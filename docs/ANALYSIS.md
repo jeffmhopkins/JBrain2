@@ -121,6 +121,12 @@ reschedules. Past-tense references convert `expected` → `occurred`.
   **`subject_id`** when the entity is also a security subject — "Mom" the
   entity and Mom the subject are one identity; fact→subject attribution is
   a security field. Cross-*subject* misattribution is treated as a leak.
+- `kind` follows the same **schema.org guidance** as fact predicates:
+  prefer schema.org type names (`Person`, `Organization`, `Place`,
+  `Event`, `Product`…), coining `snake_case` kinds only where schema.org
+  has no fit (e.g. `appointment` as a temporal-token-bound entity). Same
+  rationale: models converge on the vocabulary, so kinds stay matchable
+  across re-extractions.
 - Every link is span-anchored via `entity_mentions` (surface text + chunk +
   offsets), so merges are reversible: merge = tombstone
   (`merged_into_id`) + repoint, un-merge = re-resolve mentions.
@@ -259,7 +265,15 @@ health facts never auto-supersede anything.
 | `entity.disambiguate` (batched, only uncertain mentions) | cheap |
 | `fact.adjudicate` (batched, only retrieved candidates) | cheap |
 | `correction_note.extract` | strong |
+| `vision.ocr` / `vision.caption` (P3 image backend) | strong (vision) |
 | embeddings | local container |
+
+**Provider routing [decided]**: every task is individually configurable to
+`anthropic | xai | local` (+ model), defaulting to **`xai:grok-4.3` for
+all tasks** during dev. The `local` provider (OpenAI-compatible endpoint)
+exists from day one as the all-local escape hatch. **Vision-LLM is the
+first OCR backend [decided]** — Tesseract remains a later config option on
+the dispatcher's routing axis.
 
 One guaranteed call + up to two conditional cheap calls per note; ~5–7k
 tokens ≈ under $0.02/note. Conflict detection is bounded by candidate
