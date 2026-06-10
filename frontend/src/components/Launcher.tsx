@@ -100,10 +100,10 @@ export function Launcher({ open, onClose, onNavigate }: LauncherProps) {
   if (!open && !closing) return null;
 
   function onTouchStart(event: TouchEvent) {
-    // Only arm the dismiss gesture from the top of the launcher's scroll —
-    // otherwise a downward swipe is just the user scrolling back up.
-    const scrolled = (panelRef.current?.scrollTop ?? 0) > 4;
-    touchStartY.current = scrolled ? null : (event.touches[0]?.clientY ?? null);
+    // Owner-settled: a down-swipe anywhere on the launcher dismisses it,
+    // regardless of scroll position (pull-to-refresh is suppressed in CSS
+    // so the browser can't hijack the gesture).
+    touchStartY.current = event.touches[0]?.clientY ?? null;
   }
 
   function onTouchMove(event: TouchEvent) {
