@@ -134,6 +134,11 @@ rows; leading icon optional, trailing chevron for navigation.
 **Badges** — 12px text on the relevant tint, pill radius (e.g. `running`,
 `healthy` in the Ops screen).
 
+**Status-card grids** — glanceable per-item status (Ops containers and
+similar) uses **half-width cards** in a 2-column grid, not full-width rows
+(settled in Phase 1 polish); names/images truncate with ellipsis rather
+than wrapping.
+
 **Calendar** — Day/Week/Month/List segments; month grid with hairline cell
 borders, out-of-month days in `--text-3`, today = accent ring around the day
 number; selected-day panel below with `+ Add` (accent link) and `Open day →`.
