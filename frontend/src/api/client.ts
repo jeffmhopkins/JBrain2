@@ -3,6 +3,13 @@
 // session is gone — the app-level handler flips back to the login screen.
 // Types are hand-written until Phase 1 introduces OpenAPI-generated clients
 // (docs/DEVELOPMENT.md, "Code standards / TypeScript").
+//
+// `npm run dev:mock` (VITE_MOCK=1) swaps the transport for in-memory
+// fixtures so UI work never needs a backend (docs/DESIGN.md, "UI
+// development process"). The flag is build-time constant, so the mock
+// module tree-shakes out of real builds.
+
+import { mockFetch } from "./mock";
 
 export interface Principal {
   principal_id: string;
@@ -20,6 +27,35 @@ export interface ContainerStatus {
 
 export interface OpsStatus {
   containers: ContainerStatus[];
+}
+
+export interface AttachmentOut {
+  id: string;
+  filename: string;
+  media_type: string;
+  size_bytes: number;
+}
+
+export interface NoteOut {
+  id: string;
+  client_id: string;
+  domain: string;
+  destination: string | null;
+  body: string;
+  created_at: string;
+  attachments: AttachmentOut[];
+}
+
+export interface NotesPage {
+  notes: NoteOut[];
+  next_cursor: string | null;
+}
+
+export interface NoteCreate {
+  client_id: string;
+  domain: string;
+  destination?: string | null;
+  body: string;
 }
 
 export class ApiError extends Error {
@@ -40,8 +76,14 @@ export function setUnauthorizedHandler(handler: UnauthorizedHandler | null): voi
   unauthorizedHandler = handler;
 }
 
+export const MOCK_MODE = import.meta.env.VITE_MOCK === "1";
+
+// Resolve `fetch` at call time so test stubs (vi.stubGlobal) take effect.
+const liveFetch: typeof fetch = (input, init) => fetch(input, init);
+const transport: typeof fetch = MOCK_MODE ? mockFetch : liveFetch;
+
 async function request(path: string, init?: RequestInit): Promise<Response> {
-  const response = await fetch(path, { credentials: "same-origin", ...init });
+  const response = await transport(path, { credentials: "same-origin", ...init });
   if (response.status === 401) {
     unauthorizedHandler?.();
     throw new ApiError(401, "Not authenticated");
@@ -58,6 +100,10 @@ function jsonInit(method: string, body: unknown): RequestInit {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   };
+}
+
+export function attachmentUrl(id: string): string {
+  return `/api/attachments/${encodeURIComponent(id)}`;
 }
 
 export const api = {
@@ -77,6 +123,30 @@ export const api = {
     await request("/api/auth/session", { method: "DELETE" });
   },
 
+  // Idempotent on client_id: retrying after a lost response returns the
+  // already-created note instead of duplicating it.
+  async createNote(note: NoteCreate): Promise<NoteOut> {
+    const response = await request("/api/notes", jsonInit("POST", note));
+    return (await response.json()) as NoteOut;
+  },
+
+  async listNotes(limit = 50, before?: string): Promise<NotesPage> {
+    const params = new URLSearchParams({ limit: String(limit) });
+    if (before) params.set("before", before);
+    const response = await request(`/api/notes?${params.toString()}`);
+    return (await response.json()) as NotesPage;
+  },
+
+  async uploadAttachment(noteId: string, blob: Blob, filename: string): Promise<AttachmentOut> {
+    const form = new FormData();
+    form.append("file", blob, filename);
+    const response = await request(`/api/notes/${encodeURIComponent(noteId)}/attachments`, {
+      method: "POST",
+      body: form,
+    });
+    return (await response.json()) as AttachmentOut;
+  },
+
   async opsStatus(): Promise<OpsStatus> {
     const response = await request("/api/ops/status");
     return (await response.json()) as OpsStatus;
@@ -92,7 +162,8 @@ export const api = {
   },
 
   // EventSource cannot surface a 401, so a dead stream only shows as a
-  // connection error in the viewer rather than forcing logout.
+  // connection error in the viewer rather than forcing logout. In mock mode
+  // the stream simply errors — log-following is out of mock scope.
   opsLogStream(service: string): EventSource {
     return new EventSource(`/api/ops/logs/${encodeURIComponent(service)}/stream`);
   },

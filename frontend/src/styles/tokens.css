@@ -1,0 +1,74 @@
+/* Design tokens — the only place colors, radii, and font sizes are defined.
+   Values are the binding tables in docs/DESIGN.md. Dark is the default
+   (:root); light overrides via [data-theme="light"] set by src/theme.ts. */
+
+:root {
+  color-scheme: dark;
+
+  /* Neutrals */
+  --bg: #0e0f11;
+  --surface: #17181b;
+  --surface-2: #1e2024;
+  --border: #26282c;
+  --text: #e6e7e9;
+  --text-2: #9a9da3;
+  --text-3: #5c5f66;
+  /* The composer sits slightly below --surface so it reads as the floor. */
+  --surface-composer: #141518;
+
+  /* Accents — identical across themes. Tints are 13% alpha of the accent. */
+  --steel: #7fa7c9;
+  --steel-tint: rgba(127, 167, 201, 0.13);
+  --green: #8fbc9a;
+  --green-tint: rgba(143, 188, 154, 0.13);
+  --amber: #c9a36a;
+  --amber-tint: rgba(201, 163, 106, 0.13);
+  --rose: #cf8a8f;
+  --rose-tint: rgba(207, 138, 143, 0.13);
+  --violet: #a493c9;
+  --violet-tint: rgba(164, 147, 201, 0.13);
+
+  /* Semantic aliases */
+  --accent: var(--steel);
+  --accent-tint: var(--steel-tint);
+  --ok: var(--green);
+  --warn: var(--amber);
+  --danger: var(--rose);
+  --danger-tint: var(--rose-tint);
+  --info: var(--steel);
+
+  /* Type scale */
+  --fs-micro: 12px;
+  --fs-head: 13px; /* note-row metadata */
+  --fs-secondary: 14px;
+  --fs-note: 15px; /* stream note body, segments, destination row */
+  --fs-body: 16px;
+  --fs-composer: 17px; /* settled in the Phase 1 omnibox review */
+  --fs-title: 18px;
+  --fs-screen: 22px;
+  --fs-hero: 28px;
+
+  /* Shape */
+  --r-input: 12px;
+  --r-seg: 14px;
+  --r-card: 16px;
+  --r-box: 24px;
+  --r-pill: 999px;
+
+  --shadow-card: none;
+
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+[data-theme="light"] {
+  color-scheme: light;
+  --bg: #f7f7f5;
+  --surface: #ffffff;
+  --surface-2: #f0f0ee;
+  --border: #e2e2df;
+  --text: #1a1b1e;
+  --text-2: #5c5f66;
+  --text-3: #9a9da3;
+  --surface-composer: #ffffff;
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.06);
+}
