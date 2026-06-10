@@ -3,6 +3,7 @@
 // slides up 150ms ease-out, and dismisses on swipe-down or Escape.
 
 import { type ReactNode, type TouchEvent, useCallback, useEffect, useRef, useState } from "react";
+import { api } from "../api/client";
 import {
   BookIcon,
   CalendarIcon,
@@ -17,7 +18,7 @@ import {
   XIcon,
 } from "./icons";
 
-export type LauncherTarget = "ops" | "settings" | "search";
+export type LauncherTarget = "ops" | "settings" | "search" | "review";
 
 interface Tile {
   title: string;
@@ -48,7 +49,7 @@ const SECTIONS: Section[] = [
     header: "Authoring",
     tiles: [
       { title: "Chat", icon: <ChatIcon size={24} />, phase: "P4" },
-      { title: "Review", icon: <CheckSquareIcon size={24} />, phase: "P3" },
+      { title: "Review", icon: <CheckSquareIcon size={24} />, target: "review" },
     ],
   },
   {
@@ -74,6 +75,23 @@ export function Launcher({ open, onClose, onNavigate }: LauncherProps) {
   const [closing, setClosing] = useState(false);
   const panelRef = useRef<HTMLElement>(null);
   const touchStartY = useRef<number | null>(null);
+  // One cheap count fetch per open drives the Review tile badge; failures
+  // just mean no badge.
+  const [reviewCount, setReviewCount] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    let stale = false;
+    api
+      .reviewQueue()
+      .then((queue) => {
+        if (!stale) setReviewCount(queue.items.length);
+      })
+      .catch(() => {});
+    return () => {
+      stale = true;
+    };
+  }, [open]);
 
   const close = useCallback(() => {
     if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
@@ -156,6 +174,9 @@ export function Launcher({ open, onClose, onNavigate }: LauncherProps) {
                 <span className="tile-icon">{tile.icon}</span>
                 <span className="tile-title">{tile.title}</span>
                 {tile.phase && <span className="phase-badge">{tile.phase}</span>}
+                {tile.target === "review" && reviewCount !== null && reviewCount > 0 && (
+                  <span className="tile-badge">{reviewCount}</span>
+                )}
               </button>
             ))}
           </div>

@@ -6,6 +6,7 @@
 import { Fragment, type TouchEvent, useEffect, useRef, useState } from "react";
 import type { SearchResult } from "../api/client";
 import { attachmentUrl } from "../api/client";
+import { AnalysisTab } from "../components/AnalysisTab";
 import { Sheet } from "../components/Sheet";
 import { IngestChip } from "../components/Stream";
 import { TopBar } from "../components/TopBar";
@@ -78,29 +79,6 @@ function BodyParagraphs({ body }: { body: string }) {
           ))}
         </p>
       ))}
-    </div>
-  );
-}
-
-const ANALYSIS_SECTIONS: { header: string; phase: number }[] = [
-  { header: "Tags", phase: 3 },
-  { header: "Salient facts", phase: 3 },
-  { header: "Entities", phase: 3 },
-  { header: "Wiki backlinks", phase: 6 },
-];
-
-function AnalysisTab() {
-  return (
-    <div className="analysis-tab">
-      {ANALYSIS_SECTIONS.map((section) => (
-        <section key={section.header}>
-          <h3 className="section-header">{section.header}</h3>
-          <p className="empty-row">arrives in Phase {section.phase}</p>
-        </section>
-      ))}
-      <p className="provenance-foot">
-        extraction provenance — model, prompt version, analyzed-when — arrives in Phase 3
-      </p>
     </div>
   );
 }
@@ -291,6 +269,8 @@ interface NoteScreenProps {
   onDelete: (id: string) => void;
   onAddAttachment: (noteId: string, file: File) => Promise<StreamAttachment>;
   onRemoveAttachment: (attachmentId: string) => Promise<void>;
+  /** Analysis-tab entity chips open the entity layer above this one. */
+  onOpenEntity: (entityId: string) => void;
 }
 
 export function NoteScreen({
@@ -303,6 +283,7 @@ export function NoteScreen({
   onDelete,
   onAddAttachment,
   onRemoveAttachment,
+  onOpenEntity,
 }: NoteScreenProps) {
   const [view, setView] = useState(source);
   const [tab, setTab] = useState<"note" | "attachments" | "analysis">("note");
@@ -454,7 +435,7 @@ export function NoteScreen({
             }}
           />
         )}
-        {tab === "analysis" && <AnalysisTab />}
+        {tab === "analysis" && <AnalysisTab noteId={noteId} onOpenEntity={onOpenEntity} />}
       </div>
 
       {menuOpen && noteId !== null && (

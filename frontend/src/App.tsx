@@ -6,6 +6,7 @@ import { MoveDomainSheet } from "./components/MoveDomainSheet";
 import { TopBar } from "./components/TopBar";
 import { useNoteActions } from "./notes/useNoteActions";
 import { type StreamAttachment, type StreamItem, useNotes } from "./notes/useNotes";
+import { EntityScreen } from "./screens/EntityScreen";
 import { HomeScreen } from "./screens/HomeScreen";
 import { LoginScreen } from "./screens/LoginScreen";
 import {
@@ -15,6 +16,7 @@ import {
   noteViewFromSearch,
 } from "./screens/NoteScreen";
 import { OpsScreen } from "./screens/OpsScreen";
+import { ReviewScreen } from "./screens/ReviewScreen";
 import { SearchScreen } from "./screens/SearchScreen";
 import { SettingsScreen } from "./screens/SettingsScreen";
 
@@ -23,12 +25,13 @@ type Session =
   | { status: "anonymous" }
   | { status: "in"; principal: Principal };
 
-type Card = "ops" | "settings" | "search";
+type Card = "ops" | "settings" | "search" | "review";
 
 const SCREEN_TITLES: Record<Card, string> = {
   ops: "Ops",
   settings: "Settings",
   search: "Search",
+  review: "Review",
 };
 
 const CARD_EXIT_MS = 150;
@@ -41,6 +44,9 @@ export function App() {
   // The note view is its own tree layer above home AND above search results.
   const [noteView, setNoteView] = useState<NoteViewSource | null>(null);
   const [noteClosing, setNoteClosing] = useState(false);
+  // The entity page stacks one layer above the note view (analysis chips).
+  const [entityView, setEntityView] = useState<string | null>(null);
+  const [entityClosing, setEntityClosing] = useState(false);
 
   // Lives at the app level so the outbox keeps flushing while the user is
   // on Ops or Settings.
@@ -69,6 +75,7 @@ export function App() {
     setCard(null);
     setLauncherOpen(false);
     setNoteView(null);
+    setEntityView(null);
     setSession({ status: "anonymous" });
   }
 
@@ -112,12 +119,33 @@ export function App() {
     }, CARD_EXIT_MS);
   }
 
+  function closeEntityView() {
+    if (reducedMotion()) {
+      setEntityView(null);
+      return;
+    }
+    setEntityClosing(true);
+    setTimeout(() => {
+      setEntityClosing(false);
+      setEntityView(null);
+    }, CARD_EXIT_MS);
+  }
+
   function openNoteFromStream(item: StreamItem) {
     setNoteView(noteViewFromItem(item));
   }
 
   function openNoteFromSearch(result: SearchResult) {
     setNoteView(noteViewFromSearch(result));
+  }
+
+  // Entity-page mention tap: open the note view beneath if the note is
+  // reachable; otherwise stay put — the snippet is already on screen.
+  async function openNoteFromEntity(noteId: string) {
+    const item = await notes.fetchById(noteId);
+    if (item === null) return;
+    setNoteView(noteViewFromItem(item));
+    closeEntityView();
   }
 
   // Editing is a full-screen layer over wherever you are; underlying
@@ -247,6 +275,7 @@ export function App() {
             <SettingsScreen deviceLabel={session.principal.label} onLogout={() => void logout()} />
           )}
           {card === "search" && <SearchScreen onOpenResult={openNoteFromSearch} />}
+          {card === "review" && <ReviewScreen />}
         </div>
       )}
 
@@ -266,6 +295,20 @@ export function App() {
             }}
             onAddAttachment={addAttachmentTo}
             onRemoveAttachment={removeAttachmentFrom}
+            onOpenEntity={setEntityView}
+          />
+        </div>
+      )}
+
+      {entityView !== null && (
+        <div className={entityClosing ? "entity-layer-closing" : undefined}>
+          <EntityScreen
+            key={entityView}
+            entityId={entityView}
+            syncStatus={notes.syncStatus}
+            onClose={closeEntityView}
+            onOpenEntity={setEntityView}
+            onOpenNote={(noteId) => void openNoteFromEntity(noteId)}
           />
         </div>
       )}
