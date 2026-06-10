@@ -37,6 +37,7 @@ class FactView:
     statement: str
     value_json: dict[str, Any] | None
     object_entity_id: str | None
+    assertion: str
     valid_from: datetime | None
     valid_to: datetime | None
     reported_at: datetime
@@ -52,6 +53,7 @@ class Candidate:
     statement: str
     value_json: dict[str, Any] | None
     object_entity_id: str | None
+    assertion: str
     valid_from: datetime | None
     valid_to: datetime | None
     reported_at: datetime
@@ -80,8 +82,17 @@ class Decision:
 
 def values_equal(candidate: Candidate, existing: FactView) -> bool:
     """Same value = structured payload if either side has one, else the
-    object entity for pure edges, else the rendered statement."""
+    object entity for pure edges, else the rendered statement.
+
+    A flipped assertion (asserted<->negated, etc.) is never an idempotent
+    refresh: "I no longer own X" carries the same object as "I own X" but
+    asserts the inverse, so it must fall through to the per-kind supersession
+    logic — the refresh path only writes rendering/provenance, never assertion,
+    and would otherwise leave a head asserting the opposite of the truth
+    (docs/ANALYSIS.md "Assertion status")."""
     if candidate.object_entity_id != existing.object_entity_id:
+        return False
+    if candidate.assertion != existing.assertion:
         return False
     if candidate.value_json is not None or existing.value_json is not None:
         return candidate.value_json == existing.value_json

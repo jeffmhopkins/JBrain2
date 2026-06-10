@@ -453,12 +453,29 @@ class AnalysisPipeline:
         predicate: str,
         qualifier: str,
         subject_id: uuid.UUID | None,
+        object_entity_id: uuid.UUID | None,
+        fact_domain: str,
     ) -> list[FactView]:
+        # Candidate retrieval is scoped to same entity+DOMAIN(+kind, handled by
+        # decide). The structural identity key is the graph ADDRESS
+        # entity.predicate[.qualifier] pointing at a value or another entity, so
+        # an edge to a different object is a DIFFERENT fact (me.owns->Civic vs
+        # me.owns->kayak) while a scalar fact has a null object. The pipeline
+        # runs as the owner SYSTEM_CTX, so RLS does not scope this read — without
+        # the explicit domain filter a health fact would supersede a same-key
+        # general fact and a review card would copy cross-domain text
+        # (docs/ANALYSIS.md "Domains and the firewall", "Facts").
         stmt = select(Fact).where(
             Fact.entity_id == entity_id,
             Fact.predicate == predicate,
             Fact.qualifier == qualifier,
             Fact.subject_id == subject_id if subject_id else Fact.subject_id.is_(None),
+            (
+                Fact.object_entity_id == object_entity_id
+                if object_entity_id
+                else Fact.object_entity_id.is_(None)
+            ),
+            Fact.domain_code == fact_domain,
         )
         rows = (await session.execute(stmt)).scalars().all()
         return [
@@ -468,6 +485,7 @@ class AnalysisPipeline:
                 statement=f.statement,
                 value_json=f.value_json,
                 object_entity_id=str(f.object_entity_id) if f.object_entity_id else None,
+                assertion=f.assertion,
                 valid_from=f.valid_from,
                 valid_to=f.valid_to,
                 reported_at=f.reported_at,
@@ -537,12 +555,19 @@ class AnalysisPipeline:
             statement=fact.statement,
             value_json=fact.value_json,
             object_entity_id=str(object_entity.id) if object_entity else None,
+            assertion=fact.assertion,
             valid_from=valid_from,
             valid_to=valid_to,
             reported_at=captured_at,
         )
         existing = await self._existing_facts(
-            session, entity.id, fact.predicate, fact.qualifier, entity.subject_id
+            session,
+            entity.id,
+            fact.predicate,
+            fact.qualifier,
+            entity.subject_id,
+            object_entity.id if object_entity else None,
+            fact_domain,
         )
         decision = decide(candidate, existing, predicate=fact.predicate)
 
