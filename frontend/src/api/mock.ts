@@ -212,8 +212,9 @@ export const mockFetch: typeof fetch = async (input, init) => {
       log_tail:
         mockUpdate.state === "none"
           ? ""
-          : "[update] starting\n[update] building images\n" +
-            (mockUpdate.state === "exited" ? "[update] complete" : ""),
+          : `[update] starting\n[update] building images\n${
+              mockUpdate.state === "exited" ? "[update] complete" : ""
+            }`,
     });
   }
   if (path === "/api/ops/status") return json({ containers: CONTAINERS });
