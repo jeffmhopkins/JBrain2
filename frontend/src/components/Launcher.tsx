@@ -14,6 +14,7 @@ import {
   SearchIcon,
   SettingsIcon,
   UsersIcon,
+  XIcon,
 } from "./icons";
 
 export type LauncherTarget = "ops" | "settings";
@@ -59,7 +60,7 @@ const SECTIONS: Section[] = [
   },
 ];
 
-const SWIPE_DOWN_PX = 64;
+const SWIPE_DOWN_PX = 48;
 const EXIT_MS = 150;
 
 interface LauncherProps {
@@ -121,8 +122,15 @@ export function Launcher({ open, onClose, onNavigate }: LauncherProps) {
       onTouchStart={onTouchStart}
       onTouchMove={onTouchMove}
     >
+      {/* Gestures proved unreliable on real devices — the visible close
+          affordances are the primary path; swipes are an enhancement. */}
       <div className="launcher-head">
-        <span className="launcher-handle" aria-hidden="true" />
+        <button type="button" className="launcher-grab" onClick={close} aria-label="Close launcher">
+          <span className="launcher-handle" aria-hidden="true" />
+        </button>
+        <button type="button" className="icon-btn" onClick={close} aria-label="Close launcher">
+          <XIcon size={22} />
+        </button>
       </div>
       {SECTIONS.map((section) => (
         <section key={section.header} className="launcher-section">
