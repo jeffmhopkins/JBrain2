@@ -1,16 +1,17 @@
 #!/usr/bin/env bash
-# JBrain2 installer: barebones Ubuntu -> running stack.
+# JBrain2 installer: barebones Ubuntu -> running stack, built from source.
 #
 # From a clone:   sudo bash deploy/install.sh
 # Or piped:       curl -fsSL https://raw.githubusercontent.com/jeffmhopkins/JBrain2/main/deploy/install.sh | sudo bash
 #
-# Idempotent: re-running updates the helper scripts but never overwrites an
-# existing .env or regenerates secrets.
+# The stack builds its images from /opt/jbrain2/src (a git clone), so nothing
+# is pulled from a registry except public base images. Idempotent: re-running
+# refreshes helper scripts but never overwrites an existing .env or src tree.
 set -euo pipefail
 
-REPO_RAW="https://raw.githubusercontent.com/jeffmhopkins/JBrain2/main/deploy"
+REPO_URL="https://github.com/jeffmhopkins/JBrain2.git"
 INSTALL_DIR="/opt/jbrain2"
-# Resolves to the deploy/ dir when run from a clone; empty-ish when piped.
+# Resolves to the deploy/ dir when run from a clone; empty when piped.
 SRC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd || true)"
 
 say() { printf '\n[jbrain install] %s\n' "$*"; }
@@ -21,18 +22,30 @@ if ! command -v docker >/dev/null 2>&1; then
   say "Installing Docker Engine"
   curl -fsSL https://get.docker.com | sh
 fi
+if ! command -v git >/dev/null 2>&1; then
+  say "Installing git"
+  apt-get update -qq && apt-get install -y -qq git
+fi
 
 say "Setting up $INSTALL_DIR"
-mkdir -p "$INSTALL_DIR/db-init" "$INSTALL_DIR/backups"
-cd "$INSTALL_DIR"
+mkdir -p "$INSTALL_DIR/backups" "$INSTALL_DIR/db-init"
 
-for f in docker-compose.yml jbrain backup.sh db-init/01-app-role.sh; do
-  if [ -n "$SRC_DIR" ] && [ -f "$SRC_DIR/$f" ]; then
-    cp "$SRC_DIR/$f" "$f"
+if [ ! -d "$INSTALL_DIR/src/.git" ]; then
+  if [ -n "$SRC_DIR" ] && [ -f "$SRC_DIR/install.sh" ] && [ -d "$SRC_DIR/../.git" ]; then
+    REPO_ROOT="$(cd "$SRC_DIR/.." && pwd)"
+    say "Copying source tree from $REPO_ROOT"
+    cp -a "$REPO_ROOT" "$INSTALL_DIR/src"
   else
-    curl -fsSL "$REPO_RAW/$f" -o "$f"
+    say "Cloning source tree"
+    git clone "$REPO_URL" "$INSTALL_DIR/src"
   fi
+fi
+
+cd "$INSTALL_DIR"
+for f in docker-compose.yml jbrain backup.sh; do
+  cp "src/deploy/$f" "$f"
 done
+cp src/deploy/db-init/01-app-role.sh db-init/
 chmod +x jbrain backup.sh db-init/01-app-role.sh
 ln -sf "$INSTALL_DIR/jbrain" /usr/local/bin/jbrain
 
@@ -44,7 +57,6 @@ if [ ! -f .env ]; then
 
   cat > .env <<EOF
 JBRAIN_DOMAIN=$DOMAIN
-JBRAIN_TAG=stable
 POSTGRES_PASSWORD=$(openssl rand -hex 32)
 APP_DB_PASSWORD=$(openssl rand -hex 32)
 SUPERVISOR_TOKEN=$(openssl rand -hex 32)
@@ -56,8 +68,8 @@ else
   say "Existing .env found — keeping current configuration and secrets"
 fi
 
-say "Pulling images"
-docker compose pull
+say "Building images from source (a few minutes on first run)"
+docker compose build
 
 say "Starting database"
 docker compose up -d db

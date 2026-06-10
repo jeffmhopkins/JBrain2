@@ -148,9 +148,11 @@ two. Rejecting a fact drafts a correction note.
 ### Install
 
 `install.sh` bootstraps a barebones Ubuntu host: installs Docker Engine +
-compose plugin, creates `/opt/jbrain2`, downloads the pinned compose file and
-the `jbrain` CLI helper, prompts for the domain and LLM API key(s), generates
-all internal secrets into `.env`, and brings the stack up.
+compose plugin and git, places the source tree at `/opt/jbrain2/src` (copied
+from the clone it runs from, or cloned fresh when piped), prompts for the
+domain and LLM API key(s), generates all internal secrets into `.env`,
+**builds the images from source**, and brings the stack up. No registry
+account is required — only public base images are pulled.
 
 ### Owner key
 
@@ -177,13 +179,14 @@ same code path when the stack is too wedged for the UI.
 
 ### Updates
 
-CI publishes versioned images to GHCR on release tags (`stable` channel) and
-on every green main build (`edge` channel; channel toggle in the Ops screen).
-The supervisor polls GitHub Releases; updates are **prompted, one-tap** —
-never unattended. Apply sequence: pull images → pre-update `pg_dump`
-snapshot → Alembic migrations → rolling restart → health check, with the
-previous tag retained for `jbrain rollback`. Blind auto-pull (Watchtower
-style) is deliberately rejected: updates must migrate before they restart.
+Deployments build from source: `jbrain update` runs git pull → pre-update
+backup → image rebuild → Alembic migrations → restart. The supervisor's
+one-tap Ops-screen update (planned, Phase 1) drives the same sequence and
+polls GitHub for new commits on main; updates are **prompted** — never
+unattended — and must migrate before they restart. CI still publishes GHCR
+images (`edge` on main, `stable` + semver on tags) as build provenance and
+as an optional pinned-image escape hatch (`docker compose pull` with image
+overrides), but installs do not depend on a registry.
 
 ## Agent
 
