@@ -1166,6 +1166,19 @@ button.small {
   color: var(--text-2);
 }
 
+/* 44px tap target, but pulled in so the row keeps its compact height. */
+.note-menu-btn {
+  margin: -10px 0 -10px auto;
+  min-width: 44px;
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  color: var(--text-2);
+}
+
 .note-tabs {
   display: flex;
   border: 1px solid var(--border);
