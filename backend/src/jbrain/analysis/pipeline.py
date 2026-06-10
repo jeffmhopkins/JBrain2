@@ -31,7 +31,12 @@ from jbrain.analysis.display import (
     promotion_display,
     value_label,
 )
-from jbrain.analysis.entities import AmbiguousEntity, ResolvedEntity, resolve_entity
+from jbrain.analysis.entities import (
+    AmbiguousEntity,
+    NeedsDisambiguation,
+    ResolvedEntity,
+    resolve_entity,
+)
 from jbrain.analysis.extraction import (
     ExtractedFact,
     Extraction,
@@ -62,6 +67,8 @@ from jbrain.queue import SYSTEM_CTX, PermanentJobError
 log = structlog.get_logger()
 
 EXTRACT_MAX_TOKENS = 8192
+
+_DB_LINK_METHODS = frozenset({"exact_alias", "embedding", "llm", "human"})
 
 
 def local_anchor(captured_at: datetime, tz_offset_minutes: int | None) -> datetime:
@@ -186,7 +193,9 @@ class AnalysisPipeline:
         extraction: Extraction,
         extractor: str,
     ) -> None:
-        resolved = await self._resolve_entities(session, extraction, note_id, note_domain, chunks)
+        resolved = await self._resolve_entities(
+            session, extraction, note_id, note_domain, chunks, captured_at
+        )
         anchor_for = await self._rebuild_mentions(
             session, extraction, resolved, note_id, note_domain, chunks
         )
@@ -258,8 +267,12 @@ class AnalysisPipeline:
         note_id: uuid.UUID,
         note_domain: str,
         chunks: list[_ChunkRef],
+        captured_at: datetime,
     ) -> dict[str, ResolvedEntity | None]:
-        """Layer-1 resolution for every name the extraction references.
+        """Layered resolution for every name the extraction references
+        (docs/ANALYSIS.md "Alias resolution & separation"): exact alias, then
+        the relationship hop for reference-shaped mentions at the note's
+        capture time.
 
         Ambiguous names resolve to None (no link) and file one deduplicated
         ambiguous_mention review item.
@@ -280,8 +293,16 @@ class AnalysisPipeline:
         resolved: dict[str, ResolvedEntity | None] = {}
         for name in names:
             outcome = await resolve_entity(
-                session, name, kind_hint=kind_hints.get(name, "Thing"), domain=note_domain
+                session,
+                name,
+                kind_hint=kind_hints.get(name, "Thing"),
+                domain=note_domain,
+                note_time=captured_at,
             )
+            if isinstance(outcome, NeedsDisambiguation):
+                # Several plausible candidates and no decider yet: review,
+                # never a wrong silent link.
+                outcome = AmbiguousEntity(candidate_ids=sorted(c.id for c in outcome.candidates))
             if isinstance(outcome, AmbiguousEntity):
                 resolved[name] = None
                 await self._file_ambiguous_review(
@@ -362,8 +383,14 @@ class AnalysisPipeline:
                     surface_text=mention.surface_text,
                     char_start=start,
                     char_end=end,
-                    link_method="exact_alias",
-                    confidence=1.0,
+                    # 0006 CHECKs link_method to exact_alias|embedding|llm|
+                    # human; the deterministic relationship hop rides
+                    # exact_alias (it is rule-based linking too) until a
+                    # migration widens the enum.
+                    link_method=(
+                        entity.method if entity.method in _DB_LINK_METHODS else "exact_alias"
+                    ),
+                    confidence=entity.confidence,
                     domain_code=note_domain,
                 )
             )
