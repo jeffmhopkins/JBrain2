@@ -29,7 +29,7 @@ export function EditLayer({ editing, onCancel, onSave }: EditLayerProps) {
   const savable = trimmed !== "" && trimmed !== editing.body.trim();
 
   return (
-    <div className="edit-layer" role="dialog" aria-label="Edit note">
+    <section className="edit-layer" aria-label="Edit note">
       <header className="top-bar">
         <button type="button" className="back-btn" onClick={onCancel} aria-label="Cancel edit">
           <ChevronLeftIcon size={22} />
@@ -53,6 +53,6 @@ export function EditLayer({ editing, onCancel, onSave }: EditLayerProps) {
         value={body}
         onChange={(e) => setBody(e.target.value)}
       />
-    </div>
+    </section>
   );
 }
