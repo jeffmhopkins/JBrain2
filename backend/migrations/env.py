@@ -1,4 +1,5 @@
 import asyncio
+import os
 
 from alembic import context
 from sqlalchemy.engine import Connection
@@ -11,9 +12,14 @@ target_metadata = Base.metadata
 
 
 def _database_url() -> str:
-    # -x database_url=... lets tests point migrations at a container DB.
-    return context.get_x_argument(as_dictionary=True).get(
-        "database_url", get_settings().database_url
+    # Precedence: -x database_url=... (tests) > the migrate service's
+    # superuser URL > app settings. Migrations need DDL rights the RLS-bound
+    # app role deliberately lacks.
+    from_x = context.get_x_argument(as_dictionary=True).get("database_url")
+    return (
+        from_x
+        or os.environ.get("JBRAIN_MIGRATION_DATABASE_URL")
+        or get_settings().database_url
     )
 
 

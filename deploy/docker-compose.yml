@@ -45,6 +45,20 @@ services:
       timeout: 5s
       retries: 3
 
+  # One-shot migration runner (docker compose run --rm migrate): migrations
+  # need DDL rights, so only this short-lived container sees the superuser
+  # URL — the api/worker stay on the RLS-bound app role.
+  migrate:
+    image: jbrain2-api:local
+    profiles: [tools]
+    command: ["alembic", "upgrade", "head"]
+    environment:
+      JBRAIN_MIGRATION_DATABASE_URL: postgresql+asyncpg://jbrain:${POSTGRES_PASSWORD}@db:5432/jbrain
+    networks: [internal]
+    depends_on:
+      db:
+        condition: service_healthy
+
   worker:
     image: jbrain2-api:local
     restart: unless-stopped
