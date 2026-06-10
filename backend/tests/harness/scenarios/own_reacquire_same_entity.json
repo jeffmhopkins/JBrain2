@@ -1,0 +1,73 @@
+{
+  "name": "re-acquiring a previously sold item reuses the same entity and revives ownership",
+  "description": "own -> sell -> buy again on ONE stable item entity. The Civic entity is stable across the gap (docs/ANALYSIS.md: 'identity is stable; properties are supersedable bindings'); only the owns binding cycles owned true->false->true. Each transition has a distinct value_json so supersession.values_equal sees real changes: the sell (owned=false) supersedes the buy, and the re-buy (owned=true) supersedes the sell -- one revision chain of three rows, current head owned=true. Two fact_conflict reviews fire (one per transition). Pins entity identity of 'the Civic' across the ownership gap.",
+  "steps": [
+    {
+      "domain": "general",
+      "created_at": "2026-01-12T15:00:00-06:00",
+      "body": "Bought a Honda Civic today.",
+      "extraction": {
+        "title": "Bought a Civic",
+        "tags": ["civic"],
+        "mentions": [
+          {"name": "Me", "kind": "Person", "surface_text": "Bought"},
+          {"name": "Civic", "kind": "Product", "surface_text": "Honda Civic"}
+        ],
+        "facts": [
+          {"predicate": "owns", "qualifier": "Civic", "kind": "state", "statement": "I own a Honda Civic.", "value_json": {"item": "Honda Civic", "owned": true}, "assertion": "asserted", "entity_ref": "Me", "object_entity_ref": "Civic", "temporal": {"phrase": "today", "resolved_start": "2026-01-12T00:00:00-06:00", "resolved_end": null, "precision": "day"}, "domain": "general", "confidence": 0.92}
+        ],
+        "temporal_tokens": []
+      }
+    },
+    {
+      "domain": "general",
+      "created_at": "2026-05-20T11:00:00-06:00",
+      "body": "Sold the Civic.",
+      "extraction": {
+        "title": "Sold the Civic",
+        "tags": ["civic", "sold"],
+        "mentions": [
+          {"name": "Me", "kind": "Person", "surface_text": "Sold"},
+          {"name": "Civic", "kind": "Product", "surface_text": "Civic"}
+        ],
+        "facts": [
+          {"predicate": "owns", "qualifier": "Civic", "kind": "state", "statement": "I no longer own the Civic.", "value_json": {"item": "Honda Civic", "owned": false}, "assertion": "negated", "entity_ref": "Me", "object_entity_ref": "Civic", "temporal": {"phrase": "", "resolved_start": "2026-05-20T00:00:00-06:00", "resolved_end": null, "precision": "day"}, "domain": "general", "confidence": 0.92}
+        ],
+        "temporal_tokens": []
+      }
+    },
+    {
+      "domain": "general",
+      "created_at": "2026-09-14T13:00:00-06:00",
+      "body": "Ended up buying my Civic back from the dealer.",
+      "extraction": {
+        "title": "Bought the Civic back",
+        "tags": ["civic"],
+        "mentions": [
+          {"name": "Me", "kind": "Person", "surface_text": "buying"},
+          {"name": "Civic", "kind": "Product", "surface_text": "Civic"}
+        ],
+        "facts": [
+          {"predicate": "owns", "qualifier": "Civic", "kind": "state", "statement": "I own the Civic again.", "value_json": {"item": "Honda Civic", "owned": true}, "assertion": "asserted", "entity_ref": "Me", "object_entity_ref": "Civic", "temporal": {"phrase": "", "resolved_start": "2026-09-14T00:00:00-06:00", "resolved_end": null, "precision": "day"}, "domain": "general", "confidence": 0.92}
+        ],
+        "temporal_tokens": []
+      }
+    }
+  ],
+  "expect": {
+    "facts": [
+      {"entity": "Me", "predicate": "owns", "qualifier": "Civic", "value_contains": "again", "assertion": "asserted", "status": "active", "chained": false},
+      {"entity": "Me", "predicate": "owns", "qualifier": "Civic", "value_contains": "no longer", "assertion": "negated", "status": "superseded", "chained": true},
+      {"entity": "Me", "predicate": "owns", "qualifier": "Civic", "value_contains": "I own a Honda Civic", "status": "superseded", "chained": true}
+    ],
+    "absent_facts": [
+      {"entity": "Me", "predicate": "owns", "value_contains": "no longer", "status": "active"}
+    ],
+    "review_items": [
+      {"kind": "fact_conflict", "summary_contains": "owns", "count": 2}
+    ],
+    "entities": [
+      {"name": "Civic", "kind": "Product", "status": "provisional"}
+    ]
+  }
+}

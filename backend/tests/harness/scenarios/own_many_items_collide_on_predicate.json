@@ -1,0 +1,53 @@
+{
+  "name": "two distinct owned items collide on the owns identity key",
+  "description": "NEW GAP (distinct from the 4 known) and the headline ownership failure. The structural identity key is (subject, entity, predicate, qualifier) -- pipeline._existing_facts filters on exactly those four and NOT on object_entity_id. So owning a Civic and a kayak, both emitted as state-kind Me.owns with an empty qualifier, share one identity key. The second insert (kayak) sees the Civic as the current head of Me.owns and, because state is newest-wins, SUPERSEDES it (SCD-2 close) and files a spurious fact_conflict -- the system now believes I traded my Civic for a kayak. Two unrelated possessions wrongly form one revision chain. Spec-correct (docs/ANALYSIS.md 'property graph': me.owns -> [thing] is keyed by the thing; distinct things are distinct edges): both edges stay active, no chain, no review. xfail until the candidate read or identity key disambiguates by object (own_many_items_qualifier_disambiguates shows the qualifier workaround that DOES pass today). Probe both notes use qualifier='' to mimic a model that did not coin a per-item qualifier.",
+  "xfail": "owns predicate collision: identity key (subject,entity,predicate,qualifier) ignores object_entity_id, so a second distinct owned item supersedes the first (pipeline._existing_facts + supersession.decide state branch)",
+  "steps": [
+    {
+      "domain": "general",
+      "created_at": "2026-01-12T15:00:00-06:00",
+      "body": "Bought a Honda Civic today.",
+      "extraction": {
+        "title": "Bought a Civic",
+        "tags": ["civic", "car"],
+        "mentions": [
+          {"name": "Me", "kind": "Person", "surface_text": "Bought"},
+          {"name": "Civic", "kind": "Product", "surface_text": "Honda Civic"}
+        ],
+        "facts": [
+          {"predicate": "owns", "qualifier": "", "kind": "state", "statement": "I own a Honda Civic.", "value_json": null, "assertion": "asserted", "entity_ref": "Me", "object_entity_ref": "Civic", "temporal": {"phrase": "today", "resolved_start": "2026-01-12T00:00:00-06:00", "resolved_end": null, "precision": "day"}, "domain": "general", "confidence": 0.92}
+        ],
+        "temporal_tokens": []
+      }
+    },
+    {
+      "domain": "general",
+      "created_at": "2026-02-18T10:00:00-06:00",
+      "body": "Picked up a sea kayak.",
+      "extraction": {
+        "title": "Bought a kayak",
+        "tags": ["kayak"],
+        "mentions": [
+          {"name": "Me", "kind": "Person", "surface_text": "Picked up"},
+          {"name": "Kayak", "kind": "Product", "surface_text": "sea kayak"}
+        ],
+        "facts": [
+          {"predicate": "owns", "qualifier": "", "kind": "state", "statement": "I own a sea kayak.", "value_json": null, "assertion": "asserted", "entity_ref": "Me", "object_entity_ref": "Kayak", "temporal": {"phrase": "", "resolved_start": "2026-02-18T00:00:00-06:00", "resolved_end": null, "precision": "day"}, "domain": "general", "confidence": 0.92}
+        ],
+        "temporal_tokens": []
+      }
+    }
+  ],
+  "expect": {
+    "facts": [
+      {"entity": "Me", "predicate": "owns", "value_contains": "Civic", "status": "active", "chained": false},
+      {"entity": "Me", "predicate": "owns", "value_contains": "kayak", "status": "active", "chained": false}
+    ],
+    "absent_facts": [
+      {"entity": "Me", "predicate": "owns", "status": "superseded"}
+    ],
+    "review_items": [
+      {"kind": "fact_conflict", "count": 0}
+    ]
+  }
+}
