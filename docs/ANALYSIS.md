@@ -173,10 +173,35 @@ this decision explicitly before launch.
   worker crash never double-extracts (full engine arrives Phase 5; Phase 3
   ships the minimal watermark).
 
-## Attachments
+## Attachments: the analysis dispatcher
 
-Extracted text joins the note's analysis, with guards: per-task token/cost
-budget with a summarize-then-extract fallback for big documents; structured
+Every attachment flows through a media-type **dispatcher** that routes to a
+registered tool chain; every tool implements the same extractor interface,
+so backends are config, not code:
+
+| media | chain |
+|---|---|
+| `text/*` | decode |
+| `application/pdf` | per-page text layer (PyMuPDF); pages without one render to images → image chain |
+| `image/*` | OCR backend (Tesseract local / vision-LLM via the adapter) **and** captioning (vision-LLM) as separate products |
+| `video/*` | ffmpeg → audio track → transcription backend; keyframes → image chain |
+| `audio/*` | transcription backend (faster-whisper local once hardware allows, or API) |
+
+Extractors return **provenanced segments**: source anchor (page, frame
+time, audio range), kind (`text-layer | ocr | transcript | caption`),
+tool+version, confidence. Chunks built from segments inherit the anchor, so
+citations can point at *"video X @ 02:13"*, and re-analysis after a tool
+upgrade is a targeted job over the old tool's segments — same philosophy as
+re-embedding and re-extraction.
+
+Dispatcher-level policy: per-domain backend routing (rides the privacy
+routing axis — sensitive-domain media can be pinned to local tools), and
+per-task size/cost budgets with a sample-or-summarize fallback for large
+media. Phase mapping: Phase 2 ships the dispatcher + text/PDF chains;
+Phase 3 adds vision backends (they require the LLM adapter); transcription
+lands with whisper hardware or an API key.
+
+Guards on what extraction feeds the fact pipeline: structured
 medical/financial documents are *detected and routed* (deferred to the
 Phase 7 typed parsers) rather than free-extracted into hundreds of facts;
 facts derived from OCR carry reduced confidence, and low-confidence numeric
