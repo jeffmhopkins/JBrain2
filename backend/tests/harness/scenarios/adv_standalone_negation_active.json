@@ -1,0 +1,25 @@
+{
+  "name": "a standalone negated state is stored with status=active (negation lives in assertion only)",
+  "description": "Adversarial negation-representation probe. A note negates a state with no prior fact on the key ('Cleo does NOT have a peanut allergy', assertion=negated). supersession.decide has no negation handling: with no existing fact it simply inserts, and the pipeline sets status=active. So a negated fact is a status=active row distinguished ONLY by assertion='negated'. Pins this representation explicitly: status alone does NOT encode truth — any consumer that filters on status='active' without also checking assertion will read this as 'Cleo HAS a peanut allergy', the exact inverse. (This is the structural root of the negation-then-reassert zombie in adv_negation_then_reassert: because negated facts are 'active', a later asserted re-statement of the same value is treated as identical and refreshed in place.) Asserts the active+negated row exists; documents the status/assertion coupling risk.",
+  "steps": [
+    {
+      "domain": "general",
+      "created_at": "2026-05-05T11:00:00-06:00",
+      "body": "Confirmed at the allergist: Cleo does NOT have a peanut allergy.",
+      "extraction": {
+        "title": "Cleo allergy ruled out",
+        "tags": ["cleo", "allergy"],
+        "mentions": [{"name": "Cleo", "kind": "Person", "surface_text": "Cleo"}],
+        "facts": [
+          {"predicate": "hasAllergy", "qualifier": "peanut", "kind": "state", "statement": "Cleo does not have a peanut allergy.", "value_json": {"allergen": "peanut"}, "assertion": "negated", "entity_ref": "Cleo", "object_entity_ref": null, "temporal": {"phrase": "", "resolved_start": "2026-05-05T00:00:00-06:00", "resolved_end": null, "precision": "day"}, "domain": "general", "confidence": 0.95}
+        ],
+        "temporal_tokens": []
+      }
+    }
+  ],
+  "expect": {
+    "facts": [
+      {"entity": "Cleo", "predicate": "hasAllergy", "qualifier": "peanut", "kind": "state", "assertion": "negated", "status": "active", "count": 1}
+    ]
+  }
+}

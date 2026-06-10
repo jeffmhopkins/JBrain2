@@ -1,0 +1,32 @@
+{
+  "name": "deeply nested / huge / null value_json is stored verbatim without crashing",
+  "description": "Adversarial value_json robustness probe. Three measurement facts on distinct instants carry hostile-but-valid value_json: (1) deeply nested object with arrays and unicode; (2) a measurement with value_json explicitly null (parse_extraction keeps null when value_json is not a dict); (3) a large flat object. The pipeline stores value_json as-is into a jsonb column — no shape validation beyond 'is it a dict'. This pins that schema-valid-but-degenerate value_json persists cleanly (all three active, accumulating as a time-series), proving value_json is opaque to the pipeline and cannot crash the upsert. Note the open risk this DOCUMENTS: value_json size is unbounded server-side (no length guard in extraction.parse_extraction), so a model could write arbitrarily large jsonb blobs — same family as H1's unbounded-text gap.",
+  "steps": [
+    {
+      "domain": "general",
+      "created_at": "2026-04-10T08:00:00-06:00",
+      "body": "Logged a bunch of telemetry readings for the sensor.",
+      "extraction": {
+        "title": "Sensor telemetry",
+        "tags": ["sensor", "telemetry"],
+        "mentions": [{"name": "Sensor-9", "kind": "device", "surface_text": "the sensor"}],
+        "facts": [
+          {"predicate": "reading", "qualifier": "deep", "kind": "measurement", "statement": "Nested telemetry reading.", "value_json": {"a": {"b": {"c": {"d": [1, 2, {"e": "deepnest42", "label": "ünïcödé", "f": [true, false, null]}]}}}, "unit": "raw"}, "assertion": "asserted", "entity_ref": "Sensor-9", "object_entity_ref": null, "temporal": {"phrase": "", "resolved_start": "2026-04-10T08:00:00-06:00", "resolved_end": null, "precision": "instant"}, "domain": "general", "confidence": 0.7},
+          {"predicate": "reading", "qualifier": "nullval", "kind": "measurement", "statement": "Reading with null payload.", "value_json": null, "assertion": "asserted", "entity_ref": "Sensor-9", "object_entity_ref": null, "temporal": {"phrase": "", "resolved_start": "2026-04-10T09:00:00-06:00", "resolved_end": null, "precision": "instant"}, "domain": "general", "confidence": 0.7},
+          {"predicate": "reading", "qualifier": "flat", "kind": "measurement", "statement": "Wide flat reading.", "value_json": {"k0": 0, "k1": 1, "k2": 2, "k3": 3, "k4": 4, "k5": 5, "k6": 6, "k7": 7, "k8": 8, "k9": 9, "k10": 10, "k11": 11, "k12": 12}, "assertion": "asserted", "entity_ref": "Sensor-9", "object_entity_ref": null, "temporal": {"phrase": "", "resolved_start": "2026-04-10T10:00:00-06:00", "resolved_end": null, "precision": "instant"}, "domain": "general", "confidence": 0.7}
+        ],
+        "temporal_tokens": []
+      }
+    }
+  ],
+  "expect": {
+    "facts": [
+      {"entity": "Sensor-9", "predicate": "reading", "qualifier": "deep", "kind": "measurement", "value_contains": "deepnest42", "status": "active"},
+      {"entity": "Sensor-9", "predicate": "reading", "qualifier": "nullval", "kind": "measurement", "status": "active"},
+      {"entity": "Sensor-9", "predicate": "reading", "qualifier": "flat", "kind": "measurement", "value_contains": "k12", "status": "active"}
+    ],
+    "entities": [
+      {"name": "Sensor-9", "kind": "device", "status": "provisional"}
+    ]
+  }
+}

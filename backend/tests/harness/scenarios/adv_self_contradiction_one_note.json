@@ -1,0 +1,33 @@
+{
+  "name": "two contradictory state values in one extraction resolve last-wins deterministically",
+  "description": "Adversarial single-note self-contradiction. One extraction emits TWO facts on the SAME identity key (Cleo.homeLocation, state, same qualifier) with different cities and the same validity instant. The pipeline flushes after each fact, so the second fact sees the first as an existing active row: per supersession.decide for state/functional, equal validity means candidate >= current, so the SECOND value supersedes the FIRST (last-in-array wins), the first is chained, and a single fact_conflict is filed. Pins deterministic intra-note resolution — no dup chain, no crash, exactly one active value and exactly one fact_conflict — so a self-contradicting model output has a defined winner rather than two live truths.",
+  "steps": [
+    {
+      "domain": "general",
+      "created_at": "2026-04-01T09:00:00-06:00",
+      "body": "Cleo lives in Reykjavik. Actually no, Cleo lives in Oslo now.",
+      "extraction": {
+        "title": "Cleo location",
+        "tags": ["cleo", "location"],
+        "mentions": [{"name": "Cleo", "kind": "Person", "surface_text": "Cleo"}],
+        "facts": [
+          {"predicate": "homeLocation", "qualifier": "", "kind": "state", "statement": "Cleo lives in Reykjavik.", "value_json": {"city": "Reykjavik"}, "assertion": "asserted", "entity_ref": "Cleo", "object_entity_ref": null, "temporal": {"phrase": "", "resolved_start": "2026-04-01T00:00:00-06:00", "resolved_end": null, "precision": "day"}, "domain": "general", "confidence": 0.9},
+          {"predicate": "homeLocation", "qualifier": "", "kind": "state", "statement": "Cleo lives in Oslo.", "value_json": {"city": "Oslo"}, "assertion": "asserted", "entity_ref": "Cleo", "object_entity_ref": null, "temporal": {"phrase": "", "resolved_start": "2026-04-01T00:00:00-06:00", "resolved_end": null, "precision": "day"}, "domain": "general", "confidence": 0.9}
+        ],
+        "temporal_tokens": []
+      }
+    }
+  ],
+  "expect": {
+    "facts": [
+      {"entity": "Cleo", "predicate": "homeLocation", "kind": "state", "value_contains": "Oslo", "status": "active", "chained": false, "count": 1},
+      {"entity": "Cleo", "predicate": "homeLocation", "kind": "state", "value_contains": "Reykjavik", "status": "superseded", "chained": true}
+    ],
+    "absent_facts": [
+      {"entity": "Cleo", "predicate": "homeLocation", "value_contains": "Reykjavik", "status": "active"}
+    ],
+    "review_items": [
+      {"kind": "fact_conflict", "summary_contains": "Cleo", "count": 1}
+    ]
+  }
+}

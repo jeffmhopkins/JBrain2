@@ -1,0 +1,34 @@
+{
+  "name": "self-referential relationship (entity_ref == object_entity_ref) persists without crash",
+  "description": "Adversarial self-edge probe. A relationship fact has entity_ref == object_entity_ref (Me.knows -> Me) and a second on a non-Me entity (Cleo.rival -> Cleo). Both refs resolve to the SAME entity. The pipeline must handle the degenerate loop: _resolve_entities dedupes the name, _upsert_fact resolves both subject and object to the same id, decide treats it as a non-functional relationship and inserts. Pins that a self-loop is stored (active, subject==object) rather than crashing or being silently dropped — the property graph permits reflexive edges. (Me resolves to the canonical confirmed owner entity.)",
+  "steps": [
+    {
+      "domain": "general",
+      "created_at": "2026-04-22T10:00:00-06:00",
+      "body": "Honestly, I am my own worst critic. And Cleo is her own biggest rival.",
+      "extraction": {
+        "title": "Self relations",
+        "tags": ["self", "cleo"],
+        "mentions": [
+          {"name": "Me", "kind": "Person", "surface_text": "I"},
+          {"name": "Cleo", "kind": "Person", "surface_text": "Cleo"}
+        ],
+        "facts": [
+          {"predicate": "critic_of", "qualifier": "", "kind": "relationship", "statement": "I am my own worst critic.", "value_json": null, "assertion": "asserted", "entity_ref": "Me", "object_entity_ref": "Me", "temporal": {"phrase": "", "resolved_start": "2026-04-22T00:00:00-06:00", "resolved_end": null, "precision": "day"}, "domain": "general", "confidence": 0.7},
+          {"predicate": "rival_of", "qualifier": "", "kind": "relationship", "statement": "Cleo is her own biggest rival.", "value_json": null, "assertion": "asserted", "entity_ref": "Cleo", "object_entity_ref": "Cleo", "temporal": {"phrase": "", "resolved_start": "2026-04-22T00:00:00-06:00", "resolved_end": null, "precision": "day"}, "domain": "general", "confidence": 0.7}
+        ],
+        "temporal_tokens": []
+      }
+    }
+  ],
+  "expect": {
+    "facts": [
+      {"entity": "Me", "predicate": "critic_of", "kind": "relationship", "status": "active", "count": 1},
+      {"entity": "Cleo", "predicate": "rival_of", "kind": "relationship", "status": "active", "count": 1}
+    ],
+    "entities": [
+      {"name": "Me", "kind": "Person", "status": "confirmed"},
+      {"name": "Cleo", "kind": "Person", "status": "provisional"}
+    ]
+  }
+}

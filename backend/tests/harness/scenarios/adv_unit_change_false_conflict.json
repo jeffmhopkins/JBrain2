@@ -1,0 +1,43 @@
+{
+  "name": "same weight re-expressed lb->kg at the same instant raises a false fact_conflict",
+  "description": "Adversarial unit-change probe. Note 1 records Me.bodyWeight = 180 lb for a given instant; note 2 records the SAME reading at the SAME validity instant re-expressed as 81.6 kg (180 lb ~= 81.6 kg — physically the same measurement, just unit-converted). supersession.values_equal compares value_json dicts literally, so {value:180,unit:lb} != {value:81.6,unit:kg}; with kind=measurement and identical valid_from this hits the same-instant clash branch and files a fact_conflict, parking the second reading in pending_review. The two are the SAME measurement, so flagging them as disagreeing is a false positive — a model that normalizes units between captures poisons the time-series with spurious conflicts. SPEC-CORRECT expectation encoded: no fact_conflict, one active reading. XFAIL: values_equal has no unit-normalization, so a false fact_conflict fires. Failing line: \"expected NO review item ... fact_conflict ... found 1\" (and the second reading is pending_review, not silently merged).",
+  "xfail": "Unit-change false conflict: supersession.values_equal compares value_json verbatim with no unit normalization, so the same measurement re-expressed in a different unit at the same instant collides as a fact_conflict instead of being recognized as identical (docs/ANALYSIS.md measurement row: 'same metric+time disagreeing -> review' fires even when they don't actually disagree).",
+  "steps": [
+    {
+      "domain": "general",
+      "created_at": "2026-03-15T07:00:00-06:00",
+      "body": "Weighed in at 180 lb this morning.",
+      "extraction": {
+        "title": "Weigh-in",
+        "tags": ["weight"],
+        "mentions": [{"name": "Me", "kind": "Person", "surface_text": "Weighed"}],
+        "facts": [
+          {"predicate": "bodyWeight", "qualifier": "", "kind": "measurement", "statement": "Body weight 180 lb.", "value_json": {"value": 180, "unit": "lb"}, "assertion": "asserted", "entity_ref": "Me", "object_entity_ref": null, "temporal": {"phrase": "this morning", "resolved_start": "2026-03-15T07:00:00-06:00", "resolved_end": null, "precision": "instant"}, "domain": "general", "confidence": 0.9}
+        ],
+        "temporal_tokens": []
+      }
+    },
+    {
+      "domain": "general",
+      "created_at": "2026-03-16T07:00:00-06:00",
+      "body": "Correcting yesterday's weigh-in to metric: 81.6 kg.",
+      "extraction": {
+        "title": "Weigh-in metric",
+        "tags": ["weight", "metric"],
+        "mentions": [{"name": "Me", "kind": "Person", "surface_text": "weigh-in"}],
+        "facts": [
+          {"predicate": "bodyWeight", "qualifier": "", "kind": "measurement", "statement": "Body weight 81.6 kg.", "value_json": {"value": 81.6, "unit": "kg"}, "assertion": "asserted", "entity_ref": "Me", "object_entity_ref": null, "temporal": {"phrase": "yesterday", "resolved_start": "2026-03-15T07:00:00-06:00", "resolved_end": null, "precision": "instant"}, "domain": "general", "confidence": 0.9}
+        ],
+        "temporal_tokens": []
+      }
+    }
+  ],
+  "expect": {
+    "facts": [
+      {"entity": "Me", "predicate": "bodyWeight", "kind": "measurement", "status": "active", "count": 1}
+    ],
+    "review_items": [
+      {"kind": "fact_conflict", "count": 0}
+    ]
+  }
+}
