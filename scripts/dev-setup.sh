@@ -12,30 +12,52 @@ cd "$ROOT"
 
 log() { printf '[dev-setup] %s\n' "$*"; }
 
-# --- Python backend (FastAPI, pytest, ruff, pyright) ---
-PYPROJECT=""
-if [ -f backend/pyproject.toml ]; then
-  PYPROJECT="backend"
-elif [ -f pyproject.toml ]; then
-  PYPROJECT="."
-fi
+# Skip a sync when the lockfile hasn't changed since the last successful run;
+# stamp files make repeat sessions near-instant on a cached container.
+STAMP_DIR="$ROOT/.dev-setup-stamps"
+mkdir -p "$STAMP_DIR"
 
-if [ -n "$PYPROJECT" ]; then
+fresh() { # fresh <stamp-name> <lockfile> — 0 if stamp is current
+  [ -f "$STAMP_DIR/$1" ] && [ -f "$2" ] && [ "$STAMP_DIR/$1" -nt "$2" ]
+}
+
+# --- Python (backend + supervisor: FastAPI, pytest, ruff, pyright) ---
+ensure_uv() {
   if ! command -v uv >/dev/null 2>&1; then
     log "installing uv"
     curl -LsSf https://astral.sh/uv/install.sh | sh
     export PATH="$HOME/.local/bin:$PATH"
   fi
-  log "syncing Python dependencies in $PYPROJECT (uv sync --all-extras)"
-  (cd "$PYPROJECT" && uv sync --all-extras)
-else
-  log "no pyproject.toml yet — skipping Python setup"
-fi
+}
+
+sync_python() { # sync_python <dir>
+  local dir="$1" stamp="py-${1//\//-}"
+  if [ ! -f "$dir/pyproject.toml" ]; then
+    log "no $dir/pyproject.toml yet — skipping"
+    return 0
+  fi
+  if fresh "$stamp" "$dir/uv.lock"; then
+    log "$dir dependencies already current"
+    return 0
+  fi
+  ensure_uv
+  log "syncing $dir dependencies (uv sync --all-extras)"
+  (cd "$dir" && uv sync --all-extras)
+  touch "$STAMP_DIR/$stamp"
+}
+
+sync_python backend
+sync_python supervisor
 
 # --- Frontend (React/Vite, vitest, biome) ---
 if [ -f frontend/package.json ]; then
-  log "installing frontend dependencies (npm install)"
-  (cd frontend && npm install)
+  if fresh node frontend/package-lock.json; then
+    log "frontend dependencies already current"
+  else
+    log "installing frontend dependencies (npm install)"
+    (cd frontend && npm install)
+    touch "$STAMP_DIR/node"
+  fi
 else
   log "no frontend/package.json yet — skipping Node setup"
 fi

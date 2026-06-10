@@ -1,0 +1,100 @@
+# Production stack. The project name fixes compose labels to
+# com.docker.compose.project=jbrain, which is how the supervisor scopes its
+# view of the Docker daemon.
+name: jbrain
+
+services:
+  proxy:
+    image: ghcr.io/jeffmhopkins/jbrain2-proxy:${JBRAIN_TAG:-stable}
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      JBRAIN_DOMAIN: ${JBRAIN_DOMAIN}
+    volumes:
+      - caddy_data:/data
+      - caddy_config:/config
+    networks: [edge]
+    depends_on: [api]
+
+  api:
+    image: ghcr.io/jeffmhopkins/jbrain2-api:${JBRAIN_TAG:-stable}
+    restart: unless-stopped
+    environment: &api_env
+      JBRAIN_DATABASE_URL: postgresql+asyncpg://jbrain_app:${APP_DB_PASSWORD}@db:5432/jbrain
+      JBRAIN_SUPERVISOR_URL: http://supervisor:9000
+      JBRAIN_SUPERVISOR_TOKEN: ${SUPERVISOR_TOKEN}
+      JBRAIN_ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      JBRAIN_XAI_API_KEY: ${XAI_API_KEY:-}
+    networks: [edge, internal]
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      # Slim image has no curl; stdlib does the job.
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/healthz')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  worker:
+    image: ghcr.io/jeffmhopkins/jbrain2-api:${JBRAIN_TAG:-stable}
+    restart: unless-stopped
+    command: ["python", "-m", "jbrain.worker"]
+    environment: *api_env
+    networks: [internal]
+    depends_on:
+      db:
+        condition: service_healthy
+
+  db:
+    # TimescaleDB + PostGIS in one image; pgvector arrives with Phase 2.
+    image: timescale/timescaledb-ha:pg17
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: jbrain
+      POSTGRES_USER: jbrain
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD}
+    volumes:
+      - db_data:/home/postgres/pgdata/data
+      - ./db-init:/docker-entrypoint-initdb.d:ro
+    networks: [internal]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U jbrain -d jbrain"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  supervisor:
+    image: ghcr.io/jeffmhopkins/jbrain2-supervisor:${JBRAIN_TAG:-stable}
+    restart: unless-stopped
+    environment:
+      SUPERVISOR_TOKEN: ${SUPERVISOR_TOKEN}
+      COMPOSE_PROJECT: jbrain
+      SELF_SERVICE: supervisor
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks: [internal]
+
+  embed:
+    # Dormant until Phase 2: `docker compose --profile phase2 up -d`.
+    image: ghcr.io/huggingface/text-embeddings-inference:cpu-latest
+    restart: unless-stopped
+    profiles: [phase2]
+    command: ["--model-id", "BAAI/bge-m3"]
+    volumes:
+      - embed_models:/data
+    networks: [internal]
+
+networks:
+  edge:
+  internal:
+
+volumes:
+  db_data:
+  caddy_data:
+  caddy_config:
+  embed_models:

@@ -1,0 +1,17 @@
+# flush_interval -1 disables response buffering so SSE log streams arrive
+# line-by-line instead of in bursts.
+{$JBRAIN_DOMAIN} {
+	encode zstd gzip
+
+	handle /api/* {
+		reverse_proxy api:8000 {
+			flush_interval -1
+		}
+	}
+
+	handle {
+		root * /srv/www
+		try_files {path} /index.html
+		file_server
+	}
+}
