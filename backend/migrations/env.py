@@ -16,11 +16,7 @@ def _database_url() -> str:
     # superuser URL > app settings. Migrations need DDL rights the RLS-bound
     # app role deliberately lacks.
     from_x = context.get_x_argument(as_dictionary=True).get("database_url")
-    return (
-        from_x
-        or os.environ.get("JBRAIN_MIGRATION_DATABASE_URL")
-        or get_settings().database_url
-    )
+    return from_x or os.environ.get("JBRAIN_MIGRATION_DATABASE_URL") or get_settings().database_url
 
 
 def do_run_migrations(connection: Connection) -> None:
