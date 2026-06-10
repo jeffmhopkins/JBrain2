@@ -57,7 +57,9 @@ export function LoginScreen({ onLogin }: LoginScreenProps) {
 
   return (
     <main className="login">
-      <h1>JBrain</h1>
+      <h1 className="wordmark login-wordmark">
+        JBrain<i>.</i>
+      </h1>
       <form onSubmit={submit}>
         <label htmlFor="owner-key">Owner key</label>
         <textarea
