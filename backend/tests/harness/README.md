@@ -91,8 +91,7 @@ and the red-team review.
 
 | Gap | Scenarios | Root |
 |---|---|---|
-| **C1** supersession crosses the domain firewall | `cross_domain_no_leak`, `health_cross_domain_no_leak` | `pipeline._existing_facts` candidate read isn't domain-scoped |
-| **Object-blind identity key** — distinct `owns`/edge facts collide; disposal/negation swallowed by idempotent refresh | `own_many_items_collide_on_predicate`, `own_dispose_refresh_swallows_negation`, `own_transfer_subject_cannot_move`, `adv_negation_then_reassert` | identity key + `values_equal` ignore `object_entity_id`; refresh branch never writes `assertion` |
+| **Cross-subject edge migration** — an ownership transfer can't close the prior owner's edge | `own_transfer_subject_cannot_move` | candidate read scopes to one entity; a lone counterparty edge never sees the prior owner's head (disposal itself works now — an assertion flip supersedes — but only when the extraction also emits the negated prior-owner edge) |
 | **Retrospective interval-close** has no in-place path | `hist_retrospective_closes_open_interval` | `decide()` has no close-the-open-interval branch (drops `valid_to` or chains a dup) |
 | **H2** low-confidence/OCR health facts auto-supersede | `health_low_confidence_ocr_guard` | `decide()` takes no confidence; no `low_confidence` filing |
 | **H1** fact cap is prompt-only | `adv_over_extraction_no_cap` | `parse_extraction` doesn't cap facts; no value_json/statement size guard |

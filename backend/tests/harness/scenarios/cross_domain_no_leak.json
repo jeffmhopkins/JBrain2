@@ -1,7 +1,6 @@
 {
   "name": "supersession must not cross the domain firewall",
-  "description": "Red-team C1: a health-domain fact and a general-domain fact sharing entity+predicate+qualifier must NOT form one supersession chain — the candidate read has to be domain-scoped (docs/ANALYSIS.md: candidate retrieval scoped to same entity+domain+kind). Today the general Denver fact gets superseded by the health clinic fact and a cross-domain review card copies the other domain's text. xfail until the candidate read is domain-scoped.",
-  "xfail": "C1 cross-domain supersession leak — supersession candidate read is not domain-scoped (pipeline._existing_facts)",
+  "description": "Red-team C1: a health-domain fact and a general-domain fact sharing entity+predicate+qualifier must NOT form one supersession chain — the candidate read has to be domain-scoped (docs/ANALYSIS.md: candidate retrieval scoped to same entity+domain+kind). Previously the general Denver fact got superseded by the health clinic fact and a cross-domain review card copied the other domain's text; fixed by domain-scoping the candidate read in pipeline._existing_facts.",
   "steps": [
     {
       "domain": "general",
