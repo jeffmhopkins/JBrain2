@@ -11,6 +11,8 @@ Two invariants hold for every kind:
   only re-flagged via a review item.
 """
 
+import math
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
@@ -99,6 +101,61 @@ class Decision:
     conflicting_id: str | None = None
 
 
+# Unit normalization exists ONLY so values_equal can recognize the same
+# measurement re-expressed in another unit (180 lb restated as 81.6 kg at the
+# same instant is a refresh, not a fact_conflict). Values are STORED verbatim.
+# The table is deliberately tiny — the units personal notes actually flip
+# between, with exact conversion factors — because every entry widens what the
+# pipeline silently treats as "the same value"; anything unlisted keeps the
+# conservative conflict path and a human decides.
+_KG_PER_LB = 0.45359237
+_CM_PER_IN = 2.54
+_UNIT_TO_BASE: dict[str, tuple[str, Callable[[float], float]]] = {
+    "kg": ("mass", lambda v: v),
+    "lb": ("mass", lambda v: v * _KG_PER_LB),
+    "lbs": ("mass", lambda v: v * _KG_PER_LB),
+    "cm": ("length", lambda v: v),
+    "in": ("length", lambda v: v * _CM_PER_IN),
+    "ft": ("length", lambda v: v * 12 * _CM_PER_IN),
+    "°c": ("temperature", lambda v: v),
+    "c": ("temperature", lambda v: v),
+    "°f": ("temperature", lambda v: (v - 32) * 5 / 9),
+    "f": ("temperature", lambda v: (v - 32) * 5 / 9),
+}
+
+# A re-expressed value is typically rounded to ~3 significant figures
+# (180 lb -> "81.6 kg", true value 81.65), so equality allows that much float
+# slack; abs_tol covers exact-zero readings (0 °C vs 32 °F).
+_QUANTITY_REL_TOL = 1e-3
+
+
+def _quantity(value_json: dict[str, Any] | None) -> tuple[str, float, dict[str, Any]] | None:
+    """(dimension, base-unit value, remaining keys) for a {value, unit} shaped
+    payload in a convertible unit; None means 'not comparable this way'."""
+    if not isinstance(value_json, dict):
+        return None
+    value, unit = value_json.get("value"), value_json.get("unit")
+    if isinstance(value, bool) or not isinstance(value, int | float) or not isinstance(unit, str):
+        return None
+    base = _UNIT_TO_BASE.get(unit.strip().lower())
+    if base is None:
+        return None
+    dimension, to_base = base
+    rest = {k: v for k, v in value_json.items() if k not in ("value", "unit")}
+    return dimension, to_base(float(value)), rest
+
+
+def _same_quantity(a: dict[str, Any] | None, b: dict[str, Any] | None) -> bool:
+    qa, qb = _quantity(a), _quantity(b)
+    if qa is None or qb is None or qa[0] != qb[0]:
+        return False
+    # Any keys beyond value/unit (site, device, ...) must still match exactly:
+    # a qualifierless payload and a qualified one are not the same reading.
+    if qa[2] != qb[2]:
+        return False
+    return math.isclose(qa[1], qb[1], rel_tol=_QUANTITY_REL_TOL, abs_tol=1e-9)
+
+
 def values_equal(candidate: Candidate, existing: FactView) -> bool:
     """Same value = structured payload if either side has one, else the
     object entity for pure edges, else the rendered statement.
@@ -114,7 +171,9 @@ def values_equal(candidate: Candidate, existing: FactView) -> bool:
     if candidate.assertion != existing.assertion:
         return False
     if candidate.value_json is not None or existing.value_json is not None:
-        return candidate.value_json == existing.value_json
+        if candidate.value_json == existing.value_json:
+            return True
+        return _same_quantity(candidate.value_json, existing.value_json)
     if candidate.object_entity_id is not None:
         return True
     return candidate.statement.strip() == existing.statement.strip()

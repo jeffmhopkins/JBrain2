@@ -342,6 +342,63 @@ def test_values_equal_uses_object_entity_for_pure_edges() -> None:
     assert not values_equal(cand(kind="relationship", object_entity_id="globex"), old)
 
 
+# --- unit-normalized value identity ------------------------------------------
+
+
+def test_unit_change_same_measurement_is_equal() -> None:
+    """180 lb restated as 81.6 kg (rounded) is the SAME reading: refresh at
+    the same instant, never a fact_conflict."""
+    old = view(kind="measurement", value_json={"value": 180, "unit": "lb"}, valid_from=T0)
+    metric = cand(kind="measurement", value_json={"value": 81.6, "unit": "kg"}, valid_from=T0)
+    assert values_equal(metric, old)
+    assert decide(metric, [old]).refresh_id == "old-1"
+
+
+def test_unit_change_different_value_still_conflicts() -> None:
+    old = view(kind="measurement", value_json={"value": 180, "unit": "lb"}, valid_from=T0)
+    lighter = cand(kind="measurement", value_json={"value": 75, "unit": "kg"}, valid_from=T0)
+    assert not values_equal(lighter, old)
+    d = decide(lighter, [old])
+    assert d.insert_status == "pending_review" and d.review_kind == "fact_conflict"
+
+
+def test_unit_equivalence_for_length_and_temperature() -> None:
+    height = view(kind="measurement", value_json={"value": 70, "unit": "in"}, valid_from=T0)
+    assert values_equal(
+        cand(kind="measurement", value_json={"value": 177.8, "unit": "cm"}, valid_from=T0), height
+    )
+    fever = view(kind="measurement", value_json={"value": 98.6, "unit": "°F"}, valid_from=T0)
+    assert values_equal(
+        cand(kind="measurement", value_json={"value": 37, "unit": "°C"}, valid_from=T0), fever
+    )
+
+
+def test_unit_epsilon_boundary() -> None:
+    """Rounding to ~3 significant figures is equal; a whole-unit re-round
+    (180 lb -> '82 kg') is outside tolerance and keeps the conflict path."""
+    old = view(kind="measurement", value_json={"value": 180, "unit": "lb"}, valid_from=T0)
+    assert values_equal(
+        cand(kind="measurement", value_json={"value": 81.65, "unit": "kg"}, valid_from=T0), old
+    )
+    assert not values_equal(
+        cand(kind="measurement", value_json={"value": 82, "unit": "kg"}, valid_from=T0), old
+    )
+
+
+def test_non_convertible_units_fall_through_to_conflict() -> None:
+    old = view(kind="measurement", value_json={"value": 1100, "unit": "steps"}, valid_from=T0)
+    other = cand(kind="measurement", value_json={"value": 1.1, "unit": "ksteps"}, valid_from=T0)
+    assert not values_equal(other, old)
+
+
+def test_extra_value_json_keys_must_match_for_unit_equality() -> None:
+    left_arm = view(
+        kind="measurement", value_json={"value": 180, "unit": "lb", "site": "home"}, valid_from=T0
+    )
+    bare = cand(kind="measurement", value_json={"value": 81.6, "unit": "kg"}, valid_from=T0)
+    assert not values_equal(bare, left_arm)
+
+
 # --- assertion transitions ---------------------------------------------------
 
 
