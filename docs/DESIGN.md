@@ -147,6 +147,19 @@ than wrapping.
 borders, out-of-month days in `--text-3`, today = accent ring around the day
 number; selected-day panel below with `+ Add` (accent link) and `Open day →`.
 
+**Home stream** (settled in the Phase 2 home review): home is NOT an
+infinite timeline — it shows the **last 2 days** of notes with an
+"older notes live in Search" pill above. The stream area is
+**mode-scoped**: Entry shows the note stream; Research / Full Brain show
+that mode's **conversation cards** (title, last-message preview, time,
+mode dot) — tapping one descends the tree into the conversation layer;
+typing in those modes always starts a NEW conversation. Until Phase 4
+ships conversations, those modes show an empty state ("conversations
+arrive in Phase 4"). **Swiping a note bubble left** slides it to reveal an
+action rail: **Edit** (loads the note into the omnibox; sending updates it
+and re-triggers ingestion), **Delete** (inline tap-again confirm), **Move
+domain** (small sheet). Tapping a bubble opens the note sheet.
+
 **Search** (settled in the Phase 2 review): explicit submit (enter / Search
 tap), **passage-first results** — the matched chunk is the hero text with
 `--amber-tint` highlight marks, the source note is a one-line context row
