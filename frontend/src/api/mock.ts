@@ -10,6 +10,8 @@ const PRINCIPAL: Principal = {
   label: "Mock device",
 };
 
+const mockUpdate = { state: "none" as "none" | "running" | "exited", ticks: 0 };
+
 const CONTAINERS: ContainerStatus[] = [
   {
     service: "api",
@@ -195,6 +197,25 @@ export const mockFetch: typeof fetch = async (input, init) => {
     return new Response(blob, { status: 200, headers: { "Content-Type": blob.type } });
   }
 
+  if (path === "/api/ops/update" && init?.method === "POST") {
+    mockUpdate.state = "running";
+    mockUpdate.ticks = 0;
+    return json({ updater: "jbrain-updater-mock" }, 202);
+  }
+  if (path === "/api/ops/update/status") {
+    if (mockUpdate.state === "running" && ++mockUpdate.ticks >= 3) {
+      mockUpdate.state = "exited";
+    }
+    return json({
+      state: mockUpdate.state,
+      exit_code: mockUpdate.state === "exited" ? 0 : null,
+      log_tail:
+        mockUpdate.state === "none"
+          ? ""
+          : "[update] starting\n[update] building images\n" +
+            (mockUpdate.state === "exited" ? "[update] complete" : ""),
+    });
+  }
   if (path === "/api/ops/status") return json({ containers: CONTAINERS });
   if (path === "/api/ops/restart") return new Response(null, { status: 204 });
   if (path.startsWith("/api/ops/logs/")) {

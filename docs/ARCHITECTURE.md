@@ -179,10 +179,13 @@ same code path when the stack is too wedged for the UI.
 
 ### Updates
 
-Deployments build from source: `jbrain update` runs git pull → pre-update
-backup → image rebuild → Alembic migrations → restart. The supervisor's
-one-tap Ops-screen update (planned, Phase 1) drives the same sequence and
-polls GitHub for new commits on main; updates are **prompted** — never
+Deployments build from source: `jbrain update` (SSH) and the **Ops screen's
+one-tap "Update server"** both run backup → git pull → image rebuild →
+Alembic migrations → restart. The PWA path works by the supervisor spawning
+a **detached one-shot updater container** (docker:cli, project dir mounted
+at its host path) that survives the stack — supervisor included —
+restarting beneath it; the Ops screen polls its status and log tail,
+tolerating the api's brief restart window. Updates are **prompted** — never
 unattended — and must migrate before they restart. CI still publishes GHCR
 images (`edge` on main, `stable` + semver on tags) as build provenance and
 as an optional pinned-image escape hatch (`docker compose pull` with image

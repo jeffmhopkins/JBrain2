@@ -29,8 +29,9 @@ Financial segments, message-send model, day-grouped transcript stream);
 attachments (content-addressed storage); offline capture with an
 IndexedDB outbox and idempotent sync; card-launcher navigation; dual
 theming with Settings. Server updates ship via `jbrain update`
-(build-from-source: backup → git pull → rebuild → migrate → restart);
-the supervisor-driven one-tap Ops update moves to a later phase.
+(build-from-source: backup → git pull → rebuild → migrate → restart) and
+the Ops screen's one-tap "Update server", which drives the same sequence
+through a supervisor-spawned detached updater container.
 
 **Exit:** daily note capture from the phone is habitual, including
 offline; `jbrain update` carries a running install forward across a

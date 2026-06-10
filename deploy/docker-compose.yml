@@ -102,6 +102,7 @@ services:
       SUPERVISOR_TOKEN: ${SUPERVISOR_TOKEN}
       COMPOSE_PROJECT: jbrain
       SELF_SERVICE: supervisor
+      PROJECT_DIR: /opt/jbrain2
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     networks: [internal]

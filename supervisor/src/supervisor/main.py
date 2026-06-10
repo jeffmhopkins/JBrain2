@@ -8,5 +8,7 @@ from supervisor.gateway import ComposeDockerGateway
 
 # SUPERVISOR_TOKEN is required and comes from the environment at runtime.
 settings = Settings()  # pyright: ignore[reportCallIssue]
-gateway = ComposeDockerGateway(docker.from_env(), settings.compose_project)
+gateway = ComposeDockerGateway(
+    docker.from_env(), settings.compose_project, settings.project_dir
+)
 app = create_app(settings, gateway)

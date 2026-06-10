@@ -27,6 +27,12 @@ export interface OpsStatus {
   containers: ContainerStatus[];
 }
 
+export interface UpdateStatus {
+  state: "none" | "running" | "exited";
+  exit_code: number | null;
+  log_tail: string;
+}
+
 export interface AttachmentOut {
   id: string;
   filename: string;
@@ -151,6 +157,16 @@ export const api = {
       body: form,
     });
     return (await response.json()) as AttachmentOut;
+  },
+
+  async opsUpdateStart(): Promise<{ updater: string }> {
+    const response = await request("/api/ops/update", { method: "POST" });
+    return (await response.json()) as { updater: string };
+  },
+
+  async opsUpdateStatus(): Promise<UpdateStatus> {
+    const response = await request("/api/ops/update/status");
+    return (await response.json()) as UpdateStatus;
   },
 
   async opsStatus(): Promise<OpsStatus> {

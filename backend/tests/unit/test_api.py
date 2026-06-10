@@ -37,6 +37,10 @@ def fake_supervisor(request: httpx.Request) -> httpx.Response:
         return httpx.Response(202, json={"restarting": [body["service"]]})
     if request.url.path == "/logs/api":
         return httpx.Response(200, text="line1\nline2\n")
+    if request.url.path == "/update" and request.method == "POST":
+        return httpx.Response(202, json={"updater": "jbrain-updater-1"})
+    if request.url.path == "/update/status":
+        return httpx.Response(200, json={"state": "running", "exit_code": None, "log_tail": "x"})
     return httpx.Response(404)
 
 
@@ -130,6 +134,20 @@ def test_ops_logs(client: TestClient, repo: FakeAuthRepo) -> None:
     resp = client.get("/api/ops/logs/api")
     assert resp.status_code == 200
     assert "line1" in resp.text
+
+
+def test_ops_update_trigger_and_status(client: TestClient, repo: FakeAuthRepo) -> None:
+    login(client, repo)
+    started = client.post("/api/ops/update")
+    assert started.status_code == 202
+    assert started.json()["updater"] == "jbrain-updater-1"
+    status = client.get("/api/ops/update/status")
+    assert status.status_code == 200
+    assert status.json()["state"] == "running"
+
+
+def test_ops_update_requires_owner(client: TestClient) -> None:
+    assert client.post("/api/ops/update").status_code == 401
 
 
 def test_ops_logs_unknown_service(client: TestClient, repo: FakeAuthRepo) -> None:

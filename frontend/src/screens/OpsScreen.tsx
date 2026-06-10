@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ApiError, type ContainerStatus, api } from "../api/client";
+import { ApiError, type ContainerStatus, type UpdateStatus, api } from "../api/client";
 
 function errorMessage(err: unknown): string {
   return err instanceof ApiError ? err.message : "Request failed. Is the server reachable?";
@@ -9,6 +9,97 @@ function badgeClass(value: string): string {
   if (value === "running" || value === "healthy") return "badge ok";
   if (value === "exited" || value === "dead" || value === "unhealthy") return "badge bad";
   return "badge warn";
+}
+
+type UpdatePhase =
+  | { step: "idle" }
+  | { step: "confirm" }
+  | { step: "running"; log: string; unreachable: boolean }
+  | { step: "done"; ok: boolean; log: string };
+
+const UPDATE_POLL_MS = 3000;
+
+function UpdateCard() {
+  const [phase, setPhase] = useState<UpdatePhase>({ step: "idle" });
+  const timer = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const stopPolling = useCallback(() => {
+    if (timer.current !== null) clearInterval(timer.current);
+    timer.current = null;
+  }, []);
+  useEffect(() => stopPolling, [stopPolling]);
+
+  const poll = useCallback(async () => {
+    let status: UpdateStatus;
+    try {
+      status = await api.opsUpdateStatus();
+    } catch {
+      // The stack restarts mid-update — the api going away briefly is
+      // expected, not a failure. Keep polling.
+      setPhase((p) => (p.step === "running" ? { ...p, unreachable: true } : p));
+      return;
+    }
+    if (status.state === "running") {
+      setPhase({ step: "running", log: status.log_tail, unreachable: false });
+    } else if (status.state === "exited") {
+      stopPolling();
+      setPhase({ step: "done", ok: status.exit_code === 0, log: status.log_tail });
+    }
+  }, [stopPolling]);
+
+  async function start() {
+    try {
+      await api.opsUpdateStart();
+    } catch (err) {
+      if (!(err instanceof ApiError && err.status === 409)) {
+        setPhase({ step: "idle" });
+        return;
+      }
+      // 409: an update is already running — just attach to it.
+    }
+    setPhase({ step: "running", log: "[update] starting", unreachable: false });
+    timer.current = setInterval(() => void poll(), UPDATE_POLL_MS);
+  }
+
+  return (
+    <section className="ops-update">
+      <h3>Server update</h3>
+      {phase.step === "idle" && (
+        <button type="button" onClick={() => setPhase({ step: "confirm" })}>
+          Update server
+        </button>
+      )}
+      {phase.step === "confirm" && (
+        <button
+          type="button"
+          className="danger"
+          onClick={() => void start()}
+          onBlur={() => setPhase({ step: "idle" })}
+        >
+          Tap again to update — pulls latest main, rebuilds, restarts
+        </button>
+      )}
+      {phase.step === "running" && (
+        <>
+          <p className="muted">{phase.unreachable ? "Stack restarting — hold on…" : "Updating…"}</p>
+          <pre className="ops-update-log">{phase.log}</pre>
+        </>
+      )}
+      {phase.step === "done" && (
+        <>
+          <p className={phase.ok ? "muted" : "ops-error"}>
+            {phase.ok ? "Update complete." : "Update failed — see log."}
+          </p>
+          <pre className="ops-update-log">{phase.log}</pre>
+          {phase.ok && (
+            <button type="button" onClick={() => window.location.reload()}>
+              Reload app
+            </button>
+          )}
+        </>
+      )}
+    </section>
+  );
 }
 
 export function OpsScreen() {
@@ -97,6 +188,7 @@ export function OpsScreen() {
       )}
 
       <LogViewer services={services} />
+      <UpdateCard />
     </section>
   );
 }
