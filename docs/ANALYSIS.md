@@ -35,8 +35,16 @@ free-text blob:
 - `statement` (canonical one-sentence rendering — embedded, cited, shown),
   `value_json` for structured payloads (measurements: value + unit).
 - `predicate` is free text plus the kind enum below — no controlled
-  ontology **[decided]**; nightly consolidation merges near-duplicate
-  predicates.
+  ontology **[decided]** — but **schema.org-guided [decided]**: extraction
+  prefers schema.org type and property names where they exist
+  (`Person.birthDate`, `worksFor`, `address`), coining `snake_case`
+  predicates otherwise. LLMs know the vocabulary cold, so every model and
+  prompt version converges on the same names — which is what keeps the
+  structural identity key matchable across re-extractions. Nightly
+  consolidation normalizes drift *toward* schema.org as the attractor.
+  Domain complements: FHIR's Observation/LOINC shapes the Phase 7 typed
+  health records; iCalendar RRULE encodes `recurrence`-kind temporal
+  tokens.
 - Assertion status: `asserted | negated | hypothetical | reported |
   question` — the wiki demotes everything below `asserted`. "Doctor wants
   to rule out diabetes" is not a diabetes fact.
