@@ -5,7 +5,7 @@ import { Launcher, type LauncherTarget } from "./components/Launcher";
 import { MoveDomainSheet } from "./components/MoveDomainSheet";
 import { TopBar } from "./components/TopBar";
 import { useNoteActions } from "./notes/useNoteActions";
-import { type StreamItem, useNotes } from "./notes/useNotes";
+import { type StreamAttachment, type StreamItem, useNotes } from "./notes/useNotes";
 import { HomeScreen } from "./screens/HomeScreen";
 import { LoginScreen } from "./screens/LoginScreen";
 import {
@@ -122,8 +122,14 @@ export function App() {
 
   // Editing is a full-screen layer over wherever you are; underlying
   // layers stay put and the saved body is reflected into an open note view.
-  function startEditFromNoteView(id: string, body: string, domain: string, createdAt: Date) {
-    actions.startEdit({ id, body, domain, createdAt });
+  function startEditFromNoteView(
+    id: string,
+    body: string,
+    domain: string,
+    createdAt: Date,
+    attachments: StreamAttachment[],
+  ) {
+    actions.startEdit({ id, body, domain, createdAt, attachments });
   }
 
   async function saveEdit(body: string) {
@@ -244,6 +250,29 @@ export function App() {
           editing={actions.editing}
           onCancel={actions.cancelEdit}
           onSave={(body) => void saveEdit(body)}
+          onAddFile={async (file) => {
+            const id = actions.editing?.id;
+            const added = await notes.addAttachment(id ?? "", file);
+            if (id !== undefined) {
+              setNoteView((v) =>
+                v !== null && v.id === id && v.attachments !== null
+                  ? { ...v, attachments: [...v.attachments, added] }
+                  : v,
+              );
+            }
+            return added;
+          }}
+          onRemoveAttachment={async (attachmentId) => {
+            const id = actions.editing?.id;
+            await notes.removeAttachment(attachmentId);
+            if (id !== undefined) {
+              setNoteView((v) =>
+                v !== null && v.id === id && v.attachments !== null
+                  ? { ...v, attachments: v.attachments.filter((a) => a.id !== attachmentId) }
+                  : v,
+              );
+            }
+          }}
         />
       )}
     </div>

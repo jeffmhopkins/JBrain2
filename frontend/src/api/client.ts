@@ -243,6 +243,10 @@ export const api = {
     return (await response.json()) as AttachmentOut;
   },
 
+  async deleteAttachment(id: string): Promise<void> {
+    await request(`/api/attachments/${encodeURIComponent(id)}`, { method: "DELETE" });
+  },
+
   async opsMetrics(): Promise<OpsMetrics> {
     const response = await request("/api/ops/metrics");
     return (await response.json()) as OpsMetrics;

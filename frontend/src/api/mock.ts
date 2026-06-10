@@ -307,6 +307,15 @@ export const mockFetch: typeof fetch = async (input, init) => {
   }
 
   const blobMatch = path.match(/^\/api\/attachments\/([^/]+)$/);
+  if (blobMatch && method === "DELETE") {
+    const attId = decodeURIComponent(blobMatch[1] ?? "");
+    const owner = notes.find((n) => n.attachments.some((a) => a.id === attId));
+    if (!owner) return json({ detail: "unknown attachment" }, 404);
+    owner.attachments = owner.attachments.filter((a) => a.id !== attId);
+    owner.ingest_state = "pending";
+    attachmentBlobs.delete(attId);
+    return new Response(null, { status: 204 });
+  }
   if (blobMatch) {
     const blob = attachmentBlobs.get(decodeURIComponent(blobMatch[1] ?? ""));
     if (!blob) return json({ detail: "unknown attachment" }, 404);

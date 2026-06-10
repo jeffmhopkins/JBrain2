@@ -139,6 +139,14 @@ class FakeNotesRepo:
                     return a
         return None
 
+    async def remove_attachment(self, ctx: SessionContext, attachment_id: str) -> str | None:
+        for n in self.notes:
+            for a in n.attachments:
+                if a.id == attachment_id:
+                    n.attachments.remove(a)
+                    return n.id
+        return None
+
 
 @pytest.fixture
 def client(tmp_path: Path) -> Iterator[tuple[TestClient, FakeNotesRepo, FakeJobQueue]]:
@@ -250,6 +258,23 @@ def test_attachment_to_missing_note_404(
         f"/api/notes/{uuid.uuid4()}/attachments", files={"file": ("x.txt", b"x", "text/plain")}
     )
     assert resp.status_code == 404
+
+
+def test_remove_attachment_reingests_note(
+    client: tuple[TestClient, FakeNotesRepo, FakeJobQueue],
+) -> None:
+    c, _repo, jobs = client
+    note = c.post("/api/notes", json={"client_id": "ra1", "body": "with file"}).json()
+    att = c.post(
+        f"/api/notes/{note['id']}/attachments",
+        files={"file": ("x.txt", b"x", "text/plain")},
+    ).json()
+    jobs.enqueued.clear()
+
+    assert c.delete(f"/api/attachments/{att['id']}").status_code == 204
+    assert ("ingest_note", {"note_id": note["id"]}) in jobs.enqueued
+    assert c.get(f"/api/attachments/{att['id']}").status_code == 404
+    assert c.delete(f"/api/attachments/{uuid.uuid4()}").status_code == 404
 
 
 def test_download_missing_attachment_404(

@@ -12,6 +12,13 @@ function fakeController(): NotesController {
     update: vi.fn(async () => {}),
     remove: vi.fn(async () => {}),
     byId: vi.fn(() => undefined),
+    addAttachment: vi.fn(async () => ({
+      id: "a1",
+      filename: "f.txt",
+      mediaType: "text/plain",
+      sizeBytes: 1,
+    })),
+    removeAttachment: vi.fn(async () => undefined),
     fetchById: vi.fn(async () => null),
   };
 }

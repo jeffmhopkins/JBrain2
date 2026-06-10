@@ -164,7 +164,10 @@ caret/selection; the thumb bar holds live `words · chars` (+ amber
 `· unsaved`) and a 44px **done** button — surface-2 until savable, then
 green-tint per the green=save rule — riding above the keyboard; dirty ✕
 arms an inline rose "discard edits?" that auto-disarms in 3s or on typing;
-saving PATCHes the body and re-triggers ingestion), **Delete** (inline tap-again confirm), **Move
+saving PATCHes the body and re-triggers ingestion; the editor also owns
+**attachment management** — a paperclip in the thumb bar adds files, chips
+above the bar list them with a tap-again rose remove; adds/removals apply
+immediately to the note, independent of the text's done/cancel), **Delete** (inline tap-again confirm), **Move
 domain** (small sheet). Tapping a bubble opens the note sheet.
 
 **Capture location** (settled in the Phase 2 review): a Settings toggle,
