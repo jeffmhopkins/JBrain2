@@ -121,6 +121,12 @@ reschedules. Past-tense references convert `expected` → `occurred`.
   **`subject_id`** when the entity is also a security subject — "Mom" the
   entity and Mom the subject are one identity; fact→subject attribution is
   a security field. Cross-*subject* misattribution is treated as a leak.
+- `kind` follows the same **schema.org guidance** as fact predicates:
+  prefer schema.org type names (`Person`, `Organization`, `Place`,
+  `Event`, `Product`…), coining `snake_case` kinds only where schema.org
+  has no fit (e.g. `appointment` as a temporal-token-bound entity). Same
+  rationale: models converge on the vocabulary, so kinds stay matchable
+  across re-extractions.
 - Every link is span-anchored via `entity_mentions` (surface text + chunk +
   offsets), so merges are reversible: merge = tombstone
   (`merged_into_id`) + repoint, un-merge = re-resolve mentions.
