@@ -10,12 +10,16 @@ with notes as the sole sources of truth. Self-hosted on Ubuntu + Docker.
 ## Install (fresh Ubuntu server)
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/jeffmhopkins/JBrain2/main/deploy/install.sh | sudo bash
+git clone https://github.com/jeffmhopkins/JBrain2.git
+cd JBrain2
+sudo bash deploy/install.sh
 ```
 
-The installer sets up Docker, asks for your domain and LLM API keys, and
-prints your **owner key** exactly once — copy it to paper. Manage the stack
-with `jbrain status | restart | logs | reset-owner-key | update | backup`.
+The installer sets up Docker, asks for your domain and LLM API keys, builds
+the images from source, and prints your **owner key** exactly once — copy it
+to paper. Manage the stack with
+`jbrain status | restart | logs | reset-owner-key | update | backup`;
+`jbrain update` pulls the latest main and rebuilds.
 
 ## Development
 

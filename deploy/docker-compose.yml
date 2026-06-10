@@ -1,11 +1,15 @@
-# Production stack. The project name fixes compose labels to
-# com.docker.compose.project=jbrain, which is how the supervisor scopes its
-# view of the Docker daemon.
+# Production stack, built from the local source tree (/opt/jbrain2/src) —
+# no registry pulls except public base images. The project name fixes compose
+# labels to com.docker.compose.project=jbrain, which is how the supervisor
+# scopes its view of the Docker daemon.
 name: jbrain
 
 services:
   proxy:
-    image: ghcr.io/jeffmhopkins/jbrain2-proxy:${JBRAIN_TAG:-stable}
+    image: jbrain2-proxy:local
+    build:
+      context: ./src
+      dockerfile: deploy/Dockerfile.proxy
     restart: unless-stopped
     ports:
       - "80:80"
@@ -20,7 +24,9 @@ services:
     depends_on: [api]
 
   api:
-    image: ghcr.io/jeffmhopkins/jbrain2-api:${JBRAIN_TAG:-stable}
+    image: jbrain2-api:local
+    build:
+      context: ./src/backend
     restart: unless-stopped
     environment: &api_env
       JBRAIN_DATABASE_URL: postgresql+asyncpg://jbrain_app:${APP_DB_PASSWORD}@db:5432/jbrain
@@ -40,7 +46,7 @@ services:
       retries: 3
 
   worker:
-    image: ghcr.io/jeffmhopkins/jbrain2-api:${JBRAIN_TAG:-stable}
+    image: jbrain2-api:local
     restart: unless-stopped
     command: ["python", "-m", "jbrain.worker"]
     environment: *api_env
@@ -69,7 +75,9 @@ services:
       retries: 10
 
   supervisor:
-    image: ghcr.io/jeffmhopkins/jbrain2-supervisor:${JBRAIN_TAG:-stable}
+    image: jbrain2-supervisor:local
+    build:
+      context: ./src/supervisor
     restart: unless-stopped
     environment:
       SUPERVISOR_TOKEN: ${SUPERVISOR_TOKEN}

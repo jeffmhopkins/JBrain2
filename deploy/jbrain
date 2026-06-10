@@ -13,7 +13,7 @@ Usage: jbrain <command>
   restart [svc]    restart one service or the whole stack
   logs [svc]       follow logs (default: all services)
   reset-owner-key  revoke the owner key and print a new one
-  update           pull current channel images, migrate, restart
+  update           pull latest source, rebuild, migrate, restart
   backup           run a backup now
   down | up        stop / start the stack
 EOF
@@ -33,8 +33,16 @@ case "${1:-}" in
     docker compose run --rm api python -m jbrain.cli reset-owner-key
     ;;
   update)
-    ./backup.sh
-    docker compose pull
+    ./backup.sh || echo "backup skipped (stack not running yet?)"
+    git -C src pull --ff-only
+    # Refresh helpers from the updated tree; mv keeps this running script
+    # reading its old inode safely.
+    for f in docker-compose.yml backup.sh jbrain; do
+      cp "src/deploy/$f" "$f.new" && mv "$f.new" "$f"
+    done
+    cp src/deploy/db-init/01-app-role.sh db-init/
+    chmod +x jbrain backup.sh db-init/01-app-role.sh
+    docker compose build
     docker compose run --rm api alembic upgrade head
     docker compose up -d
     ;;
