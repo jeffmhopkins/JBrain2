@@ -71,6 +71,26 @@ era-precision range; never store only-relative. Future-tense facts carry
 `expected` status (they are not occurred events) and defer to the
 appointments pipeline where applicable.
 
+### Temporal tokens and appointment identity **[decided]**
+
+Every resolved date/time expression is a first-class **temporal token** —
+span-anchored like an entity mention: surface phrase, resolved absolute
+value, `temporal_precision`, the capture anchor used, kind
+(`point | range | recurrence`). Facts and structured records *reference*
+tokens (keeping their own valid_from/to denormalized for query speed), so
+every datetime in the system traces to the words that produced it and
+re-resolution after an anchor correction is a targeted update.
+
+**Appointments are entities with time as a binding, not identity.** An
+appointment entity is stable; its scheduled time is a supersedable binding
+to a temporal token (state-fact semantics: newest-wins + review flag,
+full reschedule chain retained). "Dentist moved to Friday" = resolve the
+mention to the existing appointment entity (candidate scope: upcoming
+appointments; ambiguity → review inbox), mint a new token from the new
+note, supersede the binding. The calendar/ICS feed reads the current
+binding; the entity, its facts, and its citations survive any number of
+reschedules. Past-tense references convert `expected` → `occurred`.
+
 ## Entities
 
 - `entities` carry `kind`, `canonical_name`, summary + embedding, and
