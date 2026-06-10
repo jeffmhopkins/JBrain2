@@ -9,7 +9,7 @@
 set -euo pipefail
 
 REPO_RAW="https://raw.githubusercontent.com/jeffmhopkins/JBrain2/main/deploy"
-INSTALL_DIR="/opt/jbrain"
+INSTALL_DIR="/opt/jbrain2"
 # Resolves to the deploy/ dir when run from a clone; empty-ish when piped.
 SRC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd || true)"
 
