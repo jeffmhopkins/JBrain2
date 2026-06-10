@@ -51,6 +51,24 @@ async def restart(
     return cast(dict[str, object], resp.json())
 
 
+@router.post("/update", status_code=202)
+async def start_update(request: Request, settings: SettingsDep) -> dict[str, object]:
+    resp = await _client(request).post("/update", headers=_headers(settings))
+    if resp.status_code == 409:
+        raise HTTPException(status_code=409, detail="update already running")
+    resp.raise_for_status()
+    return cast(dict[str, object], resp.json())
+
+
+@router.get("/update/status")
+async def update_status(request: Request, settings: SettingsDep) -> dict[str, object]:
+    resp = await _client(request).get(
+        "/update/status", params={"tail": 80}, headers=_headers(settings)
+    )
+    resp.raise_for_status()
+    return cast(dict[str, object], resp.json())
+
+
 @router.get("/logs/{service}")
 async def logs(
     service: str,

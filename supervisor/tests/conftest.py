@@ -9,7 +9,12 @@ from fastapi.testclient import TestClient
 
 from supervisor.app import create_app
 from supervisor.config import Settings
-from supervisor.gateway import ContainerInfo, UnknownServiceError
+from supervisor.gateway import (
+    ContainerInfo,
+    UnknownServiceError,
+    UpdateInProgressError,
+    UpdateStatus,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -30,6 +35,9 @@ class FakeGateway:
         self.log_lines = logs or {}
         self.restarted: list[str] = []
         self.log_requests: list[tuple[str, int]] = []
+        self.updater_running = False
+        self.updates_started: list[str] = []
+        self.update_log = "[update] starting"
 
     def list_containers(self) -> list[ContainerInfo]:
         return list(self.containers)
@@ -46,6 +54,23 @@ class FakeGateway:
     def stream_logs(self, service: str) -> Iterator[str]:
         self._check(service)
         return iter(self.log_lines.get(service, []))
+
+    def start_update(self) -> str:
+        if self.updater_running:
+            raise UpdateInProgressError
+        self.updater_running = True
+        name = f"jbrain-updater-{len(self.updates_started)}"
+        self.updates_started.append(name)
+        return name
+
+    def update_status(self, tail: int) -> UpdateStatus:
+        if not self.updates_started:
+            return UpdateStatus(state="none", exit_code=None, log_tail="")
+        if self.updater_running:
+            return UpdateStatus(
+                state="running", exit_code=None, log_tail=self.update_log
+            )
+        return UpdateStatus(state="exited", exit_code=0, log_tail=self.update_log)
 
     def _check(self, service: str) -> None:
         if service not in {c.service for c in self.containers}:

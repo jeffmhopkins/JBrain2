@@ -23,7 +23,7 @@ from fastapi import (
 from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
 from pydantic import BaseModel
 
-from supervisor.gateway import DockerGateway, UnknownServiceError
+from supervisor.gateway import DockerGateway, UnknownServiceError, UpdateInProgressError
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -52,6 +52,16 @@ class ContainerStatus(BaseModel):
 
 class StatusResponse(BaseModel):
     containers: list[ContainerStatus]
+
+
+class UpdateStartResponse(BaseModel):
+    updater: str
+
+
+class UpdateStatusResponse(BaseModel):
+    state: str
+    exit_code: int | None
+    log_tail: str
 
 
 def create_app(settings: Settings, gateway: DockerGateway) -> FastAPI:
@@ -122,6 +132,24 @@ def create_app(settings: Settings, gateway: DockerGateway) -> FastAPI:
         else:
             gateway.restart(body.service)
         return RestartResponse(restarting=[body.service])
+
+    @authed.post("/update", status_code=202)
+    def start_update() -> UpdateStartResponse:
+        try:
+            return UpdateStartResponse(updater=gateway.start_update())
+        except UpdateInProgressError:
+            raise HTTPException(
+                status_code=409, detail="update already running"
+            ) from None
+
+    @authed.get("/update/status")
+    def update_status(
+        tail: Annotated[int, Query(ge=1)] = 80,
+    ) -> UpdateStatusResponse:
+        status = gateway.update_status(min(tail, MAX_LOG_TAIL))
+        return UpdateStatusResponse(
+            state=status.state, exit_code=status.exit_code, log_tail=status.log_tail
+        )
 
     @authed.get("/logs/{service}", response_class=PlainTextResponse)
     def logs(

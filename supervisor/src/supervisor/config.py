@@ -15,3 +15,4 @@ class Settings(BaseSettings):
     supervisor_token: str
     compose_project: str = "jbrain"
     self_service: str = "supervisor"
+    project_dir: str = "/opt/jbrain2"
