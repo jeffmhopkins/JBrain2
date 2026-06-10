@@ -22,6 +22,15 @@ KNOWN_DOMAINS = {"general", "health", "finance", "location"}
 
 
 @dataclass
+class FakeJobQueue:
+    enqueued: list[tuple[str, dict]] = field(default_factory=list)
+
+    async def enqueue(self, ctx: SessionContext, kind: str, payload: dict) -> str:
+        self.enqueued.append((kind, payload))
+        return str(uuid.uuid4())
+
+
+@dataclass
 class FakeNotesRepo:
     notes: list[NoteInfo] = field(default_factory=list)
 
@@ -92,7 +101,7 @@ class FakeNotesRepo:
 
 
 @pytest.fixture
-def client(tmp_path: Path) -> Iterator[tuple[TestClient, FakeNotesRepo]]:
+def client(tmp_path: Path) -> Iterator[tuple[TestClient, FakeNotesRepo, FakeJobQueue]]:
     settings = Settings(
         secure_cookies=False,
         database_url="postgresql+asyncpg://nobody@localhost:1/none",
@@ -101,10 +110,12 @@ def client(tmp_path: Path) -> Iterator[tuple[TestClient, FakeNotesRepo]]:
     app = create_app(settings)
     repo = FakeNotesRepo()
     auth_repo = FakeAuthRepo()
+    jobs = FakeJobQueue()
     with TestClient(app) as test_client:
         app.state.auth_repo = auth_repo
         app.state.notes_repo = repo
         app.state.blob_store = FsBlobStore(tmp_path)
+        app.state.job_queue = jobs
         key = asyncio.run(auth_service.rotate_owner_key(auth_repo))
         assert (
             test_client.post(
@@ -112,7 +123,7 @@ def client(tmp_path: Path) -> Iterator[tuple[TestClient, FakeNotesRepo]]:
             ).status_code
             == 204
         )
-        yield test_client, repo
+        yield test_client, repo, jobs
 
 
 def test_notes_require_auth(tmp_path: Path) -> None:
@@ -127,9 +138,9 @@ def test_notes_require_auth(tmp_path: Path) -> None:
 
 
 def test_create_note_is_idempotent_on_client_id(
-    client: tuple[TestClient, FakeNotesRepo],
+    client: tuple[TestClient, FakeNotesRepo, FakeJobQueue],
 ) -> None:
-    c, _repo = client
+    c, _repo, _jobs = client
     payload = {"client_id": "abc", "domain": "general", "body": "hello"}
     first = c.post("/api/notes", json=payload)
     second = c.post("/api/notes", json=payload)
@@ -138,14 +149,16 @@ def test_create_note_is_idempotent_on_client_id(
     assert first.json()["id"] == second.json()["id"]
 
 
-def test_create_note_rejects_unknown_domain(client: tuple[TestClient, FakeNotesRepo]) -> None:
-    c, _ = client
+def test_create_note_rejects_unknown_domain(
+    client: tuple[TestClient, FakeNotesRepo, FakeJobQueue],
+) -> None:
+    c, _, _ = client
     resp = c.post("/api/notes", json={"client_id": "x", "domain": "nope", "body": "y"})
     assert resp.status_code == 400
 
 
-def test_list_notes_pagination(client: tuple[TestClient, FakeNotesRepo]) -> None:
-    c, _ = client
+def test_list_notes_pagination(client: tuple[TestClient, FakeNotesRepo, FakeJobQueue]) -> None:
+    c, _, _ = client
     for i in range(5):
         c.post("/api/notes", json={"client_id": f"n{i}", "body": f"note {i}"})
     page = c.get("/api/notes", params={"limit": 3}).json()
@@ -159,9 +172,9 @@ def test_list_notes_pagination(client: tuple[TestClient, FakeNotesRepo]) -> None
 
 
 def test_attachment_upload_and_download_roundtrip(
-    client: tuple[TestClient, FakeNotesRepo],
+    client: tuple[TestClient, FakeNotesRepo, FakeJobQueue],
 ) -> None:
-    c, _ = client
+    c, _, _ = client
     note = c.post("/api/notes", json={"client_id": "a1", "body": "with file"}).json()
     up = c.post(
         f"/api/notes/{note['id']}/attachments",
@@ -180,14 +193,66 @@ def test_attachment_upload_and_download_roundtrip(
     assert listed["attachments"][0]["filename"] == "lab.pdf"
 
 
-def test_attachment_to_missing_note_404(client: tuple[TestClient, FakeNotesRepo]) -> None:
-    c, _ = client
+def test_attachment_to_missing_note_404(
+    client: tuple[TestClient, FakeNotesRepo, FakeJobQueue],
+) -> None:
+    c, _, _ = client
     resp = c.post(
         f"/api/notes/{uuid.uuid4()}/attachments", files={"file": ("x.txt", b"x", "text/plain")}
     )
     assert resp.status_code == 404
 
 
-def test_download_missing_attachment_404(client: tuple[TestClient, FakeNotesRepo]) -> None:
-    c, _ = client
+def test_download_missing_attachment_404(
+    client: tuple[TestClient, FakeNotesRepo, FakeJobQueue],
+) -> None:
+    c, _, _ = client
     assert c.get(f"/api/attachments/{uuid.uuid4()}").status_code == 404
+
+
+def test_note_responses_expose_ingest_state(
+    client: tuple[TestClient, FakeNotesRepo, FakeJobQueue],
+) -> None:
+    c, _, _ = client
+    created = c.post("/api/notes", json={"client_id": "s1", "body": "state"}).json()
+    assert created["ingest_state"] == "pending"
+    listed = c.get("/api/notes").json()["notes"][0]
+    assert listed["ingest_state"] == "pending"
+
+
+def test_create_note_enqueues_ingestion_once(
+    client: tuple[TestClient, FakeNotesRepo, FakeJobQueue],
+) -> None:
+    c, _, jobs = client
+    payload = {"client_id": "q1", "body": "index me"}
+    note = c.post("/api/notes", json=payload).json()
+    c.post("/api/notes", json=payload)  # idempotent retry must not re-enqueue
+    assert jobs.enqueued == [("ingest_note", {"note_id": note["id"]})]
+    # Payload carries the id only — never note content.
+    assert "index me" not in str(jobs.enqueued)
+
+
+def test_attachment_upload_enqueues_reingestion(
+    client: tuple[TestClient, FakeNotesRepo, FakeJobQueue],
+) -> None:
+    c, _, jobs = client
+    note = c.post("/api/notes", json={"client_id": "q2", "body": "n"}).json()
+    jobs.enqueued.clear()
+    up = c.post(
+        f"/api/notes/{note['id']}/attachments",
+        files={"file": ("a.txt", b"text", "text/plain")},
+    )
+    assert up.status_code == 201
+    assert jobs.enqueued == [("ingest_note", {"note_id": note["id"]})]
+
+
+def test_failed_attachment_upload_does_not_enqueue(
+    client: tuple[TestClient, FakeNotesRepo, FakeJobQueue],
+) -> None:
+    c, _, jobs = client
+    jobs.enqueued.clear()
+    resp = c.post(
+        f"/api/notes/{uuid.uuid4()}/attachments", files={"file": ("x.txt", b"x", "text/plain")}
+    )
+    assert resp.status_code == 404
+    assert jobs.enqueued == []

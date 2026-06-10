@@ -131,9 +131,7 @@ async def fail(
     async with scoped_session(maker, ctx) as session:
         row = (
             await session.execute(
-                text(
-                    "SELECT attempts, max_attempts FROM app.jobs WHERE id = :id FOR UPDATE"
-                ),
+                text("SELECT attempts, max_attempts FROM app.jobs WHERE id = :id FOR UPDATE"),
                 {"id": job_id},
             )
         ).first()

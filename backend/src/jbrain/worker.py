@@ -53,9 +53,7 @@ async def process_one(
     return True
 
 
-async def run_loop(
-    maker: async_sessionmaker[AsyncSession], handlers: dict[str, Handler]
-) -> None:
+async def run_loop(maker: async_sessionmaker[AsyncSession], handlers: dict[str, Handler]) -> None:
     backfilled = False
     last_heartbeat = 0.0
     while True:
