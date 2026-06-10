@@ -24,6 +24,13 @@ from sqlalchemy import delete, func, select, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from jbrain.analysis.display import (
+    ambiguous_display,
+    collision_display,
+    mark_snippet,
+    promotion_display,
+    value_label,
+)
 from jbrain.analysis.entities import AmbiguousEntity, ResolvedEntity, resolve_entity
 from jbrain.analysis.extraction import (
     ExtractedFact,
@@ -54,7 +61,6 @@ from jbrain.queue import SYSTEM_CTX, PermanentJobError
 log = structlog.get_logger()
 
 EXTRACT_MAX_TOKENS = 8192
-SNIPPET_CHARS = 240
 
 
 @dataclass(frozen=True)
@@ -63,7 +69,20 @@ class _ChunkRef:
     text: str
 
 
-def _locate(surface: str, chunks: list[_ChunkRef]) -> tuple[uuid.UUID, int, int] | None:
+# (chunk_id, char_start, char_end) — what _locate anchors a surface to.
+_Span = tuple[uuid.UUID, int, int]
+
+
+def _cite(anchor: _Span | None, chunks: list[_ChunkRef]) -> str | None:
+    """The frozen citation a review card shows: the anchoring chunk's snippet
+    with the surface span <mark>ed; unmarked head text when nothing anchors."""
+    if anchor is None:
+        return mark_snippet(chunks[0].text) if chunks else None
+    text = next((c.text for c in chunks if c.id == anchor[0]), None)
+    return mark_snippet(text, anchor[1], anchor[2])
+
+
+def _locate(surface: str, chunks: list[_ChunkRef]) -> _Span | None:
     """Span-anchor a surface string: first chunk containing it (exact, then
     case-insensitive); a paraphrased surface anchors to the first chunk with
     a zero-width span rather than being dropped — merges stay reversible."""
@@ -148,7 +167,7 @@ class AnalysisPipeline:
         extraction: Extraction,
         extractor: str,
     ) -> None:
-        resolved = await self._resolve_entities(session, extraction, note_id, note_domain)
+        resolved = await self._resolve_entities(session, extraction, note_id, note_domain, chunks)
         anchor_for = await self._rebuild_mentions(
             session, extraction, resolved, note_id, note_domain, chunks
         )
@@ -219,6 +238,7 @@ class AnalysisPipeline:
         extraction: Extraction,
         note_id: uuid.UUID,
         note_domain: str,
+        chunks: list[_ChunkRef],
     ) -> dict[str, ResolvedEntity | None]:
         """Layer-1 resolution for every name the extraction references.
 
@@ -226,6 +246,9 @@ class AnalysisPipeline:
         ambiguous_mention review item.
         """
         kind_hints = {m.name: m.kind for m in extraction.mentions}
+        # A fact-only reference has no mention surface; the name itself is
+        # the best span to cite for it.
+        surfaces = {m.name: m.surface_text for m in reversed(extraction.mentions)}
         names: list[str] = []
         for mention in extraction.mentions:
             if mention.name not in names:
@@ -243,7 +266,12 @@ class AnalysisPipeline:
             if isinstance(outcome, AmbiguousEntity):
                 resolved[name] = None
                 await self._file_ambiguous_review(
-                    session, name, note_id, note_domain, outcome.candidate_ids
+                    session,
+                    name,
+                    note_id,
+                    note_domain,
+                    outcome.candidate_ids,
+                    snippet=_cite(_locate(surfaces.get(name, name), chunks), chunks),
                 )
             else:
                 resolved[name] = outcome
@@ -256,6 +284,8 @@ class AnalysisPipeline:
         note_id: uuid.UUID,
         note_domain: str,
         candidate_ids: list[uuid.UUID],
+        *,
+        snippet: str | None,
     ) -> None:
         # Re-analysis must not multiply identical open items.
         existing = (
@@ -277,6 +307,7 @@ class AnalysisPipeline:
                     "name": name,
                     "note_id": str(note_id),
                     "entity_ids": [str(c) for c in candidate_ids],
+                    **ambiguous_display(name=name, snippet=snippet),
                 },
                 domain_code=note_domain,
             )
@@ -290,16 +321,17 @@ class AnalysisPipeline:
         note_id: uuid.UUID,
         note_domain: str,
         chunks: list[_ChunkRef],
-    ) -> dict[str, uuid.UUID]:
+    ) -> dict[str, _Span]:
         """Delete + insert this note's mentions (the chunks pattern from
-        ingest); returns name -> anchoring chunk for fact provenance."""
+        ingest); returns name -> anchoring span for fact provenance and the
+        <mark>ed citations review items carry."""
         await session.execute(delete(EntityMention).where(EntityMention.note_id == note_id))
-        anchor_for: dict[str, uuid.UUID] = {}
+        anchor_for: dict[str, _Span] = {}
         for mention in extraction.mentions:
             entity = resolved.get(mention.name)
             located = _locate(mention.surface_text, chunks)
             if located is not None and mention.name not in anchor_for:
-                anchor_for[mention.name] = located[0]
+                anchor_for[mention.name] = located
             if entity is None or located is None:
                 continue
             chunk_id, start, end = located
@@ -433,7 +465,7 @@ class AnalysisPipeline:
         fact: ExtractedFact,
         resolved: dict[str, ResolvedEntity | None],
         token_ids: dict[tuple[str, str], uuid.UUID],
-        anchor_for: dict[str, uuid.UUID],
+        anchor_for: dict[str, _Span],
         note_id: uuid.UUID,
         note_domain: str,
         captured_at: datetime,
@@ -509,7 +541,8 @@ class AnalysisPipeline:
             )
             return fact_id
 
-        chunk_id = anchor_for.get(fact.entity_ref) or (chunks[0].id if chunks else None)
+        anchor = anchor_for.get(fact.entity_ref)
+        chunk_id = anchor[0] if anchor else (chunks[0].id if chunks else None)
         # Explicit id: read below before flush would otherwise be None
         # (the ORM default fires at flush time).
         new_fact = Fact(
@@ -541,8 +574,19 @@ class AnalysisPipeline:
         )
         session.add(new_fact)
         await session.flush()
+        # The held side of the collision, for the card's "previously
+        # recorded" choice label.
+        conflict = next((e for e in existing if e.id == decision.conflicting_id), None)
         await self._apply_decision_side_effects(
-            session, decision, new_fact.id, fact, fact_domain, note_id, valid_from
+            session,
+            decision,
+            new_fact.id,
+            fact,
+            fact_domain,
+            note_id,
+            valid_from,
+            conflict=conflict,
+            snippet=_cite(anchor, chunks),
         )
         if needs_promotion:
             session.add(
@@ -553,6 +597,12 @@ class AnalysisPipeline:
                         "note_id": str(note_id),
                         "note_domain": note_domain,
                         "proposed_domain": fact.domain,
+                        **promotion_display(
+                            predicate=fact.predicate,
+                            proposed=fact.domain,
+                            note_domain=note_domain,
+                            snippet=_cite(anchor, chunks),
+                        ),
                     },
                     domain_code=fact_domain,
                 )
@@ -568,6 +618,9 @@ class AnalysisPipeline:
         fact_domain: str,
         note_id: uuid.UUID,
         valid_from: datetime | None,
+        *,
+        conflict: FactView | None,
+        snippet: str | None,
     ) -> None:
         for old_id in decision.supersede_ids:
             values: dict[str, Any] = {"status": "superseded", "superseded_by": new_fact_id}
@@ -589,6 +642,19 @@ class AnalysisPipeline:
                         "fact_b": str(new_fact_id),
                         "predicate": fact.predicate,
                         "note_id": str(note_id),
+                        **collision_display(
+                            kind=decision.review_kind,
+                            predicate=fact.predicate,
+                            entity_ref=fact.entity_ref,
+                            changed=bool(decision.supersede_ids),
+                            label_a=(
+                                value_label(conflict.value_json, conflict.statement)
+                                if conflict
+                                else "the earlier value"
+                            ),
+                            label_b=value_label(fact.value_json, fact.statement),
+                            snippet=snippet,
+                        ),
                         **decision.review_extra,
                     },
                     domain_code=fact_domain,

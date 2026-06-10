@@ -192,7 +192,9 @@ class NoteAnalysis(Base):
 
 
 class ReviewItem(Base):
-    """Generic review-inbox item; payload holds row references, not content."""
+    """Generic review-inbox item; payload holds the row references the
+    resolution handlers read plus the precomputed display fields the review
+    card renders (jbrain.analysis.display)."""
 
     __tablename__ = "review_items"
     __table_args__ = {"schema": "app"}

@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import (
 from sqlalchemy.pool import NullPool
 
 from jbrain.analysis.pipeline import AnalysisPipeline
+from jbrain.analysis.repo import SqlAnalysisRepo
 from jbrain.auth import service
 from jbrain.auth.repo import SqlAuthRepo
 from jbrain.config import Settings
@@ -469,10 +470,16 @@ async def test_state_change_forms_supersession_chain(
         OWNER,
         "SELECT payload FROM app.review_items WHERE kind = 'fact_conflict' AND status = 'open'",
     )
-    assert any(
-        r.payload.get("fact_a") == str(old.id) and r.payload.get("fact_b") == str(new.id)
+    item = next(
+        r.payload
         for r in reviews
+        if r.payload.get("fact_a") == str(old.id) and r.payload.get("fact_b") == str(new.id)
     )
+    # The change-notice card: ids plus the display fields the UI renders.
+    assert item["summary"] == "Me's residence changed"
+    assert [c["action"] for c in item["choices"]] == ["accept_a", "accept_b"]
+    assert item["choices"][0]["label"] == "Lives at 4 Cedar Ct."
+    assert "<mark>We</mark>" in item["snippet"]
 
 
 async def test_malformed_extraction_is_permanent_and_writes_nothing(
@@ -497,6 +504,93 @@ async def test_malformed_extraction_is_permanent_and_writes_nothing(
 
 async def test_missing_note_is_a_noop(maker: async_sessionmaker[AsyncSession]) -> None:
     await analyzer(maker, ["{}"]).analyze_note({"note_id": str(uuid.uuid4())})
+
+
+async def test_domain_promotion_review_carries_display_fields(
+    maker: async_sessionmaker[AsyncSession], tmp_path: Any
+) -> None:
+    # A general fact inside a health note ratchets DOWN -> promotion review.
+    note_id = await make_note(maker, domain="health", body="Asked Dr. Akin to fax the form.")
+    await ingest(maker, note_id, tmp_path)
+    payload = extraction_payload(
+        title="Fax request",
+        tags=["paperwork"],
+        mentions=[{"name": "Dr. Akin", "kind": "Person", "surface_text": "Dr. Akin"}],
+        facts=[
+            {
+                "predicate": "faxRequest",
+                "qualifier": "",
+                "kind": "event",
+                "statement": "Asked Dr. Akin's office to fax the form.",
+                "value_json": None,
+                "assertion": "asserted",
+                "entity_ref": "Dr. Akin",
+                "object_entity_ref": None,
+                "temporal": None,
+                "domain": "general",
+                "confidence": 0.9,
+            }
+        ],
+        temporal_tokens=[],
+    )
+    await analyzer(maker, [json.dumps(payload)]).analyze_note({"note_id": note_id})
+
+    item = (
+        await rows(
+            maker,
+            OWNER,
+            "SELECT payload FROM app.review_items"
+            " WHERE kind = 'domain_promotion' AND payload->>'note_id' = :nid",
+            nid=note_id,
+        )
+    )[0].payload
+    assert item["proposed_domain"] == "general" and item["note_domain"] == "health"
+    assert item["summary"] == "this faxRequest fact may belong in general, not health"
+    # The advertised verbs are exactly the actions resolve accepts here.
+    assert set(item["outcomes"]) == {"accept", "reject"}
+    assert "<mark>Dr. Akin</mark>" in item["snippet"]
+
+
+async def test_ambiguous_mention_review_and_reject_dismissal(
+    maker: async_sessionmaker[AsyncSession], tmp_path: Any
+) -> None:
+    # Two pre-existing entities answer to "Sam" -> layer 1 cannot pick.
+    async with scoped_session(maker, OWNER) as s:
+        for n in ("one", "two"):
+            await s.execute(
+                text(
+                    "WITH e AS (INSERT INTO app.entities (id, kind, canonical_name, status,"
+                    " domain_code) VALUES (gen_random_uuid(), 'Person', :name, 'provisional',"
+                    " 'general') RETURNING id)"
+                    " INSERT INTO app.entity_aliases (id, entity_id, alias, alias_norm,"
+                    " domain_code) SELECT gen_random_uuid(), id, 'Sam', 'sam', 'general' FROM e"
+                ),
+                {"name": f"Sam {n}"},
+            )
+    note_id = await make_note(maker, domain="general", body="Sam said the quote covers it.")
+    await ingest(maker, note_id, tmp_path)
+    payload = extraction_payload(
+        title="Roof quote",
+        tags=["house"],
+        mentions=[{"name": "Sam", "kind": "Person", "surface_text": "Sam"}],
+        facts=[],
+        temporal_tokens=[],
+    )
+    await analyzer(maker, [json.dumps(payload)]).analyze_note({"note_id": note_id})
+
+    repo = SqlAnalysisRepo(maker)
+    items = await repo.list_review(OWNER, "open")
+    item = next(
+        i for i in items if i["kind"] == "ambiguous_mention" and i["payload"]["note_id"] == note_id
+    )
+    assert item["payload"]["summary"] == "which Sam?"
+    assert len(item["payload"]["entity_ids"]) == 2
+    assert "<mark>Sam</mark>" in item["payload"]["snippet"]
+    # The card advertises reject only; accepting a link needs layer 2/3.
+    assert set(item["payload"]["outcomes"]) == {"reject"}
+
+    resolved = await repo.resolve_review(OWNER, item["id"], "reject", {})
+    assert resolved is not None and resolved["status"] == "dismissed"
 
 
 # --- API round trip -----------------------------------------------------------
@@ -587,7 +681,8 @@ async def test_analysis_and_review_api_round_trip(
                 "source_snippet",
             }
             assert fact_shape["entity_name"] == "Mom"
-            assert fact_shape["source_snippet"]  # cites its chunk text
+            # The cited span renders as a literal <mark>, like search snippets.
+            assert "<mark>Mom</mark>" in fact_shape["source_snippet"]
 
             # Unknown note -> 404; un-analyzed note -> empty shell.
             assert client.get(f"/api/notes/{uuid.uuid4()}/analysis").status_code == 404
@@ -606,6 +701,7 @@ async def test_analysis_and_review_api_round_trip(
             assert len(birth["history"]) == 2
             assert {f["status"] for f in birth["history"]} == {"pending_review"}
             assert len(entity["mentions"]) == 2
+            assert all("<mark>Mom</mark>" in m["snippet"] for m in entity["mentions"])
             assert client.get(f"/api/entities/{uuid.uuid4()}").status_code == 404
 
             # --- review inbox: collision item is open, oldest first.
@@ -613,6 +709,17 @@ async def test_analysis_and_review_api_round_trip(
             collision = next(i for i in items if i["kind"] == "attribute_collision")
             assert set(collision) == {"id", "kind", "payload", "domain", "created_at"}
             fact_a, fact_b = collision["payload"]["fact_a"], collision["payload"]["fact_b"]
+
+            # History is newest-first and includes the (here pending) head.
+            assert [f["id"] for f in birth["history"]] == [fact_b, fact_a]
+
+            # Display fields ride alongside the ids; the advertised choice
+            # actions are exactly what resolve accepts for this kind.
+            payload = collision["payload"]
+            assert payload["summary"] == "two values recorded for Mom's birthDate"
+            assert "<mark>Mom</mark>" in payload["snippet"]
+            assert [c["action"] for c in payload["choices"]] == ["accept_a", "accept_b"]
+            assert payload["choices"][1]["label"] == "Mom was born on 1958-04-03."
 
             # Unknown action -> 400, untouched.
             bad = client.post(

@@ -13,9 +13,8 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from jbrain.analysis.display import mark_snippet
 from jbrain.db.session import SessionContext, scoped_session
-
-SNIPPET_CHARS = 240
 
 REVIEW_STATUSES = ("open", "resolved", "dismissed")
 
@@ -35,16 +34,27 @@ def _as_uuid(value: str) -> uuid.UUID | None:
         return None
 
 
-_FACT_SELECT = f"""
+_FACT_SELECT = """
     SELECT f.id::text, f.entity_id::text, e.canonical_name AS entity_name,
            f.predicate, f.qualifier, f.kind, f.statement, f.value_json,
            f.assertion, f.status, f.pinned, f.confidence,
            f.valid_from, f.valid_to, f.reported_at, f.temporal_precision,
-           left(c.text, {SNIPPET_CHARS}) AS source_snippet
+           c.text AS chunk_text, anchor.char_start, anchor.char_end
     FROM app.facts f
     JOIN app.entities e ON e.id = f.entity_id
     LEFT JOIN app.chunks c ON c.id = f.chunk_id
+    LEFT JOIN LATERAL (
+        SELECT m.char_start, m.char_end
+        FROM app.entity_mentions m
+        WHERE m.chunk_id = f.chunk_id AND m.entity_id = f.entity_id
+        ORDER BY (m.char_end - m.char_start) DESC, m.char_start
+        LIMIT 1
+    ) anchor ON true
 """
+# The lateral picks the subject's mention in the fact's cited chunk — the
+# span the UI highlights. Widest-first ordering keeps zero-width paraphrase
+# anchors from shadowing a real span; with none in range the snippet is
+# served unmarked.
 
 
 def _fact_dict(row: Any) -> dict[str, Any]:
@@ -65,7 +75,7 @@ def _fact_dict(row: Any) -> dict[str, Any]:
         "valid_to": row.valid_to,
         "reported_at": row.reported_at,
         "temporal_precision": row.temporal_precision,
-        "source_snippet": row.source_snippet,
+        "source_snippet": mark_snippet(row.chunk_text, row.char_start, row.char_end),
     }
 
 
@@ -211,10 +221,10 @@ class SqlAnalysisRepo:
             mentions = (
                 await session.execute(
                     text(
-                        f"""
-                        SELECT m.note_id::text,
-                               coalesce(left(c.text, {SNIPPET_CHARS}), m.surface_text) AS snippet,
-                               m.created_at
+                        """
+                        SELECT m.note_id::text, m.surface_text,
+                               m.char_start, m.char_end,
+                               c.text AS chunk_text, m.created_at
                         FROM app.entity_mentions m
                         LEFT JOIN app.chunks c ON c.id = m.chunk_id
                         WHERE m.entity_id = :id
@@ -260,7 +270,14 @@ class SqlAnalysisRepo:
                 for r in inbound
             ],
             "mentions": [
-                {"note_id": m.note_id, "snippet": m.snippet, "created_at": m.created_at}
+                {
+                    "note_id": m.note_id,
+                    # A re-chunked note can orphan the span: fall back to the
+                    # bare surface text rather than dropping the mention.
+                    "snippet": mark_snippet(m.chunk_text, m.char_start, m.char_end)
+                    or m.surface_text,
+                    "created_at": m.created_at,
+                }
                 for m in mentions
             ],
         }
@@ -417,6 +434,12 @@ class SqlAnalysisRepo:
                     {"a": a, "b": b},
                 )
             return "resolved"
+
+        if kind == "ambiguous_mention" and action == "reject":
+            # The card's only advertised verb: leaving the mention unlinked
+            # changes no data, so this is a dismissal — layer-2/3 resolution
+            # may re-propose the link with more signal.
+            return "dismissed"
 
         if kind == "domain_promotion" and action in ("accept", "reject"):
             if action == "accept":
