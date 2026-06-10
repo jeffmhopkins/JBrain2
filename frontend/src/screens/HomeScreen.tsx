@@ -61,7 +61,13 @@ export function HomeScreen({
           onOpenSearch={onOpenSearch}
           onOpenNote={onOpenNote}
           onEdit={(item) => {
-            if (item.id !== null) actions.startEdit(item.id, item.body);
+            if (item.id !== null)
+              actions.startEdit({
+                id: item.id,
+                body: item.body,
+                domain: item.domain,
+                createdAt: item.createdAt,
+              });
           }}
           onMove={(item) => {
             if (item.id !== null)

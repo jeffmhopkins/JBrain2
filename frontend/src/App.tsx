@@ -122,8 +122,8 @@ export function App() {
 
   // Editing is a full-screen layer over wherever you are; underlying
   // layers stay put and the saved body is reflected into an open note view.
-  function startEditFromNoteView(id: string, body: string) {
-    actions.startEdit(id, body);
+  function startEditFromNoteView(id: string, body: string, domain: string, createdAt: Date) {
+    actions.startEdit({ id, body, domain, createdAt });
   }
 
   async function saveEdit(body: string) {

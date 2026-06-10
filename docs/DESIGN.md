@@ -156,10 +156,15 @@ mode dot) — tapping one descends the tree into the conversation layer;
 typing in those modes always starts a NEW conversation. Until Phase 4
 ships conversations, those modes show an empty state ("conversations
 arrive in Phase 4"). **Swiping a note bubble left** slides it to reveal an
-action rail: **Edit** (opens the full-screen editor layer — the topmost tree level,
-sliding over wherever you are and returning there on save/cancel; saving
-PATCHes the body and re-triggers ingestion; revised from edit-in-omnibox
-in Phase 2 polish), **Delete** (inline tap-again confirm), **Move
+action rail: **Edit** (opens the full-screen **focused-writer** editor — settled in the
+Phase 2 edit review against two rival designs: chrome fades to a whisper
+context line (domain dot · date) with a quiet ✕; the note is the screen at
+`--fs-editor` (20px-scale) with 1.7 line-height and a 38em measure, steel
+caret/selection; the thumb bar holds live `words · chars` (+ amber
+`· unsaved`) and a 44px **done** button — surface-2 until savable, then
+green-tint per the green=save rule — riding above the keyboard; dirty ✕
+arms an inline rose "discard edits?" that auto-disarms in 3s or on typing;
+saving PATCHes the body and re-triggers ingestion), **Delete** (inline tap-again confirm), **Move
 domain** (small sheet). Tapping a bubble opens the note sheet.
 
 **Capture location** (settled in the Phase 2 review): a Settings toggle,
