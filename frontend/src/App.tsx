@@ -13,16 +13,19 @@ type Session =
   | { status: "anonymous" }
   | { status: "in"; principal: Principal };
 
-type Screen = "home" | "ops" | "settings";
+type Card = "ops" | "settings";
 
-const SCREEN_TITLES: Record<Exclude<Screen, "home">, string> = {
+const SCREEN_TITLES: Record<Card, string> = {
   ops: "Ops",
   settings: "Settings",
 };
 
+const CARD_EXIT_MS = 150;
+
 export function App() {
   const [session, setSession] = useState<Session>({ status: "loading" });
-  const [screen, setScreen] = useState<Screen>("home");
+  const [card, setCard] = useState<Card | null>(null);
+  const [cardClosing, setCardClosing] = useState(false);
   const [launcherOpen, setLauncherOpen] = useState(false);
 
   // Lives at the app level so the outbox keeps flushing while the user is
@@ -48,12 +51,37 @@ export function App() {
     } catch {
       // Even if the server call fails the local session is done.
     }
-    setScreen("home");
+    setCard(null);
+    setLauncherOpen(false);
     setSession({ status: "anonymous" });
   }
 
   function navigate(target: LauncherTarget) {
-    setScreen(target);
+    setCard(target);
+  }
+
+  function reducedMotion(): boolean {
+    return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  }
+
+  // Climb one level: the card sinks away, revealing the launcher beneath.
+  function closeCardToLauncher() {
+    if (reducedMotion()) {
+      setCard(null);
+      return;
+    }
+    setCardClosing(true);
+    setTimeout(() => {
+      setCardClosing(false);
+      setCard(null);
+    }, CARD_EXIT_MS);
+  }
+
+  // Chevron: jump straight home — drop the launcher instantly (the card
+  // still covers it), then let the card sink to reveal home.
+  function jumpHome() {
+    setLauncherOpen(false);
+    closeCardToLauncher();
   }
 
   // Navigation is a tree: home → (swipe up) → launcher → (tap) → card
@@ -81,7 +109,7 @@ export function App() {
     const dx = Math.abs(t.clientX - start.x);
     if (dy > 56 && dy > dx * 2) {
       swipeStart.current = null;
-      setLauncherOpen(true);
+      closeCardToLauncher();
     }
   }
 
@@ -95,37 +123,38 @@ export function App() {
 
   return (
     <div className="shell">
-      <TopBar
-        {...(screen !== "home"
-          ? { title: SCREEN_TITLES[screen], onBack: () => setScreen("home") }
-          : {})}
-        syncStatus={notes.syncStatus}
-        onBolt={() => setLauncherOpen(true)}
-      />
+      <TopBar syncStatus={notes.syncStatus} onBolt={() => setLauncherOpen(true)} />
 
       {/* Home stays mounted so stream scroll position survives sub-screens. */}
-      <div className={`screen-home${screen === "home" ? "" : " screen-hidden"}`}>
+      <div className={`screen-home${card === null && !launcherOpen ? "" : " screen-hidden"}`}>
         <HomeScreen notes={notes} onOpenLauncher={() => setLauncherOpen(true)} />
       </div>
-      {screen !== "home" && (
+
+      <Launcher open={launcherOpen} onClose={() => setLauncherOpen(false)} onNavigate={navigate} />
+
+      {card !== null && (
         <div
-          className="subscreen"
+          className={`subscreen${cardClosing ? " subscreen-closing" : ""}`}
           ref={subRef}
           onTouchStart={onSubTouchStart}
           onTouchMove={onSubTouchMove}
         >
-          {screen === "ops" && (
+          <TopBar
+            title={SCREEN_TITLES[card]}
+            onBack={jumpHome}
+            syncStatus={notes.syncStatus}
+            onBolt={closeCardToLauncher}
+          />
+          {card === "ops" && (
             <main className="screen-body">
               <OpsScreen />
             </main>
           )}
-          {screen === "settings" && (
+          {card === "settings" && (
             <SettingsScreen deviceLabel={session.principal.label} onLogout={() => void logout()} />
           )}
         </div>
       )}
-
-      <Launcher open={launcherOpen} onClose={() => setLauncherOpen(false)} onNavigate={navigate} />
     </div>
   );
 }
