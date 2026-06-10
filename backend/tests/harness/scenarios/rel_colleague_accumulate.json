@@ -1,0 +1,79 @@
+{
+  "name": "non-functional relationships accumulate (colleague, knows)",
+  "description": "colleague and knows are NOT in supersession.FUNCTIONAL_PREDICATES, so decide() returns insert=True with no supersede/review (pipeline relationship branch: 'non-functional edges accumulate'). Two distinct colleague edges and a friend edge all stay active with no chain and no fact_conflict. Pins docs/ANALYSIS.md: 'default accumulate'.",
+  "steps": [
+    {
+      "domain": "general",
+      "created_at": "2026-03-10T08:30:00-06:00",
+      "body": "Priya is a colleague of mine on the platform team.",
+      "extraction": {
+        "title": "Priya colleague",
+        "tags": ["priya", "colleague", "work"],
+        "mentions": [
+          {"name": "Me", "kind": "Person", "surface_text": "mine"},
+          {"name": "Priya", "kind": "Person", "surface_text": "Priya"}
+        ],
+        "facts": [
+          {"predicate": "colleague", "qualifier": "", "kind": "relationship", "statement": "Priya is my colleague.", "value_json": null, "assertion": "asserted", "entity_ref": "Me", "object_entity_ref": "Priya", "temporal": {"phrase": "", "resolved_start": "2026-03-10T00:00:00-06:00", "resolved_end": null, "precision": "day"}, "domain": "general", "confidence": 0.85}
+        ],
+        "temporal_tokens": []
+      }
+    },
+    {
+      "domain": "general",
+      "created_at": "2026-03-12T08:30:00-06:00",
+      "body": "Devon is also a colleague on the same team.",
+      "extraction": {
+        "title": "Devon colleague",
+        "tags": ["devon", "colleague", "work"],
+        "mentions": [
+          {"name": "Me", "kind": "Person", "surface_text": "Devon is also a colleague"},
+          {"name": "Devon", "kind": "Person", "surface_text": "Devon"}
+        ],
+        "facts": [
+          {"predicate": "colleague", "qualifier": "", "kind": "relationship", "statement": "Devon is my colleague.", "value_json": null, "assertion": "asserted", "entity_ref": "Me", "object_entity_ref": "Devon", "temporal": {"phrase": "", "resolved_start": "2026-03-12T00:00:00-06:00", "resolved_end": null, "precision": "day"}, "domain": "general", "confidence": 0.85}
+        ],
+        "temporal_tokens": []
+      }
+    },
+    {
+      "domain": "general",
+      "created_at": "2026-03-15T08:30:00-06:00",
+      "body": "I know Priya socially too — we go way back.",
+      "extraction": {
+        "title": "knows Priya",
+        "tags": ["priya", "friend"],
+        "mentions": [
+          {"name": "Me", "kind": "Person", "surface_text": "I"},
+          {"name": "Priya", "kind": "Person", "surface_text": "Priya"}
+        ],
+        "facts": [
+          {"predicate": "knows", "qualifier": "", "kind": "relationship", "statement": "I know Priya socially.", "value_json": null, "assertion": "asserted", "entity_ref": "Me", "object_entity_ref": "Priya", "temporal": {"phrase": "", "resolved_start": "2026-03-15T00:00:00-06:00", "resolved_end": null, "precision": "day"}, "domain": "general", "confidence": 0.8}
+        ],
+        "temporal_tokens": []
+      }
+    }
+  ],
+  "expect": {
+    "facts": [
+      {"entity": "Me", "predicate": "colleague", "kind": "relationship", "value_contains": "Priya", "status": "active", "chained": false},
+      {"entity": "Me", "predicate": "colleague", "kind": "relationship", "value_contains": "Devon", "status": "active", "chained": false},
+      {"entity": "Me", "predicate": "colleague", "kind": "relationship", "value_contains": "Priya", "status": "active", "count": 1},
+      {"entity": "Me", "predicate": "knows", "kind": "relationship", "value_contains": "Priya", "status": "active", "chained": false}
+    ],
+    "absent_facts": [
+      {"entity": "Me", "predicate": "colleague", "value_contains": "Priya", "status": "superseded"},
+      {"entity": "Me", "predicate": "colleague", "value_contains": "Devon", "status": "superseded"},
+      {"entity": "Me", "predicate": "knows", "value_contains": "Priya", "status": "superseded"}
+    ],
+    "review_items": [
+      {"kind": "fact_conflict", "summary_contains": "colleague", "count": 0},
+      {"kind": "fact_conflict", "summary_contains": "knows", "count": 0}
+    ],
+    "entities": [
+      {"name": "Me", "kind": "Person", "status": "confirmed"},
+      {"name": "Priya", "kind": "Person", "status": "provisional"},
+      {"name": "Devon", "kind": "Person", "status": "provisional"}
+    ]
+  }
+}

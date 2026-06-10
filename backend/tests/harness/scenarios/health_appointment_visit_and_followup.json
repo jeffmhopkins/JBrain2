@@ -1,0 +1,37 @@
+{
+  "name": "one visit note yields a measurement taken today and an expected follow-up",
+  "description": "docs/ANALYSIS.md: future-tense facts carry `expected` status (not occurred events); a measurement is an instant time-series point. A single appointment note emits BOTH a BP reading taken at the visit (measurement, asserted, today) AND the next appointment's scheduled time (state on the appointment entity, assertion=expected, three months out). Both land from one note with the correct kinds/assertions/domains; the future follow-up is NOT an asserted occurred event and does not collide with the measurement.",
+  "steps": [
+    {
+      "domain": "health",
+      "created_at": "2026-06-10T15:30:00-06:00",
+      "body": "Saw Dr. Okafor today, BP was 124/79. She wants me back in 3 months for a recheck.",
+      "extraction": {
+        "title": "Visit with Dr. Okafor",
+        "tags": ["visit", "bp", "follow-up", "health"],
+        "mentions": [
+          {"name": "Me", "kind": "Person", "surface_text": "me"},
+          {"name": "Dr. Okafor", "kind": "Person", "surface_text": "Dr. Okafor"},
+          {"name": "Dr. Okafor recheck", "kind": "appointment", "surface_text": "back in 3 months"}
+        ],
+        "facts": [
+          {"predicate": "bloodPressure", "qualifier": "", "kind": "measurement", "statement": "Blood pressure was 124/79 at the visit.", "value_json": {"systolic": 124, "diastolic": 79, "unit": "mmHg"}, "assertion": "asserted", "entity_ref": "Me", "object_entity_ref": null, "temporal": {"phrase": "today", "resolved_start": "2026-06-10T15:30:00-06:00", "resolved_end": null, "precision": "instant"}, "domain": "health", "confidence": 0.93},
+          {"predicate": "scheduledTime", "qualifier": "", "kind": "state", "statement": "Recheck with Dr. Okafor scheduled for 2026-09-10.", "value_json": {"date": "2026-09-10"}, "assertion": "expected", "entity_ref": "Dr. Okafor recheck", "object_entity_ref": null, "temporal": {"phrase": "in 3 months", "resolved_start": "2026-09-10T00:00:00-06:00", "resolved_end": null, "precision": "day"}, "domain": "health", "confidence": 0.85}
+        ],
+        "temporal_tokens": []
+      }
+    }
+  ],
+  "expect": {
+    "facts": [
+      {"entity": "Me", "predicate": "bloodPressure", "kind": "measurement", "assertion": "asserted", "value_contains": "124", "status": "active", "domain": "health"},
+      {"entity": "Dr. Okafor recheck", "predicate": "scheduledTime", "kind": "state", "assertion": "expected", "value_contains": "2026-09-10", "status": "active", "domain": "health"}
+    ],
+    "absent_facts": [
+      {"entity": "Dr. Okafor recheck", "predicate": "scheduledTime", "assertion": "asserted"}
+    ],
+    "entities": [
+      {"name": "Dr. Okafor recheck", "kind": "appointment", "status": "provisional"}
+    ]
+  }
+}

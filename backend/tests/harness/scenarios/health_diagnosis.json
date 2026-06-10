@@ -1,0 +1,48 @@
+{
+  "name": "a diagnosis is an asserted state; a rule-out is hypothetical and not a diagnosis fact",
+  "description": "docs/ANALYSIS.md: assertion status gates what counts. A confirmed diagnosis lands as an asserted state on me.diagnosis. A separate 'wants to rule out X' is assertion=hypothetical — it is still recorded (the wiki demotes it) but must NEVER become an asserted diagnosis fact. The absent_facts check pins that no asserted diagnosis exists for the ruled-out condition, while the confirmed diagnosis is present and active.",
+  "steps": [
+    {
+      "domain": "health",
+      "created_at": "2026-05-20T14:00:00-06:00",
+      "body": "Dr. Okafor confirmed I have type 2 diabetes based on the A1c. Starting metformin.",
+      "extraction": {
+        "title": "Type 2 diabetes diagnosis",
+        "tags": ["diagnosis", "diabetes", "health"],
+        "mentions": [
+          {"name": "Me", "kind": "Person", "surface_text": "I"},
+          {"name": "Dr. Okafor", "kind": "Person", "surface_text": "Dr. Okafor"}
+        ],
+        "facts": [
+          {"predicate": "diagnosis", "qualifier": "type 2 diabetes", "kind": "state", "statement": "Diagnosed with type 2 diabetes.", "value_json": {"condition": "type 2 diabetes", "icd10": "E11"}, "assertion": "asserted", "entity_ref": "Me", "object_entity_ref": null, "temporal": {"phrase": "", "resolved_start": "2026-05-20T00:00:00-06:00", "resolved_end": null, "precision": "day"}, "domain": "health", "confidence": 0.95}
+        ],
+        "temporal_tokens": []
+      }
+    },
+    {
+      "domain": "health",
+      "created_at": "2026-05-20T14:05:00-06:00",
+      "body": "She also wants to rule out sleep apnea — ordering a sleep study.",
+      "extraction": {
+        "title": "Rule out sleep apnea",
+        "tags": ["sleep-apnea", "workup", "health"],
+        "mentions": [
+          {"name": "Me", "kind": "Person", "surface_text": "She"}
+        ],
+        "facts": [
+          {"predicate": "diagnosis", "qualifier": "sleep apnea", "kind": "state", "statement": "Sleep apnea is being investigated (rule out).", "value_json": {"condition": "sleep apnea"}, "assertion": "hypothetical", "entity_ref": "Me", "object_entity_ref": null, "temporal": {"phrase": "", "resolved_start": "2026-05-20T00:00:00-06:00", "resolved_end": null, "precision": "day"}, "domain": "health", "confidence": 0.7}
+        ],
+        "temporal_tokens": []
+      }
+    }
+  ],
+  "expect": {
+    "facts": [
+      {"entity": "Me", "predicate": "diagnosis", "qualifier": "type 2 diabetes", "kind": "state", "assertion": "asserted", "status": "active", "value_contains": "type 2 diabetes", "domain": "health"},
+      {"entity": "Me", "predicate": "diagnosis", "qualifier": "sleep apnea", "kind": "state", "assertion": "hypothetical", "value_contains": "sleep apnea", "domain": "health"}
+    ],
+    "absent_facts": [
+      {"entity": "Me", "predicate": "diagnosis", "qualifier": "sleep apnea", "assertion": "asserted"}
+    ]
+  }
+}

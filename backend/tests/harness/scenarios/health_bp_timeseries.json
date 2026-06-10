@@ -1,0 +1,61 @@
+{
+  "name": "blood pressure readings are a time-series, not a conflict",
+  "description": "Two BP readings on different days are measurements: both stay active, NO supersession, NO false conflict (docs/ANALYSIS.md fact kinds: measurement = time-series, accumulate, never auto-supersede). A third reading taken the SAME day/instant as the second but with a different value is a same-instant disagreement -> the candidate lands pending_review and a fact_conflict is filed for a human to pick.",
+  "steps": [
+    {
+      "domain": "health",
+      "created_at": "2026-06-01T08:30:00-06:00",
+      "body": "Morning BP check at home: 128/82.",
+      "extraction": {
+        "title": "BP reading",
+        "tags": ["bp", "vitals", "health"],
+        "mentions": [{"name": "Me", "kind": "Person", "surface_text": "home"}],
+        "facts": [
+          {"predicate": "bloodPressure", "qualifier": "", "kind": "measurement", "statement": "Blood pressure was 128/82.", "value_json": {"systolic": 128, "diastolic": 82, "unit": "mmHg"}, "assertion": "asserted", "entity_ref": "Me", "object_entity_ref": null, "temporal": {"phrase": "Morning", "resolved_start": "2026-06-01T08:30:00-06:00", "resolved_end": null, "precision": "instant"}, "domain": "health", "confidence": 0.92}
+        ],
+        "temporal_tokens": []
+      }
+    },
+    {
+      "domain": "health",
+      "created_at": "2026-06-05T08:15:00-06:00",
+      "body": "Morning BP check at home: 122/78.",
+      "extraction": {
+        "title": "BP reading",
+        "tags": ["bp", "vitals", "health"],
+        "mentions": [{"name": "Me", "kind": "Person", "surface_text": "home"}],
+        "facts": [
+          {"predicate": "bloodPressure", "qualifier": "", "kind": "measurement", "statement": "Blood pressure was 122/78.", "value_json": {"systolic": 122, "diastolic": 78, "unit": "mmHg"}, "assertion": "asserted", "entity_ref": "Me", "object_entity_ref": null, "temporal": {"phrase": "Morning", "resolved_start": "2026-06-05T08:15:00-06:00", "resolved_end": null, "precision": "instant"}, "domain": "health", "confidence": 0.92}
+        ],
+        "temporal_tokens": []
+      }
+    },
+    {
+      "domain": "health",
+      "created_at": "2026-06-05T20:00:00-06:00",
+      "body": "Logging this morning's reading again — I think it was actually 140/90, not 122/78.",
+      "extraction": {
+        "title": "BP correction",
+        "tags": ["bp", "vitals", "health"],
+        "mentions": [{"name": "Me", "kind": "Person", "surface_text": "I"}],
+        "facts": [
+          {"predicate": "bloodPressure", "qualifier": "", "kind": "measurement", "statement": "Blood pressure was 140/90.", "value_json": {"systolic": 140, "diastolic": 90, "unit": "mmHg"}, "assertion": "asserted", "entity_ref": "Me", "object_entity_ref": null, "temporal": {"phrase": "this morning", "resolved_start": "2026-06-05T08:15:00-06:00", "resolved_end": null, "precision": "instant"}, "domain": "health", "confidence": 0.6}
+        ],
+        "temporal_tokens": []
+      }
+    }
+  ],
+  "expect": {
+    "facts": [
+      {"entity": "Me", "predicate": "bloodPressure", "kind": "measurement", "value_contains": "128", "status": "active", "chained": false},
+      {"entity": "Me", "predicate": "bloodPressure", "kind": "measurement", "value_contains": "122", "status": "active", "chained": false},
+      {"entity": "Me", "predicate": "bloodPressure", "kind": "measurement", "value_contains": "140", "status": "pending_review", "chained": false}
+    ],
+    "absent_facts": [
+      {"entity": "Me", "predicate": "bloodPressure", "status": "superseded"}
+    ],
+    "review_items": [
+      {"kind": "fact_conflict", "domain": "health", "count": 1}
+    ]
+  }
+}
