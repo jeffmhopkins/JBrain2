@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { SearchOut, SearchResult } from "../api/client";
 import { SearchScreen } from "./SearchScreen";
@@ -37,11 +37,28 @@ async function submit(query: string) {
 }
 
 describe("SearchScreen", () => {
-  it("shows the pre-query empty state until an explicit submit", () => {
-    const { search } = setup({ degraded: false, results: [] });
-    expect(screen.getByText("search by meaning or keywords")).toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText("Search query"), { target: { value: "roof" } });
-    expect(search).not.toHaveBeenCalled();
+  it("searches as you type after the debounce, not per keystroke", async () => {
+    vi.useFakeTimers();
+    try {
+      const { search } = setup({ degraded: false, results: [] });
+      expect(screen.getByText("search by meaning or keywords")).toBeInTheDocument();
+      fireEvent.change(screen.getByLabelText("Search query"), { target: { value: "ro" } });
+      fireEvent.change(screen.getByLabelText("Search query"), { target: { value: "roof" } });
+      expect(search).not.toHaveBeenCalled(); // still inside the debounce window
+      await act(async () => {
+        vi.advanceTimersByTime(300);
+      });
+      expect(search).toHaveBeenCalledTimes(1);
+      expect(search).toHaveBeenCalledWith("roof", undefined);
+      // Clearing the box returns to the idle empty state.
+      fireEvent.change(screen.getByLabelText("Search query"), { target: { value: "" } });
+      await act(async () => {
+        vi.advanceTimersByTime(10);
+      });
+      expect(screen.getByText("search by meaning or keywords")).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("submits with the selected domain filter", async () => {
