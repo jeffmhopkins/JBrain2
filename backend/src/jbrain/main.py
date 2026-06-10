@@ -25,6 +25,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         engine = create_async_engine(settings.database_url)
         maker = async_sessionmaker(engine, expire_on_commit=False)
         app.state.engine = engine
+        app.state.session_maker = maker
         app.state.auth_repo = SqlAuthRepo(maker)
         app.state.notes_repo = SqlNotesRepo(maker)
         app.state.blob_store = FsBlobStore(settings.blob_dir)

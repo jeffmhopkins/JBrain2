@@ -134,6 +134,10 @@ rows; leading icon optional, trailing chevron for navigation.
 **Badges** — 12px text on the relevant tint, pill radius (e.g. `running`,
 `healthy` in the Ops screen).
 
+**Meters** — 6px pill-radius track on `--surface-2`; fill is `--ok`, turning
+`--warn` above 80% and `--danger` above 92%. Always paired with a text
+value — the bar is a glance aid, never the only encoding.
+
 **Status-card grids** — glanceable per-item status (Ops containers and
 similar) uses **half-width cards** in a 2-column grid, not full-width rows
 (settled in Phase 1 polish); names/images truncate with ellipsis rather

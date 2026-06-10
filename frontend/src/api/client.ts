@@ -27,6 +27,27 @@ export interface OpsStatus {
   containers: ContainerStatus[];
 }
 
+export interface OpsMetrics {
+  mem_total_bytes: number;
+  mem_available_bytes: number;
+  swap_total_bytes: number;
+  swap_free_bytes: number;
+  disk_total_bytes: number;
+  disk_free_bytes: number;
+  load_1m: number;
+  load_5m: number;
+  load_15m: number;
+  uptime_seconds: number;
+  containers: { service: string; mem_bytes: number }[];
+  db: {
+    db_size_bytes: number;
+    note_count: number;
+    attachment_count: number;
+    attachment_bytes: number;
+  } | null;
+  blobs: { file_count: number; total_bytes: number } | null;
+}
+
 export interface UpdateStatus {
   state: "none" | "running" | "exited";
   exit_code: number | null;
@@ -157,6 +178,11 @@ export const api = {
       body: form,
     });
     return (await response.json()) as AttachmentOut;
+  },
+
+  async opsMetrics(): Promise<OpsMetrics> {
+    const response = await request("/api/ops/metrics");
+    return (await response.json()) as OpsMetrics;
   },
 
   async opsUpdateStart(): Promise<{ updater: string }> {

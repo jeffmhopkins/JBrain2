@@ -851,3 +851,38 @@ button.small {
     animation: none;
   }
 }
+
+/* ===== Ops: metrics ===== */
+
+.metrics-grid {
+  margin-bottom: 12px;
+}
+
+.metric-value {
+  font-size: var(--fs-secondary);
+  font-weight: 500;
+}
+
+.meter {
+  height: 6px;
+  border-radius: var(--r-pill);
+  background: var(--surface-2);
+  overflow: hidden;
+}
+
+.meter-fill {
+  height: 100%;
+  border-radius: var(--r-pill);
+}
+
+.meter-ok {
+  background: var(--ok);
+}
+
+.meter-warn {
+  background: var(--warn);
+}
+
+.meter-bad {
+  background: var(--danger);
+}

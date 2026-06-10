@@ -11,6 +11,7 @@ from supervisor.app import create_app
 from supervisor.config import Settings
 from supervisor.gateway import (
     ContainerInfo,
+    ContainerMemory,
     UnknownServiceError,
     UpdateInProgressError,
     UpdateStatus,
@@ -54,6 +55,12 @@ class FakeGateway:
     def stream_logs(self, service: str) -> Iterator[str]:
         self._check(service)
         return iter(self.log_lines.get(service, []))
+
+    def container_memory(self) -> list[ContainerMemory]:
+        return [
+            ContainerMemory(service=c.service, mem_bytes=100 << 20)
+            for c in self.containers
+        ]
 
     def start_update(self) -> str:
         if self.updater_running:

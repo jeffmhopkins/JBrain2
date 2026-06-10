@@ -217,6 +217,31 @@ export const mockFetch: typeof fetch = async (input, init) => {
             }`,
     });
   }
+  if (path === "/api/ops/metrics") {
+    return json({
+      mem_total_bytes: 4 * 2 ** 30,
+      mem_available_bytes: 1.2 * 2 ** 30,
+      swap_total_bytes: 2 * 2 ** 30,
+      swap_free_bytes: 1.9 * 2 ** 30,
+      disk_total_bytes: 40 * 2 ** 30,
+      disk_free_bytes: 24 * 2 ** 30,
+      load_1m: 0.42,
+      load_5m: 0.31,
+      load_15m: 0.2,
+      uptime_seconds: 3 * 86400 + 7 * 3600,
+      containers: CONTAINERS.map((c, i) => ({
+        service: c.service,
+        mem_bytes: (i + 1) * 90 * 2 ** 20,
+      })),
+      db: {
+        db_size_bytes: 38 * 2 ** 20,
+        note_count: 47,
+        attachment_count: 9,
+        attachment_bytes: 21 * 2 ** 20,
+      },
+      blobs: { file_count: 9, total_bytes: 21 * 2 ** 20 },
+    });
+  }
   if (path === "/api/ops/status") return json({ containers: CONTAINERS });
   if (path === "/api/ops/restart") return new Response(null, { status: 204 });
   if (path.startsWith("/api/ops/logs/")) {
