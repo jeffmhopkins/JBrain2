@@ -31,6 +31,7 @@ from datetime import datetime
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from jbrain.embed import EmbedClient, vector_literal
 from jbrain.models.analysis import Entity, EntityAlias
 from jbrain.models.core import Subject
 
@@ -317,6 +318,113 @@ async def _relationship_hop(
     return _hop_outcome(candidates)
 
 
+# --- layer 2: embedding similarity -------------------------------------------
+
+# Cosine-similarity bands. One candidate at/above STRONG with no other
+# candidate in range auto-links; anything in [WEAK, STRONG) — or several
+# candidates — is layer 3's call. Below WEAK a neighbour is noise, not a
+# candidate. Bands chosen for short name-vs-name text on bge-small; they err
+# toward review, never toward a wrong link.
+_EMBED_STRONG = 0.90
+_EMBED_WEAK = 0.78
+_EMBED_TOPK = 5
+# Provisional entities usually lack summary_embedding (the nightly hygiene
+# pass that writes summaries doesn't exist yet), so missing vectors are
+# backfilled here from canonical_name + aliases — a one-time cost per entity
+# that makes layer 2 useful from day one. Bounded per call, and narrowed to
+# the mention's kind, so a resolution can't trigger a corpus-wide embed.
+_EMBED_BACKFILL = 50
+
+
+def _kind_filter(kind_hint: str) -> str:
+    # "Thing" is extraction's catch-all, not a real constraint.
+    return "" if kind_hint in ("", "Thing") else kind_hint.casefold()
+
+
+async def _embedding_candidates(
+    session: AsyncSession,
+    name: str,
+    *,
+    kind_hint: str,
+    domain: str,
+    embedder: EmbedClient,
+    embed_model: str,
+) -> list[tuple[EntityCandidate, float]]:
+    """Layer 2: nearest entities by name+aliases(+summary) vector, WEAK-banded
+    and strongest first. Same-domain-or-general only — the embedding space
+    knows nothing about the firewall, so the SQL must."""
+    hint = _kind_filter(kind_hint)
+    missing = (
+        await session.execute(
+            text(
+                """
+                SELECT e.id, e.canonical_name, e.summary,
+                       coalesce(string_agg(a.alias, ', '), '') AS aliases
+                FROM app.entities e
+                LEFT JOIN app.entity_aliases a ON a.entity_id = e.id
+                WHERE e.summary_embedding IS NULL AND e.status != 'merged'
+                  AND e.domain_code IN (:dom, 'general')
+                  AND (:hint = '' OR lower(e.kind) = :hint)
+                GROUP BY e.id, e.canonical_name, e.summary
+                LIMIT :lim
+                """
+            ),
+            {"dom": domain, "hint": hint, "lim": _EMBED_BACKFILL},
+        )
+    ).all()
+    if missing:
+        texts = [
+            "; ".join(part for part in (r.canonical_name, r.aliases, r.summary) if part)
+            for r in missing
+        ]
+        vectors = await embedder.embed(texts)
+        await session.execute(
+            text(
+                "UPDATE app.entities"
+                " SET summary_embedding = cast(:emb AS vector), embedding_model = :model"
+                " WHERE id = :id AND summary_embedding IS NULL"
+            ),
+            [
+                {"id": str(r.id), "emb": vector_literal(vec), "model": embed_model}
+                for r, vec in zip(missing, vectors, strict=True)
+            ],
+        )
+
+    [target] = await embedder.embed([name])
+    rows = (
+        await session.execute(
+            text(
+                """
+                SELECT e.id, e.subject_id, e.canonical_name, e.kind, e.summary,
+                       1 - (e.summary_embedding <=> cast(:v AS vector)) AS sim
+                FROM app.entities e
+                WHERE e.summary_embedding IS NOT NULL AND e.status != 'merged'
+                  AND e.domain_code IN (:dom, 'general')
+                  AND (:hint = '' OR lower(e.kind) = :hint)
+                  AND lower(e.canonical_name) != 'me'
+                ORDER BY e.summary_embedding <=> cast(:v AS vector)
+                LIMIT :k
+                """
+            ),
+            {"v": vector_literal(target), "dom": domain, "hint": hint, "k": _EMBED_TOPK},
+        )
+    ).all()
+    return [
+        (
+            EntityCandidate(
+                id=r.id,
+                subject_id=r.subject_id,
+                name=r.canonical_name,
+                kind=r.kind,
+                summary=r.summary,
+            ),
+            float(r.sim),
+        )
+        for r in rows
+        if r.sim >= _EMBED_WEAK
+    ]
+
+
 # --- layer 1 + entry point ---------------------------------------------------
 
 
@@ -420,6 +528,8 @@ async def resolve_entity(
     kind_hint: str,
     domain: str,
     note_time: datetime | None = None,
+    embedder: EmbedClient | None = None,
+    embed_model: str = "",
 ) -> ResolvedEntity | AmbiguousEntity | NeedsDisambiguation:
     """Layered resolution; creates a provisional entity when nothing matches.
 
@@ -427,7 +537,8 @@ async def resolve_entity(
     NeedsDisambiguation when candidates exist but only layer 3 can decide.
     note_time gates the relationship hop: without the note's capture time the
     "valid at the note's time" rule cannot hold, so reference shapes fall
-    through to creation exactly as before.
+    through to creation exactly as before. embedder gates layer 2 the same
+    way — not wired in means skip straight on, never a degraded guess.
     """
     if normalize_alias(name) in FIRST_PERSON or name == "Me":
         return await get_or_create_me(session)
@@ -446,5 +557,29 @@ async def resolve_entity(
         )
         if hop is not None:
             return hop
+
+    # Layer 2 applies to plain names only: a reference surface ("Summer's
+    # rat") is a description, not a name, so its vector matching an entity
+    # NAME would be coincidence, not evidence.
+    if ref is None and embedder is not None:
+        scored = await _embedding_candidates(
+            session,
+            name,
+            kind_hint=kind_hint,
+            domain=domain,
+            embedder=embedder,
+            embed_model=embed_model,
+        )
+        if len(scored) == 1 and scored[0][1] >= _EMBED_STRONG:
+            only, sim = scored[0]
+            # Subject-bearing entities never auto-link on similarity alone:
+            # cross-subject misattribution is a leak (docs/ANALYSIS.md
+            # "Entities"), so those candidates always face layer 3 / review.
+            if only.subject_id is None:
+                return ResolvedEntity(
+                    id=only.id, subject_id=only.subject_id, method="embedding", confidence=sim
+                )
+        if scored:
+            return NeedsDisambiguation(candidates=[c for c, _ in scored])
 
     return await create_provisional(session, name, kind_hint=kind_hint, domain=domain)

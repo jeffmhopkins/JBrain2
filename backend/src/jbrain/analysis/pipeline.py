@@ -53,6 +53,7 @@ from jbrain.analysis.prompt import (
 )
 from jbrain.analysis.supersession import Candidate, Decision, FactView, decide
 from jbrain.db.session import scoped_session
+from jbrain.embed import EmbedClient
 from jbrain.llm import LlmBadResponseError, LlmRouter
 from jbrain.models.analysis import (
     EntityMention,
@@ -124,9 +125,21 @@ def _locate(surface: str, chunks: list[_ChunkRef]) -> _Span | None:
 
 
 class AnalysisPipeline:
-    def __init__(self, maker: async_sessionmaker[AsyncSession], router: LlmRouter):
+    def __init__(
+        self,
+        maker: async_sessionmaker[AsyncSession],
+        router: LlmRouter,
+        *,
+        embedder: EmbedClient | None = None,
+        embed_model: str = "",
+    ):
         self._maker = maker
         self._router = router
+        # Optional on purpose: without an embed client, resolution layer 2 is
+        # skipped entirely (no degraded guessing) — the harness and older
+        # call sites keep their exact behavior.
+        self._embedder = embedder
+        self._embed_model = embed_model
 
     async def analyze_note(self, payload: dict[str, Any]) -> None:
         """Handle an analyze_note job: {note_id}; missing note is a no-op."""
@@ -298,6 +311,8 @@ class AnalysisPipeline:
                 kind_hint=kind_hints.get(name, "Thing"),
                 domain=note_domain,
                 note_time=captured_at,
+                embedder=self._embedder,
+                embed_model=self._embed_model,
             )
             if isinstance(outcome, NeedsDisambiguation):
                 # Several plausible candidates and no decider yet: review,
