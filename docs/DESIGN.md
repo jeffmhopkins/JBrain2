@@ -229,6 +229,33 @@ designs): entry-stream bubbles clamp at **3 lines**; tapping opens the
 Search results and stream taps open the same surface — this *is* the
 former "note sheet", upgraded.
 
+**Analysis tab + entity pages** (settled in the Phase 3 three-way review —
+**graph-forward** won over a dense dossier and soft cards): the analysis
+tab renders facts as **literal property-graph edges grouped by subject
+node** (`me.blood_pressure → 128/82 mmHg`,
+`appt:patel-follow-up.scheduled_time → Sep 2026 ±`), predicate paths in
+monospace; subject headers double as entity navigation. Tapping a fact
+cites back to the **highlighted source words**. The **entity page is a
+hub**: centered node with kind/alias/domain meta, current facts as
+outbound edges, **revision histories as vertical timeline rails** (each
+dot a supersession link citing its note), inbound edges from other
+entities, provisional state marked. Correction is never a direct edit —
+facts route to **review / pin** with tap-again confirms; the pipeline owns
+the data. Temper the raw notation toward the lowercase-calm voice during
+implementation (the chosen mock's `~provisional`/`.96` chrome reads too
+developer-facing — keep paths, soften the meta).
+
+**Review inbox** (settled in the same review — **one-at-a-time triage**
+won over a decision-card stream and a grouped batch queue): full-screen
+card per item with **progress dots**, the **cited note text as the hero**
+at editor size, a bordered "what happens" panel spelling out both
+outcomes, candidate choices as big stacked buttons, and a fixed bottom bar
+**skip · reject · accept** (skip cycles the item to the back of the
+queue). Destructive/permanent choices (splits, `distinct_from`) use the
+armed tap-again. Inbox zero = one `--text-2` sentence. Item kinds: fact
+conflicts, attribute collisions, merge proposals, ambiguous mentions,
+domain promotions, low-confidence extractions.
+
 **Search** (settled in the Phase 2 review; input mode revised on-device):
 **live as-you-type** — results update per keystroke behind a 250ms
 debounce, stale responses sequence-guarded, previous results stay visible
