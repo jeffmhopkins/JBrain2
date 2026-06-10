@@ -8,6 +8,8 @@ import type { NotesController } from "./useNotes";
 export interface EditingNote {
   id: string;
   body: string;
+  domain: string;
+  createdAt: Date;
 }
 
 export interface MoveTarget {
@@ -18,7 +20,7 @@ export interface MoveTarget {
 
 export interface NoteActions {
   editing: EditingNote | null;
-  startEdit(id: string, body: string): void;
+  startEdit(note: EditingNote): void;
   cancelEdit(): void;
   /** Sends PATCH {body} for the note under edit, then leaves edit mode. */
   submitEdit(body: string): Promise<void>;
@@ -34,7 +36,7 @@ export function useNoteActions(notes: NotesController): NoteActions {
   const [editing, setEditing] = useState<EditingNote | null>(null);
   const [moveTarget, setMoveTarget] = useState<MoveTarget | null>(null);
 
-  const startEdit = useCallback((id: string, body: string) => setEditing({ id, body }), []);
+  const startEdit = useCallback((note: EditingNote) => setEditing(note), []);
   const cancelEdit = useCallback(() => setEditing(null), []);
 
   const submitEdit = useCallback(

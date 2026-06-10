@@ -52,6 +52,7 @@
   --fs-title: calc(18px * var(--font-scale));
   --fs-screen: calc(22px * var(--font-scale));
   --fs-hero: calc(28px * var(--font-scale));
+  --fs-editor: calc(20px * var(--font-scale)); /* focused-writer edit page */
 
   /* Shape */
   --r-input: 12px;

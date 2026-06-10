@@ -20,8 +20,15 @@ describe("useNoteActions", () => {
     const notes = fakeController();
     const { result } = renderHook(() => useNoteActions(notes));
 
-    act(() => result.current.startEdit("n1", "original"));
-    expect(result.current.editing).toEqual({ id: "n1", body: "original" });
+    act(() =>
+      result.current.startEdit({
+        id: "n1",
+        body: "original",
+        domain: "general",
+        createdAt: new Date(),
+      }),
+    );
+    expect(result.current.editing).toMatchObject({ id: "n1", body: "original" });
 
     await act(() => result.current.submitEdit("corrected"));
     expect(notes.update).toHaveBeenCalledWith("n1", { body: "corrected" });
@@ -31,7 +38,14 @@ describe("useNoteActions", () => {
   it("cancel drops edit mode without a PATCH", () => {
     const notes = fakeController();
     const { result } = renderHook(() => useNoteActions(notes));
-    act(() => result.current.startEdit("n1", "original"));
+    act(() =>
+      result.current.startEdit({
+        id: "n1",
+        body: "original",
+        domain: "general",
+        createdAt: new Date(),
+      }),
+    );
     act(() => result.current.cancelEdit());
     expect(result.current.editing).toBeNull();
     expect(notes.update).not.toHaveBeenCalled();

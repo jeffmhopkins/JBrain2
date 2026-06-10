@@ -1413,7 +1413,7 @@ button.small {
   white-space: nowrap;
 }
 
-/* ===== Full-screen note editor (topmost layer) ===== */
+/* ===== Full-screen note editor — focused writer ===== */
 
 .edit-layer {
   position: fixed;
@@ -1432,29 +1432,119 @@ button.small {
   }
 }
 
-.edit-save {
-  padding: 8px 18px;
-  border-radius: var(--r-input);
-  border: none;
-  background: var(--steel-tint);
-  color: var(--steel);
-  font: 500 var(--fs-secondary) system-ui;
+.ed-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  padding: 6px 8px;
+  position: relative;
 }
 
-.edit-save:disabled {
-  background: var(--surface-2);
+.btn-close {
+  min-width: 44px;
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  color: var(--text-2);
+  border-radius: var(--r-input);
+  padding: 0 12px;
+  font: 500 var(--fs-secondary) system-ui;
+  z-index: 2;
+}
+
+.btn-close.armed {
+  background: var(--rose-tint);
+  color: var(--rose);
+}
+
+.context-line {
+  position: absolute;
+  inset-inline: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  font-size: var(--fs-head);
+  color: var(--text-3);
+  pointer-events: none;
+}
+
+.ed-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--r-pill);
+  flex: none;
+}
+
+.ed-body {
+  flex: 1;
+  display: flex;
+  justify-content: center;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.ed-page {
+  width: 100%;
+  max-width: 38em;
+  border: none;
+  background: transparent;
+  resize: none;
+  color: var(--text);
+  caret-color: var(--steel);
+  font-size: var(--fs-editor);
+  font-family: inherit;
+  line-height: 1.7;
+  padding: 20px 28px 24px;
+  outline: none;
+}
+
+.ed-page::placeholder {
   color: var(--text-3);
 }
 
-.edit-area {
-  flex: 1;
-  margin: 8px 16px calc(16px + env(safe-area-inset-bottom));
-  padding: 14px;
-  background: var(--surface);
+.ed-page::selection {
+  background: var(--steel-tint);
+}
+
+.ed-bar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 16px calc(8px + env(safe-area-inset-bottom));
+  border-top: 1px solid var(--border);
+  background: var(--bg);
+}
+
+.ed-counts {
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.ed-unsaved {
+  color: var(--amber);
+}
+
+.btn-done {
+  min-height: 44px;
+  min-width: 88px;
+  padding: 0 22px;
+  border-radius: var(--r-input);
   border: 1px solid var(--border);
-  border-radius: var(--r-card);
-  color: var(--text);
-  font: 400 var(--fs-composer) / 1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  resize: none;
-  outline: none;
+  background: var(--surface-2);
+  color: var(--text-3);
+  font: 500 var(--fs-note) system-ui;
+  transition: background 150ms ease-out, color 150ms ease-out;
+}
+
+.btn-done.ready {
+  background: var(--green-tint);
+  border-color: transparent;
+  color: var(--green);
 }

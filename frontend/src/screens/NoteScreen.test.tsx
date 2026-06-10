@@ -70,7 +70,7 @@ describe("NoteScreen", () => {
     expect(onDelete).toHaveBeenCalledWith("n1");
 
     fireEvent.click(screen.getByRole("button", { name: "Edit" }));
-    expect(onEdit).toHaveBeenCalledWith("n1", ITEM.body);
+    expect(onEdit).toHaveBeenCalledWith("n1", ITEM.body, ITEM.domain, ITEM.createdAt);
   });
 
   it("a search opening starts from the preview, then resolves the full note", async () => {
