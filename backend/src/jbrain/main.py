@@ -6,15 +6,18 @@ import structlog
 from fastapi import FastAPI
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from jbrain.api import auth, health, notes, ops, search
+from jbrain.analysis.repo import SqlAnalysisRepo
+from jbrain.api import analysis, auth, health, notes, ops, search
 from jbrain.auth.repo import SqlAuthRepo
 from jbrain.config import Settings, get_settings
 from jbrain.embed import TeiEmbedClient
+from jbrain.llm import build_router
 from jbrain.notes.repo import SqlNotesRepo
 from jbrain.queue import PgJobQueue
 from jbrain.search.repo import SqlSearchRepo
 from jbrain.search.service import SearchService
 from jbrain.storage import FsBackupShelf, FsBlobStore
+from jbrain.usage import SqlUsageRecorder
 
 structlog.configure(
     processors=[structlog.processors.TimeStamper(fmt="iso"), structlog.processors.JSONRenderer()]
@@ -38,6 +41,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.search_service = SearchService(
             SqlSearchRepo(maker), TeiEmbedClient(settings.embed_url)
         )
+        app.state.analysis_repo = SqlAnalysisRepo(maker)
+        # Any API-side LLM call must flow through this router so its tokens
+        # land in app.llm_usage like the worker's do.
+        app.state.llm_router = build_router(settings, recorder=SqlUsageRecorder(maker))
         app.state.supervisor_client = httpx.AsyncClient(base_url=settings.supervisor_url)
         yield
         await app.state.supervisor_client.aclose()
@@ -46,6 +53,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app = FastAPI(title="JBrain", lifespan=lifespan)
     app.state.settings = settings
     app.include_router(health.router, prefix="/api")
+    app.include_router(analysis.router, prefix="/api")
     app.include_router(auth.router, prefix="/api")
     app.include_router(notes.router, prefix="/api")
     app.include_router(ops.router, prefix="/api")
