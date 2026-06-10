@@ -4,10 +4,12 @@ from jbrain.models.analysis import (
     EntityDistinction,
     EntityMention,
     Fact,
+    NoteAnalysis,
     ReviewItem,
     TemporalToken,
 )
 from jbrain.models.core import Base, DeviceSession, Domain, Principal, Subject
+from jbrain.models.telemetry import LlmUsage
 
 __all__ = [
     "Base",
@@ -18,6 +20,8 @@ __all__ = [
     "EntityDistinction",
     "EntityMention",
     "Fact",
+    "LlmUsage",
+    "NoteAnalysis",
     "Principal",
     "ReviewItem",
     "Subject",
