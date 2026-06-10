@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { type TouchEvent, useEffect, useRef, useState } from "react";
 import { type Principal, api, setUnauthorizedHandler } from "./api/client";
 import { Launcher, type LauncherTarget } from "./components/Launcher";
 import { TopBar } from "./components/TopBar";
@@ -56,6 +56,28 @@ export function App() {
     setScreen(target);
   }
 
+  // On sub-screens, a horizontally-dominant left swipe brings the card
+  // launcher back (settled in Phase 1 polish). 56px threshold; vertical
+  // scrolling wins whenever the motion isn't clearly horizontal.
+  const swipeStart = useRef<{ x: number; y: number } | null>(null);
+
+  function onSubTouchStart(event: TouchEvent) {
+    const t = event.touches[0];
+    swipeStart.current = t ? { x: t.clientX, y: t.clientY } : null;
+  }
+
+  function onSubTouchMove(event: TouchEvent) {
+    const start = swipeStart.current;
+    const t = event.touches[0];
+    if (!start || !t) return;
+    const dx = start.x - t.clientX;
+    const dy = Math.abs(start.y - t.clientY);
+    if (dx > 56 && dx > dy * 2) {
+      swipeStart.current = null;
+      setLauncherOpen(true);
+    }
+  }
+
   if (session.status === "loading") {
     return <main className="centered muted">Loading…</main>;
   }
@@ -78,13 +100,17 @@ export function App() {
       <div className={`screen-home${screen === "home" ? "" : " screen-hidden"}`}>
         <HomeScreen notes={notes} onOpenLauncher={() => setLauncherOpen(true)} />
       </div>
-      {screen === "ops" && (
-        <main className="screen-body">
-          <OpsScreen />
-        </main>
-      )}
-      {screen === "settings" && (
-        <SettingsScreen deviceLabel={session.principal.label} onLogout={() => void logout()} />
+      {screen !== "home" && (
+        <div className="subscreen" onTouchStart={onSubTouchStart} onTouchMove={onSubTouchMove}>
+          {screen === "ops" && (
+            <main className="screen-body">
+              <OpsScreen />
+            </main>
+          )}
+          {screen === "settings" && (
+            <SettingsScreen deviceLabel={session.principal.label} onLogout={() => void logout()} />
+          )}
+        </div>
       )}
 
       <Launcher open={launcherOpen} onClose={() => setLauncherOpen(false)} onNavigate={navigate} />
