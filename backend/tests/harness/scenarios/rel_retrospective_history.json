@@ -1,0 +1,56 @@
+{
+  "name": "retrospective relationship lands as history, never supersedes current",
+  "description": "Supersession compares VALIDITY time, not capture time (supersession._validity / docs/ANALYSIS.md 'a retrospective note about 2019 must not supersede the current address'). A note captured in 2026 about a 2018 job has an OLDER valid_from than the current employer, so decide() takes the retrospective branch: insert_status='superseded', superseded_by=current, NO fact_conflict. The current worksFor stays active; the old job is recorded as already-closed history.",
+  "steps": [
+    {
+      "domain": "general",
+      "created_at": "2026-06-08T11:00:00-06:00",
+      "body": "Tara works at Vandelay Industries these days.",
+      "extraction": {
+        "title": "Tara at Vandelay",
+        "tags": ["tara", "vandelay"],
+        "mentions": [
+          {"name": "Tara", "kind": "Person", "surface_text": "Tara"},
+          {"name": "Vandelay Industries", "kind": "Organization", "surface_text": "Vandelay Industries"}
+        ],
+        "facts": [
+          {"predicate": "worksFor", "qualifier": "", "kind": "relationship", "statement": "Tara works for Vandelay Industries.", "value_json": null, "assertion": "asserted", "entity_ref": "Tara", "object_entity_ref": "Vandelay Industries", "temporal": {"phrase": "these days", "resolved_start": "2026-06-08T00:00:00-06:00", "resolved_end": null, "precision": "day"}, "domain": "general", "confidence": 0.9}
+        ],
+        "temporal_tokens": []
+      }
+    },
+    {
+      "domain": "general",
+      "created_at": "2026-06-09T11:00:00-06:00",
+      "body": "Funny memory — back in 2018 Tara worked at Stark Industries.",
+      "extraction": {
+        "title": "Tara's old job at Stark",
+        "tags": ["tara", "stark", "history"],
+        "mentions": [
+          {"name": "Tara", "kind": "Person", "surface_text": "Tara"},
+          {"name": "Stark Industries", "kind": "Organization", "surface_text": "Stark Industries"}
+        ],
+        "facts": [
+          {"predicate": "worksFor", "qualifier": "", "kind": "relationship", "statement": "Tara worked for Stark Industries in 2018.", "value_json": null, "assertion": "asserted", "entity_ref": "Tara", "object_entity_ref": "Stark Industries", "temporal": {"phrase": "back in 2018", "resolved_start": "2018-01-01T00:00:00-07:00", "resolved_end": "2018-12-31T23:59:59-07:00", "precision": "year"}, "domain": "general", "confidence": 0.8}
+        ],
+        "temporal_tokens": []
+      }
+    }
+  ],
+  "expect": {
+    "facts": [
+      {"entity": "Tara", "predicate": "worksFor", "kind": "relationship", "value_contains": "Vandelay", "status": "active", "chained": false},
+      {"entity": "Tara", "predicate": "worksFor", "kind": "relationship", "value_contains": "Stark", "status": "superseded", "chained": true}
+    ],
+    "absent_facts": [
+      {"entity": "Tara", "predicate": "worksFor", "value_contains": "Vandelay", "status": "superseded"}
+    ],
+    "review_items": [
+      {"kind": "fact_conflict", "summary_contains": "Tara", "count": 0}
+    ],
+    "entities": [
+      {"name": "Vandelay Industries", "kind": "Organization", "status": "provisional"},
+      {"name": "Stark Industries", "kind": "Organization", "status": "provisional"}
+    ]
+  }
+}

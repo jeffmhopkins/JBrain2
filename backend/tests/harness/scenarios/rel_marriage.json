@@ -1,0 +1,53 @@
+{
+  "name": "spouse is functional: a new partner supersedes the old",
+  "description": "spouse is in supersession.FUNCTIONAL_PREDICATES, so a later spouse binding to a different person supersedes the earlier one (SCD-2 close + fact_conflict), exactly like employer. A subject (Me) has at most one current spouse. Pins the 'spouse' member of the functional allowlist in docs/ANALYSIS.md.",
+  "steps": [
+    {
+      "domain": "general",
+      "created_at": "2019-08-01T12:00:00-06:00",
+      "body": "Married Jordan today.",
+      "extraction": {
+        "title": "Married Jordan",
+        "tags": ["jordan", "marriage"],
+        "mentions": [
+          {"name": "Me", "kind": "Person", "surface_text": "Married"},
+          {"name": "Jordan", "kind": "Person", "surface_text": "Jordan"}
+        ],
+        "facts": [
+          {"predicate": "spouse", "qualifier": "", "kind": "relationship", "statement": "My spouse is Jordan.", "value_json": null, "assertion": "asserted", "entity_ref": "Me", "object_entity_ref": "Jordan", "temporal": {"phrase": "today", "resolved_start": "2019-08-01T00:00:00-06:00", "resolved_end": null, "precision": "day"}, "domain": "general", "confidence": 0.95}
+        ],
+        "temporal_tokens": []
+      }
+    },
+    {
+      "domain": "general",
+      "created_at": "2026-05-30T12:00:00-06:00",
+      "body": "Got married again — to Riley this time.",
+      "extraction": {
+        "title": "Married Riley",
+        "tags": ["riley", "marriage"],
+        "mentions": [
+          {"name": "Me", "kind": "Person", "surface_text": "married"},
+          {"name": "Riley", "kind": "Person", "surface_text": "Riley"}
+        ],
+        "facts": [
+          {"predicate": "spouse", "qualifier": "", "kind": "relationship", "statement": "My spouse is Riley.", "value_json": null, "assertion": "asserted", "entity_ref": "Me", "object_entity_ref": "Riley", "temporal": {"phrase": "this time", "resolved_start": "2026-05-30T00:00:00-06:00", "resolved_end": null, "precision": "day"}, "domain": "general", "confidence": 0.95}
+        ],
+        "temporal_tokens": []
+      }
+    }
+  ],
+  "expect": {
+    "facts": [
+      {"entity": "Me", "predicate": "spouse", "kind": "relationship", "value_contains": "Jordan", "status": "superseded", "chained": true},
+      {"entity": "Me", "predicate": "spouse", "kind": "relationship", "value_contains": "Riley", "status": "active", "chained": false}
+    ],
+    "review_items": [
+      {"kind": "fact_conflict", "summary_contains": "Me's spouse changed"}
+    ],
+    "entities": [
+      {"name": "Jordan", "kind": "Person", "status": "provisional"},
+      {"name": "Riley", "kind": "Person", "status": "provisional"}
+    ]
+  }
+}
