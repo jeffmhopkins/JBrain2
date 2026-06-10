@@ -138,6 +138,33 @@ def test_state_first_value_inserts_active_silently() -> None:
     assert d.insert and d.insert_status == "active" and d.review_kind is None
 
 
+# --- confidence guard: low-confidence never auto-supersedes ------------------
+
+
+def test_low_confidence_candidate_never_auto_supersedes() -> None:
+    """The H2 guard: a blurry OCR read (0.25) parks in pending_review behind
+    a low_confidence card; the confident prior stays active."""
+    confident = view(value_json={"drug": "lisinopril"}, confidence=0.95)
+    ocr = cand(value_json={"drug": "losartan"}, confidence=0.25)
+    d = decide(ocr, [confident])
+    assert d.insert and d.insert_status == "pending_review"
+    assert d.review_kind == "low_confidence" and d.conflicting_id == "old-1"
+    assert d.supersede_ids == [] and d.hold_ids == []
+
+
+def test_confidence_at_threshold_supersedes_normally() -> None:
+    """LOW_CONFIDENCE is exclusive: exactly 0.5 is not 'low'."""
+    d = decide(cand(confidence=0.5), [view(confidence=0.95)])
+    assert d.supersede_ids == ["old-1"] and d.review_kind == "fact_conflict"
+
+
+def test_low_confidence_may_replace_an_even_shakier_fact() -> None:
+    """The guard protects HIGHER-confidence knowledge only; between two weak
+    facts, newest still wins (with the usual conflict flag)."""
+    d = decide(cand(confidence=0.4), [view(confidence=0.2)])
+    assert d.supersede_ids == ["old-1"] and d.review_kind == "fact_conflict"
+
+
 # --- in-place interval close ------------------------------------------------
 
 

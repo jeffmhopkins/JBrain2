@@ -92,6 +92,5 @@ and the red-team review.
 | Gap | Scenarios | Root |
 |---|---|---|
 | **Cross-subject edge migration** — an ownership transfer can't close the prior owner's edge | `own_transfer_subject_cannot_move` | candidate read scopes to one entity; a lone counterparty edge never sees the prior owner's head (disposal itself works now — an assertion flip supersedes — but only when the extraction also emits the negated prior-owner edge) |
-| **H2** low-confidence/OCR health facts auto-supersede | `health_low_confidence_ocr_guard` | `decide()` takes no confidence; no `low_confidence` filing |
 | **H1** fact cap is prompt-only | `adv_over_extraction_no_cap` | `parse_extraction` doesn't cap facts; no value_json/statement size guard |
 | **Bare-name ambiguity not detected** on repeat | `adv_same_first_name_collapses` | the spec's auto-link rule fires (one exact "Zane" match) and extraction emits the identical bare name, so a second entity is never minted and the retro-recheck (which triggers on second-entity creation) has nothing to fire on; catching it needs co-mention-signal disambiguation |

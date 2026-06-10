@@ -645,6 +645,9 @@ class AnalysisPipeline:
                 reported_at=f.reported_at,
                 status=f.status,
                 pinned=f.pinned,
+                # NULL (pre-column rows) reads as confident: a low-confidence
+                # candidate must not displace a row of unknown confidence.
+                confidence=f.confidence if f.confidence is not None else 1.0,
             )
             for f in rows
         ]
@@ -713,6 +716,7 @@ class AnalysisPipeline:
             valid_from=valid_from,
             valid_to=valid_to,
             reported_at=captured_at,
+            confidence=fact.confidence,
         )
         existing = await self._existing_facts(
             session,

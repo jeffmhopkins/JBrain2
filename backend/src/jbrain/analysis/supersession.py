@@ -44,6 +44,16 @@ def is_schedule_binding(predicate: str) -> bool:
     return predicate.lower() in SCHEDULE_PREDICATES
 
 
+# Below this, a candidate never auto-supersedes a MORE confident active fact;
+# it parks in pending_review behind a low_confidence card instead.
+# docs/ANALYSIS.md "Guards" demands this for low-confidence numeric health
+# facts (OCR-derived especially); we apply it domain-agnostically because
+# decide() is deliberately pure (it never sees the fact's domain) and the
+# asymmetry is safe — over-guarding a general fact costs one review card,
+# under-guarding a health fact is a silent overwrite by garbage.
+LOW_CONFIDENCE = 0.5
+
+
 @dataclass(frozen=True)
 class FactView:
     """The slice of an existing fact row that supersession decisions read."""
@@ -59,6 +69,9 @@ class FactView:
     reported_at: datetime
     status: str
     pinned: bool
+    # Default 1.0: rows predating the confidence column (NULL) are treated as
+    # confident, so a low-confidence candidate still cannot displace them.
+    confidence: float = 1.0
 
 
 @dataclass(frozen=True)
@@ -73,6 +86,7 @@ class Candidate:
     valid_from: datetime | None
     valid_to: datetime | None
     reported_at: datetime
+    confidence: float = 1.0
 
 
 @dataclass
@@ -311,6 +325,16 @@ def decide(candidate: Candidate, existing: list[FactView], *, predicate: str = "
                 insert=True,
                 insert_status="pending_review",
                 review_kind="fact_conflict",
+                conflicting_id=current.id,
+            )
+        if candidate.confidence < LOW_CONFIDENCE and candidate.confidence < current.confidence:
+            # A blurry OCR read must not silently overwrite confident
+            # knowledge: park the candidate, keep the current fact active,
+            # and let a human adjudicate via the low_confidence card.
+            return Decision(
+                insert=True,
+                insert_status="pending_review",
+                review_kind="low_confidence",
                 conflicting_id=current.id,
             )
         return Decision(
