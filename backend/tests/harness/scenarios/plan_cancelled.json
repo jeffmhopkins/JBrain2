@@ -1,0 +1,48 @@
+{
+  "name": "cancelled plan is no longer an active expectation",
+  "description": "A planned trip ('going to DjangoCon', assertion=expected) followed by a cancellation ('no longer going') must not leave the conference as an active expectation. Modeled as a state binding on the trip entity's eventStatus: the cancellation is a newer state value (assertion=negated, status=cancelled) that supersedes the expected interval. Asserts the prior expected plan is superseded (not active) and the active head is the negated cancellation. The earlier expectation survives as closed history per SCD-2, but is not surfaced as a live plan.",
+  "steps": [
+    {
+      "domain": "general",
+      "created_at": "2026-06-10T08:00:00-06:00",
+      "body": "Booked travel for DjangoCon in Vancouver on July 8.",
+      "extraction": {
+        "title": "DjangoCon booked",
+        "tags": ["djangocon", "travel", "conference"],
+        "mentions": [{"name": "DjangoCon Vancouver trip", "kind": "Event", "surface_text": "DjangoCon in Vancouver"}],
+        "facts": [
+          {"predicate": "eventStatus", "qualifier": "", "kind": "state", "statement": "Attending DjangoCon in Vancouver on 2026-07-08 (planned).", "value_json": {"status": "expected", "event": "DjangoCon", "date": "2026-07-08"}, "assertion": "expected", "entity_ref": "DjangoCon Vancouver trip", "object_entity_ref": null, "temporal": {"phrase": "July 8", "resolved_start": "2026-07-08T00:00:00-06:00", "resolved_end": null, "precision": "day"}, "domain": "general", "confidence": 0.9}
+        ],
+        "temporal_tokens": []
+      }
+    },
+    {
+      "domain": "general",
+      "created_at": "2026-06-20T08:00:00-06:00",
+      "body": "I'm no longer going to DjangoCon — cancelled the trip.",
+      "extraction": {
+        "title": "DjangoCon cancelled",
+        "tags": ["djangocon", "cancelled", "conference"],
+        "mentions": [{"name": "DjangoCon Vancouver trip", "kind": "Event", "surface_text": "no longer going to DjangoCon"}],
+        "facts": [
+          {"predicate": "eventStatus", "qualifier": "", "kind": "state", "statement": "DjangoCon in Vancouver on 2026-07-08 cancelled (not attending).", "value_json": {"status": "cancelled", "event": "DjangoCon", "date": "2026-07-08"}, "assertion": "negated", "entity_ref": "DjangoCon Vancouver trip", "object_entity_ref": null, "temporal": {"phrase": "July 8", "resolved_start": "2026-07-08T00:00:00-06:00", "resolved_end": null, "precision": "day"}, "domain": "general", "confidence": 0.95}
+        ],
+        "temporal_tokens": []
+      }
+    }
+  ],
+  "expect": {
+    "facts": [
+      {"entity": "DjangoCon Vancouver trip", "predicate": "eventStatus", "kind": "state", "value_contains": "cancelled", "status": "active", "assertion": "negated", "chained": false},
+      {"entity": "DjangoCon Vancouver trip", "predicate": "eventStatus", "kind": "state", "value_contains": "expected", "status": "superseded", "chained": true},
+      {"entity": "DjangoCon Vancouver trip", "predicate": "eventStatus", "kind": "state", "assertion": "expected", "status": "active", "count": 0},
+      {"entity": "DjangoCon Vancouver trip", "predicate": "eventStatus", "kind": "state", "status": "active", "count": 1}
+    ],
+    "review_items": [
+      {"kind": "fact_conflict", "summary_contains": "eventStatus"}
+    ],
+    "entities": [
+      {"name": "DjangoCon Vancouver trip", "kind": "Event", "status": "provisional"}
+    ]
+  }
+}
