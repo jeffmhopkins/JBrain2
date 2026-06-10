@@ -22,11 +22,13 @@ path degrades to review, and the fuzzy layers never cross the domain firewall
 the firewall for resolution).
 """
 
+import json
 import re
 import unicodedata
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Any
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -423,6 +425,65 @@ async def _embedding_candidates(
         for r in rows
         if r.sim >= _EMBED_WEAK
     ]
+
+
+# --- layer 3: batched LLM disambiguation (prompt + parsing only) -------------
+
+# The adapter call itself lives in the pipeline (it owns the router); these
+# helpers keep the contract testable without a session or a router.
+DISAMBIGUATE_TASK = "entity.disambiguate"
+DISAMBIGUATE_MAX_TOKENS = 1024
+
+DISAMBIGUATE_SYSTEM = (
+    "You resolve mention strings from a personal note to entities already in a"
+    " knowledge graph. For each mention, decide which candidate entity it"
+    " denotes using the note context, or null if it is genuinely none of them."
+    ' Reply with only JSON: {"choices": [{"name": "<mention name>",'
+    ' "entity_id": "<candidate id>" | null}]}. Use each candidate id verbatim;'
+    " never invent ids. When unsure between candidates, prefer null."
+)
+
+DISAMBIGUATE_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "choices": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "entity_id": {"type": ["string", "null"]},
+                },
+                "required": ["name", "entity_id"],
+            },
+        }
+    },
+    "required": ["choices"],
+}
+
+
+def build_disambiguation_prompt(items: list[dict[str, Any]]) -> str:
+    """One batched payload for every undecided mention in the note —
+    entity.disambiguate is conditional and batched, never per-mention
+    (docs/ANALYSIS.md "Model routing & cost")."""
+    return json.dumps({"mentions": items}, ensure_ascii=False)
+
+
+def parse_disambiguation(parsed: Any) -> dict[str, str | None]:
+    """Mention name -> chosen candidate id (None = a genuinely new entity).
+
+    Tolerant: malformed payloads or items yield no entry, and the caller
+    routes every unanswered mention to the review inbox — degraded output is
+    never allowed to become a guessed link.
+    """
+    if not isinstance(parsed, dict) or not isinstance(parsed.get("choices"), list):
+        return {}
+    out: dict[str, str | None] = {}
+    for choice in parsed["choices"]:
+        if isinstance(choice, dict) and isinstance(choice.get("name"), str):
+            entity_id = choice.get("entity_id")
+            out[choice["name"]] = entity_id if isinstance(entity_id, str) else None
+    return out
 
 
 # --- layer 1 + entry point ---------------------------------------------------
