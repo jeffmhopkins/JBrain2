@@ -53,20 +53,22 @@ Muted, desaturated pastels — never saturated/neon. Each has a `-tint`
 
 | Token | Value | Tint | Meaning |
 |---|---|---|---|
-| `--accent` | `#7FA7C9` | 14% alpha | General/brand: wordmark dot, links, active nav, focus ring, today-marker |
-| `--amber` | `#C9A36A` | 14% alpha | Research/search mode, in-progress states |
-| `--rose` | `#CF8A8F` | 14% alpha | Health domain surfaces, warnings, destructive |
-| `--green` | `#8FBC9A` | 14% alpha | Finance domain, success/healthy |
-| `--violet` | `#A493C9` | 14% alpha | Location domain, automation (triggers/actions) |
+| `--steel` | `#7FA7C9` | 13% alpha | Brand (wordmark dot), Full Brain mode, links, focus ring, info |
+| `--green` | `#8FBC9A` | 13% alpha | Entry mode / "saved", success, healthy |
+| `--amber` | `#C9A36A` | 13% alpha | Research mode (read-only), pending/in-progress, warnings |
+| `--rose` | `#CF8A8F` | 13% alpha | Medical domain, errors, destructive |
+| `--violet` | `#A493C9` | 13% alpha | Financial domain |
 
 Semantic aliases: `--ok: var(--green)`, `--warn: var(--amber)`,
-`--danger: var(--rose)`, `--info: var(--accent)`.
+`--danger: var(--rose)`, `--info: var(--steel)`. The location domain's color
+is assigned when Phase 7 lands (candidate: a teal, distinct from the five
+above).
 
-**Domain coding rule**: surfaces operating on a firewalled domain take that
-domain's accent for their active segment, status dot, and section markers —
-health=rose, finance=green, location=violet, general=accent. This is a
-usability feature of the security model: you can *see* which firewall you're
-inside.
+**Mode/domain coding rule** (settled in the Phase 1 omnibox review):
+green=entry/save, amber=research/read-only, steel=full-brain/agent,
+rose=medical, violet=financial. A surface's active segment, status dot,
+send button, and section markers all take its mode color — you can *see*
+which mode and firewall you're inside.
 
 ## Typography
 
@@ -185,11 +187,48 @@ Binding workflow for every new screen or significant UI change:
    in this doc immediately. This document is the memory; "we decided this
    already" must be checkable by reading it.
 
+## The omnibox home (approved Phase 1 review — reference mock: `docs/mocks/phase1-omnibox-approved.html`)
+
+The home screen is a **bottom-docked omnibox** with a day-grouped transcript
+stream above it (newest at the bottom). Capture is message-send: instant
+local append with an amber "pending sync" chip until the outbox clears.
+
+- **Modes**: one segmented row carries Entry / Research / Full Brain.
+  **Tapping Entry while it is active morphs the other two slots into the
+  entry sub-types (Medical / Financial); tapping it again morphs back.**
+  The row is a full-width bordered rect with hairline dividers; the active
+  segment takes its mode tint, colored icon, and bold label.
+- **Fixed box height across all modes** (~300px). Medical/Financial show a
+  destination row inside the box — mode icon, path (`notes/medical/`),
+  destination select, `+ New` — and the text area absorbs the difference.
+- **Footer**: mode-colored dot + mode microcopy left ("Saved to your wiki ·
+  no AI." / "Read-only — nothing gets written." / "Files to notes/medical/ ·
+  PDFs staged."); right icons are paperclip + send (Research swaps the
+  paperclip for the bolt). Send button tint follows the mode.
+- **Type sizes**: composer body/placeholder 17px (the 22px draft read too
+  big), segments 15px/500, footer 14px, destination row 15px.
+- Research / Full Brain sends hand off to the (Phase 4) conversation
+  surface; in Phase 1 they explain themselves via toast.
+
+## Navigation: the card launcher (no bottom nav)
+
+There is **no bottom tab bar**. Navigation is a full-screen **card
+launcher** (the v1 knowledge-hub tile grid: 3-column tiles under uppercase
+section headers — KNOWLEDGE, AUTHORING, SYSTEM):
+
+- Opened by tapping the **bolt icon** in the top bar, or by **swiping up on
+  the omnibox**.
+- Slides up over the home screen; **swipe down (or back gesture) dismisses
+  it**. It is a navigation surface, not a modal — no scrim-tap dismissal
+  needed, it owns the whole screen.
+- Tiles for phases not yet built render disabled with their phase label.
+
 ## Surface paradigms (which container for which job)
 
 | Job | Paradigm |
 |---|---|
 | Primary tasks (capture, reading an article, chat) | Full screen with top-bar back chevron |
+| App-wide navigation | Card launcher (bolt tap / swipe up on omnibox) |
 | Contextual quick forms & actions (add list item, edit appointment, filters) | **Bottom sheet** — the workhorse modal on phone |
 | Confirmation of a destructive/irreversible act | Center **confirm dialog**, destructive variant |
 | Row-level detail that doesn't warrant navigation | Inline expansion within the list |
