@@ -1,0 +1,29 @@
+{
+  "name": "fact entity_ref naming an entity absent from mentions resolves-or-creates, never crashes",
+  "description": "Adversarial hallucinated-referent probe. The model emits a fact whose entity_ref ('Cleo') and object_entity_ref ('Bjorn Industries') appear in NO mention. The pipeline must not crash and must not silently drop a load-bearing fact: pipeline._resolve_entities iterates fact.entity_ref/object_entity_ref into its name list even when no mention surface exists, so resolve_entity mints provisional entities for both and the relationship edge attaches cleanly. This pins the SAFE outcome (resolve-or-create) for a referent the model invented without a matching mention — proving the mentions array is not a required allowlist for fact refs. The entity citation falls back to chunk head text (anchor_for has no span for Cleo).",
+  "steps": [
+    {
+      "domain": "general",
+      "created_at": "2026-04-20T11:00:00-06:00",
+      "body": "Notes from the offsite about the new vendor partnership.",
+      "extraction": {
+        "title": "Vendor partnership",
+        "tags": ["vendor", "partnership"],
+        "mentions": [],
+        "facts": [
+          {"predicate": "worksFor", "qualifier": "", "kind": "relationship", "statement": "Cleo works for Bjorn Industries.", "value_json": null, "assertion": "asserted", "entity_ref": "Cleo", "object_entity_ref": "Bjorn Industries", "temporal": {"phrase": "", "resolved_start": "2026-04-20T00:00:00-06:00", "resolved_end": null, "precision": "day"}, "domain": "general", "confidence": 0.8}
+        ],
+        "temporal_tokens": []
+      }
+    }
+  ],
+  "expect": {
+    "facts": [
+      {"entity": "Cleo", "predicate": "worksFor", "kind": "relationship", "value_contains": "Bjorn", "status": "active", "chained": false}
+    ],
+    "entities": [
+      {"name": "Cleo", "kind": "Thing", "status": "provisional"},
+      {"name": "Bjorn Industries", "kind": "Thing", "status": "provisional"}
+    ]
+  }
+}

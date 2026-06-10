@@ -1,0 +1,677 @@
+{
+  "name": "over-extraction past MAX_FACTS is not capped server-side",
+  "description": "Adversarial H1 fact-cap probe. MAX_FACTS=12 lives only in the prompt text (analysis.prompt); the pipeline applies ZERO server-side limit. One extraction emits 30 distinct stepCount measurements (distinct days, so they accumulate as a time-series with no supersession). A spec-honouring server-side soft cap (docs/ANALYSIS.md 'Over-extraction is the known quality risk: soft cap on facts-per-note') would write at most 12; the pipeline writes all 30. We assert the cap-honouring outcome (the 30th day's fact, 2026-05-30, must be ABSENT \u2014 it is beyond any cap of 12) so the scenario xfails today and xpasses the day a server-side cap lands. XFAIL: no cap exists, all 30 facts persist. Failing line: \"expected NO fact matching {...'2026-05-30'...}, found 1\".",
+  "xfail": "H1: MAX_FACTS is prompt-only; pipeline._apply loops every extraction.facts with no count limit, so a hostile/verbose extraction writes unbounded facts per note (docs/ANALYSIS.md 'soft cap on facts-per-note').",
+  "steps": [
+    {
+      "domain": "general",
+      "created_at": "2026-06-01T08:00:00-06:00",
+      "body": "2026-05-01: 1100 steps. 2026-05-02: 1200 steps. 2026-05-03: 1300 steps. 2026-05-04: 1400 steps. 2026-05-05: 1500 steps. 2026-05-06: 1600 steps. 2026-05-07: 1700 steps. 2026-05-08: 1800 steps. 2026-05-09: 1900 steps. 2026-05-10: 2000 steps. 2026-05-11: 2100 steps. 2026-05-12: 2200 steps. 2026-05-13: 2300 steps. 2026-05-14: 2400 steps. 2026-05-15: 2500 steps. 2026-05-16: 2600 steps. 2026-05-17: 2700 steps. 2026-05-18: 2800 steps. 2026-05-19: 2900 steps. 2026-05-20: 3000 steps. 2026-05-21: 3100 steps. 2026-05-22: 3200 steps. 2026-05-23: 3300 steps. 2026-05-24: 3400 steps. 2026-05-25: 3500 steps. 2026-05-26: 3600 steps. 2026-05-27: 3700 steps. 2026-05-28: 3800 steps. 2026-05-29: 3900 steps. 2026-05-30: 4000 steps.",
+      "extraction": {
+        "title": "Step log",
+        "tags": [
+          "steps",
+          "fitness"
+        ],
+        "mentions": [
+          {
+            "name": "Me",
+            "kind": "Person",
+            "surface_text": "Walked"
+          }
+        ],
+        "facts": [
+          {
+            "predicate": "stepCount",
+            "qualifier": "",
+            "kind": "measurement",
+            "statement": "Walked 1100 steps on 2026-05-01.",
+            "value_json": {
+              "value": 1100,
+              "unit": "steps"
+            },
+            "assertion": "asserted",
+            "entity_ref": "Me",
+            "object_entity_ref": null,
+            "temporal": {
+              "phrase": "",
+              "resolved_start": "2026-05-01T00:00:00-06:00",
+              "resolved_end": null,
+              "precision": "day"
+            },
+            "domain": "general",
+            "confidence": 0.9
+          },
+          {
+            "predicate": "stepCount",
+            "qualifier": "",
+            "kind": "measurement",
+            "statement": "Walked 1200 steps on 2026-05-02.",
+            "value_json": {
+              "value": 1200,
+              "unit": "steps"
+            },
+            "assertion": "asserted",
+            "entity_ref": "Me",
+            "object_entity_ref": null,
+            "temporal": {
+              "phrase": "",
+              "resolved_start": "2026-05-02T00:00:00-06:00",
+              "resolved_end": null,
+              "precision": "day"
+            },
+            "domain": "general",
+            "confidence": 0.9
+          },
+          {
+            "predicate": "stepCount",
+            "qualifier": "",
+            "kind": "measurement",
+            "statement": "Walked 1300 steps on 2026-05-03.",
+            "value_json": {
+              "value": 1300,
+              "unit": "steps"
+            },
+            "assertion": "asserted",
+            "entity_ref": "Me",
+            "object_entity_ref": null,
+            "temporal": {
+              "phrase": "",
+              "resolved_start": "2026-05-03T00:00:00-06:00",
+              "resolved_end": null,
+              "precision": "day"
+            },
+            "domain": "general",
+            "confidence": 0.9
+          },
+          {
+            "predicate": "stepCount",
+            "qualifier": "",
+            "kind": "measurement",
+            "statement": "Walked 1400 steps on 2026-05-04.",
+            "value_json": {
+              "value": 1400,
+              "unit": "steps"
+            },
+            "assertion": "asserted",
+            "entity_ref": "Me",
+            "object_entity_ref": null,
+            "temporal": {
+              "phrase": "",
+              "resolved_start": "2026-05-04T00:00:00-06:00",
+              "resolved_end": null,
+              "precision": "day"
+            },
+            "domain": "general",
+            "confidence": 0.9
+          },
+          {
+            "predicate": "stepCount",
+            "qualifier": "",
+            "kind": "measurement",
+            "statement": "Walked 1500 steps on 2026-05-05.",
+            "value_json": {
+              "value": 1500,
+              "unit": "steps"
+            },
+            "assertion": "asserted",
+            "entity_ref": "Me",
+            "object_entity_ref": null,
+            "temporal": {
+              "phrase": "",
+              "resolved_start": "2026-05-05T00:00:00-06:00",
+              "resolved_end": null,
+              "precision": "day"
+            },
+            "domain": "general",
+            "confidence": 0.9
+          },
+          {
+            "predicate": "stepCount",
+            "qualifier": "",
+            "kind": "measurement",
+            "statement": "Walked 1600 steps on 2026-05-06.",
+            "value_json": {
+              "value": 1600,
+              "unit": "steps"
+            },
+            "assertion": "asserted",
+            "entity_ref": "Me",
+            "object_entity_ref": null,
+            "temporal": {
+              "phrase": "",
+              "resolved_start": "2026-05-06T00:00:00-06:00",
+              "resolved_end": null,
+              "precision": "day"
+            },
+            "domain": "general",
+            "confidence": 0.9
+          },
+          {
+            "predicate": "stepCount",
+            "qualifier": "",
+            "kind": "measurement",
+            "statement": "Walked 1700 steps on 2026-05-07.",
+            "value_json": {
+              "value": 1700,
+              "unit": "steps"
+            },
+            "assertion": "asserted",
+            "entity_ref": "Me",
+            "object_entity_ref": null,
+            "temporal": {
+              "phrase": "",
+              "resolved_start": "2026-05-07T00:00:00-06:00",
+              "resolved_end": null,
+              "precision": "day"
+            },
+            "domain": "general",
+            "confidence": 0.9
+          },
+          {
+            "predicate": "stepCount",
+            "qualifier": "",
+            "kind": "measurement",
+            "statement": "Walked 1800 steps on 2026-05-08.",
+            "value_json": {
+              "value": 1800,
+              "unit": "steps"
+            },
+            "assertion": "asserted",
+            "entity_ref": "Me",
+            "object_entity_ref": null,
+            "temporal": {
+              "phrase": "",
+              "resolved_start": "2026-05-08T00:00:00-06:00",
+              "resolved_end": null,
+              "precision": "day"
+            },
+            "domain": "general",
+            "confidence": 0.9
+          },
+          {
+            "predicate": "stepCount",
+            "qualifier": "",
+            "kind": "measurement",
+            "statement": "Walked 1900 steps on 2026-05-09.",
+            "value_json": {
+              "value": 1900,
+              "unit": "steps"
+            },
+            "assertion": "asserted",
+            "entity_ref": "Me",
+            "object_entity_ref": null,
+            "temporal": {
+              "phrase": "",
+              "resolved_start": "2026-05-09T00:00:00-06:00",
+              "resolved_end": null,
+              "precision": "day"
+            },
+            "domain": "general",
+            "confidence": 0.9
+          },
+          {
+            "predicate": "stepCount",
+            "qualifier": "",
+            "kind": "measurement",
+            "statement": "Walked 2000 steps on 2026-05-10.",
+            "value_json": {
+              "value": 2000,
+              "unit": "steps"
+            },
+            "assertion": "asserted",
+            "entity_ref": "Me",
+            "object_entity_ref": null,
+            "temporal": {
+              "phrase": "",
+              "resolved_start": "2026-05-10T00:00:00-06:00",
+              "resolved_end": null,
+              "precision": "day"
+            },
+            "domain": "general",
+            "confidence": 0.9
+          },
+          {
+            "predicate": "stepCount",
+            "qualifier": "",
+            "kind": "measurement",
+            "statement": "Walked 2100 steps on 2026-05-11.",
+            "value_json": {
+              "value": 2100,
+              "unit": "steps"
+            },
+            "assertion": "asserted",
+            "entity_ref": "Me",
+            "object_entity_ref": null,
+            "temporal": {
+              "phrase": "",
+              "resolved_start": "2026-05-11T00:00:00-06:00",
+              "resolved_end": null,
+              "precision": "day"
+            },
+            "domain": "general",
+            "confidence": 0.9
+          },
+          {
+            "predicate": "stepCount",
+            "qualifier": "",
+            "kind": "measurement",
+            "statement": "Walked 2200 steps on 2026-05-12.",
+            "value_json": {
+              "value": 2200,
+              "unit": "steps"
+            },
+            "assertion": "asserted",
+            "entity_ref": "Me",
+            "object_entity_ref": null,
+            "temporal": {
+              "phrase": "",
+              "resolved_start": "2026-05-12T00:00:00-06:00",
+              "resolved_end": null,
+              "precision": "day"
+            },
+            "domain": "general",
+            "confidence": 0.9
+          },
+          {
+            "predicate": "stepCount",
+            "qualifier": "",
+            "kind": "measurement",
+            "statement": "Walked 2300 steps on 2026-05-13.",
+            "value_json": {
+              "value": 2300,
+              "unit": "steps"
+            },
+            "assertion": "asserted",
+            "entity_ref": "Me",
+            "object_entity_ref": null,
+            "temporal": {
+              "phrase": "",
+              "resolved_start": "2026-05-13T00:00:00-06:00",
+              "resolved_end": null,
+              "precision": "day"
+            },
+            "domain": "general",
+            "confidence": 0.9
+          },
+          {
+            "predicate": "stepCount",
+            "qualifier": "",
+            "kind": "measurement",
+            "statement": "Walked 2400 steps on 2026-05-14.",
+            "value_json": {
+              "value": 2400,
+              "unit": "steps"
+            },
+            "assertion": "asserted",
+            "entity_ref": "Me",
+            "object_entity_ref": null,
+            "temporal": {
+              "phrase": "",
+              "resolved_start": "2026-05-14T00:00:00-06:00",
+              "resolved_end": null,
+              "precision": "day"
+            },
+            "domain": "general",
+            "confidence": 0.9
+          },
+          {
+            "predicate": "stepCount",
+            "qualifier": "",
+            "kind": "measurement",
+            "statement": "Walked 2500 steps on 2026-05-15.",
+            "value_json": {
+              "value": 2500,
+              "unit": "steps"
+            },
+            "assertion": "asserted",
+            "entity_ref": "Me",
+            "object_entity_ref": null,
+            "temporal": {
+              "phrase": "",
+              "resolved_start": "2026-05-15T00:00:00-06:00",
+              "resolved_end": null,
+              "precision": "day"
+            },
+            "domain": "general",
+            "confidence": 0.9
+          },
+          {
+            "predicate": "stepCount",
+            "qualifier": "",
+            "kind": "measurement",
+            "statement": "Walked 2600 steps on 2026-05-16.",
+            "value_json": {
+              "value": 2600,
+              "unit": "steps"
+            },
+            "assertion": "asserted",
+            "entity_ref": "Me",
+            "object_entity_ref": null,
+            "temporal": {
+              "phrase": "",
+              "resolved_start": "2026-05-16T00:00:00-06:00",
+              "resolved_end": null,
+              "precision": "day"
+            },
+            "domain": "general",
+            "confidence": 0.9
+          },
+          {
+            "predicate": "stepCount",
+            "qualifier": "",
+            "kind": "measurement",
+            "statement": "Walked 2700 steps on 2026-05-17.",
+            "value_json": {
+              "value": 2700,
+              "unit": "steps"
+            },
+            "assertion": "asserted",
+            "entity_ref": "Me",
+            "object_entity_ref": null,
+            "temporal": {
+              "phrase": "",
+              "resolved_start": "2026-05-17T00:00:00-06:00",
+              "resolved_end": null,
+              "precision": "day"
+            },
+            "domain": "general",
+            "confidence": 0.9
+          },
+          {
+            "predicate": "stepCount",
+            "qualifier": "",
+            "kind": "measurement",
+            "statement": "Walked 2800 steps on 2026-05-18.",
+            "value_json": {
+              "value": 2800,
+              "unit": "steps"
+            },
+            "assertion": "asserted",
+            "entity_ref": "Me",
+            "object_entity_ref": null,
+            "temporal": {
+              "phrase": "",
+              "resolved_start": "2026-05-18T00:00:00-06:00",
+              "resolved_end": null,
+              "precision": "day"
+            },
+            "domain": "general",
+            "confidence": 0.9
+          },
+          {
+            "predicate": "stepCount",
+            "qualifier": "",
+            "kind": "measurement",
+            "statement": "Walked 2900 steps on 2026-05-19.",
+            "value_json": {
+              "value": 2900,
+              "unit": "steps"
+            },
+            "assertion": "asserted",
+            "entity_ref": "Me",
+            "object_entity_ref": null,
+            "temporal": {
+              "phrase": "",
+              "resolved_start": "2026-05-19T00:00:00-06:00",
+              "resolved_end": null,
+              "precision": "day"
+            },
+            "domain": "general",
+            "confidence": 0.9
+          },
+          {
+            "predicate": "stepCount",
+            "qualifier": "",
+            "kind": "measurement",
+            "statement": "Walked 3000 steps on 2026-05-20.",
+            "value_json": {
+              "value": 3000,
+              "unit": "steps"
+            },
+            "assertion": "asserted",
+            "entity_ref": "Me",
+            "object_entity_ref": null,
+            "temporal": {
+              "phrase": "",
+              "resolved_start": "2026-05-20T00:00:00-06:00",
+              "resolved_end": null,
+              "precision": "day"
+            },
+            "domain": "general",
+            "confidence": 0.9
+          },
+          {
+            "predicate": "stepCount",
+            "qualifier": "",
+            "kind": "measurement",
+            "statement": "Walked 3100 steps on 2026-05-21.",
+            "value_json": {
+              "value": 3100,
+              "unit": "steps"
+            },
+            "assertion": "asserted",
+            "entity_ref": "Me",
+            "object_entity_ref": null,
+            "temporal": {
+              "phrase": "",
+              "resolved_start": "2026-05-21T00:00:00-06:00",
+              "resolved_end": null,
+              "precision": "day"
+            },
+            "domain": "general",
+            "confidence": 0.9
+          },
+          {
+            "predicate": "stepCount",
+            "qualifier": "",
+            "kind": "measurement",
+            "statement": "Walked 3200 steps on 2026-05-22.",
+            "value_json": {
+              "value": 3200,
+              "unit": "steps"
+            },
+            "assertion": "asserted",
+            "entity_ref": "Me",
+            "object_entity_ref": null,
+            "temporal": {
+              "phrase": "",
+              "resolved_start": "2026-05-22T00:00:00-06:00",
+              "resolved_end": null,
+              "precision": "day"
+            },
+            "domain": "general",
+            "confidence": 0.9
+          },
+          {
+            "predicate": "stepCount",
+            "qualifier": "",
+            "kind": "measurement",
+            "statement": "Walked 3300 steps on 2026-05-23.",
+            "value_json": {
+              "value": 3300,
+              "unit": "steps"
+            },
+            "assertion": "asserted",
+            "entity_ref": "Me",
+            "object_entity_ref": null,
+            "temporal": {
+              "phrase": "",
+              "resolved_start": "2026-05-23T00:00:00-06:00",
+              "resolved_end": null,
+              "precision": "day"
+            },
+            "domain": "general",
+            "confidence": 0.9
+          },
+          {
+            "predicate": "stepCount",
+            "qualifier": "",
+            "kind": "measurement",
+            "statement": "Walked 3400 steps on 2026-05-24.",
+            "value_json": {
+              "value": 3400,
+              "unit": "steps"
+            },
+            "assertion": "asserted",
+            "entity_ref": "Me",
+            "object_entity_ref": null,
+            "temporal": {
+              "phrase": "",
+              "resolved_start": "2026-05-24T00:00:00-06:00",
+              "resolved_end": null,
+              "precision": "day"
+            },
+            "domain": "general",
+            "confidence": 0.9
+          },
+          {
+            "predicate": "stepCount",
+            "qualifier": "",
+            "kind": "measurement",
+            "statement": "Walked 3500 steps on 2026-05-25.",
+            "value_json": {
+              "value": 3500,
+              "unit": "steps"
+            },
+            "assertion": "asserted",
+            "entity_ref": "Me",
+            "object_entity_ref": null,
+            "temporal": {
+              "phrase": "",
+              "resolved_start": "2026-05-25T00:00:00-06:00",
+              "resolved_end": null,
+              "precision": "day"
+            },
+            "domain": "general",
+            "confidence": 0.9
+          },
+          {
+            "predicate": "stepCount",
+            "qualifier": "",
+            "kind": "measurement",
+            "statement": "Walked 3600 steps on 2026-05-26.",
+            "value_json": {
+              "value": 3600,
+              "unit": "steps"
+            },
+            "assertion": "asserted",
+            "entity_ref": "Me",
+            "object_entity_ref": null,
+            "temporal": {
+              "phrase": "",
+              "resolved_start": "2026-05-26T00:00:00-06:00",
+              "resolved_end": null,
+              "precision": "day"
+            },
+            "domain": "general",
+            "confidence": 0.9
+          },
+          {
+            "predicate": "stepCount",
+            "qualifier": "",
+            "kind": "measurement",
+            "statement": "Walked 3700 steps on 2026-05-27.",
+            "value_json": {
+              "value": 3700,
+              "unit": "steps"
+            },
+            "assertion": "asserted",
+            "entity_ref": "Me",
+            "object_entity_ref": null,
+            "temporal": {
+              "phrase": "",
+              "resolved_start": "2026-05-27T00:00:00-06:00",
+              "resolved_end": null,
+              "precision": "day"
+            },
+            "domain": "general",
+            "confidence": 0.9
+          },
+          {
+            "predicate": "stepCount",
+            "qualifier": "",
+            "kind": "measurement",
+            "statement": "Walked 3800 steps on 2026-05-28.",
+            "value_json": {
+              "value": 3800,
+              "unit": "steps"
+            },
+            "assertion": "asserted",
+            "entity_ref": "Me",
+            "object_entity_ref": null,
+            "temporal": {
+              "phrase": "",
+              "resolved_start": "2026-05-28T00:00:00-06:00",
+              "resolved_end": null,
+              "precision": "day"
+            },
+            "domain": "general",
+            "confidence": 0.9
+          },
+          {
+            "predicate": "stepCount",
+            "qualifier": "",
+            "kind": "measurement",
+            "statement": "Walked 3900 steps on 2026-05-29.",
+            "value_json": {
+              "value": 3900,
+              "unit": "steps"
+            },
+            "assertion": "asserted",
+            "entity_ref": "Me",
+            "object_entity_ref": null,
+            "temporal": {
+              "phrase": "",
+              "resolved_start": "2026-05-29T00:00:00-06:00",
+              "resolved_end": null,
+              "precision": "day"
+            },
+            "domain": "general",
+            "confidence": 0.9
+          },
+          {
+            "predicate": "stepCount",
+            "qualifier": "",
+            "kind": "measurement",
+            "statement": "Walked 4000 steps on 2026-05-30.",
+            "value_json": {
+              "value": 4000,
+              "unit": "steps"
+            },
+            "assertion": "asserted",
+            "entity_ref": "Me",
+            "object_entity_ref": null,
+            "temporal": {
+              "phrase": "",
+              "resolved_start": "2026-05-30T00:00:00-06:00",
+              "resolved_end": null,
+              "precision": "day"
+            },
+            "domain": "general",
+            "confidence": 0.9
+          }
+        ],
+        "temporal_tokens": []
+      }
+    }
+  ],
+  "expect": {
+    "facts": [
+      {
+        "entity": "Me",
+        "predicate": "stepCount",
+        "kind": "measurement",
+        "status": "active",
+        "count": 12
+      }
+    ],
+    "absent_facts": [
+      {
+        "entity": "Me",
+        "predicate": "stepCount",
+        "value_contains": "2026-05-30"
+      }
+    ]
+  }
+}

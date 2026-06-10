@@ -1,0 +1,32 @@
+{
+  "name": "the same name mentioned twice in one note yields one entity",
+  "description": "Adversarial duplicate-mention probe. One extraction lists the SAME mention name ('Cleo') three times (identical name+kind, varying surface_text) plus one fact. resolve_entity is called once per DISTINCT name (pipeline._resolve_entities dedupes into `names`), so exactly one provisional Cleo is minted — not three. _rebuild_mentions wipes-and-reinserts this note's mentions, anchoring each surface; the fact attaches to the single entity. Pins clean dedupe: one Cleo entity, one active fact, no duplicate entities from repeated mentions.",
+  "steps": [
+    {
+      "domain": "general",
+      "created_at": "2026-04-30T15:00:00-06:00",
+      "body": "Cleo called. Then Cleo texted. Later, Cleo emailed about the trip to Lisbon.",
+      "extraction": {
+        "title": "Cleo contact",
+        "tags": ["cleo", "lisbon"],
+        "mentions": [
+          {"name": "Cleo", "kind": "Person", "surface_text": "Cleo called"},
+          {"name": "Cleo", "kind": "Person", "surface_text": "Cleo texted"},
+          {"name": "Cleo", "kind": "Person", "surface_text": "Cleo emailed"}
+        ],
+        "facts": [
+          {"predicate": "plannedTrip", "qualifier": "", "kind": "state", "statement": "Cleo is planning a trip to Lisbon.", "value_json": {"destination": "Lisbon"}, "assertion": "asserted", "entity_ref": "Cleo", "object_entity_ref": null, "temporal": {"phrase": "", "resolved_start": "2026-04-30T00:00:00-06:00", "resolved_end": null, "precision": "day"}, "domain": "general", "confidence": 0.85}
+        ],
+        "temporal_tokens": []
+      }
+    }
+  ],
+  "expect": {
+    "facts": [
+      {"entity": "Cleo", "predicate": "plannedTrip", "kind": "state", "value_contains": "Lisbon", "status": "active", "count": 1}
+    ],
+    "entities": [
+      {"name": "Cleo", "kind": "Person", "status": "provisional"}
+    ]
+  }
+}

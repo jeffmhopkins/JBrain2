@@ -1,0 +1,49 @@
+{
+  "name": "re-asserting a relationship after negation must not leave a negated zombie",
+  "description": "Adversarial assertion-transition probe. Note 1 negates the worksFor edge ('Bjorn no longer works at Acme', assertion=negated). Note 2 re-asserts it ('Bjorn is back at Acme', assertion=asserted) — same functional predicate, same object entity Acme. supersession.values_equal keys on object_entity_id only for a pure edge, so the asserted candidate is 'equal' to the still-active negated row and decide returns refresh_id: the pipeline refreshes the NEGATED row in place (statement/confidence) and NEVER updates its assertion. Result: the only worksFor row stays assertion=negated despite the latest note asserting the job — a negated zombie that reads as 'not working there' when the truth is the opposite. SPEC-CORRECT expectation encoded: an active ASSERTED worksFor to Acme after re-assertion, and NO active negated one. XFAIL: refresh_id path ignores assertion, so the active row is still negated. Failing line: \"expected a fact matching {...'assertion': 'asserted'...}, found none\".",
+  "xfail": "Assertion transitions are invisible to supersession: decide()'s idempotency refresh (values_equal true + status active) matches a negated row when a later note re-asserts the same edge, and _upsert_fact's refresh branch updates statement/confidence but not assertion — so a negated->asserted flip leaves the row negated (no zombie-clearing on re-assertion).",
+  "steps": [
+    {
+      "domain": "general",
+      "created_at": "2026-02-01T09:00:00-07:00",
+      "body": "Bjorn no longer works at Acme — he left last month.",
+      "extraction": {
+        "title": "Bjorn left Acme",
+        "tags": ["bjorn", "acme"],
+        "mentions": [
+          {"name": "Bjorn", "kind": "Person", "surface_text": "Bjorn"},
+          {"name": "Acme", "kind": "Organization", "surface_text": "Acme"}
+        ],
+        "facts": [
+          {"predicate": "worksFor", "qualifier": "", "kind": "relationship", "statement": "Bjorn no longer works at Acme.", "value_json": null, "assertion": "negated", "entity_ref": "Bjorn", "object_entity_ref": "Acme", "temporal": {"phrase": "last month", "resolved_start": "2026-01-01T00:00:00-07:00", "resolved_end": null, "precision": "day"}, "domain": "general", "confidence": 0.9}
+        ],
+        "temporal_tokens": []
+      }
+    },
+    {
+      "domain": "general",
+      "created_at": "2026-05-01T09:00:00-06:00",
+      "body": "Bjorn is back at Acme again — rehired this week.",
+      "extraction": {
+        "title": "Bjorn rehired at Acme",
+        "tags": ["bjorn", "acme", "rehired"],
+        "mentions": [
+          {"name": "Bjorn", "kind": "Person", "surface_text": "Bjorn"},
+          {"name": "Acme", "kind": "Organization", "surface_text": "Acme"}
+        ],
+        "facts": [
+          {"predicate": "worksFor", "qualifier": "", "kind": "relationship", "statement": "Bjorn works for Acme again.", "value_json": null, "assertion": "asserted", "entity_ref": "Bjorn", "object_entity_ref": "Acme", "temporal": {"phrase": "this week", "resolved_start": "2026-04-27T00:00:00-06:00", "resolved_end": null, "precision": "day"}, "domain": "general", "confidence": 0.9}
+        ],
+        "temporal_tokens": []
+      }
+    }
+  ],
+  "expect": {
+    "facts": [
+      {"entity": "Bjorn", "predicate": "worksFor", "kind": "relationship", "assertion": "asserted", "status": "active"}
+    ],
+    "absent_facts": [
+      {"entity": "Bjorn", "predicate": "worksFor", "assertion": "negated", "status": "active"}
+    ]
+  }
+}

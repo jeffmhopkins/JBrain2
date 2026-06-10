@@ -1,0 +1,65 @@
+{
+  "name": "a backdated reading inserted between two existing measurements never supersedes",
+  "description": "Three weight measurements for Wei: note A at 2026-04-01, note B at 2026-04-15, then note C captured last (2026-04-20) but backdated to a DISTINCT instant 2026-04-08 between them. Measurements accumulate and NEVER auto-supersede (docs/ANALYSIS.md fact kinds: measurement = time-series). decide() for kind='measurement' with a distinct valid_from hits the time-series branch (return Decision(insert=True)) — no same-instant clash, so no fact_conflict, no superseded chain. All three stay active regardless of capture order. Pins that out-of-order arrival in a measurement series is harmless: insertion order doesn't matter, only the (metric, instant) identity, and distinct instants coexist.",
+  "steps": [
+    {
+      "domain": "health",
+      "created_at": "2026-04-01T07:00:00-06:00",
+      "body": "Weight this morning: 80.0 kg.",
+      "extraction": {
+        "title": "Weight 80.0",
+        "tags": ["weight", "health"],
+        "mentions": [{"name": "Wei", "kind": "Person", "surface_text": "morning"}],
+        "facts": [
+          {"predicate": "bodyWeight", "qualifier": "", "kind": "measurement", "statement": "Weight was 80.0 kg.", "value_json": {"kg": 80.0}, "assertion": "asserted", "entity_ref": "Wei", "object_entity_ref": null, "temporal": {"phrase": "this morning", "resolved_start": "2026-04-01T07:00:00-06:00", "resolved_end": null, "precision": "instant"}, "domain": "health", "confidence": 0.9}
+        ],
+        "temporal_tokens": []
+      }
+    },
+    {
+      "domain": "health",
+      "created_at": "2026-04-15T07:00:00-06:00",
+      "body": "Weight this morning: 79.2 kg.",
+      "extraction": {
+        "title": "Weight 79.2",
+        "tags": ["weight", "health"],
+        "mentions": [{"name": "Wei", "kind": "Person", "surface_text": "morning"}],
+        "facts": [
+          {"predicate": "bodyWeight", "qualifier": "", "kind": "measurement", "statement": "Weight was 79.2 kg.", "value_json": {"kg": 79.2}, "assertion": "asserted", "entity_ref": "Wei", "object_entity_ref": null, "temporal": {"phrase": "this morning", "resolved_start": "2026-04-15T07:00:00-06:00", "resolved_end": null, "precision": "instant"}, "domain": "health", "confidence": 0.9}
+        ],
+        "temporal_tokens": []
+      }
+    },
+    {
+      "domain": "health",
+      "created_at": "2026-04-20T21:00:00-06:00",
+      "body": "Forgot to log it: on the 8th my weight was 79.6 kg.",
+      "extraction": {
+        "title": "Weight 79.6 backfill",
+        "tags": ["weight", "health", "backfill"],
+        "mentions": [{"name": "Wei", "kind": "Person", "surface_text": "my weight"}],
+        "facts": [
+          {"predicate": "bodyWeight", "qualifier": "", "kind": "measurement", "statement": "Weight was 79.6 kg on 2026-04-08.", "value_json": {"kg": 79.6}, "assertion": "asserted", "entity_ref": "Wei", "object_entity_ref": null, "temporal": {"phrase": "on the 8th", "resolved_start": "2026-04-08T07:00:00-06:00", "resolved_end": null, "precision": "instant"}, "domain": "health", "confidence": 0.8}
+        ],
+        "temporal_tokens": []
+      }
+    }
+  ],
+  "expect": {
+    "facts": [
+      {"entity": "Wei", "predicate": "bodyWeight", "kind": "measurement", "value_contains": "80.0", "status": "active", "chained": false},
+      {"entity": "Wei", "predicate": "bodyWeight", "kind": "measurement", "value_contains": "79.2", "status": "active", "chained": false},
+      {"entity": "Wei", "predicate": "bodyWeight", "kind": "measurement", "value_contains": "79.6", "status": "active", "chained": false},
+      {"entity": "Wei", "predicate": "bodyWeight", "kind": "measurement", "status": "active", "count": 3}
+    ],
+    "absent_facts": [
+      {"entity": "Wei", "predicate": "bodyWeight", "status": "superseded"}
+    ],
+    "review_items": [
+      {"kind": "fact_conflict", "count": 0}
+    ],
+    "entities": [
+      {"name": "Wei", "kind": "Person", "status": "provisional"}
+    ]
+  }
+}

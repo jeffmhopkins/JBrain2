@@ -1,0 +1,51 @@
+{
+  "name": "ownership transfer cannot move the owner edge off the prior owner",
+  "description": "NEW GAP behaviour (related to but distinct from C1/H2/reschedule/role-reference). 'I gave my old bike to Otto' should MOVE the owner edge: close Me.owns->Bike and open Otto.owns->Bike, leaving exactly one active owner. But supersession is per identity key (subject, entity, predicate, qualifier) and the new fact's entity_ref is Otto -- a DIFFERENT key from Me.owns. The pipeline has no path to supersede a fact belonging to another subject's key, so Me.owns stays active AND Otto.owns is inserted: the bike now has two simultaneous owners. The model emitting only the Otto edge (the natural extraction) cannot express the transfer. Spec-correct (docs/ANALYSIS.md 'property graph': single current owner for a transferred chattel): Me.owns must be closed/superseded. xfail until the pipeline can close a counterparty's edge on transfer (would require the extraction to also emit a negated Me.owns AND the dispose path to work).",
+  "xfail": "owner edge cannot move across subjects: decide() resolves per (subject,entity,predicate,qualifier) so the new Otto.owns key never sees the Me.owns head -- prior owner stays active (pipeline._existing_facts scopes to one entity)",
+  "steps": [
+    {
+      "domain": "general",
+      "created_at": "2026-01-12T15:00:00-06:00",
+      "body": "I own an old mountain bike.",
+      "extraction": {
+        "title": "My bike",
+        "tags": ["bike"],
+        "mentions": [
+          {"name": "Me", "kind": "Person", "surface_text": "I"},
+          {"name": "Bike", "kind": "Product", "surface_text": "old mountain bike"}
+        ],
+        "facts": [
+          {"predicate": "owns", "qualifier": "Bike", "kind": "state", "statement": "I own an old mountain bike.", "value_json": null, "assertion": "asserted", "entity_ref": "Me", "object_entity_ref": "Bike", "temporal": {"phrase": "", "resolved_start": "2026-01-12T00:00:00-06:00", "resolved_end": null, "precision": "day"}, "domain": "general", "confidence": 0.9}
+        ],
+        "temporal_tokens": []
+      }
+    },
+    {
+      "domain": "general",
+      "created_at": "2026-03-22T16:00:00-06:00",
+      "body": "Gave my old bike to Otto.",
+      "extraction": {
+        "title": "Gave Otto the bike",
+        "tags": ["bike", "otto"],
+        "mentions": [
+          {"name": "Me", "kind": "Person", "surface_text": "Gave"},
+          {"name": "Otto", "kind": "Person", "surface_text": "Otto"},
+          {"name": "Bike", "kind": "Product", "surface_text": "old bike"}
+        ],
+        "facts": [
+          {"predicate": "owns", "qualifier": "Bike", "kind": "state", "statement": "Otto owns the old bike now.", "value_json": null, "assertion": "asserted", "entity_ref": "Otto", "object_entity_ref": "Bike", "temporal": {"phrase": "", "resolved_start": "2026-03-22T00:00:00-06:00", "resolved_end": null, "precision": "day"}, "domain": "general", "confidence": 0.9}
+        ],
+        "temporal_tokens": []
+      }
+    }
+  ],
+  "expect": {
+    "facts": [
+      {"entity": "Otto", "predicate": "owns", "value_contains": "bike", "status": "active", "chained": false},
+      {"entity": "Me", "predicate": "owns", "value_contains": "bike", "status": "superseded"}
+    ],
+    "absent_facts": [
+      {"entity": "Me", "predicate": "owns", "value_contains": "bike", "status": "active"}
+    ]
+  }
+}

@@ -1,0 +1,38 @@
+{
+  "name": "acquiring an item mints the thing entity and an inbound owns edge",
+  "description": "Baseline ownership (docs/ANALYSIS.md 'property graph': me.owns -> [thing]). 'Bought a Honda Civic' mints a provisional Product entity and a relationship-kind owns edge from Me to it. The thing is an ENTITY with an inbound edge (object_entity_ref), not a value fact. Pins the happy-path the dispose/transfer cases break from. owns is NOT in supersession.FUNCTIONAL_PREDICATES so the single edge simply stays active.",
+  "steps": [
+    {
+      "domain": "general",
+      "created_at": "2026-01-12T15:00:00-06:00",
+      "body": "Bought a Honda Civic today.",
+      "extraction": {
+        "title": "Bought a Civic",
+        "tags": ["civic", "car"],
+        "mentions": [
+          {"name": "Me", "kind": "Person", "surface_text": "Bought"},
+          {"name": "Civic", "kind": "Product", "surface_text": "Honda Civic"}
+        ],
+        "facts": [
+          {"predicate": "owns", "qualifier": "Civic", "kind": "relationship", "statement": "I own a Honda Civic.", "value_json": null, "assertion": "asserted", "entity_ref": "Me", "object_entity_ref": "Civic", "temporal": {"phrase": "today", "resolved_start": "2026-01-12T00:00:00-06:00", "resolved_end": null, "precision": "day"}, "domain": "general", "confidence": 0.92}
+        ],
+        "temporal_tokens": []
+      }
+    }
+  ],
+  "expect": {
+    "facts": [
+      {"entity": "Me", "predicate": "owns", "qualifier": "Civic", "kind": "relationship", "value_contains": "Civic", "status": "active", "chained": false}
+    ],
+    "absent_facts": [
+      {"entity": "Me", "predicate": "owns", "status": "superseded"}
+    ],
+    "review_items": [
+      {"kind": "fact_conflict", "count": 0}
+    ],
+    "entities": [
+      {"name": "Me", "kind": "Person", "status": "confirmed"},
+      {"name": "Civic", "kind": "Product", "status": "provisional"}
+    ]
+  }
+}

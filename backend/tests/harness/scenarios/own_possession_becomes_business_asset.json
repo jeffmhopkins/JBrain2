@@ -1,0 +1,54 @@
+{
+  "name": "a possession reclassified as a business asset ratchets into the finance domain",
+  "description": "Domain ratchet on a possession. A general-note owns fact about the Civic stays general; a later note (still captured as general) reclassifies it with a finance-domain assetClass fact. ratchet_domain: general note -> restricted finance is the FREE direction, so the finance fact lands in finance with NO promotion review (extraction.ratchet_domain returns needs_promotion=False when note is general and extracted is restricted). The owns possession fact is untouched and stays general -- facts carry their own domains regardless of the entity (docs/ANALYSIS.md 'Facts always carry their own domains'). Pins that a possession can acquire a finance-relevant fact without dragging or being dragged by the general ownership edge, and without the firewall blocking the ratchet INTO finance.",
+  "steps": [
+    {
+      "domain": "general",
+      "created_at": "2026-01-12T15:00:00-06:00",
+      "body": "Bought a Honda Civic today.",
+      "extraction": {
+        "title": "Bought a Civic",
+        "tags": ["civic"],
+        "mentions": [
+          {"name": "Me", "kind": "Person", "surface_text": "Bought"},
+          {"name": "Civic", "kind": "Product", "surface_text": "Honda Civic"}
+        ],
+        "facts": [
+          {"predicate": "owns", "qualifier": "Civic", "kind": "state", "statement": "I own a Honda Civic.", "value_json": null, "assertion": "asserted", "entity_ref": "Me", "object_entity_ref": "Civic", "temporal": {"phrase": "today", "resolved_start": "2026-01-12T00:00:00-06:00", "resolved_end": null, "precision": "day"}, "domain": "general", "confidence": 0.92}
+        ],
+        "temporal_tokens": []
+      }
+    },
+    {
+      "domain": "general",
+      "created_at": "2026-06-30T10:00:00-06:00",
+      "body": "The Civic is now a business asset for tax purposes.",
+      "extraction": {
+        "title": "Civic is a business asset",
+        "tags": ["civic", "business", "tax"],
+        "mentions": [
+          {"name": "Me", "kind": "Person", "surface_text": "I"},
+          {"name": "Civic", "kind": "Product", "surface_text": "Civic"}
+        ],
+        "facts": [
+          {"predicate": "assetClass", "qualifier": "Civic", "kind": "state", "statement": "The Civic is a business asset.", "value_json": {"assetClass": "business"}, "assertion": "asserted", "entity_ref": "Me", "object_entity_ref": "Civic", "temporal": {"phrase": "now", "resolved_start": "2026-06-30T00:00:00-06:00", "resolved_end": null, "precision": "day"}, "domain": "finance", "confidence": 0.9}
+        ],
+        "temporal_tokens": []
+      }
+    }
+  ],
+  "expect": {
+    "facts": [
+      {"entity": "Me", "predicate": "owns", "qualifier": "Civic", "domain": "general", "status": "active", "chained": false},
+      {"entity": "Me", "predicate": "assetClass", "qualifier": "Civic", "domain": "finance", "value_contains": "business asset", "status": "active", "chained": false}
+    ],
+    "absent_facts": [
+      {"entity": "Me", "predicate": "owns", "domain": "finance"},
+      {"entity": "Me", "predicate": "assetClass", "domain": "general"}
+    ],
+    "review_items": [
+      {"kind": "domain_promotion", "count": 0},
+      {"kind": "fact_conflict", "count": 0}
+    ]
+  }
+}

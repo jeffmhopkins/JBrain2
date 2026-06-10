@@ -1,0 +1,50 @@
+{
+  "name": "deep-past era-precision history coexists with the current value, no false conflict",
+  "description": "Note A sets Ingrid's current homeLocation (Oslo, valid_from 2026). Note B is a deep-past memory at ERA precision ('when I was a kid I lived in Bergen', resolved to a 1990s era range). The era fact's valid_from (1990) is far older than the active Oslo valid_from, so decide() takes the retrospective branch (supersession.decide final return): Bergen lands status='superseded', superseded_by=Oslo, NO fact_conflict. docs/ANALYSIS.md 'Temporal model': 'when I was a kid' -> era-precision range; both facts persist (history closed, current active). Pins era precision is preserved and that an era-range memory never displaces the current value.",
+  "steps": [
+    {
+      "domain": "general",
+      "created_at": "2026-06-01T09:00:00-06:00",
+      "body": "Ingrid lives in Oslo now.",
+      "extraction": {
+        "title": "Ingrid in Oslo",
+        "tags": ["ingrid", "oslo"],
+        "mentions": [{"name": "Ingrid", "kind": "Person", "surface_text": "Ingrid"}],
+        "facts": [
+          {"predicate": "homeLocation", "qualifier": "", "kind": "state", "statement": "Ingrid lives in Oslo.", "value_json": {"city": "Oslo"}, "assertion": "asserted", "entity_ref": "Ingrid", "object_entity_ref": null, "temporal": {"phrase": "now", "resolved_start": "2026-06-01T00:00:00-06:00", "resolved_end": null, "precision": "day"}, "domain": "general", "confidence": 0.9}
+        ],
+        "temporal_tokens": []
+      }
+    },
+    {
+      "domain": "general",
+      "created_at": "2026-06-05T09:00:00-06:00",
+      "body": "When Ingrid was a kid she lived in Bergen.",
+      "extraction": {
+        "title": "Ingrid's childhood in Bergen",
+        "tags": ["ingrid", "bergen", "childhood"],
+        "mentions": [{"name": "Ingrid", "kind": "Person", "surface_text": "Ingrid"}],
+        "facts": [
+          {"predicate": "homeLocation", "qualifier": "", "kind": "state", "statement": "Ingrid lived in Bergen as a child.", "value_json": {"city": "Bergen"}, "assertion": "asserted", "entity_ref": "Ingrid", "object_entity_ref": null, "temporal": {"phrase": "When Ingrid was a kid", "resolved_start": "1990-01-01T00:00:00+01:00", "resolved_end": "1999-12-31T23:59:59+01:00", "precision": "era"}, "domain": "general", "confidence": 0.6}
+        ],
+        "temporal_tokens": []
+      }
+    }
+  ],
+  "expect": {
+    "facts": [
+      {"entity": "Ingrid", "predicate": "homeLocation", "kind": "state", "value_contains": "Oslo", "status": "active", "chained": false},
+      {"entity": "Ingrid", "predicate": "homeLocation", "kind": "state", "value_contains": "Bergen", "status": "superseded", "chained": true},
+      {"entity": "Ingrid", "predicate": "homeLocation", "kind": "state", "status": "active", "count": 1}
+    ],
+    "absent_facts": [
+      {"entity": "Ingrid", "predicate": "homeLocation", "value_contains": "Oslo", "status": "superseded"}
+    ],
+    "review_items": [
+      {"kind": "fact_conflict", "summary_contains": "homeLocation", "count": 0}
+    ],
+    "entities": [
+      {"name": "Ingrid", "kind": "Person", "status": "provisional"}
+    ]
+  }
+}
