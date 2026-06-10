@@ -281,11 +281,20 @@ written fire-and-forget so accounting can never fail or slow a call.
 Owner-only RLS (telemetry, not domain data; still gets the standard
 isolation test). Surfaced live on the Ops screen as an **AI usage card**:
 today / this month totals with per-task breakdown, aggregated by
-`date_trunc` at query time. Token counts only — no dollar estimates (a
-per-model price table would rot); revisit if costs matter.
+`date_trunc` at query time.
+
+**Cost estimates [decided]**: the card shows estimated dollars alongside
+tokens, computed at query time from a config price table
+(`JBRAIN_LLM_PRICES` JSON of `provider:model` → $/M input, $/M output)
+seeded with **grok-4.3 at $1.25/M in, $2.50/M out** (xAI docs, June
+2026; cached input $0.20/M exists but isn't modeled — estimates are
+deliberately conservative). Models missing from the table show tokens
+only, never a guessed price. Query-time pricing means a table update
+re-prices history — acceptable at personal scale, and the tokens remain
+the ground truth. ≈ **$0.01/note** at grok-4.3 rates.
 
 One guaranteed call + up to two conditional cheap calls per note; ~5–7k
-tokens ≈ under $0.02/note. Conflict detection is bounded by candidate
+tokens ≈ $0.01/note at grok-4.3 rates. Conflict detection is bounded by candidate
 retrieval (SQL identity match, else pgvector top-k scoped to same
 entity+domain+kind) — never corpus-wide comparison. Concurrent offline-sync
 bursts serialize per (entity, predicate) to keep supersession chains
