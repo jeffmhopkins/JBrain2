@@ -103,6 +103,144 @@ export interface NoteUpdate {
   destination?: string | null;
 }
 
+// ===== Phase 3: analysis, entities, review, LLM usage (docs/ANALYSIS.md) =====
+
+export type FactKind =
+  | "event"
+  | "measurement"
+  | "state"
+  | "attribute"
+  | "preference"
+  | "relationship";
+
+export type FactStatus = "active" | "superseded" | "pending_review" | "retracted";
+
+export interface FactOut {
+  id: string;
+  entity_id: string;
+  entity_name: string;
+  predicate: string;
+  qualifier: string | null;
+  kind: FactKind;
+  statement: string;
+  value_json: unknown;
+  assertion: string;
+  status: FactStatus;
+  pinned: boolean;
+  confidence: number;
+  valid_from: string | null;
+  valid_to: string | null;
+  reported_at: string;
+  temporal_precision: string;
+  /** May carry literal <mark> around the source words, like search snippets. */
+  source_snippet: string | null;
+}
+
+export interface AnalysisEntity {
+  id: string;
+  kind: string;
+  name: string;
+  status: string;
+}
+
+export interface TemporalTokenOut {
+  id: string;
+  surface_phrase: string;
+  kind: string;
+  resolved_start: string | null;
+  resolved_end: string | null;
+  temporal_precision: string;
+}
+
+export interface NoteAnalysis {
+  note_id: string;
+  title: string | null;
+  tags: string[];
+  /** null = the extraction pass hasn't run yet. */
+  analyzed_at: string | null;
+  extractor: string | null;
+  facts: FactOut[];
+  entities: AnalysisEntity[];
+  temporal_tokens: TemporalTokenOut[];
+}
+
+export interface EntityPredicate {
+  predicate: string;
+  qualifier: string | null;
+  current: FactOut | null;
+  /** Full supersession chain, newest first (includes the current fact). */
+  history: FactOut[];
+}
+
+export interface InboundEdge {
+  entity_id: string;
+  name: string;
+  predicate: string;
+  statement: string;
+}
+
+export interface EntityMention {
+  note_id: string;
+  snippet: string;
+  created_at: string;
+}
+
+export interface EntityOut {
+  id: string;
+  kind: string;
+  canonical_name: string;
+  status: string;
+  aliases: string[];
+  domain: string;
+  predicates: EntityPredicate[];
+  inbound: InboundEdge[];
+  mentions: EntityMention[];
+}
+
+export type ReviewKind =
+  | "fact_conflict"
+  | "attribute_collision"
+  | "merge_proposal"
+  | "ambiguous_mention"
+  | "domain_promotion"
+  | "low_confidence"
+  | "split_proposal";
+
+export interface ReviewItem {
+  id: string;
+  kind: ReviewKind;
+  /** Free-form per-kind payload; the review screen reads it defensively. */
+  payload: Record<string, unknown>;
+  domain: string;
+  created_at: string;
+}
+
+export interface ReviewQueue {
+  items: ReviewItem[];
+}
+
+export interface UsageTotals {
+  input_tokens: number;
+  output_tokens: number;
+  /** null = model missing from the price table; tokens only, never a guess. */
+  cost_usd: number | null;
+}
+
+export interface TaskUsage extends UsageTotals {
+  task: string;
+}
+
+export interface DayUsage extends UsageTotals {
+  date: string;
+}
+
+export interface LlmUsage {
+  today: UsageTotals;
+  month: UsageTotals;
+  by_task: TaskUsage[];
+  days: DayUsage[];
+}
+
 export type SearchMatch = "semantic" | "keyword" | "both";
 
 export interface SearchResult {
@@ -254,6 +392,40 @@ export const api = {
 
   async deleteAttachment(id: string): Promise<void> {
     await request(`/api/attachments/${encodeURIComponent(id)}`, { method: "DELETE" });
+  },
+
+  async noteAnalysis(noteId: string): Promise<NoteAnalysis> {
+    const response = await request(`/api/notes/${encodeURIComponent(noteId)}/analysis`);
+    return (await response.json()) as NoteAnalysis;
+  },
+
+  async getEntity(entityId: string): Promise<EntityOut> {
+    const response = await request(`/api/entities/${encodeURIComponent(entityId)}`);
+    return (await response.json()) as EntityOut;
+  },
+
+  async reviewQueue(): Promise<ReviewQueue> {
+    const response = await request("/api/review?status=open");
+    return (await response.json()) as ReviewQueue;
+  },
+
+  // Skip is client-side only (cycle to the back of the local queue) — there
+  // is deliberately no skip action on the wire.
+  async reviewResolve(
+    id: string,
+    action: string,
+    payload: Record<string, unknown> = {},
+  ): Promise<ReviewItem> {
+    const response = await request(
+      `/api/review/${encodeURIComponent(id)}/resolve`,
+      jsonInit("POST", { action, payload }),
+    );
+    return (await response.json()) as ReviewItem;
+  },
+
+  async llmUsage(): Promise<LlmUsage> {
+    const response = await request("/api/ops/llm-usage");
+    return (await response.json()) as LlmUsage;
   },
 
   async opsMetrics(): Promise<OpsMetrics> {

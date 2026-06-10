@@ -3,8 +3,10 @@ import {
   ApiError,
   type ContainerStatus,
   type ExportStatus,
+  type LlmUsage,
   type OpsMetrics,
   type UpdateStatus,
+  type UsageTotals,
   api,
   exportFileUrl,
 } from "../api/client";
@@ -85,6 +87,54 @@ function MetricsGrid({ metrics }: { metrics: OpsMetrics }) {
         <span className="container-meta muted">up {fmtUptime(metrics.uptime_seconds)}</span>
       </li>
     </ul>
+  );
+}
+
+export function fmtTokens(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1).replace(/\.0$/, "")}M`;
+  if (n >= 1000) return `${Math.round(n / 1000)}k`;
+  return String(n);
+}
+
+/** `41k in · 12k out · ~$0.08`; cost omitted when the price table has no
+ * entry for the model — tokens only, never a guessed price. */
+function usageLine(totals: UsageTotals): string {
+  const parts = [`${fmtTokens(totals.input_tokens)} in`, `${fmtTokens(totals.output_tokens)} out`];
+  if (totals.cost_usd !== null) parts.push(`~$${totals.cost_usd.toFixed(2)}`);
+  return parts.join(" · ");
+}
+
+/** Ops "AI usage" card (docs/ANALYSIS.md "Token accounting"): live totals
+ * from the adapter's llm_usage rows, priced at query time. */
+function UsageCard({ usage }: { usage: LlmUsage | null }) {
+  return (
+    <section className="ops-update usage-card">
+      <h3>AI usage</h3>
+      {usage === null ? (
+        <p className="muted data-hint">no usage data yet.</p>
+      ) : (
+        <>
+          <div className="usage-row">
+            <span className="usage-label">today</span>
+            <span className="usage-value">{usageLine(usage.today)}</span>
+          </div>
+          <div className="usage-row">
+            <span className="usage-label">this month</span>
+            <span className="usage-value">{usageLine(usage.month)}</span>
+          </div>
+          {usage.by_task.length > 0 && (
+            <div className="usage-tasks">
+              {usage.by_task.map((task) => (
+                <div key={task.task} className="usage-row usage-task-row">
+                  <span className="usage-label">{task.task}</span>
+                  <span className="usage-value">{usageLine(task)}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+    </section>
   );
 }
 
@@ -374,12 +424,18 @@ function DataCard() {
 export function OpsScreen() {
   const [containers, setContainers] = useState<ContainerStatus[] | null>(null);
   const [metrics, setMetrics] = useState<OpsMetrics | null>(null);
+  const [usage, setUsage] = useState<LlmUsage | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   const refresh = useCallback(async () => {
     setBusy(true);
     setError(null);
+    // Usage is telemetry — it rides the refresh cycle but fails quietly.
+    api
+      .llmUsage()
+      .then(setUsage)
+      .catch(() => {});
     try {
       setContainers((await api.opsStatus()).containers);
       setMetrics(await api.opsMetrics());
@@ -464,6 +520,7 @@ export function OpsScreen() {
       )}
 
       <LogViewer services={services} />
+      <UsageCard usage={usage} />
       <DataCard />
       <UpdateCard />
     </section>
