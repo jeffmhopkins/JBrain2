@@ -156,8 +156,10 @@ mode dot) — tapping one descends the tree into the conversation layer;
 typing in those modes always starts a NEW conversation. Until Phase 4
 ships conversations, those modes show an empty state ("conversations
 arrive in Phase 4"). **Swiping a note bubble left** slides it to reveal an
-action rail: **Edit** (loads the note into the omnibox; sending updates it
-and re-triggers ingestion), **Delete** (inline tap-again confirm), **Move
+action rail: **Edit** (opens the full-screen editor layer — the topmost tree level,
+sliding over wherever you are and returning there on save/cancel; saving
+PATCHes the body and re-triggers ingestion; revised from edit-in-omnibox
+in Phase 2 polish), **Delete** (inline tap-again confirm), **Move
 domain** (small sheet). Tapping a bubble opens the note sheet.
 
 **Capture location** (settled in the Phase 2 review): a Settings toggle,

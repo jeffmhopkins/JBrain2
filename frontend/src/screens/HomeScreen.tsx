@@ -77,9 +77,6 @@ export function HomeScreen({
       <Omnibox
         seg={seg}
         onSegChange={setSeg}
-        editing={actions.editing}
-        onCancelEdit={actions.cancelEdit}
-        onSubmitEdit={(body) => void actions.submitEdit(body)}
         onSend={(input) => void notes.send(input)}
         onConversation={() => showToast("Conversations arrive in Phase 4")}
         onOpenLauncher={onOpenLauncher}

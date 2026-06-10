@@ -1412,3 +1412,49 @@ button.small {
 .result-anchor {
   white-space: nowrap;
 }
+
+/* ===== Full-screen note editor (topmost layer) ===== */
+
+.edit-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+  padding-top: env(safe-area-inset-top);
+  animation: launcher-in 150ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .edit-layer {
+    animation: none;
+  }
+}
+
+.edit-save {
+  padding: 8px 18px;
+  border-radius: var(--r-input);
+  border: none;
+  background: var(--steel-tint);
+  color: var(--steel);
+  font: 500 var(--fs-secondary) system-ui;
+}
+
+.edit-save:disabled {
+  background: var(--surface-2);
+  color: var(--text-3);
+}
+
+.edit-area {
+  flex: 1;
+  margin: 8px 16px calc(16px + env(safe-area-inset-bottom));
+  padding: 14px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
+  color: var(--text);
+  font: 400 var(--fs-composer) / 1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  resize: none;
+  outline: none;
+}

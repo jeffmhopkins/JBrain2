@@ -1,5 +1,6 @@
 import { type TouchEvent, useEffect, useRef, useState } from "react";
 import { type Principal, type SearchResult, api, setUnauthorizedHandler } from "./api/client";
+import { EditLayer } from "./components/EditLayer";
 import { Launcher, type LauncherTarget } from "./components/Launcher";
 import { MoveDomainSheet } from "./components/MoveDomainSheet";
 import { TopBar } from "./components/TopBar";
@@ -119,13 +120,18 @@ export function App() {
     setNoteView(noteViewFromSearch(result));
   }
 
-  // Editing happens in the omnibox, which lives on home — leaving the note
-  // view (and any card under it) behind on the way there.
+  // Editing is a full-screen layer over wherever you are; underlying
+  // layers stay put and the saved body is reflected into an open note view.
   function startEditFromNoteView(id: string, body: string) {
-    setNoteView(null);
-    setCard(null);
-    setLauncherOpen(false);
     actions.startEdit(id, body);
+  }
+
+  async function saveEdit(body: string) {
+    const id = actions.editing?.id;
+    await actions.submitEdit(body);
+    if (id !== undefined) {
+      setNoteView((v) => (v !== null && v.id === id ? { ...v, body } : v));
+    }
   }
 
   // Navigation is a tree: home → (swipe up) → launcher → (tap) → card
@@ -230,6 +236,14 @@ export function App() {
           target={actions.moveTarget}
           onClose={actions.cancelMove}
           onMove={(domain, destination) => void actions.submitMove(domain, destination)}
+        />
+      )}
+
+      {actions.editing !== null && (
+        <EditLayer
+          editing={actions.editing}
+          onCancel={actions.cancelEdit}
+          onSave={(body) => void saveEdit(body)}
         />
       )}
     </div>

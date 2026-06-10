@@ -3,16 +3,8 @@
 // entry sub-types; Medical/Financial expose an in-box destination row and
 // the textarea absorbs the height difference.
 
-import {
-  type CSSProperties,
-  type ReactNode,
-  type TouchEvent,
-  useEffect,
-  useRef,
-  useState,
-} from "react";
+import { type CSSProperties, type ReactNode, type TouchEvent, useRef, useState } from "react";
 import { MODES, type Mode, ROWS, type SegState, tapSegment } from "../notes/modes";
-import type { EditingNote } from "../notes/useNoteActions";
 import type { SendInput } from "../notes/useNotes";
 import {
   BoltIcon,
@@ -40,9 +32,6 @@ interface OmniboxProps {
   seg: SegState;
   onSegChange: (seg: SegState) => void;
   /** Non-null = the box is PATCHing an existing note instead of capturing. */
-  editing: EditingNote | null;
-  onCancelEdit: () => void;
-  onSubmitEdit: (body: string) => void;
   onSend: (input: SendInput) => void;
   onConversation: () => void;
   onOpenLauncher: () => void;
@@ -51,9 +40,6 @@ interface OmniboxProps {
 export function Omnibox({
   seg,
   onSegChange,
-  editing,
-  onCancelEdit,
-  onSubmitEdit,
   onSend,
   onConversation,
   onOpenLauncher,
@@ -67,26 +53,12 @@ export function Omnibox({
   const touchStartX = useRef<number | null>(null);
 
   // Entering edit mode loads the note body; leaving it restores blank capture.
-  const editingId = editing?.id ?? null;
-  const prevEditingId = useRef<string | null>(null);
-  useEffect(() => {
-    if (editingId !== prevEditingId.current) {
-      prevEditingId.current = editingId;
-      setText(editing?.body ?? "");
-    }
-  }, [editingId, editing]);
-
   const meta = MODES[seg.mode];
   const destination = meta.dest ? (destinations[seg.mode] ?? meta.dest.options[0] ?? null) : null;
 
   function send() {
     const body = text.trim();
     if (body === "") return;
-    if (editing !== null) {
-      onSubmitEdit(body);
-      setText("");
-      return;
-    }
     if (meta.domain === null) {
       // Research / Full Brain hand off to the Phase 4 conversation surface.
       onConversation();
@@ -147,21 +119,6 @@ export function Omnibox({
         onTouchStart={onTouchStart}
         onTouchMove={onTouchMove}
       >
-        {editing !== null && (
-          <div className="edit-banner">
-            <span>editing note</span>
-            <button
-              type="button"
-              className="edit-cancel"
-              onClick={() => {
-                setText("");
-                onCancelEdit();
-              }}
-            >
-              cancel
-            </button>
-          </div>
-        )}
         <div className="seg-row" role="tablist">
           {ROWS[seg.row].map((mode) => {
             const m = MODES[mode];
