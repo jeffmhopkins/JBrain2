@@ -1,0 +1,47 @@
+{
+  "name": "supersession must not cross the domain firewall",
+  "description": "Red-team C1: a health-domain fact and a general-domain fact sharing entity+predicate+qualifier must NOT form one supersession chain — the candidate read has to be domain-scoped (docs/ANALYSIS.md: candidate retrieval scoped to same entity+domain+kind). Today the general Denver fact gets superseded by the health clinic fact and a cross-domain review card copies the other domain's text. xfail until the candidate read is domain-scoped.",
+  "xfail": "C1 cross-domain supersession leak — supersession candidate read is not domain-scoped (pipeline._existing_facts)",
+  "steps": [
+    {
+      "domain": "general",
+      "created_at": "2026-06-10T17:11:00-06:00",
+      "body": "Sarah moved to Denver.",
+      "extraction": {
+        "title": "Sarah moved",
+        "tags": ["sarah", "move", "denver"],
+        "mentions": [{"name": "Sarah", "kind": "Person", "surface_text": "Sarah"}],
+        "facts": [
+          {"predicate": "homeLocation", "qualifier": "", "kind": "state", "statement": "Sarah moved to Denver.", "value_json": {"city": "Denver"}, "assertion": "asserted", "entity_ref": "Sarah", "object_entity_ref": null, "temporal": {"phrase": "", "resolved_start": "2026-06-10T00:00:00-06:00", "resolved_end": null, "precision": "day"}, "domain": "general", "confidence": 0.9}
+        ],
+        "temporal_tokens": []
+      }
+    },
+    {
+      "domain": "health",
+      "created_at": "2026-06-10T17:20:00-06:00",
+      "body": "Sarah checked into the Boulder treatment clinic.",
+      "extraction": {
+        "title": "Sarah care",
+        "tags": ["sarah", "health", "clinic"],
+        "mentions": [{"name": "Sarah", "kind": "Person", "surface_text": "Sarah"}],
+        "facts": [
+          {"predicate": "homeLocation", "qualifier": "", "kind": "state", "statement": "Sarah is staying at the Boulder treatment clinic.", "value_json": {"city": "Boulder clinic"}, "assertion": "asserted", "entity_ref": "Sarah", "object_entity_ref": null, "temporal": {"phrase": "", "resolved_start": "2026-06-10T00:00:00-06:00", "resolved_end": null, "precision": "day"}, "domain": "health", "confidence": 0.9}
+        ],
+        "temporal_tokens": []
+      }
+    }
+  ],
+  "expect": {
+    "facts": [
+      {"entity": "Sarah", "predicate": "homeLocation", "domain": "general", "status": "active", "chained": false},
+      {"entity": "Sarah", "predicate": "homeLocation", "domain": "health", "status": "active", "chained": false}
+    ],
+    "absent_facts": [
+      {"entity": "Sarah", "predicate": "homeLocation", "status": "superseded"}
+    ],
+    "review_items": [
+      {"kind": "fact_conflict", "count": 0}
+    ]
+  }
+}

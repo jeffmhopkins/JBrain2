@@ -1,0 +1,55 @@
+{
+  "name": "restated identical relationship is an idempotent refresh",
+  "description": "A functional relationship (worksFor) re-asserted with the SAME object entity in a later note hits decide()'s idempotency branch (values_equal true, existing status active -> refresh_id): the rendering/provenance update in place, no second row, no supersession chain, no duplicate fact_conflict. Pins docs/ANALYSIS.md 'Reprocessing': same identity key + same value -> update in place, no inbox noise.",
+  "steps": [
+    {
+      "domain": "general",
+      "created_at": "2026-04-01T10:00:00-06:00",
+      "body": "Nadia works for Initech.",
+      "extraction": {
+        "title": "Nadia at Initech",
+        "tags": ["nadia", "initech"],
+        "mentions": [
+          {"name": "Nadia", "kind": "Person", "surface_text": "Nadia"},
+          {"name": "Initech", "kind": "Organization", "surface_text": "Initech"}
+        ],
+        "facts": [
+          {"predicate": "worksFor", "qualifier": "", "kind": "relationship", "statement": "Nadia works for Initech.", "value_json": null, "assertion": "asserted", "entity_ref": "Nadia", "object_entity_ref": "Initech", "temporal": {"phrase": "", "resolved_start": "2026-04-01T00:00:00-06:00", "resolved_end": null, "precision": "day"}, "domain": "general", "confidence": 0.9}
+        ],
+        "temporal_tokens": []
+      }
+    },
+    {
+      "domain": "general",
+      "created_at": "2026-05-20T10:00:00-06:00",
+      "body": "Reminder: Nadia is still at Initech.",
+      "extraction": {
+        "title": "Nadia still at Initech",
+        "tags": ["nadia", "initech"],
+        "mentions": [
+          {"name": "Nadia", "kind": "Person", "surface_text": "Nadia"},
+          {"name": "Initech", "kind": "Organization", "surface_text": "Initech"}
+        ],
+        "facts": [
+          {"predicate": "worksFor", "qualifier": "", "kind": "relationship", "statement": "Nadia works for Initech.", "value_json": null, "assertion": "asserted", "entity_ref": "Nadia", "object_entity_ref": "Initech", "temporal": {"phrase": "", "resolved_start": "2026-04-01T00:00:00-06:00", "resolved_end": null, "precision": "day"}, "domain": "general", "confidence": 0.95}
+        ],
+        "temporal_tokens": []
+      }
+    }
+  ],
+  "expect": {
+    "facts": [
+      {"entity": "Nadia", "predicate": "worksFor", "kind": "relationship", "value_contains": "Initech", "status": "active", "chained": false, "count": 1}
+    ],
+    "absent_facts": [
+      {"entity": "Nadia", "predicate": "worksFor", "status": "superseded"}
+    ],
+    "review_items": [
+      {"kind": "fact_conflict", "summary_contains": "Nadia", "count": 0}
+    ],
+    "entities": [
+      {"name": "Nadia", "kind": "Person", "status": "provisional"},
+      {"name": "Initech", "kind": "Organization", "status": "provisional"}
+    ]
+  }
+}

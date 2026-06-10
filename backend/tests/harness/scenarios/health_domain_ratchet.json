@@ -1,0 +1,31 @@
+{
+  "name": "a health fact captured in a general note ratchets up to health",
+  "description": "docs/ANALYSIS.md domain firewall: 'domain can ratchet UP without review, never down' — misclassifying INTO health is cheap, a leak OUT of it is not. A note captured in `general` whose content is clearly health (an A1c lab value) emits a fact with domain=health. ratchet_domain(extracted=health, note_domain=general) returns (health, needs_promotion=False): the fact silently LANDS in health and NO domain_promotion review is filed (ratcheting up from general is free; promotion review fires only when a fact would move DOWN/ACROSS and gets held in the note's domain). This pins the cheap, no-friction up-ratchet.",
+  "steps": [
+    {
+      "domain": "general",
+      "created_at": "2026-05-18T09:00:00-06:00",
+      "body": "Got my lab results back — A1c came in at 6.8 percent.",
+      "extraction": {
+        "title": "Lab results",
+        "tags": ["labs", "a1c"],
+        "mentions": [{"name": "Me", "kind": "Person", "surface_text": "my"}],
+        "facts": [
+          {"predicate": "labResult", "qualifier": "hba1c", "kind": "measurement", "statement": "HbA1c was 6.8%.", "value_json": {"value": 6.8, "unit": "%", "loinc": "4548-4"}, "assertion": "asserted", "entity_ref": "Me", "object_entity_ref": null, "temporal": {"phrase": "", "resolved_start": "2026-05-18T00:00:00-06:00", "resolved_end": null, "precision": "day"}, "domain": "health", "confidence": 0.9}
+        ],
+        "temporal_tokens": []
+      }
+    }
+  ],
+  "expect": {
+    "facts": [
+      {"entity": "Me", "predicate": "labResult", "qualifier": "hba1c", "kind": "measurement", "value_contains": "6.8", "status": "active", "domain": "health"}
+    ],
+    "absent_facts": [
+      {"entity": "Me", "predicate": "labResult", "domain": "general"}
+    ],
+    "review_items": [
+      {"kind": "domain_promotion", "count": 0}
+    ]
+  }
+}

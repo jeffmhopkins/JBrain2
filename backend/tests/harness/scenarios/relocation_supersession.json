@@ -1,0 +1,46 @@
+{
+  "name": "relocation supersedes as a homeLocation state",
+  "description": "A move is a state change on schema.org homeLocation, not an event; a later correcting note supersedes the earlier city (SCD-2 close) and files a fact_conflict for review. This is the Denver->Boulder case from the owner's first real run, encoded as the behaviour a fixed prompt must produce.",
+  "steps": [
+    {
+      "domain": "general",
+      "created_at": "2026-06-10T17:11:00-06:00",
+      "body": "Bumped into Sarah from accounting — she just moved to Denver.",
+      "extraction": {
+        "title": "Ran into Sarah",
+        "tags": ["sarah", "relocation", "denver"],
+        "mentions": [{"name": "Sarah", "kind": "Person", "surface_text": "Sarah"}],
+        "facts": [
+          {"predicate": "homeLocation", "qualifier": "", "kind": "state", "statement": "Sarah moved to Denver.", "value_json": {"city": "Denver"}, "assertion": "asserted", "entity_ref": "Sarah", "object_entity_ref": null, "temporal": {"phrase": "just", "resolved_start": "2026-06-10T00:00:00-06:00", "resolved_end": null, "precision": "day"}, "domain": "general", "confidence": 0.85}
+        ],
+        "temporal_tokens": []
+      }
+    },
+    {
+      "domain": "general",
+      "created_at": "2026-06-10T17:13:00-06:00",
+      "body": "Sarah actually moved to Boulder, not Denver.",
+      "extraction": {
+        "title": "Sarah moved to Boulder",
+        "tags": ["sarah", "relocation", "correction"],
+        "mentions": [{"name": "Sarah", "kind": "Person", "surface_text": "Sarah"}],
+        "facts": [
+          {"predicate": "homeLocation", "qualifier": "", "kind": "state", "statement": "Sarah moved to Boulder.", "value_json": {"city": "Boulder"}, "assertion": "asserted", "entity_ref": "Sarah", "object_entity_ref": null, "temporal": {"phrase": "", "resolved_start": "2026-06-10T00:00:00-06:00", "resolved_end": null, "precision": "day"}, "domain": "general", "confidence": 0.9}
+        ],
+        "temporal_tokens": []
+      }
+    }
+  ],
+  "expect": {
+    "facts": [
+      {"entity": "Sarah", "predicate": "homeLocation", "kind": "state", "value_contains": "Denver", "status": "superseded", "chained": true},
+      {"entity": "Sarah", "predicate": "homeLocation", "kind": "state", "value_contains": "Boulder", "status": "active", "chained": false}
+    ],
+    "review_items": [
+      {"kind": "fact_conflict", "summary_contains": "homeLocation"}
+    ],
+    "entities": [
+      {"name": "Sarah", "kind": "Person", "status": "provisional"}
+    ]
+  }
+}

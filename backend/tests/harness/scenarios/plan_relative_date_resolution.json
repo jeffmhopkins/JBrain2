@@ -1,0 +1,46 @@
+{
+  "name": "relative plan dates resolve absolutely against created_at",
+  "description": "Relative phrases must be resolved to absolute ISO against the note's capture anchor and stored, never kept only-relative (docs/ANALYSIS.md 'Temporal model'). Two plans: 'in 3 months' from 2026-06-10 -> 2026-09-10 (day precision), and 'next Tuesday' from 2026-06-10 (a Wednesday) -> 2026-06-16. The harness snapshot exposes value_json+statement but not valid_from/temporal_precision columns, so the resolved date is asserted via value_contains and the precision is encoded in value_json (the authored temporal also carries precision for the real pipeline). Pins that the resolved absolute dates land on the facts.",
+  "steps": [
+    {
+      "domain": "general",
+      "created_at": "2026-06-10T11:00:00-06:00",
+      "body": "Dr. Okafor wants to see me again in 3 months for a follow-up.",
+      "extraction": {
+        "title": "Follow-up in 3 months",
+        "tags": ["okafor", "followup", "appointment"],
+        "mentions": [{"name": "Dr. Okafor follow-up", "kind": "appointment", "surface_text": "see me again in 3 months"}],
+        "facts": [
+          {"predicate": "scheduledTime", "qualifier": "", "kind": "state", "statement": "Follow-up with Dr. Okafor due around 2026-09-10.", "value_json": {"start": "2026-09-10", "precision": "day"}, "assertion": "expected", "entity_ref": "Dr. Okafor follow-up", "object_entity_ref": null, "temporal": {"phrase": "in 3 months", "resolved_start": "2026-09-10T11:00:00-06:00", "resolved_end": null, "precision": "day"}, "domain": "general", "confidence": 0.8}
+        ],
+        "temporal_tokens": []
+      }
+    },
+    {
+      "domain": "general",
+      "created_at": "2026-06-10T11:05:00-06:00",
+      "body": "Standup with the platform team moved to next Tuesday at 9am.",
+      "extraction": {
+        "title": "Standup next Tuesday",
+        "tags": ["standup", "platform", "meeting"],
+        "mentions": [{"name": "platform team standup", "kind": "appointment", "surface_text": "Standup with the platform team"}],
+        "facts": [
+          {"predicate": "scheduledTime", "qualifier": "", "kind": "state", "statement": "Platform team standup scheduled for 2026-06-16 at 9am.", "value_json": {"start": "2026-06-16T09:00:00-06:00", "precision": "instant"}, "assertion": "expected", "entity_ref": "platform team standup", "object_entity_ref": null, "temporal": {"phrase": "next Tuesday at 9am", "resolved_start": "2026-06-16T09:00:00-06:00", "resolved_end": null, "precision": "instant"}, "domain": "general", "confidence": 0.85}
+        ],
+        "temporal_tokens": []
+      }
+    }
+  ],
+  "expect": {
+    "facts": [
+      {"entity": "Dr. Okafor follow-up", "predicate": "scheduledTime", "kind": "state", "value_contains": "2026-09-10", "status": "active", "assertion": "expected"},
+      {"entity": "Dr. Okafor follow-up", "predicate": "scheduledTime", "kind": "state", "value_contains": "\"precision\": \"day\""},
+      {"entity": "platform team standup", "predicate": "scheduledTime", "kind": "state", "value_contains": "2026-06-16T09:00:00", "status": "active", "assertion": "expected"},
+      {"entity": "platform team standup", "predicate": "scheduledTime", "kind": "state", "value_contains": "\"precision\": \"instant\""}
+    ],
+    "entities": [
+      {"name": "Dr. Okafor follow-up", "kind": "appointment", "status": "provisional"},
+      {"name": "platform team standup", "kind": "appointment", "status": "provisional"}
+    ]
+  }
+}

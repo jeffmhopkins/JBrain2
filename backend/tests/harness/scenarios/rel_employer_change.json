@@ -1,0 +1,54 @@
+{
+  "name": "employer change supersedes worksFor (functional relationship)",
+  "description": "worksFor is a functional relationship predicate (supersession.FUNCTIONAL_PREDICATES): a new job supersedes the old binding, the old edge closes (SCD-2, valid_to = new valid_from), and a fact_conflict review is filed. Pins docs/ANALYSIS.md relationship row: 'supersede only for functional predicates'. Marcus leaves Acme for Globex; both Marcus and the employers are object entities.",
+  "steps": [
+    {
+      "domain": "general",
+      "created_at": "2026-02-03T09:00:00-07:00",
+      "body": "Marcus started at Acme Robotics last week.",
+      "extraction": {
+        "title": "Marcus joined Acme",
+        "tags": ["marcus", "acme", "job"],
+        "mentions": [
+          {"name": "Marcus", "kind": "Person", "surface_text": "Marcus"},
+          {"name": "Acme Robotics", "kind": "Organization", "surface_text": "Acme Robotics"}
+        ],
+        "facts": [
+          {"predicate": "worksFor", "qualifier": "", "kind": "relationship", "statement": "Marcus works for Acme Robotics.", "value_json": null, "assertion": "asserted", "entity_ref": "Marcus", "object_entity_ref": "Acme Robotics", "temporal": {"phrase": "last week", "resolved_start": "2026-01-26T00:00:00-07:00", "resolved_end": null, "precision": "day"}, "domain": "general", "confidence": 0.9}
+        ],
+        "temporal_tokens": []
+      }
+    },
+    {
+      "domain": "general",
+      "created_at": "2026-06-01T09:00:00-06:00",
+      "body": "Marcus just took a new job at Globex.",
+      "extraction": {
+        "title": "Marcus moved to Globex",
+        "tags": ["marcus", "globex", "job"],
+        "mentions": [
+          {"name": "Marcus", "kind": "Person", "surface_text": "Marcus"},
+          {"name": "Globex", "kind": "Organization", "surface_text": "Globex"}
+        ],
+        "facts": [
+          {"predicate": "worksFor", "qualifier": "", "kind": "relationship", "statement": "Marcus works for Globex.", "value_json": null, "assertion": "asserted", "entity_ref": "Marcus", "object_entity_ref": "Globex", "temporal": {"phrase": "just", "resolved_start": "2026-06-01T00:00:00-06:00", "resolved_end": null, "precision": "day"}, "domain": "general", "confidence": 0.9}
+        ],
+        "temporal_tokens": []
+      }
+    }
+  ],
+  "expect": {
+    "facts": [
+      {"entity": "Marcus", "predicate": "worksFor", "kind": "relationship", "value_contains": "Acme", "status": "superseded", "chained": true},
+      {"entity": "Marcus", "predicate": "worksFor", "kind": "relationship", "value_contains": "Globex", "status": "active", "chained": false}
+    ],
+    "review_items": [
+      {"kind": "fact_conflict", "summary_contains": "Marcus's worksFor changed"}
+    ],
+    "entities": [
+      {"name": "Marcus", "kind": "Person", "status": "provisional"},
+      {"name": "Acme Robotics", "kind": "Organization", "status": "provisional"},
+      {"name": "Globex", "kind": "Organization", "status": "provisional"}
+    ]
+  }
+}

@@ -1,0 +1,59 @@
+{
+  "name": "relationship object_entity_ref links new and existing entities",
+  "description": "A relationship fact is an edge to another entity (docs/ANALYSIS.md 'property graph': me.employer -> Acme). Pins object_entity_ref handling in the pipeline: note 1 mints both subject (Felix) and a NEW provisional object (Umbrella Corp) and links the worksFor edge to it; note 2 reuses the SAME object entity (Umbrella Corp) for a different subject (Greta) -- one org entity, two inbound edges. Both edges are functional worksFor but to the same single value each, so neither supersedes and no review fires.",
+  "steps": [
+    {
+      "domain": "general",
+      "created_at": "2026-04-10T09:00:00-06:00",
+      "body": "Felix works for Umbrella Corp.",
+      "extraction": {
+        "title": "Felix at Umbrella",
+        "tags": ["felix", "umbrella"],
+        "mentions": [
+          {"name": "Felix", "kind": "Person", "surface_text": "Felix"},
+          {"name": "Umbrella Corp", "kind": "Organization", "surface_text": "Umbrella Corp"}
+        ],
+        "facts": [
+          {"predicate": "worksFor", "qualifier": "", "kind": "relationship", "statement": "Felix works for Umbrella Corp.", "value_json": null, "assertion": "asserted", "entity_ref": "Felix", "object_entity_ref": "Umbrella Corp", "temporal": {"phrase": "", "resolved_start": "2026-04-10T00:00:00-06:00", "resolved_end": null, "precision": "day"}, "domain": "general", "confidence": 0.9}
+        ],
+        "temporal_tokens": []
+      }
+    },
+    {
+      "domain": "general",
+      "created_at": "2026-04-12T09:00:00-06:00",
+      "body": "Greta also works for Umbrella Corp.",
+      "extraction": {
+        "title": "Greta at Umbrella",
+        "tags": ["greta", "umbrella"],
+        "mentions": [
+          {"name": "Greta", "kind": "Person", "surface_text": "Greta"},
+          {"name": "Umbrella Corp", "kind": "Organization", "surface_text": "Umbrella Corp"}
+        ],
+        "facts": [
+          {"predicate": "worksFor", "qualifier": "", "kind": "relationship", "statement": "Greta works for Umbrella Corp.", "value_json": null, "assertion": "asserted", "entity_ref": "Greta", "object_entity_ref": "Umbrella Corp", "temporal": {"phrase": "", "resolved_start": "2026-04-12T00:00:00-06:00", "resolved_end": null, "precision": "day"}, "domain": "general", "confidence": 0.9}
+        ],
+        "temporal_tokens": []
+      }
+    }
+  ],
+  "expect": {
+    "facts": [
+      {"entity": "Felix", "predicate": "worksFor", "kind": "relationship", "value_contains": "Umbrella", "status": "active", "chained": false},
+      {"entity": "Greta", "predicate": "worksFor", "kind": "relationship", "value_contains": "Umbrella", "status": "active", "chained": false}
+    ],
+    "absent_facts": [
+      {"entity": "Felix", "predicate": "worksFor", "status": "superseded"},
+      {"entity": "Greta", "predicate": "worksFor", "status": "superseded"}
+    ],
+    "review_items": [
+      {"kind": "fact_conflict", "summary_contains": "Felix", "count": 0},
+      {"kind": "fact_conflict", "summary_contains": "Greta", "count": 0}
+    ],
+    "entities": [
+      {"name": "Felix", "kind": "Person", "status": "provisional"},
+      {"name": "Greta", "kind": "Person", "status": "provisional"},
+      {"name": "Umbrella Corp", "kind": "Organization", "status": "provisional"}
+    ]
+  }
+}
