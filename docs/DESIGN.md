@@ -31,6 +31,10 @@ Dual theme, dark-first. Implementation:
 - Default follows `prefers-color-scheme`; a Settings option overrides it
   (`system | dark | light`), persisted locally and (later) as a user setting.
 - The PWA `theme-color` meta updates with the active theme.
+- **Text size**: every type token is `calc(px × var(--font-scale))`; a
+  Settings "Text size" control (65 / 75 / 90 / 100%) sets the scale,
+  persisted locally. **Default is 75%** of the drawn px values (settled in
+  Phase 1 polish — the doc's sizes read large on real devices).
 
 ## Color tokens
 
@@ -218,9 +222,13 @@ section headers — KNOWLEDGE, AUTHORING, SYSTEM):
 
 - Opened by tapping the **bolt icon** in the top bar, or by **swiping up on
   the omnibox**.
-- Slides up over the home screen; **swipe down (or back gesture) dismisses
-  it**. It is a navigation surface, not a modal — no scrim-tap dismissal
-  needed, it owns the whole screen.
+- Slides up over the home screen; dismissed by the **explicit ✕ button or
+  tapping the handle row** (primary paths — gestures proved unreliable on
+  real devices and are an enhancement only), swipe down, or Escape. It is a
+  navigation surface, not a modal — no scrim-tap dismissal needed, it owns
+  the whole screen.
+- Every overlay surface must have a visible, tappable exit; a gesture is
+  never the only way out (settled in Phase 1 polish).
 - Tiles for phases not yet built render disabled with their phase label.
 
 ## Surface paradigms (which container for which job)

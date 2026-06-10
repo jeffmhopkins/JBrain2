@@ -2,12 +2,14 @@ import { registerSW } from "virtual:pwa-register";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./App";
+import { initFontScale } from "./fontScale";
 import { initTheme } from "./theme";
 import "./styles/tokens.css";
 import "./styles.css";
 
 // Resolve the theme before first paint so there is no flash of wrong theme.
 initTheme();
+initFontScale();
 
 // autoUpdate handles relaunches; the hourly check covers a PWA left open for
 // days, so it still converges on the latest deploy without a restart.

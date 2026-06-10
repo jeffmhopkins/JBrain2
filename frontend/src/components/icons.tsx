@@ -145,3 +145,9 @@ export const SettingsIcon = (p: IconProps) => (
     <path d="M12 2v2m0 16v2M4.93 4.93l1.41 1.41m11.32 11.32 1.41 1.41M2 12h2m16 0h2M4.93 19.07l1.41-1.41m11.32-11.32 1.41-1.41" />
   </Icon>
 );
+
+export const XIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M18 6 6 18M6 6l12 12" />
+  </Icon>
+);

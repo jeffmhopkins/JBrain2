@@ -506,8 +506,17 @@ h3 {
 
 .launcher-head {
   display: flex;
+  align-items: center;
+  padding: 4px 8px;
+}
+
+.launcher-grab {
+  flex: 1;
+  display: flex;
   justify-content: center;
-  padding: 10px 0 4px;
+  padding: 14px 0;
+  background: none;
+  border: none;
 }
 
 .launcher-handle {

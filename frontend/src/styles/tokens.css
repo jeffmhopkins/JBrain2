@@ -38,15 +38,18 @@
   --info: var(--steel);
 
   /* Type scale */
-  --fs-micro: 12px;
-  --fs-head: 13px; /* note-row metadata */
-  --fs-secondary: 14px;
-  --fs-note: 15px; /* stream note body, segments, destination row */
-  --fs-body: 16px;
-  --fs-composer: 17px; /* settled in the Phase 1 omnibox review */
-  --fs-title: 18px;
-  --fs-screen: 22px;
-  --fs-hero: 28px;
+  /* Type scale = DESIGN.md px values × the user's font-scale setting
+     (Settings → Text size, default 0.75). fontScale.ts sets --font-scale. */
+  --font-scale: 0.75;
+  --fs-micro: calc(12px * var(--font-scale));
+  --fs-head: calc(13px * var(--font-scale)); /* note-row metadata */
+  --fs-secondary: calc(14px * var(--font-scale));
+  --fs-note: calc(15px * var(--font-scale)); /* stream body, segments */
+  --fs-body: calc(16px * var(--font-scale));
+  --fs-composer: calc(17px * var(--font-scale)); /* Phase 1 omnibox review */
+  --fs-title: calc(18px * var(--font-scale));
+  --fs-screen: calc(22px * var(--font-scale));
+  --fs-hero: calc(28px * var(--font-scale));
 
   /* Shape */
   --r-input: 12px;
