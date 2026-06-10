@@ -46,7 +46,7 @@ from jbrain.analysis.prompt import (
     SYSTEM_PROMPT,
     build_user_prompt,
 )
-from jbrain.analysis.supersession import Candidate, Decision, FactView, decide
+from jbrain.analysis.supersession import Candidate, Decision, FactView, decide, is_functional
 from jbrain.db.session import scoped_session
 from jbrain.llm import LlmBadResponseError, LlmRouter
 from jbrain.models.analysis import (
@@ -460,9 +460,12 @@ class AnalysisPipeline:
         # decide). The structural identity key is the graph ADDRESS
         # entity.predicate[.qualifier] pointing at a value or another entity, so
         # an edge to a different object is a DIFFERENT fact (me.owns->Civic vs
-        # me.owns->kayak) while a scalar fact has a null object. The pipeline
-        # runs as the owner SYSTEM_CTX, so RLS does not scope this read — without
-        # the explicit domain filter a health fact would supersede a same-key
+        # me.owns->kayak) while a scalar fact has a null object. Functional
+        # predicates are the exception: at most one current value across ALL
+        # objects (a new employer must see — and supersede — the old employer
+        # edge), so the object stays out of their key. The pipeline runs as the
+        # owner SYSTEM_CTX, so RLS does not scope this read — without the
+        # explicit domain filter a health fact would supersede a same-key
         # general fact and a review card would copy cross-domain text
         # (docs/ANALYSIS.md "Domains and the firewall", "Facts").
         stmt = select(Fact).where(
@@ -470,13 +473,14 @@ class AnalysisPipeline:
             Fact.predicate == predicate,
             Fact.qualifier == qualifier,
             Fact.subject_id == subject_id if subject_id else Fact.subject_id.is_(None),
-            (
+            Fact.domain_code == fact_domain,
+        )
+        if not is_functional(predicate):
+            stmt = stmt.where(
                 Fact.object_entity_id == object_entity_id
                 if object_entity_id
                 else Fact.object_entity_id.is_(None)
-            ),
-            Fact.domain_code == fact_domain,
-        )
+            )
         rows = (await session.execute(stmt)).scalars().all()
         return [
             FactView(
