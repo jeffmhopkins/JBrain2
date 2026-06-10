@@ -5,6 +5,7 @@ stored by sha256, so identical attachments dedupe for free and the layout
 can move to S3/MinIO without touching callers.
 """
 
+import asyncio
 import hashlib
 from pathlib import Path
 from typing import Protocol
@@ -13,6 +14,10 @@ from typing import Protocol
 class BlobStore(Protocol):
     async def put(self, data: bytes) -> str:
         """Store bytes, return their sha256 hex digest."""
+        ...
+
+    async def get(self, sha256: str) -> bytes:
+        """Read a stored blob; raises FileNotFoundError when absent."""
         ...
 
     def path_for(self, sha256: str) -> Path:
@@ -46,6 +51,10 @@ class FsBlobStore:
             tmp.write_bytes(data)
             tmp.rename(target)
         return digest
+
+    async def get(self, sha256: str) -> bytes:
+        # to_thread keeps large attachment reads off the event loop.
+        return await asyncio.to_thread(self.path_for(sha256).read_bytes)
 
     async def exists(self, sha256: str) -> bool:
         return self.path_for(sha256).exists()

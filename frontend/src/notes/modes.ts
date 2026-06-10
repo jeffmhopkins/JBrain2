@@ -101,3 +101,11 @@ export const DOMAIN_LABEL: Record<string, string> = {
   health: "Medical",
   finance: "Financial",
 };
+
+/** Every domain's display name (the stream omits "General" — see DOMAIN_LABEL). */
+export const DOMAIN_TITLE: Record<string, string> = {
+  general: "General",
+  health: "Medical",
+  finance: "Financial",
+  location: "Location",
+};

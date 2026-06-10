@@ -1,15 +1,15 @@
 """SQL notes repository. Every query runs on an RLS-scoped session, so
 domain filtering is enforced by Postgres, not by these methods."""
 
-from datetime import datetime
+from datetime import UTC, datetime
 
-from sqlalchemy import select
+from sqlalchemy import delete, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from jbrain.db.session import SessionContext, scoped_session
-from jbrain.models.notes import Attachment, Note
-from jbrain.notes.service import AttachmentInfo, NoteInfo, UnknownDomain
+from jbrain.models.notes import Attachment, Chunk, Note
+from jbrain.notes.service import AttachmentInfo, NoteInfo, NoteUpdate, UnknownDomain
 
 
 def _attachment_info(a: Attachment) -> AttachmentInfo:
@@ -30,7 +30,11 @@ def _note_info(n: Note) -> NoteInfo:
         destination=n.destination,
         body=n.body,
         created_at=n.created_at,
+        ingest_state=n.ingest_state,
         attachments=[_attachment_info(a) for a in n.attachments],
+        latitude=n.latitude,
+        longitude=n.longitude,
+        accuracy_m=n.location_accuracy_m,
     )
 
 
@@ -46,11 +50,20 @@ class SqlNotesRepo:
         domain: str,
         destination: str | None,
         body: str,
+        latitude: float | None = None,
+        longitude: float | None = None,
+        accuracy_m: float | None = None,
     ) -> tuple[NoteInfo, bool]:
         try:
             async with scoped_session(self._maker, ctx) as session:
                 note = Note(
-                    client_id=client_id, domain_code=domain, destination=destination, body=body
+                    client_id=client_id,
+                    domain_code=domain,
+                    destination=destination,
+                    body=body,
+                    latitude=latitude,
+                    longitude=longitude,
+                    location_accuracy_m=accuracy_m,
                 )
                 session.add(note)
                 await session.flush()
@@ -81,6 +94,68 @@ class SqlNotesRepo:
                 query = query.where(Note.created_at < before)
             rows = (await session.execute(query)).scalars().all()
             return [_note_info(n) for n in rows]
+
+    async def update_note(
+        self, ctx: SessionContext, note_id: str, changes: NoteUpdate
+    ) -> NoteInfo | None:
+        try:
+            async with scoped_session(self._maker, ctx) as session:
+                note = (
+                    await session.execute(
+                        select(Note).where(Note.id == note_id, Note.deleted_at.is_(None))
+                    )
+                ).scalar_one_or_none()
+                if note is None:
+                    return None
+                if changes.body is not None:
+                    note.body = changes.body
+                if changes.domain is not None and changes.domain != note.domain_code:
+                    note.domain_code = changes.domain
+                    # Attachments duplicate the note's domain (0002 invariant)
+                    # so a domain move must carry them along; chunks re-derive
+                    # theirs from the note at re-ingest.
+                    await session.execute(
+                        update(Attachment)
+                        .where(Attachment.note_id == note.id)
+                        .values(domain_code=changes.domain)
+                    )
+                if changes.clear_destination:
+                    note.destination = None
+                elif changes.destination is not None:
+                    note.destination = changes.destination
+                note.updated_at = datetime.now(UTC)
+                # Any edit invalidates chunks/embeddings: back to 'pending'
+                # until the re-enqueued ingest rebuilds them.
+                note.ingest_state = "pending"
+                await session.flush()
+                await session.refresh(note)
+                return _note_info(note)
+        except IntegrityError as exc:
+            raise UnknownDomain(changes.domain or "") from exc
+
+    async def delete_note(self, ctx: SessionContext, note_id: str) -> bool:
+        async with scoped_session(self._maker, ctx) as session:
+            note = (
+                await session.execute(
+                    select(Note).where(Note.id == note_id, Note.deleted_at.is_(None))
+                )
+            ).scalar_one_or_none()
+            if note is None:
+                return False
+            # Soft-delete keeps the source of truth; chunks go hard so the
+            # search index never serves a deleted note's text.
+            note.deleted_at = datetime.now(UTC)
+            await session.execute(delete(Chunk).where(Chunk.note_id == note.id))
+            return True
+
+    async def get_note(self, ctx: SessionContext, note_id: str) -> NoteInfo | None:
+        async with scoped_session(self._maker, ctx) as session:
+            row = (
+                await session.execute(
+                    select(Note).where(Note.id == note_id, Note.deleted_at.is_(None))
+                )
+            ).scalar_one_or_none()
+            return None if row is None else _note_info(row)
 
     async def add_attachment(
         self,

@@ -147,6 +147,57 @@ than wrapping.
 borders, out-of-month days in `--text-3`, today = accent ring around the day
 number; selected-day panel below with `+ Add` (accent link) and `Open day →`.
 
+**Home stream** (settled in the Phase 2 home review): home is NOT an
+infinite timeline — it shows the **last 2 days** of notes with an
+"older notes live in Search" pill above. The stream area is
+**mode-scoped**: Entry shows the note stream; Research / Full Brain show
+that mode's **conversation cards** (title, last-message preview, time,
+mode dot) — tapping one descends the tree into the conversation layer;
+typing in those modes always starts a NEW conversation. Until Phase 4
+ships conversations, those modes show an empty state ("conversations
+arrive in Phase 4"). **Swiping a note bubble left** slides it to reveal an
+action rail: **Edit** (loads the note into the omnibox; sending updates it
+and re-triggers ingestion), **Delete** (inline tap-again confirm), **Move
+domain** (small sheet). Tapping a bubble opens the note sheet.
+
+**Capture location** (settled in the Phase 2 review): a Settings toggle,
+**on by default** (browser permission prompt on first launch; denial just
+means location-less notes). While on, the app keeps a warm geolocation fix
+and attaches lat/lng/accuracy to a note at send **only if the fix is under
+2 minutes old** — capture is never blocked or delayed waiting for GPS.
+Note-location is owner-eyes metadata: Phase 7 scoped tokens never receive
+location fields, regardless of the note's domain.
+
+**Note view** (settled in the Phase 2 review): entry-stream bubbles clamp
+at **3 lines**; tapping opens the **note view layer** (slide-up tree level,
+swipe-down back) with a **Note / Analysis tab split**:
+
+- *Note tab*: full markdown body, attachment cards with per-attachment
+  extraction status from the dispatcher, and the Edit / Move domain /
+  Delete actions (the swipe rail's longhand).
+- *Analysis tab* (lights up by phase): generated title + 3-6 tags (P3 —
+  pre-P3 the header shows only domain + date, **no title fallback**);
+  salient facts with kind badges (measurement/state/event/preference),
+  status chips (active / pending-review / **pinned**) and confidence;
+  entity chips → entity pages; extraction provenance (model, prompt
+  version, analyzed-when) with re-run and correct actions (P3); wiki
+  backlinks → articles (P6).
+
+Search results and stream taps open the same surface — this *is* the
+former "note sheet", upgraded.
+
+**Search** (settled in the Phase 2 review): explicit submit (enter / Search
+tap), **passage-first results** — the matched chunk is the hero text with
+`--amber-tint` highlight marks, the source note is a one-line context row
+beneath; domain-colored dot + date in the head; every result carries its
+**match badge** (`semantic` steel-tint / `keyword` surface-2) — retrieval
+transparency is a feature, not debug chrome. Domain filter chips under the
+search bar. Degraded mode shows the amber "keyword-only results — semantic
+search recovering…" banner (never an error page). Tapping a result opens
+the **note sheet** — a minimal full-note view (body, attachments, metadata)
+as a slide-up layer; swipe down returns to results. The omnibox Research
+segment remains a Phase 4 surface; search lives behind the Search tile.
+
 **Empty states** — one `--text-2` sentence with the action inline: *"Nothing
 scheduled — tap to add."* No illustrations.
 

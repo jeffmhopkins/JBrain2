@@ -35,13 +35,37 @@ free-text blob:
 - `statement` (canonical one-sentence rendering — embedded, cited, shown),
   `value_json` for structured payloads (measurements: value + unit).
 - `predicate` is free text plus the kind enum below — no controlled
-  ontology **[decided]**; nightly consolidation merges near-duplicate
-  predicates.
+  ontology **[decided]** — but **schema.org-guided [decided]**: extraction
+  prefers schema.org type and property names where they exist
+  (`Person.birthDate`, `worksFor`, `address`), coining `snake_case`
+  predicates otherwise. LLMs know the vocabulary cold, so every model and
+  prompt version converges on the same names — which is what keeps the
+  structural identity key matchable across re-extractions. Nightly
+  consolidation normalizes drift *toward* schema.org as the attractor.
+  Domain complements: FHIR's Observation/LOINC shapes the Phase 7 typed
+  health records; iCalendar RRULE encodes `recurrence`-kind temporal
+  tokens.
 - Assertion status: `asserted | negated | hypothetical | reported |
   question` — the wiki demotes everything below `asserted`. "Doctor wants
   to rule out diabetes" is not a diabetes fact.
 - Provenance: `note_id`, `chunk_id`, `extractor` (model id),
   `prompt_version`, `confidence`.
+
+### The fact grammar: a property graph **[decided]**
+
+Every fact is an **edge addressed as `entity.predicate[.qualifier]`**,
+pointing at a value (`me.weight → 182 lb`) or another entity
+(`me.employer → Acme`). The structural identity key IS the graph address,
+and the supersession chain on that address IS the property's **full
+revision history** — `me.weight` yields a time series, `me.address` an
+interval history, `appointment.scheduled_time` a reschedule chain — every
+link citing its source note. Nothing is deleted, ever.
+
+Entity-row fields (`canonical_name`, summary) are **denormalized
+projections of current facts**: a name change is an `entity.name`
+transition with history, not an overwrite. The same rule that made
+appointments reschedule-safe applies to every property: identity is
+stable; properties are supersedable bindings.
 
 ### Fact kinds and supersession **[decided: per-kind policy]**
 
@@ -70,6 +94,26 @@ against the capture anchor and stored absolute with
 era-precision range; never store only-relative. Future-tense facts carry
 `expected` status (they are not occurred events) and defer to the
 appointments pipeline where applicable.
+
+### Temporal tokens and appointment identity **[decided]**
+
+Every resolved date/time expression is a first-class **temporal token** —
+span-anchored like an entity mention: surface phrase, resolved absolute
+value, `temporal_precision`, the capture anchor used, kind
+(`point | range | recurrence`). Facts and structured records *reference*
+tokens (keeping their own valid_from/to denormalized for query speed), so
+every datetime in the system traces to the words that produced it and
+re-resolution after an anchor correction is a targeted update.
+
+**Appointments are entities with time as a binding, not identity.** An
+appointment entity is stable; its scheduled time is a supersedable binding
+to a temporal token (state-fact semantics: newest-wins + review flag,
+full reschedule chain retained). "Dentist moved to Friday" = resolve the
+mention to the existing appointment entity (candidate scope: upcoming
+appointments; ambiguity → review inbox), mint a new token from the new
+note, supersede the binding. The calendar/ICS feed reads the current
+binding; the entity, its facts, and its citations survive any number of
+reschedules. Past-tense references convert `expected` → `occurred`.
 
 ## Entities
 

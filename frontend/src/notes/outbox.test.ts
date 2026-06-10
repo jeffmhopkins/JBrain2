@@ -22,7 +22,11 @@ function noteOut(clientId: string): NoteOut {
     destination: null,
     body: "hello",
     created_at: "2026-06-10T10:00:01.000Z",
+    ingest_state: "pending",
     attachments: [],
+    latitude: null,
+    longitude: null,
+    accuracy_m: null,
   };
 }
 
@@ -61,6 +65,32 @@ describe("flushOutbox", () => {
       domain: "general",
       body: "hello",
     });
+  });
+
+  it("sends write-time coordinates with the note when the outbox row has them", async () => {
+    const store = createMemoryStore();
+    await store.put(pendingNote({ latitude: 47.6, longitude: -122.3, accuracy_m: 25 }));
+    fetchMock.mockResolvedValue(jsonResponse(noteOut("c-1")));
+
+    await flushOutbox(store);
+
+    const [, init] = fetchMock.mock.calls[0] ?? [];
+    expect(JSON.parse(String(init?.body))).toMatchObject({
+      latitude: 47.6,
+      longitude: -122.3,
+      accuracy_m: 25,
+    });
+  });
+
+  it("omits location fields entirely when the note has no fix", async () => {
+    const store = createMemoryStore();
+    await store.put(pendingNote());
+    fetchMock.mockResolvedValue(jsonResponse(noteOut("c-1")));
+
+    await flushOutbox(store);
+
+    const [, init] = fetchMock.mock.calls[0] ?? [];
+    expect(JSON.parse(String(init?.body))).not.toHaveProperty("latitude");
   });
 
   it("keeps the note on network failure and retries with the same client_id", async () => {

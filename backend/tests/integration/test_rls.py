@@ -33,7 +33,9 @@ APP_PASSWORD = "app_test_pw"
 def database_url() -> Iterator[str]:
     from testcontainers.postgres import PostgresContainer
 
-    with PostgresContainer("postgres:16-alpine") as pg:
+    # Migration 0003 needs pgvector; the plain alpine image doesn't ship it
+    # (production uses timescaledb-ha, which does).
+    with PostgresContainer("pgvector/pgvector:pg16") as pg:
         admin_url = pg.get_connection_url(driver="psycopg")
         import sqlalchemy
 

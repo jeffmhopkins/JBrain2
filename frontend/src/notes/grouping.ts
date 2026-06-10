@@ -46,6 +46,15 @@ export function groupByDay<T>(
   return groups;
 }
 
+/**
+ * Home-stream bound (docs/DESIGN.md "Home stream"): true for local today and
+ * the previous `days - 1` calendar days. Older notes live in Search.
+ */
+export function isWithinLastDays(date: Date, days: number, now: Date = new Date()): boolean {
+  const diffDays = Math.round((startOfDay(now) - startOfDay(date)) / DAY_MS);
+  return diffDays < days;
+}
+
 /** "now" / "5m" / "3h" within 24h, otherwise local clock time. */
 export function relativeTime(date: Date, now: Date = new Date()): string {
   const diffMs = now.getTime() - date.getTime();

@@ -3,8 +3,16 @@
 // entry sub-types; Medical/Financial expose an in-box destination row and
 // the textarea absorbs the height difference.
 
-import { type CSSProperties, type ReactNode, type TouchEvent, useRef, useState } from "react";
+import {
+  type CSSProperties,
+  type ReactNode,
+  type TouchEvent,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import { MODES, type Mode, ROWS, type SegState, tapSegment } from "../notes/modes";
+import type { EditingNote } from "../notes/useNoteActions";
 import type { SendInput } from "../notes/useNotes";
 import {
   BoltIcon,
@@ -28,13 +36,28 @@ const MODE_ICON: Record<Mode, (p: { size?: number }) => ReactNode> = {
 const SWIPE_UP_PX = 48;
 
 interface OmniboxProps {
+  /** Mode state is lifted so the home stream can scope itself to the mode. */
+  seg: SegState;
+  onSegChange: (seg: SegState) => void;
+  /** Non-null = the box is PATCHing an existing note instead of capturing. */
+  editing: EditingNote | null;
+  onCancelEdit: () => void;
+  onSubmitEdit: (body: string) => void;
   onSend: (input: SendInput) => void;
   onConversation: () => void;
   onOpenLauncher: () => void;
 }
 
-export function Omnibox({ onSend, onConversation, onOpenLauncher }: OmniboxProps) {
-  const [seg, setSeg] = useState<SegState>({ row: "main", mode: "entry" });
+export function Omnibox({
+  seg,
+  onSegChange,
+  editing,
+  onCancelEdit,
+  onSubmitEdit,
+  onSend,
+  onConversation,
+  onOpenLauncher,
+}: OmniboxProps) {
   const [text, setText] = useState("");
   const [files, setFiles] = useState<File[]>([]);
   // Remember the chosen destination per mode so flipping modes keeps it.
@@ -43,12 +66,27 @@ export function Omnibox({ onSend, onConversation, onOpenLauncher }: OmniboxProps
   const touchStartY = useRef<number | null>(null);
   const touchStartX = useRef<number | null>(null);
 
+  // Entering edit mode loads the note body; leaving it restores blank capture.
+  const editingId = editing?.id ?? null;
+  const prevEditingId = useRef<string | null>(null);
+  useEffect(() => {
+    if (editingId !== prevEditingId.current) {
+      prevEditingId.current = editingId;
+      setText(editing?.body ?? "");
+    }
+  }, [editingId, editing]);
+
   const meta = MODES[seg.mode];
   const destination = meta.dest ? (destinations[seg.mode] ?? meta.dest.options[0] ?? null) : null;
 
   function send() {
     const body = text.trim();
     if (body === "") return;
+    if (editing !== null) {
+      onSubmitEdit(body);
+      setText("");
+      return;
+    }
     if (meta.domain === null) {
       // Research / Full Brain hand off to the Phase 4 conversation surface.
       onConversation();
@@ -109,6 +147,21 @@ export function Omnibox({ onSend, onConversation, onOpenLauncher }: OmniboxProps
         onTouchStart={onTouchStart}
         onTouchMove={onTouchMove}
       >
+        {editing !== null && (
+          <div className="edit-banner">
+            <span>editing note</span>
+            <button
+              type="button"
+              className="edit-cancel"
+              onClick={() => {
+                setText("");
+                onCancelEdit();
+              }}
+            >
+              cancel
+            </button>
+          </div>
+        )}
         <div className="seg-row" role="tablist">
           {ROWS[seg.row].map((mode) => {
             const m = MODES[mode];
@@ -126,7 +179,7 @@ export function Omnibox({ onSend, onConversation, onOpenLauncher }: OmniboxProps
                     ? ({ "--mode": m.color, "--mode-tint": m.tint } as CSSProperties)
                     : undefined
                 }
-                onClick={() => setSeg((prev) => tapSegment(prev, mode))}
+                onClick={() => onSegChange(tapSegment(seg, mode))}
               >
                 <span className="seg-ic">
                   <Ic size={18} />

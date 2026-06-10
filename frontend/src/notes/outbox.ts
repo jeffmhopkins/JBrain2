@@ -19,6 +19,11 @@ export interface PendingNote {
   body: string;
   created_at: string;
   attachments: PendingAttachment[];
+  // Captured at write time so an offline note keeps its true location even
+  // when the flush happens somewhere else. Absent on pre-Phase-2 rows.
+  latitude?: number;
+  longitude?: number;
+  accuracy_m?: number;
 }
 
 export interface OutboxStore {
@@ -110,6 +115,11 @@ async function doFlush(store: OutboxStore): Promise<FlushResult> {
         domain: note.domain,
         destination: note.destination,
         body: note.body,
+        ...(note.latitude !== undefined &&
+        note.longitude !== undefined &&
+        note.accuracy_m !== undefined
+          ? { latitude: note.latitude, longitude: note.longitude, accuracy_m: note.accuracy_m }
+          : {}),
       });
       while (note.attachments.length > 0) {
         const att = note.attachments[0];
