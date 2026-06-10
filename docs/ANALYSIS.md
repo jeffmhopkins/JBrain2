@@ -91,6 +91,42 @@ appointments pipeline where applicable.
   restrictive domain proposes promotion via the review inbox. Facts always
   carry their own domains regardless of their entity's domain.
 
+### First person and the owner **[decided]**
+
+Unattributed first person resolves to the **note's author-subject**: in the
+owner's notes, "my BP" is the owner's; in a Phase-7 intake session, "I had my
+gallbladder out" is that subject's. This is a resolution *rule* keyed to
+note authorship — pronouns are never stored as aliases. The owner exists as
+a canonical **"Me" entity** hard-linked to the owner subject row, the
+implicit center of the graph **[decided]**. Quoted or relayed first person
+("Mom says: I take lisinopril") attributes to the speaker with
+`assertion=reported`; the default applies only to genuinely unattributed
+statements.
+
+### Alias resolution & separation **[decided]**
+
+Resolution layers, cheapest first: exact alias match (case/diacritic
+insensitive) → embedding similarity vs entity name+summary → batched cheap
+LLM disambiguation with candidates → review inbox for the gray zone.
+
+- **Bare first names [decided: auto-link + retro-recheck]**: if exactly one
+  matching entity exists, mentions auto-link; the moment a second entity
+  with the same name appears, all prior auto-linked mentions of that name
+  are flagged for retroactive re-review. Low friction, self-correcting.
+- **Role references [decided: via relationship facts]**: "my dentist" /
+  "my boss" resolve through the relationship fact (`dentist_of`,
+  `employer`) **valid at the note's time** — never static aliases, so a
+  provider or job change can't silently misattribute later notes. No such
+  fact at that time → review inbox. Kinship terms ("Mom") remain ordinary
+  stable aliases.
+- **Negative knowledge**: rejecting a merge proposal writes a permanent
+  `distinct_from` edge — never re-proposed, and a hard constraint for the
+  disambiguator. Rejections teach as much as confirmations.
+- **Split detection**: conflicting `attribute` facts on one entity (two
+  birthdays) are evidence of a hidden two-people merge — the system
+  proposes a **split**, not a supersession; mention-level provenance makes
+  the split a re-resolution of spans, not archaeology.
+
 ## Domains and the firewall
 
 - Every fact, entity, mention, and derived chunk carries a domain and sits
