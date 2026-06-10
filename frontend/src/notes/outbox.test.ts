@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { NoteOut } from "../api/client";
-import { type PendingNote, createMemoryStore, flushOutbox } from "./outbox";
+import { type PendingNote, createMemoryStore, flushOutbox, localCaptureIso } from "./outbox";
 
 function pendingNote(overrides: Partial<PendingNote> = {}): PendingNote {
   return {
@@ -80,6 +80,30 @@ describe("flushOutbox", () => {
       longitude: -122.3,
       accuracy_m: 25,
     });
+  });
+
+  it("sends the write-time capture instant with its UTC offset", async () => {
+    const store = createMemoryStore();
+    await store.put(pendingNote({ captured_at: "2026-06-10T17:11:42-06:00" }));
+    fetchMock.mockResolvedValue(jsonResponse(noteOut("c-1")));
+
+    await flushOutbox(store);
+
+    const [, init] = fetchMock.mock.calls[0] ?? [];
+    expect(JSON.parse(String(init?.body))).toMatchObject({
+      captured_at: "2026-06-10T17:11:42-06:00",
+    });
+  });
+
+  it("omits captured_at for pre-0008 outbox rows", async () => {
+    const store = createMemoryStore();
+    await store.put(pendingNote());
+    fetchMock.mockResolvedValue(jsonResponse(noteOut("c-1")));
+
+    await flushOutbox(store);
+
+    const [, init] = fetchMock.mock.calls[0] ?? [];
+    expect(JSON.parse(String(init?.body))).not.toHaveProperty("captured_at");
   });
 
   it("omits location fields entirely when the note has no fix", async () => {
@@ -182,6 +206,13 @@ describe("flushOutbox", () => {
 
     expect(await flushOutbox(store)).toEqual({ sent: 1, remaining: 0 });
     expect(await store.all()).toEqual([]);
+  });
+
+  it("localCaptureIso renders local wall-clock time with an explicit offset", () => {
+    // The exact field shape: an evening capture must read as the LOCAL date.
+    const iso = localCaptureIso(new Date(2026, 5, 10, 17, 11, 42));
+    expect(iso.startsWith("2026-06-10T17:11:42")).toBe(true);
+    expect(iso).toMatch(/[+-]\d{2}:\d{2}$/);
   });
 
   it("flushes oldest-first so the stream stays ordered", async () => {

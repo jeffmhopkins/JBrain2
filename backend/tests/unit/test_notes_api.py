@@ -5,7 +5,7 @@ import dataclasses
 import uuid
 from collections.abc import Iterator
 from dataclasses import dataclass, field
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -34,6 +34,9 @@ class FakeJobQueue:
 @dataclass
 class FakeNotesRepo:
     notes: list[NoteInfo] = field(default_factory=list)
+    # captured_at isn't on NoteInfo (responses don't echo it), so the fake
+    # records what the API handed it for assertions.
+    captured_at_by_client: dict[str, datetime | None] = field(default_factory=dict)
 
     async def create_note(
         self,
@@ -46,9 +49,11 @@ class FakeNotesRepo:
         latitude: float | None = None,
         longitude: float | None = None,
         accuracy_m: float | None = None,
+        captured_at: datetime | None = None,
     ) -> tuple[NoteInfo, bool]:
         if domain not in KNOWN_DOMAINS:
             raise UnknownDomain(domain)
+        self.captured_at_by_client[client_id] = captured_at
         for n in self.notes:
             if n.client_id == client_id:
                 return n, False
@@ -415,6 +420,37 @@ def test_create_note_rejects_out_of_range_location(
     c, _, _ = client
     payload = {"client_id": "locbad", "body": "x", "latitude": 0, "longitude": 0, **patch}
     assert c.post("/api/notes", json=payload).status_code == 422
+
+
+def test_create_note_passes_captured_at_with_offset(
+    client: tuple[TestClient, FakeNotesRepo, FakeJobQueue],
+) -> None:
+    c, repo, _ = client
+    resp = c.post(
+        "/api/notes",
+        json={"client_id": "cap1", "body": "x", "captured_at": "2026-06-10T17:11:00-06:00"},
+    )
+    assert resp.status_code == 201
+    stored = repo.captured_at_by_client["cap1"]
+    assert stored is not None
+    # The author's offset survives the wire: it is the resolution frame.
+    assert stored.utcoffset() == timedelta(hours=-6)
+    assert stored == datetime(2026, 6, 10, 17, 11, tzinfo=timezone(timedelta(hours=-6)))
+    # Optional: absent stays None (analysis falls back to created_at).
+    c.post("/api/notes", json={"client_id": "cap2", "body": "y"})
+    assert repo.captured_at_by_client["cap2"] is None
+
+
+def test_create_note_rejects_naive_captured_at(
+    client: tuple[TestClient, FakeNotesRepo, FakeJobQueue],
+) -> None:
+    # Without an offset there is no frame to resolve "today" in.
+    c, _, _ = client
+    resp = c.post(
+        "/api/notes",
+        json={"client_id": "capbad", "body": "x", "captured_at": "2026-06-10T17:11:00"},
+    )
+    assert resp.status_code == 422
 
 
 def test_failed_attachment_upload_does_not_enqueue(

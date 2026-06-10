@@ -19,11 +19,28 @@ export interface PendingNote {
   body: string;
   created_at: string;
   attachments: PendingAttachment[];
+  // Write-time capture instant WITH the author's UTC offset — the anchor
+  // analysis resolves "today"/"in 3 months" against. The outbox makes
+  // server receipt time wrong, and a UTC string loses the local frame.
+  // Absent on pre-0008 rows.
+  captured_at?: string;
   // Captured at write time so an offline note keeps its true location even
   // when the flush happens somewhere else. Absent on pre-Phase-2 rows.
   latitude?: number;
   longitude?: number;
   accuracy_m?: number;
+}
+
+/** Local ISO 8601 with explicit offset, e.g. "2026-06-10T17:11:42-06:00". */
+export function localCaptureIso(d: Date = new Date()): string {
+  const pad = (n: number) => String(Math.abs(n)).padStart(2, "0");
+  const offsetMin = -d.getTimezoneOffset();
+  const sign = offsetMin < 0 ? "-" : "+";
+  return (
+    `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}` +
+    `T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}` +
+    `${sign}${pad(Math.trunc(Math.abs(offsetMin) / 60))}:${pad(Math.abs(offsetMin) % 60)}`
+  );
 }
 
 export interface OutboxStore {
@@ -115,6 +132,7 @@ async function doFlush(store: OutboxStore): Promise<FlushResult> {
         domain: note.domain,
         destination: note.destination,
         body: note.body,
+        ...(note.captured_at !== undefined ? { captured_at: note.captured_at } : {}),
         ...(note.latitude !== undefined &&
         note.longitude !== undefined &&
         note.accuracy_m !== undefined

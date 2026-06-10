@@ -25,6 +25,12 @@ class Note(Base):
     longitude: Mapped[float | None] = mapped_column(Double, nullable=True)
     location_accuracy_m: Mapped[float | None] = mapped_column(Float, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    # Client-side capture instant + the author's UTC offset at capture time:
+    # the anchor relative phrases resolve against. timestamptz normalizes to
+    # UTC, so the offset rides separately; both null for pre-0008 notes and
+    # clients that never sent it (fall back to created_at in UTC).
+    captured_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    capture_tz_offset_min: Mapped[int | None] = mapped_column(Integer, nullable=True)
     updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 

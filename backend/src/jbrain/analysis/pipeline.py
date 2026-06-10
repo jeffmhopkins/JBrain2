@@ -16,7 +16,7 @@ which RLS simply hides from narrower scopes.
 
 import uuid
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta, timezone
 from typing import Any
 
 import structlog
@@ -61,6 +61,21 @@ from jbrain.queue import SYSTEM_CTX, PermanentJobError
 log = structlog.get_logger()
 
 EXTRACT_MAX_TOKENS = 8192
+
+
+def capture_anchor(note: Note) -> datetime:
+    """The note's capture instant in the author's local frame.
+
+    Client capture time + stored offset when the client sent them; otherwise
+    server receipt time, which only exists as UTC. Postgres normalized the
+    instant to UTC, so the offset column is what rebuilds the local frame —
+    anchoring the prompt in UTC made the model resolve day-precision dates
+    at UTC midnight, which local rendering shows as the previous day.
+    """
+    instant = note.captured_at or note.created_at
+    if note.captured_at is not None and note.capture_tz_offset_min is not None:
+        return instant.astimezone(timezone(timedelta(minutes=note.capture_tz_offset_min)))
+    return instant.astimezone(UTC)
 
 
 @dataclass(frozen=True)
@@ -115,7 +130,7 @@ class AnalysisPipeline:
             if note is None or note.deleted_at is not None:
                 log.info("analysis.skipped", note_id=note_id, reason="missing or deleted")
                 return
-            body, domain, captured_at = note.body, note.domain_code, note.created_at
+            body, domain, captured_at = note.body, note.domain_code, capture_anchor(note)
             chunk_rows = (
                 await session.execute(
                     select(Chunk.id, Chunk.text).where(Chunk.note_id == note_id).order_by(Chunk.seq)
@@ -132,7 +147,8 @@ class AnalysisPipeline:
                 json_schema=EXTRACTION_SCHEMA,
                 max_tokens=EXTRACT_MAX_TOKENS,
             )
-            extraction = parse_extraction(result.parsed)
+            # Offset-less datetimes from the model are author-local, not UTC.
+            extraction = parse_extraction(result.parsed, default_tz=captured_at.tzinfo or UTC)
         except (LlmBadResponseError, ExtractionError) as exc:
             # The adapter already spent its one re-ask: retrying the job would
             # just re-bill the same garbage. Nothing was written.

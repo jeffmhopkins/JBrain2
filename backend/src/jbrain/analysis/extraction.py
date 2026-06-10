@@ -7,7 +7,7 @@ sinking the whole note.
 """
 
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, tzinfo
 from typing import Any
 
 import structlog
@@ -77,17 +77,19 @@ class Extraction:
     tokens: list[ExtractedToken]
 
 
-def parse_datetime(value: Any) -> datetime | None:
-    """ISO 8601 -> aware datetime; naive values are pinned to UTC (the anchor
-    in the prompt carries the real offset, so naive output is model slop, not
-    a different timezone). None/unparseable -> None."""
+def parse_datetime(value: Any, default_tz: tzinfo = UTC) -> datetime | None:
+    """ISO 8601 -> aware datetime; naive values are pinned to default_tz —
+    the capture anchor's frame. The model resolves in the author's local
+    frame, so an offset-less "2026-06-10" means local June 10; pinning it
+    to UTC would shift day-precision dates a day early when rendered
+    locally (the field off-by-one). None/unparseable -> None."""
     if not isinstance(value, str) or not value.strip():
         return None
     try:
         parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
     except ValueError:
         return None
-    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
+    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=default_tz)
 
 
 def ratchet_domain(extracted: str, note_domain: str) -> tuple[str, bool]:
@@ -105,16 +107,16 @@ def ratchet_domain(extracted: str, note_domain: str) -> tuple[str, bool]:
     return note_domain, True
 
 
-def _parse_temporal(raw: Any) -> ExtractedTemporal | None:
+def _parse_temporal(raw: Any, default_tz: tzinfo) -> ExtractedTemporal | None:
     if not isinstance(raw, dict):
         return None
     precision = raw.get("precision")
-    start = parse_datetime(raw.get("resolved_start"))
+    start = parse_datetime(raw.get("resolved_start"), default_tz)
     phrase = raw.get("phrase")
     return ExtractedTemporal(
         phrase=str(phrase) if phrase else None,
         resolved_start=start,
-        resolved_end=parse_datetime(raw.get("resolved_end")),
+        resolved_end=parse_datetime(raw.get("resolved_end"), default_tz),
         precision=precision if precision in PRECISIONS else "unknown",
     )
 
@@ -126,8 +128,11 @@ def _clamp_confidence(value: Any) -> float:
         return 0.0
 
 
-def parse_extraction(payload: Any) -> Extraction:
+def parse_extraction(payload: Any, *, default_tz: tzinfo = UTC) -> Extraction:
     """Validate the parsed JSON into typed extraction objects.
+
+    default_tz is the capture anchor's frame: offset-less datetimes from the
+    model are local times, not UTC.
 
     Raises:
         ExtractionError: the top-level shape is wrong (permanent failure).
@@ -186,7 +191,7 @@ def parse_extraction(payload: Any) -> Extraction:
                 assertion=assertion,
                 entity_ref=entity_ref,
                 object_entity_ref=str(object_ref).strip() if object_ref else None,
-                temporal=_parse_temporal(raw.get("temporal")),
+                temporal=_parse_temporal(raw.get("temporal"), default_tz),
                 # Unknown domain strings fall back to "" -> the pipeline
                 # substitutes the note's domain (never trust invented codes).
                 domain=domain if domain in DOMAINS else "",
@@ -198,7 +203,7 @@ def parse_extraction(payload: Any) -> Extraction:
     for raw in payload.get("temporal_tokens") or []:
         if not isinstance(raw, dict):
             continue
-        start = parse_datetime(raw.get("resolved_start"))
+        start = parse_datetime(raw.get("resolved_start"), default_tz)
         phrase = str(raw.get("phrase") or "").strip()
         # Never store only-relative: an unresolved expression is not a token
         # (docs/ANALYSIS.md "Temporal model").
@@ -213,7 +218,7 @@ def parse_extraction(payload: Any) -> Extraction:
                 phrase=phrase,
                 kind=kind if kind in TOKEN_KINDS else "point",
                 resolved_start=start,
-                resolved_end=parse_datetime(raw.get("resolved_end")),
+                resolved_end=parse_datetime(raw.get("resolved_end"), default_tz),
                 precision=precision if precision in PRECISIONS else "unknown",
                 rrule=str(rrule) if rrule else None,
             )

@@ -53,7 +53,12 @@ class SqlNotesRepo:
         latitude: float | None = None,
         longitude: float | None = None,
         accuracy_m: float | None = None,
+        captured_at: datetime | None = None,
     ) -> tuple[NoteInfo, bool]:
+        # timestamptz keeps the instant but normalizes away the author's
+        # offset, so the offset is persisted separately — it is the local
+        # frame the analysis anchor is rebuilt in.
+        offset = captured_at.utcoffset() if captured_at is not None else None
         try:
             async with scoped_session(self._maker, ctx) as session:
                 note = Note(
@@ -64,6 +69,10 @@ class SqlNotesRepo:
                     latitude=latitude,
                     longitude=longitude,
                     location_accuracy_m=accuracy_m,
+                    captured_at=captured_at,
+                    capture_tz_offset_min=(
+                        int(offset.total_seconds() // 60) if offset is not None else None
+                    ),
                 )
                 session.add(note)
                 await session.flush()

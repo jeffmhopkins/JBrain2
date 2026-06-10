@@ -60,8 +60,14 @@ class NotesRepo(Protocol):
         latitude: float | None = None,
         longitude: float | None = None,
         accuracy_m: float | None = None,
+        captured_at: datetime | None = None,
     ) -> tuple[NoteInfo, bool]:
-        """Insert or return the existing note for client_id; bool = created."""
+        """Insert or return the existing note for client_id; bool = created.
+
+        captured_at must be timezone-aware: its UTC offset is the author's
+        local frame, persisted alongside the instant so analysis can anchor
+        relative-time resolution locally (docs/ANALYSIS.md "Temporal model").
+        """
         ...
 
     async def list_notes(

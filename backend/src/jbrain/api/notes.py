@@ -3,7 +3,7 @@ from typing import Annotated, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse
-from pydantic import BaseModel, Field
+from pydantic import AwareDatetime, BaseModel, Field
 
 from jbrain.api.deps import PrincipalDep
 from jbrain.auth.service import PrincipalInfo
@@ -93,6 +93,10 @@ class CreateNoteRequest(BaseModel):
     latitude: float | None = Field(default=None, ge=-90, le=90)
     longitude: float | None = Field(default=None, ge=-180, le=180)
     accuracy_m: float | None = Field(default=None, ge=0)
+    # Client capture time; must carry the author's UTC offset (it is the
+    # frame relative phrases resolve in). The outbox makes server receipt
+    # time wrong, so analysis prefers this anchor when present.
+    captured_at: AwareDatetime | None = None
 
 
 class UpdateNoteRequest(BaseModel):
@@ -121,6 +125,7 @@ async def create_note(
             latitude=body.latitude,
             longitude=body.longitude,
             accuracy_m=body.accuracy_m,
+            captured_at=body.captured_at,
         )
     except UnknownDomain:
         raise HTTPException(status_code=400, detail="unknown domain") from None

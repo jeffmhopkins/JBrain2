@@ -91,6 +91,8 @@ export interface NoteCreate {
   domain: string;
   destination?: string | null;
   body: string;
+  /** ISO 8601 capture time WITH the author's UTC offset (analysis anchor). */
+  captured_at?: string;
   latitude?: number;
   longitude?: number;
   accuracy_m?: number;

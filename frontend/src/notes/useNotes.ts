@@ -5,7 +5,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { type AttachmentOut, type NoteOut, type NoteUpdate, api } from "../api/client";
 import { freshCoords } from "../location";
-import { type OutboxStore, type PendingNote, createIdbStore, flushOutbox } from "./outbox";
+import {
+  type OutboxStore,
+  type PendingNote,
+  createIdbStore,
+  flushOutbox,
+  localCaptureIso,
+} from "./outbox";
 
 export interface StreamAttachment {
   id: string | null; // null while the blob is still queued locally
@@ -154,6 +160,9 @@ export function useNotes(enabled: boolean, store?: OutboxStore): NotesController
         destination: input.destination,
         body: input.body,
         created_at: new Date().toISOString(),
+        // Local time with offset: the temporal anchor analysis resolves
+        // relative phrases against, immune to outbox flush delays.
+        captured_at: localCaptureIso(),
         attachments: input.files.map((f) => ({
           filename: f.name,
           media_type: f.type || "application/octet-stream",

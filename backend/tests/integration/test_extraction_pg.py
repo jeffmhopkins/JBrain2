@@ -4,8 +4,10 @@ exercises the analysis read API and the review resolve endpoint through the
 real FastAPI app."""
 
 import json
+import re
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
+from datetime import UTC, date, datetime, timedelta, timezone
 from typing import Any
 
 import pytest
@@ -28,6 +30,7 @@ from jbrain.config import Settings
 from jbrain.db.session import SessionContext, scoped_session
 from jbrain.ingest.pipeline import IngestPipeline
 from jbrain.llm import FakeLlmClient, LlmRouter
+from jbrain.llm.types import LlmImage, LlmResult, LlmUsage
 from jbrain.main import create_app
 from jbrain.notes.repo import SqlNotesRepo
 from jbrain.queue import PermanentJobError
@@ -52,9 +55,20 @@ async def maker(database_url: str) -> AsyncIterator[async_sessionmaker[AsyncSess
     await engine.dispose()
 
 
-async def make_note(maker: async_sessionmaker[AsyncSession], *, domain: str, body: str) -> str:
+async def make_note(
+    maker: async_sessionmaker[AsyncSession],
+    *,
+    domain: str,
+    body: str,
+    captured_at: datetime | None = None,
+) -> str:
     note, _ = await SqlNotesRepo(maker).create_note(
-        OWNER, client_id=f"ana-{uuid.uuid4()}", domain=domain, destination=None, body=body
+        OWNER,
+        client_id=f"ana-{uuid.uuid4()}",
+        domain=domain,
+        destination=None,
+        body=body,
+        captured_at=captured_at,
     )
     return note.id
 
@@ -480,6 +494,316 @@ async def test_state_change_forms_supersession_chain(
     assert [c["action"] for c in item["choices"]] == ["accept_a", "accept_b"]
     assert item["choices"][0]["label"] == "Lives at 4 Cedar Ct."
     assert "<mark>We</mark>" in item["snippet"]
+
+
+LOCAL_TZ = timezone(timedelta(hours=-6))  # the field setup: a US-local author
+
+
+class AnchorEchoClient:
+    """A scripted model that obeys the v2 instruction sheet literally: it
+    reads the spelled-out local "today" date from the prompt and resolves
+    against it — but emits the datetime NAIVE (offset-less), the exact slop
+    the field model produced. The pipeline must pin it to the capture frame,
+    not UTC."""
+
+    def __init__(self) -> None:
+        self.prompts: list[str] = []
+
+    async def complete(
+        self,
+        *,
+        model: str,
+        system: str,
+        user_text: str,
+        images: Sequence[LlmImage] = (),
+        json_schema: dict[str, Any] | None = None,
+        max_tokens: int = 0,
+    ) -> LlmResult:
+        self.prompts.append(user_text)
+        match = re.search(r'"today" = (\d{4}-\d{2}-\d{2})', user_text)
+        assert match, "prompt no longer spells out the local today-date"
+        today = match.group(1)
+        temporal = {
+            "phrase": "today",
+            "resolved_start": f"{today}T00:00:00",  # naive, deliberately
+            "resolved_end": None,
+            "precision": "day",
+        }
+        payload = extraction_payload(
+            title="Checkup",
+            tags=["health", "checkup", "doctor"],
+            mentions=[{"name": "Me", "kind": "Person", "surface_text": "I"}],
+            facts=[
+                {
+                    "predicate": "checkupVisit",
+                    "qualifier": "",
+                    "kind": "event",
+                    "statement": "Saw Dr. Patel for a checkup.",
+                    "value_json": None,
+                    "assertion": "asserted",
+                    "entity_ref": "Me",
+                    "object_entity_ref": None,
+                    "temporal": temporal,
+                    "domain": "health",
+                    "confidence": 0.9,
+                }
+            ],
+            temporal_tokens=[{**temporal, "kind": "point", "rrule": None}],
+        )
+        text = json.dumps(payload)
+        return LlmResult(text=text, parsed=payload, usage=LlmUsage(1, 1))
+
+
+async def test_evening_local_capture_resolves_today_to_the_local_date(
+    maker: async_sessionmaker[AsyncSession], tmp_path: Any
+) -> None:
+    """Field regression (June 10, 2026): a note captured 5:11 PM local must
+    store "today" as June 10 in the author's frame — the v1 UTC anchor plus
+    UTC-pinned day-precision values rendered as June 9 on every local screen.
+    """
+    captured = datetime(2026, 6, 10, 17, 11, tzinfo=LOCAL_TZ)
+    note_id = await make_note(
+        maker, domain="general", body="Saw Dr. Patel today.", captured_at=captured
+    )
+    await ingest(maker, note_id, tmp_path)
+
+    echo = AnchorEchoClient()
+    router = LlmRouter({"xai": echo}, {"note.extract": ("xai", "grok-4.3")})
+    await AnalysisPipeline(maker, router).analyze_note({"note_id": note_id})
+
+    # The prompt anchored in the author's local frame, weekday and offset.
+    assert "Wednesday, June 10, 2026, 5:11 PM (UTC-06:00)" in echo.prompts[0]
+    assert "2026-06-10T17:11:00-06:00" in echo.prompts[0]
+
+    fact = (
+        await rows(
+            maker,
+            OWNER,
+            "SELECT valid_from, reported_at FROM app.facts"
+            " WHERE note_id = :nid AND predicate = 'checkupVisit'",
+            nid=note_id,
+        )
+    )[0]
+    token = (
+        await rows(
+            maker,
+            OWNER,
+            "SELECT resolved_start, capture_anchor FROM app.temporal_tokens"
+            " WHERE note_id = :nid AND surface_phrase = 'today'",
+            nid=note_id,
+        )
+    )[0]
+    # Local midnight June 10 (-06:00) == 06:00Z June 10 — NOT midnight UTC,
+    # which a US-local renderer displays as June 9.
+    expected = datetime(2026, 6, 10, 6, 0, tzinfo=UTC)
+    assert fact.valid_from == expected and token.resolved_start == expected
+    assert fact.valid_from.astimezone(LOCAL_TZ).date() == date(2026, 6, 10)
+    # Provenance anchors to the client capture instant, not server receipt.
+    assert fact.reported_at == captured and token.capture_anchor == captured
+
+
+async def test_sarah_relocation_sequence_supersedes_and_flags(
+    maker: async_sessionmaker[AsyncSession], tmp_path: Any
+) -> None:
+    """The exact field failure, replayed with v2-correct extractions: the
+    move is a homeLocation STATE (not a bare event), the correction note
+    uses the same canonical predicate, so the per-kind engine chains
+    Denver -> Boulder and files the newest-wins review flag."""
+
+    def home_fact(city: str, temporal: dict[str, Any] | None, statement: str) -> dict[str, Any]:
+        return {
+            "predicate": "homeLocation",
+            "qualifier": "",
+            "kind": "state",
+            "statement": statement,
+            "value_json": {"city": city},
+            "assertion": "asserted",
+            "entity_ref": "Sarah",
+            "object_entity_ref": None,
+            "temporal": temporal,
+            "domain": "general",
+            "confidence": 0.85,
+        }
+
+    move_temporal = {
+        "phrase": "just moved",
+        "resolved_start": "2026-06-08T00:00:00-06:00",
+        "resolved_end": None,
+        "precision": "day",
+    }
+    note_one_payload = extraction_payload(
+        title="Checkup and a Denver move",
+        tags=["checkup", "friends", "moving"],
+        mentions=[
+            {"name": "Me", "kind": "Person", "surface_text": "me"},
+            {"name": "Dr. Patel", "kind": "Person", "surface_text": "Dr. Patel"},
+            {"name": "Sarah", "kind": "Person", "surface_text": "Sarah"},
+            {"name": "Denver", "kind": "Place", "surface_text": "Denver"},
+        ],
+        facts=[
+            {
+                "predicate": "bloodPressure",
+                "qualifier": "",
+                "kind": "measurement",
+                "statement": "Blood pressure was 128/82 on June 10, 2026.",
+                "value_json": {"systolic": 128, "diastolic": 82, "unit": "mmHg"},
+                "assertion": "asserted",
+                "entity_ref": "Me",
+                "object_entity_ref": None,
+                "temporal": {
+                    "phrase": "today",
+                    "resolved_start": "2026-06-10T00:00:00-06:00",
+                    "resolved_end": None,
+                    "precision": "day",
+                },
+                "domain": "health",
+                "confidence": 0.9,
+            },
+            {
+                "predicate": "scheduled_time",
+                "qualifier": "",
+                "kind": "state",
+                "statement": "Follow-up with Dr. Patel around September 10, 2026.",
+                "value_json": None,
+                "assertion": "expected",
+                "entity_ref": "Dr. Patel",
+                "object_entity_ref": None,
+                "temporal": {
+                    "phrase": "in 3 months",
+                    "resolved_start": "2026-09-10T00:00:00-06:00",
+                    "resolved_end": None,
+                    "precision": "day",
+                },
+                "domain": "health",
+                "confidence": 0.8,
+            },
+            # v2 kind discipline: the mandatory state fact carrying the new
+            # value, plus the optional move event — both must flow.
+            home_fact("Denver", move_temporal, "Sarah lives in Denver."),
+            {
+                "predicate": "relocated",
+                "qualifier": "",
+                "kind": "event",
+                "statement": "Sarah moved to Denver in early June 2026.",
+                "value_json": None,
+                "assertion": "asserted",
+                "entity_ref": "Sarah",
+                "object_entity_ref": None,
+                "temporal": move_temporal,
+                "domain": "general",
+                "confidence": 0.8,
+            },
+        ],
+        temporal_tokens=[
+            {
+                "phrase": "today",
+                "kind": "point",
+                "resolved_start": "2026-06-10T00:00:00-06:00",
+                "resolved_end": None,
+                "precision": "day",
+                "rrule": None,
+            },
+            {
+                "phrase": "in 3 months",
+                "kind": "point",
+                "resolved_start": "2026-09-10T00:00:00-06:00",
+                "resolved_end": None,
+                "precision": "day",
+                "rrule": None,
+            },
+        ],
+    )
+    note_one = await make_note(
+        maker,
+        domain="general",
+        body=(
+            "Saw Dr. Patel today, BP was 128/82. She wants me back in 3 months."
+            " Bumped into Sarah from accounting — she just moved to Denver."
+        ),
+        captured_at=datetime(2026, 6, 10, 17, 11, tzinfo=LOCAL_TZ),
+    )
+    await ingest(maker, note_one, tmp_path)
+    await analyzer(maker, [json.dumps(note_one_payload)]).analyze_note({"note_id": note_one})
+
+    # The temporal tokens land on the author's calendar: June 10 and
+    # September 10 local — the field run showed June 9 / September 9.
+    tokens = await rows(
+        maker,
+        OWNER,
+        "SELECT surface_phrase, resolved_start FROM app.temporal_tokens WHERE note_id = :nid",
+        nid=note_one,
+    )
+    resolved = {t.surface_phrase: t.resolved_start.astimezone(LOCAL_TZ).date() for t in tokens}
+    assert resolved == {
+        "today": date(2026, 6, 10),
+        "in 3 months": date(2026, 9, 10),
+        "just moved": date(2026, 6, 8),  # the fact-level phrase mints a token too
+    }
+
+    note_two_payload = extraction_payload(
+        title="Sarah is in Boulder",
+        tags=["friends", "moving", "correction"],
+        mentions=[
+            {"name": "Sarah", "kind": "Person", "surface_text": "Sarah"},
+            {"name": "Boulder", "kind": "Place", "surface_text": "Boulder"},
+        ],
+        facts=[home_fact("Boulder", None, "Sarah lives in Boulder.")],
+        temporal_tokens=[],
+    )
+    note_two = await make_note(
+        maker,
+        domain="general",
+        body="Sarah actually moved to Boulder, not Denver.",
+        captured_at=datetime(2026, 6, 10, 19, 30, tzinfo=LOCAL_TZ),
+    )
+    await ingest(maker, note_two, tmp_path)
+    await analyzer(maker, [json.dumps(note_two_payload)]).analyze_note({"note_id": note_two})
+
+    sarah = (
+        await rows(maker, OWNER, "SELECT id FROM app.entities WHERE canonical_name = 'Sarah'")
+    )[0]
+    homes = await rows(
+        maker,
+        OWNER,
+        "SELECT id, status, superseded_by, value_json FROM app.facts"
+        " WHERE entity_id = :eid AND predicate = 'homeLocation' ORDER BY created_at",
+        eid=str(sarah.id),
+    )
+    assert len(homes) == 2
+    denver, boulder = homes
+    assert denver.value_json == {"city": "Denver"} and boulder.value_json == {"city": "Boulder"}
+    # State policy = newest-wins: the chain forms instead of two live truths.
+    assert denver.status == "superseded" and denver.superseded_by == boulder.id
+    assert boulder.status == "active"
+    # The optional move event accumulated untouched alongside the state pair.
+    events = await rows(
+        maker,
+        OWNER,
+        "SELECT status FROM app.facts WHERE entity_id = :eid AND predicate = 'relocated'",
+        eid=str(sarah.id),
+    )
+    assert [e.status for e in events] == ["active"]
+
+    # ...and the supersession is flagged for review, never silent.
+    reviews = await rows(
+        maker,
+        OWNER,
+        "SELECT payload FROM app.review_items WHERE kind = 'fact_conflict' AND status = 'open'",
+    )
+    item = next(
+        r.payload
+        for r in reviews
+        if r.payload.get("fact_a") == str(denver.id) and r.payload.get("fact_b") == str(boulder.id)
+    )
+    assert item["summary"] == "Sarah's homeLocation changed"
+
+    # The entity page shows the full revision history, Boulder current.
+    view = await SqlAnalysisRepo(maker).entity_view(OWNER, str(sarah.id))
+    assert view is not None
+    home = next(p for p in view["predicates"] if p["predicate"] == "homeLocation")
+    assert home["current"] is not None and home["current"]["id"] == str(boulder.id)
+    assert {f["id"] for f in home["history"]} == {str(denver.id), str(boulder.id)}
+    assert {f["status"] for f in home["history"]} == {"active", "superseded"}
 
 
 async def test_malformed_extraction_is_permanent_and_writes_nothing(
