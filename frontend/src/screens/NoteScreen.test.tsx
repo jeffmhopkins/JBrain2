@@ -18,6 +18,16 @@ const ITEM: StreamItem = {
   pending: false,
 };
 
+// Indexed variant with a PDF (searchable) and an image (awaits Phase 3 OCR).
+const INDEXED: StreamItem = {
+  ...ITEM,
+  ingestState: "indexed",
+  attachments: [
+    ...ITEM.attachments,
+    { id: "a2", filename: "receipt.png", mediaType: "image/png", sizeBytes: 512_000 },
+  ],
+};
+
 function setup(
   source = noteViewFromItem(ITEM),
   resolve: (id: string) => Promise<StreamItem | null> = vi.fn(async () => null),
@@ -27,6 +37,13 @@ function setup(
     onEdit: vi.fn(),
     onMove: vi.fn(),
     onDelete: vi.fn(),
+    onAddAttachment: vi.fn(async (_noteId: string, file: File) => ({
+      id: "a-new",
+      filename: file.name,
+      mediaType: file.type || "application/octet-stream",
+      sizeBytes: file.size,
+    })),
+    onRemoveAttachment: vi.fn(async () => {}),
   };
   render(<NoteScreen source={source} resolve={resolve} syncStatus="synced" {...handlers} />);
   return handlers;
@@ -40,14 +57,57 @@ describe("NoteScreen", () => {
     expect(screen.queryByRole("heading", { level: 1 })).not.toBeInTheDocument();
   });
 
-  it("renders the body as paragraphs and attachment cards that open in a new tab", () => {
+  it("renders the body as paragraphs; attachments live in their own tab", () => {
     setup();
     expect(screen.getByText("first paragraph")).toBeInTheDocument();
     expect(screen.getByText("second paragraph")).toBeInTheDocument();
-    const link = screen.getByText("lab-orders.pdf").closest("a");
-    expect(link).toHaveAttribute("href", "/api/attachments/a1");
-    expect(link).toHaveAttribute("target", "_blank");
-    expect(screen.getByText("24 KB")).toBeInTheDocument();
+    expect(screen.queryByText("lab-orders.pdf")).not.toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /Attachments/ })).toHaveTextContent("1");
+  });
+
+  it("Attachments tab: summary + manifest rows with per-file status chips", () => {
+    setup(noteViewFromItem(INDEXED));
+    fireEvent.click(screen.getByRole("tab", { name: /Attachments/ }));
+
+    expect(
+      screen.getByText("2 files · 524 KB · 1 searchable · 1 awaiting ocr (p3)"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("lab-orders.pdf")).toBeInTheDocument();
+    expect(screen.getByText("24 KB · application/pdf")).toBeInTheDocument();
+    expect(screen.getByText("text extracted")).toBeInTheDocument();
+    expect(screen.getByText("no text layer — ocr in p3")).toBeInTheDocument();
+  });
+
+  it("⋯ opens the file sheet with an open link; remove needs the tap-again confirm", async () => {
+    const { onRemoveAttachment } = setup(noteViewFromItem(INDEXED));
+    fireEvent.click(screen.getByRole("tab", { name: /Attachments/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Actions for lab-orders.pdf" }));
+
+    const open = screen.getByText("open").closest("a");
+    expect(open).toHaveAttribute("href", "/api/attachments/a1");
+    expect(open).toHaveAttribute("target", "_blank");
+
+    fireEvent.click(screen.getByRole("button", { name: "remove" }));
+    expect(onRemoveAttachment).not.toHaveBeenCalled();
+    fireEvent.click(
+      screen.getByRole("button", { name: "tap again — removes file + its extracted text" }),
+    );
+    expect(onRemoveAttachment).toHaveBeenCalledWith("a1");
+    await waitFor(() => expect(screen.queryByText("lab-orders.pdf")).not.toBeInTheDocument());
+  });
+
+  it("add files uploads through the handler and appends a manifest row", async () => {
+    const { onAddAttachment } = setup(noteViewFromItem(INDEXED));
+    fireEvent.click(screen.getByRole("tab", { name: /Attachments/ }));
+
+    const file = new File(["hello"], "notes.txt", { type: "text/plain" });
+    const input = document.querySelector<HTMLInputElement>('input[type="file"]');
+    if (!input) throw new Error("file input missing");
+    fireEvent.change(input, { target: { files: [file] } });
+
+    await waitFor(() => expect(screen.getByText("notes.txt")).toBeInTheDocument());
+    expect(onAddAttachment).toHaveBeenCalledWith("n1", file);
+    expect(screen.getByRole("tab", { name: /Attachments/ })).toHaveTextContent("3");
   });
 
   it("Analysis tab shows the phased placeholder sections", () => {
@@ -101,6 +161,7 @@ describe("NoteScreen", () => {
     await waitFor(() => expect(screen.getByText("second paragraph")).toBeInTheDocument());
     expect(resolve).toHaveBeenCalledWith("n1");
     expect(screen.queryByText("loading the full note…")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: /Attachments/ }));
     expect(screen.getByText("lab-orders.pdf")).toBeInTheDocument();
   });
 });

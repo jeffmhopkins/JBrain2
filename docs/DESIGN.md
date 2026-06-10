@@ -178,13 +178,29 @@ and attaches lat/lng/accuracy to a note at send **only if the fix is under
 Note-location is owner-eyes metadata: Phase 7 scoped tokens never receive
 location fields, regardless of the note's domain.
 
-**Note view** (settled in the Phase 2 review): entry-stream bubbles clamp
-at **3 lines**; tapping opens the **note view layer** (slide-up tree level,
-swipe-down back) with a **Note / Analysis tab split**:
+**Note view** (settled in the Phase 2 review; Attachments tab settled in a
+later three-way review — **manifest** won over gallery and inline-viewer
+designs): entry-stream bubbles clamp at **3 lines**; tapping opens the
+**note view layer** (slide-up tree level, swipe-down back) with a
+**Note / Attachments / Analysis tab split**:
 
-- *Note tab*: full markdown body, attachment cards with per-attachment
-  extraction status from the dispatcher, and the Edit / Move domain /
-  Delete actions (the swipe rail's longhand).
+- *Note tab*: full markdown body and the Edit / Move domain / Delete
+  actions (the swipe rail's longhand). No attachment chrome here — files
+  live in their own tab.
+- *Attachments tab* — the **canonical attachment manager** (the editor
+  keeps its quick paperclip for capture-time adds). The tab label carries a
+  count pill. Layout is a **manifest**: a one-line summary
+  (`N files · total size · how many searchable / indexing / awaiting ocr`),
+  then one bordered card of rows — type icon, filename,
+  `size · media type` meta line, and a **pipeline status chip** derived
+  client-side (`indexing…` amber while the note's ingest is pending,
+  `text extracted` green-tint for text/PDF, `no text layer — ocr in p3`
+  muted for images). Each row ends in a 44px `⋯` that opens the shared
+  bottom sheet with **open** (new tab) and **remove** — remove uses the
+  tap-again confirm and spells out the consequence ("removes file + its
+  extracted text"). The card's last row is a steel **add files** row
+  (multi-select) with the hint "pdfs and images become searchable";
+  adds/removals apply immediately and re-trigger ingestion.
 - *Analysis tab* (lights up by phase): generated title + 3-6 tags (P3 —
   pre-P3 the header shows only domain + date, **no title fallback**);
   salient facts with kind badges (measurement/state/event/preference),

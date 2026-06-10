@@ -1192,36 +1192,167 @@ button.small {
   margin: 0;
 }
 
-.attachment-card {
-  display: flex;
+/* Attachments tab: manifest list (docs/DESIGN.md "Note view"). */
+
+.tab-count {
+  display: inline-flex;
   align-items: center;
-  gap: 12px;
-  padding: 12px 14px;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  margin-left: 6px;
+  padding: 0 5px;
+  border-radius: var(--r-pill);
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: var(--fs-micro);
+  font-weight: 500;
+}
+
+.att-summary {
+  margin: 0;
+  font-size: var(--fs-secondary);
+  color: var(--text-2);
+}
+
+.att-card {
+  display: flex;
+  flex-direction: column;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--r-card);
-  color: var(--text);
-  text-decoration: none;
-  min-height: 44px;
   box-shadow: var(--shadow-card);
+  overflow: hidden;
 }
 
-.attachment-icon {
+.att-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 6px 12px 14px;
+}
+
+.att-row + .att-row,
+.att-row + .att-empty,
+.att-row + .att-add-row,
+.att-empty + .att-add-row {
+  border-top: 1px solid var(--border);
+}
+
+.att-icon {
   color: var(--text-2);
   display: inline-flex;
+  flex-shrink: 0;
 }
 
-.attachment-name {
+.att-main {
   flex: 1;
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.att-name {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.attachment-size {
+.att-meta {
   font-size: var(--fs-micro);
   color: var(--text-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.att-chip {
+  align-self: flex-start;
+  padding: 1px 8px;
+  border-radius: var(--r-pill);
+  font-size: var(--fs-micro);
+}
+
+.att-chip-ok {
+  color: var(--ok);
+  background: var(--green-tint);
+}
+
+.att-chip-warn {
+  color: var(--warn);
+  background: var(--amber-tint);
+}
+
+.att-chip-muted {
+  color: var(--text-3);
+  border: 1px solid var(--border);
+}
+
+.att-more-btn {
+  flex-shrink: 0;
+  min-width: 44px;
+  min-height: 44px;
+  background: transparent;
+  border: none;
+  color: var(--text-2);
+  font-size: var(--fs-title);
+  line-height: 1;
+}
+
+.att-empty {
+  margin: 0;
+  padding: 16px 14px;
+  font-size: var(--fs-secondary);
+  color: var(--text-3);
+}
+
+.att-add-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 48px;
+  padding: 0 14px;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  color: var(--steel);
+  font-weight: 500;
+  text-align: left;
+}
+
+.att-add-hint {
+  color: var(--text-3);
+  font-weight: 400;
+  font-size: var(--fs-micro);
+}
+
+/* Per-file action sheet rows. */
+
+.sheet-action {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-height: 48px;
+  margin-top: 8px;
+  padding: 0 14px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-input);
+  color: var(--text);
+  font-size: var(--fs-body);
+  font-weight: 500;
+  text-decoration: none;
+}
+
+.sheet-action-danger {
+  color: var(--rose);
+  background: var(--rose-tint);
+}
+
+.sheet-action-danger.armed {
+  background: var(--rose);
+  color: #fff;
 }
 
 .note-actions {
