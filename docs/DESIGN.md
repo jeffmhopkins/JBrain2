@@ -186,10 +186,12 @@ designs): entry-stream bubbles clamp at **3 lines**; tapping opens the
 
 - *Note tab*: full markdown body only. No attachment chrome (files live
   in their own tab) and no action buttons — note actions live in a
-  **top-right ⋯ menu** in the top bar (same affordance as the attachment
-  rows' ⋯) opening the shared bottom sheet with **edit** (amber-tint),
-  **move domain**, and **delete** (rose, tap-again confirm "tap again —
-  deletes this note"); the ⋯ hides for not-yet-synced outbox notes.
+  **⋯ menu right-aligned on the domain/date line** (same affordance as
+  the attachment rows' ⋯; kept out of the top bar, which stays
+  navigation-only) opening the shared bottom sheet with **edit**
+  (amber-tint), **move domain**, and **delete** (rose, tap-again confirm
+  "tap again — deletes this note"); the ⋯ hides for not-yet-synced
+  outbox notes.
 - *Attachments tab* — the **canonical attachment manager** (the editor
   keeps its quick paperclip for capture-time adds). The tab label carries a
   count pill. Layout is a **manifest**: a one-line summary

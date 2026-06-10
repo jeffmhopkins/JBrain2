@@ -9,7 +9,7 @@ import { attachmentUrl } from "../api/client";
 import { Sheet } from "../components/Sheet";
 import { IngestChip } from "../components/Stream";
 import { TopBar } from "../components/TopBar";
-import { FileIcon, ImageIcon, PlusIcon } from "../components/icons";
+import { FileIcon, ImageIcon, MoreIcon, PlusIcon } from "../components/icons";
 import { DOMAIN_COLOR, DOMAIN_TITLE } from "../notes/modes";
 import type { MoveTarget } from "../notes/useNoteActions";
 import type { StreamAttachment, StreamItem, SyncStatus } from "../notes/useNotes";
@@ -354,20 +354,7 @@ export function NoteScreen({
 
   return (
     <div className="subscreen subscreen-note" onTouchStart={onTouchStart} onTouchMove={onTouchMove}>
-      <TopBar
-        title="Note"
-        onBack={onClose}
-        syncStatus={syncStatus}
-        onBolt={onClose}
-        onMenu={
-          noteId !== null
-            ? () => {
-                setDeleteArmed(false);
-                setMenuOpen(true);
-              }
-            : undefined
-        }
-      />
+      <TopBar title="Note" onBack={onClose} syncStatus={syncStatus} onBolt={onClose} />
       <div className="screen-body note-view" ref={scrollerRef}>
         <div className="note-view-head">
           <span
@@ -391,6 +378,19 @@ export function NoteScreen({
             · {view.createdAt.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}
           </span>
           <IngestChip state={view.ingestState} />
+          {noteId !== null && (
+            <button
+              type="button"
+              className="note-menu-btn"
+              aria-label="Note actions"
+              onClick={() => {
+                setDeleteArmed(false);
+                setMenuOpen(true);
+              }}
+            >
+              <MoreIcon size={20} />
+            </button>
+          )}
         </div>
 
         <div className="note-tabs" role="tablist">
