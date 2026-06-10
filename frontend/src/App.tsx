@@ -140,6 +140,37 @@ export function App() {
     }
   }
 
+  // Attachment changes from the editor's paperclip or the note view's
+  // Attachments tab both land here, so an open note view stays in step.
+  // Search-opened views carry attachments: null (unknown); those skip the
+  // patch and re-resolve the full note instead.
+  async function addAttachmentTo(noteId: string, file: File): Promise<StreamAttachment> {
+    const added = await notes.addAttachment(noteId, file);
+    setNoteView((v) =>
+      v !== null && v.id === noteId && v.attachments !== null
+        ? {
+            ...v,
+            attachments: [...v.attachments, added],
+            attachmentCount: v.attachmentCount + 1,
+          }
+        : v,
+    );
+    return added;
+  }
+
+  async function removeAttachmentFrom(attachmentId: string): Promise<void> {
+    await notes.removeAttachment(attachmentId);
+    setNoteView((v) =>
+      v?.attachments?.some((a) => a.id === attachmentId)
+        ? {
+            ...v,
+            attachments: (v.attachments ?? []).filter((a) => a.id !== attachmentId),
+            attachmentCount: Math.max(0, v.attachmentCount - 1),
+          }
+        : v,
+    );
+  }
+
   // Navigation is a tree: home → (swipe up) → launcher → (tap) → card
   // screen. Swiping DOWN climbs back up a level — card screen reopens the
   // launcher here; the launcher's own down-swipe returns home. Armed only
@@ -233,6 +264,8 @@ export function App() {
               void actions.remove(id);
               closeNoteView();
             }}
+            onAddAttachment={addAttachmentTo}
+            onRemoveAttachment={removeAttachmentFrom}
           />
         </div>
       )}
@@ -250,29 +283,8 @@ export function App() {
           editing={actions.editing}
           onCancel={actions.cancelEdit}
           onSave={(body) => void saveEdit(body)}
-          onAddFile={async (file) => {
-            const id = actions.editing?.id;
-            const added = await notes.addAttachment(id ?? "", file);
-            if (id !== undefined) {
-              setNoteView((v) =>
-                v !== null && v.id === id && v.attachments !== null
-                  ? { ...v, attachments: [...v.attachments, added] }
-                  : v,
-              );
-            }
-            return added;
-          }}
-          onRemoveAttachment={async (attachmentId) => {
-            const id = actions.editing?.id;
-            await notes.removeAttachment(attachmentId);
-            if (id !== undefined) {
-              setNoteView((v) =>
-                v !== null && v.id === id && v.attachments !== null
-                  ? { ...v, attachments: v.attachments.filter((a) => a.id !== attachmentId) }
-                  : v,
-              );
-            }
-          }}
+          onAddFile={(file) => addAttachmentTo(actions.editing?.id ?? "", file)}
+          onRemoveAttachment={removeAttachmentFrom}
         />
       )}
     </div>

@@ -1,13 +1,15 @@
 // Note view layer (docs/DESIGN.md "Note view"): a slide-up tree level over
-// home or search with a Note / Analysis tab split. Pre-Phase-3 the header is
-// domain + date only (no title), and Analysis shows the phased placeholders.
+// home or search with Note / Attachments / Analysis tabs. Attachments is the
+// canonical manager (manifest rows + per-file sheet); pre-Phase-3 the header
+// is domain + date only (no title), and Analysis shows phased placeholders.
 
 import { Fragment, type TouchEvent, useEffect, useRef, useState } from "react";
 import type { SearchResult } from "../api/client";
 import { attachmentUrl } from "../api/client";
+import { Sheet } from "../components/Sheet";
 import { IngestChip } from "../components/Stream";
 import { TopBar } from "../components/TopBar";
-import { FileIcon, ImageIcon } from "../components/icons";
+import { FileIcon, ImageIcon, PlusIcon } from "../components/icons";
 import { DOMAIN_COLOR, DOMAIN_TITLE } from "../notes/modes";
 import type { MoveTarget } from "../notes/useNoteActions";
 import type { StreamAttachment, StreamItem, SyncStatus } from "../notes/useNotes";
@@ -60,19 +62,6 @@ function fmtBytes(n: number): string {
   return `${Math.max(1, Math.round(n / 1024))} KB`;
 }
 
-function AttachmentCardBody({ att }: { att: StreamAttachment }) {
-  const Ic = att.mediaType.startsWith("image/") ? ImageIcon : FileIcon;
-  return (
-    <>
-      <span className="attachment-icon">
-        <Ic size={24} />
-      </span>
-      <span className="attachment-name">{att.filename}</span>
-      <span className="attachment-size">{fmtBytes(att.sizeBytes)}</span>
-    </>
-  );
-}
-
 /** Minimal markdown: blank lines split paragraphs, single newlines break. */
 function BodyParagraphs({ body }: { body: string }) {
   return (
@@ -118,6 +107,173 @@ function AnalysisTab() {
 
 const SWIPE_DOWN_PX = 56;
 
+/** Pipeline status, derived client-side: PDFs/text are searchable once the
+ * note is indexed; images wait for the Phase 3 OCR backends. */
+function attachmentStatus(att: StreamAttachment, ingestState: string | null) {
+  if (ingestState === "pending" || ingestState === "processing") {
+    return { label: "indexing…", tone: "warn" as const };
+  }
+  if (att.mediaType.startsWith("image/")) {
+    return { label: "no text layer — ocr in p3", tone: "muted" as const };
+  }
+  return { label: "text extracted", tone: "ok" as const };
+}
+
+interface AttachmentsTabProps {
+  view: NoteViewSource;
+  onAdd: (file: File) => Promise<void>;
+  onRemove: (attachmentId: string) => Promise<void>;
+}
+
+function AttachmentsTab({ view, onAdd, onRemove }: AttachmentsTabProps) {
+  const [sheetFor, setSheetFor] = useState<StreamAttachment | null>(null);
+  const [removeArmed, setRemoveArmed] = useState(false);
+  const [uploading, setUploading] = useState(0);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  const attachments = view.attachments ?? [];
+  const totalBytes = attachments.reduce((sum, a) => sum + a.sizeBytes, 0);
+  const indexing = view.ingestState === "pending" || view.ingestState === "processing";
+  const searchable = indexing
+    ? 0
+    : attachments.filter((a) => !a.mediaType.startsWith("image/")).length;
+  const awaitingOcr = attachments.filter((a) => a.mediaType.startsWith("image/")).length;
+
+  async function addFiles(list: FileList | null) {
+    if (!list) return;
+    for (const file of Array.from(list)) {
+      setUploading((n) => n + 1);
+      try {
+        await onAdd(file);
+      } catch {
+        // The sync dot reports trouble; the row simply doesn't appear.
+      } finally {
+        setUploading((n) => n - 1);
+      }
+    }
+  }
+
+  const summary = [
+    `${attachments.length} file${attachments.length === 1 ? "" : "s"}`,
+    fmtBytes(totalBytes),
+    ...(indexing ? ["indexing…"] : []),
+    ...(searchable > 0 ? [`${searchable} searchable`] : []),
+    ...(awaitingOcr > 0 ? [`${awaitingOcr} awaiting ocr (p3)`] : []),
+  ].join(" · ");
+
+  return (
+    <>
+      {attachments.length > 0 && <p className="att-summary">{summary}</p>}
+      {view.attachments === null && view.attachmentCount > 0 && (
+        <p className="note-view-loading">loading attachments…</p>
+      )}
+
+      <div className="att-card">
+        {attachments.map((att) => {
+          const status = attachmentStatus(att, view.ingestState);
+          return (
+            <div key={att.id ?? att.filename} className="att-row">
+              <span className="att-icon">
+                {att.mediaType.startsWith("image/") ? (
+                  <ImageIcon size={20} />
+                ) : (
+                  <FileIcon size={20} />
+                )}
+              </span>
+              <span className="att-main">
+                <span className="att-name">{att.filename}</span>
+                <span className="att-meta">
+                  {fmtBytes(att.sizeBytes)} · {att.mediaType}
+                </span>
+                <span className={`att-chip att-chip-${status.tone}`}>{status.label}</span>
+              </span>
+              <button
+                type="button"
+                className="att-more-btn"
+                aria-label={`Actions for ${att.filename}`}
+                onClick={() => {
+                  setRemoveArmed(false);
+                  setSheetFor(att);
+                }}
+              >
+                ⋯
+              </button>
+            </div>
+          );
+        })}
+        {uploading > 0 && (
+          <div className="att-row">
+            <span className="att-icon">
+              <FileIcon size={20} />
+            </span>
+            <span className="att-main">
+              <span className="att-name">uploading…</span>
+              <span className="att-chip att-chip-warn">
+                {uploading} file{uploading === 1 ? "" : "s"} in flight
+              </span>
+            </span>
+          </div>
+        )}
+        {attachments.length === 0 && uploading === 0 && (
+          <p className="att-empty">nothing attached — add a file below.</p>
+        )}
+
+        {view.id !== null && (
+          <button type="button" className="att-add-row" onClick={() => fileRef.current?.click()}>
+            <PlusIcon size={18} />
+            <span>
+              add files
+              <span className="att-add-hint"> — pdfs and images become searchable</span>
+            </span>
+          </button>
+        )}
+        <input
+          ref={fileRef}
+          type="file"
+          multiple
+          hidden
+          onChange={(e) => {
+            void addFiles(e.target.files);
+            e.target.value = "";
+          }}
+        />
+      </div>
+
+      {sheetFor !== null && (
+        <Sheet title={sheetFor.filename} onClose={() => setSheetFor(null)}>
+          {sheetFor.id !== null && (
+            <a
+              className="sheet-action"
+              href={attachmentUrl(sheetFor.id)}
+              target="_blank"
+              rel="noreferrer"
+              onClick={() => setSheetFor(null)}
+            >
+              open
+            </a>
+          )}
+          <button
+            type="button"
+            className={`sheet-action sheet-action-danger${removeArmed ? " armed" : ""}`}
+            onClick={() => {
+              if (!removeArmed) {
+                setRemoveArmed(true);
+                return;
+              }
+              const id = sheetFor.id;
+              setSheetFor(null);
+              if (id !== null) void onRemove(id);
+            }}
+            onBlur={() => setRemoveArmed(false)}
+          >
+            {removeArmed ? "tap again — removes file + its extracted text" : "remove"}
+          </button>
+        </Sheet>
+      )}
+    </>
+  );
+}
+
 interface NoteScreenProps {
   source: NoteViewSource;
   /** Cache-first full-note lookup for search-result openings. */
@@ -133,6 +289,8 @@ interface NoteScreenProps {
   ) => void;
   onMove: (target: MoveTarget) => void;
   onDelete: (id: string) => void;
+  onAddAttachment: (noteId: string, file: File) => Promise<StreamAttachment>;
+  onRemoveAttachment: (attachmentId: string) => Promise<void>;
 }
 
 export function NoteScreen({
@@ -143,9 +301,15 @@ export function NoteScreen({
   onEdit,
   onMove,
   onDelete,
+  onAddAttachment,
+  onRemoveAttachment,
 }: NoteScreenProps) {
   const [view, setView] = useState(source);
-  const [tab, setTab] = useState<"note" | "analysis">("note");
+  const [tab, setTab] = useState<"note" | "attachments" | "analysis">("note");
+
+  // Keep the local view in step when App refreshes the source (saved edits,
+  // attachment changes from the editor layer).
+  useEffect(() => setView(source), [source]);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const scrollerRef = useRef<HTMLDivElement>(null);
   const swipeStart = useRef<{ x: number; y: number } | null>(null);
@@ -228,6 +392,18 @@ export function NoteScreen({
           <button
             type="button"
             role="tab"
+            aria-selected={tab === "attachments"}
+            className={`seg${tab === "attachments" ? " seg-on" : ""}`}
+            onClick={() => setTab("attachments")}
+          >
+            Attachments
+            {(view.attachments?.length ?? view.attachmentCount) > 0 && (
+              <span className="tab-count">{view.attachments?.length ?? view.attachmentCount}</span>
+            )}
+          </button>
+          <button
+            type="button"
+            role="tab"
             aria-selected={tab === "analysis"}
             className={`seg${tab === "analysis" ? " seg-on" : ""}`}
             onClick={() => setTab("analysis")}
@@ -236,32 +412,10 @@ export function NoteScreen({
           </button>
         </div>
 
-        {tab === "note" ? (
+        {tab === "note" && (
           <>
             <BodyParagraphs body={view.body} />
             {view.partial && <p className="note-view-loading">loading the full note…</p>}
-            {view.attachments?.map((att) =>
-              att.id ? (
-                <a
-                  key={att.id}
-                  className="attachment-card"
-                  href={attachmentUrl(att.id)}
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  <AttachmentCardBody att={att} />
-                </a>
-              ) : (
-                <span key={att.filename} className="attachment-card">
-                  <AttachmentCardBody att={att} />
-                </span>
-              ),
-            )}
-            {view.attachments === null && view.attachmentCount > 0 && (
-              <p className="note-view-loading">
-                {view.attachmentCount} attachment{view.attachmentCount > 1 ? "s" : ""} — loading…
-              </p>
-            )}
 
             {noteId !== null && (
               <div className="note-actions">
@@ -300,9 +454,30 @@ export function NoteScreen({
               </div>
             )}
           </>
-        ) : (
-          <AnalysisTab />
         )}
+        {tab === "attachments" && (
+          <AttachmentsTab
+            view={view}
+            onAdd={async (file) => {
+              if (view.id === null) return;
+              const added = await onAddAttachment(view.id, file);
+              setView((v) => ({
+                ...v,
+                attachments: [...(v.attachments ?? []), added],
+                attachmentCount: v.attachmentCount + 1,
+              }));
+            }}
+            onRemove={async (attachmentId) => {
+              await onRemoveAttachment(attachmentId);
+              setView((v) => ({
+                ...v,
+                attachments: (v.attachments ?? []).filter((a) => a.id !== attachmentId),
+                attachmentCount: Math.max(0, v.attachmentCount - 1),
+              }));
+            }}
+          />
+        )}
+        {tab === "analysis" && <AnalysisTab />}
       </div>
     </div>
   );
