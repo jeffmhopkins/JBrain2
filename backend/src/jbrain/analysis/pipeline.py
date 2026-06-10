@@ -36,6 +36,7 @@ from jbrain.analysis.extraction import (
     ExtractedFact,
     Extraction,
     ExtractionError,
+    normalize_future_assertion,
     parse_extraction,
     ratchet_domain,
 )
@@ -488,6 +489,8 @@ class AnalysisPipeline:
         chunks: list[_ChunkRef],
         extractor: str,
     ) -> uuid.UUID | None:
+        # A still-future fact is `expected`, never an asserted occurrence.
+        fact = normalize_future_assertion(fact, captured_at)
         entity = resolved.get(fact.entity_ref)
         if entity is None:
             log.info("analysis.fact_skipped", reason="unlinked entity", ref=fact.entity_ref)

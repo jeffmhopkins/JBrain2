@@ -7,6 +7,7 @@ import pytest
 
 from jbrain.analysis.extraction import (
     ExtractionError,
+    normalize_future_assertion,
     parse_datetime,
     parse_extraction,
     ratchet_domain,
@@ -169,6 +170,26 @@ def test_parse_extraction_threads_the_capture_frame() -> None:
     assert fact.temporal is not None
     assert fact.temporal.resolved_start == datetime(2026, 6, 10, tzinfo=tz)
     assert parsed.tokens[0].resolved_start == datetime(2026, 6, 10, tzinfo=tz)
+
+
+def test_still_future_asserted_facts_relax_to_expected() -> None:
+    """Belt to the v2 prompt's braces: a follow-up "in 3 months" must never
+    land as an asserted occurrence, even if the model lapses."""
+    anchor = datetime(2026, 6, 10, 17, 11, tzinfo=timezone(timedelta(hours=-6)))
+    payload = valid_payload()
+    payload["facts"][0]["kind"] = "event"
+    payload["facts"][0]["temporal"]["resolved_start"] = "2026-09-10T00:00:00-06:00"
+    future = parse_extraction(payload).facts[0]
+    relaxed = normalize_future_assertion(future, anchor)
+    assert relaxed.assertion == "expected"
+    assert relaxed.kind == "event"  # assertion only, never the kind
+
+    past = parse_extraction(valid_payload()).facts[0]
+    assert normalize_future_assertion(past, anchor) is past
+    # Non-asserted future facts (reported, hypothetical...) keep their level.
+    payload["facts"][0]["assertion"] = "reported"
+    reported = parse_extraction(payload).facts[0]
+    assert normalize_future_assertion(reported, anchor).assertion == "reported"
 
 
 # --- domain ratchet ---------------------------------------------------------
