@@ -2,8 +2,8 @@
 
 Personal knowledge system: notes in → RAG indexing → LLM-maintained wiki with
 notes as the sole sources of truth. See `docs/ARCHITECTURE.md` for the full
-design, `docs/ROADMAP.md` for phases, and `docs/DEVELOPMENT.md` for binding
-standards.
+design, `docs/ROADMAP.md` for phases, `docs/DEVELOPMENT.md` for binding
+standards, and `docs/DESIGN.md` for the binding GUI design system.
 
 ## Non-negotiables for all code in this repo
 
