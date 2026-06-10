@@ -16,6 +16,7 @@ One Docker Compose stack on an Ubuntu host, reachable on a public domain.
 | `worker` | Same image as `api` | Job-queue consumer: extraction, chunking, embedding, analysis, wiki builds |
 | `db` | TimescaleDB-HA (Postgres + Timescale + PostGIS; pgvector) | The single stateful service (see below) |
 | `embed` | HF text-embeddings-inference (CPU) | Local embedding model behind HTTP; GPU-swappable later |
+| `supervisor` | Minimal socket-mounted service | Host control: stack status/restart, log streaming, update orchestration (see Operations) |
 
 Attachments are content-addressed blobs (sha256) on a disk volume behind a
 storage abstraction, so S3/MinIO can replace the filesystem without touching
@@ -141,6 +142,48 @@ One unified queue in the PWA for everything needing human judgment: fact
 conflicts, proposed appointments, wiki split/merge approvals, extraction
 corrections. Badge count on the bottom nav; each item resolvable in a tap or
 two. Rejecting a fact drafts a correction note.
+
+## Operations
+
+### Install
+
+`install.sh` bootstraps a barebones Ubuntu host: installs Docker Engine +
+compose plugin, creates `/opt/jbrain`, downloads the pinned compose file and
+the `jbrain` CLI helper, prompts for the domain and LLM API key(s), generates
+all internal secrets into `.env`, and brings the stack up.
+
+### Owner key
+
+The root credential is a generated **owner key** (256-bit, word-grouped for
+transcription), displayed exactly once at install and stored only as a hash —
+there is no login/password and no email recovery. Pasting the key on a device
+creates a long-lived device session; the key then goes back on paper.
+Recovery is `jbrain reset-owner-key` over SSH — shell access to the host is
+the root of trust. Passkeys may later be added as per-device conveniences
+derived from an owner-key session, never as a replacement root.
+
+### Supervisor
+
+The api container never mounts the Docker socket (socket access is
+root-equivalent and the api is the internet-facing surface). The
+`supervisor` container holds the socket, lives only on the internal network,
+and speaks a fixed command set — `status`, `restart`, `logs`, `check-update`,
+`apply-update` — authenticated by an internal token. No free-form commands,
+no shell passthrough. The PWA's **Ops screen** (owner sessions only) shows
+per-container health, restart buttons, live log tails (SSE over
+`docker logs -f`), and the update panel. Stack restarts bounce all peers
+first and the supervisor re-execs itself last; `jbrain` over SSH is the
+same code path when the stack is too wedged for the UI.
+
+### Updates
+
+CI publishes versioned images to GHCR on release tags (`stable` channel) and
+on every green main build (`edge` channel; channel toggle in the Ops screen).
+The supervisor polls GitHub Releases; updates are **prompted, one-tap** —
+never unattended. Apply sequence: pull images → pre-update `pg_dump`
+snapshot → Alembic migrations → rolling restart → health check, with the
+previous tag retained for `jbrain rollback`. Blind auto-pull (Watchtower
+style) is deliberately rejected: updates must migrate before they restart.
 
 ## Agent
 

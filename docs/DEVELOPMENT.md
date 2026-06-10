@@ -60,6 +60,16 @@ better than narrated code, and stale comments are worse than none.
   `chore:`.
 - No force-pushes to `main`.
 
+## Releases
+
+- Two channels: **stable** (images built on release tags, semver) and
+  **edge** (images built on every green `main` commit).
+- A release tag is cut deliberately, never automated from merge.
+- Every release must be reachable by the supervisor's update sequence:
+  schema migrations ship in the same release as the code that needs them,
+  and migrations must tolerate the previous release's running code during
+  the rolling restart window.
+
 ## Testing requirements
 
 ### Tooling

@@ -7,20 +7,32 @@ companion; 5–6 add the self-organizing wiki; 7 extends to family and devices.
 
 Compose stack boots end to end. Caddy with TLS on the public domain. Postgres
 (TimescaleDB-HA image) with Alembic migrations. FastAPI healthcheck. PWA shell
-installable on a phone. Single-user auth. `subjects` / `principals` /
-`domains` tables with **Row-Level Security wired and tested**. CI (lint,
-typecheck, tests). Backup script: nightly `pg_dump` + blob-volume sync,
-restore procedure tested once before any real data exists.
+installable on a phone. **`install.sh`** bootstraps barebones Ubuntu (Docker +
+deps, secrets, domain + LLM key prompts) and prints the **owner key** —
+owner-key auth with device sessions, `jbrain reset-owner-key` recovery.
+**Supervisor container** with stack status, restart, and live log streaming
+into a minimal Ops screen. `subjects` / `principals` / `domains` tables with
+**Row-Level Security wired and tested**. CI (lint, typecheck, tests) plus
+image publishing to GHCR (stable on tags, edge on green main). Backup script:
+nightly `pg_dump` + blob-volume sync, restore procedure tested once before
+any real data exists.
 
-**Exit:** hello-world flows through every container; a restore from backup
-has been performed successfully; RLS tests prove domain isolation.
+**Exit:** a fresh Ubuntu VM reaches a running, TLS-served stack via
+`install.sh` alone; login works with only the printed owner key; the stack
+can be restarted and logs tailed from the PWA; a restore from backup has been
+performed successfully; RLS tests prove domain isolation.
 
 ## Phase 1 — Notes
 
 Note CRUD with markdown editor; attachments (content-addressed storage);
-offline capture with outbox sync; mobile-first list/filter UI.
+offline capture with outbox sync; mobile-first list/filter UI. The
+**one-tap update flow** lands here, once there is a release to update to:
+supervisor polls GitHub Releases, Ops screen prompts, apply runs pull →
+pre-update dump → migrations → rolling restart → health check, with
+`jbrain rollback` retained.
 
-**Exit:** daily note capture from the phone is habitual, including offline.
+**Exit:** daily note capture from the phone is habitual, including offline;
+an older install updates itself to a newer release from the Ops screen.
 
 ## Phase 2 — Ingestion & search
 
