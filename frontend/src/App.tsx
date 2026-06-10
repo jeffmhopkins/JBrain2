@@ -56,12 +56,19 @@ export function App() {
     setScreen(target);
   }
 
-  // On sub-screens, a horizontally-dominant left swipe brings the card
-  // launcher back (settled in Phase 1 polish). 56px threshold; vertical
-  // scrolling wins whenever the motion isn't clearly horizontal.
+  // Navigation is a tree: home → (swipe up) → launcher → (tap) → card
+  // screen. Swiping DOWN climbs back up a level — card screen reopens the
+  // launcher here; the launcher's own down-swipe returns home. Armed only
+  // when the screen is scrolled to the top so it never fights scrolling.
   const swipeStart = useRef<{ x: number; y: number } | null>(null);
+  const subRef = useRef<HTMLDivElement | null>(null);
 
   function onSubTouchStart(event: TouchEvent) {
+    const scroller = subRef.current?.querySelector("main");
+    if ((scroller?.scrollTop ?? 0) > 4) {
+      swipeStart.current = null;
+      return;
+    }
     const t = event.touches[0];
     swipeStart.current = t ? { x: t.clientX, y: t.clientY } : null;
   }
@@ -70,9 +77,9 @@ export function App() {
     const start = swipeStart.current;
     const t = event.touches[0];
     if (!start || !t) return;
-    const dx = start.x - t.clientX;
-    const dy = Math.abs(start.y - t.clientY);
-    if (dx > 56 && dx > dy * 2) {
+    const dy = t.clientY - start.y;
+    const dx = Math.abs(t.clientX - start.x);
+    if (dy > 56 && dy > dx * 2) {
       swipeStart.current = null;
       setLauncherOpen(true);
     }
@@ -101,7 +108,12 @@ export function App() {
         <HomeScreen notes={notes} onOpenLauncher={() => setLauncherOpen(true)} />
       </div>
       {screen !== "home" && (
-        <div className="subscreen" onTouchStart={onSubTouchStart} onTouchMove={onSubTouchMove}>
+        <div
+          className="subscreen"
+          ref={subRef}
+          onTouchStart={onSubTouchStart}
+          onTouchMove={onSubTouchMove}
+        >
           {screen === "ops" && (
             <main className="screen-body">
               <OpsScreen />
