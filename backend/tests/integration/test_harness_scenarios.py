@@ -48,10 +48,12 @@ async def maker(database_url: str) -> AsyncIterator[async_sessionmaker[AsyncSess
 
 @pytest.fixture(autouse=True)
 async def _clean(maker: async_sessionmaker[AsyncSession]) -> AsyncIterator[None]:
-    """Each scenario starts from an empty graph — they share the module DB."""
+    """Each scenario starts from an empty graph. Truncate at SETUP, not
+    teardown: a test must not inherit rows if a previous test's teardown was
+    skipped (e.g. a dropped connection), so each scenario guarantees its own
+    clean slate regardless of what ran before."""
     from sqlalchemy import text
 
-    yield
     async with maker() as s:
         await s.execute(text("SELECT set_config('app.principal_kind','owner',true)"))
         await s.execute(
@@ -62,6 +64,7 @@ async def _clean(maker: async_sessionmaker[AsyncSession]) -> AsyncIterator[None]
             )
         )
         await s.commit()
+    yield
 
 
 @pytest.mark.parametrize("scenario", SCENARIOS)
