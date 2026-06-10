@@ -4,7 +4,17 @@ import { createRoot } from "react-dom/client";
 import { App } from "./App";
 import "./styles.css";
 
-registerSW({ immediate: true });
+// autoUpdate handles relaunches; the hourly check covers a PWA left open for
+// days, so it still converges on the latest deploy without a restart.
+const UPDATE_CHECK_MS = 60 * 60 * 1000;
+registerSW({
+  immediate: true,
+  onRegisteredSW(_url, registration) {
+    if (registration) {
+      setInterval(() => void registration.update(), UPDATE_CHECK_MS);
+    }
+  },
+});
 
 const container = document.getElementById("root");
 if (!container) throw new Error("Missing #root element");
