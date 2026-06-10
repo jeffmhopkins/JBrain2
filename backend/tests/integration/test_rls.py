@@ -19,7 +19,7 @@ from sqlalchemy.pool import NullPool
 from jbrain.auth import service
 from jbrain.auth.repo import SqlAuthRepo
 from jbrain.db.session import SessionContext, scoped_session
-from tests.conftest import docker_available
+from tests.conftest import docker_available, pgvector_container
 
 pytestmark = [
     pytest.mark.integration,
@@ -31,11 +31,7 @@ APP_PASSWORD = "app_test_pw"
 
 @pytest.fixture(scope="module")
 def database_url() -> Iterator[str]:
-    from testcontainers.postgres import PostgresContainer
-
-    # Migration 0003 needs pgvector; the plain alpine image doesn't ship it
-    # (production uses timescaledb-ha, which does).
-    with PostgresContainer("pgvector/pgvector:pg16") as pg:
+    with pgvector_container() as pg:
         admin_url = pg.get_connection_url(driver="psycopg")
         import sqlalchemy
 
