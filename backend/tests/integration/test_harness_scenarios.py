@@ -20,7 +20,7 @@ from sqlalchemy.pool import NullPool
 from tests.conftest import docker_available
 from tests.harness.runner import run_scenario
 from tests.harness.scenario import Scenario, check, load_all
-from tests.integration.test_rls import database_url  # noqa: F401
+from tests.integration.test_rls import APP_PASSWORD, database_url  # noqa: F401
 
 pytestmark = [
     pytest.mark.integration,
@@ -46,16 +46,26 @@ async def maker(database_url: str) -> AsyncIterator[async_sessionmaker[AsyncSess
     await engine.dispose()
 
 
+@pytest.fixture
+async def admin_maker(database_url: str) -> AsyncIterator[async_sessionmaker[AsyncSession]]:  # noqa: F811
+    """A superuser session for cleanup: the app role deliberately lacks
+    DELETE/TRUNCATE on facts (facts are never deleted in production), so the
+    between-scenario reset must run as the owner — the same admin swap
+    test_rls uses."""
+    admin_url = database_url.replace(f"jbrain_app:{APP_PASSWORD}", "test:test")
+    engine: AsyncEngine = create_async_engine(admin_url, poolclass=NullPool)
+    yield async_sessionmaker(engine, expire_on_commit=False)
+    await engine.dispose()
+
+
 @pytest.fixture(autouse=True)
-async def _clean(maker: async_sessionmaker[AsyncSession]) -> AsyncIterator[None]:
+async def _clean(admin_maker: async_sessionmaker[AsyncSession]) -> AsyncIterator[None]:
     """Each scenario starts from an empty graph. Truncate at SETUP, not
     teardown: a test must not inherit rows if a previous test's teardown was
-    skipped (e.g. a dropped connection), so each scenario guarantees its own
-    clean slate regardless of what ran before."""
+    skipped, so each scenario guarantees its own clean slate."""
     from sqlalchemy import text
 
-    async with maker() as s:
-        await s.execute(text("SELECT set_config('app.principal_kind','owner',true)"))
+    async with admin_maker() as s:
         await s.execute(
             text(
                 "TRUNCATE app.facts, app.entities, app.entity_mentions, app.entity_aliases,"
