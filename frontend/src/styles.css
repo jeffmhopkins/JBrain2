@@ -695,8 +695,9 @@ button.small {
   list-style: none;
   margin: 0;
   padding: 0;
-  display: flex;
-  flex-direction: column;
+  /* Half-width cards: container status is glanceable, not prose. */
+  display: grid;
+  grid-template-columns: 1fr 1fr;
   gap: 10px;
 }
 
@@ -704,11 +705,11 @@ button.small {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--r-card);
-  padding: 12px 16px;
-  display: grid;
-  grid-template-columns: 1fr auto;
-  gap: 5px 10px;
-  align-items: center;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
   box-shadow: var(--shadow-card);
 }
 
@@ -724,11 +725,17 @@ button.small {
 }
 
 .container-meta {
-  grid-column: 1 / -1;
   display: flex;
-  gap: 12px;
+  gap: 8px;
   font-size: var(--fs-micro);
   flex-wrap: wrap;
+  min-width: 0;
+}
+
+.container-meta .muted {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .badge {
