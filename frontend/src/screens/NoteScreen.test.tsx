@@ -122,14 +122,21 @@ describe("NoteScreen", () => {
     expect(screen.getByText(/extraction provenance/)).toBeInTheDocument();
   });
 
-  it("delete needs the inline confirm; edit hands off id + body", () => {
-    const { onDelete, onEdit } = setup();
-    fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+  it("the top-right ⋯ sheet drives edit / move / delete, with a tap-again delete", () => {
+    const { onDelete, onEdit, onMove } = setup();
+
+    fireEvent.click(screen.getByRole("button", { name: "Note actions" }));
+    fireEvent.click(screen.getByRole("button", { name: "delete" }));
     expect(onDelete).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("button", { name: "Tap again to confirm" }));
+    fireEvent.click(screen.getByRole("button", { name: "tap again — deletes this note" }));
     expect(onDelete).toHaveBeenCalledWith("n1");
 
-    fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+    fireEvent.click(screen.getByRole("button", { name: "Note actions" }));
+    fireEvent.click(screen.getByRole("button", { name: "move domain" }));
+    expect(onMove).toHaveBeenCalledWith({ id: "n1", domain: "health", destination: "Labs" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Note actions" }));
+    fireEvent.click(screen.getByRole("button", { name: "edit" }));
     expect(onEdit).toHaveBeenCalledWith(
       "n1",
       ITEM.body,
@@ -137,6 +144,8 @@ describe("NoteScreen", () => {
       ITEM.createdAt,
       ITEM.attachments,
     );
+    // Picking an action closes the sheet.
+    expect(screen.queryByRole("button", { name: "edit" })).not.toBeInTheDocument();
   });
 
   it("a search opening starts from the preview, then resolves the full note", async () => {

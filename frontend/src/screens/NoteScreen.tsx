@@ -310,7 +310,8 @@ export function NoteScreen({
   // Keep the local view in step when App refreshes the source (saved edits,
   // attachment changes from the editor layer).
   useEffect(() => setView(source), [source]);
-  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [deleteArmed, setDeleteArmed] = useState(false);
   const scrollerRef = useRef<HTMLDivElement>(null);
   const swipeStart = useRef<{ x: number; y: number } | null>(null);
 
@@ -353,7 +354,20 @@ export function NoteScreen({
 
   return (
     <div className="subscreen subscreen-note" onTouchStart={onTouchStart} onTouchMove={onTouchMove}>
-      <TopBar title="Note" onBack={onClose} syncStatus={syncStatus} onBolt={onClose} />
+      <TopBar
+        title="Note"
+        onBack={onClose}
+        syncStatus={syncStatus}
+        onBolt={onClose}
+        onMenu={
+          noteId !== null
+            ? () => {
+                setDeleteArmed(false);
+                setMenuOpen(true);
+              }
+            : undefined
+        }
+      />
       <div className="screen-body note-view" ref={scrollerRef}>
         <div className="note-view-head">
           <span
@@ -416,43 +430,6 @@ export function NoteScreen({
           <>
             <BodyParagraphs body={view.body} />
             {view.partial && <p className="note-view-loading">loading the full note…</p>}
-
-            {noteId !== null && (
-              <div className="note-actions">
-                <button
-                  type="button"
-                  className="action-btn action-edit"
-                  onClick={() =>
-                    onEdit(noteId, view.body, view.domain, view.createdAt, view.attachments ?? [])
-                  }
-                >
-                  Edit
-                </button>
-                <button
-                  type="button"
-                  className="action-btn action-move"
-                  onClick={() =>
-                    onMove({ id: noteId, domain: view.domain, destination: view.destination })
-                  }
-                >
-                  Move domain
-                </button>
-                <button
-                  type="button"
-                  className="action-btn action-delete"
-                  onClick={() => {
-                    if (!confirmingDelete) {
-                      setConfirmingDelete(true);
-                      return;
-                    }
-                    onDelete(noteId);
-                  }}
-                  onBlur={() => setConfirmingDelete(false)}
-                >
-                  {confirmingDelete ? "Tap again to confirm" : "Delete"}
-                </button>
-              </div>
-            )}
           </>
         )}
         {tab === "attachments" && (
@@ -479,6 +456,46 @@ export function NoteScreen({
         )}
         {tab === "analysis" && <AnalysisTab />}
       </div>
+
+      {menuOpen && noteId !== null && (
+        <Sheet title="Note actions" onClose={() => setMenuOpen(false)}>
+          <button
+            type="button"
+            className="sheet-action sheet-action-edit"
+            onClick={() => {
+              setMenuOpen(false);
+              onEdit(noteId, view.body, view.domain, view.createdAt, view.attachments ?? []);
+            }}
+          >
+            edit
+          </button>
+          <button
+            type="button"
+            className="sheet-action"
+            onClick={() => {
+              setMenuOpen(false);
+              onMove({ id: noteId, domain: view.domain, destination: view.destination });
+            }}
+          >
+            move domain
+          </button>
+          <button
+            type="button"
+            className={`sheet-action sheet-action-danger${deleteArmed ? " armed" : ""}`}
+            onClick={() => {
+              if (!deleteArmed) {
+                setDeleteArmed(true);
+                return;
+              }
+              setMenuOpen(false);
+              onDelete(noteId);
+            }}
+            onBlur={() => setDeleteArmed(false)}
+          >
+            {deleteArmed ? "tap again — deletes this note" : "delete"}
+          </button>
+        </Sheet>
+      )}
     </div>
   );
 }

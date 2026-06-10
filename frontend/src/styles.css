@@ -1345,6 +1345,11 @@ button.small {
   text-decoration: none;
 }
 
+.sheet-action-edit {
+  color: var(--amber);
+  background: var(--amber-tint);
+}
+
 .sheet-action-danger {
   color: var(--rose);
   background: var(--rose-tint);
@@ -1353,34 +1358,6 @@ button.small {
 .sheet-action-danger.armed {
   background: var(--rose);
   color: #fff;
-}
-
-.note-actions {
-  display: flex;
-  gap: 8px;
-  margin-top: 8px;
-}
-
-.action-btn {
-  flex: 1;
-  min-height: 44px;
-  border-color: var(--border);
-  font-weight: 500;
-}
-
-.action-edit {
-  background: var(--amber-tint);
-  color: var(--amber);
-}
-
-.action-move {
-  background: var(--steel-tint);
-  color: var(--steel);
-}
-
-.action-delete {
-  background: var(--rose-tint);
-  color: var(--rose);
 }
 
 .analysis-tab {

@@ -1,5 +1,5 @@
 import type { SyncStatus } from "../notes/useNotes";
-import { BoltIcon, ChevronLeftIcon } from "./icons";
+import { BoltIcon, ChevronLeftIcon, MoreIcon } from "./icons";
 
 const SYNC_TEXT: Record<SyncStatus, string> = {
   synced: "synced",
@@ -13,9 +13,11 @@ interface TopBarProps {
   onBack?: () => void;
   syncStatus: SyncStatus;
   onBolt: () => void;
+  /** Optional ⋯ menu for screen-level actions (e.g. the note view's sheet). */
+  onMenu?: (() => void) | undefined;
 }
 
-export function TopBar({ title, onBack, syncStatus, onBolt }: TopBarProps) {
+export function TopBar({ title, onBack, syncStatus, onBolt, onMenu }: TopBarProps) {
   return (
     <header className="top-bar">
       {title ? (
@@ -29,6 +31,11 @@ export function TopBar({ title, onBack, syncStatus, onBolt }: TopBarProps) {
         </span>
       )}
       <div className="top-bar-right">
+        {onMenu && (
+          <button type="button" className="icon-btn" onClick={onMenu} aria-label="Note actions">
+            <MoreIcon size={20} />
+          </button>
+        )}
         <span
           className={`sync-dot sync-${syncStatus}`}
           role="status"

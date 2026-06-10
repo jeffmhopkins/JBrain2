@@ -31,6 +31,14 @@ export const PlusIcon = (p: IconProps) => (
   </Icon>
 );
 
+export const MoreIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <circle cx="5" cy="12" r="0.9" fill="currentColor" />
+    <circle cx="12" cy="12" r="0.9" fill="currentColor" />
+    <circle cx="19" cy="12" r="0.9" fill="currentColor" />
+  </Icon>
+);
+
 export const SearchIcon = (p: IconProps) => (
   <Icon {...p}>
     <circle cx="11" cy="11" r="7" />
