@@ -39,6 +39,8 @@ class FakeGateway:
         self.updater_running = False
         self.updates_started: list[str] = []
         self.update_log = "[update] starting"
+        self.oneshot_running: str | None = None
+        self.oneshots_started: list[tuple[str, str | None]] = []
 
     def list_containers(self) -> list[ContainerInfo]:
         return list(self.containers)
@@ -63,12 +65,38 @@ class FakeGateway:
         ]
 
     def start_update(self) -> str:
-        if self.updater_running:
+        if self._busy():
             raise UpdateInProgressError
         self.updater_running = True
         name = f"jbrain-updater-{len(self.updates_started)}"
         self.updates_started.append(name)
         return name
+
+    def start_export(self) -> str:
+        if self._busy():
+            raise UpdateInProgressError
+        self.oneshot_running = "export"
+        self.oneshots_started.append(("export", None))
+        return f"jbrain-export-{len(self.oneshots_started)}"
+
+    def start_import(self, archive: str) -> str:
+        if self._busy():
+            raise UpdateInProgressError
+        self.oneshot_running = "import"
+        self.oneshots_started.append(("import", archive))
+        return f"jbrain-import-{len(self.oneshots_started)}"
+
+    def oneshot_status(self, kind: str, tail: int) -> UpdateStatus:
+        if not any(k == kind for k, _ in self.oneshots_started):
+            return UpdateStatus(state="none", exit_code=None, log_tail="")
+        if self.oneshot_running == kind:
+            return UpdateStatus(
+                state="running", exit_code=None, log_tail=f"[{kind}] starting"
+            )
+        return UpdateStatus(state="exited", exit_code=0, log_tail=f"[{kind}] complete")
+
+    def _busy(self) -> bool:
+        return self.updater_running or self.oneshot_running is not None
 
     def update_status(self, tail: int) -> UpdateStatus:
         if not self.updates_started:

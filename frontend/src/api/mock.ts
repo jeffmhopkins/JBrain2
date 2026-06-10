@@ -18,6 +18,8 @@ const PRINCIPAL: Principal = {
 };
 
 const mockUpdate = { state: "none" as "none" | "running" | "exited", ticks: 0 };
+const mockExport = { state: "none" as "none" | "running" | "exited", ticks: 0 };
+const mockImport = { state: "none" as "none" | "running" | "exited", ticks: 0 };
 
 const CONTAINERS: ContainerStatus[] = [
   {
@@ -346,6 +348,49 @@ export const mockFetch: typeof fetch = async (input, init) => {
           ? ""
           : `[update] starting\n[update] building images\n${
               mockUpdate.state === "exited" ? "[update] complete" : ""
+            }`,
+    });
+  }
+  if (path === "/api/ops/export" && init?.method === "POST") {
+    mockExport.state = "running";
+    mockExport.ticks = 0;
+    return json({ oneshot: "jbrain-export-mock" }, 202);
+  }
+  if (path === "/api/ops/export/status") {
+    if (mockExport.state === "running" && ++mockExport.ticks >= 3) {
+      mockExport.state = "exited";
+    }
+    const done = mockExport.state === "exited";
+    return json({
+      state: mockExport.state,
+      exit_code: done ? 0 : null,
+      log_tail: mockExport.state === "none" ? "" : "[export] dumping database",
+      filename: done ? "export-20260610-133800.jbrain.tar" : null,
+    });
+  }
+  if (path.startsWith("/api/ops/export/file/")) {
+    return new Response(new Blob(["mock export archive"]), { status: 200 });
+  }
+  if (path === "/api/ops/import/upload" && init?.method === "POST") {
+    return json({ archive: "import-20260610-134500.jbrain.tar" }, 201);
+  }
+  if (path === "/api/ops/import/start" && init?.method === "POST") {
+    mockImport.state = "running";
+    mockImport.ticks = 0;
+    return json({ oneshot: "jbrain-import-mock" }, 202);
+  }
+  if (path === "/api/ops/import/status") {
+    if (mockImport.state === "running" && ++mockImport.ticks >= 4) {
+      mockImport.state = "exited";
+    }
+    return json({
+      state: mockImport.state,
+      exit_code: mockImport.state === "exited" ? 0 : null,
+      log_tail:
+        mockImport.state === "none"
+          ? ""
+          : `[import] safety backup of current data\n[import] restoring database\n${
+              mockImport.state === "exited" ? "[import] complete" : ""
             }`,
     });
   }

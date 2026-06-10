@@ -143,6 +143,18 @@ similar) uses **half-width cards** in a 2-column grid, not full-width rows
 (settled in Phase 1 polish); names/images truncate with ellipsis rather
 than wrapping.
 
+**Ops Data card** (settled in a three-way review — inline card won over a
+backup-vault list and a guided transfer sheet): a "Data" section with two
+inline buttons. **Export backup** runs a supervisor one-shot that bundles
+the database dump + blob files + manifest into one `.jbrain.tar`, then the
+browser downloads it. **Import backup…** picks a file, shows
+`name · size`, and arms a rose tap-again confirm that names the
+consequence ("current data is overwritten"); a safety backup is taken
+first, the stack restarts mid-import (the card tolerates the api being
+unreachable, like Server update), and success offers **Reload app**.
+Progress is phased text + the one-shot's log tail, matching the update
+card — no fake progress bars.
+
 **Calendar** — Day/Week/Month/List segments; month grid with hairline cell
 borders, out-of-month days in `--text-3`, today = accent ring around the day
 number; selected-day panel below with `+ Add` (accent link) and `Open day →`.

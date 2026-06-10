@@ -35,9 +35,13 @@ services:
       JBRAIN_ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       JBRAIN_XAI_API_KEY: ${XAI_API_KEY:-}
       JBRAIN_BLOB_DIR: /data/blobs
+      JBRAIN_BACKUPS_DIR: /data/backups
       JBRAIN_EMBED_URL: http://embed:80
     volumes:
       - blobs:/data/blobs
+      # Export downloads stream from here; import uploads land here for the
+      # supervisor's one-shot to pick up. Host path, shared with backup.sh.
+      - ./backups:/data/backups
     networks: [edge, internal]
     depends_on:
       db:

@@ -54,6 +54,11 @@ export interface UpdateStatus {
   log_tail: string;
 }
 
+export interface ExportStatus extends UpdateStatus {
+  /** Set only once the export one-shot has exited cleanly. */
+  filename: string | null;
+}
+
 export interface AttachmentOut {
   id: string;
   filename: string;
@@ -176,6 +181,10 @@ export function attachmentUrl(id: string): string {
   return `/api/attachments/${encodeURIComponent(id)}`;
 }
 
+export function exportFileUrl(name: string): string {
+  return `/api/ops/export/file/${encodeURIComponent(name)}`;
+}
+
 export const api = {
   async login(ownerKey: string, deviceLabel: string): Promise<void> {
     await request(
@@ -259,6 +268,31 @@ export const api = {
 
   async opsUpdateStatus(): Promise<UpdateStatus> {
     const response = await request("/api/ops/update/status");
+    return (await response.json()) as UpdateStatus;
+  },
+
+  async opsExportStart(): Promise<void> {
+    await request("/api/ops/export", { method: "POST" });
+  },
+
+  async opsExportStatus(): Promise<ExportStatus> {
+    const response = await request("/api/ops/export/status");
+    return (await response.json()) as ExportStatus;
+  },
+
+  async opsImportUpload(file: File): Promise<{ archive: string }> {
+    const form = new FormData();
+    form.append("file", file, file.name);
+    const response = await request("/api/ops/import/upload", { method: "POST", body: form });
+    return (await response.json()) as { archive: string };
+  },
+
+  async opsImportStart(archive: string): Promise<void> {
+    await request("/api/ops/import/start", jsonInit("POST", { archive }));
+  },
+
+  async opsImportStatus(): Promise<UpdateStatus> {
+    const response = await request("/api/ops/import/status");
     return (await response.json()) as UpdateStatus;
   },
 

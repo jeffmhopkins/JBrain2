@@ -12,15 +12,15 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import PlainTextResponse, StreamingResponse
+from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile
+from fastapi.responses import FileResponse, PlainTextResponse, StreamingResponse
 from pydantic import BaseModel
 
 from jbrain.api.deps import PrincipalDep, SettingsDep, owner_only
 from jbrain.config import Settings
 from jbrain.db.session import SessionContext
 from jbrain.db.stats import database_stats
-from jbrain.storage import BlobStore
+from jbrain.storage import BackupShelf, BlobStore
 
 router = APIRouter(prefix="/ops", dependencies=[Depends(owner_only)])
 
@@ -103,6 +103,90 @@ async def start_update(request: Request, settings: SettingsDep) -> dict[str, obj
 async def update_status(request: Request, settings: SettingsDep) -> dict[str, object]:
     resp = await _client(request).get(
         "/update/status", params={"tail": 80}, headers=_headers(settings)
+    )
+    resp.raise_for_status()
+    return cast(dict[str, object], resp.json())
+
+
+# --- Data export/import -------------------------------------------------
+# Heavy lifting happens in supervisor-launched one-shots (they have docker;
+# the api deliberately has neither superuser DB access nor pg_dump). The api
+# proxies start/status and moves archive bytes via the shared backups mount.
+
+
+def _shelf(request: Request) -> BackupShelf:
+    return cast(BackupShelf, request.app.state.backup_shelf)
+
+
+@router.post("/export", status_code=202)
+async def start_export(request: Request, settings: SettingsDep) -> dict[str, object]:
+    resp = await _client(request).post("/export", headers=_headers(settings))
+    if resp.status_code == 409:
+        raise HTTPException(status_code=409, detail="another operation is running")
+    resp.raise_for_status()
+    return cast(dict[str, object], resp.json())
+
+
+@router.get("/export/status")
+async def export_status(request: Request, settings: SettingsDep) -> dict[str, object]:
+    resp = await _client(request).get(
+        "/export/status", params={"tail": 80}, headers=_headers(settings)
+    )
+    resp.raise_for_status()
+    status = cast(dict[str, object], resp.json())
+    # A finished export's filename comes from the shelf, not the log text.
+    status["filename"] = (
+        _shelf(request).latest_export()
+        if status.get("state") == "exited" and status.get("exit_code") == 0
+        else None
+    )
+    return status
+
+
+@router.get("/export/file/{name}")
+async def download_export(name: str, request: Request) -> FileResponse:
+    try:
+        path = _shelf(request).export_path(name)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="no such export") from None
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="no such export")
+    return FileResponse(path, media_type="application/x-tar", filename=name)
+
+
+@router.post("/import/upload", status_code=201)
+async def upload_import(request: Request, file: UploadFile) -> dict[str, str]:
+    async def chunks() -> AsyncIterator[bytes]:
+        while data := await file.read(1 << 20):
+            yield data
+
+    name = await _shelf(request).save_import(chunks())
+    return {"archive": name}
+
+
+class ImportStartRequest(BaseModel):
+    archive: str
+
+
+@router.post("/import/start", status_code=202)
+async def start_import(
+    body: ImportStartRequest, request: Request, settings: SettingsDep
+) -> dict[str, object]:
+    resp = await _client(request).post(
+        "/import", json={"archive": body.archive}, headers=_headers(settings)
+    )
+    if resp.status_code == 409:
+        raise HTTPException(status_code=409, detail="another operation is running")
+    if resp.status_code == 400:
+        raise HTTPException(status_code=400, detail="bad archive name")
+    resp.raise_for_status()
+    return cast(dict[str, object], resp.json())
+
+
+@router.get("/import/status")
+async def import_status(request: Request, settings: SettingsDep) -> dict[str, object]:
+    resp = await _client(request).get(
+        "/import/status", params={"tail": 80}, headers=_headers(settings)
     )
     resp.raise_for_status()
     return cast(dict[str, object], resp.json())

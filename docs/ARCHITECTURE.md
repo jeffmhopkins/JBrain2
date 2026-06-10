@@ -186,7 +186,13 @@ a **detached one-shot updater container** (docker:cli, project dir mounted
 at its host path) that survives the stack — supervisor included —
 restarting beneath it; the Ops screen polls its status and log tail,
 tolerating the api's brief restart window. Updates are **prompted** — never
-unattended — and must migrate before they restart. CI still publishes GHCR
+unattended — and must migrate before they restart. The Ops screen's **Data
+card** reuses the same one-shot pattern for whole-system **export/import**:
+export bundles a pg_dump + the blob volume + a manifest into one
+`.jbrain.tar` the browser downloads; import uploads an archive through the
+api's backups mount, takes a safety backup, then a one-shot stops the
+writers, pg_restores, replaces the blobs, and restarts the stack. One-shots
+(update, export, import) are mutually exclusive. CI still publishes GHCR
 images (`edge` on main, `stable` + semver on tags) as build provenance and
 as an optional pinned-image escape hatch (`docker compose pull` with image
 overrides), but installs do not depend on a registry.

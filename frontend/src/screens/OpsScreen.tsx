@@ -2,9 +2,11 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ApiError,
   type ContainerStatus,
+  type ExportStatus,
   type OpsMetrics,
   type UpdateStatus,
   api,
+  exportFileUrl,
 } from "../api/client";
 
 function fmtBytes(n: number): string {
@@ -187,6 +189,188 @@ function UpdateCard() {
   );
 }
 
+type ExportPhase =
+  | { step: "idle"; note: string | null }
+  | { step: "running" }
+  | { step: "failed"; log: string };
+
+type ImportPhase =
+  | { step: "idle" }
+  | { step: "picked"; file: File; armed: boolean }
+  | { step: "uploading" }
+  | { step: "running"; log: string; unreachable: boolean }
+  | { step: "done"; ok: boolean; log: string };
+
+const DATA_POLL_MS = 3000;
+
+/** Ops "Data" card (docs/DESIGN.md): export downloads one archive of the
+ * database dump + attachment files; import replaces everything with an
+ * uploaded archive via a supervisor one-shot that restarts the stack. */
+function DataCard() {
+  const [exportPhase, setExportPhase] = useState<ExportPhase>({ step: "idle", note: null });
+  const [importPhase, setImportPhase] = useState<ImportPhase>({ step: "idle" });
+  const fileRef = useRef<HTMLInputElement>(null);
+  const timer = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const stopPolling = useCallback(() => {
+    if (timer.current !== null) clearInterval(timer.current);
+    timer.current = null;
+  }, []);
+  useEffect(() => stopPolling, [stopPolling]);
+
+  const pollExport = useCallback(async () => {
+    let status: ExportStatus;
+    try {
+      status = await api.opsExportStatus();
+    } catch {
+      return;
+    }
+    if (status.state !== "exited") return;
+    stopPolling();
+    if (status.exit_code === 0 && status.filename !== null) {
+      // The browser download carries the session cookie like any request.
+      window.location.assign(exportFileUrl(status.filename));
+      setExportPhase({ step: "idle", note: `${status.filename} downloaded.` });
+    } else {
+      setExportPhase({ step: "failed", log: status.log_tail });
+    }
+  }, [stopPolling]);
+
+  async function startExport() {
+    try {
+      await api.opsExportStart();
+    } catch {
+      setExportPhase({ step: "failed", log: "could not start — is another operation running?" });
+      return;
+    }
+    setExportPhase({ step: "running" });
+    timer.current = setInterval(() => void pollExport(), DATA_POLL_MS);
+  }
+
+  const pollImport = useCallback(async () => {
+    let status: UpdateStatus;
+    try {
+      status = await api.opsImportStatus();
+    } catch {
+      // api/worker stop mid-import; an unreachable api is the expected
+      // shape of progress, not an error.
+      setImportPhase((p) => (p.step === "running" ? { ...p, unreachable: true } : p));
+      return;
+    }
+    if (status.state === "running") {
+      setImportPhase({ step: "running", log: status.log_tail, unreachable: false });
+    } else if (status.state === "exited") {
+      stopPolling();
+      setImportPhase({ step: "done", ok: status.exit_code === 0, log: status.log_tail });
+    }
+  }, [stopPolling]);
+
+  async function startImport(file: File) {
+    setImportPhase({ step: "uploading" });
+    try {
+      const { archive } = await api.opsImportUpload(file);
+      await api.opsImportStart(archive);
+    } catch {
+      setImportPhase({ step: "done", ok: false, log: "upload or start failed" });
+      return;
+    }
+    setImportPhase({ step: "running", log: "[import] starting", unreachable: false });
+    timer.current = setInterval(() => void pollImport(), DATA_POLL_MS);
+  }
+
+  return (
+    <section className="ops-update">
+      <h3>Data</h3>
+      {exportPhase.step !== "running" && importPhase.step === "idle" && (
+        <div className="ops-actions">
+          <button type="button" onClick={() => void startExport()}>
+            Export backup
+          </button>
+          <button type="button" onClick={() => fileRef.current?.click()}>
+            Import backup…
+          </button>
+        </div>
+      )}
+      {exportPhase.step === "idle" && exportPhase.note !== null && (
+        <p className="muted">{exportPhase.note}</p>
+      )}
+      {exportPhase.step === "idle" && exportPhase.note === null && importPhase.step === "idle" && (
+        <p className="muted data-hint">
+          export bundles the database + attachment files into one archive; import replaces
+          everything with an archive and restarts the stack.
+        </p>
+      )}
+      {exportPhase.step === "running" && <p className="muted">Building export archive…</p>}
+      {exportPhase.step === "failed" && (
+        <>
+          <p className="ops-error">Export failed — see log.</p>
+          <pre className="ops-update-log">{exportPhase.log}</pre>
+        </>
+      )}
+
+      <input
+        ref={fileRef}
+        type="file"
+        accept=".tar,.jbrain.tar"
+        hidden
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          if (file) setImportPhase({ step: "picked", file, armed: false });
+          e.target.value = "";
+        }}
+      />
+      {importPhase.step === "picked" && (
+        <>
+          <p className="muted">
+            {importPhase.file.name} · {fmtBytes(importPhase.file.size)}
+          </p>
+          <button
+            type="button"
+            className="danger"
+            onClick={() => {
+              if (!importPhase.armed) {
+                setImportPhase({ ...importPhase, armed: true });
+                return;
+              }
+              void startImport(importPhase.file);
+            }}
+            onBlur={() => setImportPhase({ ...importPhase, armed: false })}
+          >
+            {importPhase.armed
+              ? "Tap again — current data is overwritten"
+              : "Import — replaces ALL current data"}
+          </button>
+          <p className="muted data-hint">
+            a safety backup of the current data is taken first; the stack restarts during import.
+          </p>
+        </>
+      )}
+      {importPhase.step === "uploading" && <p className="muted">Uploading archive…</p>}
+      {importPhase.step === "running" && (
+        <>
+          <p className="muted">
+            {importPhase.unreachable ? "Stack restarting — hold on…" : "Importing…"}
+          </p>
+          <pre className="ops-update-log">{importPhase.log}</pre>
+        </>
+      )}
+      {importPhase.step === "done" && (
+        <>
+          <p className={importPhase.ok ? "muted" : "ops-error"}>
+            {importPhase.ok ? "Import complete." : "Import failed — see log."}
+          </p>
+          <pre className="ops-update-log">{importPhase.log}</pre>
+          {importPhase.ok && (
+            <button type="button" onClick={() => window.location.reload()}>
+              Reload app
+            </button>
+          )}
+        </>
+      )}
+    </section>
+  );
+}
+
 export function OpsScreen() {
   const [containers, setContainers] = useState<ContainerStatus[] | null>(null);
   const [metrics, setMetrics] = useState<OpsMetrics | null>(null);
@@ -280,6 +464,7 @@ export function OpsScreen() {
       )}
 
       <LogViewer services={services} />
+      <DataCard />
       <UpdateCard />
     </section>
   );
