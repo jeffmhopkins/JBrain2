@@ -30,6 +30,12 @@ BACKOFF_CAP = timedelta(hours=1)
 STALE_LOCK = timedelta(minutes=10)
 
 
+class PermanentJobError(Exception):
+    """Raised by a handler when retrying cannot help (e.g. an extraction that
+    stayed malformed through the adapter's re-ask) — the worker fails the job
+    immediately instead of burning retries."""
+
+
 @dataclass(frozen=True)
 class Job:
     id: str
@@ -161,9 +167,18 @@ async def complete(
 
 
 async def fail(
-    maker: async_sessionmaker[AsyncSession], ctx: SessionContext, job_id: str, error: str
+    maker: async_sessionmaker[AsyncSession],
+    ctx: SessionContext,
+    job_id: str,
+    error: str,
+    *,
+    permanent: bool = False,
 ) -> None:
-    """Record a failure: requeue with exponential backoff, or fail permanently."""
+    """Record a failure: requeue with exponential backoff, or fail permanently.
+
+    `permanent` short-circuits the retry budget for failures retrying cannot
+    fix (see PermanentJobError).
+    """
     async with scoped_session(maker, ctx) as session:
         row = (
             await session.execute(
@@ -174,7 +189,7 @@ async def fail(
         if row is None:
             return
         attempts = row.attempts + 1
-        exhausted = attempts >= row.max_attempts
+        exhausted = permanent or attempts >= row.max_attempts
         await session.execute(
             text(
                 """

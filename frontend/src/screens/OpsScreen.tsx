@@ -240,9 +240,29 @@ function UpdateCard() {
 }
 
 type ExportPhase =
-  | { step: "idle"; note: string | null }
+  | { step: "idle"; latest: string | null }
   | { step: "running" }
   | { step: "failed"; log: string };
+
+/** Hand the export to the browser's download manager without navigating the
+ * SPA. `location.assign()` navigates the app itself: the SPA remounts (the
+ * Ops screen and the card's state vanish — "returns to the main screen") and
+ * in standalone PWA display-mode the navigation can swallow the download
+ * outright on mobile. A transient same-origin anchor + `download` leaves the
+ * app untouched; the Content-Disposition: attachment response does the rest.
+ * iOS home-screen web apps remain flaky even with this pattern (the click may
+ * silently no-op or open an undismissable share/preview sheet — long-standing
+ * WebKit limitation, e.g. webkit.org/b/167341), so the done state also keeps
+ * a visible link to the same URL for a manual long-press/share fallback. */
+function triggerExportDownload(name: string) {
+  const a = document.createElement("a");
+  a.href = exportFileUrl(name);
+  a.download = name;
+  a.hidden = true;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
 
 type ImportPhase =
   | { step: "idle" }
@@ -257,7 +277,7 @@ const DATA_POLL_MS = 3000;
  * database dump + attachment files; import replaces everything with an
  * uploaded archive via a supervisor one-shot that restarts the stack. */
 function DataCard() {
-  const [exportPhase, setExportPhase] = useState<ExportPhase>({ step: "idle", note: null });
+  const [exportPhase, setExportPhase] = useState<ExportPhase>({ step: "idle", latest: null });
   const [importPhase, setImportPhase] = useState<ImportPhase>({ step: "idle" });
   const fileRef = useRef<HTMLInputElement>(null);
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -279,8 +299,8 @@ function DataCard() {
     stopPolling();
     if (status.exit_code === 0 && status.filename !== null) {
       // The browser download carries the session cookie like any request.
-      window.location.assign(exportFileUrl(status.filename));
-      setExportPhase({ step: "idle", note: `${status.filename} downloaded.` });
+      triggerExportDownload(status.filename);
+      setExportPhase({ step: "idle", latest: status.filename });
     } else {
       setExportPhase({ step: "failed", log: status.log_tail });
     }
@@ -341,15 +361,26 @@ function DataCard() {
           </button>
         </div>
       )}
-      {exportPhase.step === "idle" && exportPhase.note !== null && (
-        <p className="muted">{exportPhase.note}</p>
+      {exportPhase.step === "idle" && exportPhase.latest !== null && (
+        <>
+          <p className="muted">{exportPhase.latest} downloaded.</p>
+          <a
+            className="export-link"
+            href={exportFileUrl(exportPhase.latest)}
+            download={exportPhase.latest}
+          >
+            download {exportPhase.latest}
+          </a>
+        </>
       )}
-      {exportPhase.step === "idle" && exportPhase.note === null && importPhase.step === "idle" && (
-        <p className="muted data-hint">
-          export bundles the database + attachment files into one archive; import replaces
-          everything with an archive and restarts the stack.
-        </p>
-      )}
+      {exportPhase.step === "idle" &&
+        exportPhase.latest === null &&
+        importPhase.step === "idle" && (
+          <p className="muted data-hint">
+            export bundles the database + attachment files into one archive; import replaces
+            everything with an archive and restarts the stack.
+          </p>
+        )}
       {exportPhase.step === "running" && <p className="muted">Building export archive…</p>}
       {exportPhase.step === "failed" && (
         <>
