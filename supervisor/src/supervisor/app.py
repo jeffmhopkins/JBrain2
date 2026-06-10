@@ -8,6 +8,7 @@ daemon, no real token in the environment.
 from __future__ import annotations
 
 import hmac
+import re
 from typing import TYPE_CHECKING, Annotated
 
 from fastapi import (
@@ -82,6 +83,19 @@ class UpdateStatusResponse(BaseModel):
     state: str
     exit_code: int | None
     log_tail: str
+
+
+class OneshotStartResponse(BaseModel):
+    oneshot: str
+
+
+class ImportStartRequest(BaseModel):
+    archive: str
+
+
+# Import archives are api-named uploads; anything else is rejected before the
+# name reaches a shell command line.
+IMPORT_ARCHIVE_RE = re.compile(r"^import-\d{8}-\d{6}\.jbrain\.tar$")
 
 
 def create_app(settings: Settings, gateway: DockerGateway) -> FastAPI:
@@ -187,6 +201,44 @@ def create_app(settings: Settings, gateway: DockerGateway) -> FastAPI:
         tail: Annotated[int, Query(ge=1)] = 80,
     ) -> UpdateStatusResponse:
         status = gateway.update_status(min(tail, MAX_LOG_TAIL))
+        return UpdateStatusResponse(
+            state=status.state, exit_code=status.exit_code, log_tail=status.log_tail
+        )
+
+    @authed.post("/export", status_code=202)
+    def start_export() -> OneshotStartResponse:
+        try:
+            return OneshotStartResponse(oneshot=gateway.start_export())
+        except UpdateInProgressError:
+            raise HTTPException(
+                status_code=409, detail="another one-shot is running"
+            ) from None
+
+    @authed.get("/export/status")
+    def export_status(
+        tail: Annotated[int, Query(ge=1)] = 80,
+    ) -> UpdateStatusResponse:
+        status = gateway.oneshot_status("export", min(tail, MAX_LOG_TAIL))
+        return UpdateStatusResponse(
+            state=status.state, exit_code=status.exit_code, log_tail=status.log_tail
+        )
+
+    @authed.post("/import", status_code=202)
+    def start_import(body: ImportStartRequest) -> OneshotStartResponse:
+        if not IMPORT_ARCHIVE_RE.fullmatch(body.archive):
+            raise HTTPException(status_code=400, detail="bad archive name")
+        try:
+            return OneshotStartResponse(oneshot=gateway.start_import(body.archive))
+        except UpdateInProgressError:
+            raise HTTPException(
+                status_code=409, detail="another one-shot is running"
+            ) from None
+
+    @authed.get("/import/status")
+    def import_status(
+        tail: Annotated[int, Query(ge=1)] = 80,
+    ) -> UpdateStatusResponse:
+        status = gateway.oneshot_status("import", min(tail, MAX_LOG_TAIL))
         return UpdateStatusResponse(
             state=status.state, exit_code=status.exit_code, log_tail=status.log_tail
         )

@@ -14,7 +14,7 @@ from jbrain.notes.repo import SqlNotesRepo
 from jbrain.queue import PgJobQueue
 from jbrain.search.repo import SqlSearchRepo
 from jbrain.search.service import SearchService
-from jbrain.storage import FsBlobStore
+from jbrain.storage import FsBackupShelf, FsBlobStore
 
 structlog.configure(
     processors=[structlog.processors.TimeStamper(fmt="iso"), structlog.processors.JSONRenderer()]
@@ -33,6 +33,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.auth_repo = SqlAuthRepo(maker)
         app.state.notes_repo = SqlNotesRepo(maker)
         app.state.blob_store = FsBlobStore(settings.blob_dir)
+        app.state.backup_shelf = FsBackupShelf(settings.backups_dir)
         app.state.job_queue = PgJobQueue(maker)
         app.state.search_service = SearchService(
             SqlSearchRepo(maker), TeiEmbedClient(settings.embed_url)

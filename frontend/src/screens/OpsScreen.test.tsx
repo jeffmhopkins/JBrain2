@@ -1,7 +1,14 @@
-import { render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpsStatus } from "../api/client";
 import { OpsScreen } from "./OpsScreen";
+
+function json(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
+}
 
 const STATUS: OpsStatus = {
   containers: [
@@ -65,5 +72,87 @@ describe("OpsScreen", () => {
     render(<OpsScreen />);
 
     expect(await screen.findByRole("alert")).toHaveTextContent("Request failed: 500");
+  });
+
+  it("export: starts the one-shot, then downloads the finished archive", async () => {
+    const assign = vi.fn();
+    Object.defineProperty(window, "location", {
+      value: { assign },
+      writable: true,
+      configurable: true,
+    });
+    fetchMock.mockImplementation(async (input, init) => {
+      const path = String(input);
+      if (path === "/api/ops/export" && init?.method === "POST") return json({}, 202);
+      if (path === "/api/ops/export/status") {
+        return json({
+          state: "exited",
+          exit_code: 0,
+          log_tail: "[export] complete",
+          filename: "export-20260610-120000.jbrain.tar",
+        });
+      }
+      return new Response(null, { status: 500 });
+    });
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      render(<OpsScreen />);
+      fireEvent.click(screen.getByRole("button", { name: "Export backup" }));
+      expect(await screen.findByText("Building export archive…")).toBeInTheDocument();
+
+      await act(() => vi.advanceTimersByTimeAsync(3000));
+      expect(assign).toHaveBeenCalledWith("/api/ops/export/file/export-20260610-120000.jbrain.tar");
+      expect(screen.getByText(/downloaded\./)).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("import: file pick arms a tap-again confirm, then uploads and polls to done", async () => {
+    let importPolls = 0;
+    fetchMock.mockImplementation(async (input, init) => {
+      const path = String(input);
+      if (path === "/api/ops/import/upload" && init?.method === "POST") {
+        return json({ archive: "import-20260610-134500.jbrain.tar" }, 201);
+      }
+      if (path === "/api/ops/import/start" && init?.method === "POST") {
+        expect(JSON.parse(String(init.body))).toEqual({
+          archive: "import-20260610-134500.jbrain.tar",
+        });
+        return json({}, 202);
+      }
+      if (path === "/api/ops/import/status") {
+        importPolls += 1;
+        return importPolls < 2
+          ? json({ state: "running", exit_code: null, log_tail: "[import] restoring" })
+          : json({ state: "exited", exit_code: 0, log_tail: "[import] complete" });
+      }
+      return new Response(null, { status: 500 });
+    });
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      render(<OpsScreen />);
+      const input = document.querySelector<HTMLInputElement>('input[type="file"]');
+      if (!input) throw new Error("file input missing");
+      const file = new File(["bytes"], "mine.jbrain.tar", { type: "application/x-tar" });
+      fireEvent.change(input, { target: { files: [file] } });
+
+      const confirm = await screen.findByRole("button", {
+        name: "Import — replaces ALL current data",
+      });
+      fireEvent.click(confirm);
+      expect(fetchMock).not.toHaveBeenCalledWith("/api/ops/import/upload", expect.anything());
+      fireEvent.click(
+        screen.getByRole("button", { name: "Tap again — current data is overwritten" }),
+      );
+
+      await act(() => vi.advanceTimersByTimeAsync(3000));
+      expect(screen.getByText("Importing…")).toBeInTheDocument();
+      await act(() => vi.advanceTimersByTimeAsync(3000));
+      expect(screen.getByText("Import complete.")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Reload app" })).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

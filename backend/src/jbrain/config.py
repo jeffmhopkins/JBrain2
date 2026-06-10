@@ -9,6 +9,7 @@ class Settings(BaseSettings):
     supervisor_token: str = ""
     session_cookie: str = "jbrain_session"
     blob_dir: str = "/data/blobs"
+    backups_dir: str = "/data/backups"
     embed_url: str = "http://embed:80"
     embed_model: str = "BAAI/bge-small-en-v1.5"
     # Cookies require HTTPS in production; tests and local dev run plain HTTP.

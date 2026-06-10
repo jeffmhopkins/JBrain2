@@ -7,6 +7,7 @@ and so tests can substitute a fake without a docker daemon.
 
 from __future__ import annotations
 
+import shlex
 import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol, cast
@@ -23,12 +24,16 @@ COMPOSE_SERVICE_LABEL = "com.docker.compose.service"
 # Updater one-shots are deliberately OUTSIDE the compose project label so
 # stack-wide restarts never touch a running update.
 UPDATER_LABEL = "jbrain.updater"
+# Export/import one-shots share the updater's detached-container pattern but
+# carry their kind as the label value so each has its own status lookup.
+ONESHOT_LABEL = "jbrain.oneshot"
 UPDATER_IMAGE = "docker:cli"
 # The container has docker+compose; git arrives via apk (the update needs
 # network for `git pull` anyway, so this adds no new failure class).
 UPDATE_COMMAND = (
     "apk add --no-cache git >/dev/null 2>&1 && exec sh src/deploy/update-inner.sh"
 )
+EXPORT_COMMAND = "exec sh src/deploy/export-inner.sh"
 
 # Docker reports this zero-value timestamp for containers that never started.
 _NEVER_STARTED = "0001-01-01T00:00:00Z"
@@ -43,7 +48,11 @@ class UnknownServiceError(LookupError):
 
 
 class UpdateInProgressError(RuntimeError):
-    """An updater container is already running."""
+    """A one-shot (update, export, or import) is already running.
+
+    One-shots are mutually exclusive: an import mid-update or an export
+    mid-import would race over the same database and files.
+    """
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,6 +99,12 @@ class DockerGateway(Protocol):
     def start_update(self) -> str: ...
 
     def update_status(self, tail: int) -> UpdateStatus: ...
+
+    def start_export(self) -> str: ...
+
+    def start_import(self, archive: str) -> str: ...
+
+    def oneshot_status(self, kind: str, tail: int) -> UpdateStatus: ...
 
 
 class ComposeDockerGateway:
@@ -153,16 +168,35 @@ class ComposeDockerGateway:
         return usages
 
     def start_update(self) -> str:
-        latest = self._latest_updater()
-        if latest is not None and (latest.attrs or {}).get("State", {}).get("Running"):
+        return self._run_oneshot("jbrain-updater", {UPDATER_LABEL: "1"}, UPDATE_COMMAND)
+
+    def update_status(self, tail: int) -> UpdateStatus:
+        return self._status_of(self._latest(f"{UPDATER_LABEL}=1"), tail)
+
+    def start_export(self) -> str:
+        return self._run_oneshot(
+            "jbrain-export", {ONESHOT_LABEL: "export"}, EXPORT_COMMAND
+        )
+
+    def start_import(self, archive: str) -> str:
+        # The archive name is validated at the HTTP layer; quoting here keeps
+        # this boundary safe even if a new caller forgets.
+        command = f"exec sh src/deploy/import-inner.sh {shlex.quote(archive)}"
+        return self._run_oneshot("jbrain-import", {ONESHOT_LABEL: "import"}, command)
+
+    def oneshot_status(self, kind: str, tail: int) -> UpdateStatus:
+        return self._status_of(self._latest(f"{ONESHOT_LABEL}={kind}"), tail)
+
+    def _run_oneshot(self, prefix: str, labels: dict[str, str], command: str) -> str:
+        if self._oneshot_running():
             raise UpdateInProgressError
-        name = f"jbrain-updater-{int(time.time())}"
+        name = f"{prefix}-{int(time.time())}"
         self._client.containers.run(
             UPDATER_IMAGE,
-            command=["sh", "-lc", UPDATE_COMMAND],
+            command=["sh", "-lc", command],
             name=name,
             detach=True,
-            labels={UPDATER_LABEL: "1"},
+            labels=labels,
             working_dir=self._project_dir,
             volumes={
                 "/var/run/docker.sock": {"bind": "/var/run/docker.sock", "mode": "rw"},
@@ -171,23 +205,29 @@ class ComposeDockerGateway:
         )
         return name
 
-    def update_status(self, tail: int) -> UpdateStatus:
-        latest = self._latest_updater()
-        if latest is None:
+    def _oneshot_running(self) -> bool:
+        for label in (f"{UPDATER_LABEL}=1", ONESHOT_LABEL):
+            latest = self._latest(label)
+            if latest is not None and (latest.attrs or {}).get("State", {}).get(
+                "Running"
+            ):
+                return True
+        return False
+
+    def _status_of(self, container: Container | None, tail: int) -> UpdateStatus:
+        if container is None:
             return UpdateStatus(state="none", exit_code=None, log_tail="")
-        state = (latest.attrs or {}).get("State", {})
+        state = (container.attrs or {}).get("State", {})
         running = bool(state.get("Running"))
-        raw: bytes = latest.logs(tail=tail)
+        raw: bytes = container.logs(tail=tail)
         return UpdateStatus(
             state="running" if running else "exited",
             exit_code=None if running else state.get("ExitCode"),
             log_tail=raw.decode("utf-8", errors="replace"),
         )
 
-    def _latest_updater(self) -> Container | None:
-        matches = self._client.containers.list(
-            all=True, filters={"label": f"{UPDATER_LABEL}=1"}
-        )
+    def _latest(self, label: str) -> Container | None:
+        matches = self._client.containers.list(all=True, filters={"label": label})
         if not matches:
             return None
         return max(matches, key=lambda c: (c.attrs or {}).get("Created", ""))

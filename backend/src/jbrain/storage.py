@@ -7,6 +7,9 @@ can move to S3/MinIO without touching callers.
 
 import asyncio
 import hashlib
+import re
+import time
+from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Protocol
 
@@ -68,3 +71,58 @@ class FsBlobStore:
                     count += 1
                     total += path.stat().st_size
         return count, total
+
+
+# Archives are named by this code or by export-inner.sh — anything else in
+# the shared backups directory (nightly dumps, logs) stays invisible here.
+_EXPORT_RE = re.compile(r"^export-\d{8}-\d{6}\.jbrain\.tar$")
+_IMPORT_RE = re.compile(r"^import-\d{8}-\d{6}\.jbrain\.tar$")
+
+
+class BackupShelf(Protocol):
+    """The host backups directory, as far as the api may touch it.
+
+    Exports are read-only handoffs from the supervisor's one-shot; imports
+    are uploads parked here for the one-shot to consume. The api never
+    reads or writes any other file in the directory.
+    """
+
+    def latest_export(self) -> str | None: ...
+
+    def export_path(self, name: str) -> Path:
+        """Path for a named export; raises ValueError on foreign names."""
+        ...
+
+    async def save_import(self, chunks: AsyncIterator[bytes]) -> str:
+        """Persist an uploaded archive, return its generated name."""
+        ...
+
+
+class FsBackupShelf:
+    def __init__(self, root: str | Path):
+        self._root = Path(root)
+
+    def latest_export(self) -> str | None:
+        if not self._root.exists():
+            return None
+        names = sorted(p.name for p in self._root.iterdir() if _EXPORT_RE.fullmatch(p.name))
+        return names[-1] if names else None
+
+    def export_path(self, name: str) -> Path:
+        if not _EXPORT_RE.fullmatch(name):
+            raise ValueError(f"not an export archive: {name!r}")
+        return self._root / name
+
+    async def save_import(self, chunks: AsyncIterator[bytes]) -> str:
+        name = f"import-{time.strftime('%Y%m%d-%H%M%S')}.jbrain.tar"
+        assert _IMPORT_RE.fullmatch(name)
+        self._root.mkdir(parents=True, exist_ok=True)
+        target = self._root / name
+        tmp = target.with_suffix(".tmp")
+        # Chunked write keeps multi-GB archives out of memory; write-then-
+        # rename means the one-shot can never see a partial upload.
+        with tmp.open("wb") as fh:
+            async for chunk in chunks:
+                await asyncio.to_thread(fh.write, chunk)
+        tmp.rename(target)
+        return name

@@ -938,7 +938,13 @@ button.small {
   word-break: break-all;
 }
 
-/* ===== Ops: server update ===== */
+/* ===== Ops: data + server update cards ===== */
+
+.data-hint {
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+  margin: 0;
+}
 
 .ops-update {
   display: flex;
