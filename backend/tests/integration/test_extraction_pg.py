@@ -6,6 +6,7 @@ real FastAPI app."""
 import json
 import uuid
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
@@ -29,8 +30,9 @@ from jbrain.db.session import SessionContext, scoped_session
 from jbrain.ingest.pipeline import IngestPipeline
 from jbrain.llm import FakeLlmClient, LlmRouter
 from jbrain.main import create_app
+from jbrain.models.analysis import Entity, Fact
 from jbrain.notes.repo import SqlNotesRepo
-from jbrain.queue import PermanentJobError
+from jbrain.queue import SYSTEM_CTX, PermanentJobError
 from jbrain.storage import FsBlobStore
 from jbrain.usage import SqlUsageRecorder
 from tests.conftest import docker_available
@@ -841,3 +843,69 @@ async def test_analysis_and_review_api_round_trip(
             assert usage["days"]
     finally:
         await engine.dispose()
+
+
+async def test_supersession_candidate_read_is_domain_and_object_scoped(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """The candidate read behind decide(): the same graph address in another
+    DOMAIN (C1 firewall) or pointing at another OBJECT (me.owns->Civic vs
+    me.owns->kayak) must be invisible — except functional predicates, which
+    keep one key across objects so a new employer still sees the old edge."""
+    note_id = uuid.UUID(await make_note(maker, domain="general", body="candidate-read seed"))
+    pipeline = analyzer(maker, [])
+    now = datetime(2026, 6, 1, tzinfo=UTC)
+
+    async with scoped_session(maker, SYSTEM_CTX) as session:
+        me = Entity(kind="Person", canonical_name="CandidateReadMe", domain_code="general")
+        civic = Entity(kind="Product", canonical_name="CR Civic", domain_code="general")
+        kayak = Entity(kind="Product", canonical_name="CR Kayak", domain_code="general")
+        acme = Entity(kind="Organization", canonical_name="CR Acme", domain_code="general")
+        globex = Entity(kind="Organization", canonical_name="CR Globex", domain_code="general")
+        session.add_all([me, civic, kayak, acme, globex])
+        await session.flush()
+
+        def edge(predicate: str, obj: uuid.UUID, domain: str, assertion: str) -> Fact:
+            return Fact(
+                entity_id=me.id,
+                predicate=predicate,
+                qualifier="",
+                kind="state",
+                statement=f"{predicate} edge",
+                value_json=None,
+                object_entity_id=obj,
+                assertion=assertion,
+                valid_from=now,
+                reported_at=now,
+                note_id=note_id,
+                extractor="test",
+                prompt_version="test",
+                domain_code=domain,
+            )
+
+        civic_general = edge("ownsCandidateRead", civic.id, "general", "negated")
+        session.add_all(
+            [
+                civic_general,
+                edge("ownsCandidateRead", kayak.id, "general", "asserted"),
+                edge("ownsCandidateRead", civic.id, "health", "asserted"),
+                edge("employer", acme.id, "general", "asserted"),
+                edge("employer", globex.id, "general", "asserted"),
+                edge("employer", acme.id, "health", "asserted"),
+            ]
+        )
+        await session.flush()
+
+        owned = await pipeline._existing_facts(
+            session, me.id, "ownsCandidateRead", "", None, civic.id, "general"
+        )
+        # The kayak edge and the health Civic edge are different facts.
+        assert [f.id for f in owned] == [str(civic_general.id)]
+        # The view carries assertion, so values_equal sees disposal flips.
+        assert owned[0].assertion == "negated"
+
+        # Functional predicate: one key across objects, still domain-scoped.
+        employers = await pipeline._existing_facts(
+            session, me.id, "employer", "", None, globex.id, "general"
+        )
+        assert {f.object_entity_id for f in employers} == {str(acme.id), str(globex.id)}

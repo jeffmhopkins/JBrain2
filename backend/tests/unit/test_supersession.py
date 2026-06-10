@@ -234,6 +234,52 @@ def test_values_equal_uses_object_entity_for_pure_edges() -> None:
     assert not values_equal(cand(kind="relationship", object_entity_id="globex"), old)
 
 
+# --- assertion transitions ---------------------------------------------------
+
+
+def test_values_equal_false_on_assertion_flip() -> None:
+    """Same edge, inverted assertion: never an idempotent refresh — the
+    refresh path only writes rendering/provenance, never assertion."""
+    old = view(object_entity_id="civic", statement="I own a Honda Civic.")
+    flipped = cand(
+        object_entity_id="civic", assertion="negated", statement="I no longer own the Civic."
+    )
+    assert not values_equal(flipped, old)
+
+
+def test_disposal_supersedes_asserted_head_instead_of_refreshing() -> None:
+    """Negating a bare owns edge closes the asserted head via the state
+    newest-wins branch; the inserted head carries the negated assertion."""
+    old = view(object_entity_id="civic", statement="I own a Honda Civic.")
+    disposal = cand(
+        object_entity_id="civic", assertion="negated", statement="I no longer own the Civic."
+    )
+    d = decide(disposal, [old], predicate="owns")
+    assert d.refresh_id is None
+    assert d.insert and d.insert_status == "active"
+    assert d.supersede_ids == ["old-1"]
+
+
+def test_reassertion_after_negation_supersedes_negated_head() -> None:
+    """negated -> asserted on the same edge must not refresh the negated row
+    in place (the zombie adv_negation_then_reassert guards against)."""
+    old = view(
+        kind="relationship",
+        object_entity_id="acme",
+        assertion="negated",
+        statement="Bjorn no longer works at Acme.",
+    )
+    reassert = cand(
+        kind="relationship",
+        object_entity_id="acme",
+        statement="Bjorn works for Acme again.",
+    )
+    d = decide(reassert, [old], predicate="worksFor")
+    assert d.refresh_id is None
+    assert d.insert and d.insert_status == "active"
+    assert d.supersede_ids == ["old-1"]
+
+
 def test_retracted_rows_are_ignored() -> None:
     old = view(status="retracted")
     d = decide(cand(statement="lives at 12 Oak St", valid_from=T0), [old])
