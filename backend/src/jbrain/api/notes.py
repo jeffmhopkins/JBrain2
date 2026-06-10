@@ -53,6 +53,7 @@ class NoteOut(BaseModel):
     destination: str | None
     body: str
     created_at: datetime
+    tz_offset_minutes: int | None
     ingest_state: str
     attachments: list[AttachmentOut]
     # Location fields are owner-eyes metadata: Phase 7 scoped-token
@@ -70,6 +71,7 @@ def note_out(n: NoteInfo) -> NoteOut:
         destination=n.destination,
         body=n.body,
         created_at=n.created_at,
+        tz_offset_minutes=n.tz_offset_minutes,
         ingest_state=n.ingest_state,
         attachments=[
             AttachmentOut(
@@ -88,6 +90,11 @@ class CreateNoteRequest(BaseModel):
     domain: str = "general"
     destination: str | None = None
     body: str = Field(min_length=1)
+    # Capture time and the client's UTC offset (minutes east of UTC), recorded
+    # at write time so an offline note flushed later keeps its true local
+    # capture instant — the anchor extraction resolves relative dates against.
+    created_at: datetime | None = None
+    tz_offset_minutes: int | None = Field(default=None, ge=-1080, le=1080)
     # Capture location, stored verbatim. Owner-eyes metadata: Phase 7
     # scoped-token serialization must exclude these fields.
     latitude: float | None = Field(default=None, ge=-90, le=90)
@@ -118,6 +125,8 @@ async def create_note(
             domain=body.domain,
             destination=body.destination,
             body=body.body,
+            created_at=body.created_at,
+            tz_offset_minutes=body.tz_offset_minutes,
             latitude=body.latitude,
             longitude=body.longitude,
             accuracy_m=body.accuracy_m,

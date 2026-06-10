@@ -6,7 +6,7 @@ items: a single fact with a bogus enum is dropped and logged rather than
 sinking the whole note.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from typing import Any
 
@@ -103,6 +103,21 @@ def ratchet_domain(extracted: str, note_domain: str) -> tuple[str, bool]:
     if note_domain == "general" and extracted in RESTRICTED_DOMAINS:
         return extracted, False
     return note_domain, True
+
+
+def normalize_future_assertion(fact: ExtractedFact, anchor: datetime) -> ExtractedFact:
+    """A fact whose validity is still in the future has not occurred yet, so it
+    cannot be an asserted past `event` (docs/ANALYSIS.md "Temporal model":
+    future-tense facts carry `expected`). The v2 prompt teaches this, but a
+    model lapse must not land a follow-up "in 3 months" as a bare asserted
+    event — that would read as something that already happened. This is a
+    temporal-correctness rule, not a kind rule: we only relax assertion, never
+    rewrite the model's chosen kind.
+    """
+    start = fact.temporal.resolved_start if fact.temporal else None
+    if start is not None and start > anchor and fact.assertion == "asserted":
+        return replace(fact, assertion="expected")
+    return fact
 
 
 def _parse_temporal(raw: Any) -> ExtractedTemporal | None:
