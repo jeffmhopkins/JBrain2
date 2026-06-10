@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from jbrain import queue
 from jbrain.config import get_settings
+from jbrain.embed import NoteEmbedder, TeiEmbedClient
 from jbrain.ingest.pipeline import IngestPipeline
 from jbrain.storage import FsBlobStore
 
@@ -63,9 +64,10 @@ async def run_loop(maker: async_sessionmaker[AsyncSession], handlers: dict[str, 
             last_heartbeat = now
         try:
             if not backfilled:
-                enqueued = await queue.backfill_pending_notes(maker, queue.SYSTEM_CTX)
+                ingests = await queue.backfill_pending_notes(maker, queue.SYSTEM_CTX)
+                embeds = await queue.backfill_unembedded_notes(maker, queue.SYSTEM_CTX)
                 backfilled = True
-                log.info("worker.backfill", enqueued=enqueued)
+                log.info("worker.backfill", ingest_jobs=ingests, embed_jobs=embeds)
             if await process_one(maker, handlers):
                 continue
         except asyncio.CancelledError:
@@ -80,7 +82,11 @@ async def run() -> None:
     engine = create_async_engine(settings.database_url)
     maker = async_sessionmaker(engine, expire_on_commit=False)
     pipeline = IngestPipeline(maker, FsBlobStore(settings.blob_dir))
-    handlers: dict[str, Handler] = {"ingest_note": pipeline.ingest_note}
+    embedder = NoteEmbedder(maker, TeiEmbedClient(settings.embed_url), settings.embed_model)
+    handlers: dict[str, Handler] = {
+        "ingest_note": pipeline.ingest_note,
+        "embed_note": embedder.embed_note,
+    }
     try:
         await run_loop(maker, handlers)
     finally:

@@ -16,6 +16,7 @@ class FakeQueue:
         self.completed: list[str] = []
         self.failed: list[tuple[str, str]] = []
         self.backfills = 0
+        self.embed_backfills = 0
         self.backfill_error: Exception | None = None
 
     async def claim(self, maker: Any, ctx: Any) -> Job | None:
@@ -34,9 +35,19 @@ class FakeQueue:
             raise self.backfill_error
         return 0
 
+    async def backfill_unembedded_notes(self, maker: Any, ctx: Any) -> int:
+        self.embed_backfills += 1
+        return 0
+
 
 def install(monkeypatch: pytest.MonkeyPatch, fake: FakeQueue) -> None:
-    for name in ("claim", "complete", "fail", "backfill_pending_notes"):
+    for name in (
+        "claim",
+        "complete",
+        "fail",
+        "backfill_pending_notes",
+        "backfill_unembedded_notes",
+    ):
         monkeypatch.setattr(worker.queue, name, getattr(fake, name))
 
 
@@ -107,6 +118,7 @@ async def test_run_loop_backfills_once_then_polls(monkeypatch: pytest.MonkeyPatc
         await worker.run_loop(None, {"ingest_note": handler})  # type: ignore[arg-type]
     assert done == ["n1"]
     assert fake.backfills == 1
+    assert fake.embed_backfills == 1  # embed backfill rides the same startup pass
 
 
 async def test_run_loop_survives_transient_errors_and_retries_backfill(
@@ -127,6 +139,26 @@ async def test_run_loop_survives_transient_errors_and_retries_backfill(
         await worker.run_loop(None, {})  # type: ignore[arg-type]
     # First attempt failed, the loop kept going and the retry succeeded.
     assert fake.backfills == 2
+
+
+async def test_run_registers_ingest_and_embed_handlers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeEngine:
+        async def dispose(self) -> None:
+            pass
+
+    captured: dict[str, Any] = {}
+
+    async def capture(maker: Any, handlers: Any) -> None:
+        captured.update(handlers)
+        raise asyncio.CancelledError
+
+    monkeypatch.setattr(worker, "create_async_engine", lambda url: FakeEngine())
+    monkeypatch.setattr(worker, "run_loop", capture)
+    with pytest.raises(asyncio.CancelledError):
+        await worker.run()
+    assert set(captured) == {"ingest_note", "embed_note"}
 
 
 async def test_run_disposes_engine(monkeypatch: pytest.MonkeyPatch) -> None:

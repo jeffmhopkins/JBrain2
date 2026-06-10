@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 from jbrain.api.deps import PrincipalDep
 from jbrain.auth.service import PrincipalInfo
 from jbrain.db.session import SessionContext
-from jbrain.notes.service import NoteInfo, NotesRepo, UnknownDomain
+from jbrain.notes.service import NoteInfo, NotesRepo, NoteUpdate, UnknownDomain
 from jbrain.queue import JobEnqueuer
 from jbrain.storage import BlobStore
 
@@ -55,6 +55,11 @@ class NoteOut(BaseModel):
     created_at: datetime
     ingest_state: str
     attachments: list[AttachmentOut]
+    # Location fields are owner-eyes metadata: Phase 7 scoped-token
+    # serialization must exclude them from non-owner responses.
+    latitude: float | None
+    longitude: float | None
+    accuracy_m: float | None
 
 
 def note_out(n: NoteInfo) -> NoteOut:
@@ -72,6 +77,9 @@ def note_out(n: NoteInfo) -> NoteOut:
             )
             for a in n.attachments
         ],
+        latitude=n.latitude,
+        longitude=n.longitude,
+        accuracy_m=n.accuracy_m,
     )
 
 
@@ -80,6 +88,17 @@ class CreateNoteRequest(BaseModel):
     domain: str = "general"
     destination: str | None = None
     body: str = Field(min_length=1)
+    # Capture location, stored verbatim. Owner-eyes metadata: Phase 7
+    # scoped-token serialization must exclude these fields.
+    latitude: float | None = Field(default=None, ge=-90, le=90)
+    longitude: float | None = Field(default=None, ge=-180, le=180)
+    accuracy_m: float | None = Field(default=None, ge=0)
+
+
+class UpdateNoteRequest(BaseModel):
+    body: str | None = Field(default=None, min_length=1)
+    domain: str | None = None
+    destination: str | None = None
 
 
 class NoteListOut(BaseModel):
@@ -99,6 +118,9 @@ async def create_note(
             domain=body.domain,
             destination=body.destination,
             body=body.body,
+            latitude=body.latitude,
+            longitude=body.longitude,
+            accuracy_m=body.accuracy_m,
         )
     except UnknownDomain:
         raise HTTPException(status_code=400, detail="unknown domain") from None
@@ -120,6 +142,40 @@ async def list_notes(
     notes = await repo.list_notes(ctx_for(principal), limit=limit, before=before)
     next_cursor = notes[-1].created_at if len(notes) == limit else None
     return NoteListOut(notes=[note_out(n) for n in notes], next_cursor=next_cursor)
+
+
+@router.patch("/notes/{note_id}")
+async def update_note(
+    note_id: str,
+    body: UpdateNoteRequest,
+    principal: PrincipalDep,
+    repo: NotesRepoDep,
+    jobs: JobQueueDep,
+) -> NoteOut:
+    ctx = ctx_for(principal)
+    changes = NoteUpdate(
+        body=body.body,
+        domain=body.domain,
+        destination=body.destination,
+        # An explicit `"destination": null` clears it; an absent key leaves it.
+        clear_destination="destination" in body.model_fields_set and body.destination is None,
+    )
+    try:
+        note = await repo.update_note(ctx, note_id, changes)
+    except UnknownDomain:
+        raise HTTPException(status_code=400, detail="unknown domain") from None
+    if note is None:
+        raise HTTPException(status_code=404, detail="note not found")
+    # Re-chunk under the (possibly new) domain — chunks always derive domain
+    # from the note at ingest time; ingest then re-enqueues embedding.
+    await jobs.enqueue(ctx, "ingest_note", {"note_id": note_id})
+    return note_out(note)
+
+
+@router.delete("/notes/{note_id}", status_code=204)
+async def delete_note(note_id: str, principal: PrincipalDep, repo: NotesRepoDep) -> None:
+    if not await repo.delete_note(ctx_for(principal), note_id):
+        raise HTTPException(status_code=404, detail="note not found")
 
 
 @router.post("/notes/{note_id}/attachments", status_code=201)

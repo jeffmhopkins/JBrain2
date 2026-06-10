@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import BigInteger, DateTime, ForeignKey, Integer, Text, func
+from sqlalchemy import BigInteger, DateTime, Double, Float, ForeignKey, Integer, Text, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -20,6 +20,10 @@ class Note(Base):
     # 'indexed' means chunked + FTS-searchable; embeddings arrive in Step 3.
     ingest_state: Mapped[str] = mapped_column(Text, default="pending", server_default="pending")
     indexed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Capture location: owner-eyes metadata, excluded from Phase 7 scoped views.
+    latitude: Mapped[float | None] = mapped_column(Double, nullable=True)
+    longitude: Mapped[float | None] = mapped_column(Double, nullable=True)
+    location_accuracy_m: Mapped[float | None] = mapped_column(Float, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

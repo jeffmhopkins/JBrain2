@@ -20,6 +20,7 @@ from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.sql import func
 
+from jbrain import queue
 from jbrain.db.session import scoped_session
 from jbrain.ingest.chunker import chunk_text
 from jbrain.ingest.extract import ExtractorRegistry, default_registry
@@ -83,6 +84,11 @@ class IngestPipeline:
                     update(Note).where(Note.id == note_id).values(ingest_state="failed")
                 )
             raise
+        # Embedding is a follow-up job, not part of ingest: 'indexed' keeps
+        # meaning chunked + FTS-ready, and a dead embed container can't block
+        # keyword search. Re-ingest re-enqueues because the rebuilt chunks
+        # all start with NULL embeddings.
+        await queue.enqueue(self._maker, SYSTEM_CTX, "embed_note", {"note_id": note_id})
         log.info("ingest.indexed", note_id=note_id, chunks=len(chunks))
 
     async def _build_chunks(
