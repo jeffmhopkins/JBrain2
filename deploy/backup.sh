@@ -4,7 +4,7 @@
 # volume. The restore path must be exercised before the system holds real data.
 set -euo pipefail
 
-cd /opt/jbrain
+cd /opt/jbrain2
 STAMP="$(date +%Y%m%d-%H%M%S)"
 KEEP_DAYS=14
 
@@ -14,7 +14,7 @@ docker compose exec -T db pg_dump -U jbrain -Fc jbrain > "backups/jbrain-$STAMP.
 
 # Blob volume lands in Phase 1; archive it once it exists.
 if docker volume inspect jbrain_blobs >/dev/null 2>&1; then
-  docker run --rm -v jbrain_blobs:/blobs:ro -v /opt/jbrain/backups:/out alpine \
+  docker run --rm -v jbrain_blobs:/blobs:ro -v /opt/jbrain2/backups:/out alpine \
     tar czf "/out/blobs-$STAMP.tar.gz" -C /blobs .
 fi
 

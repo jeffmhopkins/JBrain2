@@ -148,7 +148,7 @@ two. Rejecting a fact drafts a correction note.
 ### Install
 
 `install.sh` bootstraps a barebones Ubuntu host: installs Docker Engine +
-compose plugin, creates `/opt/jbrain`, downloads the pinned compose file and
+compose plugin, creates `/opt/jbrain2`, downloads the pinned compose file and
 the `jbrain` CLI helper, prompts for the domain and LLM API key(s), generates
 all internal secrets into `.env`, and brings the stack up.
 

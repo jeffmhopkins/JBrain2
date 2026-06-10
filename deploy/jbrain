@@ -3,7 +3,7 @@
 # so a wedged stack is always recoverable over SSH.
 set -euo pipefail
 
-cd /opt/jbrain
+cd /opt/jbrain2
 
 usage() {
   cat <<EOF
