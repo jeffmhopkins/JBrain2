@@ -160,6 +160,24 @@ action rail: **Edit** (loads the note into the omnibox; sending updates it
 and re-triggers ingestion), **Delete** (inline tap-again confirm), **Move
 domain** (small sheet). Tapping a bubble opens the note sheet.
 
+**Note view** (settled in the Phase 2 review): entry-stream bubbles clamp
+at **3 lines**; tapping opens the **note view layer** (slide-up tree level,
+swipe-down back) with a **Note / Analysis tab split**:
+
+- *Note tab*: full markdown body, attachment cards with per-attachment
+  extraction status from the dispatcher, and the Edit / Move domain /
+  Delete actions (the swipe rail's longhand).
+- *Analysis tab* (lights up by phase): generated title + 3-6 tags (P3 —
+  pre-P3 the header shows only domain + date, **no title fallback**);
+  salient facts with kind badges (measurement/state/event/preference),
+  status chips (active / pending-review / **pinned**) and confidence;
+  entity chips → entity pages; extraction provenance (model, prompt
+  version, analyzed-when) with re-run and correct actions (P3); wiki
+  backlinks → articles (P6).
+
+Search results and stream taps open the same surface — this *is* the
+former "note sheet", upgraded.
+
 **Search** (settled in the Phase 2 review): explicit submit (enter / Search
 tap), **passage-first results** — the matched chunk is the hero text with
 `--amber-tint` highlight marks, the source note is a one-line context row
