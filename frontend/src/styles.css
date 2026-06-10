@@ -1510,6 +1510,12 @@ button.small {
   background: var(--steel-tint);
 }
 
+/* The page IS the focused surface — the global textarea ring would wrap the
+   whole viewport and read as stray border arcs at the corners. */
+.ed-page:focus-visible {
+  outline: none;
+}
+
 .ed-bar {
   flex: none;
   display: flex;
