@@ -70,6 +70,10 @@ class NotesRepo(Protocol):
         """Newest first, optionally strictly older than `before`."""
         ...
 
+    async def get_note(self, ctx: SessionContext, note_id: str) -> NoteInfo | None:
+        """None when missing, deleted, or outside ctx's domain scopes."""
+        ...
+
     async def update_note(
         self, ctx: SessionContext, note_id: str, changes: NoteUpdate
     ) -> NoteInfo | None:

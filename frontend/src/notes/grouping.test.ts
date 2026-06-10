@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { dayLabel, groupByDay, relativeTime } from "./grouping";
+import { dayLabel, groupByDay, isWithinLastDays, relativeTime } from "./grouping";
 
 // Local-time constructor keeps assertions timezone-independent.
 const NOW = new Date(2026, 5, 10, 14, 30); // Wed Jun 10 2026, 14:30
@@ -34,6 +34,22 @@ describe("groupByDay", () => {
 
   it("returns no groups for an empty stream", () => {
     expect(groupByDay([], () => NOW, NOW)).toEqual([]);
+  });
+});
+
+describe("isWithinLastDays", () => {
+  it("keeps today and yesterday for the 2-day home window", () => {
+    expect(isWithinLastDays(new Date(2026, 5, 10, 0, 0), 2, NOW)).toBe(true);
+    expect(isWithinLastDays(new Date(2026, 5, 9, 0, 0), 2, NOW)).toBe(true);
+  });
+
+  it("drops anything two calendar days back or older", () => {
+    expect(isWithinLastDays(new Date(2026, 5, 8, 23, 59), 2, NOW)).toBe(false);
+    expect(isWithinLastDays(new Date(2026, 4, 1), 2, NOW)).toBe(false);
+  });
+
+  it("keeps clock-skewed future timestamps (a pending send is always shown)", () => {
+    expect(isWithinLastDays(new Date(2026, 5, 11, 1, 0), 2, NOW)).toBe(true);
   });
 });
 

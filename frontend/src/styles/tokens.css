@@ -15,6 +15,8 @@
   --text-3: #5c5f66;
   /* The composer sits slightly below --surface so it reads as the floor. */
   --surface-composer: #141518;
+  /* Sheet/dialog scrim: --bg at 60% alpha (docs/DESIGN.md "Modal system"). */
+  --scrim: rgba(14, 15, 17, 0.6);
 
   /* Accents — identical across themes. Tints are 13% alpha of the accent. */
   --steel: #7fa7c9;
@@ -73,5 +75,6 @@
   --text-2: #5c5f66;
   --text-3: #9a9da3;
   --surface-composer: #ffffff;
+  --scrim: rgba(247, 247, 245, 0.6);
   --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.06);
 }

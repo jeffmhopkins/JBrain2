@@ -2,7 +2,14 @@
 // Mirrors the real API contract closely enough for UI work: idempotent
 // note creation, cursor pagination, multipart attachments, always-on auth.
 
-import type { AttachmentOut, ContainerStatus, NoteOut, Principal } from "./client";
+import type {
+  AttachmentOut,
+  ContainerStatus,
+  NoteOut,
+  Principal,
+  SearchMatch,
+  SearchResult,
+} from "./client";
 
 const PRINCIPAL: Principal = {
   principal_id: "mock-owner",
@@ -67,6 +74,7 @@ function seedNote(
   body: string,
   createdAt: string,
   attachments: AttachmentOut[] = [],
+  ingestState = "indexed",
 ): NoteOut {
   return {
     id: id("note"),
@@ -75,7 +83,11 @@ function seedNote(
     destination,
     body,
     created_at: createdAt,
+    ingest_state: ingestState,
     attachments,
+    latitude: null,
+    longitude: null,
+    accuracy_m: null,
   };
 }
 
@@ -118,9 +130,24 @@ const notes: NoteOut[] = [
   seedNote(
     "health",
     "Labs",
-    "Annual physical — BP 118/76. Lab orders attached.",
+    "Annual physical — BP 118/76. Lab orders attached.\n\nDr. Akin wants a follow-up fasting panel in 3 months; book the draw early morning. Ask about the vitamin D dose then too.",
     daysAgo(0, 10, 5),
     [makeAttachment("lab-orders.pdf", "application/pdf")],
+    "failed",
+  ),
+  seedNote(
+    "general",
+    null,
+    "Long-form capture to exercise the 3-line clamp: the contractor said the south fence posts are rotted at the base, the gate hinge needs a longer lag bolt, and the section behind the shed should really be replaced whole rather than patched — he can quote both options next week, but materials prices change monthly so don't sit on it.",
+    daysAgo(0, 11, 40),
+  ),
+  seedNote(
+    "general",
+    null,
+    "Call the dentist about the crown — left side",
+    daysAgo(0, 12, 10),
+    [],
+    "pending",
   ),
 ];
 
@@ -135,6 +162,52 @@ const LATENCY_MS = 120;
 const sleep = () => new Promise((resolve) => setTimeout(resolve, LATENCY_MS));
 
 const VALID_DOMAINS = new Set(["general", "health", "finance", "location"]);
+
+// Fake passage search over the note fixtures: substring match per term, a
+// literal <mark> around the first hit (exercising the UI's mark-splitting),
+// and a rotating match badge. `degraded!` anywhere in the query flips the
+// keyword-only degraded banner on.
+function mockSearch(params: URLSearchParams): { degraded: boolean; results: SearchResult[] } {
+  const rawQ = params.get("q") ?? "";
+  const domain = params.get("domain");
+  const limit = Number(params.get("limit") ?? "20");
+  const degraded = rawQ.includes("degraded!");
+  const q = rawQ.replace(/degraded!/g, "").trim();
+  const terms = q.toLowerCase().split(/\s+/).filter(Boolean);
+
+  const matches = notes.filter((n) => {
+    if (domain && n.domain !== domain) return false;
+    if (terms.length === 0) return true;
+    const body = n.body.toLowerCase();
+    return terms.some((t) => body.includes(t));
+  });
+
+  const badges: SearchMatch[] = ["semantic", "keyword", "both"];
+  const results = matches.slice(0, limit).map((n, i): SearchResult => {
+    const term = terms.find((t) => n.body.toLowerCase().includes(t));
+    const at = term ? n.body.toLowerCase().indexOf(term) : -1;
+    const snippet =
+      at >= 0 && term
+        ? `${n.body.slice(Math.max(0, at - 60), at)}<mark>${n.body.slice(at, at + term.length)}</mark>${n.body.slice(at + term.length, at + term.length + 80)}`
+        : n.body.slice(0, 140);
+    const fromAttachment = n.attachments.length > 0 && i % 2 === 1;
+    return {
+      note_id: n.id,
+      chunk_id: id("chunk"),
+      snippet,
+      match: degraded ? "keyword" : (badges[i % badges.length] ?? "keyword"),
+      score: 1 - i * 0.07,
+      domain: n.domain,
+      destination: n.destination,
+      created_at: n.created_at,
+      body_preview: n.body.slice(0, 120),
+      attachment_count: n.attachments.length,
+      source_kind: fromAttachment ? "attachment" : "note",
+      source_anchor: fromAttachment ? `${n.attachments[0]?.filename ?? "file"} · p.1` : null,
+    };
+  });
+  return { degraded, results };
+}
 
 export const mockFetch: typeof fetch = async (input, init) => {
   await sleep();
@@ -161,15 +234,58 @@ export const mockFetch: typeof fetch = async (input, init) => {
       domain?: string;
       destination?: string | null;
       body: string;
+      latitude?: number;
+      longitude?: number;
+      accuracy_m?: number;
     };
     const domain = body.domain ?? "general";
     if (!VALID_DOMAINS.has(domain)) return json({ detail: "unknown domain" }, 400);
     const existing = notes.find((n) => n.client_id === body.client_id);
     if (existing) return json(existing, 201);
-    const note = seedNote(domain, body.destination ?? null, body.body, new Date().toISOString());
+    const note = seedNote(
+      domain,
+      body.destination ?? null,
+      body.body,
+      new Date().toISOString(),
+      [],
+      "pending",
+    );
     note.client_id = body.client_id;
+    note.latitude = body.latitude ?? null;
+    note.longitude = body.longitude ?? null;
+    note.accuracy_m = body.accuracy_m ?? null;
     notes.push(note);
     return json(note, 201);
+  }
+
+  const noteMatch = path.match(/^\/api\/notes\/([^/]+)$/);
+  if (noteMatch && method === "PATCH") {
+    const note = notes.find((n) => n.id === decodeURIComponent(noteMatch[1] ?? ""));
+    if (!note) return json({ detail: "note not found" }, 404);
+    const patch = JSON.parse(String(init?.body)) as {
+      body?: string;
+      domain?: string;
+      destination?: string | null;
+    };
+    if (patch.domain !== undefined && !VALID_DOMAINS.has(patch.domain))
+      return json({ detail: "unknown domain" }, 400);
+    if (patch.body !== undefined) note.body = patch.body;
+    if (patch.domain !== undefined) note.domain = patch.domain;
+    if ("destination" in patch) note.destination = patch.destination ?? null;
+    // Mirrors the real PATCH: edits re-trigger ingestion.
+    note.ingest_state = "pending";
+    return json(note);
+  }
+
+  if (noteMatch && method === "DELETE") {
+    const index = notes.findIndex((n) => n.id === decodeURIComponent(noteMatch[1] ?? ""));
+    if (index < 0) return json({ detail: "note not found" }, 404);
+    notes.splice(index, 1);
+    return new Response(null, { status: 204 });
+  }
+
+  if (path === "/api/search" && method === "GET") {
+    return json(mockSearch(url.searchParams));
   }
 
   const attachMatch = path.match(/^\/api\/notes\/([^/]+)\/attachments$/);
@@ -197,6 +313,13 @@ export const mockFetch: typeof fetch = async (input, init) => {
     return new Response(blob, { status: 200, headers: { "Content-Type": blob.type } });
   }
 
+  {
+    const noteMatch = path.match(/^\/api\/notes\/([^/]+)$/);
+    if (noteMatch && (!init?.method || init.method === "GET")) {
+      const note = notes.find((n) => n.id === decodeURIComponent(noteMatch[1] ?? ""));
+      return note ? json(note) : json({ detail: "note not found" }, 404);
+    }
+  }
   if (path === "/api/ops/update" && init?.method === "POST") {
     mockUpdate.state = "running";
     mockUpdate.ticks = 0;

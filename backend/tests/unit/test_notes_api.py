@@ -101,6 +101,12 @@ class FakeNotesRepo:
             rows = [n for n in rows if n.created_at < before]
         return rows[:limit]
 
+    async def get_note(self, ctx: SessionContext, note_id: str) -> NoteInfo | None:
+        for n in self.notes:
+            if n.id == note_id:
+                return n
+        return None
+
     async def add_attachment(
         self,
         ctx: SessionContext,
@@ -225,6 +231,15 @@ def test_attachment_upload_and_download_roundtrip(
 
     listed = c.get("/api/notes").json()["notes"][0]
     assert listed["attachments"][0]["filename"] == "lab.pdf"
+
+
+def test_get_note_by_id(client: tuple[TestClient, FakeNotesRepo, FakeJobQueue]) -> None:
+    c, _, _ = client
+    created = c.post("/api/notes", json={"client_id": "g1", "body": "fetch me"}).json()
+    got = c.get(f"/api/notes/{created['id']}")
+    assert got.status_code == 200
+    assert got.json()["body"] == "fetch me"
+    assert c.get(f"/api/notes/{uuid.uuid4()}").status_code == 404
 
 
 def test_attachment_to_missing_note_404(

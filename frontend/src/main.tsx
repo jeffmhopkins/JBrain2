@@ -3,6 +3,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./App";
 import { initFontScale } from "./fontScale";
+import { initLocationCapture } from "./location";
 import { initTheme } from "./theme";
 import "./styles/tokens.css";
 import "./styles.css";
@@ -10,6 +11,9 @@ import "./styles.css";
 // Resolve the theme before first paint so there is no flash of wrong theme.
 initTheme();
 initFontScale();
+// Warm geolocation fix (on by default; Settings toggle) so sends can attach
+// coordinates without ever waiting on GPS.
+initLocationCapture();
 
 // autoUpdate handles relaunches; the hourly check covers a PWA left open for
 // days, so it still converges on the latest deploy without a restart.

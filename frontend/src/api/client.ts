@@ -68,7 +68,12 @@ export interface NoteOut {
   destination: string | null;
   body: string;
   created_at: string;
+  ingest_state: string;
   attachments: AttachmentOut[];
+  // Owner-eyes capture location (Phase 7 scoped tokens never receive these).
+  latitude: number | null;
+  longitude: number | null;
+  accuracy_m: number | null;
 }
 
 export interface NotesPage {
@@ -81,6 +86,38 @@ export interface NoteCreate {
   domain: string;
   destination?: string | null;
   body: string;
+  latitude?: number;
+  longitude?: number;
+  accuracy_m?: number;
+}
+
+export interface NoteUpdate {
+  body?: string;
+  domain?: string;
+  /** Explicit null clears the destination; an absent key leaves it. */
+  destination?: string | null;
+}
+
+export type SearchMatch = "semantic" | "keyword" | "both";
+
+export interface SearchResult {
+  note_id: string;
+  chunk_id: string;
+  snippet: string;
+  match: SearchMatch;
+  score: number;
+  domain: string;
+  destination: string | null;
+  created_at: string;
+  body_preview: string;
+  attachment_count: number;
+  source_kind: string;
+  source_anchor: string | null;
+}
+
+export interface SearchOut {
+  degraded: boolean;
+  results: SearchResult[];
 }
 
 export class ApiError extends Error {
@@ -163,11 +200,37 @@ export const api = {
     return (await response.json()) as NoteOut;
   },
 
+  async getNote(id: string): Promise<NoteOut> {
+    const response = await request(`/api/notes/${encodeURIComponent(id)}`);
+    return (await response.json()) as NoteOut;
+  },
+
   async listNotes(limit = 50, before?: string): Promise<NotesPage> {
     const params = new URLSearchParams({ limit: String(limit) });
     if (before) params.set("before", before);
     const response = await request(`/api/notes?${params.toString()}`);
     return (await response.json()) as NotesPage;
+  },
+
+  // PATCH resets ingest_state to "pending" server-side — the stream's
+  // indexing chip reappears until the worker re-chunks the note.
+  async updateNote(id: string, patch: NoteUpdate): Promise<NoteOut> {
+    const response = await request(
+      `/api/notes/${encodeURIComponent(id)}`,
+      jsonInit("PATCH", patch),
+    );
+    return (await response.json()) as NoteOut;
+  },
+
+  async deleteNote(id: string): Promise<void> {
+    await request(`/api/notes/${encodeURIComponent(id)}`, { method: "DELETE" });
+  },
+
+  async search(q: string, domain?: string, limit = 20): Promise<SearchOut> {
+    const params = new URLSearchParams({ q, limit: String(limit) });
+    if (domain) params.set("domain", domain);
+    const response = await request(`/api/search?${params.toString()}`);
+    return (await response.json()) as SearchOut;
   },
 
   async uploadAttachment(noteId: string, blob: Blob, filename: string): Promise<AttachmentOut> {

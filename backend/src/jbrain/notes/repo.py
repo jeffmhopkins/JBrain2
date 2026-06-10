@@ -148,6 +148,15 @@ class SqlNotesRepo:
             await session.execute(delete(Chunk).where(Chunk.note_id == note.id))
             return True
 
+    async def get_note(self, ctx: SessionContext, note_id: str) -> NoteInfo | None:
+        async with scoped_session(self._maker, ctx) as session:
+            row = (
+                await session.execute(
+                    select(Note).where(Note.id == note_id, Note.deleted_at.is_(None))
+                )
+            ).scalar_one_or_none()
+            return None if row is None else _note_info(row)
+
     async def add_attachment(
         self,
         ctx: SessionContext,

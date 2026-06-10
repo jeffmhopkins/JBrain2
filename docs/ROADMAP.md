@@ -39,9 +39,16 @@ schema migration.
 
 ## Phase 2 — Ingestion & search
 
-Events on note save; job queue + worker; text extraction from attachments;
-multi-granularity chunking; embeddings via the `embed` container; hybrid
-search (dense + FTS, RRF) with a domain-scoped search UI.
+Postgres job queue (SKIP LOCKED, backoff, stale-job reaper) + worker loop
+with automatic backfill; the attachment analysis dispatcher (text/PDF
+chains, OCR seam for P3); paragraph/section chunking with RLS-firewalled
+chunks; embeddings via the `embed` container (bge-small-en-v1.5 384-dim on
+the 4GB box — model is an env var, re-embed is a planned migration for the
+32GB upgrade); hybrid search (dense + FTS, RRF k=60) with FTS-only degraded
+fallback. UI: bounded mode-scoped home stream with swipe action rail and
+indexing chips, passage-first Search screen with match badges, the
+Note/Analysis note view, note edit/delete/move-domain, capture-location
+setting.
 
 **Exit:** search reliably beats manual scanning; retrieval quality validated
 by hand before any LLM consumes it.

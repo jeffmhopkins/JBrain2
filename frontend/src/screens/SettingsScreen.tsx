@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { FONT_SCALES, type FontScale, getFontScale, setFontScale } from "../fontScale";
+import { isLocationCaptureEnabled, setLocationCaptureEnabled } from "../location";
 import { type ThemePref, getThemePref, setThemePref } from "../theme";
 
 const THEME_OPTIONS: { value: ThemePref; label: string }[] = [
@@ -16,6 +17,7 @@ interface SettingsScreenProps {
 export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
   const [theme, setTheme] = useState<ThemePref>(getThemePref);
   const [fontScale, setScale] = useState<FontScale>(getFontScale);
+  const [locationOn, setLocationOn] = useState<boolean>(isLocationCaptureEnabled);
   // Inline confirm per DESIGN.md — no window.confirm for destructive acts.
   const [confirmingLogout, setConfirmingLogout] = useState(false);
 
@@ -58,6 +60,30 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
               }}
             >
               {scale}%
+            </button>
+          ))}
+        </div>
+      </section>
+
+      <section className="settings-card">
+        <h2 className="settings-label">Capture location</h2>
+        <p className="settings-meta">
+          tags notes with where they were written — only when a fresh fix exists; capture never
+          waits for GPS.
+        </p>
+        <div className="theme-picker" aria-label="Capture location">
+          {[true, false].map((on) => (
+            <button
+              key={on ? "on" : "off"}
+              type="button"
+              aria-pressed={locationOn === on}
+              className={`seg${locationOn === on ? " seg-on" : ""}`}
+              onClick={() => {
+                setLocationCaptureEnabled(on);
+                setLocationOn(on);
+              }}
+            >
+              {on ? "On" : "Off"}
             </button>
           ))}
         </div>

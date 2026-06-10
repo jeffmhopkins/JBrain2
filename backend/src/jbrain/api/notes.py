@@ -178,6 +178,14 @@ async def delete_note(note_id: str, principal: PrincipalDep, repo: NotesRepoDep)
         raise HTTPException(status_code=404, detail="note not found")
 
 
+@router.get("/notes/{note_id}")
+async def get_note(note_id: str, principal: PrincipalDep, repo: NotesRepoDep) -> NoteOut:
+    note = await repo.get_note(ctx_for(principal), note_id)
+    if note is None:
+        raise HTTPException(status_code=404, detail="note not found")
+    return note_out(note)
+
+
 @router.post("/notes/{note_id}/attachments", status_code=201)
 async def upload_attachment(
     note_id: str,

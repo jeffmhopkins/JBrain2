@@ -15,7 +15,7 @@ One Docker Compose stack on an Ubuntu host, reachable on a public domain.
 | `api` | Python / FastAPI | REST API, auth, CRUD, search, chat |
 | `worker` | Same image as `api` | Job-queue consumer: extraction, chunking, embedding, analysis, wiki builds |
 | `db` | TimescaleDB-HA (Postgres + Timescale + PostGIS; pgvector) | The single stateful service (see below) |
-| `embed` | HF text-embeddings-inference (CPU) | Local embedding model behind HTTP; GPU-swappable later |
+| `embed` | HF text-embeddings-inference (CPU) | Local embeddings (`EMBED_MODEL`, default bge-small-en-v1.5/384-dim; 1GB mem cap); model swap = env change + re-embed job |
 | `supervisor` | Minimal socket-mounted service | Host control: stack status/restart, log streaming, update orchestration (see Operations) |
 
 Attachments are content-addressed blobs (sha256) on a disk volume behind a

@@ -1,11 +1,20 @@
 import { type TouchEvent, useEffect, useRef, useState } from "react";
-import { type Principal, api, setUnauthorizedHandler } from "./api/client";
+import { type Principal, type SearchResult, api, setUnauthorizedHandler } from "./api/client";
 import { Launcher, type LauncherTarget } from "./components/Launcher";
+import { MoveDomainSheet } from "./components/MoveDomainSheet";
 import { TopBar } from "./components/TopBar";
-import { useNotes } from "./notes/useNotes";
+import { useNoteActions } from "./notes/useNoteActions";
+import { type StreamItem, useNotes } from "./notes/useNotes";
 import { HomeScreen } from "./screens/HomeScreen";
 import { LoginScreen } from "./screens/LoginScreen";
+import {
+  NoteScreen,
+  type NoteViewSource,
+  noteViewFromItem,
+  noteViewFromSearch,
+} from "./screens/NoteScreen";
 import { OpsScreen } from "./screens/OpsScreen";
+import { SearchScreen } from "./screens/SearchScreen";
 import { SettingsScreen } from "./screens/SettingsScreen";
 
 type Session =
@@ -13,11 +22,12 @@ type Session =
   | { status: "anonymous" }
   | { status: "in"; principal: Principal };
 
-type Card = "ops" | "settings";
+type Card = "ops" | "settings" | "search";
 
 const SCREEN_TITLES: Record<Card, string> = {
   ops: "Ops",
   settings: "Settings",
+  search: "Search",
 };
 
 const CARD_EXIT_MS = 150;
@@ -27,10 +37,14 @@ export function App() {
   const [card, setCard] = useState<Card | null>(null);
   const [cardClosing, setCardClosing] = useState(false);
   const [launcherOpen, setLauncherOpen] = useState(false);
+  // The note view is its own tree layer above home AND above search results.
+  const [noteView, setNoteView] = useState<NoteViewSource | null>(null);
+  const [noteClosing, setNoteClosing] = useState(false);
 
   // Lives at the app level so the outbox keeps flushing while the user is
   // on Ops or Settings.
   const notes = useNotes(session.status === "in");
+  const actions = useNoteActions(notes);
 
   // Any 401 from the API means the cookie expired or was revoked.
   useEffect(() => {
@@ -53,6 +67,7 @@ export function App() {
     }
     setCard(null);
     setLauncherOpen(false);
+    setNoteView(null);
     setSession({ status: "anonymous" });
   }
 
@@ -82,6 +97,35 @@ export function App() {
   function jumpHome() {
     setLauncherOpen(false);
     closeCardToLauncher();
+  }
+
+  function closeNoteView() {
+    if (reducedMotion()) {
+      setNoteView(null);
+      return;
+    }
+    setNoteClosing(true);
+    setTimeout(() => {
+      setNoteClosing(false);
+      setNoteView(null);
+    }, CARD_EXIT_MS);
+  }
+
+  function openNoteFromStream(item: StreamItem) {
+    setNoteView(noteViewFromItem(item));
+  }
+
+  function openNoteFromSearch(result: SearchResult) {
+    setNoteView(noteViewFromSearch(result));
+  }
+
+  // Editing happens in the omnibox, which lives on home — leaving the note
+  // view (and any card under it) behind on the way there.
+  function startEditFromNoteView(id: string, body: string) {
+    setNoteView(null);
+    setCard(null);
+    setLauncherOpen(false);
+    actions.startEdit(id, body);
   }
 
   // Navigation is a tree: home → (swipe up) → launcher → (tap) → card
@@ -127,7 +171,13 @@ export function App() {
 
       {/* Home stays mounted so stream scroll position survives sub-screens. */}
       <div className={`screen-home${card === null && !launcherOpen ? "" : " screen-hidden"}`}>
-        <HomeScreen notes={notes} onOpenLauncher={() => setLauncherOpen(true)} />
+        <HomeScreen
+          notes={notes}
+          actions={actions}
+          onOpenNote={openNoteFromStream}
+          onOpenSearch={() => setCard("search")}
+          onOpenLauncher={() => setLauncherOpen(true)}
+        />
       </div>
 
       <Launcher open={launcherOpen} onClose={() => setLauncherOpen(false)} onNavigate={navigate} />
@@ -153,7 +203,34 @@ export function App() {
           {card === "settings" && (
             <SettingsScreen deviceLabel={session.principal.label} onLogout={() => void logout()} />
           )}
+          {card === "search" && <SearchScreen onOpenResult={openNoteFromSearch} />}
         </div>
+      )}
+
+      {noteView !== null && (
+        <div className={noteClosing ? "note-layer-closing" : undefined}>
+          <NoteScreen
+            key={noteView.id ?? "pending"}
+            source={noteView}
+            resolve={notes.fetchById}
+            syncStatus={notes.syncStatus}
+            onClose={closeNoteView}
+            onEdit={startEditFromNoteView}
+            onMove={actions.startMove}
+            onDelete={(id) => {
+              void actions.remove(id);
+              closeNoteView();
+            }}
+          />
+        </div>
+      )}
+
+      {actions.moveTarget !== null && (
+        <MoveDomainSheet
+          target={actions.moveTarget}
+          onClose={actions.cancelMove}
+          onMove={(domain, destination) => void actions.submitMove(domain, destination)}
+        />
       )}
     </div>
   );

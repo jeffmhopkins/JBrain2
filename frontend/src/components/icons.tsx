@@ -146,6 +146,21 @@ export const SettingsIcon = (p: IconProps) => (
   </Icon>
 );
 
+export const FileIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z" />
+    <path d="M14 2v6h6" />
+  </Icon>
+);
+
+export const ImageIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <rect x="3" y="3" width="18" height="18" rx="2" />
+    <circle cx="9" cy="9" r="2" />
+    <path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21" />
+  </Icon>
+);
+
 export const XIcon = (p: IconProps) => (
   <Icon {...p}>
     <path d="M18 6 6 18M6 6l12 12" />

@@ -199,6 +199,16 @@ async def test_location_fields_roundtrip(repo: SqlNotesRepo) -> None:
     assert (listed.latitude, listed.longitude, listed.accuracy_m) == (47.6097, -122.3331, 8.0)
 
 
+async def test_get_note_respects_firewall(repo: SqlNotesRepo) -> None:
+    note, _ = await repo.create_note(
+        OWNER, client_id="get-h", domain="health", destination=None, body="private reading"
+    )
+    assert await repo.get_note(OWNER, note.id) is not None
+    assert await repo.get_note(HEALTH_ONLY, note.id) is not None
+    assert await repo.get_note(GENERAL_ONLY, note.id) is None
+    assert await repo.get_note(UNSCOPED, note.id) is None
+
+
 async def test_attachments_inherit_note_domain_and_firewall(repo: SqlNotesRepo) -> None:
     note, _ = await repo.create_note(
         OWNER, client_id="att-h", domain="health", destination="Labs", body="lab report"
