@@ -160,6 +160,14 @@ action rail: **Edit** (loads the note into the omnibox; sending updates it
 and re-triggers ingestion), **Delete** (inline tap-again confirm), **Move
 domain** (small sheet). Tapping a bubble opens the note sheet.
 
+**Capture location** (settled in the Phase 2 review): a Settings toggle,
+**on by default** (browser permission prompt on first launch; denial just
+means location-less notes). While on, the app keeps a warm geolocation fix
+and attaches lat/lng/accuracy to a note at send **only if the fix is under
+2 minutes old** — capture is never blocked or delayed waiting for GPS.
+Note-location is owner-eyes metadata: Phase 7 scoped tokens never receive
+location fields, regardless of the note's domain.
+
 **Note view** (settled in the Phase 2 review): entry-stream bubbles clamp
 at **3 lines**; tapping opens the **note view layer** (slide-up tree level,
 swipe-down back) with a **Note / Analysis tab split**:
