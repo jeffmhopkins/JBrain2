@@ -275,6 +275,15 @@ exists from day one as the all-local escape hatch. **Vision-LLM is the
 first OCR backend [decided]** — Tesseract remains a later config option on
 the dispatcher's routing axis.
 
+**Token accounting [decided]**: every adapter call persists a usage row
+(`llm_usage`: task, provider, model, input/output tokens, timestamp) —
+written fire-and-forget so accounting can never fail or slow a call.
+Owner-only RLS (telemetry, not domain data; still gets the standard
+isolation test). Surfaced live on the Ops screen as an **AI usage card**:
+today / this month totals with per-task breakdown, aggregated by
+`date_trunc` at query time. Token counts only — no dollar estimates (a
+per-model price table would rot); revisit if costs matter.
+
 One guaranteed call + up to two conditional cheap calls per note; ~5–7k
 tokens ≈ under $0.02/note. Conflict detection is bounded by candidate
 retrieval (SQL identity match, else pgvector top-k scoped to same
