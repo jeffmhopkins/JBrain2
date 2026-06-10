@@ -43,6 +43,22 @@ free-text blob:
 - Provenance: `note_id`, `chunk_id`, `extractor` (model id),
   `prompt_version`, `confidence`.
 
+### The fact grammar: a property graph **[decided]**
+
+Every fact is an **edge addressed as `entity.predicate[.qualifier]`**,
+pointing at a value (`me.weight → 182 lb`) or another entity
+(`me.employer → Acme`). The structural identity key IS the graph address,
+and the supersession chain on that address IS the property's **full
+revision history** — `me.weight` yields a time series, `me.address` an
+interval history, `appointment.scheduled_time` a reschedule chain — every
+link citing its source note. Nothing is deleted, ever.
+
+Entity-row fields (`canonical_name`, summary) are **denormalized
+projections of current facts**: a name change is an `entity.name`
+transition with history, not an overwrite. The same rule that made
+appointments reschedule-safe applies to every property: identity is
+stable; properties are supersedable bindings.
+
 ### Fact kinds and supersession **[decided: per-kind policy]**
 
 | kind | example | temporal | conflict policy |
