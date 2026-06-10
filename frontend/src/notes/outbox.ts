@@ -18,6 +18,10 @@ export interface PendingNote {
   destination: string | null;
   body: string;
   created_at: string;
+  // Capture-time UTC offset in minutes east of UTC (the negation of JS
+  // getTimezoneOffset). Sent so the server can recover the note's local date
+  // for extraction; absent on pre-Phase-3 rows.
+  tz_offset_minutes?: number;
   attachments: PendingAttachment[];
   // Captured at write time so an offline note keeps its true location even
   // when the flush happens somewhere else. Absent on pre-Phase-2 rows.
@@ -115,6 +119,10 @@ async function doFlush(store: OutboxStore): Promise<FlushResult> {
         domain: note.domain,
         destination: note.destination,
         body: note.body,
+        created_at: note.created_at,
+        ...(note.tz_offset_minutes !== undefined
+          ? { tz_offset_minutes: note.tz_offset_minutes }
+          : {}),
         ...(note.latitude !== undefined &&
         note.longitude !== undefined &&
         note.accuracy_m !== undefined

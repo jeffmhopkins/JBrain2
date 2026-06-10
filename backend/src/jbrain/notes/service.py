@@ -28,6 +28,10 @@ class NoteInfo:
     destination: str | None
     body: str
     created_at: datetime
+    # Client capture-time UTC offset (minutes east of UTC); None for
+    # server-stamped or pre-Phase-3 rows. The extraction anchor uses it to
+    # recover the note's local date.
+    tz_offset_minutes: int | None = None
     # 'pending' | 'processing' | 'indexed' | 'failed' — drives indexing chips.
     ingest_state: str = "pending"
     attachments: list[AttachmentInfo] = field(default_factory=list)
@@ -57,6 +61,8 @@ class NotesRepo(Protocol):
         domain: str,
         destination: str | None,
         body: str,
+        created_at: datetime | None = None,
+        tz_offset_minutes: int | None = None,
         latitude: float | None = None,
         longitude: float | None = None,
         accuracy_m: float | None = None,

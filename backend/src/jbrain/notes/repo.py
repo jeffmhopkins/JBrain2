@@ -30,6 +30,7 @@ def _note_info(n: Note) -> NoteInfo:
         destination=n.destination,
         body=n.body,
         created_at=n.created_at,
+        tz_offset_minutes=n.tz_offset_minutes,
         ingest_state=n.ingest_state,
         attachments=[_attachment_info(a) for a in n.attachments],
         latitude=n.latitude,
@@ -50,10 +51,16 @@ class SqlNotesRepo:
         domain: str,
         destination: str | None,
         body: str,
+        created_at: datetime | None = None,
+        tz_offset_minutes: int | None = None,
         latitude: float | None = None,
         longitude: float | None = None,
         accuracy_m: float | None = None,
     ) -> tuple[NoteInfo, bool]:
+        # Client capture time wins when supplied (the offline outbox flushes
+        # later, so server now() would be wrong); omitting the key lets the
+        # column's server_default stamp now() instead of writing NULL.
+        captured = {"created_at": created_at} if created_at is not None else {}
         try:
             async with scoped_session(self._maker, ctx) as session:
                 note = Note(
@@ -61,9 +68,11 @@ class SqlNotesRepo:
                     domain_code=domain,
                     destination=destination,
                     body=body,
+                    tz_offset_minutes=tz_offset_minutes,
                     latitude=latitude,
                     longitude=longitude,
                     location_accuracy_m=accuracy_m,
+                    **captured,
                 )
                 session.add(note)
                 await session.flush()

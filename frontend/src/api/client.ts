@@ -73,6 +73,7 @@ export interface NoteOut {
   destination: string | null;
   body: string;
   created_at: string;
+  tz_offset_minutes: number | null;
   ingest_state: string;
   attachments: AttachmentOut[];
   // Owner-eyes capture location (Phase 7 scoped tokens never receive these).
@@ -91,6 +92,10 @@ export interface NoteCreate {
   domain: string;
   destination?: string | null;
   body: string;
+  /** Capture instant (ISO 8601). Sent so the offline outbox keeps true time. */
+  created_at?: string;
+  /** Capture-time UTC offset in minutes east of UTC (negated getTimezoneOffset). */
+  tz_offset_minutes?: number;
   latitude?: number;
   longitude?: number;
   accuracy_m?: number;

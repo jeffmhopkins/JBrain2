@@ -16,7 +16,7 @@ which RLS simply hides from narrower scopes.
 
 import uuid
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta, timezone
 from typing import Any
 
 import structlog
@@ -36,6 +36,7 @@ from jbrain.analysis.extraction import (
     ExtractedFact,
     Extraction,
     ExtractionError,
+    normalize_future_assertion,
     parse_extraction,
     ratchet_domain,
 )
@@ -61,6 +62,21 @@ from jbrain.queue import SYSTEM_CTX, PermanentJobError
 log = structlog.get_logger()
 
 EXTRACT_MAX_TOKENS = 8192
+
+
+def local_anchor(captured_at: datetime, tz_offset_minutes: int | None) -> datetime:
+    """The capture anchor in the note's LOCAL time.
+
+    created_at round-trips through timestamptz as a UTC instant, so on its own
+    it tells the model the wrong calendar day (an evening capture serializes as
+    the next UTC day). When the client recorded its offset we re-project the
+    instant into that offset, so "today"/"in 3 months" resolve against the
+    note's local date (docs/ANALYSIS.md "Temporal model"). Offset absent (older
+    rows, server-stamped captures): fall back to the instant as stored.
+    """
+    if tz_offset_minutes is None:
+        return captured_at
+    return captured_at.astimezone(timezone(timedelta(minutes=tz_offset_minutes)))
 
 
 @dataclass(frozen=True)
@@ -116,6 +132,7 @@ class AnalysisPipeline:
                 log.info("analysis.skipped", note_id=note_id, reason="missing or deleted")
                 return
             body, domain, captured_at = note.body, note.domain_code, note.created_at
+            tz_offset = note.tz_offset_minutes
             chunk_rows = (
                 await session.execute(
                     select(Chunk.id, Chunk.text).where(Chunk.note_id == note_id).order_by(Chunk.seq)
@@ -128,7 +145,9 @@ class AnalysisPipeline:
             result = await self._router.complete(
                 "note.extract",
                 system=SYSTEM_PROMPT,
-                user_text=build_user_prompt(texts, anchor=captured_at, domain=domain),
+                user_text=build_user_prompt(
+                    texts, anchor=local_anchor(captured_at, tz_offset), domain=domain
+                ),
                 json_schema=EXTRACTION_SCHEMA,
                 max_tokens=EXTRACT_MAX_TOKENS,
             )
@@ -472,6 +491,9 @@ class AnalysisPipeline:
         chunks: list[_ChunkRef],
         extractor: str,
     ) -> uuid.UUID | None:
+        # A still-future fact is `expected`, never an asserted past event — the
+        # anchor is the note's capture time (docs/ANALYSIS.md "Temporal model").
+        fact = normalize_future_assertion(fact, captured_at)
         entity = resolved.get(fact.entity_ref)
         if entity is None:
             log.info("analysis.fact_skipped", reason="unlinked entity", ref=fact.entity_ref)

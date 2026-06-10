@@ -1,16 +1,20 @@
 """Extraction parsing, the domain ratchet, and prompt assembly — all pure."""
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta, timezone
 from typing import Any
 
 import pytest
 
 from jbrain.analysis.extraction import (
+    ExtractedFact,
+    ExtractedTemporal,
     ExtractionError,
+    normalize_future_assertion,
     parse_datetime,
     parse_extraction,
     ratchet_domain,
 )
+from jbrain.analysis.pipeline import local_anchor
 from jbrain.analysis.prompt import (
     EXTRACTION_SCHEMA,
     MAX_FACTS,
@@ -189,12 +193,108 @@ def test_system_prompt_carries_the_fact_grammar() -> None:
         assert needle in SYSTEM_PROMPT, needle
 
 
+def test_system_prompt_v2_teaches_kind_discipline_and_schema_org_names() -> None:
+    """Bug 1/3: the prompt must steer relocation/residence/employer to a
+    `state` on canonical schema.org predicates, reuse predicate names across
+    notes, and type future follow-ups as `expected`."""
+    # Canonical predicate vocabulary the model must converge on.
+    for canonical in ("homeLocation", "worksFor", "address", "spouse", "birthDate"):
+        assert canonical in SYSTEM_PROMPT, canonical
+    # Kind-selection rules: residence/employer/address/marital are states.
+    assert "state change" in SYSTEM_PROMPT
+    for concept in ("residence", "employer", "address", "marital"):
+        assert concept in SYSTEM_PROMPT, concept
+    # The worked relocation example renders Denver -> homeLocation state.
+    assert "homeLocation" in SYSTEM_PROMPT and "Denver" in SYSTEM_PROMPT
+    assert "Boulder" in SYSTEM_PROMPT  # supersession by matching predicate
+    # Future follow-ups are expected, not asserted events.
+    assert "in 3 months" in SYSTEM_PROMPT and "expected" in SYSTEM_PROMPT
+
+
+def test_prompt_version_bumped_to_v2() -> None:
+    assert PROMPT_VERSION == "note-extract-v2"
+
+
 def test_user_prompt_carries_anchor_with_timezone_domain_and_content() -> None:
     anchor = datetime(2026, 6, 10, 9, 30, tzinfo=UTC)
     prompt = build_user_prompt(["BP was 118/76", "second chunk"], anchor=anchor, domain="health")
     assert "2026-06-10T09:30:00+00:00" in prompt
     assert "health" in prompt
     assert "BP was 118/76" in prompt and "second chunk" in prompt
+
+
+def test_user_prompt_anchor_carries_local_date_not_utc() -> None:
+    """Bug 2: an evening-local capture whose UTC instant is the next calendar
+    day must reach the model as its LOCAL date, or "today" drifts a day."""
+    # 2026-06-10 17:11 at UTC-07:00 == 2026-06-11 00:11 UTC.
+    local = datetime(2026, 6, 10, 17, 11, tzinfo=timezone(timedelta(hours=-7)))
+    prompt = build_user_prompt(["note"], anchor=local, domain="general")
+    assert "2026-06-10T17:11:00-07:00" in prompt
+    assert "2026-06-11" not in prompt  # never the UTC-rolled date
+
+
+# --- capture anchor locality (Bug 2) ----------------------------------------
+
+
+def test_local_anchor_reprojects_utc_instant_into_client_offset() -> None:
+    # Stored instant is UTC (timestamptz round-trip); the client wrote it at
+    # 17:11 local, UTC-07:00, which is 00:11 the NEXT day in UTC.
+    stored = datetime(2026, 6, 11, 0, 11, tzinfo=UTC)
+    anchor = local_anchor(stored, -420)  # -7h in minutes
+    assert anchor.isoformat() == "2026-06-10T17:11:00-07:00"
+    assert anchor.date() == datetime(2026, 6, 10).date()
+
+
+def test_local_anchor_without_offset_falls_back_to_stored_instant() -> None:
+    stored = datetime(2026, 6, 11, 0, 11, tzinfo=UTC)
+    assert local_anchor(stored, None) == stored
+
+
+# --- future-tense assertion (Bug 3) -----------------------------------------
+
+
+def _fact(assertion: str, start: datetime | None, kind: str = "event") -> ExtractedFact:
+    temporal = (
+        ExtractedTemporal(phrase="later", resolved_start=start, resolved_end=None, precision="day")
+        if start is not None
+        else None
+    )
+    return ExtractedFact(
+        predicate="followUp",
+        qualifier="",
+        kind=kind,
+        statement="Follow-up visit.",
+        value_json=None,
+        assertion=assertion,
+        entity_ref="Me",
+        object_entity_ref=None,
+        temporal=temporal,
+        domain="health",
+        confidence=0.9,
+    )
+
+
+def test_future_asserted_fact_becomes_expected() -> None:
+    anchor = datetime(2026, 6, 10, 17, 11, tzinfo=UTC)
+    future = anchor + timedelta(days=92)  # "back in 3 months"
+    assert normalize_future_assertion(_fact("asserted", future), anchor).assertion == "expected"
+
+
+def test_past_and_present_facts_keep_their_assertion() -> None:
+    anchor = datetime(2026, 6, 10, 17, 11, tzinfo=UTC)
+    past = anchor - timedelta(days=1)
+    assert normalize_future_assertion(_fact("asserted", past), anchor).assertion == "asserted"
+    # No temporal: nothing to relax.
+    assert normalize_future_assertion(_fact("asserted", None), anchor).assertion == "asserted"
+
+
+def test_future_non_asserted_assertion_is_left_alone() -> None:
+    anchor = datetime(2026, 6, 10, 17, 11, tzinfo=UTC)
+    future = anchor + timedelta(days=30)
+    # A future hypothetical stays hypothetical; we only relax bare asserted.
+    assert normalize_future_assertion(_fact("hypothetical", future), anchor).assertion == (
+        "hypothetical"
+    )
 
 
 def test_schema_and_version_are_stable_contract_surface() -> None:

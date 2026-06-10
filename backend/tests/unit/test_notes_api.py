@@ -43,6 +43,8 @@ class FakeNotesRepo:
         domain: str,
         destination: str | None,
         body: str,
+        created_at: datetime | None = None,
+        tz_offset_minutes: int | None = None,
         latitude: float | None = None,
         longitude: float | None = None,
         accuracy_m: float | None = None,
@@ -58,7 +60,8 @@ class FakeNotesRepo:
             domain=domain,
             destination=destination,
             body=body,
-            created_at=datetime.now(UTC) + timedelta(seconds=len(self.notes)),
+            created_at=created_at or datetime.now(UTC) + timedelta(seconds=len(self.notes)),
+            tz_offset_minutes=tz_offset_minutes,
             latitude=latitude,
             longitude=longitude,
             accuracy_m=accuracy_m,
@@ -195,6 +198,28 @@ def test_create_note_is_idempotent_on_client_id(
     assert first.status_code == 201
     assert second.status_code == 201
     assert first.json()["id"] == second.json()["id"]
+
+
+def test_create_note_persists_client_capture_time_and_offset(
+    client: tuple[TestClient, FakeNotesRepo, FakeJobQueue],
+) -> None:
+    # Bug 2: the offline outbox sends its own capture instant + UTC offset so
+    # the extraction anchor is the note's local time, not server flush time.
+    c, repo, _ = client
+    resp = c.post(
+        "/api/notes",
+        json={
+            "client_id": "tz1",
+            "body": "evening note",
+            "created_at": "2026-06-10T17:11:00-07:00",
+            "tz_offset_minutes": -420,
+        },
+    )
+    assert resp.status_code == 201
+    out = resp.json()
+    assert out["tz_offset_minutes"] == -420
+    assert out["created_at"].startswith("2026-06-10T17:11:00")
+    assert repo.notes[0].tz_offset_minutes == -420
 
 
 def test_create_note_rejects_unknown_domain(

@@ -8,7 +8,7 @@ whenever the system prompt or schema changes meaningfully.
 from datetime import datetime
 from typing import Any
 
-PROMPT_VERSION = "note-extract-v1"
+PROMPT_VERSION = "note-extract-v2"
 
 # Soft cap, enforced by instruction (over-extraction is the known quality
 # risk; the review-inbox rejection rate is the tuning signal).
@@ -35,31 +35,53 @@ speaker, not "Me". "surface_text" must be copied verbatim from the note.
 
 4. "facts": at most {MAX_FACTS} of the most durable, useful statements. Each \
 fact is one property-graph edge entity.predicate[.qualifier] -> value:
-- "predicate": prefer schema.org property names where they exist (birthDate, \
-worksFor, address, weight, bloodPressure); otherwise coin snake_case. \
-"qualifier" distinguishes sub-properties; use "" when none.
-- "kind": one of:
-  event - something occurred at a specific time;
+- "predicate": prefer schema.org property names where they exist; otherwise \
+coin snake_case. "qualifier" distinguishes sub-properties; use "" when none. \
+Re-use the SAME predicate name for the SAME concept across notes — the \
+predicate is the identity key that lets a later note update an earlier fact, \
+so drifting between synonyms (relocatedTo vs moved_to) silently forks the \
+history. Prefer these canonical schema.org property names:
+  * residence / where someone lives, a move or relocation: homeLocation
+  * employer / where someone works: worksFor
+  * mailing or street address: address
+  * spouse / marriage: spouse
+  * birthday / date of birth: birthDate
+  * job title / role: jobTitle
+  * weight: weight; height: height; blood pressure: bloodPressure
+  * a scheduled appointment's time: scheduledTime
+
+- "kind": choose by what the fact IS, not by the verb tense of the sentence:
+  state - a durable condition that HOLDS OVER AN INTERVAL and changes by being \
+replaced: where someone lives (homeLocation), their employer (worksFor), \
+their address, marital status, a current medication regimen. A residence, \
+employer, address, or marital change is a STATE change: emit the durable fact \
+as a `state` on the canonical predicate above (homeLocation/worksFor/...). \
+The new state supersedes the old one on the same predicate, giving the \
+property a current-value-plus-history rail. You MAY ALSO emit the move itself \
+as a separate `event` (kind=event, e.g. predicate "moved"), but the durable, \
+supersedable fact is the `state` and it is required.
+  event - something that OCCURRED at a specific time and is then immutable \
+("saw Dr. Patel June 3"); never use `event` for a condition that persists.
   measurement - a numeric reading at an instant (put value and unit in \
-value_json, e.g. {{"value": 182, "unit": "lb"}});
-  state - a condition holding over an interval (address, employer, medication \
-regimen);
-  attribute - timeless (birthday, blood type);
-  preference - a like/dislike/habit, valid from when reported;
+value_json, e.g. {{"value": 182, "unit": "lb"}}); accumulates as a series.
+  attribute - timeless and singular (birthday, blood type).
+  preference - a like/dislike/habit, valid from when reported.
   relationship - an edge to another entity (set object_entity_ref).
 - "statement": one self-contained sentence rendering the fact.
 - "assertion": asserted | negated | hypothetical | reported | question | \
-expected. Second-hand claims are "reported"; future or planned things are \
-"expected"; "doctor wants to rule out diabetes" is hypothetical, NOT an \
-asserted diabetes fact.
+expected. Second-hand claims are "reported". A FUTURE or planned thing that \
+has not happened yet is "expected", NEVER an asserted `event`: "she wants me \
+back in 3 months", "dentist appointment next Friday", and "I'll start the new \
+job in July" are all `expected`. "doctor wants to rule out diabetes" is \
+hypothetical, NOT an asserted diabetes fact.
 - "entity_ref" (and "object_entity_ref" for relationships) must exactly match \
 a mention's "name" ("Me" for the author).
 - "temporal": resolve every relative time phrase ("last Tuesday", "this \
-morning") against the capture anchor given with the note, to absolute ISO \
-8601 with UTC offset. Set "precision" honestly: instant | day | month | year \
-| era | unknown. Never invent dates: if a phrase cannot be resolved, keep the \
-phrase and leave resolved_start null. Use null temporal when the fact has no \
-time dimension.
+morning", "in 3 months") against the capture anchor given with the note, to \
+absolute ISO 8601 with UTC offset, preserving the anchor's local date. Set \
+"precision" honestly: instant | day | month | year | era | unknown. Never \
+invent dates: if a phrase cannot be resolved, keep the phrase and leave \
+resolved_start null. Use null temporal when the fact has no time dimension.
 - "domain": general | health | finance | location — judged per fact, not per \
 note. When unsure between general and a sensitive domain, choose the \
 sensitive one.
@@ -69,6 +91,15 @@ inferred content.
 5. "temporal_tokens": every date/time expression in the note, resolved the \
 same way. "kind" is point | range | recurrence; for recurrences also emit an \
 iCalendar RRULE string.
+
+Worked example — "Sarah moved to Denver." (a relocation is a state change):
+  {{"predicate": "homeLocation", "qualifier": "", "kind": "state", \
+"statement": "Sarah lives in Denver.", "value_json": {{"place": "Denver"}}, \
+"assertion": "asserted", "entity_ref": "Sarah", "object_entity_ref": null, \
+"temporal": null, "domain": "location", "confidence": 0.9}}
+A later note "Sarah actually moved to Boulder" emits the same homeLocation \
+`state` predicate with "Boulder" — matching predicates let Boulder supersede \
+Denver instead of forking two unrelated facts.
 
 Extract less, not more: skip trivia, pleasantries, and restatements of the \
 same fact."""
