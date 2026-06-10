@@ -1,0 +1,92 @@
+# JBrain2 — Development Standards
+
+These standards bind human and AI contributors equally. CI is the gatekeeper:
+lint, typecheck, and tests must be green before merge — no exceptions.
+
+## The architectural constitution
+
+Three rules with no carve-outs:
+
+1. **Every LLM call goes through the adapter.** No direct provider SDK usage
+   outside the adapter package.
+2. **Every file read/write goes through the storage abstraction.** No direct
+   filesystem paths in application code.
+3. **Every database query runs on an RLS-scoped session.** No raw connections
+   that bypass the domain-scope GUC.
+
+Layering: routes → services → repositories. No SQL in route handlers. Schema
+changes only via Alembic migrations, written reversible unless impossible.
+
+## Comment standards
+
+Comments explain **why**, never **what** — names and types carry the what.
+Density is deliberately lean: AI agents and humans both navigate typed code
+better than narrated code, and stale comments are worse than none.
+
+- **Python**: type hints required on all function signatures. Google-style
+  docstrings on public modules, classes, and functions — one summary line
+  always; Args/Returns/Raises only when non-obvious. Trivial private helpers
+  need none.
+- **TypeScript**: TSDoc on exported functions, hooks, and components only
+  where behavior isn't evident from the signature.
+- **Inline comments** are reserved for: non-obvious constraints (e.g. "RLS
+  requires this GUC set before any query"), workarounds (with a link to the
+  upstream issue), and domain rules (e.g. "superseded facts stay queryable
+  for citation integrity").
+- `TODO(topic): description` — every TODO references a tracked issue or is
+  resolved within the PR.
+- **No commented-out code in commits.** Git is the archive.
+
+## Code standards
+
+### Python
+- **Ruff** for linting and formatting (replaces black/isort/flake8).
+- **Pyright** for type checking; public APIs fully typed.
+- **pydantic-settings** for config; env vars only; no secrets in the repo.
+- Typed exception hierarchy; no bare `except`; structured logging
+  (structlog) with request/job IDs.
+
+### TypeScript
+- **Biome** for linting and formatting.
+- `strict: true`; no `any` without an inline justification comment.
+- API client types generated from the FastAPI OpenAPI schema — frontend and
+  backend cannot drift.
+
+## Git workflow
+
+- **Branch + PR always**, even solo: short-lived branches, merged only with
+  CI green. This buys CI gating, AI review passes, and clean revert points.
+- **Conventional Commits**: `feat:`, `fix:`, `refactor:`, `docs:`, `test:`,
+  `chore:`.
+- No force-pushes to `main`.
+
+## Testing requirements
+
+### Tooling
+- Backend: **pytest + pytest-asyncio**. Integration tests run against **real
+  Postgres via testcontainers** — never SQLite, never mocked sessions.
+- Frontend: **Vitest + React Testing Library**. Later: a thin Playwright
+  smoke suite (login → create note → search finds it).
+
+### Coverage gate
+- Backend: CI fails below **80% line coverage**.
+- **Security-critical paths require 100%**: RLS policies, auth, capability
+  tokens, device keys, domain scoping. Every new table ships with an RLS test
+  proving a scoped session cannot read other domains' rows.
+
+### Rules
+- **Tests land in the same PR as the code they cover.** A PR without tests
+  for its new behavior does not merge.
+- **Every bugfix includes a regression test** that fails before the fix.
+- **LLM calls never run in tests.** Use the adapter's fake implementation
+  with canned responses. Prompt-quality evaluation is a separate,
+  deliberately-run eval suite outside CI.
+- Tests are deterministic: no network, no real clock (inject time), no
+  ordering dependence. The suite stays fast enough to run on every commit.
+
+### What gets unit tests vs integration tests
+- Pure logic (chunking, RRF fusion, supersession resolution, triage parsing):
+  unit tests, no I/O.
+- Anything touching Postgres, RLS, the queue, or storage: integration tests
+  via testcontainers.
+- API surface: httpx against the FastAPI app.
