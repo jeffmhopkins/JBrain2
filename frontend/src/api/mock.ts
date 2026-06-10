@@ -90,6 +90,7 @@ function seedNote(
     destination,
     body,
     created_at: createdAt,
+    tz_offset_minutes: null,
     ingest_state: ingestState,
     attachments,
     latitude: null,

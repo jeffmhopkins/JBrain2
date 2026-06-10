@@ -154,6 +154,9 @@ export function useNotes(enabled: boolean, store?: OutboxStore): NotesController
         destination: input.destination,
         body: input.body,
         created_at: new Date().toISOString(),
+        // East of UTC: getTimezoneOffset is minutes WEST, so negate it. Lets
+        // the server recover the local capture date for extraction.
+        tz_offset_minutes: -new Date().getTimezoneOffset(),
         attachments: input.files.map((f) => ({
           filename: f.name,
           media_type: f.type || "application/octet-stream",

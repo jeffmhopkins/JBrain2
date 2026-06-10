@@ -22,6 +22,7 @@ function noteOut(clientId: string): NoteOut {
     destination: null,
     body: "hello",
     created_at: "2026-06-10T10:00:01.000Z",
+    tz_offset_minutes: null,
     ingest_state: "pending",
     attachments: [],
     latitude: null,
@@ -64,6 +65,22 @@ describe("flushOutbox", () => {
       client_id: "c-1",
       domain: "general",
       body: "hello",
+    });
+  });
+
+  it("forwards the capture time and UTC offset so the anchor stays local", async () => {
+    const store = createMemoryStore();
+    await store.put(
+      pendingNote({ created_at: "2026-06-11T00:11:00.000Z", tz_offset_minutes: -420 }),
+    );
+    fetchMock.mockResolvedValue(jsonResponse(noteOut("c-1")));
+
+    await flushOutbox(store);
+
+    const [, init] = fetchMock.mock.calls[0] ?? [];
+    expect(JSON.parse(String(init?.body))).toMatchObject({
+      created_at: "2026-06-11T00:11:00.000Z",
+      tz_offset_minutes: -420,
     });
   });
 

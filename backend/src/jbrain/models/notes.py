@@ -25,6 +25,10 @@ class Note(Base):
     longitude: Mapped[float | None] = mapped_column(Double, nullable=True)
     location_accuracy_m: Mapped[float | None] = mapped_column(Float, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    # Client's capture-time UTC offset in minutes east of UTC; lets the
+    # extraction anchor be the note's LOCAL date even though created_at
+    # round-trips through timestamptz as a UTC instant.
+    tz_offset_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
     updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 

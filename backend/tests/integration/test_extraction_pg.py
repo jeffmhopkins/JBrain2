@@ -482,6 +482,81 @@ async def test_state_change_forms_supersession_chain(
     assert "<mark>We</mark>" in item["snippet"]
 
 
+async def test_relocation_state_supersedes_across_notes(
+    maker: async_sessionmaker[AsyncSession], tmp_path: Any
+) -> None:
+    """Bug 1 regression: a relocation is a `state` on the canonical schema.org
+    predicate homeLocation, so a later note's city supersedes the earlier one
+    (SCD-2 close + fact_conflict review), not two forked events."""
+
+    def home_fact(place: str, start: str) -> dict[str, Any]:
+        return {
+            "predicate": "homeLocation",
+            "qualifier": "",
+            "kind": "state",
+            "statement": f"Sarah lives in {place}.",
+            "value_json": {"place": place},
+            "assertion": "asserted",
+            "entity_ref": "Sarah",
+            "object_entity_ref": None,
+            "temporal": {
+                "phrase": "now",
+                "resolved_start": start,
+                "resolved_end": None,
+                "precision": "day",
+            },
+            "domain": "location",
+            "confidence": 0.9,
+        }
+
+    def move_payload(place: str, start: str) -> str:
+        return json.dumps(
+            extraction_payload(
+                title="Sarah's move",
+                tags=["sarah", "location", "moving"],
+                mentions=[{"name": "Sarah", "kind": "Person", "surface_text": "Sarah"}],
+                facts=[home_fact(place, start)],
+                temporal_tokens=[],
+            )
+        )
+
+    note_a = await make_note(maker, domain="general", body="Sarah moved to Denver.")
+    await ingest(maker, note_a, tmp_path)
+    await analyzer(maker, [move_payload("Denver", "2026-06-10T00:00:00+00:00")]).analyze_note(
+        {"note_id": note_a}
+    )
+
+    note_b = await make_note(maker, domain="general", body="Sarah actually moved to Boulder.")
+    await ingest(maker, note_b, tmp_path)
+    await analyzer(maker, [move_payload("Boulder", "2026-06-10T00:00:01+00:00")]).analyze_note(
+        {"note_id": note_b}
+    )
+
+    chain = await rows(
+        maker,
+        OWNER,
+        "SELECT id, status, superseded_by, valid_to, statement, note_id FROM app.facts"
+        " WHERE predicate = 'homeLocation' ORDER BY created_at",
+    )
+    assert len(chain) == 2
+    denver, boulder = chain
+    assert denver.statement == "Sarah lives in Denver." and denver.status == "superseded"
+    assert boulder.statement == "Sarah lives in Boulder." and boulder.status == "active"
+    assert denver.superseded_by == boulder.id  # Boulder-current / Denver-superseded rail
+    assert denver.valid_to is not None  # SCD-2 close
+    assert str(denver.note_id) == note_a and str(boulder.note_id) == note_b
+
+    review = (
+        await rows(
+            maker,
+            OWNER,
+            "SELECT payload FROM app.review_items WHERE kind = 'fact_conflict'"
+            " AND status = 'open' AND payload->>'predicate' = 'homeLocation'",
+        )
+    )[0].payload
+    assert review["fact_a"] == str(denver.id) and review["fact_b"] == str(boulder.id)
+
+
 async def test_malformed_extraction_is_permanent_and_writes_nothing(
     maker: async_sessionmaker[AsyncSession], tmp_path: Any
 ) -> None:
