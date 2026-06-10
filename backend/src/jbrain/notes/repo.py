@@ -30,6 +30,7 @@ def _note_info(n: Note) -> NoteInfo:
         destination=n.destination,
         body=n.body,
         created_at=n.created_at,
+        ingest_state=n.ingest_state,
         attachments=[_attachment_info(a) for a in n.attachments],
     )
 

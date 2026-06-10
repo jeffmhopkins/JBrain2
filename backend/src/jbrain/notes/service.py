@@ -28,6 +28,8 @@ class NoteInfo:
     destination: str | None
     body: str
     created_at: datetime
+    # 'pending' | 'processing' | 'indexed' | 'failed' — drives indexing chips.
+    ingest_state: str = "pending"
     attachments: list[AttachmentInfo] = field(default_factory=list)
 
 

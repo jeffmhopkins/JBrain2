@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import BigInteger, DateTime, ForeignKey, Text, func
+from sqlalchemy import BigInteger, DateTime, ForeignKey, Integer, Text, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -17,6 +17,9 @@ class Note(Base):
     domain_code: Mapped[str] = mapped_column(Text, ForeignKey("app.domains.code"))
     destination: Mapped[str | None] = mapped_column(Text, nullable=True)
     body: Mapped[str] = mapped_column(Text)
+    # 'indexed' means chunked + FTS-searchable; embeddings arrive in Step 3.
+    ingest_state: Mapped[str] = mapped_column(Text, default="pending", server_default="pending")
+    indexed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -36,3 +39,31 @@ class Attachment(Base):
     media_type: Mapped[str] = mapped_column(Text)
     size_bytes: Mapped[int] = mapped_column(BigInteger)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class Chunk(Base):
+    """Searchable slice of a note or attachment segment.
+
+    The `tsv` (DB-generated) and `embedding` (pgvector, filled by Step 3 via
+    SQL) columns are deliberately unmapped: the ORM never writes them, and
+    mapping `embedding` would require a pgvector SQLAlchemy type this phase
+    doesn't need.
+    """
+
+    __tablename__ = "chunks"
+    __table_args__ = {"schema": "app"}
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    note_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("app.notes.id"))
+    attachment_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("app.attachments.id"), nullable=True
+    )
+    domain_code: Mapped[str] = mapped_column(Text, ForeignKey("app.domains.code"))
+    granularity: Mapped[str] = mapped_column(Text)  # 'paragraph' | 'section'
+    seq: Mapped[int] = mapped_column(Integer)
+    char_start: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    char_end: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    source_kind: Mapped[str] = mapped_column(Text, default="note", server_default="note")
+    source_anchor: Mapped[str | None] = mapped_column(Text, nullable=True)
+    text: Mapped[str] = mapped_column(Text)
+    embedding_model: Mapped[str | None] = mapped_column(Text, nullable=True)

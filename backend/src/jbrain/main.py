@@ -10,6 +10,7 @@ from jbrain.api import auth, health, notes, ops
 from jbrain.auth.repo import SqlAuthRepo
 from jbrain.config import Settings, get_settings
 from jbrain.notes.repo import SqlNotesRepo
+from jbrain.queue import PgJobQueue
 from jbrain.storage import FsBlobStore
 
 structlog.configure(
@@ -29,6 +30,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.auth_repo = SqlAuthRepo(maker)
         app.state.notes_repo = SqlNotesRepo(maker)
         app.state.blob_store = FsBlobStore(settings.blob_dir)
+        app.state.job_queue = PgJobQueue(maker)
         app.state.supervisor_client = httpx.AsyncClient(base_url=settings.supervisor_url)
         yield
         await app.state.supervisor_client.aclose()
