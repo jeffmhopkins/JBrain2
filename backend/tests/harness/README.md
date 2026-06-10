@@ -97,6 +97,5 @@ and the red-team review.
 | **H2** low-confidence/OCR health facts auto-supersede | `health_low_confidence_ocr_guard` | `decide()` takes no confidence; no `low_confidence` filing |
 | **H1** fact cap is prompt-only | `adv_over_extraction_no_cap` | `parse_extraction` doesn't cap facts; no value_json/statement size guard |
 | **Reschedule-to-earlier** doesn't supersede | `plan_reschedule_earlier` | `state` ordering by validity, not newest-instruction (`reported_at`) |
-| **Role-reference resolution** ("my dentist") | `rel_role_reference` | entity resolution layers 2-3 unimplemented |
 | **Unit-change false conflict** | `adv_unit_change_false_conflict` | `values_equal` compares value_json without unit normalization |
-| **Bare-name ambiguity not detected** on repeat | `adv_same_first_name_collapses` | repeated bare first name auto-links instead of filing `ambiguous_mention` |
+| **Bare-name ambiguity not detected** on repeat | `adv_same_first_name_collapses` | the spec's auto-link rule fires (one exact "Zane" match) and extraction emits the identical bare name, so a second entity is never minted and the retro-recheck (which triggers on second-entity creation) has nothing to fire on; catching it needs co-mention-signal disambiguation |
