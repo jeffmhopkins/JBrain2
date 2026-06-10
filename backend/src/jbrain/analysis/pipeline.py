@@ -31,7 +31,19 @@ from jbrain.analysis.display import (
     promotion_display,
     value_label,
 )
-from jbrain.analysis.entities import AmbiguousEntity, ResolvedEntity, resolve_entity
+from jbrain.analysis.entities import (
+    DISAMBIGUATE_MAX_TOKENS,
+    DISAMBIGUATE_SCHEMA,
+    DISAMBIGUATE_SYSTEM,
+    DISAMBIGUATE_TASK,
+    AmbiguousEntity,
+    NeedsDisambiguation,
+    ResolvedEntity,
+    build_disambiguation_prompt,
+    create_provisional,
+    parse_disambiguation,
+    resolve_entity,
+)
 from jbrain.analysis.extraction import (
     ExtractedFact,
     Extraction,
@@ -48,7 +60,8 @@ from jbrain.analysis.prompt import (
 )
 from jbrain.analysis.supersession import Candidate, Decision, FactView, decide, is_functional
 from jbrain.db.session import scoped_session
-from jbrain.llm import LlmBadResponseError, LlmRouter
+from jbrain.embed import EmbedClient
+from jbrain.llm import LlmBadResponseError, LlmError, LlmRouter
 from jbrain.models.analysis import (
     EntityMention,
     Fact,
@@ -62,6 +75,12 @@ from jbrain.queue import SYSTEM_CTX, PermanentJobError
 log = structlog.get_logger()
 
 EXTRACT_MAX_TOKENS = 8192
+
+_DB_LINK_METHODS = frozenset({"exact_alias", "embedding", "llm", "human"})
+
+# Below embedding auto-link confidence on purpose: a cheap-model verdict over
+# near-tie candidates is real evidence, not certainty.
+LLM_LINK_CONFIDENCE = 0.8
 
 
 def local_anchor(captured_at: datetime, tz_offset_minutes: int | None) -> datetime:
@@ -117,9 +136,21 @@ def _locate(surface: str, chunks: list[_ChunkRef]) -> _Span | None:
 
 
 class AnalysisPipeline:
-    def __init__(self, maker: async_sessionmaker[AsyncSession], router: LlmRouter):
+    def __init__(
+        self,
+        maker: async_sessionmaker[AsyncSession],
+        router: LlmRouter,
+        *,
+        embedder: EmbedClient | None = None,
+        embed_model: str = "",
+    ):
         self._maker = maker
         self._router = router
+        # Optional on purpose: without an embed client, resolution layer 2 is
+        # skipped entirely (no degraded guessing) — the harness and older
+        # call sites keep their exact behavior.
+        self._embedder = embedder
+        self._embed_model = embed_model
 
     async def analyze_note(self, payload: dict[str, Any]) -> None:
         """Handle an analyze_note job: {note_id}; missing note is a no-op."""
@@ -186,7 +217,9 @@ class AnalysisPipeline:
         extraction: Extraction,
         extractor: str,
     ) -> None:
-        resolved = await self._resolve_entities(session, extraction, note_id, note_domain, chunks)
+        resolved = await self._resolve_entities(
+            session, extraction, note_id, note_domain, chunks, captured_at
+        )
         anchor_for = await self._rebuild_mentions(
             session, extraction, resolved, note_id, note_domain, chunks
         )
@@ -258,8 +291,13 @@ class AnalysisPipeline:
         note_id: uuid.UUID,
         note_domain: str,
         chunks: list[_ChunkRef],
+        captured_at: datetime,
     ) -> dict[str, ResolvedEntity | None]:
-        """Layer-1 resolution for every name the extraction references.
+        """Layered resolution for every name the extraction references
+        (docs/ANALYSIS.md "Alias resolution & separation"): exact alias, the
+        relationship hop for reference-shaped mentions at the note's capture
+        time, embedding similarity, then one batched entity.disambiguate call
+        for whatever is still undecided.
 
         Ambiguous names resolve to None (no link) and file one deduplicated
         ambiguous_mention review item.
@@ -278,11 +316,20 @@ class AnalysisPipeline:
                     names.append(ref)
 
         resolved: dict[str, ResolvedEntity | None] = {}
+        pending: dict[str, NeedsDisambiguation] = {}
         for name in names:
             outcome = await resolve_entity(
-                session, name, kind_hint=kind_hints.get(name, "Thing"), domain=note_domain
+                session,
+                name,
+                kind_hint=kind_hints.get(name, "Thing"),
+                domain=note_domain,
+                note_time=captured_at,
+                embedder=self._embedder,
+                embed_model=self._embed_model,
             )
-            if isinstance(outcome, AmbiguousEntity):
+            if isinstance(outcome, NeedsDisambiguation):
+                pending[name] = outcome
+            elif isinstance(outcome, AmbiguousEntity):
                 resolved[name] = None
                 await self._file_ambiguous_review(
                     session,
@@ -294,7 +341,104 @@ class AnalysisPipeline:
                 )
             else:
                 resolved[name] = outcome
+        resolved.update(
+            await self._disambiguate(
+                session,
+                pending,
+                note_id=note_id,
+                note_domain=note_domain,
+                kind_hints=kind_hints,
+                surfaces=surfaces,
+                chunks=chunks,
+            )
+        )
         return resolved
+
+    async def _disambiguate(
+        self,
+        session: AsyncSession,
+        pending: dict[str, NeedsDisambiguation],
+        *,
+        note_id: uuid.UUID,
+        note_domain: str,
+        kind_hints: dict[str, str],
+        surfaces: dict[str, str],
+        chunks: list[_ChunkRef],
+    ) -> dict[str, ResolvedEntity | None]:
+        """Layer 3: ONE batched cheap call for the note's undecided mentions —
+        conditional, never per-mention (docs/ANALYSIS.md "Model routing &
+        cost"). Every failure mode — task not routed (the harness router only
+        carries note.extract), bad JSON after the adapter's re-ask, an
+        unanswered mention, a hallucinated id — degrades to the review inbox:
+        an uncertain resolver files a card, it never guesses. A "none of
+        these" verdict is an answer, not a failure: the mention is a
+        genuinely new entity.
+        """
+        if not pending:
+            return {}
+        choices: dict[str, str | None] = {}
+        answered = False
+        try:
+            self._router.spec(DISAMBIGUATE_TASK)
+        except LlmError:
+            log.info("analysis.disambiguate_unrouted", note_id=str(note_id))
+        else:
+            items = [
+                {
+                    "name": name,
+                    "kind": kind_hints.get(name, "Thing"),
+                    "context": _cite(_locate(surfaces.get(name, name), chunks), chunks),
+                    "candidates": [
+                        {"id": str(c.id), "name": c.name, "kind": c.kind, "summary": c.summary}
+                        for c in need.candidates
+                    ],
+                }
+                for name, need in pending.items()
+            ]
+            try:
+                result = await self._router.complete(
+                    DISAMBIGUATE_TASK,
+                    system=DISAMBIGUATE_SYSTEM,
+                    user_text=build_disambiguation_prompt(items),
+                    json_schema=DISAMBIGUATE_SCHEMA,
+                    max_tokens=DISAMBIGUATE_MAX_TOKENS,
+                )
+                choices = parse_disambiguation(result.parsed)
+                answered = True
+            except (LlmError, LlmBadResponseError) as exc:
+                # Resolution uncertainty is not extraction failure: the note's
+                # facts still land wherever resolution did succeed.
+                log.warning("analysis.disambiguate_failed", note_id=str(note_id), error=repr(exc))
+
+        out: dict[str, ResolvedEntity | None] = {}
+        for name, need in pending.items():
+            by_id = {str(c.id): c for c in need.candidates}
+            if answered and name in choices:
+                chosen = choices[name]
+                if chosen is None:
+                    out[name] = await create_provisional(
+                        session, name, kind_hint=kind_hints.get(name, "Thing"), domain=note_domain
+                    )
+                    continue
+                candidate = by_id.get(chosen)
+                if candidate is not None:
+                    out[name] = ResolvedEntity(
+                        id=candidate.id,
+                        subject_id=candidate.subject_id,
+                        method="llm",
+                        confidence=LLM_LINK_CONFIDENCE,
+                    )
+                    continue
+            out[name] = None
+            await self._file_ambiguous_review(
+                session,
+                name,
+                note_id,
+                note_domain,
+                sorted(c.id for c in need.candidates),
+                snippet=_cite(_locate(surfaces.get(name, name), chunks), chunks),
+            )
+        return out
 
     async def _file_ambiguous_review(
         self,
@@ -362,8 +506,14 @@ class AnalysisPipeline:
                     surface_text=mention.surface_text,
                     char_start=start,
                     char_end=end,
-                    link_method="exact_alias",
-                    confidence=1.0,
+                    # 0006 CHECKs link_method to exact_alias|embedding|llm|
+                    # human; the deterministic relationship hop rides
+                    # exact_alias (it is rule-based linking too) until a
+                    # migration widens the enum.
+                    link_method=(
+                        entity.method if entity.method in _DB_LINK_METHODS else "exact_alias"
+                    ),
+                    confidence=entity.confidence,
                     domain_code=note_domain,
                 )
             )
