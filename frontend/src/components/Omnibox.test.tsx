@@ -2,26 +2,19 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 import type { SegState } from "../notes/modes";
-import type { EditingNote } from "../notes/useNoteActions";
 import { Omnibox } from "./Omnibox";
 
 interface HarnessProps {
   onSend?: ReturnType<typeof vi.fn>;
   onConversation?: ReturnType<typeof vi.fn>;
-  onSubmitEdit?: ReturnType<typeof vi.fn>;
-  onCancelEdit?: ReturnType<typeof vi.fn>;
-  editing?: EditingNote | null;
 }
 
-function Harness({ onSend, onConversation, onSubmitEdit, onCancelEdit, editing }: HarnessProps) {
+function Harness({ onSend, onConversation }: HarnessProps) {
   const [seg, setSeg] = useState<SegState>({ row: "main", mode: "entry" });
   return (
     <Omnibox
       seg={seg}
       onSegChange={setSeg}
-      editing={editing ?? null}
-      onCancelEdit={onCancelEdit ?? vi.fn()}
-      onSubmitEdit={onSubmitEdit ?? vi.fn()}
       onSend={onSend ?? vi.fn()}
       onConversation={onConversation ?? vi.fn()}
       onOpenLauncher={vi.fn()}
@@ -72,35 +65,5 @@ describe("Omnibox", () => {
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
     expect(onConversation).toHaveBeenCalled();
     expect(onSend).not.toHaveBeenCalled();
-  });
-
-  it("loads the note body in edit mode and sends it as an edit, not a capture", () => {
-    const onSend = vi.fn();
-    const onSubmitEdit = vi.fn();
-    render(
-      <Harness
-        onSend={onSend}
-        onSubmitEdit={onSubmitEdit}
-        editing={{ id: "n1", body: "original body" }}
-      />,
-    );
-
-    expect(screen.getByText("editing note")).toBeInTheDocument();
-    const composer = screen.getByLabelText("Composer");
-    expect(composer).toHaveValue("original body");
-
-    fireEvent.change(composer, { target: { value: "corrected body" } });
-    fireEvent.click(screen.getByRole("button", { name: "Send" }));
-    expect(onSubmitEdit).toHaveBeenCalledWith("corrected body");
-    expect(onSend).not.toHaveBeenCalled();
-  });
-
-  it("cancel leaves edit mode and clears the loaded body", () => {
-    const onCancelEdit = vi.fn();
-    render(<Harness onCancelEdit={onCancelEdit} editing={{ id: "n1", body: "original body" }} />);
-
-    fireEvent.click(screen.getByRole("button", { name: "cancel" }));
-    expect(onCancelEdit).toHaveBeenCalled();
-    expect(screen.getByLabelText("Composer")).toHaveValue("");
   });
 });
