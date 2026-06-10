@@ -250,6 +250,45 @@ def test_preference_older_report_lands_as_history() -> None:
     assert d.insert_status == "superseded" and d.insert_superseded_by == "old-1"
 
 
+# --- schedule bindings: newest INSTRUCTION wins, either direction -----------
+
+
+def test_reschedule_earlier_still_supersedes() -> None:
+    """The binding's value IS a validity instant, so validity ordering would
+    let the stale later time win; the newest reported instruction must win."""
+    friday = view(value_json={"start": "2026-06-19T14:00"}, valid_from=T1, reported_at=T0)
+    wednesday = cand(value_json={"start": "2026-06-17T14:00"}, valid_from=T0, reported_at=T1)
+    d = decide(wednesday, [friday], predicate="scheduledTime")
+    assert d.insert and d.insert_status == "active"
+    assert d.supersede_ids == ["old-1"]
+    assert d.review_kind == "fact_conflict"
+
+
+def test_reschedule_later_supersedes_unchanged() -> None:
+    friday = view(value_json={"start": "2026-06-19T14:00"}, valid_from=T0, reported_at=T0)
+    monday = cand(value_json={"start": "2026-06-22T14:00"}, valid_from=T1, reported_at=T1)
+    d = decide(monday, [friday], predicate="scheduledTime")
+    assert d.supersede_ids == ["old-1"]
+
+
+def test_stale_schedule_instruction_lands_as_history() -> None:
+    """Out-of-order outbox: an OLDER instruction about the same binding must
+    not displace the newer one, whatever times the two carry."""
+    current = view(value_json={"start": "2026-06-17T14:00"}, valid_from=T0, reported_at=T2)
+    stale = cand(value_json={"start": "2026-06-19T14:00"}, valid_from=T1, reported_at=T1)
+    d = decide(stale, [current], predicate="scheduledTime")
+    assert d.insert_status == "superseded" and d.insert_superseded_by == "old-1"
+
+
+def test_ordinary_state_keeps_validity_ordering() -> None:
+    """homeLocation et al are untouched by the schedule rule: a later-reported
+    note about an EARLIER validity still lands as history."""
+    current = view(valid_from=T1, reported_at=T1)
+    retro = cand(statement="lived at 3 Elm Rd", valid_from=T0, reported_at=T2)
+    d = decide(retro, [current], predicate="homeLocation")
+    assert d.insert_status == "superseded" and d.insert_superseded_by == "old-1"
+
+
 # --- relationship: accumulate unless functional -----------------------------
 
 

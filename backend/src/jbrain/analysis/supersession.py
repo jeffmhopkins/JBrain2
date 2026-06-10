@@ -28,6 +28,20 @@ def is_functional(predicate: str) -> bool:
     return predicate.lower() in FUNCTIONAL_PREDICATES
 
 
+# Schedule-binding predicates: an appointment's time is a binding whose value
+# IS a validity instant, so ordering by validity would make a reschedule to an
+# EARLIER time lose to the time it replaces. The newest INSTRUCTION wins
+# regardless of direction (docs/ANALYSIS.md "Temporal tokens and appointment
+# identity"), so these order by reported_at. The set carries the schema.org
+# spelling the prompt steers toward plus its snake_case twin, like
+# FUNCTIONAL_PREDICATES above.
+SCHEDULE_PREDICATES = frozenset({"scheduledtime", "scheduled_time"})
+
+
+def is_schedule_binding(predicate: str) -> bool:
+    return predicate.lower() in SCHEDULE_PREDICATES
+
+
 @dataclass(frozen=True)
 class FactView:
     """The slice of an existing fact row that supersession decisions read."""
@@ -222,7 +236,9 @@ def decide(candidate: Candidate, existing: list[FactView], *, predicate: str = "
 
     def key(valid_from: datetime | None, reported_at: datetime) -> tuple[datetime, datetime]:
         # Preferences are valid from when reported — newest report wins.
-        if candidate.kind == "preference":
+        # Schedule bindings also order by reported_at: the latest reschedule
+        # instruction wins even when it moves the time earlier.
+        if candidate.kind == "preference" or is_schedule_binding(predicate):
             return (reported_at, reported_at)
         return _validity(valid_from, reported_at)
 
