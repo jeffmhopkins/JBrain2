@@ -179,6 +179,8 @@ same code path when the stack is too wedged for the UI.
 
 CI publishes versioned images to GHCR on release tags (`stable` channel) and
 on every green main build (`edge` channel; channel toggle in the Ops screen).
+Installs default to `edge` while the project is pre-1.0; switch a host to
+`stable` by setting `JBRAIN_TAG=stable` in `/opt/jbrain2/.env`.
 The supervisor polls GitHub Releases; updates are **prompted, one-tap** —
 never unattended. Apply sequence: pull images → pre-update `pg_dump`
 snapshot → Alembic migrations → rolling restart → health check, with the

@@ -5,7 +5,7 @@ name: jbrain
 
 services:
   proxy:
-    image: ghcr.io/jeffmhopkins/jbrain2-proxy:${JBRAIN_TAG:-stable}
+    image: ghcr.io/jeffmhopkins/jbrain2-proxy:${JBRAIN_TAG:-edge}
     restart: unless-stopped
     ports:
       - "80:80"
@@ -20,7 +20,7 @@ services:
     depends_on: [api]
 
   api:
-    image: ghcr.io/jeffmhopkins/jbrain2-api:${JBRAIN_TAG:-stable}
+    image: ghcr.io/jeffmhopkins/jbrain2-api:${JBRAIN_TAG:-edge}
     restart: unless-stopped
     environment: &api_env
       JBRAIN_DATABASE_URL: postgresql+asyncpg://jbrain_app:${APP_DB_PASSWORD}@db:5432/jbrain
@@ -40,7 +40,7 @@ services:
       retries: 3
 
   worker:
-    image: ghcr.io/jeffmhopkins/jbrain2-api:${JBRAIN_TAG:-stable}
+    image: ghcr.io/jeffmhopkins/jbrain2-api:${JBRAIN_TAG:-edge}
     restart: unless-stopped
     command: ["python", "-m", "jbrain.worker"]
     environment: *api_env
@@ -69,7 +69,7 @@ services:
       retries: 10
 
   supervisor:
-    image: ghcr.io/jeffmhopkins/jbrain2-supervisor:${JBRAIN_TAG:-stable}
+    image: ghcr.io/jeffmhopkins/jbrain2-supervisor:${JBRAIN_TAG:-edge}
     restart: unless-stopped
     environment:
       SUPERVISOR_TOKEN: ${SUPERVISOR_TOKEN}

@@ -44,7 +44,7 @@ if [ ! -f .env ]; then
 
   cat > .env <<EOF
 JBRAIN_DOMAIN=$DOMAIN
-JBRAIN_TAG=stable
+JBRAIN_TAG=edge
 POSTGRES_PASSWORD=$(openssl rand -hex 32)
 APP_DB_PASSWORD=$(openssl rand -hex 32)
 SUPERVISOR_TOKEN=$(openssl rand -hex 32)
