@@ -41,6 +41,7 @@ export function Omnibox({ onSend, onConversation, onOpenLauncher }: OmniboxProps
   const [destinations, setDestinations] = useState<Partial<Record<Mode, string>>>({});
   const fileInputRef = useRef<HTMLInputElement>(null);
   const touchStartY = useRef<number | null>(null);
+  const touchStartX = useRef<number | null>(null);
 
   const meta = MODES[seg.mode];
   const destination = meta.dest ? (destinations[seg.mode] ?? meta.dest.options[0] ?? null) : null;
@@ -63,18 +64,34 @@ export function Omnibox({ onSend, onConversation, onOpenLauncher }: OmniboxProps
     if (list) setFiles((prev) => [...prev, ...Array.from(list)]);
   }
 
-  // Swipe up anywhere on the box (except inside the textarea, which owns its
-  // own touch scrolling) opens the card launcher.
+  // Swipe up anywhere on the box opens the card launcher. The textarea is
+  // included while it has no internal scroll (empty or short text — the
+  // common case and most of the box's surface); once content overflows, it
+  // owns its own touch scrolling again. Selects stay excluded.
   function onTouchStart(event: TouchEvent) {
     const target = event.target as HTMLElement;
-    touchStartY.current =
-      target.closest("textarea, select") === null ? (event.touches[0]?.clientY ?? null) : null;
+    if (target.closest("select") !== null) {
+      touchStartY.current = null;
+      return;
+    }
+    const area = target.closest("textarea");
+    if (area !== null && area.scrollHeight > area.clientHeight) {
+      touchStartY.current = null;
+      return;
+    }
+    const touch = event.touches[0];
+    touchStartY.current = touch?.clientY ?? null;
+    touchStartX.current = touch?.clientX ?? null;
   }
 
   function onTouchMove(event: TouchEvent) {
     const startY = touchStartY.current;
-    const y = event.touches[0]?.clientY;
-    if (startY !== null && y !== undefined && startY - y > SWIPE_UP_PX) {
+    const touch = event.touches[0];
+    if (startY === null || touch === undefined) return;
+    const dy = startY - touch.clientY;
+    const dx = Math.abs((touchStartX.current ?? touch.clientX) - touch.clientX);
+    // Clearly vertical and upward — don't fire on horizontal segment swipes.
+    if (dy > SWIPE_UP_PX && dy > dx * 2) {
       touchStartY.current = null;
       onOpenLauncher();
     }

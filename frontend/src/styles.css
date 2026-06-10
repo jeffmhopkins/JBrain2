@@ -317,7 +317,8 @@ h3 {
   align-items: center;
   justify-content: center;
   gap: 8px;
-  padding: 13px 0;
+  /* em so the control thins along with the text-size setting */
+  padding: 0.85em 0;
   font-size: var(--fs-note);
   font-weight: 500;
   color: var(--text-2);
