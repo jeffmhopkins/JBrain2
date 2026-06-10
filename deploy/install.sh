@@ -78,7 +78,7 @@ until docker compose exec -T db pg_isready -U jbrain -d jbrain >/dev/null 2>&1; 
 done
 
 say "Running migrations"
-docker compose run --rm api alembic upgrade head
+docker compose run --rm migrate
 
 say "Starting the stack"
 docker compose up -d

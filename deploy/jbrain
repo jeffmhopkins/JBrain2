@@ -43,7 +43,7 @@ case "${1:-}" in
     cp src/deploy/db-init/01-app-role.sh db-init/
     chmod +x jbrain backup.sh db-init/01-app-role.sh
     docker compose build
-    docker compose run --rm api alembic upgrade head
+    docker compose run --rm migrate
     docker compose up -d
     # Reclaim layers orphaned by the rebuild; shared (cached) layers survive,
     # so disk use stays bounded without losing build speed.
