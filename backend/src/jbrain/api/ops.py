@@ -21,6 +21,7 @@ from jbrain.config import Settings
 from jbrain.db.session import SessionContext
 from jbrain.db.stats import database_stats
 from jbrain.storage import BackupShelf, BlobStore
+from jbrain.usage import usage_summary
 
 router = APIRouter(prefix="/ops", dependencies=[Depends(owner_only)])
 
@@ -88,6 +89,18 @@ async def metrics(
         merged["blobs"] = None
 
     return merged
+
+
+@router.get("/llm-usage")
+async def llm_usage(
+    request: Request, principal: PrincipalDep, settings: SettingsDep
+) -> dict[str, object]:
+    """The AI usage card: today/month totals, per-task breakdown, last 30
+    days — costs estimated at query time from the config price table
+    (docs/ANALYSIS.md "Token accounting" / "Cost estimates")."""
+    maker = cast("async_sessionmaker[AsyncSession]", request.app.state.session_maker)
+    ctx = SessionContext(principal_id=principal.id, principal_kind=principal.kind)
+    return await usage_summary(maker, ctx, settings.llm_prices)
 
 
 @router.post("/update", status_code=202)

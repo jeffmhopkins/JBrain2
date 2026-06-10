@@ -16,10 +16,13 @@ import structlog
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from jbrain import queue
+from jbrain.analysis.pipeline import AnalysisPipeline
 from jbrain.config import get_settings
 from jbrain.embed import NoteEmbedder, TeiEmbedClient
 from jbrain.ingest.pipeline import IngestPipeline
+from jbrain.llm import build_router
 from jbrain.storage import FsBlobStore
+from jbrain.usage import SqlUsageRecorder
 
 log = structlog.get_logger()
 
@@ -45,6 +48,11 @@ async def process_one(
         return True
     try:
         await handler(job.payload)
+    except queue.PermanentJobError as exc:
+        # Retrying cannot help (e.g. malformed extraction after the re-ask):
+        # fail now instead of burning the retry budget.
+        await queue.fail(maker, queue.SYSTEM_CTX, job.id, repr(exc), permanent=True)
+        log.error("worker.job_failed_permanent", job_id=job.id, kind=job.kind, error=repr(exc))
     except Exception as exc:  # noqa: BLE001 - one bad job must not kill the worker
         await queue.fail(maker, queue.SYSTEM_CTX, job.id, repr(exc))
         log.warning("worker.job_failed", job_id=job.id, kind=job.kind, error=repr(exc))
@@ -83,9 +91,12 @@ async def run() -> None:
     maker = async_sessionmaker(engine, expire_on_commit=False)
     pipeline = IngestPipeline(maker, FsBlobStore(settings.blob_dir))
     embedder = NoteEmbedder(maker, TeiEmbedClient(settings.embed_url), settings.embed_model)
+    router = build_router(settings, recorder=SqlUsageRecorder(maker))
+    analyzer = AnalysisPipeline(maker, router)
     handlers: dict[str, Handler] = {
         "ingest_note": pipeline.ingest_note,
         "embed_note": embedder.embed_note,
+        "analyze_note": analyzer.analyze_note,
     }
     try:
         await run_loop(maker, handlers)

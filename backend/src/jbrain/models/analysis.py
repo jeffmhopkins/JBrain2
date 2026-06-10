@@ -10,7 +10,7 @@ from datetime import datetime
 from typing import Any
 
 from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, Text, func
-from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from jbrain.models.core import Base
@@ -173,8 +173,28 @@ class Fact(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class NoteAnalysis(Base):
+    """Per-note product of the note.extract call; analyzed_at is the Phase 3
+    minimal reprocessing watermark (docs/ANALYSIS.md "Reprocessing")."""
+
+    __tablename__ = "note_analysis"
+    __table_args__ = {"schema": "app"}
+
+    note_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("app.notes.id"), primary_key=True
+    )
+    title: Mapped[str | None] = mapped_column(Text, nullable=True)
+    tags: Mapped[list[str]] = mapped_column(ARRAY(Text), default=list, server_default="{}")
+    extractor: Mapped[str | None] = mapped_column(Text, nullable=True)
+    prompt_version: Mapped[str | None] = mapped_column(Text, nullable=True)
+    analyzed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    domain_code: Mapped[str] = mapped_column(Text, ForeignKey("app.domains.code"))
+
+
 class ReviewItem(Base):
-    """Generic review-inbox item; payload holds row references, not content."""
+    """Generic review-inbox item; payload holds the row references the
+    resolution handlers read plus the precomputed display fields the review
+    card renders (jbrain.analysis.display)."""
 
     __tablename__ = "review_items"
     __table_args__ = {"schema": "app"}
