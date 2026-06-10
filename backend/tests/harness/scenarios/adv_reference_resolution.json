@@ -1,7 +1,6 @@
 {
   "name": "definite + relational references resolve to the established entity",
-  "description": "The hard cross-note coreference case: 'the rat' (definite) and 'Summer's rat' (relational, via the owns edge) both denote the already-known Ricky; the model emits those surface descriptions because each note is extracted alone. Spec wants the pipeline's entity resolution (ANALYSIS.md alias layers 2-3 + role-references-via-relationship-facts) to unify them onto Ricky, so the eat/not-eat facts land on ONE rat and the contradiction is visible. Today resolution is layer-1 exact-alias only, so 'the rat' and \"Summer's rat\" mint separate entities and Ricky never gains the facts. xfail until embedding/relationship-aware resolution lands. Failing line: expected a fact matching {'entity': 'Ricky', 'predicate': 'ate'...}, found none.",
-  "xfail": "cross-note definite/relational reference resolution unimplemented — entity resolver is exact-alias only (no embedding/relationship hop); 'the rat' and \"Summer's rat\" fragment from Ricky",
+  "description": "The hard cross-note coreference case: 'the rat' (definite) and 'Summer's rat' (relational, via the owns edge) both denote the already-known Ricky; the model emits those surface descriptions because each note is extracted alone. The relationship-hop layer (entities._relationship_hop) unifies them onto Ricky — the possessive resolves through Summer's owns edge, the bare definite through the single rat-matching entity — so the eat/not-eat facts land on ONE rat and the contradiction is visible.",
   "steps": [
     {"domain":"general","created_at":"2026-06-10T09:05:00-06:00","body":"Summer's rat's name is Ricky.",
      "extraction":{"title":"Summer's rat","tags":["rat","ricky","summer"],
