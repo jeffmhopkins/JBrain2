@@ -3,6 +3,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReviewItem } from "../api/client";
 import { ReviewScreen } from "./ReviewScreen";
 
+// Payload shapes mirror what the backend writes: collisions advertise
+// accept_a/accept_b choices and no footer verbs; merges advertise the
+// accept/reject outcomes. The destructive choice exercises the arming path
+// a future split_proposal will advertise.
 const ITEMS: ReviewItem[] = [
   {
     id: "rev-1",
@@ -10,14 +14,14 @@ const ITEMS: ReviewItem[] = [
     domain: "general",
     created_at: "2026-06-10T09:45:00Z",
     payload: {
-      summary: "two birthdays recorded for Sarah",
+      fact_a: "fact-old",
+      fact_b: "fact-new",
+      predicate: "birthDate",
+      summary: "two values recorded for Sarah's birthDate",
       snippet: "Card for Sarah's birthday on <mark>March 14</mark>.",
-      outcomes: {
-        accept: "the chosen birthday stands; the other is retracted.",
-        reject: "both stay pending — nothing publishes until resolved.",
-      },
       choices: [
-        { action: "keep_fact", label: "March 14, 1988", detail: "from the card note" },
+        { action: "accept_a", label: "May 2, 1990", detail: "previously recorded" },
+        { action: "accept_b", label: "March 14, 1988", detail: "from this note" },
         { action: "split", label: "split into two people", destructive: true },
       ],
     },
@@ -63,14 +67,19 @@ describe("ReviewScreen", () => {
     vi.restoreAllMocks();
   });
 
-  it("renders one item at a time: dots, kind badge, hero text, outcomes panel", async () => {
+  it("renders one item at a time: dots, kind badge, hero text, choice buttons", async () => {
     render(<ReviewScreen />);
 
-    expect(await screen.findByText("two birthdays recorded for Sarah")).toBeInTheDocument();
+    expect(
+      await screen.findByText("two values recorded for Sarah's birthDate"),
+    ).toBeInTheDocument();
     expect(screen.getByText("attribute collision")).toBeInTheDocument();
     expect(screen.getByText("March 14").closest("mark")).toHaveClass("snip-mark");
-    expect(screen.getByText(/the chosen birthday stands/)).toBeInTheDocument();
-    expect(screen.getByText(/both stay pending/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /May 2, 1990/ })).toBeInTheDocument();
+    // No outcomes advertised: the footer shows no generic accept/reject —
+    // they would 400 on this kind; the choices ARE the resolution.
+    expect(screen.queryByRole("button", { name: "accept" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "reject" })).not.toBeInTheDocument();
     expect(screen.getByLabelText("0 of 2 resolved")).toBeInTheDocument();
     // The second item is queued, not shown.
     expect(screen.queryByText(/Lunch with/)).not.toBeInTheDocument();
@@ -78,26 +87,35 @@ describe("ReviewScreen", () => {
 
   it("skip cycles the queue client-side, with no resolve call", async () => {
     render(<ReviewScreen />);
-    await screen.findByText("two birthdays recorded for Sarah");
+    await screen.findByText("two values recorded for Sarah's birthDate");
 
     fireEvent.click(screen.getByRole("button", { name: "skip" }));
     expect(screen.getByText(/Lunch with/)).toBeInTheDocument();
-    expect(screen.queryByText(/birthdays recorded/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/values recorded/)).not.toBeInTheDocument();
+    // The merge card's footer verbs come from its advertised outcomes.
+    expect(screen.getByText(/they merge/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "accept" })).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "skip" }));
-    expect(screen.getByText("two birthdays recorded for Sarah")).toBeInTheDocument();
+    expect(screen.getByText("two values recorded for Sarah's birthDate")).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it("accept resolves the item and advances; inbox zero after the last one", async () => {
+  it("a choice resolves with its advertised action; inbox zero after the last one", async () => {
     render(<ReviewScreen />);
-    await screen.findByText("two birthdays recorded for Sarah");
+    await screen.findByText("two values recorded for Sarah's birthDate");
 
-    fireEvent.click(screen.getByRole("button", { name: "accept" }));
+    fireEvent.click(screen.getByRole("button", { name: /March 14, 1988/ }));
     await waitFor(() =>
       expect(fetchMock).toHaveBeenCalledWith(
         "/api/review/rev-1/resolve",
-        expect.objectContaining({ method: "POST" }),
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify({
+            action: "accept_b",
+            payload: { choice: "March 14, 1988" },
+          }),
+        }),
       ),
     );
     // Optimistic advance: the next card shows immediately, a dot fills.
@@ -118,7 +136,9 @@ describe("ReviewScreen", () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {
       render(<ReviewScreen />);
-      expect(await screen.findByText("two birthdays recorded for Sarah")).toBeInTheDocument();
+      expect(
+        await screen.findByText("two values recorded for Sarah's birthDate"),
+      ).toBeInTheDocument();
 
       const split = screen.getByRole("button", { name: /split into two people/ });
       fireEvent.click(split);

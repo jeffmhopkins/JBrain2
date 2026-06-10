@@ -152,13 +152,24 @@ describe("mock API", () => {
 
     const first = queue.items[0];
     if (!first) throw new Error("empty review fixture");
+    // Collisions advertise accept_a/accept_b choices and no footer verbs;
+    // an unadvertised action is rejected like the real backend rejects it.
+    expect(first.kind).toBe("attribute_collision");
+    expect(first.payload.outcomes).toBeUndefined();
+    const choices = first.payload.choices as { action: string }[];
+    expect(choices.map((c) => c.action)).toEqual(["accept_a", "accept_b"]);
+    expect(
+      (await call(`/api/review/${first.id}/resolve`, jsonInit("POST", { action: "accept" })))
+        .status,
+    ).toBe(400);
+
     const res = await call(
       `/api/review/${first.id}/resolve`,
-      jsonInit("POST", { action: "accept", payload: {} }),
+      jsonInit("POST", { action: "accept_b", payload: {} }),
     );
     expect(res.status).toBe(200);
     const updated = (await res.json()) as ReviewItem;
-    expect(updated.payload.resolution).toBe("accept");
+    expect(updated.payload.resolution).toBe("accept_b");
 
     const after = (await (await call("/api/review?status=open")).json()) as ReviewQueue;
     expect(after.items.map((i) => i.id)).not.toContain(first.id);
@@ -167,7 +178,7 @@ describe("mock API", () => {
       (
         await call(
           `/api/review/${first.id}/resolve`,
-          jsonInit("POST", { action: "accept", payload: {} }),
+          jsonInit("POST", { action: "accept_a", payload: {} }),
         )
       ).status,
     ).toBe(409);

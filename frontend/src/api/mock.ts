@@ -170,7 +170,8 @@ notes.push(patelNote);
 
 // ===== Phase 3 fixtures: analysis, entities, review, usage =====
 
-const EXTRACTOR = "xai:grok-4.3 · note.extract v2";
+// The backend serves "provider:model" here, nothing fancier.
+const EXTRACTOR = "xai:grok-4.3";
 
 function fact(over: Partial<FactOut> & Pick<FactOut, "id" | "predicate">): FactOut {
   return {
@@ -535,9 +536,13 @@ const ENTITIES: Record<string, EntityOut> = {
   },
 };
 
-// Review queue: one of every kind. `payload` interiors follow the mock
-// convention the review screen reads (summary / snippet / outcomes /
-// choices / *_destructive flags) — defensively, since the field is free-form.
+// Review queue: one of every kind, payloads mirroring what the backend
+// writes at item creation: the row ids its resolution handlers read plus
+// the display fields the card renders (summary / snippet / outcomes /
+// choices / *_destructive flags). Invariant shared with the backend: every
+// advertised choice action and outcome verb is exactly an action
+// POST /review/{id}/resolve accepts — collisions resolve through
+// accept_a/accept_b choices and advertise no footer verbs.
 interface MockReviewItem extends ReviewItem {
   open: boolean;
 }
@@ -550,24 +555,15 @@ const REVIEW_ITEMS: MockReviewItem[] = [
     created_at: daysAgo(0, 9, 45),
     open: true,
     payload: {
-      summary: "two birthdays recorded for Sarah",
-      snippet:
-        "Card in the mail for Sarah's birthday on <mark>March 14</mark> — though the 2023 note said <mark>May 2, 1990</mark>.",
+      fact_a: "fact-sarah-bday-1990",
+      fact_b: FACT_SARAH_BDAY.id,
+      predicate: "birthDate",
       note_id: patelNote.id,
-      entity_name: "Sarah",
-      outcomes: {
-        accept: "the chosen birthday stands and gets pinned; the other is retracted as a misread.",
-        reject: "both stay pending — nothing publishes until this is resolved.",
-      },
+      summary: "two values recorded for Sarah's birthDate",
+      snippet: "card in the mail for <mark>Sarah's birthday on the 14th</mark>",
       choices: [
-        { action: "keep_fact", label: "March 14, 1988", detail: "from the birthday-card note" },
-        { action: "keep_other", label: "May 2, 1990", detail: "from the 2023 note" },
-        {
-          action: "split",
-          label: "split into two people",
-          detail: "mentions re-resolve from their spans",
-          destructive: true,
-        },
+        { action: "accept_a", label: "May 2, 1990", detail: "previously recorded" },
+        { action: "accept_b", label: "March 14, 1988", detail: "from this note" },
       ],
     },
   },
@@ -578,10 +574,11 @@ const REVIEW_ITEMS: MockReviewItem[] = [
     created_at: daysAgo(1, 12, 0),
     open: true,
     payload: {
+      entity_a: "ent-robert-chen",
+      entity_b: "ent-bob",
       summary: "are “Bob” and “Robert Chen” the same person?",
       snippet:
         "Lunch with <mark>Bob</mark> — he's pitching the Donnelly account again next quarter.",
-      entity_name: "Bob",
       outcomes: {
         accept:
           "bob and robert chen become one person — mentions repoint; a later split can undo it.",
@@ -597,16 +594,15 @@ const REVIEW_ITEMS: MockReviewItem[] = [
     created_at: daysAgo(1, 10, 30),
     open: true,
     payload: {
+      name: "Sam",
+      note_id: "note-archived-91",
+      entity_ids: ["ent-sam-rivera", "ent-sam-okafor"],
       summary: "which Sam?",
       snippet: "<mark>Sam</mark> said the roof quote covers the flashing too.",
+      // accept is not advertised: linking a pick needs layer-2/3 resolution.
       outcomes: {
-        accept: "the mention links to the person you pick.",
         reject: "the mention stays unlinked — it can be re-proposed with more signal.",
       },
-      choices: [
-        { action: "link", label: "Sam Rivera", detail: "contractor — roof quote co-mentions" },
-        { action: "link_other", label: "Sam Okafor", detail: "book club" },
-      ],
     },
   },
   {
@@ -616,12 +612,15 @@ const REVIEW_ITEMS: MockReviewItem[] = [
     created_at: daysAgo(2, 8, 15),
     open: true,
     payload: {
-      summary: "Dr. Akin was mentioned outside the medical domain",
+      fact_id: "fact-akin-fax",
+      note_id: "note-archived-88",
+      note_domain: "health",
+      proposed_domain: "general",
+      summary: "this faxRequest fact may belong in general, not health",
       snippet: "Asked <mark>Dr. Akin</mark>'s office to fax the form to the school nurse.",
-      entity_name: "Dr. Akin",
       outcomes: {
-        accept: "dr. akin becomes visible to general surfaces — facts keep their own domains.",
-        reject: "the entity stays medical-only; the general mention still links.",
+        accept: "the fact moves to general and is pinned there — reprocessing can't pull it back.",
+        reject: "the fact stays in health — the note's firewall keeps it.",
       },
     },
   },
@@ -632,25 +631,22 @@ const REVIEW_ITEMS: MockReviewItem[] = [
     created_at: daysAgo(0, 11, 5),
     open: true,
     payload: {
-      summary: "two blood-pressure readings disagree for the same morning",
+      fact_a: FACT_BP.id,
+      fact_b: "fact-bp-kiosk",
+      predicate: "blood_pressure",
+      note_id: patelNote.id,
+      summary: "two blood_pressure values disagree for Me",
       snippet:
         "Pharmacy kiosk says <mark>138/92</mark> — way off this morning's 128/82 at Dr. Patel's.",
-      entity_name: "Me",
-      outcomes: {
-        accept: "the reading you pick stands; the other is retracted as an extraction error.",
-        reject: "both readings stay pending review.",
-      },
       choices: [
-        { action: "keep_fact", label: "128/82 mmHg", detail: "Dr. Patel's office" },
-        { action: "keep_other", label: "138/92 mmHg", detail: "pharmacy kiosk" },
-        {
-          action: "keep_both",
-          label: "keep both readings",
-          detail: "they are separate measurements",
-        },
+        { action: "accept_a", label: "128/82 mmHg", detail: "previously recorded" },
+        { action: "accept_b", label: "138/92 mmHg", detail: "from this note" },
       ],
     },
   },
+  // rev-6/rev-7: kinds the schema reserves but no pipeline writes yet; they
+  // keep the card's rarer states (low-confidence copy, destructive accept)
+  // exercised in mock mode and follow the same payload convention.
   {
     id: "rev-6",
     kind: "low_confidence",
@@ -919,8 +915,27 @@ export const mockFetch: typeof fetch = async (input, init) => {
   if (resolveMatch && method === "POST") {
     const item = REVIEW_ITEMS.find((r) => r.id === decodeURIComponent(resolveMatch[1] ?? ""));
     if (!item) return json({ detail: "review item not found" }, 404);
-    if (!item.open) return json({ detail: "already resolved" }, 409);
+    if (!item.open) return json({ detail: "review item is not open" }, 409);
     const body = JSON.parse(String(init?.body)) as { action: string; payload?: object };
+    // Mirror the backend's contract: only the actions the payload advertises
+    // (plus dismiss) resolve; anything else is a 400, the item untouched.
+    const advertised = new Set(["dismiss"]);
+    const choices = item.payload.choices;
+    if (Array.isArray(choices)) {
+      for (const choice of choices) {
+        const action = (choice as { action?: unknown }).action;
+        if (typeof action === "string") advertised.add(action);
+      }
+    }
+    const outcomes = item.payload.outcomes;
+    if (outcomes !== null && typeof outcomes === "object") {
+      for (const verb of ["accept", "reject"]) {
+        if (verb in outcomes) advertised.add(verb);
+      }
+    }
+    if (!advertised.has(body.action)) {
+      return json({ detail: `action ${body.action} is not valid for kind ${item.kind}` }, 400);
+    }
     // Resolution mutates fixture state so the triage flow works end-to-end.
     item.open = false;
     item.payload = { ...item.payload, resolution: body.action };

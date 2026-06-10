@@ -173,24 +173,31 @@ function ReviewCard({ item, queue, canSkip }: ReviewCardProps) {
 
       {queue.actionError !== null && <p className="review-error">{queue.actionError}</p>}
 
+      {/* The outcomes panel advertises exactly the footer verbs the resolve
+          endpoint accepts for this kind (collisions resolve through their
+          choices instead): no outcome text, no button. */}
       <footer className="review-bar">
         <button type="button" className="review-skip" disabled={!canSkip} onClick={queue.skip}>
           skip
         </button>
-        <button
-          type="button"
-          className={`review-reject${armed === "reject" ? " armed" : ""}`}
-          onClick={() => fire("reject", parsed.rejectDestructive, "reject")}
-        >
-          {armed === "reject" ? "tap again — permanent" : "reject"}
-        </button>
-        <button
-          type="button"
-          className={`review-accept${armed === "accept" ? " armed" : ""}`}
-          onClick={() => fire("accept", parsed.acceptDestructive, "accept")}
-        >
-          {armed === "accept" ? "tap again — permanent" : "accept"}
-        </button>
+        {parsed.reject !== null && (
+          <button
+            type="button"
+            className={`review-reject${armed === "reject" ? " armed" : ""}`}
+            onClick={() => fire("reject", parsed.rejectDestructive, "reject")}
+          >
+            {armed === "reject" ? "tap again — permanent" : "reject"}
+          </button>
+        )}
+        {parsed.accept !== null && (
+          <button
+            type="button"
+            className={`review-accept${armed === "accept" ? " armed" : ""}`}
+            onClick={() => fire("accept", parsed.acceptDestructive, "accept")}
+          >
+            {armed === "accept" ? "tap again — permanent" : "accept"}
+          </button>
+        )}
       </footer>
     </div>
   );
