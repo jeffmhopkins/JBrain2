@@ -17,6 +17,11 @@ class Settings(BaseSettings):
 
     anthropic_api_key: str = ""
     xai_api_key: str = ""
+    # Future-GPU escape hatch: any OpenAI-compatible server (Ollama default).
+    local_llm_url: str = "http://localhost:11434/v1"
+    # JSON object of per-task "provider:model" overrides, merged over the
+    # adapter defaults — see jbrain.llm.router.TASK_DEFAULTS.
+    llm_tasks: dict[str, str] = {}
 
 
 def get_settings() -> Settings:
