@@ -18,7 +18,7 @@ sudo bash deploy/install.sh
 The installer sets up Docker, asks for your domain and LLM API keys, builds
 the images from source, and prints your **owner key** exactly once — copy it
 to paper. Manage the stack with
-`jbrain status | restart | logs | reset-owner-key | update | backup`;
+`jbrain status | restart | logs | reset-owner-key | update | backup | restore`;
 `jbrain update` pulls the latest main and rebuilds.
 
 ## Development
