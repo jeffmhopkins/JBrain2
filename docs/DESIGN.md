@@ -165,6 +165,52 @@ unreachable — retrying…"*. Never blame the user; never exclamation marks.
 - Status conveyed by dot color is always paired with text.
 - Respect safe-area insets (`env(safe-area-inset-*)`) in top bar and bottom nav.
 
+## UI development process
+
+Binding workflow for every new screen or significant UI change:
+
+1. **Mock-first, approval-gated.** UIs are built and reviewed against mock
+   data before any backend wiring. The frontend ships a mock mode
+   (`npm run dev:mock`) where the typed API client is backed by fixtures —
+   realistic, varied data including empty, long, error, and offline states.
+   Backend endpoints are implemented only after the owner approves the
+   mocked UI.
+2. **Options before commitment.** New surfaces are presented as **3–4
+   distinct variants** (layout, interaction pattern, or visual treatment —
+   not color-swaps of one idea). The owner picks; the *reasoning and chosen
+   pattern* are added to this document in the same PR, so the next surface
+   reuses the decision instead of re-litigating it.
+3. **Decisions accrete here.** If a review settles anything reusable — a
+   list pattern, a modal flow, an empty-state style — it gets a subsection
+   in this doc immediately. This document is the memory; "we decided this
+   already" must be checkable by reading it.
+
+## Surface paradigms (which container for which job)
+
+| Job | Paradigm |
+|---|---|
+| Primary tasks (capture, reading an article, chat) | Full screen with top-bar back chevron |
+| Contextual quick forms & actions (add list item, edit appointment, filters) | **Bottom sheet** — the workhorse modal on phone |
+| Confirmation of a destructive/irreversible act | Center **confirm dialog**, destructive variant |
+| Row-level detail that doesn't warrant navigation | Inline expansion within the list |
+| Outcome feedback (saved, restarted, queued) | Toast |
+| Connectivity / sync state | Status banner + dot — **never** a modal |
+
+## Modal system (one implementation, reused everywhere)
+
+- A single shared **`<Sheet>`** (bottom sheet) and a single shared
+  **`<Dialog>`** (center confirm) component own all modal behavior: scrim
+  (`--bg` at 60% alpha), focus trap, body-scroll lock, Escape/back-gesture
+  dismiss, swipe-down dismiss for sheets, safe-area padding, 16px top radius.
+  New modals compose these shells — building a bespoke modal is a design-doc
+  violation.
+- **One modal at a time, never nested.** If a flow seems to need a modal
+  over a modal, the first one should have been a full screen.
+- Sheets carry a 32×4px drag handle, a 18px/500 title, and at most one
+  primary action; longer flows are full screens.
+- Dialogs are for confirmation only: one sentence of consequence, two
+  buttons max (destructive variant on the right), no scrolling content.
+
 ## Implementation rules
 
 1. Tokens live in one file (`frontend/src/styles/tokens.css`); components
@@ -172,3 +218,6 @@ unreachable — retrying…"*. Never blame the user; never exclamation marks.
 2. New components follow this document; if a needed pattern is missing, extend
    this document in the same PR that introduces the component.
 3. Screenshot-test significant surfaces in both themes once Playwright lands.
+4. The mock fixtures are maintained alongside the API client; a screen's
+   mock states (default, empty, error, offline) are part of its definition
+   of done.
