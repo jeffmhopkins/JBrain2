@@ -1,3 +1,8 @@
+html,
+body {
+  overscroll-behavior-y: none;
+}
+
 /* App styles — tokens only (src/styles/tokens.css); no raw colors, radii,
    or font sizes outside the token sheet. */
 
@@ -317,7 +322,8 @@ h3 {
   align-items: center;
   justify-content: center;
   gap: 8px;
-  padding: 13px 0;
+  /* em so the control thins along with the text-size setting */
+  padding: 0.85em 0;
   font-size: var(--fs-note);
   font-weight: 500;
   color: var(--text-2);
@@ -464,6 +470,7 @@ h3 {
   position: fixed;
   inset: 0;
   z-index: 50;
+  overscroll-behavior: contain;
   background: var(--bg);
   overflow-y: auto;
   padding: env(safe-area-inset-top) 16px calc(24px + env(safe-area-inset-bottom));

@@ -100,6 +100,9 @@ export function Launcher({ open, onClose, onNavigate }: LauncherProps) {
   if (!open && !closing) return null;
 
   function onTouchStart(event: TouchEvent) {
+    // Owner-settled: a down-swipe anywhere on the launcher dismisses it,
+    // regardless of scroll position (pull-to-refresh is suppressed in CSS
+    // so the browser can't hijack the gesture).
     touchStartY.current = event.touches[0]?.clientY ?? null;
   }
 
