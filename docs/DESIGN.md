@@ -147,6 +147,18 @@ than wrapping.
 borders, out-of-month days in `--text-3`, today = accent ring around the day
 number; selected-day panel below with `+ Add` (accent link) and `Open day →`.
 
+**Search** (settled in the Phase 2 review): explicit submit (enter / Search
+tap), **passage-first results** — the matched chunk is the hero text with
+`--amber-tint` highlight marks, the source note is a one-line context row
+beneath; domain-colored dot + date in the head; every result carries its
+**match badge** (`semantic` steel-tint / `keyword` surface-2) — retrieval
+transparency is a feature, not debug chrome. Domain filter chips under the
+search bar. Degraded mode shows the amber "keyword-only results — semantic
+search recovering…" banner (never an error page). Tapping a result opens
+the **note sheet** — a minimal full-note view (body, attachments, metadata)
+as a slide-up layer; swipe down returns to results. The omnibox Research
+segment remains a Phase 4 surface; search lives behind the Search tile.
+
 **Empty states** — one `--text-2` sentence with the action inline: *"Nothing
 scheduled — tap to add."* No illustrations.
 
