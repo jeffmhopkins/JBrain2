@@ -4,6 +4,7 @@
 (the UI's amber banner); `match` is the per-result provenance badge.
 """
 
+from dataclasses import asdict
 from datetime import datetime
 from typing import Annotated, cast
 
@@ -44,7 +45,7 @@ class SearchOut(BaseModel):
 def search_out(resp: SearchResponse) -> SearchOut:
     return SearchOut(
         degraded=resp.degraded,
-        results=[SearchResultOut(**r.__dict__) for r in resp.results],
+        results=[SearchResultOut(**asdict(r)) for r in resp.results],
     )
 
 

@@ -84,8 +84,6 @@ class SqlSearchRepo:
     ) -> list[ChunkHit]:
         async with scoped_session(self._maker, ctx) as session:
             rows = (
-                await session.execute(
-                    text(_FTS_SQL), {"q": q, "domain": domain, "limit": limit}
-                )
+                await session.execute(text(_FTS_SQL), {"q": q, "domain": domain, "limit": limit})
             ).all()
         return [_hit(r, headline=r.headline) for r in rows]

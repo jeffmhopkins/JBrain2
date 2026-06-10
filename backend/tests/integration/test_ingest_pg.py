@@ -73,6 +73,20 @@ async def add_attachment(
     return attachment.id
 
 
+async def embed_jobs_for(maker: async_sessionmaker[AsyncSession], note_id: str) -> int:
+    async with scoped_session(maker, OWNER) as session:
+        count = (
+            await session.execute(
+                text(
+                    "SELECT count(*) FROM app.jobs WHERE kind = 'embed_note'"
+                    " AND payload->>'note_id' = :nid"
+                ),
+                {"nid": note_id},
+            )
+        ).scalar()
+    return count or 0
+
+
 def pdf_bytes(*page_texts: str) -> bytes:
     doc = pymupdf.open()
     for page_text in page_texts:
@@ -192,8 +206,10 @@ async def test_pipeline_ingests_note_with_attachments(
     pdf_chunks = [c for c in chunks if str(c["attachment_id"]) == pdf_att]
     assert {c["source_anchor"] for c in pdf_chunks} == {"page 1", "page 2"}
 
-    # Embeddings stay NULL until Step 3 fills them.
+    # Embeddings stay NULL until the embed_note job (enqueued by the
+    # pipeline on success) fills them.
     assert all(c["embedding"] is None and c["embedding_model"] is None for c in chunks)
+    assert await embed_jobs_for(maker, note_id) == 1
 
     # FTS works immediately via the generated tsv column.
     async with scoped_session(maker, OWNER) as session:
@@ -233,6 +249,8 @@ async def test_reingestion_replaces_chunks(
     assert {c["id"] for c in first}.isdisjoint({c["id"] for c in second})
     assert sum(1 for c in second if c["source_kind"] == "note") == len(first)
     assert any(c["text"] == "cholesterol within range" for c in second)
+    # Re-ingest re-enqueues embedding: rebuilt chunks all start unembedded.
+    assert await embed_jobs_for(maker, note_id) == 2
 
 
 async def test_pipeline_failure_marks_note_failed(
@@ -260,6 +278,7 @@ async def test_pipeline_failure_marks_note_failed(
         ).scalar()
     assert state == "failed"
     assert await chunk_rows(maker, OWNER, note_id) == []
+    assert await embed_jobs_for(maker, note_id) == 0  # nothing to embed on failure
 
 
 async def test_pipeline_skips_missing_note(

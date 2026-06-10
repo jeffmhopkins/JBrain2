@@ -68,9 +68,7 @@ class NoteEmbedder:
     worst no-op a row, never clobber a fresher chunk.
     """
 
-    def __init__(
-        self, maker: async_sessionmaker[AsyncSession], client: EmbedClient, model: str
-    ):
+    def __init__(self, maker: async_sessionmaker[AsyncSession], client: EmbedClient, model: str):
         self._maker = maker
         self._client = client
         self._model = model

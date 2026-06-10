@@ -142,6 +142,82 @@ async def test_jobs_are_invisible_outside_the_system_context(
         await queue.enqueue(maker, SCOPED, "ingest_note", {"note_id": "forged"})
 
 
+async def quiesce_jobs(maker: async_sessionmaker[AsyncSession]) -> None:
+    """Park jobs left queued by earlier tests so claim() sees only ours."""
+    async with scoped_session(maker, OWNER) as session:
+        await session.execute(text("UPDATE app.jobs SET status = 'done'"))
+
+
+async def backdate_lock(maker: async_sessionmaker[AsyncSession], job_id: str, minutes: int) -> None:
+    async with scoped_session(maker, OWNER) as session:
+        await session.execute(
+            text(
+                "UPDATE app.jobs SET locked_at = now() - make_interval(mins => :m) WHERE id = :id"
+            ),
+            {"id": job_id, "m": minutes},
+        )
+
+
+async def test_stale_running_job_is_reclaimed_at_attempt_cost(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    await quiesce_jobs(maker)
+    job_id = await queue.enqueue(maker, OWNER, "ingest_note", {"note_id": "stuck"})
+    first = await queue.claim(maker, OWNER)
+    assert first is not None and first.attempts == 0
+
+    # A freshly locked running job is not reclaimable.
+    assert await queue.claim(maker, OWNER) is None
+
+    await backdate_lock(maker, job_id, 11)
+    reclaimed = await queue.claim(maker, OWNER)
+    assert reclaimed is not None and reclaimed.id == job_id
+    assert reclaimed.attempts == 1  # the reclaim cost an attempt
+    assert (await job_row(maker, job_id))["status"] == "running"
+    await queue.complete(maker, OWNER, job_id)
+
+
+async def test_stale_reclaim_exhaustion_fails_permanently(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    await quiesce_jobs(maker)
+    job_id = await queue.enqueue(maker, OWNER, "ingest_note", {"note_id": "poison"})
+    assert await queue.claim(maker, OWNER) is not None
+    async with scoped_session(maker, OWNER) as session:
+        await session.execute(
+            text("UPDATE app.jobs SET attempts = 4 WHERE id = :id"), {"id": job_id}
+        )
+    await backdate_lock(maker, job_id, 11)
+
+    # The reclaim would be attempt 5 of 5: fail it instead of re-running.
+    assert await queue.claim(maker, OWNER) is None
+    row = await job_row(maker, job_id)
+    assert row["status"] == "failed"
+    assert row["attempts"] == 5
+    assert row["finished_at"] is not None
+
+
+async def test_concurrent_stale_reclaims_have_one_winner(
+    maker: async_sessionmaker[AsyncSession],
+    database_url: str,  # noqa: F811
+) -> None:
+    await quiesce_jobs(maker)
+    job_id = await queue.enqueue(maker, OWNER, "ingest_note", {"note_id": "contended-stale"})
+    assert await queue.claim(maker, OWNER) is not None
+    await backdate_lock(maker, job_id, 11)
+
+    other_engine = create_async_engine(database_url, poolclass=NullPool)
+    other_maker = async_sessionmaker(other_engine, expire_on_commit=False)
+    try:
+        results = await asyncio.gather(queue.claim(maker, OWNER), queue.claim(other_maker, OWNER))
+        claimed = [j for j in results if j is not None]
+        assert len(claimed) == 1  # SKIP LOCKED protects the reaper path too
+        assert claimed[0].id == job_id and claimed[0].attempts == 1
+        await queue.complete(maker, OWNER, job_id)
+    finally:
+        await other_engine.dispose()
+
+
 async def test_backfill_enqueues_pending_notes_exactly_once(
     maker: async_sessionmaker[AsyncSession],
 ) -> None:
@@ -178,3 +254,45 @@ async def test_backfill_enqueues_pending_notes_exactly_once(
 
     # A queued job suppresses duplicates: the second sweep is a no-op.
     assert await queue.backfill_pending_notes(maker, OWNER) == 0
+
+
+async def test_backfill_unembedded_notes_targets_null_embeddings_once(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    repo = SqlNotesRepo(maker)
+    bare, _ = await repo.create_note(
+        OWNER, client_id="emb-1", domain="general", destination=None, body="no vectors yet"
+    )
+    done, _ = await repo.create_note(
+        OWNER, client_id="emb-2", domain="general", destination=None, body="already embedded"
+    )
+    planted = "[" + ",".join(["1.0"] + ["0.0"] * 383) + "]"
+    async with scoped_session(maker, OWNER) as session:
+        for note_id, embedding in ((bare.id, None), (done.id, planted)):
+            await session.execute(
+                text(
+                    "INSERT INTO app.chunks"
+                    " (id, note_id, domain_code, granularity, seq, text, embedding)"
+                    " VALUES (gen_random_uuid(), :nid, 'general', 'paragraph', 0, 'c',"
+                    "         cast(:emb AS vector))"
+                ),
+                {"nid": note_id, "emb": embedding},
+            )
+    await quiesce_jobs(maker)
+
+    assert await queue.backfill_unembedded_notes(maker, OWNER) == 1
+    async with scoped_session(maker, OWNER) as session:
+        targets = list(
+            (
+                await session.execute(
+                    text(
+                        "SELECT payload->>'note_id' FROM app.jobs"
+                        " WHERE kind = 'embed_note' AND status = 'queued'"
+                    )
+                )
+            ).scalars()
+        )
+    assert targets == [bare.id]  # fully embedded notes are left alone
+
+    # The queued job suppresses duplicates on the next sweep.
+    assert await queue.backfill_unembedded_notes(maker, OWNER) == 0

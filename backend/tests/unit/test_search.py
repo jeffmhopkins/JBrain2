@@ -130,9 +130,7 @@ async def test_results_group_to_best_chunk_per_note() -> None:
 
 
 async def test_limit_and_preview() -> None:
-    repo = FakeSearchRepo(
-        dense=[hit(f"c{i}", note_id=f"n{i}", body="b" * 500) for i in range(5)]
-    )
+    repo = FakeSearchRepo(dense=[hit(f"c{i}", note_id=f"n{i}", body="b" * 500) for i in range(5)])
     resp = await SearchService(repo, FakeEmbed()).search(CTX, "q", None, 2)
     assert len(resp.results) == 2
     assert all(len(r.body_preview) == 161 for r in resp.results)  # 160 + ellipsis

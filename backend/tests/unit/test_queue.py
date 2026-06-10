@@ -36,7 +36,7 @@ def test_reclaim_exhausts_at_max_attempts() -> None:
 
 
 def test_stale_lock_threshold_is_ten_minutes() -> None:
-    assert STALE_LOCK == timedelta(minutes=10)
+    assert timedelta(minutes=10) == STALE_LOCK
 
 
 def test_system_context_is_owner_kind() -> None:
