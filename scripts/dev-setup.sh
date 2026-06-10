@@ -62,12 +62,34 @@ else
   log "no frontend/package.json yet — skipping Node setup"
 fi
 
-# --- Docker (testcontainers-based integration tests) ---
+# --- Docker (testcontainers integration tests + the LLM-in-the-middle harness) ---
+# Best-effort: managed environments start their own daemon. This sandbox does
+# not, and its kernel has no usable bridge networking, so we start dockerd
+# bridge-less and the test/harness code falls back to host networking
+# (tests/conftest.py pgvector_container, scripts/llm-harness.sh). Never fatal:
+# unit tests and linters don't need Docker.
+HARNESS_IMAGE="timescale/timescaledb-ha:pg17"  # prod Postgres image, also used by the harness
+
+if ! docker info >/dev/null 2>&1; then
+  if command -v dockerd >/dev/null 2>&1 && sudo -n true 2>/dev/null; then
+    log "starting dockerd (bridge-less — sandbox kernel has no bridge networking)"
+    sudo dockerd --iptables=false --bridge=none >/tmp/dockerd.log 2>&1 &
+    for _ in $(seq 1 15); do docker info >/dev/null 2>&1 && break; sleep 1; done
+  fi
+fi
+
 if docker info >/dev/null 2>&1; then
-  log "docker daemon available — integration tests can run"
+  log "docker daemon available — integration tests and the LLM harness can run"
+  # Pre-pull the harness/Postgres image so the first integration run isn't
+  # racing a Docker Hub rate limit; best-effort, retried a few times.
+  if ! docker image inspect "$HARNESS_IMAGE" >/dev/null 2>&1; then
+    log "pre-pulling $HARNESS_IMAGE (harness + integration DB)"
+    for _ in 1 2 3; do docker pull "$HARNESS_IMAGE" >/dev/null 2>&1 && break; sleep 10; done \
+      || log "WARNING: could not pre-pull $HARNESS_IMAGE — it will pull on first use"
+  fi
 else
-  log "WARNING: no docker daemon — testcontainers integration tests will be" \
-      "skipped; unit tests and linters are unaffected"
+  log "WARNING: no docker daemon — testcontainers integration tests and the LLM" \
+      "harness will be skipped; unit tests and linters are unaffected"
 fi
 
 log "done"
