@@ -1,18 +1,33 @@
 import { useEffect, useState } from "react";
 import { type Principal, api, setUnauthorizedHandler } from "./api/client";
-import { BottomNav, type Tab } from "./components/BottomNav";
+import { Launcher, type LauncherTarget } from "./components/Launcher";
+import { TopBar } from "./components/TopBar";
+import { useNotes } from "./notes/useNotes";
+import { HomeScreen } from "./screens/HomeScreen";
 import { LoginScreen } from "./screens/LoginScreen";
 import { OpsScreen } from "./screens/OpsScreen";
-import { PlaceholderScreen } from "./screens/PlaceholderScreen";
+import { SettingsScreen } from "./screens/SettingsScreen";
 
 type Session =
   | { status: "loading" }
   | { status: "anonymous" }
   | { status: "in"; principal: Principal };
 
+type Screen = "home" | "ops" | "settings";
+
+const SCREEN_TITLES: Record<Exclude<Screen, "home">, string> = {
+  ops: "Ops",
+  settings: "Settings",
+};
+
 export function App() {
   const [session, setSession] = useState<Session>({ status: "loading" });
-  const [tab, setTab] = useState<Tab>("ops");
+  const [screen, setScreen] = useState<Screen>("home");
+  const [launcherOpen, setLauncherOpen] = useState(false);
+
+  // Lives at the app level so the outbox keeps flushing while the user is
+  // on Ops or Settings.
+  const notes = useNotes(session.status === "in");
 
   // Any 401 from the API means the cookie expired or was revoked.
   useEffect(() => {
@@ -33,7 +48,12 @@ export function App() {
     } catch {
       // Even if the server call fails the local session is done.
     }
+    setScreen("home");
     setSession({ status: "anonymous" });
+  }
+
+  function navigate(target: LauncherTarget) {
+    setScreen(target);
   }
 
   if (session.status === "loading") {
@@ -46,45 +66,28 @@ export function App() {
 
   return (
     <div className="shell">
-      <header className="top-bar">
-        <span className="brand">JBrain</span>
-        <span className="muted device-label">{session.principal.label}</span>
-        <button type="button" className="small" onClick={logout}>
-          Log out
-        </button>
-      </header>
-      <main className="content">
-        {tab === "capture" && (
-          <PlaceholderScreen
-            title="Capture"
-            phase="Coming in Phase 1"
-            blurb="Quick note capture into the inbox lands here."
-          />
-        )}
-        {tab === "chat" && (
-          <PlaceholderScreen
-            title="Chat"
-            phase="Coming in Phase 4"
-            blurb="Conversational access to your notes and wiki lands here."
-          />
-        )}
-        {tab === "search" && (
-          <PlaceholderScreen
-            title="Search"
-            phase="Coming in Phase 2"
-            blurb="RAG-backed search over your notes lands here."
-          />
-        )}
-        {tab === "review" && (
-          <PlaceholderScreen
-            title="Review"
-            phase="Coming in Phase 3"
-            blurb="Wiki review and correction-note workflow lands here."
-          />
-        )}
-        {tab === "ops" && <OpsScreen />}
-      </main>
-      <BottomNav active={tab} onSelect={setTab} />
+      <TopBar
+        {...(screen !== "home"
+          ? { title: SCREEN_TITLES[screen], onBack: () => setScreen("home") }
+          : {})}
+        syncStatus={notes.syncStatus}
+        onBolt={() => setLauncherOpen(true)}
+      />
+
+      {/* Home stays mounted so stream scroll position survives sub-screens. */}
+      <div className={`screen-home${screen === "home" ? "" : " screen-hidden"}`}>
+        <HomeScreen notes={notes} onOpenLauncher={() => setLauncherOpen(true)} />
+      </div>
+      {screen === "ops" && (
+        <main className="screen-body">
+          <OpsScreen />
+        </main>
+      )}
+      {screen === "settings" && (
+        <SettingsScreen deviceLabel={session.principal.label} onLogout={() => void logout()} />
+      )}
+
+      <Launcher open={launcherOpen} onClose={() => setLauncherOpen(false)} onNavigate={navigate} />
     </div>
   );
 }
