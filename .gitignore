@@ -1,0 +1,9 @@
+.dev-setup-stamps/
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+.coverage
+.ruff_cache/
+node_modules/
+dist/

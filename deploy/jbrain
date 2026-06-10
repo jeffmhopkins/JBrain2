@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+# Host-side operator CLI. Shares code paths with the supervisor's command set
+# so a wedged stack is always recoverable over SSH.
+set -euo pipefail
+
+cd /opt/jbrain
+
+usage() {
+  cat <<EOF
+Usage: jbrain <command>
+
+  status           container states
+  restart [svc]    restart one service or the whole stack
+  logs [svc]       follow logs (default: all services)
+  reset-owner-key  revoke the owner key and print a new one
+  update           pull current channel images, migrate, restart
+  backup           run a backup now
+  down | up        stop / start the stack
+EOF
+}
+
+case "${1:-}" in
+  status)
+    docker compose ps
+    ;;
+  restart)
+    docker compose restart ${2:-}
+    ;;
+  logs)
+    docker compose logs -f --tail 200 ${2:-}
+    ;;
+  reset-owner-key)
+    docker compose run --rm api python -m jbrain.cli reset-owner-key
+    ;;
+  update)
+    ./backup.sh
+    docker compose pull
+    docker compose run --rm api alembic upgrade head
+    docker compose up -d
+    ;;
+  backup)
+    ./backup.sh
+    ;;
+  down)
+    docker compose down
+    ;;
+  up)
+    docker compose up -d
+    ;;
+  *)
+    usage
+    exit 1
+    ;;
+esac

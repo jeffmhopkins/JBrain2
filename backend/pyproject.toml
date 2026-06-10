@@ -1,0 +1,60 @@
+[project]
+name = "jbrain"
+version = "0.1.0"
+description = "JBrain2 backend: API and worker"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "sqlalchemy[asyncio]>=2.0",
+    "asyncpg>=0.29",
+    "alembic>=1.13",
+    "pydantic-settings>=2.4",
+    "httpx>=0.27",
+    "structlog>=24.1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "pytest-cov>=5.0",
+    "ruff>=0.6",
+    "pyright>=1.1.380",
+    "testcontainers[postgres]>=4.8",
+    "psycopg[binary]>=3.2",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/jbrain"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+markers = [
+    "integration: requires a Docker daemon (testcontainers); skipped when unavailable",
+]
+
+[tool.coverage.run]
+source = ["jbrain"]
+
+[tool.coverage.report]
+show_missing = true
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "ASYNC"]
+
+[tool.pyright]
+include = ["src", "tests"]
+venvPath = "."
+venv = ".venv"
+typeCheckingMode = "standard"
