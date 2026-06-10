@@ -14,9 +14,9 @@ import json
 import uuid
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 
-from sqlalchemy import text
+from sqlalchemy import CursorResult, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from jbrain.db.session import SessionContext, scoped_session
@@ -189,4 +189,6 @@ async def backfill_pending_notes(
                 """
             )
         )
-        return result.rowcount or 0
+        # session.execute is typed as Result, but INSERT always yields a
+        # CursorResult carrying rowcount.
+        return cast(CursorResult[Any], result).rowcount or 0

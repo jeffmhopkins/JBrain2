@@ -11,7 +11,7 @@ loop via asyncio.to_thread.
 """
 
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Protocol, cast
 
 import pymupdf
 
@@ -56,8 +56,9 @@ class PdfTextLayerExtractor:
     def extract(self, data: bytes) -> list[Segment]:
         segments: list[Segment] = []
         with pymupdf.open(stream=data, filetype="pdf") as doc:
-            for number, page in enumerate(doc, start=1):
-                page_text = page.get_text().strip()
+            for number in range(1, doc.page_count + 1):
+                # get_text's return type varies by option; "text" is always str.
+                page_text = cast(str, doc.load_page(number - 1).get_text("text")).strip()
                 if page_text:
                     segments.append(
                         Segment(kind=KIND_TEXT_LAYER, text=page_text, anchor=f"page {number}")

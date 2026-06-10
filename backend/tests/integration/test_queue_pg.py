@@ -72,15 +72,14 @@ async def test_enqueue_claim_complete_roundtrip(
 
 
 async def test_concurrent_claims_never_double_claim(
-    maker: async_sessionmaker[AsyncSession], database_url: str  # noqa: F811
+    maker: async_sessionmaker[AsyncSession],
+    database_url: str,  # noqa: F811
 ) -> None:
     job_id = await queue.enqueue(maker, OWNER, "ingest_note", {"note_id": "contended"})
     other_engine = create_async_engine(database_url, poolclass=NullPool)
     other_maker = async_sessionmaker(other_engine, expire_on_commit=False)
     try:
-        results = await asyncio.gather(
-            queue.claim(maker, OWNER), queue.claim(other_maker, OWNER)
-        )
+        results = await asyncio.gather(queue.claim(maker, OWNER), queue.claim(other_maker, OWNER))
         claimed = [j for j in results if j is not None]
         assert len(claimed) == 1  # SKIP LOCKED: exactly one winner
         assert claimed[0].id == job_id

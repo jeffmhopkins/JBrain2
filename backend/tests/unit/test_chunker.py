@@ -24,6 +24,8 @@ def assert_spans_match(source: str, chunks: list[TextChunk]) -> None:
 def test_empty_text_yields_nothing() -> None:
     assert chunk_text("") == []
     assert chunk_text("   \n\n  \t\n") == []
+    assert paragraph_chunks("") == []
+    assert section_chunks("") == []
 
 
 def test_one_liner_is_a_single_paragraph_chunk_without_section_twin() -> None:
