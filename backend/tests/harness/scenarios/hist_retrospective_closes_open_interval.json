@@ -1,0 +1,53 @@
+{
+  "name": "a retrospective 'I left Acme in March' should close the open employment interval, not conflict",
+  "description": "SPEC (docs/ANALYSIS.md 'state ... The old fact stays true about its interval' + SCD-2): note A opens an OPEN employer interval (Tomas worksFor Acme since 2023, no end, value_json {state:current}). Note B arriving now ('Tomas left Acme back in March 2026', value_json {state:ended, end:2026-03}) supplies the END of that SAME relationship — a valid_to backfill on the still-open current state, with the same object entity (Acme) and same valid_from (2023). The spec-correct outcome is ONE Acme fact whose interval is now closed (it stays true about its interval) with NO fact_conflict review — nobody disputes Tomas worked at Acme; we merely learned when it ended. GAP: supersession.decide has no 'close interval in place' path. value_json now differs so values_equal is False; with equal valid_from the candidate (later reported_at) wins the >= test and decide() SUPERSEDES the open Acme row, chaining a second Acme row and filing a fact_conflict. So a same-relationship interval close is mishandled as a contested value change, producing two Acme employer rows and a spurious conflict. XFAIL until decide() recognizes an end-date backfill on the same object/valid_from as an in-place interval close rather than a supersession.",
+  "xfail": "no interval-close path: closing an open interval ('left Acme in March') shares object entity Acme and valid_from 2023 with the open row, but because value_json differs decide() treats it as a contested newest-wins supersession — it chains a second Acme employer row and files a fact_conflict instead of closing the one interval in place. Failing line: \"expected 1 facts matching {'entity': 'Tomas', 'predicate': 'employer', 'kind': 'relationship', 'value_contains': 'Acme'}, found 2\" (and the spurious fact_conflict review).",
+  "steps": [
+    {
+      "domain": "general",
+      "created_at": "2026-01-10T09:00:00-06:00",
+      "body": "Tomas has worked at Acme since 2023.",
+      "extraction": {
+        "title": "Tomas at Acme",
+        "tags": ["tomas", "acme"],
+        "mentions": [
+          {"name": "Tomas", "kind": "Person", "surface_text": "Tomas"},
+          {"name": "Acme", "kind": "Organization", "surface_text": "Acme"}
+        ],
+        "facts": [
+          {"predicate": "employer", "qualifier": "", "kind": "relationship", "statement": "Tomas works for Acme since 2023.", "value_json": {"state": "current", "start": "2023"}, "assertion": "asserted", "entity_ref": "Tomas", "object_entity_ref": "Acme", "temporal": {"phrase": "since 2023", "resolved_start": "2023-01-01T00:00:00-07:00", "resolved_end": null, "precision": "year"}, "domain": "general", "confidence": 0.9}
+        ],
+        "temporal_tokens": []
+      }
+    },
+    {
+      "domain": "general",
+      "created_at": "2026-06-09T09:00:00-06:00",
+      "body": "I should note Tomas actually left Acme back in March.",
+      "extraction": {
+        "title": "Tomas left Acme",
+        "tags": ["tomas", "acme", "departure"],
+        "mentions": [
+          {"name": "Tomas", "kind": "Person", "surface_text": "Tomas"},
+          {"name": "Acme", "kind": "Organization", "surface_text": "Acme"}
+        ],
+        "facts": [
+          {"predicate": "employer", "qualifier": "", "kind": "relationship", "statement": "Tomas worked for Acme from 2023 until March 2026.", "value_json": {"state": "ended", "start": "2023", "end": "2026-03"}, "assertion": "asserted", "entity_ref": "Tomas", "object_entity_ref": "Acme", "temporal": {"phrase": "since 2023 until March", "resolved_start": "2023-01-01T00:00:00-07:00", "resolved_end": "2026-03-31T23:59:59-06:00", "precision": "month"}, "domain": "general", "confidence": 0.9}
+        ],
+        "temporal_tokens": []
+      }
+    }
+  ],
+  "expect": {
+    "facts": [
+      {"entity": "Tomas", "predicate": "employer", "kind": "relationship", "value_contains": "Acme", "count": 1},
+      {"entity": "Tomas", "predicate": "employer", "kind": "relationship", "value_contains": "ended", "status": "active", "chained": false}
+    ],
+    "review_items": [
+      {"kind": "fact_conflict", "summary_contains": "employer", "count": 0}
+    ],
+    "entities": [
+      {"name": "Acme", "kind": "Organization", "status": "provisional"}
+    ]
+  }
+}

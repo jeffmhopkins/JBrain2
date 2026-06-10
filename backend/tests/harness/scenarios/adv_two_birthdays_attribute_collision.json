@@ -1,0 +1,46 @@
+{
+  "name": "two conflicting birthdays hold BOTH sides and file attribute_collision",
+  "description": "Adversarial attribute-collision / split-detection probe. Two notes assert a different birthDate (attribute kind) for the SAME entity Cleo. Per supersession.decide attribute branch, neither side wins: BOTH active heads move to pending_review and an attribute_collision review fires (a 'two birthdays is a bug, not news' guard). Pins that an attribute conflict never auto-supersedes — both candidate values are held, exactly one attribute_collision is raised, and no value is silently active. DOCUMENTED GAP (not xfail, since the implemented surfacing is attribute_collision): docs/ANALYSIS.md 'Split detection' says conflicting attributes should propose an ENTITY SPLIT (hidden two-people merge), but the pipeline has no entity_split review kind — it only files attribute_collision and never proposes re-resolving the mention spans into two entities. The deterministic hold-both behaviour is asserted here; the missing split proposal is the residual risk.",
+  "steps": [
+    {
+      "domain": "general",
+      "created_at": "2026-01-10T09:00:00-07:00",
+      "body": "Cleo's birthday is March 3rd, 1990.",
+      "extraction": {
+        "title": "Cleo birthday",
+        "tags": ["cleo", "birthday"],
+        "mentions": [{"name": "Cleo", "kind": "Person", "surface_text": "Cleo"}],
+        "facts": [
+          {"predicate": "birthDate", "qualifier": "", "kind": "attribute", "statement": "Cleo was born March 3, 1990.", "value_json": {"date": "1990-03-03"}, "assertion": "asserted", "entity_ref": "Cleo", "object_entity_ref": null, "temporal": {"phrase": "", "resolved_start": "1990-03-03T00:00:00-07:00", "resolved_end": null, "precision": "day"}, "domain": "general", "confidence": 0.9}
+        ],
+        "temporal_tokens": []
+      }
+    },
+    {
+      "domain": "general",
+      "created_at": "2026-02-20T09:00:00-07:00",
+      "body": "Cleo's birthday is November 12th, 1985.",
+      "extraction": {
+        "title": "Cleo birthday again",
+        "tags": ["cleo", "birthday"],
+        "mentions": [{"name": "Cleo", "kind": "Person", "surface_text": "Cleo"}],
+        "facts": [
+          {"predicate": "birthDate", "qualifier": "", "kind": "attribute", "statement": "Cleo was born November 12, 1985.", "value_json": {"date": "1985-11-12"}, "assertion": "asserted", "entity_ref": "Cleo", "object_entity_ref": null, "temporal": {"phrase": "", "resolved_start": "1985-11-12T00:00:00-07:00", "resolved_end": null, "precision": "day"}, "domain": "general", "confidence": 0.9}
+        ],
+        "temporal_tokens": []
+      }
+    }
+  ],
+  "expect": {
+    "facts": [
+      {"entity": "Cleo", "predicate": "birthDate", "kind": "attribute", "value_contains": "1990-03-03", "status": "pending_review"},
+      {"entity": "Cleo", "predicate": "birthDate", "kind": "attribute", "value_contains": "1985-11-12", "status": "pending_review"}
+    ],
+    "absent_facts": [
+      {"entity": "Cleo", "predicate": "birthDate", "status": "active"}
+    ],
+    "review_items": [
+      {"kind": "attribute_collision", "summary_contains": "Cleo", "count": 1}
+    ]
+  }
+}

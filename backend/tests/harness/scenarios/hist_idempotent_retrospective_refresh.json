@@ -1,0 +1,70 @@
+{
+  "name": "re-asserting a historical (superseded) fact at the same validity refreshes in place, no new chain",
+  "description": "Note A sets Wei's current employer (Hooli). Note B is retrospective (Wei worked at Pied Piper in 2020) and lands status='superseded' via decide()'s retrospective branch. Note C re-states the SAME historical fact (Pied Piper, same value_json, same valid_from 2020). decide() idempotency: for a non-accumulating kind, an identical value at the SAME validity refreshes in place even when the existing row is superseded ('a superseded row only counts as identical at the same validity' — supersession.decide comment; same_validity True -> refresh_id). So no second Pied Piper row, no new superseded chain link, and NO extra fact_conflict. Pins re-analysis idempotency on a HISTORICAL fact: re-seeing closed history must not multiply rows or reviews. Expect exactly one superseded Pied Piper fact and one active Hooli fact.",
+  "steps": [
+    {
+      "domain": "general",
+      "created_at": "2026-06-01T09:00:00-06:00",
+      "body": "Wei works at Hooli now.",
+      "extraction": {
+        "title": "Wei at Hooli",
+        "tags": ["wei", "hooli"],
+        "mentions": [
+          {"name": "Wei", "kind": "Person", "surface_text": "Wei"},
+          {"name": "Hooli", "kind": "Organization", "surface_text": "Hooli"}
+        ],
+        "facts": [
+          {"predicate": "employer", "qualifier": "", "kind": "relationship", "statement": "Wei works for Hooli.", "value_json": {"start": "2024-01-01"}, "assertion": "asserted", "entity_ref": "Wei", "object_entity_ref": "Hooli", "temporal": {"phrase": "now", "resolved_start": "2024-01-01T00:00:00-07:00", "resolved_end": null, "precision": "year"}, "domain": "general", "confidence": 0.9}
+        ],
+        "temporal_tokens": []
+      }
+    },
+    {
+      "domain": "general",
+      "created_at": "2026-06-02T09:00:00-06:00",
+      "body": "Back in 2020 Wei was at Pied Piper.",
+      "extraction": {
+        "title": "Wei at Pied Piper 2020",
+        "tags": ["wei", "pied piper", "history"],
+        "mentions": [
+          {"name": "Wei", "kind": "Person", "surface_text": "Wei"},
+          {"name": "Pied Piper", "kind": "Organization", "surface_text": "Pied Piper"}
+        ],
+        "facts": [
+          {"predicate": "employer", "qualifier": "", "kind": "relationship", "statement": "Wei worked for Pied Piper in 2020.", "value_json": {"start": "2020-01-01"}, "assertion": "asserted", "entity_ref": "Wei", "object_entity_ref": "Pied Piper", "temporal": {"phrase": "Back in 2020", "resolved_start": "2020-01-01T00:00:00-07:00", "resolved_end": "2020-12-31T23:59:59-07:00", "precision": "year"}, "domain": "general", "confidence": 0.8}
+        ],
+        "temporal_tokens": []
+      }
+    },
+    {
+      "domain": "general",
+      "created_at": "2026-06-03T09:00:00-06:00",
+      "body": "Reminder from earlier: in 2020 Wei was at Pied Piper.",
+      "extraction": {
+        "title": "Wei at Pied Piper 2020 (again)",
+        "tags": ["wei", "pied piper", "history"],
+        "mentions": [
+          {"name": "Wei", "kind": "Person", "surface_text": "Wei"},
+          {"name": "Pied Piper", "kind": "Organization", "surface_text": "Pied Piper"}
+        ],
+        "facts": [
+          {"predicate": "employer", "qualifier": "", "kind": "relationship", "statement": "Wei worked for Pied Piper in 2020.", "value_json": {"start": "2020-01-01"}, "assertion": "asserted", "entity_ref": "Wei", "object_entity_ref": "Pied Piper", "temporal": {"phrase": "in 2020", "resolved_start": "2020-01-01T00:00:00-07:00", "resolved_end": "2020-12-31T23:59:59-07:00", "precision": "year"}, "domain": "general", "confidence": 0.8}
+        ],
+        "temporal_tokens": []
+      }
+    }
+  ],
+  "expect": {
+    "facts": [
+      {"entity": "Wei", "predicate": "employer", "kind": "relationship", "value_contains": "Hooli", "status": "active", "chained": false},
+      {"entity": "Wei", "predicate": "employer", "kind": "relationship", "value_contains": "Pied Piper", "status": "superseded", "chained": true, "count": 1}
+    ],
+    "review_items": [
+      {"kind": "fact_conflict", "summary_contains": "employer", "count": 0}
+    ],
+    "entities": [
+      {"name": "Hooli", "kind": "Organization", "status": "provisional"},
+      {"name": "Pied Piper", "kind": "Organization", "status": "provisional"}
+    ]
+  }
+}

@@ -1,0 +1,43 @@
+{
+  "name": "two distinct people named Zane silently collapse to one entity",
+  "description": "Adversarial M3/bare-first-name probe. Two genuinely different people share the first name 'Zane' (a sister and a coworker) and the model emits the bare name 'Zane' in both notes. docs/ANALYSIS.md 'Bare first names [decided: auto-link + retro-recheck]' says the moment a SECOND entity with the same name appears, prior auto-linked mentions are flagged for retroactive re-review. But entities.resolve_entity is layer-1 exact-alias only: note 2's 'Zane' finds exactly ONE existing entity and auto-links to it, so a second entity is never created, no ambiguous_mention is filed, and the coworker's 'occupation' fact is silently attached to the SISTER entity. No retro-recheck exists. This pins the real (wrong) behaviour: a single Zane entity carries BOTH facts and there is NO review item — the cross-person conflation is invisible. XFAIL: the spec promises a retro-review flag the pipeline never raises. Failing line: \"expected a review item matching {'kind': 'ambiguous_mention'}, found none\".",
+  "xfail": "Bare-first-name retro-recheck unimplemented: resolve_entity is exact-alias-only, so a repeated bare name auto-links to the single existing entity (entities.resolve_entity len(rows)==1 branch); a second same-named person is never split out and no ambiguous_mention / retro-review is filed (docs/ANALYSIS.md 'Bare first names').",
+  "steps": [
+    {
+      "domain": "general",
+      "created_at": "2026-03-01T10:00:00-07:00",
+      "body": "My sister Zane just adopted a rescue greyhound.",
+      "extraction": {
+        "title": "Sister Zane's dog",
+        "tags": ["zane", "sister", "dog"],
+        "mentions": [{"name": "Zane", "kind": "Person", "surface_text": "Zane"}],
+        "facts": [
+          {"predicate": "petOwnership", "qualifier": "", "kind": "state", "statement": "Zane adopted a rescue greyhound.", "value_json": {"pet": "greyhound"}, "assertion": "asserted", "entity_ref": "Zane", "object_entity_ref": null, "temporal": {"phrase": "", "resolved_start": "2026-03-01T00:00:00-07:00", "resolved_end": null, "precision": "day"}, "domain": "general", "confidence": 0.9}
+        ],
+        "temporal_tokens": []
+      }
+    },
+    {
+      "domain": "general",
+      "created_at": "2026-05-15T14:00:00-06:00",
+      "body": "Zane from the data team got promoted to staff engineer.",
+      "extraction": {
+        "title": "Zane promoted",
+        "tags": ["zane", "work", "promotion"],
+        "mentions": [{"name": "Zane", "kind": "Person", "surface_text": "Zane"}],
+        "facts": [
+          {"predicate": "occupation", "qualifier": "", "kind": "attribute", "statement": "Zane is a staff engineer on the data team.", "value_json": {"title": "staff engineer"}, "assertion": "asserted", "entity_ref": "Zane", "object_entity_ref": null, "temporal": {"phrase": "", "resolved_start": "2026-05-15T00:00:00-06:00", "resolved_end": null, "precision": "day"}, "domain": "general", "confidence": 0.9}
+        ],
+        "temporal_tokens": []
+      }
+    }
+  ],
+  "expect": {
+    "review_items": [
+      {"kind": "ambiguous_mention"}
+    ],
+    "entities": [
+      {"name": "Zane", "kind": "Person", "status": "provisional"}
+    ]
+  }
+}

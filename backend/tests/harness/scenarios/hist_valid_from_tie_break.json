@@ -1,0 +1,54 @@
+{
+  "name": "equal valid_from tie-break: the later-reported value wins",
+  "description": "Two state facts about Tomas's employer share the EXACT same valid_from (2025-09-01) but carry different values (Globex vs Initech) and were captured at different times. supersession._validity returns (valid_from, reported_at); with valid_from tied, the tie-break is reported_at. The newest-reported candidate (Initech, captured 2026-02-02) satisfies key(candidate) >= key(current) and supersedes the earlier-reported Globex (captured 2026-02-01). Pins the documented tie-break ('Newest = latest reported_at among facts about the same validity period', docs/ANALYSIS.md): with identical validity, capture order breaks the tie and the later report becomes active.",
+  "steps": [
+    {
+      "domain": "general",
+      "created_at": "2026-02-01T09:00:00-06:00",
+      "body": "Tomas started at Globex on 2025-09-01.",
+      "extraction": {
+        "title": "Tomas at Globex",
+        "tags": ["tomas", "globex"],
+        "mentions": [
+          {"name": "Tomas", "kind": "Person", "surface_text": "Tomas"},
+          {"name": "Globex", "kind": "Organization", "surface_text": "Globex"}
+        ],
+        "facts": [
+          {"predicate": "employer", "qualifier": "", "kind": "relationship", "statement": "Tomas works for Globex (since 2025-09-01).", "value_json": {"start": "2025-09-01"}, "assertion": "asserted", "entity_ref": "Tomas", "object_entity_ref": "Globex", "temporal": {"phrase": "on 2025-09-01", "resolved_start": "2025-09-01T00:00:00-06:00", "resolved_end": null, "precision": "day"}, "domain": "general", "confidence": 0.85}
+        ],
+        "temporal_tokens": []
+      }
+    },
+    {
+      "domain": "general",
+      "created_at": "2026-02-02T09:00:00-06:00",
+      "body": "Actually Tomas started at Initech on 2025-09-01, I had the company wrong.",
+      "extraction": {
+        "title": "Tomas at Initech",
+        "tags": ["tomas", "initech", "correction"],
+        "mentions": [
+          {"name": "Tomas", "kind": "Person", "surface_text": "Tomas"},
+          {"name": "Initech", "kind": "Organization", "surface_text": "Initech"}
+        ],
+        "facts": [
+          {"predicate": "employer", "qualifier": "", "kind": "relationship", "statement": "Tomas works for Initech (since 2025-09-01).", "value_json": {"start": "2025-09-01"}, "assertion": "asserted", "entity_ref": "Tomas", "object_entity_ref": "Initech", "temporal": {"phrase": "on 2025-09-01", "resolved_start": "2025-09-01T00:00:00-06:00", "resolved_end": null, "precision": "day"}, "domain": "general", "confidence": 0.9}
+        ],
+        "temporal_tokens": []
+      }
+    }
+  ],
+  "expect": {
+    "facts": [
+      {"entity": "Tomas", "predicate": "employer", "kind": "relationship", "value_contains": "Initech", "status": "active", "chained": false},
+      {"entity": "Tomas", "predicate": "employer", "kind": "relationship", "value_contains": "Globex", "status": "superseded", "chained": true},
+      {"entity": "Tomas", "predicate": "employer", "kind": "relationship", "status": "active", "count": 1}
+    ],
+    "review_items": [
+      {"kind": "fact_conflict", "summary_contains": "employer", "count": 1}
+    ],
+    "entities": [
+      {"name": "Globex", "kind": "Organization", "status": "provisional"},
+      {"name": "Initech", "kind": "Organization", "status": "provisional"}
+    ]
+  }
+}

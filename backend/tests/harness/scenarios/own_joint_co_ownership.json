@@ -1,0 +1,43 @@
+{
+  "name": "joint ownership keeps two simultaneous owner edges active",
+  "description": "Shared/joint ownership: 'Lena and I co-own the lake cabin' is TWO owner edges -- Me.owns->Cabin and Lena.owns->Cabin -- that must BOTH stay active (accumulate, not supersede). They land on different identity keys (different subject/entity), so even the newest-wins state path cannot collide them. Pins docs/ANALYSIS.md 'property graph': ownership is a relationship/state edge between an owner entity and a thing; co-ownership is two such edges to one thing. Emitted as state kind to show the per-subject key keeps them apart regardless of kind; one provisional Place entity (Cabin) carries two inbound edges.",
+  "steps": [
+    {
+      "domain": "general",
+      "created_at": "2026-04-15T09:30:00-06:00",
+      "body": "Lena and I co-own the lake cabin now.",
+      "extraction": {
+        "title": "Co-own the cabin",
+        "tags": ["cabin", "lena"],
+        "mentions": [
+          {"name": "Me", "kind": "Person", "surface_text": "I"},
+          {"name": "Lena", "kind": "Person", "surface_text": "Lena"},
+          {"name": "Lake Cabin", "kind": "Place", "surface_text": "lake cabin"}
+        ],
+        "facts": [
+          {"predicate": "owns", "qualifier": "Lake Cabin", "kind": "state", "statement": "I co-own the lake cabin.", "value_json": {"share": "joint"}, "assertion": "asserted", "entity_ref": "Me", "object_entity_ref": "Lake Cabin", "temporal": {"phrase": "now", "resolved_start": "2026-04-15T00:00:00-06:00", "resolved_end": null, "precision": "day"}, "domain": "general", "confidence": 0.9},
+          {"predicate": "owns", "qualifier": "Lake Cabin", "kind": "state", "statement": "Lena co-owns the lake cabin.", "value_json": {"share": "joint"}, "assertion": "asserted", "entity_ref": "Lena", "object_entity_ref": "Lake Cabin", "temporal": {"phrase": "now", "resolved_start": "2026-04-15T00:00:00-06:00", "resolved_end": null, "precision": "day"}, "domain": "general", "confidence": 0.9}
+        ],
+        "temporal_tokens": []
+      }
+    }
+  ],
+  "expect": {
+    "facts": [
+      {"entity": "Me", "predicate": "owns", "value_contains": "lake cabin", "status": "active", "chained": false},
+      {"entity": "Lena", "predicate": "owns", "value_contains": "lake cabin", "status": "active", "chained": false}
+    ],
+    "absent_facts": [
+      {"entity": "Me", "predicate": "owns", "status": "superseded"},
+      {"entity": "Lena", "predicate": "owns", "status": "superseded"}
+    ],
+    "review_items": [
+      {"kind": "fact_conflict", "count": 0}
+    ],
+    "entities": [
+      {"name": "Me", "kind": "Person", "status": "confirmed"},
+      {"name": "Lena", "kind": "Person", "status": "provisional"},
+      {"name": "Lake Cabin", "kind": "Place", "status": "provisional"}
+    ]
+  }
+}

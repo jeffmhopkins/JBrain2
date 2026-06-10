@@ -1,0 +1,50 @@
+{
+  "name": "a retrospectively-dated conflicting attribute still holds BOTH sides, never buried as history",
+  "description": "Attributes are timeless and a second value is a bug, not news: decide() for kind=='attribute' holds BOTH the existing active fact and the candidate to pending_review and files an attribute_collision (docs/ANALYSIS.md fact kinds: attribute = 'hold pending_review, never auto-supersede'). Adversarial: note A asserts Tomas's birthday is 1990-04-12 (valid_from now). Note B, captured later, gives a CONFLICTING birthday 1991-08-03 but is phrased retrospectively with an old temporal. The attribute branch is taken BEFORE any validity comparison, so the retrospective branch never fires — the old validity must NOT cause the conflicting birthday to be silently filed as closed history. Both birthdays end pending_review and exactly one attribute_collision is filed. Pins that timeless-attribute split detection ignores validity entirely (a backdated wrong birthday is still a split signal, not history).",
+  "steps": [
+    {
+      "domain": "general",
+      "created_at": "2026-06-01T09:00:00-06:00",
+      "body": "Tomas's birthday is April 12, 1990.",
+      "extraction": {
+        "title": "Tomas birthday",
+        "tags": ["tomas", "birthday"],
+        "mentions": [{"name": "Tomas", "kind": "Person", "surface_text": "Tomas"}],
+        "facts": [
+          {"predicate": "birthDate", "qualifier": "", "kind": "attribute", "statement": "Tomas was born on 1990-04-12.", "value_json": {"date": "1990-04-12"}, "assertion": "asserted", "entity_ref": "Tomas", "object_entity_ref": null, "temporal": {"phrase": "April 12, 1990", "resolved_start": "1990-04-12T00:00:00-07:00", "resolved_end": null, "precision": "day"}, "domain": "general", "confidence": 0.9}
+        ],
+        "temporal_tokens": []
+      }
+    },
+    {
+      "domain": "general",
+      "created_at": "2026-06-08T09:00:00-06:00",
+      "body": "An old record from years ago lists Tomas's birthday as August 3, 1991.",
+      "extraction": {
+        "title": "Tomas birthday (old record)",
+        "tags": ["tomas", "birthday", "record"],
+        "mentions": [{"name": "Tomas", "kind": "Person", "surface_text": "Tomas"}],
+        "facts": [
+          {"predicate": "birthDate", "qualifier": "", "kind": "attribute", "statement": "Tomas was born on 1991-08-03.", "value_json": {"date": "1991-08-03"}, "assertion": "asserted", "entity_ref": "Tomas", "object_entity_ref": null, "temporal": {"phrase": "August 3, 1991", "resolved_start": "1991-08-03T00:00:00-07:00", "resolved_end": null, "precision": "day"}, "domain": "general", "confidence": 0.6}
+        ],
+        "temporal_tokens": []
+      }
+    }
+  ],
+  "expect": {
+    "facts": [
+      {"entity": "Tomas", "predicate": "birthDate", "kind": "attribute", "value_contains": "1990-04-12", "status": "pending_review", "chained": false},
+      {"entity": "Tomas", "predicate": "birthDate", "kind": "attribute", "value_contains": "1991-08-03", "status": "pending_review", "chained": false},
+      {"entity": "Tomas", "predicate": "birthDate", "kind": "attribute", "status": "active", "count": 0}
+    ],
+    "absent_facts": [
+      {"entity": "Tomas", "predicate": "birthDate", "status": "superseded"}
+    ],
+    "review_items": [
+      {"kind": "attribute_collision", "summary_contains": "birthDate", "count": 1}
+    ],
+    "entities": [
+      {"name": "Tomas", "kind": "Person", "status": "provisional"}
+    ]
+  }
+}

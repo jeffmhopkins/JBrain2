@@ -1,0 +1,37 @@
+{
+  "name": "uncertain ownership lands as a question-assertion, not an owned fact",
+  "description": "'Not sure if the cordless drill is mine or Devon's' is ambiguous ownership. Modeled the spec-correct way: a single low-confidence owns fact carrying assertion=question (docs/ANALYSIS.md 'Assertion status': the wiki demotes everything below asserted; a question is not an owned fact). parse_extraction keeps question in ASSERTIONS, the pipeline inserts it as-is, and because it is the only fact on Me.owns.Drill it stays active with assertion=question -- the wiki must NOT render it as an asserted possession. Raj is the rival claimant entity (the note's 'Devon'); his potential ownership is left to a human via the low confidence rather than auto-asserted. Pins that the harness preserves the question assertion (the disambiguation seam), distinct from the H2 low-confidence health guard.",
+  "steps": [
+    {
+      "domain": "general",
+      "created_at": "2026-04-03T08:00:00-06:00",
+      "body": "Not sure if the cordless drill is mine or Raj's.",
+      "extraction": {
+        "title": "Whose drill?",
+        "tags": ["drill", "raj"],
+        "mentions": [
+          {"name": "Me", "kind": "Person", "surface_text": "mine"},
+          {"name": "Raj", "kind": "Person", "surface_text": "Raj's"},
+          {"name": "Cordless Drill", "kind": "Product", "surface_text": "cordless drill"}
+        ],
+        "facts": [
+          {"predicate": "owns", "qualifier": "Cordless Drill", "kind": "state", "statement": "The cordless drill may be mine.", "value_json": null, "assertion": "question", "entity_ref": "Me", "object_entity_ref": "Cordless Drill", "temporal": {"phrase": "", "resolved_start": "2026-04-03T00:00:00-06:00", "resolved_end": null, "precision": "day"}, "domain": "general", "confidence": 0.35}
+        ],
+        "temporal_tokens": []
+      }
+    }
+  ],
+  "expect": {
+    "facts": [
+      {"entity": "Me", "predicate": "owns", "value_contains": "drill", "assertion": "question", "status": "active"}
+    ],
+    "absent_facts": [
+      {"entity": "Me", "predicate": "owns", "value_contains": "drill", "assertion": "asserted"}
+    ],
+    "entities": [
+      {"name": "Me", "kind": "Person", "status": "confirmed"},
+      {"name": "Raj", "kind": "Person", "status": "provisional"},
+      {"name": "Cordless Drill", "kind": "Product", "status": "provisional"}
+    ]
+  }
+}
