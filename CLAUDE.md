@@ -18,3 +18,6 @@ standards.
 6. Conventional Commits; branch + PR always; CI green before merge.
 7. The wiki is machine-written only; humans correct it via correction notes,
    never direct edits.
+8. `scripts/dev-setup.sh` bootstraps the dev environment (it auto-runs at
+   session start on the web) and must be updated in the same PR as any new
+   dependency, tool, or setup step.

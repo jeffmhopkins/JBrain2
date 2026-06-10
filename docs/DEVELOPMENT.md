@@ -70,6 +70,20 @@ better than narrated code, and stale comments are worse than none.
   and migrations must tolerate the previous release's running code during
   the rolling restart window.
 
+## Development environment
+
+`scripts/dev-setup.sh` is the **single source of truth** for bootstrapping a
+dev environment from a fresh checkout: Python deps via `uv sync`, frontend
+deps via `npm install`, and a Docker availability check. It is idempotent
+and phase-aware (skips parts of the project that don't exist yet).
+
+- **Any PR that adds a dependency, tool, or setup step must update
+  `scripts/dev-setup.sh` in the same PR** — the same rule as tests-with-code.
+- Environments without a Docker daemon (e.g. Claude Code web sessions) can
+  run linters and unit tests but not testcontainers integration tests; the
+  test suite must skip those cleanly (pytest marker + docker availability
+  check), never fail or hang.
+
 ## Testing requirements
 
 ### Tooling
