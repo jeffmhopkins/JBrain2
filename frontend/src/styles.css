@@ -946,6 +946,15 @@ button.small {
   margin: 0;
 }
 
+/* Recoverable export download: standalone PWAs (iOS especially) can swallow
+   the auto-triggered download, so the latest archive stays tappable. */
+.export-link {
+  color: var(--accent);
+  font-size: var(--fs-secondary);
+  text-decoration: none;
+  word-break: break-all;
+}
+
 .ops-update {
   display: flex;
   flex-direction: column;

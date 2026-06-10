@@ -74,13 +74,7 @@ describe("OpsScreen", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("Request failed: 500");
   });
 
-  it("export: starts the one-shot, then downloads the finished archive", async () => {
-    const assign = vi.fn();
-    Object.defineProperty(window, "location", {
-      value: { assign },
-      writable: true,
-      configurable: true,
-    });
+  function mockExportFlow() {
     fetchMock.mockImplementation(async (input, init) => {
       const path = String(input);
       if (path === "/api/ops/export" && init?.method === "POST") return json({}, 202);
@@ -94,6 +88,18 @@ describe("OpsScreen", () => {
       }
       return new Response(null, { status: 500 });
     });
+  }
+
+  it("export: starts the one-shot, then triggers the download via an anchor, not navigation", async () => {
+    // The download must never navigate the SPA (that remounts the app and can
+    // swallow the download in standalone PWAs), so capture anchor clicks.
+    const clicked: Array<{ href: string | null; download: string | null }> = [];
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (
+      this: HTMLAnchorElement,
+    ) {
+      clicked.push({ href: this.getAttribute("href"), download: this.getAttribute("download") });
+    });
+    mockExportFlow();
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {
       render(<OpsScreen />);
@@ -101,8 +107,38 @@ describe("OpsScreen", () => {
       expect(await screen.findByText("Building export archive…")).toBeInTheDocument();
 
       await act(() => vi.advanceTimersByTimeAsync(3000));
-      expect(assign).toHaveBeenCalledWith("/api/ops/export/file/export-20260610-120000.jbrain.tar");
+      expect(clicked).toEqual([
+        {
+          href: "/api/ops/export/file/export-20260610-120000.jbrain.tar",
+          download: "export-20260610-120000.jbrain.tar",
+        },
+      ]);
       expect(screen.getByText(/downloaded\./)).toBeInTheDocument();
+      // The card survives the download: the action buttons are still mounted.
+      expect(screen.getByRole("button", { name: "Export backup" })).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("export: done state keeps a tappable link to the latest archive", async () => {
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+    mockExportFlow();
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      render(<OpsScreen />);
+      fireEvent.click(screen.getByRole("button", { name: "Export backup" }));
+      await screen.findByText("Building export archive…");
+      await act(() => vi.advanceTimersByTimeAsync(3000));
+
+      const link = screen.getByRole("link", {
+        name: "download export-20260610-120000.jbrain.tar",
+      });
+      expect(link).toHaveAttribute(
+        "href",
+        "/api/ops/export/file/export-20260610-120000.jbrain.tar",
+      );
+      expect(link).toHaveAttribute("download", "export-20260610-120000.jbrain.tar");
     } finally {
       vi.useRealTimers();
     }
