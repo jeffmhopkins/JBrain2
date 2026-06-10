@@ -45,6 +45,10 @@ case "${1:-}" in
     docker compose build
     docker compose run --rm api alembic upgrade head
     docker compose up -d
+    # Reclaim layers orphaned by the rebuild; shared (cached) layers survive,
+    # so disk use stays bounded without losing build speed.
+    docker image prune -f
+    docker builder prune -f --keep-storage 10GB >/dev/null 2>&1 || true
     ;;
   backup)
     ./backup.sh
