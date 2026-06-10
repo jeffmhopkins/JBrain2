@@ -81,11 +81,13 @@ export function SearchScreen({ onOpenResult, search }: SearchScreenProps) {
 
   // Live search: every keystroke (and chip change) re-queries after a short
   // debounce; results keep showing while the next response is in flight.
+  // run lives in a ref so the effect re-fires only on query/domain changes.
+  const runRef = useRef(run);
+  runRef.current = run;
   useEffect(() => {
     const q = query.trim();
-    const timer = setTimeout(() => void run(q, domain), q === "" ? 0 : DEBOUNCE_MS);
+    const timer = setTimeout(() => void runRef.current(q, domain), q === "" ? 0 : DEBOUNCE_MS);
     return () => clearTimeout(timer);
-    // biome-ignore lint/correctness/useExhaustiveDependencies: run is stable per render intent.
   }, [query, domain]);
 
   function submit(event?: FormEvent) {
