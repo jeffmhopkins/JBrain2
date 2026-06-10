@@ -830,5 +830,24 @@ button.small {
 }
 
 .subscreen {
-  display: contents;
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+  overscroll-behavior: contain;
+  padding-top: env(safe-area-inset-top);
+  animation: launcher-in 150ms ease-out;
+}
+
+.subscreen-closing {
+  animation: launcher-out 150ms ease-out forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .subscreen,
+  .subscreen-closing {
+    animation: none;
+  }
 }

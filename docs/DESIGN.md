@@ -234,9 +234,16 @@ section headers — KNOWLEDGE, AUTHORING, SYSTEM):
   the whole screen.
 - Every overlay surface must have a visible, tappable exit; a gesture is
   never the only way out (settled in Phase 1 polish).
-- On sub-screens reached from the launcher, a **left swipe reopens the
-  launcher** (settled in Phase 1 polish); the top-bar chevron still returns
-  home.
+- **Navigation is a tree, and swiping down climbs it** (settled in Phase 1
+  polish): card screen → (swipe down at scroll-top) → launcher → (swipe
+  down) → home. Swipe up on the omnibox descends into the launcher. The
+  down-swipe on scrollable screens arms only at scroll-top so it never
+  fights content scrolling; the top-bar chevron still jumps straight home.
+- **Levels are stacked slide-up layers**: card screens animate exactly like
+  the launcher — rising from the bottom over the still-open launcher,
+  sinking back down to reveal it (150ms ease-out, disabled under reduced
+  motion). Each card carries its own top bar (chevron + title); the bolt on
+  a card climbs one level, like the down-swipe.
 - Tiles for phases not yet built render disabled with their phase label.
 
 ## Surface paradigms (which container for which job)

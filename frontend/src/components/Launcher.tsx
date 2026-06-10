@@ -147,8 +147,9 @@ export function Launcher({ open, onClose, onNavigate }: LauncherProps) {
                 disabled={tile.phase !== undefined}
                 onClick={() => {
                   if (tile.target) {
+                    // Stay open beneath the card: the card slides up over
+                    // the launcher, and dismissing it reveals us again.
                     onNavigate(tile.target);
-                    close();
                   }
                 }}
               >
