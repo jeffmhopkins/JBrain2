@@ -221,6 +221,21 @@ async def upload_attachment(
     )
 
 
+@router.delete("/attachments/{attachment_id}", status_code=204)
+async def remove_attachment(
+    attachment_id: str,
+    principal: PrincipalDep,
+    repo: NotesRepoDep,
+    jobs: JobQueueDep,
+) -> None:
+    ctx = ctx_for(principal)
+    note_id = await repo.remove_attachment(ctx, attachment_id)
+    if note_id is None:
+        raise HTTPException(status_code=404, detail="attachment not found")
+    # Re-ingest rebuilds the note's chunks without the removed file's text.
+    await jobs.enqueue(ctx, "ingest_note", {"note_id": note_id})
+
+
 @router.get("/attachments/{attachment_id}")
 async def download_attachment(
     attachment_id: str, principal: PrincipalDep, repo: NotesRepoDep, blobs: BlobStoreDep

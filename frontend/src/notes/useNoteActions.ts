@@ -3,13 +3,14 @@
 // delete. One hook so both surfaces stay in lockstep on payload shapes.
 
 import { useCallback, useState } from "react";
-import type { NotesController } from "./useNotes";
+import type { NotesController, StreamAttachment } from "./useNotes";
 
 export interface EditingNote {
   id: string;
   body: string;
   domain: string;
   createdAt: Date;
+  attachments: StreamAttachment[];
 }
 
 export interface MoveTarget {

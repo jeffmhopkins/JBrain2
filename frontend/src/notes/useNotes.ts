@@ -46,6 +46,10 @@ export interface NotesController {
   byId(id: string): StreamItem | undefined;
   /** Cache-first note lookup; falls back to paging the list (see fetchNoteById). */
   fetchById(id: string): Promise<StreamItem | null>;
+  /** Uploads to an existing note and refreshes; returns the new attachment. */
+  addAttachment(noteId: string, file: File): Promise<StreamAttachment>;
+  /** Removes an attachment and refreshes the stream. */
+  removeAttachment(attachmentId: string): Promise<void>;
 }
 
 const FLUSH_INTERVAL_MS = 30_000;
@@ -195,11 +199,43 @@ export function useNotes(enabled: boolean, store?: OutboxStore): NotesController
     [byId],
   );
 
+  const addAttachment = useCallback(
+    async (noteId: string, file: File): Promise<StreamAttachment> => {
+      const out = await api.uploadAttachment(noteId, file, file.name);
+      await sync();
+      return {
+        id: out.id,
+        filename: out.filename,
+        mediaType: out.media_type,
+        sizeBytes: out.size_bytes,
+      };
+    },
+    [sync],
+  );
+
+  const removeAttachment = useCallback(
+    async (attachmentId: string): Promise<void> => {
+      await api.deleteAttachment(attachmentId);
+      await sync();
+    },
+    [sync],
+  );
+
   const syncStatus: SyncStatus = !reachable
     ? "unreachable"
     : pending.length > 0
       ? "pending"
       : "synced";
 
-  return { items, syncStatus, send, update, remove, byId, fetchById };
+  return {
+    items,
+    syncStatus,
+    send,
+    update,
+    remove,
+    byId,
+    fetchById,
+    addAttachment,
+    removeAttachment,
+  };
 }

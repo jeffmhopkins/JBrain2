@@ -12,6 +12,13 @@ function fakeController(): NotesController {
     remove: vi.fn(async () => {}),
     byId: vi.fn(() => undefined),
     fetchById: vi.fn(async () => null),
+    addAttachment: vi.fn(async () => ({
+      id: "a1",
+      filename: "f.txt",
+      mediaType: "text/plain",
+      sizeBytes: 1,
+    })),
+    removeAttachment: vi.fn(async () => undefined),
   };
 }
 
@@ -26,6 +33,7 @@ describe("useNoteActions", () => {
         body: "original",
         domain: "general",
         createdAt: new Date(),
+        attachments: [],
       }),
     );
     expect(result.current.editing).toMatchObject({ id: "n1", body: "original" });
@@ -44,6 +52,7 @@ describe("useNoteActions", () => {
         body: "original",
         domain: "general",
         createdAt: new Date(),
+        attachments: [],
       }),
     );
     act(() => result.current.cancelEdit());

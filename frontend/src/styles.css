@@ -1554,3 +1554,50 @@ button.small {
   border-color: transparent;
   color: var(--green);
 }
+
+.ed-attach-row {
+  flex: none;
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding: 6px 16px;
+  border-top: 1px solid var(--border);
+}
+
+.ed-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fs-micro);
+  padding: 6px 10px;
+  border-radius: var(--r-pill);
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text-2);
+  max-width: 60%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.ed-chip.armed {
+  background: var(--rose-tint);
+  color: var(--rose);
+  border-color: transparent;
+}
+
+.ed-chip-busy {
+  color: var(--amber);
+}
+
+.btn-clip {
+  min-width: 44px;
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  color: var(--text-2);
+  border-radius: var(--r-input);
+}

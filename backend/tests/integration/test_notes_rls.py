@@ -199,6 +199,25 @@ async def test_location_fields_roundtrip(repo: SqlNotesRepo) -> None:
     assert (listed.latitude, listed.longitude, listed.accuracy_m) == (47.6097, -122.3331, 8.0)
 
 
+async def test_remove_attachment_respects_firewall(repo: SqlNotesRepo) -> None:
+    note, _ = await repo.create_note(
+        OWNER, client_id="ratt-h", domain="health", destination=None, body="scan note"
+    )
+    att = await repo.add_attachment(
+        OWNER,
+        note_id=note.id,
+        sha256="aa" * 32,
+        filename="scan.pdf",
+        media_type="application/pdf",
+        size_bytes=2,
+    )
+    assert att is not None
+    # Out-of-scope removal reads as missing; in-scope removal returns note_id.
+    assert await repo.remove_attachment(GENERAL_ONLY, att.id) is None
+    assert await repo.remove_attachment(HEALTH_ONLY, att.id) == note.id
+    assert await repo.get_attachment(OWNER, att.id) is None
+
+
 async def test_get_note_respects_firewall(repo: SqlNotesRepo) -> None:
     note, _ = await repo.create_note(
         OWNER, client_id="get-h", domain="health", destination=None, body="private reading"

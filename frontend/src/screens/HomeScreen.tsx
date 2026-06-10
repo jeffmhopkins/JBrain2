@@ -67,6 +67,7 @@ export function HomeScreen({
                 body: item.body,
                 domain: item.domain,
                 createdAt: item.createdAt,
+                attachments: item.attachments,
               });
           }}
           onMove={(item) => {

@@ -104,3 +104,8 @@ class NotesRepo(Protocol):
     async def get_attachment(
         self, ctx: SessionContext, attachment_id: str
     ) -> AttachmentInfo | None: ...
+
+    async def remove_attachment(self, ctx: SessionContext, attachment_id: str) -> str | None:
+        """Deletes the row (never the shared blob); returns the note_id for
+        re-ingestion, or None when missing/out of scope."""
+        ...

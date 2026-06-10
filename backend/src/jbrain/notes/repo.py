@@ -186,6 +186,19 @@ class SqlNotesRepo:
             await session.refresh(attachment)
             return _attachment_info(attachment)
 
+    async def remove_attachment(self, ctx: SessionContext, attachment_id: str) -> str | None:
+        async with scoped_session(self._maker, ctx) as session:
+            row = (
+                await session.execute(select(Attachment).where(Attachment.id == attachment_id))
+            ).scalar_one_or_none()
+            if row is None:
+                return None
+            note_id = str(row.note_id)
+            # The blob stays: content-addressed storage may share it with
+            # other notes; only the link (and, via re-ingest, its chunks) go.
+            await session.delete(row)
+            return note_id
+
     async def get_attachment(
         self, ctx: SessionContext, attachment_id: str
     ) -> AttachmentInfo | None:

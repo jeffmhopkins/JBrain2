@@ -124,7 +124,13 @@ interface NoteScreenProps {
   resolve: (id: string) => Promise<StreamItem | null>;
   syncStatus: SyncStatus;
   onClose: () => void;
-  onEdit: (id: string, body: string, domain: string, createdAt: Date) => void;
+  onEdit: (
+    id: string,
+    body: string,
+    domain: string,
+    createdAt: Date,
+    attachments: StreamAttachment[],
+  ) => void;
   onMove: (target: MoveTarget) => void;
   onDelete: (id: string) => void;
 }
@@ -262,7 +268,9 @@ export function NoteScreen({
                 <button
                   type="button"
                   className="action-btn action-edit"
-                  onClick={() => onEdit(noteId, view.body, view.domain, view.createdAt)}
+                  onClick={() =>
+                    onEdit(noteId, view.body, view.domain, view.createdAt, view.attachments ?? [])
+                  }
                 >
                   Edit
                 </button>

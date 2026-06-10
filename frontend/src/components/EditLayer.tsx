@@ -6,7 +6,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { DOMAIN_COLOR } from "../notes/modes";
 import type { EditingNote } from "../notes/useNoteActions";
-import { XIcon } from "./icons";
+import type { StreamAttachment } from "../notes/useNotes";
+import { ClipIcon, XIcon } from "./icons";
 
 const DISARM_MS = 3000;
 
@@ -22,13 +23,57 @@ interface EditLayerProps {
   editing: EditingNote;
   onCancel: () => void;
   onSave: (body: string) => void;
+  /** Uploads immediately to the note (independent of done/cancel). */
+  onAddFile: (file: File) => Promise<StreamAttachment>;
+  /** Removes immediately from the note. */
+  onRemoveAttachment: (attachmentId: string) => Promise<void>;
 }
 
-export function EditLayer({ editing, onCancel, onSave }: EditLayerProps) {
+export function EditLayer({
+  editing,
+  onCancel,
+  onSave,
+  onAddFile,
+  onRemoveAttachment,
+}: EditLayerProps) {
   const [body, setBody] = useState(editing.body);
   const [discardArmed, setDiscardArmed] = useState(false);
+  const [attachments, setAttachments] = useState<StreamAttachment[]>(editing.attachments);
+  const [uploading, setUploading] = useState(0);
+  const [removeArmed, setRemoveArmed] = useState<string | null>(null);
   const areaRef = useRef<HTMLTextAreaElement>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
   const disarmTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  async function addFiles(list: FileList | null) {
+    if (!list) return;
+    for (const file of Array.from(list)) {
+      setUploading((n) => n + 1);
+      try {
+        const added = await onAddFile(file);
+        setAttachments((prev) => [...prev, added]);
+      } catch {
+        // Upload failures stay quiet here; the sync dot reports trouble.
+      } finally {
+        setUploading((n) => n - 1);
+      }
+    }
+  }
+
+  async function removeChip(id: string) {
+    if (removeArmed !== id) {
+      setRemoveArmed(id);
+      setTimeout(() => setRemoveArmed((cur) => (cur === id ? null : cur)), DISARM_MS);
+      return;
+    }
+    setRemoveArmed(null);
+    try {
+      await onRemoveAttachment(id);
+      setAttachments((prev) => prev.filter((a) => a.id !== id));
+    } catch {
+      // Kept on failure; the chip simply remains.
+    }
+  }
 
   const trimmed = body.trim();
   const dirty = trimmed !== editing.body.trim();
@@ -98,7 +143,42 @@ export function EditLayer({ editing, onCancel, onSave }: EditLayerProps) {
         />
       </div>
 
+      {(attachments.length > 0 || uploading > 0) && (
+        <div className="ed-attach-row">
+          {attachments.map((att) => (
+            <button
+              key={att.id ?? att.filename}
+              type="button"
+              className={`ed-chip${removeArmed === att.id ? " armed" : ""}`}
+              onClick={() => att.id !== null && void removeChip(att.id)}
+            >
+              {removeArmed === att.id ? "remove?" : att.filename}
+              <XIcon size={13} />
+            </button>
+          ))}
+          {uploading > 0 && <span className="ed-chip ed-chip-busy">uploading…</span>}
+        </div>
+      )}
+
       <div className="ed-bar">
+        <button
+          type="button"
+          className="btn-clip"
+          aria-label="Attach files"
+          onClick={() => fileRef.current?.click()}
+        >
+          <ClipIcon size={20} />
+        </button>
+        <input
+          ref={fileRef}
+          type="file"
+          multiple
+          hidden
+          onChange={(e) => {
+            void addFiles(e.target.files);
+            e.target.value = "";
+          }}
+        />
         <span className="ed-counts">
           {words} words · {chars} chars
           {dirty && <span className="ed-unsaved"> · unsaved</span>}
