@@ -34,6 +34,9 @@ services:
       JBRAIN_SUPERVISOR_TOKEN: ${SUPERVISOR_TOKEN}
       JBRAIN_ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       JBRAIN_XAI_API_KEY: ${XAI_API_KEY:-}
+      JBRAIN_BLOB_DIR: /data/blobs
+    volumes:
+      - blobs:/data/blobs
     networks: [edge, internal]
     depends_on:
       db:
@@ -64,6 +67,8 @@ services:
     restart: unless-stopped
     command: ["python", "-m", "jbrain.worker"]
     environment: *api_env
+    volumes:
+      - blobs:/data/blobs
     networks: [internal]
     depends_on:
       db:
@@ -116,6 +121,7 @@ networks:
   internal:
 
 volumes:
+  blobs:
   db_data:
   caddy_data:
   caddy_config:

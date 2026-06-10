@@ -1,0 +1,151 @@
+from datetime import datetime
+from typing import Annotated, cast
+
+from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile
+from fastapi.responses import FileResponse
+from pydantic import BaseModel, Field
+
+from jbrain.api.deps import PrincipalDep
+from jbrain.auth.service import PrincipalInfo
+from jbrain.db.session import SessionContext
+from jbrain.notes.service import NoteInfo, NotesRepo, UnknownDomain
+from jbrain.storage import BlobStore
+
+router = APIRouter()
+
+MAX_ATTACHMENT_BYTES = 100 * 1024 * 1024
+
+
+def get_notes_repo(request: Request) -> NotesRepo:
+    return cast(NotesRepo, request.app.state.notes_repo)
+
+
+def get_blob_store(request: Request) -> BlobStore:
+    return cast(BlobStore, request.app.state.blob_store)
+
+
+NotesRepoDep = Annotated[NotesRepo, Depends(get_notes_repo)]
+BlobStoreDep = Annotated[BlobStore, Depends(get_blob_store)]
+
+
+def ctx_for(principal: PrincipalInfo) -> SessionContext:
+    # Owner sessions see every domain; scoped principals arrive in Phase 7.
+    return SessionContext(principal_id=principal.id, principal_kind=principal.kind)
+
+
+class AttachmentOut(BaseModel):
+    id: str
+    filename: str
+    media_type: str
+    size_bytes: int
+
+
+class NoteOut(BaseModel):
+    id: str
+    client_id: str
+    domain: str
+    destination: str | None
+    body: str
+    created_at: datetime
+    attachments: list[AttachmentOut]
+
+
+def note_out(n: NoteInfo) -> NoteOut:
+    return NoteOut(
+        id=n.id,
+        client_id=n.client_id,
+        domain=n.domain,
+        destination=n.destination,
+        body=n.body,
+        created_at=n.created_at,
+        attachments=[
+            AttachmentOut(
+                id=a.id, filename=a.filename, media_type=a.media_type, size_bytes=a.size_bytes
+            )
+            for a in n.attachments
+        ],
+    )
+
+
+class CreateNoteRequest(BaseModel):
+    client_id: str = Field(min_length=1, max_length=128)
+    domain: str = "general"
+    destination: str | None = None
+    body: str = Field(min_length=1)
+
+
+class NoteListOut(BaseModel):
+    notes: list[NoteOut]
+    next_cursor: datetime | None
+
+
+@router.post("/notes", status_code=201)
+async def create_note(
+    body: CreateNoteRequest, principal: PrincipalDep, repo: NotesRepoDep
+) -> NoteOut:
+    try:
+        note, _created = await repo.create_note(
+            ctx_for(principal),
+            client_id=body.client_id,
+            domain=body.domain,
+            destination=body.destination,
+            body=body.body,
+        )
+    except UnknownDomain:
+        raise HTTPException(status_code=400, detail="unknown domain") from None
+    return note_out(note)
+
+
+@router.get("/notes")
+async def list_notes(
+    principal: PrincipalDep,
+    repo: NotesRepoDep,
+    limit: int = 50,
+    before: datetime | None = None,
+) -> NoteListOut:
+    limit = max(1, min(limit, 200))
+    notes = await repo.list_notes(ctx_for(principal), limit=limit, before=before)
+    next_cursor = notes[-1].created_at if len(notes) == limit else None
+    return NoteListOut(notes=[note_out(n) for n in notes], next_cursor=next_cursor)
+
+
+@router.post("/notes/{note_id}/attachments", status_code=201)
+async def upload_attachment(
+    note_id: str,
+    file: UploadFile,
+    principal: PrincipalDep,
+    repo: NotesRepoDep,
+    blobs: BlobStoreDep,
+) -> AttachmentOut:
+    data = await file.read(MAX_ATTACHMENT_BYTES + 1)
+    if len(data) > MAX_ATTACHMENT_BYTES:
+        raise HTTPException(status_code=413, detail="attachment too large")
+    digest = await blobs.put(data)
+    attachment = await repo.add_attachment(
+        ctx_for(principal),
+        note_id=note_id,
+        sha256=digest,
+        filename=file.filename or "attachment",
+        media_type=file.content_type or "application/octet-stream",
+        size_bytes=len(data),
+    )
+    if attachment is None:
+        raise HTTPException(status_code=404, detail="note not found")
+    return AttachmentOut(
+        id=attachment.id,
+        filename=attachment.filename,
+        media_type=attachment.media_type,
+        size_bytes=attachment.size_bytes,
+    )
+
+
+@router.get("/attachments/{attachment_id}")
+async def download_attachment(
+    attachment_id: str, principal: PrincipalDep, repo: NotesRepoDep, blobs: BlobStoreDep
+) -> FileResponse:
+    info = await repo.get_attachment(ctx_for(principal), attachment_id)
+    if info is None:
+        raise HTTPException(status_code=404, detail="attachment not found")
+    return FileResponse(
+        blobs.path_for(info.sha256), media_type=info.media_type, filename=info.filename
+    )

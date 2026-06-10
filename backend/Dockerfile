@@ -16,6 +16,8 @@ RUN uv sync --frozen --no-dev
 ENV PATH="/app/.venv/bin:$PATH"
 
 RUN useradd --create-home appuser
+# Pre-own the blob mount point so the named volume inherits write access.
+RUN mkdir -p /data/blobs && chown appuser /data/blobs
 USER appuser
 
 EXPOSE 8000

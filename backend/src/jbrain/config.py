@@ -8,6 +8,7 @@ class Settings(BaseSettings):
     supervisor_url: str = "http://supervisor:9000"
     supervisor_token: str = ""
     session_cookie: str = "jbrain_session"
+    blob_dir: str = "/data/blobs"
     # Cookies require HTTPS in production; tests and local dev run plain HTTP.
     secure_cookies: bool = True
 

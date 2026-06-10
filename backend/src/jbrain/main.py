@@ -6,9 +6,11 @@ import structlog
 from fastapi import FastAPI
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from jbrain.api import auth, health, ops
+from jbrain.api import auth, health, notes, ops
 from jbrain.auth.repo import SqlAuthRepo
 from jbrain.config import Settings, get_settings
+from jbrain.notes.repo import SqlNotesRepo
+from jbrain.storage import FsBlobStore
 
 structlog.configure(
     processors=[structlog.processors.TimeStamper(fmt="iso"), structlog.processors.JSONRenderer()]
@@ -24,6 +26,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         maker = async_sessionmaker(engine, expire_on_commit=False)
         app.state.engine = engine
         app.state.auth_repo = SqlAuthRepo(maker)
+        app.state.notes_repo = SqlNotesRepo(maker)
+        app.state.blob_store = FsBlobStore(settings.blob_dir)
         app.state.supervisor_client = httpx.AsyncClient(base_url=settings.supervisor_url)
         yield
         await app.state.supervisor_client.aclose()
@@ -33,6 +37,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.settings = settings
     app.include_router(health.router, prefix="/api")
     app.include_router(auth.router, prefix="/api")
+    app.include_router(notes.router, prefix="/api")
     app.include_router(ops.router, prefix="/api")
     return app
 
