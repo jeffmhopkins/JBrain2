@@ -89,6 +89,9 @@ class IngestPipeline:
         # keyword search. Re-ingest re-enqueues because the rebuilt chunks
         # all start with NULL embeddings.
         await queue.enqueue(self._maker, SYSTEM_CTX, "embed_note", {"note_id": note_id})
+        # Extraction is likewise a follow-up job: ingest stays LLM-free so
+        # capture-to-searchable never waits on a cloud LLM (docs/ANALYSIS.md).
+        await queue.enqueue(self._maker, SYSTEM_CTX, "analyze_note", {"note_id": note_id})
         log.info("ingest.indexed", note_id=note_id, chunks=len(chunks))
 
     async def _build_chunks(

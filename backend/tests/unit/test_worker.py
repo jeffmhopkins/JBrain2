@@ -15,6 +15,7 @@ class FakeQueue:
         self.jobs = list(jobs or [])
         self.completed: list[str] = []
         self.failed: list[tuple[str, str]] = []
+        self.permanent: list[str] = []
         self.backfills = 0
         self.embed_backfills = 0
         self.backfill_error: Exception | None = None
@@ -26,8 +27,12 @@ class FakeQueue:
     async def complete(self, maker: Any, ctx: Any, job_id: str) -> None:
         self.completed.append(job_id)
 
-    async def fail(self, maker: Any, ctx: Any, job_id: str, error: str) -> None:
+    async def fail(
+        self, maker: Any, ctx: Any, job_id: str, error: str, *, permanent: bool = False
+    ) -> None:
         self.failed.append((job_id, error))
+        if permanent:
+            self.permanent.append(job_id)
 
     async def backfill_pending_notes(self, maker: Any, ctx: Any) -> int:
         self.backfills += 1
@@ -83,6 +88,20 @@ async def test_process_one_fails_job_when_handler_raises(
     assert await worker.process_one(None, {"ingest_note": handler}) is True  # type: ignore[arg-type]
     assert fake.completed == []
     assert fake.failed == [("job-1", "RuntimeError('pdf exploded')")]
+
+
+async def test_process_one_fails_permanently_on_permanent_job_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake = FakeQueue([job(kind="analyze_note")])
+    install(monkeypatch, fake)
+
+    async def handler(payload: dict[str, Any]) -> None:
+        raise queue.PermanentJobError("malformed extraction after re-ask")
+
+    assert await worker.process_one(None, {"analyze_note": handler}) is True  # type: ignore[arg-type]
+    assert fake.completed == []
+    assert fake.permanent == ["job-1"]
 
 
 async def test_process_one_fails_unknown_kind(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -141,7 +160,7 @@ async def test_run_loop_survives_transient_errors_and_retries_backfill(
     assert fake.backfills == 2
 
 
-async def test_run_registers_ingest_and_embed_handlers(
+async def test_run_registers_all_job_handlers(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     class FakeEngine:
@@ -158,7 +177,7 @@ async def test_run_registers_ingest_and_embed_handlers(
     monkeypatch.setattr(worker, "run_loop", capture)
     with pytest.raises(asyncio.CancelledError):
         await worker.run()
-    assert set(captured) == {"ingest_note", "embed_note"}
+    assert set(captured) == {"ingest_note", "embed_note", "analyze_note"}
 
 
 async def test_run_disposes_engine(monkeypatch: pytest.MonkeyPatch) -> None:
