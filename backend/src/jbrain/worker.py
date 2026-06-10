@@ -92,7 +92,11 @@ async def run() -> None:
     pipeline = IngestPipeline(maker, FsBlobStore(settings.blob_dir))
     embedder = NoteEmbedder(maker, TeiEmbedClient(settings.embed_url), settings.embed_model)
     router = build_router(settings, recorder=SqlUsageRecorder(maker))
-    analyzer = AnalysisPipeline(maker, router)
+    # The embed client also powers entity-resolution layer 2 (similarity);
+    # without it the resolver still runs layers 1/2b/3.
+    analyzer = AnalysisPipeline(
+        maker, router, embedder=TeiEmbedClient(settings.embed_url), embed_model=settings.embed_model
+    )
     handlers: dict[str, Handler] = {
         "ingest_note": pipeline.ingest_note,
         "embed_note": embedder.embed_note,
