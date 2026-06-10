@@ -725,6 +725,27 @@ class AnalysisPipeline:
         )
         decision = decide(candidate, existing, predicate=fact.predicate)
 
+        if decision.close_id is not None:
+            # In-place interval close: the candidate is the END of the existing
+            # open state, not a new value — one row, no chain link, no review.
+            # value_json/statement are rewritten too: the closing note's
+            # rendering ("...until March") carries the end-marker the open
+            # row's payload lacks, and the scenario-facing value must show it.
+            fact_id = uuid.UUID(decision.close_id)
+            await session.execute(
+                update(Fact)
+                .where(Fact.id == fact_id)
+                .values(
+                    statement=fact.statement,
+                    value_json=fact.value_json,
+                    valid_to=decision.close_valid_to,
+                    extractor=extractor,
+                    prompt_version=PROMPT_VERSION,
+                    confidence=fact.confidence,
+                )
+            )
+            return fact_id
+
         if decision.refresh_id is not None:
             # Same identity key, same value: refresh the rendering and
             # provenance in place — citations survive, no chain link, and no

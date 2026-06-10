@@ -63,12 +63,17 @@ class Candidate:
 class Decision:
     """What the pipeline must do with the candidate.
 
-    Exactly one of refresh_id / insert is set. supersede_ids close and chain
-    old facts onto the new row; hold_ids move old facts to pending_review
-    (attribute collisions hold BOTH sides).
+    Exactly one of refresh_id / close_id / insert is set. close_id is an
+    in-place interval close: the candidate merely supplies the END of the
+    existing open interval (same value/object, same valid_from), so the
+    pipeline UPDATEs that row instead of chaining a duplicate. supersede_ids
+    close and chain old facts onto the new row; hold_ids move old facts to
+    pending_review (attribute collisions hold BOTH sides).
     """
 
     refresh_id: str | None = None
+    close_id: str | None = None
+    close_valid_to: datetime | None = None
     insert: bool = False
     insert_status: str = "active"
     insert_superseded_by: str | None = None
@@ -107,9 +112,46 @@ def _validity(valid_from: datetime | None, reported_at: datetime) -> tuple[datet
     return (valid_from or reported_at, reported_at)
 
 
+def _interval_close(candidate: Candidate, live: list[FactView], predicate: str) -> Decision | None:
+    """A retrospective end-date backfill ("I actually left Acme back in March")
+    is not a value change: the candidate restates the SAME open state — same
+    object/value, same valid_from — and merely supplies the valid_to the open
+    row lacks. Closing that interval in place keeps one row whose old fact
+    "stays true about its interval" (docs/ANALYSIS.md state row / SCD-2);
+    chaining a duplicate or filing a conflict would dispute a fact nobody
+    disputes. Checked BEFORE the refresh path, which writes only rendering and
+    provenance and would otherwise swallow the new end date."""
+    if candidate.valid_to is None:
+        return None
+    if candidate.kind != "state" and not (
+        candidate.kind == "relationship" and is_functional(predicate)
+    ):
+        return None
+    for e in live:
+        # Pinned rows are human overrides: fall through to the per-kind logic,
+        # which re-flags instead of editing them.
+        if e.status != "active" or e.valid_to is not None or e.pinned:
+            continue
+        if e.assertion != candidate.assertion or e.valid_from != candidate.valid_from:
+            continue
+        # For a pure edge the object IS the value (value_json only carries
+        # start/end markers, which legitimately change on a close).
+        same_edge = (
+            candidate.object_entity_id is not None
+            and candidate.object_entity_id == e.object_entity_id
+        )
+        if same_edge or values_equal(candidate, e):
+            return Decision(close_id=e.id, close_valid_to=candidate.valid_to)
+    return None
+
+
 def decide(candidate: Candidate, existing: list[FactView], *, predicate: str = "") -> Decision:
     """Resolve one candidate against the identity key's existing facts."""
     live = [e for e in existing if e.status != "retracted"]
+
+    closed = _interval_close(candidate, live, predicate)
+    if closed is not None:
+        return closed
 
     # Re-extraction idempotency: an identical value refreshes provenance in
     # place — citations survive, no chain link, no review noise. Accumulating

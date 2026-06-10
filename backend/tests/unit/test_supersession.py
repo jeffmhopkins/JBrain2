@@ -138,6 +138,75 @@ def test_state_first_value_inserts_active_silently() -> None:
     assert d.insert and d.insert_status == "active" and d.review_kind is None
 
 
+# --- in-place interval close ------------------------------------------------
+
+
+def test_end_date_backfill_closes_open_edge_in_place() -> None:
+    """'Left Acme back in March': same object + valid_from, new valid_to —
+    close the one open row; no duplicate, no chain, no conflict."""
+    old = view(kind="relationship", object_entity_id="acme", value_json={"state": "current"})
+    d = decide(
+        cand(
+            kind="relationship",
+            object_entity_id="acme",
+            value_json={"state": "ended", "end": "2026-03"},
+            valid_from=T0,
+            valid_to=T1,
+            reported_at=T2,
+        ),
+        [old],
+        predicate="employer",
+    )
+    assert d.close_id == "old-1" and d.close_valid_to == T1
+    assert not d.insert and d.refresh_id is None and d.review_kind is None
+
+
+def test_end_date_backfill_closes_scalar_state_instead_of_refreshing() -> None:
+    """values_equal + a new valid_to must hit the close path, not the refresh
+    path (refresh only writes rendering/provenance and would drop the end)."""
+    d = decide(
+        cand(statement="lives at 12 Oak St", valid_from=T0, valid_to=T1, reported_at=T2),
+        [view()],
+    )
+    assert d.close_id == "old-1" and d.close_valid_to == T1
+
+
+def test_close_requires_open_interval_and_matching_start() -> None:
+    already_closed = view(valid_to=T1)
+    d = decide(
+        cand(statement="lives at 12 Oak St", valid_from=T0, valid_to=T2, reported_at=T2),
+        [already_closed],
+    )
+    assert d.close_id is None
+    other_start = cand(statement="lives at 12 Oak St", valid_from=T1, valid_to=T2, reported_at=T2)
+    assert decide(other_start, [view()]).close_id is None
+
+
+def test_close_requires_same_assertion() -> None:
+    """A disposal ('no longer own X') flips the assertion: that is a state
+    TRANSITION (supersede with a negated head), never an in-place close."""
+    old = view(object_entity_id="civic", statement="I own a Honda Civic.")
+    disposal = cand(
+        object_entity_id="civic",
+        assertion="negated",
+        statement="I no longer own the Civic.",
+        valid_from=T0,
+        valid_to=T1,
+    )
+    d = decide(disposal, [old], predicate="owns")
+    assert d.close_id is None
+    assert d.insert and d.supersede_ids == ["old-1"]
+
+
+def test_close_never_edits_pinned_row() -> None:
+    d = decide(
+        cand(statement="lives at 12 Oak St", valid_from=T0, valid_to=T1, reported_at=T1),
+        [view(pinned=True)],
+    )
+    assert d.close_id is None  # refresh may touch rendering, never the interval
+    assert d.refresh_id == "old-1"
+
+
 # --- attribute: hold both, never auto-supersede ----------------------------
 
 
