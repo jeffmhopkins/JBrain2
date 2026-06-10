@@ -22,7 +22,14 @@ from jbrain.config import Settings
 from jbrain.llm.anthropic import AnthropicClient
 from jbrain.llm.errors import LlmBadResponseError, LlmError
 from jbrain.llm.openai_compat import OpenAiCompatClient
-from jbrain.llm.types import DEFAULT_MAX_TOKENS, LlmClient, LlmImage, LlmResult
+from jbrain.llm.types import (
+    DEFAULT_MAX_TOKENS,
+    LlmClient,
+    LlmImage,
+    LlmResult,
+    LlmUsage,
+    UsageRecorder,
+)
 
 log = structlog.get_logger()
 
@@ -75,9 +82,31 @@ class LlmRouter:
     prompt contents (notes are private data).
     """
 
-    def __init__(self, clients: Mapping[str, LlmClient], tasks: Mapping[str, tuple[str, str]]):
+    def __init__(
+        self,
+        clients: Mapping[str, LlmClient],
+        tasks: Mapping[str, tuple[str, str]],
+        recorder: UsageRecorder | None = None,
+    ):
         self._clients = clients
         self._tasks = tasks
+        self._recorder = recorder
+
+    def spec(self, task: str) -> tuple[str, str]:
+        """The (provider, model) a task resolves to — callers stamp it as
+        fact provenance (`extractor`) without touching provider clients."""
+        try:
+            return self._tasks[task]
+        except KeyError:
+            raise LlmError(f"unknown LLM task: {task!r}") from None
+
+    async def _record(self, task: str, provider: str, model: str, usage: LlmUsage) -> None:
+        if self._recorder is None:
+            return
+        try:
+            await self._recorder.record(task=task, provider=provider, model=model, usage=usage)
+        except Exception as exc:  # noqa: BLE001 - accounting must never fail or slow a call
+            log.warning("llm.usage_record_failed", task=task, error=repr(exc))
 
     async def complete(
         self,
@@ -102,6 +131,9 @@ class LlmRouter:
             json_schema=json_schema,
             max_tokens=max_tokens,
         )
+        # Recorded per provider call (the re-ask spends tokens too): the
+        # ledger tracks what was billed, not what was usable.
+        await self._record(task, provider, model, result.usage)
         if json_schema is not None and result.parsed is None:
             log.warning("llm.json_reask", task=task, provider=provider, model=model)
             result = await client.complete(
@@ -112,6 +144,7 @@ class LlmRouter:
                 json_schema=json_schema,
                 max_tokens=max_tokens,
             )
+            await self._record(task, provider, model, result.usage)
             if result.parsed is None:
                 raise LlmBadResponseError(
                     f"{provider}: invalid JSON for task {task!r} after re-ask"
@@ -132,6 +165,7 @@ def build_router(
     *,
     transport: httpx.AsyncBaseTransport | None = None,
     sleep: Callable[[float], Awaitable[None]] | None = None,
+    recorder: UsageRecorder | None = None,
 ) -> LlmRouter:
     """Wire the three providers from settings; transport/sleep injectable for tests."""
     extra: dict[str, Any] = {"transport": transport}
@@ -142,4 +176,4 @@ def build_router(
         "xai": OpenAiCompatClient(XAI_BASE_URL, settings.xai_api_key, provider="xai", **extra),
         "local": OpenAiCompatClient(settings.local_llm_url, "", provider="local", **extra),
     }
-    return LlmRouter(clients, resolve_tasks(settings.llm_tasks))
+    return LlmRouter(clients, resolve_tasks(settings.llm_tasks), recorder=recorder)

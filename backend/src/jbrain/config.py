@@ -22,6 +22,11 @@ class Settings(BaseSettings):
     # JSON object of per-task "provider:model" overrides, merged over the
     # adapter defaults — see jbrain.llm.router.TASK_DEFAULTS.
     llm_tasks: dict[str, str] = {}
+    # "provider:model" -> $/M tokens, applied at query time over llm_usage —
+    # docs/ANALYSIS.md "Cost estimates" (grok-4.3 rates, xAI docs June 2026).
+    llm_prices: dict[str, dict[str, float]] = {
+        "xai:grok-4.3": {"input_per_m": 1.25, "output_per_m": 2.50}
+    }
 
 
 def get_settings() -> Settings:

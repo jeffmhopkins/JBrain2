@@ -37,6 +37,18 @@ class LlmResult:
     usage: LlmUsage
 
 
+class UsageRecorder(Protocol):
+    """Persists one call's token usage (docs/ANALYSIS.md "Token accounting").
+
+    A protocol rather than a concrete class keeps the llm package free of any
+    persistence dependency; the SQL implementation lives in jbrain.usage. The
+    router invokes it fire-and-forget — implementations may raise, the call
+    must still succeed.
+    """
+
+    async def record(self, *, task: str, provider: str, model: str, usage: LlmUsage) -> None: ...
+
+
 class LlmClient(Protocol):
     """One provider's completion surface. All application code routes through
     LlmRouter; this protocol exists so tests and the router can swap providers

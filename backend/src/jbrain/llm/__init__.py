@@ -15,7 +15,7 @@ from jbrain.llm.errors import (
 from jbrain.llm.fake import FakeLlmClient
 from jbrain.llm.openai_compat import OpenAiCompatClient
 from jbrain.llm.router import TASK_DEFAULTS, LlmRouter, build_router, resolve_tasks
-from jbrain.llm.types import LlmClient, LlmImage, LlmResult, LlmUsage
+from jbrain.llm.types import LlmClient, LlmImage, LlmResult, LlmUsage, UsageRecorder
 
 __all__ = [
     "TASK_DEFAULTS",
@@ -32,6 +32,7 @@ __all__ = [
     "LlmTransientError",
     "LlmUsage",
     "OpenAiCompatClient",
+    "UsageRecorder",
     "build_router",
     "resolve_tasks",
 ]
