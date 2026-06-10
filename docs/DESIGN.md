@@ -186,8 +186,11 @@ swipe-down back) with a **Note / Analysis tab split**:
 Search results and stream taps open the same surface — this *is* the
 former "note sheet", upgraded.
 
-**Search** (settled in the Phase 2 review): explicit submit (enter / Search
-tap), **passage-first results** — the matched chunk is the hero text with
+**Search** (settled in the Phase 2 review; input mode revised on-device):
+**live as-you-type** — results update per keystroke behind a 250ms
+debounce, stale responses sequence-guarded, previous results stay visible
+while the next query is in flight; enter / the Search button forces an
+immediate run. **Passage-first results** — the matched chunk is the hero text with
 `--amber-tint` highlight marks, the source note is a one-line context row
 beneath; domain-colored dot + date in the head; every result carries its
 **match badge** (`semantic` steel-tint / `keyword` surface-2) — retrieval

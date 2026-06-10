@@ -1,8 +1,10 @@
-// Search (docs/DESIGN.md "Search"): explicit submit, passage-first result
-// cards with retrieval-transparency match badges, domain filter chips, and
-// the amber degraded banner when semantic search is recovering.
+// Search (docs/DESIGN.md "Search"): live as-you-type (debounced) with
+// passage-first result cards, retrieval-transparency match badges, domain
+// filter chips, and the amber degraded banner while semantic search
+// recovers. Stale responses are sequence-guarded so fast typing can't
+// reorder results.
 
-import { type FormEvent, useState } from "react";
+import { type FormEvent, useEffect, useRef, useState } from "react";
 import { type SearchOut, type SearchResult, api } from "../api/client";
 import { ClipIcon, SearchIcon } from "../components/icons";
 import { dayLabel } from "../notes/grouping";
@@ -53,22 +55,42 @@ interface SearchScreenProps {
   search?: (q: string, domain?: string) => Promise<SearchOut>;
 }
 
+const DEBOUNCE_MS = 250;
+
 export function SearchScreen({ onOpenResult, search }: SearchScreenProps) {
   const doSearch = search ?? ((q: string, domain?: string) => api.search(q, domain));
   const [query, setQuery] = useState("");
   const [domain, setDomain] = useState<string | null>(null);
   const [state, setState] = useState<SearchState>({ phase: "idle" });
+  const seq = useRef(0);
 
-  async function submit(event?: FormEvent) {
-    event?.preventDefault();
-    const q = query.trim();
-    if (q === "") return;
-    setState({ phase: "loading" });
-    try {
-      setState({ phase: "done", query: q, out: await doSearch(q, domain ?? undefined) });
-    } catch {
-      setState({ phase: "error" });
+  async function run(q: string, dom: string | null) {
+    const mine = ++seq.current;
+    if (q === "") {
+      setState({ phase: "idle" });
+      return;
     }
+    setState((prev) => (prev.phase === "done" ? prev : { phase: "loading" }));
+    try {
+      const out = await doSearch(q, dom ?? undefined);
+      if (seq.current === mine) setState({ phase: "done", query: q, out });
+    } catch {
+      if (seq.current === mine) setState({ phase: "error" });
+    }
+  }
+
+  // Live search: every keystroke (and chip change) re-queries after a short
+  // debounce; results keep showing while the next response is in flight.
+  useEffect(() => {
+    const q = query.trim();
+    const timer = setTimeout(() => void run(q, domain), q === "" ? 0 : DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+    // biome-ignore lint/correctness/useExhaustiveDependencies: run is stable per render intent.
+  }, [query, domain]);
+
+  function submit(event?: FormEvent) {
+    event?.preventDefault();
+    void run(query.trim(), domain);
   }
 
   return (
