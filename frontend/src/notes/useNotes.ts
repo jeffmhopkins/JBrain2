@@ -138,7 +138,11 @@ export function useNotes(enabled: boolean, store?: OutboxStore): NotesController
     return merged;
   }, [serverItems, pending]);
 
-  const syncStatus: SyncStatus = !reachable ? "unreachable" : pending.length > 0 ? "pending" : "synced";
+  const syncStatus: SyncStatus = !reachable
+    ? "unreachable"
+    : pending.length > 0
+      ? "pending"
+      : "synced";
 
   return { items, syncStatus, send };
 }

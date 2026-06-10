@@ -35,11 +35,7 @@ export function HomeScreen({ notes, onOpenLauncher }: HomeScreenProps) {
         onConversation={() => showToast("Conversations arrive in Phase 4")}
         onOpenLauncher={onOpenLauncher}
       />
-      {toast && (
-        <div className="toast" role="status">
-          {toast}
-        </div>
-      )}
+      {toast && <output className="toast">{toast}</output>}
     </>
   );
 }

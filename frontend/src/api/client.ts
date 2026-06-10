@@ -6,10 +6,8 @@
 //
 // `npm run dev:mock` (VITE_MOCK=1) swaps the transport for in-memory
 // fixtures so UI work never needs a backend (docs/DESIGN.md, "UI
-// development process"). The flag is build-time constant, so the mock
-// module tree-shakes out of real builds.
-
-import { mockFetch } from "./mock";
+// development process"). The flag is a build-time constant and the mock
+// module loads via dynamic import, so fixtures never ship in real builds.
 
 export interface Principal {
   principal_id: string;
@@ -80,9 +78,17 @@ export const MOCK_MODE = import.meta.env.VITE_MOCK === "1";
 
 // Resolve `fetch` at call time so test stubs (vi.stubGlobal) take effect.
 const liveFetch: typeof fetch = (input, init) => fetch(input, init);
-const transport: typeof fetch = MOCK_MODE ? mockFetch : liveFetch;
+
+let transportPromise: Promise<typeof fetch> | null = null;
+function getTransport(): Promise<typeof fetch> {
+  transportPromise ??= MOCK_MODE
+    ? import("./mock").then((m) => m.mockFetch)
+    : Promise.resolve(liveFetch);
+  return transportPromise;
+}
 
 async function request(path: string, init?: RequestInit): Promise<Response> {
+  const transport = await getTransport();
   const response = await transport(path, { credentials: "same-origin", ...init });
   if (response.status === 401) {
     unauthorizedHandler?.();

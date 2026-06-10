@@ -4,13 +4,7 @@
 // the textarea absorbs the height difference.
 
 import { type CSSProperties, type ReactNode, type TouchEvent, useRef, useState } from "react";
-import {
-  MODES,
-  type Mode,
-  ROWS,
-  type SegState,
-  tapSegment,
-} from "../notes/modes";
+import { MODES, type Mode, ROWS, type SegState, tapSegment } from "../notes/modes";
 import type { SendInput } from "../notes/useNotes";
 import {
   BoltIcon,
@@ -92,7 +86,12 @@ export function Omnibox({ onSend, onConversation, onOpenLauncher }: OmniboxProps
 
   return (
     <div className="dock">
-      <div className="omnibox" style={boxStyle} onTouchStart={onTouchStart} onTouchMove={onTouchMove}>
+      <div
+        className="omnibox"
+        style={boxStyle}
+        onTouchStart={onTouchStart}
+        onTouchMove={onTouchMove}
+      >
         <div className="seg-row" role="tablist">
           {ROWS[seg.row].map((mode) => {
             const m = MODES[mode];
@@ -105,7 +104,11 @@ export function Omnibox({ onSend, onConversation, onOpenLauncher }: OmniboxProps
                 role="tab"
                 aria-selected={active}
                 className={`seg${active ? " seg-on" : ""}`}
-                style={active ? ({ "--mode": m.color, "--mode-tint": m.tint } as CSSProperties) : undefined}
+                style={
+                  active
+                    ? ({ "--mode": m.color, "--mode-tint": m.tint } as CSSProperties)
+                    : undefined
+                }
                 onClick={() => setSeg((prev) => tapSegment(prev, mode))}
               >
                 <span className="seg-ic">

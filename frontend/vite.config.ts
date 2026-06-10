@@ -12,8 +12,8 @@ export default defineConfig({
         name: "JBrain",
         short_name: "JBrain",
         description: "Personal knowledge system",
-        theme_color: "#10131a",
-        background_color: "#10131a",
+        theme_color: "#0e0f11",
+        background_color: "#0e0f11",
         display: "standalone",
         icons: [
           { src: "pwa-192x192.png", sizes: "192x192", type: "image/png" },

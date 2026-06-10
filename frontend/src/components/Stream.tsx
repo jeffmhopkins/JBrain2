@@ -6,7 +6,9 @@ import type { StreamItem } from "../notes/useNotes";
 import { ClipIcon } from "./icons";
 
 function headText(item: StreamItem): string {
-  const time = item.pending ? `${relativeTime(item.createdAt)} · pending` : relativeTime(item.createdAt);
+  const time = item.pending
+    ? `${relativeTime(item.createdAt)} · pending`
+    : relativeTime(item.createdAt);
   const domainLabel = DOMAIN_LABEL[item.domain];
   if (domainLabel && item.destination) return `${time} · ${domainLabel} → ${item.destination}`;
   if (domainLabel) return `${time} · ${domainLabel}`;
@@ -26,13 +28,8 @@ function NoteRow({ item }: { item: StreamItem }) {
       <div className="note-body">{item.body}</div>
       {(item.attachments.length > 0 || item.pending) && (
         <div className="note-chips">
-          {item.attachments.map((att) => {
-            const label = (
-              <>
-                <ClipIcon size={12} /> {att.filename}
-              </>
-            );
-            return att.id ? (
+          {item.attachments.map((att) =>
+            att.id ? (
               <a
                 key={`${item.key}-${att.id}`}
                 className="chip"
@@ -40,14 +37,14 @@ function NoteRow({ item }: { item: StreamItem }) {
                 target="_blank"
                 rel="noreferrer"
               >
-                {label}
+                <ClipIcon size={12} /> {att.filename}
               </a>
             ) : (
               <span key={`${item.key}-${att.filename}`} className="chip">
-                {label}
+                <ClipIcon size={12} /> {att.filename}
               </span>
-            );
-          })}
+            ),
+          )}
           {item.pending && <span className="chip chip-pending">pending sync</span>}
         </div>
       )}
@@ -59,6 +56,7 @@ export function Stream({ items }: { items: StreamItem[] }) {
   const scrollerRef = useRef<HTMLElement>(null);
 
   // New rows land at the bottom; keep the latest in view like a chat log.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: re-run per append; the effect reads the DOM, not the items.
   useEffect(() => {
     const el = scrollerRef.current;
     if (el) el.scrollTop = el.scrollHeight;

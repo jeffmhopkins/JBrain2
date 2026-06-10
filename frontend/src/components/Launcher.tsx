@@ -2,7 +2,7 @@
 // launcher"). A navigation surface, not a modal: it owns the whole screen,
 // slides up 150ms ease-out, and dismisses on swipe-down or Escape.
 
-import { type ReactNode, type TouchEvent, useEffect, useRef, useState } from "react";
+import { type ReactNode, type TouchEvent, useCallback, useEffect, useRef, useState } from "react";
 import {
   BookIcon,
   CalendarIcon,
@@ -71,12 +71,11 @@ interface LauncherProps {
 export function Launcher({ open, onClose, onNavigate }: LauncherProps) {
   // Stay mounted through the exit animation, then unmount.
   const [closing, setClosing] = useState(false);
-  const panelRef = useRef<HTMLDivElement>(null);
+  const panelRef = useRef<HTMLElement>(null);
   const touchStartY = useRef<number | null>(null);
 
-  function close() {
-    const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    if (reduced) {
+  const close = useCallback(() => {
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
       onClose();
       return;
     }
@@ -85,7 +84,7 @@ export function Launcher({ open, onClose, onNavigate }: LauncherProps) {
       setClosing(false);
       onClose();
     }, EXIT_MS);
-  }
+  }, [onClose]);
 
   useEffect(() => {
     if (!open) return;
@@ -95,8 +94,7 @@ export function Launcher({ open, onClose, onNavigate }: LauncherProps) {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-    // biome-ignore lint/correctness/useExhaustiveDependencies: close is stable per render; re-binding on open is the point.
-  }, [open]);
+  }, [open, close]);
 
   if (!open && !closing) return null;
 
@@ -114,11 +112,11 @@ export function Launcher({ open, onClose, onNavigate }: LauncherProps) {
   }
 
   return (
-    <div
+    // A nav surface, not a modal (docs/DESIGN.md) — hence <nav>, no scrim.
+    <nav
       className={`launcher${closing ? " launcher-closing" : ""}`}
       ref={panelRef}
       tabIndex={-1}
-      role="dialog"
       aria-label="Launcher"
       onTouchStart={onTouchStart}
       onTouchMove={onTouchMove}
@@ -151,6 +149,6 @@ export function Launcher({ open, onClose, onNavigate }: LauncherProps) {
           </div>
         </section>
       ))}
-    </div>
+    </nav>
   );
 }

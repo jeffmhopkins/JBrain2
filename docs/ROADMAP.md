@@ -24,15 +24,17 @@ performed successfully; RLS tests prove domain isolation.
 
 ## Phase 1 — Notes
 
-Note CRUD with markdown editor; attachments (content-addressed storage);
-offline capture with outbox sync; mobile-first list/filter UI. The
-**one-tap update flow** lands here, once there is a release to update to:
-supervisor polls GitHub Releases, Ops screen prompts, apply runs pull →
-pre-update dump → migrations → rolling restart → health check, with
-`jbrain rollback` retained.
+Note capture via the approved omnibox home (morphing Entry/Medical/
+Financial segments, message-send model, day-grouped transcript stream);
+attachments (content-addressed storage); offline capture with an
+IndexedDB outbox and idempotent sync; card-launcher navigation; dual
+theming with Settings. Server updates ship via `jbrain update`
+(build-from-source: backup → git pull → rebuild → migrate → restart);
+the supervisor-driven one-tap Ops update moves to a later phase.
 
-**Exit:** daily note capture from the phone is habitual, including offline;
-an older install updates itself to a newer release from the Ops screen.
+**Exit:** daily note capture from the phone is habitual, including
+offline; `jbrain update` carries a running install forward across a
+schema migration.
 
 ## Phase 2 — Ingestion & search
 

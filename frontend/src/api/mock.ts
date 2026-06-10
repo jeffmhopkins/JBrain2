@@ -66,19 +66,60 @@ function seedNote(
   createdAt: string,
   attachments: AttachmentOut[] = [],
 ): NoteOut {
-  return { id: id("note"), client_id: id("client"), domain, destination, body, created_at: createdAt, attachments };
+  return {
+    id: id("note"),
+    client_id: id("client"),
+    domain,
+    destination,
+    body,
+    created_at: createdAt,
+    attachments,
+  };
 }
 
 // Oldest-first internally; the list endpoint serves newest-first.
 const notes: NoteOut[] = [
-  seedNote("general", null, "Dad: grandpa worked at the mill in Ohio before the war — family history follow-up", daysAgo(8, 19, 12)),
-  seedNote("finance", "Statements", "Q2 brokerage statement filed — rebalance overdue", daysAgo(8, 20, 40), [makeAttachment("brokerage-q2.pdf", "application/pdf")]),
-  seedNote("health", "Medications", "Started vitamin D 2000 IU daily per Dr. Akin", daysAgo(3, 8, 5)),
+  seedNote(
+    "general",
+    null,
+    "Dad: grandpa worked at the mill in Ohio before the war — family history follow-up",
+    daysAgo(8, 19, 12),
+  ),
+  seedNote(
+    "finance",
+    "Statements",
+    "Q2 brokerage statement filed — rebalance overdue",
+    daysAgo(8, 20, 40),
+    [makeAttachment("brokerage-q2.pdf", "application/pdf")],
+  ),
+  seedNote(
+    "health",
+    "Medications",
+    "Started vitamin D 2000 IU daily per Dr. Akin",
+    daysAgo(3, 8, 5),
+  ),
   seedNote("general", null, "Book rec from Sam: The Beginning of Infinity", daysAgo(3, 13, 30)),
-  seedNote("finance", "Receipts", "Roof repair quote — $4,200 incl. flashing. Get second opinion?", daysAgo(1, 10, 22), [makeAttachment("roof-quote.jpg", "image/jpeg")]),
+  seedNote(
+    "finance",
+    "Receipts",
+    "Roof repair quote — $4,200 incl. flashing. Get second opinion?",
+    daysAgo(1, 10, 22),
+    [makeAttachment("roof-quote.jpg", "image/jpeg")],
+  ),
   seedNote("general", null, "Garage door keypad battery replaced — CR2032", daysAgo(1, 17, 48)),
-  seedNote("general", null, "Groceries: eggs, coffee, olive oil, that bread Mom liked", daysAgo(0, 8, 15)),
-  seedNote("health", "Labs", "Annual physical — BP 118/76. Lab orders attached.", daysAgo(0, 10, 5), [makeAttachment("lab-orders.pdf", "application/pdf")]),
+  seedNote(
+    "general",
+    null,
+    "Groceries: eggs, coffee, olive oil, that bread Mom liked",
+    daysAgo(0, 8, 15),
+  ),
+  seedNote(
+    "health",
+    "Labs",
+    "Annual physical — BP 118/76. Lab orders attached.",
+    daysAgo(0, 10, 5),
+    [makeAttachment("lab-orders.pdf", "application/pdf")],
+  ),
 ];
 
 function json(body: unknown, status = 200): Response {
@@ -157,7 +198,10 @@ export const mockFetch: typeof fetch = async (input, init) => {
   if (path === "/api/ops/status") return json({ containers: CONTAINERS });
   if (path === "/api/ops/restart") return new Response(null, { status: 204 });
   if (path.startsWith("/api/ops/logs/")) {
-    const lines = Array.from({ length: 40 }, (_, i) => `${new Date().toISOString()} mock log line ${i + 1}`);
+    const lines = Array.from(
+      { length: 40 },
+      (_, i) => `${new Date().toISOString()} mock log line ${i + 1}`,
+    );
     return new Response(lines.join("\n"), { status: 200 });
   }
 

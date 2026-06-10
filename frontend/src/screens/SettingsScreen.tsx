@@ -26,13 +26,12 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
     <main className="screen-body settings">
       <section className="settings-card">
         <h2 className="settings-label">Theme</h2>
-        <div className="theme-picker" role="radiogroup" aria-label="Theme">
+        <div className="theme-picker" aria-label="Theme">
           {THEME_OPTIONS.map((opt) => (
             <button
               key={opt.value}
               type="button"
-              role="radio"
-              aria-checked={theme === opt.value}
+              aria-pressed={theme === opt.value}
               className={`seg${theme === opt.value ? " seg-on" : ""}`}
               onClick={() => pick(opt.value)}
             >
