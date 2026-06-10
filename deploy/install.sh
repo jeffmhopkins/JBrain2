@@ -42,11 +42,11 @@ if [ ! -d "$INSTALL_DIR/src/.git" ]; then
 fi
 
 cd "$INSTALL_DIR"
-for f in docker-compose.yml jbrain backup.sh; do
+for f in docker-compose.yml jbrain backup.sh restore.sh; do
   cp "src/deploy/$f" "$f"
 done
 cp src/deploy/db-init/01-app-role.sh db-init/
-chmod +x jbrain backup.sh db-init/01-app-role.sh
+chmod +x jbrain backup.sh restore.sh db-init/01-app-role.sh
 ln -sf "$INSTALL_DIR/jbrain" /usr/local/bin/jbrain
 
 if [ ! -f .env ]; then
@@ -95,4 +95,4 @@ cat > /etc/cron.d/jbrain-backup <<EOF
 EOF
 
 say "Done. Open https://$(grep '^JBRAIN_DOMAIN=' .env | cut -d= -f2) and paste your owner key."
-say "Manage with: jbrain status | restart | logs | reset-owner-key | update | backup"
+say "Manage with: jbrain status | restart | logs | reset-owner-key | update | backup | restore"

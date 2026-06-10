@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Nightly (and pre-update) backup: schema+data dump plus blob volume archive.
-# Restore: pg_restore -U jbrain -d jbrain --clean <dump>; untar blobs into the
-# volume. The restore path must be exercised before the system holds real data.
+# Restore with restore.sh (jbrain restore <stamp>) — drilled end-to-end; keep
+# both sides in step when adding volumes or moving data outside Postgres.
 set -euo pipefail
 
 cd /opt/jbrain2
