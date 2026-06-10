@@ -10,8 +10,9 @@ from typing import Any
 
 PROMPT_VERSION = "note-extract-v2"
 
-# Soft cap, enforced by instruction (over-extraction is the known quality
-# risk; the review-inbox rejection rate is the tuning signal).
+# Facts-per-note cap: taught by instruction here, enforced server-side in
+# extraction.parse_extraction (over-extraction is the known quality risk;
+# the review-inbox rejection rate is the tuning signal).
 MAX_FACTS = 12
 
 SYSTEM_PROMPT = f"""You extract structured knowledge from one personal note. \
