@@ -234,6 +234,9 @@ section headers — KNOWLEDGE, AUTHORING, SYSTEM):
   the whole screen.
 - Every overlay surface must have a visible, tappable exit; a gesture is
   never the only way out (settled in Phase 1 polish).
+- On sub-screens reached from the launcher, a **left swipe reopens the
+  launcher** (settled in Phase 1 polish); the top-bar chevron still returns
+  home.
 - Tiles for phases not yet built render disabled with their phase label.
 
 ## Surface paradigms (which container for which job)
