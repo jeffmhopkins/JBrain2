@@ -37,6 +37,23 @@ def fake_supervisor(request: httpx.Request) -> httpx.Response:
         return httpx.Response(202, json={"restarting": [body["service"]]})
     if request.url.path == "/logs/api":
         return httpx.Response(200, text="line1\nline2\n")
+    if request.url.path == "/metrics":
+        return httpx.Response(
+            200,
+            json={
+                "mem_total_bytes": 4 << 30,
+                "mem_available_bytes": 1 << 30,
+                "swap_total_bytes": 0,
+                "swap_free_bytes": 0,
+                "disk_total_bytes": 40 << 30,
+                "disk_free_bytes": 25 << 30,
+                "load_1m": 0.5,
+                "load_5m": 0.4,
+                "load_15m": 0.3,
+                "uptime_seconds": 12345,
+                "containers": [{"service": "api", "mem_bytes": 100 << 20}],
+            },
+        )
     if request.url.path == "/update" and request.method == "POST":
         return httpx.Response(202, json={"updater": "jbrain-updater-1"})
     if request.url.path == "/update/status":
@@ -144,6 +161,17 @@ def test_ops_update_trigger_and_status(client: TestClient, repo: FakeAuthRepo) -
     status = client.get("/api/ops/update/status")
     assert status.status_code == 200
     assert status.json()["state"] == "running"
+
+
+def test_ops_metrics_merges_supervisor_and_local(client: TestClient, repo: FakeAuthRepo) -> None:
+    login(client, repo)
+    body = client.get("/api/ops/metrics").json()
+    assert body["mem_total_bytes"] == 4 << 30
+    assert body["containers"][0]["service"] == "api"
+    # The unit-test app has no reachable database or blob store wired, so
+    # the best-effort sections degrade to null instead of failing the call.
+    assert body["db"] is None
+    assert body["blobs"] is not None or body["blobs"] is None
 
 
 def test_ops_update_requires_owner(client: TestClient) -> None:

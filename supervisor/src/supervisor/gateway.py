@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Protocol, cast
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -47,6 +47,14 @@ class UpdateInProgressError(RuntimeError):
 
 
 @dataclass(frozen=True, slots=True)
+class ContainerMemory:
+    """Instantaneous memory usage of one compose container."""
+
+    service: str
+    mem_bytes: int
+
+
+@dataclass(frozen=True, slots=True)
 class UpdateStatus:
     """State of the most recent updater run ('none' when never run)."""
 
@@ -76,6 +84,8 @@ class DockerGateway(Protocol):
     def logs(self, service: str, tail: int) -> str: ...
 
     def stream_logs(self, service: str) -> Iterator[str]: ...
+
+    def container_memory(self) -> list[ContainerMemory]: ...
 
     def start_update(self) -> str: ...
 
@@ -122,6 +132,25 @@ class ComposeDockerGateway:
         # tail=0: the stream carries only lines emitted after the client attaches.
         chunks = self._find(service).logs(stream=True, follow=True, tail=0)
         return _decode_lines(chunks)
+
+    def container_memory(self) -> list[ContainerMemory]:
+        usages: list[ContainerMemory] = []
+        for container in self._client.containers.list(
+            filters={"label": f"{COMPOSE_PROJECT_LABEL}={self._project}"}
+        ):
+            service = (container.labels or {}).get(COMPOSE_SERVICE_LABEL)
+            if not service:
+                continue
+            try:
+                # one_shot skips the 1s CPU sampling window; memory is instant.
+                # docker-py types stats() as Iterator; stream=False returns a dict.
+                stats = cast("dict", container.stats(stream=False, one_shot=True))
+            except Exception:
+                continue
+            mem = stats.get("memory_stats", {})
+            usage = mem.get("usage", 0) - mem.get("stats", {}).get("inactive_file", 0)
+            usages.append(ContainerMemory(service=service, mem_bytes=max(usage, 0)))
+        return usages
 
     def start_update(self) -> str:
         latest = self._latest_updater()

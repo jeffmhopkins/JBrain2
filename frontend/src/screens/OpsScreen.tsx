@@ -1,5 +1,90 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ApiError, type ContainerStatus, type UpdateStatus, api } from "../api/client";
+import {
+  ApiError,
+  type ContainerStatus,
+  type OpsMetrics,
+  type UpdateStatus,
+  api,
+} from "../api/client";
+
+function fmtBytes(n: number): string {
+  if (n >= 2 ** 30) return `${(n / 2 ** 30).toFixed(1)} GB`;
+  if (n >= 2 ** 20) return `${(n / 2 ** 20).toFixed(0)} MB`;
+  return `${(n / 1024).toFixed(0)} KB`;
+}
+
+function fmtUptime(seconds: number): string {
+  const d = Math.floor(seconds / 86400);
+  const h = Math.floor((seconds % 86400) / 3600);
+  return d > 0 ? `${d}d ${h}h` : `${h}h ${Math.floor((seconds % 3600) / 60)}m`;
+}
+
+function Meter({ used, total }: { used: number; total: number }) {
+  const pct = total > 0 ? Math.min(100, (used / total) * 100) : 0;
+  const level = pct > 92 ? "bad" : pct > 80 ? "warn" : "ok";
+  return (
+    <div className="meter">
+      <div className={`meter-fill meter-${level}`} style={{ width: `${pct}%` }} />
+    </div>
+  );
+}
+
+function MetricsGrid({ metrics }: { metrics: OpsMetrics }) {
+  const memUsed = metrics.mem_total_bytes - metrics.mem_available_bytes;
+  const diskUsed = metrics.disk_total_bytes - metrics.disk_free_bytes;
+  const swapUsed = metrics.swap_total_bytes - metrics.swap_free_bytes;
+  return (
+    <ul className="container-list metrics-grid">
+      <li className="container-row">
+        <div className="container-main">
+          <span className="service-name">Memory</span>
+        </div>
+        <span className="metric-value">
+          {fmtBytes(memUsed)} / {fmtBytes(metrics.mem_total_bytes)}
+        </span>
+        <Meter used={memUsed} total={metrics.mem_total_bytes} />
+        {metrics.swap_total_bytes > 0 && (
+          <span className="container-meta muted">swap {fmtBytes(swapUsed)} used</span>
+        )}
+      </li>
+      <li className="container-row">
+        <div className="container-main">
+          <span className="service-name">Disk</span>
+        </div>
+        <span className="metric-value">
+          {fmtBytes(diskUsed)} / {fmtBytes(metrics.disk_total_bytes)}
+        </span>
+        <Meter used={diskUsed} total={metrics.disk_total_bytes} />
+      </li>
+      <li className="container-row">
+        <div className="container-main">
+          <span className="service-name">Database</span>
+        </div>
+        {metrics.db ? (
+          <>
+            <span className="metric-value">{fmtBytes(metrics.db.db_size_bytes)}</span>
+            <span className="container-meta muted">
+              {metrics.db.note_count} notes · {metrics.db.attachment_count} files
+              {metrics.blobs ? ` · ${fmtBytes(metrics.blobs.total_bytes)} blobs` : ""}
+            </span>
+          </>
+        ) : (
+          <span className="container-meta muted">unavailable</span>
+        )}
+      </li>
+      <li className="container-row">
+        <div className="container-main">
+          <span className="service-name">Load</span>
+        </div>
+        <span className="metric-value">
+          {metrics.load_1m.toFixed(2)} · {metrics.load_5m.toFixed(2)} ·{" "}
+          {metrics.load_15m.toFixed(2)}
+        </span>
+        <span className="container-meta muted">up {fmtUptime(metrics.uptime_seconds)}</span>
+      </li>
+    </ul>
+  );
+}
 
 function errorMessage(err: unknown): string {
   return err instanceof ApiError ? err.message : "Request failed. Is the server reachable?";
@@ -104,6 +189,7 @@ function UpdateCard() {
 
 export function OpsScreen() {
   const [containers, setContainers] = useState<ContainerStatus[] | null>(null);
+  const [metrics, setMetrics] = useState<OpsMetrics | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -112,6 +198,7 @@ export function OpsScreen() {
     setError(null);
     try {
       setContainers((await api.opsStatus()).containers);
+      setMetrics(await api.opsMetrics());
     } catch (err) {
       setError(errorMessage(err));
     } finally {
@@ -162,6 +249,7 @@ export function OpsScreen() {
         </p>
       )}
 
+      {metrics !== null && <MetricsGrid metrics={metrics} />}
       {containers === null && !error ? (
         <p className="muted">Loading status…</p>
       ) : (
@@ -175,6 +263,10 @@ export function OpsScreen() {
               </div>
               <div className="container-meta">
                 <span className="muted">{c.image}</span>
+                {(() => {
+                  const m = metrics?.containers.find((x) => x.service === c.service);
+                  return m ? <span className="muted">{fmtBytes(m.mem_bytes)}</span> : null;
+                })()}
                 {c.started_at && (
                   <span className="muted">since {new Date(c.started_at).toLocaleString()}</span>
                 )}

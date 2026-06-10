@@ -21,6 +21,10 @@ class BlobStore(Protocol):
 
     async def exists(self, sha256: str) -> bool: ...
 
+    def usage(self) -> tuple[int, int]:
+        """(blob_count, total_bytes) — fine to walk at personal scale."""
+        ...
+
 
 class FsBlobStore:
     """Sharded directory layout (ab/cd/abcd…) keeps directories small."""
@@ -45,3 +49,13 @@ class FsBlobStore:
 
     async def exists(self, sha256: str) -> bool:
         return self.path_for(sha256).exists()
+
+    def usage(self) -> tuple[int, int]:
+        count = 0
+        total = 0
+        if self._root.exists():
+            for path in self._root.rglob("*"):
+                if path.is_file() and not path.name.endswith(".tmp"):
+                    count += 1
+                    total += path.stat().st_size
+        return count, total

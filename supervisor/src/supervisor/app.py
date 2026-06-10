@@ -23,6 +23,7 @@ from fastapi import (
 from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
 from pydantic import BaseModel
 
+from supervisor import host_metrics
 from supervisor.gateway import DockerGateway, UnknownServiceError, UpdateInProgressError
 
 if TYPE_CHECKING:
@@ -52,6 +53,25 @@ class ContainerStatus(BaseModel):
 
 class StatusResponse(BaseModel):
     containers: list[ContainerStatus]
+
+
+class ContainerMemoryOut(BaseModel):
+    service: str
+    mem_bytes: int
+
+
+class MetricsResponse(BaseModel):
+    mem_total_bytes: int
+    mem_available_bytes: int
+    swap_total_bytes: int
+    swap_free_bytes: int
+    disk_total_bytes: int
+    disk_free_bytes: int
+    load_1m: float
+    load_5m: float
+    load_15m: float
+    uptime_seconds: int
+    containers: list[ContainerMemoryOut]
 
 
 class UpdateStartResponse(BaseModel):
@@ -132,6 +152,26 @@ def create_app(settings: Settings, gateway: DockerGateway) -> FastAPI:
         else:
             gateway.restart(body.service)
         return RestartResponse(restarting=[body.service])
+
+    @authed.get("/metrics")
+    def metrics() -> MetricsResponse:
+        host = host_metrics.read_host_metrics()
+        return MetricsResponse(
+            mem_total_bytes=host.mem_total_bytes,
+            mem_available_bytes=host.mem_available_bytes,
+            swap_total_bytes=host.swap_total_bytes,
+            swap_free_bytes=host.swap_free_bytes,
+            disk_total_bytes=host.disk_total_bytes,
+            disk_free_bytes=host.disk_free_bytes,
+            load_1m=host.load_1m,
+            load_5m=host.load_5m,
+            load_15m=host.load_15m,
+            uptime_seconds=host.uptime_seconds,
+            containers=[
+                ContainerMemoryOut(service=c.service, mem_bytes=c.mem_bytes)
+                for c in gateway.container_memory()
+            ],
+        )
 
     @authed.post("/update", status_code=202)
     def start_update() -> UpdateStartResponse:
