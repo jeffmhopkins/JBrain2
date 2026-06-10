@@ -1,0 +1,48 @@
+{
+  "name": "a future fact the model wrongly marked asserted is normalized to expected, then becomes occurred after the date passes",
+  "description": "Adversarial: note A is captured 2026-06-12 about a concert on 2026-06-20 but the model (lapse) emits assertion='asserted' for a still-future event. normalize_future_assertion (analysis.extraction) catches valid_from > captured_at and relaxes it to 'expected' — a future event must not read as already-happened (docs/ANALYSIS.md 'Temporal model': future-tense facts carry expected). Note B is captured 2026-06-21, AFTER the date passed, restating the SAME concert/instant as occurred (assertion='asserted', valid_from now in the past relative to capture, so normalize leaves it asserted). Different value_json (status expected->occurred) at equal valid_from => state newest-wins: occurred supersedes expected, one active asserted fact remains. Pins that capture-relative future detection flips a mislabeled assertion and that the expected row does not linger active after the event occurs.",
+  "steps": [
+    {
+      "domain": "general",
+      "created_at": "2026-06-12T09:00:00-06:00",
+      "body": "Ingrid is going to the Sigrid concert on June 20th.",
+      "extraction": {
+        "title": "Ingrid concert plan",
+        "tags": ["ingrid", "concert"],
+        "mentions": [{"name": "Ingrid Sigrid concert", "kind": "Event", "surface_text": "Sigrid concert on June 20th"}],
+        "facts": [
+          {"predicate": "attendanceStatus", "qualifier": "", "kind": "state", "statement": "Ingrid attends the Sigrid concert on 2026-06-20.", "value_json": {"status": "expected", "event": "Sigrid concert", "date": "2026-06-20"}, "assertion": "asserted", "entity_ref": "Ingrid Sigrid concert", "object_entity_ref": null, "temporal": {"phrase": "on June 20th", "resolved_start": "2026-06-20T20:00:00-06:00", "resolved_end": null, "precision": "instant"}, "domain": "general", "confidence": 0.85}
+        ],
+        "temporal_tokens": []
+      }
+    },
+    {
+      "domain": "general",
+      "created_at": "2026-06-21T09:00:00-06:00",
+      "body": "Ingrid went to the Sigrid concert last night, it was great.",
+      "extraction": {
+        "title": "Ingrid concert done",
+        "tags": ["ingrid", "concert", "done"],
+        "mentions": [{"name": "Ingrid Sigrid concert", "kind": "Event", "surface_text": "Sigrid concert"}],
+        "facts": [
+          {"predicate": "attendanceStatus", "qualifier": "", "kind": "state", "statement": "Ingrid attended the Sigrid concert on 2026-06-20.", "value_json": {"status": "occurred", "event": "Sigrid concert", "date": "2026-06-20"}, "assertion": "asserted", "entity_ref": "Ingrid Sigrid concert", "object_entity_ref": null, "temporal": {"phrase": "last night", "resolved_start": "2026-06-20T20:00:00-06:00", "resolved_end": null, "precision": "instant"}, "domain": "general", "confidence": 0.95}
+        ],
+        "temporal_tokens": []
+      }
+    }
+  ],
+  "expect": {
+    "facts": [
+      {"entity": "Ingrid Sigrid concert", "predicate": "attendanceStatus", "kind": "state", "value_contains": "occurred", "status": "active", "assertion": "asserted", "chained": false},
+      {"entity": "Ingrid Sigrid concert", "predicate": "attendanceStatus", "kind": "state", "value_contains": "expected", "status": "superseded", "assertion": "expected", "chained": true},
+      {"entity": "Ingrid Sigrid concert", "predicate": "attendanceStatus", "kind": "state", "status": "active", "count": 1},
+      {"entity": "Ingrid Sigrid concert", "predicate": "attendanceStatus", "kind": "state", "assertion": "asserted", "status": "active", "count": 1}
+    ],
+    "review_items": [
+      {"kind": "fact_conflict", "summary_contains": "attendanceStatus"}
+    ],
+    "entities": [
+      {"name": "Ingrid Sigrid concert", "kind": "Event", "status": "provisional"}
+    ]
+  }
+}

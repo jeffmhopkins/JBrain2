@@ -1,0 +1,50 @@
+{
+  "name": "out-of-order outbox: a later-captured note about an EARLIER validity must not supersede the current value",
+  "description": "Offline outbox: note A (captured 2026-05-02) records Tomas moved to Lisbon valid_from 2026-05-01. Note B is captured LATER (2026-06-09) but describes an EARLIER move to Madrid valid_from 2024-03-01 (a backfilled history entry that synced late). Supersession compares VALIDITY time, never capture time (supersession._validity / docs/ANALYSIS.md 'a retrospective note about 2019 must not supersede the current address'). Because the Madrid candidate's valid_from (2024) is OLDER than the active Lisbon valid_from (2025), decide() takes the retrospective branch: Madrid is inserted status='superseded', superseded_by=Lisbon, NO fact_conflict review. Lisbon stays the active current homeLocation despite Madrid arriving last.",
+  "steps": [
+    {
+      "domain": "general",
+      "created_at": "2026-05-02T09:00:00-06:00",
+      "body": "Tomas moved to Lisbon yesterday.",
+      "extraction": {
+        "title": "Tomas in Lisbon",
+        "tags": ["tomas", "lisbon", "relocation"],
+        "mentions": [{"name": "Tomas", "kind": "Person", "surface_text": "Tomas"}],
+        "facts": [
+          {"predicate": "homeLocation", "qualifier": "", "kind": "state", "statement": "Tomas moved to Lisbon.", "value_json": {"city": "Lisbon"}, "assertion": "asserted", "entity_ref": "Tomas", "object_entity_ref": null, "temporal": {"phrase": "yesterday", "resolved_start": "2026-05-01T00:00:00-06:00", "resolved_end": null, "precision": "day"}, "domain": "general", "confidence": 0.9}
+        ],
+        "temporal_tokens": []
+      }
+    },
+    {
+      "domain": "general",
+      "created_at": "2026-06-09T22:30:00-06:00",
+      "body": "Filling in old history that never synced: Tomas was living in Madrid back in March 2024.",
+      "extraction": {
+        "title": "Tomas history: Madrid 2024",
+        "tags": ["tomas", "madrid", "history"],
+        "mentions": [{"name": "Tomas", "kind": "Person", "surface_text": "Tomas"}],
+        "facts": [
+          {"predicate": "homeLocation", "qualifier": "", "kind": "state", "statement": "Tomas lived in Madrid in March 2024.", "value_json": {"city": "Madrid"}, "assertion": "asserted", "entity_ref": "Tomas", "object_entity_ref": null, "temporal": {"phrase": "back in March 2024", "resolved_start": "2024-03-01T00:00:00-07:00", "resolved_end": null, "precision": "month"}, "domain": "general", "confidence": 0.8}
+        ],
+        "temporal_tokens": []
+      }
+    }
+  ],
+  "expect": {
+    "facts": [
+      {"entity": "Tomas", "predicate": "homeLocation", "kind": "state", "value_contains": "Lisbon", "status": "active", "chained": false},
+      {"entity": "Tomas", "predicate": "homeLocation", "kind": "state", "value_contains": "Madrid", "status": "superseded", "chained": true},
+      {"entity": "Tomas", "predicate": "homeLocation", "kind": "state", "status": "active", "count": 1}
+    ],
+    "absent_facts": [
+      {"entity": "Tomas", "predicate": "homeLocation", "value_contains": "Lisbon", "status": "superseded"}
+    ],
+    "review_items": [
+      {"kind": "fact_conflict", "summary_contains": "homeLocation", "count": 0}
+    ],
+    "entities": [
+      {"name": "Tomas", "kind": "Person", "status": "provisional"}
+    ]
+  }
+}
