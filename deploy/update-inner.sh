@@ -13,11 +13,11 @@ git -C src pull --ff-only
 
 # Refresh host helper scripts from the updated tree (mv keeps any running
 # reader on its old inode).
-for f in docker-compose.yml backup.sh jbrain; do
+for f in docker-compose.yml backup.sh restore.sh jbrain; do
   cp "src/deploy/$f" "$f.new" && mv "$f.new" "$f"
 done
 cp src/deploy/db-init/01-app-role.sh db-init/
-chmod +x jbrain backup.sh db-init/01-app-role.sh
+chmod +x jbrain backup.sh restore.sh db-init/01-app-role.sh
 
 echo "[update] building images"
 docker compose build
