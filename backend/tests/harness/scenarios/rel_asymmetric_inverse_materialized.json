@@ -1,0 +1,33 @@
+{
+  "name": "asymmetric relationship materializes its named inverse",
+  "description": "worksFor has a named inverse (employs) in the registry, so Marcus.worksFor -> Globex materializes Globex.employs -> Marcus as a derived edge on the org's stream (docs/research/fix-options/2, Phase C). The inverse predicate differs from the source; employs is non-functional and accumulates.",
+  "steps": [
+    {
+      "domain": "general",
+      "created_at": "2026-04-10T09:00:00-06:00",
+      "body": "Marcus works for Globex.",
+      "extraction": {
+        "title": "Marcus at Globex",
+        "tags": ["marcus", "globex"],
+        "mentions": [
+          {"name": "Marcus", "kind": "Person", "surface_text": "Marcus"},
+          {"name": "Globex", "kind": "Organization", "surface_text": "Globex"}
+        ],
+        "facts": [
+          {"predicate": "worksFor", "qualifier": "", "kind": "relationship", "statement": "Marcus works for Globex.", "value_json": null, "assertion": "asserted", "entity_ref": "Marcus", "object_entity_ref": "Globex", "temporal": {"phrase": "", "resolved_start": "2026-04-10T00:00:00-06:00", "resolved_end": null, "precision": "day"}, "domain": "general", "confidence": 0.9}
+        ],
+        "temporal_tokens": []
+      }
+    }
+  ],
+  "expect": {
+    "facts": [
+      {"entity": "Marcus", "predicate": "worksFor", "kind": "relationship", "value_contains": "Globex", "status": "active", "chained": false},
+      {"entity": "Globex", "predicate": "employs", "kind": "relationship", "value_contains": "Marcus", "status": "active", "chained": false}
+    ],
+    "entities": [
+      {"name": "Marcus", "kind": "Person", "status": "provisional"},
+      {"name": "Globex", "kind": "Organization", "status": "provisional"}
+    ]
+  }
+}

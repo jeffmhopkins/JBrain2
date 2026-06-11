@@ -1,0 +1,33 @@
+{
+  "name": "symmetric relationship materializes the reciprocal edge",
+  "description": "A directed spouse edge (Jeff.spouse -> Celine) is symmetric, so the pipeline materializes the reciprocal Celine.spouse -> Jeff as a derived inverse on the object's stream (docs/research/fix-options/2, Option 2 + 4a). The model emits ONLY the directed edge; reciprocity is the pipeline's job, not the prompt's. Both edges land active.",
+  "steps": [
+    {
+      "domain": "general",
+      "created_at": "2026-05-01T12:00:00-06:00",
+      "body": "Jeff is married to Celine.",
+      "extraction": {
+        "title": "Jeff and Celine",
+        "tags": ["jeff", "celine", "marriage"],
+        "mentions": [
+          {"name": "Jeff", "kind": "Person", "surface_text": "Jeff"},
+          {"name": "Celine", "kind": "Person", "surface_text": "Celine"}
+        ],
+        "facts": [
+          {"predicate": "spouse", "qualifier": "", "kind": "relationship", "statement": "Jeff's spouse is Celine.", "value_json": null, "assertion": "asserted", "entity_ref": "Jeff", "object_entity_ref": "Celine", "temporal": {"phrase": "", "resolved_start": "2026-05-01T00:00:00-06:00", "resolved_end": null, "precision": "day"}, "domain": "general", "confidence": 0.95}
+        ],
+        "temporal_tokens": []
+      }
+    }
+  ],
+  "expect": {
+    "facts": [
+      {"entity": "Jeff", "predicate": "spouse", "kind": "relationship", "value_contains": "Celine", "status": "active", "chained": false},
+      {"entity": "Celine", "predicate": "spouse", "kind": "relationship", "value_contains": "Jeff", "status": "active", "chained": false}
+    ],
+    "entities": [
+      {"name": "Jeff", "kind": "Person", "status": "provisional"},
+      {"name": "Celine", "kind": "Person", "status": "provisional"}
+    ]
+  }
+}

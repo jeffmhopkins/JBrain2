@@ -1,0 +1,51 @@
+{
+  "name": "superseding a source edge propagates to its derived reciprocal",
+  "description": "spouse is functional, so Jeff.spouse Celine -> Dana supersedes the source edge. The old reciprocal Celine.spouse -> Jeff (a derived shadow) must close too, chained onto the new Dana.spouse -> Jeff. A reciprocal that did not move would be a stale lie (docs/research/fix-options/2, Phase B). Asserts Celine's shadow superseded and Dana's open.",
+  "steps": [
+    {
+      "domain": "general",
+      "created_at": "2026-05-01T12:00:00-06:00",
+      "body": "Jeff is married to Celine.",
+      "extraction": {
+        "title": "Jeff and Celine",
+        "tags": ["jeff", "celine"],
+        "mentions": [
+          {"name": "Jeff", "kind": "Person", "surface_text": "Jeff"},
+          {"name": "Celine", "kind": "Person", "surface_text": "Celine"}
+        ],
+        "facts": [
+          {"predicate": "spouse", "qualifier": "", "kind": "relationship", "statement": "Jeff's spouse is Celine.", "value_json": null, "assertion": "asserted", "entity_ref": "Jeff", "object_entity_ref": "Celine", "temporal": {"phrase": "", "resolved_start": "2026-05-01T00:00:00-06:00", "resolved_end": null, "precision": "day"}, "domain": "general", "confidence": 0.95}
+        ],
+        "temporal_tokens": []
+      }
+    },
+    {
+      "domain": "general",
+      "created_at": "2026-06-01T12:00:00-06:00",
+      "body": "Jeff married Dana.",
+      "extraction": {
+        "title": "Jeff and Dana",
+        "tags": ["jeff", "dana"],
+        "mentions": [
+          {"name": "Jeff", "kind": "Person", "surface_text": "Jeff"},
+          {"name": "Dana", "kind": "Person", "surface_text": "Dana"}
+        ],
+        "facts": [
+          {"predicate": "spouse", "qualifier": "", "kind": "relationship", "statement": "Jeff's spouse is Dana.", "value_json": null, "assertion": "asserted", "entity_ref": "Jeff", "object_entity_ref": "Dana", "temporal": {"phrase": "", "resolved_start": "2026-06-01T00:00:00-06:00", "resolved_end": null, "precision": "day"}, "domain": "general", "confidence": 0.95}
+        ],
+        "temporal_tokens": []
+      }
+    }
+  ],
+  "expect": {
+    "facts": [
+      {"entity": "Jeff", "predicate": "spouse", "value_contains": "Celine", "status": "superseded", "chained": true},
+      {"entity": "Jeff", "predicate": "spouse", "value_contains": "Dana", "status": "active", "chained": false},
+      {"entity": "Celine", "predicate": "spouse", "value_contains": "Jeff", "status": "superseded", "chained": true},
+      {"entity": "Dana", "predicate": "spouse", "value_contains": "Jeff", "status": "active", "chained": false}
+    ],
+    "absent_facts": [
+      {"entity": "Celine", "predicate": "spouse", "status": "active"}
+    ]
+  }
+}

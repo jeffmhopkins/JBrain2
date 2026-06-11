@@ -195,6 +195,62 @@ async def test_scoped_writer_cannot_smuggle_analysis_rows_across_domains(
             )
 
 
+async def test_derived_inverse_edge_obeys_domain_firewall(
+    maker: async_sessionmaker,
+) -> None:
+    """A derived inverse edge inherits its SOURCE fact's domain, so a
+    health-domain reciprocal is invisible to a general-only scope (Issue 2:
+    the derived row is a security-firewalled fact like any other)."""
+    ids = await seed_health_graph(maker)
+    derived = str(uuid.uuid4())
+    async with scoped_session(maker, OWNER) as s:
+        # The seeded fact is the source; its reciprocal lands on entity_b,
+        # carrying the source's health domain via derived_from_fact_id.
+        await s.execute(
+            text(
+                "INSERT INTO app.facts"
+                " (id, entity_id, predicate, kind, statement, assertion, reported_at,"
+                "  object_entity_id, derived_from_fact_id, note_id, extractor,"
+                "  prompt_version, domain_code)"
+                " VALUES (:id, :eid, 'treatedBy', 'relationship',"
+                "  'derived reciprocal', 'asserted', now(), :obj, :src, :nid,"
+                "  'fake-model', 'v1', 'health')"
+            ),
+            {
+                "id": derived,
+                "eid": ids["entity_b"],
+                "obj": ids["entity"],
+                "src": ids["fact"],
+                "nid": ids["note"],
+            },
+        )
+    assert await count_visible(maker, HEALTH_ONLY, "facts", derived) == 1
+    assert await count_visible(maker, OWNER, "facts", derived) == 1
+    assert await count_visible(maker, GENERAL_ONLY, "facts", derived) == 0
+    assert await count_visible(maker, UNSCOPED, "facts", derived) == 0
+
+
+async def test_inverse_proposal_review_item_obeys_domain_firewall(
+    maker: async_sessionmaker,
+) -> None:
+    """A cross-subject inverse is PROPOSED, never written: the proposal is an
+    inverse_proposal review item carrying the SOURCE fact's domain, so it sits
+    behind the same firewall (Issue 2, Phase D — the cross-subject gate)."""
+    ids = await seed_health_graph(maker)
+    proposal = str(uuid.uuid4())
+    async with scoped_session(maker, OWNER) as s:
+        await s.execute(
+            text(
+                "INSERT INTO app.review_items (id, kind, payload, domain_code)"
+                " VALUES (:id, 'inverse_proposal', :payload, 'health')"
+            ),
+            {"id": proposal, "payload": '{"source_fact_id": "' + ids["fact"] + '"}'},
+        )
+    assert await count_visible(maker, HEALTH_ONLY, "review_items", proposal) == 1
+    assert await count_visible(maker, GENERAL_ONLY, "review_items", proposal) == 0
+    assert await count_visible(maker, UNSCOPED, "review_items", proposal) == 0
+
+
 async def test_supersession_chain_walks_and_preserves_history(
     maker: async_sessionmaker,
 ) -> None:
