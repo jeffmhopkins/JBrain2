@@ -321,8 +321,8 @@ def test_system_prompt_v5_teaches_object_person_and_backward_temporal() -> None:
     assert "last night" in SYSTEM_PROMPT and "PRIOR calendar day" in SYSTEM_PROMPT
 
 
-def test_prompt_version_bumped_to_v7() -> None:
-    assert PROMPT_VERSION == "note-extract-v7"
+def test_prompt_version_bumped_to_v8() -> None:
+    assert PROMPT_VERSION == "note-extract-v8"
 
 
 def test_user_prompt_carries_anchor_with_timezone_domain_and_content() -> None:

@@ -38,6 +38,12 @@ export function factValue(fact: FactOut): string {
       }
       return `${String(o.value)}${typeof o.unit === "string" ? ` ${o.unit}` : ""}`;
     }
+    // Common single-datum shapes the extractor emits: a name ({"name": "Bella"},
+    // {"name": "Jeff Hopkins"}) or a place ({"place": "Denver"}). Without this a
+    // populated value_json still fell through to the whole statement sentence.
+    for (const key of ["name", "place"] as const) {
+      if (typeof o[key] === "string") return o[key] as string;
+    }
   }
   return fact.statement;
 }

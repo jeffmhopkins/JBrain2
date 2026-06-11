@@ -1,0 +1,32 @@
+{
+  "name": "canonical_name projects from name facts, not the first surface form",
+  "description": "The Sammy bug: an entity first mentioned by a nickname must not stay displayed as that nickname. After the note's facts land, reproject_canonical_name (wired into the pipeline) recomputes canonical_name from the entity's name.* facts by the Person display_name precedence (preferred > given+family > legal > name). name.nickname is NOT in that precedence, so the legal name wins and the entity displays as 'Celine Kitina Hopkins', not 'Sammy'. Exercises slice 2 (projection) + slice 3 (the model puts the bare name in value_json).",
+  "steps": [
+    {
+      "domain": "general",
+      "created_at": "2026-06-11T12:00:00-06:00",
+      "body": "My neighbor Sammy — her legal name is Celine Kitina Hopkins; her friends all call her Sammy.",
+      "extraction": {
+        "title": "Neighbor Sammy",
+        "tags": ["neighbor", "names"],
+        "mentions": [
+          {"name": "Sammy", "kind": "Person", "surface_text": "Sammy"}
+        ],
+        "facts": [
+          {"predicate": "name.legal", "qualifier": "", "kind": "attribute", "statement": "Sammy's legal name is Celine Kitina Hopkins.", "value_json": {"value": "Celine Kitina Hopkins"}, "assertion": "asserted", "entity_ref": "Sammy", "object_entity_ref": null, "temporal": null, "domain": "general", "confidence": 1.0},
+          {"predicate": "name.nickname", "qualifier": "friends", "kind": "attribute", "statement": "Sammy's friends call her Sammy.", "value_json": {"value": "Sammy"}, "assertion": "asserted", "entity_ref": "Sammy", "object_entity_ref": null, "temporal": null, "domain": "general", "confidence": 1.0}
+        ],
+        "temporal_tokens": []
+      }
+    }
+  ],
+  "expect": {
+    "facts": [
+      {"entity": "Celine Kitina Hopkins", "predicate": "name.legal", "kind": "attribute", "value_contains": "Celine Kitina Hopkins"},
+      {"entity": "Celine Kitina Hopkins", "predicate": "name.nickname", "qualifier": "friends", "value_contains": "Sammy"}
+    ],
+    "entities": [
+      {"name": "Celine Kitina Hopkins", "kind": "Person", "status": "provisional"}
+    ]
+  }
+}

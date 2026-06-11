@@ -86,4 +86,11 @@ describe("fmtQuantity / factValue imperial display", () => {
     expect(factValue(fact({ systolic: 128, diastolic: 82, unit: "mmHg" }))).toBe("128/82 mmHg");
     expect(factValue(fact(null))).toBe("Jeff is 6'4\" tall.");
   });
+
+  it("name and place shapes render their datum, not the statement sentence", () => {
+    // The bug-3 fix: a populated value_json no longer falls back to prose.
+    expect(factValue(fact({ value: "Jeffrey Mark Hopkins" }))).toBe("Jeffrey Mark Hopkins");
+    expect(factValue(fact({ name: "Bella", species: "dog" }))).toBe("Bella");
+    expect(factValue(fact({ place: "Denver" }))).toBe("Denver");
+  });
 });
