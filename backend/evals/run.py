@@ -65,7 +65,14 @@ class CaseResult:
         return self.error is None and all(ok for _, ok, _ in self.checks)
 
 
-def _dump(parsed: Any) -> str:
+def _local_date(dt: datetime, anchor: datetime) -> str:
+    """The calendar date the instant falls on in the note's LOCAL timezone —
+    what the app shows. An absolute date stored as midnight-UTC is the prior
+    local day at a western offset, so a raw UTC .date() would mis-read it."""
+    return dt.astimezone(anchor.tzinfo).date().isoformat()
+
+
+def _dump(parsed: Any, anchor: datetime) -> str:
     """What the model actually returned, compact enough to paste — the thing I
     read to iterate the prompt when a case fails."""
     mentions = ", ".join(f"{m.name}:{m.kind}" for m in parsed.mentions) or "(none)"
@@ -75,11 +82,11 @@ def _dump(parsed: Any) -> str:
         if f.object_entity_ref
     ]
     temporal = [
-        f"{f.temporal.phrase!r}={f.temporal.resolved_start.date().isoformat()}"
+        f"{f.temporal.phrase!r}={_local_date(f.temporal.resolved_start, anchor)}"
         for f in parsed.facts
         if f.temporal and f.temporal.phrase and f.temporal.resolved_start
     ] + [
-        f"{t.phrase!r}={t.resolved_start.date().isoformat()}"
+        f"{t.phrase!r}={_local_date(t.resolved_start, anchor)}"
         for t in parsed.tokens
         if t.phrase and t.resolved_start
     ]
@@ -91,8 +98,8 @@ def _dump(parsed: Any) -> str:
     return "\n".join(lines)
 
 
-def _score(case: dict[str, Any], parsed: Any) -> CaseResult:
-    res = CaseResult(name=case["name"], dump=_dump(parsed))
+def _score(case: dict[str, Any], parsed: Any, anchor: datetime) -> CaseResult:
+    res = CaseResult(name=case["name"], dump=_dump(parsed, anchor))
     expect = case.get("expect", {})
     mention_names = [m.name for m in parsed.mentions]
 
@@ -123,7 +130,8 @@ def _score(case: dict[str, Any], parsed: Any) -> CaseResult:
             for tok in parsed.tokens
             if tok.phrase and _overlaps(phrase, tok.phrase)
         ]
-        got = {s.date().isoformat() for s in starts if s is not None}
+        # Compare in the note's LOCAL tz, exactly as the app renders the date.
+        got = {_local_date(s, anchor) for s in starts if s is not None}
         res.checks.append((f"temporal:{phrase}={want}", want in got, ""))
 
     return res
@@ -150,7 +158,7 @@ async def _run(cases: list[dict[str, Any]]) -> tuple[list[CaseResult], str]:
                 json_schema=EXTRACTION_SCHEMA,
                 max_tokens=EXTRACT_MAX_TOKENS,
             )
-            results.append(_score(case, parse_extraction(out.parsed, anchor=anchor)))
+            results.append(_score(case, parse_extraction(out.parsed, anchor=anchor), anchor))
         except Exception as exc:  # a live call can fail many ways; report, don't crash the run
             results.append(CaseResult(name=case["name"], error=f"{type(exc).__name__}: {exc}"))
     return results, f"{provider}:{model}"
