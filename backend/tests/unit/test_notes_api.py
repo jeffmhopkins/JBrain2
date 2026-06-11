@@ -15,7 +15,7 @@ from jbrain.auth import service as auth_service
 from jbrain.config import Settings
 from jbrain.db.session import SessionContext
 from jbrain.main import create_app
-from jbrain.notes.service import AttachmentInfo, NoteInfo, NoteUpdate, UnknownDomain
+from jbrain.notes.service import AttachmentInfo, ExtractInfo, NoteInfo, NoteUpdate, UnknownDomain
 from jbrain.storage import FsBlobStore
 from tests.unit.fakes import FakeAuthRepo
 
@@ -25,15 +25,23 @@ KNOWN_DOMAINS = {"general", "health", "finance", "location"}
 @dataclass
 class FakeJobQueue:
     enqueued: list[tuple[str, dict]] = field(default_factory=list)
+    # (kind, payload_field, value) triples the queue reports as in flight.
+    active: set[tuple[str, str, str]] = field(default_factory=set)
 
     async def enqueue(self, ctx: SessionContext, kind: str, payload: dict) -> str:
         self.enqueued.append((kind, payload))
         return str(uuid.uuid4())
 
+    async def has_active(
+        self, ctx: SessionContext, kind: str, *, payload_field: str, value: str
+    ) -> bool:
+        return (kind, payload_field, value) in self.active
+
 
 @dataclass
 class FakeNotesRepo:
     notes: list[NoteInfo] = field(default_factory=list)
+    extracts: dict[str, list[ExtractInfo]] = field(default_factory=dict)
 
     async def create_note(
         self,
@@ -158,6 +166,13 @@ class FakeNotesRepo:
                     n.attachments.remove(a)
                     return n.id
         return None
+
+    async def list_extracts(
+        self, ctx: SessionContext, attachment_id: str
+    ) -> list[ExtractInfo] | None:
+        if await self.get_attachment(ctx, attachment_id) is None:
+            return None
+        return self.extracts.get(attachment_id, [])
 
 
 @pytest.fixture
@@ -328,6 +343,24 @@ def test_note_responses_expose_ingest_state(
     assert listed["ingest_state"] == "pending"
 
 
+def test_note_responses_expose_analyzed(
+    client: tuple[TestClient, FakeNotesRepo, FakeJobQueue],
+) -> None:
+    c, repo, _ = client
+    # Fresh notes can't have an analysis row yet: create + list say so.
+    created = c.post("/api/notes", json={"client_id": "an1", "body": "analyze me"}).json()
+    assert created["analyzed"] is False
+    assert c.get("/api/notes").json()["notes"][0]["analyzed"] is False
+
+    # Once the analyze_note job lands its note_analysis row, every read path
+    # (list, single note, PATCH echo) carries analyzed=true.
+    repo.notes[0] = dataclasses.replace(repo.notes[0], analyzed=True)
+    assert c.get("/api/notes").json()["notes"][0]["analyzed"] is True
+    assert c.get(f"/api/notes/{created['id']}").json()["analyzed"] is True
+    patched = c.patch(f"/api/notes/{created['id']}", json={"body": "edited"}).json()
+    assert patched["analyzed"] is True
+
+
 def test_create_note_enqueues_ingestion_once(
     client: tuple[TestClient, FakeNotesRepo, FakeJobQueue],
 ) -> None:
@@ -488,3 +521,70 @@ def test_failed_attachment_upload_does_not_enqueue(
     )
     assert resp.status_code == 404
     assert jobs.enqueued == []
+
+
+def _upload_image(c: TestClient, client_id: str = "img1") -> tuple[str, str]:
+    note = c.post("/api/notes", json={"client_id": client_id, "body": "photo"}).json()
+    att = c.post(
+        f"/api/notes/{note['id']}/attachments",
+        files={"file": ("receipt.png", b"\x89PNG fake", "image/png")},
+    ).json()
+    return note["id"], att["id"]
+
+
+def test_extracts_endpoint_serves_the_vision_cache(
+    client: tuple[TestClient, FakeNotesRepo, FakeJobQueue],
+) -> None:
+    c, repo, _ = client
+    _, att_id = _upload_image(c)
+    # Empty cache reads as an empty list, not a 404 — the row exists.
+    assert c.get(f"/api/attachments/{att_id}/extracts").json() == {"extracts": []}
+
+    when = datetime(2026, 6, 11, 9, 0, tzinfo=UTC)
+    repo.extracts[att_id] = [
+        ExtractInfo(
+            kind="ocr", text="Total: $41.20", tool="xai:grok-4.3", confidence=0.7, created_at=when
+        ),
+        ExtractInfo(
+            kind="caption",
+            text="A crumpled receipt.",
+            tool="xai:grok-4.3",
+            confidence=0.6,
+            created_at=when,
+        ),
+    ]
+    out = c.get(f"/api/attachments/{att_id}/extracts").json()
+    assert [(e["kind"], e["text"], e["tool"], e["confidence"]) for e in out["extracts"]] == [
+        ("ocr", "Total: $41.20", "xai:grok-4.3", 0.7),
+        ("caption", "A crumpled receipt.", "xai:grok-4.3", 0.6),
+    ]
+    assert out["extracts"][0]["created_at"].startswith("2026-06-11")
+
+    assert c.get(f"/api/attachments/{uuid.uuid4()}/extracts").status_code == 404
+
+
+def test_analyze_attachment_enqueues_a_full_mode_job(
+    client: tuple[TestClient, FakeNotesRepo, FakeJobQueue],
+) -> None:
+    c, _, jobs = client
+    _, att_id = _upload_image(c)
+    jobs.enqueued.clear()
+
+    resp = c.post(f"/api/attachments/{att_id}/analyze")
+    assert resp.status_code == 202
+    assert resp.json()["job_id"]
+    # The override rides the payload: full analysis regardless of the setting.
+    assert jobs.enqueued == [("ocr_attachment", {"attachment_id": att_id, "mode": "full"})]
+
+
+def test_analyze_attachment_404_unknown_409_in_flight(
+    client: tuple[TestClient, FakeNotesRepo, FakeJobQueue],
+) -> None:
+    c, _, jobs = client
+    assert c.post(f"/api/attachments/{uuid.uuid4()}/analyze").status_code == 404
+
+    _, att_id = _upload_image(c)
+    jobs.active.add(("ocr_attachment", "attachment_id", att_id))
+    jobs.enqueued.clear()
+    assert c.post(f"/api/attachments/{att_id}/analyze").status_code == 409
+    assert jobs.enqueued == []  # the duplicate guard never double-enqueues

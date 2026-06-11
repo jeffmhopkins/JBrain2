@@ -1,10 +1,21 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import BigInteger, DateTime, Double, Float, ForeignKey, Integer, Text, func
+from sqlalchemy import (
+    BigInteger,
+    DateTime,
+    Double,
+    Float,
+    ForeignKey,
+    Integer,
+    Text,
+    func,
+    select,
+)
 from sqlalchemy.dialects.postgresql import UUID
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, column_property, mapped_column, relationship
 
+from jbrain.models.analysis import NoteAnalysis
 from jbrain.models.core import Base
 
 
@@ -35,8 +46,37 @@ class Note(Base):
     # chunks/embeddings are untouched, so the note stays searchable. NULL =
     # visible; an instant = when it was hidden. Distinct from deleted_at.
     hidden_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Whether note.extract has produced this note's note_analysis row — the
+    # API's "analysis done" signal for the lifecycle chip. A correlated EXISTS
+    # (the has_extracts pattern) so list/get serialization needs no second
+    # query; the row only appears when the analyze_note job commits.
+    analyzed: Mapped[bool] = column_property(
+        select(NoteAnalysis.note_id).where(NoteAnalysis.note_id == id).exists()
+    )
 
     attachments: Mapped[list["Attachment"]] = relationship(lazy="selectin")
+
+
+class AttachmentExtract(Base):
+    """One vision-backend product for an attachment (migration 0010): OCR and
+    caption are separate products (docs/ANALYSIS.md "Attachments"). Ingest
+    reads these as a pure cache; only the ocr_attachment job writes them, and
+    re-OCR is delete + insert (the chunks pattern)."""
+
+    __tablename__ = "attachment_extracts"
+    __table_args__ = {"schema": "app"}
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    attachment_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("app.attachments.id")
+    )
+    kind: Mapped[str] = mapped_column(Text)  # 'ocr' | 'caption'
+    tool: Mapped[str] = mapped_column(Text)  # provider:model provenance
+    text: Mapped[str] = mapped_column(Text)
+    confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    source_anchor: Mapped[str | None] = mapped_column(Text, nullable=True)
+    domain_code: Mapped[str] = mapped_column(Text, ForeignKey("app.domains.code"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class Attachment(Base):
@@ -51,6 +91,22 @@ class Attachment(Base):
     media_type: Mapped[str] = mapped_column(Text)
     size_bytes: Mapped[int] = mapped_column(BigInteger)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    # Whether any vision extract exists — the API's OCR-status signal. A
+    # correlated EXISTS so list/get serialization needs no second query.
+    has_extracts: Mapped[bool] = column_property(
+        select(AttachmentExtract.id).where(AttachmentExtract.attachment_id == id).exists()
+    )
+    # Whether a non-empty description (kind 'caption') exists — drives the
+    # "text + description" chip without the client fetching extracts.
+    has_description: Mapped[bool] = column_property(
+        select(AttachmentExtract.id)
+        .where(
+            AttachmentExtract.attachment_id == id,
+            AttachmentExtract.kind == "caption",
+            AttachmentExtract.text != "",
+        )
+        .exists()
+    )
 
 
 class Chunk(Base):

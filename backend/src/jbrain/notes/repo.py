@@ -9,8 +9,14 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from jbrain.analysis.purge import purge_note_artifacts
 from jbrain.db.session import SessionContext, scoped_session
-from jbrain.models.notes import Attachment, Chunk, Note
-from jbrain.notes.service import AttachmentInfo, NoteInfo, NoteUpdate, UnknownDomain
+from jbrain.models.notes import Attachment, AttachmentExtract, Chunk, Note
+from jbrain.notes.service import (
+    AttachmentInfo,
+    ExtractInfo,
+    NoteInfo,
+    NoteUpdate,
+    UnknownDomain,
+)
 
 
 def _attachment_info(a: Attachment) -> AttachmentInfo:
@@ -20,6 +26,8 @@ def _attachment_info(a: Attachment) -> AttachmentInfo:
         media_type=a.media_type,
         size_bytes=a.size_bytes,
         sha256=a.sha256,
+        has_extracts=a.has_extracts,
+        has_description=a.has_description,
     )
 
 
@@ -34,6 +42,7 @@ def _note_info(n: Note) -> NoteInfo:
         tz_offset_minutes=n.tz_offset_minutes,
         ingest_state=n.ingest_state,
         hidden=n.hidden_at is not None,
+        analyzed=n.analyzed,
         attachments=[_attachment_info(a) for a in n.attachments],
         latitude=n.latitude,
         longitude=n.longitude,
@@ -240,3 +249,35 @@ class SqlNotesRepo:
                 await session.execute(select(Attachment).where(Attachment.id == attachment_id))
             ).scalar_one_or_none()
             return None if row is None else _attachment_info(row)
+
+    async def list_extracts(
+        self, ctx: SessionContext, attachment_id: str
+    ) -> list[ExtractInfo] | None:
+        async with scoped_session(self._maker, ctx) as session:
+            att = (
+                await session.execute(select(Attachment.id).where(Attachment.id == attachment_id))
+            ).scalar_one_or_none()
+            if att is None:
+                return None
+            rows = (
+                (
+                    await session.execute(
+                        select(AttachmentExtract)
+                        .where(AttachmentExtract.attachment_id == attachment_id)
+                        # ocr first, then caption — the expansion's reading order.
+                        .order_by(AttachmentExtract.kind.desc(), AttachmentExtract.created_at)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            return [
+                ExtractInfo(
+                    kind=r.kind,
+                    text=r.text,
+                    tool=r.tool,
+                    confidence=r.confidence,
+                    created_at=r.created_at,
+                )
+                for r in rows
+            ]

@@ -246,7 +246,15 @@ async def test_analyze_note_lands_everything(
     )
     assert "analyze_note" in {j.kind for j in jobs}
 
+    # The API's lifecycle flag rides the note row as a correlated EXISTS:
+    # false until the analysis header lands, true right after.
+    note = await SqlNotesRepo(maker).get_note(OWNER, note_id)
+    assert note is not None and note.analyzed is False
+
     await analyzer(maker, [json.dumps(extraction_payload())]).analyze_note({"note_id": note_id})
+
+    note = await SqlNotesRepo(maker).get_note(OWNER, note_id)
+    assert note is not None and note.analyzed is True
 
     header = (
         await rows(

@@ -12,6 +12,10 @@ export interface StreamAttachment {
   filename: string;
   mediaType: string;
   sizeBytes: number;
+  /** Images: true once OCR/caption text is cached server-side. */
+  hasExtracts: boolean;
+  /** Images: true once a non-empty description is cached (full analysis). */
+  hasDescription: boolean;
 }
 
 export interface StreamItem {
@@ -24,6 +28,8 @@ export interface StreamItem {
   createdAt: Date;
   /** pending/processing → indexing chip, failed → failure chip; null = outbox row. */
   ingestState: string | null;
+  /** True once the analysis pipeline finished — the lifecycle chip's end. */
+  analyzed: boolean;
   attachments: StreamAttachment[];
   pending: boolean;
   /** Hidden from the stream server-side; outbox rows are never hidden. */
@@ -71,11 +77,14 @@ function serverItem(note: NoteOut): StreamItem {
     body: note.body,
     createdAt: new Date(note.created_at),
     ingestState: note.ingest_state,
+    analyzed: note.analyzed,
     attachments: note.attachments.map((a: AttachmentOut) => ({
       id: a.id,
       filename: a.filename,
       mediaType: a.media_type,
       sizeBytes: a.size_bytes,
+      hasExtracts: a.has_extracts,
+      hasDescription: a.has_description,
     })),
     pending: false,
     hidden: note.hidden,
@@ -91,11 +100,14 @@ function pendingItem(note: PendingNote): StreamItem {
     body: note.body,
     createdAt: new Date(note.created_at),
     ingestState: null,
+    analyzed: false, // analysis can only have run server-side
     attachments: note.attachments.map((a) => ({
       id: null,
       filename: a.filename,
       mediaType: a.media_type,
       sizeBytes: a.blob.size,
+      hasExtracts: false, // OCR can only have run server-side
+      hasDescription: false,
     })),
     pending: true,
     hidden: false,
@@ -228,6 +240,8 @@ export function useNotes(enabled: boolean, store?: OutboxStore): NotesController
         filename: out.filename,
         mediaType: out.media_type,
         sizeBytes: out.size_bytes,
+        hasExtracts: out.has_extracts,
+        hasDescription: out.has_description,
       };
     },
     [sync],

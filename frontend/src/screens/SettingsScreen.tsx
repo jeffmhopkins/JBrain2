@@ -1,4 +1,6 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import type { ImageAnalysisMode } from "../api/client";
+import { api } from "../api/client";
 import { FONT_SCALES, type FontScale, getFontScale, setFontScale } from "../fontScale";
 import { isLocationCaptureEnabled, setLocationCaptureEnabled } from "../location";
 import { type ThemePref, getThemePref, setThemePref } from "../theme";
@@ -7,6 +9,11 @@ const THEME_OPTIONS: { value: ThemePref; label: string }[] = [
   { value: "system", label: "System" },
   { value: "dark", label: "Dark" },
   { value: "light", label: "Light" },
+];
+
+const IMAGE_ANALYSIS_OPTIONS: { value: ImageAnalysisMode; label: string }[] = [
+  { value: "ocr", label: "ocr only" },
+  { value: "full", label: "full analysis" },
 ];
 
 interface SettingsScreenProps {
@@ -20,10 +27,34 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
   const [locationOn, setLocationOn] = useState<boolean>(isLocationCaptureEnabled);
   // Inline confirm per DESIGN.md — no window.confirm for destructive acts.
   const [confirmingLogout, setConfirmingLogout] = useState(false);
+  // Image analysis is the FIRST server-synced setting (GET/PUT /api/settings
+  // over app.settings): the worker reads it, so it must follow the account.
+  // Theme and text size deliberately stay device-local for now.
+  const [imageMode, setImageMode] = useState<ImageAnalysisMode | null>(null);
+  useEffect(() => {
+    let stale = false;
+    api
+      .getSettings()
+      .then((s) => {
+        if (!stale) setImageMode(s.image_analysis_mode);
+      })
+      .catch(() => {
+        // Unreachable backend: show the default; a tap still tries to save.
+        if (!stale) setImageMode("full");
+      });
+    return () => {
+      stale = true;
+    };
+  }, []);
 
   function pick(pref: ThemePref) {
     setThemePref(pref);
     setTheme(pref);
+  }
+
+  function pickImageMode(mode: ImageAnalysisMode) {
+    setImageMode(mode); // optimistic — the sync dot reports trouble
+    void api.updateSettings({ image_analysis_mode: mode }).catch(() => {});
   }
 
   return (
@@ -60,6 +91,28 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
               }}
             >
               {scale}%
+            </button>
+          ))}
+        </div>
+      </section>
+
+      <section className="settings-card">
+        <h2 className="settings-label">Image analysis</h2>
+        <p className="settings-meta">
+          how much a vision model reads from attached images — ocr only transcribes the text
+          verbatim; full analysis adds a salient description the fact pipeline mines. either way,
+          capture never waits — vision runs after sync.
+        </p>
+        <div className="theme-picker" aria-label="Image analysis">
+          {IMAGE_ANALYSIS_OPTIONS.map((opt) => (
+            <button
+              key={opt.value}
+              type="button"
+              aria-pressed={imageMode === opt.value}
+              className={`seg${imageMode === opt.value ? " seg-on" : ""}`}
+              onClick={() => pickImageMode(opt.value)}
+            >
+              {opt.label}
             </button>
           ))}
         </div>

@@ -18,6 +18,7 @@ class FakeQueue:
         self.permanent: list[str] = []
         self.backfills = 0
         self.embed_backfills = 0
+        self.analyze_backfills = 0
         self.purge_backfills = 0
         self.backfill_error: Exception | None = None
 
@@ -45,6 +46,10 @@ class FakeQueue:
         self.embed_backfills += 1
         return 0
 
+    async def backfill_unanalyzed_notes(self, maker: Any, ctx: Any) -> int:
+        self.analyze_backfills += 1
+        return 0
+
 
 def install(monkeypatch: pytest.MonkeyPatch, fake: FakeQueue) -> None:
     for name in (
@@ -53,6 +58,7 @@ def install(monkeypatch: pytest.MonkeyPatch, fake: FakeQueue) -> None:
         "fail",
         "backfill_pending_notes",
         "backfill_unembedded_notes",
+        "backfill_unanalyzed_notes",
     ):
         monkeypatch.setattr(worker.queue, name, getattr(fake, name))
 
@@ -146,7 +152,10 @@ async def test_run_loop_backfills_once_then_polls(monkeypatch: pytest.MonkeyPatc
         await worker.run_loop(None, {"ingest_note": handler})  # type: ignore[arg-type]
     assert done == ["n1"]
     assert fake.backfills == 1
-    assert fake.embed_backfills == 1  # embed backfill rides the same startup pass
+    # Embed/analyze/purge backfills all ride the same once-per-boot pass.
+    assert fake.embed_backfills == 1
+    assert fake.analyze_backfills == 1
+    assert fake.purge_backfills == 1
 
 
 async def test_run_loop_survives_transient_errors_and_retries_backfill(
@@ -186,7 +195,7 @@ async def test_run_registers_all_job_handlers(
     monkeypatch.setattr(worker, "run_loop", capture)
     with pytest.raises(asyncio.CancelledError):
         await worker.run()
-    assert set(captured) == {"ingest_note", "embed_note", "analyze_note"}
+    assert set(captured) == {"ingest_note", "embed_note", "analyze_note", "ocr_attachment"}
 
 
 async def test_run_disposes_engine(monkeypatch: pytest.MonkeyPatch) -> None:

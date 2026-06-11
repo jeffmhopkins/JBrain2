@@ -2,14 +2,20 @@
 
 Every attachment routes by media type to a registered extractor; every
 extractor implements the same protocol and returns provenanced segments, so
-future backends (OCR, captioning, transcription — Phase 3, they need the LLM
-adapter) are registry entries, not new code paths. Media types with no
-registered backend extract to nothing rather than failing the pipeline.
+future backends (transcription, local Tesseract) are registry entries, not
+new code paths. Media types with no registered backend extract to nothing
+rather than failing the pipeline.
+
+The image chain is the exception to the bytes-in interface: vision OCR and
+captioning run in the async ocr_attachment job (capture-to-searchable never
+waits on a cloud LLM), and ingest consumes their cached products via
+image_segments — a pure read over app.attachment_extracts, no LLM here.
 
 Extractors are synchronous CPU work; the pipeline runs them off the event
 loop via asyncio.to_thread.
 """
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Protocol, cast
 
@@ -49,8 +55,11 @@ class TextExtractor:
 class PdfTextLayerExtractor:
     """application/pdf: per-page text layer via PyMuPDF.
 
-    Pages without a text layer (scans) produce no segment this phase — the
-    vision/OCR backend that would handle them arrives in Phase 3.
+    TODO(vision): pages without a text layer (scans) still produce no
+    segment. The spec routes them through the image chain (docs/ANALYSIS.md
+    "Attachments": pages without one render to images -> image chain); doing
+    that here means per-page rows in the attachment_extracts cache and a
+    page-aware ocr_attachment job — a follow-up, not a registry tweak.
     """
 
     def extract(self, data: bytes) -> list[Segment]:
@@ -64,6 +73,31 @@ class PdfTextLayerExtractor:
                         Segment(kind=KIND_TEXT_LAYER, text=page_text, anchor=f"page {number}")
                     )
         return segments
+
+
+@dataclass(frozen=True)
+class CachedExtract:
+    """One app.attachment_extracts row, as the image chain consumes it."""
+
+    kind: str
+    text: str
+    anchor: str | None
+    confidence: float
+
+
+def image_segments(extracts: Iterable[CachedExtract]) -> list[Segment]:
+    """The image chain: provenanced segments from the vision-extract cache.
+
+    Pure cache read — the ocr_attachment job is the only thing that ever
+    calls a vision model. An empty-text row (an image with no legible text)
+    yields no segment, but its presence in the cache is still what keeps
+    re-ingest from re-enqueueing OCR.
+    """
+    return [
+        Segment(kind=e.kind, text=e.text.strip(), anchor=e.anchor, confidence=e.confidence)
+        for e in extracts
+        if e.text.strip()
+    ]
 
 
 class ExtractorRegistry:

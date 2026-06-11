@@ -64,6 +64,26 @@ export interface AttachmentOut {
   filename: string;
   media_type: string;
   size_bytes: number;
+  /** True once the vision pipeline cached OCR/caption text for this file. */
+  has_extracts: boolean;
+  /** True once a non-empty description is cached (full image analysis). */
+  has_description: boolean;
+}
+
+/** One vision-cache row, served lazily for the manifest expansion. */
+export interface AttachmentExtract {
+  kind: string;
+  text: string;
+  tool: string;
+  confidence: number | null;
+  created_at: string;
+}
+
+export type ImageAnalysisMode = "full" | "ocr";
+
+/** Server-synced user settings (extensible object; image analysis first). */
+export interface AppSettings {
+  image_analysis_mode: ImageAnalysisMode;
 }
 
 export interface NoteOut {
@@ -75,6 +95,8 @@ export interface NoteOut {
   created_at: string;
   tz_offset_minutes: number | null;
   ingest_state: string;
+  /** True once the analyze_note job has written the note_analysis row. */
+  analyzed: boolean;
   /** Hidden from the home stream (still searchable); toggled via hide/unhide. */
   hidden: boolean;
   attachments: AttachmentOut[];
@@ -444,6 +466,29 @@ export const api = {
 
   async deleteAttachment(id: string): Promise<void> {
     await request(`/api/attachments/${encodeURIComponent(id)}`, { method: "DELETE" });
+  },
+
+  // Fetched on first expand of a manifest row — never inlined into notes.
+  async attachmentExtracts(id: string): Promise<AttachmentExtract[]> {
+    const response = await request(`/api/attachments/${encodeURIComponent(id)}/extracts`);
+    return ((await response.json()) as { extracts: AttachmentExtract[] }).extracts;
+  },
+
+  // On-demand full analysis for one attachment regardless of the global
+  // image-analysis mode (also the re-run path); 409 while one is in flight.
+  async analyzeAttachment(id: string): Promise<void> {
+    await request(`/api/attachments/${encodeURIComponent(id)}/analyze`, { method: "POST" });
+  },
+
+  // The first server-synced settings (theme/text-size stay device-local).
+  async getSettings(): Promise<AppSettings> {
+    const response = await request("/api/settings");
+    return (await response.json()) as AppSettings;
+  },
+
+  async updateSettings(patch: Partial<AppSettings>): Promise<AppSettings> {
+    const response = await request("/api/settings", jsonInit("PUT", patch));
+    return (await response.json()) as AppSettings;
   },
 
   async noteAnalysis(noteId: string): Promise<NoteAnalysis> {

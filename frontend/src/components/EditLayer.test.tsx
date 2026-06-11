@@ -16,6 +16,8 @@ const NOOPS = {
     filename: "f.txt",
     mediaType: "text/plain",
     sizeBytes: 1,
+    hasExtracts: false,
+    hasDescription: false,
   })),
   onRemoveAttachment: vi.fn(async () => undefined),
 };
@@ -63,7 +65,14 @@ describe("EditLayer (focused writer)", () => {
         editing={{
           ...NOTE,
           attachments: [
-            { id: "a9", filename: "lab.pdf", mediaType: "application/pdf", sizeBytes: 9 },
+            {
+              id: "a9",
+              filename: "lab.pdf",
+              mediaType: "application/pdf",
+              sizeBytes: 9,
+              hasExtracts: false,
+              hasDescription: false,
+            },
           ],
         }}
         onCancel={vi.fn()}
