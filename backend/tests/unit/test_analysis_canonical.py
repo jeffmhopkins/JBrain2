@@ -3,8 +3,22 @@ reconciliation with the registry's canonical name.* family."""
 
 from __future__ import annotations
 
-from jbrain.analysis.canonical import name_fact_value, project_display_name
+from jbrain.analysis.canonical import (
+    _is_animal_name_fact,
+    name_fact_value,
+    project_display_name,
+)
 from jbrain.analysis.entities import declared_alias
+
+
+def test_animal_name_fact_detected_by_species_key() -> None:
+    # The pet decomposition shape carries species; that is the Animal signal.
+    assert _is_animal_name_fact("name", {"name": "Ricky", "species": "rat"}) is True
+    assert _is_animal_name_fact("name", '{"name": "R", "species": "rat"}') is True  # jsonb as str
+    # Not an animal: no species, a non-name predicate, or a plain person name.
+    assert _is_animal_name_fact("name", {"name": "Bella"}) is False
+    assert _is_animal_name_fact("name.legal", {"value": "Celine"}) is False
+    assert _is_animal_name_fact("birthDate", {"species": "rat"}) is False
 
 
 def test_name_fact_value_reads_the_whole_name_family() -> None:

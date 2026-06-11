@@ -51,6 +51,20 @@ def name_fact_value(predicate: str, value_json: Any) -> str | None:
     return None
 
 
+def _is_animal_name_fact(predicate: str, value_json: Any) -> bool:
+    """A pet's decomposed name fact carries a `species` key
+    ({"name": "Ricky", "species": "rat"}). That key is the signal that an entity
+    whose (species) `kind` matches no registry type is nonetheless an Animal."""
+    if re.sub(r"[\s_]+", "", predicate).casefold().split(".")[0] != "name":
+        return False
+    if isinstance(value_json, str):
+        try:
+            value_json = json.loads(value_json)
+        except (ValueError, TypeError):
+            return False
+    return isinstance(value_json, dict) and bool(str(value_json.get("species", "")).strip())
+
+
 def project_display_name(precedence: tuple[str, ...], values: dict[str, str]) -> str | None:
     """The display name by precedence: the first token that resolves wins. A
     `a+b` token composes components (e.g. name.given + name.family) and only
@@ -84,15 +98,6 @@ async def reproject_canonical_name(session: AsyncSession, entity_id: uuid.UUID) 
     # The owner "Me" is hard-linked to a subject and pinned to that display name.
     if row.subject_id is not None and row.canonical_name.strip().casefold() == "me":
         return None
-    # by_kind is keyed by type id and schema.org name. KNOWN LIMITATION: an
-    # animal entity's kind is its species ("dog"), which matches no registry
-    # type, so animals do not reproject — acceptable today because a pet's
-    # canonical is already its name, but a real gap if a pet first mentioned by
-    # a reference ("the rat") later declares a name. Unifying kind resolution
-    # (the resolver's species/noun matching) is the proper fix.
-    etype = get_registry().by_kind.get(row.kind)
-    if etype is None:
-        return None
 
     # Active heads only: a name held in pending_review is contested (e.g. an
     # attribute collision), and publishing a contested name as THE display name
@@ -108,10 +113,23 @@ async def reproject_canonical_name(session: AsyncSession, entity_id: uuid.UUID) 
         )
     ).all()
     values: dict[str, str] = {}
+    is_animal = False
     for fact in facts:
         name = name_fact_value(fact.predicate, fact.value_json)
         if name is not None:
             values.setdefault(fact.predicate, name)
+        is_animal = is_animal or _is_animal_name_fact(fact.predicate, fact.value_json)
+
+    # by_kind is keyed by type id and schema.org name. An animal's kind is its
+    # SPECIES ("dog"), which matches no registry type — but its decomposed name
+    # fact carries a `species` key, so recognize it and use the Animal type
+    # rather than silently skipping every pet.
+    registry = get_registry()
+    etype = registry.by_kind.get(row.kind)
+    if etype is None and is_animal:
+        etype = registry.by_kind.get("animal")
+    if etype is None:
+        return None
 
     projected = project_display_name(etype.display_name, values)
     if not projected or projected == row.canonical_name:

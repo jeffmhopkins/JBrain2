@@ -226,3 +226,23 @@ async def test_no_usable_value_keeps_existing_name(
     async with scoped_session(maker, SYSTEM_CTX) as s:
         assert await reproject_canonical_name(s, entity) is None
     assert await _canonical(maker, entity) == "Sammy"
+
+
+async def test_animal_reprojects_via_species_signal(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """A pet first mentioned by a reference ("the rat", kind=species) reprojects
+    to its declared name: its species kind matches no registry type, but the
+    decomposed name fact's species key identifies it as an Animal."""
+    note = await seed_note(maker)
+    entity = await seed_entity(maker, name="the rat", kind="rat")
+    await seed_fact(
+        maker,
+        entity_id=entity,
+        note_id=note,
+        predicate="name",
+        value_json={"name": "Ricky", "species": "rat"},
+    )
+    async with scoped_session(maker, SYSTEM_CTX) as s:
+        assert await reproject_canonical_name(s, entity) == "Ricky"
+    assert await _canonical(maker, entity) == "Ricky"
