@@ -26,6 +26,8 @@ export interface StreamItem {
   ingestState: string | null;
   attachments: StreamAttachment[];
   pending: boolean;
+  /** Hidden from the stream server-side; outbox rows are never hidden. */
+  hidden: boolean;
 }
 
 export type SyncStatus = "synced" | "pending" | "unreachable";
@@ -43,6 +45,8 @@ export interface NotesController {
   send(input: SendInput): Promise<void>;
   update(id: string, patch: NoteUpdate): Promise<void>;
   remove(id: string): Promise<void>;
+  /** Hide (true) or unhide (false) a note from the stream; stays in Search. */
+  setHidden(id: string, hidden: boolean): Promise<void>;
   byId(id: string): StreamItem | undefined;
   /** Cache-first note lookup; falls back to paging the list (see fetchNoteById). */
   fetchById(id: string): Promise<StreamItem | null>;
@@ -74,6 +78,7 @@ function serverItem(note: NoteOut): StreamItem {
       sizeBytes: a.size_bytes,
     })),
     pending: false,
+    hidden: note.hidden,
   };
 }
 
@@ -93,6 +98,7 @@ function pendingItem(note: PendingNote): StreamItem {
       sizeBytes: a.blob.size,
     })),
     pending: true,
+    hidden: false,
   };
 }
 
@@ -188,6 +194,17 @@ export function useNotes(enabled: boolean, store?: OutboxStore): NotesController
     [sync],
   );
 
+  const setHidden = useCallback(
+    async (id: string, hidden: boolean) => {
+      // Optimistic: drop (or restore via reload) the row so the stream reacts
+      // before the round-trip; sync reconciles with the server afterwards.
+      if (hidden) setServerItems((prev) => prev.filter((i) => i.id !== id));
+      await (hidden ? api.hideNote(id) : api.unhideNote(id));
+      await sync();
+    },
+    [sync],
+  );
+
   const items = useMemo(() => {
     const serverKeys = new Set(serverItems.map((i) => i.key));
     const merged = [...serverItems, ...pending.filter((p) => !serverKeys.has(p.key))];
@@ -236,6 +253,7 @@ export function useNotes(enabled: boolean, store?: OutboxStore): NotesController
     send,
     update,
     remove,
+    setHidden,
     byId,
     fetchById,
     addAttachment,

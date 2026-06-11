@@ -184,6 +184,31 @@ async def test_scoped_principal_cannot_delete_across_domains(repo: SqlNotesRepo)
     assert any(n.id == note.id for n in await repo.list_notes(OWNER, limit=50, before=None))
 
 
+async def test_hide_removes_from_stream_but_keeps_note_fetchable(repo: SqlNotesRepo) -> None:
+    note, _ = await repo.create_note(
+        OWNER, client_id="hide-1", domain="general", destination=None, body="hide me"
+    )
+    assert await repo.set_hidden(OWNER, note.id, True) is True
+    # Dropped from the stream listing…
+    assert all(n.id != note.id for n in await repo.list_notes(OWNER, limit=50, before=None))
+    # …but still a source of truth, reachable directly (so Search can open it).
+    fetched = await repo.get_note(OWNER, note.id)
+    assert fetched is not None and fetched.hidden is True
+
+    assert await repo.set_hidden(OWNER, note.id, False) is True
+    listed = next(n for n in await repo.list_notes(OWNER, limit=50, before=None) if n.id == note.id)
+    assert listed.hidden is False
+
+
+async def test_scoped_principal_cannot_hide_across_domains(repo: SqlNotesRepo) -> None:
+    note, _ = await repo.create_note(
+        OWNER, client_id="hide-rls", domain="health", destination=None, body="protected"
+    )
+    # Out-of-scope hide reads as missing — RLS hides the row from the update.
+    assert await repo.set_hidden(GENERAL_ONLY, note.id, True) is False
+    assert (await repo.get_note(OWNER, note.id)).hidden is False  # type: ignore[union-attr]
+
+
 async def test_location_fields_roundtrip(repo: SqlNotesRepo) -> None:
     note, _ = await repo.create_note(
         OWNER,

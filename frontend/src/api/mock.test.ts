@@ -99,6 +99,31 @@ describe("mock API", () => {
     expect((await call(`/api/notes/${created.id}`, { method: "DELETE" })).status).toBe(404);
   });
 
+  it("hide drops the note from the stream; unhide restores it", async () => {
+    const created = (await (
+      await call(
+        "/api/notes",
+        jsonInit("POST", { client_id: "mock-test-hide", domain: "general", body: "hide me" }),
+      )
+    ).json()) as NoteOut;
+    const inStream = async () =>
+      ((await (await call("/api/notes?limit=100")).json()) as { notes: NoteOut[] }).notes.some(
+        (n) => n.id === created.id,
+      );
+
+    expect(await inStream()).toBe(true);
+    expect((await call(`/api/notes/${created.id}/hide`, { method: "POST" })).status).toBe(204);
+    expect(await inStream()).toBe(false);
+    // Hidden but still directly fetchable — it lives on in Search.
+    expect(((await (await call(`/api/notes/${created.id}`)).json()) as NoteOut).hidden).toBe(true);
+
+    expect((await call(`/api/notes/${created.id}/unhide`, { method: "POST" })).status).toBe(204);
+    expect(await inStream()).toBe(true);
+    expect((await call(`/api/notes/${crypto.randomUUID()}/hide`, { method: "POST" })).status).toBe(
+      404,
+    );
+  });
+
   it("serves a full analysis for the Dr. Patel note, empty analysis elsewhere", async () => {
     const page = (await (await call("/api/notes?limit=100")).json()) as { notes: NoteOut[] };
     const patel = page.notes.find((n) => n.body.includes("Saw Dr. Patel this morning"));

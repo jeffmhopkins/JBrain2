@@ -75,6 +75,8 @@ export interface NoteOut {
   created_at: string;
   tz_offset_minutes: number | null;
   ingest_state: string;
+  /** Hidden from the home stream (still searchable); toggled via hide/unhide. */
+  hidden: boolean;
   attachments: AttachmentOut[];
   // Owner-eyes capture location (Phase 7 scoped tokens never receive these).
   latitude: number | null;
@@ -395,6 +397,16 @@ export const api = {
 
   async deleteNote(id: string): Promise<void> {
     await request(`/api/notes/${encodeURIComponent(id)}`, { method: "DELETE" });
+  },
+
+  // Hide/unhide only flip stream visibility — no re-ingest, so the note keeps
+  // its place in Search and stays openable from there.
+  async hideNote(id: string): Promise<void> {
+    await request(`/api/notes/${encodeURIComponent(id)}/hide`, { method: "POST" });
+  },
+
+  async unhideNote(id: string): Promise<void> {
+    await request(`/api/notes/${encodeURIComponent(id)}/unhide`, { method: "POST" });
   },
 
   async search(q: string, domain?: string, limit = 20): Promise<SearchOut> {

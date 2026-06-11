@@ -1,6 +1,7 @@
 // Entry-mode home stream (docs/DESIGN.md "Home stream"): bounded to the last
 // 2 days (older notes live in Search), 3-line bubble clamp, ingest-state
-// chips, and the swipe-left action rail (Edit / Move domain / Delete).
+// chips, and the swipe-left action rail (Delete / Edit / Hide). Move domain
+// lives in the note-view ⋯ menu, not the rail.
 
 import { type TouchEvent, useEffect, useRef, useState } from "react";
 import { attachmentUrl } from "../api/client";
@@ -8,7 +9,7 @@ import { groupByDay, isWithinLastDays, relativeTime } from "../notes/grouping";
 import { DOMAIN_COLOR, DOMAIN_LABEL } from "../notes/modes";
 import { type Drag, RAIL_WIDTH, beginDrag, endDrag, moveDrag } from "../notes/swipe";
 import type { StreamItem } from "../notes/useNotes";
-import { ClipIcon } from "./icons";
+import { ClipIcon, EyeOffIcon, PencilIcon, TrashIcon } from "./icons";
 
 const STREAM_DAYS = 2;
 
@@ -36,11 +37,11 @@ interface NoteRowProps {
   onRailChange: (open: boolean) => void;
   onOpen: (item: StreamItem) => void;
   onEdit: (item: StreamItem) => void;
-  onMove: (item: StreamItem) => void;
   onDelete: (id: string) => void;
+  onHide: (item: StreamItem) => void;
 }
 
-function NoteRow({ item, railOpen, onRailChange, onOpen, onEdit, onMove, onDelete }: NoteRowProps) {
+function NoteRow({ item, railOpen, onRailChange, onOpen, onEdit, onDelete, onHide }: NoteRowProps) {
   const [drag, setDrag] = useState<Drag | null>(null);
   const [confirming, setConfirming] = useState(false);
   const dragged = useRef(false);
@@ -109,28 +110,7 @@ function NoteRow({ item, railOpen, onRailChange, onOpen, onEdit, onMove, onDelet
         <div className="note-rail">
           <button
             type="button"
-            className="rail-btn rail-edit"
-            onClick={() => {
-              onRailChange(false);
-              onEdit(item);
-            }}
-          >
-            Edit
-          </button>
-          <button
-            type="button"
-            className="rail-btn rail-move"
-            aria-label="Move domain"
-            onClick={() => {
-              onRailChange(false);
-              onMove(item);
-            }}
-          >
-            Move
-          </button>
-          <button
-            type="button"
-            className="rail-btn rail-delete"
+            className={`rail-btn rail-delete${confirming ? " rail-armed" : ""}`}
             onClick={() => {
               if (!confirming) {
                 setConfirming(true);
@@ -140,7 +120,36 @@ function NoteRow({ item, railOpen, onRailChange, onOpen, onEdit, onMove, onDelet
               if (item.id !== null) onDelete(item.id);
             }}
           >
-            {confirming ? "Tap again" : "Delete"}
+            {confirming ? (
+              "tap again"
+            ) : (
+              <>
+                <TrashIcon size={19} />
+                delete
+              </>
+            )}
+          </button>
+          <button
+            type="button"
+            className="rail-btn rail-edit"
+            onClick={() => {
+              onRailChange(false);
+              onEdit(item);
+            }}
+          >
+            <PencilIcon size={19} />
+            edit
+          </button>
+          <button
+            type="button"
+            className="rail-btn rail-hide"
+            onClick={() => {
+              onRailChange(false);
+              onHide(item);
+            }}
+          >
+            <EyeOffIcon size={19} />
+            hide
           </button>
         </div>
       )}
@@ -199,11 +208,11 @@ interface StreamProps {
   onOpenSearch: () => void;
   onOpenNote: (item: StreamItem) => void;
   onEdit: (item: StreamItem) => void;
-  onMove: (item: StreamItem) => void;
   onDelete: (id: string) => void;
+  onHide: (item: StreamItem) => void;
 }
 
-export function Stream({ items, onOpenSearch, onOpenNote, onEdit, onMove, onDelete }: StreamProps) {
+export function Stream({ items, onOpenSearch, onOpenNote, onEdit, onDelete, onHide }: StreamProps) {
   const scrollerRef = useRef<HTMLElement>(null);
   // One rail open at a time, like every messaging app.
   const [openRailKey, setOpenRailKey] = useState<string | null>(null);
@@ -245,8 +254,8 @@ export function Stream({ items, onOpenSearch, onOpenNote, onEdit, onMove, onDele
                   onRailChange={(open) => setOpenRailKey(open ? item.key : null)}
                   onOpen={onOpenNote}
                   onEdit={onEdit}
-                  onMove={onMove}
                   onDelete={onDelete}
+                  onHide={onHide}
                 />
               ))}
             </div>

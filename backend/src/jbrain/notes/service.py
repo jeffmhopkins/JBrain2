@@ -34,6 +34,8 @@ class NoteInfo:
     tz_offset_minutes: int | None = None
     # 'pending' | 'processing' | 'indexed' | 'failed' — drives indexing chips.
     ingest_state: str = "pending"
+    # True once hidden from the home stream (still searchable; see set_hidden).
+    hidden: bool = False
     attachments: list[AttachmentInfo] = field(default_factory=list)
     # Capture location: owner-eyes metadata (Phase 7 scoped views exclude it).
     latitude: float | None = None
@@ -92,6 +94,11 @@ class NotesRepo(Protocol):
 
     async def delete_note(self, ctx: SessionContext, note_id: str) -> bool:
         """Soft-delete the note and hard-delete its chunks (search hygiene)."""
+        ...
+
+    async def set_hidden(self, ctx: SessionContext, note_id: str, hidden: bool) -> bool:
+        """Toggle the note's home-stream visibility. Chunks are left intact so
+        a hidden note stays searchable. False when missing or out of scope."""
         ...
 
     async def add_attachment(

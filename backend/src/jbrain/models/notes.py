@@ -31,6 +31,10 @@ class Note(Base):
     tz_offset_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
     updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Hidden from the entry-mode home stream but still a source of truth:
+    # chunks/embeddings are untouched, so the note stays searchable. NULL =
+    # visible; an instant = when it was hidden. Distinct from deleted_at.
+    hidden_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     attachments: Mapped[list["Attachment"]] = relationship(lazy="selectin")
 
