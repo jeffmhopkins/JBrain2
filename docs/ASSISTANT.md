@@ -314,17 +314,32 @@ effect it is not privileged to cause directly, so it stages the effect and the
 owner enacts it.** Promote that shape to one first-class primitive instead of
 re-inventing it per feature.
 
-**A `Proposal` is the unit of staged work.** It captures: `kind` (correction /
-knowledge / wiki-restructure / prompt-edit / skill-promotion), the **staged
-operation(s)** in enactable form (a structured intent the relevant machine
-executor will run — never prose for a human to copy), a **rendered preview of the
-effect** (the diff, the new revision, the article-tree change — what the owner
-actually judges), full **provenance** (the conversation, notes, attachments, or
-intake that prompted it, by ID), the **requesting principal and domain scope**, and
-`status` (`staged → approved → enacted | rejected | expired`). Every Proposal
-surfaces as a distinct, typed **review-inbox** item; the inbox is the one approval
-surface (PRs remain the surface for the code/prompt/tool subset — a
-`kind=prompt-edit` Proposal *is* a drafted PR).
+**A `Proposal` is the unit of staged work, and it is a tree.** It captures: `kind`
+(correction / knowledge / wiki-restructure / prompt-edit / skill-promotion), a
+**tree of staged operations** in enactable form (structured intents the relevant
+machine executor will run — never prose for a human to copy), a **rendered preview
+of the effect** at every node (the diff, the new revision, the article-tree change
+— what the owner actually judges), full **provenance** (the conversation, notes,
+attachments, or intake that prompted it, by ID), the **requesting principal and
+domain scope**, and a **per-node `status`** (`staged → approved → enacted | rejected
+| expired`). Every Proposal surfaces as a distinct, typed **review-inbox** item; the
+inbox is the one approval surface (PRs remain the surface for the code/prompt/tool
+subset — a `kind=prompt-edit` Proposal *is* a drafted PR).
+
+**The tree is approvable in whole or in part.** Operations are organized
+hierarchically — a root intent ("restructure the health wiki"), grouping nodes (one
+per affected article or cluster), and atomic leaf operations — so the owner can
+**approve the whole tree, a subtree, or a single leaf** in one gesture. Selection
+cascades by containment (approve a node → its descendants are approved unless
+individually overridden; reject a node → its subtree is rejected), and each node's
+own preview and status let the owner judge effects at whatever granularity they
+want. **Partial approval is dependency-safe and fail-closed:** operations declare
+prerequisites (you cannot retitle an article a merge will dissolve), the executor
+enacts a leaf **only when every prerequisite it depends on is also approved**, and
+an approved op whose prerequisite was rejected is **held, never enacted** — so no
+partial selection can leave the wiki inconsistent. Unapproved nodes simply never
+run, and the privilege model is unchanged: each approved leaf is still one bounded,
+owner-authorized operation.
 
 **The privilege model, stated plainly: stage-and-approve is bounded capability
 delegation, never standing privilege escalation.** The agent's own authority never
@@ -361,9 +376,12 @@ approval fatigue). Binding rules:
 The marquee use of the Proposal primitive. On request ("clean up my health wiki")
 or on a schedule, the agent **analyzes** the wiki — coverage gaps, stale or
 thin-cited clusters, over-merged articles hiding two topics, under-split sprawl,
-drifted titles — and **stages a restructuring plan**: a set of
-split / merge / retitle / recluster / rewrite-trigger **operations**, each with its
-effect preview, as one reviewable Proposal.
+drifted titles — and **stages a restructuring plan as one Proposal tree**: grouped
+by affected article or cluster, with split / merge / retitle / recluster /
+rewrite-trigger **operations** as dependency-ordered leaves, each with its own
+effect preview — so the owner can accept the whole cleanup, just the cardiology
+subtree, or a single merge, and the builder enacts only the approved, prerequisite-
+satisfied leaves.
 
 **The agent proposes operations; the machine wiki builder enacts them as new
 revisions — the agent never writes article prose.** This keeps non-negotiable #7
