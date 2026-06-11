@@ -1,5 +1,36 @@
 # Entity-type icons — design exploration
 
+**Chosen direction:** [`search-entity-icons-typed.html`](./search-entity-icons-typed.html)
+— Set 1 "tinted disc", with the disc tinted **per entity type** (11 distinct
+muted hues) rather than per domain. The small dot in the meta line still carries
+the domain, so icon-colour = type and dot = domain with no collision. The
+toolbar "Tint by" toggle compares the new per-type tint against the v1
+per-domain tint; Theme toggles dark/light.
+
+### Per-type colour palette
+
+Extends the 5 `DESIGN.md` accents to 11 hues at the same saturation/lightness
+register (reusing the accents where a type maps naturally; `Thing` stays neutral
+grey as the uncategorised fallback):
+
+| Kind | Hex | Tone |
+|------|-----|------|
+| `Person` | `#7fa7c9` | steel |
+| `Organization` | `#a493c9` | violet |
+| `Place` | `#8fbc9a` | green |
+| `Event` | `#c9a36a` | amber |
+| `Product` | `#8f9fd0` | periwinkle |
+| `Animal` | `#a8bd7e` | sage / olive |
+| `CreativeWork` | `#cf8a8f` | rose |
+| `MedicalCondition` | `#d0917f` | terracotta |
+| `MedicalProcedure` | `#6fb6b1` | teal |
+| `Drug` | `#c98ab4` | orchid |
+| `Thing` | `#9aa0a8` | neutral slate |
+
+---
+
+## v1 — three-set comparison
+
 Open [`search-entity-icons.html`](./search-entity-icons.html) in a browser.
 Two toggles at the top: **Theme** (dark/light) and **Iconography** (three sets).
 The phone frame renders the Search screen exactly as `SearchScreen.tsx` does —
