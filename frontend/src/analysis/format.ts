@@ -9,6 +9,19 @@ export function edgePath(predicate: string, qualifier: string | null): string {
   return qualifier ? `${predicate}.${qualifier}` : predicate;
 }
 
+/** A {value, unit} quantity for display. Extraction normalizes imperial
+ * lengths to inches ({value: 76, unit: "in"}) so the backend's unit-aware
+ * equality works — display alone converts back: inch values ≥ 24 (i.e. body
+ * heights, never small parts measurements) read as feet'inches". Storage and
+ * every other unit (cm, kg, lb, …) stay verbatim. */
+export function fmtQuantity(value: number, unit: string): string {
+  if (unit.trim().toLowerCase() === "in" && value >= 24) {
+    const feet = Math.floor(value / 12);
+    return `${feet}'${value - feet * 12}"`;
+  }
+  return `${value} ${unit}`;
+}
+
 /** Render value_json into the edge's value; falls back to the statement. */
 export function factValue(fact: FactOut): string {
   const v = fact.value_json;
@@ -20,6 +33,9 @@ export function factValue(fact: FactOut): string {
       return `${o.systolic}/${o.diastolic}${typeof o.unit === "string" ? ` ${o.unit}` : ""}`;
     }
     if (o.value !== undefined) {
+      if (typeof o.value === "number" && typeof o.unit === "string") {
+        return fmtQuantity(o.value, o.unit);
+      }
       return `${String(o.value)}${typeof o.unit === "string" ? ` ${o.unit}` : ""}`;
     }
   }

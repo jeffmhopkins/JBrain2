@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import { fmtTemporal } from "./format";
+import type { FactOut } from "../api/client";
+import { factValue, fmtQuantity, fmtTemporal } from "./format";
 
 // The field bug only reproduces in a negative-offset zone: UTC-midnight
 // calendar dates rendered locally slip to the previous evening. Node re-reads
@@ -37,5 +38,52 @@ describe("fmtTemporal", () => {
 
   it("null renders the em-dash placeholder", () => {
     expect(fmtTemporal(null, "day")).toBe("—");
+  });
+});
+
+function fact(value_json: unknown): FactOut {
+  return {
+    id: "f1",
+    entity_id: "e1",
+    entity_name: "Jeff",
+    predicate: "height",
+    qualifier: null,
+    kind: "attribute",
+    statement: "Jeff is 6'4\" tall.",
+    value_json,
+    assertion: "asserted",
+    status: "active",
+    pinned: false,
+    confidence: 0.9,
+    valid_from: null,
+    valid_to: null,
+    reported_at: "2026-06-10T23:00:00-06:00",
+    temporal_precision: "unknown",
+    source_snippet: null,
+  };
+}
+
+describe("fmtQuantity / factValue imperial display", () => {
+  it("normalized inch lengths ≥ 24 read as feet'inches\"", () => {
+    expect(fmtQuantity(76, "in")).toBe("6'4\"");
+    expect(factValue(fact({ value: 76, unit: "in" }))).toBe("6'4\"");
+  });
+
+  it("short inch values stay in inches — parts, not people", () => {
+    expect(fmtQuantity(23, "in")).toBe("23 in");
+  });
+
+  it("whole feet render a zero inch part", () => {
+    expect(fmtQuantity(72, "in")).toBe("6'0\"");
+  });
+
+  it("non-inch units are untouched", () => {
+    expect(factValue(fact({ value: 255, unit: "lb" }))).toBe("255 lb");
+    expect(factValue(fact({ value: 193, unit: "cm" }))).toBe("193 cm");
+  });
+
+  it("blood pressure and statement fallback keep their rendering", () => {
+    expect(factValue(fact({ systolic: 128, diastolic: 82, unit: "mmHg" }))).toBe("128/82 mmHg");
+    expect(factValue(fact(null))).toBe("Jeff is 6'4\" tall.");
   });
 });
