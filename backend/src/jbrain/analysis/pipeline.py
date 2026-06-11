@@ -49,6 +49,7 @@ from jbrain.analysis.extraction import (
     ExtractedFact,
     Extraction,
     ExtractionError,
+    domain_floor,
     normalize_future_assertion,
     parse_extraction,
     ratchet_domain,
@@ -775,7 +776,14 @@ class AnalysisPipeline:
                 )
                 return None
 
-        fact_domain, needs_promotion = ratchet_domain(fact.domain or note_domain, note_domain)
+        # Deterministic floor first: a clearly-sensitive predicate raises a
+        # general/unclassified fact into its restricted domain (firewall
+        # hardening), then the asymmetric ratchet applies as usual.
+        extracted_domain = fact.domain or note_domain
+        floor = domain_floor(fact.predicate)
+        if floor is not None and extracted_domain == "general":
+            extracted_domain = floor
+        fact_domain, needs_promotion = ratchet_domain(extracted_domain, note_domain)
 
         valid_from = valid_to = None
         precision = "unknown"

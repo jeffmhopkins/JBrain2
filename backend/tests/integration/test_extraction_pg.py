@@ -1420,3 +1420,33 @@ async def test_conflict_resolution_cascades_to_derived_shadows(
     await repo.reopen_review(OWNER, items[0].id)
     assert (await rows(maker, OWNER, shadow_status_sql("Aldous")))[0].status == "superseded"
     assert (await rows(maker, OWNER, shadow_status_sql("Bettina")))[0].status == "active"
+
+
+async def test_domain_floor_raises_clinical_fact_in_general_note(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """Firewall hardening: a bloodPressure fact the model mislabeled `general`
+    is floored to health by the deterministic predicate->domain map, so it lands
+    behind the health RLS policy regardless of the model's per-fact judgment."""
+    note_id = await make_note(maker, domain="general", body="BP was 120/80 this morning.")
+    payload = {
+        "title": "BP", "tags": ["bp", "reading", "vitals"],
+        "mentions": [{"name": "Me", "kind": "Person", "surface_text": "BP"}],
+        "facts": [
+            {
+                "predicate": "bloodPressure", "qualifier": "", "kind": "measurement",
+                "statement": "BP was 120/80.", "value_json": {"systolic": 120, "diastolic": 80},
+                "assertion": "asserted", "entity_ref": "Me", "object_entity_ref": None,
+                "temporal": None, "domain": "general", "confidence": 0.9,  # model mislabels it
+            }
+        ],
+        "temporal_tokens": [],
+    }  # fmt: skip
+    await analyzer(maker, [json.dumps(payload)]).analyze_note({"note_id": note_id})
+    facts = await rows(
+        maker,
+        OWNER,
+        "SELECT domain_code FROM app.facts WHERE note_id = :nid AND predicate = 'bloodPressure'",
+        nid=note_id,
+    )
+    assert len(facts) == 1 and facts[0].domain_code == "health"

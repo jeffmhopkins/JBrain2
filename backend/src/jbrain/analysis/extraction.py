@@ -107,6 +107,47 @@ def parse_datetime(value: Any) -> datetime | None:
     return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
 
 
+# Deterministic domain FLOOR by predicate (firewall hardening): a fact on a
+# clearly-sensitive predicate is AT LEAST its domain regardless of the model's
+# per-fact judgment, closing the leak path where a clinical/financial fact gets
+# mislabeled `general`. Ratchet-UP only (general -> restricted, never down or
+# across restricted), matching the asymmetric bias in docs/ANALYSIS.md
+# ("misclassifying into health/finance is cheap; out of it is a leak"). A curated
+# allowlist of canonical schema.org/LOINC-ish predicates, lowercased; unknown
+# predicates fall back to the model (which already classifies well). A full LOINC
+# table is the Phase-7 typed-record job; weight/temperature are deliberately
+# OUT as too ambiguous to floor.
+_DOMAIN_BY_PREDICATE: dict[str, str] = {
+    **{
+        p: "health"
+        for p in (
+            "bloodpressure", "bloodglucose", "fastingglucose", "hemoglobina1c", "a1c",
+            "ldlcholesterol", "ldl", "hdl", "cholesterol", "triglycerides", "troponin",
+            "inr", "tsh", "heartrate", "restingheartrate", "oxygensaturation", "o2sat",
+            "respiratoryrate", "medication", "medicationregimen", "takesmedication",
+            "prescribes", "diagnosis", "medicalcondition", "healthcondition", "allergy",
+            "immunization", "vaccination",
+        )
+    },
+    **{
+        p: "finance"
+        for p in (
+            "accountbalance", "mortgagebalance", "mortgage", "interestrate", "refinancerate",
+            "retirementcontribution", "accountcontribution", "hasaccount", "brokerageaccount",
+        )
+    },
+    # Only PRECISE geo is location-firewall-sensitive; a home city (homeLocation/
+    # residence) is ordinary and left to the model + ratchet.
+    **{p: "location" for p in ("geocoordinates", "latitude", "longitude", "gpscoordinates")},
+}  # fmt: skip
+
+
+def domain_floor(predicate: str) -> str | None:
+    """The minimum (restricted) domain a clearly-sensitive predicate forces, or
+    None for predicates the model is left to classify on its own."""
+    return _DOMAIN_BY_PREDICATE.get(predicate.lower())
+
+
 def ratchet_domain(extracted: str, note_domain: str) -> tuple[str, bool]:
     """Apply the asymmetric domain bias (docs/ANALYSIS.md "Domains").
 

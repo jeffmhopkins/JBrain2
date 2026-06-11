@@ -8,7 +8,36 @@ whenever the system prompt or schema changes meaningfully.
 from datetime import datetime
 from typing import Any
 
-PROMPT_VERSION = "note-extract-v5"
+PROMPT_VERSION = "note-extract-v6"
+
+# Domain-conditioned guidance appended to the per-note prompt by capture domain.
+# The generic prompt under-EXTRACTS sensitive ENTITIES — a baseline run (grok-4.3,
+# Jun 2026) showed medications/conditions/labs and accounts/funds captured only
+# as fact VALUES, never as linkable mentions, so "my medications" / "my 401k over
+# time" can't be queried. These blocks fix the entity SHAPE; per-fact domain
+# CLASSIFICATION the model already does well, so they don't re-teach it.
+DOMAIN_GUIDANCE: dict[str, str] = {
+    "health": (
+        "This is a health note. Emit each MEDICATION, MEDICAL CONDITION / "
+        "DIAGNOSIS, LAB or ANALYTE, and PROCEDURE as its OWN mention (kind: "
+        "Drug, MedicalCondition, MedicalProcedure, or the fitting schema.org "
+        "medical type; coin snake_case otherwise) AND wire it into its fact — "
+        "not only as a string inside value_json — so each is a linkable entity. "
+        "A vital sign or lab READING is still a measurement fact with value+unit "
+        "in value_json; a medication a person takes is a state on a canonical "
+        "predicate (e.g. medication) whose object is the drug mention."
+    ),
+    "finance": (
+        "This is a finance note. Emit each FINANCIAL INSTITUTION (a bank, "
+        "brokerage, fund company), ACCOUNT, and FUND / INVESTMENT VEHICLE "
+        "('401k', 'Roth IRA', 'HSA', a named index fund) as its OWN mention "
+        "(kind: Organization for institutions; a coined account/fund kind "
+        "otherwise) AND wire it into its fact as the object — not only as a "
+        "string inside value_json — so each is a linkable entity. Monetary "
+        "amounts stay measurement/transaction facts with the amount and currency "
+        "in value_json."
+    ),
+}
 
 # Facts-per-note cap: taught by instruction here, enforced server-side in
 # extraction.parse_extraction (over-extraction is the known quality risk;
@@ -289,8 +318,10 @@ def build_user_prompt(texts: list[str], *, anchor: datetime, domain: str) -> str
     """The per-note prompt: capture anchor (with timezone — the resolution
     target for every relative phrase), capture domain, and the chunk texts."""
     content = "\n\n".join(t for t in texts if t.strip())
+    guidance = DOMAIN_GUIDANCE.get(domain)
+    block = f"\n{guidance}\n" if guidance else ""
     return (
         f"Capture anchor (note creation time): {anchor.isoformat()}\n"
-        f"Note capture domain: {domain}\n\n"
+        f"Note capture domain: {domain}\n{block}\n"
         f"Note content:\n{content}"
     )

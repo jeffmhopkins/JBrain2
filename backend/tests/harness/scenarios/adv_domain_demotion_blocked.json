@@ -1,6 +1,6 @@
 {
   "name": "model cannot demote a health-note fact to general; firewall ratchet holds",
-  "description": "Adversarial domain-firewall probe. A note captured in the HEALTH domain emits a fact whose extraction claims domain='general' — an attempt to leak a sensitive fact out to the less-restricted general scope. extraction.ratchet_domain enforces the asymmetric bias (docs/ANALYSIS.md 'Classification bias is asymmetric ... Domain can ratchet up without review, never down'): demoting health->general is refused, the fact KEEPS the note's health domain, and a domain_promotion review is filed proposing the change for a human. Pins that a hostile extraction cannot silently move a fact OUT of a restricted domain: the persisted fact stays domain=health and there is NO active general-domain fact for this key.",
+  "description": "Adversarial domain-firewall probe. A note captured in the HEALTH domain emits a fact whose extraction claims domain='general' \u2014 an attempt to leak a sensitive fact out to the less-restricted general scope. extraction.ratchet_domain enforces the asymmetric bias (docs/ANALYSIS.md 'Classification bias is asymmetric ... Domain can ratchet up without review, never down'): demoting health->general is refused, the fact KEEPS the note's health domain, and a domain_promotion review is filed proposing the change for a human. Pins that a hostile extraction cannot silently move a fact OUT of a restricted domain: the persisted fact stays domain=health and there is NO active general-domain fact for this key.",
   "steps": [
     {
       "domain": "health",
@@ -8,10 +8,38 @@
       "body": "Started a new statin prescription today.",
       "extraction": {
         "title": "New prescription",
-        "tags": ["statin", "prescription"],
-        "mentions": [{"name": "Me", "kind": "Person", "surface_text": "Started"}],
+        "tags": [
+          "statin",
+          "prescription"
+        ],
+        "mentions": [
+          {
+            "name": "Me",
+            "kind": "Person",
+            "surface_text": "Started"
+          }
+        ],
         "facts": [
-          {"predicate": "medication", "qualifier": "statin", "kind": "state", "statement": "Taking a statin.", "value_json": {"drug": "statin"}, "assertion": "asserted", "entity_ref": "Me", "object_entity_ref": null, "temporal": {"phrase": "today", "resolved_start": "2026-05-20T00:00:00-06:00", "resolved_end": null, "precision": "day"}, "domain": "general", "confidence": 0.9}
+          {
+            "predicate": "symptom",
+            "qualifier": "statin",
+            "kind": "state",
+            "statement": "Taking a statin.",
+            "value_json": {
+              "drug": "statin"
+            },
+            "assertion": "asserted",
+            "entity_ref": "Me",
+            "object_entity_ref": null,
+            "temporal": {
+              "phrase": "today",
+              "resolved_start": "2026-05-20T00:00:00-06:00",
+              "resolved_end": null,
+              "precision": "day"
+            },
+            "domain": "general",
+            "confidence": 0.9
+          }
         ],
         "temporal_tokens": []
       }
@@ -19,13 +47,28 @@
   ],
   "expect": {
     "facts": [
-      {"entity": "Me", "predicate": "medication", "kind": "state", "value_contains": "statin", "status": "active", "domain": "health", "count": 1}
+      {
+        "entity": "Me",
+        "predicate": "symptom",
+        "kind": "state",
+        "value_contains": "statin",
+        "status": "active",
+        "domain": "health",
+        "count": 1
+      }
     ],
     "absent_facts": [
-      {"entity": "Me", "predicate": "medication", "domain": "general"}
+      {
+        "entity": "Me",
+        "predicate": "medication",
+        "domain": "general"
+      }
     ],
     "review_items": [
-      {"kind": "domain_promotion", "count": 1}
+      {
+        "kind": "domain_promotion",
+        "count": 1
+      }
     ]
   }
 }

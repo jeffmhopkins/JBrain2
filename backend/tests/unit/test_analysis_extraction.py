@@ -321,8 +321,8 @@ def test_system_prompt_v5_teaches_object_person_and_backward_temporal() -> None:
     assert "last night" in SYSTEM_PROMPT and "PRIOR calendar day" in SYSTEM_PROMPT
 
 
-def test_prompt_version_bumped_to_v5() -> None:
-    assert PROMPT_VERSION == "note-extract-v5"
+def test_prompt_version_bumped_to_v6() -> None:
+    assert PROMPT_VERSION == "note-extract-v6"
 
 
 def test_user_prompt_carries_anchor_with_timezone_domain_and_content() -> None:
@@ -331,6 +331,24 @@ def test_user_prompt_carries_anchor_with_timezone_domain_and_content() -> None:
     assert "2026-06-10T09:30:00+00:00" in prompt
     assert "health" in prompt
     assert "BP was 118/76" in prompt and "second chunk" in prompt
+
+
+def test_user_prompt_appends_domain_block_for_sensitive_domains() -> None:
+    # v6: health/finance notes get an entity-shape block (baseline showed
+    # meds/conditions/accounts captured only as fact values, not mentions);
+    # general/location get none.
+    health = build_user_prompt(
+        ["BP 120/80, lisinopril"], anchor=datetime(2026, 6, 10, tzinfo=UTC), domain="health"
+    )
+    assert "MEDICATION" in health and "linkable entity" in health
+    finance = build_user_prompt(
+        ["paid rent, 401k"], anchor=datetime(2026, 6, 10, tzinfo=UTC), domain="finance"
+    )
+    assert "FINANCIAL INSTITUTION" in finance and "FUND" in finance
+    general = build_user_prompt(
+        ["went for a run"], anchor=datetime(2026, 6, 10, tzinfo=UTC), domain="general"
+    )
+    assert "MEDICATION" not in general and "FINANCIAL INSTITUTION" not in general
 
 
 def test_user_prompt_anchor_carries_local_date_not_utc() -> None:
@@ -806,3 +824,16 @@ def test_finalize_temporal_stamps_absolute_date_to_local_midnight() -> None:
     )  # fmt: skip
     _, changed2 = validate_backward_temporal(inst, _ANCHOR)
     assert not changed2
+
+
+def test_domain_floor_raises_general_to_restricted_only() -> None:
+    from jbrain.analysis.extraction import domain_floor
+
+    assert domain_floor("bloodPressure") == "health"
+    assert domain_floor("medication") == "health"
+    assert domain_floor("mortgage") == "finance"
+    assert domain_floor("latitude") == "location"  # precise geo only
+    assert domain_floor("ate") is None  # unknown -> model decides
+    # Ambiguous / not-firewall-sensitive predicates are deliberately not floored.
+    assert domain_floor("weight") is None and domain_floor("temperature") is None
+    assert domain_floor("homeLocation") is None  # a home city is ordinary
