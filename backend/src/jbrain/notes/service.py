@@ -39,6 +39,9 @@ class NoteInfo:
     ingest_state: str = "pending"
     # True once hidden from the home stream (still searchable; see set_hidden).
     hidden: bool = False
+    # True once note.extract has written the note_analysis row — the quiet
+    # end of the pipeline lifecycle chip (indexing → ocr → analyzing → gone).
+    analyzed: bool = False
     attachments: list[AttachmentInfo] = field(default_factory=list)
     # Capture location: owner-eyes metadata (Phase 7 scoped views exclude it).
     latitude: float | None = None

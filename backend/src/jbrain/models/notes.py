@@ -15,6 +15,7 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, column_property, mapped_column, relationship
 
+from jbrain.models.analysis import NoteAnalysis
 from jbrain.models.core import Base
 
 
@@ -45,6 +46,13 @@ class Note(Base):
     # chunks/embeddings are untouched, so the note stays searchable. NULL =
     # visible; an instant = when it was hidden. Distinct from deleted_at.
     hidden_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Whether note.extract has produced this note's note_analysis row — the
+    # API's "analysis done" signal for the lifecycle chip. A correlated EXISTS
+    # (the has_extracts pattern) so list/get serialization needs no second
+    # query; the row only appears when the analyze_note job commits.
+    analyzed: Mapped[bool] = column_property(
+        select(NoteAnalysis.note_id).where(NoteAnalysis.note_id == id).exists()
+    )
 
     attachments: Mapped[list["Attachment"]] = relationship(lazy="selectin")
 

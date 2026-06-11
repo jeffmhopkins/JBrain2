@@ -328,6 +328,24 @@ def test_note_responses_expose_ingest_state(
     assert listed["ingest_state"] == "pending"
 
 
+def test_note_responses_expose_analyzed(
+    client: tuple[TestClient, FakeNotesRepo, FakeJobQueue],
+) -> None:
+    c, repo, _ = client
+    # Fresh notes can't have an analysis row yet: create + list say so.
+    created = c.post("/api/notes", json={"client_id": "an1", "body": "analyze me"}).json()
+    assert created["analyzed"] is False
+    assert c.get("/api/notes").json()["notes"][0]["analyzed"] is False
+
+    # Once the analyze_note job lands its note_analysis row, every read path
+    # (list, single note, PATCH echo) carries analyzed=true.
+    repo.notes[0] = dataclasses.replace(repo.notes[0], analyzed=True)
+    assert c.get("/api/notes").json()["notes"][0]["analyzed"] is True
+    assert c.get(f"/api/notes/{created['id']}").json()["analyzed"] is True
+    patched = c.patch(f"/api/notes/{created['id']}", json={"body": "edited"}).json()
+    assert patched["analyzed"] is True
+
+
 def test_create_note_enqueues_ingestion_once(
     client: tuple[TestClient, FakeNotesRepo, FakeJobQueue],
 ) -> None:
