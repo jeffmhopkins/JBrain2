@@ -785,3 +785,24 @@ def test_parse_extraction_without_anchor_leaves_resolution_raw() -> None:
     assert fact_t is not None and fact_t.resolved_start is not None
     assert fact_t.resolved_start.date() == date(2026, 6, 11)
     assert parsed.tokens[0].resolved_start.date() == date(2026, 6, 11)
+
+
+def test_finalize_temporal_stamps_absolute_date_to_local_midnight() -> None:
+    # grok resolves "June 8" to midnight UTC; at -06:00 that instant is Jun 7
+    # evening, so the local date drifts back one. Normalization re-stamps local
+    # midnight on the written date, so the local date reads Jun 8 again.
+    utc_midnight = ExtractedTemporal(
+        phrase="June 8", resolved_start=datetime(2026, 6, 8, 0, 0, tzinfo=UTC),
+        resolved_end=None, precision="day",
+    )  # fmt: skip
+    fixed, changed = validate_backward_temporal(utc_midnight, _ANCHOR)
+    assert changed and fixed is not None and fixed.resolved_start is not None
+    assert fixed.resolved_start.utcoffset() == timedelta(hours=-6)
+    assert fixed.resolved_start.astimezone(_MST).date() == date(2026, 6, 8)
+    # An instant-precision value (a measurement time) is left exactly as resolved.
+    inst = ExtractedTemporal(
+        phrase="", resolved_start=datetime(2026, 6, 8, 14, 0, tzinfo=UTC),
+        resolved_end=None, precision="instant",
+    )  # fmt: skip
+    _, changed2 = validate_backward_temporal(inst, _ANCHOR)
+    assert not changed2

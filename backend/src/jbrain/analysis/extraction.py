@@ -231,17 +231,62 @@ def _repair_dates(
     return start + delta, (end + delta if end is not None else None), True
 
 
+# Precisions whose value is a CALENDAR DATE, not an instant — stamped to local
+# midnight so the date reads correctly in the note's timezone (see
+# _stamp_local_midnight). instant/era/unknown keep their resolved value.
+_DATE_PRECISIONS = frozenset({"day", "month", "year"})
+
+
+def _stamp_local_midnight(dt: datetime, anchor: datetime) -> datetime:
+    """Local midnight on the date the model WROTE, in the note's offset."""
+    d = dt.date()
+    return datetime(d.year, d.month, d.day, tzinfo=anchor.tzinfo)
+
+
+def _drifted_utc_midnight(dt: datetime, anchor: datetime) -> bool:
+    """The midnight-UTC date bug: the model rendered a bare calendar date as
+    midnight UTC ("June 8" -> 2026-06-08T00:00Z), which in a western offset is
+    the PRIOR evening, so the local date reads one day early. The signature is
+    exactly UTC midnight whose local date differs from the written date — a
+    real evening instant (a correctly-resolved "last night" at 02:00Z) is NOT
+    midnight and is left alone (eval baseline, grok-4.3 Jun 2026)."""
+    return (
+        dt.utcoffset() == timedelta(0)
+        and (dt.hour, dt.minute, dt.second) == (0, 0, 0)
+        and dt.astimezone(anchor.tzinfo).date() != dt.date()
+    )
+
+
+def finalize_temporal(
+    phrase: str | None,
+    start: datetime | None,
+    end: datetime | None,
+    precision: str,
+    anchor: datetime,
+) -> tuple[datetime | None, datetime | None, bool]:
+    """Repair a mis-resolved backward phrase, then fix a date-precision value the
+    model rendered as drifted midnight-UTC. Returns (start, end, changed); a
+    value already on its written local date is left exactly as-is."""
+    start, end, changed = _repair_dates(phrase, start, end, anchor)
+    if precision in _DATE_PRECISIONS:
+        if start is not None and _drifted_utc_midnight(start, anchor):
+            start, changed = _stamp_local_midnight(start, anchor), True
+        if end is not None and _drifted_utc_midnight(end, anchor):
+            end, changed = _stamp_local_midnight(end, anchor), True
+    return start, end, changed
+
+
 def validate_backward_temporal(
     temporal: ExtractedTemporal | None, anchor: datetime
 ) -> tuple[ExtractedTemporal | None, bool]:
-    """Repair a backward relative phrase the model resolved to the wrong day.
-    Returns (temporal, repaired); only the closed set is ever touched."""
+    """Repair a backward relative phrase the model resolved to the wrong day and
+    stamp date-precision values to local midnight. Returns (temporal, changed)."""
     if temporal is None:
         return None, False
-    start, end, repaired = _repair_dates(
-        temporal.phrase, temporal.resolved_start, temporal.resolved_end, anchor
+    start, end, changed = finalize_temporal(
+        temporal.phrase, temporal.resolved_start, temporal.resolved_end, temporal.precision, anchor
     )
-    if not repaired:
+    if not changed:
         return temporal, False
     return replace(temporal, resolved_start=start, resolved_end=end), True
 
@@ -533,16 +578,17 @@ def parse_extraction(payload: Any, *, anchor: datetime | None = None) -> Extract
             log.warning("analysis.token_dropped", reason="unresolved", phrase=phrase)
             continue
         end = parse_datetime(raw.get("resolved_end"))
+        precision = raw.get("precision")
+        precision = precision if precision in PRECISIONS else "unknown"
         if anchor is not None:
-            shifted, end, repaired = _repair_dates(phrase, start, end, anchor)
-            if repaired and shifted is not None:
+            shifted, end, changed = finalize_temporal(phrase, start, end, precision, anchor)
+            if changed and shifted is not None:
                 start = shifted
                 log.warning(
                     "analysis.temporal_repaired", scope="token", phrase=phrase,
                     resolved=start.isoformat(),
                 )  # fmt: skip
         kind = raw.get("kind")
-        precision = raw.get("precision")
         rrule = raw.get("rrule")
         tokens.append(
             ExtractedToken(
@@ -550,7 +596,7 @@ def parse_extraction(payload: Any, *, anchor: datetime | None = None) -> Extract
                 kind=kind if kind in TOKEN_KINDS else "point",
                 resolved_start=start,
                 resolved_end=end,
-                precision=precision if precision in PRECISIONS else "unknown",
+                precision=precision,
                 rrule=str(rrule) if rrule else None,
             )
         )

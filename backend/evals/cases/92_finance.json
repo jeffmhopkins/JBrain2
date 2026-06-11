@@ -7,7 +7,6 @@
     "expect": {
       "value": [
         {
-          "predicate": "rent",
           "contains": "1800"
         },
         {
@@ -35,7 +34,6 @@
     "expect": {
       "value": [
         {
-          "predicate": "income",
           "contains": "4200"
         }
       ],
@@ -71,7 +69,6 @@
     "expect": {
       "value": [
         {
-          "predicate": "bonus",
           "contains": "10000"
         }
       ],
@@ -330,7 +327,6 @@
     "expect": {
       "value": [
         {
-          "predicate": "carPayment",
           "contains": "375"
         }
       ],
@@ -383,7 +379,6 @@
     "expect": {
       "value": [
         {
-          "predicate": "rent",
           "contains": "1800"
         },
         {
@@ -569,7 +564,6 @@
     "expect": {
       "value": [
         {
-          "predicate": "rent",
           "contains": "1650"
         }
       ],

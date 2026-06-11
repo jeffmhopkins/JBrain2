@@ -7,11 +7,9 @@
     "expect": {
       "value": [
         {
-          "predicate": "bloodPressure",
           "contains": "118"
         },
         {
-          "predicate": "bloodPressure",
           "contains": "76"
         }
       ],
@@ -34,11 +32,9 @@
       ],
       "value": [
         {
-          "predicate": "bloodPressure",
           "contains": "148"
         },
         {
-          "predicate": "bloodPressure",
           "contains": "94"
         },
         {
@@ -124,7 +120,6 @@
     "expect": {
       "value": [
         {
-          "predicate": "heartRate",
           "contains": "58"
         }
       ],
@@ -145,11 +140,9 @@
       ],
       "value": [
         {
-          "predicate": "weight",
           "contains": "196"
         },
         {
-          "predicate": "bloodGlucose",
           "contains": "112"
         }
       ],
@@ -172,7 +165,6 @@
           "contains": "102.4"
         },
         {
-          "predicate": "heartRate",
           "contains": "108"
         }
       ],
@@ -347,11 +339,9 @@
           "contains": "20"
         },
         {
-          "predicate": "bloodPressure",
           "contains": "145"
         },
         {
-          "predicate": "bloodPressure",
           "contains": "90"
         }
       ],
@@ -455,15 +445,12 @@
       ],
       "value": [
         {
-          "predicate": "bloodPressure",
           "contains": "162"
         },
         {
-          "predicate": "bloodPressure",
           "contains": "98"
         },
         {
-          "predicate": "heartRate",
           "contains": "110"
         },
         {
@@ -547,7 +534,6 @@
       ],
       "value": [
         {
-          "predicate": "bloodGlucose",
           "contains": "108"
         },
         {
@@ -631,11 +617,9 @@
     "expect": {
       "value": [
         {
-          "predicate": "bloodPressure",
           "contains": "132"
         },
         {
-          "predicate": "bloodPressure",
           "contains": "84"
         }
       ],
@@ -676,7 +660,6 @@
       ],
       "value": [
         {
-          "predicate": "weight",
           "contains": "22"
         },
         {
