@@ -85,9 +85,9 @@
 <body>
   <div class="caption">
     <span class="tag">swipe-left actions</span><br/>
-    <b>Swipe a note left</b> to reveal three icon actions — <b>Hide</b> (slides it out of
-    the stream; undo toast, note stays in Search), <b>Edit</b> (opens the editor), and
-    <b>Delete</b> (tap-again to confirm). No right-swipe gesture.
+    <b>Swipe a note left</b> to reveal three icon actions — <b>Delete</b> (danger; needs a
+    second tap to confirm), <b>Edit</b> (opens the editor), and <b>Hide</b> (slides it out
+    of the stream; undo toast, note stays in Search). No right-swipe gesture.
   </div>
 
   <div class="phone">
@@ -138,9 +138,9 @@ function buildNote(n){
   const wrap=document.createElement('div');wrap.className='note-wrap';
   wrap.innerHTML=`
     <div class="rail">
-      <button class="rail-btn rail-hide">${ICON.hide}hide</button>
-      <button class="rail-btn rail-edit">${ICON.edit}edit</button>
       <button class="rail-btn rail-delete">${ICON.del}delete</button>
+      <button class="rail-btn rail-edit">${ICON.edit}edit</button>
+      <button class="rail-btn rail-hide">${ICON.hide}hide</button>
     </div>
     <div class="note-slide">
       <div class="note">
