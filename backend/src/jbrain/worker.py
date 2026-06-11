@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from jbrain import queue
 from jbrain.analysis import purge
+from jbrain.analysis.consolidation import Consolidator
 from jbrain.analysis.pipeline import AnalysisPipeline
 from jbrain.config import get_settings
 from jbrain.embed import NoteEmbedder, TeiEmbedClient
@@ -103,6 +104,8 @@ async def run_loop(maker: async_sessionmaker[AsyncSession], handlers: dict[str, 
                 # derived artifacts (incl. resolved review history quoting
                 # their text); sweep them once per boot.
                 purged = await purge.backfill_deleted_note_artifacts(maker)
+                # Normalize predicate drift left by older prompt versions.
+                consolidations = await queue.backfill_consolidate(maker, queue.SYSTEM_CTX)
                 backfilled = True
                 log.info(
                     "worker.backfill",
@@ -110,6 +113,7 @@ async def run_loop(maker: async_sessionmaker[AsyncSession], handlers: dict[str, 
                     embed_jobs=embeds,
                     analyze_jobs=analyses,
                     purged_notes=purged,
+                    consolidate_jobs=consolidations,
                 )
             if await process_one(maker, handlers):
                 continue
@@ -139,6 +143,8 @@ async def run() -> None:
         "analyze_note": analyzer.analyze_note,
         # The vision handler reads the image-analysis mode setting per job.
         "ocr_attachment": OcrPipeline(maker, blobs, router, SqlSettingsStore(maker)).ocr_attachment,
+        # Retroactive predicate normalization; trigger is the Phase-5 engine.
+        "consolidate_predicates": Consolidator(maker).run,
     }
     try:
         await run_loop(maker, handlers)

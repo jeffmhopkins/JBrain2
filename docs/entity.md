@@ -129,6 +129,14 @@ on. Convergence is achieved socially and by the consolidation sweep, **not** by
 rejecting input. "Closed where it matters" was the wrong framing; the right one
 is **"canonical where it matters, open everywhere, gated nowhere."**
 
+That sweep is implemented as the **`consolidate_predicates` action**
+(`jbrain.analysis.consolidation`): it rewrites a stored drift spelling onto its
+canonical address in place (same row, citations intact) when the canonical key
+is free, and counts a collision — never auto-merging two supersession chains —
+when it is occupied. It runs as a boot self-heal today; recurring and on-demand
+("emergency") triggering lands with the Phase-5 workflow engine
+(docs/ROADMAP.md "Scheduled-task migration").
+
 `allow_open_predicates` (default `true` for Person/Organization/Place; `false`
 for tightly-structured records) only changes the *prompt digest's tone* —
 "prefer these exact names" vs. "these names are the schema; coin schema.org-style

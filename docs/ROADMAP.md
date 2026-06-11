@@ -92,6 +92,17 @@ manage lists/appointments from the phone.
 Generalize the hardcoded ingest pipeline into `events` / `triggers` /
 `pipelines` / `actions` / `runs`, with a scheduler and run-log UI.
 
+**Scheduled-task migration [note]:** by this phase, find every periodic or
+swept task that today runs as an ad-hoc boot self-heal or hardcoded handler —
+**predicate consolidation** (the `consolidate_predicates` action,
+docs/entity.md), entity hygiene, merge proposals, summary re-embedding, tag
+consolidation, and the nightly wiki build — and move them onto the engine's
+`events → triggers → pipelines → actions → runs`, defined as data. Each must be
+**on-demand ("emergency") triggerable**: a sweep becomes a run-logged action a
+human can fire immediately from the Ops/review surface, not a service restart.
+The actions are built first (they work as enqueued jobs today); this phase only
+gives them their scheduled and manual triggers.
+
 **Exit:** ingest and a scheduled job run as user-defined pipeline
 definitions; failures are diagnosable from run logs alone.
 
