@@ -3,7 +3,7 @@
 
 import type { ReactNode } from "react";
 
-interface IconProps {
+export interface IconProps {
   size?: number;
 }
 
@@ -208,5 +208,91 @@ export const EyeOffIcon = (p: IconProps) => (
     <path d="M10.73 5.08A10.4 10.4 0 0 1 12 5c7 0 10 7 10 7a13.2 13.2 0 0 1-1.67 2.68" />
     <path d="M6.61 6.61A13.5 13.5 0 0 0 2 12s3 7 10 7a9.7 9.7 0 0 0 5.39-1.61" />
     <path d="M2 2l20 20" />
+  </Icon>
+);
+
+// Entity-type glyphs (docs/DESIGN.md "Iconography"). One per canonical kind;
+// mapped to types and tinted by src/entities/kinds.tsx.
+
+export const PersonIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <circle cx="12" cy="8.5" r="3.8" />
+    <path d="M5.5 20.5a6.5 6.5 0 0 1 13 0" />
+  </Icon>
+);
+
+export const OrgIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <rect x="5" y="3.5" width="14" height="17" rx="1.6" />
+    <path d="M9 7.5h2M13 7.5h2M9 11h2M13 11h2M10 20.5v-3.2h4v3.2" />
+  </Icon>
+);
+
+export const PlaceIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M12 21c4.5-4.2 7-7.6 7-11a7 7 0 1 0-14 0c0 3.4 2.5 6.8 7 11Z" />
+    <circle cx="12" cy="10" r="2.4" />
+  </Icon>
+);
+
+export const EventIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <rect x="3.5" y="5" width="17" height="15.5" rx="2" />
+    <path d="M16 3.2v3.6M8 3.2v3.6M3.5 10h17" />
+    <circle cx="12" cy="15" r="1.3" fill="currentColor" stroke="none" />
+  </Icon>
+);
+
+export const ProductIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M20.5 8.2 12 12.5 3.5 8.2 12 4l8.5 4.2Z" />
+    <path d="M3.5 8.2v7.6L12 20l8.5-4.2V8.2" />
+    <path d="M12 12.5V20" />
+  </Icon>
+);
+
+export const AnimalIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <circle cx="6.6" cy="12.2" r="1.5" />
+    <circle cx="9.8" cy="8.4" r="1.5" />
+    <circle cx="14.2" cy="8.4" r="1.5" />
+    <circle cx="17.4" cy="12.2" r="1.5" />
+    <path d="M8.2 16.6c0-2 1.7-3.4 3.8-3.4s3.8 1.4 3.8 3.4-1.7 2.9-3.8 2.9-3.8-.9-3.8-2.9Z" />
+  </Icon>
+);
+
+export const CreativeWorkIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20V3H6.5A2.5 2.5 0 0 0 4 5.5v14A2.5 2.5 0 0 0 6.5 21.5H20V17" />
+  </Icon>
+);
+
+export const ConditionIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M12 20.5C7 17 4 13.7 4 10a4.2 4.2 0 0 1 8-2.1A4.2 4.2 0 0 1 20 10c0 3.7-3 7-8 10.5Z" />
+    <path d="M7 11.6h2.2l1.2-2.2 1.8 4 1-1.8H17" />
+  </Icon>
+);
+
+export const ProcedureIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M5 4.5v4.2a4 4 0 0 0 8 0V4.5" />
+    <path d="M5 4.5H3.6M13 4.5h1.4" />
+    <path d="M9 12.7v1.6a5 5 0 0 0 9.5 2.4" />
+    <circle cx="19" cy="11.6" r="2.1" />
+  </Icon>
+);
+
+export const DrugIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <rect x="2.8" y="8.5" width="18.4" height="7" rx="3.5" transform="rotate(-45 12 12)" />
+    <path d="m9 15 6-6" />
+  </Icon>
+);
+
+export const ThingIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M3.7 11.4 11 4.1a2 2 0 0 1 1.4-.6h6.1a2 2 0 0 1 2 2v6.1a2 2 0 0 1-.6 1.4l-7.3 7.3a2 2 0 0 1-2.8 0l-6.1-6.1a2 2 0 0 1 0-2.8Z" />
+    <circle cx="16" cy="8" r="1.3" />
   </Icon>
 );

@@ -6,6 +6,7 @@
 import { useEffect, useRef, useState } from "react";
 import { fmtTemporal } from "../analysis/format";
 import { type EntityList, type EntityListItem, api } from "../api/client";
+import { EntityTypeIcon } from "../entities/kinds";
 
 type ListState =
   | { phase: "loading" }
@@ -122,6 +123,7 @@ export function EntityListScreen({ onOpenEntity, list }: EntityListScreenProps) 
               className="entity-row"
               onClick={() => onOpenEntity(item.id)}
             >
+              <EntityTypeIcon kind={item.kind} size={34} />
               <span className="entity-row-main">
                 <span className="entity-row-name">
                   {item.canonical_name}

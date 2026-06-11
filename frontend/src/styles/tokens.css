@@ -30,6 +30,16 @@
   --violet: #a493c9;
   --violet-tint: rgba(164, 147, 201, 0.13);
 
+  /* Entity-type accents — extend the five above to cover the entity-type icon
+     discs, same muted register. Tinted at 16% via color-mix on the disc, so no
+     separate -tint tokens. See docs/DESIGN.md "Entity-type accents". */
+  --periwinkle: #8f9fd0; /* Product */
+  --sage: #a8bd7e; /* Animal */
+  --terracotta: #d0917f; /* MedicalCondition */
+  --teal: #6fb6b1; /* MedicalProcedure */
+  --orchid: #c98ab4; /* Drug */
+  --slate: #9aa0a8; /* Thing — neutral fallback */
+
   /* Semantic aliases */
   --accent: var(--steel);
   --accent-tint: var(--steel-tint);

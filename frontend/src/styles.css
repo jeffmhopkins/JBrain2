@@ -2163,6 +2163,19 @@ button.small {
   flex-direction: column;
   gap: 2px;
   min-width: 0;
+  /* Grow so the leading type disc and trailing meta stay pinned to the edges. */
+  flex: 1;
+}
+
+/* Entity-type icon disc — tinted by type via --etype (see entities/kinds.tsx
+   and docs/DESIGN.md "Entity-type accents"). One tint formula for all types. */
+.etype-disc {
+  flex: none;
+  display: grid;
+  place-items: center;
+  border-radius: var(--r-pill);
+  background: color-mix(in srgb, var(--etype) 16%, transparent);
+  color: var(--etype);
 }
 
 .entity-row-name {
