@@ -18,11 +18,17 @@ interface SubjectGroup {
   facts: FactOut[];
 }
 
-/** Group facts by subject, in order of first appearance. */
+// The note's analysis surface shows what the note currently asserts —
+// active + pending_review. Retracted/superseded facts stay reachable in the
+// entity pages' history rails, which exist for exactly that.
+const VISIBLE_STATUSES = new Set(["active", "pending_review"]);
+
+/** Group visible facts by subject, in order of first appearance. */
 function groupBySubject(analysis: NoteAnalysis): SubjectGroup[] {
   const byId = new Map(analysis.entities.map((e) => [e.id, e]));
   const groups: SubjectGroup[] = [];
   for (const fact of analysis.facts) {
+    if (!VISIBLE_STATUSES.has(fact.status)) continue;
     const last = groups.find((g) => g.entity.id === fact.entity_id);
     if (last) {
       last.facts.push(fact);
@@ -161,7 +167,8 @@ export function AnalysisTab({ noteId, onOpenEntity }: AnalysisTabProps) {
       )}
 
       <p className="provenance-foot">
-        analyzed {fmtTemporal(analysis.analyzed_at, "day")}
+        {/* analyzed_at is a real instant, not a calendar date: keep it local */}
+        analyzed {fmtTemporal(analysis.analyzed_at, "instant")}
         {analysis.extractor !== null && ` · ${analysis.extractor}`}
       </p>
     </div>

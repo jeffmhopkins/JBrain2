@@ -58,7 +58,8 @@ interface FactCitationProps {
  * affordance — corrections route through review/pin, the pipeline owns facts. */
 export function FactCitation({ fact, extractor }: FactCitationProps) {
   const meta = [
-    `reported ${fmtTemporal(fact.reported_at, "day")}`,
+    // reported_at is the capture instant, not a calendar date: stays local.
+    `reported ${fmtTemporal(fact.reported_at, "instant")}`,
     ...(extractor ? [extractor] : []),
     fmtConfidence(fact.confidence),
   ].join(" · ");
