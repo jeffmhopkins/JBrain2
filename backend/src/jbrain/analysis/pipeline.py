@@ -48,6 +48,7 @@ from jbrain.analysis.entities import (
     build_disambiguation_prompt,
     create_provisional,
     declared_alias,
+    near_duplicate_entity,
     parse_disambiguation,
     plan_merge,
     register_declared_alias,
@@ -665,12 +666,48 @@ class AnalysisPipeline:
             added = await register_declared_alias(session, entity.id, name)
             if added is not None:
                 log.info("analysis.alias_declared", entity_id=str(entity.id), alias=added)
+                # The name is new on this entity, but it may be a near (not
+                # exact) duplicate of a different one — the same-person signal
+                # the exact collision below cannot see. Propose, never link.
+                await self._propose_near_duplicate(
+                    session, entity.id, name, note_id, note_domain, chunks
+                )
                 continue
             other = await alias_owner(session, name, exclude=entity.id)
             if other is not None:
                 await self._propose_merge(
                     session, entity.id, other, name, note_id, note_domain, chunks
                 )
+
+    async def _propose_near_duplicate(
+        self,
+        session: AsyncSession,
+        entity_id: uuid.UUID,
+        name: str,
+        note_id: uuid.UUID,
+        note_domain: str,
+        chunks: list[_ChunkRef],
+    ) -> None:
+        """File a merge proposal when a freshly declared name strongly embeds to
+        a DIFFERENT same-kind entity. Embedder-gated (skipped without it, so the
+        harness is unaffected) and proposal-only — `_propose_merge` honours the
+        distinct_from edge and dedupes across re-analysis."""
+        if self._embedder is None:
+            return
+        kind = await session.scalar(
+            text("SELECT kind FROM app.entities WHERE id = :id"), {"id": str(entity_id)}
+        )
+        dup = await near_duplicate_entity(
+            session,
+            name,
+            kind_hint=kind or "",
+            domain=note_domain,
+            embedder=self._embedder,
+            embed_model=self._embed_model,
+            exclude=entity_id,
+        )
+        if dup is not None:
+            await self._propose_merge(session, entity_id, dup, name, note_id, note_domain, chunks)
 
     async def _propose_merge(
         self,

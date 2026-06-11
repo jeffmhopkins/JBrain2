@@ -307,13 +307,20 @@ review inbox, never an auto-link.
 - **`canonical_name` is now the live projection** above (`jbrain.analysis.canonical`,
   wired into the pipeline after each note settles) — no longer frozen at first
   mention. The owner "Me" keeps its explicit override.
+- **Declared-name near-duplicate merge proposals are now wired**
+  (`entities.near_duplicate_entity`): when a self-declared name strongly embeds
+  to a *different* same-kind entity (`Celine Kitina Hopkins` ~ `Celine Hopkins`),
+  the pipeline files a `merge_proposal` — the exact-alias collision check could
+  not see it. Embedder-gated (skipped without one, so the harness is unaffected)
+  and proposal-only: a near match is never an auto-link. The embedding
+  resolution layer itself was already active in production (the worker passes
+  the embed client); it stays conservative — a single strong, non-subject
+  candidate auto-links, everything else degrades to review.
 - `provisional → confirmed` promotion — **deferred, needs a ratified signal.** The
   obvious "corroborated by ≥2 notes" rule contradicts the current golden harness,
   which asserts entities stay `provisional` across multiple notes; auto-promotion
   is a behaviour change the owner must define (and the goldens be updated for),
   not a silent fix. Until then only the hard-coded "Me" is `confirmed`.
-- Wire the embedding-similarity resolution layer (currently inert / blocked for
-  subject-bearing entities).
 
 ## Entity vehicles: graph vs. typed record **[proposed]**
 

@@ -756,3 +756,60 @@ async def test_plan_merge_keeps_the_subject_then_the_older(
         assert plan.keep_id == me.id and plan.gone_id == provisional
         assert plan.keep_name == "Me" and plan.gone_name == "Jeffrey Mark Hopkins"
         assert (await plan_merge(s, me.id, provisional)).keep_id == me.id
+
+
+# --- declared-name near-duplicate merge proposals (embedding) ---------------
+
+
+def _declare_name_extraction() -> str:
+    """A note that declares a legal name on a newly-mentioned 'Sammy'."""
+    return json.dumps(
+        {
+            "title": "Sammy",
+            "tags": ["neighbor"],
+            "mentions": [{"name": "Sammy", "kind": "Person", "surface_text": "Sammy"}],
+            "facts": [
+                {
+                    "predicate": "name.legal",
+                    "qualifier": "",
+                    "kind": "attribute",
+                    "statement": "Sammy's legal name is Celine Kitina Hopkins.",
+                    "value_json": {"value": "Celine Kitina Hopkins"},
+                    "assertion": "asserted",
+                    "entity_ref": "Sammy",
+                    "object_entity_ref": None,
+                    "temporal": None,
+                    "domain": "general",
+                    "confidence": 1.0,
+                }
+            ],
+            "temporal_tokens": [],
+        }
+    )
+
+
+async def test_declared_name_near_duplicate_files_merge_proposal(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """A self-declared legal name that NEAR-matches a different entity surfaces
+    a merge proposal (Celine Kitina Hopkins ~ the existing Celine Hopkins) — the
+    same-person signal the exact-alias collision check cannot see. Proposal
+    only: nothing auto-merges."""
+    await seed_entity(maker, "Celine Hopkins")
+    # 'Sammy' is orthogonal to the Celine cluster (so the mention does NOT
+    # auto-link); the declared legal name lands right on it.
+    orth = [0.0, 0.0, 1.0] + [0.0] * 381
+    embedder = FakeEmbed(
+        [("Sammy", orth), ("Celine Kitina Hopkins", _vec(0.2)), ("Celine Hopkins", _vec(0.2))]
+    )
+    await run_note(
+        maker, FakeLlmClient([_declare_name_extraction()]), tasks=BOTH_TASKS, embedder=embedder
+    )
+
+    reviews = await fetch_rows(maker, "SELECT kind FROM app.review_items")
+    assert [r.kind for r in reviews] == ["merge_proposal"]
+    # No auto-merge: both entities survive for the human to adjudicate.
+    live = await fetch_rows(
+        maker, "SELECT count(*) AS n FROM app.entities WHERE status != 'merged'"
+    )
+    assert live[0].n == 2

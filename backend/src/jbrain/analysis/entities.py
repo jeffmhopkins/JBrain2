@@ -463,6 +463,38 @@ async def _embedding_candidates(
     ]
 
 
+async def near_duplicate_entity(
+    session: AsyncSession,
+    name: str,
+    *,
+    kind_hint: str,
+    domain: str,
+    embedder: EmbedClient,
+    embed_model: str,
+    exclude: uuid.UUID,
+) -> uuid.UUID | None:
+    """The id of an entity whose name+aliases vector is a STRONG match for
+    `name` (other than `exclude`), or None.
+
+    Powers declared-name merge *proposals*: a self-declared name that is a near
+    — but not exact — match for a different entity is the same-person signal the
+    exact-alias collision check misses ("Celine Kitina Hopkins" vs the existing
+    "Celine Hopkins"). It only ever PROPOSES (the caller files a review card);
+    a near match is never an auto-link (docs/ANALYSIS.md "Alias resolution")."""
+    scored = await _embedding_candidates(
+        session,
+        name,
+        kind_hint=kind_hint,
+        domain=domain,
+        embedder=embedder,
+        embed_model=embed_model,
+    )
+    for cand, sim in scored:
+        if cand.id != exclude and sim >= _EMBED_STRONG:
+            return cand.id
+    return None
+
+
 # --- layer 3: batched LLM disambiguation (prompt + parsing only) -------------
 
 # The adapter call itself lives in the pipeline (it owns the router); these
