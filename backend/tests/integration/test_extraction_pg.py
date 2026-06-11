@@ -784,7 +784,17 @@ async def test_analysis_and_review_api_round_trip(
             # --- review inbox: collision item is open, oldest first.
             items = client.get("/api/review", params={"status": "open"}).json()["items"]
             collision = next(i for i in items if i["kind"] == "attribute_collision")
-            assert set(collision) == {"id", "kind", "payload", "domain", "created_at"}
+            assert set(collision) == {
+                "id",
+                "kind",
+                "payload",
+                "status",
+                "resolution",
+                "domain",
+                "created_at",
+                "resolved_at",
+            }
+            assert collision["status"] == "open" and collision["resolution"] is None
             fact_a, fact_b = collision["payload"]["fact_a"], collision["payload"]["fact_b"]
 
             # History is newest-first and includes the (here pending) head.
@@ -833,6 +843,51 @@ async def test_analysis_and_review_api_round_trip(
             assert again.status_code == 409
             open_now = client.get("/api/review").json()["items"]
             assert collision["id"] not in {i["id"] for i in open_now}
+
+            # The resolution recorded its graph effects with the prior state
+            # a reopen needs to reverse them.
+            effects = body["resolution"]["effects"]
+            assert {e["action"] for e in effects} == {"pinned", "retracted"}
+            pinned = next(e for e in effects if e["action"] == "pinned")
+            assert pinned["fact_id"] == fact_b
+            assert pinned["prior_status"] == "pending_review"
+            retracted = next(e for e in effects if e["action"] == "retracted")
+            assert retracted["fact_id"] == fact_a
+            assert retracted["prior_status"] == "pending_review"
+
+            # The decision shows in the resolved log, newest first.
+            log = client.get("/api/review", params={"status": "resolved"}).json()["items"]
+            entry = next(i for i in log if i["id"] == collision["id"])
+            assert entry["status"] == "resolved" and entry["resolved_at"] is not None
+
+            # Reopen = full unwind: both facts back to pending_review.
+            reopened = client.post(f"/api/review/{collision['id']}/reopen")
+            assert reopened.status_code == 200
+            ro = reopened.json()
+            assert ro["status"] == "open" and ro["resolved_at"] is None
+            assert ro["resolution"]["reopened_at"] and ro["reopen_note"] is None
+            states = {
+                r.id: (r.status, r.pinned)
+                for r in await rows(
+                    maker,
+                    OWNER,
+                    "SELECT id::text AS id, status, pinned FROM app.facts WHERE id IN (:a, :b)",
+                    a=fact_a,
+                    b=fact_b,
+                )
+            }
+            assert states[fact_b] == ("pending_review", False)
+            assert states[fact_a] == ("pending_review", False)
+
+            # Back in the open queue AND tombstoned in the resolved log.
+            open_again = client.get("/api/review").json()["items"]
+            assert collision["id"] in {i["id"] for i in open_again}
+            tombs = client.get("/api/review", params={"status": "resolved"}).json()["items"]
+            tomb = next(i for i in tombs if i["id"] == collision["id"])
+            assert tomb["status"] == "open" and tomb["resolution"]["reopened_at"]
+
+            # Reopening an open item conflicts.
+            assert client.post(f"/api/review/{collision['id']}/reopen").status_code == 409
 
             # --- ops usage card: tokens landed, grok-4.3 is priced.
             usage = client.get("/api/ops/llm-usage").json()
