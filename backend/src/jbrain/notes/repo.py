@@ -35,6 +35,7 @@ def _note_info(n: Note) -> NoteInfo:
         tz_offset_minutes=n.tz_offset_minutes,
         ingest_state=n.ingest_state,
         hidden=n.hidden_at is not None,
+        analyzed=n.analyzed,
         attachments=[_attachment_info(a) for a in n.attachments],
         latitude=n.latitude,
         longitude=n.longitude,

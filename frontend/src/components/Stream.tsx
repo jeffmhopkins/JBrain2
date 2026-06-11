@@ -6,6 +6,7 @@
 import { type TouchEvent, useEffect, useRef, useState } from "react";
 import { attachmentUrl } from "../api/client";
 import { groupByDay, isWithinLastDays, relativeTime } from "../notes/grouping";
+import { type LifecycleSource, lifecycleChip } from "../notes/lifecycle";
 import { DOMAIN_COLOR, DOMAIN_LABEL } from "../notes/modes";
 import { type Drag, RAIL_WIDTH, beginDrag, endDrag, moveDrag } from "../notes/swipe";
 import type { StreamItem } from "../notes/useNotes";
@@ -23,12 +24,12 @@ function headText(item: StreamItem): string {
   return time;
 }
 
-export function IngestChip({ state }: { state: string | null }) {
-  if (state === "pending" || state === "processing") {
-    return <span className="chip chip-pending">indexing…</span>;
-  }
-  if (state === "failed") return <span className="chip chip-failed">indexing failed</span>;
-  return null;
+/** Pipeline lifecycle chip: indexing… → reading image(s)… → analyzing…,
+ * rose on failure, nothing once analysis is done (see notes/lifecycle.ts). */
+export function IngestChip({ item }: { item: LifecycleSource }) {
+  const chip = lifecycleChip(item);
+  if (chip === null) return null;
+  return <span className={`chip chip-${chip.tone}`}>{chip.label}</span>;
 }
 
 interface NoteRowProps {
@@ -175,7 +176,7 @@ function NoteRow({ item, railOpen, onRailChange, onOpen, onEdit, onDelete, onHid
           </span>
           {clamped && <span className="note-more">more</span>}
         </button>
-        {(item.attachments.length > 0 || item.pending || item.ingestState !== "indexed") && (
+        {(item.attachments.length > 0 || item.pending || lifecycleChip(item) !== null) && (
           <div className="note-chips">
             {item.attachments.map((att) =>
               att.id ? (
@@ -195,7 +196,7 @@ function NoteRow({ item, railOpen, onRailChange, onOpen, onEdit, onDelete, onHid
               ),
             )}
             {item.pending && <span className="chip chip-pending">pending sync</span>}
-            {!item.pending && <IngestChip state={item.ingestState} />}
+            {!item.pending && <IngestChip item={item} />}
           </div>
         )}
       </div>

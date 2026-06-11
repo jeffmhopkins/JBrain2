@@ -77,6 +77,8 @@ export interface NoteOut {
   created_at: string;
   tz_offset_minutes: number | null;
   ingest_state: string;
+  /** True once the analyze_note job has written the note_analysis row. */
+  analyzed: boolean;
   /** Hidden from the home stream (still searchable); toggled via hide/unhide. */
   hidden: boolean;
   attachments: AttachmentOut[];

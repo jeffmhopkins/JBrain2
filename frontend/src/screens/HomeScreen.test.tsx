@@ -60,6 +60,7 @@ function streamItem() {
     body: "hide me",
     createdAt: new Date(),
     ingestState: "indexed",
+    analyzed: true,
     attachments: [],
     pending: false,
     hidden: false,

@@ -60,6 +60,9 @@ class NoteOut(BaseModel):
     ingest_state: str
     # Hidden from the home stream (still searchable); see POST /notes/{id}/hide.
     hidden: bool
+    # True once the analyze_note job has written the note_analysis row —
+    # the client's lifecycle chip disappears on it.
+    analyzed: bool
     attachments: list[AttachmentOut]
     # Location fields are owner-eyes metadata: Phase 7 scoped-token
     # serialization must exclude them from non-owner responses.
@@ -79,6 +82,7 @@ def note_out(n: NoteInfo) -> NoteOut:
         tz_offset_minutes=n.tz_offset_minutes,
         ingest_state=n.ingest_state,
         hidden=n.hidden,
+        analyzed=n.analyzed,
         attachments=[
             AttachmentOut(
                 id=a.id,
