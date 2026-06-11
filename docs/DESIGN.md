@@ -152,6 +152,13 @@ browser downloads it. **Import backup…** picks a file, shows
 consequence ("current data is overwritten"); a safety backup is taken
 first, the stack restarts mid-import (the card tolerates the api being
 unreachable, like Server update), and success offers **Reload app**.
+**Reset DB** (right of Import, danger-styled) is a testing convenience
+with the same double-press confirm — tap arms "Tap again — erases ALL
+notes and data" (3s auto-disarm) — that takes a safety backup first, then
+truncates all content data (notes, attachments, chunks, jobs, the entity
+graph, facts, review items, analyses) and empties the blob volume while
+auth/identity, domains, and llm_usage telemetry survive; the worker
+restarts and success offers **Reload app**.
 Progress is phased text + the one-shot's log tail, matching the update
 card — no fake progress bars.
 
