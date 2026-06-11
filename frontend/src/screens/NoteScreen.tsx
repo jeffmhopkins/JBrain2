@@ -11,6 +11,7 @@ import { Sheet } from "../components/Sheet";
 import { IngestChip } from "../components/Stream";
 import { TopBar } from "../components/TopBar";
 import { ChevronRightIcon, FileIcon, ImageIcon, MoreIcon, PlusIcon } from "../components/icons";
+import { awaitingImageCount } from "../notes/lifecycle";
 import { DOMAIN_COLOR, DOMAIN_TITLE } from "../notes/modes";
 import type { MoveTarget } from "../notes/useNoteActions";
 import type { StreamAttachment, StreamItem, SyncStatus } from "../notes/useNotes";
@@ -293,9 +294,7 @@ function AttachmentsTab({ view, onAdd, onRemove }: AttachmentsTabProps) {
   const searchable = indexing
     ? 0
     : attachments.filter((a) => !a.mediaType.startsWith("image/") || a.hasExtracts).length;
-  const awaitingOcr = attachments.filter(
-    (a) => a.mediaType.startsWith("image/") && !a.hasExtracts,
-  ).length;
+  const awaitingOcr = awaitingImageCount(attachments);
 
   async function addFiles(list: FileList | null) {
     if (!list) return;
