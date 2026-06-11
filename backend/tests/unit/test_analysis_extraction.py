@@ -321,8 +321,8 @@ def test_system_prompt_v5_teaches_object_person_and_backward_temporal() -> None:
     assert "last night" in SYSTEM_PROMPT and "PRIOR calendar day" in SYSTEM_PROMPT
 
 
-def test_prompt_version_bumped_to_v6() -> None:
-    assert PROMPT_VERSION == "note-extract-v6"
+def test_prompt_version_bumped_to_v7() -> None:
+    assert PROMPT_VERSION == "note-extract-v7"
 
 
 def test_user_prompt_carries_anchor_with_timezone_domain_and_content() -> None:
@@ -341,6 +341,9 @@ def test_user_prompt_appends_domain_block_for_sensitive_domains() -> None:
         ["BP 120/80, lisinopril"], anchor=datetime(2026, 6, 10, tzinfo=UTC), domain="health"
     )
     assert "MEDICATION" in health and "linkable entity" in health
+    # v7: a named clinician becomes a patient -> provider treatedBy edge, not
+    # only a mention (the live eval showed providers never wired into a fact).
+    assert "treatedBy" in health and "CLINICIAN" in health
     finance = build_user_prompt(
         ["paid rent, 401k"], anchor=datetime(2026, 6, 10, tzinfo=UTC), domain="finance"
     )

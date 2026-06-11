@@ -8,7 +8,7 @@ whenever the system prompt or schema changes meaningfully.
 from datetime import datetime
 from typing import Any
 
-PROMPT_VERSION = "note-extract-v6"
+PROMPT_VERSION = "note-extract-v7"
 
 # Domain-conditioned guidance appended to the per-note prompt by capture domain.
 # The generic prompt under-EXTRACTS sensitive ENTITIES — a baseline run (grok-4.3,
@@ -25,7 +25,14 @@ DOMAIN_GUIDANCE: dict[str, str] = {
         "not only as a string inside value_json — so each is a linkable entity. "
         "A vital sign or lab READING is still a measurement fact with value+unit "
         "in value_json; a medication a person takes is a state on a canonical "
-        "predicate (e.g. medication) whose object is the drug mention."
+        "predicate (e.g. medication) whose object is the drug mention. When a "
+        "CLINICIAN (a named doctor, nurse, therapist, or other provider) sees, "
+        "treats, prescribes for, or follows up the patient, ALSO emit the care "
+        "relationship as the patient -> provider edge on predicate `treatedBy` "
+        "(kind relationship, object_entity_ref the provider's mention) — a "
+        "provider must be a linked care relationship, not merely a mention or "
+        "an event participant. The patient is `Me` for the note's author, "
+        "otherwise the named patient the note is about."
     ),
     "finance": (
         "This is a finance note. Emit each FINANCIAL INSTITUTION (a bank, "
