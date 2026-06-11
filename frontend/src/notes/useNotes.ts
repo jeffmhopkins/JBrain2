@@ -26,6 +26,8 @@ export interface StreamItem {
   createdAt: Date;
   /** pending/processing → indexing chip, failed → failure chip; null = outbox row. */
   ingestState: string | null;
+  /** True once the analysis pipeline finished — the lifecycle chip's end. */
+  analyzed: boolean;
   attachments: StreamAttachment[];
   pending: boolean;
   /** Hidden from the stream server-side; outbox rows are never hidden. */
@@ -73,6 +75,7 @@ function serverItem(note: NoteOut): StreamItem {
     body: note.body,
     createdAt: new Date(note.created_at),
     ingestState: note.ingest_state,
+    analyzed: note.analyzed,
     attachments: note.attachments.map((a: AttachmentOut) => ({
       id: a.id,
       filename: a.filename,
@@ -94,6 +97,7 @@ function pendingItem(note: PendingNote): StreamItem {
     body: note.body,
     createdAt: new Date(note.created_at),
     ingestState: null,
+    analyzed: false, // analysis can only have run server-side
     attachments: note.attachments.map((a) => ({
       id: null,
       filename: a.filename,

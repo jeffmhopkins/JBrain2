@@ -12,6 +12,7 @@ const ITEM: StreamItem = {
   body: "first paragraph\n\nsecond paragraph",
   createdAt: new Date(2026, 5, 9, 10, 5),
   ingestState: "pending",
+  analyzed: false,
   attachments: [
     {
       id: "a1",
@@ -196,6 +197,23 @@ describe("NoteScreen", () => {
     expect(screen.getByText(/Medical/)).toBeInTheDocument();
     expect(screen.getByText("indexing…")).toBeInTheDocument();
     expect(screen.queryByRole("heading", { level: 1 })).not.toBeInTheDocument();
+  });
+
+  it("header shows reading image… while an image's OCR is outstanding", () => {
+    // Same shared helper as the stream bubbles, so the surfaces agree.
+    setup(noteViewFromItem(INDEXED));
+    expect(screen.getByText("reading image…")).toBeInTheDocument();
+  });
+
+  it("header shows analyzing… once indexed with OCR settled but no analysis", () => {
+    setup(noteViewFromItem({ ...ITEM, ingestState: "indexed" }));
+    expect(screen.getByText("analyzing…")).toBeInTheDocument();
+  });
+
+  it("an analyzed note shows no lifecycle chip in the header", () => {
+    setup(noteViewFromItem({ ...ITEM, ingestState: "indexed", analyzed: true }));
+    expect(screen.queryByText("analyzing…")).not.toBeInTheDocument();
+    expect(screen.queryByText("indexing…")).not.toBeInTheDocument();
   });
 
   it("renders the body as paragraphs; attachments live in their own tab", () => {

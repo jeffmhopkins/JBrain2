@@ -85,6 +85,9 @@ function seedNote(
   createdAt: string,
   attachments: AttachmentOut[] = [],
   ingestState = "indexed",
+  // Settled fixtures default to fully analyzed; pipeline-stage fixtures
+  // override this to exercise the lifecycle chip's intermediate states.
+  analyzed = ingestState === "indexed",
 ): NoteOut {
   return {
     id: id("note"),
@@ -95,6 +98,7 @@ function seedNote(
     created_at: createdAt,
     tz_offset_minutes: null,
     ingest_state: ingestState,
+    analyzed,
     hidden: false,
     attachments,
     latitude: null,
@@ -139,6 +143,20 @@ const notes: NoteOut[] = [
     null,
     "Groceries: eggs, coffee, olive oil, that bread Mom liked",
     daysAgo(0, 8, 15),
+    [],
+    "indexed",
+    // Indexed but pre-analysis: exercises the "analyzing…" chip.
+    false,
+  ),
+  seedNote(
+    "general",
+    null,
+    "Whiteboard from the planning session — decisions are in the photo",
+    daysAgo(0, 9, 10),
+    // Image with an empty vision cache: exercises the "reading image…" chip.
+    [makeAttachment("whiteboard.jpg", "image/jpeg")],
+    "indexed",
+    false,
   ),
   seedNote(
     "health",

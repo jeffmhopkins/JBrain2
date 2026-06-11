@@ -23,6 +23,8 @@ export interface NoteViewSource {
   body: string;
   createdAt: Date;
   ingestState: string | null;
+  /** True once analysis finished — ends the header's lifecycle chip. */
+  analyzed: boolean;
   /** null = unknown (search-result fallback until the full note resolves). */
   attachments: StreamAttachment[] | null;
   attachmentCount: number;
@@ -38,6 +40,7 @@ export function noteViewFromItem(item: StreamItem): NoteViewSource {
     body: item.body,
     createdAt: item.createdAt,
     ingestState: item.ingestState,
+    analyzed: item.analyzed,
     attachments: item.attachments,
     attachmentCount: item.attachments.length,
     partial: false,
@@ -51,7 +54,10 @@ export function noteViewFromSearch(result: SearchResult): NoteViewSource {
     destination: result.destination,
     body: result.body_preview,
     createdAt: new Date(result.created_at),
+    // Unknown until the full note resolves; the null ingestState already
+    // suppresses the lifecycle chip, so analyzed=false is inert here.
     ingestState: null,
+    analyzed: false,
     attachments: null,
     attachmentCount: result.attachment_count,
     partial: true,
@@ -363,7 +369,7 @@ export function NoteScreen({
             })}{" "}
             · {view.createdAt.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}
           </span>
-          <IngestChip state={view.ingestState} />
+          <IngestChip item={{ ...view, attachments: view.attachments ?? [] }} />
           {noteId !== null && (
             <button
               type="button"

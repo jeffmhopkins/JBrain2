@@ -14,10 +14,21 @@ function item(overrides: Partial<StreamItem> = {}): StreamItem {
     body: `note body ${seq}`,
     createdAt: new Date(),
     ingestState: "indexed",
+    analyzed: true,
     attachments: [],
     pending: false,
     hidden: false,
     ...overrides,
+  };
+}
+
+function imageAttachment(name: string, hasExtracts = false) {
+  return {
+    id: `att-${name}`,
+    filename: name,
+    mediaType: "image/png",
+    sizeBytes: 1024,
+    hasExtracts,
   };
 }
 
@@ -63,15 +74,43 @@ describe("Stream", () => {
     expect(screen.getByText("clamp me")).toHaveClass("note-body-clamp");
   });
 
-  it("shows the indexing chip for pending/processing and failure for failed", () => {
+  it("walks the chip through the pipeline lifecycle, one state per bubble", () => {
     renderStream([
       item({ ingestState: "pending" }),
       item({ ingestState: "processing" }),
       item({ ingestState: "failed" }),
-      item({ ingestState: "indexed" }),
+      item({
+        ingestState: "indexed",
+        analyzed: false,
+        attachments: [imageAttachment("receipt.png")],
+      }),
+      item({
+        ingestState: "indexed",
+        analyzed: false,
+        attachments: [imageAttachment("a.png"), imageAttachment("b.png")],
+      }),
+      item({ ingestState: "indexed", analyzed: false }),
+      item({ ingestState: "indexed", analyzed: true }),
     ]);
     expect(screen.getAllByText("indexing…")).toHaveLength(2);
     expect(screen.getAllByText("indexing failed")).toHaveLength(1);
+    expect(screen.getAllByText("reading image…")).toHaveLength(1);
+    expect(screen.getAllByText("reading images…")).toHaveLength(1);
+    expect(screen.getAllByText("analyzing…")).toHaveLength(1);
+    // Six chips total: the analyzed bubble ends the lifecycle chip-free.
+    expect(document.querySelectorAll(".chip-pending, .chip-failed")).toHaveLength(6);
+  });
+
+  it("an image whose OCR is cached doesn't reopen the chip", () => {
+    renderStream([
+      item({
+        ingestState: "indexed",
+        analyzed: true,
+        attachments: [imageAttachment("done.png", true)],
+      }),
+    ]);
+    expect(screen.queryByText("reading image…")).not.toBeInTheDocument();
+    expect(screen.queryByText("analyzing…")).not.toBeInTheDocument();
   });
 
   it("opens the note view on a bubble tap", () => {
