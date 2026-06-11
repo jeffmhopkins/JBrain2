@@ -46,8 +46,7 @@ def upgrade() -> None:
         """
     )
     op.execute(
-        "CREATE INDEX attachment_extracts_attachment_idx"
-        " ON app.attachment_extracts (attachment_id)"
+        "CREATE INDEX attachment_extracts_attachment_idx ON app.attachment_extracts (attachment_id)"
     )
     op.execute("ALTER TABLE app.attachment_extracts ENABLE ROW LEVEL SECURITY")
     op.execute("ALTER TABLE app.attachment_extracts FORCE ROW LEVEL SECURITY")
