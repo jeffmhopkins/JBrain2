@@ -837,3 +837,35 @@ def test_domain_floor_raises_general_to_restricted_only() -> None:
     # Ambiguous / not-firewall-sensitive predicates are deliberately not floored.
     assert domain_floor("weight") is None and domain_floor("temperature") is None
     assert domain_floor("homeLocation") is None  # a home city is ordinary
+
+
+def test_part_of_day_token_becomes_a_within_day_range() -> None:
+    payload: dict[str, Any] = {
+        "title": "t", "tags": ["a", "b", "c"],
+        "mentions": [{"name": "Me", "kind": "Person", "surface_text": "I"}],
+        "facts": [{
+            "predicate": "ran", "qualifier": "", "kind": "event", "statement": "Ran this morning.",
+            "value_json": None, "assertion": "asserted", "entity_ref": "Me",
+            "object_entity_ref": None,
+            "temporal": {"phrase": "this morning", "resolved_start": "2026-06-11T15:00:00+00:00",
+                         "resolved_end": None, "precision": "day"},
+            "domain": "general", "confidence": 0.9,
+        }],
+        "temporal_tokens": [{"phrase": "this morning", "kind": "point",
+                             "resolved_start": "2026-06-11T15:00:00+00:00", "resolved_end": None,
+                             "precision": "day", "rrule": None}],
+    }  # fmt: skip
+    parsed = parse_extraction(payload, anchor=_ANCHOR)  # _ANCHOR is 2026-06-11, -06:00
+    tok = parsed.tokens[0]
+    # 15:00 UTC == 09:00 local; the token keeps that start and gains the morning
+    # window END (12:00), becoming a within-day range.
+    assert tok.kind == "range" and tok.resolved_end is not None and tok.resolved_start is not None
+    assert tok.resolved_start.astimezone(_MST).hour == 9
+    assert tok.resolved_end.astimezone(_MST).hour == 12
+    assert tok.resolved_start.astimezone(_MST).date() == date(2026, 6, 11)
+    # The FACT is left untouched (token-only): valid_from keeps its time, no
+    # valid_to (a state interval must never be falsely closed), and it shares the
+    # token's start so there's no duplicate token.
+    ft = parsed.facts[0].temporal
+    assert ft is not None and ft.resolved_start is not None
+    assert ft.resolved_start.astimezone(_MST).hour == 9 and ft.resolved_end is None

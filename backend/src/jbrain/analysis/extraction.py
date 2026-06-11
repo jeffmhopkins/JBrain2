@@ -298,6 +298,31 @@ def _drifted_utc_midnight(dt: datetime, anchor: datetime) -> bool:
     )
 
 
+# Part-of-day windows (local hours) for time-of-day phrases — a deterministic
+# enrichment so "evening" / "last night" / "this morning" carry their within-day
+# meaning instead of collapsing to a bare date. midnight is left alone (a point,
+# and "night" must not swallow it).
+def _part_of_day_window(phrase: str | None) -> tuple[int, int] | None:
+    if not phrase:
+        return None
+    p = phrase.lower()
+    if "afternoon" in p:
+        return (12, 18)
+    if "morning" in p:
+        return (6, 12)
+    if "evening" in p:
+        return (18, 23)
+    if "night" in p and "midnight" not in p:  # tonight / last night / overnight
+        return (18, 23)
+    return None
+
+
+def _local_time_on(start: datetime, hour: int, anchor: datetime) -> datetime:
+    """`hour`:00 local, on the calendar date `start` falls on in the note's tz."""
+    d = start.astimezone(anchor.tzinfo).date()
+    return datetime(d.year, d.month, d.day, hour, tzinfo=anchor.tzinfo)
+
+
 def finalize_temporal(
     phrase: str | None,
     start: datetime | None,
@@ -305,9 +330,14 @@ def finalize_temporal(
     precision: str,
     anchor: datetime,
 ) -> tuple[datetime | None, datetime | None, bool]:
-    """Repair a mis-resolved backward phrase, then fix a date-precision value the
-    model rendered as drifted midnight-UTC. Returns (start, end, changed); a
-    value already on its written local date is left exactly as-is."""
+    """Repair a mis-resolved backward phrase and fix a date-precision value the
+    model rendered as drifted midnight-UTC. Returns (start, end, changed).
+
+    Part-of-day RANGE enrichment is applied only to TOKENS (the token loop), not
+    here: a fact's valid_from must not gain an hour offset that would reorder
+    same-day supersession, and a fact must never gain a valid_to (it would
+    falsely close a `state` interval). Tokens are the first-class range objects
+    (docs/ANALYSIS.md), so the within-day meaning lives there."""
     start, end, changed = _repair_dates(phrase, start, end, anchor)
     if precision in _DATE_PRECISIONS:
         if start is not None and _drifted_utc_midnight(start, anchor):
@@ -629,12 +659,24 @@ def parse_extraction(payload: Any, *, anchor: datetime | None = None) -> Extract
                     "analysis.temporal_repaired", scope="token", phrase=phrase,
                     resolved=start.isoformat(),
                 )  # fmt: skip
+            # A time-of-day token with no explicit end gains the part-of-day END
+            # as a within-day RANGE, so "evening"/"last night" carries a span
+            # instead of a bare instant. The START is left where it resolved so
+            # it still matches the fact's valid_from (one shared token, no
+            # duplicate) and supersession is untouched. Token only — facts keep
+            # their valid_from/to (see finalize_temporal).
+            window = _part_of_day_window(phrase)
+            if window is not None and start is not None and end is None:
+                window_end = _local_time_on(start, window[1], anchor)
+                if window_end > start:
+                    end = window_end
         kind = raw.get("kind")
+        kind = "range" if end is not None else (kind if kind in TOKEN_KINDS else "point")
         rrule = raw.get("rrule")
         tokens.append(
             ExtractedToken(
                 phrase=phrase,
-                kind=kind if kind in TOKEN_KINDS else "point",
+                kind=kind,
                 resolved_start=start,
                 resolved_end=end,
                 precision=precision,
