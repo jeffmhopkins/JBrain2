@@ -1794,6 +1794,60 @@ button.small {
   color: var(--text-3);
 }
 
+/* ===== Entities browse: standard list rows in a card ===== */
+
+.entity-list-screen {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.entity-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  min-height: 44px;
+  padding: 11px 14px;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  text-align: left;
+  color: inherit;
+}
+
+.entity-row + .entity-row {
+  border-top: 1px solid var(--border);
+}
+
+.entity-row-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.entity-row-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 500;
+}
+
+.entity-row-kind {
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+}
+
+.entity-row-meta {
+  flex-shrink: 0;
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
 /* ===== Review inbox: one-at-a-time triage ===== */
 
 .review-body {

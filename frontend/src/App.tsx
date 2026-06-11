@@ -6,6 +6,7 @@ import { MoveDomainSheet } from "./components/MoveDomainSheet";
 import { TopBar } from "./components/TopBar";
 import { useNoteActions } from "./notes/useNoteActions";
 import { type StreamAttachment, type StreamItem, useNotes } from "./notes/useNotes";
+import { EntityListScreen } from "./screens/EntityListScreen";
 import { EntityScreen } from "./screens/EntityScreen";
 import { HomeScreen } from "./screens/HomeScreen";
 import { LoginScreen } from "./screens/LoginScreen";
@@ -25,13 +26,14 @@ type Session =
   | { status: "anonymous" }
   | { status: "in"; principal: Principal };
 
-type Card = "ops" | "settings" | "search" | "review";
+type Card = "ops" | "settings" | "search" | "review" | "entities";
 
 const SCREEN_TITLES: Record<Card, string> = {
   ops: "Ops",
   settings: "Settings",
   search: "Search",
   review: "Review",
+  entities: "Entities",
 };
 
 const CARD_EXIT_MS = 150;
@@ -276,6 +278,8 @@ export function App() {
           )}
           {card === "search" && <SearchScreen onOpenResult={openNoteFromSearch} />}
           {card === "review" && <ReviewScreen />}
+          {/* Rows open the same entity layer the analysis chips use. */}
+          {card === "entities" && <EntityListScreen onOpenEntity={setEntityView} />}
         </div>
       )}
 
