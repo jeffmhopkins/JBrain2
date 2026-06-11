@@ -22,6 +22,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import re
 import sys
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -56,10 +57,15 @@ def _norm(s: str) -> str:
 
 
 def _overlaps(a: str, b: str) -> bool:
-    """One name contains the other ('Celine' ~ 'Celine Hopkins') — the eval
-    tolerates first-name-vs-full-name without rewarding a wholly wrong name."""
-    na, nb = _norm(a), _norm(b)
-    return bool(na) and bool(nb) and (na in nb or nb in na)
+    """One name contains the other AS WHOLE WORDS ('Celine' ~ 'Celine
+    Hopkins') — the eval tolerates first-name-vs-full-name without rewarding a
+    wholly wrong name, and without a short token matching INSIDE a longer word
+    (raw substring let 'Me' match the 'me' in 'Chase Home Lending')."""
+    ta, tb = re.findall(r"[0-9a-z]+", a.lower()), re.findall(r"[0-9a-z]+", b.lower())
+    if not ta or not tb:
+        return False
+    short, long = (ta, tb) if len(ta) <= len(tb) else (tb, ta)
+    return any(long[i : i + len(short)] == short for i in range(len(long) - len(short) + 1))
 
 
 @dataclass

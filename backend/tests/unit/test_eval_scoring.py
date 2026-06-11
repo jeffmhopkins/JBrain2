@@ -38,8 +38,17 @@ def _extraction(
 def test_overlaps_tolerates_first_name_vs_full_name() -> None:
     assert _overlaps("Celine", "Celine Hopkins")
     assert _overlaps("Celine Hopkins", "Celine")
+    assert _overlaps("Vasquez", "Dr. Vasquez")  # punctuation is not a token
     assert not _overlaps("Celine", "Jeff")
     assert not _overlaps("", "Jeff")
+
+
+def test_overlaps_matches_whole_words_not_substrings() -> None:
+    # 'Me' must not match the 'me' inside 'Chase Home Lending' (the live finance
+    # eval's lone false-fail) — overlap is whole-word, not raw substring.
+    assert not _overlaps("Me", "Chase Home Lending")
+    assert not _overlaps("Al", "Alvarez")
+    assert _overlaps("Chase", "Chase Home Lending")  # but a whole word still does
 
 
 # A UTC anchor, so a UTC instant's local date equals its UTC calendar date.
