@@ -16,7 +16,9 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from jbrain.analysis.display import mark_snippet
 from jbrain.db.session import SessionContext, scoped_session
 
-REVIEW_STATUSES = ("open", "resolved", "dismissed")
+# The list view exposes two segments: "resolved" folds in dismissals and
+# reopened tombstones — there is no separate dismissed listing.
+REVIEW_STATUSES = ("open", "resolved")
 
 
 class UnknownAction(Exception):
@@ -25,6 +27,10 @@ class UnknownAction(Exception):
 
 class AlreadyResolved(Exception):
     """The review item is no longer open."""
+
+
+class AlreadyOpen(Exception):
+    """The reopen target is already in the open queue."""
 
 
 def _as_uuid(value: str) -> uuid.UUID | None:
@@ -283,27 +289,31 @@ class SqlAnalysisRepo:
         }
 
     async def list_review(self, ctx: SessionContext, status: str) -> list[dict[str, Any]]:
+        """Open queue oldest-first for triage; the resolved log (decisions,
+        dismissals, and reopened tombstones) newest-decision-first.
+
+        A reopened item appears in BOTH segments: live in the open queue and
+        struck-through in the log, ordered by its reopened_at marker."""
+        if status == "open":
+            where = "status = 'open'"
+            order = "created_at, id"
+        else:
+            where = (
+                "status IN ('resolved', 'dismissed')"
+                " OR (status = 'open' AND resolution ? 'reopened_at')"
+            )
+            order = "coalesce(resolved_at, (resolution->>'reopened_at')::timestamptz) DESC, id"
         async with scoped_session(self._maker, ctx) as session:
             rows = (
                 await session.execute(
                     text(
-                        "SELECT id::text, kind, payload, domain_code, created_at"
-                        " FROM app.review_items WHERE status = :status"
-                        " ORDER BY created_at, id"
-                    ),
-                    {"status": status},
+                        "SELECT id::text, kind, payload, status, resolution, domain_code,"
+                        f" created_at, resolved_at FROM app.review_items WHERE {where}"
+                        f" ORDER BY {order}"
+                    )
                 )
             ).all()
-        return [
-            {
-                "id": r.id,
-                "kind": r.kind,
-                "payload": r.payload,
-                "domain": r.domain_code,
-                "created_at": r.created_at,
-            }
-            for r in rows
-        ]
+        return [_item_dict(r) for r in rows]
 
     async def resolve_review(
         self, ctx: SessionContext, item_id: str, action: str, payload: dict[str, Any]
@@ -332,7 +342,7 @@ class SqlAnalysisRepo:
             if item.status != "open":
                 raise AlreadyResolved(item.status)
 
-            new_status = await self._apply_resolution(
+            new_status, effects = await self._apply_resolution(
                 session, item.kind, item.payload, action, payload
             )
 
@@ -346,7 +356,7 @@ class SqlAnalysisRepo:
                 {
                     "id": str(iid),
                     "status": new_status,
-                    "resolution": _json({"action": action, "payload": payload}),
+                    "resolution": _json({"action": action, "payload": payload, "effects": effects}),
                 },
             )
             updated = (
@@ -358,16 +368,59 @@ class SqlAnalysisRepo:
                     {"id": str(iid)},
                 )
             ).one()
-        return {
-            "id": updated.id,
-            "kind": updated.kind,
-            "payload": updated.payload,
-            "status": updated.status,
-            "resolution": updated.resolution,
-            "domain": updated.domain_code,
-            "created_at": updated.created_at,
-            "resolved_at": updated.resolved_at,
-        }
+        return _item_dict(updated)
+
+    async def reopen_review(self, ctx: SessionContext, item_id: str) -> dict[str, Any] | None:
+        """Full unwind: reverse the recorded resolution effects in the same
+        transaction that re-queues the item; returns the updated item (with a
+        reopen_note for effects that are permanent by doctrine), None when
+        unknown.
+
+        Raises:
+            AlreadyOpen: the item is not resolved/dismissed.
+        """
+        iid = _as_uuid(item_id)
+        if iid is None:
+            return None
+        async with scoped_session(self._maker, ctx) as session:
+            item = (
+                await session.execute(
+                    text(
+                        "SELECT id::text, status, resolution"
+                        " FROM app.review_items WHERE id = :id FOR UPDATE"
+                    ),
+                    {"id": str(iid)},
+                )
+            ).first()
+            if item is None:
+                return None
+            if item.status == "open":
+                raise AlreadyOpen(item.status)
+
+            resolution = dict(item.resolution or {})
+            notes = await self._reverse_effects(session, resolution.get("effects") or [])
+            # The marker is how the UI tombstones the log row; the next
+            # resolve overwrites the whole resolution and clears it.
+            resolution["reopened_at"] = datetime.now(UTC).isoformat()
+            await session.execute(
+                text(
+                    "UPDATE app.review_items SET status = 'open', resolved_at = NULL,"
+                    " resolution = cast(:resolution AS jsonb) WHERE id = :id"
+                ),
+                {"id": str(iid), "resolution": _json(resolution)},
+            )
+            updated = (
+                await session.execute(
+                    text(
+                        "SELECT id::text, kind, payload, status, resolution, domain_code,"
+                        " created_at, resolved_at FROM app.review_items WHERE id = :id"
+                    ),
+                    {"id": str(iid)},
+                )
+            ).one()
+        out = _item_dict(updated)
+        out["reopen_note"] = "; ".join(notes) if notes else None
+        return out
 
     async def _apply_resolution(
         self,
@@ -376,16 +429,35 @@ class SqlAnalysisRepo:
         item_payload: dict[str, Any],
         action: str,
         payload: dict[str, Any],
-    ) -> str:
-        """Per-kind resolution semantics; returns the item's new status."""
+    ) -> tuple[str, list[dict[str, Any]]]:
+        """Per-kind resolution semantics; returns (new_status, effects).
+
+        Effects capture the prior state each write destroyed — exactly
+        enough for reopen_review to reverse it. Recording must never change
+        what a resolution does, only remember it.
+        """
         if action == "dismiss":
-            return "dismissed"
+            # No graph writes: reopening a dismissal is a bare re-queue.
+            return "dismissed", []
 
         if kind in ("attribute_collision", "fact_conflict") and action in ("accept_a", "accept_b"):
             winner = item_payload.get("fact_a" if action == "accept_a" else "fact_b")
             loser = item_payload.get("fact_b" if action == "accept_a" else "fact_a")
             if not winner or not loser:
                 raise UnknownAction(f"item payload lacks fact_a/fact_b for {action!r}")
+            prior = {
+                row.id: row
+                for row in (
+                    await session.execute(
+                        text(
+                            "SELECT id::text AS id, status, pinned,"
+                            " superseded_by::text AS superseded_by"
+                            " FROM app.facts WHERE id IN (:winner, :loser)"
+                        ),
+                        {"winner": winner, "loser": loser},
+                    )
+                ).all()
+            }
             # Pinning is what makes the human decision survive reprocessing.
             await session.execute(
                 text(
@@ -398,15 +470,45 @@ class SqlAnalysisRepo:
                 text("UPDATE app.facts SET status = 'retracted' WHERE id = :id"),
                 {"id": loser},
             )
-            return "resolved"
+            effects: list[dict[str, Any]] = []
+            if winner in prior:
+                w = prior[winner]
+                effects.append(
+                    {
+                        "action": "pinned",
+                        "fact_id": winner,
+                        "prior_status": w.status,
+                        "prior_pinned": w.pinned,
+                        "prior_superseded_by": w.superseded_by,
+                    }
+                )
+            if loser in prior:
+                effects.append(
+                    {
+                        "action": "retracted",
+                        "fact_id": loser,
+                        "prior_status": prior[loser].status,
+                    }
+                )
+            return "resolved", effects
 
         if kind == "merge_proposal" and action in ("accept", "reject"):
             entity_a, entity_b = item_payload.get("entity_a"), item_payload.get("entity_b")
             if not entity_a or not entity_b:
                 raise UnknownAction("item payload lacks entity_a/entity_b")
             if action == "accept":
-                # Tombstone + repoint; span-anchored mentions keep this
-                # reversible (un-merge = re-resolve the spans).
+                # Tombstone + repoint. RETURNING captures the repointed row
+                # ids — un-merge moves exactly those rows back instead of
+                # guessing from spans.
+                gone_prior = (
+                    await session.execute(
+                        text(
+                            "SELECT status, merged_into_id::text AS merged_into"
+                            " FROM app.entities WHERE id = :gone"
+                        ),
+                        {"gone": entity_b},
+                    )
+                ).first()
                 await session.execute(
                     text(
                         "UPDATE app.entities SET status = 'merged', merged_into_id = :keep,"
@@ -414,15 +516,39 @@ class SqlAnalysisRepo:
                     ),
                     {"keep": entity_a, "gone": entity_b},
                 )
-                for stmt in (
-                    "UPDATE app.entity_mentions SET entity_id = :keep WHERE entity_id = :gone",
-                    "UPDATE app.facts SET entity_id = :keep WHERE entity_id = :gone",
-                    "UPDATE app.facts SET object_entity_id = :keep WHERE object_entity_id = :gone",
+                repointed: dict[str, list[str]] = {}
+                for key, stmt in (
+                    (
+                        "mention_ids",
+                        "UPDATE app.entity_mentions SET entity_id = :keep"
+                        " WHERE entity_id = :gone RETURNING id::text",
+                    ),
+                    (
+                        "fact_ids",
+                        "UPDATE app.facts SET entity_id = :keep"
+                        " WHERE entity_id = :gone RETURNING id::text",
+                    ),
+                    (
+                        "object_fact_ids",
+                        "UPDATE app.facts SET object_entity_id = :keep"
+                        " WHERE object_entity_id = :gone RETURNING id::text",
+                    ),
                 ):
-                    await session.execute(text(stmt), {"keep": entity_a, "gone": entity_b})
-            else:
-                # Permanent negative knowledge: never re-proposed.
-                a, b = sorted((entity_a, entity_b))
+                    result = await session.execute(text(stmt), {"keep": entity_a, "gone": entity_b})
+                    repointed[key] = list(result.scalars())
+                return "resolved", [
+                    {
+                        "action": "merged",
+                        "entity_id": entity_b,
+                        "into": entity_a,
+                        "prior_status": gone_prior.status if gone_prior else None,
+                        "prior_merged_into": gone_prior.merged_into if gone_prior else None,
+                        **repointed,
+                    }
+                ]
+            # Permanent negative knowledge: never re-proposed.
+            a, b = sorted((entity_a, entity_b))
+            inserted = (
                 await session.execute(
                     text(
                         "INSERT INTO app.entity_distinctions"
@@ -430,16 +556,20 @@ class SqlAnalysisRepo:
                         " SELECT gen_random_uuid(), :a, :b, 'merge rejected', domain_code"
                         " FROM app.entities WHERE id = :a"
                         " ON CONFLICT (entity_a, entity_b) DO NOTHING"
+                        " RETURNING id::text"
                     ),
                     {"a": a, "b": b},
                 )
-            return "resolved"
+            ).first()
+            return "resolved", [
+                {"action": "distinct_from", "a": a, "b": b, "inserted": inserted is not None}
+            ]
 
         if kind == "ambiguous_mention" and action == "reject":
             # The card's only advertised verb: leaving the mention unlinked
             # changes no data, so this is a dismissal — layer-2/3 resolution
             # may re-propose the link with more signal.
-            return "dismissed"
+            return "dismissed", []
 
         if kind == "domain_promotion" and action in ("accept", "reject"):
             if action == "accept":
@@ -447,15 +577,116 @@ class SqlAnalysisRepo:
                 proposed = item_payload.get("proposed_domain")
                 if not fact_id or not proposed:
                     raise UnknownAction("item payload lacks fact_id/proposed_domain")
+                prior = (
+                    await session.execute(
+                        text("SELECT domain_code, pinned FROM app.facts WHERE id = :id"),
+                        {"id": fact_id},
+                    )
+                ).first()
                 await session.execute(
                     text(
                         "UPDATE app.facts SET domain_code = :domain, pinned = true WHERE id = :id"
                     ),
                     {"id": fact_id, "domain": proposed},
                 )
-            return "resolved"
+                if prior is None:
+                    return "resolved", []
+                return "resolved", [
+                    {
+                        "action": "domain_changed",
+                        "fact_id": fact_id,
+                        "prior_domain": prior.domain_code,
+                        "prior_pinned": prior.pinned,
+                        "new_domain": proposed,
+                    }
+                ]
+            return "resolved", []
 
         raise UnknownAction(f"action {action!r} is not valid for kind {kind!r}")
+
+    async def _reverse_effects(
+        self, session: AsyncSession, effects: list[dict[str, Any]]
+    ) -> list[str]:
+        """Undo recorded effects newest-first; returns notes for the ones
+        that are permanent by doctrine and deliberately survive."""
+        notes: list[str] = []
+        for effect in reversed(effects):
+            action = effect.get("action")
+            if action == "pinned":
+                await session.execute(
+                    text(
+                        "UPDATE app.facts SET status = :status, pinned = :pinned,"
+                        " superseded_by = :superseded_by WHERE id = :id"
+                    ),
+                    {
+                        "id": effect["fact_id"],
+                        "status": effect["prior_status"],
+                        "pinned": effect["prior_pinned"],
+                        "superseded_by": effect["prior_superseded_by"],
+                    },
+                )
+            elif action == "retracted":
+                await session.execute(
+                    text("UPDATE app.facts SET status = :status WHERE id = :id"),
+                    {"id": effect["fact_id"], "status": effect["prior_status"]},
+                )
+            elif action == "merged":
+                await session.execute(
+                    text(
+                        "UPDATE app.entities SET status = :status, merged_into_id = :merged_into,"
+                        " updated_at = now() WHERE id = :id"
+                    ),
+                    {
+                        "id": effect["entity_id"],
+                        "status": effect["prior_status"],
+                        "merged_into": effect["prior_merged_into"],
+                    },
+                )
+                # Repoint only the rows the merge moved — rows linked to the
+                # survivor before the merge stay put.
+                for key, stmt in (
+                    ("mention_ids", "UPDATE app.entity_mentions SET entity_id = :gone"),
+                    ("fact_ids", "UPDATE app.facts SET entity_id = :gone"),
+                    ("object_fact_ids", "UPDATE app.facts SET object_entity_id = :gone"),
+                ):
+                    for row_id in effect.get(key) or []:
+                        await session.execute(
+                            text(f"{stmt} WHERE id = :id"),
+                            {"gone": effect["entity_id"], "id": row_id},
+                        )
+            elif action == "domain_changed":
+                await session.execute(
+                    text(
+                        "UPDATE app.facts SET domain_code = :domain, pinned = :pinned"
+                        " WHERE id = :id"
+                    ),
+                    {
+                        "id": effect["fact_id"],
+                        "domain": effect["prior_domain"],
+                        "pinned": effect["prior_pinned"],
+                    },
+                )
+            elif action == "distinct_from":
+                # docs/ANALYSIS.md: distinct_from is permanent — the item
+                # re-queues but the edge stays.
+                notes.append(
+                    "the distinct-from edge is permanent and stays — this pair is never re-proposed"
+                )
+        return notes
+
+
+def _item_dict(row: Any) -> dict[str, Any]:
+    """One review-item wire shape everywhere: list, resolve, and reopen."""
+    return {
+        "id": row.id,
+        "kind": row.kind,
+        "payload": row.payload,
+        "status": row.status,
+        "resolution": row.resolution,
+        "domain": row.domain_code,
+        "created_at": row.created_at,
+        "resolved_at": row.resolved_at,
+    }
 
 
 def _json(value: dict[str, Any]) -> str:

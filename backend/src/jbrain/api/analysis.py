@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 
 from jbrain.analysis.repo import (
     REVIEW_STATUSES,
+    AlreadyOpen,
     AlreadyResolved,
     SqlAnalysisRepo,
     UnknownAction,
@@ -73,6 +74,21 @@ async def resolve_review(
         raise HTTPException(status_code=400, detail=str(exc)) from None
     except AlreadyResolved:
         raise HTTPException(status_code=409, detail="review item is not open") from None
+    if item is None:
+        raise HTTPException(status_code=404, detail="review item not found")
+    return item
+
+
+@router.post("/review/{item_id}/reopen")
+async def reopen_review(item_id: str, request: Request, principal: PrincipalDep) -> dict[str, Any]:
+    """Full unwind: reverses the resolution's recorded graph effects and
+    re-queues the item. Permanent distinct_from edges survive by doctrine;
+    the response's reopen_note says so when one was kept."""
+    repo = get_analysis_repo(request)
+    try:
+        item = await repo.reopen_review(ctx_for(principal), item_id)
+    except AlreadyOpen:
+        raise HTTPException(status_code=409, detail="review item is already open") from None
     if item is None:
         raise HTTPException(status_code=404, detail="review item not found")
     return item
