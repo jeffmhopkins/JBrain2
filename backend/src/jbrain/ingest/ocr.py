@@ -27,6 +27,7 @@ written until every call succeeds, so a failed run never half-fills the cache.
 """
 
 import base64
+from pathlib import Path
 from typing import Any, Protocol
 
 import structlog
@@ -36,6 +37,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from jbrain import queue
 from jbrain.db.session import SessionContext, scoped_session
 from jbrain.llm import LlmImage, LlmRouter
+from jbrain.llm.promptfile import load_prompt
 from jbrain.models.notes import Attachment, AttachmentExtract, Note
 from jbrain.queue import SYSTEM_CTX
 from jbrain.settings_store import IMAGE_ANALYSIS_MODES
@@ -54,34 +56,18 @@ OCR_CONFIDENCE = 0.7
 DESCRIPTION_CONFIDENCE = 0.6
 EXTRACT_CONFIDENCE = {"ocr": OCR_CONFIDENCE, "caption": DESCRIPTION_CONFIDENCE}
 
-# OCR of a dense page can outweigh the image tokens; a salient extraction of
-# a dense image runs longer than a caption but still well short of a page.
-OCR_MAX_TOKENS = 8192
-DESCRIPTION_MAX_TOKENS = 1024
-
-OCR_SYSTEM = (
-    "You transcribe text from one image. Transcribe ALL legible text "
-    "verbatim, preserving the original line structure. Output plain text "
-    "only — no commentary, no markdown, no code fences. Be honest about "
-    "illegibility: write [illegible] where you cannot read a word or "
-    "region, and never guess. If the image contains no legible text at "
-    "all, output nothing."
-)
-
-DESCRIPTION_SYSTEM = (
-    "You extract the salient information from one image for a personal "
-    "knowledge index. A separate pass transcribes its text verbatim — do "
-    "not transcribe, but do state what the text means together with what "
-    "the visuals show. Write the information itself, not a description of "
-    "the medium: never open with phrases like 'an image of' or 'a "
-    "screenshot showing', and ignore styling, layout, and UI chrome. "
-    "Capture every detail worth remembering: people and their names, "
-    "objects, places, dates and times, quantities and amounts, "
-    "identifiers, visible states or conditions, events, and the "
-    "relationships between them. Write one plain sentence per distinct "
-    "piece of information. State only what the image actually supports — "
-    "never speculate. Output plain text only — no preamble, no markdown."
-)
+# The vision prompts (system text, token budget, capability tier) are each one
+# co-located .prompt artifact (docs/DEVELOPMENT.md); these constants are the
+# loader facade so the handler and tests keep importing the same names. Both run
+# on the "vision" tier — the adapter resolves it to an image-capable model.
+_OCR = load_prompt(Path(__file__).parent / "prompts" / "vision_ocr.prompt")
+_DESCRIPTION = load_prompt(Path(__file__).parent / "prompts" / "vision_caption.prompt")
+OCR_MAX_TOKENS = int(_OCR.config["max_tokens"])
+DESCRIPTION_MAX_TOKENS = int(_DESCRIPTION.config["max_tokens"])
+OCR_STRENGTH = _OCR.strength
+DESCRIPTION_STRENGTH = _DESCRIPTION.strength
+OCR_SYSTEM = _OCR.render()
+DESCRIPTION_SYSTEM = _DESCRIPTION.render()
 
 
 async def enqueue_analysis_fallback(
@@ -209,6 +195,7 @@ class OcrPipeline:
                 user_text=f"Transcribe this image (file: {filename}).",
                 images=[image],
                 max_tokens=OCR_MAX_TOKENS,
+                strength=OCR_STRENGTH,
             )
             rows.append(
                 build_extract(
@@ -217,7 +204,7 @@ class OcrPipeline:
                     filename=filename,
                     kind="ocr",
                     text=ocr.text,
-                    tool=":".join(self._router.spec("vision.ocr")),
+                    tool=":".join(self._router.spec("vision.ocr", OCR_STRENGTH)),
                 )
             )
         if "caption" in run_kinds:
@@ -227,6 +214,7 @@ class OcrPipeline:
                 user_text=f"Describe this image (file: {filename}).",
                 images=[image],
                 max_tokens=DESCRIPTION_MAX_TOKENS,
+                strength=DESCRIPTION_STRENGTH,
             )
             rows.append(
                 build_extract(
@@ -235,7 +223,7 @@ class OcrPipeline:
                     filename=filename,
                     kind="caption",
                     text=description.text,
-                    tool=":".join(self._router.spec("vision.caption")),
+                    tool=":".join(self._router.spec("vision.caption", DESCRIPTION_STRENGTH)),
                 )
             )
 

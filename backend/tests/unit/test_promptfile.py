@@ -98,6 +98,27 @@ def test_entity_disambiguate_file_round_trips_to_the_imported_constants() -> Non
     assert pf.strength == "low" and DISAMBIGUATE_STRENGTH == "low"
 
 
+def test_vision_files_round_trip_and_run_on_the_vision_tier() -> None:
+    from jbrain.ingest.ocr import (
+        DESCRIPTION_MAX_TOKENS,
+        DESCRIPTION_STRENGTH,
+        DESCRIPTION_SYSTEM,
+        OCR_MAX_TOKENS,
+        OCR_STRENGTH,
+        OCR_SYSTEM,
+    )
+
+    base = Path(__file__).parents[2] / "src/jbrain/ingest/prompts"
+    ocr = load_prompt(base / "vision_ocr.prompt")
+    caption = load_prompt(base / "vision_caption.prompt")
+    assert ocr.render() == OCR_SYSTEM and ocr.config["max_tokens"] == OCR_MAX_TOKENS
+    assert caption.render() == DESCRIPTION_SYSTEM
+    assert caption.config["max_tokens"] == DESCRIPTION_MAX_TOKENS
+    # Both image tasks declare the vision tier (adapter picks an image model).
+    assert ocr.strength == "vision" and OCR_STRENGTH == "vision"
+    assert caption.strength == "vision" and DESCRIPTION_STRENGTH == "vision"
+
+
 def test_prompt_content_is_pinned_to_its_version() -> None:
     """A content/version guard: the rendered prompt + schema hash to a pinned
     value. Editing the prompt prose or schema fails this test until you BOTH bump
