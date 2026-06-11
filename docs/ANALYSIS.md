@@ -198,6 +198,27 @@ LLM disambiguation with candidates → review inbox for the gray zone.
   birthdays) are evidence of a hidden two-people merge — the system
   proposes a **split**, not a supersession; mention-level provenance makes
   the split a re-resolution of spans, not archaeology.
+- **Same-name coexistence [decided: rejected — conservative collision wins].**
+  Letting two live entities share a normalized name, auto-distinguished by
+  context, was evaluated (multi-agent research + red-team) and rejected for
+  this single-user system. The exact-match gate (`entities.resolve_entity`:
+  one match auto-links, 2+ → one deduped `ambiguous_mention` card) already
+  satisfies the intent — "don't misattribute when two same-named people
+  exist" — more safely than coexistence would. Coexistence is a net loss
+  here: re-analysis rebuilds mentions wholesale with no pinned routing, so
+  resolving a bare name through the LLM would be **non-deterministic across
+  re-runs** (a silent flip — the one outcome no layer may produce); the
+  "retro-recheck" of bare first names would fan one new common name out into
+  a review card per historical mention (worse than the single deduped card);
+  feeding `distinct_from` to the per-mention disambiguator is a no-op (it
+  picks one entity per mention — `distinct_from` only constrains *merges*,
+  where it is already enforced); and `_exact_matches` being domain-blind is
+  load-bearing, not a leak (declared-name collision needs cross-domain
+  visibility). The only correction worth building is the **human-initiated
+  split** (above) — never an auto-minted second entity. So "bare-first-name
+  retro-recheck" and "layer-3 `distinct_from`" are moot *by design*; the
+  auto-link half of the bare-first-names rule stands, the retro-recheck half
+  is superseded by the collision card.
 
 ## Domains and the firewall
 

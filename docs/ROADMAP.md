@@ -71,10 +71,12 @@ over-merged entity** (an attribute collision as a hidden two-people signal →
 mentions/facts into the new identity) and **alias-detach** (removing a
 wrongly-attached name and re-resolving the mentions it linked) — is left for a
 later pass; the merge machinery's reversible-effects pattern is the model to
-mirror. Bare-first-name retro-recheck and layer-3 `distinct_from` are
-architecture-dependent — only meaningful if same-name entities are ever allowed
-to coexist (today the resolver's exact-match short-circuit prevents it), so they
-ride that same future decision.
+mirror. Bare-first-name retro-recheck and layer-3 `distinct_from` are **not on
+the path** — they would only matter under same-name entity coexistence, which
+was evaluated and **rejected** (docs/ANALYSIS.md "Same-name coexistence"): the
+conservative exact-collision → review card is the correct, safer answer for a
+single user, so the human-initiated split above is the only entity-correction
+worth building.
 
 ## Phase 4 — Personal agent & structured records
 
