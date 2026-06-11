@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from jbrain.analysis.repo import SqlAnalysisRepo
 from jbrain.api import analysis, auth, health, notes, ops, search
+from jbrain.api import settings as settings_api
 from jbrain.auth.repo import SqlAuthRepo
 from jbrain.config import Settings, get_settings
 from jbrain.embed import TeiEmbedClient
@@ -16,6 +17,7 @@ from jbrain.notes.repo import SqlNotesRepo
 from jbrain.queue import PgJobQueue
 from jbrain.search.repo import SqlSearchRepo
 from jbrain.search.service import SearchService
+from jbrain.settings_store import SqlSettingsStore
 from jbrain.storage import FsBackupShelf, FsBlobStore
 from jbrain.usage import SqlUsageRecorder
 
@@ -42,6 +44,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             SqlSearchRepo(maker), TeiEmbedClient(settings.embed_url)
         )
         app.state.analysis_repo = SqlAnalysisRepo(maker)
+        app.state.settings_store = SqlSettingsStore(maker)
         # Any API-side LLM call must flow through this router so its tokens
         # land in app.llm_usage like the worker's do.
         app.state.llm_router = build_router(settings, recorder=SqlUsageRecorder(maker))
@@ -58,6 +61,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(notes.router, prefix="/api")
     app.include_router(ops.router, prefix="/api")
     app.include_router(search.router, prefix="/api")
+    app.include_router(settings_api.router, prefix="/api")
     return app
 
 

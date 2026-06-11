@@ -50,6 +50,10 @@ class JobEnqueuer(Protocol):
 
     async def enqueue(self, ctx: SessionContext, kind: str, payload: dict[str, Any]) -> str: ...
 
+    async def has_active(
+        self, ctx: SessionContext, kind: str, *, payload_field: str, value: str
+    ) -> bool: ...
+
 
 class PgJobQueue:
     """Bound-sessionmaker facade over the module functions, for DI in the app."""
@@ -59,6 +63,11 @@ class PgJobQueue:
 
     async def enqueue(self, ctx: SessionContext, kind: str, payload: dict[str, Any]) -> str:
         return await enqueue(self._maker, ctx, kind, payload)
+
+    async def has_active(
+        self, ctx: SessionContext, kind: str, *, payload_field: str, value: str
+    ) -> bool:
+        return await has_active(self._maker, ctx, kind, payload_field=payload_field, value=value)
 
 
 def reclaim_attempts(attempts: int, max_attempts: int) -> tuple[int, bool]:
@@ -93,6 +102,30 @@ async def enqueue(
             {"id": job_id, "kind": kind, "payload": json.dumps(payload)},
         )
     return job_id
+
+
+async def has_active(
+    maker: async_sessionmaker[AsyncSession],
+    ctx: SessionContext,
+    kind: str,
+    *,
+    payload_field: str,
+    value: str,
+) -> bool:
+    """Whether a queued/running job of `kind` carries this payload value —
+    the API's duplicate guard (e.g. 409 on a second on-demand analyze)."""
+    async with scoped_session(maker, ctx) as session:
+        row = (
+            await session.execute(
+                text(
+                    "SELECT 1 FROM app.jobs WHERE kind = :kind"
+                    " AND status IN ('queued', 'running')"
+                    " AND payload->>:field = :value LIMIT 1"
+                ),
+                {"kind": kind, "field": payload_field, "value": value},
+            )
+        ).first()
+    return row is not None
 
 
 async def claim(maker: async_sessionmaker[AsyncSession], ctx: SessionContext) -> Job | None:

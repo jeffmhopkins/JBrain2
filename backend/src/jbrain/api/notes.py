@@ -47,6 +47,9 @@ class AttachmentOut(BaseModel):
     # True once the vision pipeline cached OCR/caption text for this file —
     # the client derives the OCR status chip from it.
     has_extracts: bool = False
+    # True once a non-empty description is cached (full image analysis) —
+    # flips the chip to "text + description".
+    has_description: bool = False
 
 
 class NoteOut(BaseModel):
@@ -90,6 +93,7 @@ def note_out(n: NoteInfo) -> NoteOut:
                 media_type=a.media_type,
                 size_bytes=a.size_bytes,
                 has_extracts=a.has_extracts,
+                has_description=a.has_description,
             )
             for a in n.attachments
         ],
@@ -256,6 +260,7 @@ async def upload_attachment(
         media_type=attachment.media_type,
         size_bytes=attachment.size_bytes,
         has_extracts=attachment.has_extracts,
+        has_description=attachment.has_description,
     )
 
 
@@ -272,6 +277,65 @@ async def remove_attachment(
         raise HTTPException(status_code=404, detail="attachment not found")
     # Re-ingest rebuilds the note's chunks without the removed file's text.
     await jobs.enqueue(ctx, "ingest_note", {"note_id": note_id})
+
+
+class ExtractOut(BaseModel):
+    kind: str
+    text: str
+    tool: str
+    confidence: float | None
+    created_at: datetime
+
+
+class ExtractsOut(BaseModel):
+    extracts: list[ExtractOut]
+
+
+@router.get("/attachments/{attachment_id}/extracts")
+async def attachment_extracts(
+    attachment_id: str, principal: PrincipalDep, repo: NotesRepoDep
+) -> ExtractsOut:
+    """The vision-cache rows for one attachment — fetched lazily when a
+    manifest row expands, never inlined into note payloads."""
+    rows = await repo.list_extracts(ctx_for(principal), attachment_id)
+    if rows is None:
+        raise HTTPException(status_code=404, detail="attachment not found")
+    return ExtractsOut(
+        extracts=[
+            ExtractOut(
+                kind=r.kind,
+                text=r.text,
+                tool=r.tool,
+                confidence=r.confidence,
+                created_at=r.created_at,
+            )
+            for r in rows
+        ]
+    )
+
+
+@router.post("/attachments/{attachment_id}/analyze", status_code=202)
+async def analyze_attachment(
+    attachment_id: str,
+    principal: PrincipalDep,
+    repo: NotesRepoDep,
+    jobs: JobQueueDep,
+) -> dict[str, str]:
+    """On-demand full analysis for one attachment, regardless of the global
+    image-analysis mode (also the re-run path). The handler re-describes —
+    delete+insert of the caption row — runs OCR only if missing, then
+    re-ingests, so the note's lifecycle chip walks again."""
+    ctx = ctx_for(principal)
+    if await repo.get_attachment(ctx, attachment_id) is None:
+        raise HTTPException(status_code=404, detail="attachment not found")
+    if await jobs.has_active(
+        ctx, "ocr_attachment", payload_field="attachment_id", value=attachment_id
+    ):
+        raise HTTPException(status_code=409, detail="analysis already queued or running")
+    job_id = await jobs.enqueue(
+        ctx, "ocr_attachment", {"attachment_id": attachment_id, "mode": "full"}
+    )
+    return {"job_id": job_id}
 
 
 @router.get("/attachments/{attachment_id}")

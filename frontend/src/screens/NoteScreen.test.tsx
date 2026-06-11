@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { NoteAnalysis, SearchResult } from "../api/client";
+import type { AttachmentExtract, NoteAnalysis, SearchResult } from "../api/client";
 import type { StreamItem } from "../notes/useNotes";
 import { NoteScreen, noteViewFromItem, noteViewFromSearch } from "./NoteScreen";
 
@@ -20,6 +20,7 @@ const ITEM: StreamItem = {
       mediaType: "application/pdf",
       sizeBytes: 24_120,
       hasExtracts: false,
+      hasDescription: false,
     },
   ],
   pending: false,
@@ -27,7 +28,7 @@ const ITEM: StreamItem = {
 };
 
 // Indexed variant with a PDF (searchable), an image still waiting on the
-// async OCR job, and an image whose vision cache is already filled.
+// async OCR job, an image with OCR only, and a fully described image.
 const INDEXED: StreamItem = {
   ...ITEM,
   ingestState: "indexed",
@@ -39,6 +40,7 @@ const INDEXED: StreamItem = {
       mediaType: "image/png",
       sizeBytes: 512_000,
       hasExtracts: false,
+      hasDescription: false,
     },
     {
       id: "a3",
@@ -46,6 +48,15 @@ const INDEXED: StreamItem = {
       mediaType: "image/jpeg",
       sizeBytes: 300_000,
       hasExtracts: true,
+      hasDescription: true,
+    },
+    {
+      id: "a4",
+      filename: "scan.png",
+      mediaType: "image/png",
+      sizeBytes: 100_000,
+      hasExtracts: true,
+      hasDescription: false,
     },
   ],
 };
@@ -65,6 +76,7 @@ function setup(
       mediaType: file.type || "application/octet-stream",
       sizeBytes: file.size,
       hasExtracts: false,
+      hasDescription: false,
     })),
     onRemoveAttachment: vi.fn(async () => {}),
     onOpenEntity: vi.fn(),
@@ -230,16 +242,18 @@ describe("NoteScreen", () => {
 
     // OCR'd images count as searchable; only the pending one awaits OCR.
     expect(
-      screen.getByText("3 files · 817 KB · 2 searchable · 1 awaiting ocr"),
+      screen.getByText("4 files · 914 KB · 3 searchable · 1 awaiting ocr"),
     ).toBeInTheDocument();
     expect(screen.getByText("lab-orders.pdf")).toBeInTheDocument();
     expect(screen.getByText("24 KB · application/pdf")).toBeInTheDocument();
     expect(screen.getByText("text extracted")).toBeInTheDocument();
-    // Image pending the async OCR job vs image with a filled vision cache.
+    // The three image chip states: awaiting OCR, OCR cached, full analysis.
     expect(screen.getByText("ocr queued…")).toBeInTheDocument();
     expect(screen.getByText("ocr queued…")).toHaveClass("att-chip-warn");
     expect(screen.getByText("text extracted (ocr)")).toBeInTheDocument();
     expect(screen.getByText("text extracted (ocr)")).toHaveClass("att-chip-ok");
+    expect(screen.getByText("text + description")).toBeInTheDocument();
+    expect(screen.getByText("text + description")).toHaveClass("att-chip-ok");
   });
 
   it("images show the indexing chip while the note itself is still indexing", () => {
@@ -278,7 +292,7 @@ describe("NoteScreen", () => {
 
     await waitFor(() => expect(screen.getByText("notes.txt")).toBeInTheDocument());
     expect(onAddAttachment).toHaveBeenCalledWith("n1", file);
-    expect(screen.getByRole("tab", { name: /Attachments/ })).toHaveTextContent("4");
+    expect(screen.getByRole("tab", { name: /Attachments/ })).toHaveTextContent("5");
   });
 
   it("Analysis tab: title, tags, and facts as edges grouped by subject", async () => {
@@ -399,5 +413,159 @@ describe("NoteScreen", () => {
     expect(screen.queryByText("loading the full note…")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("tab", { name: /Attachments/ }));
     expect(screen.getByText("lab-orders.pdf")).toBeInTheDocument();
+  });
+});
+
+// ===== inline manifest expansion (settled three-way review — mock C) =====
+
+function jsonResponse(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+function stubAttachmentsFetch(opts: {
+  mode?: "full" | "ocr";
+  extracts?: Record<string, AttachmentExtract[]>;
+}) {
+  const analyzed: string[] = [];
+  const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+    const url = String(input);
+    const method = (init?.method ?? "GET").toUpperCase();
+    if (url === "/api/settings") {
+      return jsonResponse({ image_analysis_mode: opts.mode ?? "full" });
+    }
+    const extractsMatch = url.match(/^\/api\/attachments\/([^/]+)\/extracts$/);
+    if (extractsMatch && method === "GET") {
+      return jsonResponse({ extracts: opts.extracts?.[extractsMatch[1] ?? ""] ?? [] });
+    }
+    const analyzeMatch = url.match(/^\/api\/attachments\/([^/]+)\/analyze$/);
+    if (analyzeMatch && method === "POST") {
+      analyzed.push(analyzeMatch[1] ?? "");
+      return jsonResponse({ job_id: "job-1" }, 202);
+    }
+    throw new Error(`Unexpected fetch: ${method} ${url}`);
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  return { fetchMock, analyzed };
+}
+
+function extract(kind: "ocr" | "caption", text: string): AttachmentExtract {
+  return {
+    kind,
+    text,
+    tool: "xai:grok-4.3",
+    confidence: kind === "ocr" ? 0.7 : 0.6,
+    created_at: "2026-06-11T09:00:00.000Z",
+  };
+}
+
+const OCR_8_LINES = [
+  "Q3 PLANNING",
+  "- ship phase 4 conversations",
+  "- [illegible] retrieval evals",
+  "- ocr -> facts pipeline",
+  "owner: jeff",
+  "demo [illegible] 6/19",
+  "follow up with sam",
+  "budget: tbd",
+].join("\n");
+
+describe("AttachmentsTab inline expansion", () => {
+  it("unfolds an image row in place: clamped verbatim OCR, illegible muted, description + provenance", async () => {
+    stubAttachmentsFetch({
+      extracts: {
+        a3: [
+          extract("ocr", OCR_8_LINES),
+          extract("caption", "a whiteboard of q3 planning bullets, partly smudged."),
+        ],
+      },
+    });
+    setup(noteViewFromItem(INDEXED));
+    fireEvent.click(screen.getByRole("tab", { name: /Attachments/ }));
+    fireEvent.click(screen.getByText("whiteboard.jpg"));
+
+    // Extracts are fetched lazily on first expand, then render verbatim.
+    expect(await screen.findByText(/Q3 PLANNING/)).toBeInTheDocument();
+    const pre = document.querySelector(".x-text");
+    expect(pre).not.toBeNull();
+    expect(pre).not.toHaveClass("all");
+    // The model's honesty marker renders muted-italic, never plain prose.
+    expect(document.querySelectorAll(".x-illegible")).toHaveLength(2);
+    // 8 lines exceed the ~6-line clamp: show-all grows in place.
+    fireEvent.click(screen.getByRole("button", { name: "show all 8 lines" }));
+    expect(document.querySelector(".x-text")).toHaveClass("all");
+    fireEvent.click(screen.getByRole("button", { name: "show less" }));
+    expect(document.querySelector(".x-text")).not.toHaveClass("all");
+
+    // The description beneath, with its mined-for-facts provenance line.
+    expect(
+      screen.getByText("a whiteboard of q3 planning bullets, partly smudged."),
+    ).toBeInTheDocument();
+    expect(screen.getByText("ocr · xai:grok-4.3 · 70%")).toBeInTheDocument();
+    expect(
+      screen.getByText("caption · xai:grok-4.3 · 60% · mined for facts in analysis"),
+    ).toBeInTheDocument();
+
+    // Tapping the row again folds it back.
+    fireEvent.click(screen.getByText("whiteboard.jpg"));
+    expect(screen.queryByText(/Q3 PLANNING/)).not.toBeInTheDocument();
+  });
+
+  it("a row missing its description shows the ocr-only note and the analyze action", async () => {
+    const { analyzed } = stubAttachmentsFetch({
+      mode: "ocr",
+      extracts: { a4: [extract("ocr", "RIDGELINE SCAN\nTOTAL 4,200")] },
+    });
+    setup(noteViewFromItem(INDEXED));
+    fireEvent.click(screen.getByRole("tab", { name: /Attachments/ }));
+    fireEvent.click(screen.getByText("scan.png"));
+
+    expect(await screen.findByText(/RIDGELINE SCAN/)).toBeInTheDocument();
+    // Two lines fit the clamp — nothing to grow.
+    expect(screen.queryByRole("button", { name: /show all/ })).not.toBeInTheDocument();
+    expect(
+      await screen.findByText("no description — image analysis is set to ocr only."),
+    ).toBeInTheDocument();
+
+    // On-demand analysis: POST, then the calm in-flight line replaces it.
+    fireEvent.click(screen.getByRole("button", { name: "analyze image" }));
+    expect(await screen.findByText("analyzing image…")).toBeInTheDocument();
+    expect(analyzed).toEqual(["a4"]);
+    expect(screen.queryByRole("button", { name: "analyze image" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("no description — image analysis is set to ocr only."),
+    ).not.toBeInTheDocument();
+  });
+
+  it("pdf rows do not expand — no caret, a transient text-layer line instead", async () => {
+    const { fetchMock } = stubAttachmentsFetch({});
+    setup(noteViewFromItem(INDEXED));
+    fireEvent.click(screen.getByRole("tab", { name: /Attachments/ }));
+
+    const row = screen.getByText("lab-orders.pdf").closest(".att-row");
+    expect(row).not.toBeNull();
+    expect(row).not.toHaveAttribute("aria-expanded");
+    expect(row?.querySelector(".att-caret")).toBeNull();
+
+    fireEvent.click(screen.getByText("lab-orders.pdf"));
+    expect(screen.getByText(/pdfs carry their own text layer/)).toBeInTheDocument();
+    // No extraction fetch happens for text-layer files.
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.filter(([u]) => String(u).includes("/extracts"))).toHaveLength(0),
+    );
+  });
+
+  it("image rows carry a caret and aria-expanded state", () => {
+    stubAttachmentsFetch({ extracts: {} });
+    setup(noteViewFromItem(INDEXED));
+    fireEvent.click(screen.getByRole("tab", { name: /Attachments/ }));
+
+    const row = screen.getByText("whiteboard.jpg").closest(".att-row");
+    expect(row).toHaveAttribute("aria-expanded", "false");
+    expect(row?.querySelector(".att-caret")).not.toBeNull();
+    fireEvent.click(screen.getByText("whiteboard.jpg"));
+    expect(row).toHaveAttribute("aria-expanded", "true");
   });
 });

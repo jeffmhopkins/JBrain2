@@ -21,6 +21,20 @@ class AttachmentInfo:
     # Whether any vision extract (OCR/caption) exists — drives the
     # Attachments tab's OCR status chip.
     has_extracts: bool = False
+    # Whether a non-empty description was cached (full image analysis) —
+    # flips the chip to "text + description".
+    has_description: bool = False
+
+
+@dataclass(frozen=True)
+class ExtractInfo:
+    """One vision-cache row, as the manifest expansion fetches it."""
+
+    kind: str
+    text: str
+    tool: str
+    confidence: float | None
+    created_at: datetime
 
 
 @dataclass(frozen=True)
@@ -123,6 +137,13 @@ class NotesRepo(Protocol):
     async def get_attachment(
         self, ctx: SessionContext, attachment_id: str
     ) -> AttachmentInfo | None: ...
+
+    async def list_extracts(
+        self, ctx: SessionContext, attachment_id: str
+    ) -> list[ExtractInfo] | None:
+        """The attachment's vision-cache rows (may be empty); None when the
+        attachment is missing or out of scope."""
+        ...
 
     async def remove_attachment(self, ctx: SessionContext, attachment_id: str) -> str | None:
         """Deletes the row (never the shared blob); returns the note_id for

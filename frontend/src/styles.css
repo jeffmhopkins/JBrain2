@@ -1284,11 +1284,171 @@ button.small {
   padding: 12px 6px 12px 14px;
 }
 
+.att-item + .att-item,
+.att-item + .att-row,
+.att-item + .att-add-row,
 .att-row + .att-row,
 .att-row + .att-empty,
 .att-row + .att-add-row,
 .att-empty + .att-add-row {
   border-top: 1px solid var(--border);
+}
+
+/* Inline manifest expansion (settled in a three-way review — mock C). */
+
+.att-row[role="button"] {
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.att-caret {
+  flex-shrink: 0;
+  display: inline-flex;
+  margin-right: -6px;
+  color: var(--text-3);
+  transition: transform 150ms ease-out;
+}
+
+.att-item.open .att-caret {
+  transform: rotate(90deg);
+  color: var(--text-2);
+}
+
+.x-inner {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  /* Aligns under the filename, past the type icon. */
+  padding: 0 14px 14px 46px;
+}
+
+.x-strip {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.x-thumb {
+  width: 64px;
+  height: 64px;
+  flex: none;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--r-input);
+  background: var(--surface-2);
+}
+
+.x-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.x-strip-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  padding-top: 2px;
+}
+
+.x-label {
+  font-size: var(--fs-micro);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+.x-micro {
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+}
+
+.x-open-link {
+  color: var(--steel);
+  font-size: var(--fs-micro);
+  text-decoration: none;
+}
+
+.x-text {
+  margin: 0;
+  padding: 10px 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-input);
+  font-family: var(--font-mono);
+  font-size: var(--fs-head);
+  line-height: 1.5;
+  color: var(--text-2);
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow: hidden;
+  max-height: 9em; /* ~6 lines at 1.5 */
+}
+
+.x-text.all {
+  max-height: none;
+}
+
+.x-illegible {
+  color: var(--text-3);
+  font-style: italic;
+}
+
+.x-showall {
+  align-self: flex-start;
+  margin-top: -4px;
+  padding: 0;
+  background: none;
+  border: none;
+  color: var(--steel);
+  font-size: var(--fs-micro);
+}
+
+.x-desc-block {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.x-desc {
+  margin: 0;
+  font-size: var(--fs-secondary);
+  color: var(--text-2);
+}
+
+.x-quiet {
+  margin: 0;
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+}
+
+.x-analyze {
+  align-self: flex-start;
+  padding: 0;
+  background: none;
+  border: none;
+  color: var(--steel);
+  font-size: var(--fs-secondary);
+  font-weight: 500;
+}
+
+.pdf-hint {
+  margin: 0;
+  padding: 0 14px 12px 46px;
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .att-caret {
+    transition: none;
+  }
 }
 
 .att-icon {

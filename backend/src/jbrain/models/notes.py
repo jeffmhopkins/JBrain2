@@ -96,6 +96,17 @@ class Attachment(Base):
     has_extracts: Mapped[bool] = column_property(
         select(AttachmentExtract.id).where(AttachmentExtract.attachment_id == id).exists()
     )
+    # Whether a non-empty description (kind 'caption') exists — drives the
+    # "text + description" chip without the client fetching extracts.
+    has_description: Mapped[bool] = column_property(
+        select(AttachmentExtract.id)
+        .where(
+            AttachmentExtract.attachment_id == id,
+            AttachmentExtract.kind == "caption",
+            AttachmentExtract.text != "",
+        )
+        .exists()
+    )
 
 
 class Chunk(Base):

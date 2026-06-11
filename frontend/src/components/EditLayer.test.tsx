@@ -17,6 +17,7 @@ const NOOPS = {
     mediaType: "text/plain",
     sizeBytes: 1,
     hasExtracts: false,
+    hasDescription: false,
   })),
   onRemoveAttachment: vi.fn(async () => undefined),
 };
@@ -70,6 +71,7 @@ describe("EditLayer (focused writer)", () => {
               mediaType: "application/pdf",
               sizeBytes: 9,
               hasExtracts: false,
+              hasDescription: false,
             },
           ],
         }}
