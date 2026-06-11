@@ -1,0 +1,413 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>JBrain — PWA Icon Options</title>
+<style>
+  :root {
+    --bg: #0E0F11;
+    --surface: #17181B;
+    --surface-2: #1E2024;
+    --border: #26282C;
+    --text: #E6E7E9;
+    --text-2: #9A9DA3;
+    --text-3: #5C5F66;
+    --steel: #7FA7C9;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  header {
+    padding: 40px 32px 8px;
+    max-width: 1200px;
+    margin: 0 auto;
+  }
+  h1 { font-size: 24px; font-weight: 600; margin: 0 0 6px; letter-spacing: -0.01em; }
+  h1 .dot { color: var(--steel); }
+  header p { color: var(--text-2); margin: 0 0 20px; max-width: 60ch; }
+
+  .controls {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 20px 28px;
+    align-items: center;
+    padding: 16px 20px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+  }
+  .control { display: flex; flex-direction: column; gap: 6px; min-width: 160px; }
+  .control label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-3); }
+  .control .row { display: flex; align-items: center; gap: 10px; }
+  input[type="range"] { accent-color: var(--steel); width: 150px; }
+  input[type="color"] {
+    width: 34px; height: 28px; padding: 0; border: 1px solid var(--border);
+    border-radius: 8px; background: var(--surface-2); cursor: pointer;
+  }
+  .seg { display: inline-flex; background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px; padding: 3px; }
+  .seg button {
+    border: 0; background: transparent; color: var(--text-2); cursor: pointer;
+    padding: 5px 12px; border-radius: 7px; font-size: 13px;
+  }
+  .seg button.active { background: rgba(127,167,201,0.16); color: var(--text); }
+  .val { font-variant-numeric: tabular-nums; color: var(--text-2); font-size: 13px; min-width: 38px; }
+
+  main { max-width: 1200px; margin: 0 auto; padding: 28px 32px 80px; }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+    gap: 22px;
+  }
+  .tile {
+    display: flex; flex-direction: column; align-items: center; gap: 12px;
+    padding: 18px 12px 16px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    cursor: pointer;
+    transition: border-color .15s, transform .15s;
+  }
+  .tile:hover { border-color: #34373d; transform: translateY(-2px); }
+  .tile.sel { border-color: var(--steel); box-shadow: 0 0 0 1px var(--steel); }
+
+  /* the app-icon: rounded-square with a circular badge, mimicking a launcher icon */
+  .appicon {
+    width: 96px; height: 96px;
+    border-radius: 24px;
+    background: var(--surface-2);
+    display: grid; place-items: center;
+  }
+  .appicon .badge {
+    width: 76px; height: 76px; border-radius: 50%;
+    background: #15171A;
+    display: grid; place-items: center;
+  }
+  .appicon.flat .badge { background: transparent; border-radius: 24px; }
+  .appicon svg { width: 46px; height: 46px; display: block; stroke: var(--steel); fill: var(--steel); }
+  .appicon svg [fill="none"] { fill: none; }
+
+  .meta { text-align: center; }
+  .meta .name { font-size: 14px; font-weight: 500; }
+  .meta .num { font-size: 11px; color: var(--text-3); }
+
+  footer { max-width: 1200px; margin: 0 auto; padding: 0 32px 60px; color: var(--text-3); font-size: 13px; }
+  .picked {
+    position: sticky; bottom: 16px; margin: 24px auto 0; max-width: 1200px;
+    background: var(--surface); border: 1px solid var(--steel);
+    border-radius: 12px; padding: 12px 18px; color: var(--text-2);
+    display: none;
+  }
+  .picked.show { display: block; }
+  .picked b { color: var(--text); }
+</style>
+</head>
+<body>
+<header>
+  <h1>JBrain<span class="dot">.</span> — PWA icon options</h1>
+  <p>30+ marks in the spirit of the current graph-node glyph: minimal line-art on a
+     dark launcher tile, drawn in brand <b style="color:var(--steel)">steel</b>.
+     Tweak stroke, size, color, and tile shape live; click a tile to mark a favorite.</p>
+  <div class="controls">
+    <div class="control">
+      <label>Stroke weight</label>
+      <div class="row"><input id="stroke" type="range" min="2" max="8" step="0.5" value="4" /><span class="val" id="strokeVal">4</span></div>
+    </div>
+    <div class="control">
+      <label>Glyph size</label>
+      <div class="row"><input id="scale" type="range" min="34" max="60" step="2" value="46" /><span class="val" id="scaleVal">46</span></div>
+    </div>
+    <div class="control">
+      <label>Glyph color</label>
+      <div class="row"><input id="color" type="color" value="#7FA7C9" /><span class="val" id="colorVal">#7FA7C9</span></div>
+    </div>
+    <div class="control">
+      <label>Tile shape</label>
+      <div class="row">
+        <div class="seg" id="shape">
+          <button data-shape="badge" class="active">Badge</button>
+          <button data-shape="flat">Flat</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</header>
+
+<main>
+  <div class="grid" id="grid"></div>
+</main>
+
+<div class="picked" id="picked">Favorite: <b id="pickedName">—</b></div>
+
+<footer>
+  Mockup only — geometry lives in this file as inline SVG so any pick can be lifted
+  straight into <code>frontend/public/</code> and rasterized to 192/512 px.
+</footer>
+
+<script>
+// Each icon: 64x64 viewBox, line-art. Nodes use the small dot helper.
+// d(x,y) -> node dot; fills inherit steel via CSS.
+const SS = 'stroke-width="var(--sw)" stroke-linecap="round" stroke-linejoin="round" fill="none"';
+const dot = (x,y,r=5) => `<circle cx="${x}" cy="${y}" r="${r}" />`;
+const line = (x1,y1,x2,y2) => `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" ${SS}/>`;
+
+const icons = [
+  // 1 — recreation of the current mark: tilted quad + 4 nodes + diagonal
+  ["Quadnode", `
+    ${line(20,16, 50,22)}${line(50,22, 46,48)}${line(46,48, 14,44)}${line(14,44, 20,16)}
+    ${line(20,16, 46,48)}
+    ${dot(20,16)}${dot(50,22)}${dot(46,48)}${dot(14,44)}`],
+
+  // 2 — clean diamond + nodes
+  ["Diamond", `
+    ${line(32,12, 52,32)}${line(52,32, 32,52)}${line(32,52, 12,32)}${line(12,32, 32,12)}
+    ${dot(32,12)}${dot(52,32)}${dot(32,52)}${dot(12,32)}`],
+
+  // 3 — triangle graph
+  ["Triad", `
+    ${line(32,14, 52,48)}${line(52,48, 12,48)}${line(12,48, 32,14)}
+    ${dot(32,14)}${dot(52,48)}${dot(12,48)}`],
+
+  // 4 — triangle with centroid
+  ["Hub", `
+    ${line(32,14, 52,48)}${line(52,48, 12,48)}${line(12,48, 32,14)}
+    ${line(32,14,32,38)}${line(52,48,32,38)}${line(12,48,32,38)}
+    ${dot(32,14)}${dot(52,48)}${dot(12,48)}${dot(32,38)}`],
+
+  // 5 — pentagon ring
+  ["Pentad", `
+    ${line(32,12, 51,26)}${line(51,26, 44,49)}${line(44,49, 20,49)}${line(20,49, 13,26)}${line(13,26, 32,12)}
+    ${dot(32,12)}${dot(51,26)}${dot(44,49)}${dot(20,49)}${dot(13,26)}`],
+
+  // 6 — hexagon ring
+  ["Hex ring", `
+    ${line(32,12,50,22)}${line(50,22,50,42)}${line(50,42,32,52)}${line(32,52,14,42)}${line(14,42,14,22)}${line(14,22,32,12)}
+    ${dot(32,12)}${dot(50,22)}${dot(50,42)}${dot(32,52)}${dot(14,42)}${dot(14,22)}`],
+
+  // 7 — hex with spokes to center
+  ["Hex hub", `
+    ${line(32,12,50,22)}${line(50,22,50,42)}${line(50,42,32,52)}${line(32,52,14,42)}${line(14,42,14,22)}${line(14,22,32,12)}
+    ${line(32,12,32,32)}${line(50,22,32,32)}${line(50,42,32,32)}${line(32,52,32,32)}${line(14,42,32,32)}${line(14,22,32,32)}
+    ${dot(32,32,5.5)}`],
+
+  // 8 — simple two-node synapse
+  ["Synapse", `
+    ${line(18,40, 46,24)}
+    ${dot(18,40,7)}${dot(46,24,7)}`],
+
+  // 9 — neuron: body + dendrites
+  ["Neuron", `
+    ${dot(32,32,8)}
+    ${line(32,24,30,12)}${line(32,24,42,14)}${line(32,24,22,15)}
+    ${line(40,32,52,30)}${line(40,32,53,40)}
+    ${line(32,40,30,52)}${line(32,40,20,50)}`],
+
+  // 10 — three-layer net
+  ["Layers", `
+    ${dot(14,20,4)}${dot(14,32,4)}${dot(14,44,4)}
+    ${dot(32,26,4)}${dot(32,38,4)}
+    ${dot(50,32,4)}
+    ${line(14,20,32,26)}${line(14,20,32,38)}${line(14,32,32,26)}${line(14,32,32,38)}${line(14,44,32,26)}${line(14,44,32,38)}
+    ${line(32,26,50,32)}${line(32,38,50,32)}`],
+
+  // 11 — knowledge graph cluster
+  ["Cluster", `
+    ${line(20,20,40,16)}${line(40,16,48,34)}${line(48,34,34,46)}${line(34,46,16,38)}${line(16,38,20,20)}${line(20,20,48,34)}
+    ${dot(20,20)}${dot(40,16)}${dot(48,34)}${dot(34,46)}${dot(16,38)}`],
+
+  // 12 — constellation J
+  ["Star-J", `
+    ${line(42,12,42,40)}${line(42,40,26,48)}${line(26,48,16,38)}
+    ${dot(42,12)}${dot(42,40)}${dot(26,48)}${dot(16,38)}`],
+
+  // 13 — molecule
+  ["Molecule", `
+    ${line(32,18,20,40)}${line(32,18,44,40)}${line(20,40,44,40)}
+    ${dot(32,18,6.5)}${dot(20,40,6.5)}${dot(44,40,6.5)}`],
+
+  // 14 — orbit / atom
+  ["Orbit", `
+    <ellipse cx="32" cy="32" rx="22" ry="9" ${SS}/>
+    <ellipse cx="32" cy="32" rx="9" ry="22" ${SS}/>
+    ${dot(32,32,4.5)}${dot(54,32,3.5)}${dot(32,10,3.5)}`],
+
+  // 15 — mind map
+  ["Mind map", `
+    ${dot(32,32,7)}
+    ${dot(14,16,4)}${dot(52,16,4)}${dot(12,46,4)}${dot(50,48,4)}
+    ${line(27,28,14,16)}${line(37,28,52,16)}${line(27,36,12,46)}${line(37,36,50,48)}`],
+
+  // 16 — concentric nodes
+  ["Echo", `
+    <circle cx="32" cy="32" r="9" ${SS}/>
+    <circle cx="32" cy="32" r="18" ${SS}/>
+    ${dot(32,32,4)}`],
+
+  // 17 — cube wireframe nodes
+  ["Cube", `
+    ${line(22,20,42,20)}${line(42,20,42,40)}${line(42,40,22,40)}${line(22,40,22,20)}
+    ${line(30,14,50,14)}${line(50,14,50,34)}
+    ${line(22,20,30,14)}${line(42,20,50,14)}${line(42,40,50,34)}
+    ${dot(22,20,3.5)}${dot(42,20,3.5)}${dot(22,40,3.5)}${dot(42,40,3.5)}${dot(50,14,3.5)}${dot(30,14,3.5)}`],
+
+  // 18 — mesh net
+  ["Mesh", `
+    ${dot(18,18,3.5)}${dot(46,18,3.5)}${dot(18,46,3.5)}${dot(46,46,3.5)}${dot(32,32,4)}
+    ${line(18,18,46,18)}${line(18,46,46,46)}${line(18,18,18,46)}${line(46,18,46,46)}
+    ${line(18,18,32,32)}${line(46,18,32,32)}${line(18,46,32,32)}${line(46,46,32,32)}`],
+
+  // 19 — path graph
+  ["Path", `
+    ${line(14,44,26,24)}${line(26,24,40,40)}${line(40,40,50,18)}
+    ${dot(14,44)}${dot(26,24)}${dot(40,40)}${dot(50,18)}`],
+
+  // 20 — brain (geometric halves)
+  ["Brain", `
+    <path d="M32 16 C22 14 16 22 18 30 C12 34 14 44 24 46 C26 50 36 50 32 44" ${SS}/>
+    <path d="M32 16 C42 14 48 22 46 30 C52 34 50 44 40 46 C38 50 28 50 32 44" ${SS}/>
+    ${line(32,16,32,46)}`],
+
+  // 21 — spark / idea node
+  ["Spark", `
+    ${dot(32,32,7)}
+    ${line(32,18,32,10)}${line(32,46,32,54)}${line(18,32,10,32)}${line(46,32,54,32)}
+    ${line(22,22,16,16)}${line(42,42,48,48)}${line(42,22,48,16)}${line(22,42,16,48)}`],
+
+  // 22 — stacked data / RAG store
+  ["Store", `
+    <ellipse cx="32" cy="20" rx="16" ry="6" ${SS}/>
+    <path d="M16 20 V44 C16 47 23 50 32 50 C41 50 48 47 48 44 V20" ${SS}/>
+    <path d="M16 32 C16 35 23 38 32 38 C41 38 48 35 48 32" ${SS}/>`],
+
+  // 23 — linked rings
+  ["Links", `
+    <circle cx="24" cy="32" r="13" ${SS}/>
+    <circle cx="40" cy="32" r="13" ${SS}/>`],
+
+  // 24 — flow / pipeline
+  ["Flow", `
+    ${dot(16,32,5)}${dot(48,32,5)}
+    ${line(21,32,43,32)}
+    <path d="M38 26 L46 32 L38 38" ${SS}/>`],
+
+  // 25 — square grid of nodes
+  ["Grid", `
+    ${dot(20,20,4)}${dot(32,20,4)}${dot(44,20,4)}
+    ${dot(20,32,4)}${dot(32,32,4)}${dot(44,32,4)}
+    ${dot(20,44,4)}${dot(32,44,4)}${dot(44,44,4)}
+    ${line(20,20,44,20)}${line(20,44,44,44)}${line(20,20,20,44)}${line(44,20,44,44)}`],
+
+  // 26 — star graph
+  ["Starnet", `
+    ${dot(32,32,6)}
+    ${dot(32,12,3.5)}${dot(50,24,3.5)}${dot(46,48,3.5)}${dot(18,48,3.5)}${dot(14,24,3.5)}
+    ${line(32,32,32,12)}${line(32,32,50,24)}${line(32,32,46,48)}${line(32,32,18,48)}${line(32,32,14,24)}`],
+
+  // 27 — abstract J + node
+  ["J-node", `
+    <path d="M40 14 V36 C40 46 30 50 22 44" ${SS}/>
+    ${dot(40,14)}${dot(22,44)}`],
+
+  // 28 — bracket J nodes
+  ["Bracket", `
+    <path d="M26 14 H42 V40 C42 48 32 50 26 46" ${SS}/>
+    ${dot(26,14,4)}${dot(42,14,4)}${dot(26,46,4)}`],
+
+  // 29 — minimal tilt square outline
+  ["Tilt", `
+    <rect x="20" y="20" width="24" height="24" rx="3" transform="rotate(18 32 32)" ${SS}/>
+    ${dot(32,32,4)}`],
+
+  // 30 — tree / hierarchy
+  ["Tree", `
+    ${dot(32,14,5)}
+    ${dot(18,40,4.5)}${dot(46,40,4.5)}
+    ${dot(12,52,3.5)}${dot(24,52,3.5)}${dot(40,52,3.5)}${dot(52,52,3.5)}
+    ${line(32,18,18,36)}${line(32,18,46,36)}
+    ${line(18,44,12,49)}${line(18,44,24,49)}${line(46,44,40,49)}${line(46,44,52,49)}`],
+
+  // 31 — open square brackets (knowledge cards)
+  ["Cards", `
+    <rect x="16" y="14" width="22" height="22" rx="4" ${SS}/>
+    <rect x="26" y="26" width="22" height="22" rx="4" ${SS}/>`],
+
+  // 32 — chevron nodes (J descender feel)
+  ["Chevron", `
+    ${line(20,16,20,38)}${line(20,38,32,48)}${line(32,48,44,38)}
+    ${dot(20,16)}${dot(44,38)}${dot(32,48)}`],
+
+  // 33 — radial burst
+  ["Radial", `
+    ${dot(32,32,5)}
+    ${line(32,32,32,12)}${line(32,32,50,22)}${line(32,32,52,42)}${line(32,32,32,52)}${line(32,32,12,42)}${line(32,32,12,22)}
+    ${dot(32,12,3)}${dot(50,22,3)}${dot(52,42,3)}${dot(32,52,3)}${dot(12,42,3)}${dot(12,22,3)}`],
+
+  // 34 — infinity / continuous notes
+  ["Loop", `
+    <path d="M32 32 C26 22 14 22 14 32 C14 42 26 42 32 32 C38 22 50 22 50 32 C50 42 38 42 32 32 Z" ${SS}/>
+    ${dot(14,32,3.5)}${dot(50,32,3.5)}`],
+
+  // 35 — circuit corner
+  ["Circuit", `
+    ${line(14,32,30,32)}${line(30,32,30,18)}${line(30,32,44,32)}${line(44,32,44,48)}
+    ${dot(14,32)}${dot(30,18)}${dot(44,48)}${dot(30,32,3.5)}${dot(44,32,3.5)}`],
+
+  // 36 — kite (homage, simplified)
+  ["Kite", `
+    ${line(32,12,48,34)}${line(48,34,32,52)}${line(32,52,16,34)}${line(16,34,32,12)}
+    ${line(16,34,48,34)}
+    ${dot(32,12)}${dot(48,34)}${dot(32,52)}${dot(16,34)}`],
+];
+
+const grid = document.getElementById('grid');
+icons.forEach(([name, body], i) => {
+  const tile = document.createElement('div');
+  tile.className = 'tile';
+  tile.innerHTML = `
+    <div class="appicon badge">
+      <div class="badge">
+        <svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">${body}</svg>
+      </div>
+    </div>
+    <div class="meta"><div class="name">${name}</div><div class="num">#${String(i+1).padStart(2,'0')}</div></div>`;
+  tile.addEventListener('click', () => {
+    document.querySelectorAll('.tile.sel').forEach(t => t.classList.remove('sel'));
+    tile.classList.add('sel');
+    const p = document.getElementById('picked');
+    p.classList.add('show');
+    document.getElementById('pickedName').textContent = `#${String(i+1).padStart(2,'0')} ${name}`;
+  });
+  grid.appendChild(tile);
+});
+
+// --- live controls ---
+const root = document.documentElement;
+const set = (k,v) => root.style.setProperty(k, v);
+set('--sw', '4');
+
+const stroke = document.getElementById('stroke');
+const scale = document.getElementById('scale');
+const color = document.getElementById('color');
+
+stroke.oninput = e => { set('--sw', e.target.value); document.getElementById('strokeVal').textContent = e.target.value; };
+scale.oninput = e => {
+  document.getElementById('scaleVal').textContent = e.target.value;
+  document.querySelectorAll('.appicon svg').forEach(s => { s.style.width = e.target.value+'px'; s.style.height = e.target.value+'px'; });
+};
+color.oninput = e => { set('--steel', e.target.value); document.getElementById('colorVal').textContent = e.target.value.toUpperCase(); };
+
+document.getElementById('shape').addEventListener('click', e => {
+  const b = e.target.closest('button'); if (!b) return;
+  document.querySelectorAll('#shape button').forEach(x => x.classList.remove('active'));
+  b.classList.add('active');
+  const flat = b.dataset.shape === 'flat';
+  document.querySelectorAll('.appicon').forEach(a => a.classList.toggle('flat', flat));
+});
+</script>
+</body>
+</html>
