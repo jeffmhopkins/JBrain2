@@ -114,3 +114,61 @@ async def test_build_router_wires_all_three_providers() -> None:
         await router.complete("fact.adjudicate", system="s", user_text="u")
     ).text == "from-grok-4.3"
     assert hosts == ["api.anthropic.com", "localhost", "api.x.ai"]
+
+
+# --- capability-tier (model strength) resolution -----------------------------
+
+
+def _tiered_router(
+    xai: FakeLlmClient, anthropic: FakeLlmClient, *, pinned=frozenset()
+) -> LlmRouter:
+    return LlmRouter(
+        {"xai": xai, "anthropic": anthropic},
+        {"note.extract": ("xai", "grok-4.3")},
+        tiers={"high": ("anthropic", "claude-x"), "low": ("xai", "grok-cheap")},
+        pinned=pinned,
+    )
+
+
+async def test_strength_resolves_through_the_tier_not_the_task_default() -> None:
+    xai, anthropic = FakeLlmClient(["x"]), FakeLlmClient(["a"])
+    router = _tiered_router(xai, anthropic)
+    await router.complete("note.extract", system="s", user_text="u", strength="high")
+    # high tier -> anthropic:claude-x, overriding the task default xai:grok-4.3.
+    assert anthropic.calls[0]["model"] == "claude-x" and not xai.calls
+    assert router.spec("note.extract", "high") == ("anthropic", "claude-x")
+
+
+async def test_explicit_task_pin_outranks_the_prompt_strength() -> None:
+    xai, anthropic = FakeLlmClient(["x"]), FakeLlmClient(["a"])
+    router = _tiered_router(xai, anthropic, pinned=frozenset({"note.extract"}))
+    await router.complete("note.extract", system="s", user_text="u", strength="high")
+    # The operator pinned the task, so the pin wins over the prompt's tier.
+    assert xai.calls[0]["model"] == "grok-4.3" and not anthropic.calls
+
+
+async def test_unknown_strength_tier_raises() -> None:
+    router = _tiered_router(FakeLlmClient(), FakeLlmClient())
+    with pytest.raises(LlmError, match="unknown LLM strength tier"):
+        await router.complete("note.extract", system="s", user_text="u", strength="turbo")
+
+
+def test_resolve_tiers_defaults_overrides_and_unknown() -> None:
+    from jbrain.llm.router import TIER_DEFAULTS, resolve_tiers
+
+    assert resolve_tiers({})["high"] == ("xai", "grok-4.3")
+    assert set(resolve_tiers({})) == set(TIER_DEFAULTS)
+    assert resolve_tiers({"high": "anthropic:claude-sonnet-4-6"})["high"] == (
+        "anthropic",
+        "claude-sonnet-4-6",
+    )
+    with pytest.raises(LlmError, match="unknown LLM tier"):
+        resolve_tiers({"genius": "xai:x"})
+
+
+def test_build_router_marks_pinned_tasks_so_pins_beat_tiers() -> None:
+    router = build_router(Settings(llm_tasks={"note.extract": "anthropic:claude-sonnet-4-6"}))
+    # The pinned task resolves to its pin even when a strength tier is requested.
+    assert router.spec("note.extract", "high") == ("anthropic", "claude-sonnet-4-6")
+    # An unpinned task still honours the tier.
+    assert router.spec("vision.ocr", "high") == ("xai", "grok-4.3")

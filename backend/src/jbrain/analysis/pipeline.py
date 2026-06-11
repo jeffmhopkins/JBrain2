@@ -62,7 +62,9 @@ from jbrain.analysis.extraction import (
     ratchet_domain,
 )
 from jbrain.analysis.prompt import (
+    EXTRACT_MAX_TOKENS,
     EXTRACTION_SCHEMA,
+    NOTE_EXTRACT_STRENGTH,
     PROMPT_VERSION,
     SYSTEM_PROMPT,
     build_user_prompt,
@@ -90,8 +92,6 @@ from jbrain.models.notes import Attachment, Chunk, Note
 from jbrain.queue import SYSTEM_CTX, PermanentJobError
 
 log = structlog.get_logger()
-
-EXTRACT_MAX_TOKENS = 8192
 
 _DB_LINK_METHODS = frozenset({"exact_alias", "embedding", "llm", "human"})
 
@@ -205,6 +205,7 @@ class AnalysisPipeline:
                 ),
                 json_schema=EXTRACTION_SCHEMA,
                 max_tokens=EXTRACT_MAX_TOKENS,
+                strength=NOTE_EXTRACT_STRENGTH,
             )
             # Backward-phrase repair needs the note's LOCAL day; without a
             # client offset local_anchor falls back to the stored UTC instant,
@@ -219,7 +220,7 @@ class AnalysisPipeline:
             # just re-bill the same garbage. Nothing was written.
             raise PermanentJobError(f"note.extract unusable for note {note_id}: {exc}") from exc
 
-        provider, model = self._router.spec("note.extract")
+        provider, model = self._router.spec("note.extract", NOTE_EXTRACT_STRENGTH)
         async with scoped_session(self._maker, SYSTEM_CTX) as session:
             await self._apply(
                 session,

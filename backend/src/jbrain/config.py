@@ -22,6 +22,11 @@ class Settings(BaseSettings):
     # JSON object of per-task "provider:model" overrides, merged over the
     # adapter defaults — see jbrain.llm.router.TASK_DEFAULTS.
     llm_tasks: dict[str, str] = {}
+    # JSON object of capability-tier "provider:model" overrides (high/low/vision),
+    # merged over jbrain.llm.router.TIER_DEFAULTS. A prompt file declares the tier
+    # it needs (strength:); the router resolves that tier to a model here — unless
+    # the task is explicitly pinned in llm_tasks, which wins.
+    llm_tiers: dict[str, str] = {}
     # "provider:model" -> $/M tokens, applied at query time over llm_usage —
     # docs/ANALYSIS.md "Cost estimates" (grok-4.3 rates, xAI docs June 2026).
     llm_prices: dict[str, dict[str, float]] = {
