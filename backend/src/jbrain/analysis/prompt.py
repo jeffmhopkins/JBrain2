@@ -8,7 +8,7 @@ whenever the system prompt or schema changes meaningfully.
 from datetime import datetime
 from typing import Any
 
-PROMPT_VERSION = "note-extract-v2"
+PROMPT_VERSION = "note-extract-v3"
 
 # Facts-per-note cap: taught by instruction here, enforced server-side in
 # extraction.parse_extraction (over-extraction is the known quality risk;
@@ -32,7 +32,12 @@ Place, Event, Product); coin a snake_case kind only when schema.org has no \
 fit. Unattributed first person ("I", "me", "my") is the note's author: emit \
 one mention with name "Me", kind "Person", and the pronoun as surface_text. \
 Quoted or relayed first person ("Mom says: I take lisinopril") belongs to the \
-speaker, not "Me". "surface_text" must be copied verbatim from the note.
+speaker, not "Me". "surface_text" must be copied verbatim from the note. \
+Never normalize a reference mention into an invented proper name: a mention \
+of "the rat" or "Summer's rat" keeps that reference phrase as its "name" \
+(and verbatim as surface_text) — the pipeline's resolver owns identity, and \
+you must not guess which entity a reference denotes. For an animal entity, \
+"kind" is the species ("dog", "rat") or "Animal" — never "pet".
 
 4. "facts": at most {MAX_FACTS} of the most durable, useful statements. Each \
 fact is one property-graph edge entity.predicate[.qualifier] -> value:
@@ -68,6 +73,12 @@ value_json, e.g. {{"value": 182, "unit": "lb"}}); accumulates as a series.
   attribute - timeless and singular (birthday, blood type).
   preference - a like/dislike/habit, valid from when reported.
   relationship - an edge to another entity (set object_entity_ref).
+- Possessive or descriptor introductions DECOMPOSE into two facts: "X's \
+<species>'s name is N" yields BOTH the relationship X.owns -> N \
+(object_entity_ref "N") AND an attribute fact N.name with {{"name": "N", \
+"species": "<species>"}} in value_json. "My <species> N" or "my <species>'s \
+name is N" likewise yields Me.owns -> N plus the same N.name attribute. \
+Never fold the animal's name or species away into only the owner's edge.
 - "statement": one self-contained sentence rendering the fact.
 - "assertion": asserted | negated | hypothetical | reported | question | \
 expected. Second-hand claims are "reported". A FUTURE or planned thing that \
@@ -101,6 +112,15 @@ Worked example — "Sarah moved to Denver." (a relocation is a state change):
 A later note "Sarah actually moved to Boulder" emits the same homeLocation \
 `state` predicate with "Boulder" — matching predicates let Boulder supersede \
 Denver instead of forking two unrelated facts.
+
+Worked example — "My dog's name is Bella. Summer's rat's name is Ricky." \
+decomposes into FOUR facts: Me.owns -> Bella (relationship, \
+object_entity_ref "Bella"), the attribute Bella.name with {{"name": "Bella", \
+"species": "dog"}}, Summer.owns -> Ricky (relationship, object_entity_ref \
+"Ricky"), and the attribute Ricky.name with {{"name": "Ricky", "species": \
+"rat"}}. Bella and Ricky are mentions of kind "dog" and "rat". A later note \
+"The rat ate the dog's food" emits a mention named "the rat" (surface_text \
+"The rat") — never an invented proper name like "Rat".
 
 Extract less, not more: skip trivia, pleasantries, and restatements of the \
 same fact."""

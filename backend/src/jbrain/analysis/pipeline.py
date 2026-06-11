@@ -324,6 +324,9 @@ class AnalysisPipeline:
                 kind_hint=kind_hints.get(name, "Thing"),
                 domain=note_domain,
                 note_time=captured_at,
+                # Models normalize reference mentions to invented names; the
+                # verbatim surface keeps the shape the resolver hops on.
+                surface=surfaces.get(name),
                 embedder=self._embedder,
                 embed_model=self._embed_model,
             )

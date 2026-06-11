@@ -8,6 +8,7 @@ import json
 from jbrain.analysis.entities import (
     Reference,
     build_disambiguation_prompt,
+    kind_hint_compatible,
     normalize_alias,
     parse_disambiguation,
     parse_reference,
@@ -51,6 +52,36 @@ class TestParseReference:
     def test_bare_articles_are_not_references(self) -> None:
         assert parse_reference("Theo") is None
         assert parse_reference("Myra") is None
+
+    def test_normalized_name_with_reference_surface(self) -> None:
+        # Live models normalize "the rat" to the invented name "Rat"; the
+        # verbatim surface_text is what still carries the reference shape, so
+        # the resolver re-parses it when the name reads as a plain name.
+        assert parse_reference("Rat") is None
+        assert parse_reference("The rat") == Reference(shape="definite", owner=None, noun="rat")
+        assert parse_reference("My dog") == Reference(shape="role", owner=None, noun="dog")
+
+
+class TestKindHintCompatible:
+    def test_generic_and_empty_hints_pass(self) -> None:
+        assert kind_hint_compatible("", "pet", "rat")
+        assert kind_hint_compatible("Thing", "Organization", "bank")
+
+    def test_equality_case_insensitive(self) -> None:
+        assert kind_hint_compatible("Animal", "animal", "rat")
+        assert kind_hint_compatible("Organization", "organization", "bank")
+
+    def test_creature_vocabulary_tolerated(self) -> None:
+        # Live extractions coin "pet", "animal", or the species for the same
+        # creature; the hint filter must not hide the one real candidate.
+        assert kind_hint_compatible("animal", "pet", "rat")
+        assert kind_hint_compatible("pet", "animal", "rat")
+        assert kind_hint_compatible("animal", "rat", "rat")
+        assert kind_hint_compatible("animal", "rats", "rat")
+
+    def test_non_creature_kinds_still_require_equality(self) -> None:
+        assert not kind_hint_compatible("Organization", "Place", "bank")
+        assert not kind_hint_compatible("animal", "Person", "rat")
 
 
 class TestPredicateDenotesRole:
