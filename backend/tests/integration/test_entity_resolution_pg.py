@@ -155,6 +155,7 @@ async def seed_fact(
     valid_from: datetime | None = None,
     valid_to: datetime | None = None,
     status: str = "active",
+    assertion: str = "asserted",
     domain: str = "general",
 ) -> None:
     async with scoped_session(maker, SYSTEM_CTX) as s:
@@ -167,7 +168,7 @@ async def seed_fact(
                 statement=statement,
                 value_json=value_json,
                 object_entity_id=object_entity_id,
-                assertion="asserted",
+                assertion=assertion,
                 valid_from=valid_from,
                 valid_to=valid_to,
                 reported_at=NOTE_TIME,
@@ -187,6 +188,7 @@ async def resolve(
     kind_hint: str = "Person",
     domain: str = "general",
     note_time: datetime | None = NOTE_TIME,
+    surface: str | None = None,
     embedder: Any = None,
 ):
     async with scoped_session(maker, SYSTEM_CTX) as s:
@@ -196,6 +198,7 @@ async def resolve(
             kind_hint=kind_hint,
             domain=domain,
             note_time=note_time,
+            surface=surface,
             embedder=embedder,
             embed_model="test-embed",
         )
@@ -282,6 +285,69 @@ async def test_definite_resolves_only_when_unique(
     outcome = await resolve(maker, "the rat", kind_hint="Animal")
     assert isinstance(outcome, NeedsDisambiguation)
     assert {c.id for c in outcome.candidates} == {ricky, splinter}
+
+
+async def seed_live_rat_graph(maker: async_sessionmaker[AsyncSession]) -> uuid.UUID:
+    """The field-observed shapes, NOT the idealized ones: Ricky's kind came
+    back 'pet', he has no facts of his own, and the only rat-evidence is the
+    STATEMENT of Summer's owns edge."""
+    note = await seed_note(maker)
+    summer = await seed_entity(maker, "Summer")
+    ricky = await seed_entity(maker, "Ricky", kind="pet")
+    await seed_fact(
+        maker,
+        entity_id=summer,
+        note_id=note,
+        predicate="owns",
+        statement="Summer owns a rat named Ricky.",
+        object_entity_id=ricky,
+    )
+    return ricky
+
+
+async def test_normalized_name_resolves_via_surface_and_object_edge(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    # The model normalized "the rat" to the invented name "Rat"; the verbatim
+    # surface supplies the reference shape, the owns-edge statement the noun,
+    # and the creature tolerance bridges hint "animal" vs kind "pet".
+    ricky = await seed_live_rat_graph(maker)
+    outcome = await resolve(maker, "Rat", kind_hint="animal", surface="The rat")
+    assert isinstance(outcome, ResolvedEntity)
+    assert outcome.id == ricky
+    assert outcome.method == "relationship"
+
+
+async def test_possessive_surface_resolves_through_edge_statement(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    ricky = await seed_live_rat_graph(maker)
+    outcome = await resolve(maker, "Rat", kind_hint="pet", surface="Summer's rat")
+    assert isinstance(outcome, ResolvedEntity)
+    assert outcome.id == ricky
+
+
+async def test_negated_object_edge_is_not_noun_evidence(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    # "Summer does not own a rat" must not make Ricky rat-shaped: the mention
+    # falls through to provisional creation rather than a wrong silent link.
+    note = await seed_note(maker)
+    summer = await seed_entity(maker, "Summer")
+    ricky = await seed_entity(maker, "Ricky", kind="pet")
+    await seed_fact(
+        maker,
+        entity_id=summer,
+        note_id=note,
+        predicate="owns",
+        statement="Summer does not own a rat.",
+        object_entity_id=ricky,
+        assertion="negated",
+    )
+    outcome = await resolve(maker, "Rat", kind_hint="animal", surface="The rat")
+    assert isinstance(outcome, ResolvedEntity)
+    assert outcome.created
+    assert outcome.id != ricky
 
 
 async def test_role_hop_respects_validity_at_note_time(

@@ -155,19 +155,54 @@ _VALID_EDGE = """
     AND f.domain_code IN (:dom, 'general')
 """
 
-# An entity "matches a noun" when its kind is the noun ("rat" entity kind) or
-# an attribute/state fact ON IT mentions the noun ("Summer's rat is named
-# Ricky" / {"species": "rat"}). Relationship/event facts are excluded: their
-# statements routinely name OTHER entities.
+# An entity "matches a noun" when (a) its kind is the noun or its bare plural
+# — kind values are model-coined free text ("rat" vs "rats"), so strict
+# equality is brittle; (b) the noun appears in one of its aliases; (c) an
+# attribute/state fact ON IT mentions the noun ("Summer's rat is named Ricky"
+# / {"species": "rat"}); or (d) an asserted relationship edge pointing AT it
+# mentions the noun — live extractions often put the only species evidence in
+# the introducing edge's statement ("Summer owns a rat named Ricky") and emit
+# no facts on the animal itself. Edges FROM the entity stay excluded (their
+# statements routinely name OTHER entities), and (d) is assertion-gated so a
+# negated "does not own a rat" cannot read as rat-ness.
 _NOUN_MATCH = """
-    (lower(e.kind) = lower(:noun) OR EXISTS (
+    (lower(e.kind) IN (lower(:noun), lower(:nplural)) OR EXISTS (
+        SELECT 1 FROM app.entity_aliases al
+        WHERE al.entity_id = e.id AND al.alias_norm ~* :word
+    ) OR EXISTS (
         SELECT 1 FROM app.facts d
         WHERE d.entity_id = e.id AND d.status = 'active'
           AND d.kind IN ('attribute', 'state')
           AND d.domain_code IN (:dom, 'general')
           AND (d.statement ~* :word OR d.value_json::text ~* :word)
+    ) OR EXISTS (
+        SELECT 1 FROM app.facts d
+        WHERE d.object_entity_id = e.id AND d.status = 'active'
+          AND d.kind = 'relationship' AND d.assertion = 'asserted'
+          AND d.domain_code IN (:dom, 'general')
+          AND (d.statement ~* :word OR d.value_json::text ~* :word)
     ))
 """
+
+# Kind values models actually coin for household animals; used only to relax
+# the definite-reference kind-hint filter inside this one vocabulary.
+_GENERIC_CREATURE_KINDS = frozenset({"pet", "animal"})
+
+
+def kind_hint_compatible(hint: str, kind: str, noun: str) -> bool:
+    """Is an entity of `kind` a plausible referent for a definite mention
+    carrying `hint`? Both values are model-coined free text: live extractions
+    call the same rat "pet", "animal", or the species depending on the note,
+    so demanding equality inside that creature vocabulary hides the one real
+    candidate. Outside it, equality still rules — the hint is what keeps
+    "the bank" (Organization) from matching a river bank (Place)."""
+    if hint in ("", "Thing"):
+        return True
+    h, k = hint.casefold(), kind.casefold()
+    if h == k:
+        return True
+    creature = _GENERIC_CREATURE_KINDS | {noun.casefold(), noun.casefold() + "s"}
+    return h in creature and k in creature
 
 
 async def _role_candidates(
@@ -224,6 +259,7 @@ async def _owned_candidates(
                 "at": at,
                 "dom": domain,
                 "noun": noun,
+                "nplural": noun + "s",
                 "word": _word_regex(noun),
             },
         )
@@ -242,8 +278,8 @@ async def _definite_candidates(
     """Every entity a bare definite ("the rat") could denote. Auto-link is
     only safe when the graph knows exactly ONE such thing; the caller treats
     2+ as ambiguous. The mention's kind hint narrows the field when it is
-    more specific than the generic Thing."""
-    hint = "" if kind_hint in ("", "Thing") else kind_hint.casefold()
+    more specific than the generic Thing — applied in Python because the
+    free-text tolerance (kind_hint_compatible) reads better here than SQL."""
     rows = (
         await session.execute(
             text(
@@ -251,12 +287,11 @@ async def _definite_candidates(
                 SELECT e.id, e.subject_id, e.canonical_name, e.kind, e.summary
                 FROM app.entities e
                 WHERE e.status != 'merged' AND e.domain_code IN (:dom, 'general')
-                  AND (:hint = '' OR lower(e.kind) = :hint)
                   AND lower(e.canonical_name) != 'me'
                   AND {_NOUN_MATCH}
                 """
             ),
-            {"dom": domain, "hint": hint, "noun": noun, "word": _word_regex(noun)},
+            {"dom": domain, "noun": noun, "nplural": noun + "s", "word": _word_regex(noun)},
         )
     ).all()
     return [
@@ -264,6 +299,7 @@ async def _definite_candidates(
             id=r.id, subject_id=r.subject_id, name=r.canonical_name, kind=r.kind, summary=r.summary
         )
         for r in rows
+        if kind_hint_compatible(kind_hint, r.kind, noun)
     ]
 
 
@@ -589,6 +625,7 @@ async def resolve_entity(
     kind_hint: str,
     domain: str,
     note_time: datetime | None = None,
+    surface: str | None = None,
     embedder: EmbedClient | None = None,
     embed_model: str = "",
 ) -> ResolvedEntity | AmbiguousEntity | NeedsDisambiguation:
@@ -600,6 +637,8 @@ async def resolve_entity(
     "valid at the note's time" rule cannot hold, so reference shapes fall
     through to creation exactly as before. embedder gates layer 2 the same
     way — not wired in means skip straight on, never a degraded guess.
+    surface is the mention's verbatim surface_text, the shape fallback when
+    the model normalized the name.
     """
     if normalize_alias(name) in FIRST_PERSON or name == "Me":
         return await get_or_create_me(session)
@@ -612,6 +651,13 @@ async def resolve_entity(
         return AmbiguousEntity(candidate_ids=sorted(r.id for r in rows))
 
     ref = parse_reference(name)
+    if ref is None and surface is not None:
+        # Live models normalize reference mentions into invented proper names
+        # ("the rat" -> name "Rat"), which reads as a plain name above. The
+        # surface_text is verbatim note text, so it still carries the
+        # reference shape the name lost. Trusted for SHAPE only — identity
+        # still comes from the graph hop, never from the invented name.
+        ref = parse_reference(surface)
     if ref is not None and note_time is not None:
         hop = await _relationship_hop(
             session, ref, kind_hint=kind_hint, domain=domain, at=note_time
