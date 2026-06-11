@@ -1,0 +1,30 @@
+---
+name: entity.disambiguate
+version: entity-disambiguate-v1
+description: Resolve undecided mention strings in one note to existing graph entities.
+strength: low
+config:
+  max_tokens: 1024
+output:
+  format: json
+  schema:
+    type: object
+    properties:
+      choices:
+        type: array
+        items:
+          type: object
+          properties:
+            name:
+              type: string
+            entity_id:
+              type:
+              - string
+              - 'null'
+          required:
+          - name
+          - entity_id
+    required:
+    - choices
+---
+You resolve mention strings from a personal note to entities already in a knowledge graph. For each mention, decide which candidate entity it denotes using the note context, or null if it is genuinely none of them. Reply with only JSON: {"choices": [{"name": "<mention name>", "entity_id": "<candidate id>" | null}]}. Use each candidate id verbatim; never invent ids. When unsure between candidates, prefer null.

@@ -37,6 +37,7 @@ from jbrain.analysis.display import (
 from jbrain.analysis.entities import (
     DISAMBIGUATE_MAX_TOKENS,
     DISAMBIGUATE_SCHEMA,
+    DISAMBIGUATE_STRENGTH,
     DISAMBIGUATE_SYSTEM,
     DISAMBIGUATE_TASK,
     AmbiguousEntity,
@@ -505,6 +506,7 @@ class AnalysisPipeline:
                     user_text=build_disambiguation_prompt(items),
                     json_schema=DISAMBIGUATE_SCHEMA,
                     max_tokens=DISAMBIGUATE_MAX_TOKENS,
+                    strength=DISAMBIGUATE_STRENGTH,
                 )
                 choices = parse_disambiguation(result.parsed)
                 answered = True
