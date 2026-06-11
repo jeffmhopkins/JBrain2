@@ -692,9 +692,7 @@ async def register_declared_alias(
     return norm if inserted is not None else None
 
 
-async def alias_owner(
-    session: AsyncSession, name: str, *, exclude: uuid.UUID
-) -> uuid.UUID | None:
+async def alias_owner(session: AsyncSession, name: str, *, exclude: uuid.UUID) -> uuid.UUID | None:
     """A live entity OTHER than `exclude` that already exactly owns `name`.
     The declared-name collision signal: a self-named entity bumping into a
     different one that holds the same name is strong "same person" evidence."""
