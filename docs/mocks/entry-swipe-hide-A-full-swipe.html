@@ -46,12 +46,11 @@
     padding-left:22px;color:var(--green);background:var(--green-tint);opacity:0;}
   .hide-bg svg{flex:none;}
   .hide-bg .label{font-size:14px;font-weight:500;}
-  /* left rail (existing edit/move/delete) shown faintly for coexistence */
+  /* left rail — now a single Edit action (was Edit/Move/Delete) */
   .left-rail{position:absolute;inset:0 0 0 auto;display:flex;}
-  .rail-btn{width:62px;border:none;font-size:13px;font-weight:500;color:var(--text-2);}
+  .rail-btn{width:96px;border:none;font-size:14px;font-weight:500;display:flex;
+    align-items:center;justify-content:center;gap:7px;}
   .rail-edit{background:var(--amber-tint);color:var(--amber);}
-  .rail-move{background:var(--steel-tint);color:var(--steel);}
-  .rail-delete{background:var(--rose-tint);color:var(--rose);}
 
   .note-slide{position:relative;background:var(--surface);transition:transform 150ms ease-out;}
   .note-slide.dragging{transition:none;}
@@ -86,6 +85,11 @@
     z-index:10;box-shadow:0 8px 24px rgba(0,0,0,.4);}
   .toast.show{transform:translateY(0);opacity:1;}
   .toast button{background:none;border:none;color:var(--green);font-size:14px;font-weight:600;}
+  .mini{position:absolute;left:50%;bottom:96px;transform:translate(-50%,16px);
+    background:var(--surface-2);border:1px solid var(--border);border-radius:999px;
+    padding:8px 16px;font-size:13px;color:var(--amber);opacity:0;pointer-events:none;
+    transition:transform 160ms ease-out,opacity 160ms ease-out;z-index:11;white-space:nowrap;}
+  .mini.show{transform:translate(-50%,0);opacity:1;}
 </style>
 </head>
 <body>
@@ -93,7 +97,8 @@
     <span class="tag">Variant A · full-swipe commit</span><br/>
     <b>Drag a note all the way right</b> and let go past the line — it flies off and
     collapses, like archiving an email. A short toast offers <b>undo</b>. No buttons,
-    no second tap; the gesture itself is the action. (Left swipe still opens Edit/Move/Delete.)
+    no second tap; the gesture itself is the action. <b>Swipe left</b> reveals one
+    <b>Edit</b> button that opens the editor.
   </div>
 
   <div class="phone">
@@ -134,6 +139,7 @@
       <span id="toastmsg">note hidden</span>
       <button id="undo">Undo</button>
     </div>
+    <div class="mini" id="mini">opens the focused-writer editor…</div>
   </div>
 
 <script>
@@ -149,6 +155,7 @@ const NOTES = {
   ],
 };
 const EYE_OFF = '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9.88 9.88a3 3 0 1 0 4.24 4.24"/><path d="M10.73 5.08A10.4 10.4 0 0 1 12 5c7 0 10 7 10 7a13.2 13.2 0 0 1-1.67 2.68"/><path d="M6.61 6.61A13.5 13.5 0 0 0 2 12s3 7 10 7a9.7 9.7 0 0 0 5.39-1.61"/><line x1="2" y1="2" x2="22" y2="22"/></svg>';
+const PENCIL = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>';
 
 const COMMIT = 0.42;      // fraction of width to commit a hide
 let toastTimer, lastHidden;
@@ -158,9 +165,7 @@ function buildNote(n){
   wrap.innerHTML = `
     <div class="hide-bg">${EYE_OFF}<span class="label">hide</span></div>
     <div class="left-rail">
-      <button class="rail-btn rail-edit">Edit</button>
-      <button class="rail-btn rail-move">Move</button>
-      <button class="rail-btn rail-delete">Delete</button>
+      <button class="rail-btn rail-edit">${PENCIL}Edit</button>
     </div>
     <div class="note-slide">
       <div class="note">
@@ -170,7 +175,15 @@ function buildNote(n){
       </div>
     </div>`;
   attachDrag(wrap, n);
+  wrap.querySelector('.rail-edit').onclick=()=>openEdit(wrap);
   return wrap;
+}
+
+let miniTimer;
+function openEdit(wrap){
+  wrap.querySelector('.note-slide').style.transform='translateX(0)';
+  const m=document.getElementById('mini'); m.classList.add('show');
+  clearTimeout(miniTimer); miniTimer=setTimeout(()=>m.classList.remove('show'),1600);
 }
 
 function attachDrag(wrap, data){
@@ -179,7 +192,7 @@ function attachDrag(wrap, data){
   const W = 358;
   let startX, startY, dx=0, axis=null, active=false, base=0;
 
-  const RAIL = 186; // left rail width
+  const RAIL = 96; // left rail width (single Edit button)
 
   function down(e){
     const p = e.touches ? e.touches[0] : e;

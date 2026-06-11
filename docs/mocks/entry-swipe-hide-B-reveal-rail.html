@@ -46,12 +46,11 @@
   .hide-rail button{width:96px;border:none;background:var(--green-tint);color:var(--green);
     display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;
     font-size:13px;font-weight:500;}
-  /* left rail (existing) */
+  /* left rail — now a single Edit action (was Edit/Move/Delete) */
   .left-rail{position:absolute;inset:0 0 0 auto;display:flex;}
-  .rail-btn{width:62px;border:none;font-size:13px;font-weight:500;}
+  .rail-btn{width:96px;border:none;font-size:14px;font-weight:500;display:flex;
+    flex-direction:column;align-items:center;justify-content:center;gap:4px;}
   .rail-edit{background:var(--amber-tint);color:var(--amber);}
-  .rail-move{background:var(--steel-tint);color:var(--steel);}
-  .rail-delete{background:var(--rose-tint);color:var(--rose);}
 
   .note-slide{position:relative;background:var(--surface);transition:transform 150ms ease-out;}
   .note-slide.dragging{transition:none;}
@@ -84,6 +83,11 @@
   .hidden-row .b{font-size:15px;color:var(--text);} .hidden-row .h{font-size:12px;color:var(--text-3);}
   .hidden-row button{background:var(--green-tint);color:var(--green);border:none;border-radius:10px;padding:9px 14px;font-size:14px;font-weight:500;}
   .empty{color:var(--text-2);font-size:14px;padding:18px 0;text-align:center;}
+  .mini{position:absolute;left:50%;bottom:96px;transform:translate(-50%,16px);
+    background:var(--surface-2);border:1px solid var(--border);border-radius:999px;
+    padding:8px 16px;font-size:13px;color:var(--amber);opacity:0;pointer-events:none;
+    transition:transform 160ms ease-out,opacity 160ms ease-out;z-index:30;white-space:nowrap;}
+  .mini.show{transform:translate(-50%,0);opacity:1;}
 </style>
 </head>
 <body>
@@ -92,7 +96,7 @@
     Swipe right to reveal a single <b>Hide</b> button (mirror of the existing left
     Edit/Move/Delete rail) — one deliberate tap hides it, so nothing hides by accident.
     Hidden notes collect in a persistent <b>“hidden (N)”</b> pill at the top; tap it to
-    restore any of them.
+    restore any of them. <b>Swipe left</b> reveals one <b>Edit</b> button that opens the editor.
   </div>
 
   <div class="phone">
@@ -122,6 +126,7 @@
       <div class="foot"><div class="left"><span class="dot"></span> Saved to your wiki · no AI.</div><div class="right">📎 ➤</div></div>
     </div>
 
+    <div class="mini" id="mini">opens the focused-writer editor…</div>
     <div class="scrim" id="scrim"></div>
     <div class="sheet" id="sheet">
       <div class="handle"></div>
@@ -143,20 +148,23 @@ const NOTES = {
   ],
 };
 const EYE_OFF='<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9.88 9.88a3 3 0 1 0 4.24 4.24"/><path d="M10.73 5.08A10.4 10.4 0 0 1 12 5c7 0 10 7 10 7a13.2 13.2 0 0 1-1.67 2.68"/><path d="M6.61 6.61A13.5 13.5 0 0 0 2 12s3 7 10 7a9.7 9.7 0 0 0 5.39-1.61"/><line x1="2" y1="2" x2="22" y2="22"/></svg>';
+const PENCIL='<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>';
 
 const hidden=[]; // {wrap, parent, next, data}
 let openRail=null;
-const RAIL=96, LEFTRAIL=186;
+const RAIL=96, LEFTRAIL=96;
+let miniTimer;
+function openEdit(wrap){
+  if(openRail===wrap){setOffset(wrap,0);openRail=null;}
+  const m=document.getElementById('mini');m.classList.add('show');
+  clearTimeout(miniTimer);miniTimer=setTimeout(()=>m.classList.remove('show'),1600);
+}
 
 function buildNote(n){
   const wrap=document.createElement('div'); wrap.className='note-wrap';
   wrap.innerHTML=`
     <div class="hide-rail"><button>${EYE_OFF}hide</button></div>
-    <div class="left-rail">
-      <button class="rail-btn rail-edit">Edit</button>
-      <button class="rail-btn rail-move">Move</button>
-      <button class="rail-btn rail-delete">Delete</button>
-    </div>
+    <div class="left-rail"><button class="rail-btn rail-edit">${PENCIL}edit</button></div>
     <div class="note-slide">
       <div class="note">
         <div class="note-head"><span class="domain-dot" style="background:${n.dot}"></span>${n.head}</div>
@@ -166,6 +174,7 @@ function buildNote(n){
     </div>`;
   wrap._data=n;
   wrap.querySelector('.hide-rail button').onclick=()=>hideNote(wrap);
+  wrap.querySelector('.rail-edit').onclick=()=>openEdit(wrap);
   attachDrag(wrap);
   return wrap;
 }

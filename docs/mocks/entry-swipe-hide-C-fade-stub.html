@@ -39,11 +39,11 @@
   .note-wrap + .note-wrap{border-top:1px solid var(--border);}
   .hide-bg{position:absolute;inset:0;display:flex;align-items:center;gap:10px;padding-left:22px;
     color:var(--text-2);background:var(--surface-2);opacity:0;}
+  /* left rail — now a single Edit action (was Edit/Move/Delete) */
   .left-rail{position:absolute;inset:0 0 0 auto;display:flex;}
-  .rail-btn{width:62px;border:none;font-size:13px;font-weight:500;}
+  .rail-btn{width:96px;border:none;font-size:14px;font-weight:500;display:flex;
+    align-items:center;justify-content:center;gap:7px;}
   .rail-edit{background:var(--amber-tint);color:var(--amber);}
-  .rail-move{background:var(--steel-tint);color:var(--steel);}
-  .rail-delete{background:var(--rose-tint);color:var(--rose);}
 
   .note-slide{position:relative;background:var(--surface);transition:transform 150ms ease-out,opacity 150ms ease-out;}
   .note-slide.dragging{transition:none;}
@@ -63,6 +63,11 @@
   .note-stub .lbl{display:flex;align-items:center;gap:8px;}
   .note-stub button{background:none;border:none;color:var(--steel);font-size:13px;font-weight:500;}
   .note-collapse{transition:height 160ms ease-out;overflow:hidden;}
+  .mini{position:absolute;left:50%;bottom:96px;transform:translate(-50%,16px);
+    background:var(--surface-2);border:1px solid var(--border);border-radius:999px;
+    padding:8px 16px;font-size:13px;color:var(--amber);opacity:0;pointer-events:none;
+    transition:transform 160ms ease-out,opacity 160ms ease-out;z-index:11;white-space:nowrap;}
+  .mini.show{transform:translate(-50%,0);opacity:1;}
 
   .composer{margin:0 16px 16px;border:1px solid var(--border);border-radius:var(--r-card);background:var(--surface);padding:10px;flex:none;}
   .seg{display:flex;background:var(--surface-2);border-radius:12px;padding:4px;gap:4px;}
@@ -81,6 +86,7 @@
     that it’s on its way out. Release past the line and it collapses into a thin
     <b>“hidden — restore”</b> stub that stays exactly where the note was (no timed toast to
     chase). The stub clears when you leave the screen; the note lives on in Search.
+    <b>Swipe left</b> reveals one <b>Edit</b> button that opens the editor.
   </div>
 
   <div class="phone">
@@ -102,6 +108,7 @@
       <div class="field">Write an entry…</div>
       <div class="foot"><div class="left"><span class="dot"></span> Saved to your wiki · no AI.</div><div class="right">📎 ➤</div></div>
     </div>
+    <div class="mini" id="mini">opens the focused-writer editor…</div>
   </div>
 
 <script>
@@ -117,17 +124,20 @@ const NOTES={
   ],
 };
 const EYE_OFF='<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9.88 9.88a3 3 0 1 0 4.24 4.24"/><path d="M10.73 5.08A10.4 10.4 0 0 1 12 5c7 0 10 7 10 7a13.2 13.2 0 0 1-1.67 2.68"/><path d="M6.61 6.61A13.5 13.5 0 0 0 2 12s3 7 10 7a9.7 9.7 0 0 0 5.39-1.61"/><line x1="2" y1="2" x2="22" y2="22"/></svg>';
-const COMMIT=0.4, LEFTRAIL=186;
+const PENCIL='<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>';
+const COMMIT=0.4, LEFTRAIL=96;
+let miniTimer;
+function openEdit(wrap){
+  wrap.querySelector('.note-slide').style.transform='translateX(0)';
+  const m=document.getElementById('mini');m.classList.add('show');
+  clearTimeout(miniTimer);miniTimer=setTimeout(()=>m.classList.remove('show'),1600);
+}
 
 function buildNote(n){
   const wrap=document.createElement('div');wrap.className='note-wrap';
   wrap.innerHTML=`
     <div class="hide-bg">${EYE_OFF}<span>hide</span></div>
-    <div class="left-rail">
-      <button class="rail-btn rail-edit">Edit</button>
-      <button class="rail-btn rail-move">Move</button>
-      <button class="rail-btn rail-delete">Delete</button>
-    </div>
+    <div class="left-rail"><button class="rail-btn rail-edit">${PENCIL}Edit</button></div>
     <div class="note-slide">
       <div class="note">
         <div class="note-head"><span class="domain-dot" style="background:${n.dot}"></span>${n.head}</div>
@@ -138,6 +148,7 @@ function buildNote(n){
     <div class="note-stub"><span class="lbl">${EYE_OFF} hidden</span><button>restore</button></div>`;
   wrap._data=n;
   wrap.querySelector('.note-stub button').onclick=()=>restore(wrap);
+  wrap.querySelector('.rail-edit').onclick=()=>openEdit(wrap);
   attachDrag(wrap);
   return wrap;
 }
