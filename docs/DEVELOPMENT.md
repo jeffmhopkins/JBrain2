@@ -17,6 +17,17 @@ Three rules with no carve-outs:
 Layering: routes → services → repositories. No SQL in route handlers. Schema
 changes only via Alembic migrations, written reversible unless impossible.
 
+**Prompts live in co-located `.prompt` files, not in code.** An LLM prompt is one
+artifact — prose, output JSON schema, token budget, capability tier (`strength:`
+— high/low/vision/embedding, resolved to a concrete model by the adapter, never a
+model id), and a `version` — in YAML frontmatter + a templated body, loaded by
+`jbrain.llm.promptfile` beside the module that uses it (e.g.
+`analysis/prompts/note_extract.prompt`). The version is stamped on every record
+the prompt produces, so a CI guard fails if the prose changes without a version
+bump (a re-run is then a deliberate migration). Migration off in-code constants is
+incremental, one task at a time (note.extract first); the same sidecar pattern is
+what Phase-4 tool definitions will adopt.
+
 ## Comment standards
 
 Comments explain **why**, never **what** — names and types carry the what.

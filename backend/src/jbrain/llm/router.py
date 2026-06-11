@@ -44,12 +44,32 @@ TASK_DEFAULTS: dict[str, str] = {
     "vision.caption": "xai:grok-4.3",
 }
 
+# Capability tiers (a prompt's `strength:`) → "provider:model". A prompt names a
+# tier, never a model, so swapping the model behind a tier is config, not a
+# prompt edit (docs/ANALYSIS.md "Privacy routing"). Today every tier resolves to
+# the same default as the tasks; the "embedding" tier is served by the embed
+# container, not this completion router, so it is not listed here.
+TIER_DEFAULTS: dict[str, str] = {
+    "high": "xai:grok-4.3",
+    "low": "xai:grok-4.3",
+    "vision": "xai:grok-4.3",
+}
+
 PROVIDERS = ("anthropic", "xai", "local")
 
 JSON_NUDGE = (
     "\n\nYour previous reply was not valid JSON."
     " Return only valid JSON matching the requested schema — no prose, no code fences."
 )
+
+
+def _split_spec(label: str, spec: str) -> tuple[str, str]:
+    provider, sep, model = spec.partition(":")
+    if not sep or not provider or not model:
+        raise LlmError(f"malformed LLM spec for {label!r}: {spec!r}")
+    if provider not in PROVIDERS:
+        raise LlmError(f"unknown LLM provider for {label!r}: {provider!r}")
+    return provider, model
 
 
 def resolve_tasks(overrides: Mapping[str, str]) -> dict[str, tuple[str, str]]:
@@ -63,15 +83,18 @@ def resolve_tasks(overrides: Mapping[str, str]) -> dict[str, tuple[str, str]]:
         if task not in TASK_DEFAULTS:
             raise LlmError(f"unknown LLM task in overrides: {task!r}")
         merged[task] = spec
-    resolved: dict[str, tuple[str, str]] = {}
-    for task, spec in merged.items():
-        provider, sep, model = spec.partition(":")
-        if not sep or not provider or not model:
-            raise LlmError(f"malformed LLM task spec for {task!r}: {spec!r}")
-        if provider not in PROVIDERS:
-            raise LlmError(f"unknown LLM provider for {task!r}: {provider!r}")
-        resolved[task] = (provider, model)
-    return resolved
+    return {task: _split_spec(task, spec) for task, spec in merged.items()}
+
+
+def resolve_tiers(overrides: Mapping[str, str]) -> dict[str, tuple[str, str]]:
+    """Merge overrides over TIER_DEFAULTS and split each "provider:model".
+    Strict on unknown tiers, same as task resolution."""
+    merged = dict(TIER_DEFAULTS)
+    for tier, spec in overrides.items():
+        if tier not in TIER_DEFAULTS:
+            raise LlmError(f"unknown LLM tier in overrides: {tier!r}")
+        merged[tier] = spec
+    return {tier: _split_spec(tier, spec) for tier, spec in merged.items()}
 
 
 class LlmRouter:
@@ -87,18 +110,41 @@ class LlmRouter:
         clients: Mapping[str, LlmClient],
         tasks: Mapping[str, tuple[str, str]],
         recorder: UsageRecorder | None = None,
+        tiers: Mapping[str, tuple[str, str]] | None = None,
+        pinned: frozenset[str] = frozenset(),
     ):
         self._clients = clients
         self._tasks = tasks
         self._recorder = recorder
+        # Capability-tier → (provider, model), and the set of tasks a human
+        # explicitly pinned in config (an explicit pin outranks a prompt's tier).
+        # Default to TIER_DEFAULTS so any router (including test fakes that pass
+        # only tasks) can resolve a prompt's declared strength.
+        self._tiers = dict(tiers) if tiers is not None else resolve_tiers({})
+        self._pinned = pinned
 
-    def spec(self, task: str) -> tuple[str, str]:
-        """The (provider, model) a task resolves to — callers stamp it as
-        fact provenance (`extractor`) without touching provider clients."""
+    def _resolve(self, task: str, strength: str | None) -> tuple[str, str]:
+        """Precedence: an explicit per-task pin (JBRAIN_LLM_TASKS) wins; else the
+        prompt's capability tier (`strength`); else the task default. So a prompt
+        selects model strength by declaring a tier, while an operator can still
+        override a single task to a specific model."""
+        if task in self._pinned:
+            return self._tasks[task]
+        if strength is not None:
+            try:
+                return self._tiers[strength]
+            except KeyError:
+                raise LlmError(f"unknown LLM strength tier: {strength!r}") from None
         try:
             return self._tasks[task]
         except KeyError:
             raise LlmError(f"unknown LLM task: {task!r}") from None
+
+    def spec(self, task: str, strength: str | None = None) -> tuple[str, str]:
+        """The (provider, model) a task resolves to — callers stamp it as
+        fact provenance (`extractor`) without touching provider clients. Pass the
+        prompt's `strength` so the stamp matches the model `complete` will use."""
+        return self._resolve(task, strength)
 
     async def _record(self, task: str, provider: str, model: str, usage: LlmUsage) -> None:
         if self._recorder is None:
@@ -117,11 +163,9 @@ class LlmRouter:
         images: Sequence[LlmImage] = (),
         json_schema: dict[str, Any] | None = None,
         max_tokens: int = DEFAULT_MAX_TOKENS,
+        strength: str | None = None,
     ) -> LlmResult:
-        try:
-            provider, model = self._tasks[task]
-        except KeyError:
-            raise LlmError(f"unknown LLM task: {task!r}") from None
+        provider, model = self._resolve(task, strength)
         client = self._clients[provider]
         result = await client.complete(
             model=model,
@@ -176,4 +220,10 @@ def build_router(
         "xai": OpenAiCompatClient(XAI_BASE_URL, settings.xai_api_key, provider="xai", **extra),
         "local": OpenAiCompatClient(settings.local_llm_url, "", provider="local", **extra),
     }
-    return LlmRouter(clients, resolve_tasks(settings.llm_tasks), recorder=recorder)
+    return LlmRouter(
+        clients,
+        resolve_tasks(settings.llm_tasks),
+        recorder=recorder,
+        tiers=resolve_tiers(settings.llm_tiers),
+        pinned=frozenset(settings.llm_tasks),
+    )

@@ -30,9 +30,10 @@ from pathlib import Path
 from typing import Any
 
 from jbrain.analysis.extraction import parse_extraction
-from jbrain.analysis.pipeline import EXTRACT_MAX_TOKENS
 from jbrain.analysis.prompt import (
+    EXTRACT_MAX_TOKENS,
     EXTRACTION_SCHEMA,
+    NOTE_EXTRACT_STRENGTH,
     PROMPT_VERSION,
     SYSTEM_PROMPT,
     build_user_prompt,
@@ -225,7 +226,7 @@ async def _run(cases: list[dict[str, Any]]) -> list[CaseResult]:
     # STORES — model output plus the deterministic backward-date repair — so a
     # green eval means a green app, not just a green prompt.
     router = build_router(Settings())
-    provider, model = router.spec("note.extract")
+    provider, model = router.spec("note.extract", NOTE_EXTRACT_STRENGTH)
     print(
         f"prompt-eval — {provider}:{model} — {PROMPT_VERSION} — "
         f"{datetime.now().isoformat(timespec='seconds')}",
@@ -245,6 +246,7 @@ async def _run(cases: list[dict[str, Any]]) -> list[CaseResult]:
                 user_text=user,
                 json_schema=EXTRACTION_SCHEMA,
                 max_tokens=EXTRACT_MAX_TOKENS,
+                strength=NOTE_EXTRACT_STRENGTH,
             )
             r = _score(case, parse_extraction(out.parsed, anchor=anchor), anchor)
         except Exception as exc:  # a live call can fail many ways; report, don't crash the run
