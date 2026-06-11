@@ -869,3 +869,25 @@ def test_part_of_day_token_becomes_a_within_day_range() -> None:
     ft = parsed.facts[0].temporal
     assert ft is not None and ft.resolved_start is not None
     assert ft.resolved_start.astimezone(_MST).hour == 9 and ft.resolved_end is None
+
+
+def test_relative_phrase_rendered_midnight_utc_is_not_pushed_a_day() -> None:
+    # grok renders "yesterday" as midnight UTC: 2026-06-11T00:00Z is locally
+    # Jun 10 at -06:00 (correct for an anchor of Jun 11). It must NOT be stamped
+    # to the written UTC date (Jun 11) — a regression in the abs-date
+    # normalization caught by the live finance eval.
+    t = ExtractedTemporal(
+        phrase="yesterday", resolved_start=datetime(2026, 6, 11, 0, 0, tzinfo=UTC),
+        resolved_end=None, precision="day",
+    )  # fmt: skip
+    fixed, _ = validate_backward_temporal(t, _ANCHOR)  # _ANCHOR is Jun 11, -06:00
+    assert fixed is not None and fixed.resolved_start is not None
+    assert fixed.resolved_start.astimezone(_MST).date() == date(2026, 6, 10)
+    # An ABSOLUTE date the model rendered as midnight UTC is still normalized.
+    abs_t = ExtractedTemporal(
+        phrase="June 8", resolved_start=datetime(2026, 6, 8, 0, 0, tzinfo=UTC),
+        resolved_end=None, precision="day",
+    )  # fmt: skip
+    abs_fixed, _ = validate_backward_temporal(abs_t, _ANCHOR)
+    assert abs_fixed is not None and abs_fixed.resolved_start is not None
+    assert abs_fixed.resolved_start.astimezone(_MST).date() == date(2026, 6, 8)

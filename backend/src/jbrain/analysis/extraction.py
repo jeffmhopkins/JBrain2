@@ -339,7 +339,12 @@ def finalize_temporal(
     falsely close a `state` interval). Tokens are the first-class range objects
     (docs/ANALYSIS.md), so the within-day meaning lives there."""
     start, end, changed = _repair_dates(phrase, start, end, anchor)
-    if precision in _DATE_PRECISIONS:
+    # Midnight-UTC normalization is for ABSOLUTE dates only ("June 8"). A KNOWN
+    # relative phrase ("today"/"yesterday") is already handled by _repair_dates,
+    # whose value is locally correct even when rendered at midnight UTC; stamping
+    # it to the written (UTC) date would PUSH it a day the wrong way (e.g.
+    # "yesterday" -> 2026-06-11T00:00Z is locally Jun 10, must not become Jun 11).
+    if precision in _DATE_PRECISIONS and resolve_relative_date(phrase, anchor) is None:
         if start is not None and _drifted_utc_midnight(start, anchor):
             start, changed = _stamp_local_midnight(start, anchor), True
         if end is not None and _drifted_utc_midnight(end, anchor):
