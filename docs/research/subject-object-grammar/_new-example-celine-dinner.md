@@ -28,3 +28,19 @@ Owner-supplied screenshot, Jun 11 2026, xai:grok-4.3. A sharper variant of the
 
 Also note: robustness to the "are"/"ate" typo is incidental and fine; the
 lapse is the dropped person, not the typo.
+
+## Separate bug in the same screenshot — "last night" resolved off by one
+
+Distinct failure class (temporal, not subject-object), logged here so it
+isn't lost:
+
+- **Capture anchor:** Jun 11 2026 · 7:13 AM. "last night" should resolve to
+  the evening of **Jun 10**. The Analysis DATES token shows **Jun 11 → Jun 11**
+  — the capture day, off by one.
+- **Pure model/prompt lapse.** prompt.py:98-103 asks the model to resolve every
+  relative phrase against the anchor to an absolute value itself; it returned
+  the capture day instead of the prior evening.
+- **No deterministic net.** extraction.py only post-corrects *future* dates
+  (`normalize_future_assertion`: future "asserted" -> "expected"). A backward
+  phrase landing on the wrong day passes through untouched. Candidate for a
+  separate temporal-resolution investigation.
