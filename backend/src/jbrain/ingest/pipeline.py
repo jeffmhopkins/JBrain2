@@ -104,13 +104,32 @@ class IngestPipeline:
         # keyword search. Re-ingest re-enqueues because the rebuilt chunks
         # all start with NULL embeddings.
         await queue.enqueue(self._maker, SYSTEM_CTX, "embed_note", {"note_id": note_id})
-        # Extraction is likewise a follow-up job: ingest stays LLM-free so
-        # capture-to-searchable never waits on a cloud LLM (docs/ANALYSIS.md).
-        await queue.enqueue(self._maker, SYSTEM_CTX, "analyze_note", {"note_id": note_id})
         # Vision OCR rides the same doctrine: images whose cache is empty get
         # an async ocr_attachment job; the handler re-enqueues ingest_note, so
         # the cache check is what keeps that loop from spinning.
-        await self._enqueue_ocr_jobs(note_id, attachments, set(extracts))
+        outstanding = await self._enqueue_ocr_jobs(note_id, attachments, set(extracts))
+        # Extraction is likewise a follow-up job (ingest stays LLM-free,
+        # docs/ANALYSIS.md), gated on outstanding vision WORK — never on
+        # extract kinds or the image-analysis mode: a mode flip on a cached
+        # attachment enqueues no job and must not block analysis. While OCR is
+        # outstanding the handler's re-ingest enqueues analysis instead, so an
+        # image note is extracted once, with its OCR text. The dedup is
+        # queued-only on purpose: a RUNNING analyze may have read stale
+        # chunks, so a fresh pass must still follow it. Single-worker
+        # invariant: the OCR handler enqueues this re-ingest before its own
+        # job completes, which is safe single-threaded — under multi-worker
+        # the gate could see that originating job as running and defer
+        # forever. TODO(queue): triggered_by_job exclusion if multi-worker
+        # lands.
+        if not outstanding and not await queue.has_active(
+            self._maker,
+            SYSTEM_CTX,
+            "analyze_note",
+            payload_field="note_id",
+            value=note_id,
+            statuses=("queued",),
+        ):
+            await queue.enqueue(self._maker, SYSTEM_CTX, "analyze_note", {"note_id": note_id})
         log.info("ingest.indexed", note_id=note_id, chunks=len(chunks))
 
     async def _load_extracts(
@@ -140,15 +159,21 @@ class IngestPipeline:
 
     async def _enqueue_ocr_jobs(
         self, note_id: str, attachments: list[_AttachmentRef], cached: set[UUID]
-    ) -> None:
-        """One ocr_attachment job per image with no cache rows yet.
+    ) -> set[str]:
+        """One ocr_attachment job per image with no cache rows yet; returns
+        the attachment ids with OCR work outstanding after this run (newly
+        enqueued + already queued/running) — the analysis gate's input.
 
         Oversized images are skipped at enqueue time (the per-task size
         budget, docs/ANALYSIS.md "Dispatcher-level policy") — deliberately
-        without a cache row, so a re-uploaded smaller file OCRs normally. An
-        already queued/running job suppresses duplicates the same way the
-        startup backfills do.
+        without a cache row, so a re-uploaded smaller file OCRs normally;
+        they are never outstanding, so they never block analysis. An already
+        queued/running job suppresses duplicates the same way the startup
+        backfills do. The active check spans ALL the note's images, not just
+        cache-less candidates: an in-flight on-demand re-describe of a cached
+        attachment is outstanding work too.
         """
+        image_ids = [str(a.id) for a in attachments if a.media_type.startswith("image/")]
         candidates: list[_AttachmentRef] = []
         for att in attachments:
             if not att.media_type.startswith("image/") or att.id in cached:
@@ -162,10 +187,10 @@ class IngestPipeline:
                 )
                 continue
             candidates.append(att)
-        if not candidates:
-            return
+        if not image_ids:
+            return set()
         async with scoped_session(self._maker, SYSTEM_CTX) as session:
-            active = set(
+            outstanding = set(
                 (
                     await session.execute(
                         text(
@@ -174,17 +199,19 @@ class IngestPipeline:
                             " AND status IN ('queued', 'running')"
                             " AND payload->>'attachment_id' IN :ids"
                         ).bindparams(bindparam("ids", expanding=True)),
-                        {"ids": [str(a.id) for a in candidates]},
+                        {"ids": image_ids},
                     )
                 ).scalars()
             )
         for att in candidates:
-            if str(att.id) in active:
+            if str(att.id) in outstanding:
                 continue
             await queue.enqueue(
                 self._maker, SYSTEM_CTX, "ocr_attachment", {"attachment_id": str(att.id)}
             )
+            outstanding.add(str(att.id))
             log.info("ingest.ocr_enqueued", note_id=note_id, attachment_id=str(att.id))
+        return outstanding
 
     async def _build_chunks(
         self,

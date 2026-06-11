@@ -27,15 +27,26 @@ class FakeJobQueue:
     enqueued: list[tuple[str, dict]] = field(default_factory=list)
     # (kind, payload_field, value) triples the queue reports as in flight.
     active: set[tuple[str, str, str]] = field(default_factory=set)
+    # Note ids the queue reports as having outstanding ocr_attachment work.
+    active_ocr_notes: set[str] = field(default_factory=set)
 
     async def enqueue(self, ctx: SessionContext, kind: str, payload: dict) -> str:
         self.enqueued.append((kind, payload))
         return str(uuid.uuid4())
 
     async def has_active(
-        self, ctx: SessionContext, kind: str, *, payload_field: str, value: str
+        self,
+        ctx: SessionContext,
+        kind: str,
+        *,
+        payload_field: str,
+        value: str,
+        statuses: tuple[str, ...] = ("queued", "running"),
     ) -> bool:
         return (kind, payload_field, value) in self.active
+
+    async def has_active_ocr_for_note(self, ctx: SessionContext, note_id: str) -> bool:
+        return note_id in self.active_ocr_notes
 
 
 @dataclass
@@ -575,6 +586,70 @@ def test_analyze_attachment_enqueues_a_full_mode_job(
     assert resp.json()["job_id"]
     # The override rides the payload: full analysis regardless of the setting.
     assert jobs.enqueued == [("ocr_attachment", {"attachment_id": att_id, "mode": "full"})]
+
+
+def _indexed_note(c: TestClient, repo: FakeNotesRepo, client_id: str = "rn1") -> str:
+    note = c.post("/api/notes", json={"client_id": client_id, "body": "re-run me"}).json()
+    for i, n in enumerate(repo.notes):
+        if n.id == note["id"]:
+            repo.notes[i] = dataclasses.replace(n, ingest_state="indexed")
+    return note["id"]
+
+
+def test_analyze_note_enqueues_a_plain_analyze_job(
+    client: tuple[TestClient, FakeNotesRepo, FakeJobQueue],
+) -> None:
+    c, repo, jobs = client
+    note_id = _indexed_note(c, repo)
+    jobs.enqueued.clear()
+
+    resp = c.post(f"/api/notes/{note_id}/analyze")
+    assert resp.status_code == 202
+    assert resp.json()["job_id"]
+    # A plain analyze_note job — no special re-run kind, no mode payload.
+    assert jobs.enqueued == [("analyze_note", {"note_id": note_id})]
+
+
+def test_analyze_note_404_unknown(client: tuple[TestClient, FakeNotesRepo, FakeJobQueue]) -> None:
+    c, _, jobs = client
+    jobs.enqueued.clear()
+    assert c.post(f"/api/notes/{uuid.uuid4()}/analyze").status_code == 404
+    assert jobs.enqueued == []
+
+
+def test_analyze_note_409_when_analysis_in_flight(
+    client: tuple[TestClient, FakeNotesRepo, FakeJobQueue],
+) -> None:
+    c, repo, jobs = client
+    note_id = _indexed_note(c, repo)
+    jobs.active.add(("analyze_note", "note_id", note_id))
+    jobs.enqueued.clear()
+
+    resp = c.post(f"/api/notes/{note_id}/analyze")
+    assert resp.status_code == 409
+    assert "already queued" in resp.json()["detail"]
+    assert jobs.enqueued == []
+
+
+def test_analyze_note_409_while_pipeline_owns_sequencing(
+    client: tuple[TestClient, FakeNotesRepo, FakeJobQueue],
+) -> None:
+    c, repo, jobs = client
+    # Fresh notes are ingest_state='pending': the pipeline will analyze anyway.
+    note = c.post("/api/notes", json={"client_id": "rn-pend", "body": "still ingesting"}).json()
+    jobs.enqueued.clear()
+    resp = c.post(f"/api/notes/{note['id']}/analyze")
+    assert resp.status_code == 409
+    assert "analysis will run automatically" in resp.json()["detail"]
+
+    # Indexed but with OCR outstanding: same refusal — the gate sequences it.
+    note_id = _indexed_note(c, repo, client_id="rn-ocr")
+    jobs.active_ocr_notes.add(note_id)
+    jobs.enqueued.clear()
+    resp = c.post(f"/api/notes/{note_id}/analyze")
+    assert resp.status_code == 409
+    assert "analysis will run automatically" in resp.json()["detail"]
+    assert jobs.enqueued == []
 
 
 def test_analyze_attachment_404_unknown_409_in_flight(

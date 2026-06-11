@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from datetime import timedelta
 from typing import Any, Protocol, cast
 
-from sqlalchemy import CursorResult, text
+from sqlalchemy import CursorResult, bindparam, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from jbrain.db.session import SessionContext, scoped_session
@@ -45,14 +45,25 @@ class Job:
     max_attempts: int
 
 
+ACTIVE_STATUSES = ("queued", "running")
+
+
 class JobEnqueuer(Protocol):
     """The slice of the queue the API needs (full claim/complete is worker-side)."""
 
     async def enqueue(self, ctx: SessionContext, kind: str, payload: dict[str, Any]) -> str: ...
 
     async def has_active(
-        self, ctx: SessionContext, kind: str, *, payload_field: str, value: str
+        self,
+        ctx: SessionContext,
+        kind: str,
+        *,
+        payload_field: str,
+        value: str,
+        statuses: tuple[str, ...] = ACTIVE_STATUSES,
     ) -> bool: ...
+
+    async def has_active_ocr_for_note(self, ctx: SessionContext, note_id: str) -> bool: ...
 
 
 class PgJobQueue:
@@ -65,9 +76,20 @@ class PgJobQueue:
         return await enqueue(self._maker, ctx, kind, payload)
 
     async def has_active(
-        self, ctx: SessionContext, kind: str, *, payload_field: str, value: str
+        self,
+        ctx: SessionContext,
+        kind: str,
+        *,
+        payload_field: str,
+        value: str,
+        statuses: tuple[str, ...] = ACTIVE_STATUSES,
     ) -> bool:
-        return await has_active(self._maker, ctx, kind, payload_field=payload_field, value=value)
+        return await has_active(
+            self._maker, ctx, kind, payload_field=payload_field, value=value, statuses=statuses
+        )
+
+    async def has_active_ocr_for_note(self, ctx: SessionContext, note_id: str) -> bool:
+        return await has_active_ocr_for_note(self._maker, ctx, note_id)
 
 
 def reclaim_attempts(attempts: int, max_attempts: int) -> tuple[int, bool]:
@@ -111,18 +133,49 @@ async def has_active(
     *,
     payload_field: str,
     value: str,
+    statuses: tuple[str, ...] = ACTIVE_STATUSES,
 ) -> bool:
-    """Whether a queued/running job of `kind` carries this payload value —
-    the API's duplicate guard (e.g. 409 on a second on-demand analyze)."""
+    """Whether a job of `kind` in one of `statuses` carries this payload value —
+    the API's duplicate guard (e.g. 409 on a second on-demand analyze). The
+    ingest gate narrows `statuses` to queued-only: a RUNNING analyze may have
+    read stale chunks, so it never suppresses a fresh enqueue."""
     async with scoped_session(maker, ctx) as session:
         row = (
             await session.execute(
                 text(
                     "SELECT 1 FROM app.jobs WHERE kind = :kind"
-                    " AND status IN ('queued', 'running')"
+                    " AND status IN :statuses"
                     " AND payload->>:field = :value LIMIT 1"
+                ).bindparams(bindparam("statuses", expanding=True)),
+                {
+                    "kind": kind,
+                    "field": payload_field,
+                    "value": value,
+                    "statuses": list(statuses),
+                },
+            )
+        ).first()
+    return row is not None
+
+
+async def has_active_ocr_for_note(
+    maker: async_sessionmaker[AsyncSession], ctx: SessionContext, note_id: str
+) -> bool:
+    """Whether any queued/running ocr_attachment job targets one of this
+    note's attachments — the outstanding-vision-work signal the analysis gate
+    keys on (jbrain.ingest.pipeline)."""
+    async with scoped_session(maker, ctx) as session:
+        row = (
+            await session.execute(
+                text(
+                    "SELECT 1 FROM app.jobs j"
+                    " WHERE j.kind = 'ocr_attachment'"
+                    " AND j.status IN ('queued', 'running')"
+                    " AND j.payload->>'attachment_id' IN ("
+                    "     SELECT a.id::text FROM app.attachments a WHERE a.note_id = :note_id"
+                    " ) LIMIT 1"
                 ),
-                {"kind": kind, "field": payload_field, "value": value},
+                {"note_id": note_id},
             )
         ).first()
     return row is not None
@@ -206,11 +259,13 @@ async def fail(
     error: str,
     *,
     permanent: bool = False,
-) -> None:
+) -> bool:
     """Record a failure: requeue with exponential backoff, or fail permanently.
 
     `permanent` short-circuits the retry budget for failures retrying cannot
-    fix (see PermanentJobError).
+    fix (see PermanentJobError). Returns whether the job is now exhausted
+    (status='failed') so the worker can run kind-specific fallbacks — e.g.
+    body-only analysis after OCR gives up.
     """
     async with scoped_session(maker, ctx) as session:
         row = (
@@ -220,7 +275,7 @@ async def fail(
             )
         ).first()
         if row is None:
-            return
+            return False
         attempts = row.attempts + 1
         exhausted = permanent or attempts >= row.max_attempts
         await session.execute(
@@ -244,6 +299,7 @@ async def fail(
                 "delay": backoff(attempts).total_seconds(),
             },
         )
+    return exhausted
 
 
 async def backfill_pending_notes(
@@ -287,7 +343,9 @@ async def backfill_unanalyzed_notes(
     ingest enqueues analysis); the missing note_analysis row is the durable
     marker, so this sweep self-heals them at startup. Indexed-only on
     purpose: analysis reads chunks, and a pending note's own ingest will
-    enqueue analysis anyway.
+    enqueue analysis anyway. Notes with outstanding OCR are skipped too — a
+    worker restart mid-OCR must not analyze before the vision text lands
+    (the OCR handler's re-ingest enqueues analysis when it does).
     """
     async with scoped_session(maker, ctx) as session:
         result = await session.execute(
@@ -307,6 +365,14 @@ async def backfill_unanalyzed_notes(
                       WHERE j.kind = 'analyze_note'
                         AND j.status IN ('queued', 'running')
                         AND j.payload ->> 'note_id' = n.id::text
+                  )
+                  AND NOT EXISTS (
+                      SELECT 1 FROM app.jobs j
+                      JOIN app.attachments att
+                        ON att.id::text = j.payload ->> 'attachment_id'
+                      WHERE j.kind = 'ocr_attachment'
+                        AND j.status IN ('queued', 'running')
+                        AND att.note_id = n.id
                   )
                 """
             )

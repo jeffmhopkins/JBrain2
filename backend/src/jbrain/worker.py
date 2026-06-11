@@ -20,6 +20,7 @@ from jbrain.analysis import purge
 from jbrain.analysis.pipeline import AnalysisPipeline
 from jbrain.config import get_settings
 from jbrain.embed import NoteEmbedder, TeiEmbedClient
+from jbrain.ingest import ocr
 from jbrain.ingest.ocr import OcrPipeline
 from jbrain.ingest.pipeline import IngestPipeline
 from jbrain.llm import build_router
@@ -54,15 +55,33 @@ async def process_one(
     except queue.PermanentJobError as exc:
         # Retrying cannot help (e.g. malformed extraction after the re-ask):
         # fail now instead of burning the retry budget.
-        await queue.fail(maker, queue.SYSTEM_CTX, job.id, repr(exc), permanent=True)
+        exhausted = await queue.fail(maker, queue.SYSTEM_CTX, job.id, repr(exc), permanent=True)
         log.error("worker.job_failed_permanent", job_id=job.id, kind=job.kind, error=repr(exc))
+        await _after_exhaustion(maker, job, exhausted)
     except Exception as exc:  # noqa: BLE001 - one bad job must not kill the worker
-        await queue.fail(maker, queue.SYSTEM_CTX, job.id, repr(exc))
+        exhausted = await queue.fail(maker, queue.SYSTEM_CTX, job.id, repr(exc))
         log.warning("worker.job_failed", job_id=job.id, kind=job.kind, error=repr(exc))
+        await _after_exhaustion(maker, job, exhausted)
     else:
         await queue.complete(maker, queue.SYSTEM_CTX, job.id)
         log.info("worker.job_done", job_id=job.id, kind=job.kind)
     return True
+
+
+async def _after_exhaustion(
+    maker: async_sessionmaker[AsyncSession], job: queue.Job, exhausted: bool
+) -> None:
+    """Kind-specific fallbacks once a job has burned its whole retry budget.
+
+    An exhausted ocr_attachment must not strand its note unanalyzed: the
+    ingest gate deferred analysis to OCR work that will now never finish, so
+    fall back to body-only analysis (jbrain.ingest.ocr).
+    """
+    if not exhausted or job.kind != "ocr_attachment":
+        return
+    attachment_id = job.payload.get("attachment_id")
+    if attachment_id is not None:
+        await ocr.enqueue_analysis_fallback(maker, str(attachment_id))
 
 
 async def run_loop(maker: async_sessionmaker[AsyncSession], handlers: dict[str, Handler]) -> None:
