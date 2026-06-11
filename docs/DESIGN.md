@@ -359,6 +359,12 @@ Binding workflow for every new screen or significant UI change:
    not color-swaps of one idea). The owner picks; the *reasoning and chosen
    pattern* are added to this document in the same PR, so the next surface
    reuses the decision instead of re-litigating it.
+   **No reuse exemption [decided]:** every NEW screen or surface gets an
+   interactive mockup round before implementation, even when it composes
+   entirely from established paradigms — "it's just a list" is not a
+   waiver. Paradigm reuse shapes the variants; it does not skip the review.
+   Small in-place changes to an existing surface (a chip state, a button on
+   an existing card) remain exempt.
 3. **Decisions accrete here.** If a review settles anything reusable — a
    list pattern, a modal flow, an empty-state style — it gets a subsection
    in this doc immediately. This document is the memory; "we decided this
