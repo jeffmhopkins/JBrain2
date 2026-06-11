@@ -503,6 +503,15 @@ export const api = {
     return (await response.json()) as UpdateStatus;
   },
 
+  async opsResetStart(): Promise<void> {
+    await request("/api/ops/reset", { method: "POST" });
+  },
+
+  async opsResetStatus(): Promise<UpdateStatus> {
+    const response = await request("/api/ops/reset/status");
+    return (await response.json()) as UpdateStatus;
+  },
+
   async opsStatus(): Promise<OpsStatus> {
     const response = await request("/api/ops/status");
     return (await response.json()) as OpsStatus;

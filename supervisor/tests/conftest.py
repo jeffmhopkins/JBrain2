@@ -86,6 +86,13 @@ class FakeGateway:
         self.oneshots_started.append(("import", archive))
         return f"jbrain-import-{len(self.oneshots_started)}"
 
+    def start_reset(self) -> str:
+        if self._busy():
+            raise UpdateInProgressError
+        self.oneshot_running = "reset"
+        self.oneshots_started.append(("reset", None))
+        return f"jbrain-reset-{len(self.oneshots_started)}"
+
     def oneshot_status(self, kind: str, tail: int) -> UpdateStatus:
         if not any(k == kind for k, _ in self.oneshots_started):
             return UpdateStatus(state="none", exit_code=None, log_tail="")

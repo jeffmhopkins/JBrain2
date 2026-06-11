@@ -239,4 +239,31 @@ describe("mock API", () => {
     expect(usage.by_task.some((t) => t.cost_usd === null)).toBe(true);
     expect(usage.days).toHaveLength(7);
   });
+
+  // Last on purpose: reset wipes the shared fixtures the tests above read.
+  it("ops reset: zeroes content fixtures, keeps usage; status ticks running→exited", async () => {
+    expect((await call("/api/ops/reset", { method: "POST" })).status).toBe(202);
+
+    const page = (await (await call("/api/notes?limit=100")).json()) as { notes: NoteOut[] };
+    expect(page.notes).toHaveLength(0);
+    const open = (await (await call("/api/review?status=open")).json()) as ReviewQueue;
+    expect(open.items).toHaveLength(0);
+    expect((await call("/api/entities/ent-sarah")).status).toBe(404);
+
+    // Spend telemetry survives resets, like app.llm_usage on the real stack.
+    const usage = (await (await call("/api/ops/llm-usage")).json()) as LlmUsage;
+    expect(usage.today.input_tokens).toBeGreaterThan(0);
+
+    const first = (await (await call("/api/ops/reset/status")).json()) as { state: string };
+    expect(first.state).toBe("running");
+    await call("/api/ops/reset/status");
+    const done = (await (await call("/api/ops/reset/status")).json()) as {
+      state: string;
+      exit_code: number | null;
+      log_tail: string;
+    };
+    expect(done.state).toBe("exited");
+    expect(done.exit_code).toBe(0);
+    expect(done.log_tail).toContain("[reset] complete");
+  });
 });

@@ -1,4 +1,4 @@
-"""Export/import ops endpoints: proxying, the shelf handoff, and name safety."""
+"""Export/import/reset ops endpoints: proxying, the shelf handoff, and name safety."""
 
 import asyncio
 import json
@@ -24,8 +24,10 @@ class FakeSupervisor:
     def __init__(self) -> None:
         self.export_state = {"state": "none", "exit_code": None, "log_tail": ""}
         self.import_state = {"state": "none", "exit_code": None, "log_tail": ""}
+        self.reset_state = {"state": "none", "exit_code": None, "log_tail": ""}
         self.busy = False
         self.import_started_with: list[str] = []
+        self.resets_started = 0
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         if request.headers.get("Authorization") != "Bearer st-token":
@@ -47,6 +49,13 @@ class FakeSupervisor:
             return httpx.Response(202, json={"oneshot": "jbrain-import-1"})
         if path == "/import/status":
             return httpx.Response(200, json=self.import_state)
+        if path == "/reset" and method == "POST":
+            if self.busy:
+                return httpx.Response(409)
+            self.resets_started += 1
+            return httpx.Response(202, json={"oneshot": "jbrain-reset-1"})
+        if path == "/reset/status":
+            return httpx.Response(200, json=self.reset_state)
         return httpx.Response(404)
 
 
@@ -109,6 +118,8 @@ def test_data_endpoints_require_owner(
         assert anon.post("/api/ops/export").status_code == 401
         assert anon.get(f"/api/ops/export/file/{EXPORT_NAME}").status_code == 401
         assert anon.post("/api/ops/import/upload").status_code == 401
+        assert anon.post("/api/ops/reset").status_code == 401
+        assert anon.get("/api/ops/reset/status").status_code == 401
 
 
 def test_export_start_and_busy_conflict(client: TestClient, supervisor: FakeSupervisor) -> None:
@@ -174,3 +185,26 @@ def test_import_start_rejects_foreign_names(client: TestClient) -> None:
 def test_import_status_proxies(client: TestClient, supervisor: FakeSupervisor) -> None:
     supervisor.import_state = {"state": "running", "exit_code": None, "log_tail": "x"}
     assert client.get("/api/ops/import/status").json()["state"] == "running"
+
+
+def test_reset_start_and_busy_conflict(client: TestClient, supervisor: FakeSupervisor) -> None:
+    assert client.post("/api/ops/reset").status_code == 202
+    assert supervisor.resets_started == 1
+
+    supervisor.busy = True
+    busy = client.post("/api/ops/reset")
+    assert busy.status_code == 409
+    assert busy.json()["detail"] == "another operation is running"
+
+
+def test_reset_status_proxies(client: TestClient, supervisor: FakeSupervisor) -> None:
+    assert client.get("/api/ops/reset/status").json()["state"] == "none"
+    supervisor.reset_state = {
+        "state": "exited",
+        "exit_code": 0,
+        "log_tail": "[reset] complete",
+    }
+    done = client.get("/api/ops/reset/status").json()
+    assert done["state"] == "exited"
+    assert done["exit_code"] == 0
+    assert "[reset] complete" in done["log_tail"]

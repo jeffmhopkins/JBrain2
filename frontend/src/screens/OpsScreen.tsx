@@ -271,22 +271,39 @@ type ImportPhase =
   | { step: "running"; log: string; unreachable: boolean }
   | { step: "done"; ok: boolean; log: string };
 
+type ResetPhase =
+  | { step: "idle"; armed: boolean }
+  | { step: "running"; log: string; unreachable: boolean }
+  | { step: "done"; ok: boolean; log: string };
+
 const DATA_POLL_MS = 3000;
+const RESET_DISARM_MS = 3000;
 
 /** Ops "Data" card (docs/DESIGN.md): export downloads one archive of the
  * database dump + attachment files; import replaces everything with an
- * uploaded archive via a supervisor one-shot that restarts the stack. */
+ * uploaded archive via a supervisor one-shot that restarts the stack;
+ * reset erases all content data (a testing convenience) while auth,
+ * domains, and llm_usage survive — also a one-shot, since the api role
+ * deliberately cannot TRUNCATE. */
 function DataCard() {
   const [exportPhase, setExportPhase] = useState<ExportPhase>({ step: "idle", latest: null });
   const [importPhase, setImportPhase] = useState<ImportPhase>({ step: "idle" });
+  const [resetPhase, setResetPhase] = useState<ResetPhase>({ step: "idle", armed: false });
   const fileRef = useRef<HTMLInputElement>(null);
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
+  const disarmTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const stopPolling = useCallback(() => {
     if (timer.current !== null) clearInterval(timer.current);
     timer.current = null;
   }, []);
   useEffect(() => stopPolling, [stopPolling]);
+  useEffect(
+    () => () => {
+      if (disarmTimer.current !== null) clearTimeout(disarmTimer.current);
+    },
+    [],
+  );
 
   const pollExport = useCallback(async () => {
     let status: ExportStatus;
@@ -348,19 +365,76 @@ function DataCard() {
     timer.current = setInterval(() => void pollImport(), DATA_POLL_MS);
   }
 
+  const pollReset = useCallback(async () => {
+    let status: UpdateStatus;
+    try {
+      status = await api.opsResetStatus();
+    } catch {
+      // The worker restarts mid-reset; the api stays up, but tolerate
+      // blips the same way import does.
+      setResetPhase((p) => (p.step === "running" ? { ...p, unreachable: true } : p));
+      return;
+    }
+    if (status.state === "running") {
+      setResetPhase({ step: "running", log: status.log_tail, unreachable: false });
+    } else if (status.state === "exited") {
+      stopPolling();
+      setResetPhase({ step: "done", ok: status.exit_code === 0, log: status.log_tail });
+    }
+  }, [stopPolling]);
+
+  async function startReset() {
+    try {
+      await api.opsResetStart();
+    } catch {
+      setResetPhase({
+        step: "done",
+        ok: false,
+        log: "could not start — is another operation running?",
+      });
+      return;
+    }
+    setResetPhase({ step: "running", log: "[reset] starting", unreachable: false });
+    timer.current = setInterval(() => void pollReset(), DATA_POLL_MS);
+  }
+
+  function tapReset() {
+    if (disarmTimer.current !== null) clearTimeout(disarmTimer.current);
+    disarmTimer.current = null;
+    if (resetPhase.step === "idle" && resetPhase.armed) {
+      void startReset();
+      return;
+    }
+    setResetPhase({ step: "idle", armed: true });
+    disarmTimer.current = setTimeout(
+      () => setResetPhase((p) => (p.step === "idle" ? { step: "idle", armed: false } : p)),
+      RESET_DISARM_MS,
+    );
+  }
+
   return (
     <section className="ops-update">
       <h3>Data</h3>
-      {exportPhase.step !== "running" && importPhase.step === "idle" && (
-        <div className="ops-actions">
-          <button type="button" onClick={() => void startExport()}>
-            Export backup
-          </button>
-          <button type="button" onClick={() => fileRef.current?.click()}>
-            Import backup…
-          </button>
-        </div>
-      )}
+      {exportPhase.step !== "running" &&
+        importPhase.step === "idle" &&
+        resetPhase.step === "idle" && (
+          <div className="ops-actions">
+            <button type="button" onClick={() => void startExport()}>
+              Export backup
+            </button>
+            <button type="button" onClick={() => fileRef.current?.click()}>
+              Import backup…
+            </button>
+            <button
+              type="button"
+              className="danger"
+              onClick={tapReset}
+              onBlur={() => setResetPhase({ step: "idle", armed: false })}
+            >
+              {resetPhase.armed ? "Tap again — erases ALL notes and data" : "Reset DB"}
+            </button>
+          </div>
+        )}
       {exportPhase.step === "idle" && exportPhase.latest !== null && (
         <>
           <p className="muted">{exportPhase.latest} downloaded.</p>
@@ -375,10 +449,12 @@ function DataCard() {
       )}
       {exportPhase.step === "idle" &&
         exportPhase.latest === null &&
-        importPhase.step === "idle" && (
+        importPhase.step === "idle" &&
+        resetPhase.step === "idle" && (
           <p className="muted data-hint">
             export bundles the database + attachment files into one archive; import replaces
-            everything with an archive and restarts the stack.
+            everything with an archive and restarts the stack; reset erases all notes and derived
+            data (a safety backup is taken first).
           </p>
         )}
       {exportPhase.step === "running" && <p className="muted">Building export archive…</p>}
@@ -442,6 +518,28 @@ function DataCard() {
           </p>
           <pre className="ops-update-log">{importPhase.log}</pre>
           {importPhase.ok && (
+            <button type="button" onClick={() => window.location.reload()}>
+              Reload app
+            </button>
+          )}
+        </>
+      )}
+      {resetPhase.step === "running" && (
+        <>
+          <p className="muted">
+            {resetPhase.unreachable ? "Worker restarting — hold on…" : "Resetting…"}
+          </p>
+          <pre className="ops-update-log">{resetPhase.log}</pre>
+        </>
+      )}
+      {resetPhase.step === "done" && (
+        <>
+          <p className={resetPhase.ok ? "muted" : "ops-error"}>
+            {resetPhase.ok ? "Reset complete." : "Reset failed — see log."}
+          </p>
+          <pre className="ops-update-log">{resetPhase.log}</pre>
+          {resetPhase.ok && (
+            // The stream and caches still hold pre-reset data; reload clears them.
             <button type="button" onClick={() => window.location.reload()}>
               Reload app
             </button>
