@@ -1,0 +1,476 @@
+[
+  {
+    "name": "own_dog_named_bella_first_person",
+    "body": "My dog's name is Bella.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "mentions": ["Bella"],
+      "mention_kind": [
+        {"name": "Bella", "kind": ["dog", "Animal", "canine"]}
+      ],
+      "edges": [
+        {"predicate": "owns", "object": "Bella"}
+      ],
+      "not_person": ["Bella"]
+    }
+  },
+  {
+    "name": "own_rat_named_ricky_third_person",
+    "body": "Summer's rat's name is Ricky.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "mentions": ["Ricky"],
+      "mention_kind": [
+        {"name": "Ricky", "kind": ["rat", "Animal", "rodent"]}
+      ],
+      "edges": [
+        {"predicate": "owns", "object": "Ricky"}
+      ],
+      "not_person": ["Ricky"],
+      "person_mentions": ["Summer"]
+    }
+  },
+  {
+    "name": "own_cat_named_mochi_plural_owner",
+    "body": "Our cat Mochi knocked over a glass this morning.",
+    "domain": "general",
+    "created_at": "2026-06-11T08:45:00-06:00",
+    "expect": {
+      "mentions": ["Mochi"],
+      "mention_kind": [
+        {"name": "Mochi", "kind": ["cat", "Animal", "feline"]}
+      ],
+      "edges": [
+        {"predicate": "owns", "object": "Mochi"}
+      ],
+      "not_person": ["Mochi"]
+    }
+  },
+  {
+    "name": "own_dog_oliver_human_sounding_name",
+    "body": "Oliver the cat curled up on the couch all afternoon.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "mentions": ["Oliver"],
+      "mention_kind": [
+        {"name": "Oliver", "kind": ["cat", "Animal", "feline"]}
+      ],
+      "not_person": ["Oliver"]
+    }
+  },
+  {
+    "name": "own_golden_retriever_max_third_person",
+    "body": "Priya's golden retriever Max goes everywhere with her.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "mentions": ["Max"],
+      "mention_kind": [
+        {"name": "Max", "kind": ["dog", "Animal", "canine"]}
+      ],
+      "edges": [
+        {"predicate": "owns", "object": "Max"}
+      ],
+      "not_person": ["Max"],
+      "person_mentions": ["Priya"]
+    }
+  },
+  {
+    "name": "own_tesla_dana_third_person",
+    "body": "Dana just picked up her Tesla and could not stop texting about it.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "mentions": ["Tesla"],
+      "mention_kind": [
+        {"name": "Tesla", "kind": ["Product", "Vehicle", "Car"]}
+      ],
+      "edges": [
+        {"predicate": "owns", "object": "Tesla"}
+      ],
+      "not_person": ["Tesla"],
+      "person_mentions": ["Dana"]
+    }
+  },
+  {
+    "name": "own_honda_civic_first_person_bought",
+    "body": "Bought a Honda Civic yesterday — base trim, manual transmission.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "mentions": ["Honda Civic"],
+      "mention_kind": [
+        {"name": "Honda Civic", "kind": ["Product", "Vehicle", "Car"]}
+      ],
+      "edges": [
+        {"predicate": "owns", "object": "Honda Civic"}
+      ],
+      "not_person": ["Honda Civic"]
+    }
+  },
+  {
+    "name": "own_wedding_ring_mom_possessive",
+    "body": "Mom's wedding ring finally came back from the jeweler, good as new.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "mentions": ["wedding ring"],
+      "mention_kind": [
+        {"name": "wedding ring", "kind": ["Product"]}
+      ],
+      "edges": [
+        {"predicate": "owns", "object": "wedding ring"}
+      ],
+      "not_person": ["wedding ring"]
+    }
+  },
+  {
+    "name": "own_sea_kayak_picked_up",
+    "body": "Picked up a sea kayak at the outdoor gear swap last Saturday.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "mentions": ["sea kayak"],
+      "mention_kind": [
+        {"name": "sea kayak", "kind": ["Product"]}
+      ],
+      "edges": [
+        {"predicate": "owns", "object": "sea kayak"}
+      ],
+      "not_person": ["sea kayak"]
+    }
+  },
+  {
+    "name": "own_macbook_first_person",
+    "body": "My MacBook finally arrived — migrated everything over in an hour.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "mentions": ["MacBook"],
+      "mention_kind": [
+        {"name": "MacBook", "kind": ["Product"]}
+      ],
+      "edges": [
+        {"predicate": "owns", "object": "MacBook"}
+      ],
+      "not_person": ["MacBook"]
+    }
+  },
+  {
+    "name": "own_cat_bella_human_name_decompose",
+    "body": "My cat's name is Bella.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "mentions": ["Bella"],
+      "mention_kind": [
+        {"name": "Bella", "kind": ["cat", "Animal", "feline"]}
+      ],
+      "edges": [
+        {"predicate": "owns", "object": "Bella"}
+      ],
+      "not_person": ["Bella"]
+    }
+  },
+  {
+    "name": "own_reference_by_phrase_the_rat",
+    "body": "Summer's rat bit through another charging cable. The rat is a menace.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "mentions": ["the rat"],
+      "mention_kind": [
+        {"name": "the rat", "kind": ["rat", "Animal", "rodent"]}
+      ],
+      "not_person": ["the rat"],
+      "person_mentions": ["Summer"]
+    }
+  },
+  {
+    "name": "own_reference_by_phrase_the_honda",
+    "body": "Brought the Honda in for an oil change. The mechanic said the Honda looks good for its age.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "mentions": ["the Honda"],
+      "mention_kind": [
+        {"name": "the Honda", "kind": ["Product", "Vehicle", "Car"]}
+      ],
+      "not_person": ["the Honda"]
+    }
+  },
+  {
+    "name": "own_dog_name_decompose_two_facts",
+    "body": "My dog's name is Charlie.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "mentions": ["Charlie"],
+      "mention_kind": [
+        {"name": "Charlie", "kind": ["dog", "Animal", "canine"]}
+      ],
+      "edges": [
+        {"predicate": "owns", "object": "Charlie"}
+      ],
+      "not_person": ["Charlie"]
+    }
+  },
+  {
+    "name": "own_parrot_third_person_possessive",
+    "body": "Kezia's parrot Mango says 'hello' to everyone who walks in.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "mentions": ["Mango"],
+      "mention_kind": [
+        {"name": "Mango", "kind": ["parrot", "Animal", "bird"]}
+      ],
+      "edges": [
+        {"predicate": "owns", "object": "Mango"}
+      ],
+      "not_person": ["Mango"],
+      "person_mentions": ["Kezia"]
+    }
+  },
+  {
+    "name": "own_rabbit_human_name_george",
+    "body": "George the rabbit has free run of the apartment.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "mentions": ["George"],
+      "mention_kind": [
+        {"name": "George", "kind": ["rabbit", "Animal"]}
+      ],
+      "not_person": ["George"]
+    }
+  },
+  {
+    "name": "own_labrador_luna_third_person",
+    "body": "Dana's Labrador Luna tore up the garden again last weekend.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "mentions": ["Luna"],
+      "mention_kind": [
+        {"name": "Luna", "kind": ["dog", "Animal", "canine"]}
+      ],
+      "edges": [
+        {"predicate": "owns", "object": "Luna"}
+      ],
+      "not_person": ["Luna"],
+      "person_mentions": ["Dana"]
+    }
+  },
+  {
+    "name": "own_bicycle_first_person_bought",
+    "body": "Grabbed a used road bike at the flea market for almost nothing.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "mentions": ["road bike"],
+      "mention_kind": [
+        {"name": "road bike", "kind": ["Product"]}
+      ],
+      "edges": [
+        {"predicate": "owns", "object": "road bike"}
+      ],
+      "not_person": ["road bike"]
+    }
+  },
+  {
+    "name": "own_cat_lola_human_name_third_person",
+    "body": "Felix's cat Lola has been limping since Tuesday; he's taking her to the vet.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "mentions": ["Lola"],
+      "mention_kind": [
+        {"name": "Lola", "kind": ["cat", "Animal", "feline"]}
+      ],
+      "edges": [
+        {"predicate": "owns", "object": "Lola"}
+      ],
+      "not_person": ["Lola"],
+      "person_mentions": ["Felix"]
+    }
+  },
+  {
+    "name": "own_guitar_possessive_priya",
+    "body": "Priya's acoustic guitar finally got new strings and sounds incredible now.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "mentions": ["acoustic guitar"],
+      "mention_kind": [
+        {"name": "acoustic guitar", "kind": ["Product"]}
+      ],
+      "edges": [
+        {"predicate": "owns", "object": "acoustic guitar"}
+      ],
+      "not_person": ["acoustic guitar"],
+      "person_mentions": ["Priya"]
+    }
+  },
+  {
+    "name": "own_two_pets_same_note_decompose",
+    "body": "My dog's name is Rufus. Summer's cat's name is Nori.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "mentions": ["Rufus", "Nori"],
+      "mention_kind": [
+        {"name": "Rufus", "kind": ["dog", "Animal", "canine"]},
+        {"name": "Nori", "kind": ["cat", "Animal", "feline"]}
+      ],
+      "edges": [
+        {"predicate": "owns", "object": "Rufus"},
+        {"predicate": "owns", "object": "Nori"}
+      ],
+      "not_person": ["Rufus", "Nori"],
+      "person_mentions": ["Summer"]
+    }
+  },
+  {
+    "name": "own_fish_species_mention",
+    "body": "My betta fish Oscar has been sluggish for a few days.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "mentions": ["Oscar"],
+      "mention_kind": [
+        {"name": "Oscar", "kind": ["fish", "Animal", "betta"]}
+      ],
+      "edges": [
+        {"predicate": "owns", "object": "Oscar"}
+      ],
+      "not_person": ["Oscar"]
+    }
+  },
+  {
+    "name": "own_laptop_nadia_third_person",
+    "body": "Nadia's laptop died in the middle of her presentation.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "mentions": ["laptop"],
+      "mention_kind": [
+        {"name": "laptop", "kind": ["Product"]}
+      ],
+      "edges": [
+        {"predicate": "owns", "object": "laptop"}
+      ],
+      "not_person": ["laptop"],
+      "person_mentions": ["Nadia"]
+    }
+  },
+  {
+    "name": "own_hamster_human_name_henry",
+    "body": "Henry the hamster escaped from his cage again last night.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "mentions": ["Henry"],
+      "mention_kind": [
+        {"name": "Henry", "kind": ["hamster", "Animal"]}
+      ],
+      "not_person": ["Henry"]
+    }
+  },
+  {
+    "name": "own_camera_first_person",
+    "body": "Finally treated myself to a mirrorless camera — the Sony A7.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "mentions": ["Sony A7"],
+      "mention_kind": [
+        {"name": "Sony A7", "kind": ["Product"]}
+      ],
+      "edges": [
+        {"predicate": "owns", "object": "Sony A7"}
+      ],
+      "not_person": ["Sony A7"]
+    }
+  },
+  {
+    "name": "own_dog_and_car_same_note",
+    "body": "Dropped my dog Pepper at the groomer, then went to sign the paperwork on a used Subaru Outback.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "mentions": ["Pepper", "Subaru Outback"],
+      "mention_kind": [
+        {"name": "Pepper", "kind": ["dog", "Animal", "canine"]},
+        {"name": "Subaru Outback", "kind": ["Product", "Vehicle", "Car"]}
+      ],
+      "edges": [
+        {"predicate": "owns", "object": "Pepper"},
+        {"predicate": "owns", "object": "Subaru Outback"}
+      ],
+      "not_person": ["Pepper", "Subaru Outback"]
+    }
+  },
+  {
+    "name": "own_reference_by_phrase_the_dog",
+    "body": "Left the dog with Mom while we were traveling. The dog apparently barked all night.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "mentions": ["the dog"],
+      "mention_kind": [
+        {"name": "the dog", "kind": ["dog", "Animal", "canine"]}
+      ],
+      "not_person": ["the dog"]
+    }
+  },
+  {
+    "name": "own_cat_named_max_human_name",
+    "body": "Our cat Max gets into everything when we leave him alone.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "mentions": ["Max"],
+      "mention_kind": [
+        {"name": "Max", "kind": ["cat", "Animal", "feline"]}
+      ],
+      "edges": [
+        {"predicate": "owns", "object": "Max"}
+      ],
+      "not_person": ["Max"]
+    }
+  },
+  {
+    "name": "own_watch_possessive_decompose",
+    "body": "Grandpa's old watch stopped working; I'm getting it repaired.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "mentions": ["old watch"],
+      "mention_kind": [
+        {"name": "old watch", "kind": ["Product"]}
+      ],
+      "not_person": ["old watch"]
+    }
+  },
+  {
+    "name": "own_border_collie_named_sadie_with_context",
+    "body": "Marcus got a border collie last spring — her name is Sadie and she already knows five commands.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "mentions": ["Sadie"],
+      "mention_kind": [
+        {"name": "Sadie", "kind": ["dog", "Animal", "canine"]}
+      ],
+      "edges": [
+        {"predicate": "owns", "object": "Sadie"}
+      ],
+      "not_person": ["Sadie"],
+      "person_mentions": ["Marcus"]
+    }
+  }
+]

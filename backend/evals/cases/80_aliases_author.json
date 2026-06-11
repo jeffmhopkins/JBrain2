@@ -1,0 +1,402 @@
+[
+  {
+    "name": "ref_mom_kinship_alias_no_proper_name",
+    "body": "Mom called this evening \u2014 she wants to come visit next month.",
+    "domain": "general",
+    "created_at": "2026-06-11T20:15:00-06:00",
+    "expect": {
+      "mentions": [
+        "Mom"
+      ],
+      "person_mentions": [
+        "Mom"
+      ],
+      "absent_person": [
+        "Margaret",
+        "Susan",
+        "Linda"
+      ]
+    }
+  },
+  {
+    "name": "ref_mom_alias_with_author_first_person",
+    "body": "I talked to Mom today. She said the flight was fine.",
+    "domain": "general",
+    "created_at": "2026-06-11T14:00:00-06:00",
+    "expect": {
+      "mentions": [
+        "Mom"
+      ],
+      "person_mentions": [
+        "Me",
+        "Mom"
+      ]
+    }
+  },
+  {
+    "name": "ref_my_brother_alias_no_name",
+    "body": "My brother finally got his driver's license today after three attempts.",
+    "domain": "general",
+    "created_at": "2026-06-11T18:30:00-06:00",
+    "expect": {
+      "mentions": [
+        "my brother"
+      ],
+      "person_mentions": [
+        "Me"
+      ]
+    }
+  },
+  {
+    "name": "ref_grandpa_alias_standalone",
+    "body": "Grandpa is doing much better after the surgery last week.",
+    "domain": "health",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "mentions": [
+        "Grandpa"
+      ],
+      "person_mentions": [
+        "Grandpa"
+      ]
+    }
+  },
+  {
+    "name": "ref_aunt_rosa_partial_alias",
+    "body": "Aunt Rosa is flying in from Phoenix for the reunion.",
+    "domain": "general",
+    "created_at": "2026-06-11T10:30:00-06:00",
+    "expect": {
+      "mentions": [
+        "Aunt Rosa"
+      ],
+      "person_mentions": [
+        "Aunt Rosa"
+      ]
+    }
+  },
+  {
+    "name": "ref_my_boss_role_alias",
+    "body": "My boss pulled me aside today and said the project timeline is being pushed out.",
+    "domain": "general",
+    "created_at": "2026-06-11T17:45:00-06:00",
+    "expect": {
+      "mentions": [
+        "boss"
+      ],
+      "person_mentions": [
+        "Me"
+      ]
+    }
+  },
+  {
+    "name": "ref_my_dentist_role_alias",
+    "body": "My dentist wants me to come in every four months instead of six.",
+    "domain": "health",
+    "created_at": "2026-06-11T11:00:00-06:00",
+    "expect": {
+      "mentions": [
+        "dentist"
+      ],
+      "person_mentions": [
+        "Me"
+      ]
+    }
+  },
+  {
+    "name": "ref_the_landlord_role_alias",
+    "body": "The landlord still hasn't fixed the leaky faucet in the bathroom.",
+    "domain": "general",
+    "created_at": "2026-06-11T08:00:00-06:00",
+    "expect": {
+      "mentions": [
+        "landlord"
+      ],
+      "person_mentions": [
+        "Me"
+      ]
+    }
+  },
+  {
+    "name": "ref_our_realtor_role_alias",
+    "body": "Our realtor says the offer is strong but the sellers want two weeks to close.",
+    "domain": "finance",
+    "created_at": "2026-06-11T15:00:00-06:00",
+    "expect": {
+      "mentions": [
+        "realtor"
+      ],
+      "person_mentions": [
+        "Me"
+      ]
+    }
+  },
+  {
+    "name": "ref_the_honda_object_alias",
+    "body": "The Honda needs an oil change badly \u2014 it's been 7,000 miles.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:30:00-06:00",
+    "expect": {
+      "mentions": [
+        "Honda"
+      ],
+      "not_person": [
+        "Honda"
+      ]
+    }
+  },
+  {
+    "name": "ref_the_cabin_object_alias",
+    "body": "Thinking about opening up the cabin this weekend if the weather holds.",
+    "domain": "general",
+    "created_at": "2026-06-11T12:00:00-06:00",
+    "expect": {
+      "mentions": [
+        "cabin"
+      ],
+      "person_mentions": [
+        "Me"
+      ]
+    }
+  },
+  {
+    "name": "ref_the_rat_animal_alias",
+    "body": "The rat has been restless all night \u2014 probably needs more enrichment.",
+    "domain": "general",
+    "created_at": "2026-06-11T07:30:00-06:00",
+    "expect": {
+      "mentions": [
+        "the rat"
+      ],
+      "absent_person": [
+        "Ricky",
+        "Whiskers"
+      ]
+    }
+  },
+  {
+    "name": "ref_summers_rat_possessive_animal_alias",
+    "body": "Helped Summer clean out the cage for Summer's rat this afternoon.",
+    "domain": "general",
+    "created_at": "2026-06-11T16:00:00-06:00",
+    "expect": {
+      "mentions": [
+        "Summer",
+        "rat"
+      ],
+      "person_mentions": [
+        "Summer",
+        "Me"
+      ]
+    }
+  },
+  {
+    "name": "ref_the_old_laptop_object_alias",
+    "body": "Finally wiped the old laptop and listed it on Craigslist.",
+    "domain": "general",
+    "created_at": "2026-06-11T19:00:00-06:00",
+    "expect": {
+      "mentions": [
+        "laptop"
+      ],
+      "person_mentions": [
+        "Me"
+      ]
+    }
+  },
+  {
+    "name": "ref_author_first_person_doctor_visit",
+    "body": "I saw the doctor this morning. She said everything looks normal.",
+    "domain": "health",
+    "created_at": "2026-06-11T10:00:00-06:00",
+    "expect": {
+      "person_mentions": [
+        "Me"
+      ]
+    }
+  },
+  {
+    "name": "ref_author_first_person_bp_measurement",
+    "body": "My BP was high again \u2014 148 over 92. Starting to worry.",
+    "domain": "health",
+    "created_at": "2026-06-11T08:45:00-06:00",
+    "expect": {
+      "person_mentions": [
+        "Me"
+      ]
+    }
+  },
+  {
+    "name": "ref_author_first_person_medication",
+    "body": "I've been taking metformin for two weeks now and the side effects are mild.",
+    "domain": "health",
+    "created_at": "2026-06-11T09:15:00-06:00",
+    "expect": {
+      "person_mentions": [
+        "Me"
+      ]
+    }
+  },
+  {
+    "name": "ref_relayed_speech_mom_says_i",
+    "body": "Mom told me: I take lisinopril every morning before breakfast.",
+    "domain": "health",
+    "created_at": "2026-06-11T13:00:00-06:00",
+    "expect": {
+      "mentions": [
+        "Mom"
+      ],
+      "person_mentions": [
+        "Mom"
+      ],
+      "not_person": [
+        "lisinopril"
+      ]
+    }
+  },
+  {
+    "name": "ref_relayed_speech_mom_says_she_moving",
+    "body": "Mom says she's moving to Florida next spring.",
+    "domain": "general",
+    "created_at": "2026-06-11T20:00:00-06:00",
+    "expect": {
+      "mentions": [
+        "Mom"
+      ],
+      "person_mentions": [
+        "Mom"
+      ]
+    }
+  },
+  {
+    "name": "ref_relayed_speech_dana_texted_she_got_job",
+    "body": "Dana texted that she got the job offer. So happy for her.",
+    "domain": "general",
+    "created_at": "2026-06-11T18:00:00-06:00",
+    "expect": {
+      "mentions": [
+        "Dana"
+      ],
+      "person_mentions": [
+        "Me",
+        "Dana"
+      ]
+    }
+  },
+  {
+    "name": "ref_relayed_speech_grandpa_quoted_i",
+    "body": "Grandpa said on the phone: I haven't felt this good in years.",
+    "domain": "health",
+    "created_at": "2026-06-11T21:00:00-06:00",
+    "expect": {
+      "mentions": [
+        "Grandpa"
+      ],
+      "person_mentions": [
+        "Grandpa"
+      ]
+    }
+  },
+  {
+    "name": "ref_relayed_speech_no_author_me",
+    "body": "My brother texted: I'm staying an extra night in Seattle.",
+    "domain": "general",
+    "created_at": "2026-06-11T16:30:00-06:00",
+    "expect": {
+      "mentions": [
+        "my brother"
+      ],
+      "person_mentions": [
+        "Me"
+      ]
+    }
+  },
+  {
+    "name": "ref_mixed_author_and_named_third_party",
+    "body": "I met with Priya Menon from legal this morning. My notes from the meeting are attached.",
+    "domain": "general",
+    "created_at": "2026-06-11T11:30:00-06:00",
+    "expect": {
+      "mentions": [
+        "Priya Menon"
+      ],
+      "person_mentions": [
+        "Me",
+        "Priya Menon"
+      ]
+    }
+  },
+  {
+    "name": "ref_mixed_author_role_alias_and_named_person",
+    "body": "My boss approved the vacation request. Also ran into Kenji from the Chicago office.",
+    "domain": "general",
+    "created_at": "2026-06-11T17:00:00-06:00",
+    "expect": {
+      "mentions": [
+        "boss",
+        "Kenji"
+      ],
+      "person_mentions": [
+        "Me",
+        "Kenji"
+      ]
+    }
+  },
+  {
+    "name": "ref_kinship_alias_with_proper_name_appositive",
+    "body": "Aunt Rosa, who lives in Tucson, just retired from teaching.",
+    "domain": "general",
+    "created_at": "2026-06-11T14:30:00-06:00",
+    "expect": {
+      "mentions": [
+        "Aunt Rosa"
+      ],
+      "person_mentions": [
+        "Aunt Rosa"
+      ]
+    }
+  },
+  {
+    "name": "ref_role_alias_my_therapist",
+    "body": "My therapist suggested I try journaling before bed to manage the anxiety.",
+    "domain": "health",
+    "created_at": "2026-06-11T22:00:00-06:00",
+    "expect": {
+      "mentions": [
+        "therapist"
+      ],
+      "person_mentions": [
+        "Me"
+      ]
+    }
+  },
+  {
+    "name": "ref_object_alias_ownership_edge",
+    "body": "I finally sold the Honda. Got $8,200 for it.",
+    "domain": "finance",
+    "created_at": "2026-06-11T15:45:00-06:00",
+    "expect": {
+      "mentions": [
+        "Honda"
+      ],
+      "person_mentions": [
+        "Me"
+      ]
+    }
+  },
+  {
+    "name": "ref_kinship_grandma_possessive_note",
+    "body": "Grandma's doctor said she needs to reduce sodium. I'm planning meals for her visit.",
+    "domain": "health",
+    "created_at": "2026-06-11T12:30:00-06:00",
+    "expect": {
+      "mentions": [
+        "Grandma"
+      ],
+      "person_mentions": [
+        "Me",
+        "Grandma"
+      ]
+    }
+  }
+]
