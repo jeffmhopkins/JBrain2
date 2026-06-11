@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Entry · swipe-to-hide — C · Fade to in-place stub</title>
+<style>
+  :root {
+    --bg:#0E0F11; --surface:#17181B; --surface-2:#1E2024; --border:#26282C;
+    --text:#E6E7E9; --text-2:#9A9DA3; --text-3:#5C5F66;
+    --steel:#7FA7C9; --green:#8FBC9A; --amber:#C9A36A; --rose:#CF8A8F;
+    --steel-tint:rgba(127,167,201,.13); --green-tint:rgba(143,188,154,.13);
+    --amber-tint:rgba(201,163,106,.13); --rose-tint:rgba(207,138,143,.13);
+    --r-card:16px; --r-pill:999px;
+    --fs-micro:12px; --fs-head:13px; --fs-note:16px;
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+  body{margin:0;background:#000;color:var(--text);display:flex;flex-direction:column;
+    align-items:center;gap:14px;padding:18px 0 40px;min-height:100vh;}
+  .caption{max-width:380px;padding:0 18px;color:var(--text-2);font-size:13px;line-height:1.5;}
+  .caption b{color:var(--text);font-weight:500;}
+  .caption .tag{display:inline-block;background:var(--steel-tint);color:var(--steel);
+    font-size:11px;padding:2px 8px;border-radius:999px;margin-bottom:6px;}
+  .phone{width:390px;height:780px;background:var(--bg);border:1px solid #2a2c30;
+    border-radius:34px;overflow:hidden;position:relative;display:flex;flex-direction:column;}
+  .topbar{height:56px;display:flex;align-items:center;justify-content:space-between;padding:0 18px;flex:none;}
+  .wordmark{font-size:22px;font-weight:700;} .wordmark span{color:var(--steel);}
+  .topright{display:flex;align-items:center;gap:16px;color:var(--text-2);}
+  .dot{width:9px;height:9px;border-radius:999px;background:var(--green);}
+  .stream{flex:1;overflow-y:auto;padding:0 16px;display:flex;flex-direction:column;}
+  .stream-inner{margin-top:auto;display:flex;flex-direction:column;gap:12px;padding-bottom:12px;}
+  .older-pill{align-self:center;font-size:var(--fs-micro);padding:5px 14px;border:none;
+    border-radius:999px;background:var(--steel-tint);color:var(--steel);margin-top:8px;}
+  .day-header{font-size:var(--fs-micro);letter-spacing:.08em;text-transform:uppercase;color:var(--text-3);margin:8px 2px 6px;}
+  .day-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-card);overflow:hidden;}
+
+  .note-wrap{position:relative;overflow:hidden;}
+  .note-wrap + .note-wrap{border-top:1px solid var(--border);}
+  .hide-bg{position:absolute;inset:0;display:flex;align-items:center;gap:10px;padding-left:22px;
+    color:var(--text-2);background:var(--surface-2);opacity:0;}
+  .left-rail{position:absolute;inset:0 0 0 auto;display:flex;}
+  .rail-btn{width:62px;border:none;font-size:13px;font-weight:500;}
+  .rail-edit{background:var(--amber-tint);color:var(--amber);}
+  .rail-move{background:var(--steel-tint);color:var(--steel);}
+  .rail-delete{background:var(--rose-tint);color:var(--rose);}
+
+  .note-slide{position:relative;background:var(--surface);transition:transform 150ms ease-out,opacity 150ms ease-out;}
+  .note-slide.dragging{transition:none;}
+  .note{padding:13px 16px;display:flex;flex-direction:column;gap:5px;}
+  .note-head{display:flex;align-items:center;gap:8px;font-size:var(--fs-head);color:var(--text-3);}
+  .domain-dot{width:7px;height:7px;border-radius:999px;flex:none;}
+  .note-body{font-size:var(--fs-note);line-height:1.4;}
+  .note-chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:2px;}
+  .chip{font-size:var(--fs-micro);padding:3px 9px;border-radius:999px;background:var(--surface-2);color:var(--text-2);}
+
+  /* in-place hidden stub — replaces the bubble, stays put */
+  .note-stub{display:flex;align-items:center;justify-content:space-between;gap:10px;
+    padding:10px 16px;background:repeating-linear-gradient(135deg,transparent,transparent 8px,rgba(255,255,255,.012) 8px,rgba(255,255,255,.012) 16px);
+    color:var(--text-3);font-size:13px;height:0;opacity:0;overflow:hidden;
+    transition:height 160ms ease-out,opacity 140ms ease-out;}
+  .note-stub.open{height:42px;opacity:1;}
+  .note-stub .lbl{display:flex;align-items:center;gap:8px;}
+  .note-stub button{background:none;border:none;color:var(--steel);font-size:13px;font-weight:500;}
+  .note-collapse{transition:height 160ms ease-out;overflow:hidden;}
+
+  .composer{margin:0 16px 16px;border:1px solid var(--border);border-radius:var(--r-card);background:var(--surface);padding:10px;flex:none;}
+  .seg{display:flex;background:var(--surface-2);border-radius:12px;padding:4px;gap:4px;}
+  .seg button{flex:1;border:none;background:none;color:var(--text-2);font-size:14px;font-weight:500;padding:9px 0;border-radius:9px;}
+  .seg .on{background:var(--green-tint);color:var(--text);}
+  .composer .field{color:var(--text-3);font-size:16px;padding:14px 8px 40px;}
+  .composer .foot{display:flex;align-items:center;justify-content:space-between;padding:6px 8px 2px;}
+  .composer .foot .left{display:flex;align-items:center;gap:9px;color:var(--text-2);font-size:13px;}
+  .composer .foot .right{display:flex;gap:16px;color:var(--text-2);}
+</style>
+</head>
+<body>
+  <div class="caption">
+    <span class="tag">Variant C · fade to in-place stub</span><br/>
+    As you swipe right the bubble <b>fades and dims</b> with the distance — visible feedback
+    that it’s on its way out. Release past the line and it collapses into a thin
+    <b>“hidden — restore”</b> stub that stays exactly where the note was (no timed toast to
+    chase). The stub clears when you leave the screen; the note lives on in Search.
+  </div>
+
+  <div class="phone">
+    <div class="topbar">
+      <div class="wordmark">JBrain<span>.</span></div>
+      <div class="topright"><span class="dot"></span>⚡</div>
+    </div>
+
+    <main class="stream" id="stream">
+      <div class="stream-inner">
+        <button class="older-pill">older notes live in Search ↑</button>
+        <section><div class="day-header">Today</div><div class="day-card" id="today"></div></section>
+        <section><div class="day-header">Yesterday</div><div class="day-card" id="yesterday"></div></section>
+      </div>
+    </main>
+
+    <div class="composer">
+      <div class="seg"><button class="on">＋ Entry</button><button>🔍 Research</button><button>▣ Full Brain</button></div>
+      <div class="field">Write an entry…</div>
+      <div class="foot"><div class="left"><span class="dot"></span> Saved to your wiki · no AI.</div><div class="right">📎 ➤</div></div>
+    </div>
+  </div>
+
+<script>
+const NOTES={
+  today:[
+    {dot:'var(--green)',head:'28m',body:'Jeff Hopkins is the owner'},
+    {dot:'var(--green)',head:'2h',body:"Ricky and Bella food note — Ricky did not eat Bella's food.",chips:['food','behavior']},
+    {dot:'var(--rose)',head:'5h · medical → notes/medical/',body:'Blood pressure 128/82 this morning, resting.'},
+  ],
+  yesterday:[
+    {dot:'var(--green)',head:'1d',body:'Picked up the rental car keys from the front desk.'},
+    {dot:'var(--green)',head:'1d',body:'Idea: weekend project to index old photos by location.'},
+  ],
+};
+const EYE_OFF='<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9.88 9.88a3 3 0 1 0 4.24 4.24"/><path d="M10.73 5.08A10.4 10.4 0 0 1 12 5c7 0 10 7 10 7a13.2 13.2 0 0 1-1.67 2.68"/><path d="M6.61 6.61A13.5 13.5 0 0 0 2 12s3 7 10 7a9.7 9.7 0 0 0 5.39-1.61"/><line x1="2" y1="2" x2="22" y2="22"/></svg>';
+const COMMIT=0.4, LEFTRAIL=186;
+
+function buildNote(n){
+  const wrap=document.createElement('div');wrap.className='note-wrap';
+  wrap.innerHTML=`
+    <div class="hide-bg">${EYE_OFF}<span>hide</span></div>
+    <div class="left-rail">
+      <button class="rail-btn rail-edit">Edit</button>
+      <button class="rail-btn rail-move">Move</button>
+      <button class="rail-btn rail-delete">Delete</button>
+    </div>
+    <div class="note-slide">
+      <div class="note">
+        <div class="note-head"><span class="domain-dot" style="background:${n.dot}"></span>${n.head}</div>
+        <div class="note-body">${n.body}</div>
+        ${n.chips?`<div class="note-chips">${n.chips.map(c=>`<span class="chip">${c}</span>`).join('')}</div>`:''}
+      </div>
+    </div>
+    <div class="note-stub"><span class="lbl">${EYE_OFF} hidden</span><button>restore</button></div>`;
+  wrap._data=n;
+  wrap.querySelector('.note-stub button').onclick=()=>restore(wrap);
+  attachDrag(wrap);
+  return wrap;
+}
+
+function attachDrag(wrap){
+  const slide=wrap.querySelector('.note-slide');
+  const bg=wrap.querySelector('.hide-bg');
+  const W=358;
+  let startX,startY,dx=0,axis=null,active=false;
+  function down(e){const p=e.touches?e.touches[0]:e;startX=p.clientX;startY=p.clientY;axis=null;active=true;dx=0;slide.classList.add('dragging');}
+  function move(e){
+    if(!active)return;const p=e.touches?e.touches[0]:e;const mx=p.clientX-startX,my=p.clientY-startY;
+    if(axis===null&&(Math.abs(mx)>8||Math.abs(my)>8))axis=Math.abs(mx)>Math.abs(my)?'h':'v';
+    if(axis==='v'){active=false;slide.classList.remove('dragging');return;}
+    if(axis!=='h')return;if(e.cancelable)e.preventDefault();
+    dx=Math.max(-LEFTRAIL,mx);
+    slide.style.transform=`translateX(${dx}px)`;
+    if(dx>0){const f=Math.min(1,dx/(W*COMMIT));slide.style.opacity=String(1-0.75*f);bg.style.opacity=String(f);}
+    else{slide.style.opacity='1';bg.style.opacity='0';}
+  }
+  function up(){
+    if(!active)return;active=false;slide.classList.remove('dragging');if(axis!=='h')return;
+    if(dx>W*COMMIT){hideNote(wrap);}
+    else if(dx<-LEFTRAIL/2){slide.style.transform=`translateX(${-LEFTRAIL}px)`;slide.style.opacity='1';bg.style.opacity='0';}
+    else{slide.style.transform='translateX(0)';slide.style.opacity='1';bg.style.opacity='0';}
+  }
+  slide.addEventListener('mousedown',down);window.addEventListener('mousemove',move);window.addEventListener('mouseup',up);
+  slide.addEventListener('touchstart',down,{passive:true});slide.addEventListener('touchmove',move,{passive:false});slide.addEventListener('touchend',up);
+}
+
+function hideNote(wrap){
+  const slide=wrap.querySelector('.note-slide');
+  const stub=wrap.querySelector('.note-stub');
+  const bg=wrap.querySelector('.hide-bg');
+  slide.style.transform=`translateX(${wrap.offsetWidth+40}px)`;slide.style.opacity='0';bg.style.opacity='0';
+  const h=slide.offsetHeight; slide.style.height=h+'px';
+  requestAnimationFrame(()=>{slide.classList.add('note-collapse');slide.style.height='0';
+    setTimeout(()=>{slide.style.display='none';stub.classList.add('open');},60);});
+}
+function restore(wrap){
+  const slide=wrap.querySelector('.note-slide');
+  const stub=wrap.querySelector('.note-stub');
+  stub.classList.remove('open');
+  slide.style.display='';slide.classList.remove('note-collapse');slide.style.height='';
+  slide.style.transform='translateX(0)';slide.style.opacity='1';
+}
+
+NOTES.today.forEach(n=>document.getElementById('today').appendChild(buildNote(n)));
+NOTES.yesterday.forEach(n=>document.getElementById('yesterday').appendChild(buildNote(n)));
+</script>
+</body>
+</html>

@@ -1,0 +1,240 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Entry · swipe-to-hide — B · Reveal rail + hidden tray</title>
+<style>
+  :root {
+    --bg:#0E0F11; --surface:#17181B; --surface-2:#1E2024; --border:#26282C;
+    --text:#E6E7E9; --text-2:#9A9DA3; --text-3:#5C5F66;
+    --steel:#7FA7C9; --green:#8FBC9A; --amber:#C9A36A; --rose:#CF8A8F;
+    --steel-tint:rgba(127,167,201,.13); --green-tint:rgba(143,188,154,.13);
+    --amber-tint:rgba(201,163,106,.13); --rose-tint:rgba(207,138,143,.13);
+    --r-card:16px; --r-pill:999px;
+    --fs-micro:12px; --fs-head:13px; --fs-note:16px;
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+  body{margin:0;background:#000;color:var(--text);display:flex;flex-direction:column;
+    align-items:center;gap:14px;padding:18px 0 40px;min-height:100vh;}
+  .caption{max-width:380px;padding:0 18px;color:var(--text-2);font-size:13px;line-height:1.5;}
+  .caption b{color:var(--text);font-weight:500;}
+  .caption .tag{display:inline-block;background:var(--steel-tint);color:var(--steel);
+    font-size:11px;padding:2px 8px;border-radius:999px;margin-bottom:6px;}
+  .phone{width:390px;height:780px;background:var(--bg);border:1px solid #2a2c30;
+    border-radius:34px;overflow:hidden;position:relative;display:flex;flex-direction:column;}
+  .topbar{height:56px;display:flex;align-items:center;justify-content:space-between;padding:0 18px;flex:none;}
+  .wordmark{font-size:22px;font-weight:700;} .wordmark span{color:var(--steel);}
+  .topright{display:flex;align-items:center;gap:16px;color:var(--text-2);}
+  .dot{width:9px;height:9px;border-radius:999px;background:var(--green);}
+  .stream{flex:1;overflow-y:auto;padding:0 16px;display:flex;flex-direction:column;}
+  .stream-inner{margin-top:auto;display:flex;flex-direction:column;gap:12px;padding-bottom:12px;}
+  .older-pill{align-self:center;font-size:var(--fs-micro);padding:5px 14px;border:none;
+    border-radius:999px;background:var(--steel-tint);color:var(--steel);margin-top:8px;}
+  /* hidden tray pill */
+  .hidden-pill{align-self:center;font-size:var(--fs-micro);padding:5px 14px;border:1px solid var(--border);
+    border-radius:999px;background:var(--surface-2);color:var(--text-2);display:none;align-items:center;gap:7px;}
+  .hidden-pill.show{display:inline-flex;}
+  .day-header{font-size:var(--fs-micro);letter-spacing:.08em;text-transform:uppercase;color:var(--text-3);margin:8px 2px 6px;}
+  .day-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-card);}
+
+  .note-wrap{position:relative;overflow:hidden;}
+  .note-wrap + .note-wrap{border-top:1px solid var(--border);}
+  /* HIDE rail revealed under bubble, anchored LEFT (right swipe pulls it out) */
+  .hide-rail{position:absolute;inset:0 auto 0 0;display:flex;align-items:stretch;}
+  .hide-rail button{width:96px;border:none;background:var(--green-tint);color:var(--green);
+    display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;
+    font-size:13px;font-weight:500;}
+  /* left rail (existing) */
+  .left-rail{position:absolute;inset:0 0 0 auto;display:flex;}
+  .rail-btn{width:62px;border:none;font-size:13px;font-weight:500;}
+  .rail-edit{background:var(--amber-tint);color:var(--amber);}
+  .rail-move{background:var(--steel-tint);color:var(--steel);}
+  .rail-delete{background:var(--rose-tint);color:var(--rose);}
+
+  .note-slide{position:relative;background:var(--surface);transition:transform 150ms ease-out;}
+  .note-slide.dragging{transition:none;}
+  .note{padding:13px 16px;display:flex;flex-direction:column;gap:5px;}
+  .note-head{display:flex;align-items:center;gap:8px;font-size:var(--fs-head);color:var(--text-3);}
+  .domain-dot{width:7px;height:7px;border-radius:999px;flex:none;}
+  .note-body{font-size:var(--fs-note);line-height:1.4;}
+  .note-chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:2px;}
+  .chip{font-size:var(--fs-micro);padding:3px 9px;border-radius:999px;background:var(--surface-2);color:var(--text-2);}
+  .note-wrap.collapsing{transition:height 160ms ease-out,opacity 120ms ease-out;overflow:hidden;}
+
+  .composer{margin:0 16px 16px;border:1px solid var(--border);border-radius:var(--r-card);background:var(--surface);padding:10px;flex:none;}
+  .seg{display:flex;background:var(--surface-2);border-radius:12px;padding:4px;gap:4px;}
+  .seg button{flex:1;border:none;background:none;color:var(--text-2);font-size:14px;font-weight:500;padding:9px 0;border-radius:9px;}
+  .seg .on{background:var(--green-tint);color:var(--text);}
+  .composer .field{color:var(--text-3);font-size:16px;padding:14px 8px 40px;}
+  .composer .foot{display:flex;align-items:center;justify-content:space-between;padding:6px 8px 2px;}
+  .composer .foot .left{display:flex;align-items:center;gap:9px;color:var(--text-2);font-size:13px;}
+  .composer .foot .right{display:flex;gap:16px;color:var(--text-2);}
+
+  /* hidden tray sheet */
+  .scrim{position:absolute;inset:0;background:rgba(14,15,17,.6);opacity:0;pointer-events:none;transition:opacity 150ms;z-index:20;}
+  .scrim.show{opacity:1;pointer-events:auto;}
+  .sheet{position:absolute;left:0;right:0;bottom:0;background:var(--surface);border:1px solid var(--border);
+    border-radius:16px 16px 0 0;transform:translateY(100%);transition:transform 180ms ease-out;z-index:21;padding:8px 16px 22px;max-height:70%;overflow-y:auto;}
+  .sheet.show{transform:translateY(0);}
+  .handle{width:32px;height:4px;border-radius:999px;background:var(--border);margin:8px auto 12px;}
+  .sheet h3{font-size:18px;font-weight:500;margin:0 0 12px;}
+  .hidden-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:12px 0;border-top:1px solid var(--border);}
+  .hidden-row .b{font-size:15px;color:var(--text);} .hidden-row .h{font-size:12px;color:var(--text-3);}
+  .hidden-row button{background:var(--green-tint);color:var(--green);border:none;border-radius:10px;padding:9px 14px;font-size:14px;font-weight:500;}
+  .empty{color:var(--text-2);font-size:14px;padding:18px 0;text-align:center;}
+</style>
+</head>
+<body>
+  <div class="caption">
+    <span class="tag">Variant B · reveal rail + hidden tray</span><br/>
+    Swipe right to reveal a single <b>Hide</b> button (mirror of the existing left
+    Edit/Move/Delete rail) — one deliberate tap hides it, so nothing hides by accident.
+    Hidden notes collect in a persistent <b>“hidden (N)”</b> pill at the top; tap it to
+    restore any of them.
+  </div>
+
+  <div class="phone">
+    <div class="topbar">
+      <div class="wordmark">JBrain<span>.</span></div>
+      <div class="topright"><span class="dot"></span>⚡</div>
+    </div>
+
+    <main class="stream" id="stream">
+      <div class="stream-inner">
+        <button class="older-pill">older notes live in Search ↑</button>
+        <button class="hidden-pill" id="hiddenPill">👁 hidden (<span id="hcount">0</span>) · show</button>
+        <section>
+          <div class="day-header">Today</div>
+          <div class="day-card" id="today"></div>
+        </section>
+        <section>
+          <div class="day-header">Yesterday</div>
+          <div class="day-card" id="yesterday"></div>
+        </section>
+      </div>
+    </main>
+
+    <div class="composer">
+      <div class="seg"><button class="on">＋ Entry</button><button>🔍 Research</button><button>▣ Full Brain</button></div>
+      <div class="field">Write an entry…</div>
+      <div class="foot"><div class="left"><span class="dot"></span> Saved to your wiki · no AI.</div><div class="right">📎 ➤</div></div>
+    </div>
+
+    <div class="scrim" id="scrim"></div>
+    <div class="sheet" id="sheet">
+      <div class="handle"></div>
+      <h3>Hidden notes</h3>
+      <div id="hiddenList"></div>
+    </div>
+  </div>
+
+<script>
+const NOTES = {
+  today: [
+    {dot:'var(--green)', head:'28m', body:'Jeff Hopkins is the owner'},
+    {dot:'var(--green)', head:'2h', body:"Ricky and Bella food note — Ricky did not eat Bella's food.", chips:['food','behavior']},
+    {dot:'var(--rose)', head:'5h · medical → notes/medical/', body:'Blood pressure 128/82 this morning, resting.'},
+  ],
+  yesterday: [
+    {dot:'var(--green)', head:'1d', body:'Picked up the rental car keys from the front desk.'},
+    {dot:'var(--green)', head:'1d', body:'Idea: weekend project to index old photos by location.'},
+  ],
+};
+const EYE_OFF='<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9.88 9.88a3 3 0 1 0 4.24 4.24"/><path d="M10.73 5.08A10.4 10.4 0 0 1 12 5c7 0 10 7 10 7a13.2 13.2 0 0 1-1.67 2.68"/><path d="M6.61 6.61A13.5 13.5 0 0 0 2 12s3 7 10 7a9.7 9.7 0 0 0 5.39-1.61"/><line x1="2" y1="2" x2="22" y2="22"/></svg>';
+
+const hidden=[]; // {wrap, parent, next, data}
+let openRail=null;
+const RAIL=96, LEFTRAIL=186;
+
+function buildNote(n){
+  const wrap=document.createElement('div'); wrap.className='note-wrap';
+  wrap.innerHTML=`
+    <div class="hide-rail"><button>${EYE_OFF}hide</button></div>
+    <div class="left-rail">
+      <button class="rail-btn rail-edit">Edit</button>
+      <button class="rail-btn rail-move">Move</button>
+      <button class="rail-btn rail-delete">Delete</button>
+    </div>
+    <div class="note-slide">
+      <div class="note">
+        <div class="note-head"><span class="domain-dot" style="background:${n.dot}"></span>${n.head}</div>
+        <div class="note-body">${n.body}</div>
+        ${n.chips?`<div class="note-chips">${n.chips.map(c=>`<span class="chip">${c}</span>`).join('')}</div>`:''}
+      </div>
+    </div>`;
+  wrap._data=n;
+  wrap.querySelector('.hide-rail button').onclick=()=>hideNote(wrap);
+  attachDrag(wrap);
+  return wrap;
+}
+
+function setOffset(wrap,x){ wrap.querySelector('.note-slide').style.transform=`translateX(${x}px)`; }
+
+function attachDrag(wrap){
+  const slide=wrap.querySelector('.note-slide');
+  let startX,startY,dx=0,axis=null,active=false,base=0,opened=0;
+  function down(e){const p=e.touches?e.touches[0]:e;startX=p.clientX;startY=p.clientY;axis=null;active=true;dx=0;
+    base=wrap===openRail?openOffset:0;opened=base;slide.classList.add('dragging');}
+  let openOffset=0;
+  function down2(){}
+  function move(e){
+    if(!active)return;const p=e.touches?e.touches[0]:e;const mx=p.clientX-startX,my=p.clientY-startY;
+    if(axis===null&&(Math.abs(mx)>8||Math.abs(my)>8))axis=Math.abs(mx)>Math.abs(my)?'h':'v';
+    if(axis==='v'){active=false;slide.classList.remove('dragging');return;}
+    if(axis!=='h')return; if(e.cancelable)e.preventDefault();
+    dx=Math.max(-LEFTRAIL,Math.min(RAIL,base+mx)); setOffset(wrap,dx);
+  }
+  function up(){
+    if(!active)return;active=false;slide.classList.remove('dragging');if(axis!=='h')return;
+    if(dx>RAIL/2){ openRailTo(wrap,RAIL); }
+    else if(dx<-LEFTRAIL/2){ openRailTo(wrap,-LEFTRAIL); }
+    else { openRailTo(wrap,0); }
+  }
+  function openRailTo(w,x){
+    if(openRail&&openRail!==w){setOffset(openRail,0);}
+    openRail = x!==0?w:null; openOffset=x; setOffset(w,x);
+  }
+  slide.addEventListener('mousedown',down);window.addEventListener('mousemove',move);window.addEventListener('mouseup',up);
+  slide.addEventListener('touchstart',down,{passive:true});slide.addEventListener('touchmove',move,{passive:false});slide.addEventListener('touchend',up);
+}
+
+function hideNote(wrap){
+  openRail=null;
+  const h=wrap.offsetHeight; wrap.style.height=h+'px'; setOffset(wrap,0);
+  requestAnimationFrame(()=>{wrap.classList.add('collapsing');wrap.style.height='0';wrap.style.opacity='0';});
+  const rec={wrap,parent:wrap.parentNode,next:wrap.nextSibling,data:wrap._data};
+  setTimeout(()=>{wrap.remove();hidden.push(rec);refreshPill();},170);
+}
+function restore(rec){
+  const i=hidden.indexOf(rec); if(i>=0)hidden.splice(i,1);
+  const w=rec.wrap; w.classList.remove('collapsing'); w.style.height=''; w.style.opacity=''; setOffset(w,0);
+  if(rec.next&&rec.next.parentNode===rec.parent) rec.parent.insertBefore(w,rec.next); else rec.parent.appendChild(w);
+  refreshPill(); renderHiddenList();
+  if(hidden.length===0) closeSheet();
+}
+function refreshPill(){
+  document.getElementById('hcount').textContent=hidden.length;
+  document.getElementById('hiddenPill').classList.toggle('show',hidden.length>0);
+}
+function renderHiddenList(){
+  const list=document.getElementById('hiddenList'); list.innerHTML='';
+  if(hidden.length===0){list.innerHTML='<div class="empty">nothing hidden.</div>';return;}
+  hidden.forEach(rec=>{
+    const row=document.createElement('div');row.className='hidden-row';
+    row.innerHTML=`<div><div class="b">${rec.data.body}</div><div class="h">${rec.data.head}</div></div><button>restore</button>`;
+    row.querySelector('button').onclick=()=>restore(rec);
+    list.appendChild(row);
+  });
+}
+function openSheet(){renderHiddenList();document.getElementById('scrim').classList.add('show');document.getElementById('sheet').classList.add('show');}
+function closeSheet(){document.getElementById('scrim').classList.remove('show');document.getElementById('sheet').classList.remove('show');}
+document.getElementById('hiddenPill').onclick=openSheet;
+document.getElementById('scrim').onclick=closeSheet;
+
+NOTES.today.forEach(n=>document.getElementById('today').appendChild(buildNote(n)));
+NOTES.yesterday.forEach(n=>document.getElementById('yesterday').appendChild(buildNote(n)));
+</script>
+</body>
+</html>
