@@ -1,0 +1,62 @@
+{
+  "name": "re-run restores a chain its retracted fact had superseded",
+  "description": "Note B's Boulder fact superseded note A's Denver fact (SCD-2 close + chain link). B's re-extraction drops the relocation claim, so Boulder is retracted — and Denver must not stay superseded by a retracted fact: the chain repair restores it (active, link cleared, interval reopened) and the now-unservable open fact_conflict card is retired.",
+  "steps": [
+    {
+      "domain": "general",
+      "created_at": "2026-06-10T17:11:00-06:00",
+      "body": "Bumped into Sarah from accounting — she just moved to Denver.",
+      "extraction": {
+        "title": "Ran into Sarah",
+        "tags": ["sarah", "relocation", "denver"],
+        "mentions": [{"name": "Sarah", "kind": "Person", "surface_text": "Sarah"}],
+        "facts": [
+          {"predicate": "homeLocation", "qualifier": "", "kind": "state", "statement": "Sarah moved to Denver.", "value_json": {"city": "Denver"}, "assertion": "asserted", "entity_ref": "Sarah", "object_entity_ref": null, "temporal": {"phrase": "just", "resolved_start": "2026-06-10T00:00:00-06:00", "resolved_end": null, "precision": "day"}, "domain": "general", "confidence": 0.85}
+        ],
+        "temporal_tokens": []
+      }
+    },
+    {
+      "domain": "general",
+      "created_at": "2026-06-10T17:13:00-06:00",
+      "body": "Sarah actually moved to Boulder, not Denver.",
+      "extraction": {
+        "title": "Sarah moved to Boulder",
+        "tags": ["sarah", "relocation", "correction"],
+        "mentions": [{"name": "Sarah", "kind": "Person", "surface_text": "Sarah"}],
+        "facts": [
+          {"predicate": "homeLocation", "qualifier": "", "kind": "state", "statement": "Sarah moved to Boulder.", "value_json": {"city": "Boulder"}, "assertion": "asserted", "entity_ref": "Sarah", "object_entity_ref": null, "temporal": {"phrase": "", "resolved_start": "2026-06-10T00:00:00-06:00", "resolved_end": null, "precision": "day"}, "domain": "general", "confidence": 0.9}
+        ],
+        "temporal_tokens": []
+      }
+    },
+    {
+      "reanalyze_step": 1,
+      "domain": "general",
+      "created_at": "2026-06-10T17:13:00-06:00",
+      "body": "Sarah actually moved to Boulder, not Denver.",
+      "extraction": {
+        "title": "Note about Sarah",
+        "tags": ["sarah", "correction", "edited"],
+        "mentions": [{"name": "Sarah", "kind": "Person", "surface_text": "Sarah"}],
+        "facts": [],
+        "temporal_tokens": []
+      }
+    }
+  ],
+  "expect": {
+    "facts": [
+      {"entity": "Sarah", "predicate": "homeLocation", "kind": "state", "value_contains": "Denver", "status": "active", "chained": false},
+      {"entity": "Sarah", "predicate": "homeLocation", "kind": "state", "value_contains": "Boulder", "status": "retracted", "chained": false}
+    ],
+    "absent_facts": [
+      {"predicate": "homeLocation", "status": "superseded"}
+    ],
+    "review_items": [
+      {"kind": "fact_conflict", "count": 0}
+    ],
+    "entities": [
+      {"name": "Sarah", "kind": "Person", "status": "provisional"}
+    ]
+  }
+}

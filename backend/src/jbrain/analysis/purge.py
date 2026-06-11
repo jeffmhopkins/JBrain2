@@ -86,8 +86,8 @@ async def purge_note_artifacts(session: AsyncSession, note_id: uuid.UUID) -> Non
         ).scalars()
     )
 
-    await _repair_chains(session, note_id, doomed_links, doomed_close)
-    await _delete_review_items(session, note_id, set(doomed_links))
+    await repair_chains(session, doomed_links, doomed_close)
+    await delete_review_items(session, set(doomed_links), note_id=note_id)
 
     await session.execute(delete(Fact).where(Fact.note_id == note_id))
     # Tokens are per-note by construction (the pipeline only mints them for
@@ -110,26 +110,29 @@ async def purge_note_artifacts(session: AsyncSession, note_id: uuid.UUID) -> Non
     await _delete_orphaned_entities(session, candidates)
 
 
-async def _repair_chains(
+async def repair_chains(
     session: AsyncSession,
-    note_id: uuid.UUID,
     doomed_links: dict[uuid.UUID, uuid.UUID | None],
     doomed_close: dict[uuid.UUID, datetime | None],
 ) -> None:
-    """Fix surviving facts whose supersessor is about to vanish.
+    """Fix surviving facts whose supersessor is doomed — purged by note
+    deletion, or retracted by a re-extraction sweep (analysis/pipeline.py),
+    which is why the survivor filter is "not itself doomed" rather than
+    "other note": intra-note chains exist, and a same-note fact the sweep
+    left alone still deserves repair.
 
     A survivor whose chain re-attaches to a NON-doomed fact deeper down stays
     superseded — the world still moved past it, just with one less link of
     evidence — so only the dangling pointer is repaired. A survivor whose
     chain dies inside the doomed set is restored: the only evidence it was
-    ever superseded is being deleted.
+    ever superseded is being deleted (or retracted).
     """
     if not doomed_links:
         return
     survivors = (
         await session.execute(
             select(Fact.id, Fact.superseded_by, Fact.status, Fact.valid_to).where(
-                Fact.superseded_by.in_(doomed_links), Fact.note_id != note_id
+                Fact.superseded_by.in_(doomed_links), Fact.id.not_in(doomed_links)
             )
         )
     ).all()
@@ -159,33 +162,54 @@ async def _repair_chains(
         await session.execute(update(Fact).where(Fact.id == s.id).values(**values))
 
 
-async def _delete_review_items(
-    session: AsyncSession, note_id: uuid.UUID, doomed_ids: set[uuid.UUID]
+async def delete_review_items(
+    session: AsyncSession,
+    doomed_ids: set[uuid.UUID],
+    *,
+    note_id: uuid.UUID | None = None,
+    statuses: tuple[str, ...] | None = None,
 ) -> None:
-    """Delete review items derived from the note, in ANY status — resolved
-    history is derived data too, and its frozen display snippets quote the
-    note's text. Items created by another note but referencing a doomed fact
-    go as well, including the one-doomed-one-surviving case: such a card is
-    unservable (one side's evidence is gone) and its choice labels quote the
-    doomed fact's statement."""
-    await session.execute(
-        text("DELETE FROM app.review_items WHERE payload->>'note_id' = :note"),
-        {"note": str(note_id)},
-    )
+    """Delete review items referencing doomed facts (payload fact_id /
+    fact_a / fact_b), plus — when `note_id` is given — everything filed for
+    the note itself.
+
+    The purge passes note_id and no status filter: resolved history is
+    derived data too, and its frozen display snippets quote the note's text.
+    Items created by another note but referencing a doomed fact go as well,
+    including the one-doomed-one-surviving case: such a card is unservable
+    (one side's evidence is gone) and its choice labels quote the doomed
+    fact's statement. The re-extraction sweep instead passes
+    statuses=('open',) and no note_id: resolved/dismissed items are HUMAN
+    history and survive a re-run.
+    """
+    status_clause = " AND status IN :statuses" if statuses is not None else ""
+    if note_id is not None:
+        stmt = text(
+            f"DELETE FROM app.review_items WHERE payload->>'note_id' = :note{status_clause}"
+        )
+        params: dict[str, Any] = {"note": str(note_id)}
+        if statuses is not None:
+            stmt = stmt.bindparams(bindparam("statuses", expanding=True))
+            params["statuses"] = list(statuses)
+        await session.execute(stmt, params)
     if not doomed_ids:
         return
     ids = [str(d) for d in doomed_ids]
     stmt = text(
         "DELETE FROM app.review_items"
-        " WHERE payload->>'fact_id' IN :doomed_id"
+        " WHERE (payload->>'fact_id' IN :doomed_id"
         " OR payload->>'fact_a' IN :doomed_a"
-        " OR payload->>'fact_b' IN :doomed_b"
+        " OR payload->>'fact_b' IN :doomed_b)" + status_clause
     ).bindparams(
         bindparam("doomed_id", expanding=True),
         bindparam("doomed_a", expanding=True),
         bindparam("doomed_b", expanding=True),
     )
-    await session.execute(stmt, {"doomed_id": ids, "doomed_a": ids, "doomed_b": ids})
+    params = {"doomed_id": ids, "doomed_a": ids, "doomed_b": ids}
+    if statuses is not None:
+        stmt = stmt.bindparams(bindparam("statuses", expanding=True))
+        params["statuses"] = list(statuses)
+    await session.execute(stmt, params)
 
 
 async def _delete_orphaned_entities(session: AsyncSession, candidates: set[uuid.UUID]) -> None:

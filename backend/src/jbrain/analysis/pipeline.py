@@ -20,10 +20,11 @@ from datetime import UTC, datetime, timedelta, timezone
 from typing import Any
 
 import structlog
-from sqlalchemy import delete, func, select, text, update
+from sqlalchemy import bindparam, delete, func, select, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from jbrain.analysis import purge
 from jbrain.analysis.display import (
     ambiguous_display,
     collision_display,
@@ -272,7 +273,9 @@ class AnalysisPipeline:
         # human decisions and survive (docs/ANALYSIS.md "Reprocessing"). Derived
         # shadows are excluded: their lifecycle mirrors their source's, not the
         # note's re-extraction set, so the source's own refresh/supersession (or
-        # FK cascade on its deletion) governs them, never this sweep.
+        # FK cascade on its deletion) governs them, never this sweep. RETURNING
+        # carries the (unchanged) superseded_by/valid_from of the rows actually
+        # retracted — the doomed maps the chain repair below walks.
         sweep = (
             update(Fact)
             .where(
@@ -282,26 +285,44 @@ class AnalysisPipeline:
                 Fact.status.in_(("active", "pending_review")),
             )
             .values(status="retracted")
+            .returning(Fact.id, Fact.superseded_by, Fact.valid_from)
         )
         if touched:
             sweep = sweep.where(Fact.id.not_in(touched))
-        await session.execute(sweep)
+        swept = (await session.execute(sweep)).all()
         # A derived shadow follows its source's fate. The sweep above excludes
         # shadows (it governs only note-sourced facts), so when it retracts a
         # source the re-extraction no longer asserts, close that source's
         # reciprocal in the same breath — otherwise a dropped relationship would
         # leave a stale active inverse on the object's stream.
-        await session.execute(
-            update(Fact)
-            .where(
-                Fact.derived_from_fact_id.in_(
-                    select(Fact.id).where(Fact.note_id == note_id, Fact.status == "retracted")
-                ),
-                Fact.pinned.is_(False),
-                Fact.status.in_(("active", "pending_review")),
+        shadow_swept = (
+            await session.execute(
+                update(Fact)
+                .where(
+                    Fact.derived_from_fact_id.in_(
+                        select(Fact.id).where(Fact.note_id == note_id, Fact.status == "retracted")
+                    ),
+                    Fact.pinned.is_(False),
+                    Fact.status.in_(("active", "pending_review")),
+                )
+                .values(status="retracted")
+                .returning(Fact.id, Fact.superseded_by, Fact.valid_from)
             )
-            .values(status="retracted")
-        )
+        ).all()
+        retracted = [*swept, *shadow_swept]
+        if retracted:
+            # A retracted fact must not keep other facts superseded: survivors
+            # re-attach past the doomed links or are restored — the same repair
+            # the note-deletion purge runs, including intra-note chains.
+            doomed_links = {r.id: r.superseded_by for r in retracted}
+            await purge.repair_chains(
+                session, doomed_links, {r.id: r.valid_from for r in retracted}
+            )
+            # Open cards referencing a retracted fact are unservable noise;
+            # resolved/dismissed items are human history and pinned facts never
+            # entered the doomed set, so both survive untouched.
+            await purge.delete_review_items(session, set(doomed_links), statuses=("open",))
+        await self._sweep_stale_ambiguous(session, note_id, extraction)
 
         stmt = pg_insert(NoteAnalysis).values(
             note_id=note_id,
@@ -325,6 +346,30 @@ class AnalysisPipeline:
                 },
             )
         )
+
+    async def _sweep_stale_ambiguous(
+        self, session: AsyncSession, note_id: uuid.UUID, extraction: Extraction
+    ) -> None:
+        """Retire open ambiguous_mention cards for names the re-extraction no
+        longer references — the dedup in _file_ambiguous_review only stops new
+        duplicates, it never retires obsolete ones. Open-only: a resolved or
+        dismissed card is a human decision and survives any re-run."""
+        names = {m.name for m in extraction.mentions}
+        for fact in extraction.facts:
+            for ref in (fact.entity_ref, fact.object_entity_ref):
+                if ref:
+                    names.add(ref)
+        clause = " AND payload->>'name' NOT IN :names" if names else ""
+        stmt = text(
+            "DELETE FROM app.review_items"
+            " WHERE kind = 'ambiguous_mention' AND status = 'open'"
+            " AND payload->>'note_id' = :nid" + clause
+        )
+        params: dict[str, Any] = {"nid": str(note_id)}
+        if names:
+            stmt = stmt.bindparams(bindparam("names", expanding=True))
+            params["names"] = sorted(names)
+        await session.execute(stmt, params)
 
     async def _resolve_entities(
         self,

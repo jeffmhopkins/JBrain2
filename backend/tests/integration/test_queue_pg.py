@@ -2,6 +2,7 @@
 idempotent completion, startup backfill, and the system-table RLS policy."""
 
 import asyncio
+import uuid
 from collections.abc import AsyncIterator
 
 import pytest
@@ -117,13 +118,82 @@ async def test_exhausted_attempts_fail_permanently(
     maker: async_sessionmaker[AsyncSession],
 ) -> None:
     job_id = await queue.enqueue(maker, OWNER, "ingest_note", {"note_id": "doomed"})
-    for attempt in range(5):  # max_attempts default
-        await queue.fail(maker, OWNER, job_id, f"boom {attempt}")
+    # fail() reports exhaustion only on the attempt that burns the budget —
+    # the signal the worker's OCR fallback keys on.
+    for attempt in range(4):
+        assert await queue.fail(maker, OWNER, job_id, f"boom {attempt}") is False
+    assert await queue.fail(maker, OWNER, job_id, "boom 4") is True
     row = await job_row(maker, job_id)
     assert row["status"] == "failed"
     assert row["attempts"] == 5
     assert row["finished_at"] is not None
     assert await queue.claim(maker, OWNER) is None
+
+
+async def test_permanent_fail_reports_exhaustion_immediately(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    job_id = await queue.enqueue(maker, OWNER, "ingest_note", {"note_id": "hopeless"})
+    assert await queue.fail(maker, OWNER, job_id, "no retry can help", permanent=True) is True
+    assert (await job_row(maker, job_id))["status"] == "failed"
+    # A vanished row is not exhaustion: no fallback may fire for it.
+    assert await queue.fail(maker, OWNER, str(uuid.uuid4()), "gone") is False
+
+
+async def test_has_active_statuses_filter(maker: async_sessionmaker[AsyncSession]) -> None:
+    await quiesce_jobs(maker)
+    job_id = await queue.enqueue(maker, OWNER, "analyze_note", {"note_id": "dedup-1"})
+    kwargs: dict = {"payload_field": "note_id", "value": "dedup-1"}
+    assert await queue.has_active(maker, OWNER, "analyze_note", **kwargs) is True
+    assert (
+        await queue.has_active(maker, OWNER, "analyze_note", statuses=("queued",), **kwargs) is True
+    )
+
+    async with scoped_session(maker, OWNER) as session:
+        await session.execute(
+            text("UPDATE app.jobs SET status = 'running' WHERE id = :id"), {"id": job_id}
+        )
+    # The ingest gate's queued-only dedup must NOT see a running job...
+    assert (
+        await queue.has_active(maker, OWNER, "analyze_note", statuses=("queued",), **kwargs)
+        is False
+    )
+    # ...while the API's default in-flight guard still does.
+    assert await queue.has_active(maker, OWNER, "analyze_note", **kwargs) is True
+
+
+async def test_has_active_ocr_for_note_spans_the_notes_attachments(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    await quiesce_jobs(maker)
+    repo = SqlNotesRepo(maker)
+    note, _ = await repo.create_note(
+        OWNER, client_id="ocrgate-1", domain="general", destination=None, body="img"
+    )
+    other, _ = await repo.create_note(
+        OWNER, client_id="ocrgate-2", domain="general", destination=None, body="no img"
+    )
+    att = await repo.add_attachment(
+        OWNER,
+        note_id=note.id,
+        sha256="ab" * 32,
+        filename="x.png",
+        media_type="image/png",
+        size_bytes=4,
+    )
+    assert att is not None
+    assert await queue.has_active_ocr_for_note(maker, OWNER, note.id) is False
+
+    job_id = await queue.enqueue(maker, OWNER, "ocr_attachment", {"attachment_id": att.id})
+    assert await queue.has_active_ocr_for_note(maker, OWNER, note.id) is True
+    assert await queue.has_active_ocr_for_note(maker, OWNER, other.id) is False
+
+    async with scoped_session(maker, OWNER) as session:
+        await session.execute(
+            text("UPDATE app.jobs SET status = 'failed' WHERE id = :id"), {"id": job_id}
+        )
+    # Failed/done jobs are not outstanding work — the gate must open.
+    assert await queue.has_active_ocr_for_note(maker, OWNER, note.id) is False
 
 
 async def test_jobs_are_invisible_outside_the_system_context(

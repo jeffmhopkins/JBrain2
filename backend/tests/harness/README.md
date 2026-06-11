@@ -52,6 +52,11 @@ A scenario is one JSON file in `scenarios/`:
       "created_at": "2026-06-10T17:11:00-06:00",  // ISO+offset: reported_at + anchor
       "body": "the note text",
       "extraction": { /* the full note.extract JSON you'd emit as the model */ }
+    },
+    {
+      "reanalyze_step": 0,              // OPTIONAL: re-run the pipeline on step 0's note
+      "body": "the note text",          // ignored on a re-run (kept for readability)
+      "extraction": { /* what the model NOW reads from the same note */ }
     }
   ],
   "expect": {
@@ -74,6 +79,13 @@ Notes on authoring:
 - Steps run **in order, sharing the graph** — that's how you test supersession
   (note 1 sets a value, note 2 changes it) and entity linking across notes
   (reuse the same mention `name`).
+- `reanalyze_step: <index>` re-runs the pipeline against the note an earlier
+  step seeded (0-based) instead of seeding a new one — same note row, same
+  `reported_at`, only the scripted extraction differs. That's how you pin
+  re-extraction behaviour: dropped keys retract, identical output refreshes
+  in place with no review noise, and retraction-triggered chain repair
+  restores facts the dropped one had superseded. The step's `body`/`domain`/
+  `created_at` are ignored on a re-run.
 - A fact spec lists only the columns it cares about; `value_contains` matches
   anywhere in `value_json` + `statement`, case-insensitively.
 - `extraction` must satisfy the real schema (`jbrain.analysis.prompt.
