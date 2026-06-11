@@ -74,6 +74,27 @@ rose=medical, violet=financial. A surface's active segment, status dot,
 send button, and section markers all take its mode color — you can *see*
 which mode and firewall you're inside.
 
+### Entity-type accents
+
+A separate axis from domain color: the entity-type icon disc is tinted by the
+entity's *type*, while domain still rides its own dot on the same row. The five
+accents above are reused where a type maps naturally; five muted tones plus a
+neutral slate fill the rest, all in the same desaturated register so the disc
+never out-shouts the chrome. `Entity.kind` is free text — anything outside this
+set normalizes to **Thing**.
+
+| Type | Token | Value | Type | Token | Value |
+|---|---|---|---|---|---|
+| Person | `--steel` | `#7FA7C9` | Animal | `--sage` | `#A8BD7E` |
+| Organization | `--violet` | `#A493C9` | CreativeWork | `--rose` | `#CF8A8F` |
+| Place | `--green` | `#8FBC9A` | MedicalCondition | `--terracotta` | `#D0917F` |
+| Event | `--amber` | `#C9A36A` | MedicalProcedure | `--teal` | `#6FB6B1` |
+| Product | `--periwinkle` | `#8F9FD0` | Drug | `--orchid` | `#C98AB4` |
+| | | | Thing | `--slate` | `#9AA0A8` |
+
+The disc is `color-mix(in srgb, <accent> 16%, transparent)` background with the
+accent as the glyph color — one tint formula, no per-type `-tint` tokens.
+
 ## Typography
 
 - System font stack: `system-ui, -apple-system, "Segoe UI", Roboto, sans-serif`.
@@ -388,6 +409,13 @@ changes crossfade ≤150ms; no springs, no parallax. Honor
 
 One outline set (Lucide), 1.5px stroke, 20px in controls / 24px in tiles and
 nav. No filled icons except the status dot. No emoji in UI chrome.
+
+**Entity-type icons** — a cohesive Lucide-style set, one glyph per canonical
+entity type (Person, Organization, Place, Event, Product, Animal, CreativeWork,
+MedicalCondition, MedicalProcedure, Drug, Thing). Rendered in a round disc
+tinted by the type's accent (see "Entity-type accents") on entity rows and the
+entity hub header. The glyph carries the *type*; the row's dot still carries the
+*domain*.
 
 ## Voice & microcopy
 

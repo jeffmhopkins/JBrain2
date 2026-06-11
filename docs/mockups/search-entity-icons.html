@@ -1,0 +1,356 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>JBrain · Entity-type icons — search page mockups</title>
+<!--
+  Design exploration (not wired into the app yet).
+  Three iconography treatments for JBrain entity types, shown on the search
+  page in light + dark mode. Tokens mirror frontend/src/styles/tokens.css and
+  the search markup mirrors frontend/src/screens/SearchScreen.tsx so the
+  mock reads exactly like the real screen. Pick a set, then we lift its glyphs
+  into frontend/src/components/icons.tsx.
+-->
+<style>
+  /* ── Design tokens (verbatim from tokens.css) ─────────────────────────── */
+  :root {
+    color-scheme: dark;
+    --bg: #0e0f11; --surface: #17181b; --surface-2: #1e2024; --border: #26282c;
+    --text: #e6e7e9; --text-2: #9a9da3; --text-3: #5c5f66;
+    --surface-composer: #141518; --scrim: rgba(14,15,17,.6);
+    --steel: #7fa7c9; --steel-tint: rgba(127,167,201,.13);
+    --green: #8fbc9a; --green-tint: rgba(143,188,154,.13);
+    --amber: #c9a36a; --amber-tint: rgba(201,163,106,.13);
+    --rose: #cf8a8f; --rose-tint: rgba(207,138,143,.13);
+    --violet: #a493c9; --violet-tint: rgba(164,147,201,.13);
+    --accent: var(--steel); --accent-tint: var(--steel-tint);
+    --ok: var(--green); --warn: var(--amber); --danger: var(--rose); --info: var(--steel);
+    /* Mock viewing scale: app default is 0.75; bumped for desktop legibility. */
+    --font-scale: 1;
+    --fs-micro: calc(12px * var(--font-scale)); --fs-head: calc(13px * var(--font-scale));
+    --fs-secondary: calc(14px * var(--font-scale)); --fs-note: calc(15px * var(--font-scale));
+    --fs-body: calc(16px * var(--font-scale)); --fs-title: calc(18px * var(--font-scale));
+    --fs-screen: calc(22px * var(--font-scale));
+    --r-input: 12px; --r-seg: 14px; --r-card: 16px; --r-box: 24px; --r-pill: 999px;
+    --shadow-card: none;
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  [data-theme="light"] {
+    color-scheme: light;
+    --bg: #f7f7f5; --surface: #fff; --surface-2: #f0f0ee; --border: #e2e2df;
+    --text: #1a1b1e; --text-2: #5c5f66; --text-3: #9a9da3;
+    --surface-composer: #fff; --scrim: rgba(247,247,245,.6);
+    --shadow-card: 0 1px 2px rgba(0,0,0,.06);
+  }
+
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); transition: background .15s; }
+
+  /* ── Mock chrome (toolbar + frame) — not part of the design ───────────── */
+  .toolbar {
+    position: sticky; top: 0; z-index: 5;
+    display: flex; flex-wrap: wrap; align-items: center; gap: 18px 28px;
+    padding: 14px 22px; background: var(--surface);
+    border-bottom: 1px solid var(--border);
+  }
+  .toolbar h1 { font-size: 15px; font-weight: 600; margin: 0; letter-spacing: .01em; }
+  .toolbar .group { display: flex; align-items: center; gap: 8px; }
+  .toolbar label.k { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--text-3); }
+  .seg { display: inline-flex; background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--r-seg); padding: 3px; gap: 2px; }
+  .seg button {
+    font: inherit; font-size: 13px; cursor: pointer; border: 0; background: transparent;
+    color: var(--text-2); padding: 6px 13px; border-radius: 10px;
+  }
+  .seg button[aria-pressed="true"] { background: var(--accent-tint); color: var(--accent); font-weight: 500; }
+  .toolbar .note { margin-left: auto; font-size: 12px; color: var(--text-3); max-width: 360px; line-height: 1.5; }
+
+  .stage { display: flex; flex-wrap: wrap; gap: 28px; justify-content: center; padding: 28px 22px 56px; }
+  .phone {
+    width: 412px; flex: none; background: var(--bg);
+    border: 1px solid var(--border); border-radius: var(--r-box); overflow: hidden;
+    box-shadow: 0 12px 40px rgba(0,0,0,.28);
+  }
+  [data-theme="light"] .phone { box-shadow: 0 12px 40px rgba(0,0,0,.10); }
+
+  /* ── App shell (from styles.css) ──────────────────────────────────────── */
+  .top-bar { display: flex; align-items: center; gap: 14px; height: 56px; padding: 0 16px; }
+  .wordmark { font-weight: 700; font-size: var(--fs-screen); }
+  .wordmark i { color: var(--steel); font-style: normal; }
+  .screen-title { font-size: var(--fs-title); font-weight: 500; }
+  .top-bar-right { margin-left: auto; display: flex; align-items: center; gap: 18px; color: var(--text-2); }
+  .sync-dot { width: 8px; height: 8px; border-radius: var(--r-pill); background: var(--green); }
+  .screen-body { padding: 8px 16px 24px; display: flex; flex-direction: column; gap: 14px; }
+
+  input { font: inherit; width: 100%; color: var(--text); background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--r-input); padding: 10px 14px; }
+  input::placeholder { color: var(--text-3); }
+
+  .search-bar { display: flex; gap: 8px; }
+  .search-bar input { flex: 1; min-width: 0; }
+  .search-submit {
+    display: inline-flex; align-items: center; gap: 7px; white-space: nowrap; font: inherit;
+    background: var(--accent-tint); color: var(--accent); border: 1px solid var(--border);
+    border-radius: var(--r-input); padding: 10px 16px; font-weight: 500; cursor: pointer;
+  }
+  .filter-chips { display: flex; gap: 8px; flex-wrap: wrap; }
+  .filter-chip { font: inherit; font-size: var(--fs-secondary); padding: 6px 14px; border-radius: var(--r-pill); background: var(--surface-2); border: 1px solid var(--border); color: var(--text-2); cursor: pointer; }
+  .filter-chip-on { background: var(--accent-tint); color: var(--accent); font-weight: 500; }
+
+  .section-header { font-size: var(--fs-micro); text-transform: uppercase; letter-spacing: .08em; color: var(--text-3); margin: 6px 2px 0; }
+
+  /* ── Entity result cards — the new icon surface ───────────────────────── */
+  .entity-list { display: flex; flex-direction: column; gap: 8px; }
+  .entity-card {
+    display: flex; align-items: center; gap: 12px; text-align: left; width: 100%; font: inherit;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 14px;
+    padding: 9px 12px; cursor: pointer; box-shadow: var(--shadow-card);
+  }
+  .entity-card:hover { border-color: color-mix(in srgb, var(--dc) 45%, var(--border)); }
+  .etype-icon { width: 38px; height: 38px; flex: none; display: grid; place-items: center; }
+  .etype-icon svg { width: 21px; height: 21px; }
+  .entity-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+  .entity-name { font-size: var(--fs-body); font-weight: 500; color: var(--text); }
+  .entity-meta { display: flex; align-items: center; gap: 7px; font-size: var(--fs-head); color: var(--text-3); }
+  .domain-dot { width: 7px; height: 7px; border-radius: var(--r-pill); flex: none; }
+  .entity-kind { color: var(--text-2); }
+
+  /* Per-set icon-container treatments. --dc = domain colour, set inline. */
+  [data-set="1"] .etype-icon { border-radius: var(--r-pill); background: color-mix(in srgb, var(--dc) 14%, transparent); color: var(--dc); }
+  [data-set="2"] .etype-icon { border-radius: 11px; background: color-mix(in srgb, var(--dc) 18%, transparent); color: var(--dc); }
+  [data-set="3"] .etype-icon { border-radius: var(--r-pill); background: transparent; border: 1px solid var(--border); color: var(--text-2); }
+  [data-set="3"] .etype-icon svg { width: 20px; height: 20px; }
+
+  /* ── Passage result cards (verbatim styling from styles.css) ──────────── */
+  .result-card { display: flex; flex-direction: column; gap: 7px; text-align: left; width: 100%; font: inherit; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-card); padding: 13px 16px; cursor: pointer; box-shadow: var(--shadow-card); }
+  .result-head { display: flex; align-items: center; gap: 8px; font-size: var(--fs-head); color: var(--text-3); }
+  .result-head .etype-mini { width: 26px; height: 26px; display: grid; place-items: center; }
+  .result-head .etype-mini svg { width: 16px; height: 16px; }
+  .result-date { margin-right: auto; }
+  .match-badge { font-size: var(--fs-micro); border-radius: var(--r-pill); padding: 2px 9px; background: var(--surface-2); color: var(--text-2); }
+  .match-steel { background: var(--steel-tint); color: var(--steel); }
+  .result-snippet { margin: 0; font-size: var(--fs-note); line-height: 1.4; }
+  .snip-mark { background: var(--amber-tint); color: inherit; border-radius: 3px; padding: 0 2px; }
+  .result-context { display: flex; align-items: center; gap: 8px; font-size: var(--fs-micro); color: var(--text-3); }
+  .result-preview { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  /* ── Legend (design-review aid; would not ship on the screen) ─────────── */
+  .legend { width: 412px; flex: none; }
+  .legend h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color: var(--text-3); margin: 4px 2px 12px; font-weight: 500; }
+  .legend-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+  .legend-item { display: flex; align-items: center; gap: 11px; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 8px 11px; }
+  .legend-item .name { font-size: 13px; font-weight: 500; }
+  .legend-item .sub { font-size: 11px; color: var(--text-3); font-family: var(--font-mono, monospace); }
+</style>
+</head>
+<body data-set="1">
+
+  <div class="toolbar">
+    <h1>JBrain · entity-type icons</h1>
+    <div class="group">
+      <label class="k">Theme</label>
+      <div class="seg" id="theme">
+        <button data-v="dark" aria-pressed="true">Dark</button>
+        <button data-v="light" aria-pressed="false">Light</button>
+      </div>
+    </div>
+    <div class="group">
+      <label class="k">Iconography</label>
+      <div class="seg" id="set">
+        <button data-v="1" aria-pressed="true">1 · Tinted disc</button>
+        <button data-v="2" aria-pressed="false">2 · Duotone squircle</button>
+        <button data-v="3" aria-pressed="false">3 · Hairline mono</button>
+      </div>
+    </div>
+    <p class="note" id="set-note"></p>
+  </div>
+
+  <div class="stage">
+    <div class="phone">
+      <div class="top-bar">
+        <span class="wordmark"><i>J</i>Brain</span>
+        <span class="screen-title">Search</span>
+        <span class="top-bar-right"><span class="sync-dot" title="Synced"></span></span>
+      </div>
+      <div class="screen-body">
+        <form class="search-bar" onsubmit="return false">
+          <input type="search" value="cardiology referral" aria-label="Search query" />
+          <button type="submit" class="search-submit">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4-4"/></svg>
+            Search
+          </button>
+        </form>
+        <div class="filter-chips">
+          <button class="filter-chip filter-chip-on">All</button>
+          <button class="filter-chip">General</button>
+          <button class="filter-chip">Medical</button>
+          <button class="filter-chip">Financial</button>
+          <button class="filter-chip">Location</button>
+        </div>
+
+        <p class="section-header">Entities</p>
+        <div class="entity-list" id="entity-list"></div>
+
+        <p class="section-header">Passages</p>
+        <div class="entity-list" id="passage-list"></div>
+      </div>
+    </div>
+
+    <div class="legend">
+      <h2>This set — all entity types</h2>
+      <div class="legend-grid" id="legend"></div>
+    </div>
+  </div>
+
+<script>
+  // ── Domain colour map (frontend/src/notes/modes.ts) ──────────────────────
+  const DOMAIN = {
+    general:  { dc: "var(--green)",  title: "General" },
+    health:   { dc: "var(--rose)",   title: "Medical" },
+    finance:  { dc: "var(--violet)", title: "Financial" },
+    location: { dc: "var(--steel)",  title: "Location" },
+  };
+
+  // ── Entity-type glyphs: inner SVG per set. 24×24, currentColor. ──────────
+  // Set 1: geometric outline (Lucide-faithful, 1.5 stroke).
+  // Set 2: closed-shape duotone (filled body + outline detail).
+  // Set 3: minimal single-weight monochrome.
+  const ICONS = {
+    1: {
+      Person: '<circle cx="12" cy="8.5" r="3.8"/><path d="M5.5 20.5a6.5 6.5 0 0 1 13 0"/>',
+      Organization: '<rect x="5" y="3.5" width="14" height="17" rx="1.6"/><path d="M9 7.5h2M13 7.5h2M9 11h2M13 11h2M10 20.5v-3.2h4v3.2"/>',
+      Place: '<path d="M12 21c4.5-4.2 7-7.6 7-11a7 7 0 1 0-14 0c0 3.4 2.5 6.8 7 11Z"/><circle cx="12" cy="10" r="2.4"/>',
+      Event: '<rect x="3.5" y="5" width="17" height="15.5" rx="2"/><path d="M16 3.2v3.6M8 3.2v3.6M3.5 10h17"/><circle cx="12" cy="15" r="1.3" fill="currentColor" stroke="none"/>',
+      Product: '<path d="M20.5 8.2 12 12.5 3.5 8.2 12 4l8.5 4.2Z"/><path d="M3.5 8.2v7.6L12 20l8.5-4.2V8.2"/><path d="M12 12.5V20"/>',
+      Animal: '<circle cx="6.6" cy="12.2" r="1.5"/><circle cx="9.8" cy="8.4" r="1.5"/><circle cx="14.2" cy="8.4" r="1.5"/><circle cx="17.4" cy="12.2" r="1.5"/><path d="M8.2 16.6c0-2 1.7-3.4 3.8-3.4s3.8 1.4 3.8 3.4-1.7 2.9-3.8 2.9-3.8-.9-3.8-2.9Z"/>',
+      CreativeWork: '<path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20V3H6.5A2.5 2.5 0 0 0 4 5.5v14A2.5 2.5 0 0 0 6.5 21.5H20V17"/>',
+      MedicalCondition: '<path d="M12 20.5C7 17 4 13.7 4 10a4.2 4.2 0 0 1 8-2.1A4.2 4.2 0 0 1 20 10c0 3.7-3 7-8 10.5Z"/><path d="M7 11.6h2.2l1.2-2.2 1.8 4 1-1.8H17"/>',
+      MedicalProcedure: '<path d="M5 4.5v4.2a4 4 0 0 0 8 0V4.5"/><path d="M5 4.5H3.6M13 4.5h1.4"/><path d="M9 12.7v1.6a5 5 0 0 0 9.5 2.4"/><circle cx="19" cy="11.6" r="2.1"/>',
+      Drug: '<rect x="2.8" y="8.5" width="18.4" height="7" rx="3.5" transform="rotate(-45 12 12)"/><path d="m9 15 6-6"/>',
+      Thing: '<path d="M3.7 11.4 11 4.1a2 2 0 0 1 1.4-.6h6.1a2 2 0 0 1 2 2v6.1a2 2 0 0 1-.6 1.4l-7.3 7.3a2 2 0 0 1-2.8 0l-6.1-6.1a2 2 0 0 1 0-2.8Z"/><circle cx="16" cy="8" r="1.3"/>',
+    },
+    2: {
+      Person: '<circle cx="12" cy="8" r="3.6"/><path d="M5.8 20a6.2 6.2 0 0 1 12.4 0Z"/>',
+      Organization: '<rect x="5" y="3.5" width="14" height="17" rx="1.6"/><path d="M8.7 7.2h1.6M13.7 7.2h1.6M8.7 10.7h1.6M13.7 10.7h1.6M10.2 20.5v-3h3.6v3" fill="none"/>',
+      Place: '<path d="M12 21c4.5-4.2 7-7.6 7-11a7 7 0 1 0-14 0c0 3.4 2.5 6.8 7 11Z"/><circle cx="12" cy="10" r="2.3" fill="none"/>',
+      Event: '<rect x="3.5" y="5" width="17" height="15.5" rx="2"/><path d="M3.5 10h17M8 3.2v3.6M16 3.2v3.6" fill="none"/>',
+      Product: '<path d="M6.2 8h11.6l-1 11.2a1.4 1.4 0 0 1-1.4 1.3H8.6a1.4 1.4 0 0 1-1.4-1.3L6.2 8Z"/><path d="M9.2 8V6.4a2.8 2.8 0 0 1 5.6 0V8" fill="none"/>',
+      Animal: '<circle cx="6.6" cy="12.2" r="1.6"/><circle cx="9.8" cy="8.2" r="1.6"/><circle cx="14.2" cy="8.2" r="1.6"/><circle cx="17.4" cy="12.2" r="1.6"/><path d="M8 16.6c0-2 1.8-3.4 4-3.4s4 1.4 4 3.4-1.8 2.9-4 2.9-4-.9-4-2.9Z"/>',
+      CreativeWork: '<path d="M5 4.5A1.5 1.5 0 0 1 6.5 3H19v15H6.5A1.5 1.5 0 0 0 5 19.5V4.5Z"/><path d="M5 19.5A1.5 1.5 0 0 1 6.5 18H19v3H6.5A1.5 1.5 0 0 1 5 19.5Z" fill="none"/>',
+      MedicalCondition: '<path d="M12 20.5C7 17 4 13.7 4 10a4.2 4.2 0 0 1 8-2.1A4.2 4.2 0 0 1 20 10c0 3.7-3 7-8 10.5Z"/><path d="M12 9.6v4.6M9.7 11.9h4.6" fill="none"/>',
+      MedicalProcedure: '<rect x="5" y="4.6" width="14" height="15.8" rx="2"/><rect x="9" y="3.1" width="6" height="3.2" rx="1" fill="none"/><path d="M12 10.2v6M9 13.2h6" fill="none"/>',
+      Drug: '<rect x="2.8" y="8.5" width="18.4" height="7" rx="3.5" transform="rotate(-45 12 12)"/><path d="m9 15 6-6" fill="none"/>',
+      Thing: '<rect x="4" y="4" width="16" height="16" rx="4.2"/><circle cx="9" cy="9" r="1.1" fill="none"/><circle cx="15" cy="9" r="1.1" fill="none"/><circle cx="9" cy="15" r="1.1" fill="none"/><circle cx="15" cy="15" r="1.1" fill="none"/>',
+    },
+    3: {
+      Person: '<circle cx="12" cy="8" r="3"/><path d="M6.5 19a5.5 5.5 0 0 1 11 0"/>',
+      Organization: '<path d="M6 21V6l6-2 6 2v15"/><path d="M6 21h12M9.6 9h.01M14.4 9h.01M9.6 13h.01M14.4 13h.01"/>',
+      Place: '<path d="M12 21c4-4 6-7 6-10a6 6 0 1 0-12 0c0 3 2 6 6 10Z"/><circle cx="12" cy="11" r="1.6"/>',
+      Event: '<rect x="4" y="6" width="16" height="14" rx="1.5"/><path d="M4 10h16M9 4v3M15 4v3"/>',
+      Product: '<path d="M4 8l8-4 8 4-8 4Z"/><path d="M4 8v8l8 4 8-4V8M12 12v8"/>',
+      Animal: '<circle cx="7" cy="13" r="1.2"/><circle cx="10" cy="9" r="1.2"/><circle cx="14" cy="9" r="1.2"/><circle cx="17" cy="13" r="1.2"/><path d="M8.5 17a3.5 3 0 0 1 7 0c0 1.5-1.6 2.4-3.5 2.4S8.5 18.5 8.5 17Z"/>',
+      CreativeWork: '<path d="M12 6c-1.8-1.3-4-1.8-6-1.5V18c2-.3 4.2.2 6 1.5 1.8-1.3 4-1.8 6-1.5V4.5c-2-.3-4.2.2-6 1.5Z"/><path d="M12 6v13.5"/>',
+      MedicalCondition: '<path d="M3.5 12.5h4l1.5-3 3 7 2-5 1 1h5.5"/>',
+      MedicalProcedure: '<path d="M6 4v4a3.5 3.5 0 0 0 7 0V4"/><path d="M9.5 14.5a4.5 4.5 0 0 0 9 0v-1.5"/><circle cx="18.5" cy="11" r="1.8"/>',
+      Drug: '<rect x="4" y="9" width="16" height="6" rx="3"/><path d="M12 9v6"/>',
+      Thing: '<path d="M12 3.5 19 7.5v9L12 20.5 5 16.5v-9Z"/>',
+    },
+  };
+
+  const SET_NOTE = {
+    1: "Set 1 — outline glyph in a domain-tinted disc. Closest to today’s Lucide chrome; colour carries the domain, the ring keeps it soft.",
+    2: "Set 2 — duotone glyph in a rounded squircle. Filled bodies read at small sizes and feel a touch more “app”; still muted by the 18% tint.",
+    3: "Set 3 — single-weight monochrome glyph in a hairline disc. Most restrained: icons stay neutral, the domain dot alone carries colour.",
+  };
+
+  // ── Sample search results (realistic JBrain content) ─────────────────────
+  const ENTITIES = [
+    { name: "Dr. Lena Okafor",   kind: "Person",            domain: "health" },
+    { name: "Stanford Cardiology", kind: "Organization",    domain: "health" },
+    { name: "Echocardiogram",    kind: "MedicalProcedure",  domain: "health" },
+    { name: "Hypertension",      kind: "MedicalCondition",  domain: "health" },
+    { name: "Atorvastatin",      kind: "Drug",              domain: "health" },
+    { name: "Palo Alto Clinic",  kind: "Place",             domain: "location" },
+    { name: "Tesla Model 3",     kind: "Product",           domain: "general" },
+    { name: "SF Half Marathon",  kind: "Event",             domain: "general" },
+    { name: "“Atomic Habits”",   kind: "CreativeWork",      domain: "general" },
+    { name: "Luna",              kind: "Animal",            domain: "general" },
+    { name: "Standing desk",     kind: "Thing",             domain: "general" },
+  ];
+
+  const PASSAGES = [
+    {
+      kind: "Person", domain: "health", date: "Wed · notes/medical", match: "semantic",
+      snippet: ['Dr. Okafor sent the ', { m: "cardiology referral" }, ' to Stanford after the ', { m: "echo" }, ' came back.'],
+      preview: "Follow-up scheduled for the 24th; bring prior labs.", anchor: "#L4",
+    },
+    {
+      kind: "MedicalCondition", domain: "health", date: "Mar 2 · notes/medical", match: "both",
+      snippet: ['Blood pressure trending up — flagged ', { m: "hypertension" }, '; started on ', { m: "atorvastatin" }, ' 10mg.'],
+      preview: "BP 142/91 at home cuff, three readings.", anchor: "#L1",
+    },
+    {
+      kind: "Place", domain: "location", date: "Mar 3 · Palo Alto", match: "keyword",
+      snippet: ['Parking for the ', { m: "Palo Alto" }, ' clinic is on Quarry Rd, validate at the desk.'],
+      preview: "Garage entrance off Pasteur Dr.", anchor: "#L2",
+    },
+  ];
+
+  // ── Rendering ────────────────────────────────────────────────────────────
+  function glyph(kind, set, mini) {
+    const inner = ICONS[set][kind] || ICONS[set].Thing;
+    const duo = set === 2 ? ' fill="currentColor" fill-opacity="0.16"' : ' fill="none"';
+    return `<svg viewBox="0 0 24 24"${duo} stroke="currentColor" stroke-width="${mini ? 1.6 : 1.5}" stroke-linecap="round" stroke-linejoin="round">${inner}</svg>`;
+  }
+
+  function render() {
+    const set = Number(document.body.dataset.set);
+    document.getElementById("set-note").textContent = SET_NOTE[set];
+
+    document.getElementById("entity-list").innerHTML = ENTITIES.map(e => {
+      const d = DOMAIN[e.domain];
+      return `<button class="entity-card" style="--dc:${d.dc}">
+        <span class="etype-icon" style="--dc:${d.dc}">${glyph(e.kind, set, false)}</span>
+        <span class="entity-text">
+          <span class="entity-name">${e.name}</span>
+          <span class="entity-meta"><span class="domain-dot" style="background:${d.dc}"></span><span class="entity-kind">${e.kind}</span> · ${d.title}</span>
+        </span>
+      </button>`;
+    }).join("");
+
+    document.getElementById("passage-list").innerHTML = PASSAGES.map(p => {
+      const d = DOMAIN[p.domain];
+      const snip = p.snippet.map(s => typeof s === "string" ? s : `<mark class="snip-mark">${s.m}</mark>`).join("");
+      const steel = p.match === "semantic" || p.match === "both" ? " match-steel" : "";
+      return `<button class="result-card" style="--dc:${d.dc}">
+        <span class="result-head">
+          <span class="etype-mini etype-icon" style="--dc:${d.dc}">${glyph(p.kind, set, true)}</span>
+          <span class="result-date">${p.date}</span>
+          <span class="match-badge${steel}">${p.match}</span>
+        </span>
+        <p class="result-snippet">${snip}</p>
+        <span class="result-context"><span class="result-preview">${p.preview}</span><span>${p.anchor}</span></span>
+      </button>`;
+    }).join("");
+
+    document.getElementById("legend").innerHTML = ENTITIES.map(e => {
+      const d = DOMAIN[e.domain];
+      return `<div class="legend-item"><span class="etype-icon" style="--dc:${d.dc}">${glyph(e.kind, set, false)}</span>
+        <span><span class="name">${e.kind}</span><br><span class="sub">${e.domain}</span></span></div>`;
+    }).join("");
+  }
+
+  // ── Toggles ──────────────────────────────────────────────────────────────
+  function wire(id, apply) {
+    const seg = document.getElementById(id);
+    seg.addEventListener("click", ev => {
+      const btn = ev.target.closest("button"); if (!btn) return;
+      [...seg.children].forEach(b => b.setAttribute("aria-pressed", String(b === btn)));
+      apply(btn.dataset.v);
+    });
+  }
+  wire("theme", v => { document.documentElement.dataset.theme = v; });
+  wire("set", v => { document.body.dataset.set = v; render(); });
+  render();
+</script>
+</body>
+</html>

@@ -51,6 +51,11 @@ describe("EntityListScreen", () => {
     expect(screen.getByText("Sarah Hopkins")).toBeInTheDocument();
     expect(screen.getByText("provisional")).toHaveClass("fact-chip", "fact-chip-muted");
     expect(screen.getByText("person")).toHaveClass("entity-row-kind");
+    // Each row leads with a type-tinted icon disc; the appointment folds to Event.
+    const discs = document.querySelectorAll(".etype-disc");
+    expect(discs.length).toBe(2);
+    expect(discs[0]).toHaveAttribute("data-entity-kind", "Person");
+    expect(discs[1]).toHaveAttribute("data-entity-kind", "Event");
     // last_seen is an instant — the meta shows the local calendar day.
     const day = fmtTemporal(SARAH.last_seen, "instant");
     expect(screen.getByText(`3 facts · last seen ${day}`)).toBeInTheDocument();

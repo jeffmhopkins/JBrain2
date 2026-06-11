@@ -9,6 +9,7 @@ import { FactCitation, MarkedText, StatusChip } from "../analysis/bits";
 import { edgePath, factSpan, factValue } from "../analysis/format";
 import { type EntityOut, type EntityPredicate, type FactOut, api } from "../api/client";
 import { TopBar } from "../components/TopBar";
+import { EntityTypeIcon } from "../entities/kinds";
 import { DOMAIN_COLOR, DOMAIN_TITLE } from "../notes/modes";
 import type { SyncStatus } from "../notes/useNotes";
 
@@ -142,6 +143,7 @@ export function EntityScreen({
         {state.phase === "done" && (
           <>
             <header className="entity-hub">
+              <EntityTypeIcon kind={state.entity.kind} size={48} />
               <h2 className="entity-name">{state.entity.canonical_name}</h2>
               <p className="entity-kind-row">
                 <span>{state.entity.kind.toLowerCase()}</span>
