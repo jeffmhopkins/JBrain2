@@ -6,7 +6,7 @@ real FastAPI app."""
 import json
 import uuid
 from collections.abc import AsyncIterator
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta, timezone
 from typing import Any
 
 import pytest
@@ -54,9 +54,22 @@ async def maker(database_url: str) -> AsyncIterator[async_sessionmaker[AsyncSess
     await engine.dispose()
 
 
-async def make_note(maker: async_sessionmaker[AsyncSession], *, domain: str, body: str) -> str:
+async def make_note(
+    maker: async_sessionmaker[AsyncSession],
+    *,
+    domain: str,
+    body: str,
+    created_at: datetime | None = None,
+    tz_offset: int | None = None,
+) -> str:
     note, _ = await SqlNotesRepo(maker).create_note(
-        OWNER, client_id=f"ana-{uuid.uuid4()}", domain=domain, destination=None, body=body
+        OWNER,
+        client_id=f"ana-{uuid.uuid4()}",
+        domain=domain,
+        destination=None,
+        body=body,
+        created_at=created_at,
+        tz_offset_minutes=tz_offset,
     )
     return note.id
 
@@ -324,6 +337,63 @@ async def test_analyze_note_lands_everything(
         "SELECT task, provider, model FROM app.llm_usage WHERE task = 'note.extract'",
     )
     assert usage and usage[0].provider == "xai" and usage[0].model == "grok-4.3"
+
+
+async def test_backward_phrase_resolution_repaired_end_to_end(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """Issue 3: a 07:13 capture whose 'last night' the model wrongly resolved to
+    the capture day is repaired to the prior evening by the pipeline's local
+    anchor — both the fact's valid_from and the temporal token land on Jun 10."""
+    mst = timezone(timedelta(minutes=-360))
+    note_id = await make_note(
+        maker,
+        domain="general",
+        body="Jeff ate Celine's dinner last night.",
+        created_at=datetime(2026, 6, 11, 13, 13, tzinfo=UTC),  # 07:13 local at -06:00
+        tz_offset=-360,
+    )
+    payload = {
+        "title": "Dinner",
+        "tags": ["dinner", "food", "celine"],
+        "mentions": [{"name": "Jeff", "kind": "Person", "surface_text": "Jeff"}],
+        "facts": [
+            {
+                "predicate": "ate", "qualifier": "", "kind": "event",
+                "statement": "Jeff ate Celine's dinner last night.", "value_json": None,
+                "assertion": "asserted", "entity_ref": "Jeff", "object_entity_ref": None,
+                "temporal": {
+                    "phrase": "last night",
+                    "resolved_start": "2026-06-11T20:00:00-06:00",  # capture day: wrong
+                    "resolved_end": None, "precision": "day",
+                },
+                "domain": "general", "confidence": 0.7,
+            }
+        ],
+        "temporal_tokens": [
+            {
+                "phrase": "last night", "kind": "point",
+                "resolved_start": "2026-06-11T20:00:00-06:00",
+                "resolved_end": None, "precision": "day", "rrule": None,
+            }
+        ],
+    }  # fmt: skip
+    await analyzer(maker, [json.dumps(payload)]).analyze_note({"note_id": note_id})
+
+    facts = await rows(
+        maker, OWNER, "SELECT valid_from FROM app.facts WHERE note_id = :nid", nid=note_id
+    )
+    assert len(facts) == 1 and facts[0].valid_from is not None
+    assert facts[0].valid_from.astimezone(mst).date() == date(2026, 6, 10)
+
+    tokens = await rows(
+        maker,
+        OWNER,
+        "SELECT resolved_start FROM app.temporal_tokens WHERE note_id = :nid",
+        nid=note_id,
+    )
+    assert len(tokens) == 1
+    assert tokens[0].resolved_start.astimezone(mst).date() == date(2026, 6, 10)
 
 
 async def test_reanalysis_is_idempotent(

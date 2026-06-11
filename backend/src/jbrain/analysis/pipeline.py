@@ -182,7 +182,9 @@ class AnalysisPipeline:
                 json_schema=EXTRACTION_SCHEMA,
                 max_tokens=EXTRACT_MAX_TOKENS,
             )
-            extraction = parse_extraction(result.parsed)
+            extraction = parse_extraction(
+                result.parsed, anchor=local_anchor(captured_at, tz_offset)
+            )
         except (LlmBadResponseError, ExtractionError) as exc:
             # The adapter already spent its one re-ask: retrying the job would
             # just re-bill the same garbage. Nothing was written.
