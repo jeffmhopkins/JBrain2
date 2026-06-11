@@ -98,6 +98,13 @@ LinkML-shaped so that migration stays cheap. (This is a deliberate trim of the
 schema-architecture proposal after red-team: keep the ergonomic authoring
 surface, drop the heavyweight pipeline.)
 
+*Implemented:* `jbrain.schema` (`backend/src/jbrain/schema/`) — `load_registry()`
+parses the YAML into a validated `SchemaRegistry` and exposes the four consumers
+as methods (`prompt_digest`, `render_config`, `resolution_config`,
+`validate_value`); load-time validation mirrors `jbrain.llm.promptfile` (a
+malformed registry fails fast, never mid-pipeline). It is **not yet wired into
+the extraction pipeline** — that lands with the Phase-3 hardening below.
+
 **The four consumers, all reading one registry:**
 
 | Consumer | Uses | Hard rule |

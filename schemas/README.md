@@ -22,6 +22,15 @@ The registry is **soft**: it supplies (a) preferred predicate spellings for the
 consolidation normalizes drift toward. It is never a storage gate — that would
 resurrect the controlled ontology `docs/ANALYSIS.md` rejects.
 
+## Runtime
+
+`backend/src/jbrain/schema/` loads these files into an in-process
+`SchemaRegistry` (`load_registry()`), validating them at load (unknown
+facet/kind/value_shape, cross-facet collisions, unresolved refs/vocabs/shapes,
+enum-without-values all fail fast). It exposes the four consumers — `prompt_digest`,
+`render_config`, `resolution_config`, `validate_value`. Not yet wired into the
+pipeline. Tests: `backend/tests/unit/test_schema_registry.py`.
+
 ## Reading order
 
 1. `_meta.yaml` — the value vocabulary every type draws on.

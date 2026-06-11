@@ -34,6 +34,10 @@ value_shapes:
 # storage never gates a qualifier. These seed the prompt digest only.
 name_audiences: [kids, family, friends, work, public]
 
+# Preferred external-identifier schemes (qualifier on identifier.<scheme>).
+# Preferred, not closed — open schemes are accepted.
+id_scheme: [loinc, rxnorm, vin, imei, serial, mac, uuid, ein, duns, lei, microchip, last4, sha256]
+
 # Reusable structured shapes (atomic compounds only).
 shapes:
   postal_address:          # schema.org PostalAddress / vCard ADR

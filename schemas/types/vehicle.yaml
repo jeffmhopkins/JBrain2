@@ -24,7 +24,8 @@ predicates:
     kind: attribute
     functional: true
   - canonical_name: licensePlate       # 🔒 not stable (transfers/renewals)
-    value_shape: structured            # structured(license_plate)
+    value_shape: structured
+    shape: license_plate
     kind: state
   - canonical_name: mileage            # accumulating odometer readings
     value_shape: quantity
@@ -33,4 +34,5 @@ predicates:
 
 # identifier.vin (🔒) from ExternalIdentified — globally unique, the resolution key signal.
 # owner is a Role edge (Related).
+status_values: [active, sold, totaled, retired]
 display_name: [name, modelDate+manufacturer+model]

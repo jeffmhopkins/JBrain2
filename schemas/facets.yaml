@@ -99,11 +99,13 @@ facets:
     description: Physical location. 🔒 location domain.
     predicates:
       - canonical_name: address
-        value_shape: structured            # structured(postal_address)
+        value_shape: structured
+        shape: postal_address
         kind: state
         schema_org_ref: schema:address
-      - canonical_name: geo
-        value_shape: structured            # structured(geo)  🔒
+      - canonical_name: geo                # 🔒
+        value_shape: structured
+        shape: geo
         kind: state
         schema_org_ref: schema:geo
 

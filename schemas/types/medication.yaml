@@ -16,7 +16,8 @@ predicates:
     value_shape: scalar
     kind: attribute
   - canonical_name: dosage
-    value_shape: structured        # structured(dosage): dose+UCUM, route, timing
+    value_shape: structured
+    shape: dosage                  # dose+UCUM, route, timing
     kind: state
   - canonical_name: effectiveInterval  # the active interval (start / optional end)
     value_shape: date

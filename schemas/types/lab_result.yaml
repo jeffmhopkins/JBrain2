@@ -20,7 +20,8 @@ predicates:
     value_shape: quantity          # {value, unit: UCUM}
     kind: measurement
   - canonical_name: referenceRange
-    value_shape: structured        # structured(reference_range)
+    value_shape: structured
+    shape: reference_range
     kind: attribute
   - canonical_name: interpretation
     value_shape: enum

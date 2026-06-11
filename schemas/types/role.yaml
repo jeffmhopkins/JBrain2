@@ -26,7 +26,7 @@ predicates:
     value_shape: ref
     kind: relationship
 
-# Lifecycle.status: active | ended
+status_values: [active, ended]    # Lifecycle.status
 # Identity is mention-anchored like any entity; the natural composite signal is
 # (source, target, roleName, startDate) — a resolution hint, not a stored key.
 display_name: [jobTitle, roleName]
