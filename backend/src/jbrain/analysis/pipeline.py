@@ -29,6 +29,7 @@ from jbrain.analysis.display import (
     ambiguous_display,
     collision_display,
     mark_snippet,
+    merge_display,
     promotion_display,
     value_label,
 )
@@ -40,10 +41,13 @@ from jbrain.analysis.entities import (
     AmbiguousEntity,
     NeedsDisambiguation,
     ResolvedEntity,
+    alias_owner,
+    are_distinct,
     build_disambiguation_prompt,
     create_provisional,
     declared_alias,
     parse_disambiguation,
+    plan_merge,
     register_declared_alias,
     resolve_entity,
 )
@@ -271,7 +275,9 @@ class AnalysisPipeline:
                 touched.add(fact_id)
             await session.flush()
 
-        await self._register_declared_aliases(session, extraction, resolved)
+        await self._register_declared_aliases(
+            session, extraction, resolved, note_id, note_domain, chunks
+        )
 
         # Identity keys this note no longer asserts were removed by the edit:
         # retract quietly — not a conflict, no inbox noise. Pinned facts are
@@ -619,14 +625,19 @@ class AnalysisPipeline:
         session: AsyncSession,
         extraction: Extraction,
         resolved: dict[str, ResolvedEntity | None],
+        note_id: uuid.UUID,
+        note_domain: str,
+        chunks: list[_ChunkRef],
     ) -> None:
         """A self-naming fact ("my full name is Jeffrey Mark Hopkins") teaches
         the resolver an exact alias, so a later bare "Jeffrey Mark Hopkins"
         lands on Me instead of forking a new entity. ASSERTED facts only — a
         reported, negated, hypothetical, or questioned name is not a
-        declaration; collision with another entity is rejected inside
-        register_declared_alias (docs/ANALYSIS.md "Alias resolution &
-        separation")."""
+        declaration. When the declared name already keys a DIFFERENT entity the
+        alias is NOT widened across both (the wrong silent link); that collision
+        is instead surfaced as a merge_proposal — the one high-confidence
+        same-person signal worth auto-suggesting (docs/ANALYSIS.md "Alias
+        resolution & separation")."""
         for fact in extraction.facts:
             if fact.assertion != "asserted":
                 continue
@@ -637,6 +648,62 @@ class AnalysisPipeline:
             added = await register_declared_alias(session, entity.id, name)
             if added is not None:
                 log.info("analysis.alias_declared", entity_id=str(entity.id), alias=added)
+                continue
+            other = await alias_owner(session, name, exclude=entity.id)
+            if other is not None:
+                await self._propose_merge(
+                    session, entity.id, other, name, note_id, note_domain, chunks
+                )
+
+    async def _propose_merge(
+        self,
+        session: AsyncSession,
+        a: uuid.UUID,
+        b: uuid.UUID,
+        name: str,
+        note_id: uuid.UUID,
+        note_domain: str,
+        chunks: list[_ChunkRef],
+    ) -> None:
+        """File a merge_proposal for two entities a self-naming fact tied to the
+        same name. Honours the permanent distinct_from edge (a rejected merge is
+        never re-proposed) and dedupes open cards across re-analysis. Direction
+        comes from plan_merge so the owner / confirmed side always survives."""
+        if await are_distinct(session, a, b):
+            return
+        plan = await plan_merge(session, a, b)
+        # entity_a is the survivor, entity_b the tombstoned side — the merge
+        # handler reads exactly this direction. Dedup is direction-agnostic: one
+        # open card per unordered pair, however the next note phrases it.
+        keep, gone = str(plan.keep_id), str(plan.gone_id)
+        existing = (
+            await session.execute(
+                text(
+                    "SELECT 1 FROM app.review_items WHERE kind = 'merge_proposal'"
+                    " AND status = 'open' AND payload->>'entity_a' IN (:x, :y)"
+                    " AND payload->>'entity_b' IN (:x, :y) LIMIT 1"
+                ),
+                {"x": keep, "y": gone},
+            )
+        ).first()
+        if existing is not None:
+            return
+        snippet = _cite(_locate(name, chunks), chunks)
+        session.add(
+            ReviewItem(
+                kind="merge_proposal",
+                payload={
+                    "entity_a": keep,
+                    "entity_b": gone,
+                    "note_id": str(note_id),
+                    **merge_display(
+                        keep_name=plan.keep_name, gone_name=plan.gone_name, snippet=snippet
+                    ),
+                },
+                domain_code=note_domain,
+            )
+        )
+        log.info("analysis.merge_proposed", keep=str(plan.keep_id), gone=str(plan.gone_id))
 
     async def _upsert_tokens(
         self,

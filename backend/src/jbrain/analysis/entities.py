@@ -692,6 +692,75 @@ async def register_declared_alias(
     return norm if inserted is not None else None
 
 
+async def alias_owner(
+    session: AsyncSession, name: str, *, exclude: uuid.UUID
+) -> uuid.UUID | None:
+    """A live entity OTHER than `exclude` that already exactly owns `name`.
+    The declared-name collision signal: a self-named entity bumping into a
+    different one that holds the same name is strong "same person" evidence."""
+    norm = normalize_alias(name)
+    if not norm or norm in FIRST_PERSON:
+        return None
+    others = [row.id for row in await _exact_matches(session, norm) if row.id != exclude]
+    return others[0] if len(others) == 1 else None
+
+
+async def are_distinct(session: AsyncSession, a: uuid.UUID, b: uuid.UUID) -> bool:
+    """A permanent distinct_from edge (a rejected merge) forbids re-proposing
+    the same merge — the negative knowledge the disambiguator must honour."""
+    lo, hi = sorted((a, b))
+    return (
+        await session.execute(
+            text(
+                "SELECT 1 FROM app.entity_distinctions"
+                " WHERE entity_a = :a AND entity_b = :b LIMIT 1"
+            ),
+            {"a": str(lo), "b": str(hi)},
+        )
+    ).first() is not None
+
+
+@dataclass(frozen=True)
+class MergePlan:
+    """Direction for a proposed merge: `gone` folds into `keep`. The survivor
+    is the more-anchored identity, so a subject (the owner) and confirmed rows
+    are never the ones tombstoned."""
+
+    keep_id: uuid.UUID
+    keep_name: str
+    gone_id: uuid.UUID
+    gone_name: str
+
+
+async def plan_merge(session: AsyncSession, a: uuid.UUID, b: uuid.UUID) -> MergePlan:
+    """Rank the pair so the survivor is the stronger identity: a subject-linked
+    entity outranks a non-subject one, a confirmed status outranks provisional,
+    and age breaks the tie. Keeps the owner ("Me") from ever being merged away."""
+    rows = {
+        r.id: r
+        for r in (
+            await session.execute(
+                text(
+                    "SELECT id, canonical_name, subject_id, status, created_at"
+                    " FROM app.entities WHERE id = ANY(:ids)"
+                ),
+                {"ids": [str(a), str(b)]},
+            )
+        ).all()
+    }
+    ra, rb = rows[a], rows[b]
+
+    def rank(r: Any) -> tuple[int, int, float]:
+        return (
+            1 if r.subject_id is not None else 0,
+            1 if r.status == "confirmed" else 0,
+            -r.created_at.timestamp(),  # older wins the tie
+        )
+
+    keep, gone = (ra, rb) if rank(ra) >= rank(rb) else (rb, ra)
+    return MergePlan(keep.id, keep.canonical_name, gone.id, gone.canonical_name)
+
+
 async def resolve_entity(
     session: AsyncSession,
     name: str,

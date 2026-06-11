@@ -174,12 +174,17 @@ LLM disambiguation with candidates → review inbox for the gray zone.
   alias on the fact's entity, so a later bare "Jeffrey Mark Hopkins" resolves
   to the owner instead of forking a new person. Only `asserted` facts (a
   reported/negated/hypothetical name is not a declaration), and only when the
-  name does not already key a *different* live entity — that collision is a
-  merge proposal, never a silent second owner of one name. The alias inherits
-  the entity's firewall partition and is append-only (a corrected name adds an
-  alias; it never silently rewrites identity). Nicknames the note never states
-  ("Jeff" with only "Jeffrey Mark Hopkins" declared) still need their own
-  declaration or a human merge — declaration-driven, never guessed.
+  name does not already key a *different* live entity. That collision is the
+  high-confidence same-person signal: instead of widening one name across two
+  entities (the wrong silent link), it **files a `merge_proposal`** directed by
+  `plan_merge` so the more-anchored side (a subject/the owner, then confirmed,
+  then older) survives — gated by the `distinct_from` edge so a rejected merge
+  is never re-proposed, and deduped to one open card per pair across
+  re-analysis. The alias itself inherits the entity's firewall partition and is
+  append-only (a corrected name adds an alias; it never silently rewrites
+  identity). Nicknames the note never states ("Jeff" with only "Jeffrey Mark
+  Hopkins" declared) still need their own declaration or a human merge —
+  declaration-driven, never guessed.
 - **Role references [decided: via relationship facts]**: "my dentist" /
   "my boss" resolve through the relationship fact (`dentist_of`,
   `employer`) **valid at the note's time** — never static aliases, so a

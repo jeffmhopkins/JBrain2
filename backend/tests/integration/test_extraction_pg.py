@@ -612,6 +612,163 @@ async def test_self_naming_fact_aliases_owner_so_later_bare_name_links_to_me(
     assert age_fact and age_fact[0].entity_id == me.id
 
 
+async def _seed_provisional_namesake(maker: async_sessionmaker[AsyncSession], name: str) -> str:
+    """A prior note that minted `name` as its own provisional person — the
+    entity a later self-naming declaration collides with. Kept on a unique
+    name so the shared graph in this non-truncating file holds exactly one."""
+    note = await make_note(maker, domain="general", body=f"{name} stopped by.")
+    payload = {
+        "title": "Visit",
+        "tags": ["visit", "social", "note"],
+        "mentions": [{"name": name, "kind": "Person", "surface_text": name}],
+        "facts": [
+            {
+                "predicate": "visited", "qualifier": "", "kind": "event",
+                "statement": f"{name} stopped by.", "value_json": None,
+                "assertion": "asserted", "entity_ref": name, "object_entity_ref": None,
+                "temporal": None, "domain": "general", "confidence": 0.9,
+            }
+        ],
+        "temporal_tokens": [],
+    }  # fmt: skip
+    await analyzer(maker, [json.dumps(payload)]).analyze_note({"note_id": note})
+    rs = await rows(maker, OWNER, "SELECT id FROM app.entities WHERE canonical_name = :n", n=name)
+    return str(rs[0].id)
+
+
+def _declaration_payload(declarer: str, full_name: str) -> dict[str, Any]:
+    """`declarer` states that their full name is `full_name` — a self-naming
+    fact on a NON-owner entity, so the test never collides on the singleton
+    Me.fullName (which would leak an attribute_collision into the shared graph)."""
+    return {
+        "title": "Full name",
+        "tags": ["identity", "name", "person"],
+        "mentions": [{"name": declarer, "kind": "Person", "surface_text": declarer}],
+        "facts": [
+            {
+                "predicate": "fullName", "qualifier": "", "kind": "attribute",
+                "statement": f"{declarer}'s full name is {full_name}.",
+                "value_json": {"name": full_name},
+                "assertion": "asserted", "entity_ref": declarer, "object_entity_ref": None,
+                "temporal": None, "domain": "general", "confidence": 0.97,
+            }
+        ],
+        "temporal_tokens": [],
+    }  # fmt: skip
+
+
+async def _open_merge_proposals(
+    maker: async_sessionmaker[AsyncSession], a: str, b: str
+) -> list[Any]:
+    return await rows(
+        maker,
+        OWNER,
+        "SELECT payload->>'entity_a' AS a, payload->>'entity_b' AS b FROM app.review_items"
+        " WHERE kind = 'merge_proposal' AND status = 'open'"
+        " AND payload->>'entity_a' IN (:x, :y) AND payload->>'entity_b' IN (:x, :y)",
+        x=a,
+        y=b,
+    )
+
+
+async def test_declared_name_collision_files_one_merge_proposal(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """When a self-naming fact's name already keys a DIFFERENT entity, the alias
+    is NOT widened across both — the collision becomes a single merge_proposal
+    (the older, more-anchored side as survivor), and re-analysis does not
+    multiply it (docs/ANALYSIS.md "Alias resolution & separation")."""
+    full_name = "Wilhelmina Garcia Okonkwo"
+    declarer = "Mina O."
+    namesake = await _seed_provisional_namesake(maker, full_name)
+    declare = await make_note(
+        maker, domain="general", body=f"{declarer}'s full name is {full_name}."
+    )
+    await analyzer(maker, [json.dumps(_declaration_payload(declarer, full_name))]).analyze_note(
+        {"note_id": declare}
+    )
+    declarer_id = str(
+        (
+            await rows(
+                maker, OWNER, "SELECT id FROM app.entities WHERE canonical_name = :n", n=declarer
+            )
+        )[0].id
+    )
+
+    proposals = await _open_merge_proposals(maker, namesake, declarer_id)
+    assert len(proposals) == 1
+    # entity_a is the survivor: the older namesake outranks the newer declarer.
+    assert proposals[0].a == namesake and proposals[0].b == declarer_id
+    # The name was NOT aliased onto the declarer — the merge decides identity.
+    declarer_aliases = {
+        r.alias_norm
+        for r in await rows(
+            maker,
+            OWNER,
+            "SELECT alias_norm FROM app.entity_aliases WHERE entity_id = :e",
+            e=declarer_id,
+        )
+    }
+    assert full_name.casefold() not in declarer_aliases
+
+    # Re-analyzing the same declaration must not file a second card.
+    await analyzer(maker, [json.dumps(_declaration_payload(declarer, full_name))]).analyze_note(
+        {"note_id": declare}
+    )
+    assert len(await _open_merge_proposals(maker, namesake, declarer_id)) == 1
+
+
+async def test_rejected_merge_is_never_re_proposed(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """A distinct_from edge (a rejected merge) is honoured: a later note
+    repeating the same self-naming collision files no new proposal."""
+    full_name = "Anselm Beauregard Fitzwilliam"
+    declarer = "Ansel B."
+    namesake = await _seed_provisional_namesake(maker, full_name)
+    first = await make_note(maker, domain="general", body=f"{declarer}'s full name is {full_name}.")
+    await analyzer(maker, [json.dumps(_declaration_payload(declarer, full_name))]).analyze_note(
+        {"note_id": first}
+    )
+    declarer_id = str(
+        (
+            await rows(
+                maker, OWNER, "SELECT id FROM app.entities WHERE canonical_name = :n", n=declarer
+            )
+        )[0].id
+    )
+    assert len(await _open_merge_proposals(maker, namesake, declarer_id)) == 1
+
+    # Simulate the human rejecting the merge: resolve the card + write the
+    # permanent distinct_from edge the reject handler would.
+    lo, hi = sorted((namesake, declarer_id))
+    async with scoped_session(maker, OWNER) as s:
+        await s.execute(
+            text(
+                "UPDATE app.review_items SET status = 'resolved', resolved_at = now()"
+                " WHERE kind = 'merge_proposal' AND status = 'open'"
+                " AND payload->>'entity_a' IN (:x, :y) AND payload->>'entity_b' IN (:x, :y)"
+            ),
+            {"x": namesake, "y": declarer_id},
+        )
+        await s.execute(
+            text(
+                "INSERT INTO app.entity_distinctions (id, entity_a, entity_b, reason, domain_code)"
+                " VALUES (gen_random_uuid(), :a, :b, 'merge rejected', 'general')"
+            ),
+            {"a": lo, "b": hi},
+        )
+
+    second = await make_note(
+        maker, domain="general", body=f"{declarer}'s full name is {full_name}."
+    )
+    await analyzer(maker, [json.dumps(_declaration_payload(declarer, full_name))]).analyze_note(
+        {"note_id": second}
+    )
+    # No new open card — the negative edge blocked the re-proposal.
+    assert await _open_merge_proposals(maker, namesake, declarer_id) == []
+
+
 async def test_reextraction_dropping_a_relationship_retracts_its_inverse(
     maker: async_sessionmaker[AsyncSession],
 ) -> None:
