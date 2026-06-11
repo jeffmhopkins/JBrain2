@@ -813,3 +813,64 @@ async def test_declared_name_near_duplicate_files_merge_proposal(
         maker, "SELECT count(*) AS n FROM app.entities WHERE status != 'merged'"
     )
     assert live[0].n == 2
+
+
+def _declare_given_name_extraction() -> str:
+    """Declares only a GIVEN name (a first-name component) on 'Sammy'."""
+    return json.dumps(
+        {
+            "title": "Sammy",
+            "tags": ["neighbor"],
+            "mentions": [{"name": "Sammy", "kind": "Person", "surface_text": "Sammy"}],
+            "facts": [
+                {
+                    "predicate": "name.given",
+                    "qualifier": "",
+                    "kind": "attribute",
+                    "statement": "Sammy's first name is Celine.",
+                    "value_json": {"value": "Celine"},
+                    "assertion": "asserted",
+                    "entity_ref": "Sammy",
+                    "object_entity_ref": None,
+                    "temporal": None,
+                    "domain": "general",
+                    "confidence": 1.0,
+                }
+            ],
+            "temporal_tokens": [],
+        }
+    )
+
+
+async def test_given_name_does_not_propose_a_merge(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """A first-name component must NOT seed a near-duplicate merge proposal —
+    that is the bare-first-name fan-out ANALYSIS rejected. Only full names do."""
+    await seed_entity(maker, "Celine Hopkins")
+    orth = [0.0, 0.0, 1.0] + [0.0] * 381
+    embedder = FakeEmbed([("Sammy", orth), ("Celine", _vec(0.2)), ("Celine Hopkins", _vec(0.2))])
+    await run_note(
+        maker,
+        FakeLlmClient([_declare_given_name_extraction()]),
+        tasks=BOTH_TASKS,
+        embedder=embedder,
+    )
+    assert await fetch_rows(maker, "SELECT 1 FROM app.review_items") == []
+
+
+async def test_near_duplicate_across_subjects_is_never_proposed(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """A subject-bearing near match is dropped: proposing it would put a
+    cross-subject fact repoint one click away (a firewall leak)."""
+    await seed_entity(maker, "Celine Hopkins", with_subject=True)
+    orth = [0.0, 0.0, 1.0] + [0.0] * 381
+    embedder = FakeEmbed(
+        [("Sammy", orth), ("Celine Kitina Hopkins", _vec(0.2)), ("Celine Hopkins", _vec(0.2))]
+    )
+    await run_note(
+        maker, FakeLlmClient([_declare_name_extraction()]), tasks=BOTH_TASKS, embedder=embedder
+    )
+    # Same-name, distinct-subject people must NOT become a merge card.
+    assert await fetch_rows(maker, "SELECT 1 FROM app.review_items") == []

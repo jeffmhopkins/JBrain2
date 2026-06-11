@@ -25,6 +25,7 @@ from jbrain.ingest import ocr
 from jbrain.ingest.ocr import OcrPipeline
 from jbrain.ingest.pipeline import IngestPipeline
 from jbrain.llm import build_router
+from jbrain.schema import get_registry
 from jbrain.settings_store import SqlSettingsStore
 from jbrain.storage import FsBlobStore
 from jbrain.usage import SqlUsageRecorder
@@ -137,6 +138,10 @@ async def run() -> None:
     analyzer = AnalysisPipeline(
         maker, router, embedder=TeiEmbedClient(settings.embed_url), embed_model=settings.embed_model
     )
+    # Eager-load the schema registry so a missing/malformed defs/ fails the
+    # worker LOUDLY at startup — never mid-note, where the SchemaError would
+    # otherwise re-bill the extraction call on every retry.
+    get_registry()
     handlers: dict[str, Handler] = {
         "ingest_note": pipeline.ingest_note,
         "embed_note": embedder.embed_note,

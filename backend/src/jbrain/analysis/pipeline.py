@@ -92,6 +92,7 @@ from jbrain.models.analysis import (
 )
 from jbrain.models.notes import Attachment, Chunk, Note
 from jbrain.queue import SYSTEM_CTX, PermanentJobError
+from jbrain.schema import SchemaError
 
 log = structlog.get_logger()
 
@@ -100,6 +101,13 @@ _DB_LINK_METHODS = frozenset({"exact_alias", "embedding", "llm", "human"})
 # Below embedding auto-link confidence on purpose: a cheap-model verdict over
 # near-tie candidates is real evidence, not certainty.
 LLM_LINK_CONFIDENCE = 0.8
+
+# Only FULL declared names seed a near-duplicate merge PROPOSAL. A given/family
+# component, a preferred name, a nickname, or a bare `name` (pet decomposition)
+# is short and low-signal — proposing merges on those resurrects the
+# bare-first-name fan-out ANALYSIS rejected (docs/ANALYSIS.md "Same-name
+# coexistence"). Canonical spellings only; parse-time normalization already ran.
+_NEAR_DUP_PREDICATES = frozenset({"name.legal", "name.maiden", "name.aka"})
 
 
 def local_anchor(captured_at: datetime, tz_offset_minutes: int | None) -> datetime:
@@ -217,9 +225,12 @@ class AnalysisPipeline:
                 result.parsed,
                 anchor=local_anchor(captured_at, tz_offset) if tz_offset is not None else None,
             )
-        except (LlmBadResponseError, ExtractionError) as exc:
+        except (LlmBadResponseError, ExtractionError, SchemaError) as exc:
             # The adapter already spent its one re-ask: retrying the job would
-            # just re-bill the same garbage. Nothing was written.
+            # just re-bill the same garbage. A SchemaError (the registry the
+            # parser normalizes through is missing/malformed) is config drift,
+            # not transient — retrying re-runs the paid extraction for nothing,
+            # so it is permanent too. Nothing was written.
             raise PermanentJobError(f"note.extract unusable for note {note_id}: {exc}") from exc
 
         provider, model = self._router.spec("note.extract", NOTE_EXTRACT_STRENGTH)
@@ -666,12 +677,16 @@ class AnalysisPipeline:
             added = await register_declared_alias(session, entity.id, name)
             if added is not None:
                 log.info("analysis.alias_declared", entity_id=str(entity.id), alias=added)
-                # The name is new on this entity, but it may be a near (not
-                # exact) duplicate of a different one — the same-person signal
-                # the exact collision below cannot see. Propose, never link.
-                await self._propose_near_duplicate(
-                    session, entity.id, name, note_id, note_domain, chunks
-                )
+                # A FULL declared name may be a near (not exact) duplicate of a
+                # different entity — the same-person signal the exact collision
+                # below cannot see. Propose, never link. Restricted to full-name
+                # predicates so a first name / nickname / pet name never fans a
+                # merge card out across same-named people (docs/ANALYSIS.md
+                # "Same-name coexistence").
+                if fact.predicate in _NEAR_DUP_PREDICATES:
+                    await self._propose_near_duplicate(
+                        session, entity, name, note_id, note_domain, chunks
+                    )
                 continue
             other = await alias_owner(session, name, exclude=entity.id)
             if other is not None:
@@ -682,20 +697,21 @@ class AnalysisPipeline:
     async def _propose_near_duplicate(
         self,
         session: AsyncSession,
-        entity_id: uuid.UUID,
+        entity: ResolvedEntity,
         name: str,
         note_id: uuid.UUID,
         note_domain: str,
         chunks: list[_ChunkRef],
     ) -> None:
-        """File a merge proposal when a freshly declared name strongly embeds to
-        a DIFFERENT same-kind entity. Embedder-gated (skipped without it, so the
-        harness is unaffected) and proposal-only — `_propose_merge` honours the
+        """File a merge proposal when a freshly declared full name strongly
+        embeds to a DIFFERENT same-kind entity. Embedder-gated (skipped without
+        it, so the harness is unaffected) and proposal-only — `near_duplicate_entity`
+        drops cross-subject candidates, and `_propose_merge` honours the
         distinct_from edge and dedupes across re-analysis."""
         if self._embedder is None:
             return
         kind = await session.scalar(
-            text("SELECT kind FROM app.entities WHERE id = :id"), {"id": str(entity_id)}
+            text("SELECT kind FROM app.entities WHERE id = :id"), {"id": str(entity.id)}
         )
         dup = await near_duplicate_entity(
             session,
@@ -704,10 +720,11 @@ class AnalysisPipeline:
             domain=note_domain,
             embedder=self._embedder,
             embed_model=self._embed_model,
-            exclude=entity_id,
+            exclude=entity.id,
+            exclude_subject=entity.subject_id,
         )
         if dup is not None:
-            await self._propose_merge(session, entity_id, dup, name, note_id, note_domain, chunks)
+            await self._propose_merge(session, entity.id, dup, name, note_id, note_domain, chunks)
 
     async def _propose_merge(
         self,

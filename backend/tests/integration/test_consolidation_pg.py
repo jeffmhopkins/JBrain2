@@ -83,15 +83,17 @@ async def _seed_fact(
     entity_id: uuid.UUID,
     note_id: uuid.UUID,
     predicate: str,
+    status: str = "active",
+    pinned: bool = False,
 ) -> None:
     async with scoped_session(maker, SYSTEM_CTX) as s:
         await s.execute(
             text(
                 "INSERT INTO app.facts (id, entity_id, predicate, qualifier, kind, statement,"
-                " assertion, reported_at, temporal_precision, status, note_id, extractor,"
+                " assertion, reported_at, temporal_precision, status, pinned, note_id, extractor,"
                 " prompt_version, domain_code)"
                 " VALUES (:id, :eid, :pred, '', 'attribute', :stmt, 'asserted', :ts, 'unknown',"
-                " 'active', :nid, 'test', 'test-v1', 'general')"
+                " :status, :pinned, :nid, 'test', 'test-v1', 'general')"
             ),
             {
                 "id": str(uuid.uuid4()),
@@ -99,6 +101,8 @@ async def _seed_fact(
                 "pred": predicate,
                 "stmt": f"{predicate} fact",
                 "ts": NOTE_TIME,
+                "status": status,
+                "pinned": pinned,
                 "nid": str(note_id),
             },
         )
@@ -164,3 +168,33 @@ async def test_distinct_entities_are_independent(
     assert counts == {"renamed": 1, "collisions": 1}
     assert await _predicates(maker, e1) == {"name.legal"}
     assert await _predicates(maker, e2) == {"name.legal", "legalName"}
+
+
+async def test_pinned_drift_is_never_rewritten(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """A pinned fact is human history (CLAUDE.md #7) — the sweep must not touch
+    its identity-key address, and it is not counted as a collision."""
+    note, entity = await _seed(maker)
+    await _seed_fact(maker, entity_id=entity, note_id=note, predicate="legalName", pinned=True)
+    async with scoped_session(maker, SYSTEM_CTX) as s:
+        counts = await consolidate_predicates(s)
+    assert counts == {"renamed": 0, "collisions": 0}
+    assert await _predicates(maker, entity) == {"legalName"}
+
+
+async def test_superseded_twin_does_not_strand_the_active_drift_chain(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """A dead/superseded fact on the canonical address must NOT block the move —
+    otherwise the active drift chain is stranded and the history forks."""
+    note, entity = await _seed(maker)
+    await _seed_fact(maker, entity_id=entity, note_id=note, predicate="name.legal",
+                     status="superseded")  # fmt: skip
+    await _seed_fact(maker, entity_id=entity, note_id=note, predicate="legalName")
+    async with scoped_session(maker, SYSTEM_CTX) as s:
+        counts = await consolidate_predicates(s)
+    # The active drift fact moves onto name.legal; the superseded tombstone did
+    # not count as a live collision.
+    assert counts == {"renamed": 1, "collisions": 0}
+    assert await _predicates(maker, entity) == {"name.legal"}

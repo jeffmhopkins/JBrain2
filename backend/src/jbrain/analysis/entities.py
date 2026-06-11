@@ -404,6 +404,7 @@ async def _embedding_candidates(
                   AND e.domain_code IN (:dom, 'general')
                   AND (:hint = '' OR lower(e.kind) = :hint)
                 GROUP BY e.id, e.canonical_name, e.summary
+                ORDER BY e.id
                 LIMIT :lim
                 """
             ),
@@ -472,6 +473,7 @@ async def near_duplicate_entity(
     embedder: EmbedClient,
     embed_model: str,
     exclude: uuid.UUID,
+    exclude_subject: uuid.UUID | None,
 ) -> uuid.UUID | None:
     """The id of an entity whose name+aliases vector is a STRONG match for
     `name` (other than `exclude`), or None.
@@ -479,8 +481,14 @@ async def near_duplicate_entity(
     Powers declared-name merge *proposals*: a self-declared name that is a near
     — but not exact — match for a different entity is the same-person signal the
     exact-alias collision check misses ("Celine Kitina Hopkins" vs the existing
-    "Celine Hopkins"). It only ever PROPOSES (the caller files a review card);
-    a near match is never an auto-link (docs/ANALYSIS.md "Alias resolution")."""
+    "Celine Hopkins"). It only ever PROPOSES (the caller files a review card); a
+    near match is never an auto-link (docs/ANALYSIS.md "Alias resolution").
+
+    Firewall: a subject-bearing candidate is proposed only against the SAME
+    subject — cross-subject misattribution is a leak (CLAUDE.md #3), so a near
+    match into a DIFFERENT subject is dropped, never surfaced as a one-click
+    merge. (Candidate scope is same-domain-or-general via `_embedding_candidates`
+    — narrower than the deliberately domain-blind exact-collision path.)"""
     scored = await _embedding_candidates(
         session,
         name,
@@ -489,9 +497,12 @@ async def near_duplicate_entity(
         embedder=embedder,
         embed_model=embed_model,
     )
-    for cand, sim in scored:
-        if cand.id != exclude and sim >= _EMBED_STRONG:
-            return cand.id
+    for cand, sim in scored:  # sorted strongest-first
+        if cand.id == exclude:
+            continue
+        if cand.subject_id is not None and cand.subject_id != exclude_subject:
+            continue  # cross-subject: never propose
+        return cand.id if sim >= _EMBED_STRONG else None
     return None
 
 

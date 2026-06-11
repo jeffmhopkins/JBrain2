@@ -52,7 +52,6 @@ async def consolidate_predicates(session: AsyncSession) -> dict[str, int]:
     plan = plan_renames({r.predicate for r in rows}, get_registry())
 
     renamed = 0
-    collisions = 0
     # Sorted for determinism: when two drift spellings map to the SAME canonical
     # (legalName + legal_name -> name.legal), the first claims the key and the
     # second is left as a collision rather than merging two chains silently.
@@ -61,22 +60,40 @@ async def consolidate_predicates(session: AsyncSession) -> dict[str, int]:
             text(
                 "UPDATE app.facts f SET predicate = :canon"
                 " WHERE f.predicate = :old"
+                # Pinned facts are human history and never enter the sweep
+                # (CLAUDE.md #7, docs/ANALYSIS.md "Reprocessing"); a retracted
+                # row is dead and not worth an address.
+                "   AND f.pinned = false"
+                "   AND f.status <> 'retracted'"
+                # Only a LIVE canonical twin blocks the move. A superseded/dead
+                # tombstone on the canonical address must NOT strand the active
+                # drift chain there — that would fork the property's history,
+                # the exact harm this sweep exists to prevent.
                 "   AND NOT EXISTS ("
                 "     SELECT 1 FROM app.facts g"
                 "     WHERE g.entity_id = f.entity_id"
                 "       AND g.subject_id IS NOT DISTINCT FROM f.subject_id"
                 "       AND g.qualifier = f.qualifier"
                 "       AND g.predicate = :canon"
+                "       AND g.status IN ('active', 'pending_review')"
                 "   )"
             ),
             {"canon": canonical, "old": old},
         )
         renamed += cast(CursorResult[Any], result).rowcount or 0
-        # Rows still carrying the drift spelling could not move (the canonical
-        # key was occupied) — that is a collision for the merge machinery.
+
+    # A collision is a LIVE, non-pinned drift row that could not move because a
+    # live canonical twin holds its address — the merge machinery's job. Counted
+    # after all moves so a row blocked only by a sibling drift spelling that
+    # sorted first is still surfaced, but retracted/pinned rows never inflate it.
+    collisions = 0
+    for old in plan:
         collisions += (
             await session.execute(
-                text("SELECT count(*) FROM app.facts WHERE predicate = :old"),
+                text(
+                    "SELECT count(*) FROM app.facts"
+                    " WHERE predicate = :old AND pinned = false AND status <> 'retracted'"
+                ),
                 {"old": old},
             )
         ).scalar_one()
