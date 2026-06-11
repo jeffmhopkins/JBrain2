@@ -54,10 +54,10 @@ OCR_CONFIDENCE = 0.7
 DESCRIPTION_CONFIDENCE = 0.6
 EXTRACT_CONFIDENCE = {"ocr": OCR_CONFIDENCE, "caption": DESCRIPTION_CONFIDENCE}
 
-# OCR of a dense page can outweigh the image tokens; descriptions are a few
-# sentences.
+# OCR of a dense page can outweigh the image tokens; a salient extraction of
+# a dense image runs longer than a caption but still well short of a page.
 OCR_MAX_TOKENS = 8192
-DESCRIPTION_MAX_TOKENS = 512
+DESCRIPTION_MAX_TOKENS = 1024
 
 OCR_SYSTEM = (
     "You transcribe text from one image. Transcribe ALL legible text "
@@ -69,13 +69,18 @@ OCR_SYSTEM = (
 )
 
 DESCRIPTION_SYSTEM = (
-    "You describe one image for a personal knowledge index. A separate "
-    "pass transcribes its text — do not transcribe. Describe what the "
-    "image shows that is worth knowing: objects, people, places, the "
-    "context any visible text appears in, visible states or conditions, "
-    "and the relationships you can see between them. Write 2-5 plain "
-    "sentences. Describe only what is visible — never speculate beyond "
-    "it. Output plain text only — no preamble, no markdown."
+    "You extract the salient information from one image for a personal "
+    "knowledge index. A separate pass transcribes its text verbatim — do "
+    "not transcribe, but do state what the text means together with what "
+    "the visuals show. Write the information itself, not a description of "
+    "the medium: never open with phrases like 'an image of' or 'a "
+    "screenshot showing', and ignore styling, layout, and UI chrome. "
+    "Capture every detail worth remembering: people and their names, "
+    "objects, places, dates and times, quantities and amounts, "
+    "identifiers, visible states or conditions, events, and the "
+    "relationships between them. Write one plain sentence per distinct "
+    "piece of information. State only what the image actually supports — "
+    "never speculate. Output plain text only — no preamble, no markdown."
 )
 
 
