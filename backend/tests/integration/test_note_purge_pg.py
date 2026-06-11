@@ -400,3 +400,39 @@ async def test_deleting_never_analyzed_note_is_a_clean_noop(
     assert row.deleted_at is not None
     # Already-deleted (or unknown) reads as not found, same as before.
     assert not await repo.delete_note(OWNER, note)
+
+
+async def test_backfill_sweeps_preexisting_orphans(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """Notes deleted BEFORE the cascade existed left orphaned artifacts —
+    including resolved review history (the owner's field report). The worker
+    startup sweep purges them; a second run is a no-op."""
+    from jbrain.analysis.purge import backfill_deleted_note_artifacts
+
+    note = await seed_note(maker)
+    entity = await seed_entity(maker, "Orphan Subject", status="provisional")
+    _, token = await seed_graph_extras(maker, note, entity)
+    await seed_fact(maker, note, entity, temporal_token_id=token)
+    stray = await seed_item(
+        maker, "ambiguous_mention", {"name": "Stray", "note_id": note}, status="resolved"
+    )
+    # Simulate a pre-cascade deletion: soft-delete the note row directly,
+    # bypassing repo.delete_note so the purge never ran.
+    async with scoped_session(maker, OWNER) as s:
+        await s.execute(
+            text("UPDATE app.notes SET deleted_at = now() WHERE id = :id"), {"id": note}
+        )
+
+    assert await backfill_deleted_note_artifacts(maker) == 1
+
+    for table in ("facts", "entity_mentions", "temporal_tokens", "note_analysis"):
+        assert (
+            await count(maker, f"SELECT count(*) FROM app.{table} WHERE note_id = :id", id=note)
+            == 0
+        )
+    assert await count(maker, "SELECT count(*) FROM app.review_items WHERE id = :id", id=stray) == 0
+    # Provisional entity with no surviving references goes too.
+    assert await count(maker, "SELECT count(*) FROM app.entities WHERE id = :id", id=entity) == 0
+    # Idempotent: the swept note no longer matches any candidate predicate.
+    assert await backfill_deleted_note_artifacts(maker) == 0

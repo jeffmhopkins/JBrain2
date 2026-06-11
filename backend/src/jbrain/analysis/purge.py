@@ -23,7 +23,7 @@ from datetime import datetime
 from typing import Any
 
 from sqlalchemy import bindparam, delete, select, text, update
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import aliased
 
 from jbrain.models.analysis import (
@@ -215,3 +215,37 @@ async def _delete_orphaned_entities(session: AsyncSession, candidates: set[uuid.
             ~select(tombstone.id).where(tombstone.merged_into_id == Entity.id).exists(),
         )
     )
+
+
+async def backfill_deleted_note_artifacts(
+    maker: async_sessionmaker[AsyncSession],
+) -> int:
+    """One-shot startup sweep: purge artifacts of notes deleted BEFORE the
+    cascade existed. Idempotent — a fully purged note matches no candidate
+    predicate — so running it every worker boot costs one cheap query once
+    the backlog is clear."""
+    from jbrain.db.session import scoped_session
+    from jbrain.queue import SYSTEM_CTX
+
+    candidate_sql = text(
+        """
+        SELECT n.id FROM app.notes n
+        WHERE n.deleted_at IS NOT NULL AND (
+            EXISTS (SELECT 1 FROM app.facts f WHERE f.note_id = n.id)
+            OR EXISTS (SELECT 1 FROM app.entity_mentions m WHERE m.note_id = n.id)
+            OR EXISTS (SELECT 1 FROM app.temporal_tokens t WHERE t.note_id = n.id)
+            OR EXISTS (SELECT 1 FROM app.note_analysis a WHERE a.note_id = n.id)
+            OR EXISTS (
+                SELECT 1 FROM app.review_items r
+                WHERE r.payload->>'note_id' = n.id::text
+            )
+        )
+        """
+    )
+    async with scoped_session(maker, SYSTEM_CTX) as session:
+        candidates = [row[0] for row in (await session.execute(candidate_sql)).all()]
+    for note_id in candidates:
+        async with scoped_session(maker, SYSTEM_CTX) as session:
+            await purge_note_artifacts(session, uuid.UUID(str(note_id)))
+            await session.commit()
+    return len(candidates)

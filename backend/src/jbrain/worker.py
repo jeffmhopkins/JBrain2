@@ -16,6 +16,7 @@ import structlog
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from jbrain import queue
+from jbrain.analysis import purge
 from jbrain.analysis.pipeline import AnalysisPipeline
 from jbrain.config import get_settings
 from jbrain.embed import NoteEmbedder, TeiEmbedClient
@@ -74,8 +75,14 @@ async def run_loop(maker: async_sessionmaker[AsyncSession], handlers: dict[str, 
             if not backfilled:
                 ingests = await queue.backfill_pending_notes(maker, queue.SYSTEM_CTX)
                 embeds = await queue.backfill_unembedded_notes(maker, queue.SYSTEM_CTX)
+                # Notes deleted before the purge cascade shipped left orphaned
+                # derived artifacts (incl. resolved review history quoting
+                # their text); sweep them once per boot.
+                purged = await purge.backfill_deleted_note_artifacts(maker)
                 backfilled = True
-                log.info("worker.backfill", ingest_jobs=ingests, embed_jobs=embeds)
+                log.info(
+                    "worker.backfill", ingest_jobs=ingests, embed_jobs=embeds, purged_notes=purged
+                )
             if await process_one(maker, handlers):
                 continue
         except asyncio.CancelledError:
