@@ -1,0 +1,384 @@
+[
+  {
+    "name": "org_corporation_works_for",
+    "body": "I've been at Globex Corporation for three years now. Good benefits, brutal commute.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "mentions": ["Globex"],
+      "mention_kind": [
+        {"name": "Globex", "kind": ["Organization", "Corporation", "Company", "Business"]}
+      ],
+      "not_person": ["Globex"],
+      "edges": [
+        {"predicate": "worksFor", "object": "Globex"}
+      ]
+    }
+  },
+  {
+    "name": "org_startup_founded",
+    "body": "Priya and I co-founded Luminary Labs out of her garage two years ago. We just closed a seed round.",
+    "domain": "finance",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "mentions": ["Luminary Labs"],
+      "mention_kind": [
+        {"name": "Luminary Labs", "kind": ["Organization", "Corporation", "Company", "Business"]}
+      ],
+      "not_person": ["Luminary Labs"],
+      "edges": [
+        {"predicate": "co_founder", "object": "Luminary"}
+      ]
+    }
+  },
+  {
+    "name": "org_university_attended",
+    "body": "Marcus graduated from Northwestern University last May and landed a job in consulting.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "mentions": ["Northwestern University"],
+      "mention_kind": [
+        {"name": "Northwestern", "kind": ["Organization", "EducationalOrganization", "CollegeOrUniversity", "University", "School"]}
+      ],
+      "not_person": ["Northwestern University"]
+    }
+  },
+  {
+    "name": "org_hospital_treated_at",
+    "body": "Discharged from Mayo Clinic yesterday after the procedure. Follow-up in six weeks.",
+    "domain": "health",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "mentions": ["Mayo Clinic"],
+      "mention_kind": [
+        {"name": "Mayo Clinic", "kind": ["Organization", "Hospital", "MedicalOrganization", "HealthcareOrganization"]}
+      ],
+      "not_person": ["Mayo Clinic"]
+    }
+  },
+  {
+    "name": "org_government_agency_faa",
+    "body": "The FAA approved the maintenance waiver today. Should be back in the air by Thursday.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "mentions": ["FAA"],
+      "mention_kind": [
+        {"name": "FAA", "kind": ["Organization", "GovernmentOrganization", "GovernmentOffice", "GovernmentAgency"]}
+      ],
+      "not_person": ["FAA"]
+    }
+  },
+  {
+    "name": "org_city_council_member",
+    "body": "Leila Nasser was just elected to the City Council — she'll be representing the east side district.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "person_mentions": ["Leila Nasser"],
+      "mentions": ["City Council"],
+      "mention_kind": [
+        {"name": "City Council", "kind": ["Organization", "GovernmentOrganization", "LocalGovernment", "GovernmentOffice"]}
+      ],
+      "not_person": ["City Council"],
+      "edges": [
+        {"predicate": "member", "object": "City Council"}
+      ]
+    }
+  },
+  {
+    "name": "org_nonprofit_volunteer",
+    "body": "Started volunteering with Habitat for Humanity on weekends. Good people, hard work.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "mentions": ["Habitat for Humanity"],
+      "mention_kind": [
+        {"name": "Habitat for Humanity", "kind": ["Organization", "NGO", "NonProfit", "VolunteerOrganization"]}
+      ],
+      "not_person": ["Habitat for Humanity"]
+    }
+  },
+  {
+    "name": "org_sports_team_fan",
+    "body": "The Bulls are on a four-game winning streak. Season might actually go somewhere this year.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "mentions": ["Bulls"],
+      "mention_kind": [
+        {"name": "Bulls", "kind": ["Organization", "SportsTeam", "SportsOrganization"]}
+      ],
+      "not_person": ["Bulls"]
+    }
+  },
+  {
+    "name": "org_band_concert",
+    "body": "Caught Radiohead at the United Center last night — incredible setlist, played everything from OK Computer.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "mentions": ["Radiohead"],
+      "mention_kind": [
+        {"name": "Radiohead", "kind": ["Organization", "MusicGroup", "PerformingGroup", "Band"]}
+      ],
+      "not_person": ["Radiohead"]
+    }
+  },
+  {
+    "name": "org_rotary_club_member",
+    "body": "Joined the Rotary Club last month at Tomasz's recommendation. First meeting was this morning.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "person_mentions": ["Tomasz"],
+      "mentions": ["Rotary Club"],
+      "mention_kind": [
+        {"name": "Rotary Club", "kind": ["Organization", "Club", "CivicOrganization"]}
+      ],
+      "not_person": ["Rotary Club"],
+      "edges": [
+        {"predicate": "member", "object": "Rotary Club"}
+      ]
+    }
+  },
+  {
+    "name": "org_book_club_informal",
+    "body": "Our book club picked Pachinko for next month. Elena is hosting.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "person_mentions": ["Elena"],
+      "not_person": ["book club"]
+    }
+  },
+  {
+    "name": "org_named_family_household",
+    "body": "The Hollis family moved in next door last weekend. Three kids, two dogs, very loud.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "mentions": ["Hollis"],
+      "not_person": ["Hollis family", "Hollis"]
+    }
+  },
+  {
+    "name": "org_committee_board_member",
+    "body": "Victor Lam was appointed to the board of directors at Stratos Energy last quarter.",
+    "domain": "finance",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "person_mentions": ["Victor Lam"],
+      "mentions": ["Stratos Energy"],
+      "mention_kind": [
+        {"name": "Stratos Energy", "kind": ["Organization", "Corporation", "Company", "Business", "EnergyCompany"]}
+      ],
+      "not_person": ["Stratos Energy"],
+      "edges": [
+        {"predicate": "memberOf", "object": "Stratos"}
+      ]
+    }
+  },
+  {
+    "name": "org_generic_marketing_team",
+    "body": "The marketing team pushed back on the launch date again. Third time this quarter.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "not_person": ["marketing team"]
+    }
+  },
+  {
+    "name": "org_generic_hiring_committee",
+    "body": "The hiring committee met this afternoon and agreed to extend an offer to the second candidate.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "not_person": ["hiring committee"]
+    }
+  },
+  {
+    "name": "org_ngo_donation",
+    "body": "Set up a monthly donation to Médecins Sans Frontières. Long overdue.",
+    "domain": "finance",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "mentions": ["Médecins Sans Frontières"],
+      "mention_kind": [
+        {"name": "Médecins Sans Frontières", "kind": ["Organization", "NGO", "NonProfit", "MedicalOrganization"]}
+      ],
+      "not_person": ["Médecins Sans Frontières"]
+    }
+  },
+  {
+    "name": "org_bank_account",
+    "body": "Called Chase Bank to dispute a charge on my account. Took 45 minutes but they reversed it.",
+    "domain": "finance",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "mentions": ["Chase Bank"],
+      "mention_kind": [
+        {"name": "Chase Bank", "kind": ["Organization", "Corporation", "Company", "Business", "FinancialService", "BankOrCreditUnion"]}
+      ],
+      "not_person": ["Chase Bank"]
+    }
+  },
+  {
+    "name": "org_clinic_first_person",
+    "body": "Had my annual physical at Northside Family Clinic this morning. All good.",
+    "domain": "health",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "mentions": ["Northside Family Clinic"],
+      "mention_kind": [
+        {"name": "Northside Family Clinic", "kind": ["Organization", "MedicalClinic", "MedicalOrganization", "HealthcareOrganization", "Clinic"]}
+      ],
+      "not_person": ["Northside Family Clinic"]
+    }
+  },
+  {
+    "name": "org_school_third_person",
+    "body": "Nadia's daughter Sofia was accepted into Lakeside Academy. Starting in September.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "person_mentions": ["Nadia", "Sofia"],
+      "mentions": ["Lakeside Academy"],
+      "mention_kind": [
+        {"name": "Lakeside Academy", "kind": ["Organization", "EducationalOrganization", "School", "CollegeOrUniversity"]}
+      ],
+      "not_person": ["Lakeside Academy"]
+    }
+  },
+  {
+    "name": "org_person_name_like_company",
+    "body": "Had a meeting with Morgan Stanley about rolling over the 401k. Worth doing before year-end.",
+    "domain": "finance",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "mentions": ["Morgan Stanley"],
+      "mention_kind": [
+        {"name": "Morgan Stanley", "kind": ["Organization", "Corporation", "Company", "Business", "FinancialService"]}
+      ],
+      "not_person": ["Morgan Stanley"]
+    }
+  },
+  {
+    "name": "org_government_state_agency",
+    "body": "The EPA issued a new ruling on emissions standards this week. Going to complicate things for the plant.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "mentions": ["EPA"],
+      "mention_kind": [
+        {"name": "EPA", "kind": ["Organization", "GovernmentOrganization", "GovernmentAgency", "GovernmentOffice"]}
+      ],
+      "not_person": ["EPA"]
+    }
+  },
+  {
+    "name": "org_sports_team_plays_for",
+    "body": "Kofi Diallo signed with the Golden State Warriors for next season. Surprised everyone.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "person_mentions": ["Kofi Diallo"],
+      "mentions": ["Golden State Warriors"],
+      "mention_kind": [
+        {"name": "Golden State Warriors", "kind": ["Organization", "SportsTeam", "SportsOrganization"]}
+      ],
+      "not_person": ["Golden State Warriors"],
+      "edges": [
+        {"predicate": "memberOf", "object": "Golden State"}
+      ]
+    }
+  },
+  {
+    "name": "org_band_member_of",
+    "body": "Found out that Ramona Cruz used to play bass in The Velvet Circuit before going solo.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "person_mentions": ["Ramona Cruz"],
+      "mentions": ["Velvet Circuit"],
+      "mention_kind": [
+        {"name": "Velvet Circuit", "kind": ["Organization", "MusicGroup", "PerformingGroup", "Band"]}
+      ],
+      "not_person": ["Velvet Circuit"],
+      "edges": [
+        {"predicate": "memberOf", "object": "Velvet Circuit"}
+      ]
+    }
+  },
+  {
+    "name": "org_multi_orgs_one_note",
+    "body": "Kezia left Deloitte to join a smaller firm, Arion Advisors, where she'll be a managing partner. Her old team at Deloitte is already feeling it.",
+    "domain": "finance",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "person_mentions": ["Kezia"],
+      "mentions": ["Deloitte", "Arion Advisors"],
+      "not_person": ["Deloitte", "Arion Advisors"],
+      "edges": [
+        {"predicate": "worksFor", "object": "Arion"}
+      ]
+    }
+  },
+  {
+    "name": "org_generic_board_no_name",
+    "body": "The board rejected the proposal at today's meeting. Back to square one.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "not_person": ["board"]
+    }
+  },
+  {
+    "name": "org_informal_family_name_possessive",
+    "body": "Went to the Marchetti family reunion last weekend — probably sixty people in all.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "not_person": ["Marchetti family", "Marchetti"]
+    }
+  },
+  {
+    "name": "org_hospital_domain_finance",
+    "body": "Got the bill from Northwestern Memorial Hospital for the ER visit. $2,400 after insurance. Filing an appeal.",
+    "domain": "health",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "mentions": ["Northwestern Memorial Hospital"],
+      "mention_kind": [
+        {"name": "Northwestern Memorial Hospital", "kind": ["Organization", "Hospital", "MedicalOrganization", "HealthcareOrganization"]}
+      ],
+      "not_person": ["Northwestern Memorial Hospital"]
+    }
+  },
+  {
+    "name": "org_dense_multi_person_org",
+    "body": "Talked to Ingrid at the Red Cross gala tonight. She's heading up the new logistics program there; her colleague Amos handles donor relations. I also ran into Marco, who left Red Cross last year to start his own NGO, Covenant Relief.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "person_mentions": ["Ingrid", "Amos", "Marco"],
+      "mentions": ["Red Cross", "Covenant Relief"],
+      "not_person": ["Red Cross", "Covenant Relief"],
+      "edges": [
+        {"predicate": "worksFor", "object": "Red Cross"},
+        {"predicate": "worksFor", "object": "Covenant"}
+      ]
+    }
+  },
+  {
+    "name": "org_subcommittee_named",
+    "body": "The Finance Subcommittee voted 5-2 to approve the amended budget. Elena sat on it and pushed hard for the amendment.",
+    "domain": "finance",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "person_mentions": ["Elena"],
+      "not_person": ["Finance Subcommittee"]
+    }
+  }
+]
