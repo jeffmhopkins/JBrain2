@@ -298,9 +298,15 @@ h3 {
   width: 64px;
   border: none;
   border-radius: 0;
-  font-size: var(--fs-secondary);
+  font-size: var(--fs-micro);
   font-weight: 500;
   padding: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  line-height: 1;
 }
 
 .rail-edit {
@@ -308,7 +314,7 @@ h3 {
   color: var(--amber);
 }
 
-.rail-move {
+.rail-hide {
   background: var(--steel-tint);
   color: var(--steel);
 }
@@ -316,6 +322,12 @@ h3 {
 .rail-delete {
   background: var(--rose-tint);
   color: var(--rose);
+}
+
+/* Armed delete: the tap-again confirm fills with the danger color. */
+.rail-armed {
+  background: var(--rose);
+  color: var(--bg);
 }
 
 .note-body-clamp {
@@ -595,6 +607,18 @@ h3 {
   color: var(--text-2);
   white-space: nowrap;
   z-index: 60;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.toast-action {
+  border: none;
+  background: none;
+  padding: 0;
+  font-size: var(--fs-secondary);
+  font-weight: 600;
+  color: var(--steel);
 }
 
 /* ===== Card launcher ===== */

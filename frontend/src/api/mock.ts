@@ -93,6 +93,7 @@ function seedNote(
     created_at: createdAt,
     tz_offset_minutes: null,
     ingest_state: ingestState,
+    hidden: false,
     attachments,
     latitude: null,
     longitude: null,
@@ -949,7 +950,10 @@ export const mockFetch: typeof fetch = async (input, init) => {
   if (path === "/api/notes" && method === "GET") {
     const limit = Number(url.searchParams.get("limit") ?? "50");
     const before = url.searchParams.get("before");
-    let pool = [...notes].sort((a, b) => b.created_at.localeCompare(a.created_at));
+    // The stream excludes hidden notes (they remain in Search).
+    let pool = notes
+      .filter((n) => !n.hidden)
+      .sort((a, b) => b.created_at.localeCompare(a.created_at));
     if (before) pool = pool.filter((n) => n.created_at < before);
     const page = pool.slice(0, limit);
     const last = page[page.length - 1];
@@ -1016,6 +1020,14 @@ export const mockFetch: typeof fetch = async (input, init) => {
       if (REVIEW_ITEMS[i]?.payload.note_id === noteId) REVIEW_ITEMS.splice(i, 1);
     }
     delete ANALYSES[noteId];
+    return new Response(null, { status: 204 });
+  }
+
+  const hideMatch = path.match(/^\/api\/notes\/([^/]+)\/(hide|unhide)$/);
+  if (hideMatch && method === "POST") {
+    const note = notes.find((n) => n.id === decodeURIComponent(hideMatch[1] ?? ""));
+    if (!note) return json({ detail: "note not found" }, 404);
+    note.hidden = hideMatch[2] === "hide";
     return new Response(null, { status: 204 });
   }
 

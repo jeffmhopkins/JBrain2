@@ -175,7 +175,10 @@ mode dot) — tapping one descends the tree into the conversation layer;
 typing in those modes always starts a NEW conversation. Until Phase 4
 ships conversations, those modes show an empty state ("conversations
 arrive in Phase 4"). **Swiping a note bubble left** slides it to reveal an
-action rail: **Edit** (opens the full-screen **focused-writer** editor — settled in the
+**icon action rail — Delete · Edit · Hide** (settled in the entry-mode swipe
+review; **Move domain** was dropped from the rail to the note-view ⋯ menu and
+**Hide** added — three 64px buttons, RAIL_WIDTH 192, each an outline icon over
+a lowercase label). **Edit** opens the full-screen **focused-writer** editor (— settled in the
 Phase 2 edit review against two rival designs: chrome fades to a whisper
 context line (domain dot · date) with a quiet ✕; the note is the screen at
 `--fs-editor` (20px-scale) with 1.7 line-height and a 38em measure, steel
@@ -186,8 +189,16 @@ arms an inline rose "discard edits?" that auto-disarms in 3s or on typing;
 saving PATCHes the body and re-triggers ingestion; the editor also owns
 **attachment management** — a paperclip in the thumb bar adds files, chips
 above the bar list them with a tap-again rose remove; adds/removals apply
-immediately to the note, independent of the text's done/cancel), **Delete** (inline tap-again confirm), **Move
-domain** (small sheet). Tapping a bubble opens the note sheet.
+immediately to the note, independent of the text's done/cancel). **Delete**
+uses an inline tap-again confirm (the button arms to a filled-rose state).
+**Hide** removes the note from the home stream **without deleting it** — a
+persisted per-note `hidden_at` flag (not a local view filter), so it survives
+reload and syncs across devices; the note's chunks are untouched, so it stays
+in Search and openable from there. Hiding offers a single **undo** toast
+(green=save rule does not apply — undo links steel); there is **no persistent
+hidden tray** and **no swipe-right gesture**. Hide/unhide are dedicated
+endpoints (`POST /notes/{id}/hide|unhide`), never a PATCH, so visibility
+toggles never re-ingest. Tapping a bubble opens the note sheet.
 
 **Capture location** (settled in the Phase 2 review): a Settings toggle,
 **on by default** (browser permission prompt on first launch; denial just

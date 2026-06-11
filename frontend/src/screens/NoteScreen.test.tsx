@@ -16,6 +16,7 @@ const ITEM: StreamItem = {
     { id: "a1", filename: "lab-orders.pdf", mediaType: "application/pdf", sizeBytes: 24_120 },
   ],
   pending: false,
+  hidden: false,
 };
 
 // Indexed variant with a PDF (searchable) and an image (awaits Phase 3 OCR).

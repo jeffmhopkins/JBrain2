@@ -10,6 +10,7 @@ function fakeController(): NotesController {
     send: vi.fn(async () => {}),
     update: vi.fn(async () => {}),
     remove: vi.fn(async () => {}),
+    setHidden: vi.fn(async () => {}),
     byId: vi.fn(() => undefined),
     fetchById: vi.fn(async () => null),
     addAttachment: vi.fn(async () => ({
