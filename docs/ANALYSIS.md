@@ -168,6 +168,18 @@ LLM disambiguation with candidates → review inbox for the gray zone.
   matching entity exists, mentions auto-link; the moment a second entity
   with the same name appears, all prior auto-linked mentions of that name
   are flagged for retroactive re-review. Low friction, self-correcting.
+- **Declared names [decided: self-naming fact → exact alias]**: an asserted
+  naming fact ("my full name is Jeffrey Mark Hopkins", `name`/`fullName`/
+  `givenName`/`alternateName`/`nickname`/…) registers its value as an exact
+  alias on the fact's entity, so a later bare "Jeffrey Mark Hopkins" resolves
+  to the owner instead of forking a new person. Only `asserted` facts (a
+  reported/negated/hypothetical name is not a declaration), and only when the
+  name does not already key a *different* live entity — that collision is a
+  merge proposal, never a silent second owner of one name. The alias inherits
+  the entity's firewall partition and is append-only (a corrected name adds an
+  alias; it never silently rewrites identity). Nicknames the note never states
+  ("Jeff" with only "Jeffrey Mark Hopkins" declared) still need their own
+  declaration or a human merge — declaration-driven, never guessed.
 - **Role references [decided: via relationship facts]**: "my dentist" /
   "my boss" resolve through the relationship fact (`dentist_of`,
   `employer`) **valid at the note's time** — never static aliases, so a

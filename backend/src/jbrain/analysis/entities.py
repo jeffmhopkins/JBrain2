@@ -618,6 +618,80 @@ async def create_provisional(
     return ResolvedEntity(id=entity.id, subject_id=None, created=True)
 
 
+# --- declared-name aliasing (docs/ANALYSIS.md "Alias resolution & separation")
+
+# Predicates whose VALUE is a name the fact's entity is declaring for ITSELF:
+# "my full name is Jeffrey Mark Hopkins" makes that string an alias of Me, so a
+# later bare "Jeffrey Mark Hopkins" resolves to the owner instead of forking a
+# new entity. Matched after stripping case and word separators, so fullName /
+# full_name / "given name" all collapse to one key.
+_NAMING_PREDICATES = frozenset(
+    {
+        "name", "fullname", "givenname", "alternatename", "legalname",
+        "preferredname", "nickname", "knownas", "alias", "aka", "maidenname",
+    }
+)  # fmt: skip
+
+# value_json keys, in priority order, that carry the declared name string.
+_NAME_VALUE_KEYS = ("name", "value", "fullname", "alias", "text")
+
+
+def declared_alias(predicate: str, value_json: Any) -> str | None:
+    """The name a fact DECLARES for its own entity, or None when it is not a
+    self-naming fact. Identity declarations only — never inferred from prose;
+    the value must be a plain string under a known key."""
+    if re.sub(r"[\s_]+", "", predicate).casefold() not in _NAMING_PREDICATES:
+        return None
+    if not isinstance(value_json, dict):
+        return None
+    for key in _NAME_VALUE_KEYS:
+        val = value_json.get(key)
+        if isinstance(val, str) and val.strip():
+            return val.strip()
+    return None
+
+
+async def register_declared_alias(
+    session: AsyncSession, entity_id: uuid.UUID, name: str
+) -> str | None:
+    """Attach `name` to `entity_id` as an exact alias — the one auto-link the
+    design blesses ("auto-merge only on exact alias + same kind"). Conservative
+    on collision: if the normalized name already keys a DIFFERENT live entity,
+    skip — silently widening one name across two entities is the wrong link no
+    layer may make; that case is a merge proposal, not an alias. The alias
+    inherits the entity's firewall partition. Returns the normalized alias when
+    a NEW row was written, else None (pronoun, blank, collision, or duplicate).
+    """
+    norm = normalize_alias(name)
+    if not norm or norm in FIRST_PERSON:
+        return None
+    if any(row.id != entity_id for row in await _exact_matches(session, norm)):
+        return None
+    domain = (
+        await session.execute(
+            text("SELECT domain_code FROM app.entities WHERE id = :id"),
+            {"id": str(entity_id)},
+        )
+    ).scalar_one()
+    inserted = (
+        await session.execute(
+            text(
+                "INSERT INTO app.entity_aliases (id, entity_id, alias, alias_norm, domain_code)"
+                " VALUES (:id, :eid, :alias, :norm, :domain)"
+                " ON CONFLICT (entity_id, alias_norm) DO NOTHING RETURNING id"
+            ),
+            {
+                "id": str(uuid.uuid4()),
+                "eid": str(entity_id),
+                "alias": name,
+                "norm": norm,
+                "domain": domain,
+            },
+        )
+    ).first()
+    return norm if inserted is not None else None
+
+
 async def resolve_entity(
     session: AsyncSession,
     name: str,

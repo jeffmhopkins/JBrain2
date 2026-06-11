@@ -42,7 +42,9 @@ from jbrain.analysis.entities import (
     ResolvedEntity,
     build_disambiguation_prompt,
     create_provisional,
+    declared_alias,
     parse_disambiguation,
+    register_declared_alias,
     resolve_entity,
 )
 from jbrain.analysis.extraction import (
@@ -268,6 +270,8 @@ class AnalysisPipeline:
             if fact_id is not None:
                 touched.add(fact_id)
             await session.flush()
+
+        await self._register_declared_aliases(session, extraction, resolved)
 
         # Identity keys this note no longer asserts were removed by the edit:
         # retract quietly — not a conflict, no inbox noise. Pinned facts are
@@ -609,6 +613,30 @@ class AnalysisPipeline:
                 )
             )
         return anchor_for
+
+    async def _register_declared_aliases(
+        self,
+        session: AsyncSession,
+        extraction: Extraction,
+        resolved: dict[str, ResolvedEntity | None],
+    ) -> None:
+        """A self-naming fact ("my full name is Jeffrey Mark Hopkins") teaches
+        the resolver an exact alias, so a later bare "Jeffrey Mark Hopkins"
+        lands on Me instead of forking a new entity. ASSERTED facts only — a
+        reported, negated, hypothetical, or questioned name is not a
+        declaration; collision with another entity is rejected inside
+        register_declared_alias (docs/ANALYSIS.md "Alias resolution &
+        separation")."""
+        for fact in extraction.facts:
+            if fact.assertion != "asserted":
+                continue
+            name = declared_alias(fact.predicate, fact.value_json)
+            entity = resolved.get(fact.entity_ref) if name is not None else None
+            if name is None or entity is None:
+                continue
+            added = await register_declared_alias(session, entity.id, name)
+            if added is not None:
+                log.info("analysis.alias_declared", entity_id=str(entity.id), alias=added)
 
     async def _upsert_tokens(
         self,

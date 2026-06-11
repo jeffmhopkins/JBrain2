@@ -531,6 +531,87 @@ async def test_reanalysis_is_idempotent(
     assert fact_ids_before == fact_ids_after  # upsert on the identity key, not re-insert
 
 
+async def test_self_naming_fact_aliases_owner_so_later_bare_name_links_to_me(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """ "My full name is Jeffrey Mark Hopkins" teaches the resolver an alias on
+    the owner; a SECOND note that names "Jeffrey Mark Hopkins" in the third
+    person then lands the fact on the same Me entity instead of forking a new
+    person (docs/ANALYSIS.md "Alias resolution & separation")."""
+    naming_note = await make_note(
+        maker, domain="general", body="My full name is Jeffrey Mark Hopkins."
+    )
+    naming_payload = {
+        "title": "Full name",
+        "tags": ["identity", "name", "self"],
+        "mentions": [{"name": "Me", "kind": "Person", "surface_text": "My"}],
+        "facts": [
+            {
+                "predicate": "fullName", "qualifier": "", "kind": "attribute",
+                "statement": "My full name is Jeffrey Mark Hopkins.",
+                "value_json": {"name": "Jeffrey Mark Hopkins"},
+                "assertion": "asserted", "entity_ref": "Me", "object_entity_ref": None,
+                "temporal": None, "domain": "general", "confidence": 0.97,
+            }
+        ],
+        "temporal_tokens": [],
+    }  # fmt: skip
+    await analyzer(maker, [json.dumps(naming_payload)]).analyze_note({"note_id": naming_note})
+
+    me = (await rows(maker, OWNER, "SELECT id FROM app.entities WHERE canonical_name = 'Me'"))[0]
+    aliases = {
+        a.alias_norm
+        for a in await rows(
+            maker,
+            OWNER,
+            "SELECT alias_norm FROM app.entity_aliases WHERE entity_id = :eid",
+            eid=str(me.id),
+        )
+    }
+    assert {"me", "jeffrey mark hopkins"} <= aliases
+
+    # A later, third-person note naming the owner resolves onto Me, no new row.
+    later_note = await make_note(maker, domain="general", body="Jeffrey Mark Hopkins turned 40.")
+    later_payload = {
+        "title": "Birthday",
+        "tags": ["birthday", "milestone", "age"],
+        "mentions": [
+            {
+                "name": "Jeffrey Mark Hopkins",
+                "kind": "Person",
+                "surface_text": "Jeffrey Mark Hopkins",
+            }
+        ],
+        "facts": [
+            {
+                "predicate": "age", "qualifier": "", "kind": "attribute",
+                "statement": "Jeffrey Mark Hopkins turned 40.",
+                "value_json": {"value": 40, "unit": "year"},
+                "assertion": "asserted", "entity_ref": "Jeffrey Mark Hopkins",
+                "object_entity_ref": None, "temporal": None, "domain": "general",
+                "confidence": 0.9,
+            }
+        ],
+        "temporal_tokens": [],
+    }  # fmt: skip
+    await analyzer(maker, [json.dumps(later_payload)]).analyze_note({"note_id": later_note})
+
+    # No forked entity for the declared name — the bare name resolved onto Me.
+    forked = await rows(
+        maker,
+        OWNER,
+        "SELECT 1 FROM app.entities WHERE canonical_name = 'Jeffrey Mark Hopkins'",
+    )
+    assert forked == []
+    age_fact = await rows(
+        maker,
+        OWNER,
+        "SELECT entity_id FROM app.facts WHERE predicate = 'age' AND note_id = :nid",
+        nid=later_note,
+    )
+    assert age_fact and age_fact[0].entity_id == me.id
+
+
 async def test_reextraction_dropping_a_relationship_retracts_its_inverse(
     maker: async_sessionmaker[AsyncSession],
 ) -> None:
