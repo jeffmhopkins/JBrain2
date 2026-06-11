@@ -7,7 +7,7 @@ name: Observation                  # FHIR Observation shape
 schema_org_ref: schema:MedicalTest
 description: A clinical lab observation; FHIR/LOINC/UCUM-shaped typed record.
 vehicle: typed_record(P7)
-facets: [ExternalIdentified, Temporal, Related]
+facets: [ExternalIdentified, Temporal, Related, Lifecycle]   # Lifecycle.status carries status_values
 default_fact_kind: measurement
 allow_open_predicates: false
 

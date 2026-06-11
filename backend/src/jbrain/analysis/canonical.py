@@ -84,15 +84,25 @@ async def reproject_canonical_name(session: AsyncSession, entity_id: uuid.UUID) 
     # The owner "Me" is hard-linked to a subject and pinned to that display name.
     if row.subject_id is not None and row.canonical_name.strip().casefold() == "me":
         return None
+    # by_kind is keyed by type id and schema.org name. KNOWN LIMITATION: an
+    # animal entity's kind is its species ("dog"), which matches no registry
+    # type, so animals do not reproject — acceptable today because a pet's
+    # canonical is already its name, but a real gap if a pet first mentioned by
+    # a reference ("the rat") later declares a name. Unifying kind resolution
+    # (the resolver's species/noun matching) is the proper fix.
     etype = get_registry().by_kind.get(row.kind)
     if etype is None:
         return None
 
+    # Active heads only: a name held in pending_review is contested (e.g. an
+    # attribute collision), and publishing a contested name as THE display name
+    # is the same leak the wiki avoids ("contested facts are withheld",
+    # docs/ANALYSIS.md) one layer down.
     facts = (
         await session.execute(
             text(
                 "SELECT predicate, value_json FROM app.facts"
-                " WHERE entity_id = :id AND status IN ('active', 'pending_review')"
+                " WHERE entity_id = :id AND status = 'active'"
             ),
             {"id": str(entity_id)},
         )

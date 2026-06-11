@@ -231,6 +231,7 @@ async def test_run_loop_backfills_once_then_polls(monkeypatch: pytest.MonkeyPatc
     assert fake.embed_backfills == 1
     assert fake.analyze_backfills == 1
     assert fake.purge_backfills == 1
+    assert fake.consolidate_backfills == 1
 
 
 async def test_run_loop_survives_transient_errors_and_retries_backfill(

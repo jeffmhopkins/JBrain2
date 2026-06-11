@@ -99,20 +99,28 @@ schema-architecture proposal after red-team: keep the ergonomic authoring
 surface, drop the heavyweight pipeline.)
 
 *Implemented:* `jbrain.schema` (`backend/src/jbrain/schema/`) — `load_registry()`
-parses the YAML into a validated `SchemaRegistry` and exposes the four consumers
-as methods (`prompt_digest`, `render_config`, `resolution_config`,
-`validate_value`); load-time validation mirrors `jbrain.llm.promptfile` (a
-malformed registry fails fast, never mid-pipeline). It is **not yet wired into
-the extraction pipeline** — that lands with the Phase-3 hardening below.
+parses the YAML into a validated `SchemaRegistry`; load-time validation mirrors
+`jbrain.llm.promptfile`, and the worker **eager-loads it at boot** so a
+malformed registry fails loudly there, never mid-note.
 
-**The four consumers, all reading one registry:**
+**The four consumers — what is WIRED today vs. built-but-unconsumed.** Be
+honest about this: only two consumers are live in the pipeline; the other two
+are tested API the Phase-3 hardening will wire (and `prompt_digest` is the one
+that should be wired soon, because the prompt's predicate guidance is currently
+hand-written and can drift from the YAML with nothing reconciling them).
 
-| Consumer | Uses | Hard rule |
-|---|---|---|
-| Extraction prompt | a compact predicate digest (preferred spellings + one-line descriptions) injected into `note.extract` | **advisory** — a *relaxation*, never a stricter grammar than storage accepts; scoped to the note's domain |
-| Validation | Pydantic/JSON-Schema check of `value_json` **shape** only | validates shape; **never gates predicate names; never an insert NOT NULL** |
-| UI rendering | per-predicate `value_shape` → widget; `display_name` projection | replaces the "fall back to the whole statement" bug |
-| Resolution | `display_name` projection, `alias_seeding_predicates`, `functional` set | *describes* the resolver's existing dispatch; does not reconfigure identity |
+| Consumer | Status | Uses | Hard rule |
+|---|---|---|---|
+| **Predicate normalization** | **WIRED** (`extraction.py`, `consolidation.py`) | `normalize_predicate` / `renamed_from` attractor | normalizes a spelling, never rejects |
+| **Display projection** | **WIRED** (`canonical.py`) | `by_kind` → `display_name` precedence | recomputes `canonical_name` from name facts |
+| Extraction prompt digest | built, **not wired** | `prompt_digest` injected into `note.extract` | **advisory** relaxation; today the prompt is hand-written instead |
+| Value-shape validation | built, **not wired** | `validate_value` checks `value_json` **shape** only | validates shape; **never gates predicate names** |
+| UI render config | built, **not wired** | `render_config` per-predicate `value_shape` | the statement-fallback bug was fixed by hardcoded keys in `format.ts`, not this |
+| Resolution config | built, **not wired** | `resolution_config` (`alias_seeding`, `functional`) | *describes* existing dispatch; would not reconfigure identity |
+
+The lean-density tension (CLAUDE.md #4) is real: the unwired methods are tested
+design surface, not yet consumed. They stay only because the Phase-3 wiring is
+imminent; if it slips, delete them rather than carry speculative code.
 
 ## The vocabulary invariant **[proposed]**
 
@@ -218,7 +226,7 @@ edge model ANALYSIS already built (and exactly what the running app's
 `nickname.from_kids` already was; the only bug was that `alsoKnownAs` wasn't
 normalized into the same family).
 
-The `name.*` qualifier vocabulary (`qualifier_vocab: name_kind`):
+The `name.*` family, with `name.nickname` taking `qualifier_vocab: name_audiences`:
 
 | Edge | Meaning | Kind | Functional |
 |---|---|---|---|

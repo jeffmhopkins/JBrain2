@@ -22,7 +22,9 @@ facets:
         value_shape: text
         kind: state
         functional: true                # a legal-name change supersedes, with history
-        renamed_from: [legal_name, legalName, full_legal_name]
+        # fullName/full_name fold here (a stated full name is the formal name)
+        # so they normalize AND drive the display projection, not just alias.
+        renamed_from: [legal_name, legalName, full_legal_name, fullName, full_name]
         schema_org_ref: schema:legalName
       - canonical_name: name.given
         value_shape: text
@@ -53,7 +55,10 @@ facets:
         qualifier_vocab: name_audiences      # kids|family|friends|work|public + any open value
         value_shape: text
         kind: attribute
-        renamed_from: [nickname, alsoKnownAs, nickname.from_kids]
+        # NOT nickname.from_kids: the audience lives in the qualifier, and a
+        # base-predicate rename cannot preserve it — folding it here would drop
+        # the audience and collide distinct-audience nicknames onto one key.
+        renamed_from: [nickname, alsoKnownAs]
         schema_org_ref: schema:alternateName
         description: Audience-scoped nickname, e.g. name.nickname.kids -> "Dad".
       - canonical_name: name.maiden
