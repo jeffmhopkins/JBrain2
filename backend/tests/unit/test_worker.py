@@ -18,6 +18,7 @@ class FakeQueue:
         self.permanent: list[str] = []
         self.backfills = 0
         self.embed_backfills = 0
+        self.purge_backfills = 0
         self.backfill_error: Exception | None = None
 
     async def claim(self, maker: Any, ctx: Any) -> Job | None:
@@ -54,6 +55,14 @@ def install(monkeypatch: pytest.MonkeyPatch, fake: FakeQueue) -> None:
         "backfill_unembedded_notes",
     ):
         monkeypatch.setattr(worker.queue, name, getattr(fake, name))
+
+    # The orphan-purge sweep rides the same startup pass; SQL behavior is
+    # integration-tested (test_note_purge_pg), so stub it here like the rest.
+    async def fake_purge_backfill(maker):  # noqa: ANN001, ANN202
+        fake.purge_backfills += 1
+        return 0
+
+    monkeypatch.setattr(worker.purge, "backfill_deleted_note_artifacts", fake_purge_backfill)
 
 
 def job(kind: str = "ingest_note", payload: dict[str, Any] | None = None) -> Job:

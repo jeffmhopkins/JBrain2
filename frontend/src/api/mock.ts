@@ -1005,9 +1005,16 @@ export const mockFetch: typeof fetch = async (input, init) => {
   }
 
   if (noteMatch && method === "DELETE") {
-    const index = notes.findIndex((n) => n.id === decodeURIComponent(noteMatch[1] ?? ""));
+    const noteId = decodeURIComponent(noteMatch[1] ?? "");
+    const index = notes.findIndex((n) => n.id === noteId);
     if (index < 0) return json({ detail: "note not found" }, 404);
     notes.splice(index, 1);
+    // Mirror the backend purge: review items derived from the note go too
+    // (any status), as does its analysis fixture.
+    for (let i = REVIEW_ITEMS.length - 1; i >= 0; i--) {
+      if (REVIEW_ITEMS[i]?.payload.note_id === noteId) REVIEW_ITEMS.splice(i, 1);
+    }
+    delete ANALYSES[noteId];
     return new Response(null, { status: 204 });
   }
 

@@ -7,6 +7,7 @@ from sqlalchemy import delete, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from jbrain.analysis.purge import purge_note_artifacts
 from jbrain.db.session import SessionContext, scoped_session
 from jbrain.models.notes import Attachment, Chunk, Note
 from jbrain.notes.service import AttachmentInfo, NoteInfo, NoteUpdate, UnknownDomain
@@ -151,9 +152,16 @@ class SqlNotesRepo:
             ).scalar_one_or_none()
             if note is None:
                 return False
-            # Soft-delete keeps the source of truth; chunks go hard so the
-            # search index never serves a deleted note's text.
+            # Soft-delete keeps the note row (settled Phase 2 behavior), but
+            # everything DERIVED purges hard in this same transaction —
+            # facts, mentions, tokens, review items, the analysis header,
+            # orphaned provisional entities — because deleting a note is a
+            # privacy promise (jbrain.analysis.purge). Chunks go hard too so
+            # the search index never serves a deleted note's text. Only true
+            # note deletion comes here; attachment removal and edits
+            # re-ingest instead and never purge.
             note.deleted_at = datetime.now(UTC)
+            await purge_note_artifacts(session, note.id)
             await session.execute(delete(Chunk).where(Chunk.note_id == note.id))
             return True
 

@@ -2,7 +2,10 @@
 
 Mirrors migration 0006 (docs/ANALYSIS.md is the binding spec). Facts and
 entities are append-mostly: supersession chains and merge tombstones are the
-revision history, so nothing here is ever hard-deleted by application code.
+revision history, so nothing here is ever hard-deleted by application code —
+with one sanctioned exception [decided]: deleting a source note purges every
+artifact derived from it (jbrain.analysis.purge, grants in 0009), because
+notes are the sole sources of truth and deletion is a privacy promise.
 """
 
 import uuid

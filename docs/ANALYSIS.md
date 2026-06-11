@@ -59,7 +59,12 @@ pointing at a value (`me.weight → 182 lb`) or another entity
 and the supersession chain on that address IS the property's **full
 revision history** — `me.weight` yields a time series, `me.address` an
 interval history, `appointment.scheduled_time` a reschedule chain — every
-link citing its source note. Nothing is deleted, ever.
+link citing its source note. Nothing is deleted, ever — except when a source
+note is deleted: notes are the sole sources of truth, so deletion purges
+every derived artifact (facts, mentions, tokens, review items incl. resolved
+history, and provisional entities no surviving note references) and repairs
+affected supersession chains **[decided]**. Delete = gone; the note row
+itself stays soft-deleted.
 
 Entity-row fields (`canonical_name`, summary) are **denormalized
 projections of current facts**: a name change is an `entity.name`
