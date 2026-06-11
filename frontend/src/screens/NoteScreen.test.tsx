@@ -114,6 +114,25 @@ const ANALYSIS: NoteAnalysis = {
       temporal_precision: "day",
       source_snippet: null,
     },
+    {
+      id: "f4",
+      entity_id: "ent-me",
+      entity_name: "Me",
+      predicate: "height",
+      qualifier: null,
+      kind: "attribute",
+      statement: "Jeff is 6'4\" tall.",
+      value_json: null,
+      assertion: "asserted",
+      status: "retracted",
+      pinned: false,
+      confidence: 0.85,
+      valid_from: null,
+      valid_to: null,
+      reported_at: "2026-06-10T09:40:00Z",
+      temporal_precision: "unknown",
+      source_snippet: null,
+    },
   ],
   entities: [
     { id: "ent-me", kind: "Person", name: "Me", status: "active" },
@@ -232,6 +251,10 @@ describe("NoteScreen", () => {
     // provisional and gets the muted chip.
     expect(screen.getAllByRole("button", { name: /Me person/ })).toHaveLength(1);
     expect(screen.getByRole("button", { name: /Sarah person provisional/ })).toBeInTheDocument();
+
+    // Retracted facts never render here — entity history rails own the past.
+    expect(screen.queryByText("height")).not.toBeInTheDocument();
+    expect(screen.queryByText("retracted")).not.toBeInTheDocument();
 
     // The Sep-2026 token renders as a calm date chip.
     expect(screen.getByText("“in three months (September)”")).toBeInTheDocument();
