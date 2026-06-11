@@ -1284,9 +1284,6 @@ button.small {
   padding: 12px 6px 12px 14px;
 }
 
-.att-item + .att-item,
-.att-item + .att-row,
-.att-item + .att-add-row,
 .att-row + .att-row,
 .att-row + .att-empty,
 .att-row + .att-add-row,
@@ -1294,29 +1291,9 @@ button.small {
   border-top: 1px solid var(--border);
 }
 
-/* Inline manifest expansion (settled in a three-way review — mock C). */
-
-.att-row[role="button"] {
-  width: 100%;
-  text-align: left;
-  background: transparent;
-  border: none;
-  color: var(--text);
-  cursor: pointer;
-}
-
-.att-caret {
-  flex-shrink: 0;
-  display: inline-flex;
-  margin-right: -6px;
-  color: var(--text-3);
-  transition: transform 150ms ease-out;
-}
-
-.att-item.open .att-caret {
-  transform: rotate(90deg);
-  color: var(--text-2);
-}
+/* Image-extract expansion (.x-*), rendered inside the Analysis tab's
+ * Sources card (settled twice: inline expansion mock C, then the
+ * sources-card review — variant B — moved it out of Attachments). */
 
 .x-inner {
   display: flex;
@@ -1428,26 +1405,38 @@ button.small {
   color: var(--text-3);
 }
 
-.x-analyze {
-  align-self: flex-start;
-  padding: 0;
-  background: none;
-  border: none;
-  color: var(--steel);
-  font-size: var(--fs-secondary);
-  font-weight: 500;
+.x-running {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  font-size: var(--fs-micro);
+  color: var(--amber);
 }
 
-.pdf-hint {
-  margin: 0;
-  padding: 0 14px 12px 46px;
-  font-size: var(--fs-micro);
-  color: var(--text-3);
+/* Tiny amber arc spinner shared by stage marks and in-flight lines. */
+.spin {
+  width: 9px;
+  height: 9px;
+  flex: none;
+  display: inline-block;
+  border: 1.5px solid var(--amber-tint);
+  border-top-color: var(--amber);
+  border-radius: var(--r-pill);
+  animation: spin-rot 0.8s linear infinite;
+}
+
+@keyframes spin-rot {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .att-caret {
-    transition: none;
+  .spin {
+    animation: none;
+    border-color: var(--amber);
+    border-top-color: var(--amber);
   }
 }
 
@@ -1795,12 +1784,176 @@ button.small {
   color: var(--text-3);
 }
 
-.provenance-foot {
-  margin: 8px 0 0;
-  padding-top: 12px;
+/* ===== Sources card (settled review — variant B): analysis as a pipeline,
+ * note text + per-image extract stages, footer provenance + re-run. ===== */
+
+.analysis-sources-card {
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
+  box-shadow: var(--shadow-card);
+  overflow: hidden;
+}
+
+.analysis-sources-item + .analysis-sources-item {
   border-top: 1px solid var(--border);
-  color: var(--text-3);
+}
+
+.analysis-sources-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 12px 6px 12px 14px;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  text-align: left;
+  color: var(--text);
+}
+
+.analysis-sources-row[role="button"] {
+  cursor: pointer;
+}
+
+.analysis-sources-icon {
+  color: var(--text-2);
+  display: inline-flex;
+  flex-shrink: 0;
+}
+
+.analysis-sources-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.analysis-sources-name {
+  font-size: var(--fs-note);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.analysis-sources-meta {
   font-size: var(--fs-micro);
+  color: var(--text-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Per-stage status line: ocr ✓ · description ✓ / amber spinner in flight. */
+.analysis-sources-stages {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-wrap: wrap;
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+}
+
+.analysis-sources-stages .stage-done {
+  color: var(--ok);
+}
+
+.analysis-sources-stages .stage-running {
+  color: var(--warn);
+  display: inline-flex;
+  align-items: center;
+}
+
+.analysis-sources-stages .stage-queued,
+.analysis-sources-stages .stage-dot {
+  color: var(--text-3);
+}
+
+.analysis-sources-caret {
+  flex-shrink: 0;
+  display: inline-flex;
+  margin-right: -6px;
+  color: var(--text-3);
+  transition: transform 150ms ease-out;
+}
+
+.analysis-sources-item.open .analysis-sources-caret {
+  transform: rotate(90deg);
+  color: var(--text-2);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .analysis-sources-caret {
+    transition: none;
+  }
+}
+
+.analysis-sources-more {
+  flex-shrink: 0;
+  min-width: 44px;
+  min-height: 44px;
+  background: transparent;
+  border: none;
+  color: var(--text-2);
+  font-size: var(--fs-title);
+  line-height: 1;
+}
+
+.analysis-sources-check {
+  color: var(--ok);
+  font-size: var(--fs-secondary);
+  padding: 0 18px 0 6px;
+  flex: none;
+}
+
+/* Footer: the provenance line + note-level re-run, unified in the card. */
+.analysis-sources-foot {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  border-top: 1px solid var(--border);
+}
+
+.analysis-sources-provenance {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+}
+
+.analysis-sources-rerun {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 36px;
+  padding: 0 14px;
+  background: var(--steel-tint);
+  border: 1px solid var(--border);
+  border-radius: var(--r-input);
+  color: var(--steel);
+  font-size: var(--fs-secondary);
+  font-weight: 500;
+}
+
+.analysis-sources-rerun:disabled {
+  opacity: 0.5;
+}
+
+.analysis-sources-rerun .spin {
+  border-color: var(--steel-tint);
+  border-top-color: var(--steel);
+}
+
+.sheet-hint {
+  margin: 10px 2px 0;
+  font-size: var(--fs-micro);
+  color: var(--text-3);
 }
 
 /* ===== Entity page: the hub ===== */

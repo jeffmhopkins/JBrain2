@@ -1,12 +1,27 @@
 // Note view Analysis tab (docs/DESIGN.md "Analysis tab + entity pages" —
 // graph-forward): facts render as literal property-graph edges grouped by
 // subject node; subject headers double as entity navigation; tapping a fact
-// expands its citation back to the highlighted source words.
+// expands its citation back to the highlighted source words. The Sources
+// card at the bottom (settled review — variant B) frames analysis as a
+// pipeline: the note text plus every image's extract stages, with the
+// provenance footer owning the note-level re-run.
 
-import { useEffect, useState } from "react";
+import { type KeyboardEvent, useCallback, useEffect, useRef, useState } from "react";
 import { FactCitation, KindBadge, StatusChip } from "../analysis/bits";
 import { edgePath, factValue, fmtConfidence, fmtTemporal } from "../analysis/format";
 import { type AnalysisEntity, type FactOut, type NoteAnalysis, api } from "../api/client";
+import { awaitingImageCount } from "../notes/lifecycle";
+import type { StreamAttachment } from "../notes/useNotes";
+import {
+  ImageExpansion,
+  type ImageExtractsApi,
+  type StageStatus,
+  fmtBytes,
+  imageStages,
+  useImageExtracts,
+} from "./ImageExtracts";
+import { Sheet } from "./Sheet";
+import { ChevronRightIcon, FileIcon, ImageIcon } from "./icons";
 
 type AnalysisState =
   | { phase: "loading" }
@@ -76,14 +91,235 @@ function FactRow({ fact, extractor }: FactRowProps) {
   );
 }
 
+// ===== The Sources card (settled review — variant B) =====
+
+/** A synced image attachment — the only kind that gets a pipeline row. */
+interface ImageSource {
+  id: string;
+  filename: string;
+  mediaType: string;
+  sizeBytes: number;
+  hasExtracts: boolean;
+  hasDescription: boolean;
+}
+
+function imageSources(attachments: StreamAttachment[] | null): ImageSource[] {
+  return (attachments ?? []).flatMap((a) =>
+    a.id !== null && a.mediaType.startsWith("image/") ? [{ ...a, id: a.id }] : [],
+  );
+}
+
+function StageMark({ status }: { status: StageStatus }) {
+  if (status === "done") return <span className="stage-done">✓</span>;
+  if (status === "running") {
+    return (
+      <span className="stage-running">
+        <span className="spin" aria-hidden="true" />
+      </span>
+    );
+  }
+  if (status === "skipped") return <span className="stage-queued">skipped</span>;
+  if (status === "queued") return <span className="stage-queued">queued</span>;
+  return <span className="stage-queued">—</span>;
+}
+
+interface SourceImageRowProps {
+  source: ImageSource;
+  extractsApi: ImageExtractsApi;
+  settled: boolean;
+  onMore: () => void;
+}
+
+function SourceImageRow({ source, extractsApi, settled, onMore }: SourceImageRowProps) {
+  const [open, setOpen] = useState(false);
+  const analyzing = extractsApi.analyzingIds.includes(source.id);
+  const stages = imageStages({
+    attachment: source,
+    extracts: extractsApi.extractsById[source.id],
+    mode: extractsApi.mode,
+    analyzing,
+    settled: settled && !analyzing,
+  });
+
+  function onKeyDown(e: KeyboardEvent) {
+    if (e.key !== "Enter" && e.key !== " ") return;
+    e.preventDefault();
+    setOpen((o) => !o);
+  }
+
+  return (
+    <div className={`analysis-sources-item${open ? " open" : ""}`}>
+      <div
+        className="analysis-sources-row"
+        // biome-ignore lint/a11y/useSemanticElements: the row hosts the nested ⋯ button, which a real <button> cannot.
+        role="button"
+        tabIndex={0}
+        aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}
+        onKeyDown={onKeyDown}
+      >
+        <span className="analysis-sources-icon">
+          <ImageIcon size={20} />
+        </span>
+        <span className="analysis-sources-main">
+          <span className="analysis-sources-name">{source.filename}</span>
+          <span className="analysis-sources-meta">
+            {fmtBytes(source.sizeBytes)} · {source.mediaType}
+          </span>
+          <span className="analysis-sources-stages">
+            <span>ocr</span> <StageMark status={stages.ocr} />
+            <span className="stage-dot">·</span>
+            <span>description</span> <StageMark status={stages.description} />
+          </span>
+        </span>
+        <span className="analysis-sources-caret" aria-hidden="true">
+          <ChevronRightIcon size={16} />
+        </span>
+        <button
+          type="button"
+          className="analysis-sources-more"
+          aria-label={`Actions for ${source.filename}`}
+          onClick={(e) => {
+            e.stopPropagation();
+            onMore();
+          }}
+        >
+          ⋯
+        </button>
+      </div>
+      {open && (
+        <ImageExpansion
+          attachmentId={source.id}
+          extracts={extractsApi.extractsById[source.id]}
+          mode={extractsApi.mode}
+          analyzing={analyzing}
+          settled={settled && !analyzing}
+        />
+      )}
+    </div>
+  );
+}
+
+interface SourcesCardProps {
+  bodyChars: number;
+  images: ImageSource[];
+  extractsApi: ImageExtractsApi;
+  /** null = not yet analyzed (gated/waiting) — the footer re-run disables. */
+  analysis: NoteAnalysis | null;
+  rerunning: boolean;
+  onRerun: () => void;
+  onRerunImage: (attachmentId: string) => void;
+}
+
+function SourcesCard({
+  bodyChars,
+  images,
+  extractsApi,
+  analysis,
+  rerunning,
+  onRerun,
+  onRerunImage,
+}: SourcesCardProps) {
+  const [sheetFor, setSheetFor] = useState<ImageSource | null>(null);
+  const settled = analysis !== null && !rerunning;
+  return (
+    <section>
+      <h3 className="section-header">Sources</h3>
+      <div className="analysis-sources-card">
+        <div className="analysis-sources-item">
+          <div className="analysis-sources-row">
+            <span className="analysis-sources-icon">
+              <FileIcon size={20} />
+            </span>
+            <span className="analysis-sources-main">
+              <span className="analysis-sources-name">note text</span>
+              <span className="analysis-sources-meta">
+                {bodyChars} chars · the note body itself
+              </span>
+            </span>
+            <span className="analysis-sources-check">✓</span>
+          </div>
+        </div>
+        {images.map((source) => (
+          <SourceImageRow
+            key={source.id}
+            source={source}
+            extractsApi={extractsApi}
+            settled={settled}
+            onMore={() => setSheetFor(source)}
+          />
+        ))}
+        <div className="analysis-sources-foot">
+          {analysis !== null ? (
+            <p className="analysis-sources-provenance">
+              {/* analyzed_at is a real instant, not a calendar date: keep it local */}
+              analyzed {fmtTemporal(analysis.analyzed_at, "instant")}
+              {analysis.extractor !== null && ` · ${analysis.extractor}`}
+            </p>
+          ) : (
+            <p className="analysis-sources-provenance">
+              analysis waits here — runs automatically when every source is in.
+            </p>
+          )}
+          <button
+            type="button"
+            className="analysis-sources-rerun"
+            disabled={analysis === null || rerunning}
+            onClick={onRerun}
+          >
+            {rerunning && <span className="spin" aria-hidden="true" />}
+            {rerunning ? "re-running…" : "re-run analysis"}
+          </button>
+        </div>
+      </div>
+
+      {sheetFor !== null && (
+        <Sheet title={sheetFor.filename} onClose={() => setSheetFor(null)}>
+          <button
+            type="button"
+            className="sheet-action"
+            onClick={() => {
+              const attId = sheetFor.id;
+              setSheetFor(null);
+              onRerunImage(attId);
+            }}
+          >
+            re-run image analysis
+          </button>
+          <p className="sheet-hint">
+            runs ocr and description again for this image — facts re-extract after.
+          </p>
+        </Sheet>
+      )}
+    </section>
+  );
+}
+
+const POLL_MS = 3000;
+
 interface AnalysisTabProps {
   /** Server note id; null for unsynced outbox rows (nothing to analyze yet). */
   noteId: string | null;
+  /** null = unknown (search-result fallback until the full note resolves). */
+  attachments: StreamAttachment[] | null;
+  ingestState: string | null;
+  /** Note body length, for the Sources card's note-text row. */
+  bodyChars: number;
   onOpenEntity: (entityId: string) => void;
 }
 
-export function AnalysisTab({ noteId, onOpenEntity }: AnalysisTabProps) {
+export function AnalysisTab({
+  noteId,
+  attachments,
+  ingestState,
+  bodyChars,
+  onOpenEntity,
+}: AnalysisTabProps) {
   const [state, setState] = useState<AnalysisState>({ phase: "loading" });
+  const [rerunning, setRerunning] = useState(false);
+  const images = imageSources(attachments);
+  const extractsApi = useImageExtracts(images.map((a) => a.id));
+  const { refresh: refreshExtracts } = extractsApi;
 
   useEffect(() => {
     if (noteId === null) return;
@@ -101,7 +337,68 @@ export function AnalysisTab({ noteId, onOpenEntity }: AnalysisTabProps) {
     };
   }, [noteId]);
 
-  if (noteId === null || (state.phase === "done" && state.analysis.analyzed_at === null)) {
+  // One poller serves the re-run flow, the gated waiting state, and the
+  // per-image re-run: tick noteAnalysis until analyzed_at moves past the
+  // pre-run value, swap the fresh analysis in, and refetch the extracts so
+  // the stage marks settle too. Unmount (incl. tab switch) clears it.
+  const pollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+  const stopPolling = useCallback(() => {
+    if (pollTimer.current !== null) clearInterval(pollTimer.current);
+    pollTimer.current = null;
+  }, []);
+  useEffect(() => stopPolling, [stopPolling]);
+
+  const startPolling = useCallback(
+    (prevAnalyzedAt: string | null) => {
+      if (noteId === null) return;
+      stopPolling();
+      pollTimer.current = setInterval(() => {
+        api
+          .noteAnalysis(noteId)
+          .then((fresh) => {
+            if (fresh.analyzed_at === null || fresh.analyzed_at === prevAnalyzedAt) return;
+            stopPolling();
+            setState({ phase: "done", analysis: fresh });
+            setRerunning(false);
+            refreshExtracts();
+          })
+          .catch(() => {}); // transient failure — the next tick retries
+      }, POLL_MS);
+    },
+    [noteId, stopPolling, refreshExtracts],
+  );
+
+  const analysis = state.phase === "done" ? state.analysis : null;
+  // The gated empty state: indexed, analysis pending, and at least one image
+  // still missing its extracts — the backend won't analyze until they land.
+  const gated =
+    analysis !== null &&
+    analysis.analyzed_at === null &&
+    ingestState === "indexed" &&
+    attachments !== null &&
+    awaitingImageCount(attachments) > 0;
+
+  useEffect(() => {
+    if (gated) startPolling(null);
+  }, [gated, startPolling]);
+
+  function rerunNote() {
+    if (noteId === null || analysis === null) return;
+    setRerunning(true);
+    // A 409 means a run is already in flight, which reads the same; the
+    // poller picks up whichever run finishes.
+    api.analyzeNote(noteId).catch(() => {});
+    startPolling(analysis.analyzed_at);
+  }
+
+  function rerunImage(attachmentId: string) {
+    extractsApi.analyze(attachmentId);
+    // Image extracts gate analysis, so a fresh analysis follows; poll it in
+    // so the result fills without reopening the note.
+    startPolling(analysis?.analyzed_at ?? null);
+  }
+
+  if (noteId === null) {
     return <p className="analysis-quiet">analysis runs after indexing — nothing here yet.</p>;
   }
   if (state.phase === "loading") {
@@ -110,8 +407,28 @@ export function AnalysisTab({ noteId, onOpenEntity }: AnalysisTabProps) {
   if (state.phase === "error") {
     return <p className="analysis-quiet">couldn't load analysis — reopen to retry.</p>;
   }
+  if (analysis === null || analysis.analyzed_at === null) {
+    if (!gated) {
+      return <p className="analysis-quiet">analysis runs after indexing — nothing here yet.</p>;
+    }
+    return (
+      <div className="analysis-tab">
+        <p className="analysis-quiet">
+          waiting on image analysis — facts extract once every source below is in.
+        </p>
+        <SourcesCard
+          bodyChars={bodyChars}
+          images={images}
+          extractsApi={extractsApi}
+          analysis={null}
+          rerunning={false}
+          onRerun={() => {}}
+          onRerunImage={rerunImage}
+        />
+      </div>
+    );
+  }
 
-  const { analysis } = state;
   const groups = groupBySubject(analysis);
 
   return (
@@ -166,11 +483,15 @@ export function AnalysisTab({ noteId, onOpenEntity }: AnalysisTabProps) {
         </section>
       )}
 
-      <p className="provenance-foot">
-        {/* analyzed_at is a real instant, not a calendar date: keep it local */}
-        analyzed {fmtTemporal(analysis.analyzed_at, "instant")}
-        {analysis.extractor !== null && ` · ${analysis.extractor}`}
-      </p>
+      <SourcesCard
+        bodyChars={bodyChars}
+        images={images}
+        extractsApi={extractsApi}
+        analysis={analysis}
+        rerunning={rerunning}
+        onRerun={rerunNote}
+        onRerunImage={rerunImage}
+      />
     </div>
   );
 }

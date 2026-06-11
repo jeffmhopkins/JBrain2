@@ -496,6 +496,12 @@ export const api = {
     return (await response.json()) as NoteAnalysis;
   },
 
+  // Note-level re-run: queues a fresh analysis pass (202 with a job id);
+  // 409 while one is already in flight — the UI reads both as "running".
+  async analyzeNote(id: string): Promise<void> {
+    await request(`/api/notes/${encodeURIComponent(id)}/analyze`, { method: "POST" });
+  },
+
   // Non-merged entities, newest-seen first (server-capped at 200).
   async listEntities(q?: string, kind?: string): Promise<EntityList> {
     const params = new URLSearchParams();
