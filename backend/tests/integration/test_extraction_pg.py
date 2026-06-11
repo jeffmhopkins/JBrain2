@@ -347,6 +347,117 @@ async def test_analyze_note_lands_everything(
     assert usage and usage[0].provider == "xai" and usage[0].model == "grok-4.3"
 
 
+async def test_ratcheted_fact_cites_a_derived_chunk_in_its_own_domain(
+    maker: async_sessionmaker[AsyncSession], tmp_path: Any
+) -> None:
+    """A health fact in a `general` note ratchets UP, so its citation must land
+    on a chunk in HEALTH, not the note's general chunk — otherwise the citation
+    crosses the firewall (docs/ANALYSIS.md "Mixed-domain notes"). The same-domain
+    job-title fact keeps citing the original note chunk. A unique entity keeps
+    the measurement from colliding with another test's reading on shared Me."""
+    person = "Quincy Vitals"
+    body = f"{person}: BP 118/76, works as a baker."
+    note_id = await make_note(maker, domain="general", body=body)
+    await ingest(maker, note_id, tmp_path)
+    payload = extraction_payload(
+        title="Checkup",
+        tags=["health", "vitals", "work"],
+        mentions=[{"name": person, "kind": "Person", "surface_text": person}],
+        facts=[
+            {
+                "predicate": "bloodPressure", "qualifier": "", "kind": "measurement",
+                "statement": "BP 118/76.",
+                "value_json": {"systolic": 118, "diastolic": 76, "unit": "mmHg"},
+                "assertion": "asserted", "entity_ref": person, "object_entity_ref": None,
+                "temporal": None, "domain": "health", "confidence": 0.9,
+            },
+            {
+                "predicate": "jobTitle", "qualifier": "", "kind": "attribute",
+                "statement": "Works as a baker.", "value_json": {"value": "baker"},
+                "assertion": "asserted", "entity_ref": person, "object_entity_ref": None,
+                "temporal": None, "domain": "general", "confidence": 0.9,
+            },
+        ],
+        temporal_tokens=[],
+    )  # fmt: skip
+    await analyzer(maker, [json.dumps(payload)]).analyze_note({"note_id": note_id})
+
+    cited = {
+        r.predicate: r
+        for r in await rows(
+            maker,
+            OWNER,
+            "SELECT f.predicate, f.domain_code AS fd, f.chunk_id::text AS cid,"
+            " c.domain_code AS cd, c.source_kind AS sk, c.source_anchor AS sa, c.text AS ctext"
+            " FROM app.facts f JOIN app.chunks c ON c.id = f.chunk_id WHERE f.note_id = :n",
+            n=note_id,
+        )
+    }
+    bp, job = cited["bloodPressure"], cited["jobTitle"]
+    # The ratcheted fact cites a derived HEALTH chunk anchored to the source.
+    assert bp.fd == "health" and bp.cd == "health" and bp.sk == "derived"
+    assert bp.ctext == body  # span text copied verbatim, offsets preserved
+    # The general fact still cites the original note chunk.
+    assert job.fd == "general" and job.cd == "general" and job.sk == "note"
+    assert bp.sa == job.cid  # derived chunk's source_anchor is the note chunk
+
+    # Firewall: the derived health chunk is invisible to a general-only scope,
+    # visible to a health one — so the citation never leaves the fact's scope.
+    assert await rows(maker, GENERAL_ONLY, "SELECT 1 FROM app.chunks WHERE id = :i", i=bp.cid) == []
+    assert (
+        len(await rows(maker, HEALTH_ONLY, "SELECT 1 FROM app.chunks WHERE id = :i", i=bp.cid)) == 1
+    )
+
+
+async def test_multiple_ratcheted_facts_share_one_derived_chunk(
+    maker: async_sessionmaker[AsyncSession], tmp_path: Any
+) -> None:
+    """Two health facts anchored to the same source chunk reuse ONE derived
+    health chunk — derivation is get-or-create per (note, domain, source)."""
+    person = "Rhea Labs"
+    note_id = await make_note(maker, domain="general", body=f"{person}: BP 121/79, glucose 96.")
+    await ingest(maker, note_id, tmp_path)
+
+    def health_fact(predicate: str, value: dict[str, Any], statement: str) -> dict[str, Any]:
+        return {
+            "predicate": predicate, "qualifier": "", "kind": "measurement",
+            "statement": statement, "value_json": value, "assertion": "asserted",
+            "entity_ref": person, "object_entity_ref": None, "temporal": None,
+            "domain": "health", "confidence": 0.9,
+        }  # fmt: skip
+
+    payload = extraction_payload(
+        title="Readings",
+        tags=["health", "vitals", "labs"],
+        mentions=[{"name": person, "kind": "Person", "surface_text": person}],
+        facts=[
+            health_fact(
+                "bloodPressure", {"systolic": 121, "diastolic": 79, "unit": "mmHg"}, "BP 121/79."
+            ),
+            health_fact("bloodGlucose", {"value": 96, "unit": "mg/dL"}, "Glucose 96."),
+        ],
+        temporal_tokens=[],
+    )
+    await analyzer(maker, [json.dumps(payload)]).analyze_note({"note_id": note_id})
+
+    derived = await rows(
+        maker,
+        OWNER,
+        "SELECT id FROM app.chunks WHERE note_id = :n AND source_kind = 'derived'"
+        " AND domain_code = 'health'",
+        n=note_id,
+    )
+    assert len(derived) == 1  # one derived chunk shared by both health facts
+    health_chunk_ids = await rows(
+        maker,
+        OWNER,
+        "SELECT DISTINCT chunk_id::text AS cid FROM app.facts"
+        " WHERE note_id = :n AND domain_code = 'health'",
+        n=note_id,
+    )
+    assert [r.cid for r in health_chunk_ids] == [str(derived[0].id)]
+
+
 async def test_backward_phrase_resolution_repaired_end_to_end(
     maker: async_sessionmaker[AsyncSession],
 ) -> None:

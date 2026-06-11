@@ -21,6 +21,10 @@ _SELECT = """
     FROM app.chunks c
     JOIN app.notes n ON n.id = c.note_id
     WHERE n.deleted_at IS NULL
+      -- Derived chunks are per-domain citation backing (analysis "Mixed-domain
+      -- notes"), not primary sources: skip them so the same text a note already
+      -- carries in its capture domain is never surfaced twice.
+      AND c.source_kind != 'derived'
       AND (cast(:domain AS text) IS NULL OR c.domain_code = cast(:domain AS text))
 """
 

@@ -8,10 +8,11 @@ failed run never partial-writes facts, and re-analysis is idempotent: facts
 upsert on the structural identity key, mentions rebuild wholesale (the chunks
 pattern), tokens are reused by (phrase, resolved value).
 
-TODO(analysis): mixed-domain notes should also derive per-domain chunks so a
-citation never crosses the firewall (docs/ANALYSIS.md "Mixed-domain notes");
-until then a ratcheted fact may cite a chunk in the note's capture domain,
-which RLS simply hides from narrower scopes.
+A note is captured in one domain, but a fact may ratchet UP (a health reading
+in a `general` note). Its citation must not point at a chunk the fact's own RLS
+scope cannot see, so `_citation_chunk` derives a per-domain copy of the cited
+chunk in the fact's domain — a citation never crosses the firewall
+(docs/ANALYSIS.md "Mixed-domain notes").
 """
 
 import uuid
@@ -839,6 +840,51 @@ class AnalysisPipeline:
             for f in rows
         ]
 
+    async def _citation_chunk(
+        self,
+        session: AsyncSession,
+        *,
+        source_chunk_id: uuid.UUID | None,
+        fact_domain: str,
+        note_domain: str,
+        note_id: uuid.UUID,
+    ) -> uuid.UUID | None:
+        """The chunk a fact in `fact_domain` may cite without crossing the
+        firewall. A note's chunks all carry its capture domain, so a ratcheted
+        fact (a health reading in a `general` note) would otherwise cite a chunk
+        its own RLS scope cannot see. Derive a get-or-create `derived` copy of
+        the source chunk in the fact's domain and cite that instead — the
+        citation never leaves the fact's scope (docs/ANALYSIS.md "Mixed-domain
+        notes"). A same-domain fact cites the source chunk directly."""
+        if source_chunk_id is None or fact_domain == note_domain:
+            return source_chunk_id
+        src = str(source_chunk_id)
+        existing = (
+            await session.execute(
+                text(
+                    "SELECT id FROM app.chunks WHERE note_id = :n AND domain_code = :d"
+                    " AND source_kind = 'derived' AND source_anchor = :src LIMIT 1"
+                ),
+                {"n": str(note_id), "d": fact_domain, "src": src},
+            )
+        ).first()
+        if existing is not None:
+            return existing.id
+        new_id = uuid.uuid4()
+        # Copy the span verbatim (same char offsets, same text) so the stored
+        # fact anchor still marks the right snippet; only the domain changes.
+        # No embedding: derived chunks are citation backing, not search rows.
+        await session.execute(
+            text(
+                "INSERT INTO app.chunks (id, note_id, domain_code, granularity, seq,"
+                " char_start, char_end, source_kind, source_anchor, text)"
+                " SELECT :new, note_id, :d, granularity, seq, char_start, char_end,"
+                " 'derived', :anchor, text FROM app.chunks WHERE id = :src_id"
+            ),
+            {"new": str(new_id), "d": fact_domain, "anchor": src, "src_id": src},
+        )
+        return new_id
+
     async def _upsert_fact(
         self,
         session: AsyncSession,
@@ -969,15 +1015,29 @@ class AnalysisPipeline:
             refreshed = next((e for e in existing if e.id == decision.refresh_id), None)
             if refreshed is not None and refreshed.derived:
                 anchor = anchor_for.get(fact.entity_ref)
+                base_chunk = anchor[0] if anchor else (chunks[0].id if chunks else None)
                 values["derived_from_fact_id"] = None
                 values["note_id"] = note_id
-                values["chunk_id"] = anchor[0] if anchor else (chunks[0].id if chunks else None)
+                values["chunk_id"] = await self._citation_chunk(
+                    session,
+                    source_chunk_id=base_chunk,
+                    fact_domain=fact_domain,
+                    note_domain=note_domain,
+                    note_id=note_id,
+                )
             await session.execute(update(Fact).where(Fact.id == fact_id).values(values))
             await self._update_shadows_in_place(session, source_id=fact_id)
             return fact_id
 
         anchor = anchor_for.get(fact.entity_ref)
-        chunk_id = anchor[0] if anchor else (chunks[0].id if chunks else None)
+        base_chunk = anchor[0] if anchor else (chunks[0].id if chunks else None)
+        chunk_id = await self._citation_chunk(
+            session,
+            source_chunk_id=base_chunk,
+            fact_domain=fact_domain,
+            note_domain=note_domain,
+            note_id=note_id,
+        )
         # Explicit id: read below before flush would otherwise be None
         # (the ORM default fires at flush time).
         new_fact = Fact(
