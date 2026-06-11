@@ -24,13 +24,17 @@ def test_ocr_prompt_demands_verbatim_plain_text_and_honesty() -> None:
 
 
 def test_description_prompt_is_salient_and_transcription_independent() -> None:
-    """The full-mode description: what the image shows that's worth knowing
-    (the text the fact pipeline mines), never a second transcription and
-    never speculation beyond what's visible."""
+    """The full-mode description: the salient information itself (the text
+    the fact pipeline mines) — never a second transcription, never a
+    description of the medium, never speculation beyond the image."""
     assert "do not transcribe" in DESCRIPTION_SYSTEM
     for required in ("objects", "people", "places", "states or conditions", "relationships"):
         assert required in DESCRIPTION_SYSTEM
-    assert "2-5 plain sentences" in DESCRIPTION_SYSTEM
+    # The salient contract: information, not medium; every detail, one
+    # sentence each; no UI-chrome narration.
+    for required in ("not a description of the medium", "UI chrome", "dates and times"):
+        assert required in DESCRIPTION_SYSTEM
+    assert "one plain sentence per distinct piece of information" in DESCRIPTION_SYSTEM
     assert "never speculate" in DESCRIPTION_SYSTEM
 
 

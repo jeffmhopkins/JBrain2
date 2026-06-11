@@ -260,7 +260,10 @@ Image-chain modes [decided: **default full**; per-attachment on-demand run;
 the description kind rides `'caption'`]: the `image_analysis_mode` user
 setting (`app.settings`, read per job) picks **full** — one `vision.ocr`
 transcription call plus one `vision.caption` call producing a salient
-multi-sentence description the fact pipeline mines — or **ocr**, the
+multi-sentence description the fact pipeline mines [decided: the description
+states the information itself — names, dates, quantities, relationships,
+states, one sentence per distinct detail — never a narration of the medium
+("a screenshot showing…") or its UI chrome] — or **ocr**, the
 transcription call only with no caption row. The job payload's optional
 `mode` overrides the setting: `POST /attachments/{id}/analyze` enqueues
 `{mode: "full"}` for one attachment regardless of the global mode (also the
