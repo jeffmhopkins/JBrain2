@@ -102,9 +102,52 @@ def test_validate_value_never_gates_an_unknown_predicate(registry: SchemaRegistr
     registry.validate_value("person", "coffee_order", "oat flat white")
 
 
-def test_default_defs_dir_points_at_repo_schemas() -> None:
+def test_default_defs_dir_points_at_packaged_defs() -> None:
     d = default_defs_dir()
-    assert d.name == "schemas" and (d / "_meta.yaml").is_file()
+    assert d.name == "defs" and (d / "_meta.yaml").is_file()
+
+
+def test_predicate_normalization_collapses_drift_spellings(registry: SchemaRegistry) -> None:
+    # The screenshot drift: legalName / legal_name / "Legal Name" all converge.
+    assert registry.normalize_predicate("legalName") == "name.legal"
+    assert registry.normalize_predicate("legal_name") == "name.legal"
+    assert registry.normalize_predicate("Legal Name") == "name.legal"
+    assert registry.normalize_predicate("alsoKnownAs") == "name.nickname"
+    assert registry.normalize_predicate("scheduled_time") == "scheduledTime"
+    # An already-canonical or long-tail predicate passes through untouched.
+    assert registry.normalize_predicate("name.legal") == "name.legal"
+    assert registry.normalize_predicate("coffee_order") == "coffee_order"
+
+
+def test_conflicting_renamed_from_fails_to_load(tmp_path: Path) -> None:
+    _write_min_registry(tmp_path)
+    # Two predicates both claim the alias "aka" — an unresolvable attractor.
+    (tmp_path / "facets.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "facets": {
+                    "Named": {
+                        "predicates": [
+                            {
+                                "canonical_name": "name",
+                                "value_shape": "text",
+                                "kind": "attribute",
+                                "renamed_from": ["aka"],
+                            },
+                            {
+                                "canonical_name": "name.legal",
+                                "value_shape": "text",
+                                "kind": "state",
+                                "renamed_from": ["aka"],
+                            },
+                        ]
+                    }
+                }
+            }
+        )
+    )
+    with pytest.raises(SchemaError, match="maps to both"):
+        load_registry(tmp_path)
 
 
 # --- malformed definitions fail at load -------------------------------------

@@ -1,10 +1,12 @@
-# schemas/ — the entity schema registry
+# schema/defs — the entity schema registry definitions
 
 Declarative shape of each entity kind: the facets it carries, the canonical
 spelling of its core predicates, how its display name projects, and which
 predicates seed aliases. Binding rationale and the full model live in
-[`docs/entity.md`](../docs/entity.md). **Status: [proposed] — awaiting owner
-ratification; not yet wired into the pipeline.**
+`docs/entity.md`. Loaded by the sibling package (`jbrain.schema`); the defs are
+co-located here so they ship in the wheel, like the `.prompt` files.
+**Status: [proposed]. Predicate normalization is wired into extraction; the
+remaining consumers are not yet read by the pipeline.**
 
 ```
 _meta.yaml      schema_version, the fact-kind enum, value_shapes, shared shapes

@@ -79,7 +79,7 @@ files, LinkML-shaped (single `extends` backbone + multiple composable `facets`
 + per-predicate fields). Layout:
 
 ```
-schemas/
+backend/src/jbrain/schema/defs/   # co-located in the package, ships in the wheel
   _meta.yaml        # schema_version; the fact-kind enum; the value_shape enum
   facets.yaml       # the reusable mixin library (Named, Temporal, Monetary, …)
   types/
@@ -334,7 +334,7 @@ contradict the guard.
 
 ## Per-category catalog **[proposed]**
 
-Compact catalog; full property sets live in `schemas/types/*.yaml`. Standards in
+Compact catalog; full property sets live in `backend/src/jbrain/schema/defs/types/*.yaml`. Standards in
 parentheses. 🔒 marks the firewall a category floors into.
 
 - **Person** *(graph; schema.org Person, vCard)* — facets: Named, Contactable,
@@ -501,6 +501,7 @@ For transparency, the design choices the red-team cut from the first sketch:
    audiences (e.g. `gym`, `bandmates`) are accepted. This is the one vocabulary
    invariant applied to a qualifier: preferred where it matters, gated nowhere.
 
-All fourteen categories in the catalog are now scaffolded under `schemas/`
+All fourteen categories in the catalog are now scaffolded under
+`backend/src/jbrain/schema/defs/`
 (`person, organization, place, role, animal, appointment, bill, lab_result,
 vehicle, medication, financial_account, document, subscription, device`).

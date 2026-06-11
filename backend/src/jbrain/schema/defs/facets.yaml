@@ -22,7 +22,7 @@ facets:
         value_shape: text
         kind: state
         functional: true                # a legal-name change supersedes, with history
-        renamed_from: [legal_name, legalName, fullName, full_legal_name]
+        renamed_from: [legal_name, legalName, full_legal_name]
         schema_org_ref: schema:legalName
       - canonical_name: name.given
         value_shape: text

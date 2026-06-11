@@ -16,6 +16,7 @@ import structlog
 
 from jbrain.analysis.prompt import MAX_FACTS
 from jbrain.analysis.supersession import _same_quantity
+from jbrain.schema import get_registry
 
 log = structlog.get_logger()
 
@@ -564,7 +565,10 @@ def parse_extraction(payload: Any, *, anchor: datetime | None = None) -> Extract
         kind, assertion = raw.get("kind"), raw.get("assertion")
         entity_ref = str(raw.get("entity_ref", "")).strip()
         statement = str(raw.get("statement", "")).strip()
-        predicate = str(raw.get("predicate", "")).strip()
+        # Normalize drift spellings (legalName/legal_name -> name.legal) onto the
+        # registry's canonical predicate BEFORE the identity key is read, so the
+        # supersession chain and dedup see one stable address (docs/entity.md).
+        predicate = get_registry().normalize_predicate(str(raw.get("predicate", "")).strip())
         if (
             kind not in FACT_KINDS
             or assertion not in ASSERTIONS

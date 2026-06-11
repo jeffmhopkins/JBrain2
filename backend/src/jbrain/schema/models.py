@@ -8,8 +8,17 @@ module holds the shapes and the pure projection methods over them.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Any
+
+_NORM_SEP = re.compile(r"[\s_]+")
+
+
+def _norm_key(spelling: str) -> str:
+    """Case- and separator-insensitive key for matching predicate spellings, so
+    `legal_name`, `legalName`, and `Legal Name` all collapse to one lookup."""
+    return _NORM_SEP.sub("", spelling).casefold()
 
 
 class SchemaError(ValueError):
@@ -104,10 +113,19 @@ class SchemaRegistry:
     meta: Meta
     facets: dict[str, Facet]
     types: dict[str, EntityType]
+    # normalized drift-spelling -> canonical predicate (the renamed_from attractor)
+    normalization: dict[str, str]
 
     def type(self, type_id: str) -> EntityType:
         """The type by id; KeyError if unknown (callers know their type ids)."""
         return self.types[type_id]
+
+    def normalize_predicate(self, predicate: str) -> str:
+        """Rewrite a known drift spelling to its canonical predicate
+        (`legalName` -> `name.legal`). An unknown predicate passes through
+        unchanged: this is normalization toward a preferred name, NEVER a
+        rejection (docs/entity.md invariant)."""
+        return self.normalization.get(_norm_key(predicate), predicate)
 
     # -- consumer (a): the extraction prompt digest (advisory) ----------------
 

@@ -8,7 +8,7 @@ predicate-name validation never rejects (docs/entity.md invariant); only a
 malformed `value_json` shape can.
 """
 
-from jbrain.schema.loader import default_defs_dir, load_registry
+from jbrain.schema.loader import default_defs_dir, get_registry, load_registry
 from jbrain.schema.models import (
     EntityType,
     Facet,
@@ -26,5 +26,6 @@ __all__ = [
     "SchemaError",
     "SchemaRegistry",
     "default_defs_dir",
+    "get_registry",
     "load_registry",
 ]

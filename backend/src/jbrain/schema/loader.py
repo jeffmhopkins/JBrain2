@@ -1,16 +1,16 @@
-"""Parse and validate the `schemas/` YAML into a `SchemaRegistry`.
+"""Parse and validate the entity-schema YAML into a `SchemaRegistry`.
 
 Mirrors `jbrain.llm.promptfile`: load-time validation so a malformed registry
-fails fast (SchemaError) rather than mid-pipeline. The definitions live at the
-repo root (`schemas/`) — the YAML is the authoring surface (docs/entity.md
-decision 1). Packaging them for the deployed wheel is deferred to when the
-registry is wired into startup; until then `default_defs_dir()` finds them
-relative to this module and tests pass an explicit dir.
+fails fast (SchemaError) rather than mid-pipeline. The definitions are the YAML
+authoring surface (docs/entity.md decision 1), co-located in `defs/` so they
+ship in the wheel like the `.prompt` files; `default_defs_dir()` finds them
+relative to this module and tests may pass an explicit dir.
 """
 
 from __future__ import annotations
 
 from dataclasses import replace
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -23,16 +23,24 @@ from jbrain.schema.models import (
     Predicate,
     SchemaError,
     SchemaRegistry,
+    _norm_key,
 )
 
 
 def default_defs_dir() -> Path:
-    """The repo-root `schemas/` directory (dev/test). Raises if it is missing."""
-    root = Path(__file__).resolve().parents[4]
-    defs = root / "schemas"
+    """The `defs/` directory co-located in this package (ships in the wheel,
+    same pattern as the `.prompt` files). Raises if it is missing."""
+    defs = Path(__file__).parent / "defs"
     if not defs.is_dir():
         raise SchemaError(f"schema defs dir not found at {defs}")
     return defs
+
+
+@lru_cache(maxsize=1)
+def get_registry() -> SchemaRegistry:
+    """The process-wide registry, loaded once from the packaged defs. Mirrors
+    the prompt loader: a malformed registry fails on first use, never silently."""
+    return load_registry()
 
 
 def load_registry(defs_dir: Path | None = None) -> SchemaRegistry:
@@ -42,7 +50,27 @@ def load_registry(defs_dir: Path | None = None) -> SchemaRegistry:
     meta = _load_meta(root / "_meta.yaml")
     facets = _load_facets(root / "facets.yaml", meta)
     types = _load_types(root / "types", meta, facets)
-    return SchemaRegistry(meta=meta, facets=facets, types=types)
+    normalization = _build_normalization(facets, types)
+    return SchemaRegistry(meta=meta, facets=facets, types=types, normalization=normalization)
+
+
+def _build_normalization(facets: dict[str, Facet], types: dict[str, EntityType]) -> dict[str, str]:
+    """The `renamed_from` attractor: every declared drift spelling maps to its
+    canonical predicate. A spelling claimed by two different canonicals is an
+    authoring bug and fails the load."""
+    mapping: dict[str, str] = {}
+    sources: list[Predicate] = [p for f in facets.values() for p in f.predicates]
+    sources += [p for t in types.values() for p in t.own_predicates]
+    for pred in sources:
+        for alias in pred.renamed_from:
+            key = _norm_key(alias)
+            prior = mapping.get(key)
+            if prior is not None and prior != pred.canonical_name:
+                raise SchemaError(
+                    f"renamed_from {alias!r} maps to both {prior!r} and {pred.canonical_name!r}"
+                )
+            mapping[key] = pred.canonical_name
+    return mapping
 
 
 def _read_yaml(path: Path) -> dict[str, Any]:
