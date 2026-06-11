@@ -116,11 +116,18 @@ def _score(case: dict[str, Any], parsed: Any, anchor: datetime) -> CaseResult:
         hit = next((n for n in mention_names if _overlaps(person, n)), None)
         res.checks.append((f"person:{person}", hit is not None, ""))
 
-    # Negative check: a name the model must NOT promote to a mention (over-
-    # extraction / hallucination stress).
+    # Negative check: a name the model must NOT promote to a mention AT ALL —
+    # for fabricated humans / pure non-entities ("someone", a guessed name).
     for person in expect.get("absent_person", []):
         present = any(_overlaps(person, n) for n in mention_names)
         res.checks.append((f"absent:{person}", not present, ""))
+
+    # Over-personification check: a token that may legitimately be a non-Person
+    # mention (a Product, Place, Animal, CreativeWork) but must NOT be typed as a
+    # Person. Passes if it's absent or present with a non-Person kind.
+    for name in expect.get("not_person", []):
+        mis = any(_overlaps(name, m.name) and m.kind.lower() == "person" for m in parsed.mentions)
+        res.checks.append((f"not_person:{name}", not mis, ""))
 
     for edge in expect.get("edges", []):
         obj = edge["object"]

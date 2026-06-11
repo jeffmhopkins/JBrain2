@@ -5,8 +5,16 @@
     "domain": "general",
     "created_at": "2026-06-11T07:13:00-06:00",
     "expect": {
-      "person_mentions": ["Jeff", "Celine Hopkins"],
-      "edges": [{"predicate": "spouse", "object": "Celine"}]
+      "person_mentions": [
+        "Jeff",
+        "Celine Hopkins"
+      ],
+      "edges": [
+        {
+          "predicate": "spouse",
+          "object": "Celine"
+        }
+      ]
     }
   },
   {
@@ -15,8 +23,16 @@
     "domain": "general",
     "created_at": "2026-06-11T07:13:00-06:00",
     "expect": {
-      "person_mentions": ["Jeff", "Celine"],
-      "temporal": [{"phrase": "last night", "resolved_date": "2026-06-10"}]
+      "person_mentions": [
+        "Jeff",
+        "Celine"
+      ],
+      "temporal": [
+        {
+          "phrase": "last night",
+          "resolved_date": "2026-06-10"
+        }
+      ]
     }
   },
   {
@@ -25,8 +41,16 @@
     "domain": "general",
     "created_at": "2026-06-11T09:00:00-06:00",
     "expect": {
-      "person_mentions": ["Jeff", "Celine Hopkins"],
-      "edges": [{"predicate": "spouse", "object": "Celine"}]
+      "person_mentions": [
+        "Jeff",
+        "Celine Hopkins"
+      ],
+      "edges": [
+        {
+          "predicate": "spouse",
+          "object": "Celine"
+        }
+      ]
     }
   },
   {
@@ -35,7 +59,9 @@
     "domain": "general",
     "created_at": "2026-06-11T09:00:00-06:00",
     "expect": {
-      "person_mentions": ["Dana Okafor"]
+      "person_mentions": [
+        "Dana Okafor"
+      ]
     }
   },
   {
@@ -44,8 +70,16 @@
     "domain": "general",
     "created_at": "2026-06-11T09:00:00-06:00",
     "expect": {
-      "person_mentions": ["Marcus", "Lena"],
-      "edges": [{"predicate": "sibling", "object": "Lena"}]
+      "person_mentions": [
+        "Marcus",
+        "Lena"
+      ],
+      "edges": [
+        {
+          "predicate": "sibling",
+          "object": "Lena"
+        }
+      ]
     }
   },
   {
@@ -54,8 +88,15 @@
     "domain": "general",
     "created_at": "2026-06-11T09:00:00-06:00",
     "expect": {
-      "person_mentions": ["Marcus"],
-      "edges": [{"predicate": "worksFor", "object": "Globex"}]
+      "person_mentions": [
+        "Marcus"
+      ],
+      "edges": [
+        {
+          "predicate": "worksFor",
+          "object": "Globex"
+        }
+      ]
     }
   },
   {
@@ -64,7 +105,11 @@
     "domain": "general",
     "created_at": "2026-06-11T09:00:00-06:00",
     "expect": {
-      "person_mentions": ["Priya", "Sam", "Older Wong"]
+      "person_mentions": [
+        "Priya",
+        "Sam",
+        "Older Wong"
+      ]
     }
   },
   {
@@ -73,7 +118,10 @@
     "domain": "general",
     "created_at": "2026-06-11T09:00:00-06:00",
     "expect": {
-      "person_mentions": ["Dana", "Quentin Ross"]
+      "person_mentions": [
+        "Dana",
+        "Quentin Ross"
+      ]
     }
   },
   {
@@ -82,7 +130,10 @@
     "domain": "general",
     "created_at": "2026-06-11T09:00:00-06:00",
     "expect": {
-      "person_mentions": ["Nadia", "Theo"]
+      "person_mentions": [
+        "Nadia",
+        "Theo"
+      ]
     }
   },
   {
@@ -91,7 +142,12 @@
     "domain": "general",
     "created_at": "2026-06-11T08:30:00-06:00",
     "expect": {
-      "temporal": [{"phrase": "yesterday", "resolved_date": "2026-06-10"}]
+      "temporal": [
+        {
+          "phrase": "yesterday",
+          "resolved_date": "2026-06-10"
+        }
+      ]
     }
   },
   {
@@ -100,7 +156,12 @@
     "domain": "general",
     "created_at": "2026-06-11T08:30:00-06:00",
     "expect": {
-      "temporal": [{"phrase": "a week ago", "resolved_date": "2026-06-04"}]
+      "temporal": [
+        {
+          "phrase": "a week ago",
+          "resolved_date": "2026-06-04"
+        }
+      ]
     }
   }
 ]

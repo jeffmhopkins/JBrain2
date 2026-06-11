@@ -108,7 +108,7 @@ def test_eval_cases_are_wellformed() -> None:
     assert cases
     names = [c["name"] for c in cases]
     assert len(names) == len(set(names)), "duplicate eval case names"
-    valid_expect = {"person_mentions", "absent_person", "edges", "temporal"}
+    valid_expect = {"person_mentions", "absent_person", "not_person", "edges", "temporal"}
     for c in cases:
         assert c["name"] and c["body"], c
         assert datetime.fromisoformat(c["created_at"]).utcoffset() is not None, c["name"]
@@ -117,3 +117,14 @@ def test_eval_cases_are_wellformed() -> None:
             assert "object" in edge, c["name"]
         for tt in c.get("expect", {}).get("temporal", []):
             assert {"phrase", "resolved_date"} <= set(tt), c["name"]
+
+
+def test_score_not_person_allows_nonperson_mention_but_flags_person() -> None:
+    # Over-personification check: a Product/Place/Animal mention is fine, the
+    # SAME token typed as a Person is the failure (and absence is fine too).
+    case: dict[str, Any] = {"name": "np", "expect": {"not_person": ["Tesla"]}}
+    product = ExtractedMention(name="Tesla", kind="Product", surface_text="Tesla")
+    assert _score(case, _extraction([product]), _A).passed
+    assert _score(case, _extraction([]), _A).passed
+    person = ExtractedMention(name="Tesla", kind="Person", surface_text="Tesla")
+    assert not _score(case, _extraction([person]), _A).passed
