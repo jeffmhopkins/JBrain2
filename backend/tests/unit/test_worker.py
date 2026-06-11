@@ -186,7 +186,7 @@ async def test_run_registers_all_job_handlers(
     monkeypatch.setattr(worker, "run_loop", capture)
     with pytest.raises(asyncio.CancelledError):
         await worker.run()
-    assert set(captured) == {"ingest_note", "embed_note", "analyze_note"}
+    assert set(captured) == {"ingest_note", "embed_note", "analyze_note", "ocr_attachment"}
 
 
 async def test_run_disposes_engine(monkeypatch: pytest.MonkeyPatch) -> None:

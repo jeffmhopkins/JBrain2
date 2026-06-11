@@ -5,6 +5,7 @@ ocr/caption chunks -> FTS finds the text), with the LLM always faked."""
 
 import uuid
 from collections.abc import AsyncIterator
+from pathlib import Path
 
 import pytest
 from sqlalchemy import text
@@ -18,6 +19,9 @@ from sqlalchemy.ext.asyncio import (
 from sqlalchemy.pool import NullPool
 
 from jbrain.db.session import SessionContext, scoped_session
+from jbrain.ingest.ocr import CAPTION_SYSTEM, MAX_OCR_BYTES, OCR_SYSTEM, OcrPipeline
+from jbrain.ingest.pipeline import IngestPipeline
+from jbrain.llm import FakeLlmClient, LlmRouter
 from jbrain.notes.repo import SqlNotesRepo
 from jbrain.storage import FsBlobStore
 from tests.conftest import docker_available
@@ -136,3 +140,170 @@ async def test_extract_rows_cascade_with_their_attachment(
     extract_id = await insert_extract(maker, attachment_id)
     assert await SqlNotesRepo(maker).remove_attachment(OWNER, attachment_id) is not None
     assert await count_visible(maker, OWNER, extract_id) == 0
+
+
+# --- the ocr_attachment round trip ------------------------------------------
+
+
+@pytest.fixture
+def blobs(tmp_path: Path) -> FsBlobStore:
+    return FsBlobStore(tmp_path)
+
+
+def vision_router(fake: FakeLlmClient) -> LlmRouter:
+    return LlmRouter(
+        {"xai": fake},
+        {"vision.ocr": ("xai", "grok-4.3"), "vision.caption": ("xai", "grok-4.3")},
+    )
+
+
+async def ocr_jobs_for(maker: async_sessionmaker[AsyncSession], attachment_id: str) -> int:
+    async with scoped_session(maker, OWNER) as s:
+        return (
+            await s.execute(
+                text(
+                    "SELECT count(*) FROM app.jobs WHERE kind = 'ocr_attachment'"
+                    " AND payload->>'attachment_id' = :aid"
+                ),
+                {"aid": attachment_id},
+            )
+        ).scalar_one()
+
+
+async def extract_rows(maker: async_sessionmaker[AsyncSession], attachment_id: str) -> list[dict]:
+    async with scoped_session(maker, OWNER) as s:
+        rows = (
+            await s.execute(
+                text(
+                    "SELECT kind, tool, text, confidence, source_anchor"
+                    " FROM app.attachment_extracts WHERE attachment_id = :aid ORDER BY kind"
+                ),
+                {"aid": attachment_id},
+            )
+        ).all()
+    return [dict(r._mapping) for r in rows]
+
+
+async def test_ocr_round_trip_blob_to_searchable_chunks(
+    maker: async_sessionmaker[AsyncSession], blobs: FsBlobStore
+) -> None:
+    note_id, attachment_id = await make_note_with_image(
+        maker, blobs, body="kept the receipt", filename="receipt.png", domain="general"
+    )
+    pipeline = IngestPipeline(maker, blobs)
+
+    # Ingest is LLM-free: it only enqueues the OCR job for the uncached image.
+    await pipeline.ingest_note({"note_id": note_id})
+    assert await ocr_jobs_for(maker, attachment_id) == 1
+    # Enqueue-once: a re-ingest while the job is still queued adds nothing.
+    await pipeline.ingest_note({"note_id": note_id})
+    assert await ocr_jobs_for(maker, attachment_id) == 1
+
+    fake = FakeLlmClient(["Total: $41.20\nThanks for shopping", "A crumpled grocery receipt."])
+    await OcrPipeline(maker, blobs, vision_router(fake)).ocr_attachment(
+        {"attachment_id": attachment_id}
+    )
+
+    # Exactly one OCR call and one caption call, each carrying the image.
+    assert [c["system"] for c in fake.calls] == [OCR_SYSTEM, CAPTION_SYSTEM]
+    for call in fake.calls:
+        assert len(call["images"]) == 1
+        assert call["images"][0].media_type == "image/png"
+
+    rows = await extract_rows(maker, attachment_id)
+    assert [(r["kind"], r["tool"], r["source_anchor"]) for r in rows] == [
+        ("caption", "xai:grok-4.3", "receipt.png"),
+        ("ocr", "xai:grok-4.3", "receipt.png"),
+    ]
+    by_kind = {r["kind"]: r for r in rows}
+    assert by_kind["ocr"]["confidence"] == pytest.approx(0.7)  # the Guards cap
+    assert by_kind["caption"]["confidence"] == pytest.approx(0.6)
+
+    # The handler re-enqueued ingest; run it and the cache becomes chunks.
+    await pipeline.ingest_note({"note_id": note_id})
+    async with scoped_session(maker, OWNER) as s:
+        chunks = (
+            await s.execute(
+                text(
+                    "SELECT source_kind, source_anchor, text FROM app.chunks"
+                    " WHERE note_id = :nid AND attachment_id = :aid ORDER BY seq"
+                ),
+                {"nid": note_id, "aid": attachment_id},
+            )
+        ).all()
+        hits = (
+            await s.execute(
+                text(
+                    "SELECT count(*) FROM app.chunks WHERE note_id = :nid"
+                    " AND tsv @@ plainto_tsquery('english', 'grocery receipt')"
+                ),
+                {"nid": note_id},
+            )
+        ).scalar_one()
+    assert {(c.source_kind, c.source_anchor) for c in chunks} == {
+        ("ocr", "receipt.png"),
+        ("caption", "receipt.png"),
+    }
+    assert any("Total: $41.20" in c.text for c in chunks)
+    assert hits >= 1  # FTS finds the vision text immediately
+
+    # The cache suppresses re-OCR: this re-ingest enqueues no new job.
+    assert await ocr_jobs_for(maker, attachment_id) == 1
+
+
+async def test_ingest_skips_ocr_for_oversized_images(
+    maker: async_sessionmaker[AsyncSession], blobs: FsBlobStore
+) -> None:
+    note_id, attachment_id = await make_note_with_image(
+        maker, blobs, filename="huge.png", size_bytes=MAX_OCR_BYTES + 1
+    )
+    await IngestPipeline(maker, blobs).ingest_note({"note_id": note_id})
+    assert await ocr_jobs_for(maker, attachment_id) == 0
+
+
+async def test_ocr_handler_noops_when_attachment_or_note_is_gone(
+    maker: async_sessionmaker[AsyncSession], blobs: FsBlobStore
+) -> None:
+    fake = FakeLlmClient()
+    handler = OcrPipeline(maker, blobs, vision_router(fake))
+    await handler.ocr_attachment({"attachment_id": str(uuid.uuid4())})
+
+    note_id, attachment_id = await make_note_with_image(maker, blobs)
+    assert await SqlNotesRepo(maker).delete_note(OWNER, note_id)
+    await handler.ocr_attachment({"attachment_id": attachment_id})
+
+    assert fake.calls == []  # neither skip path may bill a vision call
+    assert await extract_rows(maker, attachment_id) == []
+
+
+async def test_illegible_image_writes_empty_cache_rows_and_no_chunks(
+    maker: async_sessionmaker[AsyncSession], blobs: FsBlobStore
+) -> None:
+    note_id, attachment_id = await make_note_with_image(maker, blobs, filename="blur.jpg")
+    pipeline = IngestPipeline(maker, blobs)
+    await pipeline.ingest_note({"note_id": note_id})
+
+    fake = FakeLlmClient(["", "A blurry photo."])
+    await OcrPipeline(maker, blobs, vision_router(fake)).ocr_attachment(
+        {"attachment_id": attachment_id}
+    )
+    by_kind = {r["kind"]: r for r in await extract_rows(maker, attachment_id)}
+    assert by_kind["ocr"]["text"] == ""
+    assert by_kind["ocr"]["confidence"] == pytest.approx(0.0)
+
+    await pipeline.ingest_note({"note_id": note_id})
+    async with scoped_session(maker, OWNER) as s:
+        kinds = set(
+            (
+                await s.execute(
+                    text(
+                        "SELECT source_kind FROM app.chunks"
+                        " WHERE note_id = :nid AND attachment_id = :aid"
+                    ),
+                    {"nid": note_id, "aid": attachment_id},
+                )
+            ).scalars()
+        )
+    assert kinds == {"caption"}  # the empty OCR row produced no chunk
+    # ...but it still suppresses another OCR pass.
+    assert await ocr_jobs_for(maker, attachment_id) == 1
