@@ -245,7 +245,7 @@ def _report(results: list[CaseResult], model: str) -> bool:
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--case", help="run only the named case")
-    ap.add_argument("--like", help="run only cases whose name contains this substring (a category)")
+    ap.add_argument("--like", help="run only cases whose name contains any of these (comma-separated)")
     ap.add_argument("--strict", action="store_true", help="exit 1 unless every case passes")
     args = ap.parse_args()
 
@@ -253,7 +253,8 @@ def main() -> int:
     if args.case:
         cases = [c for c in cases if c["name"] == args.case]
     if args.like:
-        cases = [c for c in cases if args.like in c["name"]]
+        wants = [w.strip() for w in args.like.split(",") if w.strip()]
+        cases = [c for c in cases if any(w in c["name"] for w in wants)]
     if not cases:
         print("no matching cases", file=sys.stderr)
         return 2
