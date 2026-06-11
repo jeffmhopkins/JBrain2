@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { AttachmentExtract, NoteAnalysis, SearchResult } from "../api/client";
+import type { NoteAnalysis, SearchResult } from "../api/client";
 import type { StreamItem } from "../notes/useNotes";
 import { NoteScreen, noteViewFromItem, noteViewFromSearch } from "./NoteScreen";
 
@@ -185,15 +185,22 @@ const ANALYSIS: NoteAnalysis = {
   ],
 };
 
+function jsonResponse(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+// The Analysis tab also fetches the settings mode and every image's
+// extracts (eagerly, for the Sources card) when the note carries images.
 function stubAnalysisFetch(analysis: NoteAnalysis) {
   const fetchMock = vi.fn<typeof fetch>(async (input) => {
-    if (String(input) === "/api/notes/n1/analysis") {
-      return new Response(JSON.stringify(analysis), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      });
-    }
-    throw new Error(`Unexpected fetch: ${String(input)}`);
+    const url = String(input);
+    if (url === "/api/notes/n1/analysis") return jsonResponse(analysis);
+    if (url === "/api/settings") return jsonResponse({ image_analysis_mode: "full" });
+    if (/^\/api\/attachments\/[^/]+\/extracts$/.test(url)) return jsonResponse({ extracts: [] });
+    throw new Error(`Unexpected fetch: ${url}`);
   });
   vi.stubGlobal("fetch", fetchMock);
   return fetchMock;
@@ -363,6 +370,31 @@ describe("NoteScreen", () => {
     ).toBeInTheDocument();
   });
 
+  it("an un-analyzed note with an image awaiting extracts shows the gated waiting state", async () => {
+    stubAnalysisFetch({
+      ...ANALYSIS,
+      analyzed_at: null,
+      title: null,
+      tags: [],
+      facts: [],
+      entities: [],
+      temporal_tokens: [],
+    });
+    // INDEXED carries receipt.png with an empty vision cache: the backend
+    // gates analysis on it, and the tab says so over the mid-flight card.
+    setup(noteViewFromItem(INDEXED));
+    fireEvent.click(screen.getByRole("tab", { name: "Analysis" }));
+    expect(
+      await screen.findByText(
+        "waiting on image analysis — facts extract once every source below is in.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("analysis waits here — runs automatically when every source is in."),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "re-run analysis" })).toBeDisabled();
+  });
+
   it("the top-right ⋯ sheet drives edit / move / delete, with a tap-again delete", () => {
     const { onDelete, onEdit, onMove } = setup();
 
@@ -416,156 +448,31 @@ describe("NoteScreen", () => {
   });
 });
 
-// ===== inline manifest expansion (settled three-way review — mock C) =====
+// ===== pure manifest (extract viewing lives in the Analysis tab now) =====
 
-function jsonResponse(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { "Content-Type": "application/json" },
-  });
-}
-
-function stubAttachmentsFetch(opts: {
-  mode?: "full" | "ocr";
-  extracts?: Record<string, AttachmentExtract[]>;
-}) {
-  const analyzed: string[] = [];
-  const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
-    const url = String(input);
-    const method = (init?.method ?? "GET").toUpperCase();
-    if (url === "/api/settings") {
-      return jsonResponse({ image_analysis_mode: opts.mode ?? "full" });
-    }
-    const extractsMatch = url.match(/^\/api\/attachments\/([^/]+)\/extracts$/);
-    if (extractsMatch && method === "GET") {
-      return jsonResponse({ extracts: opts.extracts?.[extractsMatch[1] ?? ""] ?? [] });
-    }
-    const analyzeMatch = url.match(/^\/api\/attachments\/([^/]+)\/analyze$/);
-    if (analyzeMatch && method === "POST") {
-      analyzed.push(analyzeMatch[1] ?? "");
-      return jsonResponse({ job_id: "job-1" }, 202);
-    }
-    throw new Error(`Unexpected fetch: ${method} ${url}`);
-  });
-  vi.stubGlobal("fetch", fetchMock);
-  return { fetchMock, analyzed };
-}
-
-function extract(kind: "ocr" | "caption", text: string): AttachmentExtract {
-  return {
-    kind,
-    text,
-    tool: "xai:grok-4.3",
-    confidence: kind === "ocr" ? 0.7 : 0.6,
-    created_at: "2026-06-11T09:00:00.000Z",
-  };
-}
-
-const OCR_8_LINES = [
-  "Q3 PLANNING",
-  "- ship phase 4 conversations",
-  "- [illegible] retrieval evals",
-  "- ocr -> facts pipeline",
-  "owner: jeff",
-  "demo [illegible] 6/19",
-  "follow up with sam",
-  "budget: tbd",
-].join("\n");
-
-describe("AttachmentsTab inline expansion", () => {
-  it("unfolds an image row in place: clamped verbatim OCR, illegible muted, description + provenance", async () => {
-    stubAttachmentsFetch({
-      extracts: {
-        a3: [
-          extract("ocr", OCR_8_LINES),
-          extract("caption", "a whiteboard of q3 planning bullets, partly smudged."),
-        ],
-      },
+describe("AttachmentsTab manifest", () => {
+  it("rows are inert manifest entries — no expansion affordances, no fetches", () => {
+    const fetchMock = vi.fn<typeof fetch>(async (input) => {
+      throw new Error(`Unexpected fetch: ${String(input)}`);
     });
+    vi.stubGlobal("fetch", fetchMock);
     setup(noteViewFromItem(INDEXED));
     fireEvent.click(screen.getByRole("tab", { name: /Attachments/ }));
+
+    // Neither image nor pdf rows expand: no role, no caret, no aria state.
+    for (const filename of ["whiteboard.jpg", "lab-orders.pdf"]) {
+      const row = screen.getByText(filename).closest(".att-row");
+      expect(row).not.toBeNull();
+      expect(row).not.toHaveAttribute("role");
+      expect(row).not.toHaveAttribute("aria-expanded");
+    }
+    expect(document.querySelector(".att-caret")).toBeNull();
+
+    // A row tap does nothing: no expansion, no pdf hint, no extract fetch.
     fireEvent.click(screen.getByText("whiteboard.jpg"));
-
-    // Extracts are fetched lazily on first expand, then render verbatim.
-    expect(await screen.findByText(/Q3 PLANNING/)).toBeInTheDocument();
-    const pre = document.querySelector(".x-text");
-    expect(pre).not.toBeNull();
-    expect(pre).not.toHaveClass("all");
-    // The model's honesty marker renders muted-italic, never plain prose.
-    expect(document.querySelectorAll(".x-illegible")).toHaveLength(2);
-    // 8 lines exceed the ~6-line clamp: show-all grows in place.
-    fireEvent.click(screen.getByRole("button", { name: "show all 8 lines" }));
-    expect(document.querySelector(".x-text")).toHaveClass("all");
-    fireEvent.click(screen.getByRole("button", { name: "show less" }));
-    expect(document.querySelector(".x-text")).not.toHaveClass("all");
-
-    // The description beneath, with its mined-for-facts provenance line.
-    expect(
-      screen.getByText("a whiteboard of q3 planning bullets, partly smudged."),
-    ).toBeInTheDocument();
-    expect(screen.getByText("ocr · xai:grok-4.3 · 70%")).toBeInTheDocument();
-    expect(
-      screen.getByText("caption · xai:grok-4.3 · 60% · mined for facts in analysis"),
-    ).toBeInTheDocument();
-
-    // Tapping the row again folds it back.
-    fireEvent.click(screen.getByText("whiteboard.jpg"));
-    expect(screen.queryByText(/Q3 PLANNING/)).not.toBeInTheDocument();
-  });
-
-  it("a row missing its description shows the ocr-only note and the analyze action", async () => {
-    const { analyzed } = stubAttachmentsFetch({
-      mode: "ocr",
-      extracts: { a4: [extract("ocr", "RIDGELINE SCAN\nTOTAL 4,200")] },
-    });
-    setup(noteViewFromItem(INDEXED));
-    fireEvent.click(screen.getByRole("tab", { name: /Attachments/ }));
-    fireEvent.click(screen.getByText("scan.png"));
-
-    expect(await screen.findByText(/RIDGELINE SCAN/)).toBeInTheDocument();
-    // Two lines fit the clamp — nothing to grow.
-    expect(screen.queryByRole("button", { name: /show all/ })).not.toBeInTheDocument();
-    expect(
-      await screen.findByText("no description — image analysis is set to ocr only."),
-    ).toBeInTheDocument();
-
-    // On-demand analysis: POST, then the calm in-flight line replaces it.
-    fireEvent.click(screen.getByRole("button", { name: "analyze image" }));
-    expect(await screen.findByText("analyzing image…")).toBeInTheDocument();
-    expect(analyzed).toEqual(["a4"]);
-    expect(screen.queryByRole("button", { name: "analyze image" })).not.toBeInTheDocument();
-    expect(
-      screen.queryByText("no description — image analysis is set to ocr only."),
-    ).not.toBeInTheDocument();
-  });
-
-  it("pdf rows do not expand — no caret, a transient text-layer line instead", async () => {
-    const { fetchMock } = stubAttachmentsFetch({});
-    setup(noteViewFromItem(INDEXED));
-    fireEvent.click(screen.getByRole("tab", { name: /Attachments/ }));
-
-    const row = screen.getByText("lab-orders.pdf").closest(".att-row");
-    expect(row).not.toBeNull();
-    expect(row).not.toHaveAttribute("aria-expanded");
-    expect(row?.querySelector(".att-caret")).toBeNull();
-
     fireEvent.click(screen.getByText("lab-orders.pdf"));
-    expect(screen.getByText(/pdfs carry their own text layer/)).toBeInTheDocument();
-    // No extraction fetch happens for text-layer files.
-    await waitFor(() =>
-      expect(fetchMock.mock.calls.filter(([u]) => String(u).includes("/extracts"))).toHaveLength(0),
-    );
-  });
-
-  it("image rows carry a caret and aria-expanded state", () => {
-    stubAttachmentsFetch({ extracts: {} });
-    setup(noteViewFromItem(INDEXED));
-    fireEvent.click(screen.getByRole("tab", { name: /Attachments/ }));
-
-    const row = screen.getByText("whiteboard.jpg").closest(".att-row");
-    expect(row).toHaveAttribute("aria-expanded", "false");
-    expect(row?.querySelector(".att-caret")).not.toBeNull();
-    fireEvent.click(screen.getByText("whiteboard.jpg"));
-    expect(row).toHaveAttribute("aria-expanded", "true");
+    expect(document.querySelector(".x-inner")).toBeNull();
+    expect(screen.queryByText(/pdfs carry their own text layer/)).not.toBeInTheDocument();
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });
