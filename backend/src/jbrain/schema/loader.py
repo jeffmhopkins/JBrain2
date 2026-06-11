@@ -51,7 +51,17 @@ def load_registry(defs_dir: Path | None = None) -> SchemaRegistry:
     facets = _load_facets(root / "facets.yaml", meta)
     types = _load_types(root / "types", meta, facets)
     normalization = _build_normalization(facets, types)
-    return SchemaRegistry(meta=meta, facets=facets, types=types, normalization=normalization)
+    # Index by id first, then by schema.org name (name wins on any clash) so a
+    # lookup keyed on entities.kind hits whichever convention the kind follows.
+    by_kind: dict[str, EntityType] = {t.id: t for t in types.values()}
+    by_kind.update({t.name: t for t in types.values()})
+    return SchemaRegistry(
+        meta=meta,
+        facets=facets,
+        types=types,
+        normalization=normalization,
+        by_kind=by_kind,
+    )
 
 
 def _build_normalization(facets: dict[str, Facet], types: dict[str, EntityType]) -> dict[str, str]:

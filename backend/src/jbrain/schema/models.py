@@ -115,6 +115,9 @@ class SchemaRegistry:
     types: dict[str, EntityType]
     # normalized drift-spelling -> canonical predicate (the renamed_from attractor)
     normalization: dict[str, str]
+    # entities.kind -> type, keyed by BOTH the type id and its schema.org `name`,
+    # so a "Person"/"person" or "Event"/"appointment" entity both resolve.
+    by_kind: dict[str, EntityType]
 
     def type(self, type_id: str) -> EntityType:
         """The type by id; KeyError if unknown (callers know their type ids)."""

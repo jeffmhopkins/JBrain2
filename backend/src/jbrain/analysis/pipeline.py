@@ -26,6 +26,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from jbrain.analysis import purge
+from jbrain.analysis.canonical import reproject_canonical_name
 from jbrain.analysis.display import (
     ambiguous_display,
     collision_display,
@@ -336,6 +337,7 @@ class AnalysisPipeline:
             # entered the doomed set, so both survive untouched.
             await purge.delete_review_items(session, set(doomed_links), statuses=("open",))
         await self._sweep_stale_ambiguous(session, note_id, extraction)
+        await self._reproject_entities(session, resolved)
 
         stmt = pg_insert(NoteAnalysis).values(
             note_id=note_id,
@@ -621,6 +623,19 @@ class AnalysisPipeline:
                 )
             )
         return anchor_for
+
+    async def _reproject_entities(
+        self, session: AsyncSession, resolved: dict[str, ResolvedEntity | None]
+    ) -> None:
+        """Once this note's facts have settled, refresh each touched entity's
+        canonical_name from its current name.* facts — a projection of current
+        facts (docs/ANALYSIS.md), never the frozen first-mention surface form."""
+        seen: set[uuid.UUID] = set()
+        for entity in resolved.values():
+            if entity is None or entity.id in seen:
+                continue
+            seen.add(entity.id)
+            await reproject_canonical_name(session, entity.id)
 
     async def _register_declared_aliases(
         self,

@@ -296,12 +296,16 @@ review inbox, never an auto-link.
 
 **Implementation requirements (gaps against ratified design):**
 
-- Implement `provisional → confirmed` promotion — currently *nothing* writes
-  `confirmed` except the hard-coded "Me" entity.
+- **`canonical_name` is now the live projection** above (`jbrain.analysis.canonical`,
+  wired into the pipeline after each note settles) — no longer frozen at first
+  mention. The owner "Me" keeps its explicit override.
+- `provisional → confirmed` promotion — **deferred, needs a ratified signal.** The
+  obvious "corroborated by ≥2 notes" rule contradicts the current golden harness,
+  which asserts entities stay `provisional` across multiple notes; auto-promotion
+  is a behaviour change the owner must define (and the goldens be updated for),
+  not a silent fix. Until then only the hard-coded "Me" is `confirmed`.
 - Wire the embedding-similarity resolution layer (currently inert / blocked for
   subject-bearing entities).
-- Make `canonical_name` the live projection above (currently frozen at first
-  mention).
 
 ## Entity vehicles: graph vs. typed record **[proposed]**
 
