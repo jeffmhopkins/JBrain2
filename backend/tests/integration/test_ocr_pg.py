@@ -251,6 +251,40 @@ async def test_ocr_round_trip_blob_to_searchable_chunks(
     assert await ocr_jobs_for(maker, attachment_id) == 1
 
 
+async def test_analyze_prompt_marks_ocr_chunks_so_the_model_knows(
+    maker: async_sessionmaker[AsyncSession], blobs: FsBlobStore
+) -> None:
+    """The extraction call must SEE which text is machine-read: OCR chunks
+    reach note.extract prefixed with their provenance marker (Guards)."""
+    from jbrain.analysis.pipeline import AnalysisPipeline
+
+    note_id, attachment_id = await make_note_with_image(
+        maker, blobs, body="filed the receipt", filename="receipt.png", domain="general"
+    )
+    pipeline = IngestPipeline(maker, blobs)
+    await pipeline.ingest_note({"note_id": note_id})
+    await OcrPipeline(
+        maker, blobs, vision_router(FakeLlmClient(["Total: $41.20", "A grocery receipt."]))
+    ).ocr_attachment({"attachment_id": attachment_id})
+    await pipeline.ingest_note({"note_id": note_id})
+
+    extract_fake = FakeLlmClient(
+        [
+            '{"title": "t", "tags": ["a", "b", "c"], "mentions": [], "facts": [],'
+            ' "temporal_tokens": []}'
+        ]
+    )
+    analyzer = AnalysisPipeline(
+        maker, LlmRouter({"xai": extract_fake}, {"note.extract": ("xai", "grok-4.3")})
+    )
+    await analyzer.analyze_note({"note_id": note_id})
+
+    user_text = extract_fake.calls[0]["user_text"]
+    assert "[ocr from receipt.png]\nTotal: $41.20" in user_text
+    assert "[image caption of receipt.png]\nA grocery receipt." in user_text
+    assert "filed the receipt" in user_text  # body chunk stays unmarked
+
+
 async def test_ingest_skips_ocr_for_oversized_images(
     maker: async_sessionmaker[AsyncSession], blobs: FsBlobStore
 ) -> None:

@@ -57,6 +57,7 @@ from jbrain.analysis.prompt import (
     PROMPT_VERSION,
     SYSTEM_PROMPT,
     build_user_prompt,
+    prompt_block,
 )
 from jbrain.analysis.supersession import Candidate, Decision, FactView, decide, is_functional
 from jbrain.db.session import scoped_session
@@ -69,7 +70,7 @@ from jbrain.models.analysis import (
     ReviewItem,
     TemporalToken,
 )
-from jbrain.models.notes import Chunk, Note
+from jbrain.models.notes import Attachment, Chunk, Note
 from jbrain.queue import SYSTEM_CTX, PermanentJobError
 
 log = structlog.get_logger()
@@ -166,11 +167,18 @@ class AnalysisPipeline:
             tz_offset = note.tz_offset_minutes
             chunk_rows = (
                 await session.execute(
-                    select(Chunk.id, Chunk.text).where(Chunk.note_id == note_id).order_by(Chunk.seq)
+                    select(Chunk.id, Chunk.text, Chunk.source_kind, Attachment.filename)
+                    .join(Attachment, Chunk.attachment_id == Attachment.id, isouter=True)
+                    .where(Chunk.note_id == note_id)
+                    .order_by(Chunk.seq)
                 )
             ).all()
         chunks = [_ChunkRef(id=r.id, text=r.text) for r in chunk_rows]
-        texts = [c.text for c in chunks] or [body]
+        # Span anchoring (_locate) works on the raw chunk text; only the
+        # prompt blocks carry the OCR/caption provenance markers.
+        texts = [
+            prompt_block(r.text, source_kind=r.source_kind, filename=r.filename) for r in chunk_rows
+        ] or [body]
 
         try:
             result = await self._router.complete(
