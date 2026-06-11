@@ -327,8 +327,64 @@ describe("mock API", () => {
       extracts: AttachmentExtract[];
     };
     expect(out.extracts.some((e) => e.kind === "caption" && e.text !== "")).toBe(true);
+    // The gate: every image on the note now has extracts, so analysis lands
+    // with it — the whiteboard fixture round-trips the gated sequence.
+    const owner = refreshed.notes.find((n) => n.attachments.some((a) => a.id === att.id));
+    expect(owner?.analyzed).toBe(true);
+    const analysis = (await (
+      await call(`/api/notes/${owner?.id}/analysis`)
+    ).json()) as NoteAnalysis;
+    expect(analysis.analyzed_at).not.toBeNull();
     // ...and a re-run is allowed again once the flight lands.
     expect((await call(`/api/attachments/${att.id}/analyze`, { method: "POST" })).status).toBe(202);
+  });
+
+  it("note analyze: 404 unknown, 202 then 409 while the run is in flight", async () => {
+    expect(
+      (await call(`/api/notes/${crypto.randomUUID()}/analyze`, { method: "POST" })).status,
+    ).toBe(404);
+
+    const page = (await (await call("/api/notes?limit=100")).json()) as { notes: NoteOut[] };
+    const grocery = page.notes.find((n) => n.body.startsWith("Groceries:"));
+    if (!grocery) throw new Error("grocery fixture note missing");
+
+    expect((await call(`/api/notes/${grocery.id}/analyze`, { method: "POST" })).status).toBe(202);
+    expect((await call(`/api/notes/${grocery.id}/analyze`, { method: "POST" })).status).toBe(409);
+
+    // Once the flight lands, a note with no analysis fixture synthesizes a
+    // minimal record and re-runs are allowed again.
+    await new Promise((resolve) => setTimeout(resolve, 700));
+    const settled = (await (await call(`/api/notes/${grocery.id}`)).json()) as NoteOut;
+    expect(settled.analyzed).toBe(true);
+    const minimal = (await (
+      await call(`/api/notes/${grocery.id}/analysis`)
+    ).json()) as NoteAnalysis;
+    expect(minimal.analyzed_at).not.toBeNull();
+    expect(minimal.facts).toHaveLength(0);
+    expect((await call(`/api/notes/${grocery.id}/analyze`, { method: "POST" })).status).toBe(202);
+    await new Promise((resolve) => setTimeout(resolve, 700));
+  });
+
+  it("note analyze: analyzed drops, image extracts gate, then analyzed_at bumps", async () => {
+    const page = (await (await call("/api/notes?limit=100")).json()) as { notes: NoteOut[] };
+    const patel = page.notes.find((n) => n.body.includes("Saw Dr. Patel this morning"));
+    if (!patel) throw new Error("patel fixture note missing");
+    const before = (await (await call(`/api/notes/${patel.id}/analysis`)).json()) as NoteAnalysis;
+    expect(before.analyzed_at).not.toBeNull();
+
+    expect((await call(`/api/notes/${patel.id}/analyze`, { method: "POST" })).status).toBe(202);
+    // analyzed drops immediately — the lifecycle chip walks "analyzing…".
+    const during = (await (await call(`/api/notes/${patel.id}`)).json()) as NoteOut;
+    expect(during.analyzed).toBe(false);
+
+    await new Promise((resolve) => setTimeout(resolve, 700));
+    const after = (await (await call(`/api/notes/${patel.id}`)).json()) as NoteOut;
+    expect(after.analyzed).toBe(true);
+    const fresh = (await (await call(`/api/notes/${patel.id}/analysis`)).json()) as NoteAnalysis;
+    expect(fresh.analyzed_at).not.toBeNull();
+    expect(fresh.analyzed_at).not.toBe(before.analyzed_at);
+    // The Patel fixture keeps its facts across re-runs.
+    expect(fresh.facts).toHaveLength(6);
   });
 
   // Last on purpose: reset wipes the shared fixtures the tests above read.

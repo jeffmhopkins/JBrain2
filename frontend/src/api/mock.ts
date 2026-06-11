@@ -64,6 +64,8 @@ const attachmentBlobs = new Map<string, Blob>();
 const attachmentExtracts = new Map<string, AttachmentExtract[]>();
 // Attachments with an on-demand analyze in flight (409s a second POST).
 const analyzingAttachments = new Set<string>();
+// Notes with a note-level re-run in flight (409s a second POST).
+const analyzingNotes = new Set<string>();
 
 // The first server-synced settings object (theme/text-size stay local).
 const SETTINGS: AppSettings = { image_analysis_mode: "full" };
@@ -938,6 +940,16 @@ const LLM_USAGE: LlmUsage = {
   })),
 };
 
+// Analysis lands like the worker's would: an existing fixture keeps its
+// facts with a bumped analyzed_at; other notes synthesize a minimal record.
+function upsertAnalysis(noteId: string): void {
+  ANALYSES[noteId] = {
+    ...(ANALYSES[noteId] ?? emptyAnalysis(noteId)),
+    analyzed_at: new Date().toISOString(),
+    extractor: EXTRACTOR,
+  };
+}
+
 function emptyAnalysis(noteId: string): NoteAnalysis {
   return {
     note_id: noteId,
@@ -1140,6 +1152,35 @@ export const mockFetch: typeof fetch = async (input, init) => {
     return new Response(null, { status: 204 });
   }
 
+  const noteAnalyzeMatch = path.match(/^\/api\/notes\/([^/]+)\/analyze$/);
+  if (noteAnalyzeMatch && method === "POST") {
+    const noteId = decodeURIComponent(noteAnalyzeMatch[1] ?? "");
+    const note = notes.find((n) => n.id === noteId);
+    if (!note) return json({ detail: "note not found" }, 404);
+    if (analyzingNotes.has(noteId)) {
+      return json({ detail: "analysis already queued or running" }, 409);
+    }
+    // The re-run walks the real gated sequence: analyzed drops right away,
+    // image extracts land first (the gate), then the analysis row upserts
+    // with a bumped analyzed_at the tab's poller can see.
+    analyzingNotes.add(noteId);
+    note.analyzed = false;
+    setTimeout(() => {
+      analyzingNotes.delete(noteId);
+      const live = notes.find((n) => n.id === noteId);
+      if (!live) return;
+      for (const att of live.attachments) {
+        if (!att.media_type.startsWith("image/")) continue;
+        if (!attachmentExtracts.has(att.id)) attachmentExtracts.set(att.id, extractFixtures());
+        att.has_extracts = true;
+        att.has_description = true;
+      }
+      live.analyzed = true;
+      upsertAnalysis(noteId);
+    }, LATENCY_MS * 4);
+    return json({ job_id: id("job") }, 202);
+  }
+
   if (path === "/api/search" && method === "GET") {
     return json(mockSearch(url.searchParams));
   }
@@ -1194,6 +1235,13 @@ export const mockFetch: typeof fetch = async (input, init) => {
       ]);
       att.has_extracts = true;
       att.has_description = true;
+      // The gate: once every image on the note has extracts, analysis lands
+      // too — the whiteboard fixture round-trips the gated sequence.
+      const owner = notes.find((n) => n.attachments.some((a) => a.id === attId));
+      if (owner?.attachments.every((a) => !a.media_type.startsWith("image/") || a.has_extracts)) {
+        owner.analyzed = true;
+        upsertAnalysis(owner.id);
+      }
     }, LATENCY_MS * 3);
     return json({ job_id: id("job") }, 202);
   }
@@ -1385,6 +1433,7 @@ export const mockFetch: typeof fetch = async (input, init) => {
     attachmentBlobs.clear();
     attachmentExtracts.clear();
     analyzingAttachments.clear();
+    analyzingNotes.clear();
     REVIEW_ITEMS.length = 0;
     for (const key of Object.keys(ANALYSES)) delete ANALYSES[key];
     for (const key of Object.keys(ENTITIES)) delete ENTITIES[key];
