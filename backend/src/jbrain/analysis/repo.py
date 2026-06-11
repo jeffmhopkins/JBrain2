@@ -173,6 +173,62 @@ class SqlAnalysisRepo:
             ],
         }
 
+    async def list_entities(
+        self,
+        ctx: SessionContext,
+        q: str | None = None,
+        kind: str | None = None,
+        limit: int = 200,
+    ) -> list[dict[str, Any]]:
+        """The GET /entities browse list: non-merged entities with the glance
+        counts the rows render. fact_count is the entity's live edges
+        (active + pending review); last_seen is the newest reported_at across
+        all its subject facts — null for an entity known only by mention,
+        which sorts last."""
+        where = ["e.status <> 'merged'"]
+        params: dict[str, Any] = {"limit": limit}
+        if kind is not None:
+            where.append("e.kind = :kind")
+            params["kind"] = kind
+        if q:
+            # The query is a literal substring, never a pattern — escape the
+            # LIKE wildcards so "100%" matches "100%", not everything.
+            escaped = q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            params["pat"] = f"%{escaped}%"
+            where.append(
+                "(e.canonical_name ILIKE :pat ESCAPE '\\' OR EXISTS ("
+                " SELECT 1 FROM app.entity_aliases a"
+                " WHERE a.entity_id = e.id AND a.alias ILIKE :pat ESCAPE '\\'))"
+            )
+        sql = f"""
+            SELECT e.id::text, e.kind, e.canonical_name, e.status,
+                   (SELECT count(*) FROM app.facts f
+                    WHERE f.entity_id = e.id
+                      AND f.status IN ('active', 'pending_review')) AS fact_count,
+                   (SELECT count(*) FROM app.entity_mentions m
+                    WHERE m.entity_id = e.id) AS mention_count,
+                   (SELECT max(f.reported_at) FROM app.facts f
+                    WHERE f.entity_id = e.id) AS last_seen
+            FROM app.entities e
+            WHERE {" AND ".join(where)}
+            ORDER BY last_seen DESC NULLS LAST, e.canonical_name
+            LIMIT :limit
+        """
+        async with scoped_session(self._maker, ctx) as session:
+            entities = (await session.execute(text(sql), params)).all()
+        return [
+            {
+                "id": e.id,
+                "kind": e.kind,
+                "canonical_name": e.canonical_name,
+                "status": e.status,
+                "fact_count": e.fact_count,
+                "mention_count": e.mention_count,
+                "last_seen": e.last_seen,
+            }
+            for e in entities
+        ]
+
     async def entity_view(self, ctx: SessionContext, entity_id: str) -> dict[str, Any] | None:
         eid = _as_uuid(entity_id)
         if eid is None:

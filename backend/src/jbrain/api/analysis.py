@@ -36,6 +36,17 @@ async def note_analysis(note_id: str, request: Request, principal: PrincipalDep)
     return view
 
 
+@router.get("/entities")
+async def entity_list(
+    request: Request,
+    principal: PrincipalDep,
+    q: Annotated[str | None, Query()] = None,
+    kind: Annotated[str | None, Query()] = None,
+) -> dict[str, Any]:
+    items = await get_analysis_repo(request).list_entities(ctx_for(principal), q=q, kind=kind)
+    return {"items": items}
+
+
 @router.get("/entities/{entity_id}")
 async def entity_detail(
     entity_id: str, request: Request, principal: PrincipalDep
