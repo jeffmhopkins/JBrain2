@@ -41,15 +41,21 @@ async def maker(database_url: str) -> AsyncIterator[async_sessionmaker[AsyncSess
     await engine.dispose()
 
 
-def home_fact(city: str, *, confidence: float) -> dict[str, Any]:
+def fresh_person() -> str:
+    """A per-test entity name: the suite shares one database, and a reused
+    name would resolve to an earlier test's entity and upsert ITS facts."""
+    return f"Sarah {uuid.uuid4().hex[:8]}"
+
+
+def home_fact(person: str, city: str, *, confidence: float) -> dict[str, Any]:
     return {
         "predicate": "homeLocation",
         "qualifier": "",
         "kind": "state",
-        "statement": f"Sarah moved to {city}.",
+        "statement": f"{person} moved to {city}.",
         "value_json": {"city": city},
         "assertion": "asserted",
-        "entity_ref": "Sarah",
+        "entity_ref": person,
         "object_entity_ref": None,
         "temporal": {
             "phrase": "",
@@ -62,12 +68,12 @@ def home_fact(city: str, *, confidence: float) -> dict[str, Any]:
     }
 
 
-def extraction(facts: list[dict[str, Any]]) -> str:
+def extraction(person: str, facts: list[dict[str, Any]]) -> str:
     return json.dumps(
         {
             "title": "Sarah news",
             "tags": ["sarah", "relocation", "news"],
-            "mentions": [{"name": "Sarah", "kind": "Person", "surface_text": "Sarah"}],
+            "mentions": [{"name": person, "kind": "Person", "surface_text": "Sarah"}],
             "facts": facts,
             "temporal_tokens": [],
         }
@@ -130,37 +136,38 @@ async def review_rows(
 
 async def supersession_pair(
     maker: async_sessionmaker[AsyncSession], tmp_path: Path
-) -> tuple[str, str]:
+) -> tuple[str, str, str]:
     """Note A asserts Denver, note B supersedes it with Boulder (SCD-2 close +
     chain link + an open fact_conflict card)."""
+    person = fresh_person()
     note_a = await analyzed_note(
         maker,
         tmp_path,
         "Sarah just moved to Denver.",
-        extraction([home_fact("Denver", confidence=0.85)]),
+        extraction(person, [home_fact(person, "Denver", confidence=0.85)]),
     )
     note_b = await analyzed_note(
         maker,
         tmp_path,
         "Sarah actually moved to Boulder, not Denver.",
-        extraction([home_fact("Boulder", confidence=0.9)]),
+        extraction(person, [home_fact(person, "Boulder", confidence=0.9)]),
     )
     facts = {f["city"]: f for f in await fact_rows(maker, note_a, note_b)}
     assert facts["Denver"]["status"] == "superseded"
     assert facts["Denver"]["superseded_by"] == facts["Boulder"]["id"]
     assert facts["Denver"]["valid_to"] is not None
-    return note_a, note_b
+    return person, note_a, note_b
 
 
 async def test_rerun_retraction_repairs_the_chain_it_breaks(
     maker: async_sessionmaker[AsyncSession], tmp_path: Path
 ) -> None:
-    note_a, note_b = await supersession_pair(maker, tmp_path)
+    person, note_a, note_b = await supersession_pair(maker, tmp_path)
 
     # B's re-extraction no longer asserts the move: Boulder is retracted, and
     # Denver must not stay superseded-by-a-retracted-fact — restored whole,
     # interval reopened (its close came FROM the doomed fact's valid_from).
-    await analyze(maker, note_b, extraction([]))
+    await analyze(maker, note_b, extraction(person, []))
 
     facts = {f["city"]: f for f in await fact_rows(maker, note_a, note_b)}
     assert facts["Boulder"]["status"] == "retracted"
@@ -174,7 +181,7 @@ async def test_rerun_retraction_repairs_the_chain_it_breaks(
 async def test_rerun_review_sweep_spares_resolved_history(
     maker: async_sessionmaker[AsyncSession], tmp_path: Path
 ) -> None:
-    note_a, note_b = await supersession_pair(maker, tmp_path)
+    person, note_a, note_b = await supersession_pair(maker, tmp_path)
     async with scoped_session(maker, OWNER) as s:
         await s.execute(
             text(
@@ -184,7 +191,7 @@ async def test_rerun_review_sweep_spares_resolved_history(
             {"nid": note_b},
         )
 
-    await analyze(maker, note_b, extraction([]))
+    await analyze(maker, note_b, extraction(person, []))
 
     facts = {f["city"]: f for f in await fact_rows(maker, note_a, note_b)}
     assert facts["Boulder"]["status"] == "retracted"
@@ -198,15 +205,19 @@ async def test_rerun_review_sweep_spares_resolved_history(
 async def test_rerun_never_retracts_pinned_facts(
     maker: async_sessionmaker[AsyncSession], tmp_path: Path
 ) -> None:
+    person = fresh_person()
     note_id = await analyzed_note(
-        maker, tmp_path, "Sarah moved to Golden.", extraction([home_fact("Golden", confidence=0.9)])
+        maker,
+        tmp_path,
+        "Sarah moved to Golden.",
+        extraction(person, [home_fact(person, "Golden", confidence=0.9)]),
     )
     async with scoped_session(maker, OWNER) as s:
         await s.execute(
             text("UPDATE app.facts SET pinned = true WHERE note_id = :nid"), {"nid": note_id}
         )
 
-    await analyze(maker, note_id, extraction([]))
+    await analyze(maker, note_id, extraction(person, []))
 
     (fact,) = await fact_rows(maker, note_id)
     assert fact["status"] == "active" and fact["pinned"] is True
@@ -215,13 +226,14 @@ async def test_rerun_never_retracts_pinned_facts(
 async def test_rerun_sweeps_stale_open_ambiguous_cards_only(
     maker: async_sessionmaker[AsyncSession], tmp_path: Path
 ) -> None:
-    note_id = await analyzed_note(maker, tmp_path, "Saw Sarah and Alex.", extraction([]))
+    person = fresh_person()
+    note_id = await analyzed_note(maker, tmp_path, "Saw Sarah and Alex.", extraction(person, []))
     other_note = str(uuid.uuid4())
     cards = [
         # Stale: the re-extraction below no longer references "Alex".
         ("open", "Alex", note_id),
         # Still referenced: must survive.
-        ("open", "Sarah", note_id),
+        ("open", person, note_id),
         # Human history: never touched even though stale.
         ("dismissed", "Alex", note_id),
         # Another note's card: out of this run's scope.
@@ -238,14 +250,14 @@ async def test_rerun_sweeps_stale_open_ambiguous_cards_only(
                 {"payload": json.dumps({"name": name, "note_id": nid}), "status": status},
             )
 
-    await analyze(maker, note_id, extraction([]))
+    await analyze(maker, note_id, extraction(person, []))
 
     remaining = {
         (r["status"], r["payload"]["name"], r["payload"]["note_id"])
         for r in await review_rows(maker, "ambiguous_mention", note_id, other_note)
     }
     assert remaining == {
-        ("open", "Sarah", note_id),
+        ("open", person, note_id),
         ("dismissed", "Alex", note_id),
         ("open", "Alex", other_note),
     }
