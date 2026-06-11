@@ -306,6 +306,75 @@ both gated by existing human surfaces; drift can only accumulate in reversible
 episodic memory and shadow skills (prune / quarantine). All four loops report into
 one offline eval store, giving a single baseline every promotion must beat.
 
+## Staging & approval (the Proposal primitive)
+
+Several gated paths above (agent-correction, knowledge-proposal, prompt/tool
+self-edit, mutating-skill promotion) are the same shape: **the agent wants an
+effect it is not privileged to cause directly, so it stages the effect and the
+owner enacts it.** Promote that shape to one first-class primitive instead of
+re-inventing it per feature.
+
+**A `Proposal` is the unit of staged work.** It captures: `kind` (correction /
+knowledge / wiki-restructure / prompt-edit / skill-promotion), the **staged
+operation(s)** in enactable form (a structured intent the relevant machine
+executor will run — never prose for a human to copy), a **rendered preview of the
+effect** (the diff, the new revision, the article-tree change — what the owner
+actually judges), full **provenance** (the conversation, notes, attachments, or
+intake that prompted it, by ID), the **requesting principal and domain scope**, and
+`status` (`staged → approved → enacted | rejected | expired`). Every Proposal
+surfaces as a distinct, typed **review-inbox** item; the inbox is the one approval
+surface (PRs remain the surface for the code/prompt/tool subset — a
+`kind=prompt-edit` Proposal *is* a drafted PR).
+
+**The privilege model, stated plainly: stage-and-approve is bounded capability
+delegation, never standing privilege escalation.** The agent's own authority never
+changes. Approving a Proposal authorizes **one specific staged operation, once**,
+executed by the trusted machine executor under the owner's authority — it grants no
+new tool, scope, or standing right, and the next equivalent action requires its own
+Proposal and its own approval. The escalation is real but per-operation,
+owner-initiated at the moment of approval, fully attributed, and reversible
+(everything an executor produces is a versioned revision or a supersedable fact).
+**No sequence of approvals can accrete into a higher resting privilege.**
+
+**The red team's A3 is the threat this section answers**, because staging is *the*
+sanctioned write lever and therefore the one worth attacking (injection-to-approval,
+approval fatigue). Binding rules:
+
+- **Untrusted-origin content can surface an analysis but can never *auto-stage* a
+  Proposal** (non-negotiable #10). A restructure or correction prompted by
+  note/attachment/intake content is staged only inside an owner turn, carries that
+  source's attribution visibly, and gets **normal (not elevated) weight** (#7).
+- **The preview is the control against fatigue:** the owner approves a *shown
+  effect*, not an intent string. A Proposal without a faithful preview cannot be
+  approved.
+- **Proposal rationale is data, not instruction** (#1) — text the agent wrote into
+  a Proposal cannot redirect the executor.
+- **Proposals are rate-limited and subject-checked**; a flood is an attack signal,
+  and a Proposal whose subject differs from its conversation's subject is flagged
+  cross-subject (a leak signal).
+- **Domain scope rides the Proposal** (#4/#8): it enacts at the scope of the content
+  it touched, by the triggering principal's authority — a non-owner principal cannot
+  stage wiki or behavior Proposals at all.
+
+### Wiki analysis & restructuring
+
+The marquee use of the Proposal primitive. On request ("clean up my health wiki")
+or on a schedule, the agent **analyzes** the wiki — coverage gaps, stale or
+thin-cited clusters, over-merged articles hiding two topics, under-split sprawl,
+drifted titles — and **stages a restructuring plan**: a set of
+split / merge / retitle / recluster / rewrite-trigger **operations**, each with its
+effect preview, as one reviewable Proposal.
+
+**The agent proposes operations; the machine wiki builder enacts them as new
+revisions — the agent never writes article prose.** This keeps non-negotiable #7
+intact: the wiki stays machine-written, the human approves *what the machine does*,
+and humans still correct *content* only via correction notes. It reuses rather than
+replaces existing machinery — split/merge already gate through the review inbox and
+the nightly builder already does triage rewrites; the agent's plan is the same
+operations, owner-requested and batched into one Proposal instead of emerging
+one-at-a-time from the nightly delta. Approval enacts the plan through the builder
+under owner authority; each resulting revision is versioned and revertable.
+
 ## Mapping to existing machinery
 
 Almost nothing new is required. The measure of fit: the assistant *composes*
@@ -314,7 +383,7 @@ JBrain2's existing parts.
 | Need | Reuses | Net-new |
 |---|---|---|
 | Loops as scheduled, audited processes | Workflow engine (`events`→`triggers`→`pipelines`→`runs`); self-improvement loops are pipeline defs (Phase 5+) | A few pipeline defs + nightly triggers |
-| Human gating | Review inbox ("one queue for everything needing judgment") | New item types: agent-knowledge-proposal, prompt-self-edit-proposal, agent-correction |
+| Human gating | Review inbox ("one queue for everything needing judgment") | The unified **Proposal** primitive + typed items: agent-correction, knowledge-proposal, wiki-restructure, prompt-self-edit, skill-promotion |
 | Behavior versioning / rollback / audit | `.prompt`/`.tool` files + YAML `version` + CI version-bump guard + git + eval suite | Reuse verbatim |
 | Durable knowledge respecting the wiki contract | Notes→facts→wiki spine + correction loop + supersession + per-domain gating | `notes.provenance` flag |
 | Skill & memory retrieval | pgvector + RRF hybrid search | `skills`, `agent_memory`, `agent_episodes` tables |
@@ -342,14 +411,17 @@ accordingly — **do not describe a Phase-6 world as Phase 4**.
   **Tier-A memory** — `agent_memory`/`agent_episodes` with owner-confirmed
   behavioral writes, auto fail-closed episodic writes, the domain classifier, and
   the three RLS tables/tests; agent-authored **notes** producing reviewable facts
-  (the note→fact path is Phase 3; the wiki-citation half lands with the wiki).
+  (the note→fact path is Phase 3; the wiki-citation half lands with the wiki). The
+  **Proposal / stage-and-approve primitive** is introduced here as the unified shape
+  for the review-inbox item types (agent-correction, knowledge-proposal).
 - **Phase 5 (workflow engine):** agent runs become `runs` rows; self-improvement
   loops become scheduled pipeline defs with daily budgets; the **eval harness** is
   stood up as the gating dependency for Loops 2 and 4.
 - **Phase 6 (wiki):** **Skill learning (Loop 2)** auto-promotion against the eval
   harness; **prompt/tool self-editing (Loop 4)** as PR-shaped proposals;
   **Tier-B** durable-knowledge promotion fully closes the loop through the wiki's
-  correction-note machinery.
+  correction-note machinery; the **wiki analysis & restructuring** capability and
+  its `wiki-restructure` Proposal flow build here on the wiki + review-inbox machinery.
 - **Phase 7 (outer ring):** intake-link and device-key principals get the
   default-deny capture-only tool allowlist; confused-deputy scoping
   (non-negotiable #8) is enforced as those principals come online.
