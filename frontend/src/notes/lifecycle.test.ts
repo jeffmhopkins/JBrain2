@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { type LifecycleSource, lifecycleChip } from "./lifecycle";
+import { type LifecycleSource, awaitingImageCount, lifecycleChip } from "./lifecycle";
 
 function image(hasExtracts: boolean) {
   return { mediaType: "image/jpeg", hasExtracts };
@@ -51,9 +51,13 @@ describe("lifecycleChip", () => {
     });
   });
 
-  it("an outstanding OCR shows even on an already-analyzed note (a new image re-walks the pipeline)", () => {
-    expect(lifecycleChip(source({ analyzed: true, attachments: [image(false)] }))).toEqual({
-      label: "reading image…",
+  it("analyzed outranks the awaiting check — analyze-anyway paths leave hasExtracts false forever", () => {
+    expect(lifecycleChip(source({ analyzed: true, attachments: [image(false)] }))).toBeNull();
+  });
+
+  it("a note-level re-run (analyzed back to false, extracts cached) resumes at analyzing…", () => {
+    expect(lifecycleChip(source({ analyzed: false, attachments: [image(true)] }))).toEqual({
+      label: "analyzing…",
       tone: "pending",
     });
   });
@@ -77,5 +81,13 @@ describe("lifecycleChip", () => {
   it("a null ingest state (outbox row, search preview) never chips", () => {
     expect(lifecycleChip(source({ ingestState: null }))).toBeNull();
     expect(lifecycleChip(source({ ingestState: null, attachments: [image(false)] }))).toBeNull();
+  });
+});
+
+describe("awaitingImageCount", () => {
+  it("counts only images with an empty vision cache", () => {
+    expect(awaitingImageCount([])).toBe(0);
+    expect(awaitingImageCount([pdf(), image(true)])).toBe(0);
+    expect(awaitingImageCount([pdf(), image(false), image(false), image(true)])).toBe(2);
   });
 });

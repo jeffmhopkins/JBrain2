@@ -248,30 +248,62 @@ designs): entry-stream bubbles clamp at **3 lines**; tapping opens the
   (multi-select) with the hint "pdfs and images become searchable";
   adds/removals apply immediately and re-trigger ingestion.
 
-  **Image-row expansion** (settled in a three-way review — **inline
-  expansion** won over a sheet section and a viewer layer, the review-log
-  inline-expansion precedent): image rows carry a disclosure caret and
-  **unfold in place** — a small thumbnail strip with `open full image →`,
-  the verbatim OCR in a quiet monospace inset (clamped ~6 lines, "show
-  all N lines" grows in place, `[illegible]` rendered muted-italic and
-  never reworded), the description beneath when present with a "mined for
-  facts in analysis" provenance line, and tool/confidence micro-meta
-  (`ocr · xai:grok-4.3 · 70%`). Extracts are fetched lazily on first
-  expand. A row lacking a description shows *"no description — image
-  analysis is set to ocr only."* (when the mode is ocr) plus a quiet
-  steel **analyze image** action — an on-demand full analysis for THAT
-  attachment regardless of the global mode (also the re-run path); while
-  in flight the row shows a calm *"analyzing image…"* line and the note's
-  lifecycle chip walks again after re-ingest. PDFs/text files do **not**
-  expand: no caret, and a tap shows a transient *"pdfs carry their own
-  text layer"* line instead. The ⋯ sheet is untouched.
+  **Image extracts moved out** (settled twice: first a three-way review
+  chose inline expansion in the manifest [mock C]; then the Sources-card
+  review [decided: **variant B** of three mockups] relocated viewing +
+  the analyze re-run to the **Analysis tab's Sources card**): Attachments
+  is a **pure manifest** again. The status chips stay; rows are **inert**
+  — no caret, no tap expansion, no pdf-hint line; the per-file ⋯ sheet
+  (open / remove) is untouched.
 - *Analysis tab* (lights up by phase): generated title + 3-6 tags (P3 —
   pre-P3 the header shows only domain + date, **no title fallback**);
   salient facts with kind badges (measurement/state/event/preference),
   status chips (active / pending-review / **pinned**) and confidence;
-  entity chips → entity pages; extraction provenance (model, prompt
-  version, analyzed-when) with re-run and correct actions (P3); wiki
-  backlinks → articles (P6).
+  entity chips → entity pages; wiki backlinks → articles (P6). At the
+  bottom, the **Sources card** (settled review — variant B, "sources
+  provenance card") frames analysis as a pipeline:
+  - A **note-text row** (char count, always ✓), then **one row per image
+    attachment** with a per-stage status line (`ocr ✓ · description ✓`;
+    amber spinners for in-flight stages, `queued` while a stage waits on
+    OCR, `skipped` when the mode is ocr only).
+  - Image rows carry a disclosure caret and **unfold in place** — a small
+    thumbnail strip with `open full image →`, the verbatim OCR in a quiet
+    monospace inset (clamped ~6 lines, "show all N lines" grows in place,
+    `[illegible]` rendered muted-italic and never reworded), the
+    description beneath when present with tool/confidence micro-meta and
+    the "mined for facts in analysis" provenance line
+    (`ocr · xai:grok-4.3 · 70%`). A row lacking a description in ocr mode
+    reads *"no description — image analysis is set to ocr only."*
+    Extracts are fetched eagerly when the card mounts (the stage line
+    needs them up front).
+  - Each image row's **⋯ opens the shared bottom sheet** with **re-run
+    image analysis** — an on-demand full analysis for THAT attachment
+    regardless of the global mode; in flight the row reads a calm
+    *"analyzing image…"* and the fresh result polls in without reopening
+    the note.
+  - The **card footer unifies provenance with the note-level re-run**:
+    the "analyzed Jun 11 · xai:grok-4.3" line (the former provenance
+    foot — it has exactly one home, this card) next to a steel **re-run
+    analysis** button (`POST /notes/{id}/analyze`, 202; a 409 means a
+    run is already in flight and reads the same). After posting, the tab
+    polls the analysis (~3s, cleared on unmount/tab switch) until
+    analyzed_at moves, then swaps the fresh result in.
+  - **Gated empty state**: the backend gates analysis on image extracts,
+    so when analyzed_at is null and ≥1 image still lacks extracts the
+    facts area is absent with the quiet line *"waiting on image analysis
+    — facts extract once every source below is in."*, the Sources card
+    renders mid-flight (per-stage spinners/pending), and the footer's
+    re-run is disabled (*"analysis waits here — runs automatically when
+    every source is in."*). Plain not-analyzed (no images outstanding)
+    keeps the existing quiet line. With no images at all, an analyzed
+    note's card collapses to the note-text row + footer.
+
+  Gating makes the lifecycle-chip sequence **truly one-way** — indexing…
+  → reading image(s)… → analyzing… → quiet. `analyzed` suppresses the
+  chip ahead of the awaiting-images check (the backend's analyze-anyway
+  paths can leave an image without extracts forever), and a note-level
+  re-run flips analyzed back to false — the chip resumes at "analyzing…"
+  without re-indexing.
 
 Search results and stream taps open the same surface — this *is* the
 former "note sheet", upgraded.

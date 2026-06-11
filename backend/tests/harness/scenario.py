@@ -25,6 +25,12 @@ class Step:
     # assertion turns on. Always set it explicitly; relative phrases in the
     # scripted extraction must already be resolved against it.
     created_at: str = "2026-06-10T12:00:00-06:00"
+    # Re-analysis: when set, the runner re-runs the pipeline against the note
+    # seeded by that earlier step (0-based index) instead of seeding a new
+    # one — the step's body/domain/created_at are ignored, only its
+    # extraction matters. This is how a scenario scripts "the model now reads
+    # the same note differently" (re-extraction after an edit or upgrade).
+    reanalyze_step: int | None = None
 
 
 @dataclass(frozen=True)
@@ -52,6 +58,7 @@ def load_scenario(path: Path) -> Scenario:
                 extraction=s["extraction"],
                 domain=s.get("domain", "general"),
                 created_at=s.get("created_at", "2026-06-10T12:00:00-06:00"),
+                reanalyze_step=s.get("reanalyze_step"),
             )
             for s in raw["steps"]
         ],
