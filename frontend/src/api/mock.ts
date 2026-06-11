@@ -25,6 +25,7 @@ const PRINCIPAL: Principal = {
 const mockUpdate = { state: "none" as "none" | "running" | "exited", ticks: 0 };
 const mockExport = { state: "none" as "none" | "running" | "exited", ticks: 0 };
 const mockImport = { state: "none" as "none" | "running" | "exited", ticks: 0 };
+const mockReset = { state: "none" as "none" | "running" | "exited", ticks: 0 };
 
 const CONTAINERS: ContainerStatus[] = [
   {
@@ -1202,6 +1203,33 @@ export const mockFetch: typeof fetch = async (input, init) => {
     mockImport.state = "running";
     mockImport.ticks = 0;
     return json({ oneshot: "jbrain-import-mock" }, 202);
+  }
+  if (path === "/api/ops/reset" && init?.method === "POST") {
+    // Mirror reset-inner.sh: content data goes, auth/domains/usage stay.
+    // Zeroing the fixtures here lets dev:mock round-trip the whole flow.
+    notes.length = 0;
+    attachmentBlobs.clear();
+    REVIEW_ITEMS.length = 0;
+    for (const key of Object.keys(ANALYSES)) delete ANALYSES[key];
+    for (const key of Object.keys(ENTITIES)) delete ENTITIES[key];
+    mockReset.state = "running";
+    mockReset.ticks = 0;
+    return json({ oneshot: "jbrain-reset-mock" }, 202);
+  }
+  if (path === "/api/ops/reset/status") {
+    if (mockReset.state === "running" && ++mockReset.ticks >= 3) {
+      mockReset.state = "exited";
+    }
+    return json({
+      state: mockReset.state,
+      exit_code: mockReset.state === "exited" ? 0 : null,
+      log_tail:
+        mockReset.state === "none"
+          ? ""
+          : `[reset] safety backup\n[reset] truncating content tables\n${
+              mockReset.state === "exited" ? "[reset] complete" : ""
+            }`,
+    });
   }
   if (path === "/api/ops/import/status") {
     if (mockImport.state === "running" && ++mockImport.ticks >= 4) {

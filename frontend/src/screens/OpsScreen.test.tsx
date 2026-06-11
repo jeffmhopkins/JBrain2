@@ -230,4 +230,62 @@ describe("OpsScreen", () => {
       vi.useRealTimers();
     }
   });
+
+  it("reset: arms a tap-again confirm and auto-disarms after 3s without firing", async () => {
+    fetchMock.mockImplementation(async (input) => {
+      if (String(input) === "/api/ops/status") return json(STATUS);
+      return new Response(null, { status: 500 });
+    });
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      render(<OpsScreen />);
+      fireEvent.click(await screen.findByRole("button", { name: "Reset DB" }));
+      expect(
+        screen.getByRole("button", { name: "Tap again — erases ALL notes and data" }),
+      ).toBeInTheDocument();
+      expect(fetchMock).not.toHaveBeenCalledWith("/api/ops/reset", expect.anything());
+
+      // Untouched for 3s, the confirm disarms itself.
+      await act(() => vi.advanceTimersByTimeAsync(3000));
+      expect(screen.getByRole("button", { name: "Reset DB" })).toBeInTheDocument();
+      expect(fetchMock).not.toHaveBeenCalledWith("/api/ops/reset", expect.anything());
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("reset: double-tap starts the one-shot and polls to done with Reload app", async () => {
+    let polls = 0;
+    fetchMock.mockImplementation(async (input, init) => {
+      const path = String(input);
+      if (path === "/api/ops/status") return json(STATUS);
+      if (path === "/api/ops/reset" && init?.method === "POST") {
+        return json({ oneshot: "jbrain-reset-1" }, 202);
+      }
+      if (path === "/api/ops/reset/status") {
+        polls += 1;
+        return polls < 2
+          ? json({ state: "running", exit_code: null, log_tail: "[reset] truncating" })
+          : json({ state: "exited", exit_code: 0, log_tail: "[reset] complete" });
+      }
+      return new Response(null, { status: 500 });
+    });
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      render(<OpsScreen />);
+      fireEvent.click(await screen.findByRole("button", { name: "Reset DB" }));
+      fireEvent.click(
+        screen.getByRole("button", { name: "Tap again — erases ALL notes and data" }),
+      );
+
+      expect(await screen.findByText("Resetting…")).toBeInTheDocument();
+      await act(() => vi.advanceTimersByTimeAsync(3000));
+      expect(screen.getByText("Resetting…")).toBeInTheDocument();
+      await act(() => vi.advanceTimersByTimeAsync(3000));
+      expect(screen.getByText("Reset complete.")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Reload app" })).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
