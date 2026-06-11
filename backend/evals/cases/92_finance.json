@@ -1,0 +1,685 @@
+[
+  {
+    "name": "fin_rent_paid_transfer",
+    "body": "Paid the $1800 rent and transferred $500 to the Fidelity 401k this morning.",
+    "domain": "finance",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "value": [
+        {
+          "predicate": "rent",
+          "contains": "1800"
+        },
+        {
+          "contains": "500"
+        }
+      ],
+      "mentions": [
+        "Fidelity",
+        "401k"
+      ],
+      "not_person": [
+        "Fidelity",
+        "401k"
+      ],
+      "domain": [
+        "finance"
+      ]
+    }
+  },
+  {
+    "name": "fin_paycheck_deposit",
+    "body": "Paycheck hit today \u2014 $4200 deposited to Chase checking. A little lighter because of the extra 401k withholding.",
+    "domain": "finance",
+    "created_at": "2026-06-11T08:30:00-06:00",
+    "expect": {
+      "value": [
+        {
+          "predicate": "income",
+          "contains": "4200"
+        }
+      ],
+      "mentions": [
+        "Chase",
+        "401k"
+      ],
+      "mention_kind": [
+        {
+          "name": "Chase",
+          "kind": [
+            "Organization",
+            "Corporation",
+            "FinancialService",
+            "BankOrCreditUnion"
+          ]
+        }
+      ],
+      "not_person": [
+        "Chase",
+        "401k"
+      ],
+      "domain": [
+        "finance"
+      ]
+    }
+  },
+  {
+    "name": "fin_annual_bonus",
+    "body": "Got the year-end bonus: $10000 landed in the account Friday. Going straight to savings.",
+    "domain": "finance",
+    "created_at": "2026-06-11T10:00:00-06:00",
+    "expect": {
+      "value": [
+        {
+          "predicate": "bonus",
+          "contains": "10000"
+        }
+      ],
+      "domain": [
+        "finance"
+      ]
+    }
+  },
+  {
+    "name": "fin_mortgage_balance",
+    "body": "Mortgage statement came in \u2014 current balance is $198000 on the house. Rate is 6.75%.",
+    "domain": "finance",
+    "created_at": "2026-06-11T19:00:00-06:00",
+    "expect": {
+      "value": [
+        {
+          "contains": "198000"
+        },
+        {
+          "contains": "6.75"
+        }
+      ],
+      "domain": [
+        "finance"
+      ]
+    }
+  },
+  {
+    "name": "fin_grocery_trader_joes",
+    "body": "Spent $67 at Trader Joe's today. Produce, some cheese, and a bottle of wine.",
+    "domain": "finance",
+    "created_at": "2026-06-11T18:00:00-06:00",
+    "expect": {
+      "value": [
+        {
+          "contains": "67"
+        }
+      ],
+      "mentions": [
+        "Trader Joe's"
+      ],
+      "not_person": [
+        "Trader Joe's"
+      ],
+      "domain": [
+        "finance"
+      ]
+    }
+  },
+  {
+    "name": "fin_checking_balance_low",
+    "body": "Checked the app \u2014 Chase checking is down to $320. Need to transfer from savings before the car payment hits.",
+    "domain": "finance",
+    "created_at": "2026-06-11T21:00:00-06:00",
+    "expect": {
+      "value": [
+        {
+          "contains": "320"
+        }
+      ],
+      "mentions": [
+        "Chase"
+      ],
+      "mention_kind": [
+        {
+          "name": "Chase",
+          "kind": [
+            "Organization",
+            "Corporation",
+            "FinancialService",
+            "BankOrCreditUnion"
+          ]
+        }
+      ],
+      "not_person": [
+        "Chase"
+      ],
+      "domain": [
+        "finance"
+      ]
+    }
+  },
+  {
+    "name": "fin_roth_ira_contribution",
+    "body": "Maxed out the Roth IRA contribution for the year \u2014 $7000 total into Vanguard.",
+    "domain": "finance",
+    "created_at": "2026-06-11T11:00:00-06:00",
+    "expect": {
+      "value": [
+        {
+          "contains": "7000"
+        }
+      ],
+      "mentions": [
+        "Roth IRA",
+        "Vanguard"
+      ],
+      "mention_kind": [
+        {
+          "name": "Vanguard",
+          "kind": [
+            "Organization",
+            "Corporation",
+            "FinancialService",
+            "Company"
+          ]
+        }
+      ],
+      "not_person": [
+        "Vanguard",
+        "Roth IRA"
+      ],
+      "domain": [
+        "finance"
+      ]
+    }
+  },
+  {
+    "name": "fin_stock_purchase_aapl",
+    "body": "Bought 10 shares of AAPL at $213 each through the Fidelity brokerage account.",
+    "domain": "finance",
+    "created_at": "2026-06-11T14:30:00-06:00",
+    "expect": {
+      "value": [
+        {
+          "contains": "10"
+        },
+        {
+          "contains": "213"
+        }
+      ],
+      "mentions": [
+        "AAPL",
+        "Fidelity"
+      ],
+      "mention_kind": [
+        {
+          "name": "Fidelity",
+          "kind": [
+            "Organization",
+            "Corporation",
+            "FinancialService",
+            "Company"
+          ]
+        }
+      ],
+      "not_person": [
+        "Fidelity",
+        "AAPL"
+      ],
+      "domain": [
+        "finance"
+      ]
+    }
+  },
+  {
+    "name": "fin_electric_bill_due",
+    "body": "Electric bill is $134, due June 20. Set a reminder to pay it before the late fee kicks in.",
+    "domain": "finance",
+    "created_at": "2026-06-11T08:00:00-06:00",
+    "expect": {
+      "value": [
+        {
+          "contains": "134"
+        }
+      ],
+      "temporal": [
+        {
+          "phrase": "June 20",
+          "resolved_date": "2026-06-20"
+        }
+      ],
+      "domain": [
+        "finance"
+      ]
+    }
+  },
+  {
+    "name": "fin_hsa_deposit",
+    "body": "Put $500 into the HSA at the credit union. Should cover the upcoming dental work.",
+    "domain": "finance",
+    "created_at": "2026-06-11T12:00:00-06:00",
+    "expect": {
+      "value": [
+        {
+          "contains": "500"
+        }
+      ],
+      "mentions": [
+        "HSA"
+      ],
+      "not_person": [
+        "HSA",
+        "credit union"
+      ],
+      "domain": [
+        "finance"
+      ]
+    }
+  },
+  {
+    "name": "fin_credit_card_payment",
+    "body": "Paid off the Chase Visa \u2014 $890 balance cleared. No interest this month.",
+    "domain": "finance",
+    "created_at": "2026-06-11T20:00:00-06:00",
+    "expect": {
+      "value": [
+        {
+          "contains": "890"
+        }
+      ],
+      "mentions": [
+        "Chase"
+      ],
+      "not_person": [
+        "Chase",
+        "Chase Visa"
+      ],
+      "domain": [
+        "finance"
+      ]
+    }
+  },
+  {
+    "name": "fin_savings_transfer_goal",
+    "body": "Moved $1000 from Chase checking into the Ally savings account. Trying to hit $12000 by end of year.",
+    "domain": "finance",
+    "created_at": "2026-06-11T09:30:00-06:00",
+    "expect": {
+      "value": [
+        {
+          "contains": "1000"
+        },
+        {
+          "contains": "12000"
+        }
+      ],
+      "mentions": [
+        "Chase",
+        "Ally"
+      ],
+      "not_person": [
+        "Chase",
+        "Ally"
+      ],
+      "domain": [
+        "finance"
+      ]
+    }
+  },
+  {
+    "name": "fin_car_payment_due_date",
+    "body": "Car payment of $375 is due the 15th. Auto-pay is set up through the credit union so it should be fine.",
+    "domain": "finance",
+    "created_at": "2026-06-11T07:00:00-06:00",
+    "expect": {
+      "value": [
+        {
+          "predicate": "carPayment",
+          "contains": "375"
+        }
+      ],
+      "temporal": [
+        {
+          "phrase": "the 15th",
+          "resolved_date": "2026-06-15"
+        }
+      ],
+      "not_person": [
+        "credit union"
+      ],
+      "domain": [
+        "finance"
+      ]
+    }
+  },
+  {
+    "name": "fin_401k_employer_match",
+    "body": "Increased 401k contribution to 10% starting next paycheck. Employer matches up to 5% at Vanguard.",
+    "domain": "finance",
+    "created_at": "2026-06-11T11:30:00-06:00",
+    "expect": {
+      "value": [
+        {
+          "contains": "10"
+        },
+        {
+          "contains": "5"
+        }
+      ],
+      "mentions": [
+        "401k",
+        "Vanguard"
+      ],
+      "not_person": [
+        "401k",
+        "Vanguard"
+      ],
+      "domain": [
+        "finance"
+      ]
+    }
+  },
+  {
+    "name": "fin_multi_amount_rent_utilities_internet",
+    "body": "Paid rent $1800, utilities $145, and internet $75 today. Total monthly fixed costs are brutal.",
+    "domain": "finance",
+    "created_at": "2026-06-11T10:00:00-06:00",
+    "expect": {
+      "value": [
+        {
+          "predicate": "rent",
+          "contains": "1800"
+        },
+        {
+          "contains": "145"
+        },
+        {
+          "contains": "75"
+        }
+      ],
+      "domain": [
+        "finance"
+      ]
+    }
+  },
+  {
+    "name": "fin_freelance_income_deposited",
+    "body": "Client finally paid the invoice \u2014 $3500 deposited to the Fidelity cash management account yesterday.",
+    "domain": "finance",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "value": [
+        {
+          "contains": "3500"
+        }
+      ],
+      "mentions": [
+        "Fidelity"
+      ],
+      "not_person": [
+        "Fidelity"
+      ],
+      "temporal": [
+        {
+          "phrase": "yesterday",
+          "resolved_date": "2026-06-10"
+        }
+      ],
+      "domain": [
+        "finance"
+      ]
+    }
+  },
+  {
+    "name": "fin_vanguard_not_person_trap",
+    "body": "Moved the old 403b into Vanguard. Their target-date fund lineup is better than what my employer offered.",
+    "domain": "finance",
+    "created_at": "2026-06-11T15:00:00-06:00",
+    "expect": {
+      "mentions": [
+        "Vanguard",
+        "403b"
+      ],
+      "mention_kind": [
+        {
+          "name": "Vanguard",
+          "kind": [
+            "Organization",
+            "Corporation",
+            "FinancialService",
+            "Company"
+          ]
+        }
+      ],
+      "not_person": [
+        "Vanguard",
+        "403b"
+      ],
+      "domain": [
+        "finance"
+      ]
+    }
+  },
+  {
+    "name": "fin_fidelity_account_edge",
+    "body": "I have my brokerage account at Fidelity. Been there since 2015 and the interface keeps getting better.",
+    "domain": "finance",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "mentions": [
+        "Fidelity"
+      ],
+      "mention_kind": [
+        {
+          "name": "Fidelity",
+          "kind": [
+            "Organization",
+            "Corporation",
+            "FinancialService",
+            "Company"
+          ]
+        }
+      ],
+      "not_person": [
+        "Fidelity"
+      ],
+      "edges": [
+        {
+          "predicate": "hasAccount",
+          "object": "Fidelity"
+        }
+      ],
+      "domain": [
+        "finance"
+      ]
+    }
+  },
+  {
+    "name": "fin_interest_rate_mortgage_refi",
+    "body": "Locked a refi rate at 6.25% with Chase Home Lending today. Closing is set for June 30.",
+    "domain": "finance",
+    "created_at": "2026-06-11T16:00:00-06:00",
+    "expect": {
+      "value": [
+        {
+          "contains": "6.25"
+        }
+      ],
+      "mentions": [
+        "Chase"
+      ],
+      "not_person": [
+        "Chase",
+        "Chase Home Lending"
+      ],
+      "temporal": [
+        {
+          "phrase": "June 30",
+          "resolved_date": "2026-06-30"
+        }
+      ],
+      "domain": [
+        "finance"
+      ]
+    }
+  },
+  {
+    "name": "fin_atm_withdrawal",
+    "body": "Withdrew $200 from the Chase ATM on the corner. Needed cash for the weekend market.",
+    "domain": "finance",
+    "created_at": "2026-06-11T17:00:00-06:00",
+    "expect": {
+      "value": [
+        {
+          "contains": "200"
+        }
+      ],
+      "mentions": [
+        "Chase"
+      ],
+      "not_person": [
+        "Chase"
+      ],
+      "domain": [
+        "finance"
+      ]
+    }
+  },
+  {
+    "name": "fin_accountant_person_named",
+    "body": "Met with my accountant Dana Reyes today to go over Q2. She thinks I should increase my Roth IRA contributions.",
+    "domain": "finance",
+    "created_at": "2026-06-11T14:00:00-06:00",
+    "expect": {
+      "person_mentions": [
+        "Dana Reyes"
+      ],
+      "mentions": [
+        "Roth IRA"
+      ],
+      "not_person": [
+        "Roth IRA"
+      ],
+      "domain": [
+        "finance"
+      ]
+    }
+  },
+  {
+    "name": "fin_landlord_person_rent_paid",
+    "body": "Wrote the rent check to my landlord Marcus \u2014 $1650 for July, mailed it today.",
+    "domain": "finance",
+    "created_at": "2026-06-11T11:00:00-06:00",
+    "expect": {
+      "value": [
+        {
+          "predicate": "rent",
+          "contains": "1650"
+        }
+      ],
+      "person_mentions": [
+        "Marcus"
+      ],
+      "domain": [
+        "finance"
+      ]
+    }
+  },
+  {
+    "name": "fin_index_fund_balance",
+    "body": "Checked the Vanguard S&P 500 index fund \u2014 balance is up to $54000. Markets have been kind this month.",
+    "domain": "finance",
+    "created_at": "2026-06-11T20:30:00-06:00",
+    "expect": {
+      "value": [
+        {
+          "contains": "54000"
+        }
+      ],
+      "mentions": [
+        "Vanguard"
+      ],
+      "not_person": [
+        "Vanguard"
+      ],
+      "domain": [
+        "finance"
+      ]
+    }
+  },
+  {
+    "name": "fin_phone_bill_due_june18",
+    "body": "Phone bill is $85 and due June 18. Autopay is off so I need to do it manually.",
+    "domain": "finance",
+    "created_at": "2026-06-11T08:00:00-06:00",
+    "expect": {
+      "value": [
+        {
+          "contains": "85"
+        }
+      ],
+      "temporal": [
+        {
+          "phrase": "June 18",
+          "resolved_date": "2026-06-18"
+        }
+      ],
+      "domain": [
+        "finance"
+      ]
+    }
+  },
+  {
+    "name": "fin_morgan_stanley_not_person",
+    "body": "Got a call from Morgan Stanley about rolling over my 401k from the old job. Might be worth a conversation.",
+    "domain": "finance",
+    "created_at": "2026-06-11T13:00:00-06:00",
+    "expect": {
+      "mentions": [
+        "Morgan Stanley",
+        "401k"
+      ],
+      "mention_kind": [
+        {
+          "name": "Morgan Stanley",
+          "kind": [
+            "Organization",
+            "Corporation",
+            "FinancialService",
+            "Company"
+          ]
+        }
+      ],
+      "not_person": [
+        "Morgan Stanley",
+        "401k"
+      ],
+      "domain": [
+        "finance"
+      ]
+    }
+  },
+  {
+    "name": "fin_multi_account_transfer_balance",
+    "body": "Transferred $2000 from Chase savings to the Fidelity brokerage. Chase savings is now at $8500 and I still need to keep at least $5000 in there per the account terms.",
+    "domain": "finance",
+    "created_at": "2026-06-11T10:30:00-06:00",
+    "expect": {
+      "value": [
+        {
+          "contains": "2000"
+        },
+        {
+          "contains": "8500"
+        }
+      ],
+      "mentions": [
+        "Chase",
+        "Fidelity"
+      ],
+      "not_person": [
+        "Chase",
+        "Fidelity"
+      ],
+      "domain": [
+        "finance"
+      ]
+    }
+  }
+]

@@ -109,9 +109,10 @@ def test_eval_cases_are_wellformed() -> None:
     names = [c["name"] for c in cases]
     assert len(names) == len(set(names)), "duplicate eval case names"
     valid_expect = {
-        "person_mentions", "mentions", "mention_kind",
-        "absent_person", "not_person", "edges", "temporal", "value",
+        "person_mentions", "mentions", "mention_kind", "absent_person",
+        "not_person", "edges", "temporal", "value", "domain",
     }  # fmt: skip
+    domains = {"general", "health", "finance", "location"}
     for c in cases:
         assert c["name"] and c["body"], c
         assert datetime.fromisoformat(c["created_at"]).utcoffset() is not None, c["name"]
@@ -124,6 +125,7 @@ def test_eval_cases_are_wellformed() -> None:
             assert mk.get("name") and isinstance(mk.get("kind"), list) and mk["kind"], c["name"]
         for v in c.get("expect", {}).get("value", []):
             assert "contains" in v, c["name"]
+        assert set(c.get("expect", {}).get("domain", [])) <= domains, c["name"]
 
 
 def test_score_not_person_allows_nonperson_mention_but_flags_person() -> None:
@@ -180,3 +182,20 @@ def test_eval_cases_pass_audit() -> None:
     from evals.audit import audit_cases
 
     assert audit_cases(load_cases()) == []
+
+
+def test_score_domain_checks_per_fact_classification() -> None:
+    health_fact = ExtractedFact(
+        predicate="bloodPressure", qualifier="", kind="measurement",
+        statement="BP 120/80.", value_json={"value": "120/80"}, assertion="asserted",
+        entity_ref="Me", object_entity_ref=None, temporal=None, domain="health", confidence=0.9,
+    )  # fmt: skip
+    case: dict[str, Any] = {"name": "d", "expect": {"domain": ["health"]}}
+    assert _score(case, _extraction([], [health_fact]), _A).passed
+    # A fact the model left general fails the health-domain check.
+    general = ExtractedFact(
+        predicate="bloodPressure", qualifier="", kind="measurement", statement="BP 120/80.",
+        value_json=None, assertion="asserted", entity_ref="Me", object_entity_ref=None,
+        temporal=None, domain="general", confidence=0.9,
+    )  # fmt: skip
+    assert not _score(case, _extraction([], [general]), _A).passed

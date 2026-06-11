@@ -100,11 +100,14 @@ def _dump(parsed: Any, anchor: datetime) -> str:
         if t.phrase and t.resolved_start
     ]
     valued = [f"{f.predicate}={json.dumps(f.value_json)}" for f in parsed.facts if f.value_json]
+    domains = [f"{f.predicate}:{f.domain or '-'}" for f in parsed.facts]
     lines = [f"      mentions: {mentions}"]
     if edges:
         lines.append(f"      edges: {', '.join(edges)}")
     if valued:
         lines.append(f"      facts: {', '.join(valued)}")
+    if domains:
+        lines.append(f"      domains: {', '.join(domains)}")
     if temporal:
         lines.append(f"      dates: {', '.join(temporal)}")
     return "\n".join(lines)
@@ -187,6 +190,12 @@ def _score(case: dict[str, Any], parsed: Any, anchor: datetime) -> CaseResult:
         )
         res.checks.append((f"value:{v.get('predicate', '')}~{v['contains']}", hit, ""))
 
+    # The model assigned at least one fact to this domain — measures per-fact
+    # domain classification (the LLM's judgment; the deterministic type->domain
+    # floor, when it lands, would make this robust regardless of the model).
+    for dom in expect.get("domain", []):
+        res.checks.append((f"domain:{dom}", any(f.domain == dom for f in parsed.facts), ""))
+
     return res
 
 
@@ -245,7 +254,9 @@ def _report(results: list[CaseResult], model: str) -> bool:
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--case", help="run only the named case")
-    ap.add_argument("--like", help="run only cases whose name contains any of these (comma-separated)")
+    ap.add_argument(
+        "--like", help="run only cases whose name contains any of these (comma-separated)"
+    )
     ap.add_argument("--strict", action="store_true", help="exit 1 unless every case passes")
     args = ap.parse_args()
 

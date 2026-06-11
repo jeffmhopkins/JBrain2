@@ -1,0 +1,759 @@
+[
+  {
+    "name": "hlth_bp_single_reading",
+    "body": "Checked BP this morning before coffee: 118/76. Feeling good.",
+    "domain": "health",
+    "created_at": "2026-06-11T07:30:00-05:00",
+    "expect": {
+      "value": [
+        {
+          "predicate": "bloodPressure",
+          "contains": "118"
+        },
+        {
+          "predicate": "bloodPressure",
+          "contains": "76"
+        }
+      ],
+      "domain": [
+        "health"
+      ]
+    }
+  },
+  {
+    "name": "hlth_bp_elevated_provider",
+    "body": "Saw Dr. Mensah today. BP was 148/94 \u2014 she wants to start me on lisinopril 10mg daily.",
+    "domain": "health",
+    "created_at": "2026-06-11T11:00:00-05:00",
+    "expect": {
+      "person_mentions": [
+        "Dr. Mensah"
+      ],
+      "mentions": [
+        "lisinopril"
+      ],
+      "value": [
+        {
+          "predicate": "bloodPressure",
+          "contains": "148"
+        },
+        {
+          "predicate": "bloodPressure",
+          "contains": "94"
+        },
+        {
+          "contains": "10"
+        }
+      ],
+      "edges": [
+        {
+          "predicate": "treatedBy",
+          "object": "Mensah"
+        }
+      ],
+      "domain": [
+        "health"
+      ]
+    }
+  },
+  {
+    "name": "hlth_med_metformin_dose_freq",
+    "body": "Started metformin 500mg BID today for the Type 2 diabetes. Dr. Okafor says take it with meals.",
+    "domain": "health",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "person_mentions": [
+        "Dr. Okafor"
+      ],
+      "mentions": [
+        "metformin",
+        "Type 2 diabetes"
+      ],
+      "value": [
+        {
+          "contains": "500"
+        }
+      ],
+      "domain": [
+        "health"
+      ]
+    }
+  },
+  {
+    "name": "hlth_a1c_lab_result",
+    "body": "Lab results in: A1c is 7.2. Dr. Patel wants it under 7.0. Adding more fiber to the diet.",
+    "domain": "health",
+    "created_at": "2026-06-11T14:00:00-05:00",
+    "expect": {
+      "person_mentions": [
+        "Dr. Patel"
+      ],
+      "value": [
+        {
+          "contains": "7.2"
+        }
+      ],
+      "domain": [
+        "health"
+      ]
+    }
+  },
+  {
+    "name": "hlth_troponin_negative_chest_pain",
+    "body": "Admitted Mr. Okafor overnight for chest pain, troponin negative, started him on aspirin.",
+    "domain": "health",
+    "created_at": "2026-06-11T08:00:00-05:00",
+    "expect": {
+      "person_mentions": [
+        "Mr. Okafor"
+      ],
+      "mentions": [
+        "chest pain",
+        "aspirin"
+      ],
+      "domain": [
+        "health"
+      ]
+    }
+  },
+  {
+    "name": "hlth_heart_rate_vitals",
+    "body": "Heart rate 58 bpm at rest this morning. O2 sat 98%. Feeling good after yesterday's run.",
+    "domain": "health",
+    "created_at": "2026-06-11T07:15:00-06:00",
+    "expect": {
+      "value": [
+        {
+          "predicate": "heartRate",
+          "contains": "58"
+        }
+      ],
+      "domain": [
+        "health"
+      ]
+    }
+  },
+  {
+    "name": "hlth_weight_glucose_multi_vital",
+    "body": "Morning check: weight 196 lb, fasting glucose 112. Both trending down. Nurse Amara flagged the glucose to Dr. Singh.",
+    "domain": "health",
+    "created_at": "2026-06-11T08:00:00-06:00",
+    "expect": {
+      "person_mentions": [
+        "Nurse Amara",
+        "Dr. Singh"
+      ],
+      "value": [
+        {
+          "predicate": "weight",
+          "contains": "196"
+        },
+        {
+          "predicate": "bloodGlucose",
+          "contains": "112"
+        }
+      ],
+      "domain": [
+        "health"
+      ]
+    }
+  },
+  {
+    "name": "hlth_temperature_tachycardia",
+    "body": "Ms. Ferreira presented febrile \u2014 temp 102.4, heart rate 108 bpm. Started on IV fluids.",
+    "domain": "health",
+    "created_at": "2026-06-11T10:30:00-05:00",
+    "expect": {
+      "person_mentions": [
+        "Ms. Ferreira"
+      ],
+      "value": [
+        {
+          "contains": "102.4"
+        },
+        {
+          "predicate": "heartRate",
+          "contains": "108"
+        }
+      ],
+      "domain": [
+        "health"
+      ]
+    }
+  },
+  {
+    "name": "hlth_ldl_cholesterol_lab",
+    "body": "LDL came back at 130. Dr. Nakamura wants to start rosuvastatin 10mg nightly if diet changes don't help in 3 months.",
+    "domain": "health",
+    "created_at": "2026-06-11T13:00:00-06:00",
+    "expect": {
+      "person_mentions": [
+        "Dr. Nakamura"
+      ],
+      "mentions": [
+        "rosuvastatin"
+      ],
+      "value": [
+        {
+          "contains": "130"
+        },
+        {
+          "contains": "10"
+        }
+      ],
+      "domain": [
+        "health"
+      ]
+    }
+  },
+  {
+    "name": "hlth_o2_sat_copd",
+    "body": "Patient on 2L O2 via nasal cannula, sat holding at 92%. COPD exacerbation, started prednisone 40mg daily.",
+    "domain": "health",
+    "created_at": "2026-06-11T09:45:00-05:00",
+    "expect": {
+      "mentions": [
+        "COPD",
+        "prednisone"
+      ],
+      "value": [
+        {
+          "contains": "92"
+        },
+        {
+          "contains": "40"
+        }
+      ],
+      "domain": [
+        "health"
+      ]
+    }
+  },
+  {
+    "name": "hlth_atrial_fibrillation_ekg",
+    "body": "EKG this morning showed atrial fibrillation. Discussed rate control with Dr. Brennan \u2014 adding metoprolol 25mg twice daily.",
+    "domain": "health",
+    "created_at": "2026-06-11T10:00:00-05:00",
+    "expect": {
+      "person_mentions": [
+        "Dr. Brennan"
+      ],
+      "mentions": [
+        "atrial fibrillation",
+        "metoprolol",
+        "EKG"
+      ],
+      "value": [
+        {
+          "contains": "25"
+        }
+      ],
+      "domain": [
+        "health"
+      ]
+    }
+  },
+  {
+    "name": "hlth_hypertension_diagnosis_provider",
+    "body": "Dr. Vasquez officially diagnosed hypertension today and added it to the problem list. Starting amlodipine 5mg daily.",
+    "domain": "health",
+    "created_at": "2026-06-11T11:30:00-06:00",
+    "expect": {
+      "person_mentions": [
+        "Dr. Vasquez"
+      ],
+      "mentions": [
+        "hypertension",
+        "amlodipine"
+      ],
+      "value": [
+        {
+          "contains": "5"
+        }
+      ],
+      "edges": [
+        {
+          "predicate": "treatedBy",
+          "object": "Vasquez"
+        }
+      ],
+      "domain": [
+        "health"
+      ]
+    }
+  },
+  {
+    "name": "hlth_admission_chest_pain_date",
+    "body": "Admitted for unstable angina on June 8. Troponin peak 0.8 ng/mL. Discharged June 10 on dual antiplatelet therapy.",
+    "domain": "health",
+    "created_at": "2026-06-11T16:00:00-05:00",
+    "expect": {
+      "mentions": [
+        "unstable angina"
+      ],
+      "value": [
+        {
+          "contains": "0.8"
+        }
+      ],
+      "temporal": [
+        {
+          "phrase": "June 8",
+          "resolved_date": "2026-06-08"
+        },
+        {
+          "phrase": "June 10",
+          "resolved_date": "2026-06-10"
+        }
+      ],
+      "domain": [
+        "health"
+      ]
+    }
+  },
+  {
+    "name": "hlth_cbc_lab_panel",
+    "body": "CBC back: hemoglobin 11.2, WBC 12.4, platelets 210. On-call nurse Rivera noted mild leukocytosis.",
+    "domain": "health",
+    "created_at": "2026-06-11T15:00:00-05:00",
+    "expect": {
+      "person_mentions": [
+        "Rivera"
+      ],
+      "value": [
+        {
+          "contains": "11.2"
+        },
+        {
+          "contains": "12.4"
+        }
+      ],
+      "domain": [
+        "health"
+      ]
+    }
+  },
+  {
+    "name": "hlth_med_lisinopril_titration",
+    "body": "Titrated lisinopril up to 20mg daily from 10mg \u2014 BP still running 145/90 at follow-up.",
+    "domain": "health",
+    "created_at": "2026-06-11T10:00:00-06:00",
+    "expect": {
+      "mentions": [
+        "lisinopril"
+      ],
+      "value": [
+        {
+          "contains": "20"
+        },
+        {
+          "predicate": "bloodPressure",
+          "contains": "145"
+        },
+        {
+          "predicate": "bloodPressure",
+          "contains": "90"
+        }
+      ],
+      "domain": [
+        "health"
+      ]
+    }
+  },
+  {
+    "name": "hlth_type2_diabetes_a1c_goal",
+    "body": "Mr. Huang has Type 2 diabetes, A1c 8.4 at last check. Dr. Rosario is managing him with metformin 1000mg BID and lifestyle changes.",
+    "domain": "health",
+    "created_at": "2026-06-11T09:00:00-05:00",
+    "expect": {
+      "person_mentions": [
+        "Mr. Huang",
+        "Dr. Rosario"
+      ],
+      "mentions": [
+        "Type 2 diabetes",
+        "metformin"
+      ],
+      "value": [
+        {
+          "contains": "8.4"
+        },
+        {
+          "contains": "1000"
+        }
+      ],
+      "edges": [
+        {
+          "predicate": "treatedBy",
+          "object": "Rosario"
+        }
+      ],
+      "domain": [
+        "health"
+      ]
+    }
+  },
+  {
+    "name": "hlth_hypothyroid_levothyroxine",
+    "body": "Hypothyroidism stable on levothyroxine 75mcg daily. TSH came back 2.1 \u2014 within normal range.",
+    "domain": "health",
+    "created_at": "2026-06-11T12:00:00-06:00",
+    "expect": {
+      "mentions": [
+        "hypothyroidism",
+        "levothyroxine"
+      ],
+      "value": [
+        {
+          "contains": "75"
+        },
+        {
+          "contains": "2.1"
+        }
+      ],
+      "domain": [
+        "health"
+      ]
+    }
+  },
+  {
+    "name": "hlth_mri_back_pain",
+    "body": "MRI lumbar spine ordered for chronic low back pain. Dr. Chen says if it shows disk herniation we'll discuss PT first before surgery.",
+    "domain": "health",
+    "created_at": "2026-06-11T14:30:00-06:00",
+    "expect": {
+      "person_mentions": [
+        "Dr. Chen"
+      ],
+      "mentions": [
+        "MRI",
+        "low back pain"
+      ],
+      "edges": [
+        {
+          "predicate": "treatedBy",
+          "object": "Chen"
+        }
+      ],
+      "domain": [
+        "health"
+      ]
+    }
+  },
+  {
+    "name": "hlth_multi_vital_admission_note",
+    "body": "Mrs. Osei admitted June 9 with dyspnea. Vitals on arrival: BP 162/98, HR 110, temp 37.8, O2 sat 89%. Placed on supplemental O2 and BiPAP. Cardiology consulted \u2014 Dr. Adeyemi seeing her tomorrow.",
+    "domain": "health",
+    "created_at": "2026-06-11T08:00:00-05:00",
+    "expect": {
+      "person_mentions": [
+        "Mrs. Osei",
+        "Dr. Adeyemi"
+      ],
+      "mentions": [
+        "dyspnea"
+      ],
+      "value": [
+        {
+          "predicate": "bloodPressure",
+          "contains": "162"
+        },
+        {
+          "predicate": "bloodPressure",
+          "contains": "98"
+        },
+        {
+          "predicate": "heartRate",
+          "contains": "110"
+        },
+        {
+          "contains": "37.8"
+        },
+        {
+          "contains": "89"
+        }
+      ],
+      "temporal": [
+        {
+          "phrase": "June 9",
+          "resolved_date": "2026-06-09"
+        }
+      ],
+      "domain": [
+        "health"
+      ]
+    }
+  },
+  {
+    "name": "hlth_warfarin_inr_dose",
+    "body": "INR today 1.8 \u2014 subtherapeutic for the afib. Increased warfarin to 5mg daily. Repeat INR in one week.",
+    "domain": "health",
+    "created_at": "2026-06-11T11:00:00-06:00",
+    "expect": {
+      "mentions": [
+        "warfarin"
+      ],
+      "value": [
+        {
+          "contains": "1.8"
+        },
+        {
+          "contains": "5"
+        }
+      ],
+      "domain": [
+        "health"
+      ]
+    }
+  },
+  {
+    "name": "hlth_discharge_summary_fragment",
+    "body": "Discharged Mr. Kapoor on June 10 after 3-day admission for pneumonia. Sent home on azithromycin 500mg daily for 5 days. Follow up with Dr. Lim next week.",
+    "domain": "health",
+    "created_at": "2026-06-11T09:30:00-05:00",
+    "expect": {
+      "person_mentions": [
+        "Mr. Kapoor",
+        "Dr. Lim"
+      ],
+      "mentions": [
+        "pneumonia",
+        "azithromycin"
+      ],
+      "value": [
+        {
+          "contains": "500"
+        }
+      ],
+      "temporal": [
+        {
+          "phrase": "June 10",
+          "resolved_date": "2026-06-10"
+        }
+      ],
+      "domain": [
+        "health"
+      ]
+    }
+  },
+  {
+    "name": "hlth_fasting_glucose_prediabetes",
+    "body": "Fasting glucose 108 today \u2014 in the prediabetic range. Dr. Park recommending diet and exercise before starting medication. A1c 6.1.",
+    "domain": "health",
+    "created_at": "2026-06-11T08:30:00-05:00",
+    "expect": {
+      "person_mentions": [
+        "Dr. Park"
+      ],
+      "value": [
+        {
+          "predicate": "bloodGlucose",
+          "contains": "108"
+        },
+        {
+          "contains": "6.1"
+        }
+      ],
+      "domain": [
+        "health"
+      ]
+    }
+  },
+  {
+    "name": "hlth_depression_ssri_start",
+    "body": "Started sertraline 50mg daily for depression. Dr. Nguyen says to give it 4\u20136 weeks before judging efficacy.",
+    "domain": "health",
+    "created_at": "2026-06-11T16:00:00-06:00",
+    "expect": {
+      "person_mentions": [
+        "Dr. Nguyen"
+      ],
+      "mentions": [
+        "sertraline",
+        "depression"
+      ],
+      "value": [
+        {
+          "contains": "50"
+        }
+      ],
+      "edges": [
+        {
+          "predicate": "treatedBy",
+          "object": "Nguyen"
+        }
+      ],
+      "domain": [
+        "health"
+      ]
+    }
+  },
+  {
+    "name": "hlth_referral_cardiologist",
+    "body": "My GP, Dr. Reyes, referred me to a cardiologist for palpitations. Appointment with Dr. Fourie at Midtown Cardiology on June 18.",
+    "domain": "health",
+    "created_at": "2026-06-11T10:00:00-05:00",
+    "expect": {
+      "person_mentions": [
+        "Dr. Reyes",
+        "Dr. Fourie"
+      ],
+      "mention_kind": [
+        {
+          "name": "Dr. Fourie",
+          "kind": [
+            "Person"
+          ]
+        }
+      ],
+      "temporal": [
+        {
+          "phrase": "June 18",
+          "resolved_date": "2026-06-18"
+        }
+      ],
+      "edges": [
+        {
+          "predicate": "treatedBy",
+          "object": "Reyes"
+        }
+      ],
+      "domain": [
+        "health"
+      ]
+    }
+  },
+  {
+    "name": "hlth_blood_pressure_yesterday",
+    "body": "Checked BP yesterday evening: 132/84. Up a bit from last week. Taking it again tomorrow.",
+    "domain": "health",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "value": [
+        {
+          "predicate": "bloodPressure",
+          "contains": "132"
+        },
+        {
+          "predicate": "bloodPressure",
+          "contains": "84"
+        }
+      ],
+      "temporal": [
+        {
+          "phrase": "yesterday",
+          "resolved_date": "2026-06-10"
+        }
+      ],
+      "domain": [
+        "health"
+      ]
+    }
+  },
+  {
+    "name": "hlth_negated_diabetes_hypothetical",
+    "body": "Doctor wants to rule out diabetes \u2014 ordering fasting glucose and A1c. No diagnosis yet.",
+    "domain": "health",
+    "created_at": "2026-06-11T12:00:00-06:00",
+    "expect": {
+      "mentions": [
+        "diabetes"
+      ],
+      "domain": [
+        "health"
+      ]
+    }
+  },
+  {
+    "name": "hlth_pediatric_weight_fever",
+    "body": "Brought Lena in to see Dr. Morales. She weighs 22 kg, temp 39.1 \u2014 viral URI most likely. No antibiotics.",
+    "domain": "health",
+    "created_at": "2026-06-11T15:00:00-05:00",
+    "expect": {
+      "person_mentions": [
+        "Lena",
+        "Dr. Morales"
+      ],
+      "value": [
+        {
+          "predicate": "weight",
+          "contains": "22"
+        },
+        {
+          "contains": "39.1"
+        }
+      ],
+      "edges": [
+        {
+          "predicate": "treatedBy",
+          "object": "Morales"
+        }
+      ],
+      "domain": [
+        "health"
+      ]
+    }
+  },
+  {
+    "name": "hlth_procedure_colonoscopy_date",
+    "body": "Colonoscopy scheduled for June 25 at Memorial GI. Dr. Ibarra is performing it. Prep starts the evening of June 24.",
+    "domain": "health",
+    "created_at": "2026-06-11T08:00:00-06:00",
+    "expect": {
+      "person_mentions": [
+        "Dr. Ibarra"
+      ],
+      "mentions": [
+        "colonoscopy"
+      ],
+      "temporal": [
+        {
+          "phrase": "June 25",
+          "resolved_date": "2026-06-25"
+        },
+        {
+          "phrase": "June 24",
+          "resolved_date": "2026-06-24"
+        }
+      ],
+      "domain": [
+        "health"
+      ]
+    }
+  },
+  {
+    "name": "hlth_multi_med_complex_regimen",
+    "body": "Mrs. Tanaka's current meds after discharge: lisinopril 10mg daily, atorvastatin 40mg nightly, aspirin 81mg daily, metformin 500mg BID. Follow up with Dr. Hamed in two weeks.",
+    "domain": "health",
+    "created_at": "2026-06-11T17:00:00-05:00",
+    "expect": {
+      "person_mentions": [
+        "Mrs. Tanaka",
+        "Dr. Hamed"
+      ],
+      "mentions": [
+        "lisinopril",
+        "atorvastatin",
+        "aspirin",
+        "metformin"
+      ],
+      "value": [
+        {
+          "contains": "10"
+        },
+        {
+          "contains": "40"
+        },
+        {
+          "contains": "81"
+        },
+        {
+          "contains": "500"
+        }
+      ],
+      "domain": [
+        "health"
+      ]
+    }
+  }
+]
