@@ -199,13 +199,33 @@ def _score(case: dict[str, Any], parsed: Any, anchor: datetime) -> CaseResult:
     return res
 
 
-async def _run(cases: list[dict[str, Any]]) -> tuple[list[CaseResult], str]:
+def _print_case(r: CaseResult) -> None:
+    # Stream each case as it finishes (flush, since output is usually piped) so a
+    # long run shows progress and a timeout still yields the cases that ran.
+    print(f"[{'PASS' if r.passed else 'FAIL'}] {r.name}", flush=True)
+    if r.error:
+        print(f"      ERROR {r.error}", flush=True)
+        return
+    for label, ok, _ in r.checks:
+        if not ok:
+            print(f"      miss {label}", flush=True)
+    if not r.passed and r.dump:
+        print(r.dump, flush=True)  # what the model returned, so the prompt can be tuned
+
+
+async def _run(cases: list[dict[str, Any]]) -> list[CaseResult]:
     # Parse WITH the anchor, exactly as the pipeline does for a note whose
     # client offset is known: the score then reflects what the app actually
     # STORES — model output plus the deterministic backward-date repair — so a
     # green eval means a green app, not just a green prompt.
     router = build_router(Settings())
     provider, model = router.spec("note.extract")
+    print(
+        f"prompt-eval — {provider}:{model} — {PROMPT_VERSION} — "
+        f"{datetime.now().isoformat(timespec='seconds')}",
+        flush=True,
+    )
+    print("-" * 64, flush=True)
     results: list[CaseResult] = []
     for case in cases:
         anchor = datetime.fromisoformat(case["created_at"])
@@ -220,34 +240,24 @@ async def _run(cases: list[dict[str, Any]]) -> tuple[list[CaseResult], str]:
                 json_schema=EXTRACTION_SCHEMA,
                 max_tokens=EXTRACT_MAX_TOKENS,
             )
-            results.append(_score(case, parse_extraction(out.parsed, anchor=anchor), anchor))
+            r = _score(case, parse_extraction(out.parsed, anchor=anchor), anchor)
         except Exception as exc:  # a live call can fail many ways; report, don't crash the run
-            results.append(CaseResult(name=case["name"], error=f"{type(exc).__name__}: {exc}"))
-    return results, f"{provider}:{model}"
+            r = CaseResult(name=case["name"], error=f"{type(exc).__name__}: {exc}")
+        _print_case(r)
+        results.append(r)
+    return results
 
 
-def _report(results: list[CaseResult], model: str) -> bool:
-    print(
-        f"prompt-eval — {model} — {PROMPT_VERSION} — {datetime.now().isoformat(timespec='seconds')}"
-    )
-    print("-" * 64)
-    checks_total = checks_ok = 0
-    for r in results:
-        print(f"[{'PASS' if r.passed else 'FAIL'}] {r.name}")
-        if r.error:
-            print(f"      ERROR {r.error}")
-            continue
-        for label, ok, _ in r.checks:
-            checks_total += 1
-            checks_ok += ok
-            if not ok:
-                print(f"      miss {label}")
-        if not r.passed and r.dump:
-            print(r.dump)  # show what the model returned so the prompt can be tuned
+def _report(results: list[CaseResult]) -> bool:
+    checks_total = sum(len(r.checks) for r in results)
+    checks_ok = sum(ok for r in results for _, ok, _ in r.checks)
     passed = sum(r.passed for r in results)
     pct = (100 * checks_ok / checks_total) if checks_total else 0.0
-    print("-" * 64)
-    print(f"{passed}/{len(results)} cases passed; {checks_ok}/{checks_total} checks ({pct:.0f}%)")
+    print("-" * 64, flush=True)
+    print(
+        f"{passed}/{len(results)} cases passed; {checks_ok}/{checks_total} checks ({pct:.0f}%)",
+        flush=True,
+    )
     return passed == len(results)
 
 
@@ -269,8 +279,8 @@ def main() -> int:
     if not cases:
         print("no matching cases", file=sys.stderr)
         return 2
-    results, model = asyncio.run(_run(cases))
-    all_passed = _report(results, model)
+    results = asyncio.run(_run(cases))
+    all_passed = _report(results)
     return 0 if (all_passed or not args.strict) else 1
 
 
