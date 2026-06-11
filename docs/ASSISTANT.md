@@ -187,6 +187,39 @@ against real Postgres via testcontainers, with the mandatory per-table RLS
 isolation test; sidecar validity (compiles to a valid schema; unique name/version)
 is a unit test; guardrail accounting is pure and unit-tested.
 
+### Session capabilities — read-scope chosen up front, writes staged
+
+Every session is a **capability, not an identity**, configured by two independent
+dials that are both least-privilege by default:
+
+- **Read scope, selected at session start.** The owner picks which knowledge-base
+  sources — domains (`general`/`health`/`finance`/`location`/…) × subjects (me, Dad,
+  …) — this session may read. That selection **sets the RLS domain-scope GUC**, so
+  every query, retrieval, and tool the session runs is physically bounded to it: a
+  session opened "general only" cannot read a health fact even when asked, and
+  injected content in it cannot reach what the session cannot see. The default is a
+  deliberate minimal/last-used set; **widening scope is an explicit owner act, never
+  the resting state.** This dissolves the omni-scoped-owner problem at the source —
+  the session's read scope is the **upper bound** on any episode's domain, so the
+  fail-closed episodic scoping (non-negotiable #4) is trivially satisfied and the
+  write-time classifier only ever chooses *among the scopes already selected*.
+
+- **Writes and sensitive actions, never standing — always staged.** Within its read
+  scope a session reads freely; anything that *changes* state, or that the owner has
+  flagged as approval-worthy, does not execute directly — it stages a **Proposal**
+  (below). Each tool/action declares a permission class (`read` / `mutate` /
+  `external` / `sensitive`); a session policy maps classes to {direct / staged /
+  denied}. Default owner policy: `read` direct within scope, `mutate` and `sensitive`
+  **staged**, `external` **denied** (#9). A write can target **only an in-scope
+  domain** — you cannot stage a write to a domain the session cannot read.
+
+Non-owner principals are the **same machine with the dials pinned**: an intake link
+is a session whose read scope is fixed to its capability token (one subject × one
+domain) and whose policy is capture-only / everything-else-denied (#8). The owner
+session is just the general case where the read dial is *selectable* and writes are
+*staged* rather than denied — so the whole subjects/principals/domains model
+(ARCHITECTURE.md) is one mechanism, not a special case per caller.
+
 ## Memory model
 
 Two tiers, **distinct jobs, no overlap.** *Long-term memory* is the existing
@@ -405,7 +438,7 @@ JBrain2's existing parts.
 | Behavior versioning / rollback / audit | `.prompt`/`.tool` files + YAML `version` + CI version-bump guard + git + eval suite | Reuse verbatim |
 | Durable knowledge respecting the wiki contract | Notes→facts→wiki spine + correction loop + supersession + per-domain gating | `notes.provenance` flag |
 | Skill & memory retrieval | pgvector + RRF hybrid search | `skills`, `agent_memory`, `agent_episodes` tables |
-| Domain firewalls across all of it | RLS domain scoping + mandated isolation tests | The domain classifier; RLS tests per new table |
+| Domain firewalls across all of it | RLS domain scoping + mandated isolation tests; subjects/principals/domains | The domain classifier; RLS tests per new table; the **session read-scope selector** + per-tool permission class + session action policy |
 | Cheap-vs-strong routing | LLM-adapter task profiles | A couple of profiles + `.prompt` files |
 | Tests | Adapter fake + testcontainers + coverage gates | Tests-with-code as usual |
 
