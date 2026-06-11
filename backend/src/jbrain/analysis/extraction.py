@@ -14,6 +14,7 @@ from typing import Any
 import structlog
 
 from jbrain.analysis.prompt import MAX_FACTS
+from jbrain.analysis.supersession import _same_quantity
 
 log = structlog.get_logger()
 
@@ -156,6 +157,138 @@ def _clamp_confidence(value: Any) -> float:
         return 0.0
 
 
+# Same-key dedup (prompt v4's "ONE fact per entity+predicate per note", with
+# server-side teeth): a model that restates one property across renderings,
+# units, or kinds must yield ONE stored fact, not an attribute collision the
+# owner resolves by hand. The line we draw: a DUPLICATE (same value re-rendered,
+# unit-converted, re-kinded, or the same date at differing precision) collapses
+# silently; a CONTRADICTION (genuinely different values on the same key, e.g.
+# adv_self_contradiction_one_note's Reykjavik-then-Oslo) keeps both facts so
+# the supersession/conflict machinery — the part that works — decides.
+
+_PRECISION_RANK = {"year": 1, "month": 2, "day": 3, "instant": 4}
+
+
+def _calendar_key(start: datetime, precision: str) -> tuple[int, ...]:
+    # Calendar components as stamped (no astimezone): day/month/year temporals
+    # are calendar dates anchored by the extractor, not comparable instants.
+    parts = (start.year, start.month, start.day, start.hour, start.minute, start.second)
+    return parts[: _PRECISION_RANK[precision] if precision != "instant" else 6]
+
+
+def temporals_consistent(a: ExtractedTemporal | None, b: ExtractedTemporal | None) -> bool:
+    """Can these two temporal claims describe the same moment?
+
+    A missing side is vacuously consistent (no time claim to contradict).
+    Identical claims are consistent. Otherwise both calendar values must agree
+    once truncated to the VAGUER precision — "March 1986" contains
+    "March 19, 1986" but not "April 4, 1986". era/unknown precisions are never
+    assumed consistent: there is nothing sound to truncate to.
+    """
+    if a is None or b is None or a.resolved_start is None or b.resolved_start is None:
+        return True
+    if a.precision == b.precision and a.resolved_start == b.resolved_start:
+        return True
+    rank_a, rank_b = _PRECISION_RANK.get(a.precision), _PRECISION_RANK.get(b.precision)
+    if rank_a is None or rank_b is None:
+        return False
+    vaguer = a.precision if rank_a <= rank_b else b.precision
+    return _calendar_key(a.resolved_start, vaguer) == _calendar_key(b.resolved_start, vaguer)
+
+
+def _values_agree(vague: dict[str, Any] | None, precise: dict[str, Any] | None) -> bool:
+    """Same value modulo rendering: equal payloads, a unit-converted quantity
+    (76 in vs 193 cm), or one side carrying no payload at all (a valueless
+    restatement rides its statement)."""
+    if vague is None or precise is None or vague == precise:
+        return True
+    return _same_quantity(vague, precise)
+
+
+def _date_prefix_agrees(vague: dict[str, Any], precise: dict[str, Any]) -> bool:
+    # Differing-precision renderings of one date ("1986-03" vs "1986-03-19"):
+    # every shared string field of the vaguer payload must be a prefix of the
+    # preciser's. Only consulted when temporal precisions differ, so same-rank
+    # near-strings ("York" vs "Yorkshire") can never collapse through here.
+    shared = set(vague) & set(precise)
+    return bool(shared) and all(
+        isinstance(vague[k], str)
+        and isinstance(precise[k], str)
+        and precise[k].startswith(vague[k])
+        for k in shared
+    )
+
+
+def _duplicate_winner(a: ExtractedFact, b: ExtractedFact) -> ExtractedFact | None:
+    """The surviving fact when `b` (later in the array) restates `a`'s
+    property; None means they genuinely differ — a contradiction for the
+    supersession machinery, never collapsed here.
+
+    Winner rule, in order:
+    1. Both sides dated at DIFFERENT precisions describing the same consistent
+       date: the more precise fact wins regardless of confidence — extra
+       information beats a confidence score on a vaguer rendering.
+    2. Otherwise highest confidence; tie → the side carrying a value_json
+       payload; still tied → later in the array, matching the pipeline's
+       intra-note last-wins convention for same-key facts.
+    """
+    if not temporals_consistent(a.temporal, b.temporal):
+        return None
+    rank_a = _PRECISION_RANK.get(a.temporal.precision) if a.temporal else None
+    rank_b = _PRECISION_RANK.get(b.temporal.precision) if b.temporal else None
+    if rank_a is not None and rank_b is not None and rank_a != rank_b:
+        vague, precise = (a, b) if rank_a < rank_b else (b, a)
+        agree = _values_agree(vague.value_json, precise.value_json) or (
+            vague.value_json is not None
+            and precise.value_json is not None
+            and _date_prefix_agrees(vague.value_json, precise.value_json)
+        )
+        return precise if agree else None
+    if not _values_agree(a.value_json, b.value_json):
+        return None
+    if a.confidence != b.confidence:
+        return a if a.confidence > b.confidence else b
+    if (a.value_json is None) != (b.value_json is None):
+        return a if a.value_json is not None else b
+    return b
+
+
+def dedup_facts(facts: list[ExtractedFact]) -> list[ExtractedFact]:
+    """Collapse same-key duplicates within ONE extraction, keeping the best
+    fact per _duplicate_winner. The key includes object_entity_ref (distinct
+    edges like Me.owns→Bella vs Me.owns→Ricky are different facts) and
+    assertion (a negation is never a restatement of the assertion it negates).
+    """
+
+    def key(f: ExtractedFact) -> tuple[str, str, str, str | None, str]:
+        return (f.entity_ref, f.predicate, f.qualifier, f.object_entity_ref, f.assertion)
+
+    kept: list[ExtractedFact] = []
+    for fact in facts:
+        merged = False
+        for i, prior in enumerate(kept):
+            if key(prior) != key(fact):
+                continue
+            winner = _duplicate_winner(prior, fact)
+            if winner is None:
+                continue  # genuinely different values: both stay
+            dropped = fact if winner is prior else prior
+            log.warning(
+                "analysis.fact_deduped",
+                predicate=fact.predicate,
+                entity=fact.entity_ref,
+                kept_kind=winner.kind,
+                dropped_kind=dropped.kind,
+                dropped_statement=dropped.statement[:80],
+            )
+            kept[i] = winner
+            merged = True
+            break
+        if not merged:
+            kept.append(fact)
+    return kept
+
+
 def parse_extraction(payload: Any) -> Extraction:
     """Validate the parsed JSON into typed extraction objects.
 
@@ -241,6 +374,9 @@ def parse_extraction(payload: Any) -> Extraction:
                 confidence=_clamp_confidence(raw.get("confidence")),
             )
         )
+
+    # Dedup BEFORE the cap: restatements must not eat salience slots.
+    facts = dedup_facts(facts)
 
     if len(facts) > MAX_FACTS:
         # The prompt's soft cap, enforced: keep the FIRST N — fact order is

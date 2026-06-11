@@ -8,7 +8,7 @@ whenever the system prompt or schema changes meaningfully.
 from datetime import datetime
 from typing import Any
 
-PROMPT_VERSION = "note-extract-v3"
+PROMPT_VERSION = "note-extract-v4"
 
 # Facts-per-note cap: taught by instruction here, enforced server-side in
 # extraction.parse_extraction (over-extraction is the known quality risk;
@@ -79,6 +79,13 @@ value_json, e.g. {{"value": 182, "unit": "lb"}}); accumulates as a series.
 "species": "<species>"}} in value_json. "My <species> N" or "my <species>'s \
 name is N" likewise yields Me.owns -> N plus the same N.name attribute. \
 Never fold the animal's name or species away into only the owner's edge.
+- HARD RULE — ONE fact per entity+predicate per note: never restate the same \
+property as multiple facts in different renderings, units, or kinds. Emit the \
+SINGLE most precise value once, with normalized units in value_json (6'4" is \
+ONE height fact with {{"value": 76, "unit": "in"}} — never also a second \
+height fact phrased differently), and choose its kind ONCE per the kind table \
+above: an adult's height or a birthDate is an `attribute`, never also a \
+`measurement`; a weight or blood-pressure READING is a `measurement`.
 - "statement": one self-contained sentence rendering the fact.
 - "assertion": asserted | negated | hypothetical | reported | question | \
 expected. Second-hand claims are "reported". A FUTURE or planned thing that \

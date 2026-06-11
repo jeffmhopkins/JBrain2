@@ -1,0 +1,43 @@
+{
+  "name": "one note restating the same property across kinds/renderings stores exactly one fact",
+  "description": "Adversarial duplicate-property probe, from a field report (owner device, Jun 10 2026): the note 'Jeff is 40 years old, born March 19, 1986, is 6'4\" 255lb' came back with height THREE times (attribute {value:76,unit:in}, a second valueless attribute rendering, and a measurement) and birthDate TWICE (month-precision 'March 1986' plus day-precision 'March 19, 1986'), so the Analysis tab showed triple height, double birthDate, and two attribute_collision cards the owner had to resolve by hand. On pre-guard main this scenario failed with: \"expected 1 facts matching {entity Jeff, predicate height, count 1}, found 3\", \"expected 1 facts matching {entity Jeff, predicate birthDate, count 1}, found 2\", and \"expected 0 review items matching {count 0}, found 2\". parse_extraction now collapses same-key (entity, predicate, qualifier, object, assertion) DUPLICATES from one extraction — same value re-rendered/re-united/re-kinded keeps the highest-confidence fact; differing temporal PRECISIONS of the same consistent date keep the more precise fact even at lower confidence — while genuinely different values (see adv_self_contradiction_one_note) still fall through to the supersession/conflict machinery untouched. Expect exactly ONE height fact (the 0.92 attribute, not the measurement), ONE birthDate fact (the day-precision one, despite the month rendering's higher confidence), and ZERO review items.",
+  "steps": [
+    {
+      "domain": "general",
+      "created_at": "2026-06-10T23:02:00-06:00",
+      "body": "Jeff is 40 years old, born March 19, 1986, is 6'4\" 255lb",
+      "extraction": {
+        "title": "Jeff: birth date, height, weight",
+        "tags": ["jeff", "height", "weight", "birthday"],
+        "mentions": [{"name": "Jeff", "kind": "Person", "surface_text": "Jeff"}],
+        "facts": [
+          {"predicate": "height", "qualifier": "", "kind": "attribute", "statement": "Jeff is 76 inches tall.", "value_json": {"value": 76, "unit": "in"}, "assertion": "asserted", "entity_ref": "Jeff", "object_entity_ref": null, "temporal": null, "domain": "general", "confidence": 0.92},
+          {"predicate": "height", "qualifier": "", "kind": "attribute", "statement": "Jeff is 6'4\" tall.", "value_json": null, "assertion": "asserted", "entity_ref": "Jeff", "object_entity_ref": null, "temporal": null, "domain": "general", "confidence": 0.85},
+          {"predicate": "height", "qualifier": "", "kind": "measurement", "statement": "Jeff's height measured 76 in.", "value_json": {"value": 76, "unit": "in"}, "assertion": "asserted", "entity_ref": "Jeff", "object_entity_ref": null, "temporal": {"phrase": null, "resolved_start": "2026-06-10T23:02:00-06:00", "resolved_end": null, "precision": "instant"}, "domain": "general", "confidence": 0.8},
+          {"predicate": "birthDate", "qualifier": "", "kind": "attribute", "statement": "Jeff was born in March 1986.", "value_json": {"date": "1986-03"}, "assertion": "asserted", "entity_ref": "Jeff", "object_entity_ref": null, "temporal": {"phrase": "March 1986", "resolved_start": "1986-03-01T00:00:00+00:00", "resolved_end": null, "precision": "month"}, "domain": "general", "confidence": 0.93},
+          {"predicate": "birthDate", "qualifier": "", "kind": "attribute", "statement": "Jeff was born on March 19, 1986.", "value_json": {"date": "1986-03-19"}, "assertion": "asserted", "entity_ref": "Jeff", "object_entity_ref": null, "temporal": {"phrase": "March 19, 1986", "resolved_start": "1986-03-19T00:00:00+00:00", "resolved_end": null, "precision": "day"}, "domain": "general", "confidence": 0.9},
+          {"predicate": "weight", "qualifier": "", "kind": "measurement", "statement": "Jeff weighs 255 lb.", "value_json": {"value": 255, "unit": "lb"}, "assertion": "asserted", "entity_ref": "Jeff", "object_entity_ref": null, "temporal": {"phrase": null, "resolved_start": "2026-06-10T23:02:00-06:00", "resolved_end": null, "precision": "instant"}, "domain": "general", "confidence": 0.9}
+        ],
+        "temporal_tokens": [
+          {"phrase": "March 19, 1986", "kind": "point", "resolved_start": "1986-03-19T00:00:00+00:00", "resolved_end": null, "precision": "day", "rrule": null}
+        ]
+      }
+    }
+  ],
+  "expect": {
+    "facts": [
+      {"entity": "Jeff", "predicate": "height", "count": 1},
+      {"entity": "Jeff", "predicate": "height", "kind": "attribute", "status": "active", "value_contains": "76", "count": 1},
+      {"entity": "Jeff", "predicate": "birthDate", "count": 1},
+      {"entity": "Jeff", "predicate": "birthDate", "kind": "attribute", "status": "active", "value_contains": "1986-03-19", "count": 1},
+      {"entity": "Jeff", "predicate": "weight", "kind": "measurement", "status": "active", "count": 1}
+    ],
+    "absent_facts": [
+      {"entity": "Jeff", "predicate": "height", "kind": "measurement"},
+      {"entity": "Jeff", "predicate": "birthDate", "value_contains": "born in March 1986"}
+    ],
+    "review_items": [
+      {"count": 0}
+    ]
+  }
+}

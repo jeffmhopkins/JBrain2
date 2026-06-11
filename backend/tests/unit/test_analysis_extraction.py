@@ -9,10 +9,12 @@ from jbrain.analysis.extraction import (
     ExtractedFact,
     ExtractedTemporal,
     ExtractionError,
+    dedup_facts,
     normalize_future_assertion,
     parse_datetime,
     parse_extraction,
     ratchet_domain,
+    temporals_consistent,
 )
 from jbrain.analysis.pipeline import local_anchor
 from jbrain.analysis.prompt import (
@@ -279,8 +281,23 @@ def test_system_prompt_v3_teaches_possessive_decomposition_and_no_normalizing() 
     assert '"the rat"' in SYSTEM_PROMPT
 
 
-def test_prompt_version_bumped_to_v3() -> None:
-    assert PROMPT_VERSION == "note-extract-v3"
+def test_system_prompt_v4_forbids_same_predicate_restatement() -> None:
+    """Field gap: one note ('Jeff is ... born March 19, 1986, is 6\\'4" 255lb')
+    came back with height THREE times (two attribute renderings + a
+    measurement) and birthDate twice at different precisions. v4 must demand
+    one fact per entity+predicate per note, normalized units, and a single
+    kind choice per the kind table."""
+    assert "ONE fact per entity+predicate per note" in SYSTEM_PROMPT
+    assert "renderings, units, or kinds" in SYSTEM_PROMPT
+    # The exact field case is the worked normalization example.
+    assert '{"value": 76, "unit": "in"}' in SYSTEM_PROMPT
+    # Kind chosen once: adult height/birthDate attribute, readings measurement.
+    assert "never also a `measurement`" in SYSTEM_PROMPT
+    assert "READING is a `measurement`" in SYSTEM_PROMPT
+
+
+def test_prompt_version_bumped_to_v4() -> None:
+    assert PROMPT_VERSION == "note-extract-v4"
 
 
 def test_user_prompt_carries_anchor_with_timezone_domain_and_content() -> None:
@@ -382,3 +399,188 @@ def test_schema_and_version_are_stable_contract_surface() -> None:
         "finance",
         "location",
     ]
+
+
+# --- same-key dedup within one extraction (field: triple height) ------------
+
+
+def _dup(
+    predicate: str,
+    kind: str,
+    value_json: dict[str, Any] | None,
+    *,
+    confidence: float = 0.9,
+    statement: str = "stmt",
+    temporal: ExtractedTemporal | None = None,
+    qualifier: str = "",
+    object_ref: str | None = None,
+    assertion: str = "asserted",
+) -> ExtractedFact:
+    return ExtractedFact(
+        predicate=predicate,
+        qualifier=qualifier,
+        kind=kind,
+        statement=statement,
+        value_json=value_json,
+        assertion=assertion,
+        entity_ref="Jeff",
+        object_entity_ref=object_ref,
+        temporal=temporal,
+        domain="general",
+        confidence=confidence,
+    )
+
+
+def _temporal(start: str, precision: str) -> ExtractedTemporal:
+    return ExtractedTemporal(
+        phrase=None,
+        resolved_start=datetime.fromisoformat(start),
+        resolved_end=None,
+        precision=precision,
+    )
+
+
+def test_dedup_collapses_field_height_triple_to_best_confidence() -> None:
+    """The exact field shape: height as a valued attribute, a valueless
+    rendering, and a measurement — ONE fact survives, the most confident."""
+    deduped = dedup_facts(
+        [
+            _dup("height", "attribute", {"value": 76, "unit": "in"}, confidence=0.92),
+            _dup("height", "attribute", None, confidence=0.85, statement="Jeff is 6'4\" tall."),
+            _dup(
+                "height",
+                "measurement",
+                {"value": 76, "unit": "in"},
+                confidence=0.8,
+                temporal=_temporal("2026-06-10T23:02:00-06:00", "instant"),
+            ),
+        ]
+    )
+    assert len(deduped) == 1
+    assert deduped[0].kind == "attribute" and deduped[0].confidence == 0.92
+
+
+def test_dedup_recognizes_unit_converted_duplicate() -> None:
+    # 76 in == 193.04 cm: the supersession conversion table must agree.
+    deduped = dedup_facts(
+        [
+            _dup("height", "attribute", {"value": 76, "unit": "in"}, confidence=0.95),
+            _dup("height", "attribute", {"value": 193, "unit": "cm"}, confidence=0.7),
+        ]
+    )
+    assert len(deduped) == 1
+    assert deduped[0].value_json == {"value": 76, "unit": "in"}
+
+
+def test_dedup_precision_variants_keep_the_precise_date_despite_confidence() -> None:
+    """'March 1986' and 'March 19, 1986' are the SAME date at differing
+    precision: the precise one wins even at lower confidence — information
+    beats a score on a vaguer rendering."""
+    month = _dup(
+        "birthDate",
+        "attribute",
+        {"date": "1986-03"},
+        confidence=0.95,
+        temporal=_temporal("1986-03-01T00:00:00+00:00", "month"),
+    )
+    day = _dup(
+        "birthDate",
+        "attribute",
+        {"date": "1986-03-19"},
+        confidence=0.9,
+        temporal=_temporal("1986-03-19T00:00:00+00:00", "day"),
+    )
+    deduped = dedup_facts([month, day])
+    assert len(deduped) == 1
+    assert deduped[0].value_json == {"date": "1986-03-19"}
+    # Order must not matter: vaguer-after-preciser also keeps the precise one.
+    deduped = dedup_facts([day, month])
+    assert len(deduped) == 1 and deduped[0].value_json == {"date": "1986-03-19"}
+
+
+def test_dedup_inconsistent_dates_fall_through_to_contradiction() -> None:
+    # April 1986 does NOT contain March 19, 1986: a real disagreement, kept
+    # for the attribute-collision machinery.
+    facts = [
+        _dup(
+            "birthDate",
+            "attribute",
+            {"date": "1986-04"},
+            temporal=_temporal("1986-04-01T00:00:00+00:00", "month"),
+        ),
+        _dup(
+            "birthDate",
+            "attribute",
+            {"date": "1986-03-19"},
+            temporal=_temporal("1986-03-19T00:00:00+00:00", "day"),
+        ),
+    ]
+    assert len(dedup_facts(facts)) == 2
+
+
+def test_dedup_keeps_genuinely_different_values_for_conflict_machinery() -> None:
+    """adv_self_contradiction_one_note semantics survive: same key, different
+    VALUES (Reykjavik vs Oslo) is a contradiction, never silently collapsed."""
+    facts = [
+        _dup("homeLocation", "state", {"city": "Reykjavik"}),
+        _dup("homeLocation", "state", {"city": "Oslo"}),
+    ]
+    assert len(dedup_facts(facts)) == 2
+
+
+def test_dedup_key_separates_objects_and_assertions() -> None:
+    # Distinct edges accumulate; a negation never restates its assertion.
+    facts = [
+        _dup("owns", "relationship", None, object_ref="Bella"),
+        _dup("owns", "relationship", None, object_ref="Ricky"),
+        _dup("owns", "relationship", None, object_ref="Bella", assertion="negated"),
+    ]
+    assert len(dedup_facts(facts)) == 3
+
+
+def test_dedup_ties_prefer_valued_then_later() -> None:
+    valued = _dup("height", "attribute", {"value": 76, "unit": "in"})
+    bare = _dup("height", "attribute", None, statement="second rendering")
+    assert dedup_facts([bare, valued]) == [valued]
+    # Equal confidence, both valueless: later in array wins (last-wins).
+    first = _dup("nickname", "attribute", None, statement="first")
+    second = _dup("nickname", "attribute", None, statement="second")
+    assert dedup_facts([first, second]) == [second]
+
+
+def test_parse_extraction_applies_the_dedup_guard() -> None:
+    payload = valid_payload()
+    payload["facts"] = [dict(payload["facts"][0]), dict(payload["facts"][0])]
+    payload["facts"][1]["kind"] = "state"  # same key, re-kinded restatement
+    assert len(parse_extraction(payload).facts) == 1
+
+
+# --- temporal consistency (the duplicate-vs-contradiction line) --------------
+
+
+def test_temporals_consistent_vacuous_and_identical() -> None:
+    t = _temporal("1986-03-19T00:00:00+00:00", "day")
+    assert temporals_consistent(None, t)
+    assert temporals_consistent(t, None)
+    assert temporals_consistent(t, _temporal("1986-03-19T00:00:00+00:00", "day"))
+
+
+def test_temporals_consistent_truncates_to_the_vaguer_precision() -> None:
+    month = _temporal("1986-03-01T00:00:00+00:00", "month")
+    day = _temporal("1986-03-19T00:00:00+00:00", "day")
+    year = _temporal("1986-01-01T00:00:00+00:00", "year")
+    assert temporals_consistent(month, day)
+    assert temporals_consistent(year, day)
+    assert not temporals_consistent(_temporal("1986-04-01T00:00:00+00:00", "month"), day)
+    assert not temporals_consistent(_temporal("1987-01-01T00:00:00+00:00", "year"), day)
+
+
+def test_temporals_consistent_never_assumes_for_era_unknown_or_instants() -> None:
+    day = _temporal("1986-03-19T00:00:00+00:00", "day")
+    assert not temporals_consistent(_temporal("1986-03-19T00:00:00+00:00", "era"), day)
+    assert not temporals_consistent(_temporal("1986-03-19T00:00:00+00:00", "unknown"), day)
+    # Two distinct instants are distinct readings, not duplicates.
+    assert not temporals_consistent(
+        _temporal("2026-06-10T08:00:00+00:00", "instant"),
+        _temporal("2026-06-10T20:00:00+00:00", "instant"),
+    )
