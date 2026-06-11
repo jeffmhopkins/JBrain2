@@ -7,14 +7,14 @@ change (e.g. note-extract-v5's object-person + backward-temporal guidance) is
 MEASURED rather than guessed — the gap the harness explicitly cannot cover
 ("does not test the prompt — only a live model exercises that").
 
-Run it against whatever provider/model your config points note.extract at
-(JBRAIN_LLM_TASKS, provider keys / base URLs). It is provider-agnostic, so the
-same cases score Claude, grok, or a local model. CI never calls a live model,
-so this lives outside the test suite and is invoked by hand:
+It routes to whatever provider/model your config points note.extract at
+(JBRAIN_LLM_TASKS, provider keys / base URLs), so the same cases score Claude,
+grok, or a local model. CI never calls a live model, so this lives outside the
+test suite. ONE COMMAND, then copy the whole report back:
 
-    cd backend && uv run python -m evals.run            # all cases
-    uv run python -m evals.run --strict                 # exit 1 if any case fails
-    uv run python -m evals.run --case marriage_copular_object
+    scripts/prompt-eval.sh           # all cases (failures dump the raw output)
+    scripts/prompt-eval.sh --strict  # exit 1 if any case fails
+    scripts/prompt-eval.sh --case marriage_copular_object
 """
 
 from __future__ import annotations
@@ -30,7 +30,12 @@ from typing import Any
 
 from jbrain.analysis.extraction import parse_extraction
 from jbrain.analysis.pipeline import EXTRACT_MAX_TOKENS
-from jbrain.analysis.prompt import EXTRACTION_SCHEMA, SYSTEM_PROMPT, build_user_prompt
+from jbrain.analysis.prompt import (
+    EXTRACTION_SCHEMA,
+    PROMPT_VERSION,
+    SYSTEM_PROMPT,
+    build_user_prompt,
+)
 from jbrain.config import Settings
 from jbrain.llm import build_router
 
@@ -52,6 +57,7 @@ def _overlaps(a: str, b: str) -> bool:
 class CaseResult:
     name: str
     checks: list[tuple[str, bool, str]] = field(default_factory=list)  # (label, ok, detail)
+    dump: str = ""  # compact rendering of what the model returned, for diagnosis
     error: str | None = None
 
     @property
@@ -59,14 +65,40 @@ class CaseResult:
         return self.error is None and all(ok for _, ok, _ in self.checks)
 
 
+def _dump(parsed: Any) -> str:
+    """What the model actually returned, compact enough to paste — the thing I
+    read to iterate the prompt when a case fails."""
+    mentions = ", ".join(f"{m.name}:{m.kind}" for m in parsed.mentions) or "(none)"
+    edges = [
+        f"{f.entity_ref}.{f.predicate}->{f.object_entity_ref}"
+        for f in parsed.facts
+        if f.object_entity_ref
+    ]
+    temporal = [
+        f"{f.temporal.phrase!r}={f.temporal.resolved_start.date().isoformat()}"
+        for f in parsed.facts
+        if f.temporal and f.temporal.phrase and f.temporal.resolved_start
+    ] + [
+        f"{t.phrase!r}={t.resolved_start.date().isoformat()}"
+        for t in parsed.tokens
+        if t.phrase and t.resolved_start
+    ]
+    lines = [f"      mentions: {mentions}"]
+    if edges:
+        lines.append(f"      edges: {', '.join(edges)}")
+    if temporal:
+        lines.append(f"      dates: {', '.join(temporal)}")
+    return "\n".join(lines)
+
+
 def _score(case: dict[str, Any], parsed: Any) -> CaseResult:
-    res = CaseResult(name=case["name"])
+    res = CaseResult(name=case["name"], dump=_dump(parsed))
     expect = case.get("expect", {})
     mention_names = [m.name for m in parsed.mentions]
 
     for person in expect.get("person_mentions", []):
         hit = next((n for n in mention_names if _overlaps(person, n)), None)
-        res.checks.append((f"person:{person}", hit is not None, f"got {mention_names}"))
+        res.checks.append((f"person:{person}", hit is not None, ""))
 
     for edge in expect.get("edges", []):
         obj = edge["object"]
@@ -78,12 +110,7 @@ def _score(case: dict[str, Any], parsed: Any) -> CaseResult:
             ),
             None,
         )
-        detail = (
-            f"{match.predicate} -> {match.object_entity_ref}"
-            if match
-            else f"no edge with object ~ {obj!r}"
-        )
-        res.checks.append((f"edge->{obj}", match is not None, detail))
+        res.checks.append((f"edge->{obj}", match is not None, ""))
 
     for t in expect.get("temporal", []):
         phrase, want = t["phrase"], t["resolved_date"]
@@ -97,15 +124,18 @@ def _score(case: dict[str, Any], parsed: Any) -> CaseResult:
             if tok.phrase and _overlaps(phrase, tok.phrase)
         ]
         got = {s.date().isoformat() for s in starts if s is not None}
-        res.checks.append((f"temporal:{phrase}={want}", want in got, f"got {got or 'none'}"))
+        res.checks.append((f"temporal:{phrase}={want}", want in got, ""))
 
     return res
 
 
-async def _run(cases: list[dict[str, Any]]) -> list[CaseResult]:
-    # Parse WITHOUT an anchor: the eval measures the MODEL's own resolution, not
-    # the deterministic backward-date repair (that is unit-tested separately).
+async def _run(cases: list[dict[str, Any]]) -> tuple[list[CaseResult], str]:
+    # Parse WITH the anchor, exactly as the pipeline does for a note whose
+    # client offset is known: the score then reflects what the app actually
+    # STORES — model output plus the deterministic backward-date repair — so a
+    # green eval means a green app, not just a green prompt.
     router = build_router(Settings())
+    provider, model = router.spec("note.extract")
     results: list[CaseResult] = []
     for case in cases:
         anchor = datetime.fromisoformat(case["created_at"])
@@ -120,27 +150,34 @@ async def _run(cases: list[dict[str, Any]]) -> list[CaseResult]:
                 json_schema=EXTRACTION_SCHEMA,
                 max_tokens=EXTRACT_MAX_TOKENS,
             )
-            results.append(_score(case, parse_extraction(out.parsed)))
+            results.append(_score(case, parse_extraction(out.parsed, anchor=anchor)))
         except Exception as exc:  # a live call can fail many ways; report, don't crash the run
             results.append(CaseResult(name=case["name"], error=f"{type(exc).__name__}: {exc}"))
-    return results
+    return results, f"{provider}:{model}"
 
 
-def _report(results: list[CaseResult]) -> int:
+def _report(results: list[CaseResult], model: str) -> bool:
+    print(
+        f"prompt-eval — {model} — {PROMPT_VERSION} — {datetime.now().isoformat(timespec='seconds')}"
+    )
+    print("-" * 64)
     checks_total = checks_ok = 0
     for r in results:
-        mark = "PASS" if r.passed else "FAIL"
-        print(f"[{mark}] {r.name}")
+        print(f"[{'PASS' if r.passed else 'FAIL'}] {r.name}")
         if r.error:
-            print(f"    ERROR {r.error}")
-        for label, ok, detail in r.checks:
+            print(f"      ERROR {r.error}")
+            continue
+        for label, ok, _ in r.checks:
             checks_total += 1
             checks_ok += ok
             if not ok:
-                print(f"    miss {label}  ({detail})")
+                print(f"      miss {label}")
+        if not r.passed and r.dump:
+            print(r.dump)  # show what the model returned so the prompt can be tuned
     passed = sum(r.passed for r in results)
     pct = (100 * checks_ok / checks_total) if checks_total else 0.0
-    print(f"\n{passed}/{len(results)} cases passed; {checks_ok}/{checks_total} checks ({pct:.0f}%)")
+    print("-" * 64)
+    print(f"{passed}/{len(results)} cases passed; {checks_ok}/{checks_total} checks ({pct:.0f}%)")
     return passed == len(results)
 
 
@@ -156,7 +193,8 @@ def main() -> int:
         if not cases:
             print(f"no case named {args.case!r}", file=sys.stderr)
             return 2
-    all_passed = _report(asyncio.run(_run(cases)))
+    results, model = asyncio.run(_run(cases))
+    all_passed = _report(results, model)
     return 0 if (all_passed or not args.strict) else 1
 
 
