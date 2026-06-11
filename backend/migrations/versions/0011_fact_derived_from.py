@@ -36,12 +36,8 @@ def upgrade() -> None:
         "ALTER TABLE app.facts ADD COLUMN derived_from_fact_id uuid"
         " REFERENCES app.facts(id) ON DELETE CASCADE"
     )
-    op.execute(
-        "CREATE INDEX facts_derived_from_idx ON app.facts (derived_from_fact_id)"
-    )
-    op.execute(
-        "ALTER TABLE app.review_items DROP CONSTRAINT review_items_kind_check"
-    )
+    op.execute("CREATE INDEX facts_derived_from_idx ON app.facts (derived_from_fact_id)")
+    op.execute("ALTER TABLE app.review_items DROP CONSTRAINT review_items_kind_check")
     op.execute(
         "ALTER TABLE app.review_items ADD CONSTRAINT review_items_kind_check"
         " CHECK (kind IN"
@@ -51,9 +47,7 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.execute(
-        "ALTER TABLE app.review_items DROP CONSTRAINT review_items_kind_check"
-    )
+    op.execute("ALTER TABLE app.review_items DROP CONSTRAINT review_items_kind_check")
     op.execute(
         "ALTER TABLE app.review_items ADD CONSTRAINT review_items_kind_check"
         " CHECK (kind IN"
