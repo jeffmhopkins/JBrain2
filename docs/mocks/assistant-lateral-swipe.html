@@ -49,14 +49,6 @@
   .foot .left .mdot{width:10px;height:10px;border-radius:999px;background:var(--steel);}
   .foot .right{display:flex;gap:16px;color:var(--text-2);}
 
-  /* edge handles */
-  .handle{position:absolute;top:50%;transform:translateY(-50%);z-index:6;display:flex;flex-direction:column;align-items:center;gap:6px;
-    background:var(--surface);border:1px solid var(--border);color:var(--steel);padding:12px 5px;font-size:10px;letter-spacing:.06em;text-transform:uppercase;}
-  .handle span{writing-mode:vertical-rl;}
-  .handle.left{left:0;border-left:none;border-radius:0 12px 12px 0;}
-  .handle.right{right:0;border-right:none;border-radius:12px 0 0 12px;}
-  .handle svg{width:16px;height:16px;}
-
   /* lateral panels */
   .panel{position:absolute;inset:0;background:var(--bg);z-index:20;display:flex;flex-direction:column;transition:transform 220ms cubic-bezier(.2,.7,.3,1);will-change:transform;}
   .panel.left{transform:translateX(-100%);}
@@ -88,10 +80,10 @@
 <body>
   <div class="caption">
     <span class="tag">Full Brain · lateral shortcuts</span><br/>
-    From the Full Brain composer, a <b>horizontal swipe opens the agent's two side surfaces</b>:
-    <b>swipe left → Sessions</b>, <b>swipe right → Proposals</b> (past sessions left, pending approvals right).
-    Tap the <code>‹ Sessions</code> / <code>Proposals ›</code> <b>edge handles</b> for the same — the gesture is an
-    enhancement, never the only way. Try dragging the composer area sideways, or tap a handle. Back chevron (or swipe back) returns to chat.
+    From the Full Brain composer, a <b>horizontal swipe</b> shuttles in a side panel from its own edge to cover the screen:
+    <b>swipe right → Sessions</b> (slides in from the left), <b>swipe left → Proposals</b> (slides in from the right).
+    <b>No chrome on the main screen</b> — the gesture is the in-context shortcut; the launcher tiles are the always-visible
+    tappable way in. Drag the composer/chat area sideways. Back chevron returns to chat.
   </div>
 
   <div class="phone" id="phone">
@@ -108,7 +100,7 @@
         <div class="bubble ai">Morning. I pulled your week — two labs and the roof quote are still open. Want a recap?</div>
         <div class="bubble me">Yeah, and can you tidy up the health wiki, it's gotten messy</div>
         <div class="bubble ai">On it. I found an over-merged Cardiology article and some stale titles. I've staged a restructuring plan for you to review.
-          <div class="tool"><svg width="14" height="14" viewBox="0 0 24 24"><path d="M9 11l3 3 8-8"/><path d="M20 12v6a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h9"/></svg><span class="ok">staged</span> · 1 Proposal → swipe right</div>
+          <div class="tool"><svg width="14" height="14" viewBox="0 0 24 24"><path d="M9 11l3 3 8-8"/><path d="M20 12v6a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h9"/></svg><span class="ok">staged</span> · 1 Proposal → swipe left</div>
         </div>
         <div class="bubble me">great, show me</div>
       </div>
@@ -123,14 +115,6 @@
       <div class="field">Talk it out — full tool access…</div>
       <div class="foot"><div class="left"><span class="mdot"></span> Full tool access · staged writes need approval</div><div class="right">📎 ➤</div></div>
     </div>
-
-    <!-- edge handles -->
-    <button class="handle left" onclick="openPanel('sessions')">
-      <svg viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg><span>Sessions</span>
-    </button>
-    <button class="handle right" onclick="openPanel('proposals')">
-      <svg viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg><span>Proposals <b style="color:#1a1112;background:var(--steel);border-radius:9px;padding:0 4px;">1</b></span>
-    </button>
 
     <div class="hint" id="hint"></div>
 
@@ -198,40 +182,42 @@ const composer=document.getElementById('composer');
 const sessions=document.getElementById('sessions');
 const proposals=document.getElementById('proposals');
 const hintEl=document.getElementById('hint');
-let armed=null; // 'left'|'right' panel being dragged in
+let armed=null; // which panel is being dragged in
 
-function openPanel(which){
-  if(which==='sessions') sessions.classList.add('open');
-  else proposals.classList.add('open');
-}
 function closePanels(){sessions.classList.remove('open');proposals.classList.remove('open');}
 function hint(t){hintEl.textContent=t;hintEl.classList.add('show');clearTimeout(hint._t);hint._t=setTimeout(()=>hintEl.classList.remove('show'),900);}
 
-// drag on composer + chat to summon a side panel
+// drag on composer + chat to shuttle a side panel in from its own edge.
+// swipe RIGHT (dx>0) -> Sessions (left panel) slides in from the LEFT edge.
+// swipe LEFT  (dx<0) -> Proposals (right panel) slides in from the RIGHT edge.
 (function(){
-  const zone=phone; let sx,sy,axis,active=false,W=390;
+  const zone=phone; let sx,sy,axis,active=false,lastDx=0,W=390;
   function pt(e){return e.touches?e.touches[0]:e;}
+  function reset(el){el.classList.remove('dragging');el.style.transform='';}
   function down(e){
     if(sessions.classList.contains('open')||proposals.classList.contains('open'))return;
-    // ignore drags starting on the seg buttons / handles
-    if(e.target.closest('.seg')||e.target.closest('.handle')||e.target.closest('.foot'))return;
-    const p=pt(e);sx=p.clientX;sy=p.clientY;axis=null;active=true;armed=null;
+    if(e.target.closest('.seg')||e.target.closest('.foot'))return; // leave controls tappable
+    const p=pt(e);sx=p.clientX;sy=p.clientY;axis=null;active=true;armed=null;lastDx=0;
   }
   function move(e){
-    if(!active)return;const p=pt(e);const dx=p.clientX-sx,dy=p.clientY-sy;
+    if(!active)return;const p=pt(e);const dx=p.clientX-sx,dy=p.clientY-sy;lastDx=dx;
     if(axis===null&&(Math.abs(dx)>10||Math.abs(dy)>10))axis=Math.abs(dx)>Math.abs(dy)?'h':'v';
     if(axis!=='h')return;if(e.cancelable)e.preventDefault();
-    // swipe LEFT (dx<0) -> Sessions in from left ; swipe RIGHT (dx>0) -> Proposals in from right
-    if(dx<0){armed='sessions';const prog=Math.min(1,-dx/(W*.6));sessions.classList.add('dragging');sessions.style.transform=`translateX(${-100+prog*100}%)`;}
-    else{armed='proposals';const prog=Math.min(1,dx/(W*.6));proposals.classList.add('dragging');proposals.style.transform=`translateX(${100-prog*100}%)`;}
+    if(dx>0){ // -> Sessions, in from left
+      if(armed==='proposals')reset(proposals);
+      armed='sessions';const prog=Math.min(1,dx/(W*.6));
+      sessions.classList.add('dragging');sessions.style.transform=`translateX(${-100+prog*100}%)`;
+    } else { // -> Proposals, in from right
+      if(armed==='sessions')reset(sessions);
+      armed='proposals';const prog=Math.min(1,-dx/(W*.6));
+      proposals.classList.add('dragging');proposals.style.transform=`translateX(${100-prog*100}%)`;
+    }
   }
-  function up(e){
-    if(!active)return;active=false;if(axis!=='h'||!armed){return;}
-    const p=pt(e.changedTouches?{changedTouches:e.changedTouches}.changedTouches[0]:e);
-    const dx=(p.clientX||sx)-sx;const el=armed==='sessions'?sessions:proposals;
-    el.classList.remove('dragging');el.style.transform='';
-    const passed=Math.abs(dx)>W*.28;
-    if(passed){el.classList.add('open');hint(armed==='sessions'?'Sessions':'Proposals');}
+  function up(){
+    if(!active)return;active=false;if(axis!=='h'||!armed)return;
+    const el=armed==='sessions'?sessions:proposals;
+    reset(el);
+    if(Math.abs(lastDx)>W*.28){el.classList.add('open');hint(armed==='sessions'?'Sessions':'Proposals');}
     armed=null;
   }
   zone.addEventListener('mousedown',down);window.addEventListener('mousemove',move);window.addEventListener('mouseup',up);

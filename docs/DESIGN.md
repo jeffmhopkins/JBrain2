@@ -493,30 +493,37 @@ agent's staged Proposal trees (see `docs/ASSISTANT.md`); **Sessions** lists past
 and active agent sessions with their selected read scope.
 
 As an **enhancement only** (never the sole path — the gesture rule above binds), a
-**horizontal swipe on the omnibox / text-entry box** is a shortcut: **swipe left →
-Sessions, swipe right → Proposals.**
+**horizontal swipe on the omnibox / text-entry box** is a shortcut, following the
+natural drawer convention — **the panel slides in from its own side to cover the
+screen, in the direction your finger moves:**
 
+- **Swipe right → Sessions** (the left panel shuttles in from the **left** edge to
+  cover the screen).
+- **Swipe left → Proposals** (the right panel shuttles in from the **right** edge).
+
+Rules:
+
+- **No edge chrome on the main screen** — there are no handles, tabs, or peek
+  affordances flanking the composer. The conversation surface stays clean; the
+  gesture is discovered, and the **card-launcher tiles** (under a SYSTEM/ASSISTANT
+  group) are the canonical, always-visible tappable way to both pages.
 - The gesture is anchored to the **composer**, not to transcript bubbles, so it
   never competes with message content; the recognizer favors the dominant axis, so
   it never fights the vertical nav-tree gestures (up → launcher, down → climb).
   Horizontal is available precisely because modes switch by *tap*, not swipe.
-- **Tappable parity is mandatory:** small left/right affordances flank the composer
-  (or sit beside the bolt) doing the same thing, and both pages stay reachable from
-  the launcher.
 - Sessions and Proposals open as **standard full-screen cards** (own top bar + back
-  chevron; bolt or down-swipe climbs home). A lateral slide-in matching the swipe
-  direction is optional polish, disabled under reduced motion.
+  chevron; bolt or down-swipe climbs home, satisfying the required visible tappable
+  exit). The panel tracks the finger and snaps in past threshold; disabled under
+  reduced motion.
 - **Full-Brain-only:** Entry/Research composers do not carry these shortcuts (Entry
   keeps its transcript-item action rail). Phase 4 surface — disabled with a phase
   label until then.
 
-Reference mocks: `docs/mocks/assistant-lateral-swipe.html` (the gesture + edge
-handles), `docs/mocks/assistant-sessions-view.html` (the Sessions page + start-
+Reference mocks: `docs/mocks/assistant-lateral-swipe.html` (the gesture, no edge
+chrome), `docs/mocks/assistant-sessions-view.html` (the Sessions page + start-
 session read-scope picker), `docs/mocks/assistant-proposals-view.html` (the
 tree-structured Proposals page with whole/subtree/leaf approval and dependency
-holds). **Direction is still open for review** — these mock the literal mapping
-(swipe-left → Sessions, swipe-right → Proposals); the natural-pager inverse is a
-one-line flip and the edge handles are unambiguous either way.
+holds).
 
 ## Surface paradigms (which container for which job)
 
