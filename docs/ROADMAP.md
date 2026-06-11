@@ -62,6 +62,20 @@ review flag. Entity pages. The **unified review inbox** ships here.
 **Exit:** new notes produce reviewable facts/entities with correct citations;
 conflicts surface and resolve in the inbox.
 
+*Deferred — fuller entity-correction (later analysis-hardening pass):* the
+linking and conflict-surfacing half ships in Phase 3 — declared-name aliasing,
+collision → `merge_proposal`, `distinct_from` enforcement, attribute-collision
+cards, and the mixed-domain citation firewall. The inverse — **splitting an
+over-merged entity** (an attribute collision as a hidden two-people signal →
+`split_proposal`, with provenance-based re-partition of the entity's
+mentions/facts into the new identity) and **alias-detach** (removing a
+wrongly-attached name and re-resolving the mentions it linked) — is left for a
+later pass; the merge machinery's reversible-effects pattern is the model to
+mirror. Bare-first-name retro-recheck and layer-3 `distinct_from` are
+architecture-dependent — only meaningful if same-name entities are ever allowed
+to coexist (today the resolver's exact-match short-circuit prevents it), so they
+ride that same future decision.
+
 ## Phase 4 — Personal agent & structured records
 
 Tool-calling agent (search, read notes/entities/facts, lists, appointments)
