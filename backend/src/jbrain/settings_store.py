@@ -8,15 +8,16 @@ the OcrPipeline reads it per job and the Settings screen round-trips it.
 """
 
 import json
-from typing import Any
+from typing import Any, Literal, cast
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from jbrain.db.session import SessionContext, scoped_session
 
-IMAGE_ANALYSIS_MODES = ("full", "ocr")
-IMAGE_ANALYSIS_DEFAULT = "full"
+ImageAnalysisMode = Literal["full", "ocr"]
+IMAGE_ANALYSIS_MODES: tuple[ImageAnalysisMode, ...] = ("full", "ocr")
+IMAGE_ANALYSIS_DEFAULT: ImageAnalysisMode = "full"
 IMAGE_ANALYSIS_KEY = "image_analysis_mode"
 
 
@@ -48,8 +49,12 @@ class SqlSettingsStore:
                 {"key": key, "value": json.dumps(value)},
             )
 
-    async def image_analysis_mode(self, ctx: SessionContext) -> str:
+    async def image_analysis_mode(self, ctx: SessionContext) -> ImageAnalysisMode:
         """The configured mode, defaulting (and falling back on any
         unrecognized stored value) to full analysis."""
         mode = await self.get(ctx, IMAGE_ANALYSIS_KEY, IMAGE_ANALYSIS_DEFAULT)
-        return mode if mode in IMAGE_ANALYSIS_MODES else IMAGE_ANALYSIS_DEFAULT
+        return (
+            cast(ImageAnalysisMode, mode)
+            if mode in IMAGE_ANALYSIS_MODES
+            else (IMAGE_ANALYSIS_DEFAULT)
+        )

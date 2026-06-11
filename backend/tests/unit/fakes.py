@@ -57,3 +57,20 @@ class FakeAuthRepo:
 
     async def create_principal(self, kind: str, key_hash: str, label: str) -> None:
         self.principals.append(FakePrincipal(str(uuid.uuid4()), kind, key_hash, label))
+
+
+@dataclass
+class FakeSettingsStore:
+    """In-memory app.settings: the same default semantics as the SQL store."""
+
+    values: dict[str, object] = field(default_factory=dict)
+
+    async def get(self, ctx: object, key: str, default: object = None) -> object:
+        return self.values.get(key, default)
+
+    async def upsert(self, ctx: object, key: str, value: object) -> None:
+        self.values[key] = value
+
+    async def image_analysis_mode(self, ctx: object) -> str:
+        mode = self.values.get("image_analysis_mode", "full")
+        return mode if mode in ("full", "ocr") else "full"
