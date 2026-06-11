@@ -16,15 +16,21 @@ from typing import Any
 from uuid import UUID
 
 import structlog
-from sqlalchemy import delete, select, update
+from sqlalchemy import bindparam, delete, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.sql import func
 
 from jbrain import queue
 from jbrain.db.session import scoped_session
 from jbrain.ingest.chunker import chunk_text
-from jbrain.ingest.extract import ExtractorRegistry, default_registry
-from jbrain.models.notes import Chunk, Note
+from jbrain.ingest.extract import (
+    CachedExtract,
+    ExtractorRegistry,
+    default_registry,
+    image_segments,
+)
+from jbrain.ingest.ocr import MAX_OCR_BYTES
+from jbrain.models.notes import AttachmentExtract, Chunk, Note
 from jbrain.queue import SYSTEM_CTX
 from jbrain.storage import BlobStore
 
@@ -36,6 +42,8 @@ class _AttachmentRef:
     id: UUID
     media_type: str
     sha256: str
+    filename: str
+    size_bytes: int
 
 
 class IngestPipeline:
@@ -64,12 +72,19 @@ class IngestPipeline:
             body = note.body
             domain = note.domain_code
             attachments = [
-                _AttachmentRef(id=a.id, media_type=a.media_type, sha256=a.sha256)
+                _AttachmentRef(
+                    id=a.id,
+                    media_type=a.media_type,
+                    sha256=a.sha256,
+                    filename=a.filename,
+                    size_bytes=a.size_bytes,
+                )
                 for a in note.attachments
             ]
+            extracts = await self._load_extracts(session, attachments)
 
         try:
-            chunks = await self._build_chunks(note_id, domain, body, attachments)
+            chunks = await self._build_chunks(note_id, domain, body, attachments, extracts)
             async with scoped_session(self._maker, SYSTEM_CTX) as session:
                 await session.execute(delete(Chunk).where(Chunk.note_id == note_id))
                 session.add_all(chunks)
@@ -92,10 +107,92 @@ class IngestPipeline:
         # Extraction is likewise a follow-up job: ingest stays LLM-free so
         # capture-to-searchable never waits on a cloud LLM (docs/ANALYSIS.md).
         await queue.enqueue(self._maker, SYSTEM_CTX, "analyze_note", {"note_id": note_id})
+        # Vision OCR rides the same doctrine: images whose cache is empty get
+        # an async ocr_attachment job; the handler re-enqueues ingest_note, so
+        # the cache check is what keeps that loop from spinning.
+        await self._enqueue_ocr_jobs(note_id, attachments, set(extracts))
         log.info("ingest.indexed", note_id=note_id, chunks=len(chunks))
 
+    async def _load_extracts(
+        self, session: AsyncSession, attachments: list[_AttachmentRef]
+    ) -> dict[UUID, list[CachedExtract]]:
+        """The vision-extract cache for these attachments, keyed by id."""
+        if not attachments:
+            return {}
+        rows = (
+            await session.execute(
+                select(AttachmentExtract).where(
+                    AttachmentExtract.attachment_id.in_([a.id for a in attachments])
+                )
+            )
+        ).scalars()
+        extracts: dict[UUID, list[CachedExtract]] = {}
+        for row in rows:
+            extracts.setdefault(row.attachment_id, []).append(
+                CachedExtract(
+                    kind=row.kind,
+                    text=row.text,
+                    anchor=row.source_anchor,
+                    confidence=row.confidence if row.confidence is not None else 0.0,
+                )
+            )
+        return extracts
+
+    async def _enqueue_ocr_jobs(
+        self, note_id: str, attachments: list[_AttachmentRef], cached: set[UUID]
+    ) -> None:
+        """One ocr_attachment job per image with no cache rows yet.
+
+        Oversized images are skipped at enqueue time (the per-task size
+        budget, docs/ANALYSIS.md "Dispatcher-level policy") — deliberately
+        without a cache row, so a re-uploaded smaller file OCRs normally. An
+        already queued/running job suppresses duplicates the same way the
+        startup backfills do.
+        """
+        candidates: list[_AttachmentRef] = []
+        for att in attachments:
+            if not att.media_type.startswith("image/") or att.id in cached:
+                continue
+            if att.size_bytes > MAX_OCR_BYTES:
+                log.warning(
+                    "ingest.ocr_skipped_too_large",
+                    attachment_id=str(att.id),
+                    size_bytes=att.size_bytes,
+                    cap_bytes=MAX_OCR_BYTES,
+                )
+                continue
+            candidates.append(att)
+        if not candidates:
+            return
+        async with scoped_session(self._maker, SYSTEM_CTX) as session:
+            active = set(
+                (
+                    await session.execute(
+                        text(
+                            "SELECT payload->>'attachment_id' FROM app.jobs"
+                            " WHERE kind = 'ocr_attachment'"
+                            " AND status IN ('queued', 'running')"
+                            " AND payload->>'attachment_id' IN :ids"
+                        ).bindparams(bindparam("ids", expanding=True)),
+                        {"ids": [str(a.id) for a in candidates]},
+                    )
+                ).scalars()
+            )
+        for att in candidates:
+            if str(att.id) in active:
+                continue
+            await queue.enqueue(
+                self._maker, SYSTEM_CTX, "ocr_attachment", {"attachment_id": str(att.id)}
+            )
+            log.info("ingest.ocr_enqueued", note_id=note_id, attachment_id=str(att.id))
+
     async def _build_chunks(
-        self, note_id: str, domain: str, body: str, attachments: list[_AttachmentRef]
+        self,
+        note_id: str,
+        domain: str,
+        body: str,
+        attachments: list[_AttachmentRef],
+        extracts: dict[UUID, list[CachedExtract]],
     ) -> list[Chunk]:
         seq = 0
         chunks: list[Chunk] = []
@@ -123,16 +220,23 @@ class IngestPipeline:
 
         add(chunk_text(body), attachment_id=None, source_kind="note", anchor=None)
         for att in attachments:
-            if self._registry.extractor_for(att.media_type) is None:
+            if att.id in extracts:
+                # The image chain: a pure read over the vision-extract cache
+                # (docs/ANALYSIS.md "Attachments") — OCR/captioning already
+                # ran in the ocr_attachment job, never here.
+                segments = image_segments(extracts[att.id])
+            elif self._registry.extractor_for(att.media_type) is not None:
+                data = await self._blobs.get(att.sha256)
+                # Extraction is CPU-bound (PDF parsing); keep it off the
+                # event loop.
+                segments = await asyncio.to_thread(self._registry.extract, att.media_type, data)
+            else:
                 continue
-            data = await self._blobs.get(att.sha256)
-            # Extraction is CPU-bound (PDF parsing); keep it off the event loop.
-            segments = await asyncio.to_thread(self._registry.extract, att.media_type, data)
             for segment in segments:
                 add(
                     chunk_text(segment.text),
                     attachment_id=att.id,
                     source_kind=segment.kind,
-                    anchor=segment.anchor,
+                    anchor=segment.anchor or att.filename,
                 )
         return chunks

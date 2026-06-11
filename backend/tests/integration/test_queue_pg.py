@@ -256,6 +256,58 @@ async def test_backfill_enqueues_pending_notes_exactly_once(
     assert await queue.backfill_pending_notes(maker, OWNER) == 0
 
 
+async def test_backfill_unanalyzed_notes_targets_indexed_notes_without_analysis(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    repo = SqlNotesRepo(maker)
+    unanalyzed, _ = await repo.create_note(
+        OWNER, client_id="an-1", domain="general", destination=None, body="pre-extraction note"
+    )
+    analyzed, _ = await repo.create_note(
+        OWNER, client_id="an-2", domain="general", destination=None, body="already analyzed"
+    )
+    deleted, _ = await repo.create_note(
+        OWNER, client_id="an-3", domain="general", destination=None, body="gone"
+    )
+    pending, _ = await repo.create_note(
+        OWNER, client_id="an-4", domain="general", destination=None, body="not yet ingested"
+    )
+    async with scoped_session(maker, OWNER) as session:
+        for note_id in (unanalyzed.id, analyzed.id, deleted.id):
+            await session.execute(
+                text("UPDATE app.notes SET ingest_state = 'indexed' WHERE id = :id"),
+                {"id": note_id},
+            )
+        await session.execute(
+            text(
+                "INSERT INTO app.note_analysis (note_id, title, domain_code)"
+                " VALUES (:id, 'done', 'general')"
+            ),
+            {"id": analyzed.id},
+        )
+    assert await repo.delete_note(OWNER, deleted.id)
+    await quiesce_jobs(maker)
+
+    assert await queue.backfill_unanalyzed_notes(maker, OWNER) >= 1
+    async with scoped_session(maker, OWNER) as session:
+        targets = set(
+            (
+                await session.execute(
+                    text(
+                        "SELECT payload->>'note_id' FROM app.jobs"
+                        " WHERE kind = 'analyze_note' AND status = 'queued'"
+                    )
+                )
+            ).scalars()
+        )
+    assert unanalyzed.id in targets
+    # Analyzed, deleted, and never-indexed notes are all left alone.
+    assert targets.isdisjoint({analyzed.id, deleted.id, pending.id})
+
+    # The queued job suppresses duplicates on the next sweep.
+    assert await queue.backfill_unanalyzed_notes(maker, OWNER) == 0
+
+
 async def test_backfill_unembedded_notes_targets_null_embeddings_once(
     maker: async_sessionmaker[AsyncSession],
 ) -> None:

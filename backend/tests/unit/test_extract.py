@@ -1,13 +1,18 @@
-"""Extraction dispatcher: text decode, PDF text layer, registry routing."""
+"""Extraction dispatcher: text decode, PDF text layer, registry routing, and
+the image chain's pure cache read."""
 
 import pymupdf
 
 from jbrain.ingest.extract import (
+    KIND_CAPTION,
+    KIND_OCR,
     KIND_TEXT_LAYER,
+    CachedExtract,
     PdfTextLayerExtractor,
     Segment,
     TextExtractor,
     default_registry,
+    image_segments,
 )
 
 
@@ -81,3 +86,22 @@ def test_registry_exposes_extractor_lookup() -> None:
     registry = default_registry()
     assert registry.extractor_for("application/pdf") is not None
     assert registry.extractor_for("audio/ogg") is None
+
+
+def test_image_segments_carry_cache_provenance() -> None:
+    """The image chain is a pure cache read: kind, anchor, and the capped
+    confidence flow straight from attachment_extracts rows into segments."""
+    ocr = CachedExtract(kind=KIND_OCR, text=" Total: $41.20 \n", anchor="rcpt.png", confidence=0.7)
+    cap = CachedExtract(kind=KIND_CAPTION, text="A receipt.", anchor="rcpt.png", confidence=0.6)
+    segments = image_segments([ocr, cap])
+    assert segments == [
+        Segment(kind=KIND_OCR, text="Total: $41.20", anchor="rcpt.png", confidence=0.7),
+        Segment(kind=KIND_CAPTION, text="A receipt.", anchor="rcpt.png", confidence=0.6),
+    ]
+
+
+def test_image_segments_skip_empty_text_rows() -> None:
+    # An empty-text row marks "no legible text" in the cache; it must not
+    # become a chunk.
+    rows = [CachedExtract(kind=KIND_OCR, text="  \n", anchor="blur.jpg", confidence=0.0)]
+    assert image_segments(rows) == []

@@ -240,6 +240,24 @@ EXTRACTION_SCHEMA: dict[str, Any] = {
 }
 
 
+def prompt_block(text: str, *, source_kind: str, filename: str | None) -> str:
+    """One chunk as the extraction model sees it.
+
+    OCR and caption chunks announce their provenance: the system prompt's
+    confidence rule ("lower it for garbled, OCR-derived, or inferred
+    content") only fires if the model can TELL the text is machine-read —
+    nothing else in the concatenated note content conveys it. Facts from
+    these blocks then inherit reduced confidence, which is what keeps a
+    misread health number from auto-superseding anything (docs/ANALYSIS.md
+    "Guards")."""
+    name = filename or "attachment"
+    if source_kind == "ocr":
+        return f"[ocr from {name}]\n{text}"
+    if source_kind == "caption":
+        return f"[image caption of {name}]\n{text}"
+    return text
+
+
 def build_user_prompt(texts: list[str], *, anchor: datetime, domain: str) -> str:
     """The per-note prompt: capture anchor (with timezone — the resolution
     target for every relative phrase), capture domain, and the chunk texts."""

@@ -13,19 +13,39 @@ const ITEM: StreamItem = {
   createdAt: new Date(2026, 5, 9, 10, 5),
   ingestState: "pending",
   attachments: [
-    { id: "a1", filename: "lab-orders.pdf", mediaType: "application/pdf", sizeBytes: 24_120 },
+    {
+      id: "a1",
+      filename: "lab-orders.pdf",
+      mediaType: "application/pdf",
+      sizeBytes: 24_120,
+      hasExtracts: false,
+    },
   ],
   pending: false,
   hidden: false,
 };
 
-// Indexed variant with a PDF (searchable) and an image (awaits Phase 3 OCR).
+// Indexed variant with a PDF (searchable), an image still waiting on the
+// async OCR job, and an image whose vision cache is already filled.
 const INDEXED: StreamItem = {
   ...ITEM,
   ingestState: "indexed",
   attachments: [
     ...ITEM.attachments,
-    { id: "a2", filename: "receipt.png", mediaType: "image/png", sizeBytes: 512_000 },
+    {
+      id: "a2",
+      filename: "receipt.png",
+      mediaType: "image/png",
+      sizeBytes: 512_000,
+      hasExtracts: false,
+    },
+    {
+      id: "a3",
+      filename: "whiteboard.jpg",
+      mediaType: "image/jpeg",
+      sizeBytes: 300_000,
+      hasExtracts: true,
+    },
   ],
 };
 
@@ -43,6 +63,7 @@ function setup(
       filename: file.name,
       mediaType: file.type || "application/octet-stream",
       sizeBytes: file.size,
+      hasExtracts: false,
     })),
     onRemoveAttachment: vi.fn(async () => {}),
     onOpenEntity: vi.fn(),
@@ -189,13 +210,25 @@ describe("NoteScreen", () => {
     setup(noteViewFromItem(INDEXED));
     fireEvent.click(screen.getByRole("tab", { name: /Attachments/ }));
 
+    // OCR'd images count as searchable; only the pending one awaits OCR.
     expect(
-      screen.getByText("2 files · 524 KB · 1 searchable · 1 awaiting ocr (p3)"),
+      screen.getByText("3 files · 817 KB · 2 searchable · 1 awaiting ocr"),
     ).toBeInTheDocument();
     expect(screen.getByText("lab-orders.pdf")).toBeInTheDocument();
     expect(screen.getByText("24 KB · application/pdf")).toBeInTheDocument();
     expect(screen.getByText("text extracted")).toBeInTheDocument();
-    expect(screen.getByText("no text layer — ocr in p3")).toBeInTheDocument();
+    // Image pending the async OCR job vs image with a filled vision cache.
+    expect(screen.getByText("ocr queued…")).toBeInTheDocument();
+    expect(screen.getByText("ocr queued…")).toHaveClass("att-chip-warn");
+    expect(screen.getByText("text extracted (ocr)")).toBeInTheDocument();
+    expect(screen.getByText("text extracted (ocr)")).toHaveClass("att-chip-ok");
+  });
+
+  it("images show the indexing chip while the note itself is still indexing", () => {
+    setup(noteViewFromItem({ ...INDEXED, ingestState: "processing" }));
+    fireEvent.click(screen.getByRole("tab", { name: /Attachments/ }));
+    expect(screen.getAllByText("indexing…").length).toBeGreaterThanOrEqual(3);
+    expect(screen.queryByText("ocr queued…")).not.toBeInTheDocument();
   });
 
   it("⋯ opens the file sheet with an open link; remove needs the tap-again confirm", async () => {
@@ -227,7 +260,7 @@ describe("NoteScreen", () => {
 
     await waitFor(() => expect(screen.getByText("notes.txt")).toBeInTheDocument());
     expect(onAddAttachment).toHaveBeenCalledWith("n1", file);
-    expect(screen.getByRole("tab", { name: /Attachments/ })).toHaveTextContent("3");
+    expect(screen.getByRole("tab", { name: /Attachments/ })).toHaveTextContent("4");
   });
 
   it("Analysis tab: title, tags, and facts as edges grouped by subject", async () => {
