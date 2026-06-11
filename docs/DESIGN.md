@@ -261,7 +261,11 @@ entities, provisional state marked. Correction is never a direct edit —
 facts route to **review / pin** with tap-again confirms; the pipeline owns
 the data. Temper the raw notation toward the lowercase-calm voice during
 implementation (the chosen mock's `~provisional`/`.96` chrome reads too
-developer-facing — keep paths, soften the meta).
+developer-facing — keep paths, soften the meta). The launcher's **Entities
+tile** opens a browse list of the graph — the search screen's live filter
+input plus kind chips over standard list rows in a card, each row opening
+the entity page — pure reuse of settled paradigms, so it shipped without a
+variant review.
 
 **Review inbox** (settled in the same review — **one-at-a-time triage**
 won over a decision-card stream and a grouped batch queue): full-screen
