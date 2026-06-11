@@ -252,9 +252,27 @@ at editor size, a bordered "what happens" panel spelling out both
 outcomes, candidate choices as big stacked buttons, and a fixed bottom bar
 **skip · reject · accept** (skip cycles the item to the back of the
 queue). Destructive/permanent choices (splits, `distinct_from`) use the
-armed tap-again. Inbox zero = one `--text-2` sentence. Item kinds: fact
-conflicts, attribute collisions, merge proposals, ambiguous mentions,
-domain promotions, low-confidence extractions.
+armed tap-again. Item kinds: fact conflicts, attribute collisions, merge
+proposals, ambiguous mentions, domain promotions, low-confidence
+extractions.
+
+**Review history** (settled in a three-way review — **split segments** won
+over a decision journal and a consequence ledger; **reopen = full unwind**
+[decided]): the Review screen carries a segmented control **open |
+resolved** with live count pills. OPEN is the triage flow above,
+unchanged. RESOLVED is the reverse-chronological decision log — each row
+is kind badge, domain dot, one-line summary, **what was decided in plain
+language** (the chosen option's own copy), and resolved-when; dismissed
+rows are muted. Tapping a row expands it inline into the full decision
+record: the cited evidence snippet, the **choices that were offered with
+the chosen one marked**, and an amber **reopen** button (armed tap-again)
+whose consequence text **names the unwind** per kind. Reopening returns
+the item to the open queue (count pills update) and reverses the
+resolution's recorded graph effects; the log row stays behind as a
+**struck-through "reopened" tombstone**. The one permanent exception is a
+rejected merge: the `distinct_from` edge survives the reopen by doctrine.
+Inbox zero in Open reads *"inbox zero — N past decisions in resolved."*
+(one `--text-2` sentence, the count linking into the resolved segment).
 
 **Search** (settled in the Phase 2 review; input mode revised on-device):
 **live as-you-type** — results update per keystroke behind a 250ms

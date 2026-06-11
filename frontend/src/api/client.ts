@@ -211,17 +211,36 @@ export type ReviewKind =
   | "low_confidence"
   | "split_proposal";
 
+export type ReviewStatus = "open" | "resolved" | "dismissed";
+
+export interface ReviewResolution {
+  action: string;
+  payload: Record<string, unknown>;
+  /** Recorded graph side effects — what reopen reverses; shape is per-kind. */
+  effects?: Record<string, unknown>[];
+  /** Present = the item was reopened after this decision (tombstone). */
+  reopened_at?: string;
+}
+
 export interface ReviewItem {
   id: string;
   kind: ReviewKind;
   /** Free-form per-kind payload; the review screen reads it defensively. */
   payload: Record<string, unknown>;
+  status: ReviewStatus;
+  resolution: ReviewResolution | null;
   domain: string;
   created_at: string;
+  resolved_at: string | null;
 }
 
 export interface ReviewQueue {
   items: ReviewItem[];
+}
+
+export interface ReviewReopened extends ReviewItem {
+  /** Set when a permanent effect (distinct_from) survived the unwind. */
+  reopen_note: string | null;
 }
 
 export interface UsageTotals {
@@ -409,8 +428,10 @@ export const api = {
     return (await response.json()) as EntityOut;
   },
 
-  async reviewQueue(): Promise<ReviewQueue> {
-    const response = await request("/api/review?status=open");
+  // "resolved" is the full decision log: it folds in dismissals and
+  // reopened tombstones, newest decision first.
+  async reviewQueue(status: "open" | "resolved" = "open"): Promise<ReviewQueue> {
+    const response = await request(`/api/review?status=${status}`);
     return (await response.json()) as ReviewQueue;
   },
 
@@ -426,6 +447,15 @@ export const api = {
       jsonInit("POST", { action, payload }),
     );
     return (await response.json()) as ReviewItem;
+  },
+
+  // Full unwind: the backend reverses the resolution's recorded graph
+  // effects and re-queues the item; 409 when it is already open.
+  async reviewReopen(id: string): Promise<ReviewReopened> {
+    const response = await request(`/api/review/${encodeURIComponent(id)}/reopen`, {
+      method: "POST",
+    });
+    return (await response.json()) as ReviewReopened;
   },
 
   async llmUsage(): Promise<LlmUsage> {

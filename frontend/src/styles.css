@@ -1985,6 +1985,272 @@ button.small {
   color: #fff;
 }
 
+/* ===== Review history: open | resolved segments + the decision log ===== */
+
+/* DESIGN.md segmented control: pill row on --surface-2, accent-tint active. */
+.review-segs {
+  display: flex;
+  gap: 3px;
+  padding: 3px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-seg);
+  flex: none;
+}
+
+.review-seg {
+  flex: 1;
+  min-height: 38px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border-radius: calc(var(--r-seg) - 3px);
+  font-size: var(--fs-note);
+  color: var(--text-2);
+  transition: background-color 150ms ease-out, color 150ms ease-out;
+}
+
+.review-seg.seg-active {
+  background: var(--accent-tint);
+  color: var(--text);
+  font-weight: 500;
+}
+
+.seg-count {
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill);
+  min-width: 18px;
+  padding: 0 5px;
+  line-height: 16px;
+}
+
+.review-seg.seg-active .seg-count {
+  color: var(--accent);
+  border-color: transparent;
+}
+
+/* The log has no fixed action bar to clear. */
+.review-body-log {
+  padding-bottom: 24px;
+}
+
+.quiet-link {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: var(--accent);
+  cursor: pointer;
+}
+
+.rlist {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
+  overflow: hidden;
+}
+
+.rrow {
+  border-bottom: 1px solid var(--border);
+}
+
+.rrow:last-child {
+  border-bottom: none;
+}
+
+.rrow-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 5px;
+  width: 100%;
+  min-height: 44px;
+  padding: 12px 14px;
+  text-align: left;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  color: inherit;
+}
+
+.rrow-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.rrow-when {
+  margin-left: auto;
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+  white-space: nowrap;
+}
+
+.rrow-summary {
+  font-size: var(--fs-note);
+  color: var(--text);
+}
+
+.rrow-decided {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: var(--fs-secondary);
+  color: var(--text-2);
+}
+
+.decided-mark {
+  color: var(--green);
+  font-weight: 500;
+  flex: none;
+}
+
+/* Dismissed rows are muted; reopened rows strike their decided line. */
+.rrow-dismissed .rrow-summary,
+.rrow-dismissed .rrow-decided,
+.rrow-dismissed .decided-mark {
+  color: var(--text-3);
+}
+
+.rrow-dismissed .kind-badge {
+  background: var(--surface-2);
+  color: var(--text-3);
+}
+
+.rrow-reopened .rrow-decided {
+  color: var(--text-3);
+  text-decoration: line-through;
+}
+
+.rrow-reopened .decided-mark {
+  color: var(--text-3);
+  text-decoration: none;
+}
+
+.state-chip {
+  font-size: var(--fs-micro);
+  padding: 1px 8px;
+  border-radius: var(--r-pill);
+}
+
+.chip-dismissed {
+  background: var(--surface-2);
+  color: var(--text-3);
+}
+
+.chip-reopened {
+  background: var(--amber-tint);
+  color: var(--amber);
+}
+
+/* Inline expansion: row-level detail that doesn't warrant navigation. */
+.rrow-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 2px 14px 14px;
+  animation: review-in 150ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rrow-detail {
+    animation: none;
+  }
+
+  .review-seg {
+    transition: none;
+  }
+}
+
+.evidence {
+  margin: 0;
+  font-size: var(--fs-note);
+  line-height: 1.6;
+  color: var(--text);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-input);
+  padding: 10px 12px;
+}
+
+.offered {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.offered-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: var(--fs-secondary);
+  color: var(--text-3);
+  border: 1px solid var(--border);
+  border-radius: var(--r-input);
+  padding: 8px 12px;
+}
+
+.offered-row.chosen {
+  color: var(--text);
+  border-color: rgba(143, 188, 154, 0.4);
+  background: var(--green-tint);
+}
+
+.offered-row.chosen .offered-mark {
+  color: var(--green);
+  font-weight: 500;
+}
+
+.offered-mark {
+  width: 12px;
+  flex: none;
+}
+
+.offered-note {
+  margin: 0;
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+}
+
+.reopen-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+  min-height: 44px;
+  padding: 9px 14px;
+  text-align: left;
+  background: var(--amber-tint);
+  color: var(--amber);
+  border: 1px solid var(--border);
+  border-radius: var(--r-input);
+}
+
+.reopen-btn .choice-label {
+  font-size: var(--fs-note);
+}
+
+.reopen-btn .choice-detail {
+  color: var(--text-3);
+}
+
+.reopen-btn.armed {
+  background: var(--amber);
+  border-color: transparent;
+  color: #141518;
+}
+
+.reopened-note {
+  margin: 0;
+  font-size: var(--fs-secondary);
+  color: var(--text-3);
+}
+
 .tile-badge {
   position: absolute;
   top: 8px;

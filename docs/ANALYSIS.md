@@ -309,3 +309,18 @@ conflicts, attribute collisions, entity-merge proposals, ambiguous
 mentions, domain promotions/demotions, low-confidence extractions.
 Resolutions write pinned overrides and, where the fix is prose-shaped,
 draft correction notes.
+
+**Resolutions record their graph effects, and reopen reverses them
+[decided: full unwind].** Each resolution writes an `effects` array into
+the item's resolution jsonb capturing the prior state every write
+destroyed: pins record the fact's prior status/pin/supersession link,
+retractions the prior status, merges the tombstoned entity's prior state
+plus the exact mention/fact row ids that were repointed (which is what
+makes un-merge a replay, not span archaeology), domain moves the prior
+domain and pin. Reopening a resolved or dismissed item reverses those
+effects in the same transaction that re-queues it and stamps a
+`reopened_at` marker into the jsonb (the UI's tombstone). The one
+exception: permanent `distinct_from` edges survive reopen by doctrine — a
+reopened merge-rejection re-queues the item but the edge stays, and the
+reopen response says so. Dismissals record no effects; their reopen is a
+bare re-queue.

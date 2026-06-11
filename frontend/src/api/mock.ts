@@ -544,17 +544,16 @@ const ENTITIES: Record<string, EntityOut> = {
 // advertised choice action and outcome verb is exactly an action
 // POST /review/{id}/resolve accepts — collisions resolve through
 // accept_a/accept_b choices and advertise no footer verbs.
-interface MockReviewItem extends ReviewItem {
-  open: boolean;
+function openReview(item: Omit<ReviewItem, "status" | "resolution" | "resolved_at">): ReviewItem {
+  return { ...item, status: "open", resolution: null, resolved_at: null };
 }
 
-const REVIEW_ITEMS: MockReviewItem[] = [
-  {
+const REVIEW_ITEMS: ReviewItem[] = [
+  openReview({
     id: "rev-1",
     kind: "attribute_collision",
     domain: "general",
     created_at: daysAgo(0, 9, 45),
-    open: true,
     payload: {
       fact_a: "fact-sarah-bday-1990",
       fact_b: FACT_SARAH_BDAY.id,
@@ -567,13 +566,12 @@ const REVIEW_ITEMS: MockReviewItem[] = [
         { action: "accept_b", label: "March 14, 1988", detail: "from this note" },
       ],
     },
-  },
-  {
+  }),
+  openReview({
     id: "rev-2",
     kind: "merge_proposal",
     domain: "general",
     created_at: daysAgo(1, 12, 0),
-    open: true,
     payload: {
       entity_a: "ent-robert-chen",
       entity_b: "ent-bob",
@@ -587,13 +585,12 @@ const REVIEW_ITEMS: MockReviewItem[] = [
       },
       reject_destructive: true,
     },
-  },
-  {
+  }),
+  openReview({
     id: "rev-3",
     kind: "ambiguous_mention",
     domain: "general",
     created_at: daysAgo(1, 10, 30),
-    open: true,
     payload: {
       name: "Sam",
       note_id: "note-archived-91",
@@ -605,13 +602,12 @@ const REVIEW_ITEMS: MockReviewItem[] = [
         reject: "the mention stays unlinked — it can be re-proposed with more signal.",
       },
     },
-  },
-  {
+  }),
+  openReview({
     id: "rev-4",
     kind: "domain_promotion",
     domain: "health",
     created_at: daysAgo(2, 8, 15),
-    open: true,
     payload: {
       fact_id: "fact-akin-fax",
       note_id: "note-archived-88",
@@ -624,13 +620,12 @@ const REVIEW_ITEMS: MockReviewItem[] = [
         reject: "the fact stays in health — the note's firewall keeps it.",
       },
     },
-  },
-  {
+  }),
+  openReview({
     id: "rev-5",
     kind: "fact_conflict",
     domain: "health",
     created_at: daysAgo(0, 11, 5),
-    open: true,
     payload: {
       fact_a: FACT_BP.id,
       fact_b: "fact-bp-kiosk",
@@ -644,16 +639,15 @@ const REVIEW_ITEMS: MockReviewItem[] = [
         { action: "accept_b", label: "138/92 mmHg", detail: "from this note" },
       ],
     },
-  },
+  }),
   // rev-6/rev-7: kinds the schema reserves but no pipeline writes yet; they
   // keep the card's rarer states (low-confidence copy, destructive accept)
   // exercised in mock mode and follow the same payload convention.
-  {
+  openReview({
     id: "rev-6",
     kind: "low_confidence",
     domain: "health",
     created_at: daysAgo(3, 8, 10),
-    open: true,
     payload: {
       summary: "low-confidence extraction (41%)",
       snippet: "Started <mark>vitamin D 2000 IU daily</mark> per Dr. Akin.",
@@ -662,13 +656,12 @@ const REVIEW_ITEMS: MockReviewItem[] = [
         reject: "the fact is retracted as a misread.",
       },
     },
-  },
-  {
+  }),
+  openReview({
     id: "rev-7",
     kind: "split_proposal",
     domain: "finance",
     created_at: daysAgo(4, 18, 0),
-    open: true,
     payload: {
       summary: "“the Honda” may be two different cars",
       snippet: "Oil change on <mark>the Honda</mark> — 152k miles now, the other receipt said 48k.",
@@ -679,8 +672,180 @@ const REVIEW_ITEMS: MockReviewItem[] = [
       },
       accept_destructive: true,
     },
+  }),
+  // Past decisions seed the resolved segment (newest first when listed):
+  // an accepted merge, a decided collision, a rejected merge (permanent
+  // distinct_from — its reopen keeps the edge), and a muted dismissal.
+  {
+    id: "rev-done-1",
+    kind: "merge_proposal",
+    domain: "general",
+    created_at: daysAgo(1, 8, 30),
+    status: "resolved",
+    resolved_at: daysAgo(0, 9, 18),
+    resolution: {
+      action: "accept",
+      payload: {},
+      effects: [
+        {
+          action: "merged",
+          entity_id: "ent-patel-dup",
+          into: "ent-patel",
+          prior_status: "provisional",
+          prior_merged_into: null,
+          mention_ids: ["men-patel-dup-1"],
+          fact_ids: [],
+          object_fact_ids: [],
+        },
+      ],
+    },
+    payload: {
+      entity_a: "ent-patel",
+      entity_b: "ent-patel-dup",
+      summary: "merge “Dr. Patel” with “Dr. Anita Patel”",
+      snippet:
+        "follow-up booked with <mark>Dr. Patel</mark> for the 24th — same office as the Anita Patel visit in March.",
+      outcomes: {
+        accept: "they become one person — Dr. Anita Patel is canonical, mentions repoint.",
+        reject: "writes a permanent distinct-from edge — this pair is never proposed again.",
+      },
+      reject_destructive: true,
+    },
+  },
+  {
+    id: "rev-done-2",
+    kind: "attribute_collision",
+    domain: "health",
+    created_at: daysAgo(1, 17, 50),
+    status: "resolved",
+    resolved_at: daysAgo(1, 18, 2),
+    resolution: {
+      action: "accept_a",
+      payload: { choice: "128 mg/dL" },
+      effects: [
+        {
+          action: "pinned",
+          fact_id: "fact-ldl-128",
+          prior_status: "pending_review",
+          prior_pinned: false,
+          prior_superseded_by: null,
+        },
+        { action: "retracted", fact_id: "fact-ldl-132", prior_status: "pending_review" },
+      ],
+    },
+    payload: {
+      fact_a: "fact-ldl-128",
+      fact_b: "fact-ldl-132",
+      predicate: "ldlCholesterol",
+      summary: "two LDL values from the same lab visit",
+      snippet: "Quest results in — <mark>LDL 128</mark>, though the portal PDF also lists 132.",
+      choices: [
+        { action: "accept_a", label: "128 mg/dL", detail: "summary page value" },
+        { action: "accept_b", label: "132 mg/dL", detail: "detail page value" },
+      ],
+    },
+  },
+  {
+    id: "rev-done-3",
+    kind: "merge_proposal",
+    domain: "finance",
+    created_at: daysAgo(5, 9, 0),
+    status: "resolved",
+    resolved_at: daysAgo(5, 9, 40),
+    resolution: {
+      action: "reject",
+      payload: {},
+      effects: [
+        { action: "distinct_from", a: "ent-chase-sapphire", b: "ent-chase-visa", inserted: true },
+      ],
+    },
+    payload: {
+      entity_a: "ent-chase-visa",
+      entity_b: "ent-chase-sapphire",
+      summary: "merge “Chase Visa” with “Chase Sapphire”?",
+      snippet: "Paid the <mark>Chase Visa</mark> — the Sapphire statement closes Friday.",
+      outcomes: {
+        accept: "the two cards become one account.",
+        reject: "writes a permanent distinct-from edge — this pair is never proposed again.",
+      },
+      reject_destructive: true,
+    },
+  },
+  {
+    id: "rev-done-4",
+    kind: "low_confidence",
+    domain: "finance",
+    created_at: daysAgo(2, 12, 0),
+    status: "dismissed",
+    resolved_at: daysAgo(2, 12, 30),
+    resolution: { action: "dismiss", payload: {}, effects: [] },
+    payload: {
+      summary: "low-confidence extraction: “Roth contribution maxed”",
+      snippet: "Think the <mark>Roth is maxed</mark> for the year? Need to check Fidelity first.",
+      outcomes: {
+        accept: "the fact stands at its stated confidence.",
+        reject: "the extraction is dropped.",
+      },
+    },
   },
 ];
+
+// Fake the backend's effects recording so dev:mock reopen round-trips.
+function mockEffects(item: ReviewItem, action: string): Record<string, unknown>[] {
+  const p = item.payload;
+  if (
+    (item.kind === "attribute_collision" || item.kind === "fact_conflict") &&
+    (action === "accept_a" || action === "accept_b")
+  ) {
+    const winner = action === "accept_a" ? p.fact_a : p.fact_b;
+    const loser = action === "accept_a" ? p.fact_b : p.fact_a;
+    return [
+      {
+        action: "pinned",
+        fact_id: winner,
+        prior_status: "pending_review",
+        prior_pinned: false,
+        prior_superseded_by: null,
+      },
+      { action: "retracted", fact_id: loser, prior_status: "pending_review" },
+    ];
+  }
+  if (item.kind === "merge_proposal" && action === "accept") {
+    return [
+      {
+        action: "merged",
+        entity_id: p.entity_b,
+        into: p.entity_a,
+        prior_status: "provisional",
+        prior_merged_into: null,
+        mention_ids: [],
+        fact_ids: [],
+        object_fact_ids: [],
+      },
+    ];
+  }
+  if (item.kind === "merge_proposal" && action === "reject") {
+    const pair = [p.entity_a, p.entity_b].map(String).sort();
+    return [{ action: "distinct_from", a: pair[0], b: pair[1], inserted: true }];
+  }
+  if (item.kind === "domain_promotion" && action === "accept") {
+    return [
+      {
+        action: "domain_changed",
+        fact_id: p.fact_id,
+        prior_domain: p.note_domain,
+        prior_pinned: false,
+        new_domain: p.proposed_domain,
+      },
+    ];
+  }
+  return [];
+}
+
+/** Resolved-log ordering key: a reopened tombstone sorts by its marker. */
+function decidedAt(item: ReviewItem): string {
+  return item.resolved_at ?? item.resolution?.reopened_at ?? item.created_at;
+}
 
 const LLM_USAGE: LlmUsage = {
   today: { input_tokens: 41_200, output_tokens: 12_400, cost_usd: 0.08 },
@@ -908,16 +1073,26 @@ export const mockFetch: typeof fetch = async (input, init) => {
 
   if (path === "/api/review" && method === "GET") {
     const status = url.searchParams.get("status") ?? "open";
-    const items = REVIEW_ITEMS.filter((item) => (status === "open" ? item.open : !item.open));
-    return json({ items: items.map(({ open: _open, ...item }) => item) });
+    // Mirrors the backend: the resolved log folds in dismissals and
+    // reopened tombstones (still open, marker set), newest decision first.
+    const items =
+      status === "open"
+        ? REVIEW_ITEMS.filter((item) => item.status === "open")
+        : REVIEW_ITEMS.filter(
+            (item) => item.status !== "open" || item.resolution?.reopened_at !== undefined,
+          ).sort((a, b) => decidedAt(b).localeCompare(decidedAt(a)));
+    return json({ items });
   }
 
   const resolveMatch = path.match(/^\/api\/review\/([^/]+)\/resolve$/);
   if (resolveMatch && method === "POST") {
     const item = REVIEW_ITEMS.find((r) => r.id === decodeURIComponent(resolveMatch[1] ?? ""));
     if (!item) return json({ detail: "review item not found" }, 404);
-    if (!item.open) return json({ detail: "review item is not open" }, 409);
-    const body = JSON.parse(String(init?.body)) as { action: string; payload?: object };
+    if (item.status !== "open") return json({ detail: "review item is not open" }, 409);
+    const body = JSON.parse(String(init?.body)) as {
+      action: string;
+      payload?: Record<string, unknown>;
+    };
     // Mirror the backend's contract: only the actions the payload advertises
     // (plus dismiss) resolve; anything else is a 400, the item untouched.
     const advertised = new Set(["dismiss"]);
@@ -937,11 +1112,38 @@ export const mockFetch: typeof fetch = async (input, init) => {
     if (!advertised.has(body.action)) {
       return json({ detail: `action ${body.action} is not valid for kind ${item.kind}` }, 400);
     }
-    // Resolution mutates fixture state so the triage flow works end-to-end.
-    item.open = false;
-    item.payload = { ...item.payload, resolution: body.action };
-    const { open: _open, ...out } = item;
-    return json(out);
+    // Resolution mutates fixture state (with recorded effects, like the
+    // backend) so triage and reopen round-trip end-to-end in dev:mock.
+    const dismissal =
+      body.action === "dismiss" || (item.kind === "ambiguous_mention" && body.action === "reject");
+    item.status = dismissal ? "dismissed" : "resolved";
+    item.resolution = {
+      action: body.action,
+      payload: body.payload ?? {},
+      effects: dismissal ? [] : mockEffects(item, body.action),
+    };
+    item.resolved_at = new Date().toISOString();
+    return json(item);
+  }
+
+  const reopenMatch = path.match(/^\/api\/review\/([^/]+)\/reopen$/);
+  if (reopenMatch && method === "POST") {
+    const item = REVIEW_ITEMS.find((r) => r.id === decodeURIComponent(reopenMatch[1] ?? ""));
+    if (!item) return json({ detail: "review item not found" }, 404);
+    if (item.status === "open") return json({ detail: "review item is already open" }, 409);
+    const keptEdge = (item.resolution?.effects ?? []).some((e) => e.action === "distinct_from");
+    item.status = "open";
+    item.resolved_at = null;
+    item.resolution = {
+      ...(item.resolution ?? { action: "dismiss", payload: {} }),
+      reopened_at: new Date().toISOString(),
+    };
+    return json({
+      ...item,
+      reopen_note: keptEdge
+        ? "the distinct-from edge is permanent and stays — this pair is never re-proposed"
+        : null,
+    });
   }
 
   if (path === "/api/ops/llm-usage") return json(LLM_USAGE);

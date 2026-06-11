@@ -169,7 +169,13 @@ describe("mock API", () => {
     );
     expect(res.status).toBe(200);
     const updated = (await res.json()) as ReviewItem;
-    expect(updated.payload.resolution).toBe("accept_b");
+    expect(updated.status).toBe("resolved");
+    expect(updated.resolved_at).not.toBeNull();
+    expect(updated.resolution?.action).toBe("accept_b");
+    // Effects are recorded like the backend records them, so reopen can
+    // round-trip in dev:mock.
+    const actions = (updated.resolution?.effects ?? []).map((e) => e.action);
+    expect(actions).toEqual(["pinned", "retracted"]);
 
     const after = (await (await call("/api/review?status=open")).json()) as ReviewQueue;
     expect(after.items.map((i) => i.id)).not.toContain(first.id);
@@ -182,6 +188,48 @@ describe("mock API", () => {
         )
       ).status,
     ).toBe(409);
+  });
+
+  it("review: resolved log lists decisions newest-first with dismissals folded in", async () => {
+    const log = (await (await call("/api/review?status=resolved")).json()) as ReviewQueue;
+    expect(log.items.length).toBeGreaterThanOrEqual(4);
+    const statuses = new Set(log.items.map((i) => i.status));
+    expect(statuses).toContain("resolved");
+    expect(statuses).toContain("dismissed");
+    const decidedAt = (i: ReviewItem) => i.resolved_at ?? i.resolution?.reopened_at ?? i.created_at;
+    const order = log.items.map(decidedAt);
+    expect(order).toEqual([...order].sort((a, b) => b.localeCompare(a)));
+    for (const item of log.items) {
+      expect(item.resolution).not.toBeNull();
+    }
+  });
+
+  it("review: reopen re-queues with a tombstone marker; double-reopen 409s", async () => {
+    const reopened = await call("/api/review/rev-done-2/reopen", { method: "POST" });
+    expect(reopened.status).toBe(200);
+    const item = (await reopened.json()) as ReviewItem & { reopen_note: string | null };
+    expect(item.status).toBe("open");
+    expect(item.resolved_at).toBeNull();
+    expect(item.resolution?.reopened_at).toBeDefined();
+    expect(item.reopen_note).toBeNull();
+
+    // Back in the open queue AND tombstoned in the resolved log.
+    const open = (await (await call("/api/review?status=open")).json()) as ReviewQueue;
+    expect(open.items.map((i) => i.id)).toContain("rev-done-2");
+    const log = (await (await call("/api/review?status=resolved")).json()) as ReviewQueue;
+    const tomb = log.items.find((i) => i.id === "rev-done-2");
+    expect(tomb?.status).toBe("open");
+
+    expect((await call("/api/review/rev-done-2/reopen", { method: "POST" })).status).toBe(409);
+    expect((await call("/api/review/rev-nope/reopen", { method: "POST" })).status).toBe(404);
+  });
+
+  it("review: reopening a rejected merge keeps the permanent distinct_from edge", async () => {
+    const reopened = await call("/api/review/rev-done-3/reopen", { method: "POST" });
+    expect(reopened.status).toBe(200);
+    const item = (await reopened.json()) as ReviewItem & { reopen_note: string | null };
+    expect(item.status).toBe("open");
+    expect(item.reopen_note).toContain("permanent");
   });
 
   it("llm-usage: totals exercise k/M formatting and a null-cost task", async () => {
