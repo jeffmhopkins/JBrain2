@@ -205,6 +205,30 @@ async def import_status(request: Request, settings: SettingsDep) -> dict[str, ob
     return cast(dict[str, object], resp.json())
 
 
+# Reset is a supervisor one-shot for the same reason export/import are: the
+# api's RLS-scoped role deliberately cannot TRUNCATE (least privilege — RLS
+# does not bind TRUNCATE), so erasing content data takes superuser psql that
+# only a supervisor-launched container holds.
+
+
+@router.post("/reset", status_code=202)
+async def start_reset(request: Request, settings: SettingsDep) -> dict[str, object]:
+    resp = await _client(request).post("/reset", headers=_headers(settings))
+    if resp.status_code == 409:
+        raise HTTPException(status_code=409, detail="another operation is running")
+    resp.raise_for_status()
+    return cast(dict[str, object], resp.json())
+
+
+@router.get("/reset/status")
+async def reset_status(request: Request, settings: SettingsDep) -> dict[str, object]:
+    resp = await _client(request).get(
+        "/reset/status", params={"tail": 80}, headers=_headers(settings)
+    )
+    resp.raise_for_status()
+    return cast(dict[str, object], resp.json())
+
+
 @router.get("/logs/{service}")
 async def logs(
     service: str,
