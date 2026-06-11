@@ -4,6 +4,8 @@
 
 import { describe, expect, it } from "vitest";
 import type {
+  AppSettings,
+  AttachmentExtract,
   EntityOut,
   LlmUsage,
   NoteAnalysis,
@@ -263,6 +265,70 @@ describe("mock API", () => {
     expect(usage.month.input_tokens).toBeGreaterThan(1_000_000);
     expect(usage.by_task.some((t) => t.cost_usd === null)).toBe(true);
     expect(usage.days).toHaveLength(7);
+  });
+
+  it("serves the vision cache for the described image fixture", async () => {
+    const page = (await (await call("/api/notes?limit=100")).json()) as { notes: NoteOut[] };
+    const att = page.notes
+      .flatMap((n) => n.attachments)
+      .find((a) => a.filename === "roof-quote.jpg");
+    if (!att) throw new Error("roof-quote.jpg fixture missing");
+    expect(att.has_extracts).toBe(true);
+    expect(att.has_description).toBe(true);
+
+    const out = (await (await call(`/api/attachments/${att.id}/extracts`)).json()) as {
+      extracts: AttachmentExtract[];
+    };
+    expect(out.extracts.map((e) => e.kind)).toEqual(["ocr", "caption"]);
+    expect(out.extracts[0]?.text).toContain("[illegible]");
+    expect(out.extracts[0]?.confidence).toBe(0.7);
+    expect(out.extracts[1]?.confidence).toBe(0.6);
+
+    expect((await call("/api/attachments/att-nope/extracts")).status).toBe(404);
+  });
+
+  it("round-trips the image-analysis setting with strict validation", async () => {
+    const before = (await (await call("/api/settings")).json()) as AppSettings;
+    expect(before.image_analysis_mode).toBe("full"); // the decided default
+
+    const put = await call("/api/settings", jsonInit("PUT", { image_analysis_mode: "ocr" }));
+    expect(((await put.json()) as AppSettings).image_analysis_mode).toBe("ocr");
+    const after = (await (await call("/api/settings")).json()) as AppSettings;
+    expect(after.image_analysis_mode).toBe("ocr");
+
+    expect(
+      (await call("/api/settings", jsonInit("PUT", { image_analysis_mode: "everything" }))).status,
+    ).toBe(422);
+    expect((await call("/api/settings", jsonInit("PUT", { theme: "dark" }))).status).toBe(422);
+
+    // Back to the default so later mock sessions start where they expect.
+    await call("/api/settings", jsonInit("PUT", { image_analysis_mode: "full" }));
+  });
+
+  it("on-demand analyze 409s while in flight, then flips the fixture state", async () => {
+    const page = (await (await call("/api/notes?limit=100")).json()) as { notes: NoteOut[] };
+    const att = page.notes
+      .flatMap((n) => n.attachments)
+      .find((a) => a.filename === "whiteboard.jpg");
+    if (!att) throw new Error("whiteboard.jpg fixture missing");
+    expect(att.has_description).toBe(false);
+
+    expect((await call("/api/attachments/att-nope/analyze", { method: "POST" })).status).toBe(404);
+    expect((await call(`/api/attachments/${att.id}/analyze`, { method: "POST" })).status).toBe(202);
+    expect((await call(`/api/attachments/${att.id}/analyze`, { method: "POST" })).status).toBe(409);
+
+    // A tick later the worker "finished": extracts cached, chip flips.
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    const refreshed = (await (await call("/api/notes?limit=100")).json()) as { notes: NoteOut[] };
+    const flipped = refreshed.notes.flatMap((n) => n.attachments).find((a) => a.id === att.id);
+    expect(flipped?.has_extracts).toBe(true);
+    expect(flipped?.has_description).toBe(true);
+    const out = (await (await call(`/api/attachments/${att.id}/extracts`)).json()) as {
+      extracts: AttachmentExtract[];
+    };
+    expect(out.extracts.some((e) => e.kind === "caption" && e.text !== "")).toBe(true);
+    // ...and a re-run is allowed again once the flight lands.
+    expect((await call(`/api/attachments/${att.id}/analyze`, { method: "POST" })).status).toBe(202);
   });
 
   // Last on purpose: reset wipes the shared fixtures the tests above read.

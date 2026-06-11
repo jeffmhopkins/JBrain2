@@ -23,12 +23,14 @@ function item(overrides: Partial<StreamItem> = {}): StreamItem {
 }
 
 function imageAttachment(name: string, hasExtracts = false) {
+  // hasDescription rides along; the stream chips only read hasExtracts.
   return {
     id: `att-${name}`,
     filename: name,
     mediaType: "image/png",
     sizeBytes: 1024,
     hasExtracts,
+    hasDescription: false,
   };
 }
 

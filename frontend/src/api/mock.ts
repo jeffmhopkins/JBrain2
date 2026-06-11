@@ -3,6 +3,8 @@
 // note creation, cursor pagination, multipart attachments, always-on auth.
 
 import type {
+  AppSettings,
+  AttachmentExtract,
   AttachmentOut,
   ContainerStatus,
   EntityListItem,
@@ -58,17 +60,61 @@ function id(prefix: string): string {
 }
 
 const attachmentBlobs = new Map<string, Blob>();
+// Vision-cache fixtures for the manifest expansion, keyed by attachment id.
+const attachmentExtracts = new Map<string, AttachmentExtract[]>();
+// Attachments with an on-demand analyze in flight (409s a second POST).
+const analyzingAttachments = new Set<string>();
 
-function makeAttachment(filename: string, mediaType: string, hasExtracts = false): AttachmentOut {
+// The first server-synced settings object (theme/text-size stay local).
+const SETTINGS: AppSettings = { image_analysis_mode: "full" };
+
+function makeAttachment(
+  filename: string,
+  mediaType: string,
+  hasExtracts = false,
+  hasDescription = false,
+): AttachmentOut {
   const att = {
     id: id("att"),
     filename,
     media_type: mediaType,
     size_bytes: 24_120,
     has_extracts: hasExtracts,
+    has_description: hasDescription,
   };
   attachmentBlobs.set(att.id, new Blob([`mock contents of ${filename}`], { type: mediaType }));
   return att;
+}
+
+const MOCK_DESCRIPTION =
+  "A printed contractor quote on a kitchen counter, with a handwritten note " +
+  "in the margin and a coffee mug holding the corner down.";
+
+function extractFixtures(): AttachmentExtract[] {
+  return [
+    {
+      kind: "ocr",
+      text:
+        "RIDGELINE ROOFING — QUOTE\n" +
+        "1204 Pearl St, Boulder CO\n" +
+        "tear-off + re-shingle        3,400\n" +
+        "flashing (chimney + valley)    480\n" +
+        "[illegible] disposal           320\n" +
+        "--------------------------------\n" +
+        "TOTAL                        4,200\n" +
+        "valid 30 days — ask for Manny",
+      tool: "xai:grok-4.3",
+      confidence: 0.7,
+      created_at: daysAgo(1, 10, 30),
+    },
+    {
+      kind: "caption",
+      text: MOCK_DESCRIPTION,
+      tool: "xai:grok-4.3",
+      confidence: 0.6,
+      created_at: daysAgo(1, 10, 30),
+    },
+  ];
 }
 
 function daysAgo(days: number, hour: number, minute = 0): string {
@@ -107,6 +153,10 @@ function seedNote(
   };
 }
 
+// Fully analyzed image: exercises the expansion's OCR inset + description.
+const roofQuoteJpg = makeAttachment("roof-quote.jpg", "image/jpeg", true, true);
+attachmentExtracts.set(roofQuoteJpg.id, extractFixtures());
+
 // Oldest-first internally; the list endpoint serves newest-first.
 const notes: NoteOut[] = [
   seedNote(
@@ -134,8 +184,8 @@ const notes: NoteOut[] = [
     "Receipts",
     "Roof repair quote — $4,200 incl. flashing. Get second opinion?",
     daysAgo(1, 10, 22),
-    // OCR already cached: exercises the "text extracted (ocr)" chip.
-    [makeAttachment("roof-quote.jpg", "image/jpeg", true)],
+    // OCR + description cached: exercises the "text + description" chip.
+    [roofQuoteJpg],
   ),
   seedNote("general", null, "Garage door keypad battery replaced — CR2032", daysAgo(1, 17, 48)),
   seedNote(
@@ -1107,10 +1157,57 @@ export const mockFetch: typeof fetch = async (input, init) => {
       media_type: file.type || "application/octet-stream",
       size_bytes: file.size,
       has_extracts: false, // fresh uploads always start pre-OCR
+      has_description: false,
     };
     attachmentBlobs.set(att.id, file);
     note.attachments.push(att);
     return json(att, 201);
+  }
+
+  const extractsMatch = path.match(/^\/api\/attachments\/([^/]+)\/extracts$/);
+  if (extractsMatch && method === "GET") {
+    const attId = decodeURIComponent(extractsMatch[1] ?? "");
+    const known = notes.some((n) => n.attachments.some((a) => a.id === attId));
+    if (!known) return json({ detail: "attachment not found" }, 404);
+    return json({ extracts: attachmentExtracts.get(attId) ?? [] });
+  }
+
+  const analyzeMatch = path.match(/^\/api\/attachments\/([^/]+)\/analyze$/);
+  if (analyzeMatch && method === "POST") {
+    const attId = decodeURIComponent(analyzeMatch[1] ?? "");
+    const att = notes.flatMap((n) => n.attachments).find((a) => a.id === attId);
+    if (!att) return json({ detail: "attachment not found" }, 404);
+    if (analyzingAttachments.has(attId)) {
+      return json({ detail: "analysis already queued or running" }, 409);
+    }
+    // A tick later the fixture flips like the worker would: OCR if missing,
+    // a fresh description, and the chip signals on the attachment row.
+    analyzingAttachments.add(attId);
+    setTimeout(() => {
+      analyzingAttachments.delete(attId);
+      const fresh = extractFixtures();
+      const existing = attachmentExtracts.get(attId) ?? [];
+      const kept = existing.filter((e) => e.kind === "ocr");
+      attachmentExtracts.set(attId, [
+        ...(kept.length > 0 ? kept : fresh.filter((e) => e.kind === "ocr")),
+        ...fresh.filter((e) => e.kind === "caption"),
+      ]);
+      att.has_extracts = true;
+      att.has_description = true;
+    }, LATENCY_MS * 3);
+    return json({ job_id: id("job") }, 202);
+  }
+
+  if (path === "/api/settings" && method === "GET") return json(SETTINGS);
+  if (path === "/api/settings" && method === "PUT") {
+    const patch = JSON.parse(String(init?.body)) as Record<string, unknown>;
+    // Mirror the backend's strict validation: unknown keys/values are 422s.
+    for (const [key, value] of Object.entries(patch)) {
+      if (key !== "image_analysis_mode") return json({ detail: `unknown key ${key}` }, 422);
+      if (value !== "full" && value !== "ocr") return json({ detail: "unknown mode" }, 422);
+      SETTINGS.image_analysis_mode = value;
+    }
+    return json(SETTINGS);
   }
 
   const blobMatch = path.match(/^\/api\/attachments\/([^/]+)$/);
@@ -1121,6 +1218,7 @@ export const mockFetch: typeof fetch = async (input, init) => {
     owner.attachments = owner.attachments.filter((a) => a.id !== attId);
     owner.ingest_state = "pending";
     attachmentBlobs.delete(attId);
+    attachmentExtracts.delete(attId);
     return new Response(null, { status: 204 });
   }
   if (blobMatch) {
@@ -1285,6 +1383,8 @@ export const mockFetch: typeof fetch = async (input, init) => {
     // Zeroing the fixtures here lets dev:mock round-trip the whole flow.
     notes.length = 0;
     attachmentBlobs.clear();
+    attachmentExtracts.clear();
+    analyzingAttachments.clear();
     REVIEW_ITEMS.length = 0;
     for (const key of Object.keys(ANALYSES)) delete ANALYSES[key];
     for (const key of Object.keys(ENTITIES)) delete ENTITIES[key];

@@ -93,6 +93,12 @@ export const ChevronLeftIcon = (p: IconProps) => (
   </Icon>
 );
 
+export const ChevronRightIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="m9 18 6-6-6-6" />
+  </Icon>
+);
+
 export const BookIcon = (p: IconProps) => (
   <Icon {...p}>
     <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20V2H6.5A2.5 2.5 0 0 0 4 4.5v15A2.5 2.5 0 0 0 6.5 22H20v-2.5" />
