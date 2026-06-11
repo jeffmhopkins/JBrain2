@@ -215,17 +215,19 @@ def _repair_dates(
     preserving time-of-day, offset, and any range width. Returns
     (start, end, repaired); a phrase outside the closed set is a no-op."""
     expected = resolve_relative_date(phrase, anchor)
-    if start is None or expected is None or expected == start.date():
+    if start is None or expected is None:
         return start, end, False
-    # The calendar-day comparison is only sound when the model resolved in the
-    # SAME UTC offset as the anchor. A different offset — naive output pinned to
-    # UTC, or a missing client offset that left the anchor in UTC (local_anchor's
-    # fallback) — makes start.date() and the anchor's local date incomparable, so
-    # we leave the model's value untouched rather than shift it on a false
-    # mismatch (the pipeline also withholds the anchor entirely when tz is None).
-    if start.utcoffset() != anchor.utcoffset():
+    # Judge the model's instant by the calendar day it falls on IN THE NOTE'S
+    # LOCAL timezone (the anchor's offset), not by a raw .date() that depends on
+    # whichever offset the model happened to emit. grok routinely resolves to a
+    # UTC instant rather than echoing the local offset, so an exact-offset check
+    # would skip the repair in exactly the case it exists for. The pipeline only
+    # supplies an anchor when the client offset is known, so anchor.tzinfo is
+    # always a real local offset here (fixed, hence DST-safe day arithmetic).
+    local_start_date = start.astimezone(anchor.tzinfo).date()
+    if expected == local_start_date:
         return start, end, False
-    delta = timedelta(days=(expected - start.date()).days)
+    delta = timedelta(days=(expected - local_start_date).days)
     return start + delta, (end + delta if end is not None else None), True
 
 

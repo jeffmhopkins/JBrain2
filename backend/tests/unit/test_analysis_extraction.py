@@ -711,13 +711,28 @@ def test_resolve_relative_date_last_night_is_ambiguous_at_evening_anchor() -> No
     assert resolve_relative_date("last night", _ANCHOR) == (_ANCHOR - timedelta(days=1)).date()
 
 
-def test_validate_backward_temporal_skips_on_offset_mismatch() -> None:
-    # Model resolved in a DIFFERENT offset than the anchor (naive -> UTC pinning,
-    # or a missing client offset that left the anchor in UTC): the calendar-day
-    # comparison is unsound, so the value is never shifted (red-team Finding 1/5).
+def test_validate_backward_temporal_repairs_utc_model_output_by_local_day() -> None:
+    # grok routinely resolves to a UTC instant instead of echoing the note's
+    # local offset. The repair must still judge it by the LOCAL calendar day:
+    # 2026-06-11T20:00Z is Jun 11 14:00 at -06:00 (the capture DAY) — wrong for
+    # "last night" from a 07:13 anchor, so it shifts to Jun 10 (the live bug).
     utc_start = ExtractedTemporal(
         phrase="last night",
-        resolved_start=datetime(2026, 6, 11, 20, 0, tzinfo=UTC),  # +00:00 vs anchor -06:00
+        resolved_start=datetime(2026, 6, 11, 20, 0, tzinfo=UTC),
+        resolved_end=None,
+        precision="day",
+    )
+    fixed, repaired = validate_backward_temporal(utc_start, _ANCHOR)
+    assert repaired and fixed is not None and fixed.resolved_start is not None
+    assert fixed.resolved_start.astimezone(_MST).date() == date(2026, 6, 10)
+
+
+def test_validate_backward_temporal_noop_when_utc_output_is_locally_correct() -> None:
+    # 2026-06-11T02:00Z is Jun 10 20:00 at -06:00 — already the right local day
+    # for "last night", so no shift even though the offset differs from anchor's.
+    utc_start = ExtractedTemporal(
+        phrase="last night",
+        resolved_start=datetime(2026, 6, 11, 2, 0, tzinfo=UTC),
         resolved_end=None,
         precision="day",
     )
