@@ -1,8 +1,13 @@
-#!/usr/bin/env bash
+#!/bin/sh
 # Nightly (and pre-update) backup: schema+data dump plus blob volume archive.
 # Restore with restore.sh (jbrain restore <stamp>) — drilled end-to-end; keep
 # both sides in step when adding volumes or moving data outside Postgres.
-set -euo pipefail
+#
+# POSIX sh (not bash): the import/reset one-shots call this from inside the
+# bash-less docker:cli (Alpine) container, so a `#!/usr/bin/env bash` shebang
+# fails there with "env: can't execute 'bash'". No pipes here, so dropping
+# `pipefail` loses nothing.
+set -eu
 
 cd /opt/jbrain2
 STAMP="$(date +%Y%m%d-%H%M%S)"
