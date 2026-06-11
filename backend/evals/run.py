@@ -7,14 +7,14 @@ change (e.g. note-extract-v5's object-person + backward-temporal guidance) is
 MEASURED rather than guessed — the gap the harness explicitly cannot cover
 ("does not test the prompt — only a live model exercises that").
 
-Run it against whatever provider/model your config points note.extract at
-(JBRAIN_LLM_TASKS, provider keys / base URLs). It is provider-agnostic, so the
-same cases score Claude, grok, or a local model. CI never calls a live model,
-so this lives outside the test suite and is invoked by hand:
+It routes to whatever provider/model your config points note.extract at
+(JBRAIN_LLM_TASKS, provider keys / base URLs), so the same cases score Claude,
+grok, or a local model. CI never calls a live model, so this lives outside the
+test suite. ONE COMMAND, then copy the whole report back:
 
-    cd backend && uv run python -m evals.run            # all cases
-    uv run python -m evals.run --strict                 # exit 1 if any case fails
-    uv run python -m evals.run --case marriage_copular_object
+    scripts/prompt-eval.sh           # all cases (failures dump the raw output)
+    scripts/prompt-eval.sh --strict  # exit 1 if any case fails
+    scripts/prompt-eval.sh --case marriage_copular_object
 """
 
 from __future__ import annotations
@@ -30,11 +30,25 @@ from typing import Any
 
 from jbrain.analysis.extraction import parse_extraction
 from jbrain.analysis.pipeline import EXTRACT_MAX_TOKENS
-from jbrain.analysis.prompt import EXTRACTION_SCHEMA, SYSTEM_PROMPT, build_user_prompt
+from jbrain.analysis.prompt import (
+    EXTRACTION_SCHEMA,
+    PROMPT_VERSION,
+    SYSTEM_PROMPT,
+    build_user_prompt,
+)
 from jbrain.config import Settings
 from jbrain.llm import build_router
 
-CASES_FILE = Path(__file__).parent / "cases.json"
+CASES_DIR = Path(__file__).parent / "cases"
+
+
+def load_cases() -> list[dict[str, Any]]:
+    """Every case across all evals/cases/*.json — agents drop in their own file
+    and it's picked up automatically (sorted for a stable run order)."""
+    cases: list[dict[str, Any]] = []
+    for path in sorted(CASES_DIR.glob("*.json")):
+        cases.extend(json.loads(path.read_text()))
+    return cases
 
 
 def _norm(s: str) -> str:
@@ -52,6 +66,7 @@ def _overlaps(a: str, b: str) -> bool:
 class CaseResult:
     name: str
     checks: list[tuple[str, bool, str]] = field(default_factory=list)  # (label, ok, detail)
+    dump: str = ""  # compact rendering of what the model returned, for diagnosis
     error: str | None = None
 
     @property
@@ -59,14 +74,81 @@ class CaseResult:
         return self.error is None and all(ok for _, ok, _ in self.checks)
 
 
-def _score(case: dict[str, Any], parsed: Any) -> CaseResult:
-    res = CaseResult(name=case["name"])
+def _local_date(dt: datetime, anchor: datetime) -> str:
+    """The calendar date the instant falls on in the note's LOCAL timezone —
+    what the app shows. An absolute date stored as midnight-UTC is the prior
+    local day at a western offset, so a raw UTC .date() would mis-read it."""
+    return dt.astimezone(anchor.tzinfo).date().isoformat()
+
+
+def _dump(parsed: Any, anchor: datetime) -> str:
+    """What the model actually returned, compact enough to paste — the thing I
+    read to iterate the prompt when a case fails."""
+    mentions = ", ".join(f"{m.name}:{m.kind}" for m in parsed.mentions) or "(none)"
+    edges = [
+        f"{f.entity_ref}.{f.predicate}->{f.object_entity_ref}"
+        for f in parsed.facts
+        if f.object_entity_ref
+    ]
+    temporal = [
+        f"{f.temporal.phrase!r}={_local_date(f.temporal.resolved_start, anchor)}"
+        for f in parsed.facts
+        if f.temporal and f.temporal.phrase and f.temporal.resolved_start
+    ] + [
+        f"{t.phrase!r}={_local_date(t.resolved_start, anchor)}"
+        for t in parsed.tokens
+        if t.phrase and t.resolved_start
+    ]
+    valued = [f"{f.predicate}={json.dumps(f.value_json)}" for f in parsed.facts if f.value_json]
+    domains = [f"{f.predicate}:{f.domain or '-'}" for f in parsed.facts]
+    lines = [f"      mentions: {mentions}"]
+    if edges:
+        lines.append(f"      edges: {', '.join(edges)}")
+    if valued:
+        lines.append(f"      facts: {', '.join(valued)}")
+    if domains:
+        lines.append(f"      domains: {', '.join(domains)}")
+    if temporal:
+        lines.append(f"      dates: {', '.join(temporal)}")
+    return "\n".join(lines)
+
+
+def _score(case: dict[str, Any], parsed: Any, anchor: datetime) -> CaseResult:
+    res = CaseResult(name=case["name"], dump=_dump(parsed, anchor))
     expect = case.get("expect", {})
     mention_names = [m.name for m in parsed.mentions]
 
     for person in expect.get("person_mentions", []):
         hit = next((n for n in mention_names if _overlaps(person, n)), None)
-        res.checks.append((f"person:{person}", hit is not None, f"got {mention_names}"))
+        res.checks.append((f"person:{person}", hit is not None, ""))
+
+    # Presence of any-kind entity (org, group, place, concrete concept) by name.
+    for name in expect.get("mentions", []):
+        hit = any(_overlaps(name, n) for n in mention_names)
+        res.checks.append((f"mention:{name}", hit, ""))
+
+    # Present AND typed within an allowed kind family (case-insensitive) — a
+    # generous set per case, since models name kinds variably (Organization vs
+    # Corporation, Place vs City).
+    for spec in expect.get("mention_kind", []):
+        allowed = {k.lower() for k in spec["kind"]}
+        ok = any(
+            _overlaps(spec["name"], m.name) and m.kind.lower() in allowed for m in parsed.mentions
+        )
+        res.checks.append((f"kind:{spec['name']}", ok, ""))
+
+    # Negative check: a name the model must NOT promote to a mention AT ALL —
+    # for fabricated humans / pure non-entities ("someone", a guessed name).
+    for person in expect.get("absent_person", []):
+        present = any(_overlaps(person, n) for n in mention_names)
+        res.checks.append((f"absent:{person}", not present, ""))
+
+    # Over-personification check: a token that may legitimately be a non-Person
+    # mention (a Product, Place, Animal, CreativeWork) but must NOT be typed as a
+    # Person. Passes if it's absent or present with a non-Person kind.
+    for name in expect.get("not_person", []):
+        mis = any(_overlaps(name, m.name) and m.kind.lower() == "person" for m in parsed.mentions)
+        res.checks.append((f"not_person:{name}", not mis, ""))
 
     for edge in expect.get("edges", []):
         obj = edge["object"]
@@ -78,12 +160,7 @@ def _score(case: dict[str, Any], parsed: Any) -> CaseResult:
             ),
             None,
         )
-        detail = (
-            f"{match.predicate} -> {match.object_entity_ref}"
-            if match
-            else f"no edge with object ~ {obj!r}"
-        )
-        res.checks.append((f"edge->{obj}", match is not None, detail))
+        res.checks.append((f"edge->{obj}", match is not None, ""))
 
     for t in expect.get("temporal", []):
         phrase, want = t["phrase"], t["resolved_date"]
@@ -96,16 +173,59 @@ def _score(case: dict[str, Any], parsed: Any) -> CaseResult:
             for tok in parsed.tokens
             if tok.phrase and _overlaps(phrase, tok.phrase)
         ]
-        got = {s.date().isoformat() for s in starts if s is not None}
-        res.checks.append((f"temporal:{phrase}={want}", want in got, f"got {got or 'none'}"))
+        # Compare in the note's LOCAL tz, exactly as the app renders the date.
+        got = {_local_date(s, anchor) for s in starts if s is not None}
+        res.checks.append((f"temporal:{phrase}={want}", want in got, ""))
+
+    # A fact carries a value (a measurement/amount): some fact's rendered
+    # value_json + statement contains the wanted text, optionally on a predicate
+    # matching `predicate` (substring-overlap). For weight/BP/money extraction.
+    for v in expect.get("value", []):
+        want = str(v["contains"]).casefold()
+        pred = v.get("predicate")
+        hit = any(
+            (pred is None or _overlaps(pred, f.predicate))
+            and want in f"{json.dumps(f.value_json or {})} {f.statement}".casefold()
+            for f in parsed.facts
+        )
+        res.checks.append((f"value:{v.get('predicate', '')}~{v['contains']}", hit, ""))
+
+    # The model assigned at least one fact to this domain — measures per-fact
+    # domain classification (the LLM's judgment; the deterministic type->domain
+    # floor, when it lands, would make this robust regardless of the model).
+    for dom in expect.get("domain", []):
+        res.checks.append((f"domain:{dom}", any(f.domain == dom for f in parsed.facts), ""))
 
     return res
 
 
+def _print_case(r: CaseResult) -> None:
+    # Stream each case as it finishes (flush, since output is usually piped) so a
+    # long run shows progress and a timeout still yields the cases that ran.
+    print(f"[{'PASS' if r.passed else 'FAIL'}] {r.name}", flush=True)
+    if r.error:
+        print(f"      ERROR {r.error}", flush=True)
+        return
+    for label, ok, _ in r.checks:
+        if not ok:
+            print(f"      miss {label}", flush=True)
+    if not r.passed and r.dump:
+        print(r.dump, flush=True)  # what the model returned, so the prompt can be tuned
+
+
 async def _run(cases: list[dict[str, Any]]) -> list[CaseResult]:
-    # Parse WITHOUT an anchor: the eval measures the MODEL's own resolution, not
-    # the deterministic backward-date repair (that is unit-tested separately).
+    # Parse WITH the anchor, exactly as the pipeline does for a note whose
+    # client offset is known: the score then reflects what the app actually
+    # STORES — model output plus the deterministic backward-date repair — so a
+    # green eval means a green app, not just a green prompt.
     router = build_router(Settings())
+    provider, model = router.spec("note.extract")
+    print(
+        f"prompt-eval — {provider}:{model} — {PROMPT_VERSION} — "
+        f"{datetime.now().isoformat(timespec='seconds')}",
+        flush=True,
+    )
+    print("-" * 64, flush=True)
     results: list[CaseResult] = []
     for case in cases:
         anchor = datetime.fromisoformat(case["created_at"])
@@ -120,43 +240,47 @@ async def _run(cases: list[dict[str, Any]]) -> list[CaseResult]:
                 json_schema=EXTRACTION_SCHEMA,
                 max_tokens=EXTRACT_MAX_TOKENS,
             )
-            results.append(_score(case, parse_extraction(out.parsed)))
+            r = _score(case, parse_extraction(out.parsed, anchor=anchor), anchor)
         except Exception as exc:  # a live call can fail many ways; report, don't crash the run
-            results.append(CaseResult(name=case["name"], error=f"{type(exc).__name__}: {exc}"))
+            r = CaseResult(name=case["name"], error=f"{type(exc).__name__}: {exc}")
+        _print_case(r)
+        results.append(r)
     return results
 
 
-def _report(results: list[CaseResult]) -> int:
-    checks_total = checks_ok = 0
-    for r in results:
-        mark = "PASS" if r.passed else "FAIL"
-        print(f"[{mark}] {r.name}")
-        if r.error:
-            print(f"    ERROR {r.error}")
-        for label, ok, detail in r.checks:
-            checks_total += 1
-            checks_ok += ok
-            if not ok:
-                print(f"    miss {label}  ({detail})")
+def _report(results: list[CaseResult]) -> bool:
+    checks_total = sum(len(r.checks) for r in results)
+    checks_ok = sum(ok for r in results for _, ok, _ in r.checks)
     passed = sum(r.passed for r in results)
     pct = (100 * checks_ok / checks_total) if checks_total else 0.0
-    print(f"\n{passed}/{len(results)} cases passed; {checks_ok}/{checks_total} checks ({pct:.0f}%)")
+    print("-" * 64, flush=True)
+    print(
+        f"{passed}/{len(results)} cases passed; {checks_ok}/{checks_total} checks ({pct:.0f}%)",
+        flush=True,
+    )
     return passed == len(results)
 
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--case", help="run only the named case")
+    ap.add_argument(
+        "--like", help="run only cases whose name contains any of these (comma-separated)"
+    )
     ap.add_argument("--strict", action="store_true", help="exit 1 unless every case passes")
     args = ap.parse_args()
 
-    cases = json.loads(CASES_FILE.read_text())
+    cases = load_cases()
     if args.case:
         cases = [c for c in cases if c["name"] == args.case]
-        if not cases:
-            print(f"no case named {args.case!r}", file=sys.stderr)
-            return 2
-    all_passed = _report(asyncio.run(_run(cases)))
+    if args.like:
+        wants = [w.strip() for w in args.like.split(",") if w.strip()]
+        cases = [c for c in cases if any(w in c["name"] for w in wants)]
+    if not cases:
+        print("no matching cases", file=sys.stderr)
+        return 2
+    results = asyncio.run(_run(cases))
+    all_passed = _report(results)
     return 0 if (all_passed or not args.strict) else 1
 
 

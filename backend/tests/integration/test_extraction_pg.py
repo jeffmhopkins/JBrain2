@@ -347,6 +347,117 @@ async def test_analyze_note_lands_everything(
     assert usage and usage[0].provider == "xai" and usage[0].model == "grok-4.3"
 
 
+async def test_ratcheted_fact_cites_a_derived_chunk_in_its_own_domain(
+    maker: async_sessionmaker[AsyncSession], tmp_path: Any
+) -> None:
+    """A health fact in a `general` note ratchets UP, so its citation must land
+    on a chunk in HEALTH, not the note's general chunk — otherwise the citation
+    crosses the firewall (docs/ANALYSIS.md "Mixed-domain notes"). The same-domain
+    job-title fact keeps citing the original note chunk. A unique entity keeps
+    the measurement from colliding with another test's reading on shared Me."""
+    person = "Quincy Vitals"
+    body = f"{person}: BP 118/76, works as a baker."
+    note_id = await make_note(maker, domain="general", body=body)
+    await ingest(maker, note_id, tmp_path)
+    payload = extraction_payload(
+        title="Checkup",
+        tags=["health", "vitals", "work"],
+        mentions=[{"name": person, "kind": "Person", "surface_text": person}],
+        facts=[
+            {
+                "predicate": "bloodPressure", "qualifier": "", "kind": "measurement",
+                "statement": "BP 118/76.",
+                "value_json": {"systolic": 118, "diastolic": 76, "unit": "mmHg"},
+                "assertion": "asserted", "entity_ref": person, "object_entity_ref": None,
+                "temporal": None, "domain": "health", "confidence": 0.9,
+            },
+            {
+                "predicate": "jobTitle", "qualifier": "", "kind": "attribute",
+                "statement": "Works as a baker.", "value_json": {"value": "baker"},
+                "assertion": "asserted", "entity_ref": person, "object_entity_ref": None,
+                "temporal": None, "domain": "general", "confidence": 0.9,
+            },
+        ],
+        temporal_tokens=[],
+    )  # fmt: skip
+    await analyzer(maker, [json.dumps(payload)]).analyze_note({"note_id": note_id})
+
+    cited = {
+        r.predicate: r
+        for r in await rows(
+            maker,
+            OWNER,
+            "SELECT f.predicate, f.domain_code AS fd, f.chunk_id::text AS cid,"
+            " c.domain_code AS cd, c.source_kind AS sk, c.source_anchor AS sa, c.text AS ctext"
+            " FROM app.facts f JOIN app.chunks c ON c.id = f.chunk_id WHERE f.note_id = :n",
+            n=note_id,
+        )
+    }
+    bp, job = cited["bloodPressure"], cited["jobTitle"]
+    # The ratcheted fact cites a derived HEALTH chunk anchored to the source.
+    assert bp.fd == "health" and bp.cd == "health" and bp.sk == "derived"
+    assert bp.ctext == body  # span text copied verbatim, offsets preserved
+    # The general fact still cites the original note chunk.
+    assert job.fd == "general" and job.cd == "general" and job.sk == "note"
+    assert bp.sa == job.cid  # derived chunk's source_anchor is the note chunk
+
+    # Firewall: the derived health chunk is invisible to a general-only scope,
+    # visible to a health one — so the citation never leaves the fact's scope.
+    assert await rows(maker, GENERAL_ONLY, "SELECT 1 FROM app.chunks WHERE id = :i", i=bp.cid) == []
+    assert (
+        len(await rows(maker, HEALTH_ONLY, "SELECT 1 FROM app.chunks WHERE id = :i", i=bp.cid)) == 1
+    )
+
+
+async def test_multiple_ratcheted_facts_share_one_derived_chunk(
+    maker: async_sessionmaker[AsyncSession], tmp_path: Any
+) -> None:
+    """Two health facts anchored to the same source chunk reuse ONE derived
+    health chunk — derivation is get-or-create per (note, domain, source)."""
+    person = "Rhea Labs"
+    note_id = await make_note(maker, domain="general", body=f"{person}: BP 121/79, glucose 96.")
+    await ingest(maker, note_id, tmp_path)
+
+    def health_fact(predicate: str, value: dict[str, Any], statement: str) -> dict[str, Any]:
+        return {
+            "predicate": predicate, "qualifier": "", "kind": "measurement",
+            "statement": statement, "value_json": value, "assertion": "asserted",
+            "entity_ref": person, "object_entity_ref": None, "temporal": None,
+            "domain": "health", "confidence": 0.9,
+        }  # fmt: skip
+
+    payload = extraction_payload(
+        title="Readings",
+        tags=["health", "vitals", "labs"],
+        mentions=[{"name": person, "kind": "Person", "surface_text": person}],
+        facts=[
+            health_fact(
+                "bloodPressure", {"systolic": 121, "diastolic": 79, "unit": "mmHg"}, "BP 121/79."
+            ),
+            health_fact("bloodGlucose", {"value": 96, "unit": "mg/dL"}, "Glucose 96."),
+        ],
+        temporal_tokens=[],
+    )
+    await analyzer(maker, [json.dumps(payload)]).analyze_note({"note_id": note_id})
+
+    derived = await rows(
+        maker,
+        OWNER,
+        "SELECT id FROM app.chunks WHERE note_id = :n AND source_kind = 'derived'"
+        " AND domain_code = 'health'",
+        n=note_id,
+    )
+    assert len(derived) == 1  # one derived chunk shared by both health facts
+    health_chunk_ids = await rows(
+        maker,
+        OWNER,
+        "SELECT DISTINCT chunk_id::text AS cid FROM app.facts"
+        " WHERE note_id = :n AND domain_code = 'health'",
+        n=note_id,
+    )
+    assert [r.cid for r in health_chunk_ids] == [str(derived[0].id)]
+
+
 async def test_backward_phrase_resolution_repaired_end_to_end(
     maker: async_sessionmaker[AsyncSession],
 ) -> None:
@@ -529,6 +640,244 @@ async def test_reanalysis_is_idempotent(
 
     assert tuple(first) == tuple(second)
     assert fact_ids_before == fact_ids_after  # upsert on the identity key, not re-insert
+
+
+async def test_self_naming_fact_aliases_owner_so_later_bare_name_links_to_me(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """ "My full name is Jeffrey Mark Hopkins" teaches the resolver an alias on
+    the owner; a SECOND note that names "Jeffrey Mark Hopkins" in the third
+    person then lands the fact on the same Me entity instead of forking a new
+    person (docs/ANALYSIS.md "Alias resolution & separation")."""
+    naming_note = await make_note(
+        maker, domain="general", body="My full name is Jeffrey Mark Hopkins."
+    )
+    naming_payload = {
+        "title": "Full name",
+        "tags": ["identity", "name", "self"],
+        "mentions": [{"name": "Me", "kind": "Person", "surface_text": "My"}],
+        "facts": [
+            {
+                "predicate": "fullName", "qualifier": "", "kind": "attribute",
+                "statement": "My full name is Jeffrey Mark Hopkins.",
+                "value_json": {"name": "Jeffrey Mark Hopkins"},
+                "assertion": "asserted", "entity_ref": "Me", "object_entity_ref": None,
+                "temporal": None, "domain": "general", "confidence": 0.97,
+            }
+        ],
+        "temporal_tokens": [],
+    }  # fmt: skip
+    await analyzer(maker, [json.dumps(naming_payload)]).analyze_note({"note_id": naming_note})
+
+    me = (await rows(maker, OWNER, "SELECT id FROM app.entities WHERE canonical_name = 'Me'"))[0]
+    aliases = {
+        a.alias_norm
+        for a in await rows(
+            maker,
+            OWNER,
+            "SELECT alias_norm FROM app.entity_aliases WHERE entity_id = :eid",
+            eid=str(me.id),
+        )
+    }
+    assert {"me", "jeffrey mark hopkins"} <= aliases
+
+    # A later, third-person note naming the owner resolves onto Me, no new row.
+    later_note = await make_note(maker, domain="general", body="Jeffrey Mark Hopkins turned 40.")
+    later_payload = {
+        "title": "Birthday",
+        "tags": ["birthday", "milestone", "age"],
+        "mentions": [
+            {
+                "name": "Jeffrey Mark Hopkins",
+                "kind": "Person",
+                "surface_text": "Jeffrey Mark Hopkins",
+            }
+        ],
+        "facts": [
+            {
+                "predicate": "age", "qualifier": "", "kind": "attribute",
+                "statement": "Jeffrey Mark Hopkins turned 40.",
+                "value_json": {"value": 40, "unit": "year"},
+                "assertion": "asserted", "entity_ref": "Jeffrey Mark Hopkins",
+                "object_entity_ref": None, "temporal": None, "domain": "general",
+                "confidence": 0.9,
+            }
+        ],
+        "temporal_tokens": [],
+    }  # fmt: skip
+    await analyzer(maker, [json.dumps(later_payload)]).analyze_note({"note_id": later_note})
+
+    # No forked entity for the declared name — the bare name resolved onto Me.
+    forked = await rows(
+        maker,
+        OWNER,
+        "SELECT 1 FROM app.entities WHERE canonical_name = 'Jeffrey Mark Hopkins'",
+    )
+    assert forked == []
+    age_fact = await rows(
+        maker,
+        OWNER,
+        "SELECT entity_id FROM app.facts WHERE predicate = 'age' AND note_id = :nid",
+        nid=later_note,
+    )
+    assert age_fact and age_fact[0].entity_id == me.id
+
+
+async def _seed_provisional_namesake(maker: async_sessionmaker[AsyncSession], name: str) -> str:
+    """A prior note that minted `name` as its own provisional person — the
+    entity a later self-naming declaration collides with. Kept on a unique
+    name so the shared graph in this non-truncating file holds exactly one."""
+    note = await make_note(maker, domain="general", body=f"{name} stopped by.")
+    payload = {
+        "title": "Visit",
+        "tags": ["visit", "social", "note"],
+        "mentions": [{"name": name, "kind": "Person", "surface_text": name}],
+        "facts": [
+            {
+                "predicate": "visited", "qualifier": "", "kind": "event",
+                "statement": f"{name} stopped by.", "value_json": None,
+                "assertion": "asserted", "entity_ref": name, "object_entity_ref": None,
+                "temporal": None, "domain": "general", "confidence": 0.9,
+            }
+        ],
+        "temporal_tokens": [],
+    }  # fmt: skip
+    await analyzer(maker, [json.dumps(payload)]).analyze_note({"note_id": note})
+    rs = await rows(maker, OWNER, "SELECT id FROM app.entities WHERE canonical_name = :n", n=name)
+    return str(rs[0].id)
+
+
+def _declaration_payload(declarer: str, full_name: str) -> dict[str, Any]:
+    """`declarer` states that their full name is `full_name` — a self-naming
+    fact on a NON-owner entity, so the test never collides on the singleton
+    Me.fullName (which would leak an attribute_collision into the shared graph)."""
+    return {
+        "title": "Full name",
+        "tags": ["identity", "name", "person"],
+        "mentions": [{"name": declarer, "kind": "Person", "surface_text": declarer}],
+        "facts": [
+            {
+                "predicate": "fullName", "qualifier": "", "kind": "attribute",
+                "statement": f"{declarer}'s full name is {full_name}.",
+                "value_json": {"name": full_name},
+                "assertion": "asserted", "entity_ref": declarer, "object_entity_ref": None,
+                "temporal": None, "domain": "general", "confidence": 0.97,
+            }
+        ],
+        "temporal_tokens": [],
+    }  # fmt: skip
+
+
+async def _open_merge_proposals(
+    maker: async_sessionmaker[AsyncSession], a: str, b: str
+) -> list[Any]:
+    return await rows(
+        maker,
+        OWNER,
+        "SELECT payload->>'entity_a' AS a, payload->>'entity_b' AS b FROM app.review_items"
+        " WHERE kind = 'merge_proposal' AND status = 'open'"
+        " AND payload->>'entity_a' IN (:x, :y) AND payload->>'entity_b' IN (:x, :y)",
+        x=a,
+        y=b,
+    )
+
+
+async def test_declared_name_collision_files_one_merge_proposal(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """When a self-naming fact's name already keys a DIFFERENT entity, the alias
+    is NOT widened across both — the collision becomes a single merge_proposal
+    (the older, more-anchored side as survivor), and re-analysis does not
+    multiply it (docs/ANALYSIS.md "Alias resolution & separation")."""
+    full_name = "Wilhelmina Garcia Okonkwo"
+    declarer = "Mina O."
+    namesake = await _seed_provisional_namesake(maker, full_name)
+    declare = await make_note(
+        maker, domain="general", body=f"{declarer}'s full name is {full_name}."
+    )
+    await analyzer(maker, [json.dumps(_declaration_payload(declarer, full_name))]).analyze_note(
+        {"note_id": declare}
+    )
+    declarer_id = str(
+        (
+            await rows(
+                maker, OWNER, "SELECT id FROM app.entities WHERE canonical_name = :n", n=declarer
+            )
+        )[0].id
+    )
+
+    proposals = await _open_merge_proposals(maker, namesake, declarer_id)
+    assert len(proposals) == 1
+    # entity_a is the survivor: the older namesake outranks the newer declarer.
+    assert proposals[0].a == namesake and proposals[0].b == declarer_id
+    # The name was NOT aliased onto the declarer — the merge decides identity.
+    declarer_aliases = {
+        r.alias_norm
+        for r in await rows(
+            maker,
+            OWNER,
+            "SELECT alias_norm FROM app.entity_aliases WHERE entity_id = :e",
+            e=declarer_id,
+        )
+    }
+    assert full_name.casefold() not in declarer_aliases
+
+    # Re-analyzing the same declaration must not file a second card.
+    await analyzer(maker, [json.dumps(_declaration_payload(declarer, full_name))]).analyze_note(
+        {"note_id": declare}
+    )
+    assert len(await _open_merge_proposals(maker, namesake, declarer_id)) == 1
+
+
+async def test_rejected_merge_is_never_re_proposed(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """A distinct_from edge (a rejected merge) is honoured: a later note
+    repeating the same self-naming collision files no new proposal."""
+    full_name = "Anselm Beauregard Fitzwilliam"
+    declarer = "Ansel B."
+    namesake = await _seed_provisional_namesake(maker, full_name)
+    first = await make_note(maker, domain="general", body=f"{declarer}'s full name is {full_name}.")
+    await analyzer(maker, [json.dumps(_declaration_payload(declarer, full_name))]).analyze_note(
+        {"note_id": first}
+    )
+    declarer_id = str(
+        (
+            await rows(
+                maker, OWNER, "SELECT id FROM app.entities WHERE canonical_name = :n", n=declarer
+            )
+        )[0].id
+    )
+    assert len(await _open_merge_proposals(maker, namesake, declarer_id)) == 1
+
+    # Simulate the human rejecting the merge: resolve the card + write the
+    # permanent distinct_from edge the reject handler would.
+    lo, hi = sorted((namesake, declarer_id))
+    async with scoped_session(maker, OWNER) as s:
+        await s.execute(
+            text(
+                "UPDATE app.review_items SET status = 'resolved', resolved_at = now()"
+                " WHERE kind = 'merge_proposal' AND status = 'open'"
+                " AND payload->>'entity_a' IN (:x, :y) AND payload->>'entity_b' IN (:x, :y)"
+            ),
+            {"x": namesake, "y": declarer_id},
+        )
+        await s.execute(
+            text(
+                "INSERT INTO app.entity_distinctions (id, entity_a, entity_b, reason, domain_code)"
+                " VALUES (gen_random_uuid(), :a, :b, 'merge rejected', 'general')"
+            ),
+            {"a": lo, "b": hi},
+        )
+
+    second = await make_note(
+        maker, domain="general", body=f"{declarer}'s full name is {full_name}."
+    )
+    await analyzer(maker, [json.dumps(_declaration_payload(declarer, full_name))]).analyze_note(
+        {"note_id": second}
+    )
+    # No new open card — the negative edge blocked the re-proposal.
+    assert await _open_merge_proposals(maker, namesake, declarer_id) == []
 
 
 async def test_reextraction_dropping_a_relationship_retracts_its_inverse(
@@ -1420,3 +1769,33 @@ async def test_conflict_resolution_cascades_to_derived_shadows(
     await repo.reopen_review(OWNER, items[0].id)
     assert (await rows(maker, OWNER, shadow_status_sql("Aldous")))[0].status == "superseded"
     assert (await rows(maker, OWNER, shadow_status_sql("Bettina")))[0].status == "active"
+
+
+async def test_domain_floor_raises_clinical_fact_in_general_note(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """Firewall hardening: a bloodPressure fact the model mislabeled `general`
+    is floored to health by the deterministic predicate->domain map, so it lands
+    behind the health RLS policy regardless of the model's per-fact judgment."""
+    note_id = await make_note(maker, domain="general", body="BP was 120/80 this morning.")
+    payload = {
+        "title": "BP", "tags": ["bp", "reading", "vitals"],
+        "mentions": [{"name": "Me", "kind": "Person", "surface_text": "BP"}],
+        "facts": [
+            {
+                "predicate": "bloodPressure", "qualifier": "", "kind": "measurement",
+                "statement": "BP was 120/80.", "value_json": {"systolic": 120, "diastolic": 80},
+                "assertion": "asserted", "entity_ref": "Me", "object_entity_ref": None,
+                "temporal": None, "domain": "general", "confidence": 0.9,  # model mislabels it
+            }
+        ],
+        "temporal_tokens": [],
+    }  # fmt: skip
+    await analyzer(maker, [json.dumps(payload)]).analyze_note({"note_id": note_id})
+    facts = await rows(
+        maker,
+        OWNER,
+        "SELECT domain_code FROM app.facts WHERE note_id = :nid AND predicate = 'bloodPressure'",
+        nid=note_id,
+    )
+    assert len(facts) == 1 and facts[0].domain_code == "health"

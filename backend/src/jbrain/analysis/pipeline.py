@@ -8,10 +8,11 @@ failed run never partial-writes facts, and re-analysis is idempotent: facts
 upsert on the structural identity key, mentions rebuild wholesale (the chunks
 pattern), tokens are reused by (phrase, resolved value).
 
-TODO(analysis): mixed-domain notes should also derive per-domain chunks so a
-citation never crosses the firewall (docs/ANALYSIS.md "Mixed-domain notes");
-until then a ratcheted fact may cite a chunk in the note's capture domain,
-which RLS simply hides from narrower scopes.
+A note is captured in one domain, but a fact may ratchet UP (a health reading
+in a `general` note). Its citation must not point at a chunk the fact's own RLS
+scope cannot see, so `_citation_chunk` derives a per-domain copy of the cited
+chunk in the fact's domain — a citation never crosses the firewall
+(docs/ANALYSIS.md "Mixed-domain notes").
 """
 
 import uuid
@@ -29,6 +30,7 @@ from jbrain.analysis.display import (
     ambiguous_display,
     collision_display,
     mark_snippet,
+    merge_display,
     promotion_display,
     value_label,
 )
@@ -40,15 +42,21 @@ from jbrain.analysis.entities import (
     AmbiguousEntity,
     NeedsDisambiguation,
     ResolvedEntity,
+    alias_owner,
+    are_distinct,
     build_disambiguation_prompt,
     create_provisional,
+    declared_alias,
     parse_disambiguation,
+    plan_merge,
+    register_declared_alias,
     resolve_entity,
 )
 from jbrain.analysis.extraction import (
     ExtractedFact,
     Extraction,
     ExtractionError,
+    domain_floor,
     normalize_future_assertion,
     parse_extraction,
     ratchet_domain,
@@ -267,6 +275,10 @@ class AnalysisPipeline:
             if fact_id is not None:
                 touched.add(fact_id)
             await session.flush()
+
+        await self._register_declared_aliases(
+            session, extraction, resolved, note_id, note_domain, chunks
+        )
 
         # Identity keys this note no longer asserts were removed by the edit:
         # retract quietly — not a conflict, no inbox noise. Pinned facts are
@@ -609,6 +621,91 @@ class AnalysisPipeline:
             )
         return anchor_for
 
+    async def _register_declared_aliases(
+        self,
+        session: AsyncSession,
+        extraction: Extraction,
+        resolved: dict[str, ResolvedEntity | None],
+        note_id: uuid.UUID,
+        note_domain: str,
+        chunks: list[_ChunkRef],
+    ) -> None:
+        """A self-naming fact ("my full name is Jeffrey Mark Hopkins") teaches
+        the resolver an exact alias, so a later bare "Jeffrey Mark Hopkins"
+        lands on Me instead of forking a new entity. ASSERTED facts only — a
+        reported, negated, hypothetical, or questioned name is not a
+        declaration. When the declared name already keys a DIFFERENT entity the
+        alias is NOT widened across both (the wrong silent link); that collision
+        is instead surfaced as a merge_proposal — the one high-confidence
+        same-person signal worth auto-suggesting (docs/ANALYSIS.md "Alias
+        resolution & separation")."""
+        for fact in extraction.facts:
+            if fact.assertion != "asserted":
+                continue
+            name = declared_alias(fact.predicate, fact.value_json)
+            entity = resolved.get(fact.entity_ref) if name is not None else None
+            if name is None or entity is None:
+                continue
+            added = await register_declared_alias(session, entity.id, name)
+            if added is not None:
+                log.info("analysis.alias_declared", entity_id=str(entity.id), alias=added)
+                continue
+            other = await alias_owner(session, name, exclude=entity.id)
+            if other is not None:
+                await self._propose_merge(
+                    session, entity.id, other, name, note_id, note_domain, chunks
+                )
+
+    async def _propose_merge(
+        self,
+        session: AsyncSession,
+        a: uuid.UUID,
+        b: uuid.UUID,
+        name: str,
+        note_id: uuid.UUID,
+        note_domain: str,
+        chunks: list[_ChunkRef],
+    ) -> None:
+        """File a merge_proposal for two entities a self-naming fact tied to the
+        same name. Honours the permanent distinct_from edge (a rejected merge is
+        never re-proposed) and dedupes open cards across re-analysis. Direction
+        comes from plan_merge so the owner / confirmed side always survives."""
+        if await are_distinct(session, a, b):
+            return
+        plan = await plan_merge(session, a, b)
+        # entity_a is the survivor, entity_b the tombstoned side — the merge
+        # handler reads exactly this direction. Dedup is direction-agnostic: one
+        # open card per unordered pair, however the next note phrases it.
+        keep, gone = str(plan.keep_id), str(plan.gone_id)
+        existing = (
+            await session.execute(
+                text(
+                    "SELECT 1 FROM app.review_items WHERE kind = 'merge_proposal'"
+                    " AND status = 'open' AND payload->>'entity_a' IN (:x, :y)"
+                    " AND payload->>'entity_b' IN (:x, :y) LIMIT 1"
+                ),
+                {"x": keep, "y": gone},
+            )
+        ).first()
+        if existing is not None:
+            return
+        snippet = _cite(_locate(name, chunks), chunks)
+        session.add(
+            ReviewItem(
+                kind="merge_proposal",
+                payload={
+                    "entity_a": keep,
+                    "entity_b": gone,
+                    "note_id": str(note_id),
+                    **merge_display(
+                        keep_name=plan.keep_name, gone_name=plan.gone_name, snippet=snippet
+                    ),
+                },
+                domain_code=note_domain,
+            )
+        )
+        log.info("analysis.merge_proposed", keep=str(plan.keep_id), gone=str(plan.gone_id))
+
     async def _upsert_tokens(
         self,
         session: AsyncSession,
@@ -743,6 +840,51 @@ class AnalysisPipeline:
             for f in rows
         ]
 
+    async def _citation_chunk(
+        self,
+        session: AsyncSession,
+        *,
+        source_chunk_id: uuid.UUID | None,
+        fact_domain: str,
+        note_domain: str,
+        note_id: uuid.UUID,
+    ) -> uuid.UUID | None:
+        """The chunk a fact in `fact_domain` may cite without crossing the
+        firewall. A note's chunks all carry its capture domain, so a ratcheted
+        fact (a health reading in a `general` note) would otherwise cite a chunk
+        its own RLS scope cannot see. Derive a get-or-create `derived` copy of
+        the source chunk in the fact's domain and cite that instead — the
+        citation never leaves the fact's scope (docs/ANALYSIS.md "Mixed-domain
+        notes"). A same-domain fact cites the source chunk directly."""
+        if source_chunk_id is None or fact_domain == note_domain:
+            return source_chunk_id
+        src = str(source_chunk_id)
+        existing = (
+            await session.execute(
+                text(
+                    "SELECT id FROM app.chunks WHERE note_id = :n AND domain_code = :d"
+                    " AND source_kind = 'derived' AND source_anchor = :src LIMIT 1"
+                ),
+                {"n": str(note_id), "d": fact_domain, "src": src},
+            )
+        ).first()
+        if existing is not None:
+            return existing.id
+        new_id = uuid.uuid4()
+        # Copy the span verbatim (same char offsets, same text) so the stored
+        # fact anchor still marks the right snippet; only the domain changes.
+        # No embedding: derived chunks are citation backing, not search rows.
+        await session.execute(
+            text(
+                "INSERT INTO app.chunks (id, note_id, domain_code, granularity, seq,"
+                " char_start, char_end, source_kind, source_anchor, text)"
+                " SELECT :new, note_id, :d, granularity, seq, char_start, char_end,"
+                " 'derived', :anchor, text FROM app.chunks WHERE id = :src_id"
+            ),
+            {"new": str(new_id), "d": fact_domain, "anchor": src, "src_id": src},
+        )
+        return new_id
+
     async def _upsert_fact(
         self,
         session: AsyncSession,
@@ -775,7 +917,14 @@ class AnalysisPipeline:
                 )
                 return None
 
-        fact_domain, needs_promotion = ratchet_domain(fact.domain or note_domain, note_domain)
+        # Deterministic floor first: a clearly-sensitive predicate raises a
+        # general/unclassified fact into its restricted domain (firewall
+        # hardening), then the asymmetric ratchet applies as usual.
+        extracted_domain = fact.domain or note_domain
+        floor = domain_floor(fact.predicate)
+        if floor is not None and extracted_domain == "general":
+            extracted_domain = floor
+        fact_domain, needs_promotion = ratchet_domain(extracted_domain, note_domain)
 
         valid_from = valid_to = None
         precision = "unknown"
@@ -866,15 +1015,29 @@ class AnalysisPipeline:
             refreshed = next((e for e in existing if e.id == decision.refresh_id), None)
             if refreshed is not None and refreshed.derived:
                 anchor = anchor_for.get(fact.entity_ref)
+                base_chunk = anchor[0] if anchor else (chunks[0].id if chunks else None)
                 values["derived_from_fact_id"] = None
                 values["note_id"] = note_id
-                values["chunk_id"] = anchor[0] if anchor else (chunks[0].id if chunks else None)
+                values["chunk_id"] = await self._citation_chunk(
+                    session,
+                    source_chunk_id=base_chunk,
+                    fact_domain=fact_domain,
+                    note_domain=note_domain,
+                    note_id=note_id,
+                )
             await session.execute(update(Fact).where(Fact.id == fact_id).values(values))
             await self._update_shadows_in_place(session, source_id=fact_id)
             return fact_id
 
         anchor = anchor_for.get(fact.entity_ref)
-        chunk_id = anchor[0] if anchor else (chunks[0].id if chunks else None)
+        base_chunk = anchor[0] if anchor else (chunks[0].id if chunks else None)
+        chunk_id = await self._citation_chunk(
+            session,
+            source_chunk_id=base_chunk,
+            fact_domain=fact_domain,
+            note_domain=note_domain,
+            note_id=note_id,
+        )
         # Explicit id: read below before flush would otherwise be None
         # (the ORM default fires at flush time).
         new_fact = Fact(

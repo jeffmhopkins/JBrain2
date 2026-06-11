@@ -2,10 +2,10 @@
 green prompt-eval run actually means what it says. The live run itself
 (evals.run against a real provider) is opt-in and never part of CI."""
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta, timezone
 from typing import Any
 
-from evals.run import _overlaps, _score
+from evals.run import _overlaps, _score, load_cases
 
 from jbrain.analysis.extraction import (
     ExtractedFact,
@@ -42,12 +42,16 @@ def test_overlaps_tolerates_first_name_vs_full_name() -> None:
     assert not _overlaps("", "Jeff")
 
 
+# A UTC anchor, so a UTC instant's local date equals its UTC calendar date.
+_A = datetime(2026, 6, 11, 12, tzinfo=UTC)
+
+
 def test_score_person_recall_passes_and_fails() -> None:
     case: dict[str, Any] = {"name": "m", "expect": {"person_mentions": ["Jeff", "Celine Hopkins"]}}
-    ok = _score(case, _extraction([_mention("Jeff"), _mention("Celine Hopkins")]))
+    ok = _score(case, _extraction([_mention("Jeff"), _mention("Celine Hopkins")]), _A)
     assert ok.passed
     # Dropping the object person (the actual lapse) fails the case.
-    missed = _score(case, _extraction([_mention("Jeff")]))
+    missed = _score(case, _extraction([_mention("Jeff")]), _A)
     assert not missed.passed
     assert any(label == "person:Celine Hopkins" and not ok_ for label, ok_, _ in missed.checks)
 
@@ -57,14 +61,14 @@ def test_score_edge_matches_on_object_entity_ref() -> None:
         "name": "e",
         "expect": {"edges": [{"predicate": "spouse", "object": "Celine"}]},
     }
-    ok = _score(case, _extraction([_mention("Jeff")], [_edge("spouse", "Celine Hopkins")]))
+    ok = _score(case, _extraction([_mention("Jeff")], [_edge("spouse", "Celine Hopkins")]), _A)
     assert ok.passed
     # A bare fact with no object_entity_ref (object left in the statement) fails.
-    bare = _score(case, _extraction([_mention("Jeff")], [_edge("spouse", "")]))
+    bare = _score(case, _extraction([_mention("Jeff")], [_edge("spouse", "")]), _A)
     assert not bare.passed
 
 
-def test_score_temporal_checks_resolved_date_on_fact_or_token() -> None:
+def test_score_temporal_uses_local_date_for_fact_or_token() -> None:
     case: dict[str, Any] = {
         "name": "t",
         "expect": {"temporal": [{"phrase": "last night", "resolved_date": "2026-06-10"}]},
@@ -74,10 +78,124 @@ def test_score_temporal_checks_resolved_date_on_fact_or_token() -> None:
         resolved_start=datetime(2026, 6, 10, 22, tzinfo=UTC), resolved_end=None,
         precision="day", rrule=None,
     )  # fmt: skip
-    assert _score(case, _extraction([], [], [tok])).passed
+    assert _score(case, _extraction([], [], [tok]), _A).passed
     wrong = ExtractedToken(
         phrase="last night", kind="point",
         resolved_start=datetime(2026, 6, 11, 22, tzinfo=UTC), resolved_end=None,
         precision="day", rrule=None,
     )  # fmt: skip
-    assert not _score(case, _extraction([], [], [wrong])).passed
+    assert not _score(case, _extraction([], [], [wrong]), _A).passed
+    # The midnight-UTC case the live eval mis-scored: Jun 5 00:00Z is Jun 4 at
+    # -06:00, so against a -06:00 anchor it reads as the correct local day.
+    mst = ExtractedToken(
+        phrase="a week ago", kind="point",
+        resolved_start=datetime(2026, 6, 5, 0, tzinfo=UTC), resolved_end=None,
+        precision="day", rrule=None,
+    )  # fmt: skip
+    case_wk: dict[str, Any] = {
+        "name": "w",
+        "expect": {"temporal": [{"phrase": "a week ago", "resolved_date": "2026-06-04"}]},
+    }
+    anchor_mst = datetime(2026, 6, 11, 8, 30, tzinfo=timezone(timedelta(minutes=-360)))
+    assert _score(case_wk, _extraction([], [], [mst]), anchor_mst).passed
+
+
+def test_eval_cases_are_wellformed() -> None:
+    # Guards against a malformed agent-authored case slipping into the set: every
+    # case loads, names are unique, created_at parses with an offset, and only
+    # known expect keys are used (a typo'd key would silently never be checked).
+    cases = load_cases()
+    assert cases
+    names = [c["name"] for c in cases]
+    assert len(names) == len(set(names)), "duplicate eval case names"
+    valid_expect = {
+        "person_mentions", "mentions", "mention_kind", "absent_person",
+        "not_person", "edges", "temporal", "value", "domain",
+    }  # fmt: skip
+    domains = {"general", "health", "finance", "location"}
+    for c in cases:
+        assert c["name"] and c["body"], c
+        assert datetime.fromisoformat(c["created_at"]).utcoffset() is not None, c["name"]
+        assert set(c.get("expect", {})) <= valid_expect, c["name"]
+        for edge in c.get("expect", {}).get("edges", []):
+            assert "object" in edge, c["name"]
+        for tt in c.get("expect", {}).get("temporal", []):
+            assert {"phrase", "resolved_date"} <= set(tt), c["name"]
+        for mk in c.get("expect", {}).get("mention_kind", []):
+            assert mk.get("name") and isinstance(mk.get("kind"), list) and mk["kind"], c["name"]
+        for v in c.get("expect", {}).get("value", []):
+            assert "contains" in v, c["name"]
+        assert set(c.get("expect", {}).get("domain", [])) <= domains, c["name"]
+
+
+def test_score_not_person_allows_nonperson_mention_but_flags_person() -> None:
+    # Over-personification check: a Product/Place/Animal mention is fine, the
+    # SAME token typed as a Person is the failure (and absence is fine too).
+    case: dict[str, Any] = {"name": "np", "expect": {"not_person": ["Tesla"]}}
+    product = ExtractedMention(name="Tesla", kind="Product", surface_text="Tesla")
+    assert _score(case, _extraction([product]), _A).passed
+    assert _score(case, _extraction([]), _A).passed
+    person = ExtractedMention(name="Tesla", kind="Person", surface_text="Tesla")
+    assert not _score(case, _extraction([person]), _A).passed
+
+
+def test_score_mentions_and_mention_kind() -> None:
+    org = ExtractedMention(name="Globex Corporation", kind="Organization", surface_text="Globex")
+    # Presence by name (any kind).
+    assert _score({"name": "m", "expect": {"mentions": ["Globex"]}}, _extraction([org]), _A).passed
+    assert not _score({"name": "m", "expect": {"mentions": ["Globex"]}}, _extraction([]), _A).passed
+    # Present AND within an allowed kind family (case-insensitive, generous set).
+    kind_case: dict[str, Any] = {
+        "name": "k",
+        "expect": {"mention_kind": [{"name": "Globex", "kind": ["Organization", "Corporation"]}]},
+    }
+    assert _score(kind_case, _extraction([org]), _A).passed
+    wrong = ExtractedMention(name="Globex", kind="Person", surface_text="Globex")
+    assert not _score(kind_case, _extraction([wrong]), _A).passed
+
+
+def test_score_value_matches_measurement_in_fact() -> None:
+    fact = ExtractedFact(
+        predicate="weight", qualifier="", kind="measurement",
+        statement="Weight was 182 lb.", value_json={"value": 182, "unit": "lb"},
+        assertion="asserted", entity_ref="Me", object_entity_ref=None, temporal=None,
+        domain="health", confidence=0.9,
+    )  # fmt: skip
+    case: dict[str, Any] = {
+        "name": "v",
+        "expect": {"value": [{"predicate": "weight", "contains": "182"}]},
+    }
+    assert _score(case, _extraction([], [fact]), _A).passed
+    # Wrong predicate or missing value fails.
+    assert not _score(
+        {"name": "v", "expect": {"value": [{"predicate": "height", "contains": "182"}]}},
+        _extraction([], [fact]),
+        _A,
+    ).passed
+    assert not _score(case, _extraction([]), _A).passed
+
+
+def test_eval_cases_pass_audit() -> None:
+    # The offline pre-flight (evals.audit) is enforced here so a new/edited case
+    # whose asserted name/number/phrase isn't in its body — or whose closed-set
+    # temporal date is off — fails CI before anyone spends a live model call.
+    from evals.audit import audit_cases
+
+    assert audit_cases(load_cases()) == []
+
+
+def test_score_domain_checks_per_fact_classification() -> None:
+    health_fact = ExtractedFact(
+        predicate="bloodPressure", qualifier="", kind="measurement",
+        statement="BP 120/80.", value_json={"value": "120/80"}, assertion="asserted",
+        entity_ref="Me", object_entity_ref=None, temporal=None, domain="health", confidence=0.9,
+    )  # fmt: skip
+    case: dict[str, Any] = {"name": "d", "expect": {"domain": ["health"]}}
+    assert _score(case, _extraction([], [health_fact]), _A).passed
+    # A fact the model left general fails the health-domain check.
+    general = ExtractedFact(
+        predicate="bloodPressure", qualifier="", kind="measurement", statement="BP 120/80.",
+        value_json=None, assertion="asserted", entity_ref="Me", object_entity_ref=None,
+        temporal=None, domain="general", confidence=0.9,
+    )  # fmt: skip
+    assert not _score(case, _extraction([], [general]), _A).passed

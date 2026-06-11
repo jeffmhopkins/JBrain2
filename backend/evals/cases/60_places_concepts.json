@@ -1,0 +1,576 @@
+[
+  {
+    "name": "plc_city_simple_extraction",
+    "body": "Flying to Denver next Tuesday for the conference. Haven't been since 2019.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "mentions": [
+        "Denver"
+      ],
+      "mention_kind": [
+        {
+          "name": "Denver",
+          "kind": [
+            "Place",
+            "City",
+            "AdministrativeArea"
+          ]
+        }
+      ],
+      "not_person": [
+        "Denver"
+      ]
+    }
+  },
+  {
+    "name": "plc_country_extraction",
+    "body": "Spent three weeks traveling through Japan in April. Kyoto was the highlight.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "mentions": [
+        "Japan",
+        "Kyoto"
+      ],
+      "mention_kind": [
+        {
+          "name": "Japan",
+          "kind": [
+            "Place",
+            "Country",
+            "AdministrativeArea"
+          ]
+        },
+        {
+          "name": "Kyoto",
+          "kind": [
+            "Place",
+            "City",
+            "AdministrativeArea"
+          ]
+        }
+      ],
+      "not_person": [
+        "Japan",
+        "Kyoto"
+      ]
+    }
+  },
+  {
+    "name": "plc_state_province_extraction",
+    "body": "Thinking about relocating to Vermont. The cost of living is better and I love the fall foliage.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "mentions": [
+        "Vermont"
+      ],
+      "mention_kind": [
+        {
+          "name": "Vermont",
+          "kind": [
+            "Place",
+            "AdministrativeArea",
+            "State"
+          ]
+        }
+      ],
+      "not_person": [
+        "Vermont"
+      ]
+    }
+  },
+  {
+    "name": "plc_venue_named_theater",
+    "body": "Saw Wilco at the Riviera Theatre on Saturday. Amazing set \u2014 played for almost three hours.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "mentions": [
+        "Riviera Theatre"
+      ],
+      "mention_kind": [
+        {
+          "name": "Riviera Theatre",
+          "kind": [
+            "Place",
+            "LandmarksOrHistoricalBuildings",
+            "CivicStructure",
+            "EventVenue",
+            "PerformingArtsTheater"
+          ]
+        }
+      ],
+      "not_person": [
+        "Riviera Theatre"
+      ]
+    }
+  },
+  {
+    "name": "plc_natural_feature_lake",
+    "body": "Rented a cabin near Lake Tahoe for the long weekend. Water was freezing but worth it.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "mentions": [
+        "Lake Tahoe"
+      ],
+      "mention_kind": [
+        {
+          "name": "Lake Tahoe",
+          "kind": [
+            "Place",
+            "LakeBodyOfWater",
+            "BodyOfWater"
+          ]
+        }
+      ],
+      "not_person": [
+        "Lake Tahoe"
+      ]
+    }
+  },
+  {
+    "name": "plc_neighborhood_extraction",
+    "body": "Found a great ramen spot in Wicker Park last night. The neighborhood has really changed in ten years.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "mentions": [
+        "Wicker Park"
+      ],
+      "mention_kind": [
+        {
+          "name": "Wicker Park",
+          "kind": [
+            "Place",
+            "Neighborhood",
+            "AdministrativeArea"
+          ]
+        }
+      ],
+      "not_person": [
+        "Wicker Park"
+      ]
+    }
+  },
+  {
+    "name": "plc_street_address_extraction",
+    "body": "The new office is at 1455 Market Street, San Francisco. Starting there Monday.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "mentions": [
+        "San Francisco"
+      ],
+      "not_person": [
+        "San Francisco"
+      ]
+    }
+  },
+  {
+    "name": "plc_landmark_hospital_edge",
+    "body": "Marcus just started his residency at the Mayo Clinic. He's been working toward that for years.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "mentions": [
+        "Marcus",
+        "Mayo Clinic"
+      ],
+      "not_person": [
+        "Mayo Clinic"
+      ],
+      "edges": [
+        {
+          "predicate": "worksFor",
+          "object": "Mayo Clinic"
+        }
+      ]
+    }
+  },
+  {
+    "name": "plc_business_as_place_coffee_shop",
+    "body": "Met Priya at Intelligentsia Coffee in the West Loop. She had good news about the funding round.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "mentions": [
+        "Priya",
+        "Intelligentsia Coffee"
+      ],
+      "not_person": [
+        "Intelligentsia Coffee"
+      ]
+    }
+  },
+  {
+    "name": "plc_place_as_meeting_location_edge",
+    "body": "The city council vote is scheduled for Tuesday at Town Hall. Dana is presenting the proposal.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "mentions": [
+        "Town Hall",
+        "Dana"
+      ],
+      "not_person": [
+        "Town Hall"
+      ]
+    }
+  },
+  {
+    "name": "plc_worksAt_place_hospital",
+    "body": "Dr. Okeke works at Northwestern Memorial Hospital downtown.",
+    "domain": "health",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "mentions": [
+        "Dr. Okeke",
+        "Northwestern Memorial Hospital"
+      ],
+      "not_person": [
+        "Northwestern Memorial Hospital"
+      ],
+      "edges": [
+        {
+          "predicate": "worksFor",
+          "object": "Northwestern Memorial"
+        }
+      ]
+    }
+  },
+  {
+    "name": "plc_place_name_looks_like_person_madison",
+    "body": "The drive through Madison was gorgeous \u2014 I forgot how pretty that city is in spring.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "mentions": [
+        "Madison"
+      ],
+      "mention_kind": [
+        {
+          "name": "Madison",
+          "kind": [
+            "Place",
+            "City",
+            "AdministrativeArea"
+          ]
+        }
+      ],
+      "not_person": [
+        "Madison"
+      ]
+    }
+  },
+  {
+    "name": "plc_place_name_looks_like_person_austin",
+    "body": "We're seriously considering Austin for the expansion \u2014 the tech scene there has exploded.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "mentions": [
+        "Austin"
+      ],
+      "mention_kind": [
+        {
+          "name": "Austin",
+          "kind": [
+            "Place",
+            "City",
+            "AdministrativeArea"
+          ]
+        }
+      ],
+      "not_person": [
+        "Austin"
+      ]
+    }
+  },
+  {
+    "name": "plc_place_name_looks_like_person_savannah",
+    "body": "Spent a long weekend in Savannah. The historic district is stunning.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "mentions": [
+        "Savannah"
+      ],
+      "mention_kind": [
+        {
+          "name": "Savannah",
+          "kind": [
+            "Place",
+            "City",
+            "AdministrativeArea"
+          ]
+        }
+      ],
+      "not_person": [
+        "Savannah"
+      ]
+    }
+  },
+  {
+    "name": "plc_place_name_looks_like_person_florence",
+    "body": "The art history tour spent four days in Florence. The Uffizi alone was worth the trip.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "mentions": [
+        "Florence"
+      ],
+      "mention_kind": [
+        {
+          "name": "Florence",
+          "kind": [
+            "Place",
+            "City",
+            "AdministrativeArea"
+          ]
+        }
+      ],
+      "not_person": [
+        "Florence"
+      ]
+    }
+  },
+  {
+    "name": "plc_place_name_looks_like_person_sydney",
+    "body": "Nadia's company is opening an office in Sydney next quarter.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "mentions": [
+        "Nadia",
+        "Sydney"
+      ],
+      "mention_kind": [
+        {
+          "name": "Sydney",
+          "kind": [
+            "Place",
+            "City",
+            "AdministrativeArea"
+          ]
+        }
+      ],
+      "not_person": [
+        "Sydney"
+      ]
+    }
+  },
+  {
+    "name": "plc_place_name_looks_like_person_brooklyn",
+    "body": "Moved to Brooklyn two years ago. Can't imagine living anywhere else in New York.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "mentions": [
+        "Brooklyn"
+      ],
+      "mention_kind": [
+        {
+          "name": "Brooklyn",
+          "kind": [
+            "Place",
+            "Neighborhood",
+            "City",
+            "AdministrativeArea"
+          ]
+        }
+      ],
+      "not_person": [
+        "Brooklyn"
+      ]
+    }
+  },
+  {
+    "name": "plc_named_project_concept",
+    "body": "Finally got sign-off on Project Atlas today. Kicks off in July and runs through Q4.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "mentions": [
+        "Project Atlas"
+      ],
+      "not_person": [
+        "Project Atlas"
+      ]
+    }
+  },
+  {
+    "name": "plc_named_event_wedding",
+    "body": "The Hopkins wedding is in October \u2014 we need to book flights soon or the prices will go through the roof.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "mentions": [
+        "Hopkins wedding"
+      ],
+      "not_person": [
+        "Hopkins wedding"
+      ]
+    }
+  },
+  {
+    "name": "plc_named_event_summit",
+    "body": "Applied to present at the 2026 Climate Summit in Geneva. Should hear back by end of month.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "mentions": [
+        "2026 Climate Summit",
+        "Geneva"
+      ],
+      "not_person": [
+        "2026 Climate Summit",
+        "Geneva"
+      ]
+    }
+  },
+  {
+    "name": "plc_medical_condition_named_health",
+    "body": "The endocrinologist confirmed Type 2 diabetes today. Starting metformin and making diet changes.",
+    "domain": "health",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "mentions": [
+        "Type 2 diabetes"
+      ],
+      "not_person": [
+        "Type 2 diabetes"
+      ]
+    }
+  },
+  {
+    "name": "plc_named_law_policy",
+    "body": "The CHIPS Act funding is finally flowing to fabs in Ohio and Arizona. About time.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "mentions": [
+        "CHIPS Act"
+      ],
+      "not_person": [
+        "CHIPS Act"
+      ]
+    }
+  },
+  {
+    "name": "plc_holiday_named_concept",
+    "body": "Hosting Thanksgiving at our place this year for the first time. Twelve people, two turkeys.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "not_person": [
+        "Thanksgiving"
+      ]
+    }
+  },
+  {
+    "name": "plc_named_course_academic",
+    "body": "Struggling with Bio 201 this semester. The lab reports are brutal but the material is fascinating.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "mentions": [
+        "Bio 201"
+      ],
+      "not_person": [
+        "Bio 201"
+      ]
+    }
+  },
+  {
+    "name": "plc_named_product_line",
+    "body": "Switched the whole studio over to the M-Series Mac minis. The performance per dollar is unreal.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "mentions": [
+        "Mac mini"
+      ],
+      "not_person": [
+        "M-Series"
+      ]
+    }
+  },
+  {
+    "name": "plc_place_and_concept_same_note",
+    "body": "The 2026 Climate Summit is being held in Geneva at the Palais des Nations. Tickets are surprisingly easy to get.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "mentions": [
+        "2026 Climate Summit",
+        "Geneva",
+        "Palais des Nations"
+      ],
+      "not_person": [
+        "2026 Climate Summit",
+        "Geneva",
+        "Palais des Nations"
+      ]
+    }
+  },
+  {
+    "name": "plc_multi_cities_person_disambiguation",
+    "body": "Fatima is relocating from Austin to Portland. Her partner Jordan is already there \u2014 started work at Intel's Hillsboro campus last month.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "mentions": [
+        "Fatima",
+        "Austin",
+        "Portland",
+        "Jordan",
+        "Intel"
+      ],
+      "not_person": [
+        "Austin",
+        "Portland"
+      ],
+      "edges": [
+        {
+          "predicate": "worksFor",
+          "object": "Intel"
+        }
+      ]
+    }
+  },
+  {
+    "name": "plc_medical_condition_with_place_edge",
+    "body": "Referred to the Cleveland Clinic's cardiology department for the atrial fibrillation follow-up.",
+    "domain": "health",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "mentions": [
+        "Cleveland Clinic",
+        "atrial fibrillation"
+      ],
+      "not_person": [
+        "Cleveland Clinic"
+      ]
+    }
+  },
+  {
+    "name": "plc_named_project_and_event_dense",
+    "body": "Project Atlas hits its first milestone at the Q3 all-hands next Friday. Keiko is presenting the roadmap. Venue is the Mercer Hotel ballroom.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "mentions": [
+        "Project Atlas",
+        "Keiko",
+        "Mercer Hotel"
+      ],
+      "not_person": [
+        "Project Atlas",
+        "Mercer Hotel"
+      ]
+    }
+  }
+]

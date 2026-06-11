@@ -1,0 +1,645 @@
+[
+  {
+    "name": "rel_spouse_third_person_simple",
+    "body": "Nadia and her husband Tomasz moved to Portland last year.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "person_mentions": [
+        "Nadia",
+        "Tomasz"
+      ],
+      "edges": [
+        {
+          "predicate": "spouse",
+          "object": "Tomasz"
+        }
+      ]
+    }
+  },
+  {
+    "name": "rel_spouse_first_person_appositive",
+    "body": "Ran errands with my wife, Renata Kwon, this morning.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "person_mentions": [
+        "Renata Kwon"
+      ],
+      "edges": [
+        {
+          "predicate": "spouse",
+          "object": "Renata"
+        }
+      ]
+    }
+  },
+  {
+    "name": "rel_sibling_symmetric_first_person",
+    "body": "My brother Eli called me from Seoul \u2014 he just landed a new job.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "person_mentions": [
+        "Eli"
+      ],
+      "edges": [
+        {
+          "predicate": "sibling",
+          "object": "Eli"
+        }
+      ]
+    }
+  },
+  {
+    "name": "rel_sibling_symmetric_third_person",
+    "body": "Camille and her sister Odette share a studio in Montr\u00e9al.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "person_mentions": [
+        "Camille",
+        "Odette"
+      ],
+      "edges": [
+        {
+          "predicate": "sibling",
+          "object": "Odette"
+        }
+      ]
+    }
+  },
+  {
+    "name": "rel_cousin_symmetric",
+    "body": "Spent the afternoon with my cousin Dara Osei; she's visiting from Accra.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "person_mentions": [
+        "Dara Osei"
+      ],
+      "edges": [
+        {
+          "predicate": "cousin",
+          "object": "Dara"
+        }
+      ]
+    }
+  },
+  {
+    "name": "rel_friend_symmetric",
+    "body": "My close friend Yusuf Tanaka is throwing a party next weekend.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "person_mentions": [
+        "Yusuf Tanaka"
+      ],
+      "edges": [
+        {
+          "predicate": "friend",
+          "object": "Yusuf"
+        }
+      ]
+    }
+  },
+  {
+    "name": "rel_cofounder_symmetric_org_object",
+    "body": "Ingrid Solberg and her co-founder Matteo Ricci launched Novu Systems together.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "person_mentions": [
+        "Ingrid Solberg",
+        "Matteo Ricci",
+        "Novu Systems"
+      ],
+      "edges": [
+        {
+          "predicate": "co_founder",
+          "object": "Matteo"
+        },
+        {
+          "predicate": "co_founder",
+          "object": "Novu"
+        }
+      ]
+    }
+  },
+  {
+    "name": "rel_business_partner_symmetric",
+    "body": "Felix and his business partner Amara Diallo run a logistics firm in Nairobi.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "person_mentions": [
+        "Felix",
+        "Amara Diallo"
+      ],
+      "edges": [
+        {
+          "predicate": "business_partner",
+          "object": "Amara"
+        }
+      ]
+    }
+  },
+  {
+    "name": "rel_bandmate_symmetric",
+    "body": "Caught up with Juno Park today; he's been my bandmate for six years.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "person_mentions": [
+        "Juno Park"
+      ],
+      "edges": [
+        {
+          "predicate": "bandmate",
+          "object": "Juno"
+        }
+      ]
+    }
+  },
+  {
+    "name": "rel_neighbor_symmetric",
+    "body": "My neighbor Bette S\u00f8rensen brought over some leftovers last night.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "person_mentions": [
+        "Bette S\u00f8rensen"
+      ],
+      "edges": [
+        {
+          "predicate": "neighbor",
+          "object": "Bette"
+        }
+      ]
+    }
+  },
+  {
+    "name": "rel_parent_child_asymmetric",
+    "body": "Victor Lam is the father of twins: Sofia and Marco.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "person_mentions": [
+        "Victor Lam",
+        "Sofia",
+        "Marco"
+      ],
+      "edges": [
+        {
+          "predicate": "parent_of",
+          "object": "Sofia"
+        },
+        {
+          "predicate": "parent_of",
+          "object": "Marco"
+        }
+      ]
+    }
+  },
+  {
+    "name": "rel_child_of_first_person",
+    "body": "My mom, Esperanza Ruiz, retired from the hospital after 30 years.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "person_mentions": [
+        "Esperanza Ruiz"
+      ],
+      "edges": [
+        {
+          "predicate": "child_of",
+          "object": "Esperanza"
+        }
+      ]
+    }
+  },
+  {
+    "name": "rel_works_for_org_object",
+    "body": "Leila Nasser has been working at Meridian Health Partners since January.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "person_mentions": [
+        "Leila Nasser",
+        "Meridian Health Partners"
+      ],
+      "edges": [
+        {
+          "predicate": "worksFor",
+          "object": "Meridian"
+        }
+      ]
+    }
+  },
+  {
+    "name": "rel_works_for_person_object",
+    "body": "Brennan Dale works directly for Councilwoman Grace Tao.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "person_mentions": [
+        "Brennan Dale",
+        "Grace Tao"
+      ],
+      "edges": [
+        {
+          "predicate": "worksFor",
+          "object": "Grace"
+        }
+      ]
+    }
+  },
+  {
+    "name": "rel_doctor_patient_asymmetric",
+    "body": "My dermatologist, Dr. Olu Adewale, checked the mole on my shoulder today.",
+    "domain": "health",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "person_mentions": [
+        "Dr. Olu Adewale"
+      ],
+      "edges": [
+        {
+          "predicate": "treatedBy",
+          "object": "Adewale"
+        }
+      ]
+    }
+  },
+  {
+    "name": "rel_landlord_tenant_asymmetric",
+    "body": "Our landlord, Mrs. Petrova, raised the rent again \u2014 third time in two years.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "person_mentions": [
+        "Mrs. Petrova"
+      ],
+      "edges": [
+        {
+          "predicate": "tenant_of",
+          "object": "Petrova"
+        }
+      ]
+    }
+  },
+  {
+    "name": "rel_mentor_mentee_asymmetric_me_as_mentee",
+    "body": "Dr. Fiona Marsh has been mentoring me through the fellowship program.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "person_mentions": [
+        "Fiona Marsh"
+      ],
+      "edges": [
+        {
+          "predicate": "mentee_of",
+          "object": "Fiona"
+        }
+      ]
+    }
+  },
+  {
+    "name": "rel_manager_report_asymmetric",
+    "body": "Ivan Chernov reports to Kezia Wambua on the infrastructure team.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "person_mentions": [
+        "Ivan Chernov",
+        "Kezia Wambua"
+      ],
+      "edges": [
+        {
+          "predicate": "reportsTo",
+          "object": "Kezia"
+        }
+      ]
+    }
+  },
+  {
+    "name": "rel_multi_spouse_and_sibling_same_note",
+    "body": "Jeff married Celine last spring; his sister Lena works for Globex Corporation.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "person_mentions": [
+        "Jeff",
+        "Celine",
+        "Lena",
+        "Globex"
+      ],
+      "edges": [
+        {
+          "predicate": "spouse",
+          "object": "Celine"
+        },
+        {
+          "predicate": "sibling",
+          "object": "Lena"
+        },
+        {
+          "predicate": "worksFor",
+          "object": "Globex"
+        }
+      ]
+    }
+  },
+  {
+    "name": "rel_multi_mentor_and_employer_same_note",
+    "body": "Priya mentors Rohan at Synapse Labs; Rohan has been there two years and she manages his team.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "person_mentions": [
+        "Priya",
+        "Rohan",
+        "Synapse Labs"
+      ],
+      "edges": [
+        {
+          "predicate": "mentors",
+          "object": "Rohan"
+        },
+        {
+          "predicate": "worksFor",
+          "object": "Synapse"
+        },
+        {
+          "predicate": "manages",
+          "object": "Rohan"
+        }
+      ]
+    }
+  },
+  {
+    "name": "rel_multi_three_people_sibling_cofounder",
+    "body": "Tariq and his sister Zara co-founded Zephyr AI; their colleague Benoit handles sales.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "person_mentions": [
+        "Tariq",
+        "Zara",
+        "Benoit",
+        "Zephyr"
+      ],
+      "edges": [
+        {
+          "predicate": "sibling",
+          "object": "Zara"
+        },
+        {
+          "predicate": "co_founder",
+          "object": "Zara"
+        },
+        {
+          "predicate": "co_founder",
+          "object": "Zephyr"
+        },
+        {
+          "predicate": "worksFor",
+          "object": "Zephyr"
+        }
+      ]
+    }
+  },
+  {
+    "name": "rel_possessive_role_chain_dentist_referral",
+    "body": "My dentist, Dr. Akin Osei, referred me to her colleague Dr. Yara Bloom for an implant consult.",
+    "domain": "health",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "person_mentions": [
+        "Dr. Akin Osei",
+        "Dr. Yara Bloom"
+      ],
+      "edges": [
+        {
+          "predicate": "treatedBy",
+          "object": "Akin"
+        }
+      ]
+    }
+  },
+  {
+    "name": "rel_possessive_role_chain_doctor_to_specialist",
+    "body": "My cardiologist, Dr. Nadia Petrov, sent a referral to her associate Dr. Samuel Obi.",
+    "domain": "health",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "person_mentions": [
+        "Dr. Nadia Petrov",
+        "Dr. Samuel Obi"
+      ],
+      "edges": [
+        {
+          "predicate": "treatedBy",
+          "object": "Petrov"
+        }
+      ]
+    }
+  },
+  {
+    "name": "rel_org_object_employer_named_corporation",
+    "body": "Marcus recently joined Helion Ventures as a senior analyst.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "person_mentions": [
+        "Marcus",
+        "Helion Ventures"
+      ],
+      "edges": [
+        {
+          "predicate": "worksFor",
+          "object": "Helion"
+        }
+      ]
+    }
+  },
+  {
+    "name": "rel_two_third_parties_neither_is_author",
+    "body": "Tobias and his longtime friend Cecile Moreau ran into each other at the conference.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "person_mentions": [
+        "Tobias",
+        "Cecile Moreau"
+      ],
+      "edges": [
+        {
+          "predicate": "friend",
+          "object": "Cecile"
+        }
+      ]
+    }
+  },
+  {
+    "name": "rel_two_third_parties_employer_employee",
+    "body": "Word is that Dana hired Quentin Ross to run the new product division.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "person_mentions": [
+        "Dana",
+        "Quentin Ross"
+      ],
+      "edges": [
+        {
+          "predicate": "worksFor",
+          "object": "Dana"
+        }
+      ]
+    }
+  },
+  {
+    "name": "rel_two_third_parties_parent_child",
+    "body": "Heard that Simone Archambault is Julien Archambault's mother.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "person_mentions": [
+        "Simone Archambault",
+        "Julien Archambault"
+      ],
+      "edges": [
+        {
+          "predicate": "parent_of",
+          "object": "Julien"
+        }
+      ]
+    }
+  },
+  {
+    "name": "rel_implied_no_clean_object_vague_acquaintance",
+    "body": "Ran into someone from my old office who knows Priya \u2014 small world.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "person_mentions": [
+        "Priya"
+      ],
+      "absent_person": [
+        "someone"
+      ]
+    }
+  },
+  {
+    "name": "rel_dense_multi_spouse_sibling_worksfor_doctor",
+    "body": "My wife Amara Diallo is seeing Dr. Chidi Okeke for her knee; her brother Kofi Diallo works for Stratos Energy, and Kofi's manager there is our neighbor Rafael Vargas.",
+    "domain": "health",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "person_mentions": [
+        "Amara Diallo",
+        "Dr. Chidi Okeke",
+        "Kofi Diallo",
+        "Stratos Energy",
+        "Rafael Vargas"
+      ],
+      "edges": [
+        {
+          "predicate": "spouse",
+          "object": "Amara"
+        },
+        {
+          "predicate": "treatedBy",
+          "object": "Chidi"
+        },
+        {
+          "predicate": "sibling",
+          "object": "Kofi"
+        },
+        {
+          "predicate": "worksFor",
+          "object": "Stratos"
+        },
+        {
+          "predicate": "manages",
+          "object": "Kofi"
+        },
+        {
+          "predicate": "neighbor",
+          "object": "Rafael"
+        }
+      ]
+    }
+  },
+  {
+    "name": "rel_dense_cofounder_spouse_employee",
+    "body": "Elena Vasquez and her co-founder Lior Ben-David launched Carbonix; Elena's husband Soren Hansen now heads sales there, and their first hire was Amira Soltan, who reports to Soren.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "person_mentions": [
+        "Elena Vasquez",
+        "Lior Ben-David",
+        "Carbonix",
+        "Soren Hansen",
+        "Amira Soltan"
+      ],
+      "edges": [
+        {
+          "predicate": "co_founder",
+          "object": "Lior"
+        },
+        {
+          "predicate": "co_founder",
+          "object": "Carbonix"
+        },
+        {
+          "predicate": "spouse",
+          "object": "Soren"
+        },
+        {
+          "predicate": "worksFor",
+          "object": "Carbonix"
+        },
+        {
+          "predicate": "reportsTo",
+          "object": "Soren"
+        }
+      ]
+    }
+  },
+  {
+    "name": "rel_dense_sibling_landlord_mentor_report",
+    "body": "Jess and her brother Owen both rent from Ms. Hara Kato; Owen's mentor at the firm is Director Alinta Watson, and he now reports directly to her after last month's reorg.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "person_mentions": [
+        "Jess",
+        "Owen",
+        "Hara Kato",
+        "Alinta Watson"
+      ],
+      "edges": [
+        {
+          "predicate": "sibling",
+          "object": "Owen"
+        },
+        {
+          "predicate": "tenant_of",
+          "object": "Hara"
+        },
+        {
+          "predicate": "mentee_of",
+          "object": "Alinta"
+        },
+        {
+          "predicate": "reportsTo",
+          "object": "Alinta"
+        }
+      ]
+    }
+  }
+]

@@ -107,6 +107,47 @@ def parse_datetime(value: Any) -> datetime | None:
     return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
 
 
+# Deterministic domain FLOOR by predicate (firewall hardening): a fact on a
+# clearly-sensitive predicate is AT LEAST its domain regardless of the model's
+# per-fact judgment, closing the leak path where a clinical/financial fact gets
+# mislabeled `general`. Ratchet-UP only (general -> restricted, never down or
+# across restricted), matching the asymmetric bias in docs/ANALYSIS.md
+# ("misclassifying into health/finance is cheap; out of it is a leak"). A curated
+# allowlist of canonical schema.org/LOINC-ish predicates, lowercased; unknown
+# predicates fall back to the model (which already classifies well). A full LOINC
+# table is the Phase-7 typed-record job; weight/temperature are deliberately
+# OUT as too ambiguous to floor.
+_DOMAIN_BY_PREDICATE: dict[str, str] = {
+    **{
+        p: "health"
+        for p in (
+            "bloodpressure", "bloodglucose", "fastingglucose", "hemoglobina1c", "a1c",
+            "ldlcholesterol", "ldl", "hdl", "cholesterol", "triglycerides", "troponin",
+            "inr", "tsh", "heartrate", "restingheartrate", "oxygensaturation", "o2sat",
+            "respiratoryrate", "medication", "medicationregimen", "takesmedication",
+            "prescribes", "diagnosis", "medicalcondition", "healthcondition", "allergy",
+            "immunization", "vaccination",
+        )
+    },
+    **{
+        p: "finance"
+        for p in (
+            "accountbalance", "mortgagebalance", "mortgage", "interestrate", "refinancerate",
+            "retirementcontribution", "accountcontribution", "hasaccount", "brokerageaccount",
+        )
+    },
+    # Only PRECISE geo is location-firewall-sensitive; a home city (homeLocation/
+    # residence) is ordinary and left to the model + ratchet.
+    **{p: "location" for p in ("geocoordinates", "latitude", "longitude", "gpscoordinates")},
+}  # fmt: skip
+
+
+def domain_floor(predicate: str) -> str | None:
+    """The minimum (restricted) domain a clearly-sensitive predicate forces, or
+    None for predicates the model is left to classify on its own."""
+    return _DOMAIN_BY_PREDICATE.get(predicate.lower())
+
+
 def ratchet_domain(extracted: str, note_domain: str) -> tuple[str, bool]:
     """Apply the asymmetric domain bias (docs/ANALYSIS.md "Domains").
 
@@ -215,31 +256,113 @@ def _repair_dates(
     preserving time-of-day, offset, and any range width. Returns
     (start, end, repaired); a phrase outside the closed set is a no-op."""
     expected = resolve_relative_date(phrase, anchor)
-    if start is None or expected is None or expected == start.date():
+    if start is None or expected is None:
         return start, end, False
-    # The calendar-day comparison is only sound when the model resolved in the
-    # SAME UTC offset as the anchor. A different offset — naive output pinned to
-    # UTC, or a missing client offset that left the anchor in UTC (local_anchor's
-    # fallback) — makes start.date() and the anchor's local date incomparable, so
-    # we leave the model's value untouched rather than shift it on a false
-    # mismatch (the pipeline also withholds the anchor entirely when tz is None).
-    if start.utcoffset() != anchor.utcoffset():
+    # Judge the model's instant by the calendar day it falls on IN THE NOTE'S
+    # LOCAL timezone (the anchor's offset), not by a raw .date() that depends on
+    # whichever offset the model happened to emit. grok routinely resolves to a
+    # UTC instant rather than echoing the local offset, so an exact-offset check
+    # would skip the repair in exactly the case it exists for. The pipeline only
+    # supplies an anchor when the client offset is known, so anchor.tzinfo is
+    # always a real local offset here (fixed, hence DST-safe day arithmetic).
+    local_start_date = start.astimezone(anchor.tzinfo).date()
+    if expected == local_start_date:
         return start, end, False
-    delta = timedelta(days=(expected - start.date()).days)
+    delta = timedelta(days=(expected - local_start_date).days)
     return start + delta, (end + delta if end is not None else None), True
+
+
+# Precisions whose value is a CALENDAR DATE, not an instant — stamped to local
+# midnight so the date reads correctly in the note's timezone (see
+# _stamp_local_midnight). instant/era/unknown keep their resolved value.
+_DATE_PRECISIONS = frozenset({"day", "month", "year"})
+
+
+def _stamp_local_midnight(dt: datetime, anchor: datetime) -> datetime:
+    """Local midnight on the date the model WROTE, in the note's offset."""
+    d = dt.date()
+    return datetime(d.year, d.month, d.day, tzinfo=anchor.tzinfo)
+
+
+def _drifted_utc_midnight(dt: datetime, anchor: datetime) -> bool:
+    """The midnight-UTC date bug: the model rendered a bare calendar date as
+    midnight UTC ("June 8" -> 2026-06-08T00:00Z), which in a western offset is
+    the PRIOR evening, so the local date reads one day early. The signature is
+    exactly UTC midnight whose local date differs from the written date — a
+    real evening instant (a correctly-resolved "last night" at 02:00Z) is NOT
+    midnight and is left alone (eval baseline, grok-4.3 Jun 2026)."""
+    return (
+        dt.utcoffset() == timedelta(0)
+        and (dt.hour, dt.minute, dt.second) == (0, 0, 0)
+        and dt.astimezone(anchor.tzinfo).date() != dt.date()
+    )
+
+
+# Part-of-day windows (local hours) for time-of-day phrases — a deterministic
+# enrichment so "evening" / "last night" / "this morning" carry their within-day
+# meaning instead of collapsing to a bare date. midnight is left alone (a point,
+# and "night" must not swallow it).
+def _part_of_day_window(phrase: str | None) -> tuple[int, int] | None:
+    if not phrase:
+        return None
+    p = phrase.lower()
+    if "afternoon" in p:
+        return (12, 18)
+    if "morning" in p:
+        return (6, 12)
+    if "evening" in p:
+        return (18, 23)
+    if "night" in p and "midnight" not in p:  # tonight / last night / overnight
+        return (18, 23)
+    return None
+
+
+def _local_time_on(start: datetime, hour: int, anchor: datetime) -> datetime:
+    """`hour`:00 local, on the calendar date `start` falls on in the note's tz."""
+    d = start.astimezone(anchor.tzinfo).date()
+    return datetime(d.year, d.month, d.day, hour, tzinfo=anchor.tzinfo)
+
+
+def finalize_temporal(
+    phrase: str | None,
+    start: datetime | None,
+    end: datetime | None,
+    precision: str,
+    anchor: datetime,
+) -> tuple[datetime | None, datetime | None, bool]:
+    """Repair a mis-resolved backward phrase and fix a date-precision value the
+    model rendered as drifted midnight-UTC. Returns (start, end, changed).
+
+    Part-of-day RANGE enrichment is applied only to TOKENS (the token loop), not
+    here: a fact's valid_from must not gain an hour offset that would reorder
+    same-day supersession, and a fact must never gain a valid_to (it would
+    falsely close a `state` interval). Tokens are the first-class range objects
+    (docs/ANALYSIS.md), so the within-day meaning lives there."""
+    start, end, changed = _repair_dates(phrase, start, end, anchor)
+    # Midnight-UTC normalization is for ABSOLUTE dates only ("June 8"). A KNOWN
+    # relative phrase ("today"/"yesterday") is already handled by _repair_dates,
+    # whose value is locally correct even when rendered at midnight UTC; stamping
+    # it to the written (UTC) date would PUSH it a day the wrong way (e.g.
+    # "yesterday" -> 2026-06-11T00:00Z is locally Jun 10, must not become Jun 11).
+    if precision in _DATE_PRECISIONS and resolve_relative_date(phrase, anchor) is None:
+        if start is not None and _drifted_utc_midnight(start, anchor):
+            start, changed = _stamp_local_midnight(start, anchor), True
+        if end is not None and _drifted_utc_midnight(end, anchor):
+            end, changed = _stamp_local_midnight(end, anchor), True
+    return start, end, changed
 
 
 def validate_backward_temporal(
     temporal: ExtractedTemporal | None, anchor: datetime
 ) -> tuple[ExtractedTemporal | None, bool]:
-    """Repair a backward relative phrase the model resolved to the wrong day.
-    Returns (temporal, repaired); only the closed set is ever touched."""
+    """Repair a backward relative phrase the model resolved to the wrong day and
+    stamp date-precision values to local midnight. Returns (temporal, changed)."""
     if temporal is None:
         return None, False
-    start, end, repaired = _repair_dates(
-        temporal.phrase, temporal.resolved_start, temporal.resolved_end, anchor
+    start, end, changed = finalize_temporal(
+        temporal.phrase, temporal.resolved_start, temporal.resolved_end, temporal.precision, anchor
     )
-    if not repaired:
+    if not changed:
         return temporal, False
     return replace(temporal, resolved_start=start, resolved_end=end), True
 
@@ -531,24 +654,37 @@ def parse_extraction(payload: Any, *, anchor: datetime | None = None) -> Extract
             log.warning("analysis.token_dropped", reason="unresolved", phrase=phrase)
             continue
         end = parse_datetime(raw.get("resolved_end"))
+        precision = raw.get("precision")
+        precision = precision if precision in PRECISIONS else "unknown"
         if anchor is not None:
-            shifted, end, repaired = _repair_dates(phrase, start, end, anchor)
-            if repaired and shifted is not None:
+            shifted, end, changed = finalize_temporal(phrase, start, end, precision, anchor)
+            if changed and shifted is not None:
                 start = shifted
                 log.warning(
                     "analysis.temporal_repaired", scope="token", phrase=phrase,
                     resolved=start.isoformat(),
                 )  # fmt: skip
+            # A time-of-day token with no explicit end gains the part-of-day END
+            # as a within-day RANGE, so "evening"/"last night" carries a span
+            # instead of a bare instant. The START is left where it resolved so
+            # it still matches the fact's valid_from (one shared token, no
+            # duplicate) and supersession is untouched. Token only — facts keep
+            # their valid_from/to (see finalize_temporal).
+            window = _part_of_day_window(phrase)
+            if window is not None and start is not None and end is None:
+                window_end = _local_time_on(start, window[1], anchor)
+                if window_end > start:
+                    end = window_end
         kind = raw.get("kind")
-        precision = raw.get("precision")
+        kind = "range" if end is not None else (kind if kind in TOKEN_KINDS else "point")
         rrule = raw.get("rrule")
         tokens.append(
             ExtractedToken(
                 phrase=phrase,
-                kind=kind if kind in TOKEN_KINDS else "point",
+                kind=kind,
                 resolved_start=start,
                 resolved_end=end,
-                precision=precision if precision in PRECISIONS else "unknown",
+                precision=precision,
                 rrule=str(rrule) if rrule else None,
             )
         )

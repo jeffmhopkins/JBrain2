@@ -1,0 +1,375 @@
+[
+  {
+    "name": "tmp_yesterday_afternoon_minus5",
+    "body": "Finally finished the report yesterday, took way longer than expected.",
+    "domain": "general",
+    "created_at": "2026-06-11T14:22:00-05:00",
+    "expect": {
+      "temporal": [
+        {
+          "phrase": "yesterday",
+          "resolved_date": "2026-06-10"
+        }
+      ]
+    }
+  },
+  {
+    "name": "tmp_yesterday_early_morning_minus5",
+    "body": "I signed the lease yesterday and got the keys.",
+    "domain": "general",
+    "created_at": "2026-06-11T00:15:00-05:00",
+    "expect": {
+      "temporal": [
+        {
+          "phrase": "yesterday",
+          "resolved_date": "2026-06-10"
+        }
+      ]
+    }
+  },
+  {
+    "name": "tmp_yesterday_far_east_plus12",
+    "body": "Ran into Marcus at the market yesterday \u2014 hadn't seen him in ages.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:40:00+12:00",
+    "expect": {
+      "person_mentions": [
+        "Marcus"
+      ],
+      "temporal": [
+        {
+          "phrase": "yesterday",
+          "resolved_date": "2026-06-10"
+        }
+      ]
+    }
+  },
+  {
+    "name": "tmp_yesterday_far_west_minus10",
+    "body": "Dropped off the donation boxes yesterday afternoon.",
+    "domain": "general",
+    "created_at": "2026-06-10T23:50:00-10:00",
+    "expect": {
+      "temporal": [
+        {
+          "phrase": "yesterday",
+          "resolved_date": "2026-06-09"
+        }
+      ]
+    }
+  },
+  {
+    "name": "tmp_last_night_daytime_anchor",
+    "body": "Priya called last night and we talked for two hours.",
+    "domain": "general",
+    "created_at": "2026-06-11T10:05:00-05:00",
+    "expect": {
+      "person_mentions": [
+        "Priya"
+      ],
+      "temporal": [
+        {
+          "phrase": "last night",
+          "resolved_date": "2026-06-10"
+        }
+      ]
+    }
+  },
+  {
+    "name": "tmp_last_night_early_morning_anchor",
+    "body": "I barely slept last night, kept waking up every hour.",
+    "domain": "general",
+    "created_at": "2026-06-11T06:45:00-06:00",
+    "expect": {
+      "temporal": [
+        {
+          "phrase": "last night",
+          "resolved_date": "2026-06-10"
+        }
+      ]
+    }
+  },
+  {
+    "name": "tmp_last_night_late_night_ambiguous",
+    "body": "Dinner with Dana last night was great \u2014 she picked a fantastic place.",
+    "domain": "general",
+    "created_at": "2026-06-11T23:45:00-05:00",
+    "expect": {
+      "person_mentions": [
+        "Dana"
+      ]
+    }
+  },
+  {
+    "name": "tmp_last_night_far_east_daytime",
+    "body": "The storm last night knocked out power for a few hours.",
+    "domain": "general",
+    "created_at": "2026-06-11T13:00:00+12:00",
+    "expect": {
+      "temporal": [
+        {
+          "phrase": "last night",
+          "resolved_date": "2026-06-10"
+        }
+      ]
+    }
+  },
+  {
+    "name": "tmp_3_days_ago_morning",
+    "body": "Got the blood work results back 3 days ago, everything looked normal.",
+    "domain": "general",
+    "created_at": "2026-06-11T08:00:00-05:00",
+    "expect": {
+      "temporal": [
+        {
+          "phrase": "3 days ago",
+          "resolved_date": "2026-06-08"
+        }
+      ]
+    }
+  },
+  {
+    "name": "tmp_5_days_ago_afternoon",
+    "body": "Sent the invoice 5 days ago and still haven't heard back from them.",
+    "domain": "general",
+    "created_at": "2026-06-11T15:30:00-04:00",
+    "expect": {
+      "temporal": [
+        {
+          "phrase": "5 days ago",
+          "resolved_date": "2026-06-06"
+        }
+      ]
+    }
+  },
+  {
+    "name": "tmp_a_week_ago_afternoon",
+    "body": "Called Mom a week ago, need to follow up soon.",
+    "domain": "general",
+    "created_at": "2026-06-11T16:00:00-05:00",
+    "expect": {
+      "temporal": [
+        {
+          "phrase": "a week ago",
+          "resolved_date": "2026-06-04"
+        }
+      ]
+    }
+  },
+  {
+    "name": "tmp_two_weeks_ago_morning",
+    "body": "Two weeks ago I started the new sleep schedule and it's already making a difference.",
+    "domain": "general",
+    "created_at": "2026-06-11T07:30:00-05:00",
+    "expect": {
+      "temporal": [
+        {
+          "phrase": "two weeks ago",
+          "resolved_date": "2026-05-28"
+        }
+      ]
+    }
+  },
+  {
+    "name": "tmp_3_weeks_ago_evening",
+    "body": "Met with Quentin Ross 3 weeks ago about the new project scope.",
+    "domain": "general",
+    "created_at": "2026-06-11T19:00:00-05:00",
+    "expect": {
+      "person_mentions": [
+        "Quentin Ross"
+      ],
+      "temporal": [
+        {
+          "phrase": "3 weeks ago",
+          "resolved_date": "2026-05-21"
+        }
+      ]
+    }
+  },
+  {
+    "name": "tmp_last_monday_from_thursday",
+    "body": "Last Monday's standup ran way over \u2014 someone needs to set a timer.",
+    "domain": "general",
+    "created_at": "2026-06-11T11:15:00-05:00",
+    "expect": {
+      "temporal": [
+        {
+          "phrase": "last Monday",
+          "resolved_date": "2026-06-08"
+        }
+      ]
+    }
+  },
+  {
+    "name": "tmp_last_tuesday_from_thursday",
+    "body": "The dentist appointment last Tuesday went fine, no cavities.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "temporal": [
+        {
+          "phrase": "last Tuesday",
+          "resolved_date": "2026-06-09"
+        }
+      ]
+    }
+  },
+  {
+    "name": "tmp_last_wednesday_from_thursday",
+    "body": "Lena and I did the full trail hike last Wednesday \u2014 my legs are still sore.",
+    "domain": "general",
+    "created_at": "2026-06-11T13:45:00-05:00",
+    "expect": {
+      "person_mentions": [
+        "Lena"
+      ],
+      "temporal": [
+        {
+          "phrase": "last Wednesday",
+          "resolved_date": "2026-06-10"
+        }
+      ]
+    }
+  },
+  {
+    "name": "tmp_last_friday_from_thursday",
+    "body": "Submitted the quarterly review last Friday, ahead of the deadline.",
+    "domain": "general",
+    "created_at": "2026-06-11T10:30:00-05:00",
+    "expect": {
+      "temporal": [
+        {
+          "phrase": "last Friday",
+          "resolved_date": "2026-06-05"
+        }
+      ]
+    }
+  },
+  {
+    "name": "tmp_last_saturday_from_thursday",
+    "body": "The farmer's market last Saturday had an incredible peach stand.",
+    "domain": "general",
+    "created_at": "2026-06-11T12:00:00-05:00",
+    "expect": {
+      "temporal": [
+        {
+          "phrase": "last Saturday",
+          "resolved_date": "2026-06-06"
+        }
+      ]
+    }
+  },
+  {
+    "name": "tmp_today_afternoon_capture",
+    "body": "Today's retrospective was actually productive for a change.",
+    "domain": "general",
+    "created_at": "2026-06-11T17:10:00-05:00",
+    "expect": {
+      "temporal": [
+        {
+          "phrase": "today",
+          "resolved_date": "2026-06-11"
+        }
+      ]
+    }
+  },
+  {
+    "name": "tmp_this_morning_afternoon_capture",
+    "body": "This morning's run was rough \u2014 skipped the hill intervals entirely.",
+    "domain": "general",
+    "created_at": "2026-06-11T14:00:00-05:00",
+    "expect": {
+      "temporal": [
+        {
+          "phrase": "this morning",
+          "resolved_date": "2026-06-11"
+        }
+      ]
+    }
+  },
+  {
+    "name": "tmp_this_morning_early_capture",
+    "body": "Reading through old notes this morning and found a great idea I'd forgotten.",
+    "domain": "general",
+    "created_at": "2026-06-11T07:05:00-05:00",
+    "expect": {
+      "temporal": [
+        {
+          "phrase": "this morning",
+          "resolved_date": "2026-06-11"
+        }
+      ]
+    }
+  },
+  {
+    "name": "tmp_tonight_late_night_capture",
+    "body": "Finishing up the proposal tonight so it's ready to send first thing.",
+    "domain": "general",
+    "created_at": "2026-06-11T23:50:00-05:00",
+    "expect": {
+      "temporal": [
+        {
+          "phrase": "tonight",
+          "resolved_date": "2026-06-11"
+        }
+      ]
+    }
+  },
+  {
+    "name": "tmp_day_before_yesterday_model_only",
+    "body": "The package arrived the day before yesterday, which was faster than expected.",
+    "domain": "general",
+    "created_at": "2026-06-11T10:00:00-05:00",
+    "expect": {
+      "temporal": [
+        {
+          "phrase": "day before yesterday",
+          "resolved_date": "2026-06-09"
+        }
+      ]
+    }
+  },
+  {
+    "name": "tmp_two_months_ago_model_only",
+    "body": "Two months ago I cut out caffeine completely \u2014 still going strong.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-05:00",
+    "expect": {
+      "temporal": [
+        {
+          "phrase": "two months ago",
+          "resolved_date": "2026-04-11"
+        }
+      ]
+    }
+  },
+  {
+    "name": "tmp_next_monday_forward",
+    "body": "Team offsite is scheduled for next Monday \u2014 need to book travel tonight.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-05:00",
+    "expect": {
+      "temporal": [
+        {
+          "phrase": "next Monday",
+          "resolved_date": "2026-06-15"
+        }
+      ]
+    }
+  },
+  {
+    "name": "tmp_in_3_months_forward",
+    "body": "The lease renewal deadline is in 3 months \u2014 marking the calendar now.",
+    "domain": "general",
+    "created_at": "2026-06-11T10:00:00-05:00",
+    "expect": {
+      "temporal": [
+        {
+          "phrase": "in 3 months",
+          "resolved_date": "2026-09-11"
+        }
+      ]
+    }
+  }
+]

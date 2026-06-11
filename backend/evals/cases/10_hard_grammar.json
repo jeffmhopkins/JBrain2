@@ -1,0 +1,379 @@
+[
+  {
+    "name": "gram_pronoun_object_married_her",
+    "body": "Jeff married her last spring. They've been inseparable ever since.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "person_mentions": [
+        "Jeff"
+      ]
+    }
+  },
+  {
+    "name": "gram_pronoun_object_told_him",
+    "body": "Nadia confronted him at the office on Friday and told him she was resigning.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "person_mentions": [
+        "Nadia"
+      ]
+    }
+  },
+  {
+    "name": "gram_pronoun_object_fired_them",
+    "body": "The regional director, Bram Joost, called them both into his office and fired them on the spot.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "person_mentions": [
+        "Bram Joost"
+      ]
+    }
+  },
+  {
+    "name": "gram_relative_clause_whom_hired",
+    "body": "Celeste Fontaine, whom Dana hired last quarter, is already running the Chicago desk.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "person_mentions": [
+        "Celeste Fontaine",
+        "Dana"
+      ],
+      "edges": [
+        {
+          "predicate": "worksFor",
+          "object": "Dana"
+        }
+      ]
+    }
+  },
+  {
+    "name": "gram_relative_clause_whom_jeff_mentored",
+    "body": "Marcus Webb, whom Jeff mentored during the fellowship, just made partner at Aldrich & Cole.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "person_mentions": [
+        "Marcus Webb",
+        "Jeff"
+      ]
+    }
+  },
+  {
+    "name": "gram_relative_clause_who_replaced",
+    "body": "The account went to Priya Nair, who replaced the guy that Sam Voss had recommended.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "person_mentions": [
+        "Priya Nair",
+        "Sam Voss"
+      ]
+    }
+  },
+  {
+    "name": "gram_appositive_chain_boss_and_deputy",
+    "body": "My boss, Dana Okafor, and her deputy, Sam Pike, both signed off on the restructuring plan.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "person_mentions": [
+        "Dana Okafor",
+        "Sam Pike"
+      ]
+    }
+  },
+  {
+    "name": "gram_appositive_chain_three_people",
+    "body": "The board named three trustees: my uncle, Ren Takahashi, the retiring CFO, Gwen Ellroy, and an outside counsel, Piotr Saar.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "person_mentions": [
+        "Ren Takahashi",
+        "Gwen Ellroy",
+        "Piotr Saar"
+      ]
+    }
+  },
+  {
+    "name": "gram_appositive_relational_possessive_with_org",
+    "body": "Jeff's mentor, Osei Quartey, and his long-time colleague, Bea Strand, co-founded Verdant Labs together.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "person_mentions": [
+        "Jeff",
+        "Osei Quartey",
+        "Bea Strand"
+      ]
+    }
+  },
+  {
+    "name": "gram_coordinated_subjects_adopted_dog",
+    "body": "Jeff and Celine adopted a dog from the shelter last weekend.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "person_mentions": [
+        "Jeff",
+        "Celine"
+      ],
+      "not_person": [
+        "shelter"
+      ]
+    }
+  },
+  {
+    "name": "gram_coordinated_subjects_three_siblings",
+    "body": "Rosa, Tomas, and Lena Vargas all moved back home to take care of their father.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "person_mentions": [
+        "Rosa",
+        "Tomas",
+        "Lena Vargas"
+      ]
+    }
+  },
+  {
+    "name": "gram_coordinated_subjects_co_signed",
+    "body": "Priya and her roommate Darya Volkov co-signed the lease on the new apartment.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "person_mentions": [
+        "Priya",
+        "Darya Volkov"
+      ]
+    }
+  },
+  {
+    "name": "gram_nested_clause_reported_speech_aunt_rosa",
+    "body": "Mom said Aunt Rosa moved in with her daughter Luz after the divorce.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "person_mentions": [
+        "Aunt Rosa",
+        "Luz"
+      ]
+    }
+  },
+  {
+    "name": "gram_nested_clause_double_embed",
+    "body": "I heard that Nadia mentioned that her ex-boyfriend, Ciro Belli, is dating someone from her firm.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "person_mentions": [
+        "Nadia",
+        "Ciro Belli"
+      ]
+    }
+  },
+  {
+    "name": "gram_nested_clause_subordinate_who_told_who",
+    "body": "Jeff told me that his sister called him to say that their cousin Vera Hopwood is pregnant.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "person_mentions": [
+        "Jeff",
+        "Vera Hopwood"
+      ]
+    }
+  },
+  {
+    "name": "gram_reported_speech_uncle_retired",
+    "body": "Grandma mentioned that Uncle Bert Lowe finally retired and is moving to Tucson.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "person_mentions": [
+        "Bert Lowe"
+      ]
+    }
+  },
+  {
+    "name": "gram_reported_speech_mom_said_neighbor",
+    "body": "Mom said the Kowalski boy, her neighbor Pavel, got accepted to med school.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "person_mentions": [
+        "Pavel"
+      ]
+    }
+  },
+  {
+    "name": "gram_passive_by_agent_eulogy",
+    "body": "The eulogy was given by Father Limm, and the reading was done by Priya's cousin Anand.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "person_mentions": [
+        "Father Limm",
+        "Anand"
+      ]
+    }
+  },
+  {
+    "name": "gram_passive_by_agent_terminated",
+    "body": "Three staff members were terminated by HR director Osei Quartey following the audit.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "person_mentions": [
+        "Osei Quartey"
+      ]
+    }
+  },
+  {
+    "name": "gram_passive_by_agent_surgery_performed",
+    "body": "The surgery was performed by Dr. Miriam Lau and assisted by her resident, Tobias Renn.",
+    "domain": "health",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "person_mentions": [
+        "Miriam Lau",
+        "Tobias Renn"
+      ]
+    }
+  },
+  {
+    "name": "gram_possessive_chain_priya_brother_wife",
+    "body": "Priya's brother's wife, Lena Sood, is a cardiologist at Northwestern.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "person_mentions": [
+        "Priya",
+        "Lena Sood"
+      ]
+    }
+  },
+  {
+    "name": "gram_possessive_chain_boss_assistant",
+    "body": "My boss's assistant's husband, Cliff Ibarra, runs the catering company they used for the gala.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "person_mentions": [
+        "Cliff Ibarra"
+      ]
+    }
+  },
+  {
+    "name": "gram_long_preamble_object_buried",
+    "body": "After everything that happened with the merger, the layoffs, and the audit last spring, the person who really held things together was the quiet deputy ops lead, Soren Halberg.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "person_mentions": [
+        "Soren Halberg"
+      ]
+    }
+  },
+  {
+    "name": "gram_long_preamble_health_distractor",
+    "body": "Had my annual labs done \u2014 cholesterol 198, A1c 5.4, all fine. The results were reviewed by Dr. Yael Drori before she forwarded them to my GP, Ines Cabral.",
+    "domain": "health",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "person_mentions": [
+        "Yael Drori",
+        "Ines Cabral"
+      ]
+    }
+  },
+  {
+    "name": "gram_four_people_one_sentence_dinner",
+    "body": "Had dinner with Nadia, her boyfriend Ciro Belli, my old roommate Sasha Windt, and Sasha's sister Faye.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "person_mentions": [
+        "Nadia",
+        "Ciro Belli",
+        "Sasha Windt",
+        "Faye"
+      ]
+    }
+  },
+  {
+    "name": "gram_four_people_one_sentence_wedding",
+    "body": "The ceremony was officiated by Pastor Eli Garro, witnessed by Tomas and Lena Vargas, and the rings were carried by little Rosa.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "person_mentions": [
+        "Eli Garro",
+        "Tomas",
+        "Lena Vargas",
+        "Rosa"
+      ]
+    }
+  },
+  {
+    "name": "gram_four_people_custody_dispute",
+    "body": "The mediator, Judith Crane, met separately with Marcus, his ex-wife Dara Hollis, and her attorney Bex Ong to try to reach a custody agreement.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "person_mentions": [
+        "Judith Crane",
+        "Marcus",
+        "Dara Hollis",
+        "Bex Ong"
+      ],
+      "edges": [
+        {
+          "predicate": "spouse",
+          "object": "Dara"
+        }
+      ]
+    }
+  },
+  {
+    "name": "gram_vague_reference_guy_from_accounting",
+    "body": "Ran into Priya Nair in the lobby; she was with the guy from accounting who always parks in the visitor spots. Priya said he's been there fifteen years.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "person_mentions": [
+        "Priya Nair"
+      ],
+      "not_person": [
+        "accounting"
+      ]
+    }
+  },
+  {
+    "name": "gram_vague_reference_her_cousin",
+    "body": "Celeste mentioned her cousin is in town this week and might join us for the hike on Saturday.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "person_mentions": [
+        "Celeste"
+      ]
+    }
+  },
+  {
+    "name": "gram_passive_relative_coordinated_mix",
+    "body": "The grant was awarded to Dr. Miriam Lau, whom the committee selected over two other finalists, and her co-investigator, Tobias Renn, was brought on shortly after.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "person_mentions": [
+        "Miriam Lau",
+        "Tobias Renn"
+      ]
+    }
+  }
+]

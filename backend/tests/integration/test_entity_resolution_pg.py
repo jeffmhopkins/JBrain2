@@ -26,7 +26,11 @@ from jbrain.analysis.entities import (
     AmbiguousEntity,
     NeedsDisambiguation,
     ResolvedEntity,
+    alias_owner,
+    are_distinct,
     get_or_create_me,
+    plan_merge,
+    register_declared_alias,
     resolve_entity,
 )
 from jbrain.analysis.pipeline import AnalysisPipeline
@@ -637,3 +641,118 @@ async def test_disambiguation_degrades_to_review_when_task_unrouted(
         r.canonical_name for r in await fetch_rows(maker, "SELECT canonical_name FROM app.entities")
     }
     assert "Bob Smith" not in names
+
+
+# --- declared-name aliasing --------------------------------------------------
+
+
+async def test_declared_alias_links_a_later_bare_name_to_me(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """ "my full name is Jeffrey Mark Hopkins" registers the name on Me, so a
+    later bare "Jeffrey Mark Hopkins" resolves to the owner — not a new row."""
+    async with scoped_session(maker, SYSTEM_CTX) as s:
+        me = await get_or_create_me(s)
+        added = await register_declared_alias(s, me.id, "Jeffrey Mark Hopkins")
+    assert added == "jeffrey mark hopkins"
+
+    outcome = await resolve(maker, "Jeffrey Mark Hopkins")
+    assert isinstance(outcome, ResolvedEntity)
+    assert outcome.id == me.id and not outcome.created
+    # The alias inherits Me's general firewall partition.
+    rows = await fetch_rows(
+        maker,
+        "SELECT domain_code FROM app.entity_aliases WHERE alias_norm = 'jeffrey mark hopkins'",
+    )
+    assert [r.domain_code for r in rows] == ["general"]
+
+
+async def test_declared_alias_skips_collision_with_another_entity(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """A name that already keys a DIFFERENT live entity is NOT silently widened
+    onto a second one — that is a merge proposal, not an alias."""
+    other = await seed_entity(maker, "Jeffrey Mark Hopkins")
+    async with scoped_session(maker, SYSTEM_CTX) as s:
+        me = await get_or_create_me(s)
+        added = await register_declared_alias(s, me.id, "Jeffrey Mark Hopkins")
+    assert added is None
+
+    # The name still resolves to the original entity, never to Me.
+    outcome = await resolve(maker, "Jeffrey Mark Hopkins")
+    assert isinstance(outcome, ResolvedEntity)
+    assert outcome.id == other and outcome.id != me.id
+    owners = await fetch_rows(
+        maker,
+        "SELECT entity_id FROM app.entity_aliases WHERE alias_norm = 'jeffrey mark hopkins'",
+    )
+    assert [r.entity_id for r in owners] == [other]
+
+
+async def test_declared_alias_is_idempotent_and_ignores_pronouns(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    async with scoped_session(maker, SYSTEM_CTX) as s:
+        me = await get_or_create_me(s)
+        first = await register_declared_alias(s, me.id, "Jeffrey Mark Hopkins")
+        repeat = await register_declared_alias(s, me.id, "Jeffrey Mark Hopkins")
+        pronoun = await register_declared_alias(s, me.id, "my")
+    assert first == "jeffrey mark hopkins"
+    assert repeat is None and pronoun is None
+    count = await fetch_rows(
+        maker,
+        "SELECT count(*) AS n FROM app.entity_aliases WHERE alias_norm = 'jeffrey mark hopkins'",
+    )
+    assert count[0].n == 1
+
+
+# --- collision plumbing for declared-name merge proposals --------------------
+
+
+async def test_alias_owner_finds_a_different_owner_only(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    held = await seed_entity(maker, "Jeffrey Mark Hopkins")
+    async with scoped_session(maker, SYSTEM_CTX) as s:
+        me = await get_or_create_me(s)
+        # A name a DIFFERENT entity owns is the collision signal...
+        assert await alias_owner(s, "Jeffrey Mark Hopkins", exclude=me.id) == held
+        # ...but the owner finding its own name, a pronoun, or an unheld name is not.
+        assert await alias_owner(s, "Jeffrey Mark Hopkins", exclude=held) is None
+        assert await alias_owner(s, "my", exclude=me.id) is None
+        assert await alias_owner(s, "Nobody At All", exclude=me.id) is None
+
+
+async def test_are_distinct_reflects_a_rejected_merge(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    a = await seed_entity(maker, "Robert Smith")
+    b = await seed_entity(maker, "Bobby Smith")
+    async with scoped_session(maker, SYSTEM_CTX) as s:
+        assert not await are_distinct(s, a, b)
+    lo, hi = sorted((a, b), key=str)
+    async with scoped_session(maker, SYSTEM_CTX) as s:
+        await s.execute(
+            text(
+                "INSERT INTO app.entity_distinctions (id, entity_a, entity_b, reason, domain_code)"
+                " VALUES (gen_random_uuid(), :a, :b, 'merge rejected', 'general')"
+            ),
+            {"a": str(lo), "b": str(hi)},
+        )
+    async with scoped_session(maker, SYSTEM_CTX) as s:
+        # Direction-agnostic: the edge forbids the merge either way it is asked.
+        assert await are_distinct(s, a, b)
+        assert await are_distinct(s, b, a)
+
+
+async def test_plan_merge_keeps_the_subject_then_the_older(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    provisional = await seed_entity(maker, "Jeffrey Mark Hopkins")
+    async with scoped_session(maker, SYSTEM_CTX) as s:
+        me = await get_or_create_me(s)  # subject-linked + confirmed
+        plan = await plan_merge(s, provisional, me.id)
+        # The owner outranks a bare provisional, whichever order it is asked in.
+        assert plan.keep_id == me.id and plan.gone_id == provisional
+        assert plan.keep_name == "Me" and plan.gone_name == "Jeffrey Mark Hopkins"
+        assert (await plan_merge(s, me.id, provisional)).keep_id == me.id

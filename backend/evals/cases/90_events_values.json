@@ -1,0 +1,471 @@
+[
+  {
+    "name": "evt_dentist_explicit_date",
+    "body": "Dentist appointment on Friday, June 19 at 2pm. Need to leave work early.",
+    "domain": "health",
+    "created_at": "2026-06-11T08:00:00-06:00",
+    "expect": {
+      "temporal": [
+        {
+          "phrase": "June 19",
+          "resolved_date": "2026-06-19"
+        }
+      ]
+    }
+  },
+  {
+    "name": "evt_hopkins_wedding_named_event",
+    "body": "The Hopkins wedding is June 20 \u2014 still need to RSVP and figure out a gift.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "mentions": [
+        "Hopkins wedding"
+      ],
+      "mention_kind": [
+        {
+          "name": "Hopkins wedding",
+          "kind": [
+            "Event"
+          ]
+        }
+      ],
+      "temporal": [
+        {
+          "phrase": "June 20",
+          "resolved_date": "2026-06-20"
+        }
+      ]
+    }
+  },
+  {
+    "name": "evt_dr_patel_past_visit",
+    "body": "Saw Dr. Patel on June 3 for the knee pain. She recommended physical therapy twice a week.",
+    "domain": "health",
+    "created_at": "2026-06-11T10:00:00-06:00",
+    "expect": {
+      "person_mentions": [
+        "Dr. Patel"
+      ],
+      "temporal": [
+        {
+          "phrase": "June 3",
+          "resolved_date": "2026-06-03"
+        }
+      ]
+    }
+  },
+  {
+    "name": "evt_team_offsite_next_tuesday",
+    "body": "Team offsite is next Tuesday \u2014 whole day, need to block the calendar and tell the dog sitter.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "mentions": [
+        "offsite"
+      ],
+      "mention_kind": [
+        {
+          "name": "offsite",
+          "kind": [
+            "Event"
+          ]
+        }
+      ],
+      "temporal": [
+        {
+          "phrase": "next Tuesday",
+          "resolved_date": "2026-06-16"
+        }
+      ]
+    }
+  },
+  {
+    "name": "evt_checkup_thursday_explicit",
+    "body": "Annual physical scheduled for Thursday the 18th at 9am with Dr. Liu. Fasting required.",
+    "domain": "health",
+    "created_at": "2026-06-11T07:30:00-06:00",
+    "expect": {
+      "person_mentions": [
+        "Dr. Liu"
+      ],
+      "temporal": [
+        {
+          "phrase": "Thursday the 18th",
+          "resolved_date": "2026-06-18"
+        }
+      ]
+    }
+  },
+  {
+    "name": "evt_fourth_of_july_party",
+    "body": "Marcus and Lena are hosting a Fourth of July party on July 4. Confirmed we're going.",
+    "domain": "general",
+    "created_at": "2026-06-11T20:00:00-05:00",
+    "expect": {
+      "person_mentions": [
+        "Marcus",
+        "Lena"
+      ],
+      "mentions": [
+        "Fourth of July"
+      ],
+      "temporal": [
+        {
+          "phrase": "July 4",
+          "resolved_date": "2026-07-04"
+        }
+      ]
+    }
+  },
+  {
+    "name": "evt_conference_august_explicit",
+    "body": "Registered for the design conference on August 12 in Chicago. Hotel is already booked.",
+    "domain": "general",
+    "created_at": "2026-06-11T11:00:00-05:00",
+    "expect": {
+      "mentions": [
+        "design conference",
+        "Chicago"
+      ],
+      "mention_kind": [
+        {
+          "name": "design conference",
+          "kind": [
+            "Event"
+          ]
+        }
+      ],
+      "temporal": [
+        {
+          "phrase": "August 12",
+          "resolved_date": "2026-08-12"
+        }
+      ]
+    }
+  },
+  {
+    "name": "evt_past_surgery_june5",
+    "body": "Had the outpatient procedure on June 5. Recovery is going well, back at the gym already.",
+    "domain": "health",
+    "created_at": "2026-06-11T08:30:00-06:00",
+    "expect": {
+      "temporal": [
+        {
+          "phrase": "June 5",
+          "resolved_date": "2026-06-05"
+        }
+      ]
+    }
+  },
+  {
+    "name": "evt_wedding_anniversary_june20",
+    "body": "Our anniversary is June 20 \u2014 reservations at Monteverde at 7:30pm.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "mentions": [
+        "anniversary"
+      ],
+      "mention_kind": [
+        {
+          "name": "anniversary",
+          "kind": [
+            "Event"
+          ]
+        }
+      ],
+      "temporal": [
+        {
+          "phrase": "June 20",
+          "resolved_date": "2026-06-20"
+        }
+      ]
+    }
+  },
+  {
+    "name": "evt_dentist_last_monday",
+    "body": "Last Monday's dentist cleaning went fine \u2014 no cavities, next visit is in six months.",
+    "domain": "health",
+    "created_at": "2026-06-11T14:00:00-05:00",
+    "expect": {
+      "temporal": [
+        {
+          "phrase": "Last Monday",
+          "resolved_date": "2026-06-08"
+        }
+      ]
+    }
+  },
+  {
+    "name": "evt_kickoff_next_wednesday",
+    "body": "Project kickoff call is next Wednesday with Priya and the design team. Calendar invite sent.",
+    "domain": "general",
+    "created_at": "2026-06-11T16:00:00-05:00",
+    "expect": {
+      "person_mentions": [
+        "Priya"
+      ],
+      "temporal": [
+        {
+          "phrase": "next Wednesday",
+          "resolved_date": "2026-06-17"
+        }
+      ]
+    }
+  },
+  {
+    "name": "evt_flight_explicit_monday",
+    "body": "Flight to Denver departs Monday, June 15 at 6am. Have to be at the airport by 4:30.",
+    "domain": "general",
+    "created_at": "2026-06-11T21:00:00-06:00",
+    "expect": {
+      "mentions": [
+        "Denver"
+      ],
+      "temporal": [
+        {
+          "phrase": "June 15",
+          "resolved_date": "2026-06-15"
+        }
+      ]
+    }
+  },
+  {
+    "name": "evt_funeral_last_saturday",
+    "body": "Attended Aunt Rosa's memorial service last Saturday. Beautifully done \u2014 she would have loved it.",
+    "domain": "general",
+    "created_at": "2026-06-11T19:00:00-06:00",
+    "expect": {
+      "person_mentions": [
+        "Rosa"
+      ],
+      "temporal": [
+        {
+          "phrase": "last Saturday",
+          "resolved_date": "2026-06-06"
+        }
+      ]
+    }
+  },
+  {
+    "name": "evt_therapy_appointment_fragment",
+    "body": "Therapy \u2014 Wednesday, June 17 at 4pm. Don't reschedule again.",
+    "domain": "health",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "mention_kind": [
+        {
+          "name": "Therapy",
+          "kind": [
+            "Event",
+            "appointment",
+            "Appointment",
+            "Thing"
+          ]
+        }
+      ],
+      "temporal": [
+        {
+          "phrase": "June 17",
+          "resolved_date": "2026-06-17"
+        }
+      ]
+    }
+  },
+  {
+    "name": "val_weight_lb",
+    "body": "Weighed myself this morning: 182 lb. Down 3 pounds from last month.",
+    "domain": "health",
+    "created_at": "2026-06-11T07:10:00-06:00",
+    "expect": {
+      "value": [
+        {
+          "predicate": "weight",
+          "contains": "182"
+        },
+        {
+          "predicate": "weight",
+          "contains": "lb"
+        }
+      ]
+    }
+  },
+  {
+    "name": "val_blood_pressure_slash",
+    "body": "BP this morning was 120/80. Cardiologist says that's exactly where it should be.",
+    "domain": "health",
+    "created_at": "2026-06-11T08:15:00-06:00",
+    "expect": {
+      "value": [
+        {
+          "predicate": "bloodPressure",
+          "contains": "120"
+        },
+        {
+          "predicate": "bloodPressure",
+          "contains": "80"
+        }
+      ]
+    }
+  },
+  {
+    "name": "val_blood_pressure_elevated",
+    "body": "Checked BP at the pharmacy: 138/92. Higher than I'd like \u2014 probably stress from the move.",
+    "domain": "health",
+    "created_at": "2026-06-11T17:30:00-05:00",
+    "expect": {
+      "value": [
+        {
+          "predicate": "bloodPressure",
+          "contains": "138"
+        },
+        {
+          "predicate": "bloodPressure",
+          "contains": "92"
+        }
+      ]
+    }
+  },
+  {
+    "name": "val_blood_glucose",
+    "body": "Fasting glucose came back at 95 today. Solidly in the normal range.",
+    "domain": "health",
+    "created_at": "2026-06-11T09:30:00-06:00",
+    "expect": {
+      "value": [
+        {
+          "predicate": "bloodGlucose",
+          "contains": "95"
+        }
+      ]
+    }
+  },
+  {
+    "name": "val_temperature_fever",
+    "body": "Woke up with a fever \u2014 temperature was 101.2 this morning. Staying home from work.",
+    "domain": "health",
+    "created_at": "2026-06-11T07:45:00-05:00",
+    "expect": {
+      "value": [
+        {
+          "contains": "101.2"
+        }
+      ]
+    }
+  },
+  {
+    "name": "val_run_distance_miles",
+    "body": "Ran 5 miles on the lakefront path before work. New personal best for a weekday morning.",
+    "domain": "health",
+    "created_at": "2026-06-11T07:00:00-06:00",
+    "expect": {
+      "value": [
+        {
+          "contains": "5"
+        }
+      ]
+    }
+  },
+  {
+    "name": "val_groceries_spend",
+    "body": "Spent $45 on groceries at Trader Joe's. Mostly produce and pasta \u2014 pretty good for the week.",
+    "domain": "finance",
+    "created_at": "2026-06-11T18:30:00-06:00",
+    "expect": {
+      "value": [
+        {
+          "contains": "45"
+        }
+      ]
+    }
+  },
+  {
+    "name": "val_rent_monthly",
+    "body": "Rent is $1800 a month starting July 1. Slightly over budget but the location is worth it.",
+    "domain": "finance",
+    "created_at": "2026-06-11T12:00:00-06:00",
+    "expect": {
+      "value": [
+        {
+          "contains": "1800"
+        }
+      ]
+    }
+  },
+  {
+    "name": "val_height_cm",
+    "body": "New patient intake form asked for height. Entered 178 cm. Never converted it to feet.",
+    "domain": "health",
+    "created_at": "2026-06-11T11:15:00-06:00",
+    "expect": {
+      "value": [
+        {
+          "predicate": "height",
+          "contains": "178"
+        },
+        {
+          "predicate": "height",
+          "contains": "cm"
+        }
+      ]
+    }
+  },
+  {
+    "name": "val_cholesterol_ldl",
+    "body": "Lab results back: LDL cholesterol is 112. Doctor wants it under 100 so tweaking the diet.",
+    "domain": "health",
+    "created_at": "2026-06-11T14:00:00-06:00",
+    "expect": {
+      "value": [
+        {
+          "contains": "112"
+        }
+      ]
+    }
+  },
+  {
+    "name": "val_utility_bill",
+    "body": "Electric bill came in at $134 this month. Higher than usual \u2014 AC has been running constantly.",
+    "domain": "finance",
+    "created_at": "2026-06-11T19:00:00-06:00",
+    "expect": {
+      "value": [
+        {
+          "contains": "134"
+        }
+      ]
+    }
+  },
+  {
+    "name": "val_weight_kg",
+    "body": "Scale at the gym shows 83 kg today. That's consistent with last week.",
+    "domain": "health",
+    "created_at": "2026-06-11T06:45:00-05:00",
+    "expect": {
+      "value": [
+        {
+          "predicate": "weight",
+          "contains": "83"
+        },
+        {
+          "predicate": "weight",
+          "contains": "kg"
+        }
+      ]
+    }
+  },
+  {
+    "name": "val_resting_heart_rate",
+    "body": "Resting heart rate this morning was 58 bpm according to the watch. Down from 63 last month.",
+    "domain": "health",
+    "created_at": "2026-06-11T07:05:00-06:00",
+    "expect": {
+      "value": [
+        {
+          "contains": "58"
+        }
+      ]
+    }
+  }
+]

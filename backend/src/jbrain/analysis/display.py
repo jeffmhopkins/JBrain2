@@ -100,6 +100,20 @@ def promotion_display(
     }
 
 
+def merge_display(*, keep_name: str, gone_name: str, snippet: str | None) -> dict[str, Any]:
+    """merge_proposal card fields. accept folds `gone` into `keep`; reject
+    writes the permanent distinct_from edge — both are POST /resolve verbs, so
+    the generic accept/reject footer carries them."""
+    return {
+        "summary": f"are {gone_name} and {keep_name} the same?",
+        "snippet": snippet,
+        "outcomes": {
+            "accept": f"{gone_name} merges into {keep_name} — their mentions and facts combine.",
+            "reject": f"{keep_name} and {gone_name} stay separate — never re-proposed.",
+        },
+    }
+
+
 def ambiguous_display(*, name: str, snippet: str | None) -> dict[str, Any]:
     """ambiguous_mention card fields. accept is deliberately not advertised:
     linking a specific candidate needs the layer-2/3 resolution machinery."""

@@ -618,6 +618,147 @@ async def create_provisional(
     return ResolvedEntity(id=entity.id, subject_id=None, created=True)
 
 
+# --- declared-name aliasing (docs/ANALYSIS.md "Alias resolution & separation")
+
+# Predicates whose VALUE is a name the fact's entity is declaring for ITSELF:
+# "my full name is Jeffrey Mark Hopkins" makes that string an alias of Me, so a
+# later bare "Jeffrey Mark Hopkins" resolves to the owner instead of forking a
+# new entity. Matched after stripping case and word separators, so fullName /
+# full_name / "given name" all collapse to one key.
+_NAMING_PREDICATES = frozenset(
+    {
+        "name", "fullname", "givenname", "alternatename", "legalname",
+        "preferredname", "nickname", "knownas", "alias", "aka", "maidenname",
+    }
+)  # fmt: skip
+
+# value_json keys, in priority order, that carry the declared name string.
+_NAME_VALUE_KEYS = ("name", "value", "fullname", "alias", "text")
+
+
+def declared_alias(predicate: str, value_json: Any) -> str | None:
+    """The name a fact DECLARES for its own entity, or None when it is not a
+    self-naming fact. Identity declarations only — never inferred from prose;
+    the value must be a plain string under a known key."""
+    if re.sub(r"[\s_]+", "", predicate).casefold() not in _NAMING_PREDICATES:
+        return None
+    if not isinstance(value_json, dict):
+        return None
+    for key in _NAME_VALUE_KEYS:
+        val = value_json.get(key)
+        if isinstance(val, str) and val.strip():
+            return val.strip()
+    return None
+
+
+async def register_declared_alias(
+    session: AsyncSession, entity_id: uuid.UUID, name: str
+) -> str | None:
+    """Attach `name` to `entity_id` as an exact alias — the one auto-link the
+    design blesses ("auto-merge only on exact alias + same kind"). Conservative
+    on collision: if the normalized name already keys a DIFFERENT live entity,
+    skip — silently widening one name across two entities is the wrong link no
+    layer may make; that case is a merge proposal, not an alias. The alias
+    inherits the entity's firewall partition. Returns the normalized alias when
+    a NEW row was written, else None (pronoun, blank, collision, or duplicate).
+    """
+    norm = normalize_alias(name)
+    if not norm or norm in FIRST_PERSON:
+        return None
+    if any(row.id != entity_id for row in await _exact_matches(session, norm)):
+        return None
+    domain = (
+        await session.execute(
+            text("SELECT domain_code FROM app.entities WHERE id = :id"),
+            {"id": str(entity_id)},
+        )
+    ).scalar_one()
+    inserted = (
+        await session.execute(
+            text(
+                "INSERT INTO app.entity_aliases (id, entity_id, alias, alias_norm, domain_code)"
+                " VALUES (:id, :eid, :alias, :norm, :domain)"
+                " ON CONFLICT (entity_id, alias_norm) DO NOTHING RETURNING id"
+            ),
+            {
+                "id": str(uuid.uuid4()),
+                "eid": str(entity_id),
+                "alias": name,
+                "norm": norm,
+                "domain": domain,
+            },
+        )
+    ).first()
+    return norm if inserted is not None else None
+
+
+async def alias_owner(session: AsyncSession, name: str, *, exclude: uuid.UUID) -> uuid.UUID | None:
+    """A live entity OTHER than `exclude` that already exactly owns `name`.
+    The declared-name collision signal: a self-named entity bumping into a
+    different one that holds the same name is strong "same person" evidence."""
+    norm = normalize_alias(name)
+    if not norm or norm in FIRST_PERSON:
+        return None
+    others = [row.id for row in await _exact_matches(session, norm) if row.id != exclude]
+    return others[0] if len(others) == 1 else None
+
+
+async def are_distinct(session: AsyncSession, a: uuid.UUID, b: uuid.UUID) -> bool:
+    """A permanent distinct_from edge (a rejected merge) forbids re-proposing
+    the same merge — the negative knowledge the disambiguator must honour."""
+    lo, hi = sorted((a, b))
+    return (
+        await session.execute(
+            text(
+                "SELECT 1 FROM app.entity_distinctions"
+                " WHERE entity_a = :a AND entity_b = :b LIMIT 1"
+            ),
+            {"a": str(lo), "b": str(hi)},
+        )
+    ).first() is not None
+
+
+@dataclass(frozen=True)
+class MergePlan:
+    """Direction for a proposed merge: `gone` folds into `keep`. The survivor
+    is the more-anchored identity, so a subject (the owner) and confirmed rows
+    are never the ones tombstoned."""
+
+    keep_id: uuid.UUID
+    keep_name: str
+    gone_id: uuid.UUID
+    gone_name: str
+
+
+async def plan_merge(session: AsyncSession, a: uuid.UUID, b: uuid.UUID) -> MergePlan:
+    """Rank the pair so the survivor is the stronger identity: a subject-linked
+    entity outranks a non-subject one, a confirmed status outranks provisional,
+    and age breaks the tie. Keeps the owner ("Me") from ever being merged away."""
+    rows = {
+        r.id: r
+        for r in (
+            await session.execute(
+                text(
+                    "SELECT id, canonical_name, subject_id, status, created_at"
+                    " FROM app.entities WHERE id = ANY(:ids)"
+                ),
+                {"ids": [str(a), str(b)]},
+            )
+        ).all()
+    }
+    ra, rb = rows[a], rows[b]
+
+    def rank(r: Any) -> tuple[int, int, float]:
+        return (
+            1 if r.subject_id is not None else 0,
+            1 if r.status == "confirmed" else 0,
+            -r.created_at.timestamp(),  # older wins the tie
+        )
+
+    keep, gone = (ra, rb) if rank(ra) >= rank(rb) else (rb, ra)
+    return MergePlan(keep.id, keep.canonical_name, gone.id, gone.canonical_name)
+
+
 async def resolve_entity(
     session: AsyncSession,
     name: str,

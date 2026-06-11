@@ -321,8 +321,8 @@ def test_system_prompt_v5_teaches_object_person_and_backward_temporal() -> None:
     assert "last night" in SYSTEM_PROMPT and "PRIOR calendar day" in SYSTEM_PROMPT
 
 
-def test_prompt_version_bumped_to_v5() -> None:
-    assert PROMPT_VERSION == "note-extract-v5"
+def test_prompt_version_bumped_to_v7() -> None:
+    assert PROMPT_VERSION == "note-extract-v7"
 
 
 def test_user_prompt_carries_anchor_with_timezone_domain_and_content() -> None:
@@ -331,6 +331,27 @@ def test_user_prompt_carries_anchor_with_timezone_domain_and_content() -> None:
     assert "2026-06-10T09:30:00+00:00" in prompt
     assert "health" in prompt
     assert "BP was 118/76" in prompt and "second chunk" in prompt
+
+
+def test_user_prompt_appends_domain_block_for_sensitive_domains() -> None:
+    # v6: health/finance notes get an entity-shape block (baseline showed
+    # meds/conditions/accounts captured only as fact values, not mentions);
+    # general/location get none.
+    health = build_user_prompt(
+        ["BP 120/80, lisinopril"], anchor=datetime(2026, 6, 10, tzinfo=UTC), domain="health"
+    )
+    assert "MEDICATION" in health and "linkable entity" in health
+    # v7: a named clinician becomes a patient -> provider treatedBy edge, not
+    # only a mention (the live eval showed providers never wired into a fact).
+    assert "treatedBy" in health and "CLINICIAN" in health
+    finance = build_user_prompt(
+        ["paid rent, 401k"], anchor=datetime(2026, 6, 10, tzinfo=UTC), domain="finance"
+    )
+    assert "FINANCIAL INSTITUTION" in finance and "FUND" in finance
+    general = build_user_prompt(
+        ["went for a run"], anchor=datetime(2026, 6, 10, tzinfo=UTC), domain="general"
+    )
+    assert "MEDICATION" not in general and "FINANCIAL INSTITUTION" not in general
 
 
 def test_user_prompt_anchor_carries_local_date_not_utc() -> None:
@@ -711,13 +732,28 @@ def test_resolve_relative_date_last_night_is_ambiguous_at_evening_anchor() -> No
     assert resolve_relative_date("last night", _ANCHOR) == (_ANCHOR - timedelta(days=1)).date()
 
 
-def test_validate_backward_temporal_skips_on_offset_mismatch() -> None:
-    # Model resolved in a DIFFERENT offset than the anchor (naive -> UTC pinning,
-    # or a missing client offset that left the anchor in UTC): the calendar-day
-    # comparison is unsound, so the value is never shifted (red-team Finding 1/5).
+def test_validate_backward_temporal_repairs_utc_model_output_by_local_day() -> None:
+    # grok routinely resolves to a UTC instant instead of echoing the note's
+    # local offset. The repair must still judge it by the LOCAL calendar day:
+    # 2026-06-11T20:00Z is Jun 11 14:00 at -06:00 (the capture DAY) — wrong for
+    # "last night" from a 07:13 anchor, so it shifts to Jun 10 (the live bug).
     utc_start = ExtractedTemporal(
         phrase="last night",
-        resolved_start=datetime(2026, 6, 11, 20, 0, tzinfo=UTC),  # +00:00 vs anchor -06:00
+        resolved_start=datetime(2026, 6, 11, 20, 0, tzinfo=UTC),
+        resolved_end=None,
+        precision="day",
+    )
+    fixed, repaired = validate_backward_temporal(utc_start, _ANCHOR)
+    assert repaired and fixed is not None and fixed.resolved_start is not None
+    assert fixed.resolved_start.astimezone(_MST).date() == date(2026, 6, 10)
+
+
+def test_validate_backward_temporal_noop_when_utc_output_is_locally_correct() -> None:
+    # 2026-06-11T02:00Z is Jun 10 20:00 at -06:00 — already the right local day
+    # for "last night", so no shift even though the offset differs from anchor's.
+    utc_start = ExtractedTemporal(
+        phrase="last night",
+        resolved_start=datetime(2026, 6, 11, 2, 0, tzinfo=UTC),
         resolved_end=None,
         precision="day",
     )
@@ -770,3 +806,91 @@ def test_parse_extraction_without_anchor_leaves_resolution_raw() -> None:
     assert fact_t is not None and fact_t.resolved_start is not None
     assert fact_t.resolved_start.date() == date(2026, 6, 11)
     assert parsed.tokens[0].resolved_start.date() == date(2026, 6, 11)
+
+
+def test_finalize_temporal_stamps_absolute_date_to_local_midnight() -> None:
+    # grok resolves "June 8" to midnight UTC; at -06:00 that instant is Jun 7
+    # evening, so the local date drifts back one. Normalization re-stamps local
+    # midnight on the written date, so the local date reads Jun 8 again.
+    utc_midnight = ExtractedTemporal(
+        phrase="June 8", resolved_start=datetime(2026, 6, 8, 0, 0, tzinfo=UTC),
+        resolved_end=None, precision="day",
+    )  # fmt: skip
+    fixed, changed = validate_backward_temporal(utc_midnight, _ANCHOR)
+    assert changed and fixed is not None and fixed.resolved_start is not None
+    assert fixed.resolved_start.utcoffset() == timedelta(hours=-6)
+    assert fixed.resolved_start.astimezone(_MST).date() == date(2026, 6, 8)
+    # An instant-precision value (a measurement time) is left exactly as resolved.
+    inst = ExtractedTemporal(
+        phrase="", resolved_start=datetime(2026, 6, 8, 14, 0, tzinfo=UTC),
+        resolved_end=None, precision="instant",
+    )  # fmt: skip
+    _, changed2 = validate_backward_temporal(inst, _ANCHOR)
+    assert not changed2
+
+
+def test_domain_floor_raises_general_to_restricted_only() -> None:
+    from jbrain.analysis.extraction import domain_floor
+
+    assert domain_floor("bloodPressure") == "health"
+    assert domain_floor("medication") == "health"
+    assert domain_floor("mortgage") == "finance"
+    assert domain_floor("latitude") == "location"  # precise geo only
+    assert domain_floor("ate") is None  # unknown -> model decides
+    # Ambiguous / not-firewall-sensitive predicates are deliberately not floored.
+    assert domain_floor("weight") is None and domain_floor("temperature") is None
+    assert domain_floor("homeLocation") is None  # a home city is ordinary
+
+
+def test_part_of_day_token_becomes_a_within_day_range() -> None:
+    payload: dict[str, Any] = {
+        "title": "t", "tags": ["a", "b", "c"],
+        "mentions": [{"name": "Me", "kind": "Person", "surface_text": "I"}],
+        "facts": [{
+            "predicate": "ran", "qualifier": "", "kind": "event", "statement": "Ran this morning.",
+            "value_json": None, "assertion": "asserted", "entity_ref": "Me",
+            "object_entity_ref": None,
+            "temporal": {"phrase": "this morning", "resolved_start": "2026-06-11T15:00:00+00:00",
+                         "resolved_end": None, "precision": "day"},
+            "domain": "general", "confidence": 0.9,
+        }],
+        "temporal_tokens": [{"phrase": "this morning", "kind": "point",
+                             "resolved_start": "2026-06-11T15:00:00+00:00", "resolved_end": None,
+                             "precision": "day", "rrule": None}],
+    }  # fmt: skip
+    parsed = parse_extraction(payload, anchor=_ANCHOR)  # _ANCHOR is 2026-06-11, -06:00
+    tok = parsed.tokens[0]
+    # 15:00 UTC == 09:00 local; the token keeps that start and gains the morning
+    # window END (12:00), becoming a within-day range.
+    assert tok.kind == "range" and tok.resolved_end is not None and tok.resolved_start is not None
+    assert tok.resolved_start.astimezone(_MST).hour == 9
+    assert tok.resolved_end.astimezone(_MST).hour == 12
+    assert tok.resolved_start.astimezone(_MST).date() == date(2026, 6, 11)
+    # The FACT is left untouched (token-only): valid_from keeps its time, no
+    # valid_to (a state interval must never be falsely closed), and it shares the
+    # token's start so there's no duplicate token.
+    ft = parsed.facts[0].temporal
+    assert ft is not None and ft.resolved_start is not None
+    assert ft.resolved_start.astimezone(_MST).hour == 9 and ft.resolved_end is None
+
+
+def test_relative_phrase_rendered_midnight_utc_is_not_pushed_a_day() -> None:
+    # grok renders "yesterday" as midnight UTC: 2026-06-11T00:00Z is locally
+    # Jun 10 at -06:00 (correct for an anchor of Jun 11). It must NOT be stamped
+    # to the written UTC date (Jun 11) — a regression in the abs-date
+    # normalization caught by the live finance eval.
+    t = ExtractedTemporal(
+        phrase="yesterday", resolved_start=datetime(2026, 6, 11, 0, 0, tzinfo=UTC),
+        resolved_end=None, precision="day",
+    )  # fmt: skip
+    fixed, _ = validate_backward_temporal(t, _ANCHOR)  # _ANCHOR is Jun 11, -06:00
+    assert fixed is not None and fixed.resolved_start is not None
+    assert fixed.resolved_start.astimezone(_MST).date() == date(2026, 6, 10)
+    # An ABSOLUTE date the model rendered as midnight UTC is still normalized.
+    abs_t = ExtractedTemporal(
+        phrase="June 8", resolved_start=datetime(2026, 6, 8, 0, 0, tzinfo=UTC),
+        resolved_end=None, precision="day",
+    )  # fmt: skip
+    abs_fixed, _ = validate_backward_temporal(abs_t, _ANCHOR)
+    assert abs_fixed is not None and abs_fixed.resolved_start is not None
+    assert abs_fixed.resolved_start.astimezone(_MST).date() == date(2026, 6, 8)

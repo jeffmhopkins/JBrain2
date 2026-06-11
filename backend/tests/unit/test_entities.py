@@ -8,6 +8,7 @@ import json
 from jbrain.analysis.entities import (
     Reference,
     build_disambiguation_prompt,
+    declared_alias,
     kind_hint_compatible,
     normalize_alias,
     parse_disambiguation,
@@ -137,3 +138,28 @@ class TestDisambiguationContract:
 def test_normalize_alias_strips_case_diacritics_whitespace() -> None:
     assert normalize_alias("  Dr.  Okafor ") == "dr. okafor"
     assert normalize_alias("Zoë") == "zoe"
+
+
+class TestDeclaredAlias:
+    """The self-naming-fact -> alias source: "my full name is X" must yield X,
+    a non-naming fact must yield nothing (the persistence + collision rules are
+    proven against Postgres in test_entity_resolution_pg.py)."""
+
+    def test_naming_predicates_across_separators_and_keys(self) -> None:
+        assert declared_alias("fullName", {"name": "Jeffrey Mark Hopkins"}) == (
+            "Jeffrey Mark Hopkins"
+        )
+        assert declared_alias("full_name", {"value": "Jane Roe"}) == "Jane Roe"
+        assert declared_alias("given name", {"name": "Jeff"}) == "Jeff"
+        assert declared_alias("nickname", {"alias": "JJ"}) == "JJ"
+
+    def test_non_naming_predicate_is_ignored(self) -> None:
+        assert declared_alias("height", {"value": 76}) is None
+        assert declared_alias("homeLocation", {"place": "Denver"}) is None
+
+    def test_naming_predicate_without_a_string_value_is_ignored(self) -> None:
+        # The animal example carries {"name": "Bella", "species": "dog"} — that
+        # is a valid declaration; but a name fact with no usable string is not.
+        assert declared_alias("name", {"species": "dog"}) is None
+        assert declared_alias("name", None) is None
+        assert declared_alias("name", {"name": "   "}) is None

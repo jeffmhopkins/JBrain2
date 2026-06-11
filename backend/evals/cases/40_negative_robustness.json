@@ -1,0 +1,352 @@
+[
+  {
+    "name": "neg_brand_tesla_not_person",
+    "body": "I bought a Tesla last week and I love it so far.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "not_person": [
+        "Tesla"
+      ]
+    }
+  },
+  {
+    "name": "neg_pet_dog_not_person",
+    "body": "Took Biscuit to the vet this morning. She's a good girl but hates the car.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "not_person": [
+        "Biscuit"
+      ]
+    }
+  },
+  {
+    "name": "neg_band_name_not_person",
+    "body": "Saw Wilco at the Riviera last night \u2014 best show I've been to in years.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "not_person": [
+        "Wilco"
+      ]
+    }
+  },
+  {
+    "name": "neg_book_title_name_not_person",
+    "body": "Finally finished Middlemarch. George Eliot really knew how to build a character.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "not_person": [
+        "Middlemarch"
+      ]
+    }
+  },
+  {
+    "name": "neg_software_tool_not_person",
+    "body": "Switched to Obsidian for notes after years of Notion. No regrets.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "not_person": [
+        "Notion",
+        "Obsidian"
+      ]
+    }
+  },
+  {
+    "name": "neg_sports_team_not_person",
+    "body": "The Bulls are on a five-game losing streak. Painful to watch.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "not_person": [
+        "Bulls"
+      ]
+    }
+  },
+  {
+    "name": "neg_place_name_not_person",
+    "body": "Drove through Madison on the way home. Beautiful city but the traffic was rough.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "not_person": [
+        "Madison"
+      ]
+    }
+  },
+  {
+    "name": "neg_no_second_person_solo_run",
+    "body": "I went for a run this morning. Five miles, felt great.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "absent_person": [
+        "Alex",
+        "Chris"
+      ]
+    }
+  },
+  {
+    "name": "neg_no_second_person_bill_payment",
+    "body": "Paid the electric bill online. Set up autopay so I don't have to think about it.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "absent_person": [
+        "Ryan",
+        "Taylor"
+      ]
+    }
+  },
+  {
+    "name": "neg_someone_keyed_car_vague",
+    "body": "Someone keyed my car in the parking lot overnight. So frustrating.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "absent_person": [
+        "Mike",
+        "John"
+      ]
+    }
+  },
+  {
+    "name": "neg_vague_old_friend_no_name",
+    "body": "Had a great chat with an old friend this afternoon. Hadn't talked in years.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "absent_person": [
+        "David",
+        "Sarah"
+      ]
+    }
+  },
+  {
+    "name": "neg_typo_ate_as_are_celine_present",
+    "body": "Jeff are Celine's dinner while she was at work.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "person_mentions": [
+        "Jeff",
+        "Celine"
+      ]
+    }
+  },
+  {
+    "name": "neg_all_caps_robustness",
+    "body": "TALKED TO MOM TODAY. SHE WANTS TO VISIT NEXT MONTH. CALLED AUNT ROSA TOO.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "person_mentions": [
+        "Rosa"
+      ]
+    }
+  },
+  {
+    "name": "neg_txt_speak_robustness",
+    "body": "lol hung out w/ marcus n his gf priya 2day. gr8 time tbh",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "person_mentions": [
+        "Marcus",
+        "Priya"
+      ]
+    }
+  },
+  {
+    "name": "neg_emoji_heavy_robustness",
+    "body": "Dinner with Dana \ud83c\udf55 and her brother Leo \ud83c\udf89 \u2014 such a fun night \ud83e\udd42\u2728",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "person_mentions": [
+        "Dana",
+        "Leo"
+      ],
+      "edges": [
+        {
+          "predicate": "sibling",
+          "object": "Leo"
+        }
+      ]
+    }
+  },
+  {
+    "name": "neg_run_on_sentence_robustness",
+    "body": "Called Ravi about the project and he said it was going fine but then he mentioned that his colleague Yasmin had flagged a bug which took two days to trace back to a config issue that nobody had noticed since the last deploy which Ravi handled himself.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "person_mentions": [
+        "Ravi",
+        "Yasmin"
+      ]
+    }
+  },
+  {
+    "name": "neg_fragment_note_robustness",
+    "body": "Elena \u2014 Thursday 3pm",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "person_mentions": [
+        "Elena"
+      ]
+    }
+  },
+  {
+    "name": "neg_very_long_rambling_note",
+    "body": "So I've been thinking a lot lately, mostly because I had coffee this morning which I probably shouldn't have because it makes me anxious, and I was sitting there looking out the window at the neighbor's garden which is really something this time of year, and then I remembered I need to call Marcus back about the thing he mentioned when we ran into each other at the farmer's market last Saturday, it was something about a job opportunity he heard about from his friend Nadia who apparently works at a consultancy downtown, though I can't remember the name of the firm, and honestly I'm not sure I want to change jobs right now anyway, but it was nice of him to think of me, also I need to buy more coffee.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "person_mentions": [
+        "Marcus",
+        "Nadia"
+      ]
+    }
+  },
+  {
+    "name": "neg_mixed_domain_health_and_general",
+    "body": "BP was 124/80 at the checkup today. Ran into Kenji in the waiting room \u2014 he's seeing the same cardiologist.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "person_mentions": [
+        "Kenji"
+      ]
+    }
+  },
+  {
+    "name": "neg_quoted_speech_speaker_vs_i",
+    "body": "Fatima told me, \"I'm thinking of moving to Denver next spring.\" Hope she goes for it.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "person_mentions": [
+        "Fatima"
+      ]
+    }
+  },
+  {
+    "name": "neg_relayed_speech_third_party",
+    "body": "Mom said that Uncle Pete is retiring at the end of the year.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "person_mentions": [
+        "Pete"
+      ]
+    }
+  },
+  {
+    "name": "neg_product_name_looks_like_given_name",
+    "body": "Finally picked up Alexa for the kitchen. She'll remind me about timers.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "not_person": [
+        "Alexa"
+      ]
+    }
+  },
+  {
+    "name": "neg_movie_character_not_real_person",
+    "body": "Rewatched Parasite tonight. Loved the way Ki-woo's arc resolves at the end.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "not_person": [
+        "Parasite"
+      ]
+    }
+  },
+  {
+    "name": "neg_possessive_of_place_not_person",
+    "body": "Chicago's winters are brutal but I still love the city.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "not_person": [
+        "Chicago"
+      ]
+    }
+  },
+  {
+    "name": "neg_generic_pronoun_they_no_antecedent",
+    "body": "They really need to fix the potholes on Oak Street. Ridiculous.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "absent_person": [
+        "They"
+      ]
+    }
+  },
+  {
+    "name": "neg_pet_with_human_name_not_person",
+    "body": "Oliver scratched the couch again. I love that cat but he is destructive.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "not_person": [
+        "Oliver"
+      ]
+    }
+  },
+  {
+    "name": "neg_positive_control_clean_spouse",
+    "body": "Jeff is married to Celine Hopkins.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "person_mentions": [
+        "Jeff",
+        "Celine Hopkins"
+      ],
+      "edges": [
+        {
+          "predicate": "spouse",
+          "object": "Celine"
+        }
+      ]
+    }
+  },
+  {
+    "name": "neg_positive_control_colleague_introduced",
+    "body": "Priya introduced me to her colleague, Dr. Anand Rao, at the conference.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "person_mentions": [
+        "Priya",
+        "Anand Rao"
+      ]
+    }
+  },
+  {
+    "name": "neg_positive_control_sibling_edge",
+    "body": "Marcus and his sister Lena are flying out for the reunion next weekend.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "person_mentions": [
+        "Marcus",
+        "Lena"
+      ],
+      "edges": [
+        {
+          "predicate": "sibling",
+          "object": "Lena"
+        }
+      ]
+    }
+  }
+]
