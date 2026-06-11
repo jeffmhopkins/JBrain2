@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Assistant · Sessions — read-scope chosen at start</title>
+<style>
+  :root{
+    --bg:#0E0F11; --surface:#17181B; --surface-2:#1E2024; --border:#26282C;
+    --text:#E6E7E9; --text-2:#9A9DA3; --text-3:#5C5F66;
+    --steel:#7FA7C9; --green:#8FBC9A; --amber:#C9A36A; --rose:#CF8A8F; --violet:#A493C9;
+    --steel-tint:rgba(127,167,201,.13); --green-tint:rgba(143,188,154,.13);
+    --amber-tint:rgba(201,163,106,.13); --rose-tint:rgba(207,138,143,.13); --violet-tint:rgba(164,147,201,.13);
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+  body{background:#000;color:var(--text);display:flex;flex-direction:column;align-items:center;gap:14px;padding:18px 0 40px;min-height:100vh;}
+  .caption{max-width:392px;padding:0 18px;color:var(--text-2);font-size:13px;line-height:1.55;}
+  .caption b{color:var(--text);font-weight:500;}
+  .caption .tag{display:inline-block;background:var(--steel-tint);color:var(--steel);font-size:11px;padding:2px 8px;border-radius:999px;margin-bottom:6px;}
+  svg{fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;}
+
+  .phone{width:390px;height:780px;background:var(--bg);border:1px solid #2a2c30;border-radius:34px;overflow:hidden;position:relative;display:flex;flex-direction:column;}
+  .panel-bar{height:56px;display:flex;align-items:center;gap:12px;padding:0 14px;border-bottom:1px solid var(--border);flex:none;}
+  .panel-bar .back{color:var(--text-2);}
+  .panel-bar .ttl{font-size:18px;font-weight:600;}
+  .panel-bar .sub{margin-left:auto;font-size:12px;color:var(--text-3);}
+  .body{flex:1;overflow-y:auto;padding:14px 16px 18px;display:flex;flex-direction:column;gap:10px;}
+
+  .newbtn{border:1px dashed var(--border);color:var(--steel);background:var(--surface);border-radius:14px;padding:14px;font-size:15px;font-weight:500;display:flex;align-items:center;justify-content:center;gap:8px;}
+  .sect{font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--text-3);margin:6px 2px 0;}
+
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:13px 14px;display:flex;flex-direction:column;gap:8px;}
+  .card.live{border-color:rgba(143,188,154,.4);}
+  .c-head{display:flex;align-items:center;gap:9px;font-size:15px;font-weight:500;}
+  .c-head .g{width:8px;height:8px;border-radius:999px;flex:none;}
+  .c-head .when{margin-left:auto;font-size:12px;color:var(--text-3);font-weight:400;}
+  .c-sub{font-size:13px;color:var(--text-2);line-height:1.45;}
+  .pills{display:flex;flex-wrap:wrap;gap:6px;align-items:center;}
+  .pill{font-size:11px;padding:3px 9px;border-radius:999px;background:var(--surface-2);color:var(--text-2);display:inline-flex;align-items:center;gap:5px;}
+  .pill.general{background:var(--steel-tint);color:var(--steel);}
+  .pill.health{background:var(--rose-tint);color:var(--rose);}
+  .pill.finance{background:var(--violet-tint);color:var(--violet);}
+  .pill.location{background:var(--amber-tint);color:var(--amber);}
+  .pill.live{background:var(--green-tint);color:var(--green);}
+  .pill.subj{background:transparent;border:1px solid var(--border);}
+  .scope-lead{font-size:11px;color:var(--text-3);margin-right:2px;}
+  .stat{font-size:11px;padding:3px 8px;border-radius:999px;}
+  .stat.staged{background:var(--steel-tint);color:var(--steel);}
+
+  /* bottom sheet: choose sources */
+  .scrim{position:absolute;inset:0;background:rgba(14,15,17,.6);opacity:0;pointer-events:none;transition:.2s;z-index:30;}
+  .scrim.show{opacity:1;pointer-events:auto;}
+  .sheet{position:absolute;left:0;right:0;bottom:0;background:var(--surface);border-top:1px solid var(--border);border-radius:18px 18px 0 0;
+    transform:translateY(100%);transition:transform .24s cubic-bezier(.2,.7,.3,1);z-index:31;padding:8px 16px calc(16px + env(safe-area-inset-bottom));max-height:88%;display:flex;flex-direction:column;}
+  .sheet.show{transform:translateY(0);}
+  .grip{width:40px;height:4px;border-radius:999px;background:var(--border);margin:8px auto 12px;}
+  .sheet h3{font-size:17px;font-weight:600;margin-bottom:2px;}
+  .sheet .lead{font-size:13px;color:var(--text-2);margin-bottom:14px;line-height:1.45;}
+  .opt{display:flex;align-items:center;gap:12px;padding:12px;border:1px solid var(--border);border-radius:12px;margin-bottom:8px;background:var(--surface-2);}
+  .opt .ico{width:30px;height:30px;border-radius:8px;display:flex;align-items:center;justify-content:center;flex:none;}
+  .opt .meta{flex:1;min-width:0;}
+  .opt .meta .t{font-size:15px;}
+  .opt .meta .d{font-size:12px;color:var(--text-3);}
+  .check{width:24px;height:24px;border-radius:7px;border:1.5px solid var(--border);display:flex;align-items:center;justify-content:center;color:transparent;flex:none;}
+  .opt.on .check{background:var(--steel);border-color:var(--steel);color:#10141a;}
+  .opt.on{border-color:rgba(127,167,201,.5);}
+  .opt.locked{opacity:.55;}
+  .subj-row{display:flex;gap:8px;margin:6px 0 16px;flex-wrap:wrap;}
+  .subj{font-size:13px;padding:8px 14px;border-radius:999px;border:1px solid var(--border);background:var(--surface-2);color:var(--text-2);}
+  .subj.on{border-color:var(--steel);color:var(--text);background:var(--steel-tint);}
+  .start{margin-top:auto;background:var(--steel);color:#10141a;border:none;border-radius:13px;padding:15px;font-size:16px;font-weight:600;display:flex;align-items:center;justify-content:center;gap:8px;}
+  .start .hintline{font-weight:400;font-size:12px;color:#10141a;opacity:.8;}
+  .writes-note{font-size:12px;color:var(--text-3);text-align:center;margin-top:10px;line-height:1.5;}
+</style>
+</head>
+<body>
+  <div class="caption">
+    <span class="tag">Sessions</span><br/>
+    Every session is a <b>capability, not an identity</b>. Each card shows the <b>read-scope chosen at start</b>
+    (domain × subject) — the upper bound on everything that session can see. Tap <b>＋ New session</b> to pick sources;
+    writes never come from this dial — they go through Proposals.
+  </div>
+
+  <div class="phone">
+    <div class="panel-bar">
+      <button class="back"><svg width="22" height="22" viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg></button>
+      <span class="ttl">Sessions</span>
+      <span class="sub">swipe right → chat</span>
+    </div>
+
+    <div class="body">
+      <button class="newbtn" onclick="openSheet()">＋ New session — choose sources</button>
+
+      <div class="sect">Active</div>
+      <div class="card live">
+        <div class="c-head"><span class="g" style="background:var(--green)"></span>Health wiki cleanup <span class="stat staged" style="margin-left:auto">1 staged</span></div>
+        <div class="c-sub">Analyzed 7 articles · staged a restructuring plan (split Cardiology, 2 merges, retitles).</div>
+        <div class="pills"><span class="scope-lead">reads</span><span class="pill health">health</span><span class="pill subj">me</span></div>
+      </div>
+
+      <div class="sect">Earlier today</div>
+      <div class="card">
+        <div class="c-head">Weekly recap &amp; open items<span class="when">9:12 AM · 14 turns</span></div>
+        <div class="c-sub">Surfaced two open labs and the roof quote. No writes.</div>
+        <div class="pills"><span class="scope-lead">reads</span><span class="pill general">general</span><span class="pill health">health</span><span class="pill finance">finance</span><span class="pill subj">me</span></div>
+      </div>
+      <div class="card">
+        <div class="c-head">Dad's medication list<span class="when">8:03 AM · 5 turns</span></div>
+        <div class="c-sub">Read-only review of Dad's current meds.</div>
+        <div class="pills"><span class="scope-lead">reads</span><span class="pill health">health</span><span class="pill subj">Dad</span></div>
+      </div>
+
+      <div class="sect">Yesterday</div>
+      <div class="card">
+        <div class="c-head">Roof quote — second opinion?<span class="when">6 turns</span></div>
+        <div class="c-sub">Compared the $4,200 quote against last year's invoices.</div>
+        <div class="pills"><span class="scope-lead">reads</span><span class="pill finance">finance</span><span class="pill subj">me</span></div>
+      </div>
+      <div class="card">
+        <div class="c-head">Grocery &amp; errands brainstorm<span class="when">11 turns</span></div>
+        <div class="c-sub">General planning chat.</div>
+        <div class="pills"><span class="scope-lead">reads</span><span class="pill general">general</span><span class="pill subj">me</span></div>
+      </div>
+    </div>
+
+    <!-- choose-sources sheet -->
+    <div class="scrim" id="scrim" onclick="closeSheet()"></div>
+    <div class="sheet" id="sheet">
+      <div class="grip"></div>
+      <h3>New session</h3>
+      <div class="lead">Choose which knowledge sources this session may <b style="color:var(--text)">read</b>. Narrow by default — widen only when you need to. This sets the session's firewall.</div>
+
+      <div style="font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--text-3);margin:2px 2px 8px">Subject</div>
+      <div class="subj-row">
+        <button class="subj on" onclick="toggleSubj(this)">Me</button>
+        <button class="subj" onclick="toggleSubj(this)">Dad</button>
+        <button class="subj" onclick="toggleSubj(this)">Mom</button>
+      </div>
+
+      <div style="font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--text-3);margin:2px 2px 8px">Domains</div>
+      <div class="opt on" onclick="toggleOpt(this)"><div class="ico" style="background:var(--steel-tint);color:var(--steel)">◆</div><div class="meta"><div class="t">General</div><div class="d">notes, lists, wiki</div></div><div class="check">✓</div></div>
+      <div class="opt" onclick="toggleOpt(this)"><div class="ico" style="background:var(--rose-tint);color:var(--rose)">✚</div><div class="meta"><div class="t">Health</div><div class="d">labs, meds, medical notes</div></div><div class="check">✓</div></div>
+      <div class="opt" onclick="toggleOpt(this)"><div class="ico" style="background:var(--violet-tint);color:var(--violet)">$</div><div class="meta"><div class="t">Finance</div><div class="d">statements, receipts</div></div><div class="check">✓</div></div>
+      <div class="opt" onclick="toggleOpt(this)"><div class="ico" style="background:var(--amber-tint);color:var(--amber)">⌖</div><div class="meta"><div class="t">Location</div><div class="d">places, geofences</div></div><div class="check">✓</div></div>
+
+      <button class="start" onclick="closeSheet()">Start session <span class="hintline" id="startsub">· reads general · me</span></button>
+      <div class="writes-note">Reads only. Any change the agent wants to make is <b style="color:var(--text-2)">staged as a Proposal</b> for your approval.</div>
+    </div>
+  </div>
+
+<script>
+function openSheet(){document.getElementById('scrim').classList.add('show');document.getElementById('sheet').classList.add('show');}
+function closeSheet(){document.getElementById('scrim').classList.remove('show');document.getElementById('sheet').classList.remove('show');}
+function toggleOpt(el){el.classList.toggle('on');sync();}
+function toggleSubj(el){el.classList.toggle('on');sync();}
+function sync(){
+  const doms=[...document.querySelectorAll('.opt.on .t')].map(e=>e.textContent.toLowerCase());
+  const subs=[...document.querySelectorAll('.subj.on')].map(e=>e.textContent.toLowerCase());
+  const d=doms.length?doms.join(' · '):'nothing';
+  const s=subs.length?subs.join(', '):'no subject';
+  document.getElementById('startsub').textContent='· reads '+d+' · '+s;
+}
+sync();
+</script>
+</body>
+</html>

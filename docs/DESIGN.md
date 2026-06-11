@@ -510,6 +510,14 @@ Sessions, swipe right → Proposals.**
   keeps its transcript-item action rail). Phase 4 surface — disabled with a phase
   label until then.
 
+Reference mocks: `docs/mocks/assistant-lateral-swipe.html` (the gesture + edge
+handles), `docs/mocks/assistant-sessions-view.html` (the Sessions page + start-
+session read-scope picker), `docs/mocks/assistant-proposals-view.html` (the
+tree-structured Proposals page with whole/subtree/leaf approval and dependency
+holds). **Direction is still open for review** — these mock the literal mapping
+(swipe-left → Sessions, swipe-right → Proposals); the natural-pager inverse is a
+one-line flip and the edge handles are unambiguous either way.
+
 ## Surface paradigms (which container for which job)
 
 | Job | Paradigm |
