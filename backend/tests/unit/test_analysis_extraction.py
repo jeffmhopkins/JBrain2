@@ -259,8 +259,28 @@ def test_system_prompt_v2_teaches_kind_discipline_and_schema_org_names() -> None
     assert "in 3 months" in SYSTEM_PROMPT and "expected" in SYSTEM_PROMPT
 
 
-def test_prompt_version_bumped_to_v2() -> None:
-    assert PROMPT_VERSION == "note-extract-v2"
+def test_system_prompt_v3_teaches_possessive_decomposition_and_no_normalizing() -> None:
+    """Field gap: 'Summer's rat's name is Ricky' came back as ONE owner edge
+    (no name attribute on Ricky, kind 'pet'), and a later 'the rat' mention
+    was normalized to the invented name 'Rat'. v3 must teach the two-fact
+    decomposition, species kinds, and that reference phrases stay verbatim."""
+    # Possessive introductions decompose into owns edge + name attribute.
+    assert "DECOMPOSE" in SYSTEM_PROMPT
+    assert "X.owns -> N" in SYSTEM_PROMPT and "Me.owns -> N" in SYSTEM_PROMPT
+    assert '"species"' in SYSTEM_PROMPT
+    # Reference mentions are never normalized to invented proper names.
+    assert "Never normalize a reference mention" in SYSTEM_PROMPT
+    assert "resolver owns identity" in SYSTEM_PROMPT
+    # Animal kinds are the species or Animal, never the useless "pet".
+    assert 'never "pet"' in SYSTEM_PROMPT
+    # The worked dog/rat example renders the exact field case.
+    for needle in ("Bella", "Ricky", '"species": "dog"', '"species": "rat"', "FOUR facts"):
+        assert needle in SYSTEM_PROMPT, needle
+    assert '"the rat"' in SYSTEM_PROMPT
+
+
+def test_prompt_version_bumped_to_v3() -> None:
+    assert PROMPT_VERSION == "note-extract-v3"
 
 
 def test_user_prompt_carries_anchor_with_timezone_domain_and_content() -> None:
