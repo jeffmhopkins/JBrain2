@@ -24,9 +24,10 @@ model id), and a `version` — in YAML frontmatter + a templated body, loaded by
 `jbrain.llm.promptfile` beside the module that uses it (e.g.
 `analysis/prompts/note_extract.prompt`). The version is stamped on every record
 the prompt produces, so a CI guard fails if the prose changes without a version
-bump (a re-run is then a deliberate migration). Migration off in-code constants is
-incremental, one task at a time (note.extract first); the same sidecar pattern is
-what Phase-4 tool definitions will adopt.
+bump (a re-run is then a deliberate migration). All current prompts live this way
+(note.extract, entity.disambiguate, vision.ocr, vision.caption); a new prompt is a
+new `.prompt` file, never an in-code string, and the same sidecar pattern is what
+Phase-4 tool definitions will adopt.
 
 ## Comment standards
 
