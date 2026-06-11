@@ -99,9 +99,12 @@ def _dump(parsed: Any, anchor: datetime) -> str:
         for t in parsed.tokens
         if t.phrase and t.resolved_start
     ]
+    valued = [f"{f.predicate}={json.dumps(f.value_json)}" for f in parsed.facts if f.value_json]
     lines = [f"      mentions: {mentions}"]
     if edges:
         lines.append(f"      edges: {', '.join(edges)}")
+    if valued:
+        lines.append(f"      facts: {', '.join(valued)}")
     if temporal:
         lines.append(f"      dates: {', '.join(temporal)}")
     return "\n".join(lines)
@@ -171,6 +174,19 @@ def _score(case: dict[str, Any], parsed: Any, anchor: datetime) -> CaseResult:
         got = {_local_date(s, anchor) for s in starts if s is not None}
         res.checks.append((f"temporal:{phrase}={want}", want in got, ""))
 
+    # A fact carries a value (a measurement/amount): some fact's rendered
+    # value_json + statement contains the wanted text, optionally on a predicate
+    # matching `predicate` (substring-overlap). For weight/BP/money extraction.
+    for v in expect.get("value", []):
+        want = str(v["contains"]).casefold()
+        pred = v.get("predicate")
+        hit = any(
+            (pred is None or _overlaps(pred, f.predicate))
+            and want in f"{json.dumps(f.value_json or {})} {f.statement}".casefold()
+            for f in parsed.facts
+        )
+        res.checks.append((f"value:{v.get('predicate', '')}~{v['contains']}", hit, ""))
+
     return res
 
 
@@ -229,15 +245,18 @@ def _report(results: list[CaseResult], model: str) -> bool:
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--case", help="run only the named case")
+    ap.add_argument("--like", help="run only cases whose name contains this substring (a category)")
     ap.add_argument("--strict", action="store_true", help="exit 1 unless every case passes")
     args = ap.parse_args()
 
     cases = load_cases()
     if args.case:
         cases = [c for c in cases if c["name"] == args.case]
-        if not cases:
-            print(f"no case named {args.case!r}", file=sys.stderr)
-            return 2
+    if args.like:
+        cases = [c for c in cases if args.like in c["name"]]
+    if not cases:
+        print("no matching cases", file=sys.stderr)
+        return 2
     results, model = asyncio.run(_run(cases))
     all_passed = _report(results, model)
     return 0 if (all_passed or not args.strict) else 1

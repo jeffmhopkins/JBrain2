@@ -110,7 +110,7 @@ def test_eval_cases_are_wellformed() -> None:
     assert len(names) == len(set(names)), "duplicate eval case names"
     valid_expect = {
         "person_mentions", "mentions", "mention_kind",
-        "absent_person", "not_person", "edges", "temporal",
+        "absent_person", "not_person", "edges", "temporal", "value",
     }  # fmt: skip
     for c in cases:
         assert c["name"] and c["body"], c
@@ -122,6 +122,8 @@ def test_eval_cases_are_wellformed() -> None:
             assert {"phrase", "resolved_date"} <= set(tt), c["name"]
         for mk in c.get("expect", {}).get("mention_kind", []):
             assert mk.get("name") and isinstance(mk.get("kind"), list) and mk["kind"], c["name"]
+        for v in c.get("expect", {}).get("value", []):
+            assert "contains" in v, c["name"]
 
 
 def test_score_not_person_allows_nonperson_mention_but_flags_person() -> None:
@@ -148,3 +150,24 @@ def test_score_mentions_and_mention_kind() -> None:
     assert _score(kind_case, _extraction([org]), _A).passed
     wrong = ExtractedMention(name="Globex", kind="Person", surface_text="Globex")
     assert not _score(kind_case, _extraction([wrong]), _A).passed
+
+
+def test_score_value_matches_measurement_in_fact() -> None:
+    fact = ExtractedFact(
+        predicate="weight", qualifier="", kind="measurement",
+        statement="Weight was 182 lb.", value_json={"value": 182, "unit": "lb"},
+        assertion="asserted", entity_ref="Me", object_entity_ref=None, temporal=None,
+        domain="health", confidence=0.9,
+    )  # fmt: skip
+    case: dict[str, Any] = {
+        "name": "v",
+        "expect": {"value": [{"predicate": "weight", "contains": "182"}]},
+    }
+    assert _score(case, _extraction([], [fact]), _A).passed
+    # Wrong predicate or missing value fails.
+    assert not _score(
+        {"name": "v", "expect": {"value": [{"predicate": "height", "contains": "182"}]}},
+        _extraction([], [fact]),
+        _A,
+    ).passed
+    assert not _score(case, _extraction([]), _A).passed
