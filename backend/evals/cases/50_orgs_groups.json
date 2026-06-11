@@ -5,13 +5,28 @@
     "domain": "general",
     "created_at": "2026-06-11T09:00:00-06:00",
     "expect": {
-      "mentions": ["Globex"],
-      "mention_kind": [
-        {"name": "Globex", "kind": ["Organization", "Corporation", "Company", "Business"]}
+      "mentions": [
+        "Globex"
       ],
-      "not_person": ["Globex"],
+      "mention_kind": [
+        {
+          "name": "Globex",
+          "kind": [
+            "Organization",
+            "Corporation",
+            "Company",
+            "Business"
+          ]
+        }
+      ],
+      "not_person": [
+        "Globex"
+      ],
       "edges": [
-        {"predicate": "worksFor", "object": "Globex"}
+        {
+          "predicate": "worksFor",
+          "object": "Globex"
+        }
       ]
     }
   },
@@ -21,13 +36,28 @@
     "domain": "finance",
     "created_at": "2026-06-11T09:00:00-06:00",
     "expect": {
-      "mentions": ["Luminary Labs"],
-      "mention_kind": [
-        {"name": "Luminary Labs", "kind": ["Organization", "Corporation", "Company", "Business"]}
+      "mentions": [
+        "Luminary Labs"
       ],
-      "not_person": ["Luminary Labs"],
+      "mention_kind": [
+        {
+          "name": "Luminary Labs",
+          "kind": [
+            "Organization",
+            "Corporation",
+            "Company",
+            "Business"
+          ]
+        }
+      ],
+      "not_person": [
+        "Luminary Labs"
+      ],
       "edges": [
-        {"predicate": "co_founder", "object": "Luminary"}
+        {
+          "predicate": "co_founder",
+          "object": "Luminary"
+        }
       ]
     }
   },
@@ -37,11 +67,24 @@
     "domain": "general",
     "created_at": "2026-06-11T09:00:00-06:00",
     "expect": {
-      "mentions": ["Northwestern University"],
-      "mention_kind": [
-        {"name": "Northwestern", "kind": ["Organization", "EducationalOrganization", "CollegeOrUniversity", "University", "School"]}
+      "mentions": [
+        "Northwestern University"
       ],
-      "not_person": ["Northwestern University"]
+      "mention_kind": [
+        {
+          "name": "Northwestern",
+          "kind": [
+            "Organization",
+            "EducationalOrganization",
+            "CollegeOrUniversity",
+            "University",
+            "School"
+          ]
+        }
+      ],
+      "not_person": [
+        "Northwestern University"
+      ]
     }
   },
   {
@@ -50,11 +93,23 @@
     "domain": "health",
     "created_at": "2026-06-11T09:00:00-06:00",
     "expect": {
-      "mentions": ["Mayo Clinic"],
-      "mention_kind": [
-        {"name": "Mayo Clinic", "kind": ["Organization", "Hospital", "MedicalOrganization", "HealthcareOrganization"]}
+      "mentions": [
+        "Mayo Clinic"
       ],
-      "not_person": ["Mayo Clinic"]
+      "mention_kind": [
+        {
+          "name": "Mayo Clinic",
+          "kind": [
+            "Organization",
+            "Hospital",
+            "MedicalOrganization",
+            "HealthcareOrganization"
+          ]
+        }
+      ],
+      "not_person": [
+        "Mayo Clinic"
+      ]
     }
   },
   {
@@ -63,27 +118,56 @@
     "domain": "general",
     "created_at": "2026-06-11T09:00:00-06:00",
     "expect": {
-      "mentions": ["FAA"],
-      "mention_kind": [
-        {"name": "FAA", "kind": ["Organization", "GovernmentOrganization", "GovernmentOffice", "GovernmentAgency"]}
+      "mentions": [
+        "FAA"
       ],
-      "not_person": ["FAA"]
+      "mention_kind": [
+        {
+          "name": "FAA",
+          "kind": [
+            "Organization",
+            "GovernmentOrganization",
+            "GovernmentOffice",
+            "GovernmentAgency"
+          ]
+        }
+      ],
+      "not_person": [
+        "FAA"
+      ]
     }
   },
   {
     "name": "org_city_council_member",
-    "body": "Leila Nasser was just elected to the City Council — she'll be representing the east side district.",
+    "body": "Leila Nasser was just elected to the City Council \u2014 she'll be representing the east side district.",
     "domain": "general",
     "created_at": "2026-06-11T09:00:00-06:00",
     "expect": {
-      "person_mentions": ["Leila Nasser"],
-      "mentions": ["City Council"],
-      "mention_kind": [
-        {"name": "City Council", "kind": ["Organization", "GovernmentOrganization", "LocalGovernment", "GovernmentOffice"]}
+      "person_mentions": [
+        "Leila Nasser"
       ],
-      "not_person": ["City Council"],
+      "mentions": [
+        "City Council"
+      ],
+      "mention_kind": [
+        {
+          "name": "City Council",
+          "kind": [
+            "Organization",
+            "GovernmentOrganization",
+            "LocalGovernment",
+            "GovernmentOffice"
+          ]
+        }
+      ],
+      "not_person": [
+        "City Council"
+      ],
       "edges": [
-        {"predicate": "member", "object": "City Council"}
+        {
+          "predicate": "member",
+          "object": "City Council"
+        }
       ]
     }
   },
@@ -93,11 +177,23 @@
     "domain": "general",
     "created_at": "2026-06-11T09:00:00-06:00",
     "expect": {
-      "mentions": ["Habitat for Humanity"],
-      "mention_kind": [
-        {"name": "Habitat for Humanity", "kind": ["Organization", "NGO", "NonProfit", "VolunteerOrganization"]}
+      "mentions": [
+        "Habitat for Humanity"
       ],
-      "not_person": ["Habitat for Humanity"]
+      "mention_kind": [
+        {
+          "name": "Habitat for Humanity",
+          "kind": [
+            "Organization",
+            "NGO",
+            "NonProfit",
+            "VolunteerOrganization"
+          ]
+        }
+      ],
+      "not_person": [
+        "Habitat for Humanity"
+      ]
     }
   },
   {
@@ -106,24 +202,47 @@
     "domain": "general",
     "created_at": "2026-06-11T09:00:00-06:00",
     "expect": {
-      "mentions": ["Bulls"],
-      "mention_kind": [
-        {"name": "Bulls", "kind": ["Organization", "SportsTeam", "SportsOrganization"]}
+      "mentions": [
+        "Bulls"
       ],
-      "not_person": ["Bulls"]
+      "mention_kind": [
+        {
+          "name": "Bulls",
+          "kind": [
+            "Organization",
+            "SportsTeam",
+            "SportsOrganization"
+          ]
+        }
+      ],
+      "not_person": [
+        "Bulls"
+      ]
     }
   },
   {
     "name": "org_band_concert",
-    "body": "Caught Radiohead at the United Center last night — incredible setlist, played everything from OK Computer.",
+    "body": "Caught Radiohead at the United Center last night \u2014 incredible setlist, played everything from OK Computer.",
     "domain": "general",
     "created_at": "2026-06-11T09:00:00-06:00",
     "expect": {
-      "mentions": ["Radiohead"],
-      "mention_kind": [
-        {"name": "Radiohead", "kind": ["Organization", "MusicGroup", "PerformingGroup", "Band"]}
+      "mentions": [
+        "Radiohead"
       ],
-      "not_person": ["Radiohead"]
+      "mention_kind": [
+        {
+          "name": "Radiohead",
+          "kind": [
+            "Organization",
+            "MusicGroup",
+            "PerformingGroup",
+            "Band"
+          ]
+        }
+      ],
+      "not_person": [
+        "Radiohead"
+      ]
     }
   },
   {
@@ -132,14 +251,30 @@
     "domain": "general",
     "created_at": "2026-06-11T09:00:00-06:00",
     "expect": {
-      "person_mentions": ["Tomasz"],
-      "mentions": ["Rotary Club"],
-      "mention_kind": [
-        {"name": "Rotary Club", "kind": ["Organization", "Club", "CivicOrganization"]}
+      "person_mentions": [
+        "Tomasz"
       ],
-      "not_person": ["Rotary Club"],
+      "mentions": [
+        "Rotary Club"
+      ],
+      "mention_kind": [
+        {
+          "name": "Rotary Club",
+          "kind": [
+            "Organization",
+            "Club",
+            "CivicOrganization"
+          ]
+        }
+      ],
+      "not_person": [
+        "Rotary Club"
+      ],
       "edges": [
-        {"predicate": "member", "object": "Rotary Club"}
+        {
+          "predicate": "member",
+          "object": "Rotary Club"
+        }
       ]
     }
   },
@@ -149,8 +284,12 @@
     "domain": "general",
     "created_at": "2026-06-11T09:00:00-06:00",
     "expect": {
-      "person_mentions": ["Elena"],
-      "not_person": ["book club"]
+      "person_mentions": [
+        "Elena"
+      ],
+      "not_person": [
+        "book club"
+      ]
     }
   },
   {
@@ -159,8 +298,13 @@
     "domain": "general",
     "created_at": "2026-06-11T09:00:00-06:00",
     "expect": {
-      "mentions": ["Hollis"],
-      "not_person": ["Hollis family", "Hollis"]
+      "mentions": [
+        "Hollis"
+      ],
+      "not_person": [
+        "Hollis family",
+        "Hollis"
+      ]
     }
   },
   {
@@ -169,14 +313,32 @@
     "domain": "finance",
     "created_at": "2026-06-11T09:00:00-06:00",
     "expect": {
-      "person_mentions": ["Victor Lam"],
-      "mentions": ["Stratos Energy"],
-      "mention_kind": [
-        {"name": "Stratos Energy", "kind": ["Organization", "Corporation", "Company", "Business", "EnergyCompany"]}
+      "person_mentions": [
+        "Victor Lam"
       ],
-      "not_person": ["Stratos Energy"],
+      "mentions": [
+        "Stratos Energy"
+      ],
+      "mention_kind": [
+        {
+          "name": "Stratos Energy",
+          "kind": [
+            "Organization",
+            "Corporation",
+            "Company",
+            "Business",
+            "EnergyCompany"
+          ]
+        }
+      ],
+      "not_person": [
+        "Stratos Energy"
+      ],
       "edges": [
-        {"predicate": "memberOf", "object": "Stratos"}
+        {
+          "predicate": "memberOf",
+          "object": "Stratos"
+        }
       ]
     }
   },
@@ -186,7 +348,9 @@
     "domain": "general",
     "created_at": "2026-06-11T09:00:00-06:00",
     "expect": {
-      "not_person": ["marketing team"]
+      "not_person": [
+        "marketing team"
+      ]
     }
   },
   {
@@ -195,20 +359,34 @@
     "domain": "general",
     "created_at": "2026-06-11T09:00:00-06:00",
     "expect": {
-      "not_person": ["hiring committee"]
+      "not_person": [
+        "hiring committee"
+      ]
     }
   },
   {
     "name": "org_ngo_donation",
-    "body": "Set up a monthly donation to Médecins Sans Frontières. Long overdue.",
+    "body": "Set up a monthly donation to M\u00e9decins Sans Fronti\u00e8res. Long overdue.",
     "domain": "finance",
     "created_at": "2026-06-11T09:00:00-06:00",
     "expect": {
-      "mentions": ["Médecins Sans Frontières"],
-      "mention_kind": [
-        {"name": "Médecins Sans Frontières", "kind": ["Organization", "NGO", "NonProfit", "MedicalOrganization"]}
+      "mentions": [
+        "M\u00e9decins Sans Fronti\u00e8res"
       ],
-      "not_person": ["Médecins Sans Frontières"]
+      "mention_kind": [
+        {
+          "name": "M\u00e9decins Sans Fronti\u00e8res",
+          "kind": [
+            "Organization",
+            "NGO",
+            "NonProfit",
+            "MedicalOrganization"
+          ]
+        }
+      ],
+      "not_person": [
+        "M\u00e9decins Sans Fronti\u00e8res"
+      ]
     }
   },
   {
@@ -217,11 +395,25 @@
     "domain": "finance",
     "created_at": "2026-06-11T09:00:00-06:00",
     "expect": {
-      "mentions": ["Chase Bank"],
-      "mention_kind": [
-        {"name": "Chase Bank", "kind": ["Organization", "Corporation", "Company", "Business", "FinancialService", "BankOrCreditUnion"]}
+      "mentions": [
+        "Chase Bank"
       ],
-      "not_person": ["Chase Bank"]
+      "mention_kind": [
+        {
+          "name": "Chase Bank",
+          "kind": [
+            "Organization",
+            "Corporation",
+            "Company",
+            "Business",
+            "FinancialService",
+            "BankOrCreditUnion"
+          ]
+        }
+      ],
+      "not_person": [
+        "Chase Bank"
+      ]
     }
   },
   {
@@ -230,11 +422,24 @@
     "domain": "health",
     "created_at": "2026-06-11T09:00:00-06:00",
     "expect": {
-      "mentions": ["Northside Family Clinic"],
-      "mention_kind": [
-        {"name": "Northside Family Clinic", "kind": ["Organization", "MedicalClinic", "MedicalOrganization", "HealthcareOrganization", "Clinic"]}
+      "mentions": [
+        "Northside Family Clinic"
       ],
-      "not_person": ["Northside Family Clinic"]
+      "mention_kind": [
+        {
+          "name": "Northside Family Clinic",
+          "kind": [
+            "Organization",
+            "MedicalClinic",
+            "MedicalOrganization",
+            "HealthcareOrganization",
+            "Clinic"
+          ]
+        }
+      ],
+      "not_person": [
+        "Northside Family Clinic"
+      ]
     }
   },
   {
@@ -243,12 +448,27 @@
     "domain": "general",
     "created_at": "2026-06-11T09:00:00-06:00",
     "expect": {
-      "person_mentions": ["Nadia", "Sofia"],
-      "mentions": ["Lakeside Academy"],
-      "mention_kind": [
-        {"name": "Lakeside Academy", "kind": ["Organization", "EducationalOrganization", "School", "CollegeOrUniversity"]}
+      "person_mentions": [
+        "Nadia",
+        "Sofia"
       ],
-      "not_person": ["Lakeside Academy"]
+      "mentions": [
+        "Lakeside Academy"
+      ],
+      "mention_kind": [
+        {
+          "name": "Lakeside Academy",
+          "kind": [
+            "Organization",
+            "EducationalOrganization",
+            "School",
+            "CollegeOrUniversity"
+          ]
+        }
+      ],
+      "not_person": [
+        "Lakeside Academy"
+      ]
     }
   },
   {
@@ -257,11 +477,24 @@
     "domain": "finance",
     "created_at": "2026-06-11T09:00:00-06:00",
     "expect": {
-      "mentions": ["Morgan Stanley"],
-      "mention_kind": [
-        {"name": "Morgan Stanley", "kind": ["Organization", "Corporation", "Company", "Business", "FinancialService"]}
+      "mentions": [
+        "Morgan Stanley"
       ],
-      "not_person": ["Morgan Stanley"]
+      "mention_kind": [
+        {
+          "name": "Morgan Stanley",
+          "kind": [
+            "Organization",
+            "Corporation",
+            "Company",
+            "Business",
+            "FinancialService"
+          ]
+        }
+      ],
+      "not_person": [
+        "Morgan Stanley"
+      ]
     }
   },
   {
@@ -270,11 +503,23 @@
     "domain": "general",
     "created_at": "2026-06-11T09:00:00-06:00",
     "expect": {
-      "mentions": ["EPA"],
-      "mention_kind": [
-        {"name": "EPA", "kind": ["Organization", "GovernmentOrganization", "GovernmentAgency", "GovernmentOffice"]}
+      "mentions": [
+        "EPA"
       ],
-      "not_person": ["EPA"]
+      "mention_kind": [
+        {
+          "name": "EPA",
+          "kind": [
+            "Organization",
+            "GovernmentOrganization",
+            "GovernmentAgency",
+            "GovernmentOffice"
+          ]
+        }
+      ],
+      "not_person": [
+        "EPA"
+      ]
     }
   },
   {
@@ -283,14 +528,30 @@
     "domain": "general",
     "created_at": "2026-06-11T09:00:00-06:00",
     "expect": {
-      "person_mentions": ["Kofi Diallo"],
-      "mentions": ["Golden State Warriors"],
-      "mention_kind": [
-        {"name": "Golden State Warriors", "kind": ["Organization", "SportsTeam", "SportsOrganization"]}
+      "person_mentions": [
+        "Kofi Diallo"
       ],
-      "not_person": ["Golden State Warriors"],
+      "mentions": [
+        "Golden State Warriors"
+      ],
+      "mention_kind": [
+        {
+          "name": "Golden State Warriors",
+          "kind": [
+            "Organization",
+            "SportsTeam",
+            "SportsOrganization"
+          ]
+        }
+      ],
+      "not_person": [
+        "Golden State Warriors"
+      ],
       "edges": [
-        {"predicate": "memberOf", "object": "Golden State"}
+        {
+          "predicate": "memberOf",
+          "object": "Golden State"
+        }
       ]
     }
   },
@@ -300,14 +561,31 @@
     "domain": "general",
     "created_at": "2026-06-11T09:00:00-06:00",
     "expect": {
-      "person_mentions": ["Ramona Cruz"],
-      "mentions": ["Velvet Circuit"],
-      "mention_kind": [
-        {"name": "Velvet Circuit", "kind": ["Organization", "MusicGroup", "PerformingGroup", "Band"]}
+      "person_mentions": [
+        "Ramona Cruz"
       ],
-      "not_person": ["Velvet Circuit"],
+      "mentions": [
+        "Velvet Circuit"
+      ],
+      "mention_kind": [
+        {
+          "name": "Velvet Circuit",
+          "kind": [
+            "Organization",
+            "MusicGroup",
+            "PerformingGroup",
+            "Band"
+          ]
+        }
+      ],
+      "not_person": [
+        "Velvet Circuit"
+      ],
       "edges": [
-        {"predicate": "memberOf", "object": "Velvet Circuit"}
+        {
+          "predicate": "memberOf",
+          "object": "Velvet Circuit"
+        }
       ]
     }
   },
@@ -317,11 +595,22 @@
     "domain": "finance",
     "created_at": "2026-06-11T09:00:00-06:00",
     "expect": {
-      "person_mentions": ["Kezia"],
-      "mentions": ["Deloitte", "Arion Advisors"],
-      "not_person": ["Deloitte", "Arion Advisors"],
+      "person_mentions": [
+        "Kezia"
+      ],
+      "mentions": [
+        "Deloitte",
+        "Arion Advisors"
+      ],
+      "not_person": [
+        "Deloitte",
+        "Arion Advisors"
+      ],
       "edges": [
-        {"predicate": "worksFor", "object": "Arion"}
+        {
+          "predicate": "worksFor",
+          "object": "Arion"
+        }
       ]
     }
   },
@@ -331,16 +620,21 @@
     "domain": "general",
     "created_at": "2026-06-11T09:00:00-06:00",
     "expect": {
-      "not_person": ["board"]
+      "not_person": [
+        "board"
+      ]
     }
   },
   {
     "name": "org_informal_family_name_possessive",
-    "body": "Went to the Marchetti family reunion last weekend — probably sixty people in all.",
+    "body": "Went to the Marchetti family reunion last weekend \u2014 probably sixty people in all.",
     "domain": "general",
     "created_at": "2026-06-11T09:00:00-06:00",
     "expect": {
-      "not_person": ["Marchetti family", "Marchetti"]
+      "not_person": [
+        "Marchetti family",
+        "Marchetti"
+      ]
     }
   },
   {
@@ -349,11 +643,23 @@
     "domain": "health",
     "created_at": "2026-06-11T09:00:00-06:00",
     "expect": {
-      "mentions": ["Northwestern Memorial Hospital"],
-      "mention_kind": [
-        {"name": "Northwestern Memorial Hospital", "kind": ["Organization", "Hospital", "MedicalOrganization", "HealthcareOrganization"]}
+      "mentions": [
+        "Northwestern Memorial Hospital"
       ],
-      "not_person": ["Northwestern Memorial Hospital"]
+      "mention_kind": [
+        {
+          "name": "Northwestern Memorial Hospital",
+          "kind": [
+            "Organization",
+            "Hospital",
+            "MedicalOrganization",
+            "HealthcareOrganization"
+          ]
+        }
+      ],
+      "not_person": [
+        "Northwestern Memorial Hospital"
+      ]
     }
   },
   {
@@ -362,12 +668,28 @@
     "domain": "general",
     "created_at": "2026-06-11T09:00:00-06:00",
     "expect": {
-      "person_mentions": ["Ingrid", "Amos", "Marco"],
-      "mentions": ["Red Cross", "Covenant Relief"],
-      "not_person": ["Red Cross", "Covenant Relief"],
+      "person_mentions": [
+        "Ingrid",
+        "Amos",
+        "Marco"
+      ],
+      "mentions": [
+        "Red Cross",
+        "Covenant Relief"
+      ],
+      "not_person": [
+        "Red Cross",
+        "Covenant Relief"
+      ],
       "edges": [
-        {"predicate": "worksFor", "object": "Red Cross"},
-        {"predicate": "worksFor", "object": "Covenant"}
+        {
+          "predicate": "worksFor",
+          "object": "Red Cross"
+        },
+        {
+          "predicate": "worksFor",
+          "object": "Covenant"
+        }
       ]
     }
   },
@@ -377,8 +699,12 @@
     "domain": "finance",
     "created_at": "2026-06-11T09:00:00-06:00",
     "expect": {
-      "person_mentions": ["Elena"],
-      "not_person": ["Finance Subcommittee"]
+      "person_mentions": [
+        "Elena"
+      ],
+      "not_person": [
+        "Finance Subcommittee"
+      ]
     }
   }
 ]

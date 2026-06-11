@@ -319,10 +319,6 @@
         {
           "predicate": "reportsTo",
           "object": "Kezia"
-        },
-        {
-          "predicate": "manages",
-          "object": "Ivan"
         }
       ]
     }

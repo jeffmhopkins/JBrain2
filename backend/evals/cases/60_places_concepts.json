@@ -5,9 +5,22 @@
     "domain": "general",
     "created_at": "2026-06-11T09:00:00-06:00",
     "expect": {
-      "mentions": ["Denver"],
-      "mention_kind": [{"name": "Denver", "kind": ["Place", "City", "AdministrativeArea"]}],
-      "not_person": ["Denver"]
+      "mentions": [
+        "Denver"
+      ],
+      "mention_kind": [
+        {
+          "name": "Denver",
+          "kind": [
+            "Place",
+            "City",
+            "AdministrativeArea"
+          ]
+        }
+      ],
+      "not_person": [
+        "Denver"
+      ]
     }
   },
   {
@@ -16,12 +29,32 @@
     "domain": "general",
     "created_at": "2026-06-11T09:00:00-06:00",
     "expect": {
-      "mentions": ["Japan", "Kyoto"],
-      "mention_kind": [
-        {"name": "Japan", "kind": ["Place", "Country", "AdministrativeArea"]},
-        {"name": "Kyoto", "kind": ["Place", "City", "AdministrativeArea"]}
+      "mentions": [
+        "Japan",
+        "Kyoto"
       ],
-      "not_person": ["Japan", "Kyoto"]
+      "mention_kind": [
+        {
+          "name": "Japan",
+          "kind": [
+            "Place",
+            "Country",
+            "AdministrativeArea"
+          ]
+        },
+        {
+          "name": "Kyoto",
+          "kind": [
+            "Place",
+            "City",
+            "AdministrativeArea"
+          ]
+        }
+      ],
+      "not_person": [
+        "Japan",
+        "Kyoto"
+      ]
     }
   },
   {
@@ -30,20 +63,48 @@
     "domain": "general",
     "created_at": "2026-06-11T09:00:00-06:00",
     "expect": {
-      "mentions": ["Vermont"],
-      "mention_kind": [{"name": "Vermont", "kind": ["Place", "AdministrativeArea", "State"]}],
-      "not_person": ["Vermont"]
+      "mentions": [
+        "Vermont"
+      ],
+      "mention_kind": [
+        {
+          "name": "Vermont",
+          "kind": [
+            "Place",
+            "AdministrativeArea",
+            "State"
+          ]
+        }
+      ],
+      "not_person": [
+        "Vermont"
+      ]
     }
   },
   {
     "name": "plc_venue_named_theater",
-    "body": "Saw Wilco at the Riviera Theatre on Saturday. Amazing set — played for almost three hours.",
+    "body": "Saw Wilco at the Riviera Theatre on Saturday. Amazing set \u2014 played for almost three hours.",
     "domain": "general",
     "created_at": "2026-06-11T09:00:00-06:00",
     "expect": {
-      "mentions": ["Riviera Theatre"],
-      "mention_kind": [{"name": "Riviera Theatre", "kind": ["Place", "LandmarksOrHistoricalBuildings", "CivicStructure", "EventVenue", "PerformingArtsTheater"]}],
-      "not_person": ["Riviera Theatre"]
+      "mentions": [
+        "Riviera Theatre"
+      ],
+      "mention_kind": [
+        {
+          "name": "Riviera Theatre",
+          "kind": [
+            "Place",
+            "LandmarksOrHistoricalBuildings",
+            "CivicStructure",
+            "EventVenue",
+            "PerformingArtsTheater"
+          ]
+        }
+      ],
+      "not_person": [
+        "Riviera Theatre"
+      ]
     }
   },
   {
@@ -52,9 +113,22 @@
     "domain": "general",
     "created_at": "2026-06-11T09:00:00-06:00",
     "expect": {
-      "mentions": ["Lake Tahoe"],
-      "mention_kind": [{"name": "Lake Tahoe", "kind": ["Place", "LakeBodyOfWater", "BodyOfWater"]}],
-      "not_person": ["Lake Tahoe"]
+      "mentions": [
+        "Lake Tahoe"
+      ],
+      "mention_kind": [
+        {
+          "name": "Lake Tahoe",
+          "kind": [
+            "Place",
+            "LakeBodyOfWater",
+            "BodyOfWater"
+          ]
+        }
+      ],
+      "not_person": [
+        "Lake Tahoe"
+      ]
     }
   },
   {
@@ -63,9 +137,22 @@
     "domain": "general",
     "created_at": "2026-06-11T09:00:00-06:00",
     "expect": {
-      "mentions": ["Wicker Park"],
-      "mention_kind": [{"name": "Wicker Park", "kind": ["Place", "Neighborhood", "AdministrativeArea"]}],
-      "not_person": ["Wicker Park"]
+      "mentions": [
+        "Wicker Park"
+      ],
+      "mention_kind": [
+        {
+          "name": "Wicker Park",
+          "kind": [
+            "Place",
+            "Neighborhood",
+            "AdministrativeArea"
+          ]
+        }
+      ],
+      "not_person": [
+        "Wicker Park"
+      ]
     }
   },
   {
@@ -74,8 +161,12 @@
     "domain": "general",
     "created_at": "2026-06-11T09:00:00-06:00",
     "expect": {
-      "mentions": ["1455 Market Street", "San Francisco"],
-      "not_person": ["San Francisco"]
+      "mentions": [
+        "San Francisco"
+      ],
+      "not_person": [
+        "San Francisco"
+      ]
     }
   },
   {
@@ -84,9 +175,19 @@
     "domain": "general",
     "created_at": "2026-06-11T09:00:00-06:00",
     "expect": {
-      "mentions": ["Marcus", "Mayo Clinic"],
-      "not_person": ["Mayo Clinic"],
-      "edges": [{"predicate": "worksFor", "object": "Mayo Clinic"}]
+      "mentions": [
+        "Marcus",
+        "Mayo Clinic"
+      ],
+      "not_person": [
+        "Mayo Clinic"
+      ],
+      "edges": [
+        {
+          "predicate": "worksFor",
+          "object": "Mayo Clinic"
+        }
+      ]
     }
   },
   {
@@ -95,8 +196,13 @@
     "domain": "general",
     "created_at": "2026-06-11T09:00:00-06:00",
     "expect": {
-      "mentions": ["Priya", "Intelligentsia Coffee"],
-      "not_person": ["Intelligentsia Coffee"]
+      "mentions": [
+        "Priya",
+        "Intelligentsia Coffee"
+      ],
+      "not_person": [
+        "Intelligentsia Coffee"
+      ]
     }
   },
   {
@@ -105,8 +211,13 @@
     "domain": "general",
     "created_at": "2026-06-11T09:00:00-06:00",
     "expect": {
-      "mentions": ["Town Hall", "Dana"],
-      "not_person": ["Town Hall"]
+      "mentions": [
+        "Town Hall",
+        "Dana"
+      ],
+      "not_person": [
+        "Town Hall"
+      ]
     }
   },
   {
@@ -115,31 +226,67 @@
     "domain": "health",
     "created_at": "2026-06-11T09:00:00-06:00",
     "expect": {
-      "mentions": ["Dr. Okeke", "Northwestern Memorial Hospital"],
-      "not_person": ["Northwestern Memorial Hospital"],
-      "edges": [{"predicate": "worksFor", "object": "Northwestern Memorial"}]
+      "mentions": [
+        "Dr. Okeke",
+        "Northwestern Memorial Hospital"
+      ],
+      "not_person": [
+        "Northwestern Memorial Hospital"
+      ],
+      "edges": [
+        {
+          "predicate": "worksFor",
+          "object": "Northwestern Memorial"
+        }
+      ]
     }
   },
   {
     "name": "plc_place_name_looks_like_person_madison",
-    "body": "The drive through Madison was gorgeous — I forgot how pretty that city is in spring.",
+    "body": "The drive through Madison was gorgeous \u2014 I forgot how pretty that city is in spring.",
     "domain": "general",
     "created_at": "2026-06-11T09:00:00-06:00",
     "expect": {
-      "mentions": ["Madison"],
-      "mention_kind": [{"name": "Madison", "kind": ["Place", "City", "AdministrativeArea"]}],
-      "not_person": ["Madison"]
+      "mentions": [
+        "Madison"
+      ],
+      "mention_kind": [
+        {
+          "name": "Madison",
+          "kind": [
+            "Place",
+            "City",
+            "AdministrativeArea"
+          ]
+        }
+      ],
+      "not_person": [
+        "Madison"
+      ]
     }
   },
   {
     "name": "plc_place_name_looks_like_person_austin",
-    "body": "We're seriously considering Austin for the expansion — the tech scene there has exploded.",
+    "body": "We're seriously considering Austin for the expansion \u2014 the tech scene there has exploded.",
     "domain": "general",
     "created_at": "2026-06-11T09:00:00-06:00",
     "expect": {
-      "mentions": ["Austin"],
-      "mention_kind": [{"name": "Austin", "kind": ["Place", "City", "AdministrativeArea"]}],
-      "not_person": ["Austin"]
+      "mentions": [
+        "Austin"
+      ],
+      "mention_kind": [
+        {
+          "name": "Austin",
+          "kind": [
+            "Place",
+            "City",
+            "AdministrativeArea"
+          ]
+        }
+      ],
+      "not_person": [
+        "Austin"
+      ]
     }
   },
   {
@@ -148,9 +295,22 @@
     "domain": "general",
     "created_at": "2026-06-11T09:00:00-06:00",
     "expect": {
-      "mentions": ["Savannah"],
-      "mention_kind": [{"name": "Savannah", "kind": ["Place", "City", "AdministrativeArea"]}],
-      "not_person": ["Savannah"]
+      "mentions": [
+        "Savannah"
+      ],
+      "mention_kind": [
+        {
+          "name": "Savannah",
+          "kind": [
+            "Place",
+            "City",
+            "AdministrativeArea"
+          ]
+        }
+      ],
+      "not_person": [
+        "Savannah"
+      ]
     }
   },
   {
@@ -159,9 +319,22 @@
     "domain": "general",
     "created_at": "2026-06-11T09:00:00-06:00",
     "expect": {
-      "mentions": ["Florence"],
-      "mention_kind": [{"name": "Florence", "kind": ["Place", "City", "AdministrativeArea"]}],
-      "not_person": ["Florence"]
+      "mentions": [
+        "Florence"
+      ],
+      "mention_kind": [
+        {
+          "name": "Florence",
+          "kind": [
+            "Place",
+            "City",
+            "AdministrativeArea"
+          ]
+        }
+      ],
+      "not_person": [
+        "Florence"
+      ]
     }
   },
   {
@@ -170,9 +343,23 @@
     "domain": "general",
     "created_at": "2026-06-11T09:00:00-06:00",
     "expect": {
-      "mentions": ["Nadia", "Sydney"],
-      "mention_kind": [{"name": "Sydney", "kind": ["Place", "City", "AdministrativeArea"]}],
-      "not_person": ["Sydney"]
+      "mentions": [
+        "Nadia",
+        "Sydney"
+      ],
+      "mention_kind": [
+        {
+          "name": "Sydney",
+          "kind": [
+            "Place",
+            "City",
+            "AdministrativeArea"
+          ]
+        }
+      ],
+      "not_person": [
+        "Sydney"
+      ]
     }
   },
   {
@@ -181,9 +368,23 @@
     "domain": "general",
     "created_at": "2026-06-11T09:00:00-06:00",
     "expect": {
-      "mentions": ["Brooklyn"],
-      "mention_kind": [{"name": "Brooklyn", "kind": ["Place", "Neighborhood", "City", "AdministrativeArea"]}],
-      "not_person": ["Brooklyn"]
+      "mentions": [
+        "Brooklyn"
+      ],
+      "mention_kind": [
+        {
+          "name": "Brooklyn",
+          "kind": [
+            "Place",
+            "Neighborhood",
+            "City",
+            "AdministrativeArea"
+          ]
+        }
+      ],
+      "not_person": [
+        "Brooklyn"
+      ]
     }
   },
   {
@@ -192,18 +393,26 @@
     "domain": "general",
     "created_at": "2026-06-11T09:00:00-06:00",
     "expect": {
-      "mentions": ["Project Atlas"],
-      "not_person": ["Project Atlas"]
+      "mentions": [
+        "Project Atlas"
+      ],
+      "not_person": [
+        "Project Atlas"
+      ]
     }
   },
   {
     "name": "plc_named_event_wedding",
-    "body": "The Hopkins wedding is in October — we need to book flights soon or the prices will go through the roof.",
+    "body": "The Hopkins wedding is in October \u2014 we need to book flights soon or the prices will go through the roof.",
     "domain": "general",
     "created_at": "2026-06-11T09:00:00-06:00",
     "expect": {
-      "mentions": ["Hopkins wedding"],
-      "not_person": ["Hopkins wedding"]
+      "mentions": [
+        "Hopkins wedding"
+      ],
+      "not_person": [
+        "Hopkins wedding"
+      ]
     }
   },
   {
@@ -212,8 +421,14 @@
     "domain": "general",
     "created_at": "2026-06-11T09:00:00-06:00",
     "expect": {
-      "mentions": ["2026 Climate Summit", "Geneva"],
-      "not_person": ["2026 Climate Summit", "Geneva"]
+      "mentions": [
+        "2026 Climate Summit",
+        "Geneva"
+      ],
+      "not_person": [
+        "2026 Climate Summit",
+        "Geneva"
+      ]
     }
   },
   {
@@ -222,8 +437,12 @@
     "domain": "health",
     "created_at": "2026-06-11T09:00:00-06:00",
     "expect": {
-      "mentions": ["Type 2 diabetes"],
-      "not_person": ["Type 2 diabetes"]
+      "mentions": [
+        "Type 2 diabetes"
+      ],
+      "not_person": [
+        "Type 2 diabetes"
+      ]
     }
   },
   {
@@ -232,8 +451,12 @@
     "domain": "general",
     "created_at": "2026-06-11T09:00:00-06:00",
     "expect": {
-      "mentions": ["CHIPS Act"],
-      "not_person": ["CHIPS Act"]
+      "mentions": [
+        "CHIPS Act"
+      ],
+      "not_person": [
+        "CHIPS Act"
+      ]
     }
   },
   {
@@ -242,8 +465,9 @@
     "domain": "general",
     "created_at": "2026-06-11T09:00:00-06:00",
     "expect": {
-      "mentions": ["Thanksgiving"],
-      "not_person": ["Thanksgiving"]
+      "not_person": [
+        "Thanksgiving"
+      ]
     }
   },
   {
@@ -252,8 +476,12 @@
     "domain": "general",
     "created_at": "2026-06-11T09:00:00-06:00",
     "expect": {
-      "mentions": ["Bio 201"],
-      "not_person": ["Bio 201"]
+      "mentions": [
+        "Bio 201"
+      ],
+      "not_person": [
+        "Bio 201"
+      ]
     }
   },
   {
@@ -262,8 +490,12 @@
     "domain": "general",
     "created_at": "2026-06-11T09:00:00-06:00",
     "expect": {
-      "mentions": ["M-Series"],
-      "not_person": ["M-Series"]
+      "mentions": [
+        "Mac mini"
+      ],
+      "not_person": [
+        "M-Series"
+      ]
     }
   },
   {
@@ -272,19 +504,41 @@
     "domain": "general",
     "created_at": "2026-06-11T09:00:00-06:00",
     "expect": {
-      "mentions": ["2026 Climate Summit", "Geneva", "Palais des Nations"],
-      "not_person": ["2026 Climate Summit", "Geneva", "Palais des Nations"]
+      "mentions": [
+        "2026 Climate Summit",
+        "Geneva",
+        "Palais des Nations"
+      ],
+      "not_person": [
+        "2026 Climate Summit",
+        "Geneva",
+        "Palais des Nations"
+      ]
     }
   },
   {
     "name": "plc_multi_cities_person_disambiguation",
-    "body": "Fatima is relocating from Austin to Portland. Her partner Jordan is already there — started work at Intel's Hillsboro campus last month.",
+    "body": "Fatima is relocating from Austin to Portland. Her partner Jordan is already there \u2014 started work at Intel's Hillsboro campus last month.",
     "domain": "general",
     "created_at": "2026-06-11T09:00:00-06:00",
     "expect": {
-      "mentions": ["Fatima", "Austin", "Portland", "Jordan", "Intel"],
-      "not_person": ["Austin", "Portland"],
-      "edges": [{"predicate": "worksFor", "object": "Intel"}]
+      "mentions": [
+        "Fatima",
+        "Austin",
+        "Portland",
+        "Jordan",
+        "Intel"
+      ],
+      "not_person": [
+        "Austin",
+        "Portland"
+      ],
+      "edges": [
+        {
+          "predicate": "worksFor",
+          "object": "Intel"
+        }
+      ]
     }
   },
   {
@@ -293,8 +547,13 @@
     "domain": "health",
     "created_at": "2026-06-11T09:00:00-06:00",
     "expect": {
-      "mentions": ["Cleveland Clinic", "atrial fibrillation"],
-      "not_person": ["Cleveland Clinic"]
+      "mentions": [
+        "Cleveland Clinic",
+        "atrial fibrillation"
+      ],
+      "not_person": [
+        "Cleveland Clinic"
+      ]
     }
   },
   {
@@ -303,8 +562,15 @@
     "domain": "general",
     "created_at": "2026-06-11T09:00:00-06:00",
     "expect": {
-      "mentions": ["Project Atlas", "Keiko", "Mercer Hotel"],
-      "not_person": ["Project Atlas", "Mercer Hotel"]
+      "mentions": [
+        "Project Atlas",
+        "Keiko",
+        "Mercer Hotel"
+      ],
+      "not_person": [
+        "Project Atlas",
+        "Mercer Hotel"
+      ]
     }
   }
 ]

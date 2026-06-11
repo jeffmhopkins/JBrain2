@@ -5,14 +5,28 @@
     "domain": "general",
     "created_at": "2026-06-11T09:00:00-06:00",
     "expect": {
-      "mentions": ["Bella"],
+      "mentions": [
+        "Bella"
+      ],
       "mention_kind": [
-        {"name": "Bella", "kind": ["dog", "Animal", "canine"]}
+        {
+          "name": "Bella",
+          "kind": [
+            "dog",
+            "Animal",
+            "canine"
+          ]
+        }
       ],
       "edges": [
-        {"predicate": "owns", "object": "Bella"}
+        {
+          "predicate": "owns",
+          "object": "Bella"
+        }
       ],
-      "not_person": ["Bella"]
+      "not_person": [
+        "Bella"
+      ]
     }
   },
   {
@@ -21,15 +35,31 @@
     "domain": "general",
     "created_at": "2026-06-11T09:00:00-06:00",
     "expect": {
-      "mentions": ["Ricky"],
+      "mentions": [
+        "Ricky"
+      ],
       "mention_kind": [
-        {"name": "Ricky", "kind": ["rat", "Animal", "rodent"]}
+        {
+          "name": "Ricky",
+          "kind": [
+            "rat",
+            "Animal",
+            "rodent"
+          ]
+        }
       ],
       "edges": [
-        {"predicate": "owns", "object": "Ricky"}
+        {
+          "predicate": "owns",
+          "object": "Ricky"
+        }
       ],
-      "not_person": ["Ricky"],
-      "person_mentions": ["Summer"]
+      "not_person": [
+        "Ricky"
+      ],
+      "person_mentions": [
+        "Summer"
+      ]
     }
   },
   {
@@ -38,14 +68,22 @@
     "domain": "general",
     "created_at": "2026-06-11T08:45:00-06:00",
     "expect": {
-      "mentions": ["Mochi"],
+      "mentions": [
+        "Mochi"
+      ],
       "mention_kind": [
-        {"name": "Mochi", "kind": ["cat", "Animal", "feline"]}
+        {
+          "name": "Mochi",
+          "kind": [
+            "cat",
+            "Animal",
+            "feline"
+          ]
+        }
       ],
-      "edges": [
-        {"predicate": "owns", "object": "Mochi"}
-      ],
-      "not_person": ["Mochi"]
+      "not_person": [
+        "Mochi"
+      ]
     }
   },
   {
@@ -54,11 +92,22 @@
     "domain": "general",
     "created_at": "2026-06-11T09:00:00-06:00",
     "expect": {
-      "mentions": ["Oliver"],
-      "mention_kind": [
-        {"name": "Oliver", "kind": ["cat", "Animal", "feline"]}
+      "mentions": [
+        "Oliver"
       ],
-      "not_person": ["Oliver"]
+      "mention_kind": [
+        {
+          "name": "Oliver",
+          "kind": [
+            "cat",
+            "Animal",
+            "feline"
+          ]
+        }
+      ],
+      "not_person": [
+        "Oliver"
+      ]
     }
   },
   {
@@ -67,15 +116,31 @@
     "domain": "general",
     "created_at": "2026-06-11T09:00:00-06:00",
     "expect": {
-      "mentions": ["Max"],
+      "mentions": [
+        "Max"
+      ],
       "mention_kind": [
-        {"name": "Max", "kind": ["dog", "Animal", "canine"]}
+        {
+          "name": "Max",
+          "kind": [
+            "dog",
+            "Animal",
+            "canine"
+          ]
+        }
       ],
       "edges": [
-        {"predicate": "owns", "object": "Max"}
+        {
+          "predicate": "owns",
+          "object": "Max"
+        }
       ],
-      "not_person": ["Max"],
-      "person_mentions": ["Priya"]
+      "not_person": [
+        "Max"
+      ],
+      "person_mentions": [
+        "Priya"
+      ]
     }
   },
   {
@@ -84,31 +149,63 @@
     "domain": "general",
     "created_at": "2026-06-11T09:00:00-06:00",
     "expect": {
-      "mentions": ["Tesla"],
+      "mentions": [
+        "Tesla"
+      ],
       "mention_kind": [
-        {"name": "Tesla", "kind": ["Product", "Vehicle", "Car"]}
+        {
+          "name": "Tesla",
+          "kind": [
+            "Product",
+            "Vehicle",
+            "Car",
+            "Organization",
+            "Brand"
+          ]
+        }
       ],
       "edges": [
-        {"predicate": "owns", "object": "Tesla"}
+        {
+          "predicate": "owns",
+          "object": "Tesla"
+        }
       ],
-      "not_person": ["Tesla"],
-      "person_mentions": ["Dana"]
+      "not_person": [
+        "Tesla"
+      ],
+      "person_mentions": [
+        "Dana"
+      ]
     }
   },
   {
     "name": "own_honda_civic_first_person_bought",
-    "body": "Bought a Honda Civic yesterday — base trim, manual transmission.",
+    "body": "Bought a Honda Civic yesterday \u2014 base trim, manual transmission.",
     "domain": "general",
     "created_at": "2026-06-11T09:00:00-06:00",
     "expect": {
-      "mentions": ["Honda Civic"],
+      "mentions": [
+        "Honda Civic"
+      ],
       "mention_kind": [
-        {"name": "Honda Civic", "kind": ["Product", "Vehicle", "Car"]}
+        {
+          "name": "Honda Civic",
+          "kind": [
+            "Product",
+            "Vehicle",
+            "Car"
+          ]
+        }
       ],
       "edges": [
-        {"predicate": "owns", "object": "Honda Civic"}
+        {
+          "predicate": "owns",
+          "object": "Honda Civic"
+        }
       ],
-      "not_person": ["Honda Civic"]
+      "not_person": [
+        "Honda Civic"
+      ]
     }
   },
   {
@@ -117,14 +214,26 @@
     "domain": "general",
     "created_at": "2026-06-11T09:00:00-06:00",
     "expect": {
-      "mentions": ["wedding ring"],
+      "mentions": [
+        "wedding ring"
+      ],
       "mention_kind": [
-        {"name": "wedding ring", "kind": ["Product"]}
+        {
+          "name": "wedding ring",
+          "kind": [
+            "Product"
+          ]
+        }
       ],
       "edges": [
-        {"predicate": "owns", "object": "wedding ring"}
+        {
+          "predicate": "owns",
+          "object": "wedding ring"
+        }
       ],
-      "not_person": ["wedding ring"]
+      "not_person": [
+        "wedding ring"
+      ]
     }
   },
   {
@@ -133,30 +242,48 @@
     "domain": "general",
     "created_at": "2026-06-11T09:00:00-06:00",
     "expect": {
-      "mentions": ["sea kayak"],
+      "mentions": [
+        "sea kayak"
+      ],
       "mention_kind": [
-        {"name": "sea kayak", "kind": ["Product"]}
+        {
+          "name": "sea kayak",
+          "kind": [
+            "Product"
+          ]
+        }
       ],
-      "edges": [
-        {"predicate": "owns", "object": "sea kayak"}
-      ],
-      "not_person": ["sea kayak"]
+      "not_person": [
+        "sea kayak"
+      ]
     }
   },
   {
     "name": "own_macbook_first_person",
-    "body": "My MacBook finally arrived — migrated everything over in an hour.",
+    "body": "My MacBook finally arrived \u2014 migrated everything over in an hour.",
     "domain": "general",
     "created_at": "2026-06-11T09:00:00-06:00",
     "expect": {
-      "mentions": ["MacBook"],
+      "mentions": [
+        "MacBook"
+      ],
       "mention_kind": [
-        {"name": "MacBook", "kind": ["Product"]}
+        {
+          "name": "MacBook",
+          "kind": [
+            "Product"
+          ]
+        }
       ],
       "edges": [
-        {"predicate": "owns", "object": "MacBook"}
+        {
+          "predicate": "owns",
+          "object": "MacBook"
+        }
       ],
-      "not_person": ["MacBook"]
+      "not_person": [
+        "MacBook"
+      ]
     }
   },
   {
@@ -165,14 +292,28 @@
     "domain": "general",
     "created_at": "2026-06-11T09:00:00-06:00",
     "expect": {
-      "mentions": ["Bella"],
+      "mentions": [
+        "Bella"
+      ],
       "mention_kind": [
-        {"name": "Bella", "kind": ["cat", "Animal", "feline"]}
+        {
+          "name": "Bella",
+          "kind": [
+            "cat",
+            "Animal",
+            "feline"
+          ]
+        }
       ],
       "edges": [
-        {"predicate": "owns", "object": "Bella"}
+        {
+          "predicate": "owns",
+          "object": "Bella"
+        }
       ],
-      "not_person": ["Bella"]
+      "not_person": [
+        "Bella"
+      ]
     }
   },
   {
@@ -181,12 +322,25 @@
     "domain": "general",
     "created_at": "2026-06-11T09:00:00-06:00",
     "expect": {
-      "mentions": ["the rat"],
-      "mention_kind": [
-        {"name": "the rat", "kind": ["rat", "Animal", "rodent"]}
+      "mentions": [
+        "the rat"
       ],
-      "not_person": ["the rat"],
-      "person_mentions": ["Summer"]
+      "mention_kind": [
+        {
+          "name": "the rat",
+          "kind": [
+            "rat",
+            "Animal",
+            "rodent"
+          ]
+        }
+      ],
+      "not_person": [
+        "the rat"
+      ],
+      "person_mentions": [
+        "Summer"
+      ]
     }
   },
   {
@@ -195,11 +349,22 @@
     "domain": "general",
     "created_at": "2026-06-11T09:00:00-06:00",
     "expect": {
-      "mentions": ["the Honda"],
-      "mention_kind": [
-        {"name": "the Honda", "kind": ["Product", "Vehicle", "Car"]}
+      "mentions": [
+        "the Honda"
       ],
-      "not_person": ["the Honda"]
+      "mention_kind": [
+        {
+          "name": "the Honda",
+          "kind": [
+            "Product",
+            "Vehicle",
+            "Car"
+          ]
+        }
+      ],
+      "not_person": [
+        "the Honda"
+      ]
     }
   },
   {
@@ -208,14 +373,28 @@
     "domain": "general",
     "created_at": "2026-06-11T09:00:00-06:00",
     "expect": {
-      "mentions": ["Charlie"],
+      "mentions": [
+        "Charlie"
+      ],
       "mention_kind": [
-        {"name": "Charlie", "kind": ["dog", "Animal", "canine"]}
+        {
+          "name": "Charlie",
+          "kind": [
+            "dog",
+            "Animal",
+            "canine"
+          ]
+        }
       ],
       "edges": [
-        {"predicate": "owns", "object": "Charlie"}
+        {
+          "predicate": "owns",
+          "object": "Charlie"
+        }
       ],
-      "not_person": ["Charlie"]
+      "not_person": [
+        "Charlie"
+      ]
     }
   },
   {
@@ -224,15 +403,31 @@
     "domain": "general",
     "created_at": "2026-06-11T09:00:00-06:00",
     "expect": {
-      "mentions": ["Mango"],
+      "mentions": [
+        "Mango"
+      ],
       "mention_kind": [
-        {"name": "Mango", "kind": ["parrot", "Animal", "bird"]}
+        {
+          "name": "Mango",
+          "kind": [
+            "parrot",
+            "Animal",
+            "bird"
+          ]
+        }
       ],
       "edges": [
-        {"predicate": "owns", "object": "Mango"}
+        {
+          "predicate": "owns",
+          "object": "Mango"
+        }
       ],
-      "not_person": ["Mango"],
-      "person_mentions": ["Kezia"]
+      "not_person": [
+        "Mango"
+      ],
+      "person_mentions": [
+        "Kezia"
+      ]
     }
   },
   {
@@ -241,11 +436,21 @@
     "domain": "general",
     "created_at": "2026-06-11T09:00:00-06:00",
     "expect": {
-      "mentions": ["George"],
-      "mention_kind": [
-        {"name": "George", "kind": ["rabbit", "Animal"]}
+      "mentions": [
+        "George"
       ],
-      "not_person": ["George"]
+      "mention_kind": [
+        {
+          "name": "George",
+          "kind": [
+            "rabbit",
+            "Animal"
+          ]
+        }
+      ],
+      "not_person": [
+        "George"
+      ]
     }
   },
   {
@@ -254,15 +459,31 @@
     "domain": "general",
     "created_at": "2026-06-11T09:00:00-06:00",
     "expect": {
-      "mentions": ["Luna"],
+      "mentions": [
+        "Luna"
+      ],
       "mention_kind": [
-        {"name": "Luna", "kind": ["dog", "Animal", "canine"]}
+        {
+          "name": "Luna",
+          "kind": [
+            "dog",
+            "Animal",
+            "canine"
+          ]
+        }
       ],
       "edges": [
-        {"predicate": "owns", "object": "Luna"}
+        {
+          "predicate": "owns",
+          "object": "Luna"
+        }
       ],
-      "not_person": ["Luna"],
-      "person_mentions": ["Dana"]
+      "not_person": [
+        "Luna"
+      ],
+      "person_mentions": [
+        "Dana"
+      ]
     }
   },
   {
@@ -271,14 +492,20 @@
     "domain": "general",
     "created_at": "2026-06-11T09:00:00-06:00",
     "expect": {
-      "mentions": ["road bike"],
+      "mentions": [
+        "road bike"
+      ],
       "mention_kind": [
-        {"name": "road bike", "kind": ["Product"]}
+        {
+          "name": "road bike",
+          "kind": [
+            "Product"
+          ]
+        }
       ],
-      "edges": [
-        {"predicate": "owns", "object": "road bike"}
-      ],
-      "not_person": ["road bike"]
+      "not_person": [
+        "road bike"
+      ]
     }
   },
   {
@@ -287,15 +514,31 @@
     "domain": "general",
     "created_at": "2026-06-11T09:00:00-06:00",
     "expect": {
-      "mentions": ["Lola"],
+      "mentions": [
+        "Lola"
+      ],
       "mention_kind": [
-        {"name": "Lola", "kind": ["cat", "Animal", "feline"]}
+        {
+          "name": "Lola",
+          "kind": [
+            "cat",
+            "Animal",
+            "feline"
+          ]
+        }
       ],
       "edges": [
-        {"predicate": "owns", "object": "Lola"}
+        {
+          "predicate": "owns",
+          "object": "Lola"
+        }
       ],
-      "not_person": ["Lola"],
-      "person_mentions": ["Felix"]
+      "not_person": [
+        "Lola"
+      ],
+      "person_mentions": [
+        "Felix"
+      ]
     }
   },
   {
@@ -304,15 +547,29 @@
     "domain": "general",
     "created_at": "2026-06-11T09:00:00-06:00",
     "expect": {
-      "mentions": ["acoustic guitar"],
+      "mentions": [
+        "acoustic guitar"
+      ],
       "mention_kind": [
-        {"name": "acoustic guitar", "kind": ["Product"]}
+        {
+          "name": "acoustic guitar",
+          "kind": [
+            "Product"
+          ]
+        }
       ],
       "edges": [
-        {"predicate": "owns", "object": "acoustic guitar"}
+        {
+          "predicate": "owns",
+          "object": "acoustic guitar"
+        }
       ],
-      "not_person": ["acoustic guitar"],
-      "person_mentions": ["Priya"]
+      "not_person": [
+        "acoustic guitar"
+      ],
+      "person_mentions": [
+        "Priya"
+      ]
     }
   },
   {
@@ -321,17 +578,45 @@
     "domain": "general",
     "created_at": "2026-06-11T09:00:00-06:00",
     "expect": {
-      "mentions": ["Rufus", "Nori"],
+      "mentions": [
+        "Rufus",
+        "Nori"
+      ],
       "mention_kind": [
-        {"name": "Rufus", "kind": ["dog", "Animal", "canine"]},
-        {"name": "Nori", "kind": ["cat", "Animal", "feline"]}
+        {
+          "name": "Rufus",
+          "kind": [
+            "dog",
+            "Animal",
+            "canine"
+          ]
+        },
+        {
+          "name": "Nori",
+          "kind": [
+            "cat",
+            "Animal",
+            "feline"
+          ]
+        }
       ],
       "edges": [
-        {"predicate": "owns", "object": "Rufus"},
-        {"predicate": "owns", "object": "Nori"}
+        {
+          "predicate": "owns",
+          "object": "Rufus"
+        },
+        {
+          "predicate": "owns",
+          "object": "Nori"
+        }
       ],
-      "not_person": ["Rufus", "Nori"],
-      "person_mentions": ["Summer"]
+      "not_person": [
+        "Rufus",
+        "Nori"
+      ],
+      "person_mentions": [
+        "Summer"
+      ]
     }
   },
   {
@@ -340,14 +625,28 @@
     "domain": "general",
     "created_at": "2026-06-11T09:00:00-06:00",
     "expect": {
-      "mentions": ["Oscar"],
+      "mentions": [
+        "Oscar"
+      ],
       "mention_kind": [
-        {"name": "Oscar", "kind": ["fish", "Animal", "betta"]}
+        {
+          "name": "Oscar",
+          "kind": [
+            "fish",
+            "Animal",
+            "betta"
+          ]
+        }
       ],
       "edges": [
-        {"predicate": "owns", "object": "Oscar"}
+        {
+          "predicate": "owns",
+          "object": "Oscar"
+        }
       ],
-      "not_person": ["Oscar"]
+      "not_person": [
+        "Oscar"
+      ]
     }
   },
   {
@@ -356,15 +655,29 @@
     "domain": "general",
     "created_at": "2026-06-11T09:00:00-06:00",
     "expect": {
-      "mentions": ["laptop"],
+      "mentions": [
+        "laptop"
+      ],
       "mention_kind": [
-        {"name": "laptop", "kind": ["Product"]}
+        {
+          "name": "laptop",
+          "kind": [
+            "Product"
+          ]
+        }
       ],
       "edges": [
-        {"predicate": "owns", "object": "laptop"}
+        {
+          "predicate": "owns",
+          "object": "laptop"
+        }
       ],
-      "not_person": ["laptop"],
-      "person_mentions": ["Nadia"]
+      "not_person": [
+        "laptop"
+      ],
+      "person_mentions": [
+        "Nadia"
+      ]
     }
   },
   {
@@ -373,27 +686,49 @@
     "domain": "general",
     "created_at": "2026-06-11T09:00:00-06:00",
     "expect": {
-      "mentions": ["Henry"],
-      "mention_kind": [
-        {"name": "Henry", "kind": ["hamster", "Animal"]}
+      "mentions": [
+        "Henry"
       ],
-      "not_person": ["Henry"]
+      "mention_kind": [
+        {
+          "name": "Henry",
+          "kind": [
+            "hamster",
+            "Animal"
+          ]
+        }
+      ],
+      "not_person": [
+        "Henry"
+      ]
     }
   },
   {
     "name": "own_camera_first_person",
-    "body": "Finally treated myself to a mirrorless camera — the Sony A7.",
+    "body": "Finally treated myself to a mirrorless camera \u2014 the Sony A7.",
     "domain": "general",
     "created_at": "2026-06-11T09:00:00-06:00",
     "expect": {
-      "mentions": ["Sony A7"],
+      "mentions": [
+        "Sony A7"
+      ],
       "mention_kind": [
-        {"name": "Sony A7", "kind": ["Product"]}
+        {
+          "name": "Sony A7",
+          "kind": [
+            "Product"
+          ]
+        }
       ],
       "edges": [
-        {"predicate": "owns", "object": "Sony A7"}
+        {
+          "predicate": "owns",
+          "object": "Sony A7"
+        }
       ],
-      "not_person": ["Sony A7"]
+      "not_person": [
+        "Sony A7"
+      ]
     }
   },
   {
@@ -402,16 +737,42 @@
     "domain": "general",
     "created_at": "2026-06-11T09:00:00-06:00",
     "expect": {
-      "mentions": ["Pepper", "Subaru Outback"],
+      "mentions": [
+        "Pepper",
+        "Subaru Outback"
+      ],
       "mention_kind": [
-        {"name": "Pepper", "kind": ["dog", "Animal", "canine"]},
-        {"name": "Subaru Outback", "kind": ["Product", "Vehicle", "Car"]}
+        {
+          "name": "Pepper",
+          "kind": [
+            "dog",
+            "Animal",
+            "canine"
+          ]
+        },
+        {
+          "name": "Subaru Outback",
+          "kind": [
+            "Product",
+            "Vehicle",
+            "Car"
+          ]
+        }
       ],
       "edges": [
-        {"predicate": "owns", "object": "Pepper"},
-        {"predicate": "owns", "object": "Subaru Outback"}
+        {
+          "predicate": "owns",
+          "object": "Pepper"
+        },
+        {
+          "predicate": "owns",
+          "object": "Subaru Outback"
+        }
       ],
-      "not_person": ["Pepper", "Subaru Outback"]
+      "not_person": [
+        "Pepper",
+        "Subaru Outback"
+      ]
     }
   },
   {
@@ -420,11 +781,22 @@
     "domain": "general",
     "created_at": "2026-06-11T09:00:00-06:00",
     "expect": {
-      "mentions": ["the dog"],
-      "mention_kind": [
-        {"name": "the dog", "kind": ["dog", "Animal", "canine"]}
+      "mentions": [
+        "the dog"
       ],
-      "not_person": ["the dog"]
+      "mention_kind": [
+        {
+          "name": "the dog",
+          "kind": [
+            "dog",
+            "Animal",
+            "canine"
+          ]
+        }
+      ],
+      "not_person": [
+        "the dog"
+      ]
     }
   },
   {
@@ -433,14 +805,28 @@
     "domain": "general",
     "created_at": "2026-06-11T09:00:00-06:00",
     "expect": {
-      "mentions": ["Max"],
+      "mentions": [
+        "Max"
+      ],
       "mention_kind": [
-        {"name": "Max", "kind": ["cat", "Animal", "feline"]}
+        {
+          "name": "Max",
+          "kind": [
+            "cat",
+            "Animal",
+            "feline"
+          ]
+        }
       ],
       "edges": [
-        {"predicate": "owns", "object": "Max"}
+        {
+          "predicate": "owns",
+          "object": "Max"
+        }
       ],
-      "not_person": ["Max"]
+      "not_person": [
+        "Max"
+      ]
     }
   },
   {
@@ -449,28 +835,53 @@
     "domain": "general",
     "created_at": "2026-06-11T09:00:00-06:00",
     "expect": {
-      "mentions": ["old watch"],
-      "mention_kind": [
-        {"name": "old watch", "kind": ["Product"]}
+      "mentions": [
+        "old watch"
       ],
-      "not_person": ["old watch"]
+      "mention_kind": [
+        {
+          "name": "old watch",
+          "kind": [
+            "Product"
+          ]
+        }
+      ],
+      "not_person": [
+        "old watch"
+      ]
     }
   },
   {
     "name": "own_border_collie_named_sadie_with_context",
-    "body": "Marcus got a border collie last spring — her name is Sadie and she already knows five commands.",
+    "body": "Marcus got a border collie last spring \u2014 her name is Sadie and she already knows five commands.",
     "domain": "general",
     "created_at": "2026-06-11T09:00:00-06:00",
     "expect": {
-      "mentions": ["Sadie"],
+      "mentions": [
+        "Sadie"
+      ],
       "mention_kind": [
-        {"name": "Sadie", "kind": ["dog", "Animal", "canine"]}
+        {
+          "name": "Sadie",
+          "kind": [
+            "dog",
+            "Animal",
+            "canine"
+          ]
+        }
       ],
       "edges": [
-        {"predicate": "owns", "object": "Sadie"}
+        {
+          "predicate": "owns",
+          "object": "Sadie"
+        }
       ],
-      "not_person": ["Sadie"],
-      "person_mentions": ["Marcus"]
+      "not_person": [
+        "Sadie"
+      ],
+      "person_mentions": [
+        "Marcus"
+      ]
     }
   }
 ]

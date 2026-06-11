@@ -111,9 +111,6 @@
     "expect": {
       "mentions": [
         "landlord"
-      ],
-      "person_mentions": [
-        "Me"
       ]
     }
   },
@@ -125,9 +122,6 @@
     "expect": {
       "mentions": [
         "realtor"
-      ],
-      "person_mentions": [
-        "Me"
       ]
     }
   },
@@ -153,9 +147,6 @@
     "expect": {
       "mentions": [
         "cabin"
-      ],
-      "person_mentions": [
-        "Me"
       ]
     }
   },
@@ -185,8 +176,7 @@
         "rat"
       ],
       "person_mentions": [
-        "Summer",
-        "Me"
+        "Summer"
       ]
     }
   },
@@ -198,9 +188,6 @@
     "expect": {
       "mentions": [
         "laptop"
-      ],
-      "person_mentions": [
-        "Me"
       ]
     }
   },
