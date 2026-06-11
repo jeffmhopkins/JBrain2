@@ -12,6 +12,11 @@ adversarial red-team. Owner-ratified decisions are **[decided]**; choices in
 this doc that await ratification are **[proposed]**. Where this doc cites an
 existing ratified decision it links it as **[decided: ANALYSIS]**.
 
+**[ratified 2026-06-11]** The owner approved this model's direction and the
+three decisions in the final section. Items stay marked **[proposed]** until
+they are *built* in their target phase — ratification settles the design, the
+phase ships the code.
+
 ## Why this doc exists
 
 A blank database, four capture notes, and the analysis produced an identity
@@ -207,7 +212,7 @@ The `name.*` qualifier vocabulary (`qualifier_vocab: name_kind`):
 | `name.given` / `name.family` / `name.additional` | structured components (vCard `N`) | attribute | per-component |
 | `name.prefix` / `name.suffix` | honorific prefix/suffix | attribute | accumulate |
 | `name.preferred` | what they go by | preference | yes |
-| `name.nickname.<audience>` | audience-scoped nickname; `audience ∈ {kids, family, friends, work, public}` 🔒 | attribute | accumulate (one per audience) |
+| `name.nickname.<audience>` | audience-scoped nickname; `audience` preferred `{kids, family, friends, work, public}`, open values allowed 🔒 | attribute | accumulate (one per audience) |
 | `name.maiden` / `name.former` | prior names, with `validInterval` token | state | accumulate |
 | `name.aka` | catch-all alternate | attribute | accumulate |
 
@@ -474,14 +479,21 @@ For transparency, the design choices the red-team cut from the first sketch:
 - **`is_subject_type`, `cardinality`** — dropped: subjecthood is per-entity not
   per-kind; `cardinality` overlaps `functional`.
 
-## Open questions for owner ratification
+## Ratified decisions **[decided 2026-06-11]**
 
-1. **YAML now, or Python dict now + YAML later?** This doc proposes YAML as the
-   authoring surface per the owner's request; the red-team argued a typed Python
-   structure is leaner at single-user scale. The YAML is LinkML-shaped either way
-   so the cost of starting with a dict and lifting to YAML later is low.
-2. **Which 🔒-scoped graph categories (Bill, FinancialAccount, Medication,
-   Subscription) get a typed projection vs. staying graph entities** — defer to
-   the phase that needs the structured query.
-3. **Audience vocabulary for `name.nickname.<audience>`** — fixed enum
-   (`kids|family|friends|work|public`) vs. open string.
+1. **Authoring surface is the two-file YAML registry.** The red-team's leaner
+   alternative (a typed Python structure) was considered and not taken; the YAML
+   is LinkML-shaped, so lifting to a Python dict — or up to LinkML proper past
+   ~30 types — stays cheap if scale ever argues for it. The codegen/CI-gate/
+   dev-setup machinery stays deferred until it earns its keep.
+2. **The 🔒-scoped graph categories (Bill, FinancialAccount, Medication,
+   Subscription) stay graph entities for now;** a typed projection is deferred to
+   the phase that needs structured querying over them, not built speculatively.
+3. **`name.nickname.<audience>` is a preferred-but-open enum** —
+   `{kids, family, friends, work, public}` seed the prompt digest, but open
+   audiences (e.g. `gym`, `bandmates`) are accepted. This is the one vocabulary
+   invariant applied to a qualifier: preferred where it matters, gated nowhere.
+
+All fourteen categories in the catalog are now scaffolded under `schemas/`
+(`person, organization, place, role, animal, appointment, bill, lab_result,
+vehicle, medication, financial_account, document, subscription, device`).

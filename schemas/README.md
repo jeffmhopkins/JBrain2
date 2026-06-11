@@ -31,5 +31,6 @@ resurrect the controlled ontology `docs/ANALYSIS.md` rejects.
 5. `types/bill.yaml` / `appointment.yaml` — recurrence-as-token, not rows.
 6. `types/lab_result.yaml` — a deferred Phase-7 typed record's catalog.
 
-Not yet present (cataloged in `docs/entity.md`, scaffold on demand): `place`,
-`financial_account`, `document`, `subscription`, `device`.
+All fourteen catalog types are scaffolded: `person, organization, place, role,
+animal, appointment, bill, lab_result, vehicle, medication, financial_account,
+document, subscription, device`.

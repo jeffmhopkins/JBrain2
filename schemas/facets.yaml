@@ -49,8 +49,8 @@ facets:
         kind: preference
         functional: true
         renamed_from: [preferredName, goesBy]
-      - canonical_name: name.nickname        # qualifier = audience (kids|family|friends|work|public)
-        qualifier_vocab: name_audiences
+      - canonical_name: name.nickname        # qualifier = audience; preferred enum, open allowed
+        qualifier_vocab: name_audiences      # kids|family|friends|work|public + any open value
         value_shape: text
         kind: attribute
         renamed_from: [nickname, alsoKnownAs, nickname.from_kids]

@@ -29,7 +29,9 @@ value_shapes:
   - ref                    # edge to another entity: ref(<type_id>)
   - structured             # atomic compound: structured(<shape_id>)
 
-# Audience vocabulary for the name.nickname.<audience> family.
+# Preferred audience vocabulary for the name.nickname.<audience> family.
+# PREFERRED, not closed: open values (e.g. "gym", "bandmates") are accepted —
+# storage never gates a qualifier. These seed the prompt digest only.
 name_audiences: [kids, family, friends, work, public]
 
 # Reusable structured shapes (atomic compounds only).
@@ -55,3 +57,7 @@ shapes:
   license_plate:
     value: text
     jurisdiction: text
+  geofence:                # PostGIS-backed fence for geofence-transition events
+    center: structured     # structured(geo)
+    radiusMeters: scalar
+    polygon: text          # optional WKT for non-circular fences
