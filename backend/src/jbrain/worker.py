@@ -76,13 +76,20 @@ async def run_loop(maker: async_sessionmaker[AsyncSession], handlers: dict[str, 
             if not backfilled:
                 ingests = await queue.backfill_pending_notes(maker, queue.SYSTEM_CTX)
                 embeds = await queue.backfill_unembedded_notes(maker, queue.SYSTEM_CTX)
+                # Notes ingested before extraction shipped never analyze
+                # until edited; the missing note_analysis row marks them.
+                analyses = await queue.backfill_unanalyzed_notes(maker, queue.SYSTEM_CTX)
                 # Notes deleted before the purge cascade shipped left orphaned
                 # derived artifacts (incl. resolved review history quoting
                 # their text); sweep them once per boot.
                 purged = await purge.backfill_deleted_note_artifacts(maker)
                 backfilled = True
                 log.info(
-                    "worker.backfill", ingest_jobs=ingests, embed_jobs=embeds, purged_notes=purged
+                    "worker.backfill",
+                    ingest_jobs=ingests,
+                    embed_jobs=embeds,
+                    analyze_jobs=analyses,
+                    purged_notes=purged,
                 )
             if await process_one(maker, handlers):
                 continue

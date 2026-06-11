@@ -245,6 +245,42 @@ async def backfill_pending_notes(
         return cast(CursorResult[Any], result).rowcount or 0
 
 
+async def backfill_unanalyzed_notes(
+    maker: async_sessionmaker[AsyncSession], ctx: SessionContext
+) -> int:
+    """Enqueue analyze_note for indexed notes lacking a note_analysis row.
+
+    Notes written before extraction shipped never analyze until edited (only
+    ingest enqueues analysis); the missing note_analysis row is the durable
+    marker, so this sweep self-heals them at startup. Indexed-only on
+    purpose: analysis reads chunks, and a pending note's own ingest will
+    enqueue analysis anyway.
+    """
+    async with scoped_session(maker, ctx) as session:
+        result = await session.execute(
+            text(
+                """
+                INSERT INTO app.jobs (id, kind, payload)
+                SELECT gen_random_uuid(), 'analyze_note',
+                       jsonb_build_object('note_id', n.id)
+                FROM app.notes n
+                WHERE n.ingest_state = 'indexed'
+                  AND n.deleted_at IS NULL
+                  AND NOT EXISTS (
+                      SELECT 1 FROM app.note_analysis a WHERE a.note_id = n.id
+                  )
+                  AND NOT EXISTS (
+                      SELECT 1 FROM app.jobs j
+                      WHERE j.kind = 'analyze_note'
+                        AND j.status IN ('queued', 'running')
+                        AND j.payload ->> 'note_id' = n.id::text
+                  )
+                """
+            )
+        )
+        return cast(CursorResult[Any], result).rowcount or 0
+
+
 async def backfill_unembedded_notes(
     maker: async_sessionmaker[AsyncSession], ctx: SessionContext
 ) -> int:
