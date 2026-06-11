@@ -6,7 +6,7 @@ real FastAPI app."""
 import json
 import uuid
 from collections.abc import AsyncIterator
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta, timezone
 from typing import Any
 
 import pytest
@@ -54,9 +54,22 @@ async def maker(database_url: str) -> AsyncIterator[async_sessionmaker[AsyncSess
     await engine.dispose()
 
 
-async def make_note(maker: async_sessionmaker[AsyncSession], *, domain: str, body: str) -> str:
+async def make_note(
+    maker: async_sessionmaker[AsyncSession],
+    *,
+    domain: str,
+    body: str,
+    created_at: datetime | None = None,
+    tz_offset: int | None = None,
+) -> str:
     note, _ = await SqlNotesRepo(maker).create_note(
-        OWNER, client_id=f"ana-{uuid.uuid4()}", domain=domain, destination=None, body=body
+        OWNER,
+        client_id=f"ana-{uuid.uuid4()}",
+        domain=domain,
+        destination=None,
+        body=body,
+        created_at=created_at,
+        tz_offset_minutes=tz_offset,
     )
     return note.id
 
@@ -334,6 +347,108 @@ async def test_analyze_note_lands_everything(
     assert usage and usage[0].provider == "xai" and usage[0].model == "grok-4.3"
 
 
+async def test_backward_phrase_resolution_repaired_end_to_end(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """Issue 3: a 07:13 capture whose 'last night' the model wrongly resolved to
+    the capture day is repaired to the prior evening by the pipeline's local
+    anchor — both the fact's valid_from and the temporal token land on Jun 10."""
+    mst = timezone(timedelta(minutes=-360))
+    note_id = await make_note(
+        maker,
+        domain="general",
+        body="Jeff ate Celine's dinner last night.",
+        created_at=datetime(2026, 6, 11, 13, 13, tzinfo=UTC),  # 07:13 local at -06:00
+        tz_offset=-360,
+    )
+    payload = {
+        "title": "Dinner",
+        "tags": ["dinner", "food", "celine"],
+        "mentions": [{"name": "Jeff", "kind": "Person", "surface_text": "Jeff"}],
+        "facts": [
+            {
+                "predicate": "ate", "qualifier": "", "kind": "event",
+                "statement": "Jeff ate Celine's dinner last night.", "value_json": None,
+                "assertion": "asserted", "entity_ref": "Jeff", "object_entity_ref": None,
+                "temporal": {
+                    "phrase": "last night",
+                    "resolved_start": "2026-06-11T20:00:00-06:00",  # capture day: wrong
+                    "resolved_end": None, "precision": "day",
+                },
+                "domain": "general", "confidence": 0.7,
+            }
+        ],
+        "temporal_tokens": [
+            {
+                "phrase": "last night", "kind": "point",
+                "resolved_start": "2026-06-11T20:00:00-06:00",
+                "resolved_end": None, "precision": "day", "rrule": None,
+            }
+        ],
+    }  # fmt: skip
+    await analyzer(maker, [json.dumps(payload)]).analyze_note({"note_id": note_id})
+
+    facts = await rows(
+        maker, OWNER, "SELECT valid_from FROM app.facts WHERE note_id = :nid", nid=note_id
+    )
+    assert len(facts) == 1 and facts[0].valid_from is not None
+    assert facts[0].valid_from.astimezone(mst).date() == date(2026, 6, 10)
+
+    tokens = await rows(
+        maker,
+        OWNER,
+        "SELECT resolved_start FROM app.temporal_tokens WHERE note_id = :nid",
+        nid=note_id,
+    )
+    assert len(tokens) == 1
+    assert tokens[0].resolved_start.astimezone(mst).date() == date(2026, 6, 10)
+
+
+async def test_backward_phrase_not_repaired_without_tz_offset(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """Red-team Finding 1: with no client offset the anchor falls back to the
+    stored UTC instant, whose date is the NEXT day for an evening capture. The
+    pipeline must then withhold the anchor so a model-correct backward date is
+    never clobbered. Capture = May 9 19:00 local (May 10 01:00Z); the model
+    correctly put 'yesterday' on May 8 and it must survive untouched."""
+    note_id = await make_note(
+        maker,
+        domain="general",
+        body="We moved yesterday.",
+        created_at=datetime(2026, 5, 10, 1, 0, tzinfo=UTC),  # 19:00 the prior day at -06:00
+        tz_offset=None,
+    )
+    payload = {
+        "title": "Move",
+        "tags": ["move", "home", "address"],
+        "mentions": [{"name": "Me", "kind": "Person", "surface_text": "We"}],
+        "facts": [
+            {
+                "predicate": "relocated", "qualifier": "", "kind": "event",
+                "statement": "Moved to 7 Birch Ln.", "value_json": {"place": "7 Birch Ln"},
+                "assertion": "asserted", "entity_ref": "Me", "object_entity_ref": None,
+                "temporal": {
+                    "phrase": "yesterday",
+                    "resolved_start": "2026-05-08T00:00:00-06:00",  # model-correct local day
+                    "resolved_end": None, "precision": "day",
+                },
+                "domain": "general", "confidence": 0.9,
+            }
+        ],
+        "temporal_tokens": [],
+    }  # fmt: skip
+    await analyzer(maker, [json.dumps(payload)]).analyze_note({"note_id": note_id})
+    facts = await rows(
+        maker, OWNER, "SELECT valid_from FROM app.facts WHERE note_id = :nid", nid=note_id
+    )
+    assert len(facts) == 1 and facts[0].valid_from is not None
+    # Preserved on May 8 — NOT shifted forward to the UTC-derived May 9.
+    assert facts[0].valid_from.astimezone(timezone(timedelta(minutes=-360))).date() == date(
+        2026, 5, 8
+    )
+
+
 async def test_reanalysis_is_idempotent(
     maker: async_sessionmaker[AsyncSession], tmp_path: Any
 ) -> None:
@@ -414,6 +529,65 @@ async def test_reanalysis_is_idempotent(
 
     assert tuple(first) == tuple(second)
     assert fact_ids_before == fact_ids_after  # upsert on the identity key, not re-insert
+
+
+async def test_reextraction_dropping_a_relationship_retracts_its_inverse(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """A derived inverse is a shadow of its source: when a re-extraction no
+    longer asserts the relationship and the sweep retracts the source, the
+    reciprocal on the object's stream must retract too — never linger active."""
+    note_id = await make_note(maker, domain="general", body="Quinn and Robin co-founded Lumen.")
+
+    def mentions() -> list[dict[str, Any]]:
+        return [
+            {"name": "Quinn", "kind": "Person", "surface_text": "Quinn"},
+            {"name": "Robin", "kind": "Person", "surface_text": "Robin"},
+        ]
+
+    with_edge = {
+        "title": "Co-founders",
+        "tags": ["company", "founders", "lumen"],
+        "mentions": mentions(),
+        "facts": [
+            {
+                "predicate": "cofounder", "qualifier": "", "kind": "relationship",
+                "statement": "Quinn co-founded with Robin.", "value_json": None,
+                "assertion": "asserted", "entity_ref": "Quinn", "object_entity_ref": "Robin",
+                "temporal": None, "domain": "general", "confidence": 0.9,
+            }
+        ],
+        "temporal_tokens": [],
+    }  # fmt: skip
+    # Re-extraction that no longer mentions the partnership at all.
+    without_edge = {
+        "title": "Co-founders",
+        "tags": ["company", "founders", "lumen"],
+        "mentions": mentions(),
+        "facts": [],
+        "temporal_tokens": [],
+    }
+    await analyzer(maker, [json.dumps(with_edge)]).analyze_note({"note_id": note_id})
+    derived = await rows(
+        maker,
+        OWNER,
+        "SELECT status FROM app.facts WHERE predicate = 'cofounder'"
+        " AND derived_from_fact_id IS NOT NULL AND note_id = :nid",
+        nid=note_id,
+    )
+    assert [r.status for r in derived] == ["active"]  # the reciprocal was materialized
+
+    await analyzer(maker, [json.dumps(without_edge)]).analyze_note({"note_id": note_id})
+    after = await rows(
+        maker,
+        OWNER,
+        "SELECT status, derived_from_fact_id IS NOT NULL AS derived FROM app.facts"
+        " WHERE predicate = 'cofounder' AND note_id = :nid",
+        nid=note_id,
+    )
+    # Both the source and its shadow are retracted; neither lingers active.
+    assert after and all(r.status == "retracted" for r in after)
+    assert any(r.derived for r in after)
 
 
 async def test_state_change_forms_supersession_chain(
@@ -972,3 +1146,277 @@ async def test_supersession_candidate_read_is_domain_and_object_scoped(
             session, me.id, "employer", "", None, globex.id, "general"
         )
         assert {f.object_entity_id for f in employers} == {str(acme.id), str(globex.id)}
+
+
+# --- mutual / inverse edges (Issue 2) ----------------------------------------
+
+
+def _relationship_payload(predicate: str, obj_name: str, *, obj_kind: str = "Person") -> dict:
+    """A one-fact relationship extraction: Me.<predicate> -> <obj>. Unique
+    predicates per test keep the shared DB's global predicate queries clean."""
+    return {
+        "title": f"Me and {obj_name}",
+        "tags": [obj_name.lower()],
+        "mentions": [
+            {"name": "Me", "kind": "Person", "surface_text": "I"},
+            {"name": obj_name, "kind": obj_kind, "surface_text": obj_name},
+        ],
+        "facts": [
+            {
+                "predicate": predicate,
+                "qualifier": "",
+                "kind": "relationship",
+                "statement": f"My {predicate} is {obj_name}.",
+                "value_json": None,
+                "assertion": "asserted",
+                "entity_ref": "Me",
+                "object_entity_ref": obj_name,
+                "temporal": {
+                    "phrase": "",
+                    "resolved_start": "2026-06-10T00:00:00+00:00",
+                    "resolved_end": None,
+                    "precision": "day",
+                },
+                "domain": "general",
+                "confidence": 0.95,
+            }
+        ],
+        "temporal_tokens": [],
+    }
+
+
+async def test_symmetric_inverse_edge_materialized_end_to_end(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """The real pipeline materializes the reciprocal of a same-subject /
+    null-subject relationship edge (Issue 2). Queries are scoped to THIS note
+    so the shared DB's other spouse rows never leak in."""
+    note_id = await make_note(maker, domain="general", body="I married Celine.")
+    payload = _relationship_payload("spouse", "Celine")
+    await analyzer(maker, [json.dumps(payload)]).analyze_note({"note_id": note_id})
+
+    facts = await rows(
+        maker,
+        OWNER,
+        "SELECT e.canonical_name AS entity, f.predicate, f.status,"
+        " f.derived_from_fact_id, f.statement"
+        " FROM app.facts f JOIN app.entities e ON e.id = f.entity_id"
+        " WHERE f.predicate = 'spouse' AND f.note_id = :nid ORDER BY e.canonical_name",
+        nid=note_id,
+    )
+    by_entity = {f.entity: f for f in facts}
+    # The source edge (primary) and its derived reciprocal on Celine's stream.
+    assert by_entity["Me"].derived_from_fact_id is None
+    assert by_entity["Me"].status == "active"
+    celine = by_entity["Celine"]
+    assert celine.derived_from_fact_id is not None  # derived shadow
+    assert celine.status == "active"
+    assert "Me" in celine.statement
+
+
+async def test_cross_subject_inverse_is_proposed_not_written(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """When the object entity is a DISTINCT security subject, the inverse is
+    routed to the review inbox as an inverse_proposal and NEVER written onto
+    that subject's stream (Issue 2, the firewall gate)."""
+    note_id = await make_note(maker, domain="general", body="I have treated Patient X.")
+
+    # Seed a confirmed object entity hard-linked to its OWN subject, resolvable
+    # by exact alias — a different security subject than the owner ('Me').
+    other_subject = str(uuid.uuid4())
+    other_entity = str(uuid.uuid4())
+    async with scoped_session(maker, OWNER) as s:
+        await s.execute(
+            text("INSERT INTO app.subjects (id, kind, display_name) VALUES (:id, 'person', 'X')"),
+            {"id": other_subject},
+        )
+        await s.execute(
+            text(
+                "INSERT INTO app.entities (id, kind, canonical_name, subject_id, status,"
+                " domain_code) VALUES (:id, 'Person', 'Patient X', :sub, 'confirmed', 'general')"
+            ),
+            {"id": other_entity, "sub": other_subject},
+        )
+        await s.execute(
+            text(
+                "INSERT INTO app.entity_aliases (id, entity_id, alias, alias_norm, domain_code)"
+                " VALUES (gen_random_uuid(), :eid, 'Patient X', 'patient x', 'general')"
+            ),
+            {"eid": other_entity},
+        )
+
+    payload = _relationship_payload("hasTreated", "Patient X")
+    await analyzer(maker, [json.dumps(payload)]).analyze_note({"note_id": note_id})
+
+    # The directed edge exists on the owner's stream...
+    source = await rows(
+        maker,
+        OWNER,
+        "SELECT status FROM app.facts WHERE predicate = 'hasTreated' AND note_id = :nid",
+        nid=note_id,
+    )
+    assert len(source) == 1 and source[0].status == "active"
+    # ...but NO inverse was written onto the other subject's stream.
+    inverse = await rows(
+        maker,
+        OWNER,
+        "SELECT 1 FROM app.facts WHERE entity_id = :eid AND derived_from_fact_id IS NOT NULL",
+        eid=other_entity,
+    )
+    assert inverse == []
+    # The inverse is PROPOSED instead.
+    proposals = await rows(
+        maker,
+        OWNER,
+        "SELECT payload->>'subject' AS subject FROM app.review_items"
+        " WHERE kind = 'inverse_proposal' AND payload->>'note_id' = :nid",
+        nid=note_id,
+    )
+    assert len(proposals) == 1 and proposals[0].subject == "Patient X"
+
+
+def _person_edge(subj: str, obj: str, predicate: str = "spouse") -> dict[str, Any]:
+    return {
+        "title": f"{subj} and {obj}",
+        "tags": ["rel", subj.lower()],
+        "mentions": [
+            {"name": subj, "kind": "Person", "surface_text": subj},
+            {"name": obj, "kind": "Person", "surface_text": obj},
+        ],
+        "facts": [
+            {
+                "predicate": predicate, "qualifier": "", "kind": "relationship",
+                "statement": f"{subj} is married to {obj}.", "value_json": None,
+                "assertion": "asserted", "entity_ref": subj, "object_entity_ref": obj,
+                "temporal": None, "domain": "general", "confidence": 0.95,
+            }
+        ],
+        "temporal_tokens": [],
+    }  # fmt: skip
+
+
+async def test_direct_assertion_promotes_a_derived_shadow_to_primary(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """Red-team Finding 1: when a note DIRECTLY asserts what was only a derived
+    shadow of another note's edge, the shadow is adopted as a primary fact owned
+    by that note — so it survives deletion of the source that first reflected
+    it, instead of silently riding (and dying with) the other note."""
+    from jbrain.analysis.purge import purge_note_artifacts
+
+    sql = (
+        "SELECT f.derived_from_fact_id AS dff, f.note_id::text AS note FROM app.facts f"
+        " JOIN app.entities e ON e.id = f.entity_id"
+        " WHERE e.canonical_name = 'Roanen' AND f.predicate = 'spouse' AND f.status = 'active'"
+    )
+    note_a = await make_note(maker, domain="general", body="Quillon married Roanen.")
+    await analyzer(maker, [json.dumps(_person_edge("Quillon", "Roanen"))]).analyze_note(
+        {"note_id": note_a}
+    )
+    shadow = await rows(maker, OWNER, sql)
+    assert len(shadow) == 1 and shadow[0].dff is not None and shadow[0].note == note_a
+
+    note_b = await make_note(maker, domain="general", body="Roanen married Quillon.")
+    await analyzer(maker, [json.dumps(_person_edge("Roanen", "Quillon"))]).analyze_note(
+        {"note_id": note_b}
+    )
+    promoted = await rows(maker, OWNER, sql)
+    assert len(promoted) == 1 and promoted[0].dff is None and promoted[0].note == note_b
+
+    async with scoped_session(maker, SYSTEM_CTX) as s:
+        await purge_note_artifacts(s, uuid.UUID(note_a))
+        await s.commit()
+    survivors = await rows(maker, OWNER, sql)
+    assert len(survivors) == 1 and survivors[0].note == note_b
+
+
+async def test_cross_subject_supersession_closes_shadow_without_cross_entity_link(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """Red-team Finding 2: when a supersession's new object is a DISTINCT subject
+    (gate fires, no inverse written), the old shadow closes with a NULL link —
+    never a cross-entity pointer at the source fact on another entity."""
+    shadow_sql = (
+        "SELECT f.status, f.superseded_by FROM app.facts f"
+        " JOIN app.entities e ON e.id = f.entity_id"
+        " WHERE e.canonical_name = 'Celestina' AND f.predicate = 'spouse'"
+    )
+    note1 = await make_note(maker, domain="general", body="I married Celestina.")
+    await analyzer(maker, [json.dumps(_relationship_payload("spouse", "Celestina"))]).analyze_note(
+        {"note_id": note1}
+    )
+    assert (await rows(maker, OWNER, shadow_sql))[0].status == "active"
+
+    other_subject, other_entity = str(uuid.uuid4()), str(uuid.uuid4())
+    async with scoped_session(maker, OWNER) as s:
+        await s.execute(
+            text(
+                "INSERT INTO app.subjects (id, kind, display_name) VALUES (:id, 'person', 'PatY')"
+            ),
+            {"id": other_subject},
+        )
+        await s.execute(
+            text(
+                "INSERT INTO app.entities (id, kind, canonical_name, subject_id, status,"
+                " domain_code) VALUES (:id, 'Person', 'Patient Y', :sub, 'confirmed', 'general')"
+            ),
+            {"id": other_entity, "sub": other_subject},
+        )
+        await s.execute(
+            text(
+                "INSERT INTO app.entity_aliases (id, entity_id, alias, alias_norm, domain_code)"
+                " VALUES (gen_random_uuid(), :eid, 'Patient Y', 'patient y', 'general')"
+            ),
+            {"eid": other_entity},
+        )
+    note2 = await make_note(maker, domain="general", body="I married Patient Y.")
+    await analyzer(maker, [json.dumps(_relationship_payload("spouse", "Patient Y"))]).analyze_note(
+        {"note_id": note2}
+    )
+    closed = await rows(maker, OWNER, shadow_sql)
+    assert len(closed) == 1 and closed[0].status == "superseded" and closed[0].superseded_by is None
+
+
+async def test_conflict_resolution_cascades_to_derived_shadows(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """Red-team Finding 3: resolving a spouse fact_conflict carries to the
+    reciprocals — the kept side's shadow goes active, the dropped side's shadow
+    retracts — and reopen reverses both, so a shadow never contradicts the
+    human's verdict."""
+    repo = SqlAnalysisRepo(maker)
+
+    def shadow_status_sql(name: str) -> str:
+        return (
+            "SELECT f.status FROM app.facts f JOIN app.entities e ON e.id = f.entity_id"
+            f" WHERE e.canonical_name = '{name}' AND f.predicate = 'spouse'"
+            " AND f.derived_from_fact_id IS NOT NULL"
+        )
+
+    note1 = await make_note(maker, domain="general", body="I married Aldous.")
+    await analyzer(maker, [json.dumps(_relationship_payload("spouse", "Aldous"))]).analyze_note(
+        {"note_id": note1}
+    )
+    note2 = await make_note(maker, domain="general", body="I married Bettina.")
+    await analyzer(maker, [json.dumps(_relationship_payload("spouse", "Bettina"))]).analyze_note(
+        {"note_id": note2}
+    )
+    assert (await rows(maker, OWNER, shadow_status_sql("Aldous")))[0].status == "superseded"
+    assert (await rows(maker, OWNER, shadow_status_sql("Bettina")))[0].status == "active"
+
+    items = await rows(
+        maker,
+        OWNER,
+        "SELECT id::text AS id FROM app.review_items WHERE kind = 'fact_conflict'"
+        " AND status = 'open' AND payload->>'note_id' = :nid",
+        nid=note2,
+    )
+    assert len(items) == 1
+    await repo.resolve_review(OWNER, items[0].id, "accept_a", {})  # keep Aldous (the prior value)
+    assert (await rows(maker, OWNER, shadow_status_sql("Aldous")))[0].status == "active"
+    assert (await rows(maker, OWNER, shadow_status_sql("Bettina")))[0].status == "retracted"
+
+    await repo.reopen_review(OWNER, items[0].id)
+    assert (await rows(maker, OWNER, shadow_status_sql("Aldous")))[0].status == "superseded"
+    assert (await rows(maker, OWNER, shadow_status_sql("Bettina")))[0].status == "active"

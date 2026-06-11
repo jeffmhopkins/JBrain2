@@ -165,6 +165,11 @@ class Fact(Base):
     superseded_by: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("app.facts.id"), nullable=True
     )
+    # NULL = primary, note-sourced fact; non-NULL = this row is the pipeline-
+    # materialized inverse of that source fact, whose lifecycle it shadows.
+    derived_from_fact_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("app.facts.id", ondelete="CASCADE"), nullable=True
+    )
     note_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("app.notes.id"))
     chunk_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("app.chunks.id"), nullable=True

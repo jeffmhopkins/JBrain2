@@ -9,6 +9,7 @@ from jbrain.analysis.supersession import (
     Candidate,
     FactView,
     decide,
+    inverse_predicate,
     is_functional,
     values_equal,
 )
@@ -476,3 +477,79 @@ def test_retracted_rows_are_ignored() -> None:
     old = view(status="retracted")
     d = decide(cand(statement="lives at 12 Oak St", valid_from=T0), [old])
     assert d.insert and d.refresh_id is None
+
+
+# --- inverse-predicate registry (mutual/inverse edges, Issue 2) ------------
+
+
+def test_symmetric_predicate_reflects_with_same_predicate() -> None:
+    # Same predicate back, in the spelling the source used.
+    assert inverse_predicate("spouse") == "spouse"
+    assert inverse_predicate("sibling_of") == "sibling_of"
+    assert inverse_predicate("co_founder") == "co_founder"
+
+
+def test_asymmetric_predicate_reflects_with_named_inverse() -> None:
+    assert inverse_predicate("worksFor") == "employs"
+    assert inverse_predicate("employs") == "worksFor"
+    assert inverse_predicate("parent_of") == "child_of"
+    assert inverse_predicate("child_of") == "parent_of"
+    assert inverse_predicate("manages") == "reportsTo"
+    assert inverse_predicate("hasTreated") == "treatedBy"
+
+
+def test_unknown_predicate_has_no_inverse() -> None:
+    # The registry is an allowlist; an unknown relation stands alone (safe).
+    assert inverse_predicate("favoriteBand") is None
+    assert inverse_predicate("owns") is None
+
+
+def test_inverse_lookup_is_case_insensitive() -> None:
+    assert inverse_predicate("WORKSFOR") == "employs"
+    assert inverse_predicate("Spouse") == "Spouse"
+
+
+# --- derived-defers-to-primary decision shaping ----------------------------
+#
+# The pipeline reads the derived flag off existing rows; these pin the
+# decide() shapes it relies on. A symmetric inverse runs decide() on the
+# object's own key, so an existing PRIMARY head there must produce a
+# supersession the pipeline can recognize and demote to a conflict (it never
+# auto-overwrites a primary with a reflection), while a DERIVED head may be
+# freely superseded.
+
+
+def test_derived_inverse_supersedes_existing_head_on_functional_key() -> None:
+    # Celine already has a spouse edge; a newer derived candidate supersedes
+    # on the functional key — the pipeline inspects supersede_ids' derived
+    # flags to decide whether to honor or demote this.
+    existing = view(
+        kind="relationship",
+        object_entity_id="old-jeff",
+        statement="Celine's spouse is OldJeff.",
+        valid_from=T0,
+    )
+    candidate = cand(
+        kind="relationship",
+        object_entity_id="jeff",
+        statement="Celine's spouse is Jeff.",
+        valid_from=T1,
+    )
+    d = decide(candidate, [existing], predicate="spouse")
+    assert d.supersede_ids == ["old-1"]
+
+
+def test_non_functional_inverse_accumulates() -> None:
+    # employs is not functional: a second inbound edge just inserts.
+    existing = view(
+        kind="relationship",
+        object_entity_id="alice",
+        statement="Globex employs Alice.",
+    )
+    candidate = cand(
+        kind="relationship",
+        object_entity_id="marcus",
+        statement="Globex employs Marcus.",
+    )
+    d = decide(candidate, [existing], predicate="employs")
+    assert d.insert and not d.supersede_ids

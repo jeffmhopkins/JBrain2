@@ -1,0 +1,106 @@
+[
+  {
+    "name": "marriage_copular_object",
+    "body": "Jeff is married to Celine Hopkins.",
+    "domain": "general",
+    "created_at": "2026-06-11T07:13:00-06:00",
+    "expect": {
+      "person_mentions": ["Jeff", "Celine Hopkins"],
+      "edges": [{"predicate": "spouse", "object": "Celine"}]
+    }
+  },
+  {
+    "name": "possessor_person_and_last_night",
+    "body": "Jeff ate Celine's dinner last night.",
+    "domain": "general",
+    "created_at": "2026-06-11T07:13:00-06:00",
+    "expect": {
+      "person_mentions": ["Jeff", "Celine"],
+      "temporal": [{"phrase": "last night", "resolved_date": "2026-06-10"}]
+    }
+  },
+  {
+    "name": "appositive_wife",
+    "body": "Jeff's wife, Celine Hopkins, runs a bakery downtown.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "person_mentions": ["Jeff", "Celine Hopkins"],
+      "edges": [{"predicate": "spouse", "object": "Celine"}]
+    }
+  },
+  {
+    "name": "passive_voice_agent",
+    "body": "The Q2 launch was led by Dana Okafor.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "person_mentions": ["Dana Okafor"]
+    }
+  },
+  {
+    "name": "sibling_symmetric_third_person",
+    "body": "Marcus and his sister Lena climbed Mt. Rainier in July.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "person_mentions": ["Marcus", "Lena"],
+      "edges": [{"predicate": "sibling", "object": "Lena"}]
+    }
+  },
+  {
+    "name": "employer_asymmetric",
+    "body": "Marcus works for Globex Corporation.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "person_mentions": ["Marcus"],
+      "edges": [{"predicate": "worksFor", "object": "Globex"}]
+    }
+  },
+  {
+    "name": "ditransitive_three_people",
+    "body": "Priya introduced Sam to her mentor, Older Wong, at the gala.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "person_mentions": ["Priya", "Sam", "Older Wong"]
+    }
+  },
+  {
+    "name": "transitive_named_object",
+    "body": "Dana hired Quentin Ross to run the new lab.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "person_mentions": ["Dana", "Quentin Ross"]
+    }
+  },
+  {
+    "name": "parent_child_possessive",
+    "body": "Nadia's son Theo started kindergarten this week.",
+    "domain": "general",
+    "created_at": "2026-06-11T09:00:00-06:00",
+    "expect": {
+      "person_mentions": ["Nadia", "Theo"]
+    }
+  },
+  {
+    "name": "temporal_yesterday_morning_anchor",
+    "body": "Refilled the prescription yesterday.",
+    "domain": "general",
+    "created_at": "2026-06-11T08:30:00-06:00",
+    "expect": {
+      "temporal": [{"phrase": "yesterday", "resolved_date": "2026-06-10"}]
+    }
+  },
+  {
+    "name": "temporal_a_week_ago",
+    "body": "We signed the lease a week ago.",
+    "domain": "general",
+    "created_at": "2026-06-11T08:30:00-06:00",
+    "expect": {
+      "temporal": [{"phrase": "a week ago", "resolved_date": "2026-06-04"}]
+    }
+  }
+]

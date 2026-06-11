@@ -52,14 +52,26 @@ async def _seed_note(maker: async_sessionmaker, step: Step) -> str:
     the ingest tests, not here."""
     note_id = str(uuid.uuid4())
     created = datetime.fromisoformat(step.created_at)
+    # Carry the step's local offset like a real capture would: the pipeline's
+    # local_anchor (and the backward-phrase repair that rides it) needs it, and
+    # without it an evening-capture scenario would resolve against the UTC day.
+    offset = created.utcoffset()
+    tz_offset = int(offset.total_seconds() // 60) if offset is not None else None
     async with maker() as s:
         await s.execute(text("SELECT set_config('app.principal_kind','owner',true)"))
         await s.execute(
             text(
-                "INSERT INTO app.notes (id, client_id, domain_code, body, created_at)"
-                " VALUES (:i, :c, :d, :b, :t)"
+                "INSERT INTO app.notes (id, client_id, domain_code, body, created_at,"
+                " tz_offset_minutes) VALUES (:i, :c, :d, :b, :t, :tz)"
             ),
-            {"i": note_id, "c": note_id[:12], "d": step.domain, "b": step.body, "t": created},
+            {
+                "i": note_id,
+                "c": note_id[:12],
+                "d": step.domain,
+                "b": step.body,
+                "t": created,
+                "tz": tz_offset,
+            },
         )
         await s.execute(
             text(

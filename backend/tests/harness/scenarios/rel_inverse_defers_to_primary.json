@@ -1,0 +1,53 @@
+{
+  "name": "a derived reciprocal never auto-overwrites a primary fact",
+  "description": "Celine already has a PRIMARY spouse edge (-> Aldo) from her own note. A later note 'Jeff married Celine' would reflect a derived Celine.spouse -> Jeff, which on the functional key would supersede the primary. The derived-defers-to-primary rule forbids that (docs/research/fix-options/2): the primary stays active, the reflection parks in pending_review behind a fact_conflict whose copy marks one side derived.",
+  "steps": [
+    {
+      "domain": "general",
+      "created_at": "2026-03-01T12:00:00-06:00",
+      "body": "Celine's spouse is Aldo.",
+      "extraction": {
+        "title": "Celine and Aldo",
+        "tags": ["celine", "aldo"],
+        "mentions": [
+          {"name": "Celine", "kind": "Person", "surface_text": "Celine"},
+          {"name": "Aldo", "kind": "Person", "surface_text": "Aldo"}
+        ],
+        "facts": [
+          {"predicate": "spouse", "qualifier": "", "kind": "relationship", "statement": "Celine's spouse is Aldo.", "value_json": null, "assertion": "asserted", "entity_ref": "Celine", "object_entity_ref": "Aldo", "temporal": {"phrase": "", "resolved_start": "2026-03-01T00:00:00-06:00", "resolved_end": null, "precision": "day"}, "domain": "general", "confidence": 0.95}
+        ],
+        "temporal_tokens": []
+      }
+    },
+    {
+      "domain": "general",
+      "created_at": "2026-06-01T12:00:00-06:00",
+      "body": "Jeff married Celine.",
+      "extraction": {
+        "title": "Jeff and Celine",
+        "tags": ["jeff", "celine"],
+        "mentions": [
+          {"name": "Jeff", "kind": "Person", "surface_text": "Jeff"},
+          {"name": "Celine", "kind": "Person", "surface_text": "Celine"}
+        ],
+        "facts": [
+          {"predicate": "spouse", "qualifier": "", "kind": "relationship", "statement": "Jeff's spouse is Celine.", "value_json": null, "assertion": "asserted", "entity_ref": "Jeff", "object_entity_ref": "Celine", "temporal": {"phrase": "", "resolved_start": "2026-06-01T00:00:00-06:00", "resolved_end": null, "precision": "day"}, "domain": "general", "confidence": 0.95}
+        ],
+        "temporal_tokens": []
+      }
+    }
+  ],
+  "expect": {
+    "facts": [
+      {"entity": "Celine", "predicate": "spouse", "value_contains": "Aldo", "status": "active", "chained": false},
+      {"entity": "Celine", "predicate": "spouse", "value_contains": "Jeff", "status": "pending_review", "chained": false},
+      {"entity": "Jeff", "predicate": "spouse", "value_contains": "Celine", "status": "active", "chained": false}
+    ],
+    "absent_facts": [
+      {"entity": "Celine", "predicate": "spouse", "value_contains": "Aldo", "status": "superseded"}
+    ],
+    "review_items": [
+      {"kind": "fact_conflict", "summary_contains": "spouse values disagree for Celine"}
+    ]
+  }
+}

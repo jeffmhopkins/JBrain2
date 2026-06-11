@@ -105,6 +105,7 @@ async def seed_fact(
     valid_to: datetime | None = None,
     object_entity_id: str | None = None,
     temporal_token_id: str | None = None,
+    derived_from_fact_id: str | None = None,
 ) -> str:
     fid = str(uuid.uuid4())
     async with scoped_session(maker, OWNER) as s:
@@ -112,9 +113,10 @@ async def seed_fact(
             text(
                 "INSERT INTO app.facts (id, entity_id, predicate, kind, statement, assertion,"
                 " valid_from, valid_to, reported_at, status, superseded_by, note_id,"
-                " object_entity_id, temporal_token_id, extractor, prompt_version, domain_code)"
+                " object_entity_id, temporal_token_id, derived_from_fact_id, extractor,"
+                " prompt_version, domain_code)"
                 " VALUES (:id, :eid, :pred, 'state', 'seed statement', 'asserted', :vf, :vt,"
-                " now(), :status, :sup, :nid, :oid, :tok, 'fake-model', 'v1', 'general')"
+                " now(), :status, :sup, :nid, :oid, :tok, :derived, 'fake-model', 'v1', 'general')"
             ),
             {
                 "id": fid,
@@ -127,6 +129,7 @@ async def seed_fact(
                 "nid": note_id,
                 "oid": object_entity_id,
                 "tok": temporal_token_id,
+                "derived": derived_from_fact_id,
             },
         )
     return fid
@@ -245,6 +248,56 @@ async def test_delete_purges_all_derived_artifacts(
     )
     # Confirmed entities are never purged, even when only this note cited them.
     assert await count(maker, "SELECT count(*) FROM app.entities WHERE id = :id", id=entity) == 1
+
+
+async def test_delete_purges_derived_inverse_and_repairs_survivor_chain(
+    maker: async_sessionmaker[AsyncSession], repo: SqlNotesRepo
+) -> None:
+    """A derived inverse shares its source's note_id, so the source-note delete
+    purges it for free (Issue 2). A surviving derived shadow that was chained
+    onto a doomed derived row re-repairs like any fact: deleting the source
+    note removes both the source and its derived shadow, and a survivor in
+    another note whose chain pointed through the doomed shadow restores."""
+    note_a, note_b = await seed_note(maker), await seed_note(maker)
+    entity = await seed_entity(maker, "Inverse Subject")
+    other = await seed_entity(maker, "Inverse Object")
+
+    # note_b: a primary source edge + its derived reciprocal (same note_id).
+    source_b = await seed_fact(maker, note_b, entity, predicate="spouse", object_entity_id=other)
+    shadow_b = await seed_fact(
+        maker,
+        note_b,
+        other,
+        predicate="spouse",
+        object_entity_id=entity,
+        derived_from_fact_id=source_b,
+        valid_from=T1,
+    )
+    # note_a: an older derived shadow superseded by note_b's shadow.
+    shadow_a = await seed_fact(
+        maker,
+        note_a,
+        other,
+        predicate="spouse",
+        object_entity_id=entity,
+        status="superseded",
+        superseded_by=shadow_b,
+        valid_from=T0,
+        valid_to=T1,
+    )
+
+    assert await repo.delete_note(OWNER, note_b)
+
+    # Both the source and its derived shadow vanished with the note.
+    assert await count(maker, "SELECT count(*) FROM app.facts WHERE id = :id", id=source_b) == 0
+    assert await count(maker, "SELECT count(*) FROM app.facts WHERE id = :id", id=shadow_b) == 0
+    # The survivor's chain died inside the doomed set, so it is restored.
+    (restored,) = await fetch(
+        maker,
+        "SELECT status, superseded_by, valid_to FROM app.facts WHERE id = :id",
+        id=shadow_a,
+    )
+    assert (restored.status, restored.superseded_by, restored.valid_to) == ("active", None, None)
 
 
 async def test_chain_repair_restores_superseded_survivor(

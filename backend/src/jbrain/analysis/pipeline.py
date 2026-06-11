@@ -59,7 +59,14 @@ from jbrain.analysis.prompt import (
     build_user_prompt,
     prompt_block,
 )
-from jbrain.analysis.supersession import Candidate, Decision, FactView, decide, is_functional
+from jbrain.analysis.supersession import (
+    Candidate,
+    Decision,
+    FactView,
+    decide,
+    inverse_predicate,
+    is_functional,
+)
 from jbrain.db.session import scoped_session
 from jbrain.embed import EmbedClient
 from jbrain.llm import LlmBadResponseError, LlmError, LlmRouter
@@ -190,7 +197,14 @@ class AnalysisPipeline:
                 json_schema=EXTRACTION_SCHEMA,
                 max_tokens=EXTRACT_MAX_TOKENS,
             )
-            extraction = parse_extraction(result.parsed)
+            # Backward-phrase repair needs the note's LOCAL day; without a
+            # client offset local_anchor falls back to the stored UTC instant,
+            # whose date can be tomorrow for an evening capture. Withhold the
+            # anchor in that case so a model-correct date is never clobbered.
+            extraction = parse_extraction(
+                result.parsed,
+                anchor=local_anchor(captured_at, tz_offset) if tz_offset is not None else None,
+            )
         except (LlmBadResponseError, ExtractionError) as exc:
             # The adapter already spent its one re-ask: retrying the job would
             # just re-bill the same garbage. Nothing was written.
@@ -255,12 +269,16 @@ class AnalysisPipeline:
 
         # Identity keys this note no longer asserts were removed by the edit:
         # retract quietly — not a conflict, no inbox noise. Pinned facts are
-        # human decisions and survive (docs/ANALYSIS.md "Reprocessing").
+        # human decisions and survive (docs/ANALYSIS.md "Reprocessing"). Derived
+        # shadows are excluded: their lifecycle mirrors their source's, not the
+        # note's re-extraction set, so the source's own refresh/supersession (or
+        # FK cascade on its deletion) governs them, never this sweep.
         sweep = (
             update(Fact)
             .where(
                 Fact.note_id == note_id,
                 Fact.pinned.is_(False),
+                Fact.derived_from_fact_id.is_(None),
                 Fact.status.in_(("active", "pending_review")),
             )
             .values(status="retracted")
@@ -268,6 +286,22 @@ class AnalysisPipeline:
         if touched:
             sweep = sweep.where(Fact.id.not_in(touched))
         await session.execute(sweep)
+        # A derived shadow follows its source's fate. The sweep above excludes
+        # shadows (it governs only note-sourced facts), so when it retracts a
+        # source the re-extraction no longer asserts, close that source's
+        # reciprocal in the same breath — otherwise a dropped relationship would
+        # leave a stale active inverse on the object's stream.
+        await session.execute(
+            update(Fact)
+            .where(
+                Fact.derived_from_fact_id.in_(
+                    select(Fact.id).where(Fact.note_id == note_id, Fact.status == "retracted")
+                ),
+                Fact.pinned.is_(False),
+                Fact.status.in_(("active", "pending_review")),
+            )
+            .values(status="retracted")
+        )
 
         stmt = pg_insert(NoteAnalysis).values(
             note_id=note_id,
@@ -659,6 +693,7 @@ class AnalysisPipeline:
                 # NULL (pre-column rows) reads as confident: a low-confidence
                 # candidate must not displace a row of unknown confidence.
                 confidence=f.confidence if f.confidence is not None else 1.0,
+                derived=f.derived_from_fact_id is not None,
             )
             for f in rows
         ]
@@ -759,6 +794,11 @@ class AnalysisPipeline:
                     confidence=fact.confidence,
                 )
             )
+            # A derived shadow's lifecycle mirrors its source's: copy the
+            # interval close (and re-render) so the reciprocal closes too.
+            await self._update_shadows_in_place(
+                session, source_id=fact_id, valid_to=decision.close_valid_to
+            )
             return fact_id
 
         if decision.refresh_id is not None:
@@ -766,16 +806,26 @@ class AnalysisPipeline:
             # provenance in place — citations survive, no chain link, and no
             # repeated promotion review on re-analysis.
             fact_id = uuid.UUID(decision.refresh_id)
-            await session.execute(
-                update(Fact)
-                .where(Fact.id == fact_id)
-                .values(
-                    statement=fact.statement,
-                    extractor=extractor,
-                    prompt_version=PROMPT_VERSION,
-                    confidence=fact.confidence,
-                )
-            )
+            values: dict[str, Any] = {
+                "statement": fact.statement,
+                "extractor": extractor,
+                "prompt_version": PROMPT_VERSION,
+                "confidence": fact.confidence,
+            }
+            # This note DIRECTLY asserts what so far was only a derived shadow of
+            # another note's edge: adopt it as a primary fact owned by THIS note,
+            # so the human-stated claim survives deletion of the source that
+            # first reflected it (red-team Finding 1). Without this, "Celine's
+            # spouse is Jeff" in its own note would silently ride Jeff's note and
+            # vanish when his note is deleted.
+            refreshed = next((e for e in existing if e.id == decision.refresh_id), None)
+            if refreshed is not None and refreshed.derived:
+                anchor = anchor_for.get(fact.entity_ref)
+                values["derived_from_fact_id"] = None
+                values["note_id"] = note_id
+                values["chunk_id"] = anchor[0] if anchor else (chunks[0].id if chunks else None)
+            await session.execute(update(Fact).where(Fact.id == fact_id).values(values))
+            await self._update_shadows_in_place(session, source_id=fact_id)
             return fact_id
 
         anchor = anchor_for.get(fact.entity_ref)
@@ -825,6 +875,46 @@ class AnalysisPipeline:
             conflict=conflict,
             snippet=_cite(anchor, chunks),
         )
+        # Reciprocity: a directed relationship edge inserted ACTIVE gets its
+        # inverse materialized on the object's stream, then the old source's
+        # derived shadow re-pointed at it. Order matters — the new inverse must
+        # exist before propagation can chain a superseded shadow onto it.
+        new_inverse_id: uuid.UUID | None = None
+        if (
+            fact.kind == "relationship"
+            and object_entity is not None
+            and decision.insert_status == "active"
+        ):
+            new_inverse_id = await self._materialize_inverse(
+                session,
+                fact=fact,
+                source_fact_id=new_fact.id,
+                entity=entity,
+                object_entity=object_entity,
+                valid_from=valid_from,
+                valid_to=decision.insert_valid_to or valid_to,
+                precision=precision,
+                token_id=token_id,
+                note_id=note_id,
+                fact_domain=fact_domain,
+                captured_at=captured_at,
+                chunk_id=chunk_id,
+                extractor=extractor,
+                snippet=_cite(anchor, chunks),
+            )
+        if decision.supersede_ids:
+            # Chain the old shadow onto the NEW inverse when one exists (a clean
+            # mirror of the source chain). When none does — the predicate is
+            # unknown, or the cross-subject gate refused to write an inverse —
+            # the shadow has no successor on its own entity, so close it with a
+            # null link rather than pointing it cross-entity at the source fact
+            # (red-team Finding 2).
+            await self._propagate_supersession_to_shadows(
+                session,
+                source_ids=[uuid.UUID(i) for i in decision.supersede_ids],
+                successor_id=new_inverse_id,
+                valid_from=valid_from,
+            )
         if needs_promotion:
             session.add(
                 ReviewItem(
@@ -897,3 +987,222 @@ class AnalysisPipeline:
                     domain_code=fact_domain,
                 )
             )
+
+    async def _materialize_inverse(
+        self,
+        session: AsyncSession,
+        *,
+        fact: ExtractedFact,
+        source_fact_id: uuid.UUID,
+        entity: ResolvedEntity,
+        object_entity: ResolvedEntity,
+        valid_from: datetime | None,
+        valid_to: datetime | None,
+        precision: str,
+        token_id: uuid.UUID | None,
+        note_id: uuid.UUID,
+        fact_domain: str,
+        captured_at: datetime,
+        chunk_id: uuid.UUID | None,
+        extractor: str,
+        snippet: str | None,
+    ) -> uuid.UUID | None:
+        """Write the reciprocal of a directed relationship edge on the object's
+        stream, marked derived (docs/research/fix-options/2). Returns the new
+        inverse fact id, or None when nothing was written (unknown predicate or
+        the cross-subject gate fired)."""
+        inverse_pred = inverse_predicate(fact.predicate)
+        if inverse_pred is None:
+            return None  # not a relation we know how to reciprocate — safe default
+
+        # Cross-subject firewall gate: an inverse lands a fact on the OBJECT's
+        # stream. If that object is a DISTINCT security subject, auto-writing it
+        # would attribute knowledge across a subject boundary — a leak. Propose
+        # it to the review inbox and write nothing (docs/research/fix-options/2,
+        # "the single most important rule"). Same-subject / null-subject is safe.
+        if object_entity.subject_id is not None and object_entity.subject_id != entity.subject_id:
+            session.add(
+                ReviewItem(
+                    kind="inverse_proposal",
+                    payload={
+                        "source_fact_id": str(source_fact_id),
+                        "note_id": str(note_id),
+                        "predicate": inverse_pred,
+                        "subject": fact.object_entity_ref,
+                        "object": fact.entity_ref,
+                        "summary": (
+                            f"propose {fact.object_entity_ref}'s {inverse_pred} is"
+                            f" {fact.entity_ref}"
+                        ),
+                        "snippet": snippet,
+                    },
+                    # The derived edge always inherits the SOURCE fact's domain,
+                    # so the proposal does too — never the object's domain.
+                    domain_code=fact_domain,
+                )
+            )
+            return None
+
+        statement = f"{fact.object_entity_ref}'s {inverse_pred} is {fact.entity_ref}."
+        candidate = Candidate(
+            kind="relationship",
+            statement=statement,
+            value_json=None,
+            object_entity_id=str(entity.id),
+            assertion=fact.assertion,
+            valid_from=valid_from,
+            valid_to=valid_to,
+            reported_at=captured_at,
+            confidence=fact.confidence,
+        )
+        existing = await self._existing_facts(
+            session,
+            object_entity.id,
+            inverse_pred,
+            fact.qualifier,
+            object_entity.subject_id,
+            entity.id,
+            fact_domain,
+        )
+        decision = decide(candidate, existing, predicate=inverse_pred)
+
+        # The reciprocal already exists in a compatible form — a note asserting
+        # BOTH directions, or a re-mention — so refresh provenance in place
+        # rather than inserting a duplicate derived row. close_id (a pure-edge
+        # interval close) likewise updates the existing row, never duplicates.
+        if decision.refresh_id is not None or decision.close_id is not None:
+            existing_id = uuid.UUID(decision.refresh_id or decision.close_id)  # type: ignore[arg-type]
+            values: dict[str, Any] = {
+                "statement": statement,
+                "extractor": extractor,
+                "prompt_version": PROMPT_VERSION,
+                "confidence": fact.confidence,
+            }
+            if decision.close_id is not None:
+                values["valid_to"] = decision.close_valid_to
+            await session.execute(update(Fact).where(Fact.id == existing_id).values(values))
+            return existing_id
+
+        # Derived-defers-to-primary: a derived candidate may supersede another
+        # DERIVED shadow, but never a PRIMARY head. If decide() would close a
+        # primary, drop the supersession and route to fact_conflict instead so
+        # a human adjudicates the reflection against the human-sourced claim.
+        by_id = {e.id: e for e in existing}
+        primaries = [i for i in decision.supersede_ids if not by_id[i].derived]
+        if primaries:
+            decision = Decision(
+                insert=True,
+                insert_status="pending_review",
+                review_kind="fact_conflict",
+                conflicting_id=primaries[0],
+            )
+
+        new_inverse = Fact(
+            id=uuid.uuid4(),
+            subject_id=object_entity.subject_id,
+            entity_id=object_entity.id,
+            predicate=inverse_pred,
+            qualifier=fact.qualifier,
+            kind="relationship",
+            statement=statement,
+            value_json=None,
+            object_entity_id=entity.id,
+            assertion=fact.assertion,
+            valid_from=valid_from,
+            valid_to=decision.insert_valid_to or valid_to,
+            reported_at=captured_at,
+            temporal_precision=precision,
+            temporal_token_id=token_id,
+            status=decision.insert_status,
+            superseded_by=(
+                uuid.UUID(decision.insert_superseded_by) if decision.insert_superseded_by else None
+            ),
+            derived_from_fact_id=source_fact_id,
+            note_id=note_id,
+            chunk_id=chunk_id,
+            extractor=extractor,
+            prompt_version=PROMPT_VERSION,
+            confidence=fact.confidence,
+            domain_code=fact_domain,
+        )
+        session.add(new_inverse)
+        await session.flush()
+
+        for old_id in decision.supersede_ids:
+            values: dict[str, Any] = {"status": "superseded", "superseded_by": new_inverse.id}
+            if valid_from is not None:
+                values["valid_to"] = func.coalesce(Fact.valid_to, valid_from)
+            await session.execute(update(Fact).where(Fact.id == uuid.UUID(old_id)).values(values))
+        if decision.review_kind is not None:
+            conflict = by_id.get(decision.conflicting_id) if decision.conflicting_id else None
+            session.add(
+                ReviewItem(
+                    kind=decision.review_kind,
+                    payload={
+                        "fact_a": decision.conflicting_id,
+                        "fact_b": str(new_inverse.id),
+                        "predicate": inverse_pred,
+                        "note_id": str(note_id),
+                        # The card copy must flag that one side is the system's
+                        # own reflection, so a human isn't asked to adjudicate it
+                        # against the primary as if it were an independent claim.
+                        "derived": True,
+                        **collision_display(
+                            kind=decision.review_kind,
+                            predicate=inverse_pred,
+                            entity_ref=fact.object_entity_ref or "",
+                            changed=bool(decision.supersede_ids),
+                            label_a=(
+                                value_label(conflict.value_json, conflict.statement)
+                                if conflict
+                                else "the earlier value"
+                            ),
+                            label_b=value_label(None, statement),
+                            snippet=snippet,
+                        ),
+                    },
+                    domain_code=fact_domain,
+                )
+            )
+        return new_inverse.id
+
+    async def _propagate_supersession_to_shadows(
+        self,
+        session: AsyncSession,
+        *,
+        source_ids: list[uuid.UUID],
+        successor_id: uuid.UUID | None,
+        valid_from: datetime | None,
+    ) -> None:
+        """When a later note supersedes a source edge, its derived shadow must
+        close too — status superseded, SCD-2 valid_to, superseded_by pointing at
+        the newly-materialized inverse. A None successor (unknown predicate or a
+        cross-subject inverse that was only proposed) closes the shadow with a
+        null link, so the chain ends cleanly on its own entity rather than
+        pointing cross-entity at the source. Keeps a derived chain a faithful
+        mirror of its source's chain."""
+        values: dict[str, Any] = {"status": "superseded", "superseded_by": successor_id}
+        if valid_from is not None:
+            values["valid_to"] = func.coalesce(Fact.valid_to, valid_from)
+        await session.execute(
+            update(Fact)
+            .where(Fact.derived_from_fact_id.in_(source_ids), Fact.status != "superseded")
+            .values(values)
+        )
+
+    async def _update_shadows_in_place(
+        self,
+        session: AsyncSession,
+        *,
+        source_id: uuid.UUID,
+        valid_to: datetime | None = None,
+    ) -> None:
+        """Mirror a source's in-place refresh/close onto its derived shadow:
+        copy the valid_to (close) so the reciprocal interval ends with its
+        source's. The shadow's statement is display-only and already renders
+        the relationship, so only the temporal bound needs copying."""
+        if valid_to is None:
+            return
+        await session.execute(
+            update(Fact).where(Fact.derived_from_fact_id == source_id).values(valid_to=valid_to)
+        )

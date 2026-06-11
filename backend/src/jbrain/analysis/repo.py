@@ -546,6 +546,45 @@ class SqlAnalysisRepo:
                         "prior_status": prior[loser].status,
                     }
                 )
+            # Cascade onto derived shadows so a reciprocal can't outlive the
+            # human's verdict (red-team Finding 3): the winner's shadow goes
+            # active alongside it, the loser's shadow retracts with it. Recorded
+            # with the "pinned" shape so reopen restores each shadow's prior
+            # status/superseded_by (shadows are never themselves pinned).
+            for source_id, becomes_active in ((winner, True), (loser, False)):
+                shadows = (
+                    await session.execute(
+                        text(
+                            "SELECT id::text AS id, status, pinned,"
+                            " superseded_by::text AS superseded_by"
+                            " FROM app.facts WHERE derived_from_fact_id = :sid"
+                        ),
+                        {"sid": source_id},
+                    )
+                ).all()
+                for sh in shadows:
+                    if becomes_active:
+                        await session.execute(
+                            text(
+                                "UPDATE app.facts SET status = 'active',"
+                                " superseded_by = NULL WHERE id = :id"
+                            ),
+                            {"id": sh.id},
+                        )
+                    else:
+                        await session.execute(
+                            text("UPDATE app.facts SET status = 'retracted' WHERE id = :id"),
+                            {"id": sh.id},
+                        )
+                    effects.append(
+                        {
+                            "action": "pinned",
+                            "fact_id": sh.id,
+                            "prior_status": sh.status,
+                            "prior_pinned": sh.pinned,
+                            "prior_superseded_by": sh.superseded_by,
+                        }
+                    )
             return "resolved", effects
 
         if kind == "merge_proposal" and action in ("accept", "reject"):

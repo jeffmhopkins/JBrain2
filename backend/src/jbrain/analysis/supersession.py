@@ -30,6 +30,87 @@ def is_functional(predicate: str) -> bool:
     return predicate.lower() in FUNCTIONAL_PREDICATES
 
 
+# Reciprocity registry (docs/research/fix-options/2-mutual-inverse-edges.md,
+# Option 4a): which directed relationship edges the pipeline knows how to
+# materialize on the OTHER party. Cardinality (FUNCTIONAL_PREDICATES) and
+# reciprocity are orthogonal — spouse is both functional and symmetric — so
+# these live beside, not inside, the functional set.
+#
+# Symmetric relations reflect with the SAME predicate (Celine.spouse -> Jeff).
+# Both the schema.org spelling the prompt steers toward and its snake_case
+# twin are listed, like FUNCTIONAL_PREDICATES, so a derived edge keyed on the
+# lowercased predicate matches whichever spelling the model emitted.
+SYMMETRIC_PREDICATES = frozenset(
+    {
+        "spouse",
+        "married_to",
+        "marriedto",
+        "engaged_to",
+        "engagedto",
+        "sibling",
+        "sibling_of",
+        "siblingof",
+        "friend",
+        "friend_of",
+        "friendof",
+        "cofounder",
+        "co_founder",
+        "business_partner",
+        "businesspartner",
+        "bandmate",
+        "neighbor",
+        "cousin",
+    }
+)
+
+# Asymmetric relations reflect with a DIFFERENT, named inverse predicate. The
+# map is symmetric in storage (both directions present) so a note may state
+# either side; values are the canonical spelling the derived edge is written
+# with. Lowercased keys; both schema.org and snake_case twins point at one
+# canonical inverse spelling.
+INVERSE_PAIRS: dict[str, str] = {
+    "worksfor": "employs",
+    "works_for": "employs",
+    "employs": "worksFor",
+    "parent_of": "child_of",
+    "parentof": "child_of",
+    "child_of": "parent_of",
+    "childof": "parent_of",
+    "manages": "reportsTo",
+    "reportsto": "manages",
+    "reports_to": "manages",
+    "tenant_of": "landlord_of",
+    "tenantof": "landlord_of",
+    "landlord_of": "tenant_of",
+    "landlordof": "tenant_of",
+    "mentor_of": "mentee_of",
+    "mentorof": "mentee_of",
+    "mentors": "mentee_of",
+    "mentee_of": "mentor_of",
+    "menteeof": "mentor_of",
+    "hastreated": "treatedBy",
+    "has_treated": "treatedBy",
+    "treatedby": "hasTreated",
+    "treated_by": "hasTreated",
+}
+
+
+def inverse_predicate(predicate: str) -> str | None:
+    """The predicate the reciprocal edge carries on the object entity, or None
+    when this relation is not one we know how to reciprocate.
+
+    Symmetric relations return the SAME predicate; asymmetric relations return
+    their named inverse. An unknown predicate returns None — the directed edge
+    stands alone, exactly as before. The registry is an allowlist, never a
+    requirement: guessing an inverse for an unknown relation is the unsafe
+    default, so we never do it.
+    """
+    key = predicate.lower()
+    if key in SYMMETRIC_PREDICATES:
+        return predicate
+    return INVERSE_PAIRS.get(key)
+
+
 # Schedule-binding predicates: an appointment's time is a binding whose value
 # IS a validity instant, so ordering by validity would make a reschedule to an
 # EARLIER time lose to the time it replaces. The newest INSTRUCTION wins
@@ -72,6 +153,10 @@ class FactView:
     # Default 1.0: rows predating the confidence column (NULL) are treated as
     # confident, so a low-confidence candidate still cannot displace them.
     confidence: float = 1.0
+    # True when this existing row is itself a derived inverse. A derived
+    # candidate may freely supersede another derived row (a shadow of its
+    # source) but must never auto-overwrite a primary — that routes to review.
+    derived: bool = False
 
 
 @dataclass(frozen=True)

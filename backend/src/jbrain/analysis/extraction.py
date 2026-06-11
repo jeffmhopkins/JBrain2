@@ -7,8 +7,9 @@ sinking the whole note.
 """
 
 import json
+import re
 from dataclasses import dataclass, replace
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 import structlog
@@ -134,6 +135,113 @@ def normalize_future_assertion(fact: ExtractedFact, anchor: datetime) -> Extract
     if start is not None and start > anchor and fact.assertion == "asserted":
         return replace(fact, assertion="expected")
     return fact
+
+
+# Backward-looking companion to normalize_future_assertion. The model resolves
+# every relative phrase against the capture anchor (prompt.py temporal rule),
+# but a common lapse is an off-by-one on BACKWARD phrases: "last night" captured
+# at 07:13 lands on the capture day instead of the prior evening (owner field
+# report, Jun 2026). For a CLOSED set of phrases whose correct LOCAL calendar
+# date is unambiguous given the anchor, we recompute deterministically and
+# repair a wrong one. Novel or genuinely ambiguous phrases ("last week", "around
+# the holidays") are left to the model — we only override where we are certain.
+# The anchor is the capture time in the note's local offset (pipeline.
+# local_anchor); that offset is fixed, so timedelta-day arithmetic preserves the
+# local wall clock and stays DST-safe (the hist_dst_boundary lesson).
+
+_WORD_NUMBERS = {
+    "a": 1, "an": 1, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
+    "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10,
+}  # fmt: skip
+_WEEKDAYS = {
+    "monday": 0, "tuesday": 1, "wednesday": 2, "thursday": 3,
+    "friday": 4, "saturday": 5, "sunday": 6,
+}  # fmt: skip
+# Phrases denoting the anchor's OWN local day vs the immediately prior day.
+_SAME_DAY = frozenset({"today", "tonight", "this morning", "this afternoon", "this evening"})
+_PRIOR_DAY = frozenset(
+    {"yesterday", "yesterday morning", "yesterday afternoon", "yesterday evening"}
+)
+# "last night" pins no calendar day by itself: from a daytime anchor it is
+# unambiguously the prior evening, but from a late-evening anchor it can mean
+# earlier the same night. Only repair it from a daytime capture; otherwise leave
+# the model's reading alone (the bug we fix is the 07:13 morning case).
+_LAST_NIGHT_DAYTIME_CUTOFF = 18
+
+
+def _normalize_phrase(phrase: str) -> str:
+    return re.sub(r"\s+", " ", phrase.strip().lower()).strip(" .,!?;:\"'")
+
+
+def _word_or_int(token: str) -> int | None:
+    return int(token) if token.isdigit() else _WORD_NUMBERS.get(token)
+
+
+def resolve_relative_date(phrase: str | None, anchor: datetime) -> date | None:
+    """The LOCAL calendar date a backward relative phrase denotes, or None when
+    the phrase is outside the closed deterministic set (left to the model)."""
+    if not phrase:
+        return None
+    p = _normalize_phrase(phrase)
+    base = anchor.date()
+    if p in _SAME_DAY:
+        return base
+    if p in _PRIOR_DAY:
+        return base - timedelta(days=1)
+    if p == "last night":
+        return base - timedelta(days=1) if anchor.hour < _LAST_NIGHT_DAYTIME_CUTOFF else None
+    if p in ("day before yesterday", "the day before yesterday"):
+        return base - timedelta(days=2)
+    if m := re.fullmatch(r"(\w+) days? ago", p):
+        n = _word_or_int(m.group(1))
+        return base - timedelta(days=n) if n is not None else None
+    if m := re.fullmatch(r"(\w+) weeks? ago", p):
+        n = _word_or_int(m.group(1))
+        return base - timedelta(weeks=n) if n is not None else None
+    if (m := re.fullmatch(r"last (\w+)", p)) and m.group(1) in _WEEKDAYS:
+        # The PRIOR occurrence, strictly before the anchor's own weekday.
+        delta = (base.weekday() - _WEEKDAYS[m.group(1)]) % 7 or 7
+        return base - timedelta(days=delta)
+    return None
+
+
+def _repair_dates(
+    phrase: str | None,
+    start: datetime | None,
+    end: datetime | None,
+    anchor: datetime,
+) -> tuple[datetime | None, datetime | None, bool]:
+    """Shift a mis-resolved backward phrase onto its correct calendar date,
+    preserving time-of-day, offset, and any range width. Returns
+    (start, end, repaired); a phrase outside the closed set is a no-op."""
+    expected = resolve_relative_date(phrase, anchor)
+    if start is None or expected is None or expected == start.date():
+        return start, end, False
+    # The calendar-day comparison is only sound when the model resolved in the
+    # SAME UTC offset as the anchor. A different offset — naive output pinned to
+    # UTC, or a missing client offset that left the anchor in UTC (local_anchor's
+    # fallback) — makes start.date() and the anchor's local date incomparable, so
+    # we leave the model's value untouched rather than shift it on a false
+    # mismatch (the pipeline also withholds the anchor entirely when tz is None).
+    if start.utcoffset() != anchor.utcoffset():
+        return start, end, False
+    delta = timedelta(days=(expected - start.date()).days)
+    return start + delta, (end + delta if end is not None else None), True
+
+
+def validate_backward_temporal(
+    temporal: ExtractedTemporal | None, anchor: datetime
+) -> tuple[ExtractedTemporal | None, bool]:
+    """Repair a backward relative phrase the model resolved to the wrong day.
+    Returns (temporal, repaired); only the closed set is ever touched."""
+    if temporal is None:
+        return None, False
+    start, end, repaired = _repair_dates(
+        temporal.phrase, temporal.resolved_start, temporal.resolved_end, anchor
+    )
+    if not repaired:
+        return temporal, False
+    return replace(temporal, resolved_start=start, resolved_end=end), True
 
 
 def _parse_temporal(raw: Any) -> ExtractedTemporal | None:
@@ -289,8 +397,13 @@ def dedup_facts(facts: list[ExtractedFact]) -> list[ExtractedFact]:
     return kept
 
 
-def parse_extraction(payload: Any) -> Extraction:
+def parse_extraction(payload: Any, *, anchor: datetime | None = None) -> Extraction:
     """Validate the parsed JSON into typed extraction objects.
+
+    When `anchor` (the capture time in the note's local offset) is given,
+    backward relative phrases the model mis-resolved are repaired against it
+    (validate_backward_temporal); callers that don't care about temporal
+    correctness — most unit tests — omit it and get the raw resolution.
 
     Raises:
         ExtractionError: the top-level shape is wrong (permanent failure).
@@ -375,6 +488,27 @@ def parse_extraction(payload: Any) -> Extraction:
             )
         )
 
+    # Repair backward-phrase mis-resolutions before dedup, so dedup compares
+    # corrected dates (a "last night" landing on the wrong day must not look
+    # like a different fact from the same phrase resolved right).
+    if anchor is not None:
+        repaired_facts: list[ExtractedFact] = []
+        for fact in facts:
+            temporal, repaired = validate_backward_temporal(fact.temporal, anchor)
+            if repaired:
+                log.warning(
+                    "analysis.temporal_repaired",
+                    scope="fact",
+                    phrase=fact.temporal.phrase if fact.temporal else None,
+                    predicate=fact.predicate,
+                    resolved=temporal.resolved_start.isoformat()
+                    if temporal and temporal.resolved_start
+                    else None,
+                )
+                fact = replace(fact, temporal=temporal)
+            repaired_facts.append(fact)
+        facts = repaired_facts
+
     # Dedup BEFORE the cap: restatements must not eat salience slots.
     facts = dedup_facts(facts)
 
@@ -396,6 +530,15 @@ def parse_extraction(payload: Any) -> Extraction:
         if start is None or not phrase:
             log.warning("analysis.token_dropped", reason="unresolved", phrase=phrase)
             continue
+        end = parse_datetime(raw.get("resolved_end"))
+        if anchor is not None:
+            shifted, end, repaired = _repair_dates(phrase, start, end, anchor)
+            if repaired and shifted is not None:
+                start = shifted
+                log.warning(
+                    "analysis.temporal_repaired", scope="token", phrase=phrase,
+                    resolved=start.isoformat(),
+                )  # fmt: skip
         kind = raw.get("kind")
         precision = raw.get("precision")
         rrule = raw.get("rrule")
@@ -404,7 +547,7 @@ def parse_extraction(payload: Any) -> Extraction:
                 phrase=phrase,
                 kind=kind if kind in TOKEN_KINDS else "point",
                 resolved_start=start,
-                resolved_end=parse_datetime(raw.get("resolved_end")),
+                resolved_end=end,
                 precision=precision if precision in PRECISIONS else "unknown",
                 rrule=str(rrule) if rrule else None,
             )

@@ -1,6 +1,6 @@
 """Extraction parsing, the domain ratchet, and prompt assembly — all pure."""
 
-from datetime import UTC, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta, timezone
 from typing import Any
 
 import pytest
@@ -14,7 +14,9 @@ from jbrain.analysis.extraction import (
     parse_datetime,
     parse_extraction,
     ratchet_domain,
+    resolve_relative_date,
     temporals_consistent,
+    validate_backward_temporal,
 )
 from jbrain.analysis.pipeline import local_anchor
 from jbrain.analysis.prompt import (
@@ -296,8 +298,31 @@ def test_system_prompt_v4_forbids_same_predicate_restatement() -> None:
     assert "READING is a `measurement`" in SYSTEM_PROMPT
 
 
-def test_prompt_version_bumped_to_v4() -> None:
-    assert PROMPT_VERSION == "note-extract-v4"
+def test_system_prompt_v5_teaches_object_person_and_backward_temporal() -> None:
+    """Field gaps (Jun 2026): 'Jeff is married to Celine Hopkins' dropped Celine
+    entirely (object-of-relation), 'Jeff ate Celine's dinner' kept Celine only
+    as a tag, and 'last night' resolved to the capture day. v5 must teach that a
+    person in ANY grammatical role is a mention, that a relationship's object
+    MUST also be a mention, and how backward phrases count from the local day."""
+    # A non-subject person is still a mention — object, possessor, appositive.
+    assert "NO MATTER THEIR GRAMMATICAL ROLE" in SYSTEM_PROMPT
+    for needle in ("POSSESSOR", "appositive", "including in a tag"):
+        assert needle in SYSTEM_PROMPT, needle
+    # The relationship object must appear in mentions, not just the statement.
+    assert 'MUST also appear in "mentions"' in SYSTEM_PROMPT
+    assert "never drop the object" in SYSTEM_PROMPT
+    # The worked Person<->Person example is the exact marriage field case.
+    for needle in (
+        '"object_entity_ref": "Celine Hopkins"',
+        "only appears as a possessor",
+    ):
+        assert needle in SYSTEM_PROMPT, needle
+    # Backward temporal: "last night" from a morning capture is the prior day.
+    assert "last night" in SYSTEM_PROMPT and "PRIOR calendar day" in SYSTEM_PROMPT
+
+
+def test_prompt_version_bumped_to_v5() -> None:
+    assert PROMPT_VERSION == "note-extract-v5"
 
 
 def test_user_prompt_carries_anchor_with_timezone_domain_and_content() -> None:
@@ -584,3 +609,164 @@ def test_temporals_consistent_never_assumes_for_era_unknown_or_instants() -> Non
         _temporal("2026-06-10T08:00:00+00:00", "instant"),
         _temporal("2026-06-10T20:00:00+00:00", "instant"),
     )
+
+
+# --- Increment 1: backward relative-phrase resolution repair ----------------
+
+_MST = timezone(timedelta(hours=-6))
+# The owner field report: a 07:13 capture where "last night" belongs to the
+# PRIOR day, but the model resolved it to the capture day.
+_ANCHOR = datetime(2026, 6, 11, 7, 13, tzinfo=_MST)
+
+
+def test_resolve_relative_date_same_and_prior_day() -> None:
+    assert resolve_relative_date("today", _ANCHOR) == _ANCHOR.date()
+    assert resolve_relative_date("this morning", _ANCHOR) == _ANCHOR.date()
+    assert resolve_relative_date("last night", _ANCHOR) == (_ANCHOR - timedelta(days=1)).date()
+    assert resolve_relative_date("Yesterday.", _ANCHOR) == (_ANCHOR - timedelta(days=1)).date()
+    assert (
+        resolve_relative_date("day before yesterday", _ANCHOR)
+        == (_ANCHOR - timedelta(days=2)).date()
+    )
+
+
+def test_resolve_relative_date_counted_offsets() -> None:
+    assert resolve_relative_date("3 days ago", _ANCHOR) == (_ANCHOR - timedelta(days=3)).date()
+    assert resolve_relative_date("a day ago", _ANCHOR) == (_ANCHOR - timedelta(days=1)).date()
+    assert resolve_relative_date("two weeks ago", _ANCHOR) == (_ANCHOR - timedelta(weeks=2)).date()
+
+
+def test_resolve_relative_date_last_weekday_is_strictly_prior() -> None:
+    assert _ANCHOR.weekday() == 3  # Thursday
+    # "last Thursday" is a week back, never the anchor's own day.
+    assert resolve_relative_date("last Thursday", _ANCHOR) == (_ANCHOR - timedelta(days=7)).date()
+    assert resolve_relative_date("last Tuesday", _ANCHOR) == (_ANCHOR - timedelta(days=2)).date()
+
+
+def test_resolve_relative_date_unknown_or_ambiguous_is_none() -> None:
+    # "last week" is a range, not a day — left to the model, never guessed.
+    assert resolve_relative_date("last week", _ANCHOR) is None
+    assert resolve_relative_date("around the holidays", _ANCHOR) is None
+    assert resolve_relative_date(None, _ANCHOR) is None
+    assert resolve_relative_date("", _ANCHOR) is None
+
+
+def test_validate_backward_temporal_repairs_off_by_one() -> None:
+    wrong = ExtractedTemporal(
+        phrase="last night",
+        resolved_start=datetime(2026, 6, 11, 22, 0, tzinfo=_MST),  # capture day: wrong
+        resolved_end=None,
+        precision="day",
+    )
+    fixed, repaired = validate_backward_temporal(wrong, _ANCHOR)
+    assert repaired and fixed is not None and fixed.resolved_start is not None
+    assert fixed.resolved_start.date() == date(2026, 6, 10)
+    # Only the calendar date shifts; time-of-day and offset are preserved.
+    assert fixed.resolved_start.hour == 22
+    assert fixed.resolved_start.utcoffset() == timedelta(hours=-6)
+
+
+def test_validate_backward_temporal_preserves_range_width() -> None:
+    wrong = ExtractedTemporal(
+        phrase="yesterday",
+        resolved_start=datetime(2026, 6, 11, 18, 0, tzinfo=_MST),
+        resolved_end=datetime(2026, 6, 11, 23, 0, tzinfo=_MST),
+        precision="day",
+    )
+    fixed, repaired = validate_backward_temporal(wrong, _ANCHOR)
+    assert repaired and fixed is not None
+    assert fixed.resolved_start is not None and fixed.resolved_end is not None
+    assert fixed.resolved_start.date() == date(2026, 6, 10)
+    assert fixed.resolved_end.date() == date(2026, 6, 10)
+    assert fixed.resolved_end - fixed.resolved_start == timedelta(hours=5)
+
+
+def test_validate_backward_temporal_noop_when_already_correct() -> None:
+    right = ExtractedTemporal(
+        phrase="last night",
+        resolved_start=datetime(2026, 6, 10, 22, 0, tzinfo=_MST),
+        resolved_end=None,
+        precision="day",
+    )
+    fixed, repaired = validate_backward_temporal(right, _ANCHOR)
+    assert not repaired and fixed is right
+
+
+def test_validate_backward_temporal_leaves_ambiguous_phrases_alone() -> None:
+    ambiguous = ExtractedTemporal(
+        phrase="last week",
+        resolved_start=datetime(2026, 6, 11, 12, 0, tzinfo=_MST),
+        resolved_end=None,
+        precision="day",
+    )
+    fixed, repaired = validate_backward_temporal(ambiguous, _ANCHOR)
+    assert not repaired and fixed is ambiguous
+
+
+def test_resolve_relative_date_last_night_is_ambiguous_at_evening_anchor() -> None:
+    # From a late-evening capture "last night" can mean earlier the SAME night,
+    # so we don't guess; a daytime capture is unambiguous.
+    evening = datetime(2026, 6, 11, 23, 45, tzinfo=_MST)
+    assert resolve_relative_date("last night", evening) is None
+    assert resolve_relative_date("last night", _ANCHOR) == (_ANCHOR - timedelta(days=1)).date()
+
+
+def test_validate_backward_temporal_skips_on_offset_mismatch() -> None:
+    # Model resolved in a DIFFERENT offset than the anchor (naive -> UTC pinning,
+    # or a missing client offset that left the anchor in UTC): the calendar-day
+    # comparison is unsound, so the value is never shifted (red-team Finding 1/5).
+    utc_start = ExtractedTemporal(
+        phrase="last night",
+        resolved_start=datetime(2026, 6, 11, 20, 0, tzinfo=UTC),  # +00:00 vs anchor -06:00
+        resolved_end=None,
+        precision="day",
+    )
+    fixed, repaired = validate_backward_temporal(utc_start, _ANCHOR)
+    assert not repaired and fixed is utc_start
+
+
+def _last_night_payload() -> dict[str, Any]:
+    """A note whose 'last night' the model wrongly resolved to the capture day."""
+    return {
+        "title": "Dinner",
+        "tags": ["dinner", "food", "celine"],
+        "mentions": [{"name": "Jeff", "kind": "Person", "surface_text": "Jeff"}],
+        "facts": [
+            {
+                "predicate": "ate", "qualifier": "", "kind": "event",
+                "statement": "Jeff ate dinner last night.", "value_json": None,
+                "assertion": "asserted", "entity_ref": "Jeff", "object_entity_ref": None,
+                "temporal": {
+                    "phrase": "last night",
+                    "resolved_start": "2026-06-11T20:00:00-06:00",
+                    "resolved_end": None, "precision": "day",
+                },
+                "domain": "general", "confidence": 0.7,
+            }
+        ],
+        "temporal_tokens": [
+            {
+                "phrase": "last night", "kind": "point",
+                "resolved_start": "2026-06-11T20:00:00-06:00",
+                "resolved_end": None, "precision": "day", "rrule": None,
+            }
+        ],
+    }  # fmt: skip
+
+
+def test_parse_extraction_repairs_fact_and_token_when_anchored() -> None:
+    parsed = parse_extraction(_last_night_payload(), anchor=_ANCHOR)
+    fact_t = parsed.facts[0].temporal
+    assert fact_t is not None and fact_t.resolved_start is not None
+    assert fact_t.resolved_start.date() == date(2026, 6, 10)
+    assert parsed.tokens[0].resolved_start.date() == date(2026, 6, 10)
+
+
+def test_parse_extraction_without_anchor_leaves_resolution_raw() -> None:
+    # Back-compat: callers that omit the anchor (most unit tests) see the
+    # model's value untouched.
+    parsed = parse_extraction(_last_night_payload())
+    fact_t = parsed.facts[0].temporal
+    assert fact_t is not None and fact_t.resolved_start is not None
+    assert fact_t.resolved_start.date() == date(2026, 6, 11)
+    assert parsed.tokens[0].resolved_start.date() == date(2026, 6, 11)
