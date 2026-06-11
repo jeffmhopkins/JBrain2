@@ -80,6 +80,24 @@ def test_note_extract_file_round_trips_to_the_imported_constants() -> None:
     assert pf.version == PROMPT_VERSION and pf.strength == "high"
 
 
+def test_entity_disambiguate_file_round_trips_to_the_imported_constants() -> None:
+    from jbrain.analysis.entities import (
+        DISAMBIGUATE_MAX_TOKENS,
+        DISAMBIGUATE_SCHEMA,
+        DISAMBIGUATE_STRENGTH,
+        DISAMBIGUATE_SYSTEM,
+    )
+
+    pf = load_prompt(
+        Path(__file__).parents[2] / "src/jbrain/analysis/prompts/entity_disambiguate.prompt"
+    )
+    assert pf.render() == DISAMBIGUATE_SYSTEM
+    assert pf.output_schema == DISAMBIGUATE_SCHEMA
+    assert pf.config["max_tokens"] == DISAMBIGUATE_MAX_TOKENS
+    # The cheap batched resolver runs on the low tier (behaviour-preserving today).
+    assert pf.strength == "low" and DISAMBIGUATE_STRENGTH == "low"
+
+
 def test_prompt_content_is_pinned_to_its_version() -> None:
     """A content/version guard: the rendered prompt + schema hash to a pinned
     value. Editing the prompt prose or schema fails this test until you BOTH bump

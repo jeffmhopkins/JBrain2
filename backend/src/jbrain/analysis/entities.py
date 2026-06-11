@@ -28,12 +28,14 @@ import unicodedata
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from jbrain.embed import EmbedClient, vector_literal
+from jbrain.llm.promptfile import load_prompt
 from jbrain.models.analysis import Entity, EntityAlias
 from jbrain.models.core import Subject
 
@@ -465,37 +467,16 @@ async def _embedding_candidates(
 
 # --- layer 3: batched LLM disambiguation (prompt + parsing only) -------------
 
-# The adapter call itself lives in the pipeline (it owns the router); these
-# helpers keep the contract testable without a session or a router.
-DISAMBIGUATE_TASK = "entity.disambiguate"
-DISAMBIGUATE_MAX_TOKENS = 1024
-
-DISAMBIGUATE_SYSTEM = (
-    "You resolve mention strings from a personal note to entities already in a"
-    " knowledge graph. For each mention, decide which candidate entity it"
-    " denotes using the note context, or null if it is genuinely none of them."
-    ' Reply with only JSON: {"choices": [{"name": "<mention name>",'
-    ' "entity_id": "<candidate id>" | null}]}. Use each candidate id verbatim;'
-    " never invent ids. When unsure between candidates, prefer null."
-)
-
-DISAMBIGUATE_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "properties": {
-        "choices": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "name": {"type": "string"},
-                    "entity_id": {"type": ["string", "null"]},
-                },
-                "required": ["name", "entity_id"],
-            },
-        }
-    },
-    "required": ["choices"],
-}
+# The adapter call itself lives in the pipeline (it owns the router); the prompt
+# (system text, output schema, token budget, capability tier) is one artifact in
+# a co-located .prompt file (docs/DEVELOPMENT.md). These constants are the loader
+# facade so the pipeline and tests keep importing the same names.
+_DISAMBIGUATE = load_prompt(Path(__file__).parent / "prompts" / "entity_disambiguate.prompt")
+DISAMBIGUATE_TASK = _DISAMBIGUATE.name
+DISAMBIGUATE_MAX_TOKENS = int(_DISAMBIGUATE.config["max_tokens"])
+DISAMBIGUATE_STRENGTH = _DISAMBIGUATE.strength
+DISAMBIGUATE_SYSTEM = _DISAMBIGUATE.render()
+DISAMBIGUATE_SCHEMA: dict[str, Any] = _DISAMBIGUATE.output_schema or {}
 
 
 def build_disambiguation_prompt(items: list[dict[str, Any]]) -> str:
