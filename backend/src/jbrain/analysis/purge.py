@@ -140,9 +140,7 @@ async def _repair_chains(
             # middle link's valid_from, but the surviving supersessor still
             # bounds the interval and inventing a new close here would be
             # guessing.
-            await session.execute(
-                update(Fact).where(Fact.id == s.id).values(superseded_by=target)
-            )
+            await session.execute(update(Fact).where(Fact.id == s.id).values(superseded_by=target))
             continue
         values: dict[str, Any] = {"superseded_by": None}
         # Only a supersession is undone. retracted/pending_review are
