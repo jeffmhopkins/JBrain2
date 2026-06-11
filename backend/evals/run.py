@@ -116,6 +116,21 @@ def _score(case: dict[str, Any], parsed: Any, anchor: datetime) -> CaseResult:
         hit = next((n for n in mention_names if _overlaps(person, n)), None)
         res.checks.append((f"person:{person}", hit is not None, ""))
 
+    # Presence of any-kind entity (org, group, place, concrete concept) by name.
+    for name in expect.get("mentions", []):
+        hit = any(_overlaps(name, n) for n in mention_names)
+        res.checks.append((f"mention:{name}", hit, ""))
+
+    # Present AND typed within an allowed kind family (case-insensitive) — a
+    # generous set per case, since models name kinds variably (Organization vs
+    # Corporation, Place vs City).
+    for spec in expect.get("mention_kind", []):
+        allowed = {k.lower() for k in spec["kind"]}
+        ok = any(
+            _overlaps(spec["name"], m.name) and m.kind.lower() in allowed for m in parsed.mentions
+        )
+        res.checks.append((f"kind:{spec['name']}", ok, ""))
+
     # Negative check: a name the model must NOT promote to a mention AT ALL —
     # for fabricated humans / pure non-entities ("someone", a guessed name).
     for person in expect.get("absent_person", []):

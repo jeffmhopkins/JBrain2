@@ -108,7 +108,10 @@ def test_eval_cases_are_wellformed() -> None:
     assert cases
     names = [c["name"] for c in cases]
     assert len(names) == len(set(names)), "duplicate eval case names"
-    valid_expect = {"person_mentions", "absent_person", "not_person", "edges", "temporal"}
+    valid_expect = {
+        "person_mentions", "mentions", "mention_kind",
+        "absent_person", "not_person", "edges", "temporal",
+    }  # fmt: skip
     for c in cases:
         assert c["name"] and c["body"], c
         assert datetime.fromisoformat(c["created_at"]).utcoffset() is not None, c["name"]
@@ -117,6 +120,8 @@ def test_eval_cases_are_wellformed() -> None:
             assert "object" in edge, c["name"]
         for tt in c.get("expect", {}).get("temporal", []):
             assert {"phrase", "resolved_date"} <= set(tt), c["name"]
+        for mk in c.get("expect", {}).get("mention_kind", []):
+            assert mk.get("name") and isinstance(mk.get("kind"), list) and mk["kind"], c["name"]
 
 
 def test_score_not_person_allows_nonperson_mention_but_flags_person() -> None:
@@ -128,3 +133,18 @@ def test_score_not_person_allows_nonperson_mention_but_flags_person() -> None:
     assert _score(case, _extraction([]), _A).passed
     person = ExtractedMention(name="Tesla", kind="Person", surface_text="Tesla")
     assert not _score(case, _extraction([person]), _A).passed
+
+
+def test_score_mentions_and_mention_kind() -> None:
+    org = ExtractedMention(name="Globex Corporation", kind="Organization", surface_text="Globex")
+    # Presence by name (any kind).
+    assert _score({"name": "m", "expect": {"mentions": ["Globex"]}}, _extraction([org]), _A).passed
+    assert not _score({"name": "m", "expect": {"mentions": ["Globex"]}}, _extraction([]), _A).passed
+    # Present AND within an allowed kind family (case-insensitive, generous set).
+    kind_case: dict[str, Any] = {
+        "name": "k",
+        "expect": {"mention_kind": [{"name": "Globex", "kind": ["Organization", "Corporation"]}]},
+    }
+    assert _score(kind_case, _extraction([org]), _A).passed
+    wrong = ExtractedMention(name="Globex", kind="Person", surface_text="Globex")
+    assert not _score(kind_case, _extraction([wrong]), _A).passed
