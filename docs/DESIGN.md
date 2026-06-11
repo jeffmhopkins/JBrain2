@@ -208,6 +208,15 @@ and attaches lat/lng/accuracy to a note at send **only if the fix is under
 Note-location is owner-eyes metadata: Phase 7 scoped tokens never receive
 location fields, regardless of the note's domain.
 
+**Image analysis** (Settings): a segmented control, **ocr only | full
+analysis**, default **full**. Full = verbatim transcription plus a salient
+description (objects, people, context, relationships visible — the text the
+fact pipeline mines); ocr only skips the description call. This is the
+**first server-synced setting** (GET/PUT `/api/settings` over
+`app.settings`, owner-only RLS) because the worker reads it per job — theme
+and text size deliberately stay device-local for now. Either way, capture
+never waits: vision runs after sync.
+
 **Note view** (settled in the Phase 2 review; Attachments tab settled in a
 later three-way review — **manifest** won over gallery and inline-viewer
 designs): entry-stream bubbles clamp at **3 lines**; tapping opens the
@@ -229,13 +238,33 @@ designs): entry-stream bubbles clamp at **3 lines**; tapping opens the
   then one bordered card of rows — type icon, filename,
   `size · media type` meta line, and a **pipeline status chip** derived
   client-side (`indexing…` amber while the note's ingest is pending,
-  `text extracted` green-tint for text/PDF, `no text layer — ocr in p3`
-  muted for images). Each row ends in a 44px `⋯` that opens the shared
+  `text extracted` green-tint for text/PDF, `ocr queued…` amber for an
+  image whose vision cache is empty, `text extracted (ocr)` for an
+  OCR-only image, `text + description` once full analysis also cached a
+  description). Each row ends in a 44px `⋯` that opens the shared
   bottom sheet with **open** (new tab) and **remove** — remove uses the
   tap-again confirm and spells out the consequence ("removes file + its
   extracted text"). The card's last row is a steel **add files** row
   (multi-select) with the hint "pdfs and images become searchable";
   adds/removals apply immediately and re-trigger ingestion.
+
+  **Image-row expansion** (settled in a three-way review — **inline
+  expansion** won over a sheet section and a viewer layer, the review-log
+  inline-expansion precedent): image rows carry a disclosure caret and
+  **unfold in place** — a small thumbnail strip with `open full image →`,
+  the verbatim OCR in a quiet monospace inset (clamped ~6 lines, "show
+  all N lines" grows in place, `[illegible]` rendered muted-italic and
+  never reworded), the description beneath when present with a "mined for
+  facts in analysis" provenance line, and tool/confidence micro-meta
+  (`ocr · xai:grok-4.3 · 70%`). Extracts are fetched lazily on first
+  expand. A row lacking a description shows *"no description — image
+  analysis is set to ocr only."* (when the mode is ocr) plus a quiet
+  steel **analyze image** action — an on-demand full analysis for THAT
+  attachment regardless of the global mode (also the re-run path); while
+  in flight the row shows a calm *"analyzing image…"* line and the note's
+  lifecycle chip walks again after re-ingest. PDFs/text files do **not**
+  expand: no caret, and a tap shows a transient *"pdfs carry their own
+  text layer"* line instead. The ⋯ sheet is untouched.
 - *Analysis tab* (lights up by phase): generated title + 3-6 tags (P3 —
   pre-P3 the header shows only domain + date, **no title fallback**);
   salient facts with kind badges (measurement/state/event/preference),

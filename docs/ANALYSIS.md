@@ -256,6 +256,18 @@ media. Phase mapping: Phase 2 ships the dispatcher + text/PDF chains;
 Phase 3 adds vision backends (they require the LLM adapter); transcription
 lands with whisper hardware or an API key.
 
+Image-chain modes [decided: **default full**; per-attachment on-demand run;
+the description kind rides `'caption'`]: the `image_analysis_mode` user
+setting (`app.settings`, read per job) picks **full** — one `vision.ocr`
+transcription call plus one `vision.caption` call producing a salient
+multi-sentence description the fact pipeline mines — or **ocr**, the
+transcription call only with no caption row. The job payload's optional
+`mode` overrides the setting: `POST /attachments/{id}/analyze` enqueues
+`{mode: "full"}` for one attachment regardless of the global mode (also the
+re-run path — the handler re-describes via delete+insert of the caption row
+and re-runs OCR only if its cache row is missing, then re-ingests).
+Confidence caps are unchanged: OCR 0.7, description 0.6.
+
 Guards on what extraction feeds the fact pipeline: structured
 medical/financial documents are *detected and routed* (deferred to the
 Phase 7 typed parsers) rather than free-extracted into hundreds of facts;
