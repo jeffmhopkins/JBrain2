@@ -243,6 +243,24 @@ def create_app(settings: Settings, gateway: DockerGateway) -> FastAPI:
             state=status.state, exit_code=status.exit_code, log_tail=status.log_tail
         )
 
+    @authed.post("/reset", status_code=202)
+    def start_reset() -> OneshotStartResponse:
+        try:
+            return OneshotStartResponse(oneshot=gateway.start_reset())
+        except UpdateInProgressError:
+            raise HTTPException(
+                status_code=409, detail="another one-shot is running"
+            ) from None
+
+    @authed.get("/reset/status")
+    def reset_status(
+        tail: Annotated[int, Query(ge=1)] = 80,
+    ) -> UpdateStatusResponse:
+        status = gateway.oneshot_status("reset", min(tail, MAX_LOG_TAIL))
+        return UpdateStatusResponse(
+            state=status.state, exit_code=status.exit_code, log_tail=status.log_tail
+        )
+
     @authed.get("/logs/{service}", response_class=PlainTextResponse)
     def logs(
         service: str,

@@ -34,6 +34,10 @@ UPDATE_COMMAND = (
     "apk add --no-cache git >/dev/null 2>&1 && exec sh src/deploy/update-inner.sh"
 )
 EXPORT_COMMAND = "exec sh src/deploy/export-inner.sh"
+# Reset lives here, not in the api: TRUNCATE needs table ownership and RLS
+# does not bind it, so the api's least-privilege role cannot erase data —
+# only a supervisor one-shot running superuser psql can.
+RESET_COMMAND = "exec sh src/deploy/reset-inner.sh"
 
 # Docker reports this zero-value timestamp for containers that never started.
 _NEVER_STARTED = "0001-01-01T00:00:00Z"
@@ -48,10 +52,11 @@ class UnknownServiceError(LookupError):
 
 
 class UpdateInProgressError(RuntimeError):
-    """A one-shot (update, export, or import) is already running.
+    """A one-shot (update, export, import, or reset) is already running.
 
-    One-shots are mutually exclusive: an import mid-update or an export
-    mid-import would race over the same database and files.
+    One-shots are mutually exclusive: an import mid-update, an export
+    mid-import, or a reset mid-anything would race over the same database
+    and files.
     """
 
 
@@ -103,6 +108,8 @@ class DockerGateway(Protocol):
     def start_export(self) -> str: ...
 
     def start_import(self, archive: str) -> str: ...
+
+    def start_reset(self) -> str: ...
 
     def oneshot_status(self, kind: str, tail: int) -> UpdateStatus: ...
 
@@ -183,6 +190,11 @@ class ComposeDockerGateway:
         # this boundary safe even if a new caller forgets.
         command = f"exec sh src/deploy/import-inner.sh {shlex.quote(archive)}"
         return self._run_oneshot("jbrain-import", {ONESHOT_LABEL: "import"}, command)
+
+    def start_reset(self) -> str:
+        return self._run_oneshot(
+            "jbrain-reset", {ONESHOT_LABEL: "reset"}, RESET_COMMAND
+        )
 
     def oneshot_status(self, kind: str, tail: int) -> UpdateStatus:
         return self._status_of(self._latest(f"{ONESHOT_LABEL}={kind}"), tail)
