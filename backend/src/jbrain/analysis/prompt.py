@@ -8,7 +8,7 @@ whenever the system prompt or schema changes meaningfully.
 from datetime import datetime
 from typing import Any
 
-PROMPT_VERSION = "note-extract-v4"
+PROMPT_VERSION = "note-extract-v5"
 
 # Facts-per-note cap: taught by instruction here, enforced server-side in
 # extraction.parse_extraction (over-extraction is the known quality risk;
@@ -29,7 +29,14 @@ never surface health or finance details in the title or tags.
 3. "mentions": every distinct person, organization, place, event, or thing \
 referred to. "kind" prefers schema.org type names (Person, Organization, \
 Place, Event, Product); coin a snake_case kind only when schema.org has no \
-fit. Unattributed first person ("I", "me", "my") is the note's author: emit \
+fit. A person counts as a mention NO MATTER THEIR GRAMMATICAL ROLE — not only \
+the subject of the sentence. The OBJECT of a verb or preposition ("Jeff is \
+married to Celine", "she works for Dana"), a POSSESSOR ("Celine's dinner"), \
+and an appositive ("Jeff's wife, Celine") are all people who each get their \
+own Person mention. Do not drop a named person just because the sentence is \
+"about" someone else; if you name a person anywhere — including in a tag — \
+they must appear here as a mention. Unattributed first person ("I", "me", \
+"my") is the note's author: emit \
 one mention with name "Me", kind "Person", and the pronoun as surface_text. \
 Quoted or relayed first person ("Mom says: I take lisinopril") belongs to the \
 speaker, not "Me". "surface_text" must be copied verbatim from the note. \
@@ -72,7 +79,13 @@ supersedable fact is the `state` and it is required.
 value_json, e.g. {{"value": 182, "unit": "lb"}}); accumulates as a series.
   attribute - timeless and singular (birthday, blood type).
   preference - a like/dislike/habit, valid from when reported.
-  relationship - an edge to another entity (set object_entity_ref).
+  relationship - an edge to another entity. Set object_entity_ref to the \
+OTHER party's mention "name", and that party MUST also appear in "mentions". \
+Never leave the other person only in the statement text: "Jeff is married to \
+Celine" is the relationship Jeff.spouse -> Celine (object_entity_ref \
+"Celine"), with BOTH Jeff and Celine as Person mentions — not a lone fact \
+about Jeff. The pipeline derives the reciprocal edge itself, so emit only the \
+ONE direction the note states; just never drop the object.
 - Possessive or descriptor introductions DECOMPOSE into two facts: "X's \
 <species>'s name is N" yields BOTH the relationship X.owns -> N \
 (object_entity_ref "N") AND an attribute fact N.name with {{"name": "N", \
@@ -97,7 +110,11 @@ hypothetical, NOT an asserted diabetes fact.
 a mention's "name" ("Me" for the author).
 - "temporal": resolve every relative time phrase ("last Tuesday", "this \
 morning", "in 3 months") against the capture anchor given with the note, to \
-absolute ISO 8601 with UTC offset, preserving the anchor's local date. Set \
+absolute ISO 8601 with UTC offset, preserving the anchor's local date. \
+Backward phrases count back from the anchor's LOCAL day: from a morning \
+capture, "last night" and "yesterday evening" are the PRIOR calendar day, not \
+the capture day (a note written 7am Thursday saying "last night" means \
+Wednesday evening); "a week ago" is the anchor's date minus seven days. Set \
 "precision" honestly: instant | day | month | year | era | unknown. Never \
 invent dates: if a phrase cannot be resolved, keep the phrase and leave \
 resolved_start null. Use null temporal when the fact has no time dimension.
@@ -119,6 +136,16 @@ Worked example — "Sarah moved to Denver." (a relocation is a state change):
 A later note "Sarah actually moved to Boulder" emits the same homeLocation \
 `state` predicate with "Boulder" — matching predicates let Boulder supersede \
 Denver instead of forking two unrelated facts.
+
+Worked example — "Jeff is married to Celine Hopkins." emits TWO Person \
+mentions (Jeff, Celine Hopkins) and the single edge: \
+{{"predicate": "spouse", "qualifier": "", "kind": "relationship", \
+"statement": "Jeff is married to Celine Hopkins.", "value_json": null, \
+"assertion": "asserted", "entity_ref": "Jeff", "object_entity_ref": \
+"Celine Hopkins", "temporal": null, "domain": "general", "confidence": 0.95}}. \
+Celine is the OBJECT of "married to" yet is just as much a person as Jeff. \
+Likewise "Jeff ate Celine's dinner" names TWO people: emit both Jeff and \
+Celine as Person mentions even though Celine only appears as a possessor.
 
 Worked example — "My dog's name is Bella. Summer's rat's name is Ricky." \
 decomposes into FOUR facts: Me.owns -> Bella (relationship, \

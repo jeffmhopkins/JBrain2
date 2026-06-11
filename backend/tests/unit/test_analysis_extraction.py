@@ -298,8 +298,31 @@ def test_system_prompt_v4_forbids_same_predicate_restatement() -> None:
     assert "READING is a `measurement`" in SYSTEM_PROMPT
 
 
-def test_prompt_version_bumped_to_v4() -> None:
-    assert PROMPT_VERSION == "note-extract-v4"
+def test_system_prompt_v5_teaches_object_person_and_backward_temporal() -> None:
+    """Field gaps (Jun 2026): 'Jeff is married to Celine Hopkins' dropped Celine
+    entirely (object-of-relation), 'Jeff ate Celine's dinner' kept Celine only
+    as a tag, and 'last night' resolved to the capture day. v5 must teach that a
+    person in ANY grammatical role is a mention, that a relationship's object
+    MUST also be a mention, and how backward phrases count from the local day."""
+    # A non-subject person is still a mention — object, possessor, appositive.
+    assert "NO MATTER THEIR GRAMMATICAL ROLE" in SYSTEM_PROMPT
+    for needle in ("POSSESSOR", "appositive", "including in a tag"):
+        assert needle in SYSTEM_PROMPT, needle
+    # The relationship object must appear in mentions, not just the statement.
+    assert 'MUST also appear in "mentions"' in SYSTEM_PROMPT
+    assert "never drop the object" in SYSTEM_PROMPT
+    # The worked Person<->Person example is the exact marriage field case.
+    for needle in (
+        '"object_entity_ref": "Celine Hopkins"',
+        "only appears as a possessor",
+    ):
+        assert needle in SYSTEM_PROMPT, needle
+    # Backward temporal: "last night" from a morning capture is the prior day.
+    assert "last night" in SYSTEM_PROMPT and "PRIOR calendar day" in SYSTEM_PROMPT
+
+
+def test_prompt_version_bumped_to_v5() -> None:
+    assert PROMPT_VERSION == "note-extract-v5"
 
 
 def test_user_prompt_carries_anchor_with_timezone_domain_and_content() -> None:
