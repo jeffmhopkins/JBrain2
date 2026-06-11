@@ -161,7 +161,8 @@ export function AnalysisTab({ noteId, onOpenEntity }: AnalysisTabProps) {
       )}
 
       <p className="provenance-foot">
-        analyzed {fmtTemporal(analysis.analyzed_at, "day")}
+        {/* analyzed_at is a real instant, not a calendar date: keep it local */}
+        analyzed {fmtTemporal(analysis.analyzed_at, "instant")}
         {analysis.extractor !== null && ` · ${analysis.extractor}`}
       </p>
     </div>
