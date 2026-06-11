@@ -798,16 +798,25 @@ class AnalysisPipeline:
             # provenance in place — citations survive, no chain link, and no
             # repeated promotion review on re-analysis.
             fact_id = uuid.UUID(decision.refresh_id)
-            await session.execute(
-                update(Fact)
-                .where(Fact.id == fact_id)
-                .values(
-                    statement=fact.statement,
-                    extractor=extractor,
-                    prompt_version=PROMPT_VERSION,
-                    confidence=fact.confidence,
-                )
-            )
+            values: dict[str, Any] = {
+                "statement": fact.statement,
+                "extractor": extractor,
+                "prompt_version": PROMPT_VERSION,
+                "confidence": fact.confidence,
+            }
+            # This note DIRECTLY asserts what so far was only a derived shadow of
+            # another note's edge: adopt it as a primary fact owned by THIS note,
+            # so the human-stated claim survives deletion of the source that
+            # first reflected it (red-team Finding 1). Without this, "Celine's
+            # spouse is Jeff" in its own note would silently ride Jeff's note and
+            # vanish when his note is deleted.
+            refreshed = next((e for e in existing if e.id == decision.refresh_id), None)
+            if refreshed is not None and refreshed.derived:
+                anchor = anchor_for.get(fact.entity_ref)
+                values["derived_from_fact_id"] = None
+                values["note_id"] = note_id
+                values["chunk_id"] = anchor[0] if anchor else (chunks[0].id if chunks else None)
+            await session.execute(update(Fact).where(Fact.id == fact_id).values(values))
             await self._update_shadows_in_place(session, source_id=fact_id)
             return fact_id
 
@@ -886,10 +895,16 @@ class AnalysisPipeline:
                 snippet=_cite(anchor, chunks),
             )
         if decision.supersede_ids:
+            # Chain the old shadow onto the NEW inverse when one exists (a clean
+            # mirror of the source chain). When none does — the predicate is
+            # unknown, or the cross-subject gate refused to write an inverse —
+            # the shadow has no successor on its own entity, so close it with a
+            # null link rather than pointing it cross-entity at the source fact
+            # (red-team Finding 2).
             await self._propagate_supersession_to_shadows(
                 session,
                 source_ids=[uuid.UUID(i) for i in decision.supersede_ids],
-                successor_id=new_inverse_id or new_fact.id,
+                successor_id=new_inverse_id,
                 valid_from=valid_from,
             )
         if needs_promotion:
@@ -1148,13 +1163,16 @@ class AnalysisPipeline:
         session: AsyncSession,
         *,
         source_ids: list[uuid.UUID],
-        successor_id: uuid.UUID,
+        successor_id: uuid.UUID | None,
         valid_from: datetime | None,
     ) -> None:
         """When a later note supersedes a source edge, its derived shadow must
-        close too — status superseded, SCD-2 valid_to, superseded_by pointing
-        at the newly-materialized inverse (or, absent one, the new source).
-        Keeps a derived chain a faithful mirror of its source's chain."""
+        close too — status superseded, SCD-2 valid_to, superseded_by pointing at
+        the newly-materialized inverse. A None successor (unknown predicate or a
+        cross-subject inverse that was only proposed) closes the shadow with a
+        null link, so the chain ends cleanly on its own entity rather than
+        pointing cross-entity at the source. Keeps a derived chain a faithful
+        mirror of its source's chain."""
         values: dict[str, Any] = {"status": "superseded", "superseded_by": successor_id}
         if valid_from is not None:
             values["valid_to"] = func.coalesce(Fact.valid_to, valid_from)

@@ -1266,3 +1266,149 @@ async def test_cross_subject_inverse_is_proposed_not_written(
         nid=note_id,
     )
     assert len(proposals) == 1 and proposals[0].subject == "Patient X"
+
+
+def _person_edge(subj: str, obj: str, predicate: str = "spouse") -> dict[str, Any]:
+    return {
+        "title": f"{subj} and {obj}",
+        "tags": ["rel", subj.lower()],
+        "mentions": [
+            {"name": subj, "kind": "Person", "surface_text": subj},
+            {"name": obj, "kind": "Person", "surface_text": obj},
+        ],
+        "facts": [
+            {
+                "predicate": predicate, "qualifier": "", "kind": "relationship",
+                "statement": f"{subj} is married to {obj}.", "value_json": None,
+                "assertion": "asserted", "entity_ref": subj, "object_entity_ref": obj,
+                "temporal": None, "domain": "general", "confidence": 0.95,
+            }
+        ],
+        "temporal_tokens": [],
+    }  # fmt: skip
+
+
+async def test_direct_assertion_promotes_a_derived_shadow_to_primary(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """Red-team Finding 1: when a note DIRECTLY asserts what was only a derived
+    shadow of another note's edge, the shadow is adopted as a primary fact owned
+    by that note — so it survives deletion of the source that first reflected
+    it, instead of silently riding (and dying with) the other note."""
+    from jbrain.analysis.purge import purge_note_artifacts
+
+    sql = (
+        "SELECT f.derived_from_fact_id AS dff, f.note_id::text AS note FROM app.facts f"
+        " JOIN app.entities e ON e.id = f.entity_id"
+        " WHERE e.canonical_name = 'Roanen' AND f.predicate = 'spouse' AND f.status = 'active'"
+    )
+    note_a = await make_note(maker, domain="general", body="Quillon married Roanen.")
+    await analyzer(maker, [json.dumps(_person_edge("Quillon", "Roanen"))]).analyze_note(
+        {"note_id": note_a}
+    )
+    shadow = await rows(maker, OWNER, sql)
+    assert len(shadow) == 1 and shadow[0].dff is not None and shadow[0].note == note_a
+
+    note_b = await make_note(maker, domain="general", body="Roanen married Quillon.")
+    await analyzer(maker, [json.dumps(_person_edge("Roanen", "Quillon"))]).analyze_note(
+        {"note_id": note_b}
+    )
+    promoted = await rows(maker, OWNER, sql)
+    assert len(promoted) == 1 and promoted[0].dff is None and promoted[0].note == note_b
+
+    async with scoped_session(maker, SYSTEM_CTX) as s:
+        await purge_note_artifacts(s, uuid.UUID(note_a))
+        await s.commit()
+    survivors = await rows(maker, OWNER, sql)
+    assert len(survivors) == 1 and survivors[0].note == note_b
+
+
+async def test_cross_subject_supersession_closes_shadow_without_cross_entity_link(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """Red-team Finding 2: when a supersession's new object is a DISTINCT subject
+    (gate fires, no inverse written), the old shadow closes with a NULL link —
+    never a cross-entity pointer at the source fact on another entity."""
+    shadow_sql = (
+        "SELECT f.status, f.superseded_by FROM app.facts f"
+        " JOIN app.entities e ON e.id = f.entity_id"
+        " WHERE e.canonical_name = 'Celestina' AND f.predicate = 'spouse'"
+    )
+    note1 = await make_note(maker, domain="general", body="I married Celestina.")
+    await analyzer(maker, [json.dumps(_relationship_payload("spouse", "Celestina"))]).analyze_note(
+        {"note_id": note1}
+    )
+    assert (await rows(maker, OWNER, shadow_sql))[0].status == "active"
+
+    other_subject, other_entity = str(uuid.uuid4()), str(uuid.uuid4())
+    async with scoped_session(maker, OWNER) as s:
+        await s.execute(
+            text(
+                "INSERT INTO app.subjects (id, kind, display_name) VALUES (:id, 'person', 'PatY')"
+            ),
+            {"id": other_subject},
+        )
+        await s.execute(
+            text(
+                "INSERT INTO app.entities (id, kind, canonical_name, subject_id, status,"
+                " domain_code) VALUES (:id, 'Person', 'Patient Y', :sub, 'confirmed', 'general')"
+            ),
+            {"id": other_entity, "sub": other_subject},
+        )
+        await s.execute(
+            text(
+                "INSERT INTO app.entity_aliases (id, entity_id, alias, alias_norm, domain_code)"
+                " VALUES (gen_random_uuid(), :eid, 'Patient Y', 'patient y', 'general')"
+            ),
+            {"eid": other_entity},
+        )
+    note2 = await make_note(maker, domain="general", body="I married Patient Y.")
+    await analyzer(maker, [json.dumps(_relationship_payload("spouse", "Patient Y"))]).analyze_note(
+        {"note_id": note2}
+    )
+    closed = await rows(maker, OWNER, shadow_sql)
+    assert len(closed) == 1 and closed[0].status == "superseded" and closed[0].superseded_by is None
+
+
+async def test_conflict_resolution_cascades_to_derived_shadows(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """Red-team Finding 3: resolving a spouse fact_conflict carries to the
+    reciprocals — the kept side's shadow goes active, the dropped side's shadow
+    retracts — and reopen reverses both, so a shadow never contradicts the
+    human's verdict."""
+    repo = SqlAnalysisRepo(maker)
+
+    def shadow_status_sql(name: str) -> str:
+        return (
+            "SELECT f.status FROM app.facts f JOIN app.entities e ON e.id = f.entity_id"
+            f" WHERE e.canonical_name = '{name}' AND f.predicate = 'spouse'"
+            " AND f.derived_from_fact_id IS NOT NULL"
+        )
+
+    note1 = await make_note(maker, domain="general", body="I married Aldous.")
+    await analyzer(maker, [json.dumps(_relationship_payload("spouse", "Aldous"))]).analyze_note(
+        {"note_id": note1}
+    )
+    note2 = await make_note(maker, domain="general", body="I married Bettina.")
+    await analyzer(maker, [json.dumps(_relationship_payload("spouse", "Bettina"))]).analyze_note(
+        {"note_id": note2}
+    )
+    assert (await rows(maker, OWNER, shadow_status_sql("Aldous")))[0].status == "superseded"
+    assert (await rows(maker, OWNER, shadow_status_sql("Bettina")))[0].status == "active"
+
+    items = await rows(
+        maker,
+        OWNER,
+        "SELECT id::text AS id FROM app.review_items WHERE kind = 'fact_conflict'"
+        " AND status = 'open' AND payload->>'note_id' = :nid",
+        nid=note2,
+    )
+    assert len(items) == 1
+    await repo.resolve_review(OWNER, items[0].id, "accept_a", {})  # keep Aldous (the prior value)
+    assert (await rows(maker, OWNER, shadow_status_sql("Aldous")))[0].status == "active"
+    assert (await rows(maker, OWNER, shadow_status_sql("Bettina")))[0].status == "retracted"
+
+    await repo.reopen_review(OWNER, items[0].id)
+    assert (await rows(maker, OWNER, shadow_status_sql("Aldous")))[0].status == "superseded"
+    assert (await rows(maker, OWNER, shadow_status_sql("Bettina")))[0].status == "active"
