@@ -190,7 +190,8 @@ is a unit test; guardrail accounting is pure and unit-tested.
 ### Session capabilities — read-scope chosen up front, writes staged
 
 Every session is a **capability, not an identity**, configured by two independent
-dials that are both least-privilege by default:
+dials that are both least-privilege by default (browsable on the **Sessions page** —
+a left-swipe from the Full Brain composer, DESIGN.md):
 
 - **Read scope, selected at session start.** The owner picks which knowledge-base
   sources — domains (`general`/`health`/`finance`/`location`/…) × subjects (me, Dad,
@@ -356,8 +357,9 @@ of the effect** at every node (the diff, the new revision, the article-tree chan
 attachments, or intake that prompted it, by ID), the **requesting principal and
 domain scope**, and a **per-node `status`** (`staged → approved → enacted | rejected
 | expired`). Every Proposal surfaces as a distinct, typed **review-inbox** item; the
-inbox is the one approval surface (PRs remain the surface for the code/prompt/tool
-subset — a `kind=prompt-edit` Proposal *is* a drafted PR).
+inbox is the one approval surface, presented as the **Proposals page** (reached by a
+right-swipe from the Full Brain composer — DESIGN.md). PRs remain the surface for the
+code/prompt/tool subset — a `kind=prompt-edit` Proposal *is* a drafted PR.
 
 **The tree is approvable in whole or in part.** Operations are organized
 hierarchically — a root intent ("restructure the health wiki"), grouping nodes (one

@@ -481,6 +481,35 @@ section headers — KNOWLEDGE, AUTHORING, SYSTEM):
   a card climbs one level, like the down-swipe.
 - Tiles for phases not yet built render disabled with their phase label.
 
+### Full Brain lateral shortcuts (Sessions ← chat → Proposals)
+
+In **Full Brain** mode (steel/agent) the conversation is the center of a
+three-pane lateral model: **Sessions** to the left, **Proposals** to the right —
+the mnemonic is temporal/actional (past sessions left, pending approvals right).
+Both are first-class **card-launcher destinations** (tiles, under a SYSTEM/
+ASSISTANT group) — that is their canonical, tappable home and the required visible
+way in and out. The **Proposals** page is the unified review queue focused on the
+agent's staged Proposal trees (see `docs/ASSISTANT.md`); **Sessions** lists past
+and active agent sessions with their selected read scope.
+
+As an **enhancement only** (never the sole path — the gesture rule above binds), a
+**horizontal swipe on the omnibox / text-entry box** is a shortcut: **swipe left →
+Sessions, swipe right → Proposals.**
+
+- The gesture is anchored to the **composer**, not to transcript bubbles, so it
+  never competes with message content; the recognizer favors the dominant axis, so
+  it never fights the vertical nav-tree gestures (up → launcher, down → climb).
+  Horizontal is available precisely because modes switch by *tap*, not swipe.
+- **Tappable parity is mandatory:** small left/right affordances flank the composer
+  (or sit beside the bolt) doing the same thing, and both pages stay reachable from
+  the launcher.
+- Sessions and Proposals open as **standard full-screen cards** (own top bar + back
+  chevron; bolt or down-swipe climbs home). A lateral slide-in matching the swipe
+  direction is optional polish, disabled under reduced motion.
+- **Full-Brain-only:** Entry/Research composers do not carry these shortcuts (Entry
+  keeps its transcript-item action rail). Phase 4 surface — disabled with a phase
+  label until then.
+
 ## Surface paradigms (which container for which job)
 
 | Job | Paradigm |
