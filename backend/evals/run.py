@@ -39,7 +39,16 @@ from jbrain.analysis.prompt import (
 from jbrain.config import Settings
 from jbrain.llm import build_router
 
-CASES_FILE = Path(__file__).parent / "cases.json"
+CASES_DIR = Path(__file__).parent / "cases"
+
+
+def load_cases() -> list[dict[str, Any]]:
+    """Every case across all evals/cases/*.json — agents drop in their own file
+    and it's picked up automatically (sorted for a stable run order)."""
+    cases: list[dict[str, Any]] = []
+    for path in sorted(CASES_DIR.glob("*.json")):
+        cases.extend(json.loads(path.read_text()))
+    return cases
 
 
 def _norm(s: str) -> str:
@@ -106,6 +115,12 @@ def _score(case: dict[str, Any], parsed: Any, anchor: datetime) -> CaseResult:
     for person in expect.get("person_mentions", []):
         hit = next((n for n in mention_names if _overlaps(person, n)), None)
         res.checks.append((f"person:{person}", hit is not None, ""))
+
+    # Negative check: a name the model must NOT promote to a mention (over-
+    # extraction / hallucination stress).
+    for person in expect.get("absent_person", []):
+        present = any(_overlaps(person, n) for n in mention_names)
+        res.checks.append((f"absent:{person}", not present, ""))
 
     for edge in expect.get("edges", []):
         obj = edge["object"]
@@ -195,7 +210,7 @@ def main() -> int:
     ap.add_argument("--strict", action="store_true", help="exit 1 unless every case passes")
     args = ap.parse_args()
 
-    cases = json.loads(CASES_FILE.read_text())
+    cases = load_cases()
     if args.case:
         cases = [c for c in cases if c["name"] == args.case]
         if not cases:

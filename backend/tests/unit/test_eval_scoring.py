@@ -5,7 +5,7 @@ green prompt-eval run actually means what it says. The live run itself
 from datetime import UTC, datetime, timedelta, timezone
 from typing import Any
 
-from evals.run import _overlaps, _score
+from evals.run import _overlaps, _score, load_cases
 
 from jbrain.analysis.extraction import (
     ExtractedFact,
@@ -98,3 +98,22 @@ def test_score_temporal_uses_local_date_for_fact_or_token() -> None:
     }
     anchor_mst = datetime(2026, 6, 11, 8, 30, tzinfo=timezone(timedelta(minutes=-360)))
     assert _score(case_wk, _extraction([], [], [mst]), anchor_mst).passed
+
+
+def test_eval_cases_are_wellformed() -> None:
+    # Guards against a malformed agent-authored case slipping into the set: every
+    # case loads, names are unique, created_at parses with an offset, and only
+    # known expect keys are used (a typo'd key would silently never be checked).
+    cases = load_cases()
+    assert cases
+    names = [c["name"] for c in cases]
+    assert len(names) == len(set(names)), "duplicate eval case names"
+    valid_expect = {"person_mentions", "absent_person", "edges", "temporal"}
+    for c in cases:
+        assert c["name"] and c["body"], c
+        assert datetime.fromisoformat(c["created_at"]).utcoffset() is not None, c["name"]
+        assert set(c.get("expect", {})) <= valid_expect, c["name"]
+        for edge in c.get("expect", {}).get("edges", []):
+            assert "object" in edge, c["name"]
+        for tt in c.get("expect", {}).get("temporal", []):
+            assert {"phrase", "resolved_date"} <= set(tt), c["name"]
