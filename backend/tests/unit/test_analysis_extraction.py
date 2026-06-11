@@ -680,6 +680,28 @@ def test_validate_backward_temporal_leaves_ambiguous_phrases_alone() -> None:
     assert not repaired and fixed is ambiguous
 
 
+def test_resolve_relative_date_last_night_is_ambiguous_at_evening_anchor() -> None:
+    # From a late-evening capture "last night" can mean earlier the SAME night,
+    # so we don't guess; a daytime capture is unambiguous.
+    evening = datetime(2026, 6, 11, 23, 45, tzinfo=_MST)
+    assert resolve_relative_date("last night", evening) is None
+    assert resolve_relative_date("last night", _ANCHOR) == (_ANCHOR - timedelta(days=1)).date()
+
+
+def test_validate_backward_temporal_skips_on_offset_mismatch() -> None:
+    # Model resolved in a DIFFERENT offset than the anchor (naive -> UTC pinning,
+    # or a missing client offset that left the anchor in UTC): the calendar-day
+    # comparison is unsound, so the value is never shifted (red-team Finding 1/5).
+    utc_start = ExtractedTemporal(
+        phrase="last night",
+        resolved_start=datetime(2026, 6, 11, 20, 0, tzinfo=UTC),  # +00:00 vs anchor -06:00
+        resolved_end=None,
+        precision="day",
+    )
+    fixed, repaired = validate_backward_temporal(utc_start, _ANCHOR)
+    assert not repaired and fixed is utc_start
+
+
 def _last_night_payload() -> dict[str, Any]:
     """A note whose 'last night' the model wrongly resolved to the capture day."""
     return {

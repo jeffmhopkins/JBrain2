@@ -182,8 +182,13 @@ class AnalysisPipeline:
                 json_schema=EXTRACTION_SCHEMA,
                 max_tokens=EXTRACT_MAX_TOKENS,
             )
+            # Backward-phrase repair needs the note's LOCAL day; without a
+            # client offset local_anchor falls back to the stored UTC instant,
+            # whose date can be tomorrow for an evening capture. Withhold the
+            # anchor in that case so a model-correct date is never clobbered.
             extraction = parse_extraction(
-                result.parsed, anchor=local_anchor(captured_at, tz_offset)
+                result.parsed,
+                anchor=local_anchor(captured_at, tz_offset) if tz_offset is not None else None,
             )
         except (LlmBadResponseError, ExtractionError) as exc:
             # The adapter already spent its one re-ask: retrying the job would

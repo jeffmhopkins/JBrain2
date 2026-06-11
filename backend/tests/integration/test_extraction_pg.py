@@ -396,6 +396,51 @@ async def test_backward_phrase_resolution_repaired_end_to_end(
     assert tokens[0].resolved_start.astimezone(mst).date() == date(2026, 6, 10)
 
 
+async def test_backward_phrase_not_repaired_without_tz_offset(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """Red-team Finding 1: with no client offset the anchor falls back to the
+    stored UTC instant, whose date is the NEXT day for an evening capture. The
+    pipeline must then withhold the anchor so a model-correct backward date is
+    never clobbered. Capture = May 9 19:00 local (May 10 01:00Z); the model
+    correctly put 'yesterday' on May 8 and it must survive untouched."""
+    note_id = await make_note(
+        maker,
+        domain="general",
+        body="We moved yesterday.",
+        created_at=datetime(2026, 5, 10, 1, 0, tzinfo=UTC),  # 19:00 the prior day at -06:00
+        tz_offset=None,
+    )
+    payload = {
+        "title": "Move",
+        "tags": ["move", "home", "address"],
+        "mentions": [{"name": "Me", "kind": "Person", "surface_text": "We"}],
+        "facts": [
+            {
+                "predicate": "relocated", "qualifier": "", "kind": "event",
+                "statement": "Moved to 7 Birch Ln.", "value_json": {"place": "7 Birch Ln"},
+                "assertion": "asserted", "entity_ref": "Me", "object_entity_ref": None,
+                "temporal": {
+                    "phrase": "yesterday",
+                    "resolved_start": "2026-05-08T00:00:00-06:00",  # model-correct local day
+                    "resolved_end": None, "precision": "day",
+                },
+                "domain": "general", "confidence": 0.9,
+            }
+        ],
+        "temporal_tokens": [],
+    }  # fmt: skip
+    await analyzer(maker, [json.dumps(payload)]).analyze_note({"note_id": note_id})
+    facts = await rows(
+        maker, OWNER, "SELECT valid_from FROM app.facts WHERE note_id = :nid", nid=note_id
+    )
+    assert len(facts) == 1 and facts[0].valid_from is not None
+    # Preserved on May 8 — NOT shifted forward to the UTC-derived May 9.
+    assert facts[0].valid_from.astimezone(timezone(timedelta(minutes=-360))).date() == date(
+        2026, 5, 8
+    )
+
+
 async def test_reanalysis_is_idempotent(
     maker: async_sessionmaker[AsyncSession], tmp_path: Any
 ) -> None:

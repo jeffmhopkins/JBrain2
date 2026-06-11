@@ -160,8 +160,13 @@ _WEEKDAYS = {
 # Phrases denoting the anchor's OWN local day vs the immediately prior day.
 _SAME_DAY = frozenset({"today", "tonight", "this morning", "this afternoon", "this evening"})
 _PRIOR_DAY = frozenset(
-    {"yesterday", "last night", "yesterday morning", "yesterday afternoon", "yesterday evening"}
+    {"yesterday", "yesterday morning", "yesterday afternoon", "yesterday evening"}
 )
+# "last night" pins no calendar day by itself: from a daytime anchor it is
+# unambiguously the prior evening, but from a late-evening anchor it can mean
+# earlier the same night. Only repair it from a daytime capture; otherwise leave
+# the model's reading alone (the bug we fix is the 07:13 morning case).
+_LAST_NIGHT_DAYTIME_CUTOFF = 18
 
 
 def _normalize_phrase(phrase: str) -> str:
@@ -183,6 +188,8 @@ def resolve_relative_date(phrase: str | None, anchor: datetime) -> date | None:
         return base
     if p in _PRIOR_DAY:
         return base - timedelta(days=1)
+    if p == "last night":
+        return base - timedelta(days=1) if anchor.hour < _LAST_NIGHT_DAYTIME_CUTOFF else None
     if p in ("day before yesterday", "the day before yesterday"):
         return base - timedelta(days=2)
     if m := re.fullmatch(r"(\w+) days? ago", p):
@@ -209,6 +216,14 @@ def _repair_dates(
     (start, end, repaired); a phrase outside the closed set is a no-op."""
     expected = resolve_relative_date(phrase, anchor)
     if start is None or expected is None or expected == start.date():
+        return start, end, False
+    # The calendar-day comparison is only sound when the model resolved in the
+    # SAME UTC offset as the anchor. A different offset — naive output pinned to
+    # UTC, or a missing client offset that left the anchor in UTC (local_anchor's
+    # fallback) — makes start.date() and the anchor's local date incomparable, so
+    # we leave the model's value untouched rather than shift it on a false
+    # mismatch (the pipeline also withholds the anchor entirely when tz is None).
+    if start.utcoffset() != anchor.utcoffset():
         return start, end, False
     delta = timedelta(days=(expected - start.date()).days)
     return start + delta, (end + delta if end is not None else None), True
