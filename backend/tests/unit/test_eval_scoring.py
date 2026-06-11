@@ -171,3 +171,12 @@ def test_score_value_matches_measurement_in_fact() -> None:
         _A,
     ).passed
     assert not _score(case, _extraction([]), _A).passed
+
+
+def test_eval_cases_pass_audit() -> None:
+    # The offline pre-flight (evals.audit) is enforced here so a new/edited case
+    # whose asserted name/number/phrase isn't in its body — or whose closed-set
+    # temporal date is off — fails CI before anyone spends a live model call.
+    from evals.audit import audit_cases
+
+    assert audit_cases(load_cases()) == []
