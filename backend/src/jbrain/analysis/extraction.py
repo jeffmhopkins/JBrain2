@@ -6,11 +6,14 @@ items: a single fact with a bogus enum is dropped and logged rather than
 sinking the whole note.
 """
 
+import json
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from typing import Any
 
 import structlog
+
+from jbrain.analysis.prompt import MAX_FACTS
 
 log = structlog.get_logger()
 
@@ -22,6 +25,18 @@ DOMAINS = frozenset({"general", "health", "finance", "location"})
 RESTRICTED_DOMAINS = frozenset({"health", "finance", "location"})
 
 MAX_TAGS = 6
+
+# Server-side teeth for the prompt's instructions (red-team H1): a hostile or
+# runaway extraction must not write unbounded rows or unbounded row WIDTH.
+# predicate/qualifier are identity-key parts — truncating one could collide
+# two distinct keys, so an oversized key REJECTS the fact. A statement is
+# rendering only, so it truncates harmlessly. value_json is opaque jsonb a
+# real personal-data payload never approaches 16 KiB of, so an oversized one
+# is dropped (the fact survives on its statement). Limits are generous on
+# purpose: they exist to stop abuse, not to second-guess the prompt.
+MAX_KEY_CHARS = 200
+MAX_STATEMENT_CHARS = 1000
+MAX_VALUE_JSON_BYTES = 16384
 
 
 class ExtractionError(Exception):
@@ -188,13 +203,31 @@ def parse_extraction(payload: Any) -> Extraction:
         ):
             log.warning("analysis.fact_dropped", reason="invalid fields", predicate=predicate)
             continue
+        qualifier = str(raw.get("qualifier") or "").strip()
+        if len(predicate) > MAX_KEY_CHARS or len(qualifier) > MAX_KEY_CHARS:
+            log.warning(
+                "analysis.fact_dropped",
+                reason="oversized identity key",
+                predicate=predicate[:80],
+            )
+            continue
+        if len(statement) > MAX_STATEMENT_CHARS:
+            log.warning(
+                "analysis.fact_statement_truncated",
+                predicate=predicate,
+                length=len(statement),
+            )
+            statement = statement[:MAX_STATEMENT_CHARS]
         value_json = raw.get("value_json")
+        if isinstance(value_json, dict) and len(json.dumps(value_json)) > MAX_VALUE_JSON_BYTES:
+            log.warning("analysis.fact_value_json_dropped", predicate=predicate)
+            value_json = None
         object_ref = raw.get("object_entity_ref")
         domain = raw.get("domain")
         facts.append(
             ExtractedFact(
                 predicate=predicate,
-                qualifier=str(raw.get("qualifier") or "").strip(),
+                qualifier=qualifier,
                 kind=kind,
                 statement=statement,
                 value_json=value_json if isinstance(value_json, dict) else None,
@@ -208,6 +241,13 @@ def parse_extraction(payload: Any) -> Extraction:
                 confidence=_clamp_confidence(raw.get("confidence")),
             )
         )
+
+    if len(facts) > MAX_FACTS:
+        # The prompt's soft cap, enforced: keep the FIRST N — fact order is
+        # the model's salience ranking, so the tail is the trivia the prompt
+        # told it to skip (docs/ANALYSIS.md "soft cap on facts-per-note").
+        log.warning("analysis.facts_capped", kept=MAX_FACTS, dropped=len(facts) - MAX_FACTS)
+        facts = facts[:MAX_FACTS]
 
     tokens: list[ExtractedToken] = []
     for raw in payload.get("temporal_tokens") or []:

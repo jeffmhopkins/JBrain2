@@ -108,6 +108,54 @@ def test_invalid_fact_is_dropped_not_fatal() -> None:
     assert len(parsed.facts) == 1  # only the valid one survives
 
 
+def _raw_fact(i: int) -> dict[str, Any]:
+    fact = dict(valid_payload()["facts"][0])
+    fact["qualifier"] = f"q{i}"  # distinct identity keys, like a real over-extraction
+    return fact
+
+
+def test_facts_hard_capped_at_max_facts_keeping_first() -> None:
+    """H1: the prompt's soft cap has server-side teeth; order is the model's
+    salience ranking, so the FIRST N survive."""
+    payload = valid_payload()
+    payload["facts"] = [_raw_fact(i) for i in range(MAX_FACTS + 18)]
+    parsed = parse_extraction(payload)
+    assert len(parsed.facts) == MAX_FACTS
+    assert [f.qualifier for f in parsed.facts] == [f"q{i}" for i in range(MAX_FACTS)]
+
+
+def test_oversized_identity_key_rejects_the_fact() -> None:
+    """predicate/qualifier are identity-key parts: truncation could collide
+    two distinct keys, so the fact is dropped instead."""
+    payload = valid_payload()
+    payload["facts"][0]["predicate"] = "p" * 201
+    assert parse_extraction(payload).facts == []
+    payload = valid_payload()
+    payload["facts"][0]["qualifier"] = "q" * 201
+    assert parse_extraction(payload).facts == []
+
+
+def test_oversized_statement_truncates_but_keeps_the_fact() -> None:
+    payload = valid_payload()
+    payload["facts"][0]["statement"] = "s" * 5000
+    parsed = parse_extraction(payload)
+    assert len(parsed.facts) == 1
+    assert len(parsed.facts[0].statement) == 1000
+
+
+def test_oversized_value_json_is_dropped_fact_survives() -> None:
+    payload = valid_payload()
+    payload["facts"][0]["value_json"] = {"blob": "x" * 20000}
+    parsed = parse_extraction(payload)
+    assert len(parsed.facts) == 1
+    assert parsed.facts[0].value_json is None
+
+
+def test_reasonable_value_json_passes_untouched() -> None:
+    parsed = parse_extraction(valid_payload())
+    assert parsed.facts[0].value_json == {"systolic": 118, "diastolic": 76, "unit": "mmHg"}
+
+
 def test_unknown_domain_falls_back_to_empty_for_pipeline_substitution() -> None:
     payload = valid_payload()
     payload["facts"][0]["domain"] = "work"  # invented code: never trusted

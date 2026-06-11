@@ -138,6 +138,102 @@ def test_state_first_value_inserts_active_silently() -> None:
     assert d.insert and d.insert_status == "active" and d.review_kind is None
 
 
+# --- confidence guard: low-confidence never auto-supersedes ------------------
+
+
+def test_low_confidence_candidate_never_auto_supersedes() -> None:
+    """The H2 guard: a blurry OCR read (0.25) parks in pending_review behind
+    a low_confidence card; the confident prior stays active."""
+    confident = view(value_json={"drug": "lisinopril"}, confidence=0.95)
+    ocr = cand(value_json={"drug": "losartan"}, confidence=0.25)
+    d = decide(ocr, [confident])
+    assert d.insert and d.insert_status == "pending_review"
+    assert d.review_kind == "low_confidence" and d.conflicting_id == "old-1"
+    assert d.supersede_ids == [] and d.hold_ids == []
+
+
+def test_confidence_at_threshold_supersedes_normally() -> None:
+    """LOW_CONFIDENCE is exclusive: exactly 0.5 is not 'low'."""
+    d = decide(cand(confidence=0.5), [view(confidence=0.95)])
+    assert d.supersede_ids == ["old-1"] and d.review_kind == "fact_conflict"
+
+
+def test_low_confidence_may_replace_an_even_shakier_fact() -> None:
+    """The guard protects HIGHER-confidence knowledge only; between two weak
+    facts, newest still wins (with the usual conflict flag)."""
+    d = decide(cand(confidence=0.4), [view(confidence=0.2)])
+    assert d.supersede_ids == ["old-1"] and d.review_kind == "fact_conflict"
+
+
+# --- in-place interval close ------------------------------------------------
+
+
+def test_end_date_backfill_closes_open_edge_in_place() -> None:
+    """'Left Acme back in March': same object + valid_from, new valid_to —
+    close the one open row; no duplicate, no chain, no conflict."""
+    old = view(kind="relationship", object_entity_id="acme", value_json={"state": "current"})
+    d = decide(
+        cand(
+            kind="relationship",
+            object_entity_id="acme",
+            value_json={"state": "ended", "end": "2026-03"},
+            valid_from=T0,
+            valid_to=T1,
+            reported_at=T2,
+        ),
+        [old],
+        predicate="employer",
+    )
+    assert d.close_id == "old-1" and d.close_valid_to == T1
+    assert not d.insert and d.refresh_id is None and d.review_kind is None
+
+
+def test_end_date_backfill_closes_scalar_state_instead_of_refreshing() -> None:
+    """values_equal + a new valid_to must hit the close path, not the refresh
+    path (refresh only writes rendering/provenance and would drop the end)."""
+    d = decide(
+        cand(statement="lives at 12 Oak St", valid_from=T0, valid_to=T1, reported_at=T2),
+        [view()],
+    )
+    assert d.close_id == "old-1" and d.close_valid_to == T1
+
+
+def test_close_requires_open_interval_and_matching_start() -> None:
+    already_closed = view(valid_to=T1)
+    d = decide(
+        cand(statement="lives at 12 Oak St", valid_from=T0, valid_to=T2, reported_at=T2),
+        [already_closed],
+    )
+    assert d.close_id is None
+    other_start = cand(statement="lives at 12 Oak St", valid_from=T1, valid_to=T2, reported_at=T2)
+    assert decide(other_start, [view()]).close_id is None
+
+
+def test_close_requires_same_assertion() -> None:
+    """A disposal ('no longer own X') flips the assertion: that is a state
+    TRANSITION (supersede with a negated head), never an in-place close."""
+    old = view(object_entity_id="civic", statement="I own a Honda Civic.")
+    disposal = cand(
+        object_entity_id="civic",
+        assertion="negated",
+        statement="I no longer own the Civic.",
+        valid_from=T0,
+        valid_to=T1,
+    )
+    d = decide(disposal, [old], predicate="owns")
+    assert d.close_id is None
+    assert d.insert and d.supersede_ids == ["old-1"]
+
+
+def test_close_never_edits_pinned_row() -> None:
+    d = decide(
+        cand(statement="lives at 12 Oak St", valid_from=T0, valid_to=T1, reported_at=T1),
+        [view(pinned=True)],
+    )
+    assert d.close_id is None  # refresh may touch rendering, never the interval
+    assert d.refresh_id == "old-1"
+
+
 # --- attribute: hold both, never auto-supersede ----------------------------
 
 
@@ -178,6 +274,45 @@ def test_preference_older_report_lands_as_history() -> None:
         cand(kind="preference", statement="prefers window seats", valid_from=None, reported_at=T0),
         [old],
     )
+    assert d.insert_status == "superseded" and d.insert_superseded_by == "old-1"
+
+
+# --- schedule bindings: newest INSTRUCTION wins, either direction -----------
+
+
+def test_reschedule_earlier_still_supersedes() -> None:
+    """The binding's value IS a validity instant, so validity ordering would
+    let the stale later time win; the newest reported instruction must win."""
+    friday = view(value_json={"start": "2026-06-19T14:00"}, valid_from=T1, reported_at=T0)
+    wednesday = cand(value_json={"start": "2026-06-17T14:00"}, valid_from=T0, reported_at=T1)
+    d = decide(wednesday, [friday], predicate="scheduledTime")
+    assert d.insert and d.insert_status == "active"
+    assert d.supersede_ids == ["old-1"]
+    assert d.review_kind == "fact_conflict"
+
+
+def test_reschedule_later_supersedes_unchanged() -> None:
+    friday = view(value_json={"start": "2026-06-19T14:00"}, valid_from=T0, reported_at=T0)
+    monday = cand(value_json={"start": "2026-06-22T14:00"}, valid_from=T1, reported_at=T1)
+    d = decide(monday, [friday], predicate="scheduledTime")
+    assert d.supersede_ids == ["old-1"]
+
+
+def test_stale_schedule_instruction_lands_as_history() -> None:
+    """Out-of-order outbox: an OLDER instruction about the same binding must
+    not displace the newer one, whatever times the two carry."""
+    current = view(value_json={"start": "2026-06-17T14:00"}, valid_from=T0, reported_at=T2)
+    stale = cand(value_json={"start": "2026-06-19T14:00"}, valid_from=T1, reported_at=T1)
+    d = decide(stale, [current], predicate="scheduledTime")
+    assert d.insert_status == "superseded" and d.insert_superseded_by == "old-1"
+
+
+def test_ordinary_state_keeps_validity_ordering() -> None:
+    """homeLocation et al are untouched by the schedule rule: a later-reported
+    note about an EARLIER validity still lands as history."""
+    current = view(valid_from=T1, reported_at=T1)
+    retro = cand(statement="lived at 3 Elm Rd", valid_from=T0, reported_at=T2)
+    d = decide(retro, [current], predicate="homeLocation")
     assert d.insert_status == "superseded" and d.insert_superseded_by == "old-1"
 
 
@@ -232,6 +367,63 @@ def test_values_equal_uses_object_entity_for_pure_edges() -> None:
         cand(kind="relationship", object_entity_id="acme", statement="employed by Acme"), old
     )
     assert not values_equal(cand(kind="relationship", object_entity_id="globex"), old)
+
+
+# --- unit-normalized value identity ------------------------------------------
+
+
+def test_unit_change_same_measurement_is_equal() -> None:
+    """180 lb restated as 81.6 kg (rounded) is the SAME reading: refresh at
+    the same instant, never a fact_conflict."""
+    old = view(kind="measurement", value_json={"value": 180, "unit": "lb"}, valid_from=T0)
+    metric = cand(kind="measurement", value_json={"value": 81.6, "unit": "kg"}, valid_from=T0)
+    assert values_equal(metric, old)
+    assert decide(metric, [old]).refresh_id == "old-1"
+
+
+def test_unit_change_different_value_still_conflicts() -> None:
+    old = view(kind="measurement", value_json={"value": 180, "unit": "lb"}, valid_from=T0)
+    lighter = cand(kind="measurement", value_json={"value": 75, "unit": "kg"}, valid_from=T0)
+    assert not values_equal(lighter, old)
+    d = decide(lighter, [old])
+    assert d.insert_status == "pending_review" and d.review_kind == "fact_conflict"
+
+
+def test_unit_equivalence_for_length_and_temperature() -> None:
+    height = view(kind="measurement", value_json={"value": 70, "unit": "in"}, valid_from=T0)
+    assert values_equal(
+        cand(kind="measurement", value_json={"value": 177.8, "unit": "cm"}, valid_from=T0), height
+    )
+    fever = view(kind="measurement", value_json={"value": 98.6, "unit": "°F"}, valid_from=T0)
+    assert values_equal(
+        cand(kind="measurement", value_json={"value": 37, "unit": "°C"}, valid_from=T0), fever
+    )
+
+
+def test_unit_epsilon_boundary() -> None:
+    """Rounding to ~3 significant figures is equal; a whole-unit re-round
+    (180 lb -> '82 kg') is outside tolerance and keeps the conflict path."""
+    old = view(kind="measurement", value_json={"value": 180, "unit": "lb"}, valid_from=T0)
+    assert values_equal(
+        cand(kind="measurement", value_json={"value": 81.65, "unit": "kg"}, valid_from=T0), old
+    )
+    assert not values_equal(
+        cand(kind="measurement", value_json={"value": 82, "unit": "kg"}, valid_from=T0), old
+    )
+
+
+def test_non_convertible_units_fall_through_to_conflict() -> None:
+    old = view(kind="measurement", value_json={"value": 1100, "unit": "steps"}, valid_from=T0)
+    other = cand(kind="measurement", value_json={"value": 1.1, "unit": "ksteps"}, valid_from=T0)
+    assert not values_equal(other, old)
+
+
+def test_extra_value_json_keys_must_match_for_unit_equality() -> None:
+    left_arm = view(
+        kind="measurement", value_json={"value": 180, "unit": "lb", "site": "home"}, valid_from=T0
+    )
+    bare = cand(kind="measurement", value_json={"value": 81.6, "unit": "kg"}, valid_from=T0)
+    assert not values_equal(bare, left_arm)
 
 
 # --- assertion transitions ---------------------------------------------------
