@@ -23,6 +23,7 @@ from jbrain.embed import NoteEmbedder, TeiEmbedClient
 from jbrain.ingest.ocr import OcrPipeline
 from jbrain.ingest.pipeline import IngestPipeline
 from jbrain.llm import build_router
+from jbrain.settings_store import SqlSettingsStore
 from jbrain.storage import FsBlobStore
 from jbrain.usage import SqlUsageRecorder
 
@@ -117,7 +118,8 @@ async def run() -> None:
         "ingest_note": pipeline.ingest_note,
         "embed_note": embedder.embed_note,
         "analyze_note": analyzer.analyze_note,
-        "ocr_attachment": OcrPipeline(maker, blobs, router).ocr_attachment,
+        # The vision handler reads the image-analysis mode setting per job.
+        "ocr_attachment": OcrPipeline(maker, blobs, router, SqlSettingsStore(maker)).ocr_attachment,
     }
     try:
         await run_loop(maker, handlers)
