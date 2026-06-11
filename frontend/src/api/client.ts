@@ -77,6 +77,8 @@ export interface NoteOut {
   created_at: string;
   tz_offset_minutes: number | null;
   ingest_state: string;
+  /** Hidden from the home stream (still searchable); toggled via hide/unhide. */
+  hidden: boolean;
   attachments: AttachmentOut[];
   // Owner-eyes capture location (Phase 7 scoped tokens never receive these).
   latitude: number | null;
@@ -202,6 +204,22 @@ export interface EntityOut {
   predicates: EntityPredicate[];
   inbound: InboundEdge[];
   mentions: EntityMention[];
+}
+
+export interface EntityListItem {
+  id: string;
+  kind: string;
+  canonical_name: string;
+  status: string;
+  /** Live edges only: active + pending-review facts with this subject. */
+  fact_count: number;
+  mention_count: number;
+  /** Newest reported_at across the entity's facts; null = mentions only. */
+  last_seen: string | null;
+}
+
+export interface EntityList {
+  items: EntityListItem[];
 }
 
 export type ReviewKind =
@@ -399,6 +417,16 @@ export const api = {
     await request(`/api/notes/${encodeURIComponent(id)}`, { method: "DELETE" });
   },
 
+  // Hide/unhide only flip stream visibility — no re-ingest, so the note keeps
+  // its place in Search and stays openable from there.
+  async hideNote(id: string): Promise<void> {
+    await request(`/api/notes/${encodeURIComponent(id)}/hide`, { method: "POST" });
+  },
+
+  async unhideNote(id: string): Promise<void> {
+    await request(`/api/notes/${encodeURIComponent(id)}/unhide`, { method: "POST" });
+  },
+
   async search(q: string, domain?: string, limit = 20): Promise<SearchOut> {
     const params = new URLSearchParams({ q, limit: String(limit) });
     if (domain) params.set("domain", domain);
@@ -423,6 +451,16 @@ export const api = {
   async noteAnalysis(noteId: string): Promise<NoteAnalysis> {
     const response = await request(`/api/notes/${encodeURIComponent(noteId)}/analysis`);
     return (await response.json()) as NoteAnalysis;
+  },
+
+  // Non-merged entities, newest-seen first (server-capped at 200).
+  async listEntities(q?: string, kind?: string): Promise<EntityList> {
+    const params = new URLSearchParams();
+    if (q) params.set("q", q);
+    if (kind) params.set("kind", kind);
+    const qs = params.toString();
+    const response = await request(`/api/entities${qs ? `?${qs}` : ""}`);
+    return (await response.json()) as EntityList;
   },
 
   async getEntity(entityId: string): Promise<EntityOut> {

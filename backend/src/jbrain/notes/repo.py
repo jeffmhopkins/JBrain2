@@ -34,6 +34,7 @@ def _note_info(n: Note) -> NoteInfo:
         created_at=n.created_at,
         tz_offset_minutes=n.tz_offset_minutes,
         ingest_state=n.ingest_state,
+        hidden=n.hidden_at is not None,
         attachments=[_attachment_info(a) for a in n.attachments],
         latitude=n.latitude,
         longitude=n.longitude,
@@ -95,9 +96,10 @@ class SqlNotesRepo:
         self, ctx: SessionContext, *, limit: int, before: datetime | None
     ) -> list[NoteInfo]:
         async with scoped_session(self._maker, ctx) as session:
+            # The home stream excludes hidden notes; they live on in Search.
             query = (
                 select(Note)
-                .where(Note.deleted_at.is_(None))
+                .where(Note.deleted_at.is_(None), Note.hidden_at.is_(None))
                 .order_by(Note.created_at.desc(), Note.id.desc())
                 .limit(limit)
             )
@@ -164,6 +166,20 @@ class SqlNotesRepo:
             note.deleted_at = datetime.now(UTC)
             await purge_note_artifacts(session, note.id)
             await session.execute(delete(Chunk).where(Chunk.note_id == note.id))
+            return True
+
+    async def set_hidden(self, ctx: SessionContext, note_id: str, hidden: bool) -> bool:
+        async with scoped_session(self._maker, ctx) as session:
+            note = (
+                await session.execute(
+                    select(Note).where(Note.id == note_id, Note.deleted_at.is_(None))
+                )
+            ).scalar_one_or_none()
+            if note is None:
+                return False
+            # Visibility only: chunks/embeddings are untouched so the note
+            # stays searchable, and ingest_state is not reset.
+            note.hidden_at = datetime.now(UTC) if hidden else None
             return True
 
     async def get_note(self, ctx: SessionContext, note_id: str) -> NoteInfo | None:

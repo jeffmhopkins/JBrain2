@@ -11,6 +11,7 @@ function fakeController(): NotesController {
     send: vi.fn(async () => {}),
     update: vi.fn(async () => {}),
     remove: vi.fn(async () => {}),
+    setHidden: vi.fn(async () => {}),
     byId: vi.fn(() => undefined),
     addAttachment: vi.fn(async () => ({
       id: "a1",
@@ -38,16 +39,31 @@ function fakeActions(): NoteActions {
   };
 }
 
-function setup() {
+function setup(notes: NotesController = fakeController()) {
   render(
     <HomeScreen
-      notes={fakeController()}
+      notes={notes}
       actions={fakeActions()}
       onOpenNote={vi.fn()}
       onOpenSearch={vi.fn()}
       onOpenLauncher={vi.fn()}
     />,
   );
+}
+
+function streamItem() {
+  return {
+    key: "k1",
+    id: "n1",
+    domain: "general",
+    destination: null,
+    body: "hide me",
+    createdAt: new Date(),
+    ingestState: "indexed",
+    attachments: [],
+    pending: false,
+    hidden: false,
+  };
 }
 
 describe("HomeScreen mode scoping", () => {
@@ -67,6 +83,22 @@ describe("HomeScreen mode scoping", () => {
     expect(
       screen.queryByText("Nothing captured yet — write your first entry below."),
     ).not.toBeInTheDocument();
+  });
+
+  it("swipe-Hide hides the note and an undo toast restores it", () => {
+    const notes = { ...fakeController(), items: [streamItem()] };
+    setup(notes);
+    const bubble = screen.getByRole("button", { name: /hide me/ });
+    fireEvent.touchStart(bubble, { touches: [{ clientX: 250, clientY: 50 }] });
+    fireEvent.touchMove(bubble, { touches: [{ clientX: 60, clientY: 52 }] });
+    fireEvent.touchEnd(bubble);
+
+    fireEvent.click(screen.getByRole("button", { name: "hide" }));
+    expect(notes.setHidden).toHaveBeenCalledWith("n1", true);
+    expect(screen.getByText("note hidden")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "undo" }));
+    expect(notes.setHidden).toHaveBeenCalledWith("n1", false);
   });
 
   it("Full Brain shows the same placeholder; Entry sub-modes keep the stream", () => {

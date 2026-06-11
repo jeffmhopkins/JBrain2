@@ -15,6 +15,12 @@ interface HomeScreenProps {
   onOpenLauncher: () => void;
 }
 
+interface Toast {
+  message: string;
+  /** Single action max (docs/DESIGN.md "Toasts"); here it's the hide undo. */
+  action?: { label: string; run: () => void };
+}
+
 export function HomeScreen({
   notes,
   actions,
@@ -23,13 +29,18 @@ export function HomeScreen({
   onOpenLauncher,
 }: HomeScreenProps) {
   const [seg, setSeg] = useState<SegState>({ row: "main", mode: "entry" });
-  const [toast, setToast] = useState<string | null>(null);
+  const [toast, setToast] = useState<Toast | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  function showToast(message: string) {
+  function showToast(message: string, action?: Toast["action"]) {
     if (toastTimer.current) clearTimeout(toastTimer.current);
-    setToast(message);
+    setToast(action ? { message, action } : { message });
     toastTimer.current = setTimeout(() => setToast(null), TOAST_MS);
+  }
+
+  function dismissToast() {
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    setToast(null);
   }
 
   useEffect(
@@ -70,15 +81,19 @@ export function HomeScreen({
                 attachments: item.attachments,
               });
           }}
-          onMove={(item) => {
-            if (item.id !== null)
-              actions.startMove({
-                id: item.id,
-                domain: item.domain,
-                destination: item.destination,
-              });
-          }}
           onDelete={(id) => void actions.remove(id)}
+          onHide={(item) => {
+            const id = item.id;
+            if (id === null) return;
+            void notes.setHidden(id, true);
+            showToast("note hidden", {
+              label: "undo",
+              run: () => {
+                dismissToast();
+                void notes.setHidden(id, false);
+              },
+            });
+          }}
         />
       )}
       <Omnibox
@@ -88,7 +103,16 @@ export function HomeScreen({
         onConversation={() => showToast("Conversations arrive in Phase 4")}
         onOpenLauncher={onOpenLauncher}
       />
-      {toast && <output className="toast">{toast}</output>}
+      {toast && (
+        <output className="toast">
+          {toast.message}
+          {toast.action && (
+            <button type="button" className="toast-action" onClick={toast.action.run}>
+              {toast.action.label}
+            </button>
+          )}
+        </output>
+      )}
     </>
   );
 }

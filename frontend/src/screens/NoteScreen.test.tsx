@@ -22,6 +22,7 @@ const ITEM: StreamItem = {
     },
   ],
   pending: false,
+  hidden: false,
 };
 
 // Indexed variant with a PDF (searchable), an image still waiting on the

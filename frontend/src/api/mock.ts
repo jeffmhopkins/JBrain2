@@ -5,6 +5,7 @@
 import type {
   AttachmentOut,
   ContainerStatus,
+  EntityListItem,
   EntityOut,
   FactOut,
   LlmUsage,
@@ -94,6 +95,7 @@ function seedNote(
     created_at: createdAt,
     tz_offset_minutes: null,
     ingest_state: ingestState,
+    hidden: false,
     attachments,
     latitude: null,
     longitude: null,
@@ -881,6 +883,44 @@ function emptyAnalysis(noteId: string): NoteAnalysis {
   };
 }
 
+// Mirrors GET /api/entities: derives the browse rows from the entity-page
+// fixtures, so the list and the pages it opens always agree in dev:mock.
+function mockEntityList(params: URLSearchParams): EntityListItem[] {
+  const q = (params.get("q") ?? "").toLowerCase();
+  const kind = params.get("kind");
+  return Object.values(ENTITIES)
+    .filter((e) => e.status !== "merged")
+    .filter((e) => kind === null || e.kind === kind)
+    .filter(
+      (e) =>
+        q === "" ||
+        e.canonical_name.toLowerCase().includes(q) ||
+        e.aliases.some((a) => a.toLowerCase().includes(q)),
+    )
+    .map((e): EntityListItem => {
+      const facts = e.predicates.flatMap((p) => p.history);
+      return {
+        id: e.id,
+        kind: e.kind,
+        canonical_name: e.canonical_name,
+        status: e.status,
+        fact_count: facts.filter((f) => f.status === "active" || f.status === "pending_review")
+          .length,
+        mention_count: e.mentions.length,
+        last_seen: facts.map((f) => f.reported_at).sort()[facts.length - 1] ?? null,
+      };
+    })
+    .sort((a, b) => {
+      if (a.last_seen !== b.last_seen) {
+        if (a.last_seen === null) return 1; // nulls last, like the SQL
+        if (b.last_seen === null) return -1;
+        return b.last_seen.localeCompare(a.last_seen);
+      }
+      return a.canonical_name.localeCompare(b.canonical_name);
+    })
+    .slice(0, 200);
+}
+
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
@@ -951,7 +991,10 @@ export const mockFetch: typeof fetch = async (input, init) => {
   if (path === "/api/notes" && method === "GET") {
     const limit = Number(url.searchParams.get("limit") ?? "50");
     const before = url.searchParams.get("before");
-    let pool = [...notes].sort((a, b) => b.created_at.localeCompare(a.created_at));
+    // The stream excludes hidden notes (they remain in Search).
+    let pool = notes
+      .filter((n) => !n.hidden)
+      .sort((a, b) => b.created_at.localeCompare(a.created_at));
     if (before) pool = pool.filter((n) => n.created_at < before);
     const page = pool.slice(0, limit);
     const last = page[page.length - 1];
@@ -1021,6 +1064,14 @@ export const mockFetch: typeof fetch = async (input, init) => {
     return new Response(null, { status: 204 });
   }
 
+  const hideMatch = path.match(/^\/api\/notes\/([^/]+)\/(hide|unhide)$/);
+  if (hideMatch && method === "POST") {
+    const note = notes.find((n) => n.id === decodeURIComponent(hideMatch[1] ?? ""));
+    if (!note) return json({ detail: "note not found" }, 404);
+    note.hidden = hideMatch[2] === "hide";
+    return new Response(null, { status: 204 });
+  }
+
   if (path === "/api/search" && method === "GET") {
     return json(mockSearch(url.searchParams));
   }
@@ -1074,6 +1125,10 @@ export const mockFetch: typeof fetch = async (input, init) => {
     if (!note) return json({ detail: "note not found" }, 404);
     // Notes without an analysis fixture read as not-yet-analyzed.
     return json(ANALYSES[noteId] ?? emptyAnalysis(noteId));
+  }
+
+  if (path === "/api/entities" && method === "GET") {
+    return json({ items: mockEntityList(url.searchParams) });
   }
 
   const entityMatch = path.match(/^\/api\/entities\/([^/]+)$/);

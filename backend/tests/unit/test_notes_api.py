@@ -96,10 +96,19 @@ class FakeNotesRepo:
         self.notes = [n for n in self.notes if n.id != note_id]
         return len(self.notes) < before
 
+    async def set_hidden(self, ctx: SessionContext, note_id: str, hidden: bool) -> bool:
+        for i, n in enumerate(self.notes):
+            if n.id == note_id:
+                self.notes[i] = dataclasses.replace(n, hidden=hidden)
+                return True
+        return False
+
     async def list_notes(
         self, ctx: SessionContext, *, limit: int, before: datetime | None
     ) -> list[NoteInfo]:
-        rows = sorted(self.notes, key=lambda n: n.created_at, reverse=True)
+        rows = sorted(
+            (n for n in self.notes if not n.hidden), key=lambda n: n.created_at, reverse=True
+        )
         if before is not None:
             rows = [n for n in rows if n.created_at < before]
         return rows[:limit]
@@ -398,6 +407,33 @@ def test_delete_note_204_then_404(client: tuple[TestClient, FakeNotesRepo, FakeJ
     assert c.delete(f"/api/notes/{note['id']}").status_code == 204
     assert all(n["id"] != note["id"] for n in c.get("/api/notes").json()["notes"])
     assert c.delete(f"/api/notes/{note['id']}").status_code == 404
+
+
+def test_hide_drops_note_from_stream_then_unhide_restores(
+    client: tuple[TestClient, FakeNotesRepo, FakeJobQueue],
+) -> None:
+    c, _, jobs = client
+    note = c.post("/api/notes", json={"client_id": "h1", "body": "keep but hide"}).json()
+    assert note["hidden"] is False
+    jobs.enqueued.clear()
+
+    assert c.post(f"/api/notes/{note['id']}/hide").status_code == 204
+    # Gone from the stream, but not re-ingested (visibility ≠ content change).
+    assert all(n["id"] != note["id"] for n in c.get("/api/notes").json()["notes"])
+    assert jobs.enqueued == []
+    # Still directly fetchable — the note is searchable, just not streamed.
+    assert c.get(f"/api/notes/{note['id']}").json()["hidden"] is True
+
+    assert c.post(f"/api/notes/{note['id']}/unhide").status_code == 204
+    assert any(n["id"] == note["id"] for n in c.get("/api/notes").json()["notes"])
+
+
+def test_hide_unhide_missing_note_404(
+    client: tuple[TestClient, FakeNotesRepo, FakeJobQueue],
+) -> None:
+    c, _, _ = client
+    assert c.post(f"/api/notes/{uuid.uuid4()}/hide").status_code == 404
+    assert c.post(f"/api/notes/{uuid.uuid4()}/unhide").status_code == 404
 
 
 def test_create_note_stores_location_verbatim(

@@ -58,6 +58,8 @@ class NoteOut(BaseModel):
     created_at: datetime
     tz_offset_minutes: int | None
     ingest_state: str
+    # Hidden from the home stream (still searchable); see POST /notes/{id}/hide.
+    hidden: bool
     attachments: list[AttachmentOut]
     # Location fields are owner-eyes metadata: Phase 7 scoped-token
     # serialization must exclude them from non-owner responses.
@@ -76,6 +78,7 @@ def note_out(n: NoteInfo) -> NoteOut:
         created_at=n.created_at,
         tz_offset_minutes=n.tz_offset_minutes,
         ingest_state=n.ingest_state,
+        hidden=n.hidden,
         attachments=[
             AttachmentOut(
                 id=a.id,
@@ -191,6 +194,20 @@ async def update_note(
 @router.delete("/notes/{note_id}", status_code=204)
 async def delete_note(note_id: str, principal: PrincipalDep, repo: NotesRepoDep) -> None:
     if not await repo.delete_note(ctx_for(principal), note_id):
+        raise HTTPException(status_code=404, detail="note not found")
+
+
+# Hide/unhide only flip home-stream visibility — no re-ingest, so unlike a
+# PATCH they leave the search index alone and the note stays findable.
+@router.post("/notes/{note_id}/hide", status_code=204)
+async def hide_note(note_id: str, principal: PrincipalDep, repo: NotesRepoDep) -> None:
+    if not await repo.set_hidden(ctx_for(principal), note_id, True):
+        raise HTTPException(status_code=404, detail="note not found")
+
+
+@router.post("/notes/{note_id}/unhide", status_code=204)
+async def unhide_note(note_id: str, principal: PrincipalDep, repo: NotesRepoDep) -> None:
+    if not await repo.set_hidden(ctx_for(principal), note_id, False):
         raise HTTPException(status_code=404, detail="note not found")
 
 

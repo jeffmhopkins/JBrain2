@@ -16,6 +16,7 @@ function item(overrides: Partial<StreamItem> = {}): StreamItem {
     ingestState: "indexed",
     attachments: [],
     pending: false,
+    hidden: false,
     ...overrides,
   };
 }
@@ -31,8 +32,8 @@ function renderStream(items: StreamItem[]) {
     onOpenSearch: vi.fn(),
     onOpenNote: vi.fn(),
     onEdit: vi.fn(),
-    onMove: vi.fn(),
     onDelete: vi.fn(),
+    onHide: vi.fn(),
   };
   render(<Stream items={items} {...handlers} />);
   return handlers;
@@ -80,19 +81,19 @@ describe("Stream", () => {
     expect(onOpenNote).toHaveBeenCalledWith(note);
   });
 
-  it("swipe-left reveals the rail; Edit and Move dispatch their actions", () => {
+  it("swipe-left reveals the rail; Edit and Hide dispatch their actions", () => {
     const note = item({ body: "swipe me" });
-    const { onEdit, onMove } = renderStream([note]);
+    const { onEdit, onHide } = renderStream([note]);
     const bubble = screen.getByRole("button", { name: /swipe me/ });
 
-    expect(screen.queryByRole("button", { name: "Edit" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "edit" })).not.toBeInTheDocument();
     swipeLeft(bubble);
-    fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+    fireEvent.click(screen.getByRole("button", { name: "edit" }));
     expect(onEdit).toHaveBeenCalledWith(note);
 
     swipeLeft(bubble);
-    fireEvent.click(screen.getByRole("button", { name: "Move domain" }));
-    expect(onMove).toHaveBeenCalledWith(note);
+    fireEvent.click(screen.getByRole("button", { name: "hide" }));
+    expect(onHide).toHaveBeenCalledWith(note);
   });
 
   it("vertical drags do not open the rail", () => {
@@ -102,7 +103,7 @@ describe("Stream", () => {
     fireEvent.touchStart(bubble, { touches: [{ clientX: 250, clientY: 50 }] });
     fireEvent.touchMove(bubble, { touches: [{ clientX: 248, clientY: 220 }] });
     fireEvent.touchEnd(bubble);
-    expect(screen.queryByRole("button", { name: "Delete" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "delete" })).not.toBeInTheDocument();
   });
 
   it("delete requires the inline tap-again confirm", () => {
@@ -110,9 +111,9 @@ describe("Stream", () => {
     const { onDelete } = renderStream([note]);
     swipeLeft(screen.getByRole("button", { name: /doomed note/ }));
 
-    fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+    fireEvent.click(screen.getByRole("button", { name: "delete" }));
     expect(onDelete).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("button", { name: "Tap again" }));
+    fireEvent.click(screen.getByRole("button", { name: "tap again" }));
     expect(onDelete).toHaveBeenCalledWith(note.id);
   });
 
@@ -120,6 +121,6 @@ describe("Stream", () => {
     const note = item({ id: null, pending: true, body: "still local" });
     renderStream([note]);
     swipeLeft(screen.getByRole("button", { name: /still local/ }));
-    expect(screen.queryByRole("button", { name: "Edit" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "edit" })).not.toBeInTheDocument();
   });
 });

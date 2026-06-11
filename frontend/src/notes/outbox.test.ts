@@ -24,6 +24,7 @@ function noteOut(clientId: string): NoteOut {
     created_at: "2026-06-10T10:00:01.000Z",
     tz_offset_minutes: null,
     ingest_state: "pending",
+    hidden: false,
     attachments: [],
     latitude: null,
     longitude: null,
