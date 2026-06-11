@@ -195,6 +195,8 @@ async def test_ocr_round_trip_blob_to_searchable_chunks(
     # Ingest is LLM-free: it only enqueues the OCR job for the uncached image.
     await pipeline.ingest_note({"note_id": note_id})
     assert await ocr_jobs_for(maker, attachment_id) == 1
+    note = await SqlNotesRepo(maker).get_note(OWNER, note_id)
+    assert note is not None and note.attachments[0].has_extracts is False  # "ocr queued…"
     # Enqueue-once: a re-ingest while the job is still queued adds nothing.
     await pipeline.ingest_note({"note_id": note_id})
     assert await ocr_jobs_for(maker, attachment_id) == 1
@@ -218,6 +220,9 @@ async def test_ocr_round_trip_blob_to_searchable_chunks(
     by_kind = {r["kind"]: r for r in rows}
     assert by_kind["ocr"]["confidence"] == pytest.approx(0.7)  # the Guards cap
     assert by_kind["caption"]["confidence"] == pytest.approx(0.6)
+    # The API's chip signal flips once the cache fills ("text extracted").
+    note = await SqlNotesRepo(maker).get_note(OWNER, note_id)
+    assert note is not None and note.attachments[0].has_extracts is True
 
     # The handler re-enqueued ingest; run it and the cache becomes chunks.
     await pipeline.ingest_note({"note_id": note_id})

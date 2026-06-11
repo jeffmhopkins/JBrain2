@@ -20,6 +20,7 @@ def _attachment_info(a: Attachment) -> AttachmentInfo:
         media_type=a.media_type,
         size_bytes=a.size_bytes,
         sha256=a.sha256,
+        has_extracts=a.has_extracts,
     )
 
 

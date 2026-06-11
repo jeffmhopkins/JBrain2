@@ -64,6 +64,8 @@ export interface AttachmentOut {
   filename: string;
   media_type: string;
   size_bytes: number;
+  /** True once the vision pipeline cached OCR/caption text for this file. */
+  has_extracts: boolean;
 }
 
 export interface NoteOut {

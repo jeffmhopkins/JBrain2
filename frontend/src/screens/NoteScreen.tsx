@@ -86,13 +86,16 @@ function BodyParagraphs({ body }: { body: string }) {
 const SWIPE_DOWN_PX = 56;
 
 /** Pipeline status, derived client-side: PDFs/text are searchable once the
- * note is indexed; images wait for the Phase 3 OCR backends. */
+ * note is indexed; images become searchable once the async OCR job has
+ * filled the vision cache (hasExtracts). */
 function attachmentStatus(att: StreamAttachment, ingestState: string | null) {
   if (ingestState === "pending" || ingestState === "processing") {
     return { label: "indexing…", tone: "warn" as const };
   }
   if (att.mediaType.startsWith("image/")) {
-    return { label: "no text layer — ocr in p3", tone: "muted" as const };
+    return att.hasExtracts
+      ? { label: "text extracted (ocr)", tone: "ok" as const }
+      : { label: "ocr queued…", tone: "warn" as const };
   }
   return { label: "text extracted", tone: "ok" as const };
 }
@@ -114,8 +117,10 @@ function AttachmentsTab({ view, onAdd, onRemove }: AttachmentsTabProps) {
   const indexing = view.ingestState === "pending" || view.ingestState === "processing";
   const searchable = indexing
     ? 0
-    : attachments.filter((a) => !a.mediaType.startsWith("image/")).length;
-  const awaitingOcr = attachments.filter((a) => a.mediaType.startsWith("image/")).length;
+    : attachments.filter((a) => !a.mediaType.startsWith("image/") || a.hasExtracts).length;
+  const awaitingOcr = attachments.filter(
+    (a) => a.mediaType.startsWith("image/") && !a.hasExtracts,
+  ).length;
 
   async function addFiles(list: FileList | null) {
     if (!list) return;
@@ -136,7 +141,7 @@ function AttachmentsTab({ view, onAdd, onRemove }: AttachmentsTabProps) {
     fmtBytes(totalBytes),
     ...(indexing ? ["indexing…"] : []),
     ...(searchable > 0 ? [`${searchable} searchable`] : []),
-    ...(awaitingOcr > 0 ? [`${awaitingOcr} awaiting ocr (p3)`] : []),
+    ...(awaitingOcr > 0 ? [`${awaitingOcr} awaiting ocr`] : []),
   ].join(" · ");
 
   return (

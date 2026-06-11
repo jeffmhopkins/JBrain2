@@ -17,6 +17,7 @@ function fakeController(): NotesController {
       filename: "f.txt",
       mediaType: "text/plain",
       sizeBytes: 1,
+      hasExtracts: false,
     })),
     removeAttachment: vi.fn(async () => undefined),
     fetchById: vi.fn(async () => null),

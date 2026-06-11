@@ -18,6 +18,9 @@ class AttachmentInfo:
     media_type: str
     size_bytes: int
     sha256: str = ""
+    # Whether any vision extract (OCR/caption) exists — drives the
+    # Attachments tab's OCR status chip.
+    has_extracts: bool = False
 
 
 @dataclass(frozen=True)

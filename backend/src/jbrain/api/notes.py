@@ -44,6 +44,9 @@ class AttachmentOut(BaseModel):
     filename: str
     media_type: str
     size_bytes: int
+    # True once the vision pipeline cached OCR/caption text for this file —
+    # the client derives the OCR status chip from it.
+    has_extracts: bool = False
 
 
 class NoteOut(BaseModel):
@@ -75,7 +78,11 @@ def note_out(n: NoteInfo) -> NoteOut:
         ingest_state=n.ingest_state,
         attachments=[
             AttachmentOut(
-                id=a.id, filename=a.filename, media_type=a.media_type, size_bytes=a.size_bytes
+                id=a.id,
+                filename=a.filename,
+                media_type=a.media_type,
+                size_bytes=a.size_bytes,
+                has_extracts=a.has_extracts,
             )
             for a in n.attachments
         ],
@@ -227,6 +234,7 @@ async def upload_attachment(
         filename=attachment.filename,
         media_type=attachment.media_type,
         size_bytes=attachment.size_bytes,
+        has_extracts=attachment.has_extracts,
     )
 
 

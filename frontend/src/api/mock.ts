@@ -58,12 +58,13 @@ function id(prefix: string): string {
 
 const attachmentBlobs = new Map<string, Blob>();
 
-function makeAttachment(filename: string, mediaType: string): AttachmentOut {
+function makeAttachment(filename: string, mediaType: string, hasExtracts = false): AttachmentOut {
   const att = {
     id: id("att"),
     filename,
     media_type: mediaType,
     size_bytes: 24_120,
+    has_extracts: hasExtracts,
   };
   attachmentBlobs.set(att.id, new Blob([`mock contents of ${filename}`], { type: mediaType }));
   return att;
@@ -127,7 +128,8 @@ const notes: NoteOut[] = [
     "Receipts",
     "Roof repair quote — $4,200 incl. flashing. Get second opinion?",
     daysAgo(1, 10, 22),
-    [makeAttachment("roof-quote.jpg", "image/jpeg")],
+    // OCR already cached: exercises the "text extracted (ocr)" chip.
+    [makeAttachment("roof-quote.jpg", "image/jpeg", true)],
   ),
   seedNote("general", null, "Garage door keypad battery replaced — CR2032", daysAgo(1, 17, 48)),
   seedNote(
@@ -1035,6 +1037,7 @@ export const mockFetch: typeof fetch = async (input, init) => {
       filename,
       media_type: file.type || "application/octet-stream",
       size_bytes: file.size,
+      has_extracts: false, // fresh uploads always start pre-OCR
     };
     attachmentBlobs.set(att.id, file);
     note.attachments.push(att);

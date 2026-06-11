@@ -12,6 +12,8 @@ export interface StreamAttachment {
   filename: string;
   mediaType: string;
   sizeBytes: number;
+  /** Images: true once OCR/caption text is cached server-side. */
+  hasExtracts: boolean;
 }
 
 export interface StreamItem {
@@ -72,6 +74,7 @@ function serverItem(note: NoteOut): StreamItem {
       filename: a.filename,
       mediaType: a.media_type,
       sizeBytes: a.size_bytes,
+      hasExtracts: a.has_extracts,
     })),
     pending: false,
   };
@@ -91,6 +94,7 @@ function pendingItem(note: PendingNote): StreamItem {
       filename: a.filename,
       mediaType: a.media_type,
       sizeBytes: a.blob.size,
+      hasExtracts: false, // OCR can only have run server-side
     })),
     pending: true,
   };
@@ -211,6 +215,7 @@ export function useNotes(enabled: boolean, store?: OutboxStore): NotesController
         filename: out.filename,
         mediaType: out.media_type,
         sizeBytes: out.size_bytes,
+        hasExtracts: out.has_extracts,
       };
     },
     [sync],
