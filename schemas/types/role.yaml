@@ -1,0 +1,32 @@
+# Role — a reified relationship edge between two entities. [proposed]
+# Employment, ownership, residence, prescriber, vet, account-holder are all Roles
+# — NOT entity types and NOT endpoint attributes. Generalizes ANALYSIS inverse edges.
+id: role
+name: Role
+schema_org_ref: schema:Role
+description: A typed, dated relationship carried as its own edge entity.
+vehicle: graph
+facets: [Temporal, Lifecycle, Monetary]   # Monetary optional (e.g. employment salary)
+default_fact_kind: relationship
+
+predicates:
+  - canonical_name: roleName            # employee | contractor | owner | resident | prescriber | ...
+    value_shape: enum
+    enum_values: [employee, contractor, board_member, owner, resident, prescriber, veterinarian, account_holder, member]
+    kind: state
+    schema_org_ref: schema:roleName
+  - canonical_name: jobTitle
+    value_shape: text
+    kind: state                         # promotion supersedes in place, title history kept
+    schema_org_ref: schema:jobTitle
+  - canonical_name: source              # the role-bearer (e.g. the Person)
+    value_shape: ref
+    kind: relationship
+  - canonical_name: target              # the counterpart (e.g. the Organization)
+    value_shape: ref
+    kind: relationship
+
+# Lifecycle.status: active | ended
+# Identity is mention-anchored like any entity; the natural composite signal is
+# (source, target, roleName, startDate) — a resolution hint, not a stored key.
+display_name: [jobTitle, roleName]

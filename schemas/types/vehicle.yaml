@@ -1,0 +1,36 @@
+# Vehicle — a car/truck/etc. [proposed]
+id: vehicle
+name: Vehicle
+schema_org_ref: schema:Vehicle
+description: A vehicle. VIN is the strong resolution signal; owner is a Role edge.
+vehicle: graph
+facets: [Named, ExternalIdentified, Related, Lifecycle]
+default_fact_kind: attribute
+allow_open_predicates: true
+
+predicates:
+  - canonical_name: manufacturer       # make
+    value_shape: text
+    kind: attribute
+    functional: true
+    schema_org_ref: schema:manufacturer
+  - canonical_name: model
+    value_shape: text
+    kind: attribute
+    functional: true
+    schema_org_ref: schema:model
+  - canonical_name: modelDate          # year
+    value_shape: scalar
+    kind: attribute
+    functional: true
+  - canonical_name: licensePlate       # 🔒 not stable (transfers/renewals)
+    value_shape: structured            # structured(license_plate)
+    kind: state
+  - canonical_name: mileage            # accumulating odometer readings
+    value_shape: quantity
+    kind: measurement
+    schema_org_ref: schema:mileageFromOdometer
+
+# identifier.vin (🔒) from ExternalIdentified — globally unique, the resolution key signal.
+# owner is a Role edge (Related).
+display_name: [name, modelDate+manufacturer+model]

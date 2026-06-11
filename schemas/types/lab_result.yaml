@@ -1,0 +1,43 @@
+# Lab result / clinical Observation. 🔒🔒 health — strictest firewall. [proposed]
+# DEFERRED: populated by the Phase-7 typed parser, NOT free-extracted into facts
+# (ANALYSIS routes structured medical docs to typed parsers). Cataloged here so
+# the typed table and the graph speak the same facet vocabulary.
+id: lab_result
+name: Observation                  # FHIR Observation shape
+schema_org_ref: schema:MedicalTest
+description: A clinical lab observation; FHIR/LOINC/UCUM-shaped typed record.
+vehicle: typed_record(P7)
+facets: [ExternalIdentified, Temporal, Related]
+default_fact_kind: measurement
+allow_open_predicates: false
+
+predicates:
+  - canonical_name: identifier     # identifier.loinc — the LOINC code (CodeableConcept)
+    qualifier_vocab: id_scheme
+    value_shape: scalar
+    kind: attribute
+  - canonical_name: value          # the reading
+    value_shape: quantity          # {value, unit: UCUM}
+    kind: measurement
+  - canonical_name: referenceRange
+    value_shape: structured        # structured(reference_range)
+    kind: attribute
+  - canonical_name: interpretation
+    value_shape: enum
+    enum_values: [normal, high, low, abnormal, critical]
+    kind: attribute
+  - canonical_name: effectiveDate  # clinically relevant time
+    value_shape: date
+    kind: event
+  - canonical_name: performer      # ordering / performing provider
+    value_shape: ref
+    range_type: organization
+    kind: relationship
+  - canonical_name: specimen
+    value_shape: text
+    kind: attribute
+
+# Lifecycle.status (FHIR): an amended/corrected result supersedes the prior value.
+status_values: [registered, preliminary, final, amended, corrected, cancelled, entered-in-error]
+
+display_name: [name]               # the LOINC long name; value rendered "<value> <unit>"
