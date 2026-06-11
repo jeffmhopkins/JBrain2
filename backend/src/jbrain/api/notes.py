@@ -314,6 +314,34 @@ async def attachment_extracts(
     )
 
 
+@router.post("/notes/{note_id}/analyze", status_code=202)
+async def analyze_note(
+    note_id: str,
+    principal: PrincipalDep,
+    repo: NotesRepoDep,
+    jobs: JobQueueDep,
+) -> dict[str, str]:
+    """On-demand re-analysis of one note: a plain analyze_note job, the same
+    incremental upsert + retraction sweep an edit triggers — no special re-run
+    job kind. Refused while the pipeline would run it anyway (ingest pending
+    or OCR outstanding): the ingest gate owns that sequencing."""
+    ctx = ctx_for(principal)
+    note = await repo.get_note(ctx, note_id)
+    if note is None:
+        raise HTTPException(status_code=404, detail="note not found")
+    if await jobs.has_active(ctx, "analyze_note", payload_field="note_id", value=note_id):
+        raise HTTPException(status_code=409, detail="analysis already queued or running")
+    if note.ingest_state in ("pending", "processing") or await jobs.has_active_ocr_for_note(
+        ctx, note_id
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail="note is still being processed; analysis will run automatically",
+        )
+    job_id = await jobs.enqueue(ctx, "analyze_note", {"note_id": note_id})
+    return {"job_id": job_id}
+
+
 @router.post("/attachments/{attachment_id}/analyze", status_code=202)
 async def analyze_attachment(
     attachment_id: str,

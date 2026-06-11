@@ -21,6 +21,8 @@ class FakeQueue:
         self.analyze_backfills = 0
         self.purge_backfills = 0
         self.backfill_error: Exception | None = None
+        # Whether a non-permanent fail() burned the last attempt.
+        self.fail_exhausts = False
 
     async def claim(self, maker: Any, ctx: Any) -> Job | None:
         assert ctx is queue.SYSTEM_CTX
@@ -31,10 +33,11 @@ class FakeQueue:
 
     async def fail(
         self, maker: Any, ctx: Any, job_id: str, error: str, *, permanent: bool = False
-    ) -> None:
+    ) -> bool:
         self.failed.append((job_id, error))
         if permanent:
             self.permanent.append(job_id)
+        return permanent or self.fail_exhausts
 
     async def backfill_pending_notes(self, maker: Any, ctx: Any) -> int:
         self.backfills += 1
@@ -117,6 +120,72 @@ async def test_process_one_fails_permanently_on_permanent_job_error(
     assert await worker.process_one(None, {"analyze_note": handler}) is True  # type: ignore[arg-type]
     assert fake.completed == []
     assert fake.permanent == ["job-1"]
+
+
+def install_fallback_spy(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    calls: list[str] = []
+
+    async def spy(maker: Any, attachment_id: str) -> str | None:
+        calls.append(attachment_id)
+        return "fallback-job"
+
+    monkeypatch.setattr(worker.ocr, "enqueue_analysis_fallback", spy)
+    return calls
+
+
+async def boom_handler(payload: dict[str, Any]) -> None:
+    raise RuntimeError("vision call kept failing")
+
+
+async def test_exhausted_ocr_job_triggers_analysis_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake = FakeQueue([job(kind="ocr_attachment", payload={"attachment_id": "att-1"})])
+    fake.fail_exhausts = True
+    install(monkeypatch, fake)
+    calls = install_fallback_spy(monkeypatch)
+
+    assert await worker.process_one(None, {"ocr_attachment": boom_handler}) is True  # type: ignore[arg-type]
+    assert calls == ["att-1"]
+
+
+async def test_permanent_ocr_failure_also_triggers_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake = FakeQueue([job(kind="ocr_attachment", payload={"attachment_id": "att-2"})])
+    install(monkeypatch, fake)
+    calls = install_fallback_spy(monkeypatch)
+
+    async def permanent(payload: dict[str, Any]) -> None:
+        raise queue.PermanentJobError("oversized after all")
+
+    assert await worker.process_one(None, {"ocr_attachment": permanent}) is True  # type: ignore[arg-type]
+    assert fake.permanent == ["job-1"]
+    assert calls == ["att-2"]
+
+
+async def test_non_exhausted_ocr_failure_does_not_fall_back(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Retries remain: the job will run again, so analysis must keep waiting.
+    fake = FakeQueue([job(kind="ocr_attachment", payload={"attachment_id": "att-3"})])
+    install(monkeypatch, fake)
+    calls = install_fallback_spy(monkeypatch)
+
+    assert await worker.process_one(None, {"ocr_attachment": boom_handler}) is True  # type: ignore[arg-type]
+    assert fake.failed and calls == []
+
+
+async def test_exhausted_non_ocr_job_does_not_fall_back(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake = FakeQueue([job(kind="analyze_note")])
+    fake.fail_exhausts = True
+    install(monkeypatch, fake)
+    calls = install_fallback_spy(monkeypatch)
+
+    assert await worker.process_one(None, {"analyze_note": boom_handler}) is True  # type: ignore[arg-type]
+    assert calls == []
 
 
 async def test_process_one_fails_unknown_kind(monkeypatch: pytest.MonkeyPatch) -> None:

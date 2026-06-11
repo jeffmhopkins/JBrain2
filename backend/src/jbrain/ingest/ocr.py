@@ -84,6 +84,37 @@ DESCRIPTION_SYSTEM = (
 )
 
 
+async def enqueue_analysis_fallback(
+    maker: async_sessionmaker[AsyncSession], attachment_id: str
+) -> str | None:
+    """OCR retry exhaustion fallback: analyze the note body-only.
+
+    The failed job row stays the durable record; analysis must not wait on
+    text that will never arrive. Enqueues analyze_note DIRECTLY — a re-ingest
+    would re-enqueue OCR for the still-cache-less attachment and loop. Skipped
+    while another ocr_attachment job for the note is still active (that job's
+    own completion or exhaustion triggers analysis) or an analyze_note job is
+    already queued/running. Returns the job id, or None when nothing was
+    enqueued.
+    """
+    async with scoped_session(maker, SYSTEM_CTX) as session:
+        note_id = (
+            await session.execute(select(Attachment.note_id).where(Attachment.id == attachment_id))
+        ).scalar_one_or_none()
+    if note_id is None:
+        return None
+    nid = str(note_id)
+    if await queue.has_active_ocr_for_note(maker, SYSTEM_CTX, nid):
+        return None
+    if await queue.has_active(
+        maker, SYSTEM_CTX, "analyze_note", payload_field="note_id", value=nid
+    ):
+        return None
+    job_id = await queue.enqueue(maker, SYSTEM_CTX, "analyze_note", {"note_id": nid})
+    log.warning("ocr.analysis_fallback", attachment_id=attachment_id, note_id=nid, job_id=job_id)
+    return job_id
+
+
 class ModeSource(Protocol):
     """The slice of the settings store the handler reads (faked in tests)."""
 

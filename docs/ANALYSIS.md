@@ -214,6 +214,23 @@ this decision explicitly before launch.
   → `retracted_by_reextraction` (not a conflict, no inbox noise); new key →
   insert. `prompt_version` makes corpus re-runs a planned, budgeted
   migration.
+- **Re-run = the same incremental pass [decided]**, on demand via
+  `POST /api/notes/{id}/analyze` (202 + job id, a plain `analyze_note` job;
+  409 while an analysis is already queued/running, or while ingest/OCR will
+  run one anyway — the gate owns that sequencing). The retraction sweep
+  carries two repairs so a re-run leaves a coherent graph: a retracted fact
+  must not keep another fact superseded — survivors re-attach to the first
+  non-retracted transitive supersessor or are restored (active, link
+  cleared, SCD-2 close reopened when it came from the retracted fact), the
+  same chain repair note deletion runs — and **open** review cards
+  referencing a retracted fact, plus open ambiguous-mention cards for names
+  the re-extraction no longer references, are retired. Resolved and
+  dismissed items are human history and survive any re-run; pinned facts
+  never enter the sweep at all. **Full unwind-on-re-run was rejected
+  [decided]**: purge stays a deletion-only privilege of note deletion,
+  because tearing the note's artifacts down to replay them would discard
+  exactly what incremental repair preserves — pins, resolution history, and
+  the cross-note supersession evidence other notes' facts hang off.
 - **Human decisions are pinned overrides**: review-inbox resolutions,
   entity merges/rejections, domain corrections, and tag fixes survive any
   reprocessing; auto-supersession cannot override a pinned fact, only
@@ -270,6 +287,24 @@ transcription call only with no caption row. The job payload's optional
 re-run path — the handler re-describes via delete+insert of the caption row
 and re-runs OCR only if its cache row is missing, then re-ingests).
 Confidence caps are unchanged: OCR 0.7, description 0.6.
+
+**Analysis gating [decided: keyed on outstanding vision work]**: ingest
+enqueues `analyze_note` only when no `ocr_attachment` job is queued or
+running for ANY of the note's attachments and the run enqueued none — so an
+image note is extracted once, *with* its OCR text (the OCR handler's
+re-ingest enqueues the analysis), never a blind body-only pass plus a
+re-run. The gate keys on outstanding **work**, never on extract kinds or
+the image-analysis mode: flipping ocr→full on an already-cached attachment
+enqueues no job and must not block — captions then arrive only via the
+on-demand endpoint, which is intended. A queued analyze job dedups a second
+enqueue; a *running* one does not (it may have read stale chunks — a fresh
+pass must follow). Two escape hatches keep the gate from stranding a note
+unanalyzed: oversized images are skipped at enqueue with no cache row, so
+they are never outstanding and never block; and an OCR job that exhausts
+its retries falls back to enqueueing **body-only analysis** directly (the
+failed job row stays the durable record — a re-ingest would just re-enqueue
+OCR and loop). The startup backfill respects the same gate. Embedding is
+never gated: capture-to-searchable still waits on nothing.
 
 Guards on what extraction feeds the fact pipeline: structured
 medical/financial documents are *detected and routed* (deferred to the

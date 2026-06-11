@@ -137,8 +137,15 @@ async def run_scenario(maker: async_sessionmaker, scenario: Scenario) -> Snapsho
     """Apply every step in order through the real pipeline; return the graph."""
     import json
 
+    note_ids: list[str] = []
     for step in scenario.steps:
-        note_id = await _seed_note(maker, step)
+        if step.reanalyze_step is not None:
+            # Re-analysis of an earlier step's note: same row, same chunk,
+            # same reported_at — only the scripted extraction changes.
+            note_id = note_ids[step.reanalyze_step]
+        else:
+            note_id = await _seed_note(maker, step)
+        note_ids.append(note_id)
         await _analyzer(maker, json.dumps(step.extraction)).analyze_note({"note_id": note_id})
     return await _snapshot(maker)
 

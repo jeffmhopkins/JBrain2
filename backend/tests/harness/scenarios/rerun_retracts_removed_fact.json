@@ -1,0 +1,44 @@
+{
+  "name": "re-run retracts a fact the re-extraction dropped",
+  "description": "Re-analysis upserts on the structural identity key; a key the note no longer asserts is retracted quietly (retracted_by_reextraction semantics — no conflict, no inbox noise). The note's edit removed the relocation sentence, so the homeLocation fact must leave the active graph but keep its row as history.",
+  "steps": [
+    {
+      "domain": "general",
+      "created_at": "2026-06-10T17:11:00-06:00",
+      "body": "Bumped into Sarah from accounting — she just moved to Denver.",
+      "extraction": {
+        "title": "Ran into Sarah",
+        "tags": ["sarah", "relocation", "denver"],
+        "mentions": [{"name": "Sarah", "kind": "Person", "surface_text": "Sarah"}],
+        "facts": [
+          {"predicate": "homeLocation", "qualifier": "", "kind": "state", "statement": "Sarah moved to Denver.", "value_json": {"city": "Denver"}, "assertion": "asserted", "entity_ref": "Sarah", "object_entity_ref": null, "temporal": {"phrase": "just", "resolved_start": "2026-06-10T00:00:00-06:00", "resolved_end": null, "precision": "day"}, "domain": "general", "confidence": 0.85}
+        ],
+        "temporal_tokens": []
+      }
+    },
+    {
+      "reanalyze_step": 0,
+      "domain": "general",
+      "created_at": "2026-06-10T17:11:00-06:00",
+      "body": "Bumped into Sarah from accounting — she just moved to Denver.",
+      "extraction": {
+        "title": "Ran into Sarah",
+        "tags": ["sarah", "accounting", "smalltalk"],
+        "mentions": [{"name": "Sarah", "kind": "Person", "surface_text": "Sarah"}],
+        "facts": [],
+        "temporal_tokens": []
+      }
+    }
+  ],
+  "expect": {
+    "facts": [
+      {"entity": "Sarah", "predicate": "homeLocation", "kind": "state", "value_contains": "Denver", "status": "retracted", "chained": false}
+    ],
+    "absent_facts": [
+      {"predicate": "homeLocation", "status": "active"}
+    ],
+    "entities": [
+      {"name": "Sarah", "kind": "Person", "status": "provisional"}
+    ]
+  }
+}
