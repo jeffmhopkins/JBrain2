@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-<title>Entry · swipe-to-hide — C · Fade to in-place stub</title>
+<title>Entry · swipe-left actions — Hide · Edit · Delete</title>
 <style>
   :root {
     --bg:#0E0F11; --surface:#17181B; --surface-2:#1E2024; --border:#26282C;
@@ -33,19 +33,21 @@
   .older-pill{align-self:center;font-size:var(--fs-micro);padding:5px 14px;border:none;
     border-radius:999px;background:var(--steel-tint);color:var(--steel);margin-top:8px;}
   .day-header{font-size:var(--fs-micro);letter-spacing:.08em;text-transform:uppercase;color:var(--text-3);margin:8px 2px 6px;}
-  .day-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-card);overflow:hidden;}
+  .day-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-card);}
 
   .note-wrap{position:relative;overflow:hidden;}
   .note-wrap + .note-wrap{border-top:1px solid var(--border);}
-  .hide-bg{position:absolute;inset:0;display:flex;align-items:center;gap:10px;padding-left:22px;
-    color:var(--text-2);background:var(--surface-2);opacity:0;}
-  /* left rail — now a single Edit action (was Edit/Move/Delete) */
-  .left-rail{position:absolute;inset:0 0 0 auto;display:flex;}
-  .rail-btn{width:96px;border:none;font-size:14px;font-weight:500;display:flex;
-    align-items:center;justify-content:center;gap:7px;}
-  .rail-edit{background:var(--amber-tint);color:var(--amber);}
 
-  .note-slide{position:relative;background:var(--surface);transition:transform 150ms ease-out,opacity 150ms ease-out;}
+  /* swipe-left action rail */
+  .rail{position:absolute;inset:0 0 0 auto;display:flex;}
+  .rail-btn{width:64px;border:none;display:flex;flex-direction:column;align-items:center;
+    justify-content:center;gap:5px;font-size:var(--fs-micro);font-weight:500;line-height:1;}
+  .rail-hide{background:var(--steel-tint);color:var(--steel);}
+  .rail-edit{background:var(--amber-tint);color:var(--amber);}
+  .rail-delete{background:var(--rose-tint);color:var(--rose);}
+  .rail-delete.armed{background:var(--rose);color:#1a1112;}
+
+  .note-slide{position:relative;background:var(--surface);transition:transform 150ms ease-out;}
   .note-slide.dragging{transition:none;}
   .note{padding:13px 16px;display:flex;flex-direction:column;gap:5px;}
   .note-head{display:flex;align-items:center;gap:8px;font-size:var(--fs-head);color:var(--text-3);}
@@ -53,21 +55,7 @@
   .note-body{font-size:var(--fs-note);line-height:1.4;}
   .note-chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:2px;}
   .chip{font-size:var(--fs-micro);padding:3px 9px;border-radius:999px;background:var(--surface-2);color:var(--text-2);}
-
-  /* in-place hidden stub — replaces the bubble, stays put */
-  .note-stub{display:flex;align-items:center;justify-content:space-between;gap:10px;
-    padding:10px 16px;background:repeating-linear-gradient(135deg,transparent,transparent 8px,rgba(255,255,255,.012) 8px,rgba(255,255,255,.012) 16px);
-    color:var(--text-3);font-size:13px;height:0;opacity:0;overflow:hidden;
-    transition:height 160ms ease-out,opacity 140ms ease-out;}
-  .note-stub.open{height:42px;opacity:1;}
-  .note-stub .lbl{display:flex;align-items:center;gap:8px;}
-  .note-stub button{background:none;border:none;color:var(--steel);font-size:13px;font-weight:500;}
-  .note-collapse{transition:height 160ms ease-out;overflow:hidden;}
-  .mini{position:absolute;left:50%;bottom:96px;transform:translate(-50%,16px);
-    background:var(--surface-2);border:1px solid var(--border);border-radius:999px;
-    padding:8px 16px;font-size:13px;color:var(--amber);opacity:0;pointer-events:none;
-    transition:transform 160ms ease-out,opacity 160ms ease-out;z-index:11;white-space:nowrap;}
-  .mini.show{transform:translate(-50%,0);opacity:1;}
+  .note-wrap.collapsing{transition:height 160ms ease-out,opacity 120ms ease-out;overflow:hidden;}
 
   .composer{margin:0 16px 16px;border:1px solid var(--border);border-radius:var(--r-card);background:var(--surface);padding:10px;flex:none;}
   .seg{display:flex;background:var(--surface-2);border-radius:12px;padding:4px;gap:4px;}
@@ -77,16 +65,29 @@
   .composer .foot{display:flex;align-items:center;justify-content:space-between;padding:6px 8px 2px;}
   .composer .foot .left{display:flex;align-items:center;gap:9px;color:var(--text-2);font-size:13px;}
   .composer .foot .right{display:flex;gap:16px;color:var(--text-2);}
+
+  /* toast (hide undo) */
+  .toast{position:absolute;left:16px;right:16px;bottom:22px;background:var(--surface-2);
+    border:1px solid var(--border);border-radius:12px;padding:12px 14px;display:flex;
+    align-items:center;justify-content:space-between;gap:12px;font-size:14px;
+    transform:translateY(140%);opacity:0;transition:transform 180ms ease-out,opacity 180ms ease-out;
+    z-index:10;box-shadow:0 8px 24px rgba(0,0,0,.4);}
+  .toast.show{transform:translateY(0);opacity:1;}
+  .toast button{background:none;border:none;color:var(--steel);font-size:14px;font-weight:600;}
+  /* edit feedback pill */
+  .mini{position:absolute;left:50%;bottom:96px;transform:translate(-50%,16px);
+    background:var(--surface-2);border:1px solid var(--border);border-radius:999px;
+    padding:8px 16px;font-size:13px;color:var(--amber);opacity:0;pointer-events:none;
+    transition:transform 160ms ease-out,opacity 160ms ease-out;z-index:11;white-space:nowrap;}
+  .mini.show{transform:translate(-50%,0);opacity:1;}
 </style>
 </head>
 <body>
   <div class="caption">
-    <span class="tag">Variant C · fade to in-place stub</span><br/>
-    As you swipe right the bubble <b>fades and dims</b> with the distance — visible feedback
-    that it’s on its way out. Release past the line and it collapses into a thin
-    <b>“hidden — restore”</b> stub that stays exactly where the note was (no timed toast to
-    chase). The stub clears when you leave the screen; the note lives on in Search.
-    <b>Swipe left</b> reveals one <b>Edit</b> button that opens the editor.
+    <span class="tag">swipe-left actions</span><br/>
+    <b>Swipe a note left</b> to reveal three icon actions — <b>Hide</b> (slides it out of
+    the stream; undo toast, note stays in Search), <b>Edit</b> (opens the editor), and
+    <b>Delete</b> (tap-again to confirm). No right-swipe gesture.
   </div>
 
   <div class="phone">
@@ -108,6 +109,8 @@
       <div class="field">Write an entry…</div>
       <div class="foot"><div class="left"><span class="dot"></span> Saved to your wiki · no AI.</div><div class="right">📎 ➤</div></div>
     </div>
+
+    <div class="toast" id="toast"><span>note hidden</span><button id="undo">Undo</button></div>
     <div class="mini" id="mini">opens the focused-writer editor…</div>
   </div>
 
@@ -123,78 +126,88 @@ const NOTES={
     {dot:'var(--green)',head:'1d',body:'Idea: weekend project to index old photos by location.'},
   ],
 };
-const EYE_OFF='<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9.88 9.88a3 3 0 1 0 4.24 4.24"/><path d="M10.73 5.08A10.4 10.4 0 0 1 12 5c7 0 10 7 10 7a13.2 13.2 0 0 1-1.67 2.68"/><path d="M6.61 6.61A13.5 13.5 0 0 0 2 12s3 7 10 7a9.7 9.7 0 0 0 5.39-1.61"/><line x1="2" y1="2" x2="22" y2="22"/></svg>';
-const PENCIL='<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>';
-const COMMIT=0.4, LEFTRAIL=96;
-let miniTimer;
-function openEdit(wrap){
-  wrap.querySelector('.note-slide').style.transform='translateX(0)';
-  const m=document.getElementById('mini');m.classList.add('show');
-  clearTimeout(miniTimer);miniTimer=setTimeout(()=>m.classList.remove('show'),1600);
-}
+const ICON={
+  hide:'<svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9.88 9.88a3 3 0 1 0 4.24 4.24"/><path d="M10.73 5.08A10.4 10.4 0 0 1 12 5c7 0 10 7 10 7a13.2 13.2 0 0 1-1.67 2.68"/><path d="M6.61 6.61A13.5 13.5 0 0 0 2 12s3 7 10 7a9.7 9.7 0 0 0 5.39-1.61"/><line x1="2" y1="2" x2="22" y2="22"/></svg>',
+  edit:'<svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>',
+  del:'<svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>',
+};
+const RAIL=192;
+let openWrap=null, miniTimer, toastTimer, lastHidden;
 
 function buildNote(n){
   const wrap=document.createElement('div');wrap.className='note-wrap';
   wrap.innerHTML=`
-    <div class="hide-bg">${EYE_OFF}<span>hide</span></div>
-    <div class="left-rail"><button class="rail-btn rail-edit">${PENCIL}Edit</button></div>
+    <div class="rail">
+      <button class="rail-btn rail-hide">${ICON.hide}hide</button>
+      <button class="rail-btn rail-edit">${ICON.edit}edit</button>
+      <button class="rail-btn rail-delete">${ICON.del}delete</button>
+    </div>
     <div class="note-slide">
       <div class="note">
         <div class="note-head"><span class="domain-dot" style="background:${n.dot}"></span>${n.head}</div>
         <div class="note-body">${n.body}</div>
         ${n.chips?`<div class="note-chips">${n.chips.map(c=>`<span class="chip">${c}</span>`).join('')}</div>`:''}
       </div>
-    </div>
-    <div class="note-stub"><span class="lbl">${EYE_OFF} hidden</span><button>restore</button></div>`;
+    </div>`;
   wrap._data=n;
-  wrap.querySelector('.note-stub button').onclick=()=>restore(wrap);
-  wrap.querySelector('.rail-edit').onclick=()=>openEdit(wrap);
+  const del=wrap.querySelector('.rail-delete');
+  wrap.querySelector('.rail-hide').onclick=()=>hideNote(wrap);
+  wrap.querySelector('.rail-edit').onclick=()=>{closeRail(wrap);showMini();};
+  del.onclick=()=>{
+    if(!del.classList.contains('armed')){del.classList.add('armed');del.lastChild.textContent='tap again';return;}
+    deleteNote(wrap);
+  };
   attachDrag(wrap);
   return wrap;
 }
 
+function setOffset(wrap,x){wrap.querySelector('.note-slide').style.transform=`translateX(${x}px)`;}
+function disarm(wrap){const d=wrap.querySelector('.rail-delete');d.classList.remove('armed');d.lastChild.textContent='delete';}
+function openRail(wrap){if(openWrap&&openWrap!==wrap){setOffset(openWrap,0);disarm(openWrap);}openWrap=wrap;setOffset(wrap,-RAIL);}
+function closeRail(wrap){setOffset(wrap,0);disarm(wrap);if(openWrap===wrap)openWrap=null;}
+
 function attachDrag(wrap){
   const slide=wrap.querySelector('.note-slide');
-  const bg=wrap.querySelector('.hide-bg');
-  const W=358;
-  let startX,startY,dx=0,axis=null,active=false;
-  function down(e){const p=e.touches?e.touches[0]:e;startX=p.clientX;startY=p.clientY;axis=null;active=true;dx=0;slide.classList.add('dragging');}
+  let startX,startY,dx=0,axis=null,active=false,base=0;
+  function down(e){const p=e.touches?e.touches[0]:e;startX=p.clientX;startY=p.clientY;axis=null;active=true;
+    base=(openWrap===wrap)?-RAIL:0;dx=base;slide.classList.add('dragging');}
   function move(e){
     if(!active)return;const p=e.touches?e.touches[0]:e;const mx=p.clientX-startX,my=p.clientY-startY;
     if(axis===null&&(Math.abs(mx)>8||Math.abs(my)>8))axis=Math.abs(mx)>Math.abs(my)?'h':'v';
     if(axis==='v'){active=false;slide.classList.remove('dragging');return;}
     if(axis!=='h')return;if(e.cancelable)e.preventDefault();
-    dx=Math.max(-LEFTRAIL,mx);
-    slide.style.transform=`translateX(${dx}px)`;
-    if(dx>0){const f=Math.min(1,dx/(W*COMMIT));slide.style.opacity=String(1-0.75*f);bg.style.opacity=String(f);}
-    else{slide.style.opacity='1';bg.style.opacity='0';}
+    dx=Math.min(0,Math.max(-RAIL,base+mx)); setOffset(wrap,dx); // left only
   }
   function up(){
     if(!active)return;active=false;slide.classList.remove('dragging');if(axis!=='h')return;
-    if(dx>W*COMMIT){hideNote(wrap);}
-    else if(dx<-LEFTRAIL/2){slide.style.transform=`translateX(${-LEFTRAIL}px)`;slide.style.opacity='1';bg.style.opacity='0';}
-    else{slide.style.transform='translateX(0)';slide.style.opacity='1';bg.style.opacity='0';}
+    if(dx<-RAIL/2)openRail(wrap);else closeRail(wrap);
   }
   slide.addEventListener('mousedown',down);window.addEventListener('mousemove',move);window.addEventListener('mouseup',up);
   slide.addEventListener('touchstart',down,{passive:true});slide.addEventListener('touchmove',move,{passive:false});slide.addEventListener('touchend',up);
+  // tapping an open bubble closes the rail
+  slide.addEventListener('click',()=>{if(openWrap===wrap)closeRail(wrap);});
 }
 
+function collapse(wrap,after){
+  if(openWrap===wrap)openWrap=null;
+  const h=wrap.offsetHeight;wrap.style.height=h+'px';setOffset(wrap,0);
+  requestAnimationFrame(()=>{wrap.classList.add('collapsing');wrap.style.height='0';wrap.style.opacity='0';});
+  setTimeout(after,180);
+}
 function hideNote(wrap){
-  const slide=wrap.querySelector('.note-slide');
-  const stub=wrap.querySelector('.note-stub');
-  const bg=wrap.querySelector('.hide-bg');
-  slide.style.transform=`translateX(${wrap.offsetWidth+40}px)`;slide.style.opacity='0';bg.style.opacity='0';
-  const h=slide.offsetHeight; slide.style.height=h+'px';
-  requestAnimationFrame(()=>{slide.classList.add('note-collapse');slide.style.height='0';
-    setTimeout(()=>{slide.style.display='none';stub.classList.add('open');},60);});
+  const rec={wrap,parent:wrap.parentNode,next:wrap.nextSibling};
+  collapse(wrap,()=>{wrap.remove();lastHidden=rec;showToast();});
 }
-function restore(wrap){
-  const slide=wrap.querySelector('.note-slide');
-  const stub=wrap.querySelector('.note-stub');
-  stub.classList.remove('open');
-  slide.style.display='';slide.classList.remove('note-collapse');slide.style.height='';
-  slide.style.transform='translateX(0)';slide.style.opacity='1';
-}
+function deleteNote(wrap){collapse(wrap,()=>wrap.remove());}
+
+function showMini(){const m=document.getElementById('mini');m.classList.add('show');clearTimeout(miniTimer);miniTimer=setTimeout(()=>m.classList.remove('show'),1600);}
+function showToast(){const t=document.getElementById('toast');t.classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>t.classList.remove('show'),4000);}
+document.getElementById('undo').onclick=()=>{
+  if(!lastHidden)return;const{wrap,parent,next}=lastHidden;
+  wrap.classList.remove('collapsing');wrap.style.height='';wrap.style.opacity='';setOffset(wrap,0);
+  if(next&&next.parentNode===parent)parent.insertBefore(wrap,next);else parent.appendChild(wrap);
+  lastHidden=null;document.getElementById('toast').classList.remove('show');
+};
 
 NOTES.today.forEach(n=>document.getElementById('today').appendChild(buildNote(n)));
 NOTES.yesterday.forEach(n=>document.getElementById('yesterday').appendChild(buildNote(n)));
