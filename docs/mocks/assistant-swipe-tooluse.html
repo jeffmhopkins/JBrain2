@@ -1,0 +1,269 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Assistant · swipe a bubble to reveal tool use — 3 versions</title>
+<style>
+  :root{
+    --bg:#0E0F11; --surface:#17181B; --surface-2:#1E2024; --border:#26282C;
+    --text:#E6E7E9; --text-2:#9A9DA3; --text-3:#5C5F66;
+    --steel:#7FA7C9; --green:#8FBC9A; --amber:#C9A36A; --rose:#CF8A8F; --violet:#A493C9;
+    --steel-tint:rgba(127,167,201,.13); --green-tint:rgba(143,188,154,.13);
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+  body{background:#000;color:var(--text);display:flex;flex-wrap:wrap;justify-content:center;align-items:flex-start;gap:22px;padding:22px 14px 60px;min-height:100vh;}
+  svg{fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;}
+
+  .col{display:flex;flex-direction:column;align-items:center;gap:12px;width:380px;max-width:94vw;}
+  .caption{padding:0 6px;color:var(--text-2);font-size:12.5px;line-height:1.5;}
+  .caption b{color:var(--text);font-weight:600;}
+  .caption .tag{display:inline-block;font-size:11px;padding:2px 9px;border-radius:999px;margin-bottom:6px;background:var(--steel-tint);color:var(--steel);}
+  .caption .v1{color:var(--green);} .caption .v2{color:var(--amber);} .caption .v3{color:var(--violet);}
+  .caption .con{color:var(--rose);}
+
+  .phone{width:380px;max-width:94vw;height:560px;background:var(--bg);border:1px solid #2a2c30;border-radius:30px;overflow:hidden;position:relative;display:flex;flex-direction:column;}
+  .title{text-align:center;font-size:14px;font-weight:600;color:var(--text);padding:14px 0 8px;flex:none;}
+  .chat{flex:1;overflow-y:auto;padding:6px 16px 16px;display:flex;flex-direction:column;justify-content:flex-end;gap:10px;}
+
+  .bubble{max-width:82%;padding:11px 14px;border-radius:16px;font-size:15px;line-height:1.45;}
+  .me{align-self:flex-end;background:var(--steel-tint);border:1px solid rgba(127,167,201,.25);border-bottom-right-radius:5px;}
+  .ai{align-self:flex-start;background:var(--surface);border:1px solid var(--border);border-bottom-left-radius:5px;}
+  .ai b{font-weight:700;}
+  .ud{border-bottom:1px dotted var(--text-3);}
+
+  .hintbar{font-size:11px;color:var(--text-3);display:flex;align-items:center;gap:6px;align-self:flex-start;padding-left:4px;}
+  .hintbar svg{width:13px;height:13px;color:var(--text-3);}
+
+  /* ---- the tool-use content shared by all three ---- */
+  .tooluse{display:flex;flex-direction:column;gap:8px;}
+  .tu-head{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--text-3);}
+  .tu-step{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text-2);}
+  .tu-step svg{width:15px;height:15px;flex:none;color:var(--text-2);}
+  .tu-step .tu-c{margin-left:auto;font-size:11px;color:var(--text-3);}
+  .tu-card{display:flex;align-items:center;gap:8px;border:1px solid var(--border);background:var(--surface-2);border-radius:10px;padding:8px 10px;width:100%;font:inherit;cursor:pointer;}
+  .tu-card .dot{width:7px;height:7px;border-radius:999px;flex:none;}
+  .tu-card .tx{flex:1;font-size:12px;color:var(--text-2);text-align:left;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .tu-card .chev{width:13px;height:13px;color:var(--text-3);flex:none;}
+
+  /* ============ V1: slide (carousel within the bubble footprint) ============ */
+  .carousel{width:80%;align-self:flex-start;overflow:hidden;position:relative;height:auto;
+    transition:height .28s cubic-bezier(.2,.7,.3,1);touch-action:pan-y;cursor:grab;}
+  .carousel .track{display:flex;transition:transform .28s cubic-bezier(.2,.7,.3,1);}
+  .carousel .page{flex:0 0 100%;}
+  .pager{position:absolute;bottom:7px;right:10px;display:flex;gap:4px;}
+  .pager i{width:5px;height:5px;border-radius:999px;background:var(--text-3);opacity:.4;transition:.2s;}
+  .pager i.on{opacity:1;background:var(--steel);}
+
+  /* ============ V2: flip (3D flip in place) ============ */
+  .flipwrap{width:80%;align-self:flex-start;perspective:1200px;
+    transition:height .3s cubic-bezier(.2,.7,.3,1);}
+  .flip{position:relative;transform-style:preserve-3d;transition:transform .4s cubic-bezier(.3,.8,.3,1);touch-action:pan-y;cursor:grab;}
+  .flip .face{backface-visibility:hidden;-webkit-backface-visibility:hidden;}
+  .flip .back{position:absolute;inset:0;transform:rotateY(180deg);}
+
+  /* ============ V3: lateral sheet (swipe summons a right-edge panel) ============ */
+  .swipezone{touch-action:pan-y;cursor:grab;}
+  .grip{position:absolute;top:0;right:0;bottom:0;width:5px;display:flex;align-items:center;justify-content:center;}
+  .scrim{position:absolute;inset:0;background:rgba(0,0,0,.45);opacity:0;pointer-events:none;transition:.28s;z-index:8;}
+  .scrim.show{opacity:1;pointer-events:auto;}
+  .sheet{position:absolute;top:0;right:0;bottom:0;width:84%;background:var(--bg);border-left:1px solid var(--border);
+    transform:translateX(100%);transition:transform .3s cubic-bezier(.2,.7,.3,1);z-index:9;display:flex;flex-direction:column;touch-action:pan-y;}
+  .sheet.open{transform:translateX(0);}
+  .sheet-bar{height:50px;display:flex;align-items:center;gap:10px;padding:0 14px;border-bottom:1px solid var(--border);flex:none;}
+  .sheet-bar .bk{color:var(--text-2);display:flex;}.sheet-bar .bk svg{width:18px;height:18px;}
+  .sheet-bar .tt{font-size:15px;font-weight:600;}
+  .sheet-bar .mt{margin-left:auto;font-size:11px;color:var(--text-3);}
+  .sheet-body{padding:14px 16px;overflow-y:auto;}
+</style>
+</head>
+<body>
+
+<!-- ============================ V1 : SLIDE ============================ -->
+<div class="col">
+  <div class="caption">
+    <span class="tag">Swipe → tool use</span><br/>
+    <b class="v1">1 — Slide.</b> Swipe the bubble left and the answer slides out while the tool steps slide in,
+    in the <b>same footprint</b>. The bubble's height eases to whatever's showing — zero resting cost. Swipe right
+    (or tap the dots) to slide back. <span class="con">Drag the AI bubble.</span>
+  </div>
+  <div class="phone">
+    <div class="title">Untitled session</div>
+    <div class="chat">
+      <div class="bubble me">Who's me</div>
+      <div class="hintbar"><svg viewBox="0 0 24 24"><path d="M14 7l-5 5 5 5"/></svg> swipe to see the work</div>
+      <div class="bubble ai carousel" data-v="slide">
+        <div class="track">
+          <div class="page answer">You are <b>Jeff&nbsp;Hopkins</b> (born <span class="ud">March 19, 1986</span>).</div>
+          <div class="page tools" data-tools></div>
+        </div>
+        <div class="pager"><i class="on"></i><i></i></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============================ V2 : FLIP ============================ -->
+<div class="col">
+  <div class="caption">
+    <span class="tag">Swipe → tool use</span><br/>
+    <b class="v2">2 — Flip.</b> The bubble is a card: swipe left and it <b>flips</b> to its back, showing the tool use,
+    then flips back. Tactile and obvious which side you're on. <span class="con">Trade-off:</span> a flip card needs one
+    fixed footprint, so the bubble settles to the taller face — a little vertical cost even on the answer side.
+    <span class="con">Drag the AI bubble.</span>
+  </div>
+  <div class="phone">
+    <div class="title">Untitled session</div>
+    <div class="chat">
+      <div class="bubble me">Who's me</div>
+      <div class="hintbar"><svg viewBox="0 0 24 24"><path d="M14 7l-5 5 5 5"/></svg> swipe to flip</div>
+      <div class="flipwrap" data-v="flip">
+        <div class="flip">
+          <div class="bubble ai face front">You are <b>Jeff&nbsp;Hopkins</b> (born <span class="ud">March 19, 1986</span>).</div>
+          <div class="bubble ai face back" data-tools></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============================ V3 : SHEET ============================ -->
+<div class="col">
+  <div class="caption">
+    <span class="tag">Swipe → tool use</span><br/>
+    <b class="v3">3 — Sheet.</b> Swipe the bubble left and a panel slides in from the right edge with the full breakdown —
+    same gesture family as the Sessions / Proposals panels you already have. The bubble never changes; the sheet has room
+    for long tool runs. Swipe right, tap the scrim, or hit ‹ to close. <span class="con">Drag the AI bubble.</span>
+  </div>
+  <div class="phone" data-v="sheet">
+    <div class="title">Untitled session</div>
+    <div class="chat">
+      <div class="bubble me">Who's me</div>
+      <div class="hintbar"><svg viewBox="0 0 24 24"><path d="M14 7l-5 5 5 5"/></svg> swipe to open the panel</div>
+      <div class="bubble ai swipezone">You are <b>Jeff&nbsp;Hopkins</b> (born <span class="ud">March 19, 1986</span>).</div>
+    </div>
+    <div class="scrim"></div>
+    <div class="sheet">
+      <div class="sheet-bar">
+        <span class="bk"><svg viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg></span>
+        <span class="tt">Worked</span><span class="mt">2 steps · 4 sources</span>
+      </div>
+      <div class="sheet-body" data-tools></div>
+    </div>
+  </div>
+</div>
+
+<script>
+  // The shared tool-use breakdown, injected into every [data-tools] slot.
+  const TOOLS = `
+    <div class="tooluse">
+      <div class="tu-step">
+        <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+        Searched your notes <span class="tu-c">4 results</span>
+      </div>
+      <button class="tu-card"><span class="dot" style="background:var(--steel)"></span><span class="tx">I was born March 19, 1986</span>
+        <svg class="chev" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></svg></button>
+      <button class="tu-card"><span class="dot" style="background:var(--steel)"></span><span class="tx">My name is Jeff Hopkins</span>
+        <svg class="chev" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></svg></button>
+      <div class="tu-step">
+        <svg viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg>
+        Read entity “Me” <span class="tu-c">3 facts</span>
+      </div>
+    </div>`;
+  for (const slot of document.querySelectorAll("[data-tools]")) slot.innerHTML = TOOLS;
+
+  const THRESH = 44; // px past which a drag commits
+
+  // ---- V1: slide ------------------------------------------------------
+  for (const car of document.querySelectorAll('[data-v="slide"]')) {
+    const track = car.querySelector(".track");
+    const pages = track.children;
+    const dots = car.querySelectorAll(".pager i");
+    let open = false, sx = 0, drag = false, w = 0;
+    const fit = () => { car.style.height = pages[open ? 1 : 0].offsetHeight + "px"; };
+    requestAnimationFrame(fit);
+    const setDots = () => dots.forEach((d, k) => d.classList.toggle("on", k === (open ? 1 : 0)));
+    car.addEventListener("pointerdown", (e) => {
+      drag = true; sx = e.clientX; w = car.clientWidth;
+      track.style.transition = car.style.transition = "none";
+      car.style.height = Math.max(pages[0].offsetHeight, pages[1].offsetHeight) + "px";
+      car.setPointerCapture(e.pointerId); car.style.cursor = "grabbing";
+    });
+    car.addEventListener("pointermove", (e) => {
+      if (!drag) return;
+      const x = Math.max(-w, Math.min(0, (open ? -w : 0) + (e.clientX - sx)));
+      track.style.transform = `translateX(${x}px)`;
+    });
+    const up = (e) => {
+      if (!drag) return; drag = false; car.style.cursor = "grab";
+      track.style.transition = ""; car.style.transition = "";
+      const dx = e.clientX - sx;
+      open = open ? !(dx > THRESH) : (dx < -THRESH);
+      track.style.transform = open ? "translateX(-100%)" : "translateX(0)";
+      setDots(); fit();
+    };
+    car.addEventListener("pointerup", up); car.addEventListener("pointercancel", up);
+    for (const d of dots) d.addEventListener("click", () => { open = !open; track.style.transition = ""; track.style.transform = open ? "translateX(-100%)" : "translateX(0)"; setDots(); fit(); });
+  }
+
+  // ---- V2: flip -------------------------------------------------------
+  for (const wrap of document.querySelectorAll('[data-v="flip"]')) {
+    const flip = wrap.querySelector(".flip");
+    const front = wrap.querySelector(".front"), back = wrap.querySelector(".back");
+    let open = false, sx = 0, drag = false;
+    const maxH = () => Math.max(front.offsetHeight, back.offsetHeight);
+    const fit = () => { wrap.style.height = (open ? back.offsetHeight : front.offsetHeight) + "px"; };
+    requestAnimationFrame(fit);
+    wrap.addEventListener("pointerdown", (e) => {
+      drag = true; sx = e.clientX; flip.style.transition = wrap.style.transition = "none";
+      wrap.style.height = maxH() + "px"; wrap.setPointerCapture(e.pointerId); flip.style.cursor = "grabbing";
+    });
+    wrap.addEventListener("pointermove", (e) => {
+      if (!drag) return;
+      const deg = Math.max(0, Math.min(180, (open ? 180 : 0) + (sx - e.clientX) * 0.55));
+      flip.style.transform = `rotateY(${deg}deg)`;
+    });
+    const up = (e) => {
+      if (!drag) return; drag = false; flip.style.cursor = "grab";
+      flip.style.transition = ""; wrap.style.transition = "";
+      const dx = sx - e.clientX; // left swipe is positive here
+      open = open ? !(dx < -THRESH) : (dx > THRESH);
+      flip.style.transform = `rotateY(${open ? 180 : 0}deg)`;
+      setTimeout(fit, 180);
+    };
+    wrap.addEventListener("pointerup", up); wrap.addEventListener("pointercancel", up);
+  }
+
+  // ---- V3: sheet ------------------------------------------------------
+  for (const phone of document.querySelectorAll('[data-v="sheet"]')) {
+    const zone = phone.querySelector(".swipezone");
+    const sheet = phone.querySelector(".sheet");
+    const scrim = phone.querySelector(".scrim");
+    const W = () => phone.clientWidth * 0.84;
+    const openSheet = (on) => { sheet.classList.toggle("open", on); scrim.classList.toggle("show", on); sheet.style.transform = ""; };
+    // open by swiping the bubble left
+    let sx = 0, drag = false;
+    zone.addEventListener("pointerdown", (e) => { drag = true; sx = e.clientX; sheet.style.transition = "none"; zone.setPointerCapture(e.pointerId); });
+    zone.addEventListener("pointermove", (e) => {
+      if (!drag) return;
+      const dx = Math.min(0, e.clientX - sx);            // only leftward
+      sheet.classList.add("open"); scrim.classList.add("show");
+      sheet.style.transform = `translateX(${Math.max(0, W() + dx)}px)`; // follows the finger in
+    });
+    const up = (e) => {
+      if (!drag) return; drag = false; sheet.style.transition = "";
+      openSheet((sx - e.clientX) > THRESH);
+    };
+    zone.addEventListener("pointerup", up); zone.addEventListener("pointercancel", up);
+    // close by swiping the sheet right, or tapping the scrim / back chevron
+    scrim.addEventListener("click", () => openSheet(false));
+    phone.querySelector(".bk").addEventListener("click", () => openSheet(false));
+    let ssx = 0, sdrag = false;
+    sheet.addEventListener("pointerdown", (e) => { sdrag = true; ssx = e.clientX; sheet.style.transition = "none"; });
+    sheet.addEventListener("pointermove", (e) => { if (!sdrag) return; const dx = Math.max(0, e.clientX - ssx); sheet.style.transform = `translateX(${dx}px)`; });
+    sheet.addEventListener("pointerup", (e) => { if (!sdrag) return; sdrag = false; sheet.style.transition = ""; openSheet(!((e.clientX - ssx) > THRESH)); });
+  }
+</script>
+</body>
+</html>
