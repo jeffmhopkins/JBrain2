@@ -7,6 +7,7 @@ from fastapi import FastAPI
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from jbrain.agent.memory import MemoryRepo, MemoryService
+from jbrain.agent.proposals import ProposalRepo
 from jbrain.agent.readtools import build_registry
 from jbrain.agent.runlog import AgentRunLog
 from jbrain.agent.session import AgentSessionRepo
@@ -57,11 +58,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.agent_memory = MemoryService(
             MemoryRepo(maker), TeiEmbedClient(settings.embed_url), settings.embed_model
         )
+        app.state.agent_proposals = ProposalRepo(maker)
         app.state.agent_registry = build_registry(
             app.state.search_service,
             app.state.notes_repo,
             app.state.analysis_repo,
             app.state.agent_memory,
+            app.state.agent_proposals,
         )
         app.state.agent_sessions = AgentSessionRepo(maker)
         app.state.agent_runlog = AgentRunLog(maker)
