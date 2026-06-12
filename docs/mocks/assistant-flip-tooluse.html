@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Assistant · flip a bubble to its tool use (left-anchored, fixed footprint)</title>
+<style>
+  :root{
+    --bg:#0E0F11; --surface:#17181B; --surface-2:#1E2024; --border:#26282C;
+    --text:#E6E7E9; --text-2:#9A9DA3; --text-3:#5C5F66;
+    --steel:#7FA7C9; --green:#8FBC9A; --amber:#C9A36A; --rose:#CF8A8F; --violet:#A493C9;
+    --steel-tint:rgba(127,167,201,.13);
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+  body{background:#000;color:var(--text);display:flex;flex-direction:column;align-items:center;gap:14px;padding:22px 14px 60px;min-height:100vh;}
+  svg{fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;}
+
+  .caption{width:392px;max-width:94vw;padding:0 6px;color:var(--text-2);font-size:12.5px;line-height:1.55;}
+  .caption b{color:var(--text);font-weight:600;}
+  .caption .tag{display:inline-block;font-size:11px;padding:2px 9px;border-radius:999px;margin-bottom:6px;background:rgba(201,163,106,.14);color:var(--amber);}
+
+  .phone{width:392px;max-width:94vw;height:600px;background:var(--bg);border:1px solid #2a2c30;border-radius:32px;overflow:hidden;position:relative;display:flex;flex-direction:column;}
+  .title{text-align:center;font-size:14px;font-weight:600;padding:14px 0 8px;flex:none;}
+  .chat{flex:1;overflow-y:auto;padding:6px 16px 16px;display:flex;flex-direction:column;justify-content:flex-end;gap:10px;}
+
+  .bubble{padding:11px 14px;border-radius:16px;font-size:15px;line-height:1.45;}
+  .me{align-self:flex-end;max-width:82%;background:var(--steel-tint);border:1px solid rgba(127,167,201,.25);border-bottom-right-radius:5px;}
+  .ai{background:var(--surface);border:1px solid var(--border);border-bottom-left-radius:5px;}
+  .ai b{font-weight:700;}
+  .ud{border-bottom:1px dotted var(--text-3);}
+
+  .hintbar{font-size:11px;color:var(--text-3);display:flex;align-items:center;gap:6px;align-self:flex-start;padding-left:4px;}
+  .hintbar svg{width:13px;height:13px;}
+
+  /* The flip card. A FIXED width, left-anchored, so the footprint never moves
+     horizontally — front and back share the exact same box; only the height
+     eases to whatever face is showing. */
+  .flipwrap{
+    width:78%;                 /* one fixed width for both faces */
+    align-self:flex-start;     /* left-anchored */
+    perspective:1300px;
+    transition:height .3s cubic-bezier(.2,.7,.3,1);
+  }
+  .flip{position:relative;width:100%;transform-style:preserve-3d;
+    transition:transform .42s cubic-bezier(.3,.85,.3,1);touch-action:pan-y;cursor:grab;}
+  .flip .face{backface-visibility:hidden;-webkit-backface-visibility:hidden;width:100%;}
+  .flip .back{position:absolute;inset:0;transform:rotateY(180deg);}
+
+  /* a quiet corner affordance so the gesture is discoverable */
+  .flipcue{position:absolute;bottom:7px;right:9px;display:flex;align-items:center;gap:3px;font-size:10px;color:var(--text-3);}
+  .flipcue svg{width:12px;height:12px;}
+  .back .flipcue{color:var(--steel);}
+
+  /* tool-use back face */
+  .tu-head{display:flex;align-items:center;gap:8px;font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--text-3);margin-bottom:9px;}
+  .tu-head .bk{display:flex;color:var(--text-2);} .tu-head .bk svg{width:15px;height:15px;}
+  .tu-head .mt{margin-left:auto;text-transform:none;letter-spacing:0;}
+  .tooluse{display:flex;flex-direction:column;gap:8px;}
+  .tu-step{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text-2);}
+  .tu-step svg{width:15px;height:15px;flex:none;}
+  .tu-step .tu-c{margin-left:auto;font-size:11px;color:var(--text-3);}
+  .tu-card{display:flex;align-items:center;gap:8px;border:1px solid var(--border);background:var(--surface-2);border-radius:10px;padding:8px 10px;width:100%;font:inherit;cursor:pointer;}
+  .tu-card .dot{width:7px;height:7px;border-radius:999px;flex:none;background:var(--steel);}
+  .tu-card .tx{flex:1;font-size:12px;color:var(--text-2);text-align:left;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .tu-card .chev{width:13px;height:13px;color:var(--text-3);flex:none;}
+</style>
+</head>
+<body>
+  <div class="caption">
+    <span class="tag">Flip · left-anchored, fixed footprint</span><br/>
+    Swipe the bubble <b>left</b> to flip it to the tool use; swipe <b>right</b> (or tap the corner cue) to flip back.
+    Both faces share <b>one fixed width pinned to the left</b>, so the bubble turns in place — the horizontal box never
+    moves. Only the height eases to the face that's showing. <b>Drag the AI bubble.</b>
+  </div>
+
+  <div class="phone">
+    <div class="title">Untitled session</div>
+    <div class="chat">
+      <div class="bubble me">Who's me</div>
+      <div class="hintbar"><svg viewBox="0 0 24 24"><path d="M14 7l-5 5 5 5"/></svg> swipe to flip to the work</div>
+
+      <div class="flipwrap">
+        <div class="flip">
+          <!-- FRONT: the answer -->
+          <div class="bubble ai face front">
+            You are <b>Jeff&nbsp;Hopkins</b> (born <span class="ud">March 19, 1986</span>).
+            <span class="flipcue"><svg viewBox="0 0 24 24"><path d="M14 7l-5 5 5 5"/></svg>work</span>
+          </div>
+          <!-- BACK: the tool use, same box -->
+          <div class="bubble ai face back">
+            <div class="tu-head">
+              <span class="bk"><svg viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></span>
+              Worked <span class="mt">2 steps · 4 sources</span>
+            </div>
+            <div class="tooluse">
+              <div class="tu-step">
+                <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+                Searched your notes <span class="tu-c">4 results</span>
+              </div>
+              <button class="tu-card"><span class="dot"></span><span class="tx">I was born March 19, 1986</span>
+                <svg class="chev" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></svg></button>
+              <button class="tu-card"><span class="dot"></span><span class="tx">My name is Jeff Hopkins</span>
+                <svg class="chev" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></svg></button>
+              <div class="tu-step">
+                <svg viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg>
+                Read entity “Me” <span class="tu-c">3 facts</span>
+              </div>
+            </div>
+            <span class="flipcue"><svg viewBox="0 0 24 24"><path d="M10 7l5 5-5 5"/></svg>answer</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+<script>
+  const THRESH = 44;
+  const wrap = document.querySelector(".flipwrap");
+  const flip = wrap.querySelector(".flip");
+  const front = wrap.querySelector(".front"), back = wrap.querySelector(".back");
+  let open = false, sx = 0, drag = false, moved = false;
+
+  const fit = () => { wrap.style.height = (open ? back.offsetHeight : front.offsetHeight) + "px"; };
+  const maxH = () => Math.max(front.offsetHeight, back.offsetHeight);
+  requestAnimationFrame(fit);
+  window.addEventListener("resize", fit);
+
+  wrap.addEventListener("pointerdown", (e) => {
+    drag = true; moved = false; sx = e.clientX;
+    flip.style.transition = wrap.style.transition = "none";
+    wrap.style.height = maxH() + "px";          // give the turn room, no clip
+    wrap.setPointerCapture(e.pointerId); flip.style.cursor = "grabbing";
+  });
+  wrap.addEventListener("pointermove", (e) => {
+    if (!drag) return;
+    if (Math.abs(e.clientX - sx) > 4) moved = true;
+    const deg = Math.max(0, Math.min(180, (open ? 180 : 0) + (sx - e.clientX) * 0.55));
+    flip.style.transform = `rotateY(${deg}deg)`;
+  });
+  const up = (e) => {
+    if (!drag) return; drag = false; flip.style.cursor = "grab";
+    flip.style.transition = ""; wrap.style.transition = "";
+    const dx = sx - e.clientX;                    // left swipe positive
+    if (moved) open = open ? !(dx < -THRESH) : (dx > THRESH);
+    else open = !open;                            // a tap (corner cue) just toggles
+    flip.style.transform = `rotateY(${open ? 180 : 0}deg)`;
+    setTimeout(fit, 190);
+  };
+  wrap.addEventListener("pointerup", up);
+  wrap.addEventListener("pointercancel", up);
+</script>
+</body>
+</html>
