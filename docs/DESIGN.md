@@ -577,6 +577,23 @@ model output drive the render). The contract:
 - **Interactive views never mutate directly.** A button dispatches a tool call or
   stages a **Proposal** under the session's action policy — the agent proposes,
   the pipeline disposes.
+- **One view names one component** (no nested trees/dashboards; multiple views in a
+  turn render as sequential inline cards), and components express **`tone`/`flag`/
+  `kind` enums, never colors or hex** — the model conveys meaning, the component owns
+  the token mapping.
+
+**The registry** (starter set; spec in `docs/research/self-improving-agent/G-tool-
+view-components.md`). Three composable primitives hold the count down —
+`data_table`, `stat_block`, `citation_card` (the shared pointer-not-copy citation
+surface every view reuses). **MVP:** those three + `lab_plot` + the interactives
+`record_list`, `appointment_card`, `confirm_panel`. **Standard:** `entity_card`,
+`timeline`, `wiki_preview`, `med_card`, `txn_table`. **Refused** (anti-bloat, tied
+to invariants): no `form` (input flows through composer/sheets/review inbox), no
+`markdown`/`html`/`image`/`iframe` (I-9), no external **map tile ever** — location
+renders as text, or later a basemap-free PostGIS-derived-SVG `mini_map` with numeric
+path slots (never a tile, image, or model-authored SVG string), no free
+`button`/`link`, no generic `chart` kitchen-sink (purpose-built plots only), no
+dashboard/layout components.
 
 ## Implementation rules
 

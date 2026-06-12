@@ -74,13 +74,22 @@ adapters covered.
 description). Loader beside `llm/promptfile.py`; `ToolRegistry` discovers/validates
 at startup (invalid sidecar or missing handler → startup failure) and exposes
 `schemas_for(scopes)`. **CI version-bump guard** mirroring the `.prompt` guard.
-Ship the **tool-view contract**: a `ViewPayload` schema (registered component name
-+ data-only typed slots + `surface` hint) and a first-party **component registry**
-(`frontend/src/agent/views/`) starting with `lab_plot`, `table`, `confirm`. A
-tool result's `view` is validated against the named component's schema server-side;
-no model-authored markup is ever rendered (`docs/DESIGN.md` "Agent tool views",
-invariants #1/#9). *Gate:* sidecar-validity unit tests; guard fails on unbumped
-prose change; a `view` failing its component schema is rejected, not rendered.
+Ship the **tool-view contract**: a `ViewPayload` schema (one registered component
+name + data-only typed slots + `surface` hint), the shared `CitationRef`
+pointer-not-copy types (`fact`/`entity`/`note` id + label), and a first-party
+**component registry** (`frontend/src/agent/views/`). **MVP set (7, on 3
+composable primitives — see `docs/research/self-improving-agent/G-tool-view-
+components.md`):** primitives `data_table`, `stat_block`, `citation_card`; reads
+`lab_plot`; interactives `record_list` (→ `list_*` tools, staged),
+`appointment_card` (→ `manage_appointment` Proposal + ICS subscribe), `confirm_panel`
+(→ approve/reject a Proposal node). Standard tier (soon): `entity_card`, `timeline`,
+`wiki_preview` (P6), `med_card`, `txn_table` (collapse into `data_table` unless a
+`money` cell is insufficient). A `view` is validated against the named component's
+schema server-side; **one view = one component** (no trees), components express
+`tone`/`flag` enums never colors, and **no model-authored markup ever renders**
+(`docs/DESIGN.md` "Agent tool views", invariants #1/#9). *Gate:* sidecar-validity
+unit tests; guard fails on unbumped prose change; a `view` failing its component
+schema is rejected, not rendered.
 
 **P4.3 — Agent session capability.** `agent_sessions` table + migration + RLS
 test. `agent/session.py` turns a selected (domain_scopes, subject_ids) into a
