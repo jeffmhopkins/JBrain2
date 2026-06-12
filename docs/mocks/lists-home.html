@@ -1,0 +1,225 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Lists home surface — 3 layouts</title>
+<style>
+  :root{
+    --bg:#0E0F11; --surface:#17181B; --surface-2:#1E2024; --border:#26282C;
+    --text:#E6E7E9; --text-2:#9A9DA3; --text-3:#5C5F66;
+    --steel:#7FA7C9; --green:#8FBC9A; --amber:#C9A36A; --rose:#CF8A8F; --violet:#A493C9;
+    --steel-tint:rgba(127,167,201,.13);
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+  body{background:#000;color:var(--text);display:flex;flex-wrap:wrap;justify-content:center;align-items:flex-start;gap:22px;padding:22px 14px 60px;min-height:100vh;}
+  svg{fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;}
+
+  .col{display:flex;flex-direction:column;align-items:center;gap:12px;width:380px;max-width:94vw;}
+  .caption{padding:0 6px;color:var(--text-2);font-size:12.5px;line-height:1.5;}
+  .caption b{color:var(--text);font-weight:600;}
+  .caption .tag{display:inline-block;font-size:11px;padding:2px 9px;border-radius:999px;margin-bottom:6px;background:var(--steel-tint);color:var(--steel);}
+  .caption .a{color:var(--green);}.caption .b{color:var(--amber);}.caption .c{color:var(--violet);}
+
+  .phone{width:380px;max-width:94vw;height:620px;background:var(--bg);border:1px solid #2a2c30;border-radius:30px;overflow:hidden;position:relative;display:flex;flex-direction:column;}
+  .top{height:54px;display:flex;align-items:center;justify-content:space-between;padding:0 18px;flex:none;}
+  .wordmark{font-size:20px;font-weight:700;}.wordmark span{color:var(--steel);}
+  .top .ico{color:var(--text-2);width:22px;height:22px;}
+  .htitle{display:flex;align-items:center;justify-content:space-between;padding:2px 18px 10px;flex:none;}
+  .htitle h1{font-size:24px;font-weight:700;letter-spacing:-.01em;}
+  .add{display:inline-flex;align-items:center;gap:6px;font-size:13px;font-weight:600;color:var(--steel);background:var(--steel-tint);border:none;border-radius:999px;padding:7px 12px;cursor:pointer;}
+  .add svg{width:14px;height:14px;}
+  .body{flex:1;overflow-y:auto;padding:4px 16px 18px;}
+
+  /* shared bits */
+  .dot{width:8px;height:8px;border-radius:999px;flex:none;}
+  .d-general{background:var(--steel);}.d-health{background:var(--rose);}.d-finance{background:var(--amber);}.d-location{background:var(--violet);}
+  .count{font-size:12px;color:var(--text-3);font-variant-numeric:tabular-nums;}
+  .bar{height:4px;border-radius:999px;background:var(--surface-2);overflow:hidden;}
+  .bar > i{display:block;height:100%;background:var(--steel);border-radius:999px;transition:width .2s;}
+  ul{list-style:none;}
+  .it{display:flex;align-items:center;gap:11px;padding:9px 2px;font-size:14.5px;}
+  .ck{flex:none;width:20px;height:20px;border-radius:6px;border:1.6px solid var(--text-3);background:none;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;}
+  .it.done .ck{background:var(--green);border-color:var(--green);}
+  .it.done .ck::after{content:"";width:5px;height:9px;border:solid #0e0f11;border-width:0 2px 2px 0;transform:rotate(45deg);margin-bottom:2px;}
+  .it.done .t{color:var(--text-3);text-decoration:line-through;}
+
+  /* ===== A: accordion ===== */
+  .acc{border:1px solid var(--border);border-radius:14px;background:var(--surface);margin-bottom:10px;overflow:hidden;}
+  .acc-row{width:100%;display:flex;align-items:center;gap:11px;padding:14px;background:none;border:none;color:var(--text);font:inherit;cursor:pointer;text-align:left;}
+  .acc-row .nm{font-size:15.5px;font-weight:600;flex:1;}
+  .acc-row .chev{width:16px;height:16px;color:var(--text-3);transition:transform .2s;}
+  .acc.open .acc-row .chev{transform:rotate(90deg);}
+  .acc-row .mini{width:46px;}
+  .acc-panel{max-height:0;overflow:hidden;transition:max-height .26s ease;}
+  .acc.open .acc-panel{max-height:520px;}
+  .acc-panel .inner{padding:0 14px 8px 14px;border-top:1px solid var(--border);}
+
+  /* ===== B: card grid + detail ===== */
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:11px;}
+  .lcard{text-align:left;border:1px solid var(--border);border-radius:14px;background:var(--surface);padding:13px;cursor:pointer;color:var(--text);font:inherit;display:flex;flex-direction:column;gap:9px;min-height:128px;}
+  .lcard .hd{display:flex;align-items:center;gap:8px;}
+  .lcard .nm{font-size:14.5px;font-weight:600;line-height:1.2;}
+  .lcard .prev{font-size:12px;color:var(--text-3);line-height:1.5;flex:1;}
+  .lcard .prev s{color:var(--text-3);opacity:.6;}
+  .detail{position:absolute;inset:0;background:var(--bg);transform:translateX(100%);transition:transform .26s cubic-bezier(.2,.7,.3,1);z-index:10;display:flex;flex-direction:column;}
+  .detail.open{transform:translateX(0);}
+  .dbar{height:54px;display:flex;align-items:center;gap:12px;padding:0 14px;border-bottom:1px solid var(--border);flex:none;}
+  .dbar .bk{color:var(--text-2);background:none;border:none;cursor:pointer;display:flex;}.dbar .bk svg{width:22px;height:22px;}
+  .dbar .nm{font-size:17px;font-weight:600;}
+  .dbody{flex:1;overflow-y:auto;padding:8px 18px;}
+
+  /* ===== C: unified board ===== */
+  .sect{margin-bottom:18px;}
+  .sect-head{display:flex;align-items:center;gap:10px;padding:8px 2px 4px;}
+  .sect-head .nm{font-size:13px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--text-2);flex:1;}
+  .sect ul{border-top:1px solid var(--border);}
+  .sect .it{border-bottom:1px solid var(--border);padding:11px 2px;}
+  .addline{display:flex;align-items:center;gap:11px;padding:10px 2px;color:var(--text-3);font-size:14px;cursor:pointer;}
+  .addline .plus{width:20px;height:20px;border:1.4px dashed var(--text-3);border-radius:6px;display:inline-flex;align-items:center;justify-content:center;}
+  .addline .plus svg{width:12px;height:12px;}
+</style>
+</head>
+<body>
+
+<!-- ============ A : ACCORDION ============ -->
+<div class="col">
+  <div class="caption">
+    <span class="tag">Lists home</span><br/>
+    <b class="a">A — Accordion.</b> One scroll of lists; tap a row to expand its checklist inline (one open at a time),
+    with a domain dot, a count, and a progress bar on each. Everything reachable without leaving the screen. Best when
+    you have several lists. <b>Tap a row; tap checkboxes.</b>
+  </div>
+  <div class="phone" id="A">
+    <div class="top"><div class="wordmark">JBrain<span>.</span></div>
+      <svg class="ico" viewBox="0 0 24 24"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg></div>
+    <div class="htitle"><h1>Lists</h1>
+      <button class="add"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>New</button></div>
+    <div class="body" data-mode="acc"></div>
+  </div>
+</div>
+
+<!-- ============ B : CARD GRID + DETAIL ============ -->
+<div class="col">
+  <div class="caption">
+    <span class="tag">Lists home</span><br/>
+    <b class="b">B — Card grid.</b> Each list is a card with a few item previews and progress; tap to open a full-screen
+    checklist (back returns). Scannable at a glance, roomy detail for long lists. Best when lists are few but deep.
+    <b>Tap a card; tap checkboxes; ‹ to go back.</b>
+  </div>
+  <div class="phone" id="B">
+    <div class="top"><div class="wordmark">JBrain<span>.</span></div>
+      <svg class="ico" viewBox="0 0 24 24"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg></div>
+    <div class="htitle"><h1>Lists</h1>
+      <button class="add"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>New</button></div>
+    <div class="body"><div class="grid" data-mode="grid"></div></div>
+    <div class="detail">
+      <div class="dbar"><button class="bk"><svg viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg></button><span class="dot"></span><span class="nm"></span></div>
+      <div class="dbody"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ C : UNIFIED BOARD ============ -->
+<div class="col">
+  <div class="caption">
+    <span class="tag">Lists home</span><br/>
+    <b class="c">C — Board.</b> Every list always open as a titled section in one continuous scroll, with an inline
+    “add item”. Nothing to tap-to-open — it’s all there, like a notes page. Best when you live in a couple of lists daily.
+    <b>Tap checkboxes; “add” is a stub.</b>
+  </div>
+  <div class="phone" id="C">
+    <div class="top"><div class="wordmark">JBrain<span>.</span></div>
+      <svg class="ico" viewBox="0 0 24 24"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg></div>
+    <div class="htitle"><h1>Lists</h1>
+      <button class="add"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>New</button></div>
+    <div class="body" data-mode="board"></div>
+  </div>
+</div>
+
+<script>
+  const LISTS = [
+    { id:"groc", nm:"Groceries", dom:"general", items:[
+      {t:"eggs",d:true},{t:"oat milk",d:true},{t:"spinach",d:false},{t:"coffee beans",d:false},{t:"olive oil",d:false}] },
+    { id:"tahoe", nm:"Packing — Tahoe", dom:"general", items:[
+      {t:"down jacket",d:false},{t:"gloves",d:false},{t:"chargers",d:false},{t:"sunscreen",d:false},{t:"boots",d:false},{t:"passport",d:false}] },
+    { id:"meds", nm:"Meds to refill", dom:"health", items:[
+      {t:"vitamin D",d:true},{t:"allergy spray",d:false},{t:"melatonin",d:false}] },
+    { id:"bills", nm:"Bills", dom:"finance", items:[
+      {t:"electric",d:true},{t:"internet",d:true},{t:"water",d:true},{t:"car insurance",d:false}] },
+  ];
+  const esc = (s)=>s.replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
+  const open = (l)=>l.items.filter(i=>!i.d).length;
+  const itemLi = (i)=>`<li class="it${i.d?" done":""}"><button class="ck" aria-label="toggle"></button><span class="t">${esc(i.t)}</span></li>`;
+  const countTxt = (l)=>`${open(l)}/${l.items.length}`;
+  const pct = (l)=>Math.round(100*(l.items.length-open(l))/l.items.length);
+
+  // A — accordion
+  document.querySelector('[data-mode="acc"]').innerHTML = LISTS.map((l,idx)=>`
+    <div class="acc${idx===0?" open":""}" data-id="${l.id}">
+      <button class="acc-row">
+        <span class="dot d-${l.dom}"></span>
+        <span class="nm">${esc(l.nm)}</span>
+        <span class="count" data-count>${countTxt(l)}</span>
+        <span class="bar mini"><i style="width:${pct(l)}%"></i></span>
+        <svg class="chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>
+      </button>
+      <div class="acc-panel"><ul class="inner">${l.items.map(itemLi).join("")}</ul></div>
+    </div>`).join("");
+
+  // B — grid
+  document.querySelector('[data-mode="grid"]').innerHTML = LISTS.map(l=>`
+    <button class="lcard" data-id="${l.id}">
+      <div class="hd"><span class="dot d-${l.dom}"></span><span class="nm">${esc(l.nm)}</span></div>
+      <div class="prev">${l.items.slice(0,3).map(i=>i.d?`<s>${esc(i.t)}</s>`:esc(i.t)).join("<br/>")}${l.items.length>3?`<br/>+${l.items.length-3} more`:""}</div>
+      <div class="bar"><i style="width:${pct(l)}%"></i></div>
+      <div class="count">${countTxt(l)} open</div>
+    </button>`).join("");
+
+  // C — board
+  document.querySelector('[data-mode="board"]').innerHTML = LISTS.map(l=>`
+    <div class="sect" data-id="${l.id}">
+      <div class="sect-head"><span class="dot d-${l.dom}"></span><span class="nm">${esc(l.nm)}</span><span class="count" data-count>${countTxt(l)}</span></div>
+      <ul>${l.items.map(itemLi).join("")}
+        <li class="addline"><span class="plus"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></span>add item</li></ul>
+    </div>`).join("");
+
+  // recount the badge(s) for the list owning this <ul>
+  function recount(scope){
+    const its = scope.querySelectorAll(".it");
+    const total = its.length, openN = [...its].filter(x=>!x.classList.contains("done")).length;
+    const root = scope.closest("[data-id]");
+    root?.querySelectorAll("[data-count]").forEach(c=>c.textContent=`${openN}/${total}`);
+    const bar = root?.querySelector(".bar > i");
+    if (bar) bar.style.width = `${Math.round(100*(total-openN)/total)}%`;
+  }
+
+  // checkbox toggles (all phones, event delegation)
+  document.body.addEventListener("click",(e)=>{
+    const ck = e.target.closest(".ck"); if(!ck) return;
+    const li = ck.closest(".it"); li.classList.toggle("done");
+    recount(li.closest("ul"));
+  });
+
+  // A — accordion expand (one open at a time)
+  document.querySelector("#A").addEventListener("click",(e)=>{
+    const row = e.target.closest(".acc-row"); if(!row) return;
+    const acc = row.closest(".acc"), wasOpen = acc.classList.contains("open");
+    document.querySelectorAll("#A .acc").forEach(a=>a.classList.remove("open"));
+    if(!wasOpen) acc.classList.add("open");
+  });
+
+  // B — card → detail
+  const B = document.querySelector("#B"), detail = B.querySelector(".detail");
+  B.querySelectorAll(".lcard").forEach(card=>card.addEventListener("click",()=>{
+    const l = LISTS.find(x=>x.id===card.dataset.id);
+    detail.querySelector(".dot").className = `dot d-${l.dom}`;
+    detail.querySelector(".nm").textContent = l.nm;
+    detail.querySelector(".dbody").innerHTML = `<ul>${l.items.map(itemLi).join("")}</ul>`;
+    detail.classList.add("open");
+  }));
+  B.querySelector(".bk").addEventListener("click",()=>detail.classList.remove("open"));
+</script>
+</body>
+</html>
