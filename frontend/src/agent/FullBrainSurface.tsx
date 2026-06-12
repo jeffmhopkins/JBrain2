@@ -84,9 +84,9 @@ export function FullBrainSurface({ fb, onOpenNote }: Props): ReactNode {
         {fb.active ? (
           <main className="fb-chat" aria-label="Conversation">
             {fb.messages.map((m, i) => (
-              // Transcript is append-only; positional key is stable for the turn.
-              // biome-ignore lint/suspicious/noArrayIndexKey: append-only transcript
               <Bubble
+                // Transcript is append-only; the positional key is stable.
+                // biome-ignore lint/suspicious/noArrayIndexKey: append-only transcript
                 key={i}
                 message={m}
                 onOpenNote={onOpenNote}
