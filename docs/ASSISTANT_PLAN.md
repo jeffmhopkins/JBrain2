@@ -70,11 +70,17 @@ adapters covered.
 
 **P4.2 — `.tool` sidecars + registry.** Define the sidecar (YAML frontmatter:
 `name`, `version`, `params` JSON-schema, `domains`, `mutating`, `side_effecting`,
-`cost_class`, `response_format`; prose body = the model-facing description).
-Loader beside `llm/promptfile.py`; `ToolRegistry` discovers/validates at startup
-(invalid sidecar or missing handler → startup failure) and exposes
+`cost_class`, `response_format` — text and/or a `view`; prose body = the model-facing
+description). Loader beside `llm/promptfile.py`; `ToolRegistry` discovers/validates
+at startup (invalid sidecar or missing handler → startup failure) and exposes
 `schemas_for(scopes)`. **CI version-bump guard** mirroring the `.prompt` guard.
-*Gate:* sidecar-validity unit tests; guard fails on unbumped prose change.
+Ship the **tool-view contract**: a `ViewPayload` schema (registered component name
++ data-only typed slots + `surface` hint) and a first-party **component registry**
+(`frontend/src/agent/views/`) starting with `lab_plot`, `table`, `confirm`. A
+tool result's `view` is validated against the named component's schema server-side;
+no model-authored markup is ever rendered (`docs/DESIGN.md` "Agent tool views",
+invariants #1/#9). *Gate:* sidecar-validity unit tests; guard fails on unbumped
+prose change; a `view` failing its component schema is rejected, not rendered.
 
 **P4.3 — Agent session capability.** `agent_sessions` table + migration + RLS
 test. `agent/session.py` turns a selected (domain_scopes, subject_ids) into a
@@ -94,11 +100,13 @@ services): `search` (hybrid), `read_note`, `read_entity`, `read_fact`. System
 per-tool RLS isolation.
 
 **P4.5 — Chat API + streaming + Full Brain PWA surface.** `api/agent.py` `/chat`
-emitting SSE/WS events (`text_delta`, `tool_call`, `tool_result`,
+emitting SSE/WS events (`text_delta`, `tool_call`, `tool_result`, `tool_view`,
 `job_enqueued`, `done`); resume from the persisted run. Frontend: the Full Brain
 conversation surface + the lateral swipe (Sessions/Proposals) per `DESIGN.md`
-(swipe-right → Sessions, swipe-left → Proposals; no edge chrome). *Gate:*
-httpx streaming test; Vitest for the surface; the existing mocks are the spec.
+(swipe-right → Sessions, swipe-left → Proposals; no edge chrome); the chat renderer
+maps `tool_view` payloads to the component registry (inline, or into the shared
+`<Sheet>`/`<Dialog>`). *Gate:* httpx streaming test; Vitest for the surface and a
+registry render test (unknown component → nothing); the existing mocks are the spec.
 
 **P4.6 — Tier-A memory + domain classifier.** `agent_memory`,
 `agent_episodes`, `agent_episode_refs` + migrations + RLS tests (incl. the

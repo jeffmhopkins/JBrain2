@@ -552,6 +552,32 @@ holds).
 - Dialogs are for confirmation only: one sentence of consequence, two
   buttons max (destructive variant on the right), no scrolling content.
 
+## Agent tool views (registered components, never bespoke markup)
+
+Agent tools render rich UI — lab plots, tables, timelines, appointment cards,
+confirm sheets — but **only through a closed registry of first-party
+components**, never by emitting HTML, scripts, or markdown URLs (that would be the
+exfiltration channel `docs/ASSISTANT.md` invariant I-9 forbids, and would let
+model output drive the render). The contract:
+
+- A tool result may carry a **`view`**: a schema-validated, **data-only** payload
+  naming a registered component and filling its typed slots
+  (`{ view:"lab_plot", series:[…], ref_fact_ids:[…] }`). The PWA looks the name up
+  in a fixed component registry and renders the vetted React component; an
+  unknown name renders nothing.
+- A `surface` hint (`inline | sheet | dialog`) places it: inline in the chat
+  transcript, or into the **shared `<Sheet>`/`<Dialog>`** shells. **This is not a
+  bespoke modal** — the component is the *content*; the modal-system rules above
+  still bind. Adding a component is a deliberate, versioned design+code change
+  (extend this document in the same PR), exactly like adding a tool.
+- View payloads are **data, not instruction** (I-1) and **render no external
+  resources** (I-9); slots are escaped by the component. Data in a view came from
+  an RLS-scoped tool call, so domain firewalls hold at the source; views carry
+  `fact_id`/`entity_id` refs for citation hover-cards (pointers-not-copies).
+- **Interactive views never mutate directly.** A button dispatches a tool call or
+  stages a **Proposal** under the session's action policy — the agent proposes,
+  the pipeline disposes.
+
 ## Implementation rules
 
 1. Tokens live in one file (`frontend/src/styles/tokens.css`); components

@@ -163,9 +163,26 @@ attention as any prompt). Each carries a `version` that is **CI-guarded** (chang
 prose or params without a bump → build fails) and stamped on every run the tool
 participates in, so a behavior change is a deliberate migration. Frontmatter also
 declares `domains` (which scopes may see it), `mutating`, `side_effecting`,
-`cost_class`, and `response_format` (concise/detailed). A `ToolRegistry`
-discovers and validates sidecars at startup (invalid sidecar or missing handler →
-startup failure), and `schemas_for(scopes)` returns only the tools in scope.
+`cost_class`, and `response_format` — `concise`/`detailed` text and/or a **view**
+(see below). A `ToolRegistry` discovers and validates sidecars at startup (invalid
+sidecar or missing handler → startup failure), and `schemas_for(scopes)` returns
+only the tools in scope.
+
+**Tool result views.** A tool may render rich UI — lab plots, tables, timelines,
+appointment cards, confirm sheets — by returning a **`view`**: a schema-validated,
+**data-only** payload naming a **registered first-party component** and filling its
+typed slots (`{view:"lab_plot", series:[…], ref_fact_ids:[…]}`), with a
+`surface` hint (`inline`/`sheet`/`dialog`). The PWA renders the named component
+from a fixed registry into the chat or the shared `<Sheet>`/`<Dialog>` shell — it
+is **never** model-authored HTML/markdown/URLs (that would be the exfiltration
+channel #9 forbids and would let model output drive the render). Views are **data,
+not instruction** (#1), render **no external resources** (#9), and carry
+`fact_id`/`entity_id` refs (pointers-not-copies, citation hover-cards); their data
+came from an RLS-scoped tool call so domain firewalls hold at the source.
+**Interactive views never mutate directly** — a button dispatches a tool call or
+stages a Proposal under the session's action policy. Adding a component is a
+deliberate, versioned change (`docs/DESIGN.md` "Agent tool views"), like adding a
+tool.
 
 **The tool set stays small** (ACI discipline; every new tool pays a context-and-
 bloat tax): hybrid `search`, `read_note`/`read_entity`/`read_fact`,
