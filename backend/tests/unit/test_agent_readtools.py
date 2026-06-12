@@ -209,7 +209,13 @@ async def test_read_entity_needs_an_id() -> None:
 
 async def test_find_entity_surfaces_refs_and_passes_the_query() -> None:
     matches = [
-        {"id": "e1", "kind": "Person", "canonical_name": "Celine", "domain": "general"},
+        {
+            "id": "e1",
+            "kind": "Person",
+            "canonical_name": "Celine",
+            "domain": "general",
+            "aliases": ["Celine Hopkins"],
+        },
         {"id": "e2", "kind": "Person", "canonical_name": "Celine R.", "domain": "health"},
     ]
     fake = FakeEntities(None, matches)
@@ -218,8 +224,9 @@ async def test_find_entity_surfaces_refs_and_passes_the_query() -> None:
     )
     assert isinstance(out, ToolOutput)
     assert "id=e1" in out  # the model gets ids to chain into read_entity
+    # Aliases ride along so the PWA can link a prose name that isn't the label.
     assert out.entities == (
-        EntityRef(entity_id="e1", label="Celine", domain="general"),
+        EntityRef(entity_id="e1", label="Celine", domain="general", aliases=["Celine Hopkins"]),
         EntityRef(entity_id="e2", label="Celine R.", domain="health"),
     )
     assert fake.searched == [("celine", "Person", 8)]

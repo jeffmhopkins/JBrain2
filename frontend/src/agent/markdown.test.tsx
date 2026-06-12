@@ -91,6 +91,20 @@ describe("Markdown", () => {
     expect(screen.queryByRole("button", { name: "Acme Corp" })).toBeNull();
   });
 
+  it("links a prose name that is an alias, not the canonical label", () => {
+    const onEntity = vi.fn();
+    render(
+      <Markdown
+        text="You are Jeff Hopkins."
+        onEntity={onEntity}
+        // canonical label "Me" never appears; the alias does and must link.
+        entities={[{ entity_id: "me", label: "Me", domain: "general", aliases: ["Jeff Hopkins"] }]}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Jeff Hopkins" }));
+    expect(onEntity).toHaveBeenCalledWith("me");
+  });
+
   it("prefers the longest entity label and respects word boundaries", () => {
     const onEntity = vi.fn();
     render(

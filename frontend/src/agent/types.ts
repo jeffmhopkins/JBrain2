@@ -16,6 +16,9 @@ export interface EntityRef {
   entity_id: string;
   label: string;
   domain: Domain;
+  /** Other surface forms (aka) — used to linkify a prose name that isn't the
+   * canonical label (e.g. "Jeff Hopkins" for an entity canonically "Me"). */
+  aliases?: string[];
 }
 export interface NoteRef {
   kind: "note";
