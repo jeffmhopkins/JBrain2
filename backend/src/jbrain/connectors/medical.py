@@ -64,8 +64,7 @@ def medical_connectors(rxnav_url: str, medlineplus_url: str) -> list[Connector]:
             base_url=medlineplus_url,
             path="/service",
             domain="health",
-            # MedlinePlus Connect's required main-search-criteria code value.
-            params=(ParamSpec("mainSearchCriteria.v.dn", str),),
+            params=(ParamSpec("name", str),),
             parse=parse_condition,
         ),
     ]

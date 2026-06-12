@@ -13,11 +13,12 @@ from typing import Annotated, Any, Literal, cast
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
+from jbrain.agent.connectortools import build_leaf_executor
 from jbrain.agent.proposals import ProposalRepo
-from jbrain.agent.proposaltools import agent_note_executor
 from jbrain.api.deps import owner_only
 from jbrain.api.notes import ctx_for
 from jbrain.auth.service import PrincipalInfo
+from jbrain.connectors.service import ConnectorService
 from jbrain.notes.repo import SqlNotesRepo
 
 router = APIRouter(prefix="/proposals", dependencies=[Depends(owner_only)])
@@ -31,6 +32,10 @@ def get_proposals(request: Request) -> ProposalRepo:
 
 def get_notes_repo(request: Request) -> SqlNotesRepo:
     return cast(SqlNotesRepo, request.app.state.notes_repo)
+
+
+def get_connector_service(request: Request) -> ConnectorService:
+    return cast(ConnectorService, request.app.state.connector_service)
 
 
 class ProposalSummaryOut(BaseModel):
@@ -121,7 +126,9 @@ async def decide_node(
 @router.post("/{proposal_id}/enact")
 async def enact_proposal(request: Request, principal: OwnerDep, proposal_id: str) -> EnactOut:
     repo = get_proposals(request)
-    executor = agent_note_executor(get_notes_repo(request))
+    # One executor dispatching by leaf op: agent-note kinds re-enter the pipeline;
+    # an egress leaf fires its connector (the call the owner just approved).
+    executor = build_leaf_executor(get_notes_repo(request), get_connector_service(request))
     try:
         plan = await repo.enact(ctx_for(principal), proposal_id, executor)
     except ValueError as exc:

@@ -14,6 +14,8 @@ from jbrain.agent.readtools import (
     format_search,
 )
 from jbrain.agent.toolfile import load_tool
+from jbrain.connectors.base import ConnectorRegistry
+from jbrain.connectors.medical import medical_connectors
 from jbrain.db.session import SessionContext
 from jbrain.notes.service import NoteInfo
 from jbrain.search.service import SearchResponse, SearchResult
@@ -183,6 +185,7 @@ def test_build_registry_binds_the_shipped_sidecars() -> None:
         FakeEntities(None),  # type: ignore[arg-type]
         object(),  # type: ignore[arg-type]
         object(),  # type: ignore[arg-type]
+        ConnectorRegistry(medical_connectors("http://rx", "http://mp")),
     )
     shipped = {
         "search",
@@ -193,8 +196,11 @@ def test_build_registry_binds_the_shipped_sidecars() -> None:
         "memory_edit",
         "remember",
         "propose_correction",
+        "lookup_medication",
+        "lookup_condition",
     }
     assert registry.names() == shipped
+    # The connector tools are external (no domain restriction on visibility).
     assert {t.name for t in registry.schemas_for({"general"})} == shipped
 
 
@@ -240,6 +246,16 @@ def test_sidecars_pinned_to_their_versions() -> None:
             "propose_correction",
             1,
             "d0e2fe9b1a1af0922a84fde2c5c299184ec2ac4e8d88ef28a9e2cd64bea9eaa6",
+        ),
+        "lookup_medication.tool": (
+            "lookup_medication",
+            1,
+            "a318f9b67990265d3db6266c72d8e36e628c8f605417f052bfe6392c5f150335",
+        ),
+        "lookup_condition.tool": (
+            "lookup_condition",
+            1,
+            "365558e91398836b3dca8ef6728e7fa86a82d49b3f3ccc25fa6efd79ca663af4",
         ),
     }
     for filename, expected in pins.items():

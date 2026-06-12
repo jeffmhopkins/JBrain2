@@ -16,6 +16,10 @@ from jbrain.api import agent, analysis, auth, health, notes, ops, proposals, sea
 from jbrain.api import settings as settings_api
 from jbrain.auth.repo import SqlAuthRepo
 from jbrain.config import Settings, get_settings
+from jbrain.connectors.base import ConnectorRegistry
+from jbrain.connectors.medical import medical_connectors
+from jbrain.connectors.repo import SqlConnectorCache
+from jbrain.connectors.service import ConnectorService
 from jbrain.embed import TeiEmbedClient
 from jbrain.llm import build_router
 from jbrain.notes.repo import SqlNotesRepo
@@ -59,12 +63,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             MemoryRepo(maker), TeiEmbedClient(settings.embed_url), settings.embed_model
         )
         app.state.agent_proposals = ProposalRepo(maker)
+        # The egress chokepoint: a fixed allowlist of connectors, served only on an
+        # approved egress Proposal (invariant #9).
+        connector_registry = ConnectorRegistry(
+            medical_connectors(settings.rxnav_url, settings.medlineplus_url)
+        )
+        app.state.connector_service = ConnectorService(connector_registry, SqlConnectorCache(maker))
         app.state.agent_registry = build_registry(
             app.state.search_service,
             app.state.notes_repo,
             app.state.analysis_repo,
             app.state.agent_memory,
             app.state.agent_proposals,
+            connector_registry,
         )
         app.state.agent_sessions = AgentSessionRepo(maker)
         app.state.agent_runlog = AgentRunLog(maker)

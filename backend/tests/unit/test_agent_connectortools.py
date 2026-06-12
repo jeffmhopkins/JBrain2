@@ -1,0 +1,125 @@
+"""Connector tools STAGE an egress Proposal (never call out), and the egress leaf
+executor fires the connector only on enact (docs/ASSISTANT.md #9)."""
+
+from typing import Any
+
+from jbrain.agent.connectortools import (
+    build_connector_handlers,
+    build_leaf_executor,
+    egress_executor,
+)
+from jbrain.agent.loop import ToolContext
+from jbrain.agent.proposals import NodeRow, ProposalRow, ProposalSpec
+from jbrain.connectors.base import ConnectorRegistry
+from jbrain.connectors.medical import medical_connectors
+from jbrain.db.session import SessionContext
+
+REGISTRY = ConnectorRegistry(medical_connectors("https://rx.example", "https://mp.example"))
+HEALTH = ToolContext(
+    session=SessionContext(principal_kind="owner", principal_id="p1", domain_scopes=("health",)),
+    scopes=("health",),
+)
+
+
+class FakeProposals:
+    def __init__(self) -> None:
+        self.staged: list[tuple[str, ProposalSpec]] = []
+
+    async def stage(self, ctx: object, *, principal_id: str, spec: ProposalSpec) -> str:
+        self.staged.append((principal_id, spec))
+        return "prop-1"
+
+
+class FakeConnectorService:
+    def __init__(self) -> None:
+        self.fetched: list[tuple[str, dict, str]] = []
+
+    async def fetch(
+        self, ctx: object, *, connector_name: str, params: dict, principal_id: str
+    ) -> str:
+        self.fetched.append((connector_name, params, principal_id))
+        return "result"
+
+
+def handler(proposals: FakeProposals, name: str = "lookup_medication"):
+    return build_connector_handlers(REGISTRY, proposals)[name]  # type: ignore[arg-type]
+
+
+async def test_connector_tool_stages_an_egress_proposal_not_a_call() -> None:
+    proposals = FakeProposals()
+    out = await handler(proposals)({"name": "metformin"}, HEALTH)
+    assert "staged" in out.lower() and "prop-1" in out
+    _, spec = proposals.staged[0]
+    assert spec.kind == "egress" and spec.domain == "health"
+    node = spec.nodes[0]
+    assert node.op == "egress_call"
+    assert node.preview["connector"] == "lookup_medication"
+    assert node.preview["params"] == {"name": "metformin"}
+    assert node.preview["url"] == "https://rx.example/REST/drugs.json"
+
+
+async def test_connector_tool_refuses_an_out_of_scope_domain() -> None:
+    proposals = FakeProposals()
+    general = ToolContext(
+        session=SessionContext(principal_kind="owner", principal_id="p1"), scopes=("general",)
+    )
+    out = await handler(proposals)({"name": "metformin"}, general)
+    assert "isn't scoped to health" in out
+    assert proposals.staged == []  # nothing staged outside scope
+
+
+async def test_connector_tool_reports_a_guard_rejection() -> None:
+    proposals = FakeProposals()
+    out = await handler(proposals)({}, HEALTH)  # missing the required name
+    assert "can't look that up" in out
+    assert proposals.staged == []
+
+
+async def test_egress_executor_fires_the_connector_on_enact() -> None:
+    svc = FakeConnectorService()
+    node = NodeRow(
+        "n",
+        None,
+        "leaf",
+        "egress_call",
+        "lbl",
+        {"connector": "lookup_medication", "params": {"name": "metformin"}},
+        (),
+        "approved",
+    )
+    proposal = ProposalRow("prop-1", "egress", "approved", "health", "t", None)
+    await egress_executor(svc)(HEALTH.session, proposal, node)  # type: ignore[arg-type]
+    assert svc.fetched == [("lookup_medication", {"name": "metformin"}, "p1")]
+
+
+class FakeNotes:
+    def __init__(self) -> None:
+        self.created: list[dict] = []
+
+    async def create_note(self, ctx: object, **kwargs: Any) -> tuple[None, bool]:
+        self.created.append(kwargs)
+        return None, True
+
+
+async def test_leaf_executor_dispatches_by_op() -> None:
+    notes, svc = FakeNotes(), FakeConnectorService()
+    execute = build_leaf_executor(notes, svc)  # type: ignore[arg-type]
+    proposal = ProposalRow("p", "egress", "approved", "health", "t", None)
+
+    egress_node = NodeRow(
+        "e",
+        None,
+        "leaf",
+        "egress_call",
+        "",
+        {"connector": "lookup_condition", "params": {"name": "x"}},
+        (),
+        "approved",
+    )
+    note_node = NodeRow(
+        "a", None, "leaf", "add_note", "", {"body": "the fact", "domain": "health"}, (), "approved"
+    )
+    await execute(HEALTH.session, proposal, egress_node)
+    await execute(HEALTH.session, proposal, note_node)
+    assert svc.fetched == [("lookup_condition", {"name": "x"}, "p1")]
+    assert notes.created[0]["provenance"] == "agent"
