@@ -46,8 +46,9 @@
     transition:transform .42s cubic-bezier(.3,.85,.3,1);touch-action:pan-y;cursor:grab;}
   .flip .face{backface-visibility:hidden;-webkit-backface-visibility:hidden;width:100%;}
   /* top/left/right but NOT bottom, so the back sizes to its own content (and
-     can be measured) instead of being pinned to the front's height. */
-  .flip .back{position:absolute;top:0;left:0;right:0;transform:rotateY(180deg);}
+     can be measured) instead of being pinned to the front's height. Extra
+     bottom padding reserves a row for the corner cue, clear of the last step. */
+  .flip .back{position:absolute;top:0;left:0;right:0;padding-bottom:30px;transform:rotateY(180deg);}
 
   /* a quiet corner affordance so the gesture is discoverable */
   .flipcue{position:absolute;bottom:7px;right:9px;display:flex;align-items:center;gap:3px;font-size:10px;color:var(--text-3);}
