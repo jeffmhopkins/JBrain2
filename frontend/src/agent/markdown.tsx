@@ -16,9 +16,10 @@ const DATE = new RegExp(
   "gi",
 );
 // Inline markdown: code first (so ** inside code is literal), then bold, italic,
-// links. Emphasis can't hug a space (avoids "3 * 4 * 5").
+// links, then `[^n]` source citations. Emphasis can't hug a space (avoids
+// "3 * 4 * 5").
 const INLINE =
-  /(`[^`]+`)|(\*\*(?! )[^*\n]+(?<! )\*\*)|(\*(?! )[^*\n]+(?<! )\*)|(\[[^\]\n]+\]\([^)\n]+\))/;
+  /(`[^`]+`)|(\*\*(?! )[^*\n]+(?<! )\*\*)|(\*(?! )[^*\n]+(?<! )\*)|(\[[^\]\n]+\]\([^)\n]+\))|(\[\^\d+\])/;
 
 const isIsoDate = (s: string): boolean => /^\d{4}-\d{2}-\d{2}$/.test(s);
 
@@ -62,7 +63,9 @@ function withTemporal(text: string, key: string): ReactNode[] {
 
 const SAFE_URL = /^(https?:|mailto:)/i;
 
-function inline(text: string, key: string): ReactNode[] {
+type Cite = ((n: number) => void) | undefined;
+
+function inline(text: string, key: string, onCite: Cite): ReactNode[] {
   const out: ReactNode[] = [];
   let rest = text;
   let n = 0;
@@ -82,9 +85,19 @@ function inline(text: string, key: string): ReactNode[] {
         </code>,
       );
     } else if (tok.startsWith("**")) {
-      out.push(<strong key={k}>{inline(tok.slice(2, -2), k)}</strong>);
+      out.push(<strong key={k}>{inline(tok.slice(2, -2), k, onCite)}</strong>);
     } else if (tok.startsWith("*")) {
-      out.push(<em key={k}>{inline(tok.slice(1, -1), k)}</em>);
+      out.push(<em key={k}>{inline(tok.slice(1, -1), k, onCite)}</em>);
+    } else if (tok.startsWith("[^")) {
+      // A source citation — render the number as a tappable superscript.
+      const num = Number(tok.slice(2, -1));
+      out.push(
+        <sup key={k} className="md-cite">
+          <button type="button" onClick={() => onCite?.(num)}>
+            {num}
+          </button>
+        </sup>,
+      );
     } else {
       const lm = /^\[([^\]]+)\]\(([^)]+)\)$/.exec(tok);
       if (lm?.[1] && lm[2] && SAFE_URL.test(lm[2])) {
@@ -104,15 +117,15 @@ function inline(text: string, key: string): ReactNode[] {
 }
 
 /** Render one paragraph's text, turning soft newlines into line breaks. */
-function paragraph(text: string, key: string): ReactNode {
+function paragraph(text: string, key: string, onCite: Cite): ReactNode {
   const lines = text.split("\n");
   return (
     <p key={key} className="md-p">
       {lines.flatMap((ln, i) =>
         i === 0
-          ? inline(ln, `${key}-l${i}`)
+          ? inline(ln, `${key}-l${i}`, onCite)
           : // biome-ignore lint/suspicious/noArrayIndexKey: soft-break order is stable
-            [<br key={`${key}-br${i}`} />, ...inline(ln, `${key}-l${i}`)],
+            [<br key={`${key}-br${i}`} />, ...inline(ln, `${key}-l${i}`, onCite)],
       )}
     </p>
   );
@@ -186,13 +199,13 @@ function parseBlocks(src: string): Block[] {
   return blocks;
 }
 
-function renderBlock(b: Block, key: string): ReactNode {
+function renderBlock(b: Block, key: string, onCite: Cite): ReactNode {
   switch (b.kind) {
     case "h": {
       const Tag = `h${Math.min(b.level + 2, 6)}` as "h3" | "h4" | "h5" | "h6";
       return (
         <Tag key={key} className="md-h">
-          {inline(b.text, key)}
+          {inline(b.text, key, onCite)}
         </Tag>
       );
     }
@@ -201,7 +214,7 @@ function renderBlock(b: Block, key: string): ReactNode {
         <ul key={key} className="md-ul">
           {b.items.map((it, i) => (
             // biome-ignore lint/suspicious/noArrayIndexKey: list order is stable
-            <li key={`${key}-${i}`}>{inline(it, `${key}-${i}`)}</li>
+            <li key={`${key}-${i}`}>{inline(it, `${key}-${i}`, onCite)}</li>
           ))}
         </ul>
       );
@@ -210,7 +223,7 @@ function renderBlock(b: Block, key: string): ReactNode {
         <ol key={key} className="md-ol">
           {b.items.map((it, i) => (
             // biome-ignore lint/suspicious/noArrayIndexKey: list order is stable
-            <li key={`${key}-${i}`}>{inline(it, `${key}-${i}`)}</li>
+            <li key={`${key}-${i}`}>{inline(it, `${key}-${i}`, onCite)}</li>
           ))}
         </ol>
       );
@@ -223,15 +236,22 @@ function renderBlock(b: Block, key: string): ReactNode {
     case "quote":
       return (
         <blockquote key={key} className="md-quote">
-          {inline(b.text, key)}
+          {inline(b.text, key, onCite)}
         </blockquote>
       );
     default:
-      return paragraph(b.text, key);
+      return paragraph(b.text, key, onCite);
   }
 }
 
-export function Markdown({ text }: { text: string }): ReactNode {
+export function Markdown({
+  text,
+  onCite,
+}: {
+  text: string;
+  /** Tap handler for a `[^n]` source citation. */
+  onCite?: ((n: number) => void) | undefined;
+}): ReactNode {
   const blocks = useMemo(() => parseBlocks(text), [text]);
-  return <div className="md">{blocks.map((b, i) => renderBlock(b, `b${i}`))}</div>;
+  return <div className="md">{blocks.map((b, i) => renderBlock(b, `b${i}`, onCite))}</div>;
 }

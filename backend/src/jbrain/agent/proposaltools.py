@@ -10,7 +10,8 @@ idempotent on its node id so re-enacting can never duplicate it.
 
 import uuid
 
-from jbrain.agent.loop import ToolContext, ToolHandler
+from jbrain.agent.contracts import ProposalRef
+from jbrain.agent.loop import ToolContext, ToolHandler, ToolOutput
 from jbrain.agent.proposals import (
     LeafExecutor,
     NodeRow,
@@ -56,9 +57,12 @@ def build_proposal_handlers(proposals: ProposalRepo) -> dict[str, ToolHandler]:
         prop_id = await proposals.stage(
             ctx.session, principal_id=ctx.session.principal_id, spec=spec
         )
-        return (
-            f"Staged a correction for your approval (proposal {prop_id}). I won't change anything"
-            " until you approve it — it then re-enters as a normal, source-attributed note."
+        # The id rides structurally (a "Review proposal" chip), not in the prose —
+        # so the model can't garble it and the user gets a real control.
+        return ToolOutput(
+            "Staged a correction for your approval. I won't change anything until you approve"
+            " it — it then re-enters as a normal, source-attributed note.",
+            proposal=ProposalRef(proposal_id=prop_id, kind="correction"),
         )
 
     return {"propose_correction": propose_correction_tool}

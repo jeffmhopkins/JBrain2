@@ -4,7 +4,7 @@
 // tool calls/results become activity rows and tool_view payloads collect for the
 // component registry.
 
-import type { ChatEvent, ViewPayload } from "./types";
+import type { ChatEvent, ProposalRef, ViewPayload } from "./types";
 
 /** A source note a tool surfaced, ready for a card: id to open, domain for the
  * dot, text for the line. */
@@ -22,6 +22,8 @@ export interface ToolActivity {
   summary?: string;
   /** Structured notes the tool surfaced, sent with the result event. */
   sources?: SourceRef[];
+  /** A Proposal this tool staged (a "Review proposal" chip). */
+  proposal?: ProposalRef;
 }
 
 export interface TranscriptMessage {
@@ -60,8 +62,11 @@ export function applyEvent(messages: TranscriptMessage[], event: ChatEvent): Tra
         domain: s.domain,
         text: s.snippet,
       }));
+      const extra = event.proposal ? { proposal: event.proposal } : {};
       next.tools = next.tools.map((t) =>
-        t.id === event.tool_call_id ? { ...t, ok: event.ok, summary: event.summary, sources } : t,
+        t.id === event.tool_call_id
+          ? { ...t, ok: event.ok, summary: event.summary, sources, ...extra }
+          : t,
       );
       break;
     }

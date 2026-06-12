@@ -86,7 +86,15 @@ export function FullBrainSurface({ fb, onOpenNote }: Props): ReactNode {
             {fb.messages.map((m, i) => (
               // Transcript is append-only; positional key is stable for the turn.
               // biome-ignore lint/suspicious/noArrayIndexKey: append-only transcript
-              <Bubble key={i} message={m} onOpenNote={onOpenNote} />
+              <Bubble
+                key={i}
+                message={m}
+                onOpenNote={onOpenNote}
+                onOpenProposal={(id) => {
+                  fb.setOpenProposal(id);
+                  fb.setPanel("proposals");
+                }}
+              />
             ))}
             {fb.messages.length === 0 && (
               <p className="fb-empty">Talk it out below — full tool access.</p>
@@ -167,9 +175,11 @@ function AgentStatusLine({ status }: { status: AgentStatus | null }): ReactNode 
 function Bubble({
   message,
   onOpenNote,
+  onOpenProposal,
 }: {
   message: TranscriptMessage;
   onOpenNote?: ((noteId: string) => void) | undefined;
+  onOpenProposal?: ((proposalId: string) => void) | undefined;
 }): ReactNode {
   if (message.role === "user") {
     return <div className="bubble me">{message.text}</div>;
@@ -179,10 +189,22 @@ function Bubble({
   if (!message.text && message.tools.length === 0 && message.views.length === 0) {
     return null;
   }
+  // `[^n]` in the answer maps to the n-th source the turn surfaced (flattened
+  // across this turn's tools, in order) — tap opens that note.
+  const flatSources = message.tools.flatMap((t) => t.sources ?? []);
+  const onCite = onOpenNote
+    ? (n: number) => {
+        const src = flatSources[n - 1];
+        if (src) onOpenNote(src.noteId);
+      }
+    : undefined;
+
   return (
     <div className="bubble ai">
-      {message.text && <Markdown text={message.text} />}
-      {message.tools.length > 0 && <ToolUsage tools={message.tools} onOpenNote={onOpenNote} />}
+      {message.text && <Markdown text={message.text} onCite={onCite} />}
+      {message.tools.length > 0 && (
+        <ToolUsage tools={message.tools} onOpenNote={onOpenNote} onOpenProposal={onOpenProposal} />
+      )}
       {message.views.map((v, i) => (
         // biome-ignore lint/suspicious/noArrayIndexKey: views append in order
         <ToolView key={i} payload={v} />
@@ -197,18 +219,36 @@ function Bubble({
 function ToolUsage({
   tools,
   onOpenNote,
+  onOpenProposal,
 }: {
   tools: ToolActivity[];
   onOpenNote?: ((noteId: string) => void) | undefined;
+  onOpenProposal?: ((proposalId: string) => void) | undefined;
 }): ReactNode {
   const [open, setOpen] = useState(false);
   const steps = tools.map(toolStep);
   const sourceCount = steps.reduce((n, s) => n + s.sources.length, 0);
   const parts = [`${steps.length} step${steps.length === 1 ? "" : "s"}`];
   if (sourceCount) parts.push(`${sourceCount} source${sourceCount === 1 ? "" : "s"}`);
+  const staged = tools.find((t) => t.proposal)?.proposal;
 
   return (
     <div className={`toolwork${open ? " open" : ""}`}>
+      {staged && (
+        <button
+          type="button"
+          className="proposal-chip"
+          onClick={() => onOpenProposal?.(staged.proposal_id)}
+        >
+          <svg className="tw-ic" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2" />
+            <rect x="9" y="3" width="6" height="4" rx="1" />
+            <path d="m9 14 2 2 4-4" />
+          </svg>
+          Review proposal
+          <ChevronGlyph className="tw-chev" />
+        </button>
+      )}
       <button
         type="button"
         className="toolwork-line"

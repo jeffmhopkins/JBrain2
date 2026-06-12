@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
+import { api } from "../api/client";
 import { FullBrainSurface } from "./FullBrainSurface";
 import type { AgentSession, ChatEvent, ChatRequest, TranscriptTurn } from "./types";
 import { type FullBrainDeps, useFullBrain } from "./useFullBrain";
@@ -202,6 +203,55 @@ describe("FullBrainSurface", () => {
     await waitFor(() =>
       expect(screen.getByRole("status").textContent).toContain("Answered · 1 tool used"),
     );
+  });
+
+  it("surfaces a staged proposal as a Review chip routed to the Proposals panel", async () => {
+    // Opening the proposal renders ProposalTree, which fetches it; hold the fetch
+    // so the panel opens without a (rejected) network call in the test.
+    vi.spyOn(api, "getProposal").mockReturnValue(new Promise(() => {}));
+    async function* answer(): AsyncGenerator<ChatEvent> {
+      yield { type: "tool_call", id: "c1", name: "propose_correction", arguments: {} };
+      yield {
+        type: "tool_result",
+        tool_call_id: "c1",
+        ok: true,
+        summary: "staged",
+        proposal: { proposal_id: "p1", kind: "correction" },
+      };
+      yield { type: "text_delta", text: "Staged it for your approval." };
+      yield { type: "done", stop_reason: "end_turn" };
+    }
+    render(<Harness d={deps({ chat: answer })} />);
+    await waitFor(() => screen.getByLabelText("Conversation"));
+    fireEvent.change(screen.getByLabelText("Composer"), { target: { value: "name that note" } });
+    fireEvent.click(screen.getByRole("button", { name: "send" }));
+
+    const chip = await screen.findByRole("button", { name: /Review proposal/ });
+    fireEvent.click(chip);
+    await waitFor(() => expect(document.querySelector(".panel.right.open")).toBeInTheDocument());
+  });
+
+  it("a [^1] citation in the answer opens the cited source note", async () => {
+    const onOpenNote = vi.fn();
+    async function* answer(): AsyncGenerator<ChatEvent> {
+      yield { type: "tool_call", id: "c1", name: "search", arguments: {} };
+      yield {
+        type: "tool_result",
+        tool_call_id: "c1",
+        ok: true,
+        summary: "1",
+        sources: [{ note_id: "n7", domain: "general", snippet: "born then" }],
+      };
+      yield { type: "text_delta", text: "You were born then.[^1]" };
+      yield { type: "done", stop_reason: "end_turn" };
+    }
+    render(<Harness d={deps({ chat: answer })} onOpenNote={onOpenNote} />);
+    await waitFor(() => screen.getByLabelText("Conversation"));
+    fireEvent.change(screen.getByLabelText("Composer"), { target: { value: "when born?" } });
+    fireEvent.click(screen.getByRole("button", { name: "send" }));
+
+    fireEvent.click(await screen.findByRole("button", { name: "1" }));
+    expect(onOpenNote).toHaveBeenCalledWith("n7");
   });
 
   it("a send with no chosen session surfaces the picker instead", async () => {

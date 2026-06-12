@@ -9,6 +9,7 @@ from jbrain.agent.contracts import (
     ChatEvent,
     DoneEvent,
     NoteSource,
+    ProposalRef,
     TextDelta,
     ToolCallEvent,
     ToolResultEvent,
@@ -57,6 +58,10 @@ async def search_sourced(arguments: dict, ctx: ToolContext) -> ToolOutput:
     return ToolOutput("found 1", (NoteSource(note_id="n1", domain="general", snippet="hi"),))
 
 
+async def propose_sourced(arguments: dict, ctx: ToolContext) -> ToolOutput:
+    return ToolOutput("staged it", proposal=ProposalRef(proposal_id="p9", kind="correction"))
+
+
 def router_with(turns: list[LlmTurn]) -> tuple[LlmRouter, FakeLlmClient]:
     fake = FakeLlmClient(turns=turns)
     return LlmRouter({"xai": fake}, {"agent.turn": ("xai", "grok-4.3")}), fake
@@ -77,8 +82,8 @@ def test_system_prompt_pinned_to_its_version() -> None:
     editing it must be a deliberate version bump, like every .prompt file."""
     digest = hashlib.sha256(SYSTEM_PROMPT.encode()).hexdigest()
     assert (SYSTEM_VERSION, digest) == (
-        "agent-system-v1",
-        "798060d1b29809ec69dacadbe2beb85301b1f21fedd521e012c9a490bbb777e4",
+        "agent-system-v2",
+        "ea1a82b644a38c5155e20d95812d76d7937406ae42c87f9bd2c16b5964f70a4c",
     )
 
 
@@ -224,6 +229,17 @@ async def test_run_stream_tool_result_carries_structured_sources() -> None:
     result = next(e for e in events if isinstance(e, ToolResultEvent))
     assert result.summary == "found 1"
     assert result.sources == [NoteSource(note_id="n1", domain="general", snippet="hi")]
+
+
+async def test_run_stream_tool_result_carries_a_staged_proposal() -> None:
+    turns = [
+        LlmTurn("", (ToolCall("c1", "propose", {}),), "tool_use", LlmUsage(1, 1)),
+        LlmTurn("done", (), "end_turn", LlmUsage(1, 1)),
+    ]
+    router, _ = stream_router_with(turns)
+    events = await collect(AgentLoop(router, registry_with(make_tool("propose", propose_sourced))))
+    result = next(e for e in events if isinstance(e, ToolResultEvent))
+    assert result.proposal == ProposalRef(proposal_id="p9", kind="correction")
 
 
 async def test_run_stream_tool_error_surfaces_in_result_event() -> None:
