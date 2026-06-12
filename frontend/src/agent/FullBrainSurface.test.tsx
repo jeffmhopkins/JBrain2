@@ -80,6 +80,21 @@ describe("FullBrainSurface", () => {
     expect(getTranscript).toHaveBeenCalledWith("s1");
   });
 
+  it("keeps the active session's history when it is re-opened from the list", async () => {
+    const getTranscript = vi.fn(
+      async (): Promise<TranscriptTurn[]> => [{ role: "user", content: "kept", tools: [] }],
+    );
+    render(<Harness d={deps({ getTranscript })} />);
+    await waitFor(() => expect(screen.getByText("kept")).toBeInTheDocument());
+
+    // Re-open the already-active session from the (in-DOM) sessions list.
+    fireEvent.click(document.querySelector(".session-row") as HTMLElement);
+
+    // Its history must not be blanked, and we don't re-fetch the same id.
+    expect(screen.getByText("kept")).toBeInTheDocument();
+    expect(getTranscript).toHaveBeenCalledTimes(1);
+  });
+
   it("shows the active session's name up top with panels closed", async () => {
     render(<Harness d={deps()} />);
     await waitFor(() => expect(screen.getByLabelText("Conversation")).toBeInTheDocument());

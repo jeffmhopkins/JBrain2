@@ -167,9 +167,11 @@ export function useFullBrain(enabled: boolean, deps: FullBrainDeps = LIVE): Full
   }
 
   function open(session: AgentSession): void {
-    // Clear now so the prior session's chat doesn't linger while the new one's
-    // transcript loads (the id-keyed effect repopulates it).
-    setMessages([]);
+    // Clear only when actually switching sessions, so the prior chat doesn't
+    // linger while the new one's transcript loads (the id-keyed effect reloads
+    // it). Re-opening the current session must NOT clear — its id is unchanged,
+    // so the effect wouldn't re-fire to repopulate it.
+    if (session.id !== active?.id) setMessages([]);
     setActive(session);
     setPanel("none");
   }
