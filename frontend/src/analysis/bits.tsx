@@ -6,10 +6,43 @@
 import type { FactOut, FactStatus } from "../api/client";
 import { PinIcon } from "../components/icons";
 import { splitMarks } from "../search/marks";
-import { fmtConfidence, fmtTemporal } from "./format";
+import { factValue, fmtConfidence, fmtTemporal } from "./format";
 
 export function KindBadge({ kind }: { kind: string }) {
   return <span className="kind-badge">{kind}</span>;
+}
+
+/** The value end of a fact's edge. A relationship fact points AT another
+ * entity, so render that node as a link to it — never the buried statement
+ * sentence. Scalar facts (and objects the session can't resolve to a name)
+ * fall back to factValue. The link stops propagation so it navigates instead
+ * of toggling the citation row it sits inside. */
+export function EdgeValue({
+  fact,
+  onOpenEntity,
+}: {
+  fact: FactOut;
+  onOpenEntity?: (entityId: string) => void;
+}) {
+  const objectId = fact.object_entity_id;
+  if (objectId && fact.object_entity_name) {
+    if (onOpenEntity) {
+      return (
+        <button
+          type="button"
+          className="edge-object"
+          onClick={(e) => {
+            e.stopPropagation();
+            onOpenEntity(objectId);
+          }}
+        >
+          {fact.object_entity_name}
+        </button>
+      );
+    }
+    return <span className="edge-object">{fact.object_entity_name}</span>;
+  }
+  return <>{factValue(fact)}</>;
 }
 
 /** active facts carry no chip — absence of state chrome IS the calm state. */

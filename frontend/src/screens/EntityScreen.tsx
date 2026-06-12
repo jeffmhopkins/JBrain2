@@ -5,8 +5,8 @@
 // A slide-up tree layer like the note view: back chevron + swipe-down exit.
 
 import { type TouchEvent, useEffect, useRef, useState } from "react";
-import { FactCitation, MarkedText, StatusChip } from "../analysis/bits";
-import { edgePath, factSpan, factValue } from "../analysis/format";
+import { EdgeValue, FactCitation, MarkedText, StatusChip } from "../analysis/bits";
+import { edgePath, factSpan } from "../analysis/format";
 import { type EntityOut, type EntityPredicate, type FactOut, api } from "../api/client";
 import { TopBar } from "../components/TopBar";
 import { EntityTypeIcon } from "../entities/kinds";
@@ -19,33 +19,51 @@ type EntityState = { phase: "loading" } | { phase: "error" } | { phase: "done"; 
 
 interface RailFactProps {
   fact: FactOut;
+  onOpenEntity: (entityId: string) => void;
 }
 
 /** One dot on a predicate's timeline rail: value, span, source citation. */
-function RailFact({ fact }: RailFactProps) {
+function RailFact({ fact, onOpenEntity }: RailFactProps) {
   const [open, setOpen] = useState(false);
   const muted = fact.status === "superseded" || fact.status === "retracted";
+  const toggle = () => setOpen((o) => !o);
   return (
     <li className={`rail-fact${muted ? " fact-superseded" : ""}`}>
       <span className="rail-dot" aria-hidden="true" />
-      <button
-        type="button"
+      <div
         className="rail-body"
+        // biome-ignore lint/a11y/useSemanticElements: the body hosts a nested object-entity link, which a real <button> cannot wrap.
+        role="button"
+        tabIndex={0}
         aria-expanded={open}
-        onClick={() => setOpen((o) => !o)}
+        onClick={toggle}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            toggle();
+          }
+        }}
       >
-        <span className="rail-value">{factValue(fact)}</span>
+        <span className="rail-value">
+          <EdgeValue fact={fact} onOpenEntity={onOpenEntity} />
+        </span>
         <span className="rail-span">
           {factSpan(fact)}
           <StatusChip status={fact.status} pinned={fact.pinned} />
         </span>
-      </button>
+      </div>
       {open && <FactCitation fact={fact} extractor={null} />}
     </li>
   );
 }
 
-function PredicateBlock({ pred }: { pred: EntityPredicate }) {
+function PredicateBlock({
+  pred,
+  onOpenEntity,
+}: {
+  pred: EntityPredicate;
+  onOpenEntity: (entityId: string) => void;
+}) {
   const hasRail = pred.history.length > 1;
   const head = pred.current ?? pred.history[0];
   return (
@@ -54,14 +72,16 @@ function PredicateBlock({ pred }: { pred: EntityPredicate }) {
         <span className="fact-edge">
           <span className="edge-path">{edgePath(pred.predicate, pred.qualifier)}</span>
           <span className="edge-arrow"> → </span>
-          <span className="edge-value">{head ? factValue(head) : "—"}</span>
+          <span className="edge-value">
+            {head ? <EdgeValue fact={head} onOpenEntity={onOpenEntity} /> : "—"}
+          </span>
         </span>
         {head && <StatusChip status={head.status} pinned={head.pinned} />}
       </div>
       {hasRail && (
         <ul className="timeline-rail">
           {pred.history.map((fact) => (
-            <RailFact key={fact.id} fact={fact} />
+            <RailFact key={fact.id} fact={fact} onOpenEntity={onOpenEntity} />
           ))}
         </ul>
       )}
@@ -170,7 +190,11 @@ export function EntityScreen({
                 <h3 className="section-header">Current</h3>
                 <div className="fact-card">
                   {state.entity.predicates.map((pred) => (
-                    <PredicateBlock key={edgePath(pred.predicate, pred.qualifier)} pred={pred} />
+                    <PredicateBlock
+                      key={edgePath(pred.predicate, pred.qualifier)}
+                      pred={pred}
+                      onOpenEntity={onOpenEntity}
+                    />
                   ))}
                 </div>
               </section>

@@ -92,6 +92,19 @@ INVERSE_PAIRS: dict[str, str] = {
     "has_treated": "treatedBy",
     "treatedby": "hasTreated",
     "treated_by": "hasTreated",
+    # Ownership: a possession edge (me.owns → the F-150) reciprocates to the
+    # owner on the object's stream (the F-150 ownedBy → me). schema.org spells
+    # both `owns`/`ownedBy`; the object is usually `Me` or a null-subject thing,
+    # so the cross-subject gate rarely fires.
+    "owns": "ownedBy",
+    "ownedby": "owns",
+    "owned_by": "owns",
+    # Membership: a person's memberOf → Org reflects to the org's member list
+    # (Org.member → person). Only the unambiguous person→org spelling reciprocates
+    # — a bare `member` is directionally ambiguous (the prompt steers toward
+    # memberOf), so it is intentionally absent and stands alone rather than
+    # minting a wrong-way edge.
+    "memberof": "member",
 }
 
 

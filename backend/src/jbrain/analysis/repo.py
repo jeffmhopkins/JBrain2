@@ -45,9 +45,12 @@ _FACT_SELECT = """
            f.predicate, f.qualifier, f.kind, f.statement, f.value_json,
            f.assertion, f.status, f.pinned, f.confidence,
            f.valid_from, f.valid_to, f.reported_at, f.temporal_precision,
+           f.object_entity_id::text AS object_entity_id,
+           oe.canonical_name AS object_entity_name,
            c.text AS chunk_text, anchor.char_start, anchor.char_end
     FROM app.facts f
     JOIN app.entities e ON e.id = f.entity_id
+    LEFT JOIN app.entities oe ON oe.id = f.object_entity_id
     LEFT JOIN app.chunks c ON c.id = f.chunk_id
     LEFT JOIN LATERAL (
         SELECT m.char_start, m.char_end
@@ -61,6 +64,12 @@ _FACT_SELECT = """
 # span the UI highlights. Widest-first ordering keeps zero-width paraphrase
 # anchors from shadowing a real span; with none in range the snippet is
 # served unmarked.
+# The `oe` join resolves a relationship fact's object to a node so the UI can
+# render `me.owns → F-150` as an entity link, not bury it in the statement
+# sentence. The join is RLS-scoped like every other read here: an object the
+# session can't see yields a null name, and the frontend falls back to the
+# statement rather than offer a chip that would 404 — never a cross-firewall
+# name leak.
 
 
 def _fact_dict(row: Any) -> dict[str, Any]:
@@ -81,6 +90,8 @@ def _fact_dict(row: Any) -> dict[str, Any]:
         "valid_to": row.valid_to,
         "reported_at": row.reported_at,
         "temporal_precision": row.temporal_precision,
+        "object_entity_id": row.object_entity_id,
+        "object_entity_name": row.object_entity_name,
         "source_snippet": mark_snippet(row.chunk_text, row.char_start, row.char_end),
     }
 

@@ -265,6 +265,8 @@ function fact(over: Partial<FactOut> & Pick<FactOut, "id" | "predicate">): FactO
     valid_to: null,
     reported_at: patelNote.created_at,
     temporal_precision: "day",
+    object_entity_id: null,
+    object_entity_name: null,
     source_snippet: null,
     ...over,
   };

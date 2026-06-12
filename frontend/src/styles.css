@@ -1686,6 +1686,17 @@ button.small {
   font-weight: 500;
 }
 
+/* A relationship fact's object renders as a link to that entity node, not the
+   buried statement. Reads as an inline accent link, not a chip — it sits in
+   the value slot beside the predicate path. */
+.edge-object {
+  font: inherit;
+  font-weight: 500;
+  color: var(--accent);
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+
 .fact-meta {
   display: flex;
   align-items: center;

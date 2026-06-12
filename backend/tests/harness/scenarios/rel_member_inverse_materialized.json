@@ -1,0 +1,33 @@
+{
+  "name": "memberOf materializes the organization's member edge",
+  "description": "memberOf has a named inverse (member) in the registry, so Leila.memberOf -> Rotary Club materializes Rotary Club.member -> Leila as a derived edge on the org's stream (docs/research/fix-options/2). The org gains its member list without the note stating it. memberOf is non-functional, so it accumulates; the bare `member` spelling is intentionally NOT reciprocated (directionally ambiguous), only the person->org memberOf is.",
+  "steps": [
+    {
+      "domain": "general",
+      "created_at": "2026-04-10T09:00:00-06:00",
+      "body": "Leila joined the Rotary Club.",
+      "extraction": {
+        "title": "Leila in Rotary",
+        "tags": ["leila", "rotary"],
+        "mentions": [
+          {"name": "Leila", "kind": "Person", "surface_text": "Leila"},
+          {"name": "Rotary Club", "kind": "Organization", "surface_text": "Rotary Club"}
+        ],
+        "facts": [
+          {"predicate": "memberOf", "qualifier": "", "kind": "relationship", "statement": "Leila is a member of the Rotary Club.", "value_json": null, "assertion": "asserted", "entity_ref": "Leila", "object_entity_ref": "Rotary Club", "temporal": {"phrase": "", "resolved_start": "2026-04-10T00:00:00-06:00", "resolved_end": null, "precision": "day"}, "domain": "general", "confidence": 0.9}
+        ],
+        "temporal_tokens": []
+      }
+    }
+  ],
+  "expect": {
+    "facts": [
+      {"entity": "Leila", "predicate": "memberOf", "kind": "relationship", "value_contains": "Rotary Club", "status": "active", "chained": false},
+      {"entity": "Rotary Club", "predicate": "member", "kind": "relationship", "value_contains": "Leila", "status": "active", "chained": false}
+    ],
+    "entities": [
+      {"name": "Leila", "kind": "Person", "status": "provisional"},
+      {"name": "Rotary Club", "kind": "Organization", "status": "provisional"}
+    ]
+  }
+}

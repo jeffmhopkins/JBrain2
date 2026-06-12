@@ -68,6 +68,8 @@ const ANALYZED: NoteAnalysis = {
       valid_to: null,
       reported_at: "2026-06-11T08:02:00Z",
       temporal_precision: "day",
+      object_entity_id: null,
+      object_entity_name: null,
       source_snippet: null,
     },
   ],
