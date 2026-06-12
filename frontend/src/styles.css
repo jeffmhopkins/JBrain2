@@ -3927,6 +3927,17 @@ button.small {
   border-top: 1px solid var(--border);
   font-size: 13px;
 }
+.fb-shell .tv-list-check {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 5px; /* a comfortable tap target around the 15px box */
+  margin: -5px 0;
+  border: none;
+  background: none;
+  cursor: pointer;
+}
 .fb-shell .tv-list-box {
   width: 15px;
   height: 15px;
