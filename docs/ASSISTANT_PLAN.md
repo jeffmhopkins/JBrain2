@@ -279,6 +279,26 @@ once without blocking each other.
 - **Combined ER:** the table block above is the authoritative sketch; the
   migration PRs draw the FKs.
 
+## Execution cadence (review gates between waves)
+
+**Every wave/phase ends with a critical-review-and-iteration gate before the next
+begins** — mirroring the researcher → reviewer → red-team discipline that produced
+this design. No wave skips its review because it "looks small."
+
+1. **Agent review pass** over the wave's diff: `/code-review` for correctness and
+   reuse; for any security-touching wave (RLS, the classifier, the
+   data/instruction boundary, Proposal enactment, the egress chokepoint) also a
+   **red-team pass** and the `security-review` skill, checked explicitly against
+   the relevant invariants (I-1..I-12, the per-loop autonomy boundaries, the
+   egress-Proposal gating).
+2. **CI gate:** lint, typecheck, tests green; 80% / security-100% coverage;
+   `.prompt`/`.tool` version guards; `dev-setup.sh` current.
+3. **Human gate:** the wave's PR(s) reviewed and merged; open questions resolved or
+   explicitly carried forward into the plan.
+4. **Iterate, then proceed:** findings are addressed on the same branch; the next
+   wave fans out only once the gate is green. Wave 2 (integration) gets its own
+   end-to-end gate before any Phase-5 work starts.
+
 ## Cross-cutting obligations (every PR)
 
 RLS isolation test for any new table; LLM calls faked in tests (the eval suite is
