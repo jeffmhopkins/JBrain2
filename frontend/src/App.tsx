@@ -9,6 +9,8 @@ import { type StreamAttachment, type StreamItem, useNotes } from "./notes/useNot
 import { EntityListScreen } from "./screens/EntityListScreen";
 import { EntityScreen } from "./screens/EntityScreen";
 import { HomeScreen } from "./screens/HomeScreen";
+import { ListDetailScreen } from "./screens/ListDetailScreen";
+import { ListsScreen } from "./screens/ListsScreen";
 import { LoginScreen } from "./screens/LoginScreen";
 import {
   NoteScreen,
@@ -26,7 +28,7 @@ type Session =
   | { status: "anonymous" }
   | { status: "in"; principal: Principal };
 
-type Card = "ops" | "settings" | "search" | "review" | "entities";
+type Card = "ops" | "settings" | "search" | "review" | "entities" | "lists";
 
 const SCREEN_TITLES: Record<Card, string> = {
   ops: "Ops",
@@ -34,6 +36,7 @@ const SCREEN_TITLES: Record<Card, string> = {
   search: "Search",
   review: "Review",
   entities: "Entities",
+  lists: "Lists",
 };
 
 const CARD_EXIT_MS = 150;
@@ -49,6 +52,10 @@ export function App() {
   // The entity page stacks one layer above the note view (analysis chips).
   const [entityView, setEntityView] = useState<string | null>(null);
   const [entityClosing, setEntityClosing] = useState(false);
+  // A list's checklist is its own layer above the Lists grid; `listsKey` remounts
+  // the grid on close so its card previews/counts reflect any edits.
+  const [listView, setListView] = useState<string | null>(null);
+  const [listsKey, setListsKey] = useState(0);
 
   // Lives at the app level so the outbox keeps flushing while the user is
   // on Ops or Settings.
@@ -78,6 +85,7 @@ export function App() {
     setLauncherOpen(false);
     setNoteView(null);
     setEntityView(null);
+    setListView(null);
     setSession({ status: "anonymous" });
   }
 
@@ -288,7 +296,21 @@ export function App() {
           {card === "review" && <ReviewScreen />}
           {/* Rows open the same entity layer the analysis chips use. */}
           {card === "entities" && <EntityListScreen onOpenEntity={setEntityView} />}
+          {/* Cards open the list detail layer; listsKey remounts on its close. */}
+          {card === "lists" && <ListsScreen key={listsKey} onOpenList={setListView} />}
         </div>
+      )}
+
+      {listView !== null && (
+        <ListDetailScreen
+          key={listView}
+          listId={listView}
+          syncStatus={notes.syncStatus}
+          onClose={() => {
+            setListView(null);
+            setListsKey((k) => k + 1);
+          }}
+        />
       )}
 
       {noteView !== null && (

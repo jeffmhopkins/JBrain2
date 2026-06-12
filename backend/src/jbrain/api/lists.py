@@ -81,6 +81,14 @@ async def list_lists(request: Request, principal: PrincipalDep) -> list[ListOut]
     return [ListOut.of(i) for i in await repo.list_lists(ctx_for(principal))]
 
 
+@router.get("/{list_id}")
+async def get_list(request: Request, principal: PrincipalDep, list_id: str) -> ListOut:
+    info = await get_lists_repo(request).get_list(ctx_for(principal), list_id)
+    if info is None:
+        raise HTTPException(status_code=404, detail="no such list")
+    return ListOut.of(info)
+
+
 @router.post("", status_code=201)
 async def create_list(request: Request, principal: PrincipalDep, body: ListCreate) -> ListOut:
     try:

@@ -32,6 +32,10 @@ class FakeLists:
         self.calls.append(("list_lists", include_archived))
         return [LIST]
 
+    async def get_list(self, ctx, list_id):  # type: ignore[no-untyped-def]
+        self.calls.append(("get_list", list_id))
+        return LIST if self.ok else None
+
     async def create_list(self, ctx, *, domain, title):  # type: ignore[no-untyped-def]
         self.calls.append(("create_list", domain, title))
         if self.bad_domain:
@@ -116,6 +120,13 @@ def test_list_lists_returns_lists_with_items(
             "items": [{"id": "i1", "body": "eggs", "checked": False}],
         }
     ]
+
+
+def test_get_one_list_and_miss(client: TestClient, repo: FakeAuthRepo, lists: FakeLists) -> None:
+    login(client, repo)
+    assert client.get("/api/lists/L1").json()["title"] == "Groceries"
+    lists.ok = False
+    assert client.get("/api/lists/gone").status_code == 404
 
 
 def test_create_list_and_unknown_domain(

@@ -4015,3 +4015,332 @@ button.small {
   color: var(--text-2);
   justify-content: center;
 }
+
+/* ===== Lists (the owner's structured records; screens/ListsScreen + ListDetailScreen) ===== */
+.lists-screen {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.list-new {
+  align-self: flex-start;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--steel);
+  font: inherit;
+  font-weight: 600;
+  font-size: 14px;
+  padding: 10px 14px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+.list-create {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  border-radius: 16px;
+  padding: 14px;
+}
+.list-create input {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 11px 12px;
+  font: inherit;
+  font-size: 16px;
+  color: var(--text);
+}
+.list-domains {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+.domain-pick {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text-2);
+  font: inherit;
+  font-size: 12.5px;
+  padding: 6px 11px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+.domain-pick.on {
+  border-color: var(--steel);
+  color: var(--text);
+}
+.domain-pick .dot,
+.list-card .dot,
+.ld-head .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  flex: none;
+}
+.list-create-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+.list-create-actions button {
+  font: inherit;
+  font-weight: 600;
+  font-size: 14px;
+  padding: 9px 16px;
+  border-radius: 10px;
+  cursor: pointer;
+  border: none;
+}
+.list-create-actions .ghost {
+  background: none;
+  color: var(--text-2);
+}
+.list-create-actions .primary {
+  background: var(--steel-tint);
+  color: var(--steel);
+}
+.list-create-actions .primary:disabled {
+  opacity: 0.4;
+}
+
+.list-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 11px;
+}
+.list-card {
+  text-align: left;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: var(--surface);
+  padding: 14px;
+  cursor: pointer;
+  color: var(--text);
+  font: inherit;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  min-height: 130px;
+}
+.list-card:active {
+  background: var(--surface-2);
+}
+.lc-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.lc-name {
+  font-size: 14.5px;
+  font-weight: 600;
+  line-height: 1.2;
+}
+.lc-prev {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 12px;
+  color: var(--text-3);
+  line-height: 1.45;
+  flex: 1;
+}
+.lc-prev .done {
+  text-decoration: line-through;
+  opacity: 0.6;
+}
+.lc-prev .more {
+  color: var(--text-3);
+  opacity: 0.8;
+}
+.lc-bar {
+  display: block;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  overflow: hidden;
+}
+.lc-bar > i {
+  display: block;
+  height: 100%;
+  background: var(--steel);
+  border-radius: 999px;
+}
+.lc-count {
+  font-size: 12px;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+/* detail layer */
+.list-detail {
+  display: flex;
+  flex-direction: column;
+}
+.ld-head {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 4px 0 12px;
+}
+.ld-title {
+  flex: 1;
+  font-size: 21px;
+  font-weight: 700;
+  color: var(--text);
+}
+input.ld-title {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 8px 11px;
+  font-weight: 600;
+}
+.ld-edit {
+  background: none;
+  border: none;
+  color: var(--steel);
+  font: inherit;
+  font-weight: 600;
+  font-size: 14px;
+  cursor: pointer;
+  padding: 8px;
+}
+.ld-items {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.ld-row {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  border-bottom: 1px solid var(--border);
+}
+.ld-toggle {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: none;
+  border: none;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  padding: 14px 2px;
+  cursor: pointer;
+}
+.ld-box {
+  flex: none;
+  width: 21px;
+  height: 21px;
+  border-radius: 6px;
+  border: 1.7px solid var(--text-3);
+}
+.ld-toggle.checked .ld-box {
+  background: var(--green);
+  border-color: var(--green);
+  position: relative;
+}
+.ld-toggle.checked .ld-box::after {
+  content: "";
+  position: absolute;
+  left: 7px;
+  top: 3px;
+  width: 5px;
+  height: 9px;
+  border: solid #0e0f11;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+.ld-body {
+  font-size: 15.5px;
+}
+.ld-toggle.checked .ld-body {
+  color: var(--text-3);
+  text-decoration: line-through;
+}
+.ld-grip {
+  flex: none;
+  background: none;
+  border: none;
+  color: var(--text-3);
+  cursor: grab;
+  touch-action: none;
+  padding: 14px 2px 14px 0;
+}
+.ld-body-edit {
+  flex: 1;
+  background: none;
+  border: none;
+  border-bottom: 1px dotted var(--border);
+  color: var(--text);
+  font: inherit;
+  font-size: 15.5px;
+  padding: 12px 0;
+  outline: none;
+}
+.ld-del {
+  flex: none;
+  width: 23px;
+  height: 23px;
+  border-radius: 999px;
+  border: none;
+  background: var(--rose-tint, rgba(207, 138, 143, 0.14));
+  color: var(--rose);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.ld-ic {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.ld-del .ld-ic {
+  width: 13px;
+  height: 13px;
+}
+.ld-add {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 13px 2px;
+  color: var(--text-3);
+}
+.ld-add-plus {
+  flex: none;
+  width: 21px;
+  text-align: center;
+  font-size: 16px;
+}
+.ld-add input {
+  flex: 1;
+  background: none;
+  border: none;
+  color: var(--text);
+  font: inherit;
+  font-size: 15.5px;
+  outline: none;
+}
+.ld-delete-list {
+  width: 100%;
+  margin-top: 22px;
+  padding: 13px;
+  border-radius: 12px;
+  border: 1px solid var(--rose-tint, rgba(207, 138, 143, 0.14));
+  background: none;
+  color: var(--rose);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}

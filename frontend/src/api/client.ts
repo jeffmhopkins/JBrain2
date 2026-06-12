@@ -260,6 +260,22 @@ export interface EntityList {
   items: EntityListItem[];
 }
 
+// ===== Lists (the owner's structured records; /api/lists) =====
+
+export interface ListItemOut {
+  id: string;
+  body: string;
+  checked: boolean;
+}
+
+export interface ListOut {
+  id: string;
+  title: string;
+  domain: string;
+  archived: boolean;
+  items: ListItemOut[];
+}
+
 export type ReviewKind =
   | "fact_conflict"
   | "attribute_collision"
@@ -535,10 +551,57 @@ export const api = {
     return (await response.json()) as EntityOut;
   },
 
-  // Owner toggles a list item directly (lists are the owner's own data) — the
-  // checkbox tap on a list_card view lands here.
+  // ----- Lists: the owner managing their own data directly -----
+  async lists(): Promise<ListOut[]> {
+    const response = await request("/api/lists");
+    return (await response.json()) as ListOut[];
+  },
+
+  async getList(listId: string): Promise<ListOut> {
+    const response = await request(`/api/lists/${encodeURIComponent(listId)}`);
+    return (await response.json()) as ListOut;
+  },
+
+  async createList(title: string, domain: string): Promise<ListOut> {
+    const response = await request("/api/lists", jsonInit("POST", { title, domain }));
+    return (await response.json()) as ListOut;
+  },
+
+  async renameList(listId: string, title: string): Promise<void> {
+    await request(`/api/lists/${encodeURIComponent(listId)}`, jsonInit("PATCH", { title }));
+  },
+
+  async deleteList(listId: string): Promise<void> {
+    await request(`/api/lists/${encodeURIComponent(listId)}`, { method: "DELETE" });
+  },
+
+  async addListItem(listId: string, body: string): Promise<ListItemOut> {
+    const response = await request(
+      `/api/lists/${encodeURIComponent(listId)}/items`,
+      jsonInit("POST", { body }),
+    );
+    return (await response.json()) as ListItemOut;
+  },
+
+  async reorderListItems(listId: string, itemIds: string[]): Promise<void> {
+    await request(
+      `/api/lists/${encodeURIComponent(listId)}/order`,
+      jsonInit("PATCH", { item_ids: itemIds }),
+    );
+  },
+
+  // The checkbox tap on a list_card view and the Lists detail both land here;
+  // body renames an item, checked toggles it.
   async setListItemChecked(itemId: string, checked: boolean): Promise<void> {
     await request(`/api/lists/items/${encodeURIComponent(itemId)}`, jsonInit("PATCH", { checked }));
+  },
+
+  async renameListItem(itemId: string, body: string): Promise<void> {
+    await request(`/api/lists/items/${encodeURIComponent(itemId)}`, jsonInit("PATCH", { body }));
+  },
+
+  async removeListItem(itemId: string): Promise<void> {
+    await request(`/api/lists/items/${encodeURIComponent(itemId)}`, { method: "DELETE" });
   },
 
   // "resolved" is the full decision log: it folds in dismissals and
