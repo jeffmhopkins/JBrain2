@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 from jbrain.api.deps import PrincipalDep
 from jbrain.auth.service import PrincipalInfo
 from jbrain.db.session import SessionContext
+from jbrain.ingest.extract import resolve_media_type
 from jbrain.notes.service import NoteInfo, NotesRepo, NoteUpdate, UnknownDomain
 from jbrain.queue import JobEnqueuer
 from jbrain.storage import BlobStore
@@ -241,12 +242,15 @@ async def upload_attachment(
         raise HTTPException(status_code=413, detail="attachment too large")
     ctx = ctx_for(principal)
     digest = await blobs.put(data)
+    # The client's content-type is advisory: recover a routable type from the
+    # bytes/extension when it is generic, so a phone-uploaded PDF still extracts.
+    media_type = resolve_media_type(file.content_type, file.filename, data[:8])
     attachment = await repo.add_attachment(
         ctx,
         note_id=note_id,
         sha256=digest,
         filename=file.filename or "attachment",
-        media_type=file.content_type or "application/octet-stream",
+        media_type=media_type,
         size_bytes=len(data),
     )
     if attachment is None:

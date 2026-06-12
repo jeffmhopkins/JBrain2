@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import (
 from sqlalchemy.pool import NullPool
 
 from jbrain.db.session import SessionContext, scoped_session
+from jbrain.ingest.extract import ExtractorRegistry, Segment, default_registry
 from jbrain.ingest.pipeline import IngestPipeline
 from jbrain.notes.repo import SqlNotesRepo
 from jbrain.storage import FsBlobStore
@@ -279,6 +280,45 @@ async def test_pipeline_failure_marks_note_failed(
     assert state == "failed"
     assert await chunk_rows(maker, OWNER, note_id) == []
     assert await embed_jobs_for(maker, note_id) == 0  # nothing to embed on failure
+
+
+class _BrokenPdfExtractor:
+    def extract(self, data: bytes) -> list[Segment]:
+        raise ValueError("corrupt PDF page tree")
+
+
+async def test_unparseable_attachment_does_not_fail_the_note(
+    maker: async_sessionmaker[AsyncSession], blobs: FsBlobStore
+) -> None:
+    """A blob that exists but won't parse (a malformed PDF) must NOT sink the
+    whole note: the body and every other attachment still index, and ingest
+    completes. Only a MISSING blob stays fatal/retryable (the test above)."""
+    note_id = await make_note(maker, domain="general", body="lab results, see pdf")
+    bad_pdf = await add_attachment(
+        maker, blobs, note_id, filename="labs.pdf", media_type="application/pdf", data=b"not a pdf"
+    )
+    await add_attachment(
+        maker, blobs, note_id, filename="note.txt", media_type="text/plain", data=b"plain sidecar"
+    )
+    registry = ExtractorRegistry()
+    registry.register("application/pdf", _BrokenPdfExtractor())
+    registry.register("text/", default_registry().extractor_for("text/plain"))  # type: ignore[arg-type]
+
+    await IngestPipeline(maker, blobs, registry).ingest_note({"note_id": note_id})
+
+    async with scoped_session(maker, OWNER) as session:
+        state = (
+            await session.execute(
+                text("SELECT ingest_state FROM app.notes WHERE id = :id"), {"id": note_id}
+            )
+        ).scalar()
+    assert state == "indexed"  # the bad PDF did not fail the note
+    chunks = await chunk_rows(maker, OWNER, note_id)
+    sources = {c["source_kind"] for c in chunks}
+    assert "note" in sources and "text-layer" in sources  # body + the good sidecar
+    # The unparseable PDF contributed no chunk, but indexing succeeded anyway.
+    assert all(str(c["attachment_id"]) != bad_pdf for c in chunks)
+    assert await embed_jobs_for(maker, note_id) >= 1  # follow-ups still enqueue
 
 
 async def test_pipeline_skips_missing_note(

@@ -13,6 +13,7 @@ from jbrain.ingest.extract import (
     TextExtractor,
     default_registry,
     image_segments,
+    resolve_media_type,
 )
 
 
@@ -86,6 +87,38 @@ def test_registry_exposes_extractor_lookup() -> None:
     registry = default_registry()
     assert registry.extractor_for("application/pdf") is not None
     assert registry.extractor_for("audio/ogg") is None
+
+
+def test_resolve_media_type_trusts_a_specific_declared_type() -> None:
+    # A real content-type is authoritative — never second-guessed by extension.
+    assert resolve_media_type("application/pdf", "report.bin", b"") == "application/pdf"
+    assert resolve_media_type("image/png", "x.pdf", b"%PDF-1.7") == "image/png"
+
+
+def test_resolve_media_type_recovers_a_generic_pdf_by_magic_then_extension() -> None:
+    # The field case: a phone uploads a PDF as octet-stream (or nothing). Magic
+    # bytes win first; the filename extension is the fallback.
+    assert resolve_media_type("application/octet-stream", "labs.pdf", b"%PDF-1.7") == (
+        "application/pdf"
+    )
+    assert resolve_media_type("", "labs.pdf", b"") == "application/pdf"
+    assert resolve_media_type(None, "notes.md", b"") == "text/markdown"
+    assert resolve_media_type("application/octet-stream", "data.csv", b"a,b\n") == "text/csv"
+
+
+def test_resolve_media_type_falls_back_to_octet_stream_when_unknown() -> None:
+    assert resolve_media_type("", "mystery", b"\x00\x01") == "application/octet-stream"
+    assert resolve_media_type("application/octet-stream", "x.xyz", b"") == (
+        "application/octet-stream"
+    )
+
+
+def test_resolved_pdf_routes_to_the_pdf_extractor() -> None:
+    # The point of resolution: the recovered type reaches an extractor.
+    registry = default_registry()
+    octet = "application/octet-stream"
+    assert registry.extractor_for(octet) is None
+    assert registry.extractor_for(resolve_media_type(octet, "labs.pdf", b"%PDF-1.7")) is not None
 
 
 def test_image_segments_carry_cache_provenance() -> None:

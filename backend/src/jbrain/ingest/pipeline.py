@@ -254,9 +254,22 @@ class IngestPipeline:
                 segments = image_segments(extracts[att.id])
             elif self._registry.extractor_for(att.media_type) is not None:
                 data = await self._blobs.get(att.sha256)
-                # Extraction is CPU-bound (PDF parsing); keep it off the
-                # event loop.
-                segments = await asyncio.to_thread(self._registry.extract, att.media_type, data)
+                # Extraction is CPU-bound (PDF parsing); keep it off the event
+                # loop. A blob that won't parse must NOT fail the whole note —
+                # the body and every other attachment still index, and the bad
+                # file is logged; only a MISSING blob (get() raised above) is
+                # fatal, so it stays retryable as "failed".
+                try:
+                    segments = await asyncio.to_thread(self._registry.extract, att.media_type, data)
+                except Exception:
+                    log.warning(
+                        "ingest.extract_failed",
+                        note_id=note_id,
+                        attachment_id=str(att.id),
+                        media_type=att.media_type,
+                        exc_info=True,
+                    )
+                    continue
             else:
                 continue
             for segment in segments:

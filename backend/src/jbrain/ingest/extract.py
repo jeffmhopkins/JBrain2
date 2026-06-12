@@ -17,6 +17,7 @@ loop via asyncio.to_thread.
 
 from collections.abc import Iterable
 from dataclasses import dataclass
+from pathlib import PurePosixPath
 from typing import Protocol, cast
 
 import pymupdf
@@ -26,6 +27,37 @@ KIND_TEXT_LAYER = "text-layer"
 KIND_OCR = "ocr"
 KIND_TRANSCRIPT = "transcript"
 KIND_CAPTION = "caption"
+
+# A declared content-type we cannot trust to route: mobile file pickers commonly
+# upload a real PDF as one of these (or as nothing), which would otherwise reach
+# no extractor and never index. Magic bytes and the filename extension recover it.
+_GENERIC_TYPES = frozenset({"", "application/octet-stream", "binary/octet-stream"})
+_MAGIC_TYPES: tuple[tuple[bytes, str], ...] = ((b"%PDF-", "application/pdf"),)
+_EXT_MEDIA: dict[str, str] = {
+    ".pdf": "application/pdf",
+    ".txt": "text/plain",
+    ".text": "text/plain",
+    ".log": "text/plain",
+    ".md": "text/markdown",
+    ".markdown": "text/markdown",
+    ".csv": "text/csv",
+}
+
+
+def resolve_media_type(declared: str | None, filename: str | None, header: bytes = b"") -> str:
+    """The best routable media type from the client's declared content-type, the
+    file's magic bytes, then its extension. A specific declared type is trusted
+    as-is; only a generic/absent one (`application/octet-stream`, "") falls back —
+    so a PDF a phone uploads without a proper content-type still reaches the PDF
+    extractor instead of being silently dropped from indexing."""
+    declared = (declared or "").strip()
+    if declared and declared.lower() not in _GENERIC_TYPES:
+        return declared
+    for magic, media in _MAGIC_TYPES:
+        if header.startswith(magic):
+            return media
+    ext = PurePosixPath(filename or "").suffix.lower()
+    return _EXT_MEDIA.get(ext) or declared or "application/octet-stream"
 
 
 @dataclass(frozen=True)
