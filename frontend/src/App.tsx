@@ -255,6 +255,7 @@ export function App() {
           actions={actions}
           onOpenNote={openNoteFromStream}
           onOpenNoteById={(noteId) => void openNoteById(noteId)}
+          onOpenEntity={setEntityView}
           onOpenSearch={() => setCard("search")}
           onOpenLauncher={() => setLauncherOpen(true)}
         />

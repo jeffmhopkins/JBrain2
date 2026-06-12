@@ -3,7 +3,7 @@ services, and the shipped sidecars bound + pinned to their versions."""
 
 from datetime import UTC, datetime
 
-from jbrain.agent.contracts import NoteSource
+from jbrain.agent.contracts import EntityRef, NoteSource
 from jbrain.agent.loop import ToolContext, ToolOutput
 from jbrain.agent.readtools import (
     TOOLS_DIR,
@@ -95,11 +95,17 @@ def entity_view(entity_id: str = "e1") -> dict:
 
 
 class FakeEntities:
-    def __init__(self, view: dict | None):
+    def __init__(self, view: dict | None, matches: list[dict] | None = None):
         self.view = view
+        self.matches = matches or []
+        self.searched: list[tuple] = []
 
     async def entity_view(self, ctx, entity_id):  # noqa: ANN001
         return self.view if self.view is not None and entity_id == self.view["id"] else None
+
+    async def list_entities(self, ctx, q=None, kind=None, limit=200):  # noqa: ANN001
+        self.searched.append((q, kind, limit))
+        return self.matches
 
 
 def handlers(search_resp: SearchResponse | None = None, stored: NoteInfo | None = None):
@@ -201,6 +207,33 @@ async def test_read_entity_needs_an_id() -> None:
     assert "needs an entity_id" in await tools["read_entity"]({}, CTX)
 
 
+async def test_find_entity_surfaces_refs_and_passes_the_query() -> None:
+    matches = [
+        {"id": "e1", "kind": "Person", "canonical_name": "Celine", "domain": "general"},
+        {"id": "e2", "kind": "Person", "canonical_name": "Celine R.", "domain": "health"},
+    ]
+    fake = FakeEntities(None, matches)
+    out = await build_entity_handlers(fake)["find_entity"](  # type: ignore[arg-type]
+        {"name": "celine", "kind": "Person"}, CTX
+    )
+    assert isinstance(out, ToolOutput)
+    assert "id=e1" in out  # the model gets ids to chain into read_entity
+    assert out.entities == (
+        EntityRef(entity_id="e1", label="Celine", domain="general"),
+        EntityRef(entity_id="e2", label="Celine R.", domain="health"),
+    )
+    assert fake.searched == [("celine", "Person", 8)]
+
+
+async def test_find_entity_handles_no_match_and_empty_name() -> None:
+    none = await build_entity_handlers(FakeEntities(None, []))["find_entity"](  # type: ignore[arg-type]
+        {"name": "ghost"}, CTX
+    )
+    assert isinstance(none, ToolOutput) and "No entity matching" in none and none.entities == ()
+    empty = await build_entity_handlers(FakeEntities(None))["find_entity"]({}, CTX)  # type: ignore[arg-type]
+    assert "needs a name" in empty
+
+
 # --- registry + version guard --------------------------------------------
 
 
@@ -219,6 +252,7 @@ def test_build_registry_binds_the_shipped_sidecars() -> None:
         "search",
         "read_note",
         "read_entity",
+        "find_entity",
         "recall",
         "memory_read",
         "memory_edit",
@@ -249,6 +283,11 @@ def test_sidecars_pinned_to_their_versions() -> None:
             "read_entity",
             1,
             "e257677a9412e71e1511dbc85d1fad0421703fbe419d957bca819980d8c2727a",
+        ),
+        "find_entity.tool": (
+            "find_entity",
+            1,
+            "6643a41ad270a3db2e85fd0fad27427e1c12665fdd953827e699918d99291674",
         ),
         "recall.tool": (
             "recall",

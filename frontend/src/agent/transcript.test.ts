@@ -52,6 +52,21 @@ describe("applyEvent reducer", () => {
     expect(ms[0]?.tools[0]?.proposal).toEqual({ proposal_id: "p1", kind: "correction" });
   });
 
+  it("attaches resolved entities from a tool result to its tool", () => {
+    let ms: TranscriptMessage[] = [streaming()];
+    ms = applyEvent(ms, { type: "tool_call", id: "c1", name: "find_entity", arguments: {} });
+    ms = applyEvent(ms, {
+      type: "tool_result",
+      tool_call_id: "c1",
+      ok: true,
+      summary: "1",
+      entities: [{ kind: "entity", entity_id: "e1", label: "Celine", domain: "general" }],
+    });
+    expect(ms[0]?.tools[0]?.entities).toEqual([
+      { kind: "entity", entity_id: "e1", label: "Celine", domain: "general" },
+    ]);
+  });
+
   it("attaches structured sources from a tool result to its tool", () => {
     let ms: TranscriptMessage[] = [streaming()];
     ms = applyEvent(ms, { type: "tool_call", id: "c1", name: "search", arguments: {} });

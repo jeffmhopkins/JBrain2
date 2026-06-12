@@ -24,9 +24,11 @@ interface Props {
   fb: FullBrain;
   /** Open a source note by id (from a Worked-block card). */
   onOpenNote?: ((noteId: string) => void) | undefined;
+  /** Open an entity page by id (from a response entity chip). */
+  onOpenEntity?: ((entityId: string) => void) | undefined;
 }
 
-export function FullBrainSurface({ fb, onOpenNote }: Props): ReactNode {
+export function FullBrainSurface({ fb, onOpenNote, onOpenEntity }: Props): ReactNode {
   const drag = useRef<{ x: number; axis: "?" | "h" | "v" } | null>(null);
   const { panel, setPanel } = fb;
 
@@ -90,6 +92,7 @@ export function FullBrainSurface({ fb, onOpenNote }: Props): ReactNode {
                 key={i}
                 message={m}
                 onOpenNote={onOpenNote}
+                onOpenEntity={onOpenEntity}
                 onOpenProposal={(id) => {
                   fb.setOpenProposal(id);
                   fb.setPanel("proposals");
@@ -176,10 +179,12 @@ function Bubble({
   message,
   onOpenNote,
   onOpenProposal,
+  onOpenEntity,
 }: {
   message: TranscriptMessage;
   onOpenNote?: ((noteId: string) => void) | undefined;
   onOpenProposal?: ((proposalId: string) => void) | undefined;
+  onOpenEntity?: ((entityId: string) => void) | undefined;
 }): ReactNode {
   if (message.role === "user") {
     return <div className="bubble me">{message.text}</div>;
@@ -198,12 +203,36 @@ function Bubble({
         if (src) onOpenNote(src.noteId);
       }
     : undefined;
+  // Entities the turn resolved (find_entity), deduped — tappable to the entity page.
+  const entities = [
+    ...new Map(
+      message.tools.flatMap((t) => t.entities ?? []).map((e) => [e.entity_id, e]),
+    ).values(),
+  ];
 
   return (
     <div className="bubble ai">
       {message.text && <Markdown text={message.text} onCite={onCite} />}
       {message.tools.length > 0 && (
         <ToolUsage tools={message.tools} onOpenNote={onOpenNote} onOpenProposal={onOpenProposal} />
+      )}
+      {entities.length > 0 && (
+        <div className="fb-entities">
+          {entities.map((e) => (
+            <button
+              key={e.entity_id}
+              type="button"
+              className="entity-chip"
+              onClick={() => onOpenEntity?.(e.entity_id)}
+            >
+              <span
+                className="ent-dot"
+                style={{ background: DOMAIN_COLOR[e.domain] ?? "var(--text-3)" }}
+              />
+              {e.label}
+            </button>
+          ))}
+        </div>
       )}
       {message.views.map((v, i) => (
         // biome-ignore lint/suspicious/noArrayIndexKey: views append in order

@@ -17,6 +17,7 @@ import structlog
 from jbrain.agent.contracts import (
     ChatEvent,
     DoneEvent,
+    EntityRef,
     NoteSource,
     ProposalRef,
     TextDelta,
@@ -72,16 +73,19 @@ class ToolOutput(str):
 
     sources: tuple[NoteSource, ...]
     proposal: ProposalRef | None
+    entities: tuple[EntityRef, ...]
 
     def __new__(
         cls,
         content: str,
         sources: tuple[NoteSource, ...] = (),
         proposal: ProposalRef | None = None,
+        entities: tuple[EntityRef, ...] = (),
     ) -> "ToolOutput":
         out = super().__new__(cls, content)
         out.sources = sources
         out.proposal = proposal
+        out.entities = entities
         return out
 
 
@@ -115,6 +119,7 @@ class _Dispatched:
     result: ToolResult
     sources: tuple[NoteSource, ...]
     proposal: ProposalRef | None
+    entities: tuple[EntityRef, ...]
 
 
 class AgentLoop:
@@ -262,6 +267,7 @@ class AgentLoop:
                     summary=dispatched.result.content,
                     sources=list(dispatched.sources),
                     proposal=dispatched.proposal,
+                    entities=list(dispatched.entities),
                 )
                 await self._record(
                     idx, "tool", call.name, ok=not dispatched.result.is_error, cost_tokens=0
@@ -283,17 +289,22 @@ class AgentLoop:
             err = ToolResult(
                 tool_call_id=call.id, content=f"unknown tool: {call.name}", is_error=True
             )
-            return _Dispatched(err, (), None)
+            return _Dispatched(err, (), None, ())
         tool = self._registry.get(call.name)
         try:
             observation = await tool.handler(call.arguments, tool_ctx)
         except Exception as exc:  # noqa: BLE001 — a tool error is an observation
             log.warning("agent.tool_error", tool=call.name, error=repr(exc))
             err = ToolResult(tool_call_id=call.id, content=f"error: {exc}", is_error=True)
-            return _Dispatched(err, (), None)
+            return _Dispatched(err, (), None, ())
         out = observation if isinstance(observation, ToolOutput) else None
         result = ToolResult(tool_call_id=call.id, content=str(observation), is_error=False)
-        return _Dispatched(result, out.sources if out else (), out.proposal if out else None)
+        return _Dispatched(
+            result,
+            out.sources if out else (),
+            out.proposal if out else None,
+            out.entities if out else (),
+        )
 
     async def _record(self, idx: int, kind: str, name: str, *, ok: bool, cost_tokens: int) -> None:
         if self._recorder is None:

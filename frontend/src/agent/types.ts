@@ -63,6 +63,7 @@ export interface ToolResultEvent {
   summary: string;
   sources?: NoteSource[];
   proposal?: ProposalRef | null;
+  entities?: EntityRef[];
 }
 export interface ToolViewEvent {
   type: "tool_view";

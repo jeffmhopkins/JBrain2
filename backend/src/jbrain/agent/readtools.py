@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from jbrain.agent.connectortools import build_connector_handlers
-from jbrain.agent.contracts import NoteSource
+from jbrain.agent.contracts import EntityRef, NoteSource
 from jbrain.agent.loop import ToolContext, ToolHandler, ToolOutput
 from jbrain.agent.memory import MemoryService
 from jbrain.agent.memorytools import build_memory_handlers
@@ -28,9 +28,18 @@ _DEFAULT_LIMIT = 8
 
 
 class EntityReader(Protocol):
-    """The slice of the analysis repo read_entity needs — the entity-page view."""
+    """The slice of the analysis repo the entity tools need — the entity-page view
+    and the name/alias search behind find_entity."""
 
     async def entity_view(self, ctx: SessionContext, entity_id: str) -> dict[str, Any] | None: ...
+
+    async def list_entities(
+        self,
+        ctx: SessionContext,
+        q: str | None = None,
+        kind: str | None = None,
+        limit: int = 200,
+    ) -> list[dict[str, Any]]: ...
 
 
 def format_search(resp: SearchResponse) -> str:
@@ -103,6 +112,24 @@ def build_read_handlers(search: SearchService, notes: NotesRepo) -> dict[str, To
     return {"search": search_tool, "read_note": read_note_tool}
 
 
+_ENTITY_LIMIT = 8
+
+
+def entity_refs(rows: list[dict[str, Any]]) -> tuple[EntityRef, ...]:
+    """Map entity rows to refs for the response's tappable entity chips."""
+    return tuple(
+        EntityRef(entity_id=str(r["id"]), label=str(r["canonical_name"]), domain=r["domain"])
+        for r in rows
+    )
+
+
+def format_entities(rows: list[dict[str, Any]]) -> str:
+    """The model-facing list — names + ids so it can chain into read_entity."""
+    return "\n".join(
+        f"- {r['canonical_name']} [{r['kind']}] ({r['domain']}) id={r['id']}" for r in rows
+    )
+
+
 def build_entity_handlers(entities: EntityReader) -> dict[str, ToolHandler]:
     async def read_entity_tool(arguments: dict, ctx: ToolContext) -> str:
         entity_id = str(arguments.get("entity_id", "")).strip()
@@ -111,7 +138,19 @@ def build_entity_handlers(entities: EntityReader) -> dict[str, ToolHandler]:
         view = await entities.entity_view(ctx.session, entity_id)
         return format_entity(view) if view is not None else "No entity with that id is in scope."
 
-    return {"read_entity": read_entity_tool}
+    async def find_entity_tool(arguments: dict, ctx: ToolContext) -> ToolOutput:
+        name = str(arguments.get("name", "")).strip()
+        if not name:
+            return ToolOutput("find_entity needs a name.")
+        kind = str(arguments.get("kind", "")).strip() or None
+        rows = (await entities.list_entities(ctx.session, name, kind, _ENTITY_LIMIT))[
+            :_ENTITY_LIMIT
+        ]
+        if not rows:
+            return ToolOutput(f"No entity matching '{name}' in scope.")
+        return ToolOutput(format_entities(rows), entities=entity_refs(rows))
+
+    return {"read_entity": read_entity_tool, "find_entity": find_entity_tool}
 
 
 def build_registry(
