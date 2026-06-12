@@ -35,12 +35,20 @@ function deps(over: Partial<FullBrainDeps> = {}): FullBrainDeps {
 }
 
 // The omnibox stands in as the external composer the home screen provides.
-function Harness({ d, onOpenNote }: { d: FullBrainDeps; onOpenNote?: (id: string) => void }) {
+function Harness({
+  d,
+  onOpenNote,
+  onOpenEntity,
+}: {
+  d: FullBrainDeps;
+  onOpenNote?: (id: string) => void;
+  onOpenEntity?: (id: string) => void;
+}) {
   const fb = useFullBrain(true, d);
   const [text, setText] = useState("");
   return (
     <>
-      <FullBrainSurface fb={fb} onOpenNote={onOpenNote} />
+      <FullBrainSurface fb={fb} onOpenNote={onOpenNote} onOpenEntity={onOpenEntity} />
       <input aria-label="Composer" value={text} onChange={(e) => setText(e.target.value)} />
       <button type="button" onClick={() => fb.send(text)}>
         send
@@ -252,6 +260,29 @@ describe("FullBrainSurface", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: "1" }));
     expect(onOpenNote).toHaveBeenCalledWith("n7");
+  });
+
+  it("surfaces resolved entities as chips that open the entity page", async () => {
+    const onOpenEntity = vi.fn();
+    async function* answer(): AsyncGenerator<ChatEvent> {
+      yield { type: "tool_call", id: "c1", name: "find_entity", arguments: { name: "celine" } };
+      yield {
+        type: "tool_result",
+        tool_call_id: "c1",
+        ok: true,
+        summary: "1",
+        entities: [{ kind: "entity", entity_id: "e9", label: "Celine", domain: "general" }],
+      };
+      yield { type: "text_delta", text: "That is Celine." };
+      yield { type: "done", stop_reason: "end_turn" };
+    }
+    render(<Harness d={deps({ chat: answer })} onOpenEntity={onOpenEntity} />);
+    await waitFor(() => screen.getByLabelText("Conversation"));
+    fireEvent.change(screen.getByLabelText("Composer"), { target: { value: "who is celine?" } });
+    fireEvent.click(screen.getByRole("button", { name: "send" }));
+
+    fireEvent.click(await screen.findByRole("button", { name: "Celine" }));
+    expect(onOpenEntity).toHaveBeenCalledWith("e9");
   });
 
   it("a send with no chosen session surfaces the picker instead", async () => {

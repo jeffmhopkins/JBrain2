@@ -155,6 +155,8 @@ class ToolResultEvent(BaseModel):
     sources: list[NoteSource] = Field(default_factory=list)
     # A Proposal the tool staged this turn, surfaced as a "Review proposal" chip.
     proposal: ProposalRef | None = None
+    # Entities a tool resolved this turn (find_entity), surfaced as tappable chips.
+    entities: list[EntityRef] = Field(default_factory=list)
 
 
 class ToolViewEvent(BaseModel):

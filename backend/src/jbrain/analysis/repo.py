@@ -201,7 +201,7 @@ class SqlAnalysisRepo:
                 " WHERE a.entity_id = e.id AND a.alias ILIKE :pat ESCAPE '\\'))"
             )
         sql = f"""
-            SELECT e.id::text, e.kind, e.canonical_name, e.status,
+            SELECT e.id::text, e.kind, e.canonical_name, e.status, e.domain_code,
                    (SELECT count(*) FROM app.facts f
                     WHERE f.entity_id = e.id
                       AND f.status IN ('active', 'pending_review')) AS fact_count,
@@ -222,6 +222,7 @@ class SqlAnalysisRepo:
                 "kind": e.kind,
                 "canonical_name": e.canonical_name,
                 "status": e.status,
+                "domain": e.domain_code,
                 "fact_count": e.fact_count,
                 "mention_count": e.mention_count,
                 "last_seen": e.last_seen,
