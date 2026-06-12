@@ -84,6 +84,61 @@ describe("FullBrainShell", () => {
     expect(document.querySelector(".panel.left.open")).toBeInTheDocument();
   });
 
+  it("swipes shuttle the panels in and the opposite swipe sends them back", async () => {
+    render(
+      <FullBrainShell
+        listSessions={vi.fn(async () => [session({})])}
+        createSession={vi.fn()}
+        chat={noChat}
+        listProposals={noProposals}
+      />,
+    );
+    await waitFor(() => screen.getByLabelText("Conversation"));
+    const shell = document.querySelector(".fb-shell") as Element;
+
+    // Swipe right → Sessions in.
+    fireEvent.touchStart(shell, { touches: [{ clientX: 20, clientY: 200 }] });
+    fireEvent.touchMove(shell, { touches: [{ clientX: 140, clientY: 205 }] });
+    fireEvent.touchEnd(shell, { changedTouches: [{ clientX: 140, clientY: 205 }] });
+    expect(document.querySelector(".panel.left.open")).toBeInTheDocument();
+
+    // Swipe left (opposite) → Sessions back out.
+    fireEvent.touchStart(shell, { touches: [{ clientX: 200, clientY: 200 }] });
+    fireEvent.touchMove(shell, { touches: [{ clientX: 80, clientY: 203 }] });
+    fireEvent.touchEnd(shell, { changedTouches: [{ clientX: 80, clientY: 203 }] });
+    expect(document.querySelector(".panel.left.open")).not.toBeInTheDocument();
+
+    // Swipe left → Proposals in; swipe right (opposite) sends it back out.
+    fireEvent.touchStart(shell, { touches: [{ clientX: 300, clientY: 200 }] });
+    fireEvent.touchMove(shell, { touches: [{ clientX: 180, clientY: 203 }] });
+    fireEvent.touchEnd(shell, { changedTouches: [{ clientX: 180, clientY: 203 }] });
+    expect(document.querySelector(".panel.right.open")).toBeInTheDocument();
+
+    fireEvent.touchStart(shell, { touches: [{ clientX: 60, clientY: 200 }] });
+    fireEvent.touchMove(shell, { touches: [{ clientX: 200, clientY: 203 }] });
+    fireEvent.touchEnd(shell, { changedTouches: [{ clientX: 200, clientY: 203 }] });
+    expect(document.querySelector(".panel.right.open")).not.toBeInTheDocument();
+  });
+
+  it("a swipe starting in the composer doesn't trigger a panel", async () => {
+    render(
+      <FullBrainShell
+        listSessions={vi.fn(async () => [session({})])}
+        createSession={vi.fn()}
+        chat={noChat}
+        listProposals={noProposals}
+      />,
+    );
+    await waitFor(() => screen.getByLabelText("Conversation"));
+    const shell = document.querySelector(".fb-shell") as Element;
+    const composer = document.querySelector(".fb-composer") as Element;
+
+    fireEvent.touchStart(composer, { touches: [{ clientX: 20, clientY: 400 }] });
+    fireEvent.touchMove(shell, { touches: [{ clientX: 200, clientY: 402 }] });
+    fireEvent.touchEnd(shell, { changedTouches: [{ clientX: 200, clientY: 402 }] });
+    expect(document.querySelector(".panel.left.open")).not.toBeInTheDocument();
+  });
+
   it("seeds the composer with a draft carried from the home box", async () => {
     render(
       <FullBrainShell

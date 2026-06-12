@@ -87,8 +87,6 @@ export function App() {
   }
 
   function navigate(target: LauncherTarget) {
-    // Launcher entry carries no seed; clear any stale draft from the box.
-    if (target === "brain") setBrainDraft(null);
     setCard(target);
   }
 

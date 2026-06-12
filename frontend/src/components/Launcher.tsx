@@ -7,7 +7,6 @@ import { api } from "../api/client";
 import {
   BookIcon,
   CalendarIcon,
-  ChatIcon,
   CheckSquareIcon,
   FlaskIcon,
   GaugeIcon,
@@ -18,7 +17,7 @@ import {
   XIcon,
 } from "./icons";
 
-export type LauncherTarget = "ops" | "settings" | "search" | "review" | "entities" | "brain";
+export type LauncherTarget = "ops" | "settings" | "search" | "review" | "entities";
 
 interface Tile {
   title: string;
@@ -47,10 +46,9 @@ const SECTIONS: Section[] = [
   },
   {
     header: "Authoring",
-    tiles: [
-      { title: "Full Brain", icon: <ChatIcon size={24} />, target: "brain" },
-      { title: "Review", icon: <CheckSquareIcon size={24} />, target: "review" },
-    ],
+    // Full Brain is integral to the home screen (the omnibox's Full Brain
+    // mode), not a launcher tile.
+    tiles: [{ title: "Review", icon: <CheckSquareIcon size={24} />, target: "review" }],
   },
   {
     header: "System",

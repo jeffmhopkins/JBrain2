@@ -1,12 +1,13 @@
 // The Full Brain surface: the chat for the active session, with the two lateral
 // panels the mock specifies — Sessions slides in from the left, Proposals from
-// the right (docs/mocks/assistant-lateral-swipe.html). The visible Sessions /
-// Proposals buttons in the chat header are the way in; gestures proved
-// unreliable on real devices (same lesson the launcher encodes), so they're not
-// the primary path. With no session yet, the Sessions panel opens so a read
-// scope is chosen before any chat.
+// the right (docs/mocks/assistant-lateral-swipe.html). A horizontal swipe is the
+// in-context shortcut: swipe right shuttles in Sessions, swipe left shuttles in
+// Proposals, and the opposite swipe sends the open panel back out. The header's
+// visible Sessions / Proposals buttons do the same thing for anyone who'd rather
+// tap. With no session yet, the Sessions panel opens so a read scope is chosen
+// before any chat.
 
-import { type ReactNode, useEffect, useState } from "react";
+import { type ReactNode, type TouchEvent, useEffect, useRef, useState } from "react";
 import { api } from "../api/client";
 import { FullBrainScreen } from "./FullBrainScreen";
 import { ProposalTree } from "./ProposalTree";
@@ -15,6 +16,7 @@ import { SessionsPanel } from "./SessionsPanel";
 import type { AgentSession, ChatEvent, ChatRequest, ProposalSummary, SessionCreate } from "./types";
 
 type Panel = "none" | "sessions" | "proposals";
+const OPEN_PX = 56; // horizontal travel that commits a panel open or closed
 
 interface Props {
   listSessions?: () => Promise<AgentSession[]>;
@@ -37,6 +39,7 @@ export function FullBrainShell({
   const [panel, setPanel] = useState<Panel>("none");
   const [proposals, setProposals] = useState<ProposalSummary[]>([]);
   const [openProposal, setOpenProposal] = useState<string | null>(null);
+  const drag = useRef<{ x: number; axis: "?" | "h" | "v" } | null>(null);
 
   useEffect(() => {
     let stale = false;
@@ -81,8 +84,51 @@ export function FullBrainShell({
     setPanel("none");
   }
 
+  // A horizontal swipe opens a panel (right→Sessions, left→Proposals) or, when
+  // one is open, the opposite swipe sends it back out. Text fields opt out so
+  // typing and selection aren't hijacked; taps on buttons fall through (they
+  // never travel OPEN_PX).
+  function onTouchStart(e: TouchEvent): void {
+    const target = e.target as HTMLElement;
+    if (target.closest(".fb-composer, textarea, input, select")) {
+      drag.current = null;
+      return;
+    }
+    const t = e.touches[0];
+    drag.current = t ? { x: t.clientX, axis: "?" } : null;
+  }
+
+  function onTouchMove(e: TouchEvent): void {
+    const d = drag.current;
+    const t = e.touches[0];
+    if (!d || !t) return;
+    if (d.axis === "?" && Math.abs(t.clientX - d.x) > 10) d.axis = "h";
+  }
+
+  function onTouchEnd(e: TouchEvent): void {
+    const d = drag.current;
+    drag.current = null;
+    const t = e.changedTouches[0];
+    if (!d || !t || d.axis !== "h") return;
+    const dx = t.clientX - d.x;
+    if (Math.abs(dx) < OPEN_PX) return;
+    if (panel === "none") {
+      // Right shuttles in Sessions (from the left); left shuttles in Proposals.
+      setPanel(dx > 0 ? "sessions" : "proposals");
+    } else if (panel === "sessions" && dx < 0) {
+      setPanel("none"); // swipe it back out the way it came
+    } else if (panel === "proposals" && dx > 0) {
+      setPanel("none");
+    }
+  }
+
   return (
-    <div className="fb-shell">
+    <div
+      className="fb-shell"
+      onTouchStart={onTouchStart}
+      onTouchMove={onTouchMove}
+      onTouchEnd={onTouchEnd}
+    >
       {active ? (
         <FullBrainScreen
           session={active}
