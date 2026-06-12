@@ -67,7 +67,7 @@ describe("ProposalTree", () => {
         proposalId="p1"
         onClose={vi.fn()}
         getProposal={vi.fn(async () =>
-          detail({ nodes: [{ ...detail().nodes[0]!, status: "approved" }] }),
+          detail({ nodes: detail().nodes.map((n) => ({ ...n, status: "approved" })) }),
         )}
         decideNode={vi.fn()}
         enactProposal={enactProposal}
