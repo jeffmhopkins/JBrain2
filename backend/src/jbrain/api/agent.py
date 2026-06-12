@@ -22,12 +22,14 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from jbrain.agent.loop import SYSTEM_VERSION, AgentLoop
+from jbrain.agent.memory import MemoryService
 from jbrain.agent.runlog import AgentRunLog
-from jbrain.agent.session import AgentSessionRepo, read_context
+from jbrain.agent.session import AgentSessionInfo, AgentSessionRepo, read_context
 from jbrain.agent.toolregistry import ToolRegistry
 from jbrain.api.deps import owner_only
 from jbrain.api.notes import ctx_for
 from jbrain.auth.service import PrincipalInfo
+from jbrain.db.session import SessionContext
 from jbrain.llm import AssistantMessage, LlmMessage, LlmRouter, UserMessage
 
 log = structlog.get_logger()
@@ -65,6 +67,34 @@ def get_agent_registry(request: Request) -> ToolRegistry:
 
 def get_llm_router(request: Request) -> LlmRouter:
     return cast(LlmRouter, request.app.state.llm_router)
+
+
+def get_agent_memory(request: Request) -> MemoryService:
+    return cast(MemoryService, request.app.state.agent_memory)
+
+
+async def _record_episode(
+    request: Request,
+    read_ctx: SessionContext,
+    session: AgentSessionInfo,
+    run_id: str,
+    question: str,
+    answer_parts: list[str],
+) -> None:
+    """Auto-append the turn as an episodic trace (the auto episodic tier). Best
+    effort and fail-closed: it runs under the session's own scope, so the
+    classifier's stamp (the session's scopes) can only ever be written and recalled
+    within that firewall, and a write failure never breaks the response."""
+    answer = "".join(answer_parts).strip()
+    body = f"Asked: {question}" + (f"\nAnswered: {answer}" if answer else "")
+    with contextlib.suppress(Exception):
+        await get_agent_memory(request).record_episode(
+            read_ctx,
+            body=body,
+            session_scopes=session.domain_scopes,
+            session_id=session.id,
+            run_id=run_id,
+        )
 
 
 def _conversation(body: ChatRequest) -> list[LlmMessage]:
@@ -114,13 +144,18 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
     async def events() -> AsyncIterator[bytes]:
         stop_reason = "error"
         status = "failed"
+        answer: list[str] = []
         try:
             async for event in loop.run_stream(
                 session=read_ctx, scopes=session.domain_scopes, conversation=conversation
             ):
-                if event.type == "done":
+                if event.type == "text_delta":
+                    answer.append(event.text)
+                elif event.type == "done":
                     stop_reason, status = event.stop_reason, "ended"
                 yield f"data: {event.model_dump_json()}\n\n".encode()
+            if status == "ended":
+                await _record_episode(request, read_ctx, session, run_id, body.message, answer)
         except asyncio.CancelledError:
             # The client disconnected mid-stream (closed the PWA, lost signal) —
             # a benign abort, not a failure. Record it as such, then re-raise so

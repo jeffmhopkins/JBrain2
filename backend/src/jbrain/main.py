@@ -6,6 +6,7 @@ import structlog
 from fastapi import FastAPI
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+from jbrain.agent.memory import MemoryRepo, MemoryService
 from jbrain.agent.readtools import build_registry
 from jbrain.agent.runlog import AgentRunLog
 from jbrain.agent.session import AgentSessionRepo
@@ -51,10 +52,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # Any API-side LLM call must flow through this router so its tokens
         # land in app.llm_usage like the worker's do.
         app.state.llm_router = build_router(settings, recorder=SqlUsageRecorder(maker))
-        # The agent: its read-only tool registry (validated against the .tool
+        # The agent: Tier-A memory, the tool registry (validated against the .tool
         # sidecars at startup), the session capability store, and the run log.
+        app.state.agent_memory = MemoryService(
+            MemoryRepo(maker), TeiEmbedClient(settings.embed_url), settings.embed_model
+        )
         app.state.agent_registry = build_registry(
-            app.state.search_service, app.state.notes_repo, app.state.analysis_repo
+            app.state.search_service,
+            app.state.notes_repo,
+            app.state.analysis_repo,
+            app.state.agent_memory,
         )
         app.state.agent_sessions = AgentSessionRepo(maker)
         app.state.agent_runlog = AgentRunLog(maker)

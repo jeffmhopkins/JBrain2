@@ -83,6 +83,10 @@ class FakeMemoryRepo:
         self.superseded.append((block_id, new_body_md))
         return "rev2"
 
+    async def append_episode(self, ctx: object, **kwargs: object) -> str:
+        self.appended = kwargs
+        return "ep-new"
+
 
 def episode(eid: str, importance: float = 0.0) -> EpisodeHit:
     return EpisodeHit(id=eid, body=f"trace {eid}", domain_scopes=("health",), importance=importance)
@@ -140,3 +144,24 @@ class TestReadEditRemember:
         assert repo.written[0]["source"] == "owner_confirmed"
         assert repo.written[0]["block_kind"] == "self_semantic"
         assert repo.written[0]["domain"] == "health"
+
+
+class TestRecordEpisode:
+    async def test_stamps_session_scopes_and_embeds_the_trace(self) -> None:
+        repo = FakeMemoryRepo()
+        svc, embedder = service(repo)
+        await svc.record_episode(
+            CTX, body="Asked: labs?", session_scopes=["general", "health"], run_id="r1"
+        )
+        # Nothing domain-specific observed → the full session scope set (fail-closed #4).
+        assert repo.appended["domain_scopes"] == ("general", "health")
+        assert repo.appended["embedding"] is not None
+        assert embedder.queries == ["Asked: labs?"]
+
+    async def test_observed_domains_narrow_the_stamp(self) -> None:
+        repo = FakeMemoryRepo()
+        svc, _ = service(repo)
+        await svc.record_episode(
+            CTX, body="b", session_scopes=["general", "health"], touched=["health"]
+        )
+        assert repo.appended["domain_scopes"] == ("health",)

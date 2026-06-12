@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from jbrain.agent.classifier import episodic_scopes
 from jbrain.db.session import SessionContext, scoped_session
 from jbrain.embed import EmbedClient, vector_literal
 from jbrain.search.service import RRF_K, rrf_scores
@@ -297,6 +298,34 @@ class MemoryService:
 
     async def read(self, ctx: SessionContext, block_kind: str | None = None) -> list[MemoryBlock]:
         return await self._repo.live_blocks(ctx, block_kind)
+
+    async def record_episode(
+        self,
+        ctx: SessionContext,
+        *,
+        body: str,
+        session_scopes: Sequence[str],
+        touched: Sequence[str] = (),
+        session_id: str | None = None,
+        run_id: str | None = None,
+        importance: float = 0.0,
+    ) -> str:
+        """Auto-append an episodic trace for a finished turn. The classifier stamps
+        it fail-closed (every scope touched, bounded by the session; the full
+        session scope when nothing domain-specific was observed), so a later
+        session can recall it only if it holds all those scopes (#4)."""
+        scopes = episodic_scopes(touched, session_scopes)
+        vec = (await self._embedder.embed([body]))[0]
+        return await self._repo.append_episode(
+            ctx,
+            body=body,
+            domain_scopes=scopes,
+            embedding=vec,
+            embedding_model=self._model,
+            session_id=session_id,
+            run_id=run_id,
+            importance=importance,
+        )
 
     async def remember(
         self,
