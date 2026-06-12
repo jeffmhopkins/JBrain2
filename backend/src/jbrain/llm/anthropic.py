@@ -2,13 +2,13 @@
 TEI embed client set the transport-injection precedent for tests)."""
 
 import asyncio
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from typing import Any
 
 import httpx
 
 from jbrain.llm.errors import LlmBadResponseError
-from jbrain.llm.retry import post_json
+from jbrain.llm.retry import post_json, stream_sse
 from jbrain.llm.types import (
     DEFAULT_MAX_TOKENS,
     AssistantMessage,
@@ -19,6 +19,8 @@ from jbrain.llm.types import (
     LlmTurn,
     LlmUsage,
     StopReason,
+    StreamPart,
+    TextChunk,
     ToolCall,
     UserMessage,
     parse_json_payload,
@@ -35,6 +37,18 @@ _ANTHROPIC_STOP: dict[str, StopReason] = {
     "tool_use": "tool_use",
     "max_tokens": "max_tokens",
 }
+
+
+def _parse_tool_args(accumulated_json: str) -> dict[str, Any]:
+    """Parse a tool_use block's accumulated input_json_delta fragments. An empty
+    string is a no-argument call (Anthropic emits no fragments); anything else
+    must parse to a JSON object."""
+    if not accumulated_json:
+        return {}
+    parsed = parse_json_payload(accumulated_json)
+    if not isinstance(parsed, dict):
+        raise LlmBadResponseError("anthropic: streamed tool input was not a JSON object")
+    return parsed
 
 
 def _image_block(img: LlmImage) -> dict[str, Any]:
@@ -140,15 +154,15 @@ class AnthropicClient:
         parsed = parse_json_payload(text) if json_schema is not None else None
         return LlmResult(text=text, parsed=parsed, usage=usage)
 
-    async def converse(
+    def _converse_payload(
         self,
         *,
         model: str,
         system: str,
         messages: Sequence[LlmMessage],
-        tools: Sequence[LlmTool] = (),
-        max_tokens: int = DEFAULT_MAX_TOKENS,
-    ) -> LlmTurn:
+        tools: Sequence[LlmTool],
+        max_tokens: int,
+    ) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "model": model,
             "max_tokens": max_tokens,
@@ -160,6 +174,20 @@ class AnthropicClient:
                 {"name": t.name, "description": t.description, "input_schema": t.input_schema}
                 for t in tools
             ]
+        return payload
+
+    async def converse(
+        self,
+        *,
+        model: str,
+        system: str,
+        messages: Sequence[LlmMessage],
+        tools: Sequence[LlmTool] = (),
+        max_tokens: int = DEFAULT_MAX_TOKENS,
+    ) -> LlmTurn:
+        payload = self._converse_payload(
+            model=model, system=system, messages=messages, tools=tools, max_tokens=max_tokens
+        )
         data = await post_json(
             f"{self._base_url}/v1/messages",
             headers={"x-api-key": self._api_key, "anthropic-version": API_VERSION},
@@ -185,3 +213,74 @@ class AnthropicClient:
             raise LlmBadResponseError(f"{self.provider}: unexpected response shape") from exc
         stop = _ANTHROPIC_STOP.get(data.get("stop_reason", ""), "end_turn")
         return LlmTurn(text=text, tool_calls=tool_calls, stop_reason=stop, usage=usage)
+
+    async def converse_stream(
+        self,
+        *,
+        model: str,
+        system: str,
+        messages: Sequence[LlmMessage],
+        tools: Sequence[LlmTool] = (),
+        max_tokens: int = DEFAULT_MAX_TOKENS,
+    ) -> AsyncIterator[StreamPart]:
+        """Stream a turn over the Messages SSE events. Text deltas stream live;
+        tool_use blocks arrive as `input_json_delta` fragments accumulated per
+        block and parsed whole at `content_block_stop`."""
+        payload = self._converse_payload(
+            model=model, system=system, messages=messages, tools=tools, max_tokens=max_tokens
+        )
+        payload["stream"] = True
+        events = stream_sse(
+            f"{self._base_url}/v1/messages",
+            headers={"x-api-key": self._api_key, "anthropic-version": API_VERSION},
+            payload=payload,
+            provider=self.provider,
+            request_timeout=self._timeout,
+            transport=self._transport,
+            sleep=self._sleep,
+        )
+        text_parts: list[str] = []
+        # Tool-use blocks keyed by content-block index: name/id from the block
+        # start, arguments accumulated from input_json_delta fragments.
+        tools_by_index: dict[int, dict[str, Any]] = {}
+        input_tokens = 0
+        output_tokens = 0
+        stop: StopReason = "end_turn"
+        async for event in events:
+            kind = event.get("type")
+            if kind == "message_start":
+                input_tokens = int(event.get("message", {}).get("usage", {}).get("input_tokens", 0))
+            elif kind == "content_block_start" and event.get("index") is not None:
+                block = event.get("content_block", {})
+                if block.get("type") == "tool_use":
+                    tools_by_index[int(event["index"])] = {
+                        "id": block.get("id", ""),
+                        "name": block.get("name", ""),
+                        "json": "",
+                    }
+            elif kind == "content_block_delta":
+                delta = event.get("delta", {})
+                if delta.get("type") == "text_delta":
+                    chunk = delta.get("text", "")
+                    if chunk:
+                        text_parts.append(chunk)
+                        yield TextChunk(text=chunk)
+                elif delta.get("type") == "input_json_delta" and event.get("index") is not None:
+                    buf = tools_by_index.get(int(event["index"]))
+                    if buf is not None:
+                        buf["json"] += delta.get("partial_json", "")
+            elif kind == "message_delta":
+                reason = event.get("delta", {}).get("stop_reason")
+                if reason:
+                    stop = _ANTHROPIC_STOP.get(reason, "end_turn")
+                output_tokens = int(event.get("usage", {}).get("output_tokens", output_tokens))
+        tool_calls = tuple(
+            ToolCall(id=buf["id"], name=buf["name"], arguments=_parse_tool_args(buf["json"]))
+            for _, buf in sorted(tools_by_index.items())
+        )
+        yield LlmTurn(
+            text="".join(text_parts),
+            tool_calls=tool_calls,
+            stop_reason=stop,
+            usage=LlmUsage(input_tokens=input_tokens, output_tokens=output_tokens),
+        )

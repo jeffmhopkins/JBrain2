@@ -8,13 +8,13 @@ docs/ANALYSIS.md "Privacy routing".
 
 import asyncio
 import json
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from typing import Any
 
 import httpx
 
 from jbrain.llm.errors import LlmBadResponseError
-from jbrain.llm.retry import post_json
+from jbrain.llm.retry import post_json, stream_sse
 from jbrain.llm.types import (
     DEFAULT_MAX_TOKENS,
     AssistantMessage,
@@ -25,6 +25,8 @@ from jbrain.llm.types import (
     LlmTurn,
     LlmUsage,
     StopReason,
+    StreamPart,
+    TextChunk,
     ToolCall,
     UserMessage,
     parse_json_payload,
@@ -157,15 +159,15 @@ class OpenAiCompatClient:
         parsed = parse_json_payload(text) if json_schema is not None else None
         return LlmResult(text=text, parsed=parsed, usage=usage)
 
-    async def converse(
+    def _converse_payload(
         self,
         *,
         model: str,
         system: str,
         messages: Sequence[LlmMessage],
-        tools: Sequence[LlmTool] = (),
-        max_tokens: int = DEFAULT_MAX_TOKENS,
-    ) -> LlmTurn:
+        tools: Sequence[LlmTool],
+        max_tokens: int,
+    ) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "model": model,
             "max_tokens": max_tokens,
@@ -183,7 +185,25 @@ class OpenAiCompatClient:
                 }
                 for t in tools
             ]
-        headers = {"Authorization": f"Bearer {self._api_key}"} if self._api_key else {}
+        return payload
+
+    def _auth_headers(self) -> dict[str, str]:
+        # Local servers run keyless; omitting the header beats sending "Bearer ".
+        return {"Authorization": f"Bearer {self._api_key}"} if self._api_key else {}
+
+    async def converse(
+        self,
+        *,
+        model: str,
+        system: str,
+        messages: Sequence[LlmMessage],
+        tools: Sequence[LlmTool] = (),
+        max_tokens: int = DEFAULT_MAX_TOKENS,
+    ) -> LlmTurn:
+        payload = self._converse_payload(
+            model=model, system=system, messages=messages, tools=tools, max_tokens=max_tokens
+        )
+        headers = self._auth_headers()
         data = await post_json(
             f"{self._base_url}/chat/completions",
             headers=headers,
@@ -222,3 +242,80 @@ class OpenAiCompatClient:
                 f"{self.provider}: tool_call arguments were not a JSON object"
             )
         return ToolCall(id=raw["id"], name=fn["name"], arguments=arguments)
+
+    async def converse_stream(
+        self,
+        *,
+        model: str,
+        system: str,
+        messages: Sequence[LlmMessage],
+        tools: Sequence[LlmTool] = (),
+        max_tokens: int = DEFAULT_MAX_TOKENS,
+    ) -> AsyncIterator[StreamPart]:
+        """Stream a turn over chat-completions SSE chunks. Content deltas stream
+        live; tool_call deltas arrive fragmented and keyed by index (id/name on
+        the first, argument fragments after), assembled whole at the end.
+        `include_usage` asks for a trailing usage-only chunk (local servers may
+        omit it; usage then stays zero, as in `converse`)."""
+        payload = self._converse_payload(
+            model=model, system=system, messages=messages, tools=tools, max_tokens=max_tokens
+        )
+        payload["stream"] = True
+        payload["stream_options"] = {"include_usage": True}
+        events = stream_sse(
+            f"{self._base_url}/chat/completions",
+            headers=self._auth_headers(),
+            payload=payload,
+            provider=self.provider,
+            request_timeout=self._timeout,
+            transport=self._transport,
+            sleep=self._sleep,
+        )
+        text_parts: list[str] = []
+        # Tool calls keyed by their stream index: id/name land on the first delta
+        # for that index, argument fragments accumulate across later ones.
+        calls_by_index: dict[int, dict[str, Any]] = {}
+        input_tokens = 0
+        output_tokens = 0
+        stop: StopReason = "end_turn"
+        async for event in events:
+            usage_body = event.get("usage")
+            if usage_body:
+                input_tokens = int(usage_body.get("prompt_tokens", input_tokens))
+                output_tokens = int(usage_body.get("completion_tokens", output_tokens))
+            for choice in event.get("choices") or ():
+                delta = choice.get("delta") or {}
+                content = delta.get("content")
+                if content:
+                    text_parts.append(content)
+                    yield TextChunk(text=content)
+                for tc in delta.get("tool_calls") or ():
+                    self._accumulate_tool_call(calls_by_index, tc)
+                finish = choice.get("finish_reason")
+                if finish:
+                    stop = _OPENAI_STOP.get(finish, "end_turn")
+        tool_calls = tuple(self._finish_tool_call(buf) for _, buf in sorted(calls_by_index.items()))
+        yield LlmTurn(
+            text="".join(text_parts),
+            tool_calls=tool_calls,
+            stop_reason=stop,
+            usage=LlmUsage(input_tokens=input_tokens, output_tokens=output_tokens),
+        )
+
+    @staticmethod
+    def _accumulate_tool_call(buffers: dict[int, dict[str, Any]], delta: dict[str, Any]) -> None:
+        buf = buffers.setdefault(int(delta.get("index", 0)), {"id": "", "name": "", "args": ""})
+        if delta.get("id"):
+            buf["id"] = delta["id"]
+        fn = delta.get("function") or {}
+        if fn.get("name"):
+            buf["name"] = fn["name"]
+        buf["args"] += fn.get("arguments") or ""
+
+    def _finish_tool_call(self, buf: dict[str, Any]) -> ToolCall:
+        arguments = parse_json_payload(buf["args"] or "{}")
+        if not isinstance(arguments, dict):
+            raise LlmBadResponseError(
+                f"{self.provider}: streamed tool_call arguments were not a JSON object"
+            )
+        return ToolCall(id=buf["id"], name=buf["name"], arguments=arguments)

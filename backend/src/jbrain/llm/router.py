@@ -12,7 +12,7 @@ The "local" provider must exist now so going all-local is config, not
 refactor — docs/ANALYSIS.md "Privacy routing".
 """
 
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from typing import Any
 
 import httpx
@@ -31,6 +31,7 @@ from jbrain.llm.types import (
     LlmTool,
     LlmTurn,
     LlmUsage,
+    StreamPart,
     UsageRecorder,
 )
 
@@ -243,6 +244,45 @@ class LlmRouter:
             output_tokens=turn.usage.output_tokens,
         )
         return turn
+
+    async def converse_stream(
+        self,
+        task: str,
+        *,
+        system: str,
+        messages: Sequence[LlmMessage],
+        tools: Sequence[LlmTool] = (),
+        max_tokens: int = DEFAULT_MAX_TOKENS,
+        strength: str | None = None,
+    ) -> AsyncIterator[StreamPart]:
+        """Stream a tool-aware turn for the agent loop (StreamPart events). Usage
+        is recorded once from the closing LlmTurn — the streamed text chunks
+        carry no usage, only the final turn does."""
+        provider, model = self._resolve(task, strength)
+        client = self._clients[provider]
+        final: LlmTurn | None = None
+        async for part in client.converse_stream(
+            model=model,
+            system=system,
+            messages=messages,
+            tools=tools,
+            max_tokens=max_tokens,
+        ):
+            if isinstance(part, LlmTurn):
+                final = part
+            yield part
+        if final is not None:
+            await self._record(task, provider, model, final.usage)
+            log.info(
+                "llm.converse_stream",
+                task=task,
+                provider=provider,
+                model=model,
+                stop_reason=final.stop_reason,
+                tool_calls=len(final.tool_calls),
+                input_tokens=final.usage.input_tokens,
+                output_tokens=final.usage.output_tokens,
+            )
 
 
 def build_router(
