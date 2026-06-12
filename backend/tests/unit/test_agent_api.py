@@ -6,6 +6,7 @@ import asyncio
 import json
 from collections.abc import Iterator
 from datetime import UTC, datetime
+from typing import cast
 
 import pytest
 from fastapi.testclient import TestClient
@@ -14,7 +15,7 @@ from jbrain.agent.session import AgentSessionInfo
 from jbrain.agent.toolregistry import ToolRegistry
 from jbrain.auth import service
 from jbrain.config import Settings
-from jbrain.llm import FakeLlmClient, LlmRouter, LlmTurn, LlmUsage
+from jbrain.llm import FakeLlmClient, LlmClient, LlmRouter, LlmTurn, LlmUsage
 from jbrain.main import create_app
 from tests.unit.fakes import FakeAuthRepo
 
@@ -185,7 +186,7 @@ def test_chat_history_is_replayed_into_the_turn(
     login(client, repo)
     sessions_store.add(AgentSessionInfo("sess-1", "", "active", ("general",), (), NOW, NOW))
     router: LlmRouter = client.app.state.llm_router  # type: ignore[attr-defined]
-    fake = router._clients["xai"]  # type: ignore[attr-defined]
+    fake = cast(FakeLlmClient, router._clients["xai"])
 
     resp = client.post(
         "/api/chat",
@@ -218,7 +219,7 @@ def test_chat_model_failure_emits_error_done_and_marks_run_failed(
     login(client, repo)
     sessions_store.add(AgentSessionInfo("sess-1", "", "active", ("general",), (), NOW, NOW))
     client.app.state.llm_router = LlmRouter(  # type: ignore[attr-defined]
-        {"xai": BoomStreamClient()}, {"agent.turn": ("xai", "grok-4.3")}
+        {"xai": cast(LlmClient, BoomStreamClient())}, {"agent.turn": ("xai", "grok-4.3")}
     )
     resp = client.post("/api/chat", json={"session_id": "sess-1", "message": "hi"})
     # The failure surfaces as a terminal event, never a 500, and the run is closed.
