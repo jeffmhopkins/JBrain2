@@ -197,6 +197,12 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
                     if step is not None:
                         step["ok"] = event.ok
                         step["sources"] = [s.model_dump() for s in event.sources]
+                        # Persist the staged-proposal and resolved-entity chips too,
+                        # so the bubble replays in full on reopen (not just sources).
+                        if event.proposal is not None:
+                            step["proposal"] = event.proposal.model_dump()
+                        if event.entities:
+                            step["entities"] = [e.model_dump() for e in event.entities]
                 elif event.type == "done":
                     stop_reason, status = event.stop_reason, "ended"
                 yield f"data: {event.model_dump_json()}\n\n".encode()

@@ -91,6 +91,37 @@ describe("FullBrainSurface", () => {
     expect(getTranscript).toHaveBeenCalledWith("s1");
   });
 
+  it("replays a turn's proposal and entity chips, not just its note sources", async () => {
+    const getTranscript = vi.fn(
+      async (): Promise<TranscriptTurn[]> => [
+        { role: "user", content: "who am i?", tools: [] },
+        {
+          role: "assistant",
+          content: "You are Jeff Hopkins.",
+          tools: [
+            {
+              id: "c1",
+              name: "find_entity",
+              ok: true,
+              sources: [],
+              proposal: { proposal_id: "p1", kind: "correction" },
+              entities: [
+                { kind: "entity", entity_id: "e1", label: "Jeff Hopkins", domain: "general" },
+              ],
+            },
+          ],
+        },
+      ],
+    );
+    render(<Harness d={deps({ getTranscript })} />);
+    await waitFor(() => screen.getByLabelText("Conversation"));
+    // The staged-proposal chip survives the reopen (it lives on the tool-use face).
+    expect(await screen.findByRole("button", { name: /Review proposal/ })).toBeInTheDocument();
+    // The entity links inline in the replayed answer (its name appears in prose).
+    const link = await screen.findByRole("button", { name: "Jeff Hopkins" });
+    expect(link).toHaveClass("md-entity");
+  });
+
   it("keeps the active session's history when it is re-opened from the list", async () => {
     const getTranscript = vi.fn(
       async (): Promise<TranscriptTurn[]> => [{ role: "user", content: "kept", tools: [] }],
