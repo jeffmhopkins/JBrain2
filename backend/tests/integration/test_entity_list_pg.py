@@ -269,6 +269,7 @@ async def test_entities_api_round_trip(
             "kind",
             "canonical_name",
             "status",
+            "domain",
             "fact_count",
             "mention_count",
             "last_seen",
