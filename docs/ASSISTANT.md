@@ -71,9 +71,14 @@ instead enforced by RLS, by an owner confirmation, or by a fail-closed default.
    Non-owner principals (intake links, device keys) get a **default-deny,
    capture-only** tool allowlist and cannot write agent memory/skills or trigger
    self-improvement jobs.
-9. **No exfiltration channels.** The agent has **no outbound-network/fetch tool**,
-   and agent output **cannot trigger external resource loads** (no auto-loading
-   markdown images/links to non-allowlisted origins).
+9. **Controlled egress only.** Agent **output never triggers external resource
+   loads** (no markdown images/links/render-time fetches) and there is **no
+   arbitrary fetch/HTTP tool**. The *only* outbound egress is the **connector
+   abstraction** (below): a fixed allowlist of named, server-side, owner-configured
+   upstreams called with **typed minimal inputs**, egress-minimized, cached, and
+   logged — governed by the `external` permission class (default **denied**,
+   enabled by owner consent). Location connectors are **local-first** so location
+   data stays on-box.
 10. **Bounded self-improvement spend.** Self-improvement pipelines carry hard
     per-principal and global daily token/cost/job budgets, separate from
     interactive budgets; they are batched and **never** triggered by
@@ -237,6 +242,51 @@ domain) and whose policy is capture-only / everything-else-denied (#8). The owne
 session is just the general case where the read dial is *selectable* and writes are
 *staged* rather than denied — so the whole subjects/principals/domains model
 (ARCHITECTURE.md) is one mechanism, not a special case per caller.
+
+### External connectors (the egress chokepoint)
+
+Some tasks genuinely need outside reference data — what a medication is, what a
+condition means, resolving a GPS fix to an address. JBrain2 allows this through **one
+egress chokepoint**, the same way every LLM call goes through the adapter and every
+file through storage: a `connectors` abstraction. **No tool ever makes a raw HTTP
+request** (this is a fourth chokepoint in the spirit of CLAUDE.md's three).
+
+A **connector** is a named, owner-configured upstream with a **pinned base URL**
+(config, never model-supplied), a **typed request schema**, a response parser, a
+**cache policy**, a rate limit, a `domain` tag, and a consent requirement. The
+connector builds the request from **typed params only** — the model fills declared
+slots, never a URL, never free-form passthrough — and an **egress guard** rejects
+anything beyond the declared shape, so the conversation context (and the owner data
+in it) cannot be stuffed into a query string. Calls run **server-side** (api/worker),
+never at render; results return as **data wrapped in the data/instruction boundary**
+(#1), are **cached** in Postgres (reference data is near-static), and every call is
+**logged** (connector, input hash, domain, principal). Connectors are the `external`
+permission class: **default denied**, enabled per owner **consent** (a Settings
+toggle / per-session opt-in).
+
+The starter connectors:
+
+| Tool | Upstream (recommended) | Typed input | Returns | Domain |
+|---|---|---|---|---|
+| `lookup_medication` | NLM **RxNorm/RxNav** (+ openFDA/DailyMed) — free, no-auth | `{name}` or `{rxcui}` | ingredients, dose forms, interactions, label highlights | health |
+| `lookup_condition` | NLM **MedlinePlus Connect** / Clinical Tables (ICD-10/SNOMED/MeSH) | `{name}` or `{code:{system,value}}` | overview, typical management, source link | health |
+| `geocode_reverse` | **local/self-hosted** (Nominatim/Photon on-box) | `{lat,lon,accuracy?}` | `{address, components, confidence}` | location |
+| `geocode_forward` | **local/self-hosted** | `{query, near?}` | `{lat, lon, confidence}` | location |
+
+**Geocoding is local-first by design.** A GPS fix or home address sent to an
+external geocoder leaks the owner's location to a third party — exactly what the
+location firewall exists to prevent. So geocoding runs against a **self-hosted
+geocoder container** (a regional OSM extract via Nominatim/Photon, mirroring the
+local `embed` container), and location data **never leaves the box**; an external
+geocoder is only an explicit, consented, logged fallback for out-of-extract queries.
+This is consistent with dossier G's no-external-map-**tile** rule — we still render
+no basemaps; geocoding only *resolves* coordinates ↔ addresses locally, which is what
+lets a `place_card` show a resolved address as text.
+
+Medical/medicine lookups are **reference enrichment, not authority**: results are
+data the agent may cite to the owner with source attribution, never minted as facts
+— a looked-up interaction the owner wants to keep re-enters as an agent-authored note
+through a Proposal (#7).
 
 ## Memory model
 

@@ -27,6 +27,9 @@ agent/
   session.py         # agent-session capability (read scope + action policy)
   runlog.py          # step log → agent_runs (becomes workflow `runs` in P5)
   prompts/*.prompt   # system persona + tool-use policy, reflexion critic, classifier
+connectors/          # the egress chokepoint: Connector protocol + registry + guard
+  medical.py         # RxNorm/RxNav, MedlinePlus connectors
+  geocode.py         # local-first geocoder client (P7)
 models/agent.py      # SQLAlchemy models for the new tables
 api/agent.py         # /chat (SSE/WS streaming)
 api/sessions.py      # start/list agent sessions
@@ -52,6 +55,8 @@ services as the tools' backends; `evals/` for the (later) promotion gates.
 | `proposal_nodes` | `proposal_id`, `parent_id`, `type` (group/leaf), `op`, `label`, `preview` jsonb, `deps[]`, `status` (pending/approved/rejected) | The tree; **dependency-safe partial approval** |
 | *(altered)* `notes` | + `provenance` (human/agent), `source_ref` | Agent-authored notes; **normal extraction weight** |
 | *(P6)* `skills` | `name`, `version`, `status` (shadow/active/quarantined), `domain_id`, `body`, `description`, embedding, `success_stats` | Procedural memory; read-only auto-promote, mutating owner-gated |
+| `connector_cache` | `connector`, `input_hash`, `result` jsonb, `domain_id`, `fetched_at`, `ttl` | Cached external reference data; `domain_id` (location cache is location-scoped) + RLS |
+| `connector_log` | `connector`, `input_hash`, `domain_id`, `principal_id`, `at` | Egress audit trail (no payload, hash only) |
 
 Discriminator/`block_kind`/namespace columns are RLS-eligible so a single-scope
 session cannot read a multi-scope episode or another domain's memory.
@@ -145,6 +150,22 @@ The `propose_correction` tool stages a Proposal instead of writing. `api/proposa
 *Gate:* cascade + dependency-hold + RLS tests; enactment touches only
 approved+satisfied leaves.
 
+**P4.9 — External connectors (egress chokepoint + medical/medicine).** A new
+`backend/src/jbrain/connectors/` package: the `Connector` protocol (pinned base URL
+from config, typed request schema, response parser, cache policy, rate limit,
+`domain`, consent flag), a registry, and the **egress guard** (typed params only;
+reject anything beyond the declared shape). Server-side only (api/worker), reusing
+the existing `httpx`. New tables `connector_cache` (connector + normalized-input
+hash → parsed result + TTL; `domain_id` + RLS) and `connector_log` (audit). First
+connectors as `external`-class tools, **default denied** by the session policy,
+enabled by an owner **consent** setting: `lookup_medication` (NLM RxNorm/RxNav +
+openFDA), `lookup_condition` (MedlinePlus Connect / Clinical Tables). Results are
+**data wrapped in the I-1 boundary**, source-attributed, never minted as facts
+without a Proposal. *Gate:* egress-guard unit tests (a param carrying extra/owner
+data is rejected); cache hit/miss; the connector is faked in tests (no live network,
+like the LLM adapter); RLS test on `connector_cache`. **No new runtime dep**
+(`httpx` exists); `dev-setup.sh` unaffected.
+
 **Phase-4 exit:** Full Brain chat is the default way to ask "what do I know about
 X," runs are logged, the agent never writes citable truth directly, every staged
 change is owner-approved through a Proposal tree, and the three new RLS tables
@@ -186,6 +207,14 @@ self-editing are explicitly deferred — see below.)
   allowlist (I-8) and **cannot write agent memory/skills or trigger
   self-improvement jobs**; agent-internal jobs run at the **triggering principal's
   scope** (no confused deputy).
+- **Geocoding connectors** (`geocode_reverse`, `geocode_forward`) land with the
+  location domain, served by a **self-hosted geocoder container** (Nominatim/Photon
+  + a regional OSM extract, mirroring the `embed` container) so location data
+  **never leaves the box**; an external geocoder is a consented, logged fallback
+  only. New compose service + a `dev-setup.sh`/install step (the OSM extract is the
+  one real infra addition — gate it behind the location domain so the base install
+  stays lean). `connector_cache` for geocoding is `location`-scoped with the same
+  RLS test. Enables the deferred `place_card` (resolved address as text — no tiles).
 
 ## Open questions — resolved here
 
