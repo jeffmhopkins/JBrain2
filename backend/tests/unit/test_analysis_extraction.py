@@ -321,8 +321,22 @@ def test_system_prompt_v5_teaches_object_person_and_backward_temporal() -> None:
     assert "last night" in SYSTEM_PROMPT and "PRIOR calendar day" in SYSTEM_PROMPT
 
 
-def test_prompt_version_bumped_to_v8() -> None:
-    assert PROMPT_VERSION == "note-extract-v8"
+def test_prompt_version_bumped_to_v9() -> None:
+    assert PROMPT_VERSION == "note-extract-v9"
+
+
+def test_system_prompt_v9_teaches_inanimate_ownership_edges() -> None:
+    """Field gap (Jun 2026): "My truck is a white f150 from 2005" produced a lone
+    Me.owns fact whose object was buried in the statement sentence, while the
+    truck's attributes (color/year/engine) had no entity to hang off. v9 must
+    teach that an owned inanimate thing is its own entity, the ownership is an
+    object_entity_ref edge, and the description lives on the THING — not folded
+    into the owns statement."""
+    assert "An owned INANIMATE thing" in SYSTEM_PROMPT
+    assert "object_entity_ref the Thing's mention" in SYSTEM_PROMPT
+    # The worked vehicle example is the exact field case, edge + on-thing props.
+    assert '"object_entity_ref": "my truck"' in SYSTEM_PROMPT
+    assert 'entity_ref is "my truck"' in SYSTEM_PROMPT
 
 
 def test_user_prompt_carries_anchor_with_timezone_domain_and_content() -> None:

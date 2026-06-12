@@ -7,8 +7,8 @@
 // provenance footer owning the note-level re-run.
 
 import { type KeyboardEvent, useCallback, useEffect, useRef, useState } from "react";
-import { FactCitation, KindBadge, StatusChip } from "../analysis/bits";
-import { edgePath, factValue, fmtConfidence, fmtTemporal } from "../analysis/format";
+import { EdgeValue, FactCitation, KindBadge, StatusChip } from "../analysis/bits";
+import { edgePath, fmtConfidence, fmtTemporal } from "../analysis/format";
 import { type AnalysisEntity, type FactOut, type NoteAnalysis, api } from "../api/client";
 import { awaitingImageCount } from "../notes/lifecycle";
 import type { StreamAttachment } from "../notes/useNotes";
@@ -63,29 +63,41 @@ function groupBySubject(analysis: NoteAnalysis): SubjectGroup[] {
 interface FactRowProps {
   fact: FactOut;
   extractor: string | null;
+  onOpenEntity: (entityId: string) => void;
 }
 
-function FactRow({ fact, extractor }: FactRowProps) {
+function FactRow({ fact, extractor, onOpenEntity }: FactRowProps) {
   const [open, setOpen] = useState(false);
+  const toggle = () => setOpen((o) => !o);
   return (
     <div className="fact-row-wrap">
-      <button
-        type="button"
+      <div
         className="fact-row"
+        // biome-ignore lint/a11y/useSemanticElements: the row hosts a nested object-entity link, which a real <button> cannot wrap.
+        role="button"
+        tabIndex={0}
         aria-expanded={open}
-        onClick={() => setOpen((o) => !o)}
+        onClick={toggle}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            toggle();
+          }
+        }}
       >
         <span className="fact-edge">
           <span className="edge-path">{edgePath(fact.predicate, fact.qualifier)}</span>
           <span className="edge-arrow"> → </span>
-          <span className="edge-value">{factValue(fact)}</span>
+          <span className="edge-value">
+            <EdgeValue fact={fact} onOpenEntity={onOpenEntity} />
+          </span>
         </span>
         <span className="fact-meta">
           <KindBadge kind={fact.kind} />
           <StatusChip status={fact.status} pinned={fact.pinned} />
           <span className="fact-conf">{fmtConfidence(fact.confidence)}</span>
         </span>
-      </button>
+      </div>
       {open && <FactCitation fact={fact} extractor={extractor} />}
     </div>
   );
@@ -461,7 +473,12 @@ export function AnalysisTab({
           </button>
           <div className="fact-card">
             {group.facts.map((fact) => (
-              <FactRow key={fact.id} fact={fact} extractor={analysis.extractor} />
+              <FactRow
+                key={fact.id}
+                fact={fact}
+                extractor={analysis.extractor}
+                onOpenEntity={onOpenEntity}
+              />
             ))}
           </div>
         </section>

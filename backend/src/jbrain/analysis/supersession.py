@@ -92,6 +92,13 @@ INVERSE_PAIRS: dict[str, str] = {
     "has_treated": "treatedBy",
     "treatedby": "hasTreated",
     "treated_by": "hasTreated",
+    # Ownership: a possession edge (me.owns → the F-150) reciprocates to the
+    # owner on the object's stream (the F-150 ownedBy → me). schema.org spells
+    # both `owns`/`ownedBy`; the object is usually `Me` or a null-subject thing,
+    # so the cross-subject gate rarely fires.
+    "owns": "ownedBy",
+    "ownedby": "owns",
+    "owned_by": "owns",
 }
 
 

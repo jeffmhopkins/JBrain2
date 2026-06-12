@@ -109,6 +109,8 @@ const ANALYSIS: NoteAnalysis = {
       valid_to: null,
       reported_at: "2026-06-10T09:40:00Z",
       temporal_precision: "instant",
+      object_entity_id: null,
+      object_entity_name: null,
       source_snippet: "Saw Dr. Patel — <mark>BP 128/82</mark> this morning",
     },
     {
@@ -128,6 +130,8 @@ const ANALYSIS: NoteAnalysis = {
       valid_to: null,
       reported_at: "2026-06-10T09:40:00Z",
       temporal_precision: "month",
+      object_entity_id: null,
+      object_entity_name: null,
       source_snippet: "she's mostly <mark>moved into the new Denver place</mark> now",
     },
     {
@@ -147,6 +151,8 @@ const ANALYSIS: NoteAnalysis = {
       valid_to: null,
       reported_at: "2026-06-10T09:40:00Z",
       temporal_precision: "day",
+      object_entity_id: "ent-patel",
+      object_entity_name: "Dr. Patel",
       source_snippet: null,
     },
     {
@@ -166,6 +172,8 @@ const ANALYSIS: NoteAnalysis = {
       valid_to: null,
       reported_at: "2026-06-10T09:40:00Z",
       temporal_precision: "unknown",
+      object_entity_id: null,
+      object_entity_name: null,
       source_snippet: null,
     },
   ],
@@ -351,6 +359,12 @@ describe("NoteScreen", () => {
     // Subject headers double as entity navigation.
     fireEvent.click(screen.getByRole("button", { name: /Sarah person provisional/ }));
     expect(onOpenEntity).toHaveBeenCalledWith("ent-sarah");
+
+    // A relationship fact's object renders as a link to that node (the
+    // physician edge → Dr. Patel), not the buried statement; tapping it
+    // navigates and does not toggle the row's citation.
+    fireEvent.click(screen.getByRole("button", { name: "Dr. Patel" }));
+    expect(onOpenEntity).toHaveBeenCalledWith("ent-patel");
   });
 
   it("an un-analyzed note shows the quiet line, driven by analyzed_at null", async () => {

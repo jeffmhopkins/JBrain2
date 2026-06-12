@@ -174,6 +174,11 @@ export interface FactOut {
   valid_to: string | null;
   reported_at: string;
   temporal_precision: string;
+  /** A relationship fact's object node: the value IS this entity (me.owns →
+   * the F-150), so the edge links to it instead of rendering the statement.
+   * Null for scalar facts, or when the object isn't visible to the session. */
+  object_entity_id: string | null;
+  object_entity_name: string | null;
   /** May carry literal <mark> around the source words, like search snippets. */
   source_snippet: string | null;
 }

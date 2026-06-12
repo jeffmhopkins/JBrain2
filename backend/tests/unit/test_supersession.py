@@ -496,12 +496,16 @@ def test_asymmetric_predicate_reflects_with_named_inverse() -> None:
     assert inverse_predicate("child_of") == "parent_of"
     assert inverse_predicate("manages") == "reportsTo"
     assert inverse_predicate("hasTreated") == "treatedBy"
+    # Ownership reciprocates owner <-> possession (me.owns -> F-150 reflects to
+    # F-150.ownedBy -> me on the thing's stream).
+    assert inverse_predicate("owns") == "ownedBy"
+    assert inverse_predicate("ownedBy") == "owns"
 
 
 def test_unknown_predicate_has_no_inverse() -> None:
     # The registry is an allowlist; an unknown relation stands alone (safe).
     assert inverse_predicate("favoriteBand") is None
-    assert inverse_predicate("owns") is None
+    assert inverse_predicate("admires") is None
 
 
 def test_inverse_lookup_is_case_insensitive() -> None:

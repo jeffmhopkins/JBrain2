@@ -59,6 +59,8 @@ function fact(value_json: unknown): FactOut {
     valid_to: null,
     reported_at: "2026-06-10T23:00:00-06:00",
     temporal_precision: "unknown",
+    object_entity_id: null,
+    object_entity_name: null,
     source_snippet: null,
   };
 }

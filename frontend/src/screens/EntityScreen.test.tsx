@@ -20,6 +20,8 @@ const DENVER: FactOut = {
   valid_to: null,
   reported_at: "2026-06-10T09:40:00Z",
   temporal_precision: "month",
+  object_entity_id: null,
+  object_entity_name: null,
   source_snippet: "she's mostly <mark>moved into the new Denver place</mark> now",
 };
 
@@ -48,8 +50,24 @@ const SARAH: EntityOut = {
     {
       predicate: "worksFor",
       qualifier: null,
-      current: { ...DENVER, id: "f-job", value_json: "Ridgeline Architects", status: "active" },
-      history: [{ ...DENVER, id: "f-job", value_json: "Ridgeline Architects", status: "active" }],
+      current: {
+        ...DENVER,
+        id: "f-job",
+        value_json: "Ridgeline Architects",
+        status: "active",
+        object_entity_id: "ent-ridgeline",
+        object_entity_name: "Ridgeline Architects",
+      },
+      history: [
+        {
+          ...DENVER,
+          id: "f-job",
+          value_json: "Ridgeline Architects",
+          status: "active",
+          object_entity_id: "ent-ridgeline",
+          object_entity_name: "Ridgeline Architects",
+        },
+      ],
     },
   ],
   inbound: [
@@ -122,7 +140,10 @@ describe("EntityScreen", () => {
 
     // Single-fact predicates render no rail (one list = the address rail).
     expect(screen.getAllByRole("list")).toHaveLength(1);
-    expect(screen.getByText("Ridgeline Architects")).toBeInTheDocument();
+    // worksFor's object renders as a link to the org node, not the statement;
+    // tapping it navigates to that entity.
+    fireEvent.click(screen.getByRole("button", { name: "Ridgeline Architects" }));
+    expect(handlers.onOpenEntity).toHaveBeenCalledWith("ent-ridgeline");
 
     // Each dot cites its note snippet on tap.
     const head = within(rail).getAllByRole("button")[0];
