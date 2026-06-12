@@ -8,6 +8,7 @@ from typing import Any
 from jbrain.agent.contracts import (
     ChatEvent,
     DoneEvent,
+    NoteSource,
     TextDelta,
     ToolCallEvent,
     ToolResultEvent,
@@ -19,6 +20,7 @@ from jbrain.agent.loop import (
     AgentLoop,
     Guardrails,
     ToolContext,
+    ToolOutput,
 )
 from jbrain.agent.toolfile import ToolFile
 from jbrain.agent.toolregistry import RegisteredTool, ToolHandler, ToolRegistry
@@ -49,6 +51,10 @@ async def search(arguments: dict, ctx: ToolContext) -> str:
 
 async def boom(arguments: dict, ctx: ToolContext) -> str:
     raise RuntimeError("nope")
+
+
+async def search_sourced(arguments: dict, ctx: ToolContext) -> ToolOutput:
+    return ToolOutput("found 1", (NoteSource(note_id="n1", domain="general", snippet="hi"),))
 
 
 def router_with(turns: list[LlmTurn]) -> tuple[LlmRouter, FakeLlmClient]:
@@ -206,6 +212,18 @@ async def test_run_stream_emits_tool_call_and_result_around_dispatch() -> None:
         TextDelta(text="the answer"),
         DoneEvent(stop_reason="end_turn"),
     ]
+
+
+async def test_run_stream_tool_result_carries_structured_sources() -> None:
+    turns = [
+        LlmTurn("", (ToolCall("c1", "search", {}),), "tool_use", LlmUsage(1, 1)),
+        LlmTurn("done", (), "end_turn", LlmUsage(1, 1)),
+    ]
+    router, _ = stream_router_with(turns)
+    events = await collect(AgentLoop(router, registry_with(make_tool("search", search_sourced))))
+    result = next(e for e in events if isinstance(e, ToolResultEvent))
+    assert result.summary == "found 1"
+    assert result.sources == [NoteSource(note_id="n1", domain="general", snippet="hi")]
 
 
 async def test_run_stream_tool_error_surfaces_in_result_event() -> None:
