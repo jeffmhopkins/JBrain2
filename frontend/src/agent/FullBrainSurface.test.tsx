@@ -97,6 +97,18 @@ describe("FullBrainSurface", () => {
     expect(getTranscript).toHaveBeenCalledTimes(1);
   });
 
+  it("refreshes the review inbox after a turn (a turn can stage a proposal)", async () => {
+    const listProposals = vi.fn(async () => []);
+    render(<Harness d={deps({ listProposals })} />);
+    await waitFor(() => screen.getByLabelText("Conversation"));
+    const initial = listProposals.mock.calls.length;
+
+    fireEvent.change(screen.getByLabelText("Composer"), { target: { value: "name that note" } });
+    fireEvent.click(screen.getByRole("button", { name: "send" }));
+
+    await waitFor(() => expect(listProposals.mock.calls.length).toBeGreaterThan(initial));
+  });
+
   it("shows the active session's name up top with panels closed", async () => {
     render(<Harness d={deps()} />);
     await waitFor(() => expect(screen.getByLabelText("Conversation")).toBeInTheDocument());
