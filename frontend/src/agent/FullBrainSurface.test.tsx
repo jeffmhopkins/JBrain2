@@ -86,8 +86,8 @@ describe("FullBrainSurface", () => {
     await waitFor(() => screen.getByLabelText("Conversation"));
     await waitFor(() => expect(screen.getByText("remind me?")).toBeInTheDocument());
     expect(screen.getByText("Here is the recap.")).toBeInTheDocument();
-    // The persisted tool sources rebuild the Worked block.
-    expect(screen.getByRole("button", { name: /Worked/ }).textContent).toContain("1 source");
+    // The persisted tool sources rebuild the bubble's tool-use (back) face.
+    expect(document.querySelector(".fb-back-head")?.textContent).toContain("1 source");
     expect(getTranscript).toHaveBeenCalledWith("s1");
   });
 
@@ -140,12 +140,14 @@ describe("FullBrainSurface", () => {
 
     await waitFor(() => expect(screen.getByText("checking")).toBeInTheDocument());
     expect(screen.getByText("what labs?")).toBeInTheDocument();
-    // The raw "search · …" dump is gone; the tools collapse into one line.
+    // The raw "search · …" dump is gone; the tools live on the bubble's back face,
+    // reached by the "work" cue.
     expect(screen.queryByText(/search · /)).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Worked/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "work" })).toBeInTheDocument();
+    expect(document.querySelector(".fb-back-head")?.textContent).toContain("Worked");
   });
 
-  it("expands the Worked block to source cards that open the cited note", async () => {
+  it("turns the bubble to its tool use, where a source card opens the cited note", async () => {
     const onOpenNote = vi.fn();
     async function* answer(): AsyncGenerator<ChatEvent> {
       yield { type: "tool_call", id: "c1", name: "search", arguments: {} };
@@ -165,16 +167,43 @@ describe("FullBrainSurface", () => {
     fireEvent.change(screen.getByLabelText("Composer"), { target: { value: "when born?" } });
     fireEvent.click(screen.getByRole("button", { name: "send" }));
 
-    // Collapsed by default — the source text isn't shown until expanded.
-    const worked = await screen.findByRole("button", { name: /Worked/ });
-    expect(worked.textContent).toContain("1 step");
-    expect(worked.textContent).toContain("2 sources");
-    expect(screen.queryByText("I was born March 19, 1986")).not.toBeInTheDocument();
+    // The cue turns the bubble to its tool-use face (an "answer" cue turns back).
+    const cue = await screen.findByRole("button", { name: "work" });
+    expect(document.querySelector(".fb-back-head")?.textContent).toContain("2 sources");
+    fireEvent.click(cue);
+    expect(screen.getByRole("button", { name: "answer" })).toBeInTheDocument();
 
-    fireEvent.click(worked);
+    // The source cards on that face open the cited note.
     expect(screen.getByText("Searched your notes")).toBeInTheDocument();
     fireEvent.click(screen.getByText("I was born March 19, 1986"));
     expect(onOpenNote).toHaveBeenCalledWith("abc-1");
+  });
+
+  it("flips the bubble between answer and tool use, keeping the hidden face inert", async () => {
+    async function* answer(): AsyncGenerator<ChatEvent> {
+      yield { type: "tool_call", id: "c1", name: "search", arguments: {} };
+      yield { type: "tool_result", tool_call_id: "c1", ok: true, summary: "1 note" };
+      yield { type: "text_delta", text: "Here you go." };
+      yield { type: "done", stop_reason: "end_turn" };
+    }
+    render(<Harness d={deps({ chat: answer })} />);
+    await waitFor(() => screen.getByLabelText("Conversation"));
+    fireEvent.change(screen.getByLabelText("Composer"), { target: { value: "go" } });
+    fireEvent.click(screen.getByRole("button", { name: "send" }));
+
+    const work = await screen.findByRole("button", { name: "work" });
+    const frontFace = () => document.querySelector<HTMLElement>(".fb-front");
+    const backFace = () => document.querySelector<HTMLElement>(".fb-back");
+    // Answer up front: the tool-use face is inert (out of tab order / a11y tree).
+    expect(frontFace()?.inert).toBe(false);
+    expect(backFace()?.inert).toBe(true);
+
+    fireEvent.click(work); // flip to the work
+    expect(frontFace()?.inert).toBe(true);
+    expect(backFace()?.inert).toBe(false);
+
+    fireEvent.click(screen.getByRole("button", { name: "answer" })); // flip back
+    expect(frontFace()?.inert).toBe(false);
   });
 
   it("drives the status line through the turn and drops the floating dots", async () => {
@@ -339,7 +368,7 @@ describe("FullBrainSurface", () => {
     fireEvent.click(screen.getByRole("button", { name: "send" }));
 
     // Mid-stream: the resolved entity must NOT flash as a chip.
-    await waitFor(() => expect(screen.getByRole("button", { name: /Worked/ })).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole("button", { name: "work" })).toBeInTheDocument());
     expect(screen.queryByRole("button", { name: "Celine" })).toBeNull();
 
     // Once the turn settles, the unnamed entity gets its chip.
