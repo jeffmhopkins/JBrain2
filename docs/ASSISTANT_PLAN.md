@@ -113,6 +113,17 @@ services): `search` (hybrid), `read_note`, `read_entity`, `read_fact`. System
 *Gate:* fake-adapter loop tests (multi-turn, guardrail trips, error self-repair);
 per-tool RLS isolation.
 
+> **Tool development path (text-first → view-later).** Every tool ships
+> **text-only first**: the handler returns a concise text observation, which is
+> all the model needs and all the loop streams. A tool gains a rich **`view`**
+> (a registered first-party component — e.g. `read_entity` → the `entity_card`
+> with its schema.org kind badge, facts-as-edges, and "open entity" link) **later,
+> additively, when the view registry lands (P4.5/P4.4-frontend)** — without
+> changing the tool's contract, since `response_format` already carries an
+> optional `view` beside the text. So `read_entity`/`read_fact` (the P4.4c
+> follow-up) return text now and grow a card later; the same path applies to
+> `lab_plot`, `record_list`, etc. Build the tool, then dress it.
+
 **P4.5 — Chat API + streaming + Full Brain PWA surface.** `api/agent.py` `/chat`
 emitting SSE/WS events (`text_delta`, `tool_call`, `tool_result`, `tool_view`,
 `job_enqueued`, `done`); resume from the persisted run. Frontend: the Full Brain
