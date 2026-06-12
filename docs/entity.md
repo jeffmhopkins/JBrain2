@@ -103,24 +103,23 @@ parses the YAML into a validated `SchemaRegistry`; load-time validation mirrors
 `jbrain.llm.promptfile`, and the worker **eager-loads it at boot** so a
 malformed registry fails loudly there, never mid-note.
 
-**The four consumers — what is WIRED today vs. built-but-unconsumed.** Be
-honest about this: only two consumers are live in the pipeline; the other two
-are tested API the Phase-3 hardening will wire (and `prompt_digest` is the one
-that should be wired soon, because the prompt's predicate guidance is currently
-hand-written and can drift from the YAML with nothing reconciling them).
+**Two consumers are WIRED; the rest are deferred design, not code.** Per
+CLAUDE.md #4 (lean density) the registry ships only the methods the pipeline
+actually calls — no speculative projection methods sitting unconsumed.
 
 | Consumer | Status | Uses | Hard rule |
 |---|---|---|---|
 | **Predicate normalization** | **WIRED** (`extraction.py`, `consolidation.py`) | `normalize_predicate` / `renamed_from` attractor | normalizes a spelling, never rejects |
 | **Display projection** | **WIRED** (`canonical.py`) | `by_kind` → `display_name` precedence | recomputes `canonical_name` from name facts |
-| Extraction prompt digest | built, **not wired** | `prompt_digest` injected into `note.extract` | **advisory** relaxation; today the prompt is hand-written instead |
-| Value-shape validation | built, **not wired** | `validate_value` checks `value_json` **shape** only | validates shape; **never gates predicate names** |
-| UI render config | built, **not wired** | `render_config` per-predicate `value_shape` | the statement-fallback bug was fixed by hardcoded keys in `format.ts`, not this |
-| Resolution config | built, **not wired** | `resolution_config` (`alias_seeding`, `functional`) | *describes* existing dispatch; would not reconfigure identity |
 
-The lean-density tension (CLAUDE.md #4) is real: the unwired methods are tested
-design surface, not yet consumed. They stay only because the Phase-3 wiring is
-imminent; if it slips, delete them rather than carry speculative code.
+The other consumers this doc envisions — a **prompt digest** injected into
+`note.extract`, **value-shape validation**, a **UI render config** — are
+*deferred design*, NOT built. The data they would read (`value_shape`,
+`enum_values`, `alias_seeding_predicates`, `schema_org_ref`, …) is already in
+the YAML and loader-validated, so building them later is a small change. Until
+then they live only here, not as dead methods. (Today the prompt's predicate
+guidance is hand-written; wiring the prompt digest is the highest-value of
+these, since it would stop the prompt and the YAML from drifting by hand.)
 
 ## The vocabulary invariant **[proposed]**
 
@@ -179,8 +178,7 @@ predicates:
     enum_values:     # for value_shape: enum
     range_type:      # for value_shape: ref(...) — target type id
     renamed_from:    # 0..n prior spellings → consolidation/normalization targets
-    advisory_required: # bool — a *prompt/UI nudge* only; never NULL-gated
-    description:     # one line, harvested into the prompt digest
+    description:     # one line (would seed a prompt digest)
 
 alias_seeding_predicates: # ordered predicates whose asserted values register as exact aliases
 display_name:             # ordered predicate paths → canonical_name projection

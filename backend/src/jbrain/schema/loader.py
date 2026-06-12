@@ -164,7 +164,6 @@ def _predicate(raw: Any, meta: Meta, *, where: str, default_kind: str | None) ->
         shape=pshape,
         renamed_from=_str_list(raw.get("renamed_from"), where=f"{where} {name} renamed_from"),
         schema_org_ref=raw.get("schema_org_ref"),
-        advisory_required=bool(raw.get("advisory_required", False)),
         description=str(raw.get("description", "")),
     )
 

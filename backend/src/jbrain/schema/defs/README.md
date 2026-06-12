@@ -29,9 +29,12 @@ resurrect the controlled ontology `docs/ANALYSIS.md` rejects.
 `backend/src/jbrain/schema/` loads these files into an in-process
 `SchemaRegistry` (`load_registry()`), validating them at load (unknown
 facet/kind/value_shape, cross-facet collisions, unresolved refs/vocabs/shapes,
-enum-without-values all fail fast). It exposes the four consumers — `prompt_digest`,
-`render_config`, `resolution_config`, `validate_value`. Not yet wired into the
-pipeline. Tests: `backend/tests/unit/test_schema_registry.py`.
+enum-without-values all fail fast). Two read APIs are WIRED into the pipeline:
+`normalize_predicate` (the `renamed_from` attractor) and `by_kind` →
+`display_name` (the canonical projection). Other projections the schema data
+would feed (prompt digest, value-shape validation, render config) are deferred
+design, not built (docs/entity.md). Tests:
+`backend/tests/unit/test_schema_registry.py`.
 
 ## Reading order
 

@@ -56,50 +56,13 @@ def test_lifecycle_status_enum_is_filled_from_status_values(registry: SchemaRegi
     assert set(status.enum_values) == {"tentative", "confirmed", "cancelled", "occurred"}
 
 
-def test_functional_and_resolution_config(registry: SchemaRegistry) -> None:
-    cfg = registry.resolution_config("person")
-    assert "name.legal" in cfg["alias_seeding"]
-    assert cfg["display_name"][0] == "name.preferred"
-    # spouse and name.legal are functional; birthDate (an attribute) is not.
-    assert "spouse" in cfg["functional"]
-    assert "birthDate" not in cfg["functional"]
-
-
-def test_prompt_digest_is_advisory_and_tonally_open_vs_closed(registry: SchemaRegistry) -> None:
-    person = registry.prompt_digest("person")  # allow_open_predicates: true
-    assert "Person" in person and "name.legal" in person
-    assert "coin schema.org-style" in person
-    bill = registry.prompt_digest("bill")  # allow_open_predicates: false
-    assert "only if truly needed" in bill
-
-
-def test_render_config_exposes_value_shapes(registry: SchemaRegistry) -> None:
-    rc = registry.render_config()
-    amount = rc["bill"]["predicates"]["amount"]
-    assert amount["value_shape"] == "quantity"
-    assert rc["person"]["display_name"][0] == "name.preferred"
-
-
-def test_validate_value_accepts_well_formed(registry: SchemaRegistry) -> None:
-    registry.validate_value("bill", "amount", {"value": 142.1, "unit": "USD"})
-    registry.validate_value("appointment", "status", "confirmed")
-    registry.validate_value("place", "address", {"addressLocality": "Denver"})
-    registry.validate_value("person", "name.legal", "Jeffrey Mark Hopkins")
-
-
-def test_validate_value_rejects_malformed_shape(registry: SchemaRegistry) -> None:
-    with pytest.raises(SchemaError):
-        registry.validate_value("bill", "amount", {"value": 10})  # missing unit
-    with pytest.raises(SchemaError):
-        registry.validate_value("appointment", "status", "rescheduled")  # not in enum
-    with pytest.raises(SchemaError):
-        registry.validate_value("place", "address", {"unknownKey": "x"})  # not in shape
-
-
-def test_validate_value_never_gates_an_unknown_predicate(registry: SchemaRegistry) -> None:
-    # The one invariant: predicate-name validation never rejects. An undeclared
-    # long-tail predicate has no shape to check and is accepted silently.
-    registry.validate_value("person", "coffee_order", "oat flat white")
+def test_person_carries_display_precedence_and_alias_seeding(registry: SchemaRegistry) -> None:
+    # The schema data future projections will consume (kept + loader-validated
+    # even though the projection methods aren't built): the display-name
+    # precedence and the alias-seeding predicates roll down onto the type.
+    person = registry.type("person")
+    assert person.display_name[0] == "name.preferred"
+    assert "name.legal" in person.alias_seeding_predicates
 
 
 def test_default_defs_dir_points_at_packaged_defs() -> None:
