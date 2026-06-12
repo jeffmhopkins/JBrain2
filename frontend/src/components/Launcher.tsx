@@ -17,7 +17,7 @@ import {
   XIcon,
 } from "./icons";
 
-export type LauncherTarget = "ops" | "settings" | "search" | "review" | "entities";
+export type LauncherTarget = "ops" | "settings" | "search" | "review" | "entities" | "lists";
 
 interface Tile {
   title: string;
@@ -39,7 +39,7 @@ const SECTIONS: Section[] = [
       { title: "Search", icon: <SearchIcon size={24} />, target: "search" },
       { title: "Wiki", icon: <BookIcon size={24} />, phase: "P6" },
       { title: "Calendar", icon: <CalendarIcon size={24} />, phase: "P4" },
-      { title: "Lists", icon: <ListIcon size={24} />, phase: "P4" },
+      { title: "Lists", icon: <ListIcon size={24} />, target: "lists" },
       { title: "Entities", icon: <UsersIcon size={24} />, target: "entities" },
       { title: "Labs", icon: <FlaskIcon size={24} />, phase: "P7" },
     ],
