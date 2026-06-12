@@ -1,0 +1,67 @@
+# JBrain2 schema registry — meta definitions.
+# Loaded once at startup into an in-process SchemaRegistry (no codegen).
+# See docs/entity.md for the binding rationale. [proposed — awaiting ratification]
+#
+# INVARIANT: storage accepts any predicate. Shape validation may reject a
+# malformed value_json; predicate-name validation may never reject anything.
+
+schema_version: 1
+
+# The fixed fact-kind enum (mirrors app.facts CHECK + docs/ANALYSIS.md).
+# A predicate's `kind` (or a type's default_fact_kind) must be one of these.
+fact_kinds:
+  - event          # occurrence at a time; never auto-supersede
+  - measurement    # instant + value_json; time-series, accumulate
+  - state          # interval; newest-wins eagerly (SCD-2)
+  - attribute      # timeless; collision -> review, never auto-supersede
+  - preference     # newest-wins, low-urgency
+  - relationship   # interval; supersede only for functional predicates
+
+# Allowed value_shape tokens. `structured(<shape>)` is reserved for ATOMIC
+# compounds only — if sub-parts can independently change/disagree/be cited,
+# they are separate edges, not a blob (see docs/entity.md §Names).
+value_shapes:
+  - scalar                 # string / number / bool
+  - text                   # free prose
+  - enum                   # one of predicate.enum_values
+  - quantity               # {value: number, unit: string}  (UCUM / ISO-4217)
+  - date                   # references a temporal token (resolved absolute)
+  - ref                    # edge to another entity: ref(<type_id>)
+  - structured             # atomic compound: structured(<shape_id>)
+
+# Preferred audience vocabulary for the name.nickname.<audience> family.
+# PREFERRED, not closed: open values (e.g. "gym", "bandmates") are accepted —
+# storage never gates a qualifier. These seed the prompt digest only.
+name_audiences: [kids, family, friends, work, public]
+
+# Preferred external-identifier schemes (qualifier on identifier.<scheme>).
+# Preferred, not closed — open schemes are accepted.
+id_scheme: [loinc, rxnorm, vin, imei, serial, mac, uuid, ein, duns, lei, microchip, last4, sha256]
+
+# Reusable structured shapes (atomic compounds only).
+shapes:
+  postal_address:          # schema.org PostalAddress / vCard ADR
+    streetAddress: text
+    addressLocality: text  # city
+    addressRegion: text    # state / province
+    postalCode: text
+    addressCountry: text   # ISO 3166-1
+  geo:                     # schema.org GeoCoordinates
+    latitude: scalar
+    longitude: scalar
+    elevation: scalar
+  reference_range:         # FHIR Observation.referenceRange
+    low: quantity
+    high: quantity
+    text: text
+  dosage:                  # FHIR Dosage (abbreviated)
+    dose: quantity
+    route: text
+    timing: text           # may carry an RRULE-shaped Timing
+  license_plate:
+    value: text
+    jurisdiction: text
+  geofence:                # PostGIS-backed fence for geofence-transition events
+    center: structured     # structured(geo)
+    radiusMeters: scalar
+    polygon: text          # optional WKT for non-circular fences

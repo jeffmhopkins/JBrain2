@@ -1,0 +1,44 @@
+# Person — a human; the owner ("Me") and everyone mentioned. [proposed]
+id: person
+name: Person
+schema_org_ref: schema:Person
+description: A human. Names are structured edges; display name is a projection.
+vehicle: graph
+facets: [Named, Contactable, Located, Temporal, Related]
+default_fact_kind: attribute
+allow_open_predicates: true        # long-tail facts about people are the norm
+
+predicates:
+  - canonical_name: birthDate
+    value_shape: date
+    kind: attribute                # two birthdays = collision -> review, never supersede
+    schema_org_ref: schema:birthDate
+  - canonical_name: deathDate
+    value_shape: date
+    kind: event
+    functional: true
+  - canonical_name: gender
+    value_shape: text              # free text allowed; 🔒
+    kind: state
+    functional: true
+    schema_org_ref: schema:gender
+  - canonical_name: pronouns
+    value_shape: text
+    kind: state
+    functional: true
+  - canonical_name: spouse         # functional relationship (ANALYSIS allowlist); symmetric
+    value_shape: ref
+    range_type: person
+    kind: relationship
+    functional: true
+    schema_org_ref: schema:spouse
+
+# Fed to the existing declared-name -> exact-alias machinery (NOT an identity key).
+alias_seeding_predicates: [name.legal, name.preferred, name.aka, name.maiden]
+
+# canonical_name projection, in precedence order (first present wins).
+display_name: [name.preferred, name.given+name.family, name.legal, name]
+
+# NOTE: subjecthood (subject_id) is set per-entity when hard-linked to a subject
+# row (ANALYSIS), never by this type. The owner "Me" keeps an explicit display
+# override and is not subject to the projection above.

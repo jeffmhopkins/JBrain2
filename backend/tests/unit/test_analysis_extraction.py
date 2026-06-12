@@ -321,8 +321,8 @@ def test_system_prompt_v5_teaches_object_person_and_backward_temporal() -> None:
     assert "last night" in SYSTEM_PROMPT and "PRIOR calendar day" in SYSTEM_PROMPT
 
 
-def test_prompt_version_bumped_to_v7() -> None:
-    assert PROMPT_VERSION == "note-extract-v7"
+def test_prompt_version_bumped_to_v8() -> None:
+    assert PROMPT_VERSION == "note-extract-v8"
 
 
 def test_user_prompt_carries_anchor_with_timezone_domain_and_content() -> None:
@@ -894,3 +894,31 @@ def test_relative_phrase_rendered_midnight_utc_is_not_pushed_a_day() -> None:
     abs_fixed, _ = validate_backward_temporal(abs_t, _ANCHOR)
     assert abs_fixed is not None and abs_fixed.resolved_start is not None
     assert abs_fixed.resolved_start.astimezone(_MST).date() == date(2026, 6, 8)
+
+
+def test_drift_predicates_normalize_to_canonical() -> None:
+    # The registry's renamed_from attractor is applied during parse, so a note
+    # that says "legalName" lands on the canonical name.legal address — the same
+    # identity key a later "legal_name" note would, keeping one history.
+    payload = {
+        "title": "Names",
+        "tags": [],
+        "mentions": [{"name": "Me", "kind": "Person", "surface_text": "I"}],
+        "facts": [
+            {
+                "predicate": "legalName",
+                "qualifier": "",
+                "kind": "state",
+                "statement": "My legal name is Jeffrey Mark Hopkins.",
+                "value_json": None,
+                "assertion": "asserted",
+                "entity_ref": "Me",
+                "object_entity_ref": None,
+                "temporal": None,
+                "domain": "general",
+                "confidence": 1.0,
+            }
+        ],
+        "temporal_tokens": [],
+    }
+    assert [f.predicate for f in parse_extraction(payload).facts] == ["name.legal"]

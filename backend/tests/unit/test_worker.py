@@ -19,6 +19,7 @@ class FakeQueue:
         self.backfills = 0
         self.embed_backfills = 0
         self.analyze_backfills = 0
+        self.consolidate_backfills = 0
         self.purge_backfills = 0
         self.backfill_error: Exception | None = None
         # Whether a non-permanent fail() burned the last attempt.
@@ -53,6 +54,10 @@ class FakeQueue:
         self.analyze_backfills += 1
         return 0
 
+    async def backfill_consolidate(self, maker: Any, ctx: Any) -> int:
+        self.consolidate_backfills += 1
+        return 0
+
 
 def install(monkeypatch: pytest.MonkeyPatch, fake: FakeQueue) -> None:
     for name in (
@@ -62,6 +67,7 @@ def install(monkeypatch: pytest.MonkeyPatch, fake: FakeQueue) -> None:
         "backfill_pending_notes",
         "backfill_unembedded_notes",
         "backfill_unanalyzed_notes",
+        "backfill_consolidate",
     ):
         monkeypatch.setattr(worker.queue, name, getattr(fake, name))
 
@@ -225,6 +231,7 @@ async def test_run_loop_backfills_once_then_polls(monkeypatch: pytest.MonkeyPatc
     assert fake.embed_backfills == 1
     assert fake.analyze_backfills == 1
     assert fake.purge_backfills == 1
+    assert fake.consolidate_backfills == 1
 
 
 async def test_run_loop_survives_transient_errors_and_retries_backfill(
@@ -264,7 +271,13 @@ async def test_run_registers_all_job_handlers(
     monkeypatch.setattr(worker, "run_loop", capture)
     with pytest.raises(asyncio.CancelledError):
         await worker.run()
-    assert set(captured) == {"ingest_note", "embed_note", "analyze_note", "ocr_attachment"}
+    assert set(captured) == {
+        "ingest_note",
+        "embed_note",
+        "analyze_note",
+        "ocr_attachment",
+        "consolidate_predicates",
+    }
 
 
 async def test_run_disposes_engine(monkeypatch: pytest.MonkeyPatch) -> None:

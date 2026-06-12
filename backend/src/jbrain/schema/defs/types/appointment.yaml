@@ -1,0 +1,31 @@
+# Appointment / Event — a time-bound entity. [proposed]
+# Graph entity from Phase 3; typed `appointments` projection + ICS feed in Phase 4.
+# Time is a supersedable BINDING to a temporal token, not identity (ANALYSIS).
+id: appointment
+name: Event
+schema_org_ref: schema:Event
+description: A scheduled event; reschedule supersedes the time binding.
+vehicle: typed_record(P4)          # catalog now; typed table + ICS feed in Phase 4
+facets: [Named, Temporal, Recurrence, Located, Lifecycle, Related]
+default_fact_kind: state
+allow_open_predicates: false
+
+predicates:
+  - canonical_name: scheduledTime  # schedule supersession: newest instruction wins (ANALYSIS)
+    value_shape: date              # binds a point/range temporal token
+    kind: state
+    functional: true
+    renamed_from: [scheduled_time, appointmentTime]
+    schema_org_ref: schema:startDate
+  - canonical_name: attendee
+    value_shape: ref
+    range_type: person
+    kind: relationship
+    schema_org_ref: schema:attendee
+
+# Lifecycle.status enum for this type:
+status_values: [tentative, confirmed, cancelled, occurred]
+
+display_name: [name]
+# Identity: the entity itself; (uid, recurrenceId) distinguishes a series occurrence.
+# Recurrence is a token (Recurrence facet) — instances computed at read time for ICS.

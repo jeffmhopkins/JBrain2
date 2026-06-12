@@ -1,0 +1,30 @@
+# Subscription / recurring service — the agreement; its charges are Bills. 🔒 finance. [proposed]
+id: subscription
+name: Service
+schema_org_ref: schema:Service
+description: A recurring service agreement. Renewal is a recurrence token, not rows.
+vehicle: graph                          # 🔒 finance-scoped
+facets: [Named, Monetary, Temporal, Recurrence, Related, Lifecycle]
+default_fact_kind: state
+allow_open_predicates: false
+
+predicates:
+  - canonical_name: provider
+    value_shape: ref
+    range_type: organization
+    kind: relationship
+  - canonical_name: plan
+    value_shape: text                   # "Family Premium"
+    kind: state
+  - canonical_name: renewalDate
+    value_shape: date
+    kind: state
+    functional: true
+  - canonical_name: paymentMethod       # 🔒
+    value_shape: ref
+    range_type: financial_account
+    kind: relationship
+
+# Monetary.amount (🔒) is the price; Recurrence.recurrence carries the billing cycle.
+status_values: [active, paused, cancelled]
+display_name: [name]                    # else "<provider> <plan>"

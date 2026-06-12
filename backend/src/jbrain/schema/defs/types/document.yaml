@@ -1,0 +1,39 @@
+# Document / file — a digital document. Domain inherits its content's firewall. [proposed]
+id: document
+name: DigitalDocument
+schema_org_ref: schema:DigitalDocument
+description: A document; links to the bill/lab/person it concerns via `about`.
+vehicle: graph
+facets: [Named, Temporal, Related, ExternalIdentified]
+default_fact_kind: attribute
+allow_open_predicates: true
+
+predicates:
+  - canonical_name: documentType
+    value_shape: enum
+    enum_values: [invoice, statement, contract, id, lab_report, letter, receipt, other]
+    kind: attribute
+    functional: true
+  - canonical_name: dateIssued
+    value_shape: date
+    kind: event
+    schema_org_ref: schema:dateCreated
+  - canonical_name: issuer
+    value_shape: ref
+    kind: relationship                  # Org or Person
+    schema_org_ref: schema:publisher
+  - canonical_name: about               # what the document concerns; accumulating refs
+    value_shape: ref
+    kind: relationship
+    schema_org_ref: schema:about
+  - canonical_name: contentUrl          # 🔒 via the storage abstraction, NEVER a raw path
+    value_shape: scalar
+    kind: attribute
+    schema_org_ref: schema:contentUrl
+  - canonical_name: encodingFormat      # MIME
+    value_shape: scalar
+    kind: attribute
+
+# identifier.sha256 from ExternalIdentified — content hash, strong dedup/resolution key.
+display_name: [name]                    # else "<documentType> from <issuer> (<dateIssued>)"
+# Domain: INHERITS the content's firewall (a lab PDF -> health 🔒, a statement -> finance 🔒).

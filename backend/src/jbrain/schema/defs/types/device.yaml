@@ -1,0 +1,35 @@
+# Device — a phone/tracker/etc. 🔒🔒 location for tracking devices. [proposed]
+id: device
+name: Device
+schema_org_ref: schema:Thing
+description: A device; lastLocation is among the most sensitive fields in the graph.
+vehicle: graph
+facets: [Named, ExternalIdentified, Related, Lifecycle]
+default_fact_kind: attribute
+allow_open_predicates: true
+
+predicates:
+  - canonical_name: deviceType
+    value_shape: enum
+    enum_values: [phone, tracker, gps, watch, car_unit, tablet, laptop, other]
+    kind: attribute
+    functional: true
+  - canonical_name: manufacturer
+    value_shape: text
+    kind: attribute
+    functional: true
+  - canonical_name: model
+    value_shape: text
+    kind: attribute
+    functional: true
+  - canonical_name: lastLocation        # 🔒🔒 live location
+    value_shape: ref
+    range_type: place
+    kind: state
+    functional: true
+
+# identifier.imei / .serial / .mac / .uuid (🔒) from ExternalIdentified — strong key.
+# owner is a Role edge (Related).
+status_values: [active, lost, retired]
+display_name: [name]                    # "Jeff's iPhone" else "<manufacturer> <model>"
+# Domain: location 🔒🔒 for tracking devices.

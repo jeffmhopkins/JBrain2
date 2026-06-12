@@ -1,0 +1,30 @@
+# Financial account / payment method. 🔒🔒 finance, PCI-aware. [proposed]
+id: financial_account
+name: BankAccount
+schema_org_ref: schema:BankAccount
+description: An account or payment method. Store last4 only — never PAN/CVV/creds.
+vehicle: graph                          # 🔒🔒 finance-scoped; typed projection possible later
+facets: [Named, ExternalIdentified, Related, Lifecycle]
+default_fact_kind: state
+allow_open_predicates: false
+
+predicates:
+  - canonical_name: institution
+    value_shape: ref
+    range_type: organization
+    kind: relationship
+  - canonical_name: accountType
+    value_shape: enum
+    enum_values: [checking, savings, credit_card, loan, brokerage, other]
+    kind: attribute
+    functional: true
+  - canonical_name: currency
+    value_shape: enum
+    enum_values: [USD, EUR, GBP, CAD, AUD]   # ISO-4217 subset; open per the invariant
+    kind: attribute
+
+# identifier.last4 (🔒) from ExternalIdentified — the ONLY account number stored.
+# accountHolder is a Role edge (Related).
+status_values: [active, closed]
+display_name: [name]                    # "Chase Checking" or "<institution> <type> ••<last4>"
+# NEVER store: full account number, full card PAN, CVV, online-banking credentials.

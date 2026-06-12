@@ -1,0 +1,38 @@
+# Medication — a drug a subject is/was taking. 🔒🔒 health. [proposed]
+# FHIR MedicationStatement / RxNorm. Graph entity within the health firewall;
+# a typed projection is possible later. reasonCode reveals diagnosis (🔒).
+id: medication
+name: Medication
+schema_org_ref: schema:Drug
+description: A medication regimen as an interval state; prescriber is a Role edge.
+vehicle: graph                     # 🔒🔒 health-scoped
+facets: [ExternalIdentified, Temporal, Related, Lifecycle]
+default_fact_kind: state
+allow_open_predicates: false
+
+predicates:
+  - canonical_name: identifier     # identifier.rxnorm — the RxNorm code
+    qualifier_vocab: id_scheme
+    value_shape: scalar
+    kind: attribute
+  - canonical_name: dosage
+    value_shape: structured
+    shape: dosage                  # dose+UCUM, route, timing
+    kind: state
+  - canonical_name: effectiveInterval  # the active interval (start / optional end)
+    value_shape: date
+    kind: state
+    functional: true
+  - canonical_name: reasonCode     # 🔒 indication — reveals diagnosis
+    value_shape: text
+    kind: attribute
+  - canonical_name: prescriber
+    value_shape: ref
+    range_type: person
+    kind: relationship
+
+# Lifecycle.status (FHIR): stopping supersedes.
+status_values: [active, completed, stopped, on-hold, intended, not-taken, entered-in-error]
+
+display_name: [name]               # the RxNorm drug name
+# Resolution hint: (subject, rxnorm, effectiveInterval.start). Not a stored key.

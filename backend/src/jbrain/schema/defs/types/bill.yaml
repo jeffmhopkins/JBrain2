@@ -1,0 +1,37 @@
+# Bill / Invoice — a bill owed or paid. 🔒 finance. [proposed]
+id: bill
+name: Invoice
+schema_org_ref: schema:Invoice
+description: A bill/invoice. Recurring bills carry a recurrence token, not rows.
+vehicle: graph                     # 🔒 finance-scoped graph entity; typed projection possible later
+facets: [Named, Monetary, Temporal, Recurrence, Related, Lifecycle]
+default_fact_kind: state
+allow_open_predicates: false       # a bill is authoritative; don't let the LLM coin bill predicates
+
+predicates:
+  - canonical_name: payee          # who billed me
+    value_shape: ref
+    range_type: organization
+    kind: relationship
+  - canonical_name: dueDate
+    value_shape: date
+    kind: attribute
+    schema_org_ref: schema:paymentDueDate
+  - canonical_name: billingPeriod
+    value_shape: date              # a range temporal token
+    kind: attribute
+  - canonical_name: paidOn
+    value_shape: date
+    kind: event                    # payment is an event, overriding default state
+  - canonical_name: account
+    value_shape: ref
+    range_type: financial_account  # 🔒
+    kind: relationship
+
+# Monetary.amount (🔒) + Lifecycle.status carry the money and payment state.
+status_values: [PaymentDue, PaymentComplete, PaymentPastDue, PaymentDeclined, PaymentAutomaticallyApplied]
+
+# Display is composed: "<payee> — <billingPeriod> — <amount>".
+display_name: [name]
+# Resolution hint (composite): (payee, account, billingPeriod). Recurring template
+# keyed (payee, account, recurrence). Neither is a stored identity key.

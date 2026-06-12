@@ -380,6 +380,28 @@ async def backfill_unanalyzed_notes(
         return cast(CursorResult[Any], result).rowcount or 0
 
 
+async def backfill_consolidate(maker: async_sessionmaker[AsyncSession], ctx: SessionContext) -> int:
+    """Enqueue ONE consolidate_predicates sweep when none is pending — the boot
+    self-heal that normalizes drift predicates left by an older prompt version
+    onto their canonical address. Recurring + on-demand scheduling is deferred
+    to the Phase-5 workflow engine (docs/ROADMAP.md "Scheduled-task migration")."""
+    async with scoped_session(maker, ctx) as session:
+        result = await session.execute(
+            text(
+                """
+                INSERT INTO app.jobs (id, kind, payload)
+                SELECT gen_random_uuid(), 'consolidate_predicates', '{}'::jsonb
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM app.jobs
+                    WHERE kind = 'consolidate_predicates'
+                      AND status IN ('queued', 'running')
+                )
+                """
+            )
+        )
+        return cast(CursorResult[Any], result).rowcount or 0
+
+
 async def backfill_unembedded_notes(
     maker: async_sessionmaker[AsyncSession], ctx: SessionContext
 ) -> int:

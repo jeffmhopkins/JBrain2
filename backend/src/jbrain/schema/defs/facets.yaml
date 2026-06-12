@@ -1,0 +1,171 @@
+# JBrain2 schema registry — the facet (mixin) library.
+# Facets are reusable property bundles composed into types via `facets: [...]`.
+# Canonical names align to schema.org / vCard / FHIR so the LLM knows the
+# spellings and the graph maps to standards. [proposed]
+#
+# Reminder: canonical_name is the PREFERRED spelling (prompt digest +
+# renamed_from normalization target), never a storage gate.
+
+facets:
+
+  Named:
+    description: >-
+      Anything with one or more names. Every variant is its own addressable
+      edge so per-variant history, supersession, and alias registration work.
+    predicates:
+      - canonical_name: name            # the PROJECTED display string (see type.display_name)
+        value_shape: text
+        kind: attribute
+        schema_org_ref: schema:name
+        description: Display name; projected from the variants below, not set directly.
+      - canonical_name: name.legal
+        value_shape: text
+        kind: state
+        functional: true                # a legal-name change supersedes, with history
+        # fullName/full_name fold here (a stated full name is the formal name)
+        # so they normalize AND drive the display projection, not just alias.
+        renamed_from: [legal_name, legalName, full_legal_name, fullName, full_name]
+        schema_org_ref: schema:legalName
+      - canonical_name: name.given
+        value_shape: text
+        kind: attribute
+        schema_org_ref: schema:givenName
+      - canonical_name: name.family
+        value_shape: text
+        kind: attribute
+        schema_org_ref: schema:familyName
+      - canonical_name: name.additional
+        value_shape: text
+        kind: attribute
+        schema_org_ref: schema:additionalName
+      - canonical_name: name.prefix
+        value_shape: text
+        kind: attribute
+        schema_org_ref: schema:honorificPrefix
+      - canonical_name: name.suffix
+        value_shape: text
+        kind: attribute
+        schema_org_ref: schema:honorificSuffix
+      - canonical_name: name.preferred
+        value_shape: text
+        kind: preference
+        functional: true
+        renamed_from: [preferredName, goesBy]
+      - canonical_name: name.nickname        # qualifier = audience; preferred enum, open allowed
+        qualifier_vocab: name_audiences      # kids|family|friends|work|public + any open value
+        value_shape: text
+        kind: attribute
+        # NOT nickname.from_kids: the audience lives in the qualifier, and a
+        # base-predicate rename cannot preserve it — folding it here would drop
+        # the audience and collide distinct-audience nicknames onto one key.
+        renamed_from: [nickname, alsoKnownAs]
+        schema_org_ref: schema:alternateName
+        description: Audience-scoped nickname, e.g. name.nickname.kids -> "Dad".
+      - canonical_name: name.maiden
+        value_shape: text
+        kind: state
+        renamed_from: [maidenName]
+      - canonical_name: name.former
+        value_shape: text
+        kind: state
+        description: A prior name; pair with a validInterval temporal token.
+      - canonical_name: name.aka
+        value_shape: text
+        kind: attribute
+        schema_org_ref: schema:alternateName
+
+  Temporal:
+    description: Validity over time; date values reference resolved temporal tokens.
+    predicates:
+      - canonical_name: startDate
+        value_shape: date
+        kind: state
+        schema_org_ref: schema:startDate
+      - canonical_name: endDate            # absent => ongoing
+        value_shape: date
+        kind: state
+        schema_org_ref: schema:endDate
+      - canonical_name: effectiveDate
+        value_shape: date
+        kind: event
+
+  Recurrence:
+    description: >-
+      A repeating schedule as a single recurrence-kind temporal token (RRULE +
+      RDATE/EXDATE). Instances are computed at read time, NEVER materialized as
+      rows — a concrete occurrence becomes a fact only when a note states it.
+    predicates:
+      - canonical_name: recurrence
+        value_shape: date                  # -> recurrence-kind temporal token
+        kind: state
+        schema_org_ref: schema:eventSchedule
+
+  Located:
+    description: Physical location. 🔒 location domain.
+    predicates:
+      - canonical_name: address
+        value_shape: structured
+        shape: postal_address
+        kind: state
+        schema_org_ref: schema:address
+      - canonical_name: geo                # 🔒
+        value_shape: structured
+        shape: geo
+        kind: state
+        schema_org_ref: schema:geo
+
+  Monetary:
+    description: A money amount with currency. 🔒 finance domain.
+    predicates:
+      - canonical_name: amount
+        value_shape: quantity              # {value, unit: ISO-4217 code}  🔒
+        kind: measurement
+        schema_org_ref: schema:price
+
+  ExternalIdentified:
+    description: >-
+      Stable external identifiers, qualifier = scheme (vin, imei, rxnorm, loinc,
+      ein, microchip, last4, sha256). Many are 🔒; all are strong resolution signals.
+    predicates:
+      - canonical_name: identifier         # qualifier = scheme
+        value_shape: scalar
+        kind: attribute
+        functional: true
+        schema_org_ref: schema:identifier
+
+  Lifecycle:
+    description: Status with transition history. status is functional (supersede).
+    predicates:
+      - canonical_name: status             # enum_values declared per type
+        value_shape: enum
+        kind: state
+        functional: true
+        schema_org_ref: schema:status
+
+  Contactable:
+    description: Contact points. 🔒 general; accumulate.
+    predicates:
+      - canonical_name: email
+        value_shape: scalar
+        kind: state
+        schema_org_ref: schema:email
+      - canonical_name: telephone
+        value_shape: scalar
+        kind: state
+        schema_org_ref: schema:telephone
+      - canonical_name: url
+        value_shape: scalar
+        kind: attribute
+        schema_org_ref: schema:url
+
+  Related:
+    description: >-
+      Reified Role-on-edge for typed relationships (employment, ownership,
+      residence, prescriber, vet, account-holder). Generalizes the ANALYSIS
+      inverse-edge pattern. Use the `role` type as the edge carrier.
+    predicates:
+      - canonical_name: hasRole            # qualifier = roleName; value = ref(role)
+        value_shape: ref
+        range_type: role
+        kind: relationship
+        schema_org_ref: schema:Role

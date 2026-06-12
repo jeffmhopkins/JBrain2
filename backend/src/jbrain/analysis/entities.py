@@ -406,6 +406,7 @@ async def _embedding_candidates(
                   AND e.domain_code IN (:dom, 'general')
                   AND (:hint = '' OR lower(e.kind) = :hint)
                 GROUP BY e.id, e.canonical_name, e.summary
+                ORDER BY e.id
                 LIMIT :lim
                 """
             ),
@@ -463,6 +464,48 @@ async def _embedding_candidates(
         for r in rows
         if r.sim >= _EMBED_WEAK
     ]
+
+
+async def near_duplicate_entity(
+    session: AsyncSession,
+    name: str,
+    *,
+    kind_hint: str,
+    domain: str,
+    embedder: EmbedClient,
+    embed_model: str,
+    exclude: uuid.UUID,
+    exclude_subject: uuid.UUID | None,
+) -> uuid.UUID | None:
+    """The id of an entity whose name+aliases vector is a STRONG match for
+    `name` (other than `exclude`), or None.
+
+    Powers declared-name merge *proposals*: a self-declared name that is a near
+    — but not exact — match for a different entity is the same-person signal the
+    exact-alias collision check misses ("Celine Kitina Hopkins" vs the existing
+    "Celine Hopkins"). It only ever PROPOSES (the caller files a review card); a
+    near match is never an auto-link (docs/ANALYSIS.md "Alias resolution").
+
+    Firewall: a subject-bearing candidate is proposed only against the SAME
+    subject — cross-subject misattribution is a leak (CLAUDE.md #3), so a near
+    match into a DIFFERENT subject is dropped, never surfaced as a one-click
+    merge. (Candidate scope is same-domain-or-general via `_embedding_candidates`
+    — narrower than the deliberately domain-blind exact-collision path.)"""
+    scored = await _embedding_candidates(
+        session,
+        name,
+        kind_hint=kind_hint,
+        domain=domain,
+        embedder=embedder,
+        embed_model=embed_model,
+    )
+    for cand, sim in scored:  # sorted strongest-first
+        if cand.id == exclude:
+            continue
+        if cand.subject_id is not None and cand.subject_id != exclude_subject:
+            continue  # cross-subject: never propose
+        return cand.id if sim >= _EMBED_STRONG else None
+    return None
 
 
 # --- layer 3: batched LLM disambiguation (prompt + parsing only) -------------
@@ -613,15 +656,34 @@ _NAMING_PREDICATES = frozenset(
     }
 )  # fmt: skip
 
+# The canonical name.* predicates the registry normalizer now emits (docs/
+# entity.md). Kept in lockstep with the legacy spellings above so that
+# normalizing legalName -> name.legal does NOT silently stop declared-name
+# aliasing. name.family is deliberately absent — a bare surname is not an
+# identity an entity declares for itself (parity with the legacy set, which
+# never carried "familyname").
+_CANONICAL_NAMING = frozenset(
+    {
+        "name", "name.given", "name.legal", "name.preferred",
+        "name.nickname", "name.maiden", "name.aka",
+    }
+)  # fmt: skip
+
 # value_json keys, in priority order, that carry the declared name string.
 _NAME_VALUE_KEYS = ("name", "value", "fullname", "alias", "text")
+
+
+def _is_naming_predicate(predicate: str) -> bool:
+    # casefold + drop separators but KEEP dots: legal_name -> legalname, name.legal stays.
+    collapsed = re.sub(r"[\s_]+", "", predicate).casefold()
+    return collapsed in _NAMING_PREDICATES or collapsed in _CANONICAL_NAMING
 
 
 def declared_alias(predicate: str, value_json: Any) -> str | None:
     """The name a fact DECLARES for its own entity, or None when it is not a
     self-naming fact. Identity declarations only — never inferred from prose;
     the value must be a plain string under a known key."""
-    if re.sub(r"[\s_]+", "", predicate).casefold() not in _NAMING_PREDICATES:
+    if not _is_naming_predicate(predicate):
         return None
     if not isinstance(value_json, dict):
         return None

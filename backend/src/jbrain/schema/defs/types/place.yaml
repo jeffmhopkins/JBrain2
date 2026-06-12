@@ -1,0 +1,21 @@
+# Place / Location — a physical place. 🔒 location. [proposed]
+id: place
+name: Place
+schema_org_ref: schema:Place
+description: A location. The place is timeless; who is tied to it is a Role interval.
+vehicle: graph
+facets: [Named, Located, ExternalIdentified]
+default_fact_kind: state
+allow_open_predicates: true
+
+predicates:
+  - canonical_name: geofence            # 🔒 not in Located; place-specific
+    value_shape: structured
+    shape: geofence
+    kind: state
+    description: Circular/polygon fence for geofence-transition workflow events.
+
+# address + geo come from Located (🔒). identifier.* from ExternalIdentified.
+alias_seeding_predicates: [name.aka]
+display_name: [name, address]           # "Home", "Acme HQ", else a rendered one-line address
+# Domain: location 🔒. Resolution signal: rounded geo and/or normalized address.

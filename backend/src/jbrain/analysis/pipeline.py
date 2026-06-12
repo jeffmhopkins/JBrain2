@@ -26,6 +26,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from jbrain.analysis import purge
+from jbrain.analysis.canonical import reproject_canonical_name
 from jbrain.analysis.display import (
     ambiguous_display,
     collision_display,
@@ -48,6 +49,7 @@ from jbrain.analysis.entities import (
     build_disambiguation_prompt,
     create_provisional,
     declared_alias,
+    near_duplicate_entity,
     parse_disambiguation,
     plan_merge,
     register_declared_alias,
@@ -91,6 +93,7 @@ from jbrain.models.analysis import (
 )
 from jbrain.models.notes import Attachment, Chunk, Note
 from jbrain.queue import SYSTEM_CTX, PermanentJobError
+from jbrain.schema import SchemaError
 
 log = structlog.get_logger()
 
@@ -99,6 +102,13 @@ _DB_LINK_METHODS = frozenset({"exact_alias", "embedding", "llm", "human"})
 # Below embedding auto-link confidence on purpose: a cheap-model verdict over
 # near-tie candidates is real evidence, not certainty.
 LLM_LINK_CONFIDENCE = 0.8
+
+# Only FULL declared names seed a near-duplicate merge PROPOSAL. A given/family
+# component, a preferred name, a nickname, or a bare `name` (pet decomposition)
+# is short and low-signal — proposing merges on those resurrects the
+# bare-first-name fan-out ANALYSIS rejected (docs/ANALYSIS.md "Same-name
+# coexistence"). Canonical spellings only; parse-time normalization already ran.
+_NEAR_DUP_PREDICATES = frozenset({"name.legal", "name.maiden", "name.aka"})
 
 
 def local_anchor(captured_at: datetime, tz_offset_minutes: int | None) -> datetime:
@@ -216,9 +226,12 @@ class AnalysisPipeline:
                 result.parsed,
                 anchor=local_anchor(captured_at, tz_offset) if tz_offset is not None else None,
             )
-        except (LlmBadResponseError, ExtractionError) as exc:
+        except (LlmBadResponseError, ExtractionError, SchemaError) as exc:
             # The adapter already spent its one re-ask: retrying the job would
-            # just re-bill the same garbage. Nothing was written.
+            # just re-bill the same garbage. A SchemaError (the registry the
+            # parser normalizes through is missing/malformed) is config drift,
+            # not transient — retrying re-runs the paid extraction for nothing,
+            # so it is permanent too. Nothing was written.
             raise PermanentJobError(f"note.extract unusable for note {note_id}: {exc}") from exc
 
         provider, model = self._router.spec("note.extract", NOTE_EXTRACT_STRENGTH)
@@ -337,6 +350,7 @@ class AnalysisPipeline:
             # entered the doomed set, so both survive untouched.
             await purge.delete_review_items(session, set(doomed_links), statuses=("open",))
         await self._sweep_stale_ambiguous(session, note_id, extraction)
+        await self._reproject_entities(session, resolved)
 
         stmt = pg_insert(NoteAnalysis).values(
             note_id=note_id,
@@ -624,6 +638,19 @@ class AnalysisPipeline:
             )
         return anchor_for
 
+    async def _reproject_entities(
+        self, session: AsyncSession, resolved: dict[str, ResolvedEntity | None]
+    ) -> None:
+        """Once this note's facts have settled, refresh each touched entity's
+        canonical_name from its current name.* facts — a projection of current
+        facts (docs/ANALYSIS.md), never the frozen first-mention surface form."""
+        seen: set[uuid.UUID] = set()
+        for entity in resolved.values():
+            if entity is None or entity.id in seen:
+                continue
+            seen.add(entity.id)
+            await reproject_canonical_name(session, entity.id)
+
     async def _register_declared_aliases(
         self,
         session: AsyncSession,
@@ -652,12 +679,54 @@ class AnalysisPipeline:
             added = await register_declared_alias(session, entity.id, name)
             if added is not None:
                 log.info("analysis.alias_declared", entity_id=str(entity.id), alias=added)
+                # A FULL declared name may be a near (not exact) duplicate of a
+                # different entity — the same-person signal the exact collision
+                # below cannot see. Propose, never link. Restricted to full-name
+                # predicates so a first name / nickname / pet name never fans a
+                # merge card out across same-named people (docs/ANALYSIS.md
+                # "Same-name coexistence").
+                if fact.predicate in _NEAR_DUP_PREDICATES:
+                    await self._propose_near_duplicate(
+                        session, entity, name, note_id, note_domain, chunks
+                    )
                 continue
             other = await alias_owner(session, name, exclude=entity.id)
             if other is not None:
                 await self._propose_merge(
                     session, entity.id, other, name, note_id, note_domain, chunks
                 )
+
+    async def _propose_near_duplicate(
+        self,
+        session: AsyncSession,
+        entity: ResolvedEntity,
+        name: str,
+        note_id: uuid.UUID,
+        note_domain: str,
+        chunks: list[_ChunkRef],
+    ) -> None:
+        """File a merge proposal when a freshly declared full name strongly
+        embeds to a DIFFERENT same-kind entity. Embedder-gated (skipped without
+        it, so the harness is unaffected) and proposal-only — `near_duplicate_entity`
+        drops cross-subject candidates, and `_propose_merge` honours the
+        distinct_from edge and dedupes across re-analysis."""
+        if self._embedder is None:
+            return
+        kind = await session.scalar(
+            text("SELECT kind FROM app.entities WHERE id = :id"), {"id": str(entity.id)}
+        )
+        dup = await near_duplicate_entity(
+            session,
+            name,
+            kind_hint=kind or "",
+            domain=note_domain,
+            embedder=self._embedder,
+            embed_model=self._embed_model,
+            exclude=entity.id,
+            exclude_subject=entity.subject_id,
+        )
+        if dup is not None:
+            await self._propose_merge(session, entity.id, dup, name, note_id, note_domain, chunks)
 
     async def _propose_merge(
         self,

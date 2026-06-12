@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from jbrain import queue
 from jbrain.analysis import purge
+from jbrain.analysis.consolidation import Consolidator
 from jbrain.analysis.pipeline import AnalysisPipeline
 from jbrain.config import get_settings
 from jbrain.embed import NoteEmbedder, TeiEmbedClient
@@ -24,6 +25,7 @@ from jbrain.ingest import ocr
 from jbrain.ingest.ocr import OcrPipeline
 from jbrain.ingest.pipeline import IngestPipeline
 from jbrain.llm import build_router
+from jbrain.schema import get_registry
 from jbrain.settings_store import SqlSettingsStore
 from jbrain.storage import FsBlobStore
 from jbrain.usage import SqlUsageRecorder
@@ -103,6 +105,8 @@ async def run_loop(maker: async_sessionmaker[AsyncSession], handlers: dict[str, 
                 # derived artifacts (incl. resolved review history quoting
                 # their text); sweep them once per boot.
                 purged = await purge.backfill_deleted_note_artifacts(maker)
+                # Normalize predicate drift left by older prompt versions.
+                consolidations = await queue.backfill_consolidate(maker, queue.SYSTEM_CTX)
                 backfilled = True
                 log.info(
                     "worker.backfill",
@@ -110,6 +114,7 @@ async def run_loop(maker: async_sessionmaker[AsyncSession], handlers: dict[str, 
                     embed_jobs=embeds,
                     analyze_jobs=analyses,
                     purged_notes=purged,
+                    consolidate_jobs=consolidations,
                 )
             if await process_one(maker, handlers):
                 continue
@@ -133,12 +138,18 @@ async def run() -> None:
     analyzer = AnalysisPipeline(
         maker, router, embedder=TeiEmbedClient(settings.embed_url), embed_model=settings.embed_model
     )
+    # Eager-load the schema registry so a missing/malformed defs/ fails the
+    # worker LOUDLY at startup — never mid-note, where the SchemaError would
+    # otherwise re-bill the extraction call on every retry.
+    get_registry()
     handlers: dict[str, Handler] = {
         "ingest_note": pipeline.ingest_note,
         "embed_note": embedder.embed_note,
         "analyze_note": analyzer.analyze_note,
         # The vision handler reads the image-analysis mode setting per job.
         "ocr_attachment": OcrPipeline(maker, blobs, router, SqlSettingsStore(maker)).ocr_attachment,
+        # Retroactive predicate normalization; trigger is the Phase-5 engine.
+        "consolidate_predicates": Consolidator(maker).run,
     }
     try:
         await run_loop(maker, handlers)

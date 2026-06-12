@@ -1,0 +1,25 @@
+# Organization — a company, institution, or group. [proposed]
+id: organization
+name: Organization
+schema_org_ref: schema:Organization
+description: An org. Locations are Place refs, never inlined onto the org.
+vehicle: graph
+facets: [Named, Contactable, ExternalIdentified, Related]
+default_fact_kind: state
+allow_open_predicates: true
+
+predicates:
+  - canonical_name: parentOrganization
+    value_shape: ref
+    range_type: organization
+    kind: relationship
+    schema_org_ref: schema:parentOrganization
+  - canonical_name: location          # an org can have many locations
+    value_shape: ref
+    range_type: place
+    kind: relationship
+    schema_org_ref: schema:location
+
+# identifier.ein / identifier.duns / identifier.lei come from ExternalIdentified.
+alias_seeding_predicates: [name.legal, name.aka]
+display_name: [name, name.legal]

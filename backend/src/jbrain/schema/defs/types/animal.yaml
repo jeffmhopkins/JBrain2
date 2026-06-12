@@ -1,0 +1,34 @@
+# Animal / Pet — household animal. schema.org has no fit; pragmatic custom type. [proposed]
+id: animal
+name: Animal                       # the entity `kind` is the SPECIES (dog/cat), never "pet"
+schema_org_ref: schema:Thing
+description: A pet or animal. species is the kind; owner/vet are Role edges.
+vehicle: graph
+facets: [Named, ExternalIdentified, Temporal, Related]
+default_fact_kind: attribute
+allow_open_predicates: true
+
+predicates:
+  - canonical_name: species
+    value_shape: text                # "dog", "cat" — also the entity kind
+    kind: attribute
+    functional: true
+  - canonical_name: breed
+    value_shape: text
+    kind: attribute
+    functional: true
+  - canonical_name: sex
+    value_shape: enum
+    enum_values: [male, female, unknown]
+    kind: attribute
+  - canonical_name: birthDate        # often approximate; allow partial dates
+    value_shape: date
+    kind: attribute
+  - canonical_name: color
+    value_shape: text
+    kind: attribute
+
+# identifier.microchip (ISO 11784/11785) comes from ExternalIdentified — 🔒, strong key.
+# owner / veterinarian are Role edges (Related). Pet health records ride the health firewall.
+alias_seeding_predicates: [name.aka]
+display_name: [name]
