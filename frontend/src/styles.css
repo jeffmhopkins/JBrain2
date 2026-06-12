@@ -3456,3 +3456,50 @@ button.small {
   color: var(--text-3);
   margin-bottom: 6px;
 }
+
+/* Proposal tree (the review-inbox detail; docs/ASSISTANT.md "Staging & approval") */
+.fb-shell .proposal-tree {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.fb-shell .node-row .node-status {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-3);
+}
+.fb-shell .node-row.status-approved .node-status {
+  color: var(--green);
+}
+.fb-shell .node-row.status-rejected .node-status {
+  color: var(--rose);
+}
+.fb-shell .node-row.status-held .node-status {
+  color: var(--amber);
+}
+.fb-shell .node-row.status-enacted .node-status {
+  color: var(--steel);
+}
+.fb-shell .node-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+}
+.fb-shell .node-actions button {
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text);
+  border-radius: 9px;
+  padding: 6px 12px;
+  font: inherit;
+  font-size: 13px;
+}
+.fb-shell .node-actions button:disabled {
+  opacity: 0.4;
+}
+.fb-shell .enact-result {
+  color: var(--text-2);
+  justify-content: center;
+}

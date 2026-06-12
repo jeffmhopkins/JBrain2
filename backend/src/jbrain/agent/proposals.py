@@ -140,6 +140,16 @@ class ProposalRow:
 
 
 @dataclass(frozen=True)
+class ProposalSummary:
+    id: str
+    kind: str
+    status: str
+    domain: str
+    title: str
+    node_count: int
+
+
+@dataclass(frozen=True)
 class NodeRow:
     id: str
     parent_id: str | None
@@ -203,6 +213,26 @@ class ProposalRepo:
                     },
                 )
         return str(prop_id)
+
+    async def list_open(self, ctx: SessionContext) -> list[ProposalSummary]:
+        """Staged/approved proposals awaiting the owner — the review inbox, newest
+        first. RLS narrows to in-scope, owner-only proposals."""
+        async with scoped_session(self._maker, ctx) as session:
+            rows = (
+                await session.execute(
+                    text(
+                        "SELECT p.id, p.kind, p.status, p.domain_code, p.title,"
+                        " (SELECT count(*) FROM app.proposal_nodes n WHERE n.proposal_id = p.id)"
+                        "   AS node_count"
+                        " FROM app.proposals p WHERE p.status IN ('staged', 'approved')"
+                        " ORDER BY p.created_at DESC"
+                    )
+                )
+            ).all()
+        return [
+            ProposalSummary(str(r.id), r.kind, r.status, r.domain_code, r.title, r.node_count)
+            for r in rows
+        ]
 
     async def load(
         self, ctx: SessionContext, proposal_id: str
