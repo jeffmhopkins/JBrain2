@@ -104,9 +104,7 @@ async def run_loop(maker: async_sessionmaker[AsyncSession], handlers: dict[str, 
                 # Relationship edges left unlinked by a sloppy model render their
                 # whole statement instead of the object entity; re-analysis binds
                 # them via the deterministic linking net.
-                relinks = await queue.backfill_unlinked_relationship_facts(
-                    maker, queue.SYSTEM_CTX
-                )
+                relinks = await queue.backfill_unlinked_relationship_facts(maker, queue.SYSTEM_CTX)
                 # Notes deleted before the purge cascade shipped left orphaned
                 # derived artifacts (incl. resolved review history quoting
                 # their text); sweep them once per boot.

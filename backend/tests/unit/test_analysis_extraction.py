@@ -1003,9 +1003,7 @@ def test_link_recovers_dropped_ref_from_the_statement() -> None:
 
 def test_link_recovers_dropped_ref_from_value_json() -> None:
     mentions = [_person("Me", "I"), _person("Celine Hopkins")]
-    fact = _rel(
-        statement="My spouse.", object_ref=None, value_json={"value": "Celine Hopkins"}
-    )
+    fact = _rel(statement="My spouse.", object_ref=None, value_json={"value": "Celine Hopkins"})
     [linked] = link_relationship_objects([fact], mentions)
     assert linked.object_entity_ref == "Celine Hopkins"
 
