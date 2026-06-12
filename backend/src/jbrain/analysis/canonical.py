@@ -22,6 +22,7 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from jbrain.analysis.entities import alias_owner
 from jbrain.schema import get_registry
 
 # value_json keys that may carry a name string (mirrors entities._NAME_VALUE_KEYS).
@@ -133,6 +134,12 @@ async def reproject_canonical_name(session: AsyncSession, entity_id: uuid.UUID) 
 
     projected = project_display_name(etype.display_name, values)
     if not projected or projected == row.canonical_name:
+        return None
+    # Don't claim a name a DIFFERENT live entity already owns: that name is
+    # contested (a declared-name collision files a merge_proposal that decides
+    # identity), and the alias machinery already refused to alias it for the
+    # same reason. Reprojecting onto it would pre-empt the human's decision.
+    if await alias_owner(session, projected, exclude=entity_id) is not None:
         return None
     await session.execute(
         text("UPDATE app.entities SET canonical_name = :n, updated_at = now() WHERE id = :id"),

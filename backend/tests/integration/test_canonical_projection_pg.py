@@ -246,3 +246,24 @@ async def test_animal_reprojects_via_species_signal(
     async with scoped_session(maker, SYSTEM_CTX) as s:
         assert await reproject_canonical_name(s, entity) == "Ricky"
     assert await _canonical(maker, entity) == "Ricky"
+
+
+async def test_does_not_reproject_onto_a_name_another_entity_owns(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """A declared full name that collides with an existing namesake is contested
+    (a merge_proposal decides identity) — the declarer must NOT reproject onto
+    it, pre-empting the human's decision."""
+    note = await seed_note(maker)
+    await seed_entity(maker, name="Anselm Beauregard Fitzwilliam")  # the namesake owns it
+    declarer = await seed_entity(maker, name="Ansel B.")
+    await seed_fact(
+        maker,
+        entity_id=declarer,
+        note_id=note,
+        predicate="name.legal",
+        value_json={"value": "Anselm Beauregard Fitzwilliam"},
+    )
+    async with scoped_session(maker, SYSTEM_CTX) as s:
+        assert await reproject_canonical_name(s, declarer) is None
+    assert await _canonical(maker, declarer) == "Ansel B."
