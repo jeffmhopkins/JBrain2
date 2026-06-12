@@ -6,10 +6,11 @@
 // same for anyone who'd rather tap. The composer is the omnibox, not here — this
 // surface only reads `fb` and renders.
 
-import { type ReactNode, type TouchEvent, useRef } from "react";
+import { type ReactNode, type TouchEvent, useEffect, useRef, useState } from "react";
 import { ProposalTree } from "./ProposalTree";
 import { ProposalsPanel } from "./ProposalsPanel";
 import { SessionsPanel } from "./SessionsPanel";
+import { type AgentStatus, agentStatus } from "./status";
 import type { TranscriptMessage } from "./transcript";
 import type { FullBrain } from "./useFullBrain";
 import { ToolView } from "./views/registry";
@@ -85,6 +86,10 @@ export function FullBrainSurface({ fb }: { fb: FullBrain }): ReactNode {
         ) : (
           <div className="fb-empty">Choose a session to start asking about your brain.</div>
         )}
+
+        {/* The live status sits at the surface's bottom edge, just above the
+            omnibox composer — replacing the old in-bubble "…". */}
+        <AgentStatusLine status={agentStatus(fb.messages)} />
       </div>
 
       <aside
@@ -117,14 +122,49 @@ export function FullBrainSurface({ fb }: { fb: FullBrain }): ReactNode {
   );
 }
 
+// The B-direction status line (docs/mocks/assistant-ai-status-*.html): a quiet
+// pulsing dot and a label that shimmers steel while the agent is live, then
+// settles; a clean finish auto-hides after a beat, errors stay put.
+function AgentStatusLine({ status }: { status: AgentStatus | null }): ReactNode {
+  const [doneHidden, setDoneHidden] = useState(false);
+  // Reset on any kind change; a clean finish hides itself after a beat. Keying
+  // on `kind` keeps the timer from re-arming when it fires (kind is unchanged).
+  const kind = status?.kind;
+  useEffect(() => {
+    setDoneHidden(false);
+    if (kind !== "done") return;
+    const t = setTimeout(() => setDoneHidden(true), 2600);
+    return () => clearTimeout(t);
+  }, [kind]);
+
+  if (!status || (status.kind === "done" && doneHidden)) return null;
+  const live = status.kind === "thinking" || status.kind === "tool" || status.kind === "answering";
+  const cls = live ? "live" : status.kind === "error" ? "err" : "done";
+
+  return (
+    <output className={`fb-status ${cls}`}>
+      <span className="fb-status-mark" aria-hidden="true" />
+      <span className="fb-status-lab">
+        {status.label}
+        {status.emphasis ? <span className="tool"> {status.emphasis}</span> : null}
+        {live ? "…" : ""}
+      </span>
+    </output>
+  );
+}
+
 function Bubble({ message }: { message: TranscriptMessage }): ReactNode {
   if (message.role === "user") {
     return <div className="bubble me">{message.text}</div>;
   }
+  // A turn that's still thinking (no text, no tools, no views yet) shows nothing
+  // here — the status line above the composer carries that state instead.
+  if (!message.text && message.tools.length === 0 && message.views.length === 0) {
+    return null;
+  }
   return (
     <div className="bubble ai">
       {message.text && <span className="fb-text">{message.text}</span>}
-      {message.streaming && !message.text && <span className="fb-typing">…</span>}
       {message.tools.map((t) => (
         <div className="tool" key={t.id}>
           <span className={t.ok === false ? "err" : "ok"}>
