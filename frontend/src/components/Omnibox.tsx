@@ -65,8 +65,10 @@ export function Omnibox({
   const touchStartX = useRef<number | null>(null);
 
   // Grow the box with the text: collapse to the CSS min (two lines), then take
-  // the content height. Re-runs on mode change since the min differs when the
-  // destination row is present.
+  // the content height. `text` and `seg.mode` are deliberate triggers — the
+  // content height is read off the DOM, which only reflects them after a render,
+  // so they don't appear in the closure for the linter to credit.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: re-measure on text/mode change
   useLayoutEffect(() => {
     const el = inputRef.current;
     if (!el) return;
