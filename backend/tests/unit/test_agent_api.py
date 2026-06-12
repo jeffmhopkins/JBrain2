@@ -222,7 +222,7 @@ def test_chat_streams_text_then_done(
         {"type": "done", "stop_reason": "end_turn"},
     ]
     # The run was opened, the session touched, and the run closed with its summary.
-    assert runlog.started == [("sess-1", "agent-system-v1")]
+    assert runlog.started == [("sess-1", "agent-system-v2")]
     assert sessions_store.touched == ["sess-1"]
     assert runlog.finished == [
         {"status": "ended", "stop_reason": "end_turn", "step_count": 1, "cost_tokens": 10}

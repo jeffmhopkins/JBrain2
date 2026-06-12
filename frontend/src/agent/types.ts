@@ -51,12 +51,18 @@ export interface NoteSource {
   domain: string;
   snippet: string;
 }
+/** A Proposal a tool staged this turn — surfaced as a "Review proposal" chip. */
+export interface ProposalRef {
+  proposal_id: string;
+  kind: string;
+}
 export interface ToolResultEvent {
   type: "tool_result";
   tool_call_id: string;
   ok: boolean;
   summary: string;
   sources?: NoteSource[];
+  proposal?: ProposalRef | null;
 }
 export interface ToolViewEvent {
   type: "tool_view";

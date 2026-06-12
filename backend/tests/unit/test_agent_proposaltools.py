@@ -1,7 +1,8 @@
 """propose_correction stages (never writes), and the agent-note executor creates a
 provenance-flagged, source-attributed, idempotent note (docs/ASSISTANT.md #7)."""
 
-from jbrain.agent.loop import ToolContext
+from jbrain.agent.contracts import ProposalRef
+from jbrain.agent.loop import ToolContext, ToolOutput
 from jbrain.agent.proposals import NodeRow, ProposalRow, ProposalSpec
 from jbrain.agent.proposaltools import agent_note_executor, build_proposal_handlers
 from jbrain.db.session import SessionContext
@@ -28,7 +29,11 @@ def handler(repo: FakeProposalRepo):
 async def test_propose_correction_stages_a_correction_proposal() -> None:
     repo = FakeProposalRepo()
     out = await handler(repo)({"correction": "PCP is Dr. Lin", "domain": "health"}, CTX)
-    assert "Staged" in out and "prop-1" in out
+    assert "Staged" in out
+    # The id rides structurally (a "Review proposal" chip), never in the prose.
+    assert isinstance(out, ToolOutput)
+    assert out.proposal == ProposalRef(proposal_id="prop-1", kind="correction")
+    assert "prop-1" not in out
     principal_id, spec = repo.staged[0]
     assert principal_id == "p1"
     assert spec.kind == "correction" and spec.domain == "health"

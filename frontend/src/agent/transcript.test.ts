@@ -39,6 +39,19 @@ describe("applyEvent reducer", () => {
     expect(applyEvent(ms, { type: "text_delta", text: "x" })).toBe(ms);
   });
 
+  it("attaches a staged proposal from a tool result to its tool", () => {
+    let ms: TranscriptMessage[] = [streaming()];
+    ms = applyEvent(ms, { type: "tool_call", id: "c1", name: "propose_correction", arguments: {} });
+    ms = applyEvent(ms, {
+      type: "tool_result",
+      tool_call_id: "c1",
+      ok: true,
+      summary: "staged",
+      proposal: { proposal_id: "p1", kind: "correction" },
+    });
+    expect(ms[0]?.tools[0]?.proposal).toEqual({ proposal_id: "p1", kind: "correction" });
+  });
+
   it("attaches structured sources from a tool result to its tool", () => {
     let ms: TranscriptMessage[] = [streaming()];
     ms = applyEvent(ms, { type: "tool_call", id: "c1", name: "search", arguments: {} });

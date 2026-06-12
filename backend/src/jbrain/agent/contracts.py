@@ -105,6 +105,15 @@ class NoteSource(BaseModel):
     snippet: str
 
 
+class ProposalRef(BaseModel):
+    """A Proposal a tool staged this turn, for a tappable "Review proposal" chip —
+    so the model never has to paste the id into its prose (it surfaces as a
+    control routed to the review inbox)."""
+
+    proposal_id: str
+    kind: str
+
+
 class ViewPayload(BaseModel):
     """A tool result's rich UI: a registered first-party component plus data-only
     typed slots (docs/DESIGN.md "Agent tool views"). Never model-authored markup;
@@ -144,6 +153,8 @@ class ToolResultEvent(BaseModel):
     # Structured notes the tool surfaced (search hits, the note read), for the
     # response's source cards; empty for tools that cite nothing.
     sources: list[NoteSource] = Field(default_factory=list)
+    # A Proposal the tool staged this turn, surfaced as a "Review proposal" chip.
+    proposal: ProposalRef | None = None
 
 
 class ToolViewEvent(BaseModel):

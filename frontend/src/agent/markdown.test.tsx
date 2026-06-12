@@ -1,5 +1,5 @@
-import { render } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { fireEvent, render, screen } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
 import { Markdown } from "./markdown";
 
 function html(text: string): string {
@@ -59,5 +59,12 @@ describe("Markdown", () => {
 
   it("renders an unclosed code fence as a code block to the end", () => {
     expect(html("```\nstuck open")).toContain('<pre class="md-pre"><code>stuck open</code></pre>');
+  });
+
+  it("renders [^n] as a tappable citation that calls onCite with the number", () => {
+    const onCite = vi.fn();
+    render(<Markdown text="You were born then.[^1] More.[^2]" onCite={onCite} />);
+    fireEvent.click(screen.getByRole("button", { name: "2" }));
+    expect(onCite).toHaveBeenCalledWith(2);
   });
 });
