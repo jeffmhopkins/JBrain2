@@ -157,14 +157,18 @@ from config, typed request schema, response parser, cache policy, rate limit,
 reject anything beyond the declared shape). Server-side only (api/worker), reusing
 the existing `httpx`. New tables `connector_cache` (connector + normalized-input
 hash → parsed result + TTL; `domain_id` + RLS) and `connector_log` (audit). First
-connectors as `external`-class tools, **default denied** by the session policy,
-enabled by an owner **consent** setting: `lookup_medication` (NLM RxNorm/RxNav +
-openFDA), `lookup_condition` (MedlinePlus Connect / Clinical Tables). Results are
-**data wrapped in the I-1 boundary**, source-attributed, never minted as facts
-without a Proposal. *Gate:* egress-guard unit tests (a param carrying extra/owner
-data is rejected); cache hit/miss; the connector is faked in tests (no live network,
-like the LLM adapter); RLS test on `connector_cache`. **No new runtime dep**
-(`httpx` exists); `dev-setup.sh` unaffected.
+connectors as `external`-class tools whose **use is proposed**: an off-box call
+**stages an `egress` Proposal** (new kind, builds on P4.8) whose **preview is the
+exact outbound payload**, and the call runs only on approval — standing per-connector
+approval is an optional owner widening, any connector is disable-able.
+`lookup_medication` (NLM RxNorm/RxNav + openFDA), `lookup_condition` (MedlinePlus
+Connect / Clinical Tables). Results are **data wrapped in the I-1 boundary**,
+source-attributed, never minted as facts without a Proposal. *Gate:* egress-guard
+unit tests (a param carrying extra/owner data is rejected); the egress Proposal is
+required before any network call fires (test: no approval → no egress); cache
+hit/miss; the connector is faked in tests (no live network, like the LLM adapter);
+RLS test on `connector_cache`. **No new runtime dep** (`httpx` exists);
+`dev-setup.sh` unaffected.
 
 **Phase-4 exit:** Full Brain chat is the default way to ask "what do I know about
 X," runs are logged, the agent never writes citable truth directly, every staged

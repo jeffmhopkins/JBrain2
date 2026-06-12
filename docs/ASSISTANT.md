@@ -76,9 +76,12 @@ instead enforced by RLS, by an owner confirmation, or by a fail-closed default.
    arbitrary fetch/HTTP tool**. The *only* outbound egress is the **connector
    abstraction** (below): a fixed allowlist of named, server-side, owner-configured
    upstreams called with **typed minimal inputs**, egress-minimized, cached, and
-   logged — governed by the `external` permission class (default **denied**,
-   enabled by owner consent). Location connectors are **local-first** so location
-   data stays on-box.
+   logged. **Every off-box call is staged as an `egress` Proposal** — the owner
+   approves the exact outbound payload before it leaves the box (the human is the
+   final egress guard); standing per-connector approval is an optional owner
+   widening, and any connector can be disabled. Location connectors are
+   **local-first** so location data stays on-box (an on-box lookup egresses
+   nothing and needs no Proposal).
 10. **Bounded self-improvement spend.** Self-improvement pipelines carry hard
     per-principal and global daily token/cost/job budgets, separate from
     interactive budgets; they are batched and **never** triggered by
@@ -233,7 +236,7 @@ a right-swipe from the Full Brain composer, DESIGN.md):
   (below). Each tool/action declares a permission class (`read` / `mutate` /
   `external` / `sensitive`); a session policy maps classes to {direct / staged /
   denied}. Default owner policy: `read` direct within scope, `mutate` and `sensitive`
-  **staged**, `external` **denied** (#9). A write can target **only an in-scope
+  **staged**, `external` **staged as an egress Proposal** (#9). A write can target **only an in-scope
   domain** — you cannot stage a write to a domain the session cannot read.
 
 Non-owner principals are the **same machine with the dials pinned**: an intake link
@@ -261,8 +264,14 @@ in it) cannot be stuffed into a query string. Calls run **server-side** (api/wor
 never at render; results return as **data wrapped in the data/instruction boundary**
 (#1), are **cached** in Postgres (reference data is near-static), and every call is
 **logged** (connector, input hash, domain, principal). Connectors are the `external`
-permission class: **default denied**, enabled per owner **consent** (a Settings
-toggle / per-session opt-in).
+permission class, gated by the **Proposal primitive**: an off-box call **stages an
+`egress` Proposal whose preview is the exact outbound payload** — the owner approves
+*what leaves the box* before it leaves, never an intent string, so the human is the
+final egress guard. The agent proposes the lookup; the call runs only on approval.
+An **on-box** connector (the local geocoder) egresses nothing, so it runs as a
+normal scoped tool — logged, not proposed. The owner may grant a **standing
+approval** per connector to skip per-use prompts (a deliberate widening, like the
+read-scope dial) and may disable any connector outright.
 
 The starter connectors:
 
@@ -416,7 +425,7 @@ owner enacts it.** Promote that shape to one first-class primitive instead of
 re-inventing it per feature.
 
 **A `Proposal` is the unit of staged work, and it is a tree.** It captures: `kind`
-(correction / knowledge / wiki-restructure / prompt-edit / skill-promotion), a
+(correction / knowledge / wiki-restructure / prompt-edit / skill-promotion / egress), a
 **tree of staged operations** in enactable form (structured intents the relevant
 machine executor will run — never prose for a human to copy), a **rendered preview
 of the effect** at every node (the diff, the new revision, the article-tree change
