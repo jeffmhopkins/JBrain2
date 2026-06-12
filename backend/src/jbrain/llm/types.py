@@ -4,7 +4,7 @@ import json
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 
 DEFAULT_MAX_TOKENS = 4096
 
@@ -49,6 +49,88 @@ class UsageRecorder(Protocol):
     async def record(self, *, task: str, provider: str, model: str, usage: LlmUsage) -> None: ...
 
 
+# --- Tool-using (agentic) conversations ------------------------------------
+#
+# `complete` is single-shot text/JSON. The agent loop needs a multi-turn,
+# tool-aware surface: the model may answer or request tool calls, the loop runs
+# them and feeds the results back, repeating until the model stops. These types
+# are the provider-agnostic shape of that exchange; the per-provider clients map
+# them onto Anthropic content blocks / OpenAI tool_calls.
+
+
+@dataclass(frozen=True)
+class LlmTool:
+    """A tool the model may call: a name, a description it reads, and a JSON
+    Schema for the arguments. The agent assembles these from `.tool` sidecars."""
+
+    name: str
+    description: str
+    input_schema: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class ToolCall:
+    """A model request to invoke a tool (Anthropic `tool_use` / OpenAI
+    `tool_calls`). `id` ties the eventual result back to this request."""
+
+    id: str
+    name: str
+    arguments: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class ToolResult:
+    """The outcome of running a ToolCall, fed back to the model on the next turn.
+    `is_error` marks a failed call so the model can self-correct rather than
+    treating the message as a successful observation."""
+
+    tool_call_id: str
+    content: str
+    is_error: bool = False
+
+
+@dataclass(frozen=True)
+class UserMessage:
+    """Owner/user input for a turn, with optional vision images."""
+
+    text: str
+    images: Sequence[LlmImage] = ()
+
+
+@dataclass(frozen=True)
+class AssistantMessage:
+    """A prior assistant turn: any text it produced plus the tool calls it made.
+    Replayed back so the model sees its own tool requests in context."""
+
+    text: str = ""
+    tool_calls: Sequence[ToolCall] = ()
+
+
+@dataclass(frozen=True)
+class ToolResultMessage:
+    """The results of the tool calls from the preceding assistant turn."""
+
+    results: Sequence[ToolResult]
+
+
+LlmMessage = UserMessage | AssistantMessage | ToolResultMessage
+
+# Why the model stopped: it finished its turn, it wants tools run, or it hit the
+# token ceiling. Providers' own reasons are normalized onto these three.
+StopReason = Literal["end_turn", "tool_use", "max_tokens"]
+
+
+@dataclass(frozen=True)
+class LlmTurn:
+    """One assistant turn from a tool-aware completion: its text, the tool calls
+    it requested (empty unless `stop_reason == "tool_use"`), and usage."""
+
+    text: str
+    tool_calls: Sequence[ToolCall]
+    stop_reason: StopReason
+    usage: LlmUsage
+
+
 class LlmClient(Protocol):
     """One provider's completion surface. All application code routes through
     LlmRouter; this protocol exists so tests and the router can swap providers
@@ -64,6 +146,16 @@ class LlmClient(Protocol):
         json_schema: dict[str, Any] | None = None,
         max_tokens: int = DEFAULT_MAX_TOKENS,
     ) -> LlmResult: ...
+
+    async def converse(
+        self,
+        *,
+        model: str,
+        system: str,
+        messages: Sequence[LlmMessage],
+        tools: Sequence[LlmTool] = (),
+        max_tokens: int = DEFAULT_MAX_TOKENS,
+    ) -> LlmTurn: ...
 
 
 def parse_json_payload(text: str) -> Any | None:

@@ -7,9 +7,21 @@ from typing import Any
 import httpx
 import pytest
 
-from jbrain.llm import AnthropicClient, LlmBadResponseError, LlmImage, OpenAiCompatClient
+from jbrain.llm import (
+    AnthropicClient,
+    AssistantMessage,
+    LlmBadResponseError,
+    LlmImage,
+    LlmTool,
+    OpenAiCompatClient,
+    ToolCall,
+    ToolResult,
+    ToolResultMessage,
+    UserMessage,
+)
 
 SCHEMA = {"type": "object", "properties": {"name": {"type": "string"}}}
+TOOL = LlmTool(name="search", description="find things", input_schema=SCHEMA)
 
 
 def capture_transport(captured: list[httpx.Request], body: dict[str, Any]) -> httpx.MockTransport:
@@ -186,3 +198,182 @@ async def test_openai_compat_rejects_bad_shape() -> None:
     )
     with pytest.raises(LlmBadResponseError):
         await client.complete(model="m", system="s", user_text="u")
+
+
+# --- converse (tool-using turns) -------------------------------------------
+
+ANTHROPIC_TOOL_TURN = {
+    "content": [
+        {"type": "text", "text": "let me check"},
+        {"type": "tool_use", "id": "tu_1", "name": "search", "input": {"q": "x"}},
+    ],
+    "stop_reason": "tool_use",
+    "usage": {"input_tokens": 3, "output_tokens": 4},
+}
+ANTHROPIC_END_TURN = {
+    "content": [{"type": "text", "text": "done"}],
+    "stop_reason": "end_turn",
+    "usage": {"input_tokens": 1, "output_tokens": 1},
+}
+
+
+async def test_anthropic_converse_sends_tools_and_parses_tool_use() -> None:
+    seen: list[httpx.Request] = []
+    client = AnthropicClient("k", transport=capture_transport(seen, ANTHROPIC_TOOL_TURN))
+    turn = await client.converse(
+        model="m", system="s", messages=[UserMessage(text="hi")], tools=[TOOL]
+    )
+    body = json.loads(seen[0].content)
+    assert body["tools"] == [
+        {"name": "search", "description": "find things", "input_schema": SCHEMA}
+    ]
+    assert body["messages"] == [{"role": "user", "content": [{"type": "text", "text": "hi"}]}]
+    assert turn.text == "let me check"
+    assert turn.stop_reason == "tool_use"
+    assert turn.tool_calls == (ToolCall(id="tu_1", name="search", arguments={"q": "x"}),)
+    assert (turn.usage.input_tokens, turn.usage.output_tokens) == (3, 4)
+
+
+async def test_anthropic_converse_replays_tool_calls_and_results() -> None:
+    seen: list[httpx.Request] = []
+    client = AnthropicClient("k", transport=capture_transport(seen, ANTHROPIC_END_TURN))
+    messages = [
+        UserMessage(text="hi"),
+        AssistantMessage(
+            text="checking", tool_calls=[ToolCall(id="tu_1", name="search", arguments={"q": "x"})]
+        ),
+        ToolResultMessage(results=[ToolResult(tool_call_id="tu_1", content="found")]),
+    ]
+    turn = await client.converse(model="m", system="s", messages=messages)
+    msgs = json.loads(seen[0].content)["messages"]
+    assert msgs[1] == {
+        "role": "assistant",
+        "content": [
+            {"type": "text", "text": "checking"},
+            {"type": "tool_use", "id": "tu_1", "name": "search", "input": {"q": "x"}},
+        ],
+    }
+    assert msgs[2] == {
+        "role": "user",
+        "content": [
+            {"type": "tool_result", "tool_use_id": "tu_1", "content": "found", "is_error": False}
+        ],
+    }
+    assert turn.stop_reason == "end_turn" and turn.text == "done"
+
+
+async def test_anthropic_converse_unknown_stop_reason_is_end_turn() -> None:
+    body = {
+        "content": [{"type": "text", "text": "x"}],
+        "stop_reason": "stop_sequence",
+        "usage": {"input_tokens": 1, "output_tokens": 1},
+    }
+    client = AnthropicClient("k", transport=capture_transport([], body))
+    turn = await client.converse(model="m", system="s", messages=[UserMessage(text="hi")])
+    assert turn.stop_reason == "end_turn"
+
+
+OPENAI_TOOL_TURN = {
+    "choices": [
+        {
+            "message": {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {"name": "search", "arguments": '{"q": "x"}'},
+                    }
+                ],
+            },
+            "finish_reason": "tool_calls",
+        }
+    ],
+    "usage": {"prompt_tokens": 3, "completion_tokens": 4},
+}
+
+
+async def test_openai_converse_sends_tools_and_parses_tool_calls() -> None:
+    seen: list[httpx.Request] = []
+    client = OpenAiCompatClient(
+        "https://api.x.ai/v1",
+        "k",
+        provider="xai",
+        transport=capture_transport(seen, OPENAI_TOOL_TURN),
+    )
+    turn = await client.converse(
+        model="m", system="s", messages=[UserMessage(text="hi")], tools=[TOOL]
+    )
+    body = json.loads(seen[0].content)
+    assert body["tools"] == [
+        {
+            "type": "function",
+            "function": {"name": "search", "description": "find things", "parameters": SCHEMA},
+        }
+    ]
+    assert body["messages"] == [
+        {"role": "system", "content": "s"},
+        {"role": "user", "content": "hi"},
+    ]
+    assert turn.stop_reason == "tool_use"
+    assert turn.tool_calls == (ToolCall(id="call_1", name="search", arguments={"q": "x"}),)
+    assert (turn.usage.input_tokens, turn.usage.output_tokens) == (3, 4)
+
+
+async def test_openai_converse_serializes_assistant_calls_and_tool_results() -> None:
+    seen: list[httpx.Request] = []
+    body = {
+        "choices": [{"message": {"content": "done"}, "finish_reason": "stop"}],
+        "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+    }
+    client = OpenAiCompatClient(
+        "https://api.x.ai/v1", "k", provider="xai", transport=capture_transport(seen, body)
+    )
+    messages = [
+        UserMessage(text="hi"),
+        AssistantMessage(
+            text="", tool_calls=[ToolCall(id="call_1", name="search", arguments={"q": "x"})]
+        ),
+        ToolResultMessage(results=[ToolResult(tool_call_id="call_1", content="found")]),
+    ]
+    turn = await client.converse(model="m", system="s", messages=messages)
+    msgs = json.loads(seen[0].content)["messages"]
+    assert msgs[2] == {
+        "role": "assistant",
+        "content": None,
+        "tool_calls": [
+            {
+                "id": "call_1",
+                "type": "function",
+                "function": {"name": "search", "arguments": '{"q": "x"}'},
+            }
+        ],
+    }
+    assert msgs[3] == {"role": "tool", "tool_call_id": "call_1", "content": "found"}
+    assert turn.text == "done" and turn.stop_reason == "end_turn"
+
+
+async def test_openai_converse_rejects_non_object_tool_arguments() -> None:
+    body = {
+        "choices": [
+            {
+                "message": {
+                    "tool_calls": [
+                        {
+                            "id": "c",
+                            "type": "function",
+                            "function": {"name": "x", "arguments": "not json"},
+                        }
+                    ]
+                },
+                "finish_reason": "tool_calls",
+            }
+        ],
+        "usage": {},
+    }
+    client = OpenAiCompatClient(
+        "https://api.x.ai/v1", "k", provider="xai", transport=capture_transport([], body)
+    )
+    with pytest.raises(LlmBadResponseError):
+        await client.converse(model="m", system="s", messages=[UserMessage(text="hi")])

@@ -15,24 +15,48 @@ from jbrain.llm.errors import (
 from jbrain.llm.fake import FakeLlmClient
 from jbrain.llm.openai_compat import OpenAiCompatClient
 from jbrain.llm.router import TASK_DEFAULTS, LlmRouter, build_router, resolve_tasks
-from jbrain.llm.types import LlmClient, LlmImage, LlmResult, LlmUsage, UsageRecorder
+from jbrain.llm.types import (
+    AssistantMessage,
+    LlmClient,
+    LlmImage,
+    LlmMessage,
+    LlmResult,
+    LlmTool,
+    LlmTurn,
+    LlmUsage,
+    StopReason,
+    ToolCall,
+    ToolResult,
+    ToolResultMessage,
+    UsageRecorder,
+    UserMessage,
+)
 
 __all__ = [
     "TASK_DEFAULTS",
     "AnthropicClient",
+    "AssistantMessage",
     "FakeLlmClient",
     "LlmAuthError",
     "LlmBadResponseError",
     "LlmClient",
     "LlmError",
     "LlmImage",
+    "LlmMessage",
     "LlmRateLimitError",
     "LlmResult",
     "LlmRouter",
+    "LlmTool",
     "LlmTransientError",
+    "LlmTurn",
     "LlmUsage",
     "OpenAiCompatClient",
+    "StopReason",
+    "ToolCall",
+    "ToolResult",
+    "ToolResultMessage",
     "UsageRecorder",
+    "UserMessage",
     "build_router",
     "resolve_tasks",
 ]
