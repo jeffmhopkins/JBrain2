@@ -70,6 +70,44 @@ function DataTable({ data }: ViewProps): ReactNode {
   );
 }
 
+interface ChecklistItem {
+  id: string;
+  body: string;
+  checked: boolean;
+}
+
+function asItems(value: unknown): ChecklistItem[] {
+  if (!Array.isArray(value)) return [];
+  return value.map((it) => {
+    const o = (it ?? {}) as Record<string, unknown>;
+    return { id: String(o.id ?? ""), body: String(o.body ?? ""), checked: Boolean(o.checked) };
+  });
+}
+
+/** A read-only checklist: `{title, items: [{id, body, checked}]}` — the owner's
+ * list, rendered as full-bleed rows with checked state (DESIGN.md "Lists"). */
+function ListCard({ data }: ViewProps): ReactNode {
+  const items = asItems(data.items);
+  return (
+    <div className="tv-list">
+      <div className="tv-list-head">{String(data.title ?? "List")}</div>
+      <ul className="tv-list-items">
+        {items.map((it, i) => (
+          <li
+            // Item ids are stable; the index only backs the rare empty-id row.
+            key={it.id || i}
+            className={`tv-list-row${it.checked ? " checked" : ""}`}
+          >
+            <span className="tv-list-box" aria-hidden="true" />
+            <span className="tv-list-body">{it.body}</span>
+          </li>
+        ))}
+        {items.length === 0 && <li className="tv-list-empty">empty</li>}
+      </ul>
+    </div>
+  );
+}
+
 function refKey(ref: CitationRef): string {
   if (ref.kind === "fact") return `fact:${ref.fact_id}`;
   if (ref.kind === "entity") return `entity:${ref.entity_id}`;
@@ -96,6 +134,7 @@ const REGISTRY: Record<string, (props: ViewProps) => ReactNode> = {
   stat_block: StatBlock,
   data_table: DataTable,
   citation_card: CitationCard,
+  list_card: ListCard,
 };
 
 export function isKnownView(name: string): boolean {

@@ -9,7 +9,8 @@ model-facing text so the model can chain (create → add → check), but the pro
 the model shows the owner shouldn't paste them — the app renders the checklist.
 """
 
-from jbrain.agent.loop import ToolContext, ToolHandler
+from jbrain.agent.contracts import ViewPayload
+from jbrain.agent.loop import ToolContext, ToolHandler, ToolOutput
 from jbrain.lists.service import ListInfo, ListsRepo, UnknownDomain
 
 
@@ -32,6 +33,21 @@ def format_list(lst: ListInfo) -> str:
     return head + "\n" + "\n".join(lines)
 
 
+def list_card(lst: ListInfo) -> ViewPayload:
+    """The structured twin of format_list: a `list_card` the PWA renders as a
+    tappable checklist (data-only slots, never model-authored markup)."""
+    return ViewPayload(
+        view="list_card",
+        surface="inline",
+        data={
+            "list_id": lst.id,
+            "title": lst.title,
+            "domain": lst.domain,
+            "items": [{"id": i.id, "body": i.body, "checked": i.checked} for i in lst.items],
+        },
+    )
+
+
 def build_list_handlers(lists: ListsRepo) -> dict[str, ToolHandler]:
     async def read_lists_tool(arguments: dict, ctx: ToolContext) -> str:
         include_archived = bool(arguments.get("include_archived", False))
@@ -43,7 +59,10 @@ def build_list_handlers(lists: ListsRepo) -> dict[str, ToolHandler]:
         if not list_id:
             return "read_list needs a list_id."
         info = await lists.get_list(ctx.session, list_id)
-        return format_list(info) if info is not None else "No list with that id is in scope."
+        if info is None:
+            return "No list with that id is in scope."
+        # The text is the model's; the card is the owner's tappable checklist.
+        return ToolOutput(format_list(info), view=list_card(info))
 
     async def create_list_tool(arguments: dict, ctx: ToolContext) -> str:
         title = str(arguments.get("title", "")).strip()

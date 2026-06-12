@@ -5,7 +5,7 @@ is proven in tests/integration/test_lists_rls.py)."""
 from datetime import UTC, datetime
 
 from jbrain.agent.listtools import build_list_handlers, format_list, format_lists
-from jbrain.agent.loop import ToolContext
+from jbrain.agent.loop import ToolContext, ToolOutput
 from jbrain.db.session import SessionContext
 from jbrain.lists.service import ListInfo, ListItemInfo, UnknownDomain
 
@@ -118,6 +118,23 @@ async def test_read_list_found_and_missing() -> None:
     assert "[ ] eggs" in found
     missing = await handlers(FakeLists(one=lst()))["read_list"]({"list_id": "other"}, CTX)
     assert "in scope" in missing
+
+
+async def test_read_list_surfaces_a_list_card_view() -> None:
+    one = lst(items=[item("a", "eggs"), item("b", "milk", checked=True)])
+    out = await handlers(FakeLists(one=one))["read_list"]({"list_id": "L1"}, CTX)
+    assert isinstance(out, ToolOutput)
+    assert out.view is not None and out.view.view == "list_card"
+    # Data-only slots the PWA's checklist renders — never model markup.
+    assert out.view.data == {
+        "list_id": "L1",
+        "title": "Groceries",
+        "domain": "general",
+        "items": [
+            {"id": "a", "body": "eggs", "checked": False},
+            {"id": "b", "body": "milk", "checked": True},
+        ],
+    }
 
 
 async def test_create_list_writes_and_defaults_domain() -> None:
