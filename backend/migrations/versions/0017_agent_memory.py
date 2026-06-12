@@ -95,6 +95,7 @@ def upgrade() -> None:
             importance real NOT NULL DEFAULT 0,
             embedding vector(384),
             embedding_model text,
+            tsv tsvector GENERATED ALWAYS AS (to_tsvector('english', body)) STORED,
             created_at timestamptz NOT NULL DEFAULT now(),
             last_accessed_at timestamptz NOT NULL DEFAULT now()
         )
@@ -103,6 +104,7 @@ def upgrade() -> None:
     op.execute(
         "CREATE INDEX agent_episodes_recency_idx ON app.agent_episodes (last_accessed_at DESC)"
     )
+    op.execute("CREATE INDEX agent_episodes_tsv_idx ON app.agent_episodes USING gin (tsv)")
     op.execute("ALTER TABLE app.agent_episodes ENABLE ROW LEVEL SECURITY")
     op.execute("ALTER TABLE app.agent_episodes FORCE ROW LEVEL SECURITY")
     # Visible only to a session holding ALL touched scopes (#4), owner-only (#8).
