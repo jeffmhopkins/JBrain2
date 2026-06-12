@@ -3200,6 +3200,23 @@ button.small {
   border-bottom: 1px dotted var(--text-3);
   cursor: help;
 }
+/* an inline entity link — the name reads as prose with a domain-tinted dotted
+   underline (border color set per entity), tapping opens its page */
+.fb-shell .md-entity {
+  border: none;
+  border-bottom: 1.5px dotted var(--text-3);
+  background: none;
+  padding: 0 0 1px;
+  font: inherit;
+  font-weight: 600;
+  color: var(--text);
+  cursor: pointer;
+  border-radius: 2px;
+  transition: background 0.12s;
+}
+.fb-shell .md-entity:hover {
+  background: var(--surface-2);
+}
 /* a tappable [^n] source citation superscript */
 .fb-shell .md-cite {
   vertical-align: super;

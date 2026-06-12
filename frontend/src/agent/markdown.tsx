@@ -6,6 +6,7 @@
 // scanner is the seam where entity/place/citation tokens slot in later.
 
 import { type ReactNode, useMemo } from "react";
+import { DOMAIN_COLOR } from "../notes/modes";
 
 const MONTHS =
   "Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?";
@@ -63,19 +64,92 @@ function withTemporal(text: string, key: string): ReactNode[] {
 
 const SAFE_URL = /^(https?:|mailto:)/i;
 
-type Cite = ((n: number) => void) | undefined;
+/** An entity a tool resolved this turn — linkified inline where its label
+ * appears in the answer prose. */
+export interface MdEntity {
+  entity_id: string;
+  label: string;
+  domain: string;
+}
 
-function inline(text: string, key: string, onCite: Cite): ReactNode[] {
+interface Ctx {
+  onCite?: ((n: number) => void) | undefined;
+  entities: MdEntity[];
+  onEntity?: ((entityId: string) => void) | undefined;
+  /** Built from the entities' labels — a single word-bounded alternation. */
+  matcher: RegExp | null;
+}
+
+const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/** A case-insensitive, word-bounded matcher over the entity labels (longest
+ * first, so "Celine Hopkins" wins over "Celine"). Null when there's nothing to
+ * link. */
+function buildMatcher(entities: MdEntity[]): RegExp | null {
+  const labels = entities
+    .map((e) => e.label)
+    .filter(Boolean)
+    .sort((a, b) => b.length - a.length);
+  if (labels.length === 0) return null;
+  const alt = labels.map(escapeRe).join("|");
+  return new RegExp(`(?<![\\p{L}\\p{N}])(?:${alt})(?![\\p{L}\\p{N}])`, "giu");
+}
+
+/** Entities whose label never appears in the text — the caller renders these as
+ * fallback chips so a surfaced entity is never left without an affordance. */
+export function unlinkedEntities(text: string, entities: MdEntity[]): MdEntity[] {
+  const matcher = buildMatcher(entities);
+  if (!matcher) return entities;
+  const present = new Set<string>();
+  for (const m of text.matchAll(matcher)) present.add(m[0].toLowerCase());
+  return entities.filter((e) => !present.has(e.label.toLowerCase()));
+}
+
+/** Split a plain-text run into entity links first, then temporal chips on the
+ * gaps — so a name reads as prose but taps through to its entity page. */
+function scanPlain(text: string, key: string, ctx: Ctx): ReactNode[] {
+  if (!ctx.matcher) return withTemporal(text, key);
+  const out: ReactNode[] = [];
+  let last = 0;
+  let i = 0;
+  for (const m of text.matchAll(ctx.matcher)) {
+    const at = m.index ?? 0;
+    if (at > last) out.push(...withTemporal(text.slice(last, at), `${key}-t${i}`));
+    const label = m[0];
+    const ent = ctx.entities.find((e) => e.label.toLowerCase() === label.toLowerCase());
+    if (ent) {
+      out.push(
+        <button
+          key={`${key}-e${i}`}
+          type="button"
+          className="md-entity"
+          style={{ borderBottomColor: DOMAIN_COLOR[ent.domain] ?? "var(--text-3)" }}
+          onClick={() => ctx.onEntity?.(ent.entity_id)}
+        >
+          {label}
+        </button>,
+      );
+    } else {
+      out.push(label);
+    }
+    i++;
+    last = at + label.length;
+  }
+  if (last < text.length) out.push(...withTemporal(text.slice(last), `${key}-t${i}`));
+  return out;
+}
+
+function inline(text: string, key: string, ctx: Ctx): ReactNode[] {
   const out: ReactNode[] = [];
   let rest = text;
   let n = 0;
   while (rest.length > 0) {
     const m = INLINE.exec(rest);
     if (!m) {
-      out.push(...withTemporal(rest, `${key}-${n++}`));
+      out.push(...scanPlain(rest, `${key}-${n++}`, ctx));
       break;
     }
-    if (m.index > 0) out.push(...withTemporal(rest.slice(0, m.index), `${key}-${n++}`));
+    if (m.index > 0) out.push(...scanPlain(rest.slice(0, m.index), `${key}-${n++}`, ctx));
     const tok = m[0];
     const k = `${key}-${n++}`;
     if (tok.startsWith("`")) {
@@ -85,15 +159,15 @@ function inline(text: string, key: string, onCite: Cite): ReactNode[] {
         </code>,
       );
     } else if (tok.startsWith("**")) {
-      out.push(<strong key={k}>{inline(tok.slice(2, -2), k, onCite)}</strong>);
+      out.push(<strong key={k}>{inline(tok.slice(2, -2), k, ctx)}</strong>);
     } else if (tok.startsWith("*")) {
-      out.push(<em key={k}>{inline(tok.slice(1, -1), k, onCite)}</em>);
+      out.push(<em key={k}>{inline(tok.slice(1, -1), k, ctx)}</em>);
     } else if (tok.startsWith("[^")) {
       // A source citation — render the number as a tappable superscript.
       const num = Number(tok.slice(2, -1));
       out.push(
         <sup key={k} className="md-cite">
-          <button type="button" onClick={() => onCite?.(num)}>
+          <button type="button" onClick={() => ctx.onCite?.(num)}>
             {num}
           </button>
         </sup>,
@@ -117,15 +191,15 @@ function inline(text: string, key: string, onCite: Cite): ReactNode[] {
 }
 
 /** Render one paragraph's text, turning soft newlines into line breaks. */
-function paragraph(text: string, key: string, onCite: Cite): ReactNode {
+function paragraph(text: string, key: string, ctx: Ctx): ReactNode {
   const lines = text.split("\n");
   return (
     <p key={key} className="md-p">
       {lines.flatMap((ln, i) =>
         i === 0
-          ? inline(ln, `${key}-l${i}`, onCite)
+          ? inline(ln, `${key}-l${i}`, ctx)
           : // biome-ignore lint/suspicious/noArrayIndexKey: soft-break order is stable
-            [<br key={`${key}-br${i}`} />, ...inline(ln, `${key}-l${i}`, onCite)],
+            [<br key={`${key}-br${i}`} />, ...inline(ln, `${key}-l${i}`, ctx)],
       )}
     </p>
   );
@@ -199,13 +273,13 @@ function parseBlocks(src: string): Block[] {
   return blocks;
 }
 
-function renderBlock(b: Block, key: string, onCite: Cite): ReactNode {
+function renderBlock(b: Block, key: string, ctx: Ctx): ReactNode {
   switch (b.kind) {
     case "h": {
       const Tag = `h${Math.min(b.level + 2, 6)}` as "h3" | "h4" | "h5" | "h6";
       return (
         <Tag key={key} className="md-h">
-          {inline(b.text, key, onCite)}
+          {inline(b.text, key, ctx)}
         </Tag>
       );
     }
@@ -214,7 +288,7 @@ function renderBlock(b: Block, key: string, onCite: Cite): ReactNode {
         <ul key={key} className="md-ul">
           {b.items.map((it, i) => (
             // biome-ignore lint/suspicious/noArrayIndexKey: list order is stable
-            <li key={`${key}-${i}`}>{inline(it, `${key}-${i}`, onCite)}</li>
+            <li key={`${key}-${i}`}>{inline(it, `${key}-${i}`, ctx)}</li>
           ))}
         </ul>
       );
@@ -223,7 +297,7 @@ function renderBlock(b: Block, key: string, onCite: Cite): ReactNode {
         <ol key={key} className="md-ol">
           {b.items.map((it, i) => (
             // biome-ignore lint/suspicious/noArrayIndexKey: list order is stable
-            <li key={`${key}-${i}`}>{inline(it, `${key}-${i}`, onCite)}</li>
+            <li key={`${key}-${i}`}>{inline(it, `${key}-${i}`, ctx)}</li>
           ))}
         </ol>
       );
@@ -236,22 +310,30 @@ function renderBlock(b: Block, key: string, onCite: Cite): ReactNode {
     case "quote":
       return (
         <blockquote key={key} className="md-quote">
-          {inline(b.text, key, onCite)}
+          {inline(b.text, key, ctx)}
         </blockquote>
       );
     default:
-      return paragraph(b.text, key, onCite);
+      return paragraph(b.text, key, ctx);
   }
 }
 
 export function Markdown({
   text,
   onCite,
+  entities = [],
+  onEntity,
 }: {
   text: string;
   /** Tap handler for a `[^n]` source citation. */
   onCite?: ((n: number) => void) | undefined;
+  /** Entities the turn surfaced — linkified where their label appears in text. */
+  entities?: MdEntity[];
+  /** Tap handler for an inline entity link. */
+  onEntity?: ((entityId: string) => void) | undefined;
 }): ReactNode {
   const blocks = useMemo(() => parseBlocks(text), [text]);
-  return <div className="md">{blocks.map((b, i) => renderBlock(b, `b${i}`, onCite))}</div>;
+  const matcher = useMemo(() => buildMatcher(entities), [entities]);
+  const ctx: Ctx = { onCite, entities, onEntity, matcher };
+  return <div className="md">{blocks.map((b, i) => renderBlock(b, `b${i}`, ctx))}</div>;
 }

@@ -67,4 +67,45 @@ describe("Markdown", () => {
     fireEvent.click(screen.getByRole("button", { name: "2" }));
     expect(onCite).toHaveBeenCalledWith(2);
   });
+
+  it("linkifies an entity label in the prose and opens it on tap", () => {
+    const onEntity = vi.fn();
+    render(
+      <Markdown
+        text="You are **Jeff Hopkins**, married to Celine."
+        onEntity={onEntity}
+        entities={[
+          { entity_id: "e1", label: "Jeff Hopkins", domain: "general" },
+          { entity_id: "e2", label: "Celine", domain: "health" },
+          // surfaced but never named in the text — no inline link to make
+          { entity_id: "e3", label: "Acme Corp", domain: "general" },
+        ]}
+      />,
+    );
+    // The name inside bold is still linked (matching recurses through emphasis).
+    fireEvent.click(screen.getByRole("button", { name: "Jeff Hopkins" }));
+    expect(onEntity).toHaveBeenCalledWith("e1");
+    fireEvent.click(screen.getByRole("button", { name: "Celine" }));
+    expect(onEntity).toHaveBeenCalledWith("e2");
+    // An entity that isn't mentioned makes no link.
+    expect(screen.queryByRole("button", { name: "Acme Corp" })).toBeNull();
+  });
+
+  it("prefers the longest entity label and respects word boundaries", () => {
+    const onEntity = vi.fn();
+    render(
+      <Markdown
+        text="Celine Hopkins waved. Unceline is not a match."
+        onEntity={onEntity}
+        entities={[
+          { entity_id: "short", label: "Celine", domain: "general" },
+          { entity_id: "long", label: "Celine Hopkins", domain: "general" },
+        ]}
+      />,
+    );
+    // "Celine Hopkins" wins over the bare "Celine"; "Unceline" is not matched.
+    fireEvent.click(screen.getByRole("button", { name: "Celine Hopkins" }));
+    expect(onEntity).toHaveBeenCalledWith("long");
+    expect(screen.getAllByRole("button")).toHaveLength(1);
+  });
 });

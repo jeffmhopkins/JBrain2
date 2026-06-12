@@ -11,7 +11,7 @@ import { DOMAIN_COLOR } from "../notes/modes";
 import { ProposalTree } from "./ProposalTree";
 import { ProposalsPanel } from "./ProposalsPanel";
 import { SessionsPanel } from "./SessionsPanel";
-import { Markdown } from "./markdown";
+import { Markdown, unlinkedEntities } from "./markdown";
 import { type AgentStatus, agentStatus } from "./status";
 import { type SourceRef, toolStep } from "./toolSummary";
 import type { ToolActivity, TranscriptMessage } from "./transcript";
@@ -212,22 +212,27 @@ function Bubble({
         if (src) onOpenNote(src.noteId);
       }
     : undefined;
-  // Entities the turn resolved (find_entity), deduped — tappable to the entity page.
+  // Entities the turn resolved (find_entity), deduped. Those whose name appears
+  // in the answer are linkified inline (Markdown); only the rest fall back to
+  // chips, so a surfaced entity is never left without a tap target.
   const entities = [
     ...new Map(
       message.tools.flatMap((t) => t.entities ?? []).map((e) => [e.entity_id, e]),
     ).values(),
   ];
+  const looseEntities = unlinkedEntities(message.text, entities);
 
   return (
     <div className="bubble ai">
-      {message.text && <Markdown text={message.text} onCite={onCite} />}
+      {message.text && (
+        <Markdown text={message.text} onCite={onCite} entities={entities} onEntity={onOpenEntity} />
+      )}
       {message.tools.length > 0 && (
         <ToolUsage tools={message.tools} onOpenNote={onOpenNote} onOpenProposal={onOpenProposal} />
       )}
-      {entities.length > 0 && (
+      {looseEntities.length > 0 && (
         <div className="fb-entities">
-          {entities.map((e) => (
+          {looseEntities.map((e) => (
             <button
               key={e.entity_id}
               type="button"
