@@ -3530,6 +3530,50 @@ button.small {
   color: var(--steel);
   align-items: center;
 }
+
+/* swipe-left action rail on a session row (reuses the home note rail buttons) */
+.fb-shell .session-wrap {
+  position: relative;
+  overflow: hidden;
+  border-radius: 14px;
+}
+.fb-shell .session-rail {
+  position: absolute;
+  inset: 0 0 0 auto;
+  display: flex;
+  border-radius: 14px;
+  overflow: hidden;
+}
+.fb-shell .session-rail .rail-btn {
+  width: 96px;
+}
+.fb-shell .session-slide {
+  position: relative;
+  transition: transform 150ms ease-out;
+}
+.fb-shell .session-tap {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  width: 100%;
+  background: none;
+  border: none;
+  padding: 0;
+  text-align: left;
+  color: inherit;
+  font: inherit;
+}
+.fb-shell .session-rename {
+  width: 100%;
+  background: var(--surface-2);
+  border: 1px solid var(--steel);
+  border-radius: 9px;
+  color: var(--text);
+  font: inherit;
+  font-size: 15px;
+  padding: 7px 9px;
+  outline: none;
+}
 .fb-shell .row .r-head {
   display: flex;
   align-items: center;

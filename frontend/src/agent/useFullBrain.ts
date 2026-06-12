@@ -29,6 +29,8 @@ export interface FullBrainDeps {
   chat: (body: ChatRequest) => AsyncGenerator<ChatEvent>;
   listProposals: () => Promise<ProposalSummary[]>;
   getTranscript: (sessionId: string) => Promise<TranscriptTurn[]>;
+  renameSession: (id: string, title: string) => Promise<void>;
+  deleteSession: (id: string) => Promise<void>;
 }
 
 const LIVE: FullBrainDeps = {
@@ -37,6 +39,8 @@ const LIVE: FullBrainDeps = {
   chat: api.chat,
   listProposals: api.listProposals,
   getTranscript: api.getTranscript,
+  renameSession: api.renameSession,
+  deleteSession: api.deleteSession,
 };
 
 /** Map a persisted turn back into a transcript message — assistant turns rebuild
@@ -72,12 +76,15 @@ export interface FullBrain {
   send: (text: string) => void;
   create: (body: SessionCreate) => Promise<AgentSession>;
   open: (session: AgentSession) => void;
+  rename: (id: string, title: string) => void;
+  remove: (id: string) => void;
 }
 
 /** Drive the Full Brain surface. `enabled` gates the network so nothing loads
  * until the mode is actually on screen; `deps` is injected in tests. */
 export function useFullBrain(enabled: boolean, deps: FullBrainDeps = LIVE): FullBrain {
   const { listSessions, createSession, chat, listProposals, getTranscript } = deps;
+  const { renameSession, deleteSession } = deps;
   const [sessions, setSessions] = useState<AgentSession[]>([]);
   const [active, setActive] = useState<AgentSession | null>(null);
   const [panel, setPanel] = useState<Panel>("none");
@@ -176,6 +183,22 @@ export function useFullBrain(enabled: boolean, deps: FullBrainDeps = LIVE): Full
     setPanel("none");
   }
 
+  async function rename(id: string, title: string): Promise<void> {
+    await renameSession(id, title);
+    setSessions((prev) => prev.map((s) => (s.id === id ? { ...s, title } : s)));
+    if (active?.id === id) setActive({ ...active, title });
+  }
+
+  async function remove(id: string): Promise<void> {
+    await deleteSession(id);
+    setSessions((prev) => prev.filter((s) => s.id !== id));
+    // If the open conversation was deleted, drop it (and its transcript).
+    if (active?.id === id) {
+      setActive(null);
+      setMessages([]);
+    }
+  }
+
   return {
     active,
     sessions,
@@ -190,5 +213,7 @@ export function useFullBrain(enabled: boolean, deps: FullBrainDeps = LIVE): Full
     send: (text) => void send(text),
     create,
     open,
+    rename: (id, title) => void rename(id, title).catch(() => {}),
+    remove: (id) => void remove(id).catch(() => {}),
   };
 }

@@ -22,6 +22,8 @@ function fbDeps(): FullBrainDeps {
     chat: async function* () {},
     listProposals: vi.fn(async () => []),
     getTranscript: vi.fn(async () => []),
+    renameSession: vi.fn(async () => {}),
+    deleteSession: vi.fn(async () => {}),
   };
 }
 
