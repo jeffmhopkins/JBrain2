@@ -45,11 +45,18 @@ export interface ToolCallEvent {
   name: string;
   arguments: Record<string, unknown>;
 }
+/** A note a read tool surfaced this turn, for the response's source cards. */
+export interface NoteSource {
+  note_id: string;
+  domain: string;
+  snippet: string;
+}
 export interface ToolResultEvent {
   type: "tool_result";
   tool_call_id: string;
   ok: boolean;
   summary: string;
+  sources?: NoteSource[];
 }
 export interface ToolViewEvent {
   type: "tool_view";

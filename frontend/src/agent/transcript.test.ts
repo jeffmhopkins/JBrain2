@@ -15,7 +15,9 @@ describe("applyEvent reducer", () => {
     ms = applyEvent(ms, { type: "done", stop_reason: "end_turn" });
     const turn = ms[0];
     expect(turn?.text).toBe("let me check");
-    expect(turn?.tools).toEqual([{ id: "c1", name: "search", ok: true, summary: "found 3" }]);
+    expect(turn?.tools).toEqual([
+      { id: "c1", name: "search", ok: true, summary: "found 3", sources: [] },
+    ]);
     expect(turn?.streaming).toBe(false);
     expect(turn?.stopReason).toBe("end_turn");
   });
@@ -35,5 +37,24 @@ describe("applyEvent reducer", () => {
       { role: "user", text: "hi", tools: [], views: [], streaming: false },
     ];
     expect(applyEvent(ms, { type: "text_delta", text: "x" })).toBe(ms);
+  });
+
+  it("attaches structured sources from a tool result to its tool", () => {
+    let ms: TranscriptMessage[] = [streaming()];
+    ms = applyEvent(ms, { type: "tool_call", id: "c1", name: "search", arguments: {} });
+    ms = applyEvent(ms, {
+      type: "tool_result",
+      tool_call_id: "c1",
+      ok: true,
+      summary: "2 notes",
+      sources: [
+        { note_id: "n1", domain: "general", snippet: "born March" },
+        { note_id: "n2", domain: "health", snippet: "albumin" },
+      ],
+    });
+    expect(ms[0]?.tools[0]?.sources).toEqual([
+      { noteId: "n1", domain: "general", text: "born March" },
+      { noteId: "n2", domain: "health", text: "albumin" },
+    ]);
   });
 });

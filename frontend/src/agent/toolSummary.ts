@@ -1,17 +1,12 @@
 // Turn a raw tool activity into a tidy "step" for the collapsed Worked block
-// under a response. Pure so it's unit-testable. search/read_note carry their
-// results as a known text format (see backend readtools.format_search /
-// format_note); we parse those into source refs the UI can list and open. Other
-// tools just get a friendly label.
+// under a response. Pure so it's unit-testable. Structured `sources` from the
+// result event are preferred; we fall back to parsing the known search/read_note
+// summary text (backend readtools) so older streams still render. Other tools
+// just get a friendly label.
 
-import type { ToolActivity } from "./transcript";
+import type { SourceRef, ToolActivity } from "./transcript";
 
-export interface SourceRef {
-  noteId: string;
-  domain: string;
-  /** A one-line, highlight-stripped snippet to show on the card. */
-  text: string;
-}
+export type { SourceRef };
 
 export interface ToolStep {
   id: string;
@@ -64,8 +59,16 @@ function noteSource(summary: string): SourceRef[] {
 }
 
 export function toolStep(t: ToolActivity): ToolStep {
-  let sources: SourceRef[] = [];
-  if (t.summary && t.name === "search") sources = searchSources(t.summary);
-  else if (t.summary && t.name === "read_note") sources = noteSource(t.summary);
+  let sources: SourceRef[];
+  if (t.sources && t.sources.length > 0) {
+    // Structured from the result event — just strip search highlight marks.
+    sources = t.sources.map((s) => ({ ...s, text: stripMarks(s.text) }));
+  } else if (t.summary && t.name === "search") {
+    sources = searchSources(t.summary);
+  } else if (t.summary && t.name === "read_note") {
+    sources = noteSource(t.summary);
+  } else {
+    sources = [];
+  }
   return { id: t.id, name: t.name, ok: t.ok, label: stepLabel(t.name), sources };
 }

@@ -3,7 +3,8 @@ services, and the shipped sidecars bound + pinned to their versions."""
 
 from datetime import UTC, datetime
 
-from jbrain.agent.loop import ToolContext
+from jbrain.agent.contracts import NoteSource
+from jbrain.agent.loop import ToolContext, ToolOutput
 from jbrain.agent.readtools import (
     TOOLS_DIR,
     build_entity_handlers,
@@ -138,19 +139,46 @@ async def test_search_tool_forwards_scope_and_query() -> None:
     assert fake.calls == [(CTX.session, "groceries", None, 3)]
 
 
+async def test_search_tool_surfaces_structured_sources() -> None:
+    results = [
+        result(note_id="a", snippet="<mark>eggs</mark>"),
+        result(note_id="b", domain="health"),
+    ]
+    out = await handlers(SearchResponse(degraded=False, results=results))["search"](
+        {"query": "x"}, CTX
+    )
+    assert isinstance(out, ToolOutput)
+    # One source per hit — id, domain, snippet — for the response's cards.
+    assert out.sources == (
+        NoteSource(note_id="a", domain="general", snippet="<mark>eggs</mark>"),
+        NoteSource(note_id="b", domain="health", snippet="hello world"),
+    )
+
+
 async def test_search_tool_rejects_empty_query() -> None:
     out = await handlers()["search"]({"query": "  "}, CTX)
-    assert "non-empty query" in out
+    assert isinstance(out, ToolOutput)
+    assert "non-empty query" in out and out.sources == ()
 
 
-async def test_read_note_found_and_missing() -> None:
-    tools = handlers(stored=note(note_id="abc", body="the note"))
-    assert "the note" in await tools["read_note"]({"note_id": "abc"}, CTX)
-    assert "in scope" in await tools["read_note"]({"note_id": "other"}, CTX)
+async def test_read_note_found_surfaces_a_source() -> None:
+    tools = handlers(stored=note(note_id="abc", domain="health", body="line one\nline two"))
+    out = await tools["read_note"]({"note_id": "abc"}, CTX)
+    assert isinstance(out, ToolOutput)
+    assert "line one" in out
+    assert out.sources == (NoteSource(note_id="abc", domain="health", snippet="line one"),)
+
+
+async def test_read_note_missing_has_no_source() -> None:
+    out = await handlers(stored=note(note_id="abc"))["read_note"]({"note_id": "other"}, CTX)
+    assert isinstance(out, ToolOutput)
+    assert "in scope" in out and out.sources == ()
 
 
 async def test_read_note_needs_an_id() -> None:
-    assert "needs a note_id" in await handlers()["read_note"]({}, CTX)
+    out = await handlers()["read_note"]({}, CTX)
+    assert isinstance(out, ToolOutput)
+    assert "needs a note_id" in out
 
 
 def test_format_entity_shows_kind_aliases_and_edges() -> None:

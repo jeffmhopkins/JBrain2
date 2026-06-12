@@ -6,12 +6,22 @@
 
 import type { ChatEvent, ViewPayload } from "./types";
 
+/** A source note a tool surfaced, ready for a card: id to open, domain for the
+ * dot, text for the line. */
+export interface SourceRef {
+  noteId: string;
+  domain: string;
+  text: string;
+}
+
 export interface ToolActivity {
   id: string;
   name: string;
   /** undefined while the call is in flight; set when its result arrives. */
   ok?: boolean;
   summary?: string;
+  /** Structured notes the tool surfaced, sent with the result event. */
+  sources?: SourceRef[];
 }
 
 export interface TranscriptMessage {
@@ -44,11 +54,17 @@ export function applyEvent(messages: TranscriptMessage[], event: ChatEvent): Tra
     case "tool_call":
       next.tools = [...next.tools, { id: event.id, name: event.name }];
       break;
-    case "tool_result":
+    case "tool_result": {
+      const sources = (event.sources ?? []).map((s) => ({
+        noteId: s.note_id,
+        domain: s.domain,
+        text: s.snippet,
+      }));
       next.tools = next.tools.map((t) =>
-        t.id === event.tool_call_id ? { ...t, ok: event.ok, summary: event.summary } : t,
+        t.id === event.tool_call_id ? { ...t, ok: event.ok, summary: event.summary, sources } : t,
       );
       break;
+    }
     case "tool_view":
       next.views = [...next.views, event.view];
       break;

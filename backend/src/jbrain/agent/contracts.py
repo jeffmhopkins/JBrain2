@@ -94,6 +94,17 @@ class NoteRef(BaseModel):
 CitationRef = Annotated[FactRef | EntityRef | NoteRef, Field(discriminator="kind")]
 
 
+class NoteSource(BaseModel):
+    """A note a read tool surfaced this turn, for the response's source cards:
+    enough to render (a domain dot + the snippet) and to open it (note_id). Sent
+    alongside the tool result so the PWA renders structured cards instead of
+    parsing the summary text."""
+
+    note_id: str
+    domain: str
+    snippet: str
+
+
 class ViewPayload(BaseModel):
     """A tool result's rich UI: a registered first-party component plus data-only
     typed slots (docs/DESIGN.md "Agent tool views"). Never model-authored markup;
@@ -130,6 +141,9 @@ class ToolResultEvent(BaseModel):
     tool_call_id: str
     ok: bool
     summary: str
+    # Structured notes the tool surfaced (search hits, the note read), for the
+    # response's source cards; empty for tools that cite nothing.
+    sources: list[NoteSource] = Field(default_factory=list)
 
 
 class ToolViewEvent(BaseModel):

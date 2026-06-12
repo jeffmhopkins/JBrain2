@@ -7,6 +7,17 @@ function tool(over: Partial<ToolActivity> & { name: string }): ToolActivity {
 }
 
 describe("toolStep", () => {
+  it("prefers structured sources over parsing the summary, stripping marks", () => {
+    const step = toolStep(
+      tool({
+        name: "search",
+        summary: "- note zzz [general] 2026-06-12: ignored",
+        sources: [{ noteId: "n1", domain: "health", text: "I was <mark>born</mark> in 1986" }],
+      }),
+    );
+    expect(step.sources).toEqual([{ noteId: "n1", domain: "health", text: "I was born in 1986" }]);
+  });
+
   it("parses search results into source refs (id, domain, mark-stripped text)", () => {
     const summary =
       "- note abc-123 [general] 2026-06-12: I was <mark>born</mark> March 19, 1986\n" +

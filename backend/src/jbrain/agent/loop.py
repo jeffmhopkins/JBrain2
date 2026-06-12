@@ -17,6 +17,7 @@ import structlog
 from jbrain.agent.contracts import (
     ChatEvent,
     DoneEvent,
+    NoteSource,
     TextDelta,
     ToolCallEvent,
     ToolResultEvent,
@@ -61,9 +62,23 @@ class ToolContext:
     scopes: tuple[str, ...]
 
 
+class ToolOutput(str):
+    """A tool observation that also carries the note sources the tool surfaced,
+    for the response's source cards. It *is* the model-facing text (a str
+    subclass), so handlers keep their `-> str` contract and existing call sites
+    are untouched; `_dispatch` pulls the sources off when they're present."""
+
+    sources: tuple[NoteSource, ...]
+
+    def __new__(cls, content: str, sources: tuple[NoteSource, ...] = ()) -> "ToolOutput":
+        out = super().__new__(cls, content)
+        out.sources = sources
+        return out
+
+
 # A tool handler runs one call and returns the observation text fed back to the
-# model. Raising marks the call an error (an observation the model can recover
-# from), never a crash.
+# model (a ToolOutput when it also has sources to surface). Raising marks the call
+# an error (an observation the model can recover from), never a crash.
 ToolHandler = Callable[[dict, ToolContext], Awaitable[str]]
 
 
@@ -81,6 +96,15 @@ class AgentResult:
     stop_reason: str  # end_turn | max_steps | too_many_errors | budget
     steps: int
     cost_tokens: int
+
+
+@dataclass(frozen=True)
+class _Dispatched:
+    """One tool call's outcome: the result fed back to the model, plus the sources
+    it surfaced for the UI."""
+
+    result: ToolResult
+    sources: tuple[NoteSource, ...]
 
 
 class AgentLoop:
@@ -141,10 +165,12 @@ class AgentLoop:
             results: list[ToolResult] = []
             any_error = False
             for call in turn.tool_calls:
-                result = await self._dispatch(call, tool_ctx)
-                results.append(result)
-                any_error = any_error or result.is_error
-                await self._record(idx, "tool", call.name, ok=not result.is_error, cost_tokens=0)
+                dispatched = await self._dispatch(call, tool_ctx)
+                results.append(dispatched.result)
+                any_error = any_error or dispatched.result.is_error
+                await self._record(
+                    idx, "tool", call.name, ok=not dispatched.result.is_error, cost_tokens=0
+                )
                 idx += 1
             messages.append(ToolResultMessage(results=results))
 
@@ -217,13 +243,18 @@ class AgentLoop:
             any_error = False
             for call in turn.tool_calls:
                 yield ToolCallEvent(id=call.id, name=call.name, arguments=call.arguments)
-                result = await self._dispatch(call, tool_ctx)
-                results.append(result)
-                any_error = any_error or result.is_error
+                dispatched = await self._dispatch(call, tool_ctx)
+                results.append(dispatched.result)
+                any_error = any_error or dispatched.result.is_error
                 yield ToolResultEvent(
-                    tool_call_id=call.id, ok=not result.is_error, summary=result.content
+                    tool_call_id=call.id,
+                    ok=not dispatched.result.is_error,
+                    summary=dispatched.result.content,
+                    sources=list(dispatched.sources),
                 )
-                await self._record(idx, "tool", call.name, ok=not result.is_error, cost_tokens=0)
+                await self._record(
+                    idx, "tool", call.name, ok=not dispatched.result.is_error, cost_tokens=0
+                )
                 idx += 1
             messages.append(ToolResultMessage(results=results))
 
@@ -234,20 +265,24 @@ class AgentLoop:
 
         yield DoneEvent(stop_reason="max_steps")
 
-    async def _dispatch(self, call: ToolCall, tool_ctx: ToolContext) -> ToolResult:
+    async def _dispatch(self, call: ToolCall, tool_ctx: ToolContext) -> _Dispatched:
         if call.name not in self._registry:
             # The model was only offered in-scope tools; an unknown name is a
             # model slip — surface it as a recoverable error, not a crash.
-            return ToolResult(
+            err = ToolResult(
                 tool_call_id=call.id, content=f"unknown tool: {call.name}", is_error=True
             )
+            return _Dispatched(err, ())
         tool = self._registry.get(call.name)
         try:
             observation = await tool.handler(call.arguments, tool_ctx)
         except Exception as exc:  # noqa: BLE001 — a tool error is an observation
             log.warning("agent.tool_error", tool=call.name, error=repr(exc))
-            return ToolResult(tool_call_id=call.id, content=f"error: {exc}", is_error=True)
-        return ToolResult(tool_call_id=call.id, content=str(observation), is_error=False)
+            err = ToolResult(tool_call_id=call.id, content=f"error: {exc}", is_error=True)
+            return _Dispatched(err, ())
+        sources = observation.sources if isinstance(observation, ToolOutput) else ()
+        result = ToolResult(tool_call_id=call.id, content=str(observation), is_error=False)
+        return _Dispatched(result, sources)
 
     async def _record(self, idx: int, kind: str, name: str, *, ok: bool, cost_tokens: int) -> None:
         if self._recorder is None:

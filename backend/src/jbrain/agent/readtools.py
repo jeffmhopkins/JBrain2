@@ -11,7 +11,8 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from jbrain.agent.connectortools import build_connector_handlers
-from jbrain.agent.loop import ToolContext, ToolHandler
+from jbrain.agent.contracts import NoteSource
+from jbrain.agent.loop import ToolContext, ToolHandler, ToolOutput
 from jbrain.agent.memory import MemoryService
 from jbrain.agent.memorytools import build_memory_handlers
 from jbrain.agent.proposals import ProposalRepo
@@ -47,6 +48,20 @@ def format_note(note: NoteInfo) -> str:
     return f"note {note.id} [{note.domain}] {note.created_at:%Y-%m-%d}\n{note.body}"
 
 
+def search_sources(resp: SearchResponse) -> tuple[NoteSource, ...]:
+    """The structured twin of format_search: a source per hit for the UI's cards."""
+    return tuple(
+        NoteSource(note_id=r.note_id, domain=r.domain, snippet=r.snippet.strip())
+        for r in resp.results
+    )
+
+
+def _note_snippet(body: str, limit: int = 140) -> str:
+    """A one-line preview of a note's body for its source card."""
+    line = next((ln.strip() for ln in body.splitlines() if ln.strip()), "")
+    return line[:limit]
+
+
 def format_entity(view: dict[str, Any]) -> str:
     """The structured/graph view: schema.org kind, names, facts-as-edges, inbound
     edges, and a mention count. Text-only now; an entity_card view comes with the
@@ -67,20 +82,23 @@ def format_entity(view: dict[str, Any]) -> str:
 
 
 def build_read_handlers(search: SearchService, notes: NotesRepo) -> dict[str, ToolHandler]:
-    async def search_tool(arguments: dict, ctx: ToolContext) -> str:
+    async def search_tool(arguments: dict, ctx: ToolContext) -> ToolOutput:
         query = str(arguments.get("query", "")).strip()
         if not query:
-            return "search needs a non-empty query."
+            return ToolOutput("search needs a non-empty query.")
         limit = int(arguments.get("limit", _DEFAULT_LIMIT))
         resp = await search.search(ctx.session, query, None, limit)
-        return format_search(resp)
+        return ToolOutput(format_search(resp), search_sources(resp))
 
-    async def read_note_tool(arguments: dict, ctx: ToolContext) -> str:
+    async def read_note_tool(arguments: dict, ctx: ToolContext) -> ToolOutput:
         note_id = str(arguments.get("note_id", "")).strip()
         if not note_id:
-            return "read_note needs a note_id."
+            return ToolOutput("read_note needs a note_id.")
         note = await notes.get_note(ctx.session, note_id)
-        return format_note(note) if note is not None else "No note with that id is in scope."
+        if note is None:
+            return ToolOutput("No note with that id is in scope.")
+        source = NoteSource(note_id=note.id, domain=note.domain, snippet=_note_snippet(note.body))
+        return ToolOutput(format_note(note), (source,))
 
     return {"search": search_tool, "read_note": read_note_tool}
 
