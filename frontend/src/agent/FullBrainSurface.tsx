@@ -55,11 +55,9 @@ export function FullBrainSurface({ fb }: { fb: FullBrain }): ReactNode {
     }
   }
 
-  const scope = fb.active
-    ? fb.active.domain_scopes.length
-      ? fb.active.domain_scopes.join(" · ")
-      : "all domains"
-    : "choose a session";
+  // Just the session's name up top — the panels are a swipe away (right for
+  // Sessions, left for Proposals). Tapping the name reopens the Sessions list.
+  const title = fb.active ? fb.active.title || "Untitled session" : "Full Brain";
 
   return (
     <div
@@ -69,25 +67,9 @@ export function FullBrainSurface({ fb }: { fb: FullBrain }): ReactNode {
       onTouchEnd={onTouchEnd}
     >
       <div className="fullbrain">
-        <div className="fb-scope">
-          <button
-            type="button"
-            className="fb-nav"
-            aria-label="Sessions"
-            onClick={() => setPanel("sessions")}
-          >
-            ‹ Sessions
-          </button>
-          <span className="scopechip">Full Brain · {scope}</span>
-          <button
-            type="button"
-            className="fb-nav"
-            aria-label="Proposals"
-            onClick={() => setPanel("proposals")}
-          >
-            Proposals ›
-          </button>
-        </div>
+        <button type="button" className="fb-title" onClick={() => setPanel("sessions")}>
+          {title}
+        </button>
 
         {fb.active ? (
           <main className="fb-chat" aria-label="Conversation">

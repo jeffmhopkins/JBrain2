@@ -1,9 +1,16 @@
 // The bottom-docked composer (docs/DESIGN.md "The omnibox home").
-// Fixed-height box; the segmented row morphs between the main trio and the
-// entry sub-types; Medical/Financial expose an in-box destination row and
-// the textarea absorbs the height difference.
+// Compact by default — two lines to type — and it grows with the text; the
+// segmented row morphs between the main trio and the entry sub-types, and
+// Medical/Financial expose an in-box destination row.
 
-import { type CSSProperties, type ReactNode, type TouchEvent, useRef, useState } from "react";
+import {
+  type CSSProperties,
+  type ReactNode,
+  type TouchEvent,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import { MODES, type Mode, ROWS, type SegState, tapSegment } from "../notes/modes";
 import type { SendInput } from "../notes/useNotes";
 import {
@@ -53,8 +60,21 @@ export function Omnibox({
   // Remember the chosen destination per mode so flipping modes keeps it.
   const [destinations, setDestinations] = useState<Partial<Record<Mode, string>>>({});
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
   const touchStartY = useRef<number | null>(null);
   const touchStartX = useRef<number | null>(null);
+
+  // Grow the box with the text: collapse to the CSS min (two lines), then take
+  // the content height. `text` and `seg.mode` are deliberate triggers — the
+  // content height is read off the DOM, which only reflects them after a render,
+  // so they don't appear in the closure for the linter to credit.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: re-measure on text/mode change
+  useLayoutEffect(() => {
+    const el = inputRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${el.scrollHeight}px`;
+  }, [text, seg.mode]);
 
   // Entering edit mode loads the note body; leaving it restores blank capture.
   const meta = MODES[seg.mode];
@@ -174,6 +194,7 @@ export function Omnibox({
         )}
 
         <textarea
+          ref={inputRef}
           className="composer-input"
           placeholder={meta.placeholder}
           value={text}

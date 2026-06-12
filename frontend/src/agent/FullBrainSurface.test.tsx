@@ -52,10 +52,10 @@ describe("FullBrainSurface", () => {
     expect(screen.getByText(/Choose a session to start/)).toBeInTheDocument();
   });
 
-  it("shows the active session's read scope with panels closed", async () => {
+  it("shows the active session's name up top with panels closed", async () => {
     render(<Harness d={deps()} />);
     await waitFor(() => expect(screen.getByLabelText("Conversation")).toBeInTheDocument());
-    expect(screen.getByText("Full Brain · general")).toBeInTheDocument();
+    expect(document.querySelector(".fb-title")?.textContent).toBe("Recap");
     expect(document.querySelector(".panel.left.open")).not.toBeInTheDocument();
   });
 
@@ -99,18 +99,15 @@ describe("FullBrainSurface", () => {
     fireEvent.click(screen.getByText("＋ New session — choose sources"));
     fireEvent.click(screen.getByRole("button", { name: /Start session/ }));
 
-    await waitFor(() =>
-      expect(screen.getByText("Full Brain · general · health")).toBeInTheDocument(),
-    );
+    await waitFor(() => expect(screen.getByLabelText("Conversation")).toBeInTheDocument());
+    expect(document.querySelector(".fb-title")?.textContent).toBe("labs");
   });
 
-  it("the nav buttons open each lateral panel", async () => {
+  it("tapping the session name reopens the Sessions panel", async () => {
     render(<Harness d={deps()} />);
     await waitFor(() => screen.getByLabelText("Conversation"));
 
-    fireEvent.click(screen.getByRole("button", { name: "Proposals" }));
-    expect(document.querySelector(".panel.right.open")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Sessions" }));
+    fireEvent.click(screen.getByRole("button", { name: "Recap" }));
     expect(document.querySelector(".panel.left.open")).toBeInTheDocument();
   });
 

@@ -127,9 +127,9 @@ describe("HomeScreen mode scoping", () => {
   it("Full Brain renders the live conversation surface inline; Entry sub-modes keep the stream", async () => {
     setup();
     fireEvent.click(screen.getByRole("tab", { name: "Full Brain" }));
-    // The real surface, not a placeholder: its scope chip and panel controls.
-    await waitFor(() => expect(screen.getByText("Full Brain · general")).toBeInTheDocument());
-    expect(screen.getByRole("button", { name: "Proposals" })).toBeInTheDocument();
+    // The real surface, not a placeholder: the session name and the transcript.
+    await waitFor(() => expect(screen.getByLabelText("Conversation")).toBeInTheDocument());
+    expect(document.querySelector(".fb-title")?.textContent).toBe("Recap");
 
     // Back to Entry, then into the Medical sub-mode: still the note stream.
     fireEvent.click(screen.getByRole("tab", { name: "Entry" }));
@@ -157,7 +157,7 @@ describe("HomeScreen mode scoping", () => {
       />,
     );
     fireEvent.click(screen.getByRole("tab", { name: "Full Brain" }));
-    await waitFor(() => screen.getByText("Full Brain · general"));
+    await waitFor(() => screen.getByLabelText("Conversation"));
 
     fireEvent.change(screen.getByLabelText("Composer"), { target: { value: "summarize my week" } });
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
