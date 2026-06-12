@@ -7,19 +7,28 @@ and never trusts the model to stop itself. Tool dispatch and the run record are
 the loop's concern; what a tool *does* is the handler's.
 """
 
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
 import structlog
 
+from jbrain.agent.contracts import (
+    ChatEvent,
+    DoneEvent,
+    TextDelta,
+    ToolCallEvent,
+    ToolResultEvent,
+)
 from jbrain.agent.toolregistry import ToolRegistry
 from jbrain.db.session import SessionContext
 from jbrain.llm import (
     AssistantMessage,
     LlmMessage,
     LlmRouter,
+    LlmTurn,
+    TextChunk,
     ToolCall,
     ToolResult,
     ToolResultMessage,
@@ -144,6 +153,86 @@ class AgentLoop:
                 return AgentResult(turn.text, "too_many_errors", step + 1, cost)
 
         return AgentResult("", "max_steps", self._g.max_steps, cost)
+
+    async def run_stream(
+        self,
+        *,
+        session: SessionContext,
+        scopes: Sequence[str],
+        conversation: Sequence[LlmMessage],
+    ) -> AsyncIterator[ChatEvent]:
+        """The streaming twin of `run`: the same turn loop and guardrails, but it
+        yields ChatEvents as they happen — `text_delta` per streamed chunk,
+        `tool_call`/`tool_result` at dispatch, and a terminal `done` carrying the
+        same stop reason `run` would return. /chat serializes these as SSE.
+
+        Guardrail accounting is identical to `run` so the two paths agree; the
+        answer is only ever streamed (the deltas), never re-emitted whole."""
+        scopes = tuple(scopes)
+        tools = self._registry.schemas_for(scopes)
+        messages: list[LlmMessage] = list(conversation)
+        tool_ctx = ToolContext(session=session, scopes=scopes)
+        cost = 0
+        consecutive_errors = 0
+        idx = 0
+
+        for _step in range(self._g.max_steps):
+            turn: LlmTurn | None = None
+            async for part in self._router.converse_stream(
+                self._task,
+                system=SYSTEM_PROMPT,
+                messages=messages,
+                tools=tools,
+                strength=SYSTEM_STRENGTH,
+            ):
+                if isinstance(part, TextChunk):
+                    if part.text:
+                        yield TextDelta(text=part.text)
+                else:
+                    turn = part
+            if turn is None:
+                # The adapter always closes a stream with an LlmTurn; guard the
+                # contract anyway rather than dereference None.
+                yield DoneEvent(stop_reason="end_turn")
+                return
+            cost += turn.usage.input_tokens + turn.usage.output_tokens
+            await self._record(
+                idx,
+                "model",
+                "converse",
+                ok=True,
+                cost_tokens=turn.usage.input_tokens + turn.usage.output_tokens,
+            )
+            idx += 1
+
+            if turn.stop_reason != "tool_use" or not turn.tool_calls:
+                yield DoneEvent(stop_reason="end_turn")
+                return
+            if cost >= self._g.max_cost_tokens:
+                yield DoneEvent(stop_reason="budget")
+                return
+
+            messages.append(AssistantMessage(text=turn.text, tool_calls=turn.tool_calls))
+            results: list[ToolResult] = []
+            any_error = False
+            for call in turn.tool_calls:
+                yield ToolCallEvent(id=call.id, name=call.name, arguments=call.arguments)
+                result = await self._dispatch(call, tool_ctx)
+                results.append(result)
+                any_error = any_error or result.is_error
+                yield ToolResultEvent(
+                    tool_call_id=call.id, ok=not result.is_error, summary=result.content
+                )
+                await self._record(idx, "tool", call.name, ok=not result.is_error, cost_tokens=0)
+                idx += 1
+            messages.append(ToolResultMessage(results=results))
+
+            consecutive_errors = consecutive_errors + 1 if any_error else 0
+            if consecutive_errors >= self._g.max_consecutive_tool_errors:
+                yield DoneEvent(stop_reason="too_many_errors")
+                return
+
+        yield DoneEvent(stop_reason="max_steps")
 
     async def _dispatch(self, call: ToolCall, tool_ctx: ToolContext) -> ToolResult:
         if call.name not in self._registry:
