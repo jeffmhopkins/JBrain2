@@ -521,6 +521,105 @@ def dedup_facts(facts: list[ExtractedFact]) -> list[ExtractedFact]:
     return kept
 
 
+# A trailing possessive ("Celine's" -> "Celine") and case are the usual gap
+# between an object_entity_ref and the mention it means; normalize both sides
+# before matching so a near-miss links instead of orphaning the edge.
+_POSSESSIVE = re.compile(r"['’]s?$")
+
+
+def _norm_ref(text: str) -> str:
+    return _POSSESSIVE.sub("", text.strip().lower())
+
+
+def link_relationship_objects(
+    facts: list[ExtractedFact], mentions: list[ExtractedMention]
+) -> list[ExtractedFact]:
+    """Deterministically bind a fact's object_entity_ref to a mention.
+
+    A near-miss ref snaps to its mention for ANY object edge; a DROPPED ref is
+    recovered only for `relationship` facts (a state fact renders its value_json
+    instead, so it has no display gap to justify the inference risk).
+
+    The model is the weak link (docs/research/fix-options/1): grok sets
+    object_entity_ref inconsistently — sometimes naming the object, sometimes
+    folding it into the statement, sometimes near-missing the mention's name.
+    That run-to-run flip swings a relationship edge between linked and unlinked,
+    so the property renders its whole statement sentence instead of the object
+    entity's name (the `spouse -> "I have a wife Celine Hopkins."` report). This
+    net makes the binding a pure function of (mentions, fact): a near-miss ref
+    snaps to its mention; a dropped ref is recovered from value_json or the one
+    non-subject mention the statement names. The object only ever binds to a
+    mention the model ALREADY emitted — never a minted entity — so it cannot
+    hallucinate a person (the risk that ruled out auto-minting, Option B2a).
+    """
+    if not mentions:
+        return facts
+    by_norm: dict[str, str] = {}
+    for m in mentions:
+        for surface in (m.name, m.surface_text):
+            by_norm.setdefault(_norm_ref(surface), m.name)
+
+    linked: list[ExtractedFact] = []
+    for fact in facts:
+        ref = fact.object_entity_ref
+        if ref:
+            # Snap a near-miss to the mention it means. Safe for ANY object edge
+            # (a relationship, or a state like worksFor/homeLocation): it only
+            # re-points an emitted ref at an emitted mention, never invents one.
+            if not any(m.name == ref for m in mentions):
+                snapped = by_norm.get(_norm_ref(ref))
+                if snapped is not None and snapped != ref:
+                    log.info(
+                        "analysis.object_ref_snapped",
+                        predicate=fact.predicate,
+                        was=ref,
+                        mention=snapped,
+                    )
+                    fact = replace(fact, object_entity_ref=snapped)
+        elif fact.kind == "relationship":
+            # Recovery (inferring a DROPPED object) is bounded to relationship
+            # facts: a state fact already renders its value_json place/value, so
+            # there is no display gap to justify the inference's risk.
+            recovered = _recover_object_ref(fact, mentions, by_norm)
+            if recovered is not None:
+                log.info(
+                    "analysis.object_ref_recovered", predicate=fact.predicate, mention=recovered
+                )
+                fact = replace(fact, object_entity_ref=recovered)
+        linked.append(fact)
+    return linked
+
+
+def _recover_object_ref(
+    fact: ExtractedFact, mentions: list[ExtractedMention], by_norm: dict[str, str]
+) -> str | None:
+    """Recover a dropped object_entity_ref from the relationship fact's payload.
+
+    Two deterministic signals, in order: a single-datum value_json the model
+    sometimes folds the object into ({"value"|"name"|"place": X}), then the
+    mentions whose surface the STATEMENT names verbatim. Either must resolve to
+    exactly ONE non-subject mention to bind — ambiguity or no match leaves the
+    edge unlinked rather than guess the wrong person.
+    """
+    if isinstance(fact.value_json, dict):
+        for key in ("value", "name", "place"):
+            raw = fact.value_json.get(key)
+            if isinstance(raw, str):
+                hit = by_norm.get(_norm_ref(raw))
+                if hit is not None and hit != fact.entity_ref:
+                    return hit
+
+    statement = fact.statement.lower()
+    named = set()
+    for m in mentions:
+        if m.name == fact.entity_ref:
+            continue
+        norm = _norm_ref(m.surface_text)
+        if norm and re.search(rf"\b{re.escape(norm)}\b", statement):
+            named.add(m.name)
+    return next(iter(named)) if len(named) == 1 else None
+
+
 def parse_extraction(payload: Any, *, anchor: datetime | None = None) -> Extraction:
     """Validate the parsed JSON into typed extraction objects.
 
@@ -635,6 +734,12 @@ def parse_extraction(payload: Any, *, anchor: datetime | None = None) -> Extract
                 fact = replace(fact, temporal=temporal)
             repaired_facts.append(fact)
         facts = repaired_facts
+
+    # Bind each relationship object to a mention deterministically BEFORE dedup,
+    # so the dedup identity key (which includes object_entity_ref) and the
+    # supersession chain see the stable, recovered edge — not the model's
+    # run-to-run flip between a linked object and one folded into the statement.
+    facts = link_relationship_objects(facts, mentions)
 
     # Dedup BEFORE the cap: restatements must not eat salience slots.
     facts = dedup_facts(facts)

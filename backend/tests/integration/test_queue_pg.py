@@ -418,3 +418,97 @@ async def test_backfill_unembedded_notes_targets_null_embeddings_once(
 
     # The queued job suppresses duplicates on the next sweep.
     assert await queue.backfill_unembedded_notes(maker, OWNER) == 0
+
+
+async def _entity(session: AsyncSession, name: str) -> str:
+    eid = str(uuid.uuid4())
+    await session.execute(
+        text(
+            "INSERT INTO app.entities (id, kind, canonical_name, domain_code)"
+            " VALUES (:id, 'Person', :name, 'general')"
+        ),
+        {"id": eid, "name": name},
+    )
+    return eid
+
+
+async def _fact(
+    session: AsyncSession,
+    *,
+    note_id: str,
+    entity_id: str,
+    kind: str,
+    object_entity_id: str | None,
+    derived_from: str | None = None,
+) -> None:
+    await session.execute(
+        text(
+            "INSERT INTO app.facts (id, entity_id, predicate, kind, statement, assertion,"
+            " reported_at, note_id, extractor, prompt_version, domain_code,"
+            " object_entity_id, derived_from_fact_id)"
+            " VALUES (:id, :ent, 'spouse', :kind, 'stmt', 'asserted', now(), :note,"
+            " 'x', 'v', 'general', :obj, :derived)"
+        ),
+        {
+            "id": str(uuid.uuid4()),
+            "ent": entity_id,
+            "kind": kind,
+            "note": note_id,
+            "obj": object_entity_id,
+            "derived": derived_from,
+        },
+    )
+
+
+async def test_backfill_relinks_only_notes_with_unlinked_relationship_edges(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    repo = SqlNotesRepo(maker)
+    unlinked, _ = await repo.create_note(
+        OWNER, client_id="rl-1", domain="general", destination=None, body="I have a wife Celine."
+    )
+    linked, _ = await repo.create_note(
+        OWNER, client_id="rl-2", domain="general", destination=None, body="married Celine"
+    )
+    scalar, _ = await repo.create_note(
+        OWNER, client_id="rl-3", domain="general", destination=None, body="I am 6'4."
+    )
+    async with scoped_session(maker, OWNER) as session:
+        for note_id in (unlinked.id, linked.id, scalar.id):
+            await session.execute(
+                text("UPDATE app.notes SET ingest_state = 'indexed' WHERE id = :id"),
+                {"id": note_id},
+            )
+        me = await _entity(session, "Me")
+        celine = await _entity(session, "Celine")
+        # The reported edge: a relationship fact whose object never bound.
+        await _fact(
+            session, note_id=unlinked.id, entity_id=me, kind="relationship", object_entity_id=None
+        )
+        # A properly linked edge is left alone.
+        await _fact(
+            session, note_id=linked.id, entity_id=me, kind="relationship", object_entity_id=celine
+        )
+        # A scalar fact with a null object is not a defect — never re-analyzed.
+        await _fact(
+            session, note_id=scalar.id, entity_id=me, kind="attribute", object_entity_id=None
+        )
+    await quiesce_jobs(maker)
+
+    assert await queue.backfill_unlinked_relationship_facts(maker, OWNER) == 1
+    async with scoped_session(maker, OWNER) as session:
+        targets = set(
+            (
+                await session.execute(
+                    text(
+                        "SELECT payload->>'note_id' FROM app.jobs"
+                        " WHERE kind = 'analyze_note' AND status = 'queued'"
+                    )
+                )
+            ).scalars()
+        )
+    assert unlinked.id in targets
+    assert targets.isdisjoint({linked.id, scalar.id})
+
+    # The in-flight re-run suppresses a duplicate on the next sweep.
+    assert await queue.backfill_unlinked_relationship_facts(maker, OWNER) == 0

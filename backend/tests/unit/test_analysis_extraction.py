@@ -7,9 +7,11 @@ import pytest
 
 from jbrain.analysis.extraction import (
     ExtractedFact,
+    ExtractedMention,
     ExtractedTemporal,
     ExtractionError,
     dedup_facts,
+    link_relationship_objects,
     normalize_future_assertion,
     parse_datetime,
     parse_extraction,
@@ -950,3 +952,150 @@ def test_drift_predicates_normalize_to_canonical() -> None:
         "temporal_tokens": [],
     }
     assert [f.predicate for f in parse_extraction(payload).facts] == ["name.legal"]
+
+
+# ---- Deterministic relationship-object linking (link_relationship_objects) ----
+
+
+def _rel(
+    *,
+    statement: str,
+    object_ref: str | None,
+    value_json: dict[str, Any] | None = None,
+    entity_ref: str = "Me",
+    kind: str = "relationship",
+    predicate: str = "spouse",
+) -> ExtractedFact:
+    return ExtractedFact(
+        predicate=predicate,
+        qualifier="",
+        kind=kind,
+        statement=statement,
+        value_json=value_json,
+        assertion="asserted",
+        entity_ref=entity_ref,
+        object_entity_ref=object_ref,
+        temporal=None,
+        domain="general",
+        confidence=0.9,
+    )
+
+
+def _person(name: str, surface: str | None = None) -> ExtractedMention:
+    return ExtractedMention(name=name, kind="Person", surface_text=surface or name)
+
+
+def test_link_snaps_a_near_miss_ref_to_its_mention() -> None:
+    # The model named the object but case/possessive drifts off the mention.
+    mentions = [_person("Me", "I"), _person("Celine")]
+    fact = _rel(statement="Jeff owns Celine's bike.", object_ref="Celine's", predicate="owns")
+    [linked] = link_relationship_objects([fact], mentions)
+    assert linked.object_entity_ref == "Celine"
+
+
+def test_link_recovers_dropped_ref_from_the_statement() -> None:
+    # The exact report: spouse edge with the object folded into the sentence.
+    mentions = [_person("Me", "I"), _person("Celine Hopkins")]
+    fact = _rel(statement="I have a wife Celine Hopkins.", object_ref=None)
+    [linked] = link_relationship_objects([fact], mentions)
+    assert linked.object_entity_ref == "Celine Hopkins"
+
+
+def test_link_recovers_dropped_ref_from_value_json() -> None:
+    mentions = [_person("Me", "I"), _person("Celine Hopkins")]
+    fact = _rel(statement="My spouse.", object_ref=None, value_json={"value": "Celine Hopkins"})
+    [linked] = link_relationship_objects([fact], mentions)
+    assert linked.object_entity_ref == "Celine Hopkins"
+
+
+def test_link_leaves_ambiguous_statement_unlinked() -> None:
+    # Two non-subject people named — never guess which one the edge points at.
+    mentions = [_person("Me", "I"), _person("Celine"), _person("Sarah")]
+    fact = _rel(statement="Celine and Sarah came over.", object_ref=None)
+    [linked] = link_relationship_objects([fact], mentions)
+    assert linked.object_entity_ref is None
+
+
+def test_link_ignores_non_relationship_facts() -> None:
+    # "Jeff ate Celine's dinner" is an event, not a relationship — the dropped
+    # person is the separate entity-recall issue, not this net's job.
+    mentions = [_person("Me", "I"), _person("Celine")]
+    fact = _rel(
+        statement="Jeff ate Celine's dinner.", object_ref=None, kind="event", predicate="ate"
+    )
+    [linked] = link_relationship_objects([fact], mentions)
+    assert linked.object_entity_ref is None
+
+
+def _org(name: str) -> ExtractedMention:
+    return ExtractedMention(name=name, kind="Organization", surface_text=name)
+
+
+def test_link_snaps_a_state_facts_near_miss_object() -> None:
+    # worksFor/homeLocation are `state`, not `relationship`, yet still carry an
+    # object — the snap re-points a case/possessive near-miss at its mention
+    # regardless of kind (it never partial-matches "Umbrella" → "Umbrella Corp").
+    mentions = [_person("Felix"), _org("Umbrella Corp")]
+    fact = _rel(
+        statement="Felix works for Umbrella Corp.",
+        object_ref="umbrella corp",
+        entity_ref="Felix",
+        kind="state",
+        predicate="worksFor",
+    )
+    [linked] = link_relationship_objects([fact], mentions)
+    assert linked.object_entity_ref == "Umbrella Corp"
+
+
+def test_link_does_not_infer_a_dropped_object_for_state_facts() -> None:
+    # A state fact's missing object is left alone — value_json carries its value
+    # and inferring a person/org from prose is the risk reserved for none.
+    mentions = [_person("Felix"), _org("Umbrella Corp")]
+    fact = _rel(
+        statement="Felix works for Umbrella Corp.",
+        object_ref=None,
+        entity_ref="Felix",
+        kind="state",
+        predicate="worksFor",
+    )
+    [linked] = link_relationship_objects([fact], mentions)
+    assert linked.object_entity_ref is None
+
+
+def test_link_does_not_bind_the_subject_to_itself() -> None:
+    # A self-naming statement must not recover its own subject as the object.
+    mentions = [_person("Me", "I")]
+    fact = _rel(statement="I am married.", object_ref=None)
+    [linked] = link_relationship_objects([fact], mentions)
+    assert linked.object_entity_ref is None
+
+
+def test_parse_extraction_links_relationship_objects() -> None:
+    # End to end through parse_extraction: the wired pass binds the edge so the
+    # stored fact points at the object node instead of rendering its statement.
+    payload = {
+        "title": "About me",
+        "tags": ["family", "marriage", "intro"],
+        "mentions": [
+            {"name": "Me", "kind": "Person", "surface_text": "I"},
+            {"name": "Celine Hopkins", "kind": "Person", "surface_text": "Celine Hopkins"},
+        ],
+        "facts": [
+            {
+                "predicate": "spouse",
+                "qualifier": "",
+                "kind": "relationship",
+                "statement": "I have a wife Celine Hopkins.",
+                "value_json": None,
+                "assertion": "asserted",
+                "entity_ref": "Me",
+                "object_entity_ref": None,
+                "temporal": None,
+                "domain": "general",
+                "confidence": 0.95,
+            }
+        ],
+        "temporal_tokens": [],
+    }
+    [fact] = parse_extraction(payload).facts
+    assert fact.object_entity_ref == "Celine Hopkins"
