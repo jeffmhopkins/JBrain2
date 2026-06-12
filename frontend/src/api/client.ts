@@ -19,6 +19,7 @@ import type {
   ProposalDetail,
   ProposalSummary,
   SessionCreate,
+  TranscriptTurn,
 } from "../agent/types";
 
 export interface Principal {
@@ -644,6 +645,11 @@ export const api = {
   async createSession(body: SessionCreate): Promise<AgentSession> {
     const response = await request("/api/sessions", jsonInit("POST", body));
     return (await response.json()) as AgentSession;
+  },
+
+  async getTranscript(sessionId: string): Promise<TranscriptTurn[]> {
+    const response = await request(`/api/sessions/${encodeURIComponent(sessionId)}/transcript`);
+    return (await response.json()) as TranscriptTurn[];
   },
 
   // POST /api/chat streams the agent turn as SSE; the body is a ReadableStream

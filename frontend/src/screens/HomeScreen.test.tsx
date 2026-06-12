@@ -21,6 +21,7 @@ function fbDeps(): FullBrainDeps {
     createSession: vi.fn(),
     chat: async function* () {},
     listProposals: vi.fn(async () => []),
+    getTranscript: vi.fn(async () => []),
   };
 }
 

@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { FullBrainSurface } from "./FullBrainSurface";
-import type { AgentSession, ChatEvent, ChatRequest } from "./types";
+import type { AgentSession, ChatEvent, ChatRequest, TranscriptTurn } from "./types";
 import { type FullBrainDeps, useFullBrain } from "./useFullBrain";
 
 function session(over: Partial<AgentSession> = {}): AgentSession {
@@ -26,6 +26,7 @@ function deps(over: Partial<FullBrainDeps> = {}): FullBrainDeps {
     createSession: vi.fn(async () => session({ id: "new" })),
     chat: noChat,
     listProposals: vi.fn(async () => []),
+    getTranscript: vi.fn(async () => []),
     ...over,
   };
 }
@@ -50,6 +51,33 @@ describe("FullBrainSurface", () => {
     render(<Harness d={deps({ listSessions: vi.fn(async () => []) })} />);
     await waitFor(() => expect(document.querySelector(".panel.left.open")).toBeInTheDocument());
     expect(screen.getByText(/Choose a session to start/)).toBeInTheDocument();
+  });
+
+  it("replays the active session's stored transcript on open", async () => {
+    const getTranscript = vi.fn(
+      async (): Promise<TranscriptTurn[]> => [
+        { role: "user", content: "remind me?", tools: [] },
+        {
+          role: "assistant",
+          content: "Here is the recap.",
+          tools: [
+            {
+              id: "c1",
+              name: "search",
+              ok: true,
+              sources: [{ note_id: "n1", domain: "general", snippet: "the note" }],
+            },
+          ],
+        },
+      ],
+    );
+    render(<Harness d={deps({ getTranscript })} />);
+    await waitFor(() => screen.getByLabelText("Conversation"));
+    await waitFor(() => expect(screen.getByText("remind me?")).toBeInTheDocument());
+    expect(screen.getByText("Here is the recap.")).toBeInTheDocument();
+    // The persisted tool sources rebuild the Worked block.
+    expect(screen.getByRole("button", { name: /Worked/ }).textContent).toContain("1 source");
+    expect(getTranscript).toHaveBeenCalledWith("s1");
   });
 
   it("shows the active session's name up top with panels closed", async () => {
