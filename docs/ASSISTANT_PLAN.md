@@ -176,6 +176,45 @@ change is owner-approved through a Proposal tree, and the three new RLS tables
 prove domain isolation. (`wiki-restructure`, skill learning, and prompt
 self-editing are explicitly deferred — see below.)
 
+## Phase 4 build — parallel tracks
+
+The Phase-4 PRs are sequenced by dependency but **fan out into ~4 concurrent
+workstreams** after one small foundation. Three accelerators make this possible and
+already exist: the **fake LLM adapter** (no one waits on real models), the **mocks**
+(`docs/mocks/assistant-*.html` are the frontend's spec today), and **independent
+migrations** (each new table is its own RLS-tested PR).
+
+**Branch strategy.** Merge this design branch to `main` first (one docs PR); every
+track/PR below is a short-lived feature branch off `main`, branch + PR + CI green
+(CLAUDE.md). Parallel work runs in isolated worktrees, one branch per PR.
+
+**Wave 0 — foundation (lands first; small, unblocks everyone):**
+- **P4.1 adapter tool-calling** — `ToolDef`/`ToolUse`/`ToolResult`/`stop_reason`,
+  `tools=` on `complete`, fake scripting. Everyone then tests against the fake.
+- **Contracts PR** — the shared shapes others build against, in one small PR: the
+  streaming event schema (`text_delta`/`tool_call`/`tool_result`/`tool_view`/
+  `job_enqueued`/`done`); the `ViewPayload` + `CitationRef` types and the
+  permission-class enum (`read`/`mutate`/`external`/`sensitive`) → policy mapping;
+  the `.tool` sidecar frontmatter schema; and the **migration set DDL** for every
+  new table, each with its RLS policy + an isolation-test stub.
+
+**Then four tracks run concurrently:**
+
+| Track | Owns (PRs) | Builds independently of the loop | Integrates |
+|---|---|---|---|
+| **A — loop / critical path** | P4.4 loop + read-only tools → P4.5 `/chat` streaming backend | the turn loop, guardrails, run-log, dispatch over `scoped_session` | the spine B/C/D wire into |
+| **B — schema & security** | P4.3 sessions · P4.6 memory + classifier · P4.8 proposals · P4.9 connector cache + egress guard + medical | migrations, repositories, the fail-closed classifier, tree cascade / dependency-safe enact, egress guard, all RLS tests | tools plug into A; egress kind needs P4.8 |
+| **C — tooling substrate** | P4.2 registry + CI guard · P4.7 reflexion verifiers | sidecar loader/registry, version guard, pure deterministic verifiers | registry feeds A; reflexion wraps A's turns |
+| **D — frontend** | P4.5 UI + the view registry | Full Brain surface, lateral swipe, transcript + `tool_view` renderer, view components, Sessions + Proposals pages — against the mocks + contracts | wires to live `/chat` when A lands |
+
+**Wave 2 — integration:** plug B's tools (recall/`remember`, `propose_correction`,
+connectors) and C's reflexion into A's loop; connect D to the live stream; the
+egress-Proposal path (P4.9 × P4.8); end-to-end fake-adapter + testcontainers tests.
+
+**Critical path** = P4.1 → P4.4 → P4.5-backend → Wave-2 integration; all of B, C, and
+D overlap it. So after a one-PR foundation, roughly four people/agents can work at
+once without blocking each other.
+
 ## Phase 5 — workflow engine alignment
 
 - `agent_runs`/`agent_steps` **become** workflow `runs` (the loop emits the same
