@@ -78,11 +78,23 @@ interface Props {
   session: AgentSession;
   /** Injected for tests; defaults to the live SSE client. */
   chat?: ChatFn;
+  /** Pre-fills the composer (carried from the home Full Brain box). */
+  initialDraft?: string;
+  /** Open the lateral panels. The swipe is an enhancement; these visible
+   * buttons are the reliable path (gestures proved flaky on real devices). */
+  onOpenSessions?: () => void;
+  onOpenProposals?: () => void;
 }
 
-export function FullBrainScreen({ session, chat = api.chat }: Props): ReactNode {
+export function FullBrainScreen({
+  session,
+  chat = api.chat,
+  initialDraft = "",
+  onOpenSessions,
+  onOpenProposals,
+}: Props): ReactNode {
   const [messages, setMessages] = useState<TranscriptMessage[]>([]);
-  const [draft, setDraft] = useState("");
+  const [draft, setDraft] = useState(initialDraft);
   const [busy, setBusy] = useState(false);
   const endRef = useRef<HTMLDivElement | null>(null);
 
@@ -113,7 +125,13 @@ export function FullBrainScreen({ session, chat = api.chat }: Props): ReactNode 
   return (
     <div className="fullbrain">
       <div className="fb-scope">
+        <button type="button" className="fb-nav" aria-label="Sessions" onClick={onOpenSessions}>
+          ‹ Sessions
+        </button>
         <span className="scopechip">Full Brain · {scope}</span>
+        <button type="button" className="fb-nav" aria-label="Proposals" onClick={onOpenProposals}>
+          Proposals ›
+        </button>
       </div>
 
       <main className="fb-chat" aria-label="Conversation">

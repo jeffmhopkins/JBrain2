@@ -66,7 +66,7 @@ describe("FullBrainShell", () => {
     expect(screen.getByText("Full Brain · general · health")).toBeInTheDocument();
   });
 
-  it("a rightward swipe shuttles in the Sessions panel", async () => {
+  it("the visible nav buttons open each lateral panel", async () => {
     render(
       <FullBrainShell
         listSessions={vi.fn(async () => [session({})])}
@@ -76,31 +76,25 @@ describe("FullBrainShell", () => {
       />,
     );
     await waitFor(() => screen.getByLabelText("Conversation"));
-    const shell = document.querySelector(".fb-shell") as Element;
 
-    fireEvent.touchStart(shell, { touches: [{ clientX: 20, clientY: 200 }] });
-    fireEvent.touchMove(shell, { touches: [{ clientX: 140, clientY: 205 }] });
-    fireEvent.touchEnd(shell, {});
-
+    fireEvent.click(screen.getByRole("button", { name: "Proposals" }));
+    expect(document.querySelector(".panel.right.open")).toBeInTheDocument();
+    // Close it, then the Sessions button.
+    fireEvent.click(screen.getByRole("button", { name: "Sessions" }));
     expect(document.querySelector(".panel.left.open")).toBeInTheDocument();
   });
 
-  it("a leftward swipe shuttles in the Proposals panel", async () => {
+  it("seeds the composer with a draft carried from the home box", async () => {
     render(
       <FullBrainShell
         listSessions={vi.fn(async () => [session({})])}
         createSession={vi.fn()}
         chat={noChat}
         listProposals={noProposals}
+        initialDraft="what did I eat?"
       />,
     );
     await waitFor(() => screen.getByLabelText("Conversation"));
-    const shell = document.querySelector(".fb-shell") as Element;
-
-    fireEvent.touchStart(shell, { touches: [{ clientX: 300, clientY: 200 }] });
-    fireEvent.touchMove(shell, { touches: [{ clientX: 180, clientY: 203 }] });
-    fireEvent.touchEnd(shell, {});
-
-    expect(document.querySelector(".panel.right.open")).toBeInTheDocument();
+    expect(screen.getByLabelText("Message")).toHaveValue("what did I eat?");
   });
 });

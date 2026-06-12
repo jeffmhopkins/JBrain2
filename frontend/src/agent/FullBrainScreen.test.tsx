@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { FullBrainScreen, type TranscriptMessage, applyEvent } from "./FullBrainScreen";
 import type { AgentSession, ChatEvent, ChatRequest } from "./types";
 
@@ -99,6 +99,31 @@ describe("FullBrainScreen", () => {
   it("shows the session's read scope", () => {
     render(<FullBrainScreen session={SESSION} chat={fakeChat([]).fn} />);
     expect(screen.getByText("Full Brain · general · health")).toBeInTheDocument();
+  });
+
+  it("the nav buttons fire the panel-open callbacks", () => {
+    const onOpenSessions = vi.fn();
+    const onOpenProposals = vi.fn();
+    render(
+      <FullBrainScreen
+        session={SESSION}
+        chat={fakeChat([]).fn}
+        onOpenSessions={onOpenSessions}
+        onOpenProposals={onOpenProposals}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Sessions" }));
+    fireEvent.click(screen.getByRole("button", { name: "Proposals" }));
+    expect(onOpenSessions).toHaveBeenCalledTimes(1);
+    expect(onOpenProposals).toHaveBeenCalledTimes(1);
+  });
+
+  it("pre-fills the composer from initialDraft so the home message carries in", () => {
+    render(<FullBrainScreen session={SESSION} chat={fakeChat([]).fn} initialDraft="seeded q" />);
+    const box = screen.getByLabelText("Message");
+    expect(box).toHaveValue("seeded q");
+    // And it's immediately sendable.
+    expect(screen.getByLabelText("Send")).not.toBeDisabled();
   });
 
   it("recovers from a stream error by closing the turn", async () => {

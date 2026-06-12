@@ -3075,6 +3075,23 @@ button.small {
 }
 .fb-shell .fb-scope {
   padding: 8px 16px 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.fb-shell .fb-nav {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-2);
+  border-radius: 999px;
+  padding: 3px 11px;
+  font: inherit;
+  font-size: 12px;
+  white-space: nowrap;
+}
+/* Proposals sits on the right edge, mirroring its right-side panel. */
+.fb-shell .fb-nav:last-of-type {
+  margin-left: auto;
 }
 .fb-shell .scopechip {
   font-size: 11px;
