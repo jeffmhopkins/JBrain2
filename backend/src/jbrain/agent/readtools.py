@@ -12,6 +12,7 @@ from typing import Any, Protocol
 
 from jbrain.agent.connectortools import build_connector_handlers
 from jbrain.agent.contracts import EntityRef, NoteSource
+from jbrain.agent.listtools import build_list_handlers
 from jbrain.agent.loop import ToolContext, ToolHandler, ToolOutput
 from jbrain.agent.memory import MemoryService
 from jbrain.agent.memorytools import build_memory_handlers
@@ -20,6 +21,7 @@ from jbrain.agent.proposaltools import build_proposal_handlers
 from jbrain.agent.toolregistry import ToolRegistry, load_registry
 from jbrain.connectors.base import ConnectorRegistry
 from jbrain.db.session import SessionContext
+from jbrain.lists.service import ListsRepo
 from jbrain.notes.service import NoteInfo, NotesRepo
 from jbrain.search.service import SearchResponse, SearchService
 
@@ -166,17 +168,20 @@ def build_registry(
     memory: MemoryService,
     proposals: ProposalRepo,
     connectors: ConnectorRegistry,
+    lists: ListsRepo,
 ) -> ToolRegistry:
     """The agent's tool registry: every shipped sidecar bound to its handler — the
-    read tools, the Tier-A memory tools, propose_correction (which stages a
-    Proposal, never writes), and the egress connector tools (which stage an egress
-    Proposal, never call out). Fails at startup if a sidecar and handler don't
-    match exactly, so a new .tool can never ship unwired."""
+    read tools, the Tier-A memory tools, the list tools (which write the owner's
+    own data directly), propose_correction (which stages a Proposal, never
+    writes), and the egress connector tools (which stage an egress Proposal, never
+    call out). Fails at startup if a sidecar and handler don't match exactly, so a
+    new .tool can never ship unwired."""
     return load_registry(
         TOOLS_DIR,
         {
             **build_read_handlers(search, notes),
             **build_entity_handlers(entities),
+            **build_list_handlers(lists),
             **build_memory_handlers(memory),
             **build_proposal_handlers(proposals),
             **build_connector_handlers(connectors, proposals),

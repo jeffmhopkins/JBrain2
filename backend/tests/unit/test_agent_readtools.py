@@ -254,12 +254,19 @@ def test_build_registry_binds_the_shipped_sidecars() -> None:
         object(),  # type: ignore[arg-type]
         object(),  # type: ignore[arg-type]
         ConnectorRegistry(medical_connectors("http://rx", "http://mp")),
+        object(),  # type: ignore[arg-type]
     )
     shipped = {
         "search",
         "read_note",
         "read_entity",
         "find_entity",
+        "read_lists",
+        "read_list",
+        "create_list",
+        "add_list_item",
+        "check_list_item",
+        "remove_list_item",
         "recall",
         "memory_read",
         "memory_edit",
@@ -295,6 +302,36 @@ def test_sidecars_pinned_to_their_versions() -> None:
             "find_entity",
             1,
             "6643a41ad270a3db2e85fd0fad27427e1c12665fdd953827e699918d99291674",
+        ),
+        "read_lists.tool": (
+            "read_lists",
+            1,
+            "6006f9bc4e80e0dc264686d15520574e34f09919c315a947f59df9ca24621b72",
+        ),
+        "read_list.tool": (
+            "read_list",
+            1,
+            "d8d8ba35f781e7485b395a4c47b6f10a21beb020b28a86039a5e6a907579d562",
+        ),
+        "create_list.tool": (
+            "create_list",
+            1,
+            "38b00d1ef10ae6ca013bed8b797a4220c49528f05bd2a8da0ca9abf4937eaf33",
+        ),
+        "add_list_item.tool": (
+            "add_list_item",
+            1,
+            "b0f1dedb8bcacfad5af1b7ae495dea059e7a164965b71d3cda96324bfbaea49e",
+        ),
+        "check_list_item.tool": (
+            "check_list_item",
+            1,
+            "cb981f0e953158d154aca08da4040059cee7b2608b881e16bf08e910ad27004d",
+        ),
+        "remove_list_item.tool": (
+            "remove_list_item",
+            1,
+            "a2b43edbfe32b4397bebbf11f029ea086d6ad3d6391acb01bcb4c76937a0b54c",
         ),
         "recall.tool": (
             "recall",
