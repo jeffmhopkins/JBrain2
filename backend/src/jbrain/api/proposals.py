@@ -20,6 +20,7 @@ from jbrain.api.notes import ctx_for
 from jbrain.auth.service import PrincipalInfo
 from jbrain.connectors.service import ConnectorService
 from jbrain.notes.repo import SqlNotesRepo
+from jbrain.queue import JobEnqueuer
 
 router = APIRouter(prefix="/proposals", dependencies=[Depends(owner_only)])
 
@@ -36,6 +37,10 @@ def get_notes_repo(request: Request) -> SqlNotesRepo:
 
 def get_connector_service(request: Request) -> ConnectorService:
     return cast(ConnectorService, request.app.state.connector_service)
+
+
+def get_job_queue(request: Request) -> JobEnqueuer:
+    return cast(JobEnqueuer, request.app.state.job_queue)
 
 
 class ProposalSummaryOut(BaseModel):
@@ -128,7 +133,9 @@ async def enact_proposal(request: Request, principal: OwnerDep, proposal_id: str
     repo = get_proposals(request)
     # One executor dispatching by leaf op: agent-note kinds re-enter the pipeline;
     # an egress leaf fires its connector (the call the owner just approved).
-    executor = build_leaf_executor(get_notes_repo(request), get_connector_service(request))
+    executor = build_leaf_executor(
+        get_notes_repo(request), get_connector_service(request), get_job_queue(request)
+    )
     try:
         plan = await repo.enact(ctx_for(principal), proposal_id, executor)
     except ValueError as exc:

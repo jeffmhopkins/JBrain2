@@ -70,6 +70,13 @@ class SqlNotesRepo:
         provenance: str = "human",
         source_ref: str | None = None,
     ) -> tuple[NoteInfo, bool]:
+        # FUTURE: ingestion (`ingest_note`) is enqueued by each caller (the notes
+        # API, the proposal executor) rather than here — so a new write path can
+        # silently forget it and leave the note stuck at 'pending' (this is how
+        # proposal-enacted notes never indexed). Fold the enqueue into a single
+        # "note created" trigger (here or a DB notify) so every path indexes
+        # uniformly. Needs a JobEnqueuer on the repo (kept out today to keep it
+        # storage-only); do it when there's a third write path.
         # Client capture time wins when supplied (the offline outbox flushes
         # later, so server now() would be wrong); omitting the key lets the
         # column's server_default stamp now() instead of writing NULL.

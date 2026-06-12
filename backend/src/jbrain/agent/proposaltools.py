@@ -21,6 +21,7 @@ from jbrain.agent.proposals import (
 )
 from jbrain.db.session import SessionContext
 from jbrain.notes.repo import SqlNotesRepo
+from jbrain.queue import JobEnqueuer
 
 _TITLE_LEN = 80
 
@@ -63,16 +64,17 @@ def build_proposal_handlers(proposals: ProposalRepo) -> dict[str, ToolHandler]:
     return {"propose_correction": propose_correction_tool}
 
 
-def agent_note_executor(notes: SqlNotesRepo) -> LeafExecutor:
+def agent_note_executor(notes: SqlNotesRepo, jobs: JobEnqueuer) -> LeafExecutor:
     """Enact a correction/knowledge leaf as an agent-authored note re-entering the
     ingestion pipeline (#7). Idempotent on the node id, so a re-enact never
-    duplicates the note."""
+    duplicates the note — and it enqueues the same `ingest_note` job a captured
+    note does, so it actually indexes and gets analyzed (not stuck at 'pending')."""
 
     async def execute(ctx: SessionContext, proposal: ProposalRow, node: NodeRow) -> None:
         body = str(node.preview.get("body", "")).strip()
         if not body:
             return
-        await notes.create_note(
+        note, created = await notes.create_note(
             ctx,
             client_id=f"proposal-{node.id}",
             domain=str(node.preview.get("domain") or proposal.domain),
@@ -81,5 +83,9 @@ def agent_note_executor(notes: SqlNotesRepo) -> LeafExecutor:
             provenance="agent",
             source_ref=f"proposal:{proposal.id}",
         )
+        # Only a fresh insert needs ingestion; a re-enact is idempotent (already
+        # has a note and a job). Without this the note never leaves 'pending'.
+        if created:
+            await jobs.enqueue(ctx, "ingest_note", {"note_id": note.id})
 
     return execute
