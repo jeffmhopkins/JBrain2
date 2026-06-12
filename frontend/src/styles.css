@@ -3897,6 +3897,56 @@ button.small {
   margin-bottom: 6px;
 }
 
+/* list_card — the owner's checklist, full-bleed rows inside the view card */
+.fb-shell .tv-list-head {
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+.fb-shell .tv-list-items {
+  list-style: none;
+  margin: 0 -12px -10px; /* full-bleed the rows to the card edges */
+  padding: 0;
+}
+.fb-shell .tv-list-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--border);
+  font-size: 13px;
+}
+.fb-shell .tv-list-box {
+  width: 15px;
+  height: 15px;
+  flex: none;
+  border: 1.5px solid var(--text-3);
+  border-radius: 4px;
+}
+.fb-shell .tv-list-row.checked .tv-list-box {
+  border-color: var(--green);
+  background: var(--green);
+}
+.fb-shell .tv-list-row.checked .tv-list-box::after {
+  content: "";
+  display: block;
+  width: 4px;
+  height: 8px;
+  margin: 1px auto;
+  border: solid #0e0f11;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+.fb-shell .tv-list-row.checked .tv-list-body {
+  color: var(--text-3);
+  text-decoration: line-through;
+}
+.fb-shell .tv-list-empty {
+  padding: 8px 0 0;
+  font-size: 12px;
+  color: var(--text-3);
+}
+
 /* Proposal tree (the review-inbox detail; docs/ASSISTANT.md "Staging & approval") */
 .fb-shell .proposal-tree {
   flex: 1;

@@ -60,8 +60,33 @@ describe("ToolView registry", () => {
     expect(getByText("Dr. Lin")).toBeInTheDocument();
   });
 
+  it("renders a list_card checklist with checked state", () => {
+    const { getByText } = render(
+      <ToolView
+        payload={payload({
+          view: "list_card",
+          data: {
+            list_id: "L1",
+            title: "Groceries",
+            items: [
+              { id: "a", body: "eggs", checked: false },
+              { id: "b", body: "milk", checked: true },
+            ],
+          },
+        })}
+      />,
+    );
+    expect(getByText("Groceries")).toBeInTheDocument();
+    expect(getByText("eggs")).toBeInTheDocument();
+    // The checked item carries the checked row class (theme draws the tick).
+    expect(getByText("milk").closest(".tv-list-row")).toHaveClass("checked");
+  });
+
   it("tolerates missing/extra slots without crashing", () => {
     const { container } = render(<ToolView payload={payload({ view: "data_table" })} />);
     expect(container.querySelector("table")).toBeInTheDocument();
+    // A list_card with no items renders the empty row, not a crash.
+    const empty = render(<ToolView payload={payload({ view: "list_card" })} />);
+    expect(empty.getByText("empty")).toBeInTheDocument();
   });
 });

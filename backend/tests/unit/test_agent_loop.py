@@ -14,6 +14,8 @@ from jbrain.agent.contracts import (
     ToolCallEvent,
     ToolResultEvent,
     ToolSpec,
+    ToolViewEvent,
+    ViewPayload,
 )
 from jbrain.agent.loop import (
     SYSTEM_PROMPT,
@@ -60,6 +62,13 @@ async def search_sourced(arguments: dict, ctx: ToolContext) -> ToolOutput:
 
 async def propose_sourced(arguments: dict, ctx: ToolContext) -> ToolOutput:
     return ToolOutput("staged it", proposal=ProposalRef(proposal_id="p9", kind="correction"))
+
+
+async def view_tool(arguments: dict, ctx: ToolContext) -> ToolOutput:
+    return ToolOutput(
+        "the list",
+        view=ViewPayload(view="list_card", data={"title": "Groceries"}),
+    )
 
 
 def router_with(turns: list[LlmTurn]) -> tuple[LlmRouter, FakeLlmClient]:
@@ -240,6 +249,31 @@ async def test_run_stream_tool_result_carries_a_staged_proposal() -> None:
     events = await collect(AgentLoop(router, registry_with(make_tool("propose", propose_sourced))))
     result = next(e for e in events if isinstance(e, ToolResultEvent))
     assert result.proposal == ProposalRef(proposal_id="p9", kind="correction")
+
+
+async def test_run_stream_emits_a_tool_view_after_its_result() -> None:
+    turns = [
+        LlmTurn("", (ToolCall("c1", "read_list", {}),), "tool_use", LlmUsage(1, 1)),
+        LlmTurn("done", (), "end_turn", LlmUsage(1, 1)),
+    ]
+    router, _ = stream_router_with(turns)
+    events = await collect(AgentLoop(router, registry_with(make_tool("read_list", view_tool))))
+    # The view rides as its own event, right after the result it belongs to.
+    types = [type(e).__name__ for e in events]
+    assert types.index("ToolViewEvent") == types.index("ToolResultEvent") + 1
+    view = next(e for e in events if isinstance(e, ToolViewEvent))
+    assert view.tool_call_id == "c1" and view.view.view == "list_card"
+    assert view.view.data == {"title": "Groceries"}
+
+
+async def test_run_stream_no_view_when_tool_has_none() -> None:
+    turns = [
+        LlmTurn("", (ToolCall("c1", "search", {}),), "tool_use", LlmUsage(1, 1)),
+        LlmTurn("done", (), "end_turn", LlmUsage(1, 1)),
+    ]
+    router, _ = stream_router_with(turns)
+    events = await collect(AgentLoop(router, registry_with(make_tool("search", search_sourced))))
+    assert not any(isinstance(e, ToolViewEvent) for e in events)
 
 
 async def test_run_stream_tool_error_surfaces_in_result_event() -> None:
