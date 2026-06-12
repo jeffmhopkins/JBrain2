@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Assistant · entity pill — 3 size alternatives</title>
+<style>
+  :root{
+    --bg:#0E0F11; --surface:#17181B; --surface-2:#1E2024; --border:#26282C;
+    --text:#E6E7E9; --text-2:#9A9DA3; --text-3:#5C5F66;
+    --steel:#7FA7C9; --green:#8FBC9A; --amber:#C9A36A; --rose:#CF8A8F; --violet:#A493C9;
+    --steel-tint:rgba(127,167,201,.13); --green-tint:rgba(143,188,154,.13);
+    --amber-tint:rgba(201,163,106,.13); --rose-tint:rgba(207,138,143,.13); --violet-tint:rgba(164,147,201,.13);
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+  body{background:#000;color:var(--text);display:flex;flex-wrap:wrap;justify-content:center;align-items:flex-start;gap:22px;padding:22px 14px 60px;min-height:100vh;}
+  svg{fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;}
+
+  .col{display:flex;flex-direction:column;align-items:center;gap:12px;width:360px;}
+  .caption{padding:0 6px;color:var(--text-2);font-size:12.5px;line-height:1.5;}
+  .caption b{color:var(--text);font-weight:600;}
+  .caption .tag{display:inline-block;font-size:11px;padding:2px 9px;border-radius:999px;margin-bottom:6px;background:var(--steel-tint);color:var(--steel);}
+  .caption .a{color:var(--green);} .caption .b{color:var(--amber);} .caption .c{color:var(--violet);}
+
+  .phone{width:360px;height:560px;background:var(--bg);border:1px solid #2a2c30;border-radius:30px;overflow:hidden;position:relative;display:flex;flex-direction:column;}
+  .title{text-align:center;font-size:14px;font-weight:600;color:var(--text);padding:14px 0 8px;flex:none;}
+  .chat{flex:1;overflow-y:auto;padding:6px 16px 16px;display:flex;flex-direction:column;justify-content:flex-end;gap:10px;}
+
+  .bubble{max-width:82%;padding:11px 14px;border-radius:16px;font-size:15px;line-height:1.45;}
+  .me{align-self:flex-end;background:var(--steel-tint);border:1px solid rgba(127,167,201,.25);border-bottom-right-radius:5px;}
+  .ai{align-self:flex-start;background:var(--surface);border:1px solid var(--border);border-bottom-left-radius:5px;display:flex;flex-direction:column;gap:8px;}
+  .ai b{font-weight:700;}
+  .worked{font-size:12px;color:var(--text-3);display:flex;align-items:center;gap:8px;border-top:1px solid var(--border);padding-top:8px;}
+  .worked .dotb{width:4px;height:4px;border-radius:999px;background:var(--text-3);}
+  .worked .chev{margin-left:auto;width:13px;height:13px;color:var(--text-3);}
+
+  /* ---- shared entity row ---- */
+  .ents{display:flex;flex-wrap:wrap;gap:6px;align-items:center;}
+
+  /* A — compact pill: the current pill, dialled down (smaller dot, tighter
+       padding, 11px text). Same affordance, ~40% less mass. */
+  .chipA{display:inline-flex;align-items:center;gap:5px;padding:2px 9px 2px 7px;border:1px solid var(--border);
+    border-radius:999px;background:var(--surface-2);color:var(--text);font-size:11px;font-weight:500;line-height:1.6;cursor:pointer;transition:.12s;}
+  .chipA .d{width:5px;height:5px;border-radius:999px;flex:none;}
+  .chipA:active,.chipA.hit{background:var(--steel-tint);border-color:rgba(127,167,201,.4);}
+
+  /* B — ghost mention: no border/fill, just a leading dot + label in the
+       entity's domain colour, like an @mention. Lightest footprint. */
+  .lead{font-size:11px;color:var(--text-3);letter-spacing:.04em;}
+  .chipB{display:inline-flex;align-items:center;gap:5px;border:none;background:none;padding:2px 2px;font-size:12.5px;font-weight:600;cursor:pointer;transition:.12s;}
+  .chipB .d{width:6px;height:6px;border-radius:999px;flex:none;}
+  .chipB:active,.chipB.hit{opacity:.6;}
+
+  /* C — inline text link: the entity rides inside the sentence with a dotted
+       domain-tinted underline (same family as the temporal underline). Zero
+       extra row; reads as prose but taps through. */
+  .linkC{border:none;background:none;padding:0;font:inherit;font-weight:700;color:var(--text);cursor:pointer;
+    border-bottom:1.5px dotted var(--green);padding-bottom:1px;transition:.12s;}
+  .linkC:active,.linkC.hit{background:var(--green-tint);}
+
+  /* toast */
+  .toast{position:absolute;left:50%;bottom:18px;transform:translate(-50%,14px);background:var(--surface-2);
+    border:1px solid var(--border);border-radius:999px;padding:8px 16px;font-size:12.5px;color:var(--steel);
+    opacity:0;pointer-events:none;transition:.18s;white-space:nowrap;z-index:5;}
+  .toast.show{transform:translate(-50%,0);opacity:1;}
+</style>
+</head>
+<body>
+
+  <!-- ============ A : compact pill ============ -->
+  <div class="col">
+    <div class="caption">
+      <span class="tag">Entity pill · alternatives</span><br/>
+      <b class="a">A — Compact pill.</b> The current pill, dialled down: 11px text, a 5px dot, tighter padding,
+      a hairline border. Keeps the familiar tappable-chip affordance — just ~40% less mass. Safest change.
+    </div>
+    <div class="phone" id="phoneA">
+      <div class="title">One</div>
+      <div class="chat">
+        <div class="bubble me">Who am I</div>
+        <div class="bubble ai">
+          <div>You are <b>Jeff Hopkins</b>, born March 19, 1986.</div>
+          <div class="worked"><span class="dotb"></span> Worked · 2 steps · 7 sources
+            <svg class="chev" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></svg></div>
+          <div class="ents">
+            <button class="chipA" data-ent="Jeff Hopkins"><span class="d" style="background:var(--green)"></span>Jeff Hopkins</button>
+            <button class="chipA" data-ent="Celine Hopkins"><span class="d" style="background:var(--rose)"></span>Celine Hopkins</button>
+            <button class="chipA" data-ent="Acme Corp"><span class="d" style="background:var(--steel)"></span>Acme Corp</button>
+          </div>
+        </div>
+      </div>
+      <div class="toast" id="toastA"></div>
+    </div>
+  </div>
+
+  <!-- ============ B : ghost mention ============ -->
+  <div class="col">
+    <div class="caption">
+      <span class="tag">Entity pill · alternatives</span><br/>
+      <b class="b">B — Ghost mention.</b> No border, no fill — a leading dot and the name in its domain colour,
+      like an <code>@mention</code>. Lightest footprint; several read as a quiet linked list. Most minimal.
+    </div>
+    <div class="phone" id="phoneB">
+      <div class="title">One</div>
+      <div class="chat">
+        <div class="bubble me">Who am I</div>
+        <div class="bubble ai">
+          <div>You are <b>Jeff Hopkins</b>, born March 19, 1986.</div>
+          <div class="worked"><span class="dotb"></span> Worked · 2 steps · 7 sources
+            <svg class="chev" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></svg></div>
+          <div class="ents">
+            <span class="lead">Linked</span>
+            <button class="chipB" data-ent="Jeff Hopkins" style="color:var(--green)"><span class="d" style="background:var(--green)"></span>Jeff Hopkins</button>
+            <button class="chipB" data-ent="Celine Hopkins" style="color:var(--rose)"><span class="d" style="background:var(--rose)"></span>Celine Hopkins</button>
+            <button class="chipB" data-ent="Acme Corp" style="color:var(--steel)"><span class="d" style="background:var(--steel)"></span>Acme Corp</button>
+          </div>
+        </div>
+      </div>
+      <div class="toast" id="toastB"></div>
+    </div>
+  </div>
+
+  <!-- ============ C : inline text link ============ -->
+  <div class="col">
+    <div class="caption">
+      <span class="tag">Entity pill · alternatives</span><br/>
+      <b class="c">C — Inline link.</b> The entity rides inside the sentence with a dotted, domain-tinted underline
+      (same family as the temporal underline). No extra row at all — reads as prose, taps through. Densest, but only
+      works when the name actually appears in the answer text.
+    </div>
+    <div class="phone" id="phoneC">
+      <div class="title">One</div>
+      <div class="chat">
+        <div class="bubble me">Who am I</div>
+        <div class="bubble ai">
+          <div>You are
+            <button class="linkC" data-ent="Jeff Hopkins" style="border-color:var(--green)">Jeff Hopkins</button>,
+            born March 19, 1986. Married to
+            <button class="linkC" data-ent="Celine Hopkins" style="border-color:var(--rose)">Celine Hopkins</button>;
+            you work at
+            <button class="linkC" data-ent="Acme Corp" style="border-color:var(--steel)">Acme Corp</button>.</div>
+          <div class="worked"><span class="dotb"></span> Worked · 2 steps · 7 sources
+            <svg class="chev" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></svg></div>
+        </div>
+      </div>
+      <div class="toast" id="toastC"></div>
+    </div>
+  </div>
+
+<script>
+  // Each entity control is a tap target: flash + a toast standing in for the
+  // entity-page navigation the real app does (onOpenEntity).
+  for (const phone of ["A","B","C"]) {
+    const root = document.getElementById("phone"+phone);
+    const toast = document.getElementById("toast"+phone);
+    let t;
+    root.addEventListener("click", (e) => {
+      const btn = e.target.closest("[data-ent]");
+      if (!btn) return;
+      btn.classList.add("hit");
+      setTimeout(() => btn.classList.remove("hit"), 220);
+      toast.textContent = "→ Opening " + btn.dataset.ent;
+      toast.classList.add("show");
+      clearTimeout(t);
+      t = setTimeout(() => toast.classList.remove("show"), 1400);
+    });
+  }
+</script>
+</body>
+</html>
