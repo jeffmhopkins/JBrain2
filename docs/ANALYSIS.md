@@ -141,6 +141,21 @@ reschedules. Past-tense references convert `expected` → `occurred`.
   confirmed.
 - Relational aliases ("Mom", "the Honda") live in `entity_aliases` —
   unambiguous in a single-owner corpus.
+- **Relationship object binding is deterministic [decided: a pipeline net, not
+  the model's job]**: a `relationship` fact's value IS its object node, so the
+  property must render the object entity's NAME, never the statement sentence
+  it's buried in (`spouse → "I have a wife Celine Hopkins."` is the bug). The
+  model sets `object_entity_ref` inconsistently — sometimes naming the object,
+  sometimes folding it into the statement, sometimes near-missing the mention —
+  and that run-to-run flip swings an edge between linked and unlinked across
+  re-extractions. `link_relationship_objects` makes the binding a pure function
+  of `(mentions, fact)`: a near-miss ref (case/possessive drift) snaps to its
+  mention; a dropped ref is recovered from `value_json` or the single
+  non-subject mention the statement names. The object only ever binds to a
+  mention the model ALREADY emitted — never a minted entity — so it cannot
+  hallucinate a person (the risk that ruled out auto-minting). Notes written
+  before the net are re-analyzed by a self-limiting startup backfill keyed on
+  unlinked primary relationship edges.
 - **Domain placement [decided: inherit + promote]**: an entity inherits the
   domain of the note that created it; a later mention from a *less*
   restrictive domain proposes promotion via the review inbox. Facts always

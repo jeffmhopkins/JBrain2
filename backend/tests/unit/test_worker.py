@@ -19,6 +19,7 @@ class FakeQueue:
         self.backfills = 0
         self.embed_backfills = 0
         self.analyze_backfills = 0
+        self.relink_backfills = 0
         self.consolidate_backfills = 0
         self.purge_backfills = 0
         self.backfill_error: Exception | None = None
@@ -54,6 +55,10 @@ class FakeQueue:
         self.analyze_backfills += 1
         return 0
 
+    async def backfill_unlinked_relationship_facts(self, maker: Any, ctx: Any) -> int:
+        self.relink_backfills += 1
+        return 0
+
     async def backfill_consolidate(self, maker: Any, ctx: Any) -> int:
         self.consolidate_backfills += 1
         return 0
@@ -67,6 +72,7 @@ def install(monkeypatch: pytest.MonkeyPatch, fake: FakeQueue) -> None:
         "backfill_pending_notes",
         "backfill_unembedded_notes",
         "backfill_unanalyzed_notes",
+        "backfill_unlinked_relationship_facts",
         "backfill_consolidate",
     ):
         monkeypatch.setattr(worker.queue, name, getattr(fake, name))
@@ -227,9 +233,10 @@ async def test_run_loop_backfills_once_then_polls(monkeypatch: pytest.MonkeyPatc
         await worker.run_loop(None, {"ingest_note": handler})  # type: ignore[arg-type]
     assert done == ["n1"]
     assert fake.backfills == 1
-    # Embed/analyze/purge backfills all ride the same once-per-boot pass.
+    # Embed/analyze/relink/purge backfills all ride the same once-per-boot pass.
     assert fake.embed_backfills == 1
     assert fake.analyze_backfills == 1
+    assert fake.relink_backfills == 1
     assert fake.purge_backfills == 1
     assert fake.consolidate_backfills == 1
 

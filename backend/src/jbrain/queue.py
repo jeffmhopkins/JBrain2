@@ -380,6 +380,50 @@ async def backfill_unanalyzed_notes(
         return cast(CursorResult[Any], result).rowcount or 0
 
 
+async def backfill_unlinked_relationship_facts(
+    maker: async_sessionmaker[AsyncSession], ctx: SessionContext
+) -> int:
+    """Re-analyze notes whose relationship edges never bound to their object.
+
+    A primary relationship fact (spouse, worksFor, owns…) with a NULL object
+    is an extraction defect: the model folded the object person into the
+    statement instead of naming it, so the property renders its whole sentence
+    instead of the entity ("spouse → 'I have a wife Celine Hopkins.'"). The
+    deterministic linking net (extraction.link_relationship_objects) recovers
+    that binding on re-analysis, so this sweep self-heals the corpus written
+    before it shipped. It self-limits: a note drops out the moment its edge
+    binds, and the active-job guard keeps a single re-run in flight per note.
+    """
+    async with scoped_session(maker, ctx) as session:
+        result = await session.execute(
+            text(
+                """
+                INSERT INTO app.jobs (id, kind, payload)
+                SELECT gen_random_uuid(), 'analyze_note',
+                       jsonb_build_object('note_id', n.id)
+                FROM app.notes n
+                WHERE n.ingest_state = 'indexed'
+                  AND n.deleted_at IS NULL
+                  AND EXISTS (
+                      SELECT 1 FROM app.facts f
+                      WHERE f.note_id = n.id
+                        AND f.kind = 'relationship'
+                        AND f.status = 'active'
+                        AND f.object_entity_id IS NULL
+                        AND f.derived_from_fact_id IS NULL
+                  )
+                  AND NOT EXISTS (
+                      SELECT 1 FROM app.jobs j
+                      WHERE j.kind = 'analyze_note'
+                        AND j.status IN ('queued', 'running')
+                        AND j.payload ->> 'note_id' = n.id::text
+                  )
+                """
+            )
+        )
+        return cast(CursorResult[Any], result).rowcount or 0
+
+
 async def backfill_consolidate(maker: async_sessionmaker[AsyncSession], ctx: SessionContext) -> int:
     """Enqueue ONE consolidate_predicates sweep when none is pending — the boot
     self-heal that normalizes drift predicates left by an older prompt version

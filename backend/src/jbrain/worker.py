@@ -101,6 +101,12 @@ async def run_loop(maker: async_sessionmaker[AsyncSession], handlers: dict[str, 
                 # Notes ingested before extraction shipped never analyze
                 # until edited; the missing note_analysis row marks them.
                 analyses = await queue.backfill_unanalyzed_notes(maker, queue.SYSTEM_CTX)
+                # Relationship edges left unlinked by a sloppy model render their
+                # whole statement instead of the object entity; re-analysis binds
+                # them via the deterministic linking net.
+                relinks = await queue.backfill_unlinked_relationship_facts(
+                    maker, queue.SYSTEM_CTX
+                )
                 # Notes deleted before the purge cascade shipped left orphaned
                 # derived artifacts (incl. resolved review history quoting
                 # their text); sweep them once per boot.
@@ -113,6 +119,7 @@ async def run_loop(maker: async_sessionmaker[AsyncSession], handlers: dict[str, 
                     ingest_jobs=ingests,
                     embed_jobs=embeds,
                     analyze_jobs=analyses,
+                    relink_jobs=relinks,
                     purged_notes=purged,
                     consolidate_jobs=consolidations,
                 )

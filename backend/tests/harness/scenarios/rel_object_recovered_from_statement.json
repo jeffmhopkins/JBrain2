@@ -1,0 +1,32 @@
+{
+  "name": "a dropped object_entity_ref is recovered from the statement",
+  "description": "The reported failure: the model emits the spouse edge with object_entity_ref=null and folds the wife into the statement ('I have a wife Celine Hopkins.'), so the property would render its whole sentence instead of the entity name. The deterministic linking net (extraction.link_relationship_objects) recovers the binding from the single non-subject Person mention the statement names — proven here by the materialized inverse on Celine's stream, which only exists when the forward edge resolved its object. Pins docs/ANALYSIS.md 'Entities' object-linking against the model's run-to-run flip.",
+  "steps": [
+    {
+      "domain": "general",
+      "created_at": "2026-06-12T09:00:00-06:00",
+      "body": "My name is Jeff and I have a wife Celine Hopkins.",
+      "extraction": {
+        "title": "About me",
+        "tags": ["intro", "family", "marriage"],
+        "mentions": [
+          {"name": "Me", "kind": "Person", "surface_text": "I"},
+          {"name": "Celine Hopkins", "kind": "Person", "surface_text": "Celine Hopkins"}
+        ],
+        "facts": [
+          {"predicate": "spouse", "qualifier": "", "kind": "relationship", "statement": "I have a wife Celine Hopkins.", "value_json": null, "assertion": "asserted", "entity_ref": "Me", "object_entity_ref": null, "temporal": null, "domain": "general", "confidence": 0.95}
+        ],
+        "temporal_tokens": []
+      }
+    }
+  ],
+  "expect": {
+    "facts": [
+      {"entity": "Me", "predicate": "spouse", "kind": "relationship", "value_contains": "Celine", "status": "active"},
+      {"entity": "Celine Hopkins", "predicate": "spouse", "kind": "relationship", "status": "active"}
+    ],
+    "entities": [
+      {"name": "Celine Hopkins", "kind": "Person", "status": "provisional"}
+    ]
+  }
+}

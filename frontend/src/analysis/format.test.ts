@@ -95,4 +95,18 @@ describe("fmtQuantity / factValue imperial display", () => {
     expect(factValue(fact({ name: "Bella", species: "dog" }))).toBe("Bella");
     expect(factValue(fact({ place: "Denver" }))).toBe("Denver");
   });
+
+  it("a relationship edge renders its object entity name, never the statement", () => {
+    // The 'spouse → "I have a wife Celine Hopkins."' report: the value IS the
+    // linked object node, so a resolved object name wins over the prose.
+    const spouse: FactOut = {
+      ...fact(null),
+      predicate: "spouse",
+      kind: "relationship",
+      statement: "I have a wife Celine Hopkins.",
+      object_entity_id: "ent-celine",
+      object_entity_name: "Celine Hopkins",
+    };
+    expect(factValue(spouse)).toBe("Celine Hopkins");
+  });
 });
