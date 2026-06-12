@@ -3,7 +3,7 @@
 // omnibox — the universal composer — drives `send`. Lifting it here is what lets
 // the composer live apart from the conversation it feeds.
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { api } from "../api/client";
 import {
   type TranscriptMessage,
@@ -113,19 +113,23 @@ export function useFullBrain(enabled: boolean, deps: FullBrainDeps = LIVE): Full
     };
   }, [enabled, listSessions]);
 
-  // The review inbox; failures just leave it empty.
-  useEffect(() => {
-    if (!enabled) return;
-    let stale = false;
+  // The review inbox. Reload it whenever the panel is opened and after each turn
+  // — the agent can stage a Proposal mid-conversation, so a once-on-mount fetch
+  // would leave the list stale (it'd read "Nothing staged"). Failures leave it
+  // empty.
+  const reloadProposals = useCallback(() => {
     listProposals()
-      .then((all) => {
-        if (!stale) setProposals(all);
-      })
+      .then((all) => setProposals(all))
       .catch(() => {});
-    return () => {
-      stale = true;
-    };
-  }, [enabled, listProposals]);
+  }, [listProposals]);
+
+  useEffect(() => {
+    if (enabled) reloadProposals();
+  }, [enabled, reloadProposals]);
+
+  useEffect(() => {
+    if (enabled && panel === "proposals") reloadProposals();
+  }, [enabled, panel, reloadProposals]);
 
   // Replay the active session's stored transcript on open/switch (keyed on id, so
   // a live turn's own setMessages never triggers a reload). A failure just leaves
@@ -164,6 +168,8 @@ export function useFullBrain(enabled: boolean, deps: FullBrainDeps = LIVE): Full
       setMessages((ms) => endStream(ms, "error"));
     } finally {
       setBusy(false);
+      // The turn may have staged a Proposal — refresh the review inbox.
+      reloadProposals();
     }
   }
 
