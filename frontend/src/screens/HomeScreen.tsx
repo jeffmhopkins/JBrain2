@@ -1,4 +1,6 @@
 import { type CSSProperties, useEffect, useRef, useState } from "react";
+import { FullBrainSurface } from "../agent/FullBrainSurface";
+import { type FullBrainDeps, useFullBrain } from "../agent/useFullBrain";
 import { Omnibox } from "../components/Omnibox";
 import { Stream } from "../components/Stream";
 import { MODES, type SegState } from "../notes/modes";
@@ -13,8 +15,8 @@ interface HomeScreenProps {
   onOpenNote: (item: StreamItem) => void;
   onOpenSearch: () => void;
   onOpenLauncher: () => void;
-  /** Open the Full Brain surface, seeded with whatever was typed in the box. */
-  onOpenBrain: (initialMessage?: string) => void;
+  /** Injected in tests; defaults to the live API client. */
+  fbDeps?: FullBrainDeps;
 }
 
 interface Toast {
@@ -29,11 +31,15 @@ export function HomeScreen({
   onOpenNote,
   onOpenSearch,
   onOpenLauncher,
-  onOpenBrain,
+  fbDeps,
 }: HomeScreenProps) {
   const [seg, setSeg] = useState<SegState>({ row: "main", mode: "entry" });
   const [toast, setToast] = useState<Toast | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Full Brain is integral to the home page: the transcript and its lateral
+  // panels render in the body while the omnibox below acts as its composer. The
+  // controller only does work while the mode is on screen.
+  const fb = useFullBrain(seg.mode === "fullbrain", fbDeps);
 
   function showToast(message: string, action?: Toast["action"]) {
     if (toastTimer.current) clearTimeout(toastTimer.current);
@@ -60,15 +66,15 @@ export function HomeScreen({
 
   return (
     <>
-      {conversational ? (
+      {seg.mode === "fullbrain" ? (
+        <FullBrainSurface fb={fb} />
+      ) : conversational ? (
         <main className="stream conv-area">
           <p
             className="conv-empty"
             style={{ "--mode": meta.color, "--mode-tint": meta.tint } as CSSProperties}
           >
-            {seg.mode === "fullbrain"
-              ? "type and send to open Full Brain — full tool access"
-              : "conversations arrive in Phase 4 — typing starts one then"}
+            conversations arrive in Phase 4 — typing starts one then
           </p>
         </main>
       ) : (
@@ -106,11 +112,12 @@ export function HomeScreen({
         onSegChange={setSeg}
         onSend={(input) => void notes.send(input)}
         onConversation={(body) => {
-          // Full Brain opens the real conversation surface, seeded with the
-          // typed message; Research's read-only surface is still Phase 4.
-          if (seg.mode === "fullbrain") onOpenBrain(body);
+          // The omnibox is Full Brain's composer: a send streams into the
+          // transcript above. Research's read-only surface is still Phase 4.
+          if (seg.mode === "fullbrain") fb.send(body);
           else showToast("Conversations arrive in Phase 4");
         }}
+        busy={seg.mode === "fullbrain" && fb.busy}
         onOpenLauncher={onOpenLauncher}
       />
       {toast && (

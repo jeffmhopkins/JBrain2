@@ -33,8 +33,10 @@ interface OmniboxProps {
   onSegChange: (seg: SegState) => void;
   /** Non-null = the box is PATCHing an existing note instead of capturing. */
   onSend: (input: SendInput) => void;
-  /** The body carries across so the conversation surface opens seeded. */
+  /** Full Brain routes the typed body to the live transcript; Research toasts. */
   onConversation: (body: string) => void;
+  /** A turn is streaming — block another send and dim the button. */
+  busy?: boolean;
   onOpenLauncher: () => void;
 }
 
@@ -43,6 +45,7 @@ export function Omnibox({
   onSegChange,
   onSend,
   onConversation,
+  busy = false,
   onOpenLauncher,
 }: OmniboxProps) {
   const [text, setText] = useState("");
@@ -59,7 +62,7 @@ export function Omnibox({
 
   function send() {
     const body = text.trim();
-    if (body === "") return;
+    if (body === "" || busy) return;
     if (meta.domain === null) {
       // Research / Full Brain hand off to the conversation surface.
       onConversation(body);
@@ -222,7 +225,7 @@ export function Omnibox({
               className="icon-btn send-btn"
               aria-label="Send"
               onClick={send}
-              disabled={text.trim() === ""}
+              disabled={text.trim() === "" || busy}
             >
               <SendIcon size={24} />
             </button>
