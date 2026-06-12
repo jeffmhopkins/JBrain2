@@ -25,6 +25,11 @@ class SessionContext:
     # 'login' and 'bootstrap' unlock the narrow RLS policies that let the
     # auth code path read/write principals before a principal context exists.
     auth_context: str = ""
+    # When True, the owner is *also* restricted to domain_scopes (migration 0015):
+    # the firewall a narrowed agent session runs under, so a health-only session
+    # cannot read finance even though it keeps owner identity for owner-only
+    # tables. Off by default — the worker and ordinary owner sessions see all.
+    owner_scoped: bool = False
 
     def gucs(self) -> dict[str, str]:
         return {
@@ -33,6 +38,7 @@ class SessionContext:
             "app.subject_id": self.subject_id,
             "app.domain_scopes": ",".join(self.domain_scopes),
             "app.auth_context": self.auth_context,
+            "app.owner_scoped": "true" if self.owner_scoped else "false",
         }
 
 

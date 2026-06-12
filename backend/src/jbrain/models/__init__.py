@@ -1,3 +1,4 @@
+from jbrain.models.agent import AgentSession
 from jbrain.models.analysis import (
     Entity,
     EntityAlias,
@@ -12,6 +13,7 @@ from jbrain.models.core import Base, DeviceSession, Domain, Principal, Subject
 from jbrain.models.telemetry import LlmUsage
 
 __all__ = [
+    "AgentSession",
     "Base",
     "DeviceSession",
     "Domain",
