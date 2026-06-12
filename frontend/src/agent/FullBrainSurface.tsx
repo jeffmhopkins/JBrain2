@@ -382,7 +382,7 @@ function FlipBubble({
           {children}
           <button type="button" className="fb-cue" onClick={() => setOpen(true)}>
             <ChevronGlyph className="fb-cue-ic back" />
-            work
+            {steps.length} tool{steps.length === 1 ? "" : "s"}
           </button>
         </div>
         <div className="bubble ai fb-face fb-back" ref={back}>

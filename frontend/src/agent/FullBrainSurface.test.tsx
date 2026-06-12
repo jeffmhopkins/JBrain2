@@ -141,9 +141,9 @@ describe("FullBrainSurface", () => {
     await waitFor(() => expect(screen.getByText("checking")).toBeInTheDocument());
     expect(screen.getByText("what labs?")).toBeInTheDocument();
     // The raw "search · …" dump is gone; the tools live on the bubble's back face,
-    // reached by the "work" cue.
+    // reached by the "N tools" cue.
     expect(screen.queryByText(/search · /)).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "work" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "1 tool" })).toBeInTheDocument();
     expect(document.querySelector(".fb-back-head")?.textContent).toContain("Worked");
   });
 
@@ -168,7 +168,7 @@ describe("FullBrainSurface", () => {
     fireEvent.click(screen.getByRole("button", { name: "send" }));
 
     // The cue turns the bubble to its tool-use face (an "answer" cue turns back).
-    const cue = await screen.findByRole("button", { name: "work" });
+    const cue = await screen.findByRole("button", { name: "1 tool" });
     expect(document.querySelector(".fb-back-head")?.textContent).toContain("2 sources");
     fireEvent.click(cue);
     expect(screen.getByRole("button", { name: "answer" })).toBeInTheDocument();
@@ -191,7 +191,7 @@ describe("FullBrainSurface", () => {
     fireEvent.change(screen.getByLabelText("Composer"), { target: { value: "go" } });
     fireEvent.click(screen.getByRole("button", { name: "send" }));
 
-    const work = await screen.findByRole("button", { name: "work" });
+    const work = await screen.findByRole("button", { name: "1 tool" });
     const frontFace = () => document.querySelector<HTMLElement>(".fb-front");
     const backFace = () => document.querySelector<HTMLElement>(".fb-back");
     // Answer up front: the tool-use face is inert (out of tab order / a11y tree).
@@ -368,7 +368,7 @@ describe("FullBrainSurface", () => {
     fireEvent.click(screen.getByRole("button", { name: "send" }));
 
     // Mid-stream: the resolved entity must NOT flash as a chip.
-    await waitFor(() => expect(screen.getByRole("button", { name: "work" })).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole("button", { name: "1 tool" })).toBeInTheDocument());
     expect(screen.queryByRole("button", { name: "Celine" })).toBeNull();
 
     // Once the turn settles, the unnamed entity gets its chip.
