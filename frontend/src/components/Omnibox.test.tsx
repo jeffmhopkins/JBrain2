@@ -56,14 +56,14 @@ describe("Omnibox", () => {
     });
   });
 
-  it("hands Research sends to the conversation toast instead of saving", () => {
+  it("hands conversational sends off with the typed body instead of saving", () => {
     const onSend = vi.fn();
     const onConversation = vi.fn();
     render(<Harness onSend={onSend} onConversation={onConversation} />);
     fireEvent.click(screen.getByRole("tab", { name: "Research" }));
     fireEvent.change(screen.getByLabelText("Composer"), { target: { value: "what did I note?" } });
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
-    expect(onConversation).toHaveBeenCalled();
+    expect(onConversation).toHaveBeenCalledWith("what did I note?");
     expect(onSend).not.toHaveBeenCalled();
   });
 });

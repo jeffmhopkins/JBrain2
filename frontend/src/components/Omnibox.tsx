@@ -33,7 +33,8 @@ interface OmniboxProps {
   onSegChange: (seg: SegState) => void;
   /** Non-null = the box is PATCHing an existing note instead of capturing. */
   onSend: (input: SendInput) => void;
-  onConversation: () => void;
+  /** The body carries across so the conversation surface opens seeded. */
+  onConversation: (body: string) => void;
   onOpenLauncher: () => void;
 }
 
@@ -60,8 +61,8 @@ export function Omnibox({
     const body = text.trim();
     if (body === "") return;
     if (meta.domain === null) {
-      // Research / Full Brain hand off to the Phase 4 conversation surface.
-      onConversation();
+      // Research / Full Brain hand off to the conversation surface.
+      onConversation(body);
       setText("");
       return;
     }

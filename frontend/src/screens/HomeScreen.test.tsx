@@ -40,7 +40,7 @@ function fakeActions(): NoteActions {
   };
 }
 
-function setup(notes: NotesController = fakeController()) {
+function setup(notes: NotesController = fakeController(), onOpenBrain = vi.fn()) {
   render(
     <HomeScreen
       notes={notes}
@@ -48,6 +48,7 @@ function setup(notes: NotesController = fakeController()) {
       onOpenNote={vi.fn()}
       onOpenSearch={vi.fn()}
       onOpenLauncher={vi.fn()}
+      onOpenBrain={onOpenBrain}
     />,
   );
 }
@@ -103,11 +104,11 @@ describe("HomeScreen mode scoping", () => {
     expect(notes.setHidden).toHaveBeenCalledWith("n1", false);
   });
 
-  it("Full Brain shows the same placeholder; Entry sub-modes keep the stream", () => {
+  it("Full Brain shows its open-the-surface hint; Entry sub-modes keep the stream", () => {
     setup();
     fireEvent.click(screen.getByRole("tab", { name: "Full Brain" }));
     expect(
-      screen.getByText("conversations arrive in Phase 4 — typing starts one then"),
+      screen.getByText("type and send to open Full Brain — full tool access"),
     ).toBeInTheDocument();
 
     // Back to Entry, then into the Medical sub-mode: still the note stream.
@@ -117,5 +118,14 @@ describe("HomeScreen mode scoping", () => {
     expect(
       screen.getByText("Nothing captured yet — write your first entry below."),
     ).toBeInTheDocument();
+  });
+
+  it("a Full Brain send opens the real surface with the typed message", () => {
+    const onOpenBrain = vi.fn();
+    setup(fakeController(), onOpenBrain);
+    fireEvent.click(screen.getByRole("tab", { name: "Full Brain" }));
+    fireEvent.change(screen.getByLabelText("Composer"), { target: { value: "summarize my week" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    expect(onOpenBrain).toHaveBeenCalledWith("summarize my week");
   });
 });

@@ -13,6 +13,8 @@ interface HomeScreenProps {
   onOpenNote: (item: StreamItem) => void;
   onOpenSearch: () => void;
   onOpenLauncher: () => void;
+  /** Open the Full Brain surface, seeded with whatever was typed in the box. */
+  onOpenBrain: (initialMessage?: string) => void;
 }
 
 interface Toast {
@@ -27,6 +29,7 @@ export function HomeScreen({
   onOpenNote,
   onOpenSearch,
   onOpenLauncher,
+  onOpenBrain,
 }: HomeScreenProps) {
   const [seg, setSeg] = useState<SegState>({ row: "main", mode: "entry" });
   const [toast, setToast] = useState<Toast | null>(null);
@@ -63,7 +66,9 @@ export function HomeScreen({
             className="conv-empty"
             style={{ "--mode": meta.color, "--mode-tint": meta.tint } as CSSProperties}
           >
-            conversations arrive in Phase 4 — typing starts one then
+            {seg.mode === "fullbrain"
+              ? "type and send to open Full Brain — full tool access"
+              : "conversations arrive in Phase 4 — typing starts one then"}
           </p>
         </main>
       ) : (
@@ -100,7 +105,12 @@ export function HomeScreen({
         seg={seg}
         onSegChange={setSeg}
         onSend={(input) => void notes.send(input)}
-        onConversation={() => showToast("Conversations arrive in Phase 4")}
+        onConversation={(body) => {
+          // Full Brain opens the real conversation surface, seeded with the
+          // typed message; Research's read-only surface is still Phase 4.
+          if (seg.mode === "fullbrain") onOpenBrain(body);
+          else showToast("Conversations arrive in Phase 4");
+        }}
         onOpenLauncher={onOpenLauncher}
       />
       {toast && (
