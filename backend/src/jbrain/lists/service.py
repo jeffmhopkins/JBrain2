@@ -87,3 +87,18 @@ class ListsRepo(Protocol):
     async def remove_item(self, ctx: SessionContext, item_id: str) -> bool:
         """Delete an item; False when missing or out of scope."""
         ...
+
+    async def rename_item(
+        self, ctx: SessionContext, item_id: str, body: str
+    ) -> ListItemInfo | None:
+        """Edit an item's text; None when missing or out of scope."""
+        ...
+
+    async def reorder_items(self, ctx: SessionContext, list_id: str, item_ids: list[str]) -> bool:
+        """Set item positions to the given order; False when the list is out of
+        scope."""
+        ...
+
+    async def delete_list(self, ctx: SessionContext, list_id: str) -> bool:
+        """Delete a list and its items; False when missing or out of scope."""
+        ...

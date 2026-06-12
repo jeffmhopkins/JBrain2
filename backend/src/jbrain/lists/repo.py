@@ -187,6 +187,59 @@ class SqlListsRepo:
             )
             return result.scalar_one_or_none() is not None
 
+    async def rename_item(
+        self, ctx: SessionContext, item_id: str, body: str
+    ) -> ListItemInfo | None:
+        iid = _as_uuid(item_id)
+        if iid is None:
+            return None
+        async with scoped_session(self._maker, ctx) as session:
+            item = (
+                await session.execute(select(ListItem).where(ListItem.id == iid))
+            ).scalar_one_or_none()
+            if item is None:
+                return None
+            item.body = body
+            await session.execute(
+                update(List).where(List.id == item.list_id).values(updated_at=func.now())
+            )
+            await session.flush()
+            await session.refresh(item)
+            return _item_info(item)
+
+    async def reorder_items(self, ctx: SessionContext, list_id: str, item_ids: list[str]) -> bool:
+        """Set each item's position to its index in `item_ids`. Items not in the
+        list are skipped (the WHERE pins them to the parent); False when the list
+        isn't in scope."""
+        lid = _as_uuid(list_id)
+        if lid is None:
+            return False
+        async with scoped_session(self._maker, ctx) as session:
+            owner = (
+                await session.execute(select(List.id).where(List.id == lid))
+            ).scalar_one_or_none()
+            if owner is None:
+                return False
+            for pos, raw in enumerate(item_ids):
+                iid = _as_uuid(raw)
+                if iid is None:
+                    continue
+                await session.execute(
+                    update(ListItem)
+                    .where(ListItem.id == iid, ListItem.list_id == lid)
+                    .values(position=pos)
+                )
+            await session.execute(update(List).where(List.id == lid).values(updated_at=func.now()))
+            return True
+
+    async def delete_list(self, ctx: SessionContext, list_id: str) -> bool:
+        lid = _as_uuid(list_id)
+        if lid is None:
+            return False
+        async with scoped_session(self._maker, ctx) as session:
+            result = await session.execute(delete(List).where(List.id == lid).returning(List.id))
+            return result.scalar_one_or_none() is not None
+
 
 def _principal(ctx: SessionContext) -> uuid.UUID:
     """The owner principal id stamped on a new list (RLS already proved owner)."""
