@@ -1,0 +1,207 @@
+# JBrain2 — Assistant Implementation Plan
+
+The buildable plan for `docs/ASSISTANT.md`, grounded in the current codebase
+(Phases 0–3 are implemented: auth, notes, ingest, search, analysis, RLS, the
+Postgres job queue, `.prompt` loading, and an eval harness all exist). This plan
+is **deep on the Phase-4 slice** (the next buildable work) and lighter on 5–7,
+which depend on the workflow engine and wiki. Every PR carries the project
+non-negotiables (adapter-only LLM, storage abstraction, RLS-scoped sessions +
+isolation test per new table, tests-with-code at 80% / security 100%,
+Conventional Commits + PR + CI green, `dev-setup.sh` updated with any new
+dep/tool/step).
+
+## Where the assistant code lives
+
+A new `backend/src/jbrain/agent/` package, mirroring the existing
+repo→service layering and `.prompt` sidecar conventions:
+
+```
+agent/
+  loop.py            # the thin ReAct turn loop + guardrails
+  tools/             # .tool sidecars + their handlers (compose existing services)
+  toolregistry.py    # discovery, validation, schemas_for(scopes)
+  memory.py          # Tier-A read/write/compaction (service over agent_memory/episodes)
+  classifier.py      # write-time fail-closed domain classifier
+  reflexion.py       # deterministic verifiers + optional critic
+  proposals.py       # Proposal staging + dependency-safe enactment
+  session.py         # agent-session capability (read scope + action policy)
+  runlog.py          # step log → agent_runs (becomes workflow `runs` in P5)
+  prompts/*.prompt   # system persona + tool-use policy, reflexion critic, classifier
+models/agent.py      # SQLAlchemy models for the new tables
+api/agent.py         # /chat (SSE/WS streaming)
+api/sessions.py      # start/list agent sessions
+api/proposals.py     # the review-inbox Proposals surface
+```
+
+Reuses verbatim: `llm/router.py` task profiles + `llm/fake.py`; `db/session.py`
+`scoped_session`/`SessionContext` (already carries `domain_scopes`); `queue.py`
+`enqueue` for deferred/long tools; `storage.py`; `notes/`, `search/`, `analysis/`
+services as the tools' backends; `evals/` for the (later) promotion gates.
+
+## Data model (new tables, all `domain_id` + RLS isolation test)
+
+| Table | Key columns | Notes |
+|---|---|---|
+| `agent_sessions` | `principal_id`, `title`, `status` (active/ended), `domain_scopes[]`, `subject_ids[]`, `started_at`, `last_active_at` | The capability: the selected **read scope** that builds the session's `SessionContext` |
+| `agent_runs` | `session_id`, `status`, `step_count`, `cost_tokens`, `cost_usd`, `stop_reason`, `tool_versions` jsonb, `prompt_version`, `started/ended_at` | One agent turn-loop execution; **becomes a workflow `runs` row in P5** |
+| `agent_steps` | `run_id`, `idx`, `kind` (model/tool), `tool_name`, `tool_version`, `request`/`response` jsonb, `is_error`, `cost` | The audit/training trace; minimal answer text (purge-friendly) |
+| `agent_memory` | `principal_id`, `subject_id`, `domain_id`, `block_kind` (core/task/self_semantic), `body_md`, `revision`, `superseded_by`, `source` (owner_confirmed/…) | MD "files" as rows; ACE delta-edit history; behavioral tier is **owner-confirmed-write only** |
+| `agent_episodes` | `session_id`, `run_id`, `domain_id`, `body`, `importance`, `last_accessed_at` + segregated-namespace embedding | Episodic trace; **fail-closed** domain stamp; never citable |
+| `agent_episode_refs` | `episode_id`, `fact_id`/`entity_id`/`note_id` | Pointers-not-copies (A-MEM links); purge cascade target |
+| `proposals` | `session_id`, `principal_id`, `kind`, `status` (staged/approved/enacted/rejected/expired), `provenance` jsonb, `domain_id`, `subject_id` | The stage-and-approve unit |
+| `proposal_nodes` | `proposal_id`, `parent_id`, `type` (group/leaf), `op`, `label`, `preview` jsonb, `deps[]`, `status` (pending/approved/rejected) | The tree; **dependency-safe partial approval** |
+| *(altered)* `notes` | + `provenance` (human/agent), `source_ref` | Agent-authored notes; **normal extraction weight** |
+| *(P6)* `skills` | `name`, `version`, `status` (shadow/active/quarantined), `domain_id`, `body`, `description`, embedding, `success_stats` | Procedural memory; read-only auto-promote, mutating owner-gated |
+
+Discriminator/`block_kind`/namespace columns are RLS-eligible so a single-scope
+session cannot read a multi-scope episode or another domain's memory.
+
+## Phase 4 — the buildable slice (sequenced PRs)
+
+Dependency order; each is one PR with tests.
+
+**P4.1 — Adapter tool-calling (foundational).** Extend the adapter for native
+tool use: add `ToolDef`/`ToolUse`/`ToolResult` + `stop_reason` to `llm/types.py`,
+a `tools=` parameter and tool-block handling to `LlmClient.complete` (or a
+sibling `complete_tools`), implemented in `anthropic.py`, `openai_compat.py`, and
+`fake.py` (scripted `tool_use` blocks for deterministic loop tests). No new
+runtime dep. *Gate:* fake-driven multi-turn tool round-trip; both provider
+adapters covered.
+
+**P4.2 — `.tool` sidecars + registry.** Define the sidecar (YAML frontmatter:
+`name`, `version`, `params` JSON-schema, `domains`, `mutating`, `side_effecting`,
+`cost_class`, `response_format`; prose body = the model-facing description).
+Loader beside `llm/promptfile.py`; `ToolRegistry` discovers/validates at startup
+(invalid sidecar or missing handler → startup failure) and exposes
+`schemas_for(scopes)`. **CI version-bump guard** mirroring the `.prompt` guard.
+*Gate:* sidecar-validity unit tests; guard fails on unbumped prose change.
+
+**P4.3 — Agent session capability.** `agent_sessions` table + migration + RLS
+test. `agent/session.py` turns a selected (domain_scopes, subject_ids) into a
+`SessionContext` (narrower than the owner's all-scopes default). Per-tool
+**permission class → policy** (`read` direct within scope, `mutate`/`sensitive`
+staged, `external` denied). `api/sessions.py` start/list. *Gate:* RLS isolation
+(a health-only session cannot read finance); policy denies an out-of-scope write.
+
+**P4.4 — The thin loop + read-only tools.** `agent/loop.py`: turn structure,
+tool dispatch under `scoped_session`, hard guardrails (`max_steps`,
+`max_cost` from the task profile, `wall_clock_timeout`,
+`max_consecutive_tool_errors`, per-session `tool_allowlist`), structured tool
+errors. Step log → `agent_runs`/`agent_steps`. First tools (compose existing
+services): `search` (hybrid), `read_note`, `read_entity`, `read_fact`. System
+`.prompt` (persona + tool-use policy + the **data/instruction boundary**, I-1).
+*Gate:* fake-adapter loop tests (multi-turn, guardrail trips, error self-repair);
+per-tool RLS isolation.
+
+**P4.5 — Chat API + streaming + Full Brain PWA surface.** `api/agent.py` `/chat`
+emitting SSE/WS events (`text_delta`, `tool_call`, `tool_result`,
+`job_enqueued`, `done`); resume from the persisted run. Frontend: the Full Brain
+conversation surface + the lateral swipe (Sessions/Proposals) per `DESIGN.md`
+(swipe-right → Sessions, swipe-left → Proposals; no edge chrome). *Gate:*
+httpx streaming test; Vitest for the surface; the existing mocks are the spec.
+
+**P4.6 — Tier-A memory + domain classifier.** `agent_memory`,
+`agent_episodes`, `agent_episode_refs` + migrations + RLS tests (incl. the
+multi-scope-episode isolation test). `agent/memory.py` (read/recall via existing
+RRF in a **segregated namespace**; ACE delta-edit writes). `agent/classifier.py`:
+**fail-closed** write-time domain stamping (episodic = most-restrictive scope
+touched; behavioral = ANALYSIS.md asymmetric rule, owner-confirmed only). Tools:
+`recall`, `memory.read`, `memory.edit`, and `remember` (**owner-confirmed only**,
+I-2). Memory read **as data, never instruction** (I-3). Note-deletion **purge
+cascade** to episodes + the assertion test (I-11). *Gate:* RLS isolation; purge
+test; classifier fail-closed unit tests.
+
+**P4.7 — Reflexion (Loop 1).** `agent/reflexion.py`: **deterministic** verifiers
+(cited facts exist & in-scope; claims ground in retrieved chunks; mutations
+validate against schema) + optional cheap critic as tiebreaker; retry **only if
+the verifier score strictly improves**, hard cap N=2. Fully ephemeral. *Gate:*
+pure unit tests; no persistence touched.
+
+**P4.8 — Proposal primitive + review inbox.** `proposals`/`proposal_nodes` +
+migrations + RLS tests; `notes.provenance` migration. `agent/proposals.py`:
+staging + **dependency-safe enactment** (enact a leaf only when every prereq is
+approved; approved-but-unmet-prereq → held). Kinds shipped now: `agent-correction`
+and `knowledge` (both re-enter as **normal-weight, source-attributed,
+provenance-flagged** agent notes through the existing extraction pipeline, I-7).
+The `propose_correction` tool stages a Proposal instead of writing. `api/proposals.py`
++ the Proposals page (the unified review-inbox view, focused on agent proposals).
+*Gate:* cascade + dependency-hold + RLS tests; enactment touches only
+approved+satisfied leaves.
+
+**Phase-4 exit:** Full Brain chat is the default way to ask "what do I know about
+X," runs are logged, the agent never writes citable truth directly, every staged
+change is owner-approved through a Proposal tree, and the three new RLS tables
+prove domain isolation. (`wiki-restructure`, skill learning, and prompt
+self-editing are explicitly deferred — see below.)
+
+## Phase 5 — workflow engine alignment
+
+- `agent_runs`/`agent_steps` **become** workflow `runs` (the loop emits the same
+  events); the self-improvement loops become scheduled **pipeline defs** with
+  per-principal + global **daily cost budgets** and a kill-switch (I-10).
+- Stand up the **eval/benchmark harness** on the existing `evals/` (held-out
+  fixtures, a baseline, and a curator for "the originating task class") — this is
+  the **gating dependency** for Loops 2 and 4, so it lands here.
+- `skills` schema groundwork (Alembic, reversible); `skill_version` stamped on
+  `runs` for auditability (mirrors the `.prompt` version stamp).
+
+## Phase 6 — wiki-era loops
+
+- **Skill learning (Loop 2):** distill verified runs into `skills`; **read-only
+  compositions auto-promote** on a replay eval that **includes a safety/
+  groundedness regression** (not task-success alone); **mutating/cross-domain
+  skills are owner-gated** (I-5/I-6); active-skill cap + decay eviction; sanitized
+  descriptions (data, not instruction).
+- **Prompt/tool self-edit (Loop 4):** the meta-pass drafts a `.prompt`/`.tool`
+  **diff + version bump + new eval fixture** as a **branch + PR** (or a review-inbox
+  item that opens one); security-relevant edits must pass an **adversarial-injection
+  suite at 100%**; the data/instruction-boundary and classifier prompts are
+  **immutable to self-edit** (I-12).
+- **Tier-B durable knowledge** fully closes through the wiki's correction-note
+  machinery; the **`wiki-restructure` Proposal kind** ships — the agent stages a
+  tree of split/merge/retitle/recluster/rewrite ops and the **machine wiki builder
+  enacts the approved, prereq-satisfied leaves** as revisions (agent never writes
+  prose).
+
+## Phase 7 — outer-ring principals
+
+- Intake-link / device-key principals get a **default-deny, capture-only** tool
+  allowlist (I-8) and **cannot write agent memory/skills or trigger
+  self-improvement jobs**; agent-internal jobs run at the **triggering principal's
+  scope** (no confused deputy).
+
+## Open questions — resolved here
+
+- **Eval harness** (was open): built in Phase 5 on `evals/`; fixtures are curated
+  per task class from real runs the owner accepted/rejected; baseline = current
+  prompt/skill version's score; promotion requires *no regression on the existing
+  set + a win on the new case*, with a safety-regression term.
+- **Compaction vs decay:** **two mechanisms, one table.** Session compaction is
+  synchronous, triggered by the loop near the context limit (summarize-and-pointer
+  the oldest episodes of the *current* run); nightly decay is a batched job over
+  `agent_episodes` (importance/recency pruning). Both write through `agent/memory.py`.
+- **Importance scoring:** heuristic-first (owner-corrected? tool error?
+  owner-confirmed "remember"?) — **no per-episode LLM call**; content-derived
+  signals are untrusted and capped (I-11/A11). An LLM poignancy score is a deferred
+  option behind a cheap task profile.
+- **Cost ceiling:** per-task `max_cost` (exists) + a per-session interactive
+  budget + a **separate daily self-improvement budget** with a kill-switch
+  (Phase 5).
+- **Combined ER:** the table block above is the authoritative sketch; the
+  migration PRs draw the FKs.
+
+## Cross-cutting obligations (every PR)
+
+RLS isolation test for any new table; LLM calls faked in tests (the eval suite is
+the deliberate, out-of-CI quality gate); `dev-setup.sh` updated for any new
+dep/tool/step (**goal: zero new runtime deps** — the loop is stdlib + existing
+stack); `.prompt`/`.tool` version-bump guards; security-adjacent paths
+(classifier, RLS scoping, the data/instruction boundary, Proposal enactment) at
+**100%** coverage.
+
+## Suggested starting point
+
+P4.1 (adapter tool-calling) unblocks everything and is self-contained — it is the
+right first PR. P4.2–P4.4 then stand up a working read-only agent over the phone
+before any memory or staging exists, which is the smallest end-to-end daily-usable
+increment.

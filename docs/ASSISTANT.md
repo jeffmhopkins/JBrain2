@@ -481,6 +481,9 @@ accordingly — **do not describe a Phase-6 world as Phase 4**.
 
 ## Open questions for the implementation plan
 
+The sequenced, codebase-grounded build-out — PRs, the new-table data model, and
+resolutions to the questions below — lives in `docs/ASSISTANT_PLAN.md`.
+
 - The eval/benchmark harness specifics: fixtures, baseline, and who curates "the
   originating task class" for skill replay and prompt-edit gating.
 - The combined ER model (the three tables + namespace discriminator + episode→fact
