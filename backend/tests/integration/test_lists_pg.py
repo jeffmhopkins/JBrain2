@@ -80,6 +80,30 @@ async def test_list_round_trip(maker: async_sessionmaker) -> None:
     assert lst.id in [x.id for x in await repo.list_lists(ctx, include_archived=True)]
 
 
+async def test_reorder_rename_and_delete(maker: async_sessionmaker) -> None:
+    pid = await _owner_principal(maker)
+    ctx = read_context(pid, ("general",))
+    repo = SqlListsRepo(maker)
+    lst = await repo.create_list(ctx, domain="general", title="Trip")
+    a = await repo.add_item(ctx, lst.id, "socks")
+    b = await repo.add_item(ctx, lst.id, "shirts")
+    c = await repo.add_item(ctx, lst.id, "shoes")
+    assert a and b and c
+
+    # Reorder reverses the list; items come back in the new position order.
+    assert await repo.reorder_items(ctx, lst.id, [c.id, b.id, a.id]) is True
+    got = await repo.get_list(ctx, lst.id)
+    assert got is not None and [i.body for i in got.items] == ["shoes", "shirts", "socks"]
+
+    # Rename an item in place.
+    renamed = await repo.rename_item(ctx, a.id, "wool socks")
+    assert renamed is not None and renamed.body == "wool socks"
+
+    # Delete the whole list — it and its items are gone.
+    assert await repo.delete_list(ctx, lst.id) is True
+    assert await repo.get_list(ctx, lst.id) is None
+
+
 async def test_missing_ids_return_none_not_error(maker: async_sessionmaker) -> None:
     pid = await _owner_principal(maker)
     ctx = read_context(pid, ("general",))
@@ -88,6 +112,9 @@ async def test_missing_ids_return_none_not_error(maker: async_sessionmaker) -> N
     assert await repo.add_item(ctx, "00000000-0000-0000-0000-000000000000", "x") is None
     assert await repo.set_item_checked(ctx, "nope", checked=True) is None
     assert await repo.remove_item(ctx, "nope") is False
+    assert await repo.rename_item(ctx, "nope", "x") is None
+    assert await repo.reorder_items(ctx, "nope", []) is False
+    assert await repo.delete_list(ctx, "nope") is False
 
 
 async def test_create_list_rejects_unknown_domain(maker: async_sessionmaker) -> None:
