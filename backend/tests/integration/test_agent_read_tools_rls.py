@@ -11,8 +11,9 @@ from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async
 from sqlalchemy.pool import NullPool
 
 from jbrain.agent.loop import ToolContext
-from jbrain.agent.readtools import build_read_handlers
+from jbrain.agent.readtools import build_entity_handlers, build_read_handlers
 from jbrain.agent.session import read_context
+from jbrain.analysis.repo import SqlAnalysisRepo
 from jbrain.auth import service
 from jbrain.auth.repo import SqlAuthRepo
 from jbrain.db.session import SessionContext, scoped_session
@@ -73,3 +74,26 @@ async def test_read_note_handler_respects_session_scope(maker: async_sessionmake
     # The finance note is invisible to a health-scoped session — RLS, not the tool.
     out_of_scope = await handlers["read_note"]({"note_id": ids["finance"]}, narrowed)
     assert "in scope" in out_of_scope
+
+
+async def test_read_entity_handler_respects_session_scope(maker: async_sessionmaker) -> None:
+    owner = await _owner(maker)
+    eid = str(uuid.uuid4())
+    async with scoped_session(maker, owner) as session:
+        await session.execute(
+            text(
+                "INSERT INTO app.entities (id, kind, canonical_name, status, domain_code)"
+                " VALUES (:id, 'Person', 'Aunt May', 'confirmed', 'health')"
+            ),
+            {"id": eid},
+        )
+
+    tools = build_entity_handlers(SqlAnalysisRepo(maker))
+    health = ToolContext(session=read_context(owner.principal_id, ("health",)), scopes=("health",))
+    assert "Aunt May [Person]" in await tools["read_entity"]({"entity_id": eid}, health)
+
+    # A finance-scoped session cannot reach the health entity — RLS, not the tool.
+    finance = ToolContext(
+        session=read_context(owner.principal_id, ("finance",)), scopes=("finance",)
+    )
+    assert "in scope" in await tools["read_entity"]({"entity_id": eid}, finance)

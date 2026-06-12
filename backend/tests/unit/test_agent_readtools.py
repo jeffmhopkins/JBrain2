@@ -6,8 +6,10 @@ from datetime import UTC, datetime
 from jbrain.agent.loop import ToolContext
 from jbrain.agent.readtools import (
     TOOLS_DIR,
+    build_entity_handlers,
     build_read_handlers,
     build_registry,
+    format_entity,
     format_note,
     format_search,
 )
@@ -67,6 +69,36 @@ class FakeNotes:
         return self.stored if self.stored is not None and note_id == self.stored.id else None
 
 
+def entity_view(entity_id: str = "e1") -> dict:
+    return {
+        "id": entity_id,
+        "kind": "Person",
+        "canonical_name": "Celine Hopkins",
+        "status": "active",
+        "domain": "general",
+        "aliases": ["Celine"],
+        "predicates": [
+            {
+                "predicate": "spouse",
+                "qualifier": "",
+                "current": {"predicate": "spouse", "statement": "married to Jeff"},
+                "history": [],
+            },
+            {"predicate": "employer", "qualifier": "", "current": None, "history": []},
+        ],
+        "inbound": [{"entity_id": "e2", "name": "Jeff", "predicate": "spouse", "statement": "..."}],
+        "mentions": [{"note_id": "n1", "snippet": "...", "created_at": None}],
+    }
+
+
+class FakeEntities:
+    def __init__(self, view: dict | None):
+        self.view = view
+
+    async def entity_view(self, ctx, entity_id):  # noqa: ANN001
+        return self.view if self.view is not None and entity_id == self.view["id"] else None
+
+
 def handlers(search_resp: SearchResponse | None = None, stored: NoteInfo | None = None):
     resp = search_resp if search_resp is not None else SearchResponse(degraded=False, results=[])
     return build_read_handlers(FakeSearch(resp), FakeNotes(stored))  # type: ignore[arg-type]
@@ -119,13 +151,41 @@ async def test_read_note_needs_an_id() -> None:
     assert "needs a note_id" in await handlers()["read_note"]({}, CTX)
 
 
+def test_format_entity_shows_kind_aliases_and_edges() -> None:
+    out = format_entity(entity_view())
+    assert "Celine Hopkins [Person]" in out  # the schema.org kind
+    assert "also known as: Celine" in out
+    assert "- spouse: married to Jeff" in out  # current fact as an edge
+    assert "Jeff spouse this" in out  # inbound edge
+    assert "mentioned in 1 note" in out
+
+
+async def test_read_entity_found_and_missing() -> None:
+    tools = build_entity_handlers(FakeEntities(entity_view("abc")))  # type: ignore[arg-type]
+    assert "Celine Hopkins" in await tools["read_entity"]({"entity_id": "abc"}, CTX)
+    assert "in scope" in await tools["read_entity"]({"entity_id": "other"}, CTX)
+
+
+async def test_read_entity_needs_an_id() -> None:
+    tools = build_entity_handlers(FakeEntities(None))  # type: ignore[arg-type]
+    assert "needs an entity_id" in await tools["read_entity"]({}, CTX)
+
+
 # --- registry + version guard --------------------------------------------
 
 
 def test_build_registry_binds_the_shipped_sidecars() -> None:
-    registry = build_registry(FakeSearch(SearchResponse(False, [])), FakeNotes(None))  # type: ignore[arg-type]
-    assert registry.names() == {"search", "read_note"}
-    assert {t.name for t in registry.schemas_for({"general"})} == {"search", "read_note"}
+    registry = build_registry(
+        FakeSearch(SearchResponse(False, [])),  # type: ignore[arg-type]
+        FakeNotes(None),  # type: ignore[arg-type]
+        FakeEntities(None),  # type: ignore[arg-type]
+    )
+    assert registry.names() == {"search", "read_note", "read_entity"}
+    assert {t.name for t in registry.schemas_for({"general"})} == {
+        "search",
+        "read_note",
+        "read_entity",
+    }
 
 
 def test_sidecars_pinned_to_their_versions() -> None:
@@ -140,6 +200,11 @@ def test_sidecars_pinned_to_their_versions() -> None:
             "read_note",
             1,
             "17ae0e655486be95b41ba0b9ab1c1952b45be0f63822e831276cc238b93f66c8",
+        ),
+        "read_entity.tool": (
+            "read_entity",
+            1,
+            "e257677a9412e71e1511dbc85d1fad0421703fbe419d957bca819980d8c2727a",
         ),
     }
     for filename, expected in pins.items():
