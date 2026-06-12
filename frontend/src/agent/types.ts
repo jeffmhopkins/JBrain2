@@ -102,3 +102,49 @@ export interface ChatRequest {
   message: string;
   history?: ChatMessage[];
 }
+
+// --- Proposals (the review inbox; /api/proposals) ---
+
+export type ProposalKind =
+  | "correction"
+  | "knowledge"
+  | "wiki-restructure"
+  | "prompt-edit"
+  | "skill-promotion"
+  | "egress";
+
+export interface ProposalSummary {
+  id: string;
+  kind: ProposalKind;
+  status: string;
+  domain: string;
+  title: string;
+  node_count: number;
+}
+
+export interface ProposalNode {
+  id: string;
+  parent_id: string | null;
+  type: "group" | "leaf";
+  op: string;
+  label: string;
+  preview: Record<string, unknown>;
+  deps: string[];
+  status: string;
+}
+
+export interface ProposalDetail {
+  id: string;
+  kind: ProposalKind;
+  status: string;
+  domain: string;
+  title: string;
+  nodes: ProposalNode[];
+}
+
+export type Decision = "approve" | "reject";
+
+export interface EnactResult {
+  enacted: string[];
+  held: string[];
+}

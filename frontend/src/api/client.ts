@@ -10,7 +10,16 @@
 // module loads via dynamic import, so fixtures never ship in real builds.
 
 import { parseChatStream } from "../agent/chat";
-import type { AgentSession, ChatEvent, ChatRequest, SessionCreate } from "../agent/types";
+import type {
+  AgentSession,
+  ChatEvent,
+  ChatRequest,
+  Decision,
+  EnactResult,
+  ProposalDetail,
+  ProposalSummary,
+  SessionCreate,
+} from "../agent/types";
 
 export interface Principal {
   principal_id: string;
@@ -644,5 +653,29 @@ export const api = {
     const response = await request("/api/chat", jsonInit("POST", body));
     if (!response.body) return;
     yield* parseChatStream(response.body);
+  },
+
+  async listProposals(): Promise<ProposalSummary[]> {
+    const response = await request("/api/proposals");
+    return (await response.json()) as ProposalSummary[];
+  },
+
+  async getProposal(id: string): Promise<ProposalDetail> {
+    const response = await request(`/api/proposals/${encodeURIComponent(id)}`);
+    return (await response.json()) as ProposalDetail;
+  },
+
+  async decideNode(proposalId: string, nodeId: string, decision: Decision): Promise<void> {
+    await request(
+      `/api/proposals/${encodeURIComponent(proposalId)}/nodes/${encodeURIComponent(nodeId)}/decision`,
+      jsonInit("POST", { decision }),
+    );
+  },
+
+  async enactProposal(id: string): Promise<EnactResult> {
+    const response = await request(`/api/proposals/${encodeURIComponent(id)}/enact`, {
+      method: "POST",
+    });
+    return (await response.json()) as EnactResult;
   },
 };

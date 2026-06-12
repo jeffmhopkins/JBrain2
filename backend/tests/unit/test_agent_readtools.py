@@ -182,6 +182,7 @@ def test_build_registry_binds_the_shipped_sidecars() -> None:
         FakeNotes(None),  # type: ignore[arg-type]
         FakeEntities(None),  # type: ignore[arg-type]
         object(),  # type: ignore[arg-type]
+        object(),  # type: ignore[arg-type]
     )
     shipped = {
         "search",
@@ -191,6 +192,7 @@ def test_build_registry_binds_the_shipped_sidecars() -> None:
         "memory_read",
         "memory_edit",
         "remember",
+        "propose_correction",
     }
     assert registry.names() == shipped
     assert {t.name for t in registry.schemas_for({"general"})} == shipped
@@ -233,6 +235,11 @@ def test_sidecars_pinned_to_their_versions() -> None:
             "remember",
             1,
             "194945fe66eb4a4ca5ab179da3b22541036de073a3f0c15e7bf2dc6763fce0ba",
+        ),
+        "propose_correction.tool": (
+            "propose_correction",
+            1,
+            "d0e2fe9b1a1af0922a84fde2c5c299184ec2ac4e8d88ef28a9e2cd64bea9eaa6",
         ),
     }
     for filename, expected in pins.items():

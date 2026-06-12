@@ -1,34 +1,24 @@
 // The Proposals panel (right swipe from Full Brain): staged changes awaiting the
-// owner. The agent never writes truth directly — it proposes, and the owner
-// enacts (docs/ASSISTANT.md "Staging & approval"). The Proposal data model and
-// the full per-node approval tree land in P4.8; this panel renders the summary
-// list (empty until then), so the swipe shortcut exists now and fills in later.
+// owner. The agent never writes truth directly — it proposes, and the owner enacts
+// (docs/ASSISTANT.md "Staging & approval"). Tapping a row opens its tree, where the
+// owner approves/rejects nodes and enacts.
 
 import type { ReactNode } from "react";
-
-export type ProposalKind =
-  | "correction"
-  | "knowledge"
-  | "wiki-restructure"
-  | "prompt-edit"
-  | "egress";
-
-export interface ProposalSummary {
-  id: string;
-  kind: ProposalKind;
-  title: string;
-  subtitle: string;
-  meta: string;
-  domain?: string;
-}
+import type { ProposalKind, ProposalSummary } from "./types";
 
 const BADGE: Record<ProposalKind, string> = {
   "wiki-restructure": "⤴",
   knowledge: "＋",
   correction: "✎",
   "prompt-edit": "⌥",
+  "skill-promotion": "★",
   egress: "↗",
 };
+
+function subtitle(p: ProposalSummary): string {
+  const ops = `${p.node_count} operation${p.node_count === 1 ? "" : "s"}`;
+  return `${p.kind} · ${ops}`;
+}
 
 interface Props {
   proposals: ProposalSummary[];
@@ -56,12 +46,12 @@ export function ProposalsPanel({ proposals, onOpen, onClose }: Props): ReactNode
         {proposals.map((p) => (
           <button type="button" className="row proposal-row" key={p.id} onClick={() => onOpen(p)}>
             <div className="r-head">
-              <span className="badge">{BADGE[p.kind]}</span> {p.title}
+              <span className="badge">{BADGE[p.kind] ?? "•"}</span> {p.title || "(untitled)"}
             </div>
-            <div className="r-sub">{p.subtitle}</div>
+            <div className="r-sub">{subtitle(p)}</div>
             <div className="r-meta">
-              {p.meta}
-              {p.domain && <span className={`pill ${p.domain}`}>{p.domain}</span>}
+              {p.status}
+              <span className={`pill ${p.domain}`}>{p.domain}</span>
             </div>
           </button>
         ))}

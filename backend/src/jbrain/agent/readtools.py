@@ -13,6 +13,8 @@ from typing import Any, Protocol
 from jbrain.agent.loop import ToolContext, ToolHandler
 from jbrain.agent.memory import MemoryService
 from jbrain.agent.memorytools import build_memory_handlers
+from jbrain.agent.proposals import ProposalRepo
+from jbrain.agent.proposaltools import build_proposal_handlers
 from jbrain.agent.toolregistry import ToolRegistry, load_registry
 from jbrain.db.session import SessionContext
 from jbrain.notes.service import NoteInfo, NotesRepo
@@ -93,17 +95,23 @@ def build_entity_handlers(entities: EntityReader) -> dict[str, ToolHandler]:
 
 
 def build_registry(
-    search: SearchService, notes: NotesRepo, entities: EntityReader, memory: MemoryService
+    search: SearchService,
+    notes: NotesRepo,
+    entities: EntityReader,
+    memory: MemoryService,
+    proposals: ProposalRepo,
 ) -> ToolRegistry:
-    """The agent's tool registry: every shipped sidecar bound to its handler —
-    the read tools (search/read_note/read_entity) plus the Tier-A memory tools
-    (recall/memory_read/memory_edit/remember). Fails at startup if a sidecar and
-    handler don't match exactly, so a new .tool can never ship unwired."""
+    """The agent's tool registry: every shipped sidecar bound to its handler — the
+    read tools (search/read_note/read_entity), the Tier-A memory tools
+    (recall/memory_read/memory_edit/remember), and propose_correction (which stages
+    a Proposal, never writes). Fails at startup if a sidecar and handler don't match
+    exactly, so a new .tool can never ship unwired."""
     return load_registry(
         TOOLS_DIR,
         {
             **build_read_handlers(search, notes),
             **build_entity_handlers(entities),
             **build_memory_handlers(memory),
+            **build_proposal_handlers(proposals),
         },
     )

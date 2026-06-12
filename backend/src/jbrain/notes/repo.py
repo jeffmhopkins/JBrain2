@@ -67,6 +67,8 @@ class SqlNotesRepo:
         latitude: float | None = None,
         longitude: float | None = None,
         accuracy_m: float | None = None,
+        provenance: str = "human",
+        source_ref: str | None = None,
     ) -> tuple[NoteInfo, bool]:
         # Client capture time wins when supplied (the offline outbox flushes
         # later, so server now() would be wrong); omitting the key lets the
@@ -83,6 +85,8 @@ class SqlNotesRepo:
                     latitude=latitude,
                     longitude=longitude,
                     location_accuracy_m=accuracy_m,
+                    provenance=provenance,
+                    source_ref=source_ref,
                     **captured,
                 )
                 session.add(note)

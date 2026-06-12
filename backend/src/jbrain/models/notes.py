@@ -46,6 +46,11 @@ class Note(Base):
     # chunks/embeddings are untouched, so the note stays searchable. NULL =
     # visible; an instant = when it was hidden. Distinct from deleted_at.
     hidden_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # 'human' (the default for captured notes) or 'agent' for an agent-authored
+    # note enacted from a Proposal; source_ref attributes it to what prompted it
+    # (the proposal/conversation id). Agent notes get NORMAL extraction weight (#7).
+    provenance: Mapped[str] = mapped_column(Text, default="human", server_default="human")
+    source_ref: Mapped[str | None] = mapped_column(Text, nullable=True)
     # Whether note.extract has produced this note's note_analysis row — the
     # API's "analysis done" signal for the lifecycle chip. A correlated EXISTS
     # (the has_extracts pattern) so list/get serialization needs no second

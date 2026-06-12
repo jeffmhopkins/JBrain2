@@ -7,11 +7,12 @@ from fastapi import FastAPI
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from jbrain.agent.memory import MemoryRepo, MemoryService
+from jbrain.agent.proposals import ProposalRepo
 from jbrain.agent.readtools import build_registry
 from jbrain.agent.runlog import AgentRunLog
 from jbrain.agent.session import AgentSessionRepo
 from jbrain.analysis.repo import SqlAnalysisRepo
-from jbrain.api import agent, analysis, auth, health, notes, ops, search, sessions
+from jbrain.api import agent, analysis, auth, health, notes, ops, proposals, search, sessions
 from jbrain.api import settings as settings_api
 from jbrain.auth.repo import SqlAuthRepo
 from jbrain.config import Settings, get_settings
@@ -57,11 +58,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.agent_memory = MemoryService(
             MemoryRepo(maker), TeiEmbedClient(settings.embed_url), settings.embed_model
         )
+        app.state.agent_proposals = ProposalRepo(maker)
         app.state.agent_registry = build_registry(
             app.state.search_service,
             app.state.notes_repo,
             app.state.analysis_repo,
             app.state.agent_memory,
+            app.state.agent_proposals,
         )
         app.state.agent_sessions = AgentSessionRepo(maker)
         app.state.agent_runlog = AgentRunLog(maker)
@@ -78,6 +81,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(auth.router, prefix="/api")
     app.include_router(notes.router, prefix="/api")
     app.include_router(ops.router, prefix="/api")
+    app.include_router(proposals.router, prefix="/api")
     app.include_router(search.router, prefix="/api")
     app.include_router(sessions.router, prefix="/api")
     app.include_router(settings_api.router, prefix="/api")

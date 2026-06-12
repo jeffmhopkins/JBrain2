@@ -17,11 +17,17 @@ function session(over: Partial<AgentSession>): AgentSession {
 }
 
 async function* noChat(_body: ChatRequest): AsyncGenerator<ChatEvent> {}
+const noProposals = vi.fn(async () => []);
 
 describe("FullBrainShell", () => {
   it("opens the Sessions panel when there is no active session", async () => {
     render(
-      <FullBrainShell listSessions={vi.fn(async () => [])} createSession={vi.fn()} chat={noChat} />,
+      <FullBrainShell
+        listSessions={vi.fn(async () => [])}
+        createSession={vi.fn()}
+        chat={noChat}
+        listProposals={noProposals}
+      />,
     );
     await waitFor(() => expect(document.querySelector(".panel.left.open")).toBeInTheDocument());
     expect(screen.getByText(/Choose a session to start/)).toBeInTheDocument();
@@ -33,6 +39,7 @@ describe("FullBrainShell", () => {
         listSessions={vi.fn(async () => [session({})])}
         createSession={vi.fn()}
         chat={noChat}
+        listProposals={noProposals}
       />,
     );
     await waitFor(() => expect(screen.getByLabelText("Conversation")).toBeInTheDocument());
@@ -48,6 +55,7 @@ describe("FullBrainShell", () => {
         listSessions={vi.fn(async () => [])}
         createSession={vi.fn(async () => created)}
         chat={noChat}
+        listProposals={noProposals}
       />,
     );
     await waitFor(() => screen.getByText("＋ New session — choose sources"));
@@ -64,6 +72,7 @@ describe("FullBrainShell", () => {
         listSessions={vi.fn(async () => [session({})])}
         createSession={vi.fn()}
         chat={noChat}
+        listProposals={noProposals}
       />,
     );
     await waitFor(() => screen.getByLabelText("Conversation"));
@@ -82,6 +91,7 @@ describe("FullBrainShell", () => {
         listSessions={vi.fn(async () => [session({})])}
         createSession={vi.fn()}
         chat={noChat}
+        listProposals={noProposals}
       />,
     );
     await waitFor(() => screen.getByLabelText("Conversation"));
