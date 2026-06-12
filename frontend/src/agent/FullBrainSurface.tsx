@@ -7,17 +7,25 @@
 // surface only reads `fb` and renders.
 
 import { type ReactNode, type TouchEvent, useEffect, useRef, useState } from "react";
+import { DOMAIN_COLOR } from "../notes/modes";
 import { ProposalTree } from "./ProposalTree";
 import { ProposalsPanel } from "./ProposalsPanel";
 import { SessionsPanel } from "./SessionsPanel";
 import { type AgentStatus, agentStatus } from "./status";
-import type { TranscriptMessage } from "./transcript";
+import { type SourceRef, toolStep } from "./toolSummary";
+import type { ToolActivity, TranscriptMessage } from "./transcript";
 import type { FullBrain } from "./useFullBrain";
 import { ToolView } from "./views/registry";
 
 const OPEN_PX = 56; // horizontal travel that commits a panel open or closed
 
-export function FullBrainSurface({ fb }: { fb: FullBrain }): ReactNode {
+interface Props {
+  fb: FullBrain;
+  /** Open a source note by id (from a Worked-block card). */
+  onOpenNote?: ((noteId: string) => void) | undefined;
+}
+
+export function FullBrainSurface({ fb, onOpenNote }: Props): ReactNode {
   const drag = useRef<{ x: number; axis: "?" | "h" | "v" } | null>(null);
   const { panel, setPanel } = fb;
 
@@ -77,7 +85,7 @@ export function FullBrainSurface({ fb }: { fb: FullBrain }): ReactNode {
             {fb.messages.map((m, i) => (
               // Transcript is append-only; positional key is stable for the turn.
               // biome-ignore lint/suspicious/noArrayIndexKey: append-only transcript
-              <Bubble key={i} message={m} />
+              <Bubble key={i} message={m} onOpenNote={onOpenNote} />
             ))}
             {fb.messages.length === 0 && (
               <p className="fb-empty">Talk it out below — full tool access.</p>
@@ -153,7 +161,13 @@ function AgentStatusLine({ status }: { status: AgentStatus | null }): ReactNode 
   );
 }
 
-function Bubble({ message }: { message: TranscriptMessage }): ReactNode {
+function Bubble({
+  message,
+  onOpenNote,
+}: {
+  message: TranscriptMessage;
+  onOpenNote?: ((noteId: string) => void) | undefined;
+}): ReactNode {
   if (message.role === "user") {
     return <div className="bubble me">{message.text}</div>;
   }
@@ -165,21 +179,132 @@ function Bubble({ message }: { message: TranscriptMessage }): ReactNode {
   return (
     <div className="bubble ai">
       {message.text && <span className="fb-text">{message.text}</span>}
-      {message.tools.map((t) => (
-        <div className="tool" key={t.id}>
-          <span className={t.ok === false ? "err" : "ok"}>
-            {t.ok === undefined ? "running" : t.ok ? "✓" : "✗"}
-          </span>
-          <span>
-            {t.name}
-            {t.summary ? ` · ${t.summary}` : ""}
-          </span>
-        </div>
-      ))}
+      {message.tools.length > 0 && <ToolUsage tools={message.tools} onOpenNote={onOpenNote} />}
       {message.views.map((v, i) => (
         // biome-ignore lint/suspicious/noArrayIndexKey: views append in order
         <ToolView key={i} payload={v} />
       ))}
     </div>
   );
+}
+
+// The collapsed "Worked" block (docs/mocks/assistant-tool-usage.html, direction
+// A): the answer leads; the tool steps fold into one quiet line that expands to
+// the steps and the source notes they pulled (tappable to open).
+function ToolUsage({
+  tools,
+  onOpenNote,
+}: {
+  tools: ToolActivity[];
+  onOpenNote?: ((noteId: string) => void) | undefined;
+}): ReactNode {
+  const [open, setOpen] = useState(false);
+  const steps = tools.map(toolStep);
+  const sourceCount = steps.reduce((n, s) => n + s.sources.length, 0);
+  const parts = [`${steps.length} step${steps.length === 1 ? "" : "s"}`];
+  if (sourceCount) parts.push(`${sourceCount} source${sourceCount === 1 ? "" : "s"}`);
+
+  return (
+    <div className={`toolwork${open ? " open" : ""}`}>
+      <button
+        type="button"
+        className="toolwork-line"
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+      >
+        <GearGlyph />
+        <span>Worked</span>
+        <span className="tw-meta">· {parts.join(" · ")}</span>
+        <ChevronGlyph className="tw-caret" />
+      </button>
+      {open && (
+        <div className="toolwork-detail">
+          {steps.map((s) => (
+            <div key={s.id}>
+              <div className="toolwork-step">
+                <StepGlyph name={s.name} />
+                <span>{s.label}</span>
+                {s.name === "search" && (
+                  <span className="tw-count">
+                    {s.sources.length} result{s.sources.length === 1 ? "" : "s"}
+                  </span>
+                )}
+              </div>
+              {s.sources.length > 0 && (
+                <div className="toolwork-srcs">
+                  {s.sources.map((src) => (
+                    <SourceCard key={src.noteId} src={src} onOpen={onOpenNote} />
+                  ))}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SourceCard({
+  src,
+  onOpen,
+}: {
+  src: SourceRef;
+  onOpen?: ((noteId: string) => void) | undefined;
+}): ReactNode {
+  const dot = (
+    <span className="tw-dot" style={{ background: DOMAIN_COLOR[src.domain] ?? "var(--text-3)" }} />
+  );
+  if (onOpen) {
+    return (
+      <button type="button" className="toolwork-card" onClick={() => onOpen(src.noteId)}>
+        {dot}
+        <span className="tw-text">{src.text}</span>
+        <ChevronGlyph className="tw-chev" />
+      </button>
+    );
+  }
+  return (
+    <div className="toolwork-card">
+      {dot}
+      <span className="tw-text">{src.text}</span>
+    </div>
+  );
+}
+
+function GearGlyph(): ReactNode {
+  return (
+    <svg className="tw-ic" viewBox="0 0 24 24" aria-hidden="true">
+      <circle cx="12" cy="12" r="3" />
+      <path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M19.1 4.9 17 7M7 17l-2.1 2.1" />
+    </svg>
+  );
+}
+
+function ChevronGlyph({ className }: { className: string }): ReactNode {
+  return (
+    <svg className={className} viewBox="0 0 24 24" aria-hidden="true">
+      <path d="m9 6 6 6-6 6" />
+    </svg>
+  );
+}
+
+function StepGlyph({ name }: { name: string }): ReactNode {
+  if (name === "search") {
+    return (
+      <svg className="tw-ic" viewBox="0 0 24 24" aria-hidden="true">
+        <circle cx="11" cy="11" r="7" />
+        <path d="m20 20-3.5-3.5" />
+      </svg>
+    );
+  }
+  if (name === "read_note" || name === "read_entity") {
+    return (
+      <svg className="tw-ic" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" />
+        <path d="M14 3v5h5M9 13h6M9 17h6" />
+      </svg>
+    );
+  }
+  return <span className="tw-ic tw-bullet" aria-hidden="true" />;
 }

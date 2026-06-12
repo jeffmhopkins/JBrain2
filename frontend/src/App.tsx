@@ -150,6 +150,12 @@ export function App() {
     closeEntityView();
   }
 
+  // A Full Brain source card (Worked block) opens the cited note over the chat.
+  async function openNoteById(noteId: string) {
+    const item = await notes.fetchById(noteId);
+    if (item !== null) setNoteView(noteViewFromItem(item));
+  }
+
   // Editing is a full-screen layer over wherever you are; underlying
   // layers stay put and the saved body is reflected into an open note view.
   function startEditFromNoteView(
@@ -248,6 +254,7 @@ export function App() {
           notes={notes}
           actions={actions}
           onOpenNote={openNoteFromStream}
+          onOpenNoteById={(noteId) => void openNoteById(noteId)}
           onOpenSearch={() => setCard("search")}
           onOpenLauncher={() => setLauncherOpen(true)}
         />
