@@ -11,6 +11,7 @@ import { DOMAIN_COLOR } from "../notes/modes";
 import { ProposalTree } from "./ProposalTree";
 import { ProposalsPanel } from "./ProposalsPanel";
 import { SessionsPanel } from "./SessionsPanel";
+import { Markdown } from "./markdown";
 import { type AgentStatus, agentStatus } from "./status";
 import { type SourceRef, toolStep } from "./toolSummary";
 import type { ToolActivity, TranscriptMessage } from "./transcript";
@@ -178,7 +179,7 @@ function Bubble({
   }
   return (
     <div className="bubble ai">
-      {message.text && <span className="fb-text">{message.text}</span>}
+      {message.text && <Markdown text={message.text} />}
       {message.tools.length > 0 && <ToolUsage tools={message.tools} onOpenNote={onOpenNote} />}
       {message.views.map((v, i) => (
         // biome-ignore lint/suspicious/noArrayIndexKey: views append in order
