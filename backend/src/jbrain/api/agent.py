@@ -6,9 +6,11 @@ serialized as `data:`-framed SSE so the PWA shows tool activity and the answer
 live (docs/ASSISTANT.md "Streaming to the phone").
 
 Two RLS contexts ride the request: the loop's *tool reads* run under the session
-narrowed to its domains (the owner_scoped firewall), while the *run log* is
-owner-only — runs are owner metadata, not in-scope content. Run text is never
-persisted (the log is purge-friendly); the client carries conversation history.
+narrowed to its domains (the owner_scoped firewall), while the *run log* and the
+*transcript* are owner-only — owner metadata, not in-scope content. A completed
+exchange is persisted to the transcript (text + the tool sources it surfaced) so
+reopening the session replays it; the sources are pointers (note id + snippet),
+never copied note bodies.
 """
 
 import asyncio
@@ -26,6 +28,7 @@ from jbrain.agent.memory import MemoryService
 from jbrain.agent.runlog import AgentRunLog
 from jbrain.agent.session import AgentSessionInfo, AgentSessionRepo, read_context
 from jbrain.agent.toolregistry import ToolRegistry
+from jbrain.agent.transcript_store import AgentTranscript
 from jbrain.api.deps import owner_only
 from jbrain.api.notes import ctx_for
 from jbrain.auth.service import PrincipalInfo
@@ -73,6 +76,10 @@ def get_agent_memory(request: Request) -> MemoryService:
     return cast(MemoryService, request.app.state.agent_memory)
 
 
+def get_agent_transcript(request: Request) -> AgentTranscript:
+    return cast(AgentTranscript, request.app.state.agent_transcript)
+
+
 async def _record_episode(
     request: Request,
     read_ctx: SessionContext,
@@ -94,6 +101,28 @@ async def _record_episode(
             session_scopes=session.domain_scopes,
             session_id=session.id,
             run_id=run_id,
+        )
+
+
+async def _record_transcript(
+    request: Request,
+    owner_ctx: SessionContext,
+    session: AgentSessionInfo,
+    run_id: str,
+    question: str,
+    answer_parts: list[str],
+    tools: list[dict],
+) -> None:
+    """Persist the completed exchange so the session replays on reopen. Owner-only
+    (the transcript is owner metadata) and best-effort — never breaks a turn."""
+    with contextlib.suppress(Exception):
+        await get_agent_transcript(request).record_exchange(
+            owner_ctx,
+            session_id=session.id,
+            run_id=run_id,
+            user_text=question,
+            assistant_text="".join(answer_parts),
+            tools=tools,
         )
 
 
@@ -145,17 +174,43 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
         stop_reason = "error"
         status = "failed"
         answer: list[str] = []
+        # Tool steps in call order, each gaining its sources when the result lands —
+        # the assistant turn's "Worked" block, persisted with the transcript.
+        steps: dict[str, dict] = {}
+        order: list[str] = []
         try:
             async for event in loop.run_stream(
                 session=read_ctx, scopes=session.domain_scopes, conversation=conversation
             ):
                 if event.type == "text_delta":
                     answer.append(event.text)
+                elif event.type == "tool_call":
+                    steps[event.id] = {
+                        "id": event.id,
+                        "name": event.name,
+                        "ok": None,
+                        "sources": [],
+                    }
+                    order.append(event.id)
+                elif event.type == "tool_result":
+                    step = steps.get(event.tool_call_id)
+                    if step is not None:
+                        step["ok"] = event.ok
+                        step["sources"] = [s.model_dump() for s in event.sources]
                 elif event.type == "done":
                     stop_reason, status = event.stop_reason, "ended"
                 yield f"data: {event.model_dump_json()}\n\n".encode()
             if status == "ended":
                 await _record_episode(request, read_ctx, session, run_id, body.message, answer)
+                await _record_transcript(
+                    request,
+                    owner_ctx,
+                    session,
+                    run_id,
+                    body.message,
+                    answer,
+                    [steps[i] for i in order],
+                )
         except asyncio.CancelledError:
             # The client disconnected mid-stream (closed the PWA, lost signal) —
             # a benign abort, not a failure. Record it as such, then re-raise so

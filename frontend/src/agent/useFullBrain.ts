@@ -12,7 +12,14 @@ import {
   streamingAssistant,
   userMessage,
 } from "./transcript";
-import type { AgentSession, ChatEvent, ChatRequest, ProposalSummary, SessionCreate } from "./types";
+import type {
+  AgentSession,
+  ChatEvent,
+  ChatRequest,
+  ProposalSummary,
+  SessionCreate,
+  TranscriptTurn,
+} from "./types";
 
 export type Panel = "none" | "sessions" | "proposals";
 
@@ -21,6 +28,7 @@ export interface FullBrainDeps {
   createSession: (body: SessionCreate) => Promise<AgentSession>;
   chat: (body: ChatRequest) => AsyncGenerator<ChatEvent>;
   listProposals: () => Promise<ProposalSummary[]>;
+  getTranscript: (sessionId: string) => Promise<TranscriptTurn[]>;
 }
 
 const LIVE: FullBrainDeps = {
@@ -28,7 +36,25 @@ const LIVE: FullBrainDeps = {
   createSession: api.createSession,
   chat: api.chat,
   listProposals: api.listProposals,
+  getTranscript: api.getTranscript,
 };
+
+/** Map a persisted turn back into a transcript message — assistant turns rebuild
+ * their tool steps + note sources so the "Worked" block reappears. */
+function fromTurn(t: TranscriptTurn): TranscriptMessage {
+  return {
+    role: t.role,
+    text: t.content,
+    tools: t.tools.map((tool) => ({
+      id: tool.id,
+      name: tool.name,
+      ...(tool.ok === null ? {} : { ok: tool.ok }),
+      sources: tool.sources.map((s) => ({ noteId: s.note_id, domain: s.domain, text: s.snippet })),
+    })),
+    views: [],
+    streaming: false,
+  };
+}
 
 export interface FullBrain {
   active: AgentSession | null;
@@ -51,7 +77,7 @@ export interface FullBrain {
 /** Drive the Full Brain surface. `enabled` gates the network so nothing loads
  * until the mode is actually on screen; `deps` is injected in tests. */
 export function useFullBrain(enabled: boolean, deps: FullBrainDeps = LIVE): FullBrain {
-  const { listSessions, createSession, chat, listProposals } = deps;
+  const { listSessions, createSession, chat, listProposals, getTranscript } = deps;
   const [sessions, setSessions] = useState<AgentSession[]>([]);
   const [active, setActive] = useState<AgentSession | null>(null);
   const [panel, setPanel] = useState<Panel>("none");
@@ -94,6 +120,23 @@ export function useFullBrain(enabled: boolean, deps: FullBrainDeps = LIVE): Full
     };
   }, [enabled, listProposals]);
 
+  // Replay the active session's stored transcript on open/switch (keyed on id, so
+  // a live turn's own setMessages never triggers a reload). A failure just leaves
+  // the conversation empty.
+  const activeId = active?.id ?? null;
+  useEffect(() => {
+    if (!enabled || activeId === null) return;
+    let stale = false;
+    getTranscript(activeId)
+      .then((turns) => {
+        if (!stale) setMessages(turns.map(fromTurn));
+      })
+      .catch(() => {});
+    return () => {
+      stale = true;
+    };
+  }, [enabled, activeId, getTranscript]);
+
   async function send(textRaw: string): Promise<void> {
     const text = textRaw.trim();
     if (!text || busy) return;
@@ -124,6 +167,9 @@ export function useFullBrain(enabled: boolean, deps: FullBrainDeps = LIVE): Full
   }
 
   function open(session: AgentSession): void {
+    // Clear now so the prior session's chat doesn't linger while the new one's
+    // transcript loads (the id-keyed effect repopulates it).
+    setMessages([]);
     setActive(session);
     setPanel("none");
   }

@@ -81,6 +81,14 @@ export type ChatEvent =
   | JobEnqueuedEvent
   | DoneEvent;
 
+/** A persisted conversation turn (GET /api/sessions/{id}/transcript) — replays a
+ * session on reopen. Assistant turns carry their tool steps + note sources. */
+export interface TranscriptTurn {
+  role: "user" | "assistant";
+  content: string;
+  tools: { id: string; name: string; ok: boolean | null; sources: NoteSource[] }[];
+}
+
 // --- Agent sessions (the capability record; /api/sessions) ---
 
 export interface AgentSession {

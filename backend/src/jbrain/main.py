@@ -11,6 +11,7 @@ from jbrain.agent.proposals import ProposalRepo
 from jbrain.agent.readtools import build_registry
 from jbrain.agent.runlog import AgentRunLog
 from jbrain.agent.session import AgentSessionRepo
+from jbrain.agent.transcript_store import AgentTranscript
 from jbrain.analysis.repo import SqlAnalysisRepo
 from jbrain.api import agent, analysis, auth, health, notes, ops, proposals, search, sessions
 from jbrain.api import settings as settings_api
@@ -79,6 +80,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
         app.state.agent_sessions = AgentSessionRepo(maker)
         app.state.agent_runlog = AgentRunLog(maker)
+        app.state.agent_transcript = AgentTranscript(maker)
         app.state.supervisor_client = httpx.AsyncClient(base_url=settings.supervisor_url)
         yield
         await app.state.supervisor_client.aclose()

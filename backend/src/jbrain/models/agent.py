@@ -3,9 +3,20 @@ subjects a session may read (docs/ASSISTANT.md "Session capabilities")."""
 
 import uuid
 from datetime import datetime
+from typing import Any
 
-from sqlalchemy import BigInteger, Boolean, DateTime, Float, ForeignKey, Integer, Text, func
-from sqlalchemy.dialects.postgresql import ARRAY, UUID
+from sqlalchemy import (
+    BigInteger,
+    Boolean,
+    DateTime,
+    Float,
+    ForeignKey,
+    Identity,
+    Integer,
+    Text,
+    func,
+)
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from jbrain.models.core import Base
@@ -66,6 +77,29 @@ class AgentStep(Base):
     ok: Mapped[bool] = mapped_column(Boolean)
     cost_tokens: Mapped[int] = mapped_column(BigInteger, default=0, server_default="0")
     at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class AgentTurn(Base):
+    """One conversation turn in a session's transcript (docs/ASSISTANT.md
+    "Sessions"). Owner-only; `seq` is the total insertion order (a user turn is
+    written just before its assistant turn). Assistant turns carry the tool steps
+    + note sources for the "Worked" block; user turns carry an empty list."""
+
+    __tablename__ = "agent_turns"
+    __table_args__ = {"schema": "app"}
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    seq: Mapped[int] = mapped_column(BigInteger, Identity(always=True))
+    session_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("app.agent_sessions.id", ondelete="CASCADE")
+    )
+    run_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("app.agent_runs.id", ondelete="SET NULL"), nullable=True
+    )
+    role: Mapped[str] = mapped_column(Text)  # user | assistant
+    content: Mapped[str] = mapped_column(Text)
+    tools: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, default=list, server_default="[]")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class AgentMemory(Base):

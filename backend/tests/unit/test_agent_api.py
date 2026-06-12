@@ -11,11 +11,15 @@ from typing import cast
 import pytest
 from fastapi.testclient import TestClient
 
+from jbrain.agent.contracts import NoteSource, ToolSpec
+from jbrain.agent.loop import ToolOutput
 from jbrain.agent.session import AgentSessionInfo
-from jbrain.agent.toolregistry import ToolRegistry
+from jbrain.agent.toolfile import ToolFile
+from jbrain.agent.toolregistry import RegisteredTool, ToolRegistry
+from jbrain.agent.transcript_store import TurnRecord
 from jbrain.auth import service
 from jbrain.config import Settings
-from jbrain.llm import FakeLlmClient, LlmClient, LlmRouter, LlmTurn, LlmUsage
+from jbrain.llm import FakeLlmClient, LlmClient, LlmRouter, LlmTurn, LlmUsage, ToolCall
 from jbrain.main import create_app
 from tests.unit.fakes import FakeAuthRepo
 
@@ -82,6 +86,33 @@ class FakeRunLog:
         )
 
 
+class FakeTranscript:
+    def __init__(self) -> None:
+        self.recorded: list[dict] = []
+        self.turns: dict[str, list[TurnRecord]] = {}
+
+    async def record_exchange(self, ctx, *, session_id, run_id, user_text, assistant_text, tools):  # type: ignore[no-untyped-def]
+        self.recorded.append(
+            {
+                "session_id": session_id,
+                "run_id": run_id,
+                "user": user_text,
+                "assistant": assistant_text,
+                "tools": list(tools),
+            }
+        )
+
+    async def load(self, ctx, session_id):  # type: ignore[no-untyped-def]
+        return self.turns.get(session_id, [])
+
+
+def registry_with_tool(name, handler) -> ToolRegistry:  # type: ignore[no-untyped-def]
+    spec = ToolSpec(name=name, version=1, params={"type": "object"}, permission="read")
+    return ToolRegistry(
+        [RegisteredTool(toolfile=ToolFile(spec=spec, description=name), handler=handler)]
+    )
+
+
 @pytest.fixture
 def repo() -> FakeAuthRepo:
     return FakeAuthRepo()
@@ -95,6 +126,11 @@ def sessions_store() -> FakeAgentSessions:
 @pytest.fixture
 def runlog() -> FakeRunLog:
     return FakeRunLog()
+
+
+@pytest.fixture
+def transcript() -> FakeTranscript:
+    return FakeTranscript()
 
 
 def stream_router(turns: list[LlmTurn], stream_chunks: list[list[str]]) -> LlmRouter:
@@ -112,7 +148,10 @@ class BoomStreamClient:
 
 @pytest.fixture
 def client(
-    repo: FakeAuthRepo, sessions_store: FakeAgentSessions, runlog: FakeRunLog
+    repo: FakeAuthRepo,
+    sessions_store: FakeAgentSessions,
+    runlog: FakeRunLog,
+    transcript: FakeTranscript,
 ) -> Iterator[TestClient]:
     settings = Settings(
         secure_cookies=False,
@@ -123,6 +162,7 @@ def client(
         app.state.auth_repo = repo
         app.state.agent_sessions = sessions_store
         app.state.agent_runlog = runlog
+        app.state.agent_transcript = transcript
         app.state.agent_registry = ToolRegistry([])  # no tools: the model answers directly
         app.state.llm_router = stream_router(
             [LlmTurn("hi there", (), "end_turn", LlmUsage(7, 3))],
@@ -178,6 +218,91 @@ def test_chat_streams_text_then_done(
     assert runlog.finished == [
         {"status": "ended", "stop_reason": "end_turn", "step_count": 1, "cost_tokens": 10}
     ]
+
+
+def test_chat_persists_the_exchange_to_the_transcript(
+    client: TestClient,
+    repo: FakeAuthRepo,
+    sessions_store: FakeAgentSessions,
+    transcript: FakeTranscript,
+) -> None:
+    login(client, repo)
+    sessions_store.add(AgentSessionInfo("sess-1", "", "active", ("general",), (), NOW, NOW))
+    client.post("/api/chat", json={"session_id": "sess-1", "message": "hello?"})
+    assert transcript.recorded == [
+        {
+            "session_id": "sess-1",
+            "run_id": "run-1",
+            "user": "hello?",
+            "assistant": "hi there",
+            "tools": [],
+        }
+    ]
+
+
+def test_chat_persists_tool_steps_with_sources(
+    client: TestClient,
+    repo: FakeAuthRepo,
+    sessions_store: FakeAgentSessions,
+    transcript: FakeTranscript,
+) -> None:
+    login(client, repo)
+    sessions_store.add(AgentSessionInfo("sess-1", "", "active", ("general",), (), NOW, NOW))
+
+    async def search(arguments, ctx):  # type: ignore[no-untyped-def]
+        return ToolOutput("found 1", (NoteSource(note_id="n1", domain="general", snippet="born"),))
+
+    client.app.state.agent_registry = registry_with_tool("search", search)  # type: ignore[attr-defined]
+    client.app.state.llm_router = stream_router(  # type: ignore[attr-defined]
+        [
+            LlmTurn("", (ToolCall("c1", "search", {}),), "tool_use", LlmUsage(1, 1)),
+            LlmTurn("done", (), "end_turn", LlmUsage(1, 1)),
+        ],
+        stream_chunks=[[""], ["here you go"]],
+    )
+    client.post("/api/chat", json={"session_id": "sess-1", "message": "when born?"})
+
+    rec = transcript.recorded[-1]
+    assert rec["assistant"] == "here you go"
+    assert rec["tools"] == [
+        {
+            "id": "c1",
+            "name": "search",
+            "ok": True,
+            "sources": [{"note_id": "n1", "domain": "general", "snippet": "born"}],
+        }
+    ]
+
+
+def test_session_transcript_endpoint_replays_stored_turns(
+    client: TestClient, repo: FakeAuthRepo, transcript: FakeTranscript
+) -> None:
+    login(client, repo)
+    transcript.turns["sess-1"] = [
+        TurnRecord("user", "when born?"),
+        TurnRecord(
+            "assistant",
+            "March 19, 1986.",
+            [
+                {
+                    "id": "c1",
+                    "name": "search",
+                    "ok": True,
+                    "sources": [{"note_id": "n1", "domain": "general", "snippet": "born"}],
+                }
+            ],
+        ),
+    ]
+    resp = client.get("/api/sessions/sess-1/transcript")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert [t["role"] for t in data] == ["user", "assistant"]
+    assert data[1]["content"] == "March 19, 1986."
+    assert data[1]["tools"][0]["sources"][0]["note_id"] == "n1"
+
+
+def test_transcript_endpoint_requires_owner(client: TestClient) -> None:
+    assert client.get("/api/sessions/sess-1/transcript").status_code == 401
 
 
 def test_chat_history_is_replayed_into_the_turn(
