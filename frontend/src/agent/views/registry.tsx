@@ -5,7 +5,8 @@
 // selects a registered component and fills its data-only slots. Adding a
 // component is a deliberate change here, like adding a tool.
 
-import type { ReactNode } from "react";
+import { type ReactNode, useState } from "react";
+import { api } from "../../api/client";
 import type { CitationRef, ViewPayload } from "../types";
 
 export interface ViewProps {
@@ -84,21 +85,37 @@ function asItems(value: unknown): ChecklistItem[] {
   });
 }
 
-/** A read-only checklist: `{title, items: [{id, body, checked}]}` — the owner's
- * list, rendered as full-bleed rows with checked state (DESIGN.md "Lists"). */
+/** The owner's checklist: `{title, items: [{id, body, checked}]}` — full-bleed
+ * rows (DESIGN.md "Lists"). A checkbox tap toggles the item directly (lists are
+ * the owner's own data): optimistic, reverting if the write fails. */
 function ListCard({ data }: ViewProps): ReactNode {
-  const items = asItems(data.items);
+  const [items, setItems] = useState<ChecklistItem[]>(() => asItems(data.items));
+
+  function toggle(target: ChecklistItem): void {
+    const next = !target.checked;
+    setItems((xs) => xs.map((x) => (x.id === target.id ? { ...x, checked: next } : x)));
+    api.setListItemChecked(target.id, next).catch(() => {
+      // The write lost — snap the row back to where it was.
+      setItems((xs) => xs.map((x) => (x.id === target.id ? { ...x, checked: target.checked } : x)));
+    });
+  }
+
   return (
     <div className="tv-list">
       <div className="tv-list-head">{String(data.title ?? "List")}</div>
       <ul className="tv-list-items">
         {items.map((it, i) => (
-          <li
-            // Item ids are stable; the index only backs the rare empty-id row.
-            key={it.id || i}
-            className={`tv-list-row${it.checked ? " checked" : ""}`}
-          >
-            <span className="tv-list-box" aria-hidden="true" />
+          // Item ids are stable; the index only backs the rare empty-id row.
+          <li key={it.id || i} className={`tv-list-row${it.checked ? " checked" : ""}`}>
+            <button
+              type="button"
+              className="tv-list-check"
+              aria-pressed={it.checked}
+              aria-label={`${it.checked ? "Uncheck" : "Check"} ${it.body}`}
+              onClick={() => toggle(it)}
+            >
+              <span className="tv-list-box" aria-hidden="true" />
+            </button>
             <span className="tv-list-body">{it.body}</span>
           </li>
         ))}

@@ -1,5 +1,6 @@
-import { render } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { fireEvent, render, waitFor } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
+import { api } from "../../api/client";
 import type { ViewPayload } from "../types";
 import { ToolView, isKnownView } from "./registry";
 
@@ -80,6 +81,47 @@ describe("ToolView registry", () => {
     expect(getByText("eggs")).toBeInTheDocument();
     // The checked item carries the checked row class (theme draws the tick).
     expect(getByText("milk").closest(".tv-list-row")).toHaveClass("checked");
+  });
+
+  it("tapping a list_card checkbox toggles the item via the API", async () => {
+    const setChecked = vi.spyOn(api, "setListItemChecked").mockResolvedValue();
+    const { getByLabelText, getByText } = render(
+      <ToolView
+        payload={payload({
+          view: "list_card",
+          data: {
+            list_id: "L1",
+            title: "Groceries",
+            items: [{ id: "a", body: "eggs", checked: false }],
+          },
+        })}
+      />,
+    );
+    fireEvent.click(getByLabelText("Check eggs"));
+    // Optimistic: the row flips immediately, and the write is sent.
+    expect(getByText("eggs").closest(".tv-list-row")).toHaveClass("checked");
+    await waitFor(() => expect(setChecked).toHaveBeenCalledWith("a", true));
+    // The control now offers the inverse action.
+    expect(getByLabelText("Uncheck eggs")).toBeInTheDocument();
+    setChecked.mockRestore();
+  });
+
+  it("reverts a list_card toggle when the write fails", async () => {
+    const setChecked = vi.spyOn(api, "setListItemChecked").mockRejectedValue(new Error("boom"));
+    const { getByLabelText, getByText } = render(
+      <ToolView
+        payload={payload({
+          view: "list_card",
+          data: { items: [{ id: "a", body: "eggs", checked: false }] },
+        })}
+      />,
+    );
+    fireEvent.click(getByLabelText("Check eggs"));
+    // It flips optimistically, then snaps back once the write rejects.
+    await waitFor(() =>
+      expect(getByText("eggs").closest(".tv-list-row")).not.toHaveClass("checked"),
+    );
+    setChecked.mockRestore();
   });
 
   it("tolerates missing/extra slots without crashing", () => {

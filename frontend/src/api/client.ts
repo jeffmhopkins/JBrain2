@@ -530,6 +530,12 @@ export const api = {
     return (await response.json()) as EntityOut;
   },
 
+  // Owner toggles a list item directly (lists are the owner's own data) — the
+  // checkbox tap on a list_card view lands here.
+  async setListItemChecked(itemId: string, checked: boolean): Promise<void> {
+    await request(`/api/lists/items/${encodeURIComponent(itemId)}`, jsonInit("PATCH", { checked }));
+  },
+
   // "resolved" is the full decision log: it folds in dismissals and
   // reopened tombstones, newest decision first.
   async reviewQueue(status: "open" | "resolved" = "open"): Promise<ReviewQueue> {
