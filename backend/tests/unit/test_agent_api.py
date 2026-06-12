@@ -12,7 +12,7 @@ from typing import cast
 import pytest
 from fastapi.testclient import TestClient
 
-from jbrain.agent.contracts import NoteSource, ToolSpec
+from jbrain.agent.contracts import EntityRef, NoteSource, ProposalRef, ToolSpec
 from jbrain.agent.loop import ToolOutput
 from jbrain.agent.session import AgentSessionInfo
 from jbrain.agent.toolfile import ToolFile
@@ -280,6 +280,41 @@ def test_chat_persists_tool_steps_with_sources(
             "ok": True,
             "sources": [{"note_id": "n1", "domain": "general", "snippet": "born"}],
         }
+    ]
+
+
+def test_chat_persists_proposal_and_entity_chips(
+    client: TestClient,
+    repo: FakeAuthRepo,
+    sessions_store: FakeAgentSessions,
+    transcript: FakeTranscript,
+) -> None:
+    login(client, repo)
+    sessions_store.add(AgentSessionInfo("sess-1", "", "active", ("general",), (), NOW, NOW))
+
+    async def find(arguments, ctx):  # type: ignore[no-untyped-def]
+        # A tool that both stages a proposal and resolves an entity — both chips
+        # must persist alongside the (empty) note sources.
+        return ToolOutput(
+            "staged",
+            proposal=ProposalRef(proposal_id="p1", kind="correction"),
+            entities=(EntityRef(entity_id="e1", label="Me", domain="general"),),
+        )
+
+    client.app.state.agent_registry = registry_with_tool("find_entity", find)  # type: ignore[attr-defined]
+    client.app.state.llm_router = stream_router(  # type: ignore[attr-defined]
+        [
+            LlmTurn("", (ToolCall("c1", "find_entity", {}),), "tool_use", LlmUsage(1, 1)),
+            LlmTurn("done", (), "end_turn", LlmUsage(1, 1)),
+        ],
+        stream_chunks=[[""], ["that is you"]],
+    )
+    client.post("/api/chat", json={"session_id": "sess-1", "message": "who am i?"})
+
+    step = transcript.recorded[-1]["tools"][0]
+    assert step["proposal"] == {"proposal_id": "p1", "kind": "correction"}
+    assert step["entities"] == [
+        {"kind": "entity", "entity_id": "e1", "label": "Me", "domain": "general", "aliases": []}
     ]
 
 

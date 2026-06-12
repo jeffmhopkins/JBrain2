@@ -96,7 +96,16 @@ export type ChatEvent =
 export interface TranscriptTurn {
   role: "user" | "assistant";
   content: string;
-  tools: { id: string; name: string; ok: boolean | null; sources: NoteSource[] }[];
+  tools: {
+    id: string;
+    name: string;
+    ok: boolean | null;
+    sources: NoteSource[];
+    /** A staged proposal / resolved entities the step surfaced, persisted so the
+     * bubble's chips and inline links replay on reopen (not just note sources). */
+    proposal?: ProposalRef | null;
+    entities?: EntityRef[];
+  }[];
 }
 
 // --- Agent sessions (the capability record; /api/sessions) ---

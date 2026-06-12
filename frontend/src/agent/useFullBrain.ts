@@ -44,7 +44,8 @@ const LIVE: FullBrainDeps = {
 };
 
 /** Map a persisted turn back into a transcript message — assistant turns rebuild
- * their tool steps + note sources so the "Worked" block reappears. */
+ * their tool steps, note sources, and any staged-proposal / resolved-entity chips
+ * so the bubble (and its inline entity links) replay in full. */
 function fromTurn(t: TranscriptTurn): TranscriptMessage {
   return {
     role: t.role,
@@ -54,6 +55,8 @@ function fromTurn(t: TranscriptTurn): TranscriptMessage {
       name: tool.name,
       ...(tool.ok === null ? {} : { ok: tool.ok }),
       sources: tool.sources.map((s) => ({ noteId: s.note_id, domain: s.domain, text: s.snippet })),
+      ...(tool.proposal ? { proposal: tool.proposal } : {}),
+      ...(tool.entities?.length ? { entities: tool.entities } : {}),
     })),
     views: [],
     streaming: false,
