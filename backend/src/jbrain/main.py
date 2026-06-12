@@ -22,6 +22,7 @@ from jbrain.connectors.medical import medical_connectors
 from jbrain.connectors.repo import SqlConnectorCache
 from jbrain.connectors.service import ConnectorService
 from jbrain.embed import TeiEmbedClient
+from jbrain.lists.repo import SqlListsRepo
 from jbrain.llm import build_router
 from jbrain.notes.repo import SqlNotesRepo
 from jbrain.queue import PgJobQueue
@@ -47,6 +48,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.session_maker = maker
         app.state.auth_repo = SqlAuthRepo(maker)
         app.state.notes_repo = SqlNotesRepo(maker)
+        app.state.lists_repo = SqlListsRepo(maker)
         app.state.blob_store = FsBlobStore(settings.blob_dir)
         app.state.backup_shelf = FsBackupShelf(settings.backups_dir)
         app.state.job_queue = PgJobQueue(maker)
@@ -77,6 +79,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             app.state.agent_memory,
             app.state.agent_proposals,
             connector_registry,
+            app.state.lists_repo,
         )
         app.state.agent_sessions = AgentSessionRepo(maker)
         app.state.agent_runlog = AgentRunLog(maker)
