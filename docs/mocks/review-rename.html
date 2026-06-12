@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Review, renamed — 3 options</title>
+<style>
+  :root{
+    --bg:#0E0F11; --surface:#17181B; --surface-2:#1E2024; --border:#26282C;
+    --text:#E6E7E9; --text-2:#9A9DA3; --text-3:#5C5F66;
+    --steel:#7FA7C9; --green:#8FBC9A; --amber:#C9A36A; --rose:#CF8A8F; --violet:#A493C9;
+    --steel-tint:rgba(127,167,201,.13);
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+  body{background:#000;color:var(--text);display:flex;flex-wrap:wrap;justify-content:center;align-items:flex-start;gap:22px;padding:22px 14px 60px;min-height:100vh;}
+  svg{fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;}
+
+  .col{display:flex;flex-direction:column;align-items:center;gap:12px;width:380px;max-width:94vw;}
+  .caption{padding:0 6px;color:var(--text-2);font-size:12.5px;line-height:1.5;}
+  .caption b{color:var(--text);font-weight:600;}
+  .caption .tag{display:inline-block;font-size:11px;padding:2px 9px;border-radius:999px;margin-bottom:6px;}
+
+  .phone{width:380px;max-width:94vw;height:660px;background:var(--bg);border:1px solid #2a2c30;border-radius:30px;overflow:hidden;position:relative;display:flex;flex-direction:column;}
+  .top{height:52px;display:flex;align-items:center;gap:12px;padding:0 14px;flex:none;}
+  .top .bk{color:var(--text-2);display:flex;}.top .bk svg{width:22px;height:22px;}
+  .htitle{padding:2px 18px 8px;flex:none;}
+  .htitle h1{font-size:25px;font-weight:700;letter-spacing:-.01em;}
+  .htitle .sub{font-size:12.5px;color:var(--text-2);margin-top:3px;}
+
+  /* tile preview (what the launcher chip would read) */
+  .tile{display:inline-flex;flex-direction:column;align-items:center;gap:6px;width:84px;padding:12px 6px;border:1px solid var(--border);border-radius:16px;background:var(--surface);margin:0 6px 4px 18px;}
+  .tile .ic{width:26px;height:26px;}
+  .tile .lab{font-size:12.5px;font-weight:600;}
+
+  .segs{display:flex;gap:6px;padding:2px 16px 10px;flex:none;}
+  .seg{flex:1;border:none;background:var(--surface-2);color:var(--text-2);font:inherit;font-size:13px;font-weight:600;padding:8px;border-radius:9px;display:flex;align-items:center;justify-content:center;gap:6px;cursor:pointer;}
+  .seg.on{background:var(--steel-tint);color:var(--text);}
+  .seg .ct{font-size:11px;background:var(--bg);border-radius:999px;padding:1px 7px;}
+
+  .body{flex:1;overflow-y:auto;padding:4px 16px 18px;}
+  .dots{display:flex;gap:5px;justify-content:center;padding:4px 0 12px;}
+  .dots i{width:6px;height:6px;border-radius:999px;background:var(--surface-2);}
+  .dots i.done{background:var(--accent);}
+
+  .card{border:1px solid var(--border);border-radius:16px;background:var(--surface);padding:15px;}
+  .chead{display:flex;align-items:center;gap:9px;margin-bottom:11px;}
+  .kind{font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--accent);background:color-mix(in srgb, var(--accent) 14%, transparent);padding:3px 9px;border-radius:999px;}
+  .ddot{width:8px;height:8px;border-radius:999px;}
+  .summary{font-size:16px;font-weight:600;line-height:1.35;margin-bottom:11px;}
+  .hero{border-left:2px solid var(--border);padding:2px 0 2px 12px;color:var(--text-2);font-size:13.5px;line-height:1.5;margin-bottom:14px;}
+  .hero mark{background:color-mix(in srgb, var(--accent) 26%, transparent);color:var(--text);border-radius:3px;padding:0 2px;}
+  .what{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--text-3);margin-bottom:6px;}
+  .orow{font-size:13px;color:var(--text-2);line-height:1.55;}
+  .orow .v{font-weight:700;}
+  .orow .v.acc{color:var(--accent);}.orow .v.rej{color:var(--rose);}
+
+  .bar{display:flex;gap:9px;margin-top:16px;}
+  .bar button{flex:1;border:none;font:inherit;font-weight:600;font-size:14px;padding:12px;border-radius:11px;cursor:pointer;}
+  .bar .skip{flex:0 0 64px;background:none;color:var(--text-3);}
+  .bar .rej{background:var(--surface-2);color:var(--rose);}
+  .bar .acc{background:var(--accent);color:#0e0f11;}
+
+  .zero{text-align:center;color:var(--text-2);font-size:14px;line-height:1.6;padding:60px 18px;}
+  .zero .big{font-size:34px;margin-bottom:10px;}
+  .resolved-row{display:flex;align-items:center;gap:9px;border-bottom:1px solid var(--border);padding:13px 2px;font-size:13.5px;color:var(--text-2);}
+  .resolved-row .ok{color:var(--accent);}
+</style>
+</head>
+<body>
+
+<div class="col">
+  <div class="caption">
+    <span class="tag" style="background:rgba(143,188,154,.14);color:var(--green)">Name option</span><br/>
+    <b style="color:var(--green)">1 — Confirm.</b> Frames it as approval: the AI did the work, it just needs your yes/no.
+    Plain, calm, low-stakes. Tile reads <b>Confirm</b>; the badge count is "things to confirm."
+  </div>
+  <div class="phone" data-accent="var(--green)" data-name="Confirm"
+       data-sub="things your brain wants you to confirm"
+       data-zero-big="✓" data-zero="All confirmed.&lt;br/&gt;Nothing waiting on you."></div>
+</div>
+
+<div class="col">
+  <div class="caption">
+    <span class="tag" style="background:rgba(164,147,201,.14);color:var(--violet)">Name option</span><br/>
+    <b style="color:var(--violet)">2 — Curate.</b> Frames it as editorial ownership: you're the editor of your own brain,
+    making the calls only you can. More agency, a touch more weight. Tile reads <b>Curate</b>.
+  </div>
+  <div class="phone" data-accent="var(--violet)" data-name="Curate"
+       data-sub="calls only you can make"
+       data-zero-big="✦" data-zero="Curated.&lt;br/&gt;Your brain's tidy."></div>
+</div>
+
+<div class="col">
+  <div class="caption">
+    <span class="tag" style="background:rgba(201,163,106,.14);color:var(--amber)">Name option</span><br/>
+    <b style="color:var(--amber)">3 — Loose Ends.</b> Warmest and most evocative: the bits your brain couldn't settle alone.
+    Inviting, a little playful; reads as "tidy up" rather than "do chores." Tile reads <b>Loose Ends</b>.
+  </div>
+  <div class="phone" data-accent="var(--amber)" data-name="Loose Ends"
+       data-sub="things your brain couldn't settle alone"
+       data-zero-big="🪢" data-zero="No loose ends.&lt;br/&gt;All tied up."></div>
+</div>
+
+<script>
+  const ITEMS = [
+    { kind:"fact conflict", dom:"var(--steel)",
+      summary:"Two weights recorded for you a week apart.",
+      hero:"Felt heavier at the gym — scale said <mark>182 lbs</mark> this morning.",
+      acc:"pin 182 lbs as current; retract the older 175 lbs",
+      rej:"keep 175 lbs; treat 182 as a one-off" },
+    { kind:"merge?", dom:"var(--rose)",
+      summary:"Are “Dr. Lin” and “Christine Lin” the same person?",
+      hero:"Saw <mark>Dr. Lin</mark> for the follow-up; Christine ran the labs.",
+      acc:"merge into one person; combine their mentions",
+      rej:"keep separate; remember they're distinct" },
+    { kind:"which one?", dom:"var(--steel)",
+      summary:"Which “Sarah” did you mean here?",
+      hero:"Grabbed lunch with <mark>Sarah</mark> downtown.",
+      acc:"Sarah Chen (from work)",
+      rej:"a new Sarah I haven't met before" },
+  ];
+
+  function mount(phone){
+    const accent = phone.dataset.accent, name = phone.dataset.name;
+    const sub = phone.dataset.sub, zeroBig = phone.dataset.zeroBig, zero = phone.dataset.zero;
+    const total = ITEMS.length;
+    let queue = ITEMS.slice();     // the open queue (working copy)
+    const resolved = [];
+    let seg = "open";
+
+    function render(){
+      const remaining = queue.length, done = resolved.length;
+      phone.style.setProperty("--accent", accent);
+      phone.innerHTML = `
+        <div class="top"><span class="bk"><svg viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg></span></div>
+        <div class="htitle"><h1>${name}</h1><div class="sub">${remaining} ${sub}</div></div>
+        <div class="segs">
+          <button class="seg ${seg==='open'?'on':''}" data-seg="open">Open <span class="ct">${remaining}</span></button>
+          <button class="seg ${seg==='resolved'?'on':''}" data-seg="resolved">Resolved <span class="ct">${done}</span></button>
+        </div>
+        <div class="body"></div>`;
+      phone.querySelectorAll(".seg").forEach(s=>s.addEventListener("click",()=>{ seg=s.dataset.seg; render(); }));
+      const body = phone.querySelector(".body");
+
+      if(seg==="resolved"){
+        body.innerHTML = resolved.length
+          ? resolved.map(r=>`<div class="resolved-row"><span class="ok">✓</span><span>${r}</span></div>`).join("")
+          : `<p class="zero">no decisions yet —<br/>resolved items collect here.</p>`;
+        return;
+      }
+      const it = queue[0];
+      if(!it){
+        body.innerHTML = `<div class="zero"><div class="big">${zeroBig}</div>${zero}</div>`;
+        return;
+      }
+      const dots = Array.from({length:total},(_,k)=>`<i class="${k<resolved.length?'done':''}"></i>`).join("");
+      body.innerHTML = `
+        <div class="dots">${dots}</div>
+        <div class="card">
+          <div class="chead"><span class="kind">${it.kind}</span><span class="ddot" style="background:${it.dom}"></span></div>
+          <div class="summary">${it.summary}</div>
+          <blockquote class="hero">${it.hero}</blockquote>
+          <div class="what">what happens</div>
+          <p class="orow"><span class="v acc">accept</span> — ${it.acc}</p>
+          <p class="orow"><span class="v rej">reject</span> — ${it.rej}</p>
+          <div class="bar">
+            <button class="skip"${queue.length<2?" disabled style=opacity:.4":""}>skip</button>
+            <button class="rej">reject</button>
+            <button class="acc">accept</button>
+          </div>
+        </div>`;
+      body.querySelector(".acc").addEventListener("click",()=>{ resolved.unshift("accepted: "+it.acc); queue.shift(); render(); });
+      body.querySelector(".rej").addEventListener("click",()=>{ resolved.unshift("rejected: "+it.rej); queue.shift(); render(); });
+      body.querySelector(".skip").addEventListener("click",()=>{ if(queue.length<2) return; queue.push(queue.shift()); render(); });
+    }
+    render();
+  }
+  document.querySelectorAll(".phone").forEach(mount);
+</script>
+</body>
+</html>
