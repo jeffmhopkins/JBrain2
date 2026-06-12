@@ -5,7 +5,14 @@ tools — no real model, no database."""
 import hashlib
 from typing import Any
 
-from jbrain.agent.contracts import ToolSpec
+from jbrain.agent.contracts import (
+    ChatEvent,
+    DoneEvent,
+    TextDelta,
+    ToolCallEvent,
+    ToolResultEvent,
+    ToolSpec,
+)
 from jbrain.agent.loop import (
     SYSTEM_PROMPT,
     SYSTEM_VERSION,
@@ -148,6 +155,112 @@ async def test_unknown_tool_is_a_recoverable_error() -> None:
     assert result.text == "recovered"
     fed_back = fake.converse_calls[1]["messages"][-1].results[0]
     assert fed_back.is_error and "unknown tool" in fed_back.content
+
+
+# --- run_stream (streaming twin) --------------------------------------------
+
+
+def stream_router_with(
+    turns: list[LlmTurn], stream_chunks: list[list[str]] | None = None
+) -> tuple[LlmRouter, FakeLlmClient]:
+    fake = FakeLlmClient(turns=turns, stream_chunks=stream_chunks or [])
+    return LlmRouter({"xai": fake}, {"agent.turn": ("xai", "grok-4.3")}), fake
+
+
+async def collect(loop: AgentLoop, scopes: tuple[str, ...] = ("general",)) -> list[ChatEvent]:
+    return [
+        event
+        async for event in loop.run_stream(
+            session=OWNER, scopes=scopes, conversation=[UserMessage(text="what do I know?")]
+        )
+    ]
+
+
+async def test_run_stream_streams_text_then_done() -> None:
+    router, _ = stream_router_with(
+        [LlmTurn("here you go", (), "end_turn", LlmUsage(1, 1))],
+        stream_chunks=[["here ", "you go"]],
+    )
+    events = await collect(AgentLoop(router, registry_with(make_tool("search", search))))
+    assert events == [
+        TextDelta(text="here "),
+        TextDelta(text="you go"),
+        DoneEvent(stop_reason="end_turn"),
+    ]
+
+
+async def test_run_stream_emits_tool_call_and_result_around_dispatch() -> None:
+    turns = [
+        LlmTurn(
+            "let me check", (ToolCall("c1", "search", {"q": "x"}),), "tool_use", LlmUsage(10, 5)
+        ),
+        LlmTurn("the answer", (), "end_turn", LlmUsage(8, 3)),
+    ]
+    router, _ = stream_router_with(turns, stream_chunks=[["let me ", "check"], ["the answer"]])
+    events = await collect(AgentLoop(router, registry_with(make_tool("search", search))))
+    assert events == [
+        TextDelta(text="let me "),
+        TextDelta(text="check"),
+        ToolCallEvent(id="c1", name="search", arguments={"q": "x"}),
+        ToolResultEvent(tool_call_id="c1", ok=True, summary="found: x"),
+        TextDelta(text="the answer"),
+        DoneEvent(stop_reason="end_turn"),
+    ]
+
+
+async def test_run_stream_tool_error_surfaces_in_result_event() -> None:
+    turns = [
+        LlmTurn("", (ToolCall("c1", "boom", {}),), "tool_use", LlmUsage(1, 1)),
+        LlmTurn("recovered", (), "end_turn", LlmUsage(1, 1)),
+    ]
+    router, _ = stream_router_with(turns)
+    events = await collect(AgentLoop(router, registry_with(make_tool("boom", boom))))
+    result = next(e for e in events if isinstance(e, ToolResultEvent))
+    assert result.ok is False and "nope" in result.summary
+    assert events[-1] == DoneEvent(stop_reason="end_turn")
+
+
+async def test_run_stream_max_steps_guardrail_emits_done() -> None:
+    forever = [LlmTurn("", (ToolCall("c", "search", {}),), "tool_use", LlmUsage(1, 1))]
+    router, _ = stream_router_with(forever)
+    loop = AgentLoop(
+        router, registry_with(make_tool("search", search)), guardrails=Guardrails(max_steps=2)
+    )
+    events = await collect(loop)
+    assert events[-1] == DoneEvent(stop_reason="max_steps")
+    # Two model turns, each emitting one tool_call + tool_result before the cap.
+    assert sum(isinstance(e, ToolCallEvent) for e in events) == 2
+
+
+async def test_run_stream_cost_budget_emits_done() -> None:
+    forever = [LlmTurn("", (ToolCall("c", "search", {}),), "tool_use", LlmUsage(10, 10))]
+    router, _ = stream_router_with(forever)
+    loop = AgentLoop(
+        router, registry_with(make_tool("search", search)), guardrails=Guardrails(max_cost_tokens=5)
+    )
+    events = await collect(loop)
+    assert events[-1] == DoneEvent(stop_reason="budget")
+
+
+async def test_run_stream_records_model_and_tool_steps() -> None:
+    steps: list[tuple[str, str, bool]] = []
+
+    class Recorder:
+        async def step(self, *, idx: int, kind: str, name: str, ok: bool, cost_tokens: int) -> None:
+            steps.append((kind, name, ok))
+
+    turns = [
+        LlmTurn("", (ToolCall("c1", "search", {"q": "x"}),), "tool_use", LlmUsage(1, 1)),
+        LlmTurn("done", (), "end_turn", LlmUsage(1, 1)),
+    ]
+    router, _ = stream_router_with(turns)
+    loop = AgentLoop(router, registry_with(make_tool("search", search)), recorder=Recorder())
+    await collect(loop)
+    assert steps == [
+        ("model", "converse", True),
+        ("tool", "search", True),
+        ("model", "converse", True),
+    ]
 
 
 async def test_recorder_logs_model_and_tool_steps() -> None:

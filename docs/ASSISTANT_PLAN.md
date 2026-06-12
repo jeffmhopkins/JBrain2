@@ -133,6 +133,21 @@ maps `tool_view` payloads to the component registry (inline, or into the shared
 `<Sheet>`/`<Dialog>`). *Gate:* httpx streaming test; Vitest for the surface and a
 registry render test (unknown component → nothing); the existing mocks are the spec.
 
+> **Owner decisions (recorded):** **(1) Full token streaming.** The adapter gains
+> a streaming `converse_stream(...) -> AsyncIterator[StreamPart]` that yields
+> incremental `TextChunk`s then one final `LlmTurn` (text streams live; tool calls
+> are assembled whole into the final turn — only the answer text "types out"); the
+> non-streaming `converse` becomes "drain the stream, return the turn." The loop
+> gains a generator `run_stream(...)` yielding `ChatEvent`s (`text_delta` from
+> chunks; `tool_call`/`tool_result` at dispatch; `done`), which `/chat` serializes
+> as SSE. **(2) One vertical-slice PR** — backend (`converse_stream` for both
+> providers + fake, `run_stream`, `/chat` SSE, `api/sessions.py`, app-state wiring)
+> **and** the React Full Brain surface together. Built in **tested layers on one
+> branch** (`feat/agent-chat`): streaming adapter → generator loop → SSE endpoint +
+> sessions API + wiring → React surface; the single PR opens when the slice is green
+> end-to-end. Streaming SSE parsing is tested with `MockTransport` byte streams; the
+> fake streams scripted chunks so the loop/endpoint tests need no real provider.
+
 **P4.6 — Tier-A memory + domain classifier.** `agent_memory`,
 `agent_episodes`, `agent_episode_refs` + migrations + RLS tests (incl. the
 multi-scope-episode isolation test). `agent/memory.py` (read/recall via existing

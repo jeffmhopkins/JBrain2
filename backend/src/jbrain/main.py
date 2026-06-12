@@ -6,8 +6,11 @@ import structlog
 from fastapi import FastAPI
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+from jbrain.agent.readtools import build_registry
+from jbrain.agent.runlog import AgentRunLog
+from jbrain.agent.session import AgentSessionRepo
 from jbrain.analysis.repo import SqlAnalysisRepo
-from jbrain.api import analysis, auth, health, notes, ops, search
+from jbrain.api import agent, analysis, auth, health, notes, ops, search, sessions
 from jbrain.api import settings as settings_api
 from jbrain.auth.repo import SqlAuthRepo
 from jbrain.config import Settings, get_settings
@@ -48,6 +51,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # Any API-side LLM call must flow through this router so its tokens
         # land in app.llm_usage like the worker's do.
         app.state.llm_router = build_router(settings, recorder=SqlUsageRecorder(maker))
+        # The agent: its read-only tool registry (validated against the .tool
+        # sidecars at startup), the session capability store, and the run log.
+        app.state.agent_registry = build_registry(
+            app.state.search_service, app.state.notes_repo, app.state.analysis_repo
+        )
+        app.state.agent_sessions = AgentSessionRepo(maker)
+        app.state.agent_runlog = AgentRunLog(maker)
         app.state.supervisor_client = httpx.AsyncClient(base_url=settings.supervisor_url)
         yield
         await app.state.supervisor_client.aclose()
@@ -56,11 +66,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app = FastAPI(title="JBrain", lifespan=lifespan)
     app.state.settings = settings
     app.include_router(health.router, prefix="/api")
+    app.include_router(agent.router, prefix="/api")
     app.include_router(analysis.router, prefix="/api")
     app.include_router(auth.router, prefix="/api")
     app.include_router(notes.router, prefix="/api")
     app.include_router(ops.router, prefix="/api")
     app.include_router(search.router, prefix="/api")
+    app.include_router(sessions.router, prefix="/api")
     app.include_router(settings_api.router, prefix="/api")
     return app
 

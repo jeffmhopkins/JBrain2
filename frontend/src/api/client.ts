@@ -9,6 +9,9 @@
 // development process"). The flag is a build-time constant and the mock
 // module loads via dynamic import, so fixtures never ship in real builds.
 
+import { parseChatStream } from "../agent/chat";
+import type { AgentSession, ChatEvent, ChatRequest, SessionCreate } from "../agent/types";
+
 export interface Principal {
   principal_id: string;
   kind: string;
@@ -620,5 +623,26 @@ export const api = {
   // the stream simply errors — log-following is out of mock scope.
   opsLogStream(service: string): EventSource {
     return new EventSource(`/api/ops/logs/${encodeURIComponent(service)}/stream`);
+  },
+
+  // ===== Phase 4: the agent — sessions + Full Brain chat (docs/ASSISTANT.md) =====
+
+  async listSessions(): Promise<AgentSession[]> {
+    const response = await request("/api/sessions");
+    return (await response.json()) as AgentSession[];
+  },
+
+  async createSession(body: SessionCreate): Promise<AgentSession> {
+    const response = await request("/api/sessions", jsonInit("POST", body));
+    return (await response.json()) as AgentSession;
+  },
+
+  // POST /api/chat streams the agent turn as SSE; the body is a ReadableStream
+  // (EventSource is GET-only and can't carry a request body). Yields each parsed
+  // ChatEvent so the caller renders text/tool activity live.
+  async *chat(body: ChatRequest): AsyncGenerator<ChatEvent> {
+    const response = await request("/api/chat", jsonInit("POST", body));
+    if (!response.body) return;
+    yield* parseChatStream(response.body);
   },
 };

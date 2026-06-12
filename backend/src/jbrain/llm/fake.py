@@ -1,6 +1,6 @@
 """Canned-response LlmClient for tests — the only LLM tests may call."""
 
-from collections.abc import Sequence
+from collections.abc import AsyncIterator, Sequence
 from typing import Any
 
 from jbrain.llm.types import (
@@ -11,6 +11,8 @@ from jbrain.llm.types import (
     LlmTool,
     LlmTurn,
     LlmUsage,
+    StreamPart,
+    TextChunk,
     parse_json_payload,
 )
 
@@ -27,11 +29,16 @@ class FakeLlmClient:
         self,
         responses: Sequence[str] = ("ok",),
         turns: Sequence[LlmTurn] = (),
+        stream_chunks: Sequence[Sequence[str]] = (),
     ):
         self._responses = list(responses)
         self._turns = list(turns)
+        # Per-converse_stream-call text chunks; defaults to the turn's whole text
+        # as one chunk. Lets a test assert that text streams in pieces.
+        self._stream_chunks = [list(c) for c in stream_chunks]
         self.calls: list[dict[str, Any]] = []
         self.converse_calls: list[dict[str, Any]] = []
+        self.stream_calls: list[dict[str, Any]] = []
 
     async def complete(
         self,
@@ -78,3 +85,35 @@ class FakeLlmClient:
         if not self._turns:
             return LlmTurn(text="ok", tool_calls=(), stop_reason="end_turn", usage=LlmUsage(1, 1))
         return self._turns[min(len(self.converse_calls) - 1, len(self._turns) - 1)]
+
+    async def converse_stream(
+        self,
+        *,
+        model: str,
+        system: str,
+        messages: Sequence[LlmMessage],
+        tools: Sequence[LlmTool] = (),
+        max_tokens: int = DEFAULT_MAX_TOKENS,
+    ) -> AsyncIterator[StreamPart]:
+        self.stream_calls.append(
+            {
+                "model": model,
+                "system": system,
+                "messages": list(messages),
+                "tools": list(tools),
+                "max_tokens": max_tokens,
+            }
+        )
+        idx = len(self.stream_calls) - 1
+        turn = (
+            self._turns[min(idx, len(self._turns) - 1)]
+            if self._turns
+            else LlmTurn(text="ok", tool_calls=(), stop_reason="end_turn", usage=LlmUsage(1, 1))
+        )
+        if self._stream_chunks:
+            chunks = self._stream_chunks[min(idx, len(self._stream_chunks) - 1)]
+        else:
+            chunks = [turn.text] if turn.text else []
+        for chunk in chunks:
+            yield TextChunk(text=chunk)
+        yield turn

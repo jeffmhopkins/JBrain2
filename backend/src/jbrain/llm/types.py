@@ -2,7 +2,7 @@
 
 import json
 import re
-from collections.abc import Sequence
+from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass
 from typing import Any, Literal, Protocol
 
@@ -131,6 +131,21 @@ class LlmTurn:
     usage: LlmUsage
 
 
+@dataclass(frozen=True)
+class TextChunk:
+    """One incremental slice of streamed assistant text. The loop forwards these
+    to the phone as `text_delta` events so the answer renders token-by-token."""
+
+    text: str
+
+
+# A streamed turn is a sequence of incremental TextChunks followed by exactly one
+# final LlmTurn: text streams live, while tool calls are assembled whole (their
+# arguments arrive as fragments and are only valid once complete) and carried on
+# the closing turn alongside the full text, stop reason, and usage.
+StreamPart = TextChunk | LlmTurn
+
+
 class LlmClient(Protocol):
     """One provider's completion surface. All application code routes through
     LlmRouter; this protocol exists so tests and the router can swap providers
@@ -156,6 +171,20 @@ class LlmClient(Protocol):
         tools: Sequence[LlmTool] = (),
         max_tokens: int = DEFAULT_MAX_TOKENS,
     ) -> LlmTurn: ...
+
+    def converse_stream(
+        self,
+        *,
+        model: str,
+        system: str,
+        messages: Sequence[LlmMessage],
+        tools: Sequence[LlmTool] = (),
+        max_tokens: int = DEFAULT_MAX_TOKENS,
+    ) -> AsyncIterator[StreamPart]:
+        """Stream one tool-aware turn: incremental TextChunks then one final
+        LlmTurn (see StreamPart). An async generator, so it is declared — not
+        `async def` — returning the iterator the caller drives with `async for`."""
+        ...
 
 
 def parse_json_payload(text: str) -> Any | None:
