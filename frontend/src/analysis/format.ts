@@ -32,6 +32,19 @@ export function factValue(fact: FactOut): string {
     if (typeof o.systolic === "number" && typeof o.diastolic === "number") {
       return `${o.systolic}/${o.diastolic}${typeof o.unit === "string" ? ` ${o.unit}` : ""}`;
     }
+    // A reference_range shape ({low, high, text}): the lab analyte's normal band.
+    // Prefer the verbatim text; otherwise render "low – high unit" from the bounds.
+    if (typeof o.low === "object" || typeof o.high === "object") {
+      if (typeof o.text === "string" && o.text.trim()) return o.text;
+      const low = o.low as Record<string, unknown> | null;
+      const high = o.high as Record<string, unknown> | null;
+      const unit = (high?.unit ?? low?.unit) as string | undefined;
+      const lo = low?.value;
+      const hi = high?.value;
+      if (lo !== undefined || hi !== undefined) {
+        return `${lo ?? "?"} – ${hi ?? "?"}${typeof unit === "string" ? ` ${unit}` : ""}`;
+      }
+    }
     if (o.value !== undefined) {
       if (typeof o.value === "number" && typeof o.unit === "string") {
         return fmtQuantity(o.value, o.unit);

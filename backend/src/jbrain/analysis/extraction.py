@@ -464,6 +464,18 @@ def _duplicate_winner(a: ExtractedFact, b: ExtractedFact) -> ExtractedFact | Non
        payload; still tied → later in the array, matching the pipeline's
        intra-note last-wins convention for same-key facts.
     """
+    # A measurement SERIES accumulates: two readings of one metric are distinct
+    # points unless they carry the SAME explicit instant. A missing date is
+    # "vacuously consistent" for everything else (temporals_consistent), but for
+    # measurements that loophole would silently collapse an undated series — and
+    # a dated chart repeats values (albumin 3.4/3.9 on two dates), so equal
+    # values are no evidence of a restatement. Require an equal, explicit
+    # resolved_start to even consider two measurements duplicates.
+    if a.kind == "measurement" and b.kind == "measurement":
+        a_at = a.temporal.resolved_start if a.temporal else None
+        b_at = b.temporal.resolved_start if b.temporal else None
+        if a_at is None or b_at is None or a_at != b_at:
+            return None
     if not temporals_consistent(a.temporal, b.temporal):
         return None
     rank_a = _PRECISION_RANK.get(a.temporal.precision) if a.temporal else None

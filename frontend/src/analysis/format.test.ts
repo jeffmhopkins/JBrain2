@@ -93,4 +93,17 @@ describe("fmtQuantity / factValue imperial display", () => {
     expect(factValue(fact({ name: "Bella", species: "dog" }))).toBe("Bella");
     expect(factValue(fact({ place: "Denver" }))).toBe("Denver");
   });
+
+  it("a lab reference_range shape renders its band, not the statement", () => {
+    const band = {
+      low: { value: 3.5, unit: "g/dL" },
+      high: { value: 5.2, unit: "g/dL" },
+      text: "3.5 - 5.2 g/dL",
+    };
+    expect(factValue(fact(band))).toBe("3.5 - 5.2 g/dL");
+    // No text → rendered from the bounds and the shared unit.
+    expect(
+      factValue(fact({ low: { value: 3.5, unit: "g/dL" }, high: { value: 5.2, unit: "g/dL" } })),
+    ).toBe("3.5 – 5.2 g/dL");
+  });
 });

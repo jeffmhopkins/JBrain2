@@ -51,6 +51,19 @@ def value_label(value_json: dict[str, Any] | None, statement: str) -> str:
         if isinstance(systolic, (int, float)) and isinstance(diastolic, (int, float)):
             reading = f"{_number(systolic)}/{_number(diastolic)}"
             return f"{reading} {unit}" if isinstance(unit, str) else reading
+        # A reference_range shape ({low, high, text}): a lab analyte's normal band.
+        low, high = value_json.get("low"), value_json.get("high")
+        if isinstance(low, dict) or isinstance(high, dict):
+            text = value_json.get("text")
+            if isinstance(text, str) and text.strip():
+                return text
+            low_v = low.get("value") if isinstance(low, dict) else None
+            high_v = high.get("value") if isinstance(high, dict) else None
+            band_unit = (high or {}).get("unit") or (low or {}).get("unit")
+            if low_v is not None or high_v is not None:
+                lo = _number(low_v) if low_v is not None else "?"
+                hi = _number(high_v) if high_v is not None else "?"
+                return f"{lo} - {hi} {band_unit}" if isinstance(band_unit, str) else f"{lo} - {hi}"
         if "value" in value_json:
             rendered = _number(value_json["value"])
             return f"{rendered} {unit}" if isinstance(unit, str) else rendered

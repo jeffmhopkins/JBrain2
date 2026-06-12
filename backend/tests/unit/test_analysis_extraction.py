@@ -321,8 +321,28 @@ def test_system_prompt_v5_teaches_object_person_and_backward_temporal() -> None:
     assert "last night" in SYSTEM_PROMPT and "PRIOR calendar day" in SYSTEM_PROMPT
 
 
-def test_prompt_version_bumped_to_v8() -> None:
-    assert PROMPT_VERSION == "note-extract-v8"
+def test_prompt_version_bumped_to_v9() -> None:
+    assert PROMPT_VERSION == "note-extract-v9"
+
+
+def test_system_prompt_v9_teaches_lab_series_and_reference_range() -> None:
+    """v9 field gap (Jun 2026): a screenshot of an albumin chart collapsed ~8
+    dated readings into 3 dateless facts, stranded the normal range as text on a
+    junk 'Albumin' Thing entity, and double-modeled the analyte. v9 must teach
+    one dated measurement per reading, the analyte-is-a-predicate rule, and the
+    referenceRange attribute fact qualified by the predicate."""
+    # The measurement carve-out to the one-fact rule + worked series example.
+    assert "measurement` time-series" in SYSTEM_PROMPT
+    assert "one fact per entity+predicate per note".lower() in SYSTEM_PROMPT.lower()
+    assert "ONE measurement fact PER reading" in SYSTEM_PROMPT
+    assert '"low": {"value": 3.5, "unit": "g/dL"}' in SYSTEM_PROMPT
+    # The worked example keeps the repeated value as two distinct points.
+    assert "never collapsed" in SYSTEM_PROMPT
+    # The analyte-is-a-predicate + referenceRange rules ride the health
+    # domain block, appended to the user prompt for health notes.
+    health = build_user_prompt(["x"], anchor=datetime(2026, 6, 10, tzinfo=UTC), domain="health")
+    assert "NOT a separate Thing mention or entity" in health
+    assert "referenceRange.albuminConcentration" in health
 
 
 def test_user_prompt_carries_anchor_with_timezone_domain_and_content() -> None:
@@ -516,6 +536,56 @@ def test_dedup_recognizes_unit_converted_duplicate() -> None:
     )
     assert len(deduped) == 1
     assert deduped[0].value_json == {"value": 76, "unit": "in"}
+
+
+def test_dedup_keeps_undated_measurement_series_distinct() -> None:
+    """The albumin field bug: a dated chart's readings repeat values (3.4, 3.9
+    twice). If the model emits them dateless, the vacuous-consistency rule must
+    NOT collapse a measurement series into one point — every reading survives."""
+    series = [
+        _dup("albuminConcentration", "measurement", {"value": 3.4, "unit": "g/dL"}),
+        _dup("albuminConcentration", "measurement", {"value": 3.4, "unit": "g/dL"}),
+        _dup("albuminConcentration", "measurement", {"value": 3.9, "unit": "g/dL"}),
+    ]
+    assert len(dedup_facts(series)) == 3
+
+
+def test_dedup_keeps_measurement_readings_at_different_instants() -> None:
+    same_value = {"value": 3.9, "unit": "g/dL"}
+    feb = _dup(
+        "albuminConcentration", "measurement", same_value,
+        temporal=_temporal("2026-02-13T00:00:00+00:00", "day"),
+    )  # fmt: skip
+    mar = _dup(
+        "albuminConcentration", "measurement", same_value,
+        temporal=_temporal("2026-03-06T00:00:00+00:00", "day"),
+    )  # fmt: skip
+    assert len(dedup_facts([feb, mar])) == 2
+
+
+def test_dedup_collapses_measurement_duplicate_at_same_instant() -> None:
+    """Two readings at the SAME explicit instant with the same value ARE one
+    reading restated — the guard only protects distinct/undated points."""
+    at = "2026-02-13T00:00:00+00:00"
+    deduped = dedup_facts(
+        [
+            _dup(
+                "albuminConcentration",
+                "measurement",
+                {"value": 3.8, "unit": "g/dL"},
+                confidence=0.9,
+                temporal=_temporal(at, "day"),
+            ),
+            _dup(
+                "albuminConcentration",
+                "measurement",
+                {"value": 3.8, "unit": "g/dL"},
+                confidence=0.7,
+                temporal=_temporal(at, "day"),
+            ),
+        ]  # fmt: skip
+    )
+    assert len(deduped) == 1 and deduped[0].confidence == 0.9
 
 
 def test_dedup_precision_variants_keep_the_precise_date_despite_confidence() -> None:

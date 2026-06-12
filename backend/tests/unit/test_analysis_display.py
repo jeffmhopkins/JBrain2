@@ -51,6 +51,24 @@ class TestValueLabel:
         assert value_label({"value": 95, "unit": "mg/dL"}, "s") == "95 mg/dL"
         assert value_label({"value": "Denver, CO"}, "s") == "Denver, CO"
 
+    def test_reference_range_shape(self) -> None:
+        # A lab analyte's normal band: prefer the verbatim text, else the bounds.
+        band = {
+            "low": {"value": 3.5, "unit": "g/dL"},
+            "high": {"value": 5.2, "unit": "g/dL"},
+            "text": "3.5 - 5.2 g/dL",
+        }
+        assert value_label(band, "Albumin's normal range is 3.5 - 5.2 g/dL.") == "3.5 - 5.2 g/dL"
+        # No text → rendered from the bounds and the shared unit.
+        assert (
+            value_label(
+                {"low": {"value": 3.5, "unit": "g/dL"}, "high": {"value": 5.2, "unit": "g/dL"}}, "s"
+            )
+            == "3.5 - 5.2 g/dL"
+        )
+        # One-sided bound still renders, never the statement.
+        assert value_label({"high": {"value": 5.2, "unit": "g/dL"}}, "s") == "? - 5.2 g/dL"
+
     def test_falls_back_to_the_statement(self) -> None:
         # Mirrors the UI's factValue: unrecognized shapes read as the
         # rendered sentence, never raw JSON.

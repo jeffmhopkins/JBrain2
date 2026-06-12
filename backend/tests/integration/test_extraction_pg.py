@@ -458,6 +458,129 @@ async def test_multiple_ratcheted_facts_share_one_derived_chunk(
     assert [r.cid for r in health_chunk_ids] == [str(derived[0].id)]
 
 
+def _albumin_reading(patient: str, value: float, date_iso: str) -> dict[str, Any]:
+    return {
+        "predicate": "albuminConcentration", "qualifier": "", "kind": "measurement",
+        "statement": f"Serum albumin was {value} g/dL.",
+        "value_json": {"value": value, "unit": "g/dL"},
+        "assertion": "asserted", "entity_ref": patient, "object_entity_ref": None,
+        "temporal": {
+            "phrase": date_iso[:10], "resolved_start": date_iso,
+            "resolved_end": None, "precision": "day",
+        },
+        "domain": "health", "confidence": 0.7,
+    }  # fmt: skip
+
+
+def _albumin_payload(patient: str) -> dict[str, Any]:
+    """A lab-chart note: a dated albumin series (a value repeats across dates) plus
+    one reference range — and NO standalone 'Albumin' analyte mention. A unique
+    patient entity per test keeps the series off the shared Me stream."""
+    return extraction_payload(
+        title="Albumin trend",
+        tags=["health", "labs", "albumin"],
+        mentions=[{"name": patient, "kind": "Person", "surface_text": patient}],
+        facts=[
+            _albumin_reading(patient, 3.8, "2026-02-13T00:00:00+00:00"),
+            _albumin_reading(patient, 3.4, "2026-02-20T00:00:00+00:00"),
+            _albumin_reading(patient, 4.1, "2026-03-06T00:00:00+00:00"),
+            _albumin_reading(patient, 3.4, "2026-03-20T00:00:00+00:00"),  # repeated value, new date
+            {
+                "predicate": "referenceRange",
+                "qualifier": "albuminConcentration",
+                "kind": "attribute",
+                "statement": "Albumin's normal range is 3.5 - 5.2 g/dL.",
+                "value_json": {
+                    "low": {"value": 3.5, "unit": "g/dL"},
+                    "high": {"value": 5.2, "unit": "g/dL"},
+                    "text": "3.5 - 5.2 g/dL",
+                },
+                "assertion": "asserted",
+                "entity_ref": patient,
+                "object_entity_ref": None,
+                "temporal": None,
+                "domain": "health",
+                "confidence": 0.7,
+            },
+        ],
+        temporal_tokens=[],
+    )
+
+
+async def test_lab_series_lands_dated_points_and_a_paired_reference_range(
+    maker: async_sessionmaker[AsyncSession], tmp_path: Any
+) -> None:
+    """The albumin-chart field bug: a dated series collapsed to 3 dateless facts,
+    the normal range stranded as text on a junk 'Albumin' Thing entity, and the
+    analyte double-modeled. The fix lands one dated measurement per reading
+    (repeated values stay distinct), one referenceRange attribute fact qualified
+    by the predicate, and NO analyte entity — the metric is the predicate."""
+    note_id = await make_note(maker, domain="health", body="Walt Albumin chart screenshot")
+    await ingest(maker, note_id, tmp_path)
+    await analyzer(maker, [json.dumps(_albumin_payload("Walt Albumin"))]).analyze_note(
+        {"note_id": note_id}
+    )
+
+    readings = await rows(
+        maker,
+        OWNER,
+        "SELECT value_json, valid_from, kind, domain_code FROM app.facts"
+        " WHERE note_id = :n AND predicate = 'albuminConcentration' ORDER BY valid_from",
+        n=note_id,
+    )
+    # Every dated point survives — no collapse, including the repeated 3.4.
+    assert len(readings) == 4
+    assert [r.value_json["value"] for r in readings] == [3.8, 3.4, 4.1, 3.4]
+    assert len({r.valid_from for r in readings}) == 4  # four distinct instants
+    assert all(r.kind == "measurement" and r.domain_code == "health" for r in readings)
+
+    # The reference range is one structured attribute fact, qualified by the
+    # measurement predicate so it pairs with the series — in the health domain.
+    ranges = await rows(
+        maker,
+        OWNER,
+        "SELECT qualifier, kind, value_json, domain_code FROM app.facts"
+        " WHERE note_id = :n AND predicate = 'referenceRange'",
+        n=note_id,
+    )
+    assert len(ranges) == 1
+    band = ranges[0]
+    assert band.qualifier == "albuminConcentration" and band.kind == "attribute"
+    assert band.domain_code == "health"
+    assert band.value_json == {
+        "low": {"value": 3.5, "unit": "g/dL"},
+        "high": {"value": 5.2, "unit": "g/dL"},
+        "text": "3.5 - 5.2 g/dL",
+    }
+
+    # The analyte is the predicate, never a standalone Thing entity.
+    assert (
+        await rows(maker, OWNER, "SELECT 1 FROM app.entities WHERE canonical_name = 'Albumin'")
+        == []
+    )
+
+
+async def test_lab_reference_range_upserts_in_place_on_reanalysis(
+    maker: async_sessionmaker[AsyncSession], tmp_path: Any
+) -> None:
+    """Re-extraction upserts the range on its identity key (Me, referenceRange,
+    albuminConcentration) — one fact, not a duplicate per run."""
+    note_id = await make_note(maker, domain="health", body="Rhea Albumin chart screenshot")
+    await ingest(maker, note_id, tmp_path)
+    payload = json.dumps(_albumin_payload("Rhea Albumin"))
+    await analyzer(maker, [payload]).analyze_note({"note_id": note_id})
+    await analyzer(maker, [payload]).analyze_note({"note_id": note_id})
+
+    ranges = await rows(
+        maker,
+        OWNER,
+        "SELECT 1 FROM app.facts WHERE note_id = :n AND predicate = 'referenceRange'"
+        " AND status = 'active'",
+        n=note_id,
+    )
+    assert len(ranges) == 1
+
+
 async def test_backward_phrase_resolution_repaired_end_to_end(
     maker: async_sessionmaker[AsyncSession],
 ) -> None:

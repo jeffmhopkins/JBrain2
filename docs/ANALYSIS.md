@@ -350,6 +350,24 @@ Phase 7 typed parsers) rather than free-extracted into hundreds of facts;
 facts derived from OCR carry reduced confidence, and low-confidence numeric
 health facts never auto-supersede anything.
 
+**Lab values over time — interim graph handling [decided], ahead of the
+Phase-7 typed `lab_result` parser.** A casual note about one analyte (a lab
+chart screenshot, a dated list of readings) is *not* a structured medical
+document, so it free-extracts into the property graph rather than waiting on
+Phase 7. The analyte is the **predicate** of the patient's measurement
+(`me.albuminConcentration`), never a standalone Thing entity for the metric
+label. A reported normal/reference range is a single `referenceRange`
+**attribute** fact on the same subject, **qualified by the measurement's
+predicate** (`referenceRange.albuminConcentration`) so it pairs with the
+series, carrying the `reference_range` shape (`{low, high, text}`). A note
+that reports a *series* of one metric emits **one measurement fact per dated
+reading** — the per-kind "accumulate" policy means a `measurement` predicate
+legitimately holds many facts distinguished by their instant, the one
+explicit exception to "one fact per entity+predicate per note"; the
+extraction de-dup never collapses two measurements that lack an equal,
+explicit date. Phase 7's typed `lab_result` (LOINC/UCUM) supersedes this
+path for structured documents.
+
 ## Model routing & cost
 
 | task | tier |

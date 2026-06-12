@@ -23,6 +23,11 @@ predicates:
     value_shape: structured
     shape: reference_range
     kind: attribute
+    # The interim graph path (ahead of this Phase-7 typed parser) emits ranges as
+    # free `referenceRange` attribute facts qualified by the analyte predicate;
+    # fold drift spellings here so the global normalization converges them.
+    renamed_from: [normalRange, normal_range, reference_range, referenceInterval, normalValues]
+    schema_org_ref: schema:referenceRange
   - canonical_name: interpretation
     value_shape: enum
     enum_values: [normal, high, low, abnormal, critical]
