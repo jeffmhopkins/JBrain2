@@ -175,17 +175,25 @@ async def test_read_entity_needs_an_id() -> None:
 
 
 def test_build_registry_binds_the_shipped_sidecars() -> None:
+    # build_memory_handlers only closes over the service (never calls it at build
+    # time), so a placeholder stands in for the registry-shape assertion.
     registry = build_registry(
         FakeSearch(SearchResponse(False, [])),  # type: ignore[arg-type]
         FakeNotes(None),  # type: ignore[arg-type]
         FakeEntities(None),  # type: ignore[arg-type]
+        object(),  # type: ignore[arg-type]
     )
-    assert registry.names() == {"search", "read_note", "read_entity"}
-    assert {t.name for t in registry.schemas_for({"general"})} == {
+    shipped = {
         "search",
         "read_note",
         "read_entity",
+        "recall",
+        "memory_read",
+        "memory_edit",
+        "remember",
     }
+    assert registry.names() == shipped
+    assert {t.name for t in registry.schemas_for({"general"})} == shipped
 
 
 def test_sidecars_pinned_to_their_versions() -> None:
@@ -205,6 +213,26 @@ def test_sidecars_pinned_to_their_versions() -> None:
             "read_entity",
             1,
             "e257677a9412e71e1511dbc85d1fad0421703fbe419d957bca819980d8c2727a",
+        ),
+        "recall.tool": (
+            "recall",
+            1,
+            "a4854e45215e2d36f77a163ce02650ebd0167a383a96dd6f6f75459def4f9332",
+        ),
+        "memory_read.tool": (
+            "memory_read",
+            1,
+            "1f6e2ff3084afbe2e752fc9fccf64b60a242692d1744af75a85f8b8b96c506e8",
+        ),
+        "memory_edit.tool": (
+            "memory_edit",
+            1,
+            "2ff5624584b3474d65c8f1b66aa9f1f807d7343b957368c6ed1ef40cadb08efd",
+        ),
+        "remember.tool": (
+            "remember",
+            1,
+            "194945fe66eb4a4ca5ab179da3b22541036de073a3f0c15e7bf2dc6763fce0ba",
         ),
     }
     for filename, expected in pins.items():
