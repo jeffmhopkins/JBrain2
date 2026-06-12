@@ -26,7 +26,10 @@ from jbrain.llm.types import (
     DEFAULT_MAX_TOKENS,
     LlmClient,
     LlmImage,
+    LlmMessage,
     LlmResult,
+    LlmTool,
+    LlmTurn,
     LlmUsage,
     UsageRecorder,
 )
@@ -42,6 +45,9 @@ TASK_DEFAULTS: dict[str, str] = {
     "correction_note.extract": "xai:grok-4.3",
     "vision.ocr": "xai:grok-4.3",
     "vision.caption": "xai:grok-4.3",
+    # The tool-using personal agent's turn (docs/ASSISTANT.md). Strong tier by
+    # default — agent reasoning over tools is the high-stakes path.
+    "agent.turn": "xai:grok-4.3",
 }
 
 # Capability tiers (a prompt's `strength:`) → "provider:model". A prompt names a
@@ -202,6 +208,41 @@ class LlmRouter:
             output_tokens=result.usage.output_tokens,
         )
         return result
+
+    async def converse(
+        self,
+        task: str,
+        *,
+        system: str,
+        messages: Sequence[LlmMessage],
+        tools: Sequence[LlmTool] = (),
+        max_tokens: int = DEFAULT_MAX_TOKENS,
+        strength: str | None = None,
+    ) -> LlmTurn:
+        """One tool-aware turn for the agent loop. Unlike `complete` there is no
+        JSON re-ask — tool calls are structured by the provider, and the loop
+        owns retry/continuation. Usage is recorded per call like everything else."""
+        provider, model = self._resolve(task, strength)
+        client = self._clients[provider]
+        turn = await client.converse(
+            model=model,
+            system=system,
+            messages=messages,
+            tools=tools,
+            max_tokens=max_tokens,
+        )
+        await self._record(task, provider, model, turn.usage)
+        log.info(
+            "llm.converse",
+            task=task,
+            provider=provider,
+            model=model,
+            stop_reason=turn.stop_reason,
+            tool_calls=len(turn.tool_calls),
+            input_tokens=turn.usage.input_tokens,
+            output_tokens=turn.usage.output_tokens,
+        )
+        return turn
 
 
 def build_router(

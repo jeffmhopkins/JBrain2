@@ -13,6 +13,7 @@ EXPECTED_TASKS = {
     "correction_note.extract",
     "vision.ocr",
     "vision.caption",
+    "agent.turn",
 }
 
 
