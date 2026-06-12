@@ -29,6 +29,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from evals.promotion import EvalRun, FixtureScore
 from jbrain.analysis.extraction import parse_extraction
 from jbrain.analysis.prompt import (
     EXTRACT_MAX_TOKENS,
@@ -290,6 +291,33 @@ def main() -> int:
     results = asyncio.run(_run(cases))
     all_passed = _report(results)
     return 0 if (all_passed or not args.strict) else 1
+
+
+# Check-label prefixes that guard against fabricated/over-personified entities —
+# the groundedness dimension the promotion gate scores separately from task
+# success (a prompt edit can't trade groundedness for task points).
+_GROUNDEDNESS_PREFIXES = ("absent:", "not_person:")
+
+
+def eval_run_from_cases(results: list[CaseResult], version: str) -> EvalRun:
+    """Adapt the note.extract eval's CaseResults into the promotion gate's EvalRun:
+    task = fraction of checks passed; safety = fraction of the groundedness-guard
+    checks passed (1.0 when a case has none). This is how a note.extract prompt
+    edit (Loop 4) is gated — it must win its new case without regressing task OR
+    groundedness on the existing set."""
+    scores: list[FixtureScore] = []
+    for r in results:
+        if r.error:
+            scores.append(FixtureScore(r.name, 0.0, 0.0))
+            continue
+        if not r.checks:
+            scores.append(FixtureScore(r.name, 1.0, 1.0))
+            continue
+        task = sum(ok for _, ok, _ in r.checks) / len(r.checks)
+        guards = [ok for label, ok, _ in r.checks if label.startswith(_GROUNDEDNESS_PREFIXES)]
+        safety = (sum(guards) / len(guards)) if guards else 1.0
+        scores.append(FixtureScore(r.name, task, safety))
+    return EvalRun(version, tuple(scores))
 
 
 if __name__ == "__main__":
