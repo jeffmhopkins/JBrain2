@@ -127,29 +127,29 @@ export function FullBrainSurface({ fb }: { fb: FullBrain }): ReactNode {
 // settles; a clean finish auto-hides after a beat, errors stay put.
 function AgentStatusLine({ status }: { status: AgentStatus | null }): ReactNode {
   const [doneHidden, setDoneHidden] = useState(false);
-  // Keyed on the status content so a re-render with the same status doesn't
-  // restart the auto-hide timer.
-  const key = status ? `${status.kind}|${status.label}` : "none";
+  // Reset on any kind change; a clean finish hides itself after a beat. Keying
+  // on `kind` keeps the timer from re-arming when it fires (kind is unchanged).
+  const kind = status?.kind;
   useEffect(() => {
     setDoneHidden(false);
-    if (status?.kind !== "done") return;
+    if (kind !== "done") return;
     const t = setTimeout(() => setDoneHidden(true), 2600);
     return () => clearTimeout(t);
-  }, [key, status?.kind]);
+  }, [kind]);
 
   if (!status || (status.kind === "done" && doneHidden)) return null;
   const live = status.kind === "thinking" || status.kind === "tool" || status.kind === "answering";
   const cls = live ? "live" : status.kind === "error" ? "err" : "done";
 
   return (
-    <div className={`fb-status ${cls}`} role="status" aria-live="polite">
+    <output className={`fb-status ${cls}`}>
       <span className="fb-status-mark" aria-hidden="true" />
       <span className="fb-status-lab">
         {status.label}
         {status.emphasis ? <span className="tool"> {status.emphasis}</span> : null}
         {live ? "…" : ""}
       </span>
-    </div>
+    </output>
   );
 }
 
