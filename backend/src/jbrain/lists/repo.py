@@ -151,9 +151,7 @@ class SqlListsRepo:
                 source_note_id=_as_uuid(source_note_id) if source_note_id else None,
             )
             session.add(item)
-            await session.execute(
-                update(List).where(List.id == lid).values(updated_at=func.now())
-            )
+            await session.execute(update(List).where(List.id == lid).values(updated_at=func.now()))
             await session.flush()
             await session.refresh(item)
             return _item_info(item)

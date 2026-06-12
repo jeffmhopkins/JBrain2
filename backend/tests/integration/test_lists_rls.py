@@ -83,16 +83,12 @@ async def test_lists_owner_only_and_domain_narrowed(maker: async_sessionmaker) -
     # The unnarrowed owner sees all three; a non-owner sees none (#8).
     async with scoped_session(maker, OWNER) as session:
         assert (
-            await session.execute(
-                text("SELECT count(*) FROM app.lists WHERE title LIKE :t"), like
-            )
+            await session.execute(text("SELECT count(*) FROM app.lists WHERE title LIKE :t"), like)
         ).scalar() == 3
     token = SessionContext(principal_kind="capability_token", domain_scopes=("health",))
     async with scoped_session(maker, token) as session:
         assert (
-            await session.execute(
-                text("SELECT count(*) FROM app.lists WHERE title LIKE :t"), like
-            )
+            await session.execute(text("SELECT count(*) FROM app.lists WHERE title LIKE :t"), like)
         ).scalar() == 0
 
 
