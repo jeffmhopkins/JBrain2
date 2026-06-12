@@ -31,12 +31,12 @@ function deps(over: Partial<FullBrainDeps> = {}): FullBrainDeps {
 }
 
 // The omnibox stands in as the external composer the home screen provides.
-function Harness({ d }: { d: FullBrainDeps }) {
+function Harness({ d, onOpenNote }: { d: FullBrainDeps; onOpenNote?: (id: string) => void }) {
   const fb = useFullBrain(true, d);
   const [text, setText] = useState("");
   return (
     <>
-      <FullBrainSurface fb={fb} />
+      <FullBrainSurface fb={fb} onOpenNote={onOpenNote} />
       <input aria-label="Composer" value={text} onChange={(e) => setText(e.target.value)} />
       <button type="button" onClick={() => fb.send(text)}>
         send
@@ -59,7 +59,7 @@ describe("FullBrainSurface", () => {
     expect(document.querySelector(".panel.left.open")).not.toBeInTheDocument();
   });
 
-  it("streams an external send into the transcript", async () => {
+  it("streams an external send into the transcript and folds tools into a Worked line", async () => {
     async function* answer(): AsyncGenerator<ChatEvent> {
       yield { type: "text_delta", text: "checking" };
       yield { type: "tool_call", id: "c1", name: "search", arguments: { q: "labs" } };
@@ -74,7 +74,41 @@ describe("FullBrainSurface", () => {
 
     await waitFor(() => expect(screen.getByText("checking")).toBeInTheDocument());
     expect(screen.getByText("what labs?")).toBeInTheDocument();
-    expect(screen.getByText("search · 2 notes")).toBeInTheDocument();
+    // The raw "search · …" dump is gone; the tools collapse into one line.
+    expect(screen.queryByText(/search · /)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Worked/ })).toBeInTheDocument();
+  });
+
+  it("expands the Worked block to source cards that open the cited note", async () => {
+    const onOpenNote = vi.fn();
+    async function* answer(): AsyncGenerator<ChatEvent> {
+      yield { type: "tool_call", id: "c1", name: "search", arguments: {} };
+      yield {
+        type: "tool_result",
+        tool_call_id: "c1",
+        ok: true,
+        summary:
+          "- note abc-1 [general] 2026-06-12: I was <mark>born</mark> March 19, 1986\n" +
+          "- note def-2 [general] 2026-01-02: My name is Jeff",
+      };
+      yield { type: "text_delta", text: "You were born March 19, 1986." };
+      yield { type: "done", stop_reason: "end_turn" };
+    }
+    render(<Harness d={deps({ chat: answer })} onOpenNote={onOpenNote} />);
+    await waitFor(() => screen.getByLabelText("Conversation"));
+    fireEvent.change(screen.getByLabelText("Composer"), { target: { value: "when born?" } });
+    fireEvent.click(screen.getByRole("button", { name: "send" }));
+
+    // Collapsed by default — the source text isn't shown until expanded.
+    const worked = await screen.findByRole("button", { name: /Worked/ });
+    expect(worked.textContent).toContain("1 step");
+    expect(worked.textContent).toContain("2 sources");
+    expect(screen.queryByText("I was born March 19, 1986")).not.toBeInTheDocument();
+
+    fireEvent.click(worked);
+    expect(screen.getByText("Searched your notes")).toBeInTheDocument();
+    fireEvent.click(screen.getByText("I was born March 19, 1986"));
+    expect(onOpenNote).toHaveBeenCalledWith("abc-1");
   });
 
   it("drives the status line through the turn and drops the floating dots", async () => {

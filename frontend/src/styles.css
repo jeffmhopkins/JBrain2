@@ -3137,20 +3137,122 @@ button.small {
   flex-direction: column;
   gap: 8px;
 }
-.fb-shell .bubble.ai .tool {
-  font-size: 12px;
-  color: var(--text-3);
+/* the collapsed "Worked" block under a response (direction A) */
+.fb-shell .toolwork {
+  margin-top: 1px;
+  border-top: 1px solid var(--border);
+  padding-top: 9px;
+}
+.fb-shell .toolwork-line {
+  width: 100%;
   display: flex;
   align-items: center;
-  gap: 7px;
-  border-top: 1px solid var(--border);
-  padding-top: 7px;
+  gap: 8px;
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--text-2);
+  text-align: left;
+  cursor: pointer;
 }
-.fb-shell .bubble.ai .tool .ok {
-  color: var(--green);
+.fb-shell .toolwork .tw-ic {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  color: var(--text-3);
 }
-.fb-shell .bubble.ai .tool .err {
-  color: var(--rose);
+.fb-shell .toolwork-line .tw-meta {
+  color: var(--text-3);
+  font-weight: 400;
+}
+.fb-shell .toolwork .tw-caret {
+  width: 13px;
+  height: 13px;
+  margin-left: auto;
+  flex: none;
+  color: var(--text-3);
+  transition: transform 0.15s ease-out;
+}
+.fb-shell .toolwork.open .tw-caret {
+  transform: rotate(90deg);
+}
+.fb-shell .toolwork-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  padding-top: 10px;
+}
+.fb-shell .toolwork-step {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  color: var(--text-2);
+}
+.fb-shell .toolwork-step .tw-ic {
+  color: var(--steel);
+}
+.fb-shell .toolwork-step .tw-count {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--text-3);
+}
+.fb-shell .tw-bullet {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--text-3);
+  margin: 0 4px;
+}
+.fb-shell .toolwork-srcs {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-left: 22px;
+  margin-top: 6px;
+}
+.fb-shell .toolwork-card {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  background: var(--surface-2);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+}
+.fb-shell button.toolwork-card {
+  cursor: pointer;
+  transition: border-color 0.12s ease-out;
+}
+.fb-shell button.toolwork-card:hover {
+  border-color: var(--steel);
+}
+.fb-shell .toolwork-card .tw-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  flex: none;
+}
+.fb-shell .toolwork-card .tw-text {
+  flex: 1;
+  font-size: 12px;
+  color: var(--text-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fb-shell .toolwork-card .tw-chev {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  color: var(--text-3);
 }
 
 /* live AI status line — sits at the surface's bottom edge, above the omnibox.

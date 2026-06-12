@@ -13,6 +13,8 @@ interface HomeScreenProps {
   notes: NotesController;
   actions: NoteActions;
   onOpenNote: (item: StreamItem) => void;
+  /** Open a Full Brain source note by id (from a Worked-block card). */
+  onOpenNoteById?: (noteId: string) => void;
   onOpenSearch: () => void;
   onOpenLauncher: () => void;
   /** Injected in tests; defaults to the live API client. */
@@ -31,6 +33,7 @@ export function HomeScreen({
   onOpenNote,
   onOpenSearch,
   onOpenLauncher,
+  onOpenNoteById,
   fbDeps,
 }: HomeScreenProps) {
   const [seg, setSeg] = useState<SegState>({ row: "main", mode: "entry" });
@@ -67,7 +70,7 @@ export function HomeScreen({
   return (
     <>
       {seg.mode === "fullbrain" ? (
-        <FullBrainSurface fb={fb} />
+        <FullBrainSurface fb={fb} onOpenNote={onOpenNoteById} />
       ) : conversational ? (
         <main className="stream conv-area">
           <p
