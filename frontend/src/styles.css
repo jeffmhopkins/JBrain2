@@ -3050,9 +3050,12 @@ button.small {
    Scoped under .fb-shell so generic class names (.panel/.row/.badge/.pill) never
    collide with the rest of the app. The lateral panels live in this subtree, so
    the scope still covers them. */
+/* Rendered inline in the home body: fill the space above the omnibox and host
+   the absolutely-positioned lateral panels (they pin to this box). */
 .fb-shell {
-  position: absolute;
-  inset: 0;
+  position: relative;
+  flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   background: var(--bg);

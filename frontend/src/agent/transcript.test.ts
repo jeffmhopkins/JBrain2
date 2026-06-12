@@ -1,0 +1,39 @@
+import { describe, expect, it } from "vitest";
+import { type TranscriptMessage, applyEvent } from "./transcript";
+
+function streaming(): TranscriptMessage {
+  return { role: "assistant", text: "", tools: [], views: [], streaming: true };
+}
+
+describe("applyEvent reducer", () => {
+  it("accumulates text, pairs a tool result to its call, and closes on done", () => {
+    let ms: TranscriptMessage[] = [streaming()];
+    ms = applyEvent(ms, { type: "text_delta", text: "let me " });
+    ms = applyEvent(ms, { type: "text_delta", text: "check" });
+    ms = applyEvent(ms, { type: "tool_call", id: "c1", name: "search", arguments: {} });
+    ms = applyEvent(ms, { type: "tool_result", tool_call_id: "c1", ok: true, summary: "found 3" });
+    ms = applyEvent(ms, { type: "done", stop_reason: "end_turn" });
+    const turn = ms[0];
+    expect(turn?.text).toBe("let me check");
+    expect(turn?.tools).toEqual([{ id: "c1", name: "search", ok: true, summary: "found 3" }]);
+    expect(turn?.streaming).toBe(false);
+    expect(turn?.stopReason).toBe("end_turn");
+  });
+
+  it("collects tool_view payloads in order", () => {
+    let ms: TranscriptMessage[] = [streaming()];
+    ms = applyEvent(ms, {
+      type: "tool_view",
+      tool_call_id: "c1",
+      view: { view: "stat_block", surface: "inline", data: { value: "1" }, refs: [] },
+    });
+    expect(ms[0]?.views).toHaveLength(1);
+  });
+
+  it("ignores events when there is no live assistant turn", () => {
+    const ms: TranscriptMessage[] = [
+      { role: "user", text: "hi", tools: [], views: [], streaming: false },
+    ];
+    expect(applyEvent(ms, { type: "text_delta", text: "x" })).toBe(ms);
+  });
+});

@@ -1,8 +1,28 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
+import type { FullBrainDeps } from "../agent/useFullBrain";
 import type { NoteActions } from "../notes/useNoteActions";
 import type { NotesController } from "../notes/useNotes";
 import { HomeScreen } from "./HomeScreen";
+
+function fbDeps(): FullBrainDeps {
+  return {
+    listSessions: vi.fn(async () => [
+      {
+        id: "s1",
+        title: "Recap",
+        status: "active",
+        domain_scopes: ["general"],
+        subject_ids: [],
+        created_at: "2026-06-12T00:00:00Z",
+        last_active_at: "2026-06-12T00:00:00Z",
+      },
+    ]),
+    createSession: vi.fn(),
+    chat: async function* () {},
+    listProposals: vi.fn(async () => []),
+  };
+}
 
 function fakeController(): NotesController {
   return {
@@ -40,7 +60,7 @@ function fakeActions(): NoteActions {
   };
 }
 
-function setup(notes: NotesController = fakeController(), onOpenBrain = vi.fn()) {
+function setup(notes: NotesController = fakeController()) {
   render(
     <HomeScreen
       notes={notes}
@@ -48,7 +68,7 @@ function setup(notes: NotesController = fakeController(), onOpenBrain = vi.fn())
       onOpenNote={vi.fn()}
       onOpenSearch={vi.fn()}
       onOpenLauncher={vi.fn()}
-      onOpenBrain={onOpenBrain}
+      fbDeps={fbDeps()}
     />,
   );
 }
@@ -104,12 +124,12 @@ describe("HomeScreen mode scoping", () => {
     expect(notes.setHidden).toHaveBeenCalledWith("n1", false);
   });
 
-  it("Full Brain shows its open-the-surface hint; Entry sub-modes keep the stream", () => {
+  it("Full Brain renders the live conversation surface inline; Entry sub-modes keep the stream", async () => {
     setup();
     fireEvent.click(screen.getByRole("tab", { name: "Full Brain" }));
-    expect(
-      screen.getByText("type and send to open Full Brain — full tool access"),
-    ).toBeInTheDocument();
+    // The real surface, not a placeholder: its scope chip and panel controls.
+    await waitFor(() => expect(screen.getByText("Full Brain · general")).toBeInTheDocument());
+    expect(screen.getByRole("button", { name: "Proposals" })).toBeInTheDocument();
 
     // Back to Entry, then into the Medical sub-mode: still the note stream.
     fireEvent.click(screen.getByRole("tab", { name: "Entry" }));
@@ -120,12 +140,29 @@ describe("HomeScreen mode scoping", () => {
     ).toBeInTheDocument();
   });
 
-  it("a Full Brain send opens the real surface with the typed message", () => {
-    const onOpenBrain = vi.fn();
-    setup(fakeController(), onOpenBrain);
+  it("a Full Brain send from the omnibox streams into the inline transcript", async () => {
+    const deps = fbDeps();
+    deps.chat = async function* () {
+      yield { type: "text_delta", text: "on it" };
+      yield { type: "done", stop_reason: "end_turn" };
+    };
+    render(
+      <HomeScreen
+        notes={fakeController()}
+        actions={fakeActions()}
+        onOpenNote={vi.fn()}
+        onOpenSearch={vi.fn()}
+        onOpenLauncher={vi.fn()}
+        fbDeps={deps}
+      />,
+    );
     fireEvent.click(screen.getByRole("tab", { name: "Full Brain" }));
+    await waitFor(() => screen.getByText("Full Brain · general"));
+
     fireEvent.change(screen.getByLabelText("Composer"), { target: { value: "summarize my week" } });
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
-    expect(onOpenBrain).toHaveBeenCalledWith("summarize my week");
+
+    await waitFor(() => expect(screen.getByText("on it")).toBeInTheDocument());
+    expect(screen.getByText("summarize my week")).toBeInTheDocument();
   });
 });

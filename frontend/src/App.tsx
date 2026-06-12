@@ -1,5 +1,4 @@
 import { type TouchEvent, useEffect, useRef, useState } from "react";
-import { FullBrainShell } from "./agent/FullBrainShell";
 import { type Principal, type SearchResult, api, setUnauthorizedHandler } from "./api/client";
 import { EditLayer } from "./components/EditLayer";
 import { Launcher, type LauncherTarget } from "./components/Launcher";
@@ -27,7 +26,7 @@ type Session =
   | { status: "anonymous" }
   | { status: "in"; principal: Principal };
 
-type Card = "ops" | "settings" | "search" | "review" | "entities" | "brain";
+type Card = "ops" | "settings" | "search" | "review" | "entities";
 
 const SCREEN_TITLES: Record<Card, string> = {
   ops: "Ops",
@@ -35,7 +34,6 @@ const SCREEN_TITLES: Record<Card, string> = {
   search: "Search",
   review: "Review",
   entities: "Entities",
-  brain: "Full Brain",
 };
 
 const CARD_EXIT_MS = 150;
@@ -44,9 +42,6 @@ export function App() {
   const [session, setSession] = useState<Session>({ status: "loading" });
   const [card, setCard] = useState<Card | null>(null);
   const [cardClosing, setCardClosing] = useState(false);
-  // A message typed in the home Full Brain box, carried into the surface so it
-  // opens seeded; null when reached any other way (e.g. the launcher tile).
-  const [brainDraft, setBrainDraft] = useState<string | null>(null);
   const [launcherOpen, setLauncherOpen] = useState(false);
   // The note view is its own tree layer above home AND above search results.
   const [noteView, setNoteView] = useState<NoteViewSource | null>(null);
@@ -88,11 +83,6 @@ export function App() {
 
   function navigate(target: LauncherTarget) {
     setCard(target);
-  }
-
-  function openBrain(initialMessage?: string) {
-    setBrainDraft(initialMessage ?? null);
-    setCard("brain");
   }
 
   function reducedMotion(): boolean {
@@ -260,7 +250,6 @@ export function App() {
           onOpenNote={openNoteFromStream}
           onOpenSearch={() => setCard("search")}
           onOpenLauncher={() => setLauncherOpen(true)}
-          onOpenBrain={openBrain}
         />
       </div>
 
@@ -288,7 +277,6 @@ export function App() {
             <SettingsScreen deviceLabel={session.principal.label} onLogout={() => void logout()} />
           )}
           {card === "search" && <SearchScreen onOpenResult={openNoteFromSearch} />}
-          {card === "brain" && <FullBrainShell initialDraft={brainDraft} />}
           {card === "review" && <ReviewScreen />}
           {/* Rows open the same entity layer the analysis chips use. */}
           {card === "entities" && <EntityListScreen onOpenEntity={setEntityView} />}

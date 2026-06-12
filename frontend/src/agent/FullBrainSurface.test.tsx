@@ -1,9 +1,11 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
-import { FullBrainShell } from "./FullBrainShell";
+import { FullBrainSurface } from "./FullBrainSurface";
 import type { AgentSession, ChatEvent, ChatRequest } from "./types";
+import { type FullBrainDeps, useFullBrain } from "./useFullBrain";
 
-function session(over: Partial<AgentSession>): AgentSession {
+function session(over: Partial<AgentSession> = {}): AgentSession {
   return {
     id: "s1",
     title: "Recap",
@@ -17,98 +19,116 @@ function session(over: Partial<AgentSession>): AgentSession {
 }
 
 async function* noChat(_body: ChatRequest): AsyncGenerator<ChatEvent> {}
-const noProposals = vi.fn(async () => []);
 
-describe("FullBrainShell", () => {
+function deps(over: Partial<FullBrainDeps> = {}): FullBrainDeps {
+  return {
+    listSessions: vi.fn(async () => [session()]),
+    createSession: vi.fn(async () => session({ id: "new" })),
+    chat: noChat,
+    listProposals: vi.fn(async () => []),
+    ...over,
+  };
+}
+
+// The omnibox stands in as the external composer the home screen provides.
+function Harness({ d }: { d: FullBrainDeps }) {
+  const fb = useFullBrain(true, d);
+  const [text, setText] = useState("");
+  return (
+    <>
+      <FullBrainSurface fb={fb} />
+      <input aria-label="Composer" value={text} onChange={(e) => setText(e.target.value)} />
+      <button type="button" onClick={() => fb.send(text)}>
+        send
+      </button>
+    </>
+  );
+}
+
+describe("FullBrainSurface", () => {
   it("opens the Sessions panel when there is no active session", async () => {
-    render(
-      <FullBrainShell
-        listSessions={vi.fn(async () => [])}
-        createSession={vi.fn()}
-        chat={noChat}
-        listProposals={noProposals}
-      />,
-    );
+    render(<Harness d={deps({ listSessions: vi.fn(async () => []) })} />);
     await waitFor(() => expect(document.querySelector(".panel.left.open")).toBeInTheDocument());
     expect(screen.getByText(/Choose a session to start/)).toBeInTheDocument();
   });
 
-  it("shows the chat for the most recent active session", async () => {
-    render(
-      <FullBrainShell
-        listSessions={vi.fn(async () => [session({})])}
-        createSession={vi.fn()}
-        chat={noChat}
-        listProposals={noProposals}
-      />,
-    );
+  it("shows the active session's read scope with panels closed", async () => {
+    render(<Harness d={deps()} />);
     await waitFor(() => expect(screen.getByLabelText("Conversation")).toBeInTheDocument());
     expect(screen.getByText("Full Brain · general")).toBeInTheDocument();
-    // Panels start closed.
     expect(document.querySelector(".panel.left.open")).not.toBeInTheDocument();
+  });
+
+  it("streams an external send into the transcript", async () => {
+    async function* answer(): AsyncGenerator<ChatEvent> {
+      yield { type: "text_delta", text: "checking" };
+      yield { type: "tool_call", id: "c1", name: "search", arguments: { q: "labs" } };
+      yield { type: "tool_result", tool_call_id: "c1", ok: true, summary: "2 notes" };
+      yield { type: "done", stop_reason: "end_turn" };
+    }
+    render(<Harness d={deps({ chat: answer })} />);
+    await waitFor(() => screen.getByLabelText("Conversation"));
+
+    fireEvent.change(screen.getByLabelText("Composer"), { target: { value: "what labs?" } });
+    fireEvent.click(screen.getByRole("button", { name: "send" }));
+
+    await waitFor(() => expect(screen.getByText("checking")).toBeInTheDocument());
+    expect(screen.getByText("what labs?")).toBeInTheDocument();
+    expect(screen.getByText("search · 2 notes")).toBeInTheDocument();
+  });
+
+  it("a send with no chosen session surfaces the picker instead", async () => {
+    const chat = vi.fn(noChat);
+    render(<Harness d={deps({ listSessions: vi.fn(async () => []), chat })} />);
+    await waitFor(() => screen.getByText(/Choose a session/));
+
+    fireEvent.change(screen.getByLabelText("Composer"), { target: { value: "hi" } });
+    fireEvent.click(screen.getByRole("button", { name: "send" }));
+    expect(chat).not.toHaveBeenCalled();
+    expect(document.querySelector(".panel.left.open")).toBeInTheDocument();
   });
 
   it("creating a session from the picker opens its chat", async () => {
     const created = session({ id: "new", title: "labs", domain_scopes: ["general", "health"] });
     render(
-      <FullBrainShell
-        listSessions={vi.fn(async () => [])}
-        createSession={vi.fn(async () => created)}
-        chat={noChat}
-        listProposals={noProposals}
+      <Harness
+        d={deps({ listSessions: vi.fn(async () => []), createSession: vi.fn(async () => created) })}
       />,
     );
     await waitFor(() => screen.getByText("＋ New session — choose sources"));
     fireEvent.click(screen.getByText("＋ New session — choose sources"));
     fireEvent.click(screen.getByRole("button", { name: /Start session/ }));
 
-    await waitFor(() => expect(screen.getByLabelText("Conversation")).toBeInTheDocument());
-    expect(screen.getByText("Full Brain · general · health")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByText("Full Brain · general · health")).toBeInTheDocument(),
+    );
   });
 
-  it("the visible nav buttons open each lateral panel", async () => {
-    render(
-      <FullBrainShell
-        listSessions={vi.fn(async () => [session({})])}
-        createSession={vi.fn()}
-        chat={noChat}
-        listProposals={noProposals}
-      />,
-    );
+  it("the nav buttons open each lateral panel", async () => {
+    render(<Harness d={deps()} />);
     await waitFor(() => screen.getByLabelText("Conversation"));
 
     fireEvent.click(screen.getByRole("button", { name: "Proposals" }));
     expect(document.querySelector(".panel.right.open")).toBeInTheDocument();
-    // Close it, then the Sessions button.
     fireEvent.click(screen.getByRole("button", { name: "Sessions" }));
     expect(document.querySelector(".panel.left.open")).toBeInTheDocument();
   });
 
   it("swipes shuttle the panels in and the opposite swipe sends them back", async () => {
-    render(
-      <FullBrainShell
-        listSessions={vi.fn(async () => [session({})])}
-        createSession={vi.fn()}
-        chat={noChat}
-        listProposals={noProposals}
-      />,
-    );
+    render(<Harness d={deps()} />);
     await waitFor(() => screen.getByLabelText("Conversation"));
     const shell = document.querySelector(".fb-shell") as Element;
 
-    // Swipe right → Sessions in.
     fireEvent.touchStart(shell, { touches: [{ clientX: 20, clientY: 200 }] });
     fireEvent.touchMove(shell, { touches: [{ clientX: 140, clientY: 205 }] });
     fireEvent.touchEnd(shell, { changedTouches: [{ clientX: 140, clientY: 205 }] });
     expect(document.querySelector(".panel.left.open")).toBeInTheDocument();
 
-    // Swipe left (opposite) → Sessions back out.
     fireEvent.touchStart(shell, { touches: [{ clientX: 200, clientY: 200 }] });
     fireEvent.touchMove(shell, { touches: [{ clientX: 80, clientY: 203 }] });
     fireEvent.touchEnd(shell, { changedTouches: [{ clientX: 80, clientY: 203 }] });
     expect(document.querySelector(".panel.left.open")).not.toBeInTheDocument();
 
-    // Swipe left → Proposals in; swipe right (opposite) sends it back out.
     fireEvent.touchStart(shell, { touches: [{ clientX: 300, clientY: 200 }] });
     fireEvent.touchMove(shell, { touches: [{ clientX: 180, clientY: 203 }] });
     fireEvent.touchEnd(shell, { changedTouches: [{ clientX: 180, clientY: 203 }] });
@@ -118,38 +138,5 @@ describe("FullBrainShell", () => {
     fireEvent.touchMove(shell, { touches: [{ clientX: 200, clientY: 203 }] });
     fireEvent.touchEnd(shell, { changedTouches: [{ clientX: 200, clientY: 203 }] });
     expect(document.querySelector(".panel.right.open")).not.toBeInTheDocument();
-  });
-
-  it("a swipe starting in the composer doesn't trigger a panel", async () => {
-    render(
-      <FullBrainShell
-        listSessions={vi.fn(async () => [session({})])}
-        createSession={vi.fn()}
-        chat={noChat}
-        listProposals={noProposals}
-      />,
-    );
-    await waitFor(() => screen.getByLabelText("Conversation"));
-    const shell = document.querySelector(".fb-shell") as Element;
-    const composer = document.querySelector(".fb-composer") as Element;
-
-    fireEvent.touchStart(composer, { touches: [{ clientX: 20, clientY: 400 }] });
-    fireEvent.touchMove(shell, { touches: [{ clientX: 200, clientY: 402 }] });
-    fireEvent.touchEnd(shell, { changedTouches: [{ clientX: 200, clientY: 402 }] });
-    expect(document.querySelector(".panel.left.open")).not.toBeInTheDocument();
-  });
-
-  it("seeds the composer with a draft carried from the home box", async () => {
-    render(
-      <FullBrainShell
-        listSessions={vi.fn(async () => [session({})])}
-        createSession={vi.fn()}
-        chat={noChat}
-        listProposals={noProposals}
-        initialDraft="what did I eat?"
-      />,
-    );
-    await waitFor(() => screen.getByLabelText("Conversation"));
-    expect(screen.getByLabelText("Message")).toHaveValue("what did I eat?");
   });
 });
