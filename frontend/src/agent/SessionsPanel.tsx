@@ -109,6 +109,7 @@ function SessionRow({
 }): ReactNode {
   const [drag, setDrag] = useState<Drag | null>(null);
   const dragged = useRef(false);
+  const renameRef = useRef<HTMLInputElement>(null);
   const [confirming, setConfirming] = useState(false);
   const [renaming, setRenaming] = useState(false);
   const [draft, setDraft] = useState(session.title);
@@ -116,6 +117,11 @@ function SessionRow({
   useEffect(() => {
     if (!railOpen) setConfirming(false);
   }, [railOpen]);
+
+  // Land focus in the rename field without `autoFocus` (a11y).
+  useEffect(() => {
+    if (renaming) renameRef.current?.focus();
+  }, [renaming]);
 
   const dragging = drag !== null && drag.axis === "h";
   const offset = renaming ? 0 : dragging ? drag.offset : railOpen ? -RAIL_WIDTH : 0;
@@ -215,12 +221,11 @@ function SessionRow({
         onTouchEnd={onTouchEnd}
       >
         {renaming ? (
-          // biome-ignore lint/a11y/noAutofocus: rename should land focused for a quick edit
           <input
+            ref={renameRef}
             className="session-rename"
             aria-label="Session title"
             value={draft}
-            autoFocus
             onChange={(e) => setDraft(e.target.value)}
             onBlur={submitRename}
             onKeyDown={(e) => {
