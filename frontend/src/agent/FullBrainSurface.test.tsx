@@ -315,6 +315,38 @@ describe("FullBrainSurface", () => {
     expect(onOpenEntity).toHaveBeenCalledWith("e9");
   });
 
+  it("holds the fallback chip until the turn settles (no mid-stream flash)", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    async function* answer(): AsyncGenerator<ChatEvent> {
+      yield { type: "tool_call", id: "c1", name: "find_entity", arguments: { name: "celine" } };
+      yield {
+        type: "tool_result",
+        tool_call_id: "c1",
+        ok: true,
+        summary: "1",
+        entities: [{ kind: "entity", entity_id: "e9", label: "Celine", domain: "general" }],
+      };
+      await gate; // the entity is resolved but the answer hasn't been written yet
+      yield { type: "text_delta", text: "Found one match." };
+      yield { type: "done", stop_reason: "end_turn" };
+    }
+    render(<Harness d={deps({ chat: answer })} />);
+    await waitFor(() => screen.getByLabelText("Conversation"));
+    fireEvent.change(screen.getByLabelText("Composer"), { target: { value: "who is celine?" } });
+    fireEvent.click(screen.getByRole("button", { name: "send" }));
+
+    // Mid-stream: the resolved entity must NOT flash as a chip.
+    await waitFor(() => expect(screen.getByRole("button", { name: /Worked/ })).toBeInTheDocument());
+    expect(screen.queryByRole("button", { name: "Celine" })).toBeNull();
+
+    // Once the turn settles, the unnamed entity gets its chip.
+    release();
+    expect(await screen.findByRole("button", { name: "Celine" })).toHaveClass("entity-chip");
+  });
+
   it("a send with no chosen session surfaces the picker instead", async () => {
     const chat = vi.fn(noChat);
     render(<Harness d={deps({ listSessions: vi.fn(async () => []), chat })} />);

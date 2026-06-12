@@ -220,7 +220,10 @@ function Bubble({
       message.tools.flatMap((t) => t.entities ?? []).map((e) => [e.entity_id, e]),
     ).values(),
   ];
-  const looseEntities = unlinkedEntities(message.text, entities);
+  // Hold the fallback chips until the turn settles: mid-stream the name often
+  // isn't typed yet, so a chip would flash and then vanish as the inline link
+  // takes over. Once streaming ends, chip whatever the prose never named.
+  const looseEntities = message.streaming ? [] : unlinkedEntities(message.text, entities);
 
   return (
     <div className="bubble ai">
