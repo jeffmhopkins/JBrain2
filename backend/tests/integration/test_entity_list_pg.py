@@ -203,9 +203,11 @@ async def test_list_orders_counts_and_excludes_merged(
     assert alma["fact_count"] == 2  # active + pending_review only
     assert alma["mention_count"] == 2
     assert alma["last_seen"] == at(10)
+    assert alma["aliases"] == []  # no aliases → empty list, never null
     carl = by_id[seeded["carl"]]
     assert carl["fact_count"] == 0 and carl["mention_count"] == 1
     assert carl["last_seen"] is None  # null-safe: sorts last, never errors
+    assert carl["aliases"] == [f"charlie-{seeded['tag']}"]  # surfaced for prose linking
 
 
 async def test_list_q_matches_names_and_aliases_literally(
@@ -270,6 +272,7 @@ async def test_entities_api_round_trip(
             "canonical_name",
             "status",
             "domain",
+            "aliases",
             "fact_count",
             "mention_count",
             "last_seen",

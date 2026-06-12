@@ -64,59 +64,82 @@ function withTemporal(text: string, key: string): ReactNode[] {
 
 const SAFE_URL = /^(https?:|mailto:)/i;
 
-/** An entity a tool resolved this turn — linkified inline where its label
- * appears in the answer prose. */
+/** An entity a tool resolved this turn — linkified inline where any of its
+ * surface forms (canonical label or an alias) appears in the answer prose. */
 export interface MdEntity {
   entity_id: string;
   label: string;
   domain: string;
+  aliases?: string[];
+}
+
+/** A matcher over every entity surface form, plus a lookup from a matched form
+ * (lowercased) back to its entity. Null matcher when there's nothing to link. */
+interface EntityIndex {
+  matcher: RegExp | null;
+  byForm: Map<string, MdEntity>;
 }
 
 interface Ctx {
   onCite?: ((n: number) => void) | undefined;
-  entities: MdEntity[];
   onEntity?: ((entityId: string) => void) | undefined;
-  /** Built from the entities' labels — a single word-bounded alternation. */
-  matcher: RegExp | null;
+  index: EntityIndex;
 }
 
 const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-/** A case-insensitive, word-bounded matcher over the entity labels (longest
- * first, so "Celine Hopkins" wins over "Celine"). Null when there's nothing to
- * link. */
-function buildMatcher(entities: MdEntity[]): RegExp | null {
-  const labels = entities
-    .map((e) => e.label)
-    .filter(Boolean)
-    .sort((a, b) => b.length - a.length);
-  if (labels.length === 0) return null;
-  const alt = labels.map(escapeRe).join("|");
-  return new RegExp(`(?<![\\p{L}\\p{N}])(?:${alt})(?![\\p{L}\\p{N}])`, "giu");
+/** Every surface form of an entity: its canonical label and any aliases. */
+function surfaceForms(e: MdEntity): string[] {
+  return [e.label, ...(e.aliases ?? [])].filter(Boolean);
 }
 
-/** Entities whose label never appears in the text — the caller renders these as
- * fallback chips so a surfaced entity is never left without an affordance. */
+/** Index the entities by surface form into a case-insensitive, word-bounded
+ * matcher (longest form first, so "Celine Hopkins" wins over "Celine"). The
+ * first entity to claim a form keeps it. */
+function buildIndex(entities: MdEntity[]): EntityIndex {
+  const byForm = new Map<string, MdEntity>();
+  const forms: string[] = [];
+  for (const e of entities) {
+    for (const f of surfaceForms(e)) {
+      const key = f.toLowerCase();
+      if (!byForm.has(key)) {
+        byForm.set(key, e);
+        forms.push(f);
+      }
+    }
+  }
+  if (forms.length === 0) return { matcher: null, byForm };
+  forms.sort((a, b) => b.length - a.length);
+  const alt = forms.map(escapeRe).join("|");
+  return { matcher: new RegExp(`(?<![\\p{L}\\p{N}])(?:${alt})(?![\\p{L}\\p{N}])`, "giu"), byForm };
+}
+
+/** Entities none of whose surface forms appear in the text — the caller renders
+ * these as fallback chips so a surfaced entity is never left without an
+ * affordance. */
 export function unlinkedEntities(text: string, entities: MdEntity[]): MdEntity[] {
-  const matcher = buildMatcher(entities);
+  const { matcher, byForm } = buildIndex(entities);
   if (!matcher) return entities;
-  const present = new Set<string>();
-  for (const m of text.matchAll(matcher)) present.add(m[0].toLowerCase());
-  return entities.filter((e) => !present.has(e.label.toLowerCase()));
+  const linked = new Set<string>();
+  for (const m of text.matchAll(matcher)) {
+    const ent = byForm.get(m[0].toLowerCase());
+    if (ent) linked.add(ent.entity_id);
+  }
+  return entities.filter((e) => !linked.has(e.entity_id));
 }
 
 /** Split a plain-text run into entity links first, then temporal chips on the
  * gaps — so a name reads as prose but taps through to its entity page. */
 function scanPlain(text: string, key: string, ctx: Ctx): ReactNode[] {
-  if (!ctx.matcher) return withTemporal(text, key);
+  if (!ctx.index.matcher) return withTemporal(text, key);
   const out: ReactNode[] = [];
   let last = 0;
   let i = 0;
-  for (const m of text.matchAll(ctx.matcher)) {
+  for (const m of text.matchAll(ctx.index.matcher)) {
     const at = m.index ?? 0;
     if (at > last) out.push(...withTemporal(text.slice(last, at), `${key}-t${i}`));
     const label = m[0];
-    const ent = ctx.entities.find((e) => e.label.toLowerCase() === label.toLowerCase());
+    const ent = ctx.index.byForm.get(label.toLowerCase());
     if (ent) {
       out.push(
         <button
@@ -333,7 +356,7 @@ export function Markdown({
   onEntity?: ((entityId: string) => void) | undefined;
 }): ReactNode {
   const blocks = useMemo(() => parseBlocks(text), [text]);
-  const matcher = useMemo(() => buildMatcher(entities), [entities]);
-  const ctx: Ctx = { onCite, entities, onEntity, matcher };
+  const index = useMemo(() => buildIndex(entities), [entities]);
+  const ctx: Ctx = { onCite, onEntity, index };
   return <div className="md">{blocks.map((b, i) => renderBlock(b, `b${i}`, ctx))}</div>;
 }

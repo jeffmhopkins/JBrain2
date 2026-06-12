@@ -83,6 +83,9 @@ class EntityRef(BaseModel):
     entity_id: str
     label: str
     domain: Domain
+    # Other surface forms (aka) so the PWA can linkify a name in prose that isn't
+    # the canonical label — e.g. "Jeff Hopkins" for an entity canonically "Me".
+    aliases: list[str] = Field(default_factory=list)
 
 
 class NoteRef(BaseModel):

@@ -116,9 +116,15 @@ _ENTITY_LIMIT = 8
 
 
 def entity_refs(rows: list[dict[str, Any]]) -> tuple[EntityRef, ...]:
-    """Map entity rows to refs for the response's tappable entity chips."""
+    """Map entity rows to refs for the response's tappable entity chips —
+    carrying aliases so a name in the prose links even when it isn't the label."""
     return tuple(
-        EntityRef(entity_id=str(r["id"]), label=str(r["canonical_name"]), domain=r["domain"])
+        EntityRef(
+            entity_id=str(r["id"]),
+            label=str(r["canonical_name"]),
+            domain=r["domain"],
+            aliases=[str(a) for a in r.get("aliases", [])],
+        )
         for r in rows
     )
 
