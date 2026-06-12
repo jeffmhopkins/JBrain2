@@ -509,6 +509,50 @@ section headers — KNOWLEDGE, AUTHORING, SYSTEM):
   a card climbs one level, like the down-swipe.
 - Tiles for phases not yet built render disabled with their phase label.
 
+### Full Brain lateral shortcuts (Sessions ← chat → Proposals)
+
+In **Full Brain** mode (steel/agent) the conversation is the center of a
+three-pane lateral model: **Sessions** to the left, **Proposals** to the right —
+the mnemonic is temporal/actional (past sessions left, pending approvals right).
+Both are first-class **card-launcher destinations** (tiles, under a SYSTEM/
+ASSISTANT group) — that is their canonical, tappable home and the required visible
+way in and out. The **Proposals** page is the unified review queue focused on the
+agent's staged Proposal trees (see `docs/ASSISTANT.md`); **Sessions** lists past
+and active agent sessions with their selected read scope.
+
+As an **enhancement only** (never the sole path — the gesture rule above binds), a
+**horizontal swipe on the omnibox / text-entry box** is a shortcut, following the
+natural drawer convention — **the panel slides in from its own side to cover the
+screen, in the direction your finger moves:**
+
+- **Swipe right → Sessions** (the left panel shuttles in from the **left** edge to
+  cover the screen).
+- **Swipe left → Proposals** (the right panel shuttles in from the **right** edge).
+
+Rules:
+
+- **No edge chrome on the main screen** — there are no handles, tabs, or peek
+  affordances flanking the composer. The conversation surface stays clean; the
+  gesture is discovered, and the **card-launcher tiles** (under a SYSTEM/ASSISTANT
+  group) are the canonical, always-visible tappable way to both pages.
+- The gesture is anchored to the **composer**, not to transcript bubbles, so it
+  never competes with message content; the recognizer favors the dominant axis, so
+  it never fights the vertical nav-tree gestures (up → launcher, down → climb).
+  Horizontal is available precisely because modes switch by *tap*, not swipe.
+- Sessions and Proposals open as **standard full-screen cards** (own top bar + back
+  chevron; bolt or down-swipe climbs home, satisfying the required visible tappable
+  exit). The panel tracks the finger and snaps in past threshold; disabled under
+  reduced motion.
+- **Full-Brain-only:** Entry/Research composers do not carry these shortcuts (Entry
+  keeps its transcript-item action rail). Phase 4 surface — disabled with a phase
+  label until then.
+
+Reference mocks: `docs/mocks/assistant-lateral-swipe.html` (the gesture, no edge
+chrome), `docs/mocks/assistant-sessions-view.html` (the Sessions page + start-
+session read-scope picker), `docs/mocks/assistant-proposals-view.html` (the
+tree-structured Proposals page with whole/subtree/leaf approval and dependency
+holds).
+
 ## Surface paradigms (which container for which job)
 
 | Job | Paradigm |
@@ -535,6 +579,49 @@ section headers — KNOWLEDGE, AUTHORING, SYSTEM):
   primary action; longer flows are full screens.
 - Dialogs are for confirmation only: one sentence of consequence, two
   buttons max (destructive variant on the right), no scrolling content.
+
+## Agent tool views (registered components, never bespoke markup)
+
+Agent tools render rich UI — lab plots, tables, timelines, appointment cards,
+confirm sheets — but **only through a closed registry of first-party
+components**, never by emitting HTML, scripts, or markdown URLs (that would be the
+exfiltration channel `docs/ASSISTANT.md` invariant I-9 forbids, and would let
+model output drive the render). The contract:
+
+- A tool result may carry a **`view`**: a schema-validated, **data-only** payload
+  naming a registered component and filling its typed slots
+  (`{ view:"lab_plot", series:[…], ref_fact_ids:[…] }`). The PWA looks the name up
+  in a fixed component registry and renders the vetted React component; an
+  unknown name renders nothing.
+- A `surface` hint (`inline | sheet | dialog`) places it: inline in the chat
+  transcript, or into the **shared `<Sheet>`/`<Dialog>`** shells. **This is not a
+  bespoke modal** — the component is the *content*; the modal-system rules above
+  still bind. Adding a component is a deliberate, versioned design+code change
+  (extend this document in the same PR), exactly like adding a tool.
+- View payloads are **data, not instruction** (I-1) and **render no external
+  resources** (I-9); slots are escaped by the component. Data in a view came from
+  an RLS-scoped tool call, so domain firewalls hold at the source; views carry
+  `fact_id`/`entity_id` refs for citation hover-cards (pointers-not-copies).
+- **Interactive views never mutate directly.** A button dispatches a tool call or
+  stages a **Proposal** under the session's action policy — the agent proposes,
+  the pipeline disposes.
+- **One view names one component** (no nested trees/dashboards; multiple views in a
+  turn render as sequential inline cards), and components express **`tone`/`flag`/
+  `kind` enums, never colors or hex** — the model conveys meaning, the component owns
+  the token mapping.
+
+**The registry** (starter set; spec in `docs/research/self-improving-agent/G-tool-
+view-components.md`). Three composable primitives hold the count down —
+`data_table`, `stat_block`, `citation_card` (the shared pointer-not-copy citation
+surface every view reuses). **MVP:** those three + `lab_plot` + the interactives
+`record_list`, `appointment_card`, `confirm_panel`. **Standard:** `entity_card`,
+`timeline`, `wiki_preview`, `med_card`, `txn_table`. **Refused** (anti-bloat, tied
+to invariants): no `form` (input flows through composer/sheets/review inbox), no
+`markdown`/`html`/`image`/`iframe` (I-9), no external **map tile ever** — location
+renders as text, or later a basemap-free PostGIS-derived-SVG `mini_map` with numeric
+path slots (never a tile, image, or model-authored SVG string), no free
+`button`/`link`, no generic `chart` kitchen-sink (purpose-built plots only), no
+dashboard/layout components.
 
 ## Implementation rules
 

@@ -1,0 +1,245 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Assistant · Proposals — tree-structured, approve in whole or in part</title>
+<style>
+  :root{
+    --bg:#0E0F11; --surface:#17181B; --surface-2:#1E2024; --border:#26282C;
+    --text:#E6E7E9; --text-2:#9A9DA3; --text-3:#5C5F66;
+    --steel:#7FA7C9; --green:#8FBC9A; --amber:#C9A36A; --rose:#CF8A8F; --violet:#A493C9;
+    --steel-tint:rgba(127,167,201,.13); --green-tint:rgba(143,188,154,.13);
+    --amber-tint:rgba(201,163,106,.13); --rose-tint:rgba(207,138,143,.13);
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+  body{background:#000;color:var(--text);display:flex;flex-direction:column;align-items:center;gap:14px;padding:18px 0 40px;min-height:100vh;}
+  .caption{max-width:392px;padding:0 18px;color:var(--text-2);font-size:13px;line-height:1.55;}
+  .caption b{color:var(--text);font-weight:500;}
+  .caption .tag{display:inline-block;background:var(--steel-tint);color:var(--steel);font-size:11px;padding:2px 8px;border-radius:999px;margin-bottom:6px;}
+  svg{fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;}
+
+  .phone{width:390px;height:780px;background:var(--bg);border:1px solid #2a2c30;border-radius:34px;overflow:hidden;position:relative;display:flex;flex-direction:column;}
+  .bar{height:56px;display:flex;align-items:center;gap:12px;padding:0 14px;border-bottom:1px solid var(--border);flex:none;}
+  .bar .back{color:var(--text-2);}
+  .bar .ttl{font-size:18px;font-weight:600;}
+  .bar .sub{margin-left:auto;font-size:12px;color:var(--text-3);}
+  .body{flex:1;overflow-y:auto;padding:14px 14px 16px;}
+
+  /* proposal card */
+  .prop{background:var(--surface);border:1px solid var(--border);border-radius:16px;overflow:hidden;margin-bottom:12px;}
+  .prop-head{padding:14px 14px 12px;border-bottom:1px solid var(--border);}
+  .prop-title{display:flex;align-items:center;gap:9px;font-size:16px;font-weight:600;}
+  .kindbadge{width:24px;height:24px;border-radius:7px;background:var(--steel);color:#10141a;display:inline-flex;align-items:center;justify-content:center;font-size:13px;flex:none;}
+  .prov{margin-top:8px;font-size:12px;color:var(--text-3);display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center;}
+  .prov .src{color:var(--text-2);}
+  .pill{font-size:11px;padding:2px 8px;border-radius:999px;background:var(--surface-2);color:var(--text-2);}
+  .pill.health{background:var(--rose-tint);color:var(--rose);}
+  .note-line{margin-top:9px;font-size:12px;color:var(--text-3);display:flex;gap:7px;align-items:flex-start;line-height:1.5;}
+  .note-line svg{flex:none;margin-top:1px;color:var(--steel);}
+
+  /* tree */
+  .tree{padding:6px 8px 10px;}
+  .node{margin:2px 0;}
+  .children{margin-left:16px;padding-left:10px;border-left:1px solid var(--border);}
+  .nrow{display:flex;align-items:flex-start;gap:9px;padding:9px 8px;border-radius:11px;}
+  .nrow:hover{background:var(--surface-2);}
+  .twist{width:18px;height:18px;color:var(--text-3);flex:none;margin-top:1px;transition:transform .15s;}
+  .twist.open{transform:rotate(90deg);}
+  .twist.leaf{visibility:hidden;}
+  .nmain{flex:1;min-width:0;}
+  .nlabel{font-size:14px;line-height:1.4;display:flex;flex-wrap:wrap;gap:7px;align-items:center;}
+  .op{font-size:10px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;padding:2px 7px;border-radius:6px;}
+  .op.split{background:var(--steel-tint);color:var(--steel);}
+  .op.merge{background:var(--green-tint);color:var(--green);}
+  .op.retitle{background:var(--amber-tint);color:var(--amber);}
+  .op.move{background:rgba(164,147,201,.16);color:var(--violet);}
+  .op.rewrite{background:var(--surface-2);color:var(--text-2);}
+  .grouplabel{font-weight:600;font-size:14px;}
+  .nsub{font-size:12px;color:var(--text-3);margin-top:3px;}
+  .held{display:inline-flex;align-items:center;gap:5px;font-size:11px;color:var(--amber);background:var(--amber-tint);padding:2px 8px;border-radius:999px;margin-top:6px;}
+
+  /* approve/reject control */
+  .ctl{display:flex;gap:6px;flex:none;}
+  .ctl button{width:30px;height:30px;border-radius:9px;border:1px solid var(--border);background:var(--surface-2);color:var(--text-3);display:flex;align-items:center;justify-content:center;}
+  .ctl .ok.on{background:var(--green);border-color:var(--green);color:#10141a;}
+  .ctl .no.on{background:var(--rose);border-color:var(--rose);color:#10141a;}
+  .ctl button.part{border-color:var(--steel);color:var(--steel);} /* partial group */
+
+  /* preview */
+  .preview{margin:2px 8px 8px 35px;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:10px 12px;font-size:12px;display:none;}
+  .preview.show{display:block;}
+  .preview .pv-row{display:flex;gap:8px;align-items:center;padding:2px 0;}
+  .preview .minus{color:var(--rose);} .preview .plus{color:var(--green);}
+  .preview .arrow{color:var(--text-3);}
+  .seemore{font-size:11px;color:var(--steel);margin-top:6px;display:inline-block;}
+
+  /* footer action bar */
+  .actions{flex:none;border-top:1px solid var(--border);padding:12px 14px calc(14px + env(safe-area-inset-bottom));display:flex;align-items:center;gap:12px;background:var(--surface);}
+  .actions .count{font-size:13px;color:var(--text-2);flex:1;line-height:1.35;}
+  .actions .count b{color:var(--text);}
+  .approveall{background:none;border:1px solid var(--border);color:var(--text-2);border-radius:11px;padding:11px 14px;font-size:14px;}
+  .enact{background:var(--steel);color:#10141a;border:none;border-radius:11px;padding:12px 18px;font-size:15px;font-weight:600;}
+  .enact:disabled{opacity:.4;}
+  .toast{position:absolute;left:16px;right:16px;bottom:88px;background:var(--surface-2);border:1px solid var(--border);border-radius:12px;padding:12px 14px;font-size:13px;color:var(--text-2);transform:translateY(140%);opacity:0;transition:.18s;z-index:10;}
+  .toast.show{transform:translateY(0);opacity:1;}
+</style>
+</head>
+<body>
+  <div class="caption">
+    <span class="tag">Proposals · tree</span><br/>
+    A Proposal is a <b>tree</b> — approve the <b>whole thing, a subtree, or a single leaf</b>. Group ✓ cascades to its
+    children. <b>Partial approval is dependency-safe</b>: a leaf whose prerequisite isn't approved is <b style="color:var(--amber)">held</b>,
+    never enacted. The agent proposes operations; the <b>wiki builder enacts only the approved, prerequisite-satisfied leaves</b> as revisions.
+    Try approving the <b>Split</b> to release the two held ops below it.
+  </div>
+
+  <div class="phone">
+    <div class="bar">
+      <button class="back"><svg width="22" height="22" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></button>
+      <span class="ttl">Proposals</span>
+      <span class="sub">1 pending</span>
+    </div>
+
+    <div class="body">
+      <div class="prop">
+        <div class="prop-head">
+          <div class="prop-title"><span class="kindbadge">⤴</span> Restructure — Health wiki cleanup</div>
+          <div class="prov"><span class="src">staged from this chat</span> · <span>4 source notes</span> · <span class="pill health">health</span> · <span class="pill">subject: me</span></div>
+          <div class="note-line">
+            <svg width="14" height="14" viewBox="0 0 24 24"><path d="M12 2 4 5v6c0 5 3.4 8.5 8 11 4.6-2.5 8-6 8-11V5l-8-3Z"/></svg>
+            Source-attributed &amp; normal-weight (not elevated). The agent never writes article prose — approving enacts the operations through the machine builder.
+          </div>
+        </div>
+        <div class="tree" id="tree"></div>
+      </div>
+    </div>
+
+    <div class="actions">
+      <div class="count" id="count"></div>
+      <button class="approveall" onclick="approveAll()">Approve all</button>
+      <button class="enact" id="enact" onclick="enact()">Enact</button>
+    </div>
+    <div class="toast" id="toast"></div>
+  </div>
+
+<script>
+// ---- tree model ----
+const NODES=[
+  {id:'g1',parent:null,type:'group',label:'Cardiology article — over-merged',sub:'one article covering two distinct topics'},
+    {id:'l1',parent:'g1',type:'leaf',op:'split',label:'Split “Cardiology” → “Hypertension” + “Cholesterol”',deps:[],
+       preview:[['split','“Cardiology”','→','“Hypertension” &amp; “Cholesterol” (2 new articles)']]},
+    {id:'l2',parent:'g1',type:'leaf',op:'move',label:'Move 6 BP facts → “Hypertension”',deps:['l1'],
+       preview:[['move','6 facts (cited)','→','“Hypertension”']]},
+    {id:'l3',parent:'g1',type:'leaf',op:'retitle',label:'Retitle remainder → “Heart — general”',deps:['l1'],
+       preview:[['retitle','“Cardiology”','→','“Heart — general”']]},
+  {id:'g2',parent:null,type:'group',label:'Lipid medications — under-split sprawl',sub:'two stubs that should be one article'},
+    {id:'l4',parent:'g2',type:'leaf',op:'merge',label:'Merge “Statins” + “Lipid meds” → “Lipid-lowering medications”',deps:[],
+       preview:[['merge','“Statins” + “Lipid meds”','→','“Lipid-lowering medications”']]},
+    {id:'l5',parent:'g2',type:'leaf',op:'rewrite',label:'Rebuild merged article body',deps:['l4'],
+       preview:[['rewrite','2 partial bodies','→','1 cited article (builder writes)']]},
+  {id:'g3',parent:null,type:'group',label:'Stale titles',sub:'drifted from their content'},
+    {id:'l6',parent:'g3',type:'leaf',op:'retitle',label:'Retitle “BP stuff” → “Blood pressure”',deps:[],
+       preview:[['retitle','“BP stuff”','→','“Blood pressure”']]},
+];
+const byId=Object.fromEntries(NODES.map(n=>[n.id,n]));
+const childrenOf=id=>NODES.filter(n=>n.parent===id);
+const leaves=()=>NODES.filter(n=>n.type==='leaf');
+// state: each leaf 'pending' | 'approved' | 'rejected'
+const st={}; leaves().forEach(l=>st[l.id]= l.id==='l1' ? 'pending' : 'approved'); // default: all approved except the Split → shows l2,l3 held
+const open={g1:true,g2:false,g3:false};
+const pvOpen={};
+
+function leafState(id){return st[id];}
+function groupState(id){
+  const kids=childrenOf(id);const s=kids.map(k=>k.type==='leaf'?st[k.id]:groupState(k.id));
+  if(s.every(x=>x==='approved'))return 'approved';
+  if(s.every(x=>x==='rejected'))return 'rejected';
+  return 'partial';
+}
+function isHeld(id){ // approved leaf whose deps aren't all approved
+  const n=byId[id]; if(n.type!=='leaf'||st[id]!=='approved')return false;
+  return n.deps.some(d=>st[d]!=='approved');
+}
+function setSubtree(id,val){
+  const n=byId[id];
+  if(n.type==='leaf'){st[id]=val;return;}
+  childrenOf(id).forEach(k=>setSubtree(k.id,val));
+}
+function toggleApprove(id){
+  const n=byId[id];const cur=n.type==='leaf'?st[id]:groupState(id);
+  setSubtree(id, cur==='approved'?'pending':'approved'); render();
+}
+function toggleReject(id){
+  const n=byId[id];const cur=n.type==='leaf'?st[id]:groupState(id);
+  setSubtree(id, cur==='rejected'?'pending':'rejected'); render();
+}
+function approveAll(){NODES.filter(n=>n.parent===null).forEach(g=>setSubtree(g.id,'approved'));render();}
+
+function enactableLeaves(){return leaves().filter(l=>st[l.id]==='approved'&&!isHeld(l.id));}
+
+// ---- render ----
+function ctlHtml(id,state){
+  const part = state==='partial';
+  return `<div class="ctl">
+    <button class="ok ${state==='approved'?'on':''} ${part?'part':''}" onclick="event.stopPropagation();toggleApprove('${id}')">
+      <svg width="16" height="16" viewBox="0 0 24 24"><path d="M5 12l4 4L19 7"/></svg></button>
+    <button class="no ${state==='rejected'?'on':''}" onclick="event.stopPropagation();toggleReject('${id}')">
+      <svg width="15" height="15" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+  </div>`;
+}
+function pvHtml(n){
+  const rows=n.preview.map(p=>`<div class="pv-row"><span class="minus">${p[1]}</span><span class="arrow">→</span><span class="plus">${p[3]}</span></div>`).join('');
+  return `<div class="preview ${pvOpen[n.id]?'show':''}" id="pv-${n.id}">${rows}<span class="seemore">view full diff →</span></div>`;
+}
+function leafHtml(n){
+  const held=isHeld(n.id);
+  const depName=held?byId[n.deps.find(d=>st[d]!=='approved')].label.split('→')[0].replace(/“|”/g,'').trim():'';
+  return `<div class="node">
+    <div class="nrow" onclick="togglePv('${n.id}')">
+      <svg class="twist leaf" width="18" height="18" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>
+      <div class="nmain">
+        <div class="nlabel"><span class="op ${n.op}">${n.op}</span> ${n.label}</div>
+        ${held?`<div class="held">⏸ held — needs: ${depName}</div>`:''}
+      </div>
+      ${ctlHtml(n.id,st[n.id])}
+    </div>
+    ${pvHtml(n)}
+  </div>`;
+}
+function groupHtml(g){
+  const gs=groupState(g.id);
+  const kids=childrenOf(g.id).map(k=>k.type==='leaf'?leafHtml(k):groupHtml(k)).join('');
+  return `<div class="node">
+    <div class="nrow" onclick="toggleOpen('${g.id}')">
+      <svg class="twist ${open[g.id]?'open':''}" width="18" height="18" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>
+      <div class="nmain"><div class="grouplabel">${g.label}</div><div class="nsub">${g.sub}</div></div>
+      ${ctlHtml(g.id,gs)}
+    </div>
+    ${open[g.id]?`<div class="children">${kids}</div>`:''}
+  </div>`;
+}
+function togglePv(id){pvOpen[id]=!pvOpen[id];render();}
+function toggleOpen(id){open[id]=!open[id];render();}
+
+function render(){
+  document.getElementById('tree').innerHTML=NODES.filter(n=>n.parent===null).map(groupHtml).join('');
+  const enact=enactableLeaves().length;
+  const heldN=leaves().filter(l=>isHeld(l.id)).length;
+  const rej=leaves().filter(l=>st[l.id]==='rejected').length;
+  document.getElementById('count').innerHTML=`<b>${enact}</b> of ${leaves().length} ops ready`+
+    (heldN?` · <span style="color:var(--amber)">${heldN} held</span>`:'')+(rej?` · ${rej} rejected`:'');
+  document.getElementById('enact').disabled=enact===0;
+  document.getElementById('enact').textContent=enact?`Enact ${enact}`:'Enact';
+}
+function enact(){
+  const n=enactableLeaves().length;
+  const t=document.getElementById('toast');
+  t.textContent=`Builder enacting ${n} operation${n>1?'s':''} → new wiki revisions. Held & rejected ops untouched.`;
+  t.classList.add('show');clearTimeout(enact._t);enact._t=setTimeout(()=>t.classList.remove('show'),3200);
+}
+render();
+</script>
+</body>
+</html>
