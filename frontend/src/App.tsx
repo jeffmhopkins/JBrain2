@@ -1,4 +1,5 @@
 import { type TouchEvent, useEffect, useRef, useState } from "react";
+import { FullBrainShell } from "./agent/FullBrainShell";
 import { type Principal, type SearchResult, api, setUnauthorizedHandler } from "./api/client";
 import { EditLayer } from "./components/EditLayer";
 import { Launcher, type LauncherTarget } from "./components/Launcher";
@@ -26,7 +27,7 @@ type Session =
   | { status: "anonymous" }
   | { status: "in"; principal: Principal };
 
-type Card = "ops" | "settings" | "search" | "review" | "entities";
+type Card = "ops" | "settings" | "search" | "review" | "entities" | "brain";
 
 const SCREEN_TITLES: Record<Card, string> = {
   ops: "Ops",
@@ -34,6 +35,7 @@ const SCREEN_TITLES: Record<Card, string> = {
   search: "Search",
   review: "Review",
   entities: "Entities",
+  brain: "Full Brain",
 };
 
 const CARD_EXIT_MS = 150;
@@ -277,6 +279,7 @@ export function App() {
             <SettingsScreen deviceLabel={session.principal.label} onLogout={() => void logout()} />
           )}
           {card === "search" && <SearchScreen onOpenResult={openNoteFromSearch} />}
+          {card === "brain" && <FullBrainShell />}
           {card === "review" && <ReviewScreen />}
           {/* Rows open the same entity layer the analysis chips use. */}
           {card === "entities" && <EntityListScreen onOpenEntity={setEntityView} />}
