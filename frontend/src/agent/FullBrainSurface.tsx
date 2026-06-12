@@ -30,7 +30,16 @@ interface Props {
 
 export function FullBrainSurface({ fb, onOpenNote, onOpenEntity }: Props): ReactNode {
   const drag = useRef<{ x: number; axis: "?" | "h" | "v" } | null>(null);
+  const chatRef = useRef<HTMLElement>(null);
   const { panel, setPanel } = fb;
+
+  // Keep the newest turn in view as text streams and tools land — each event
+  // hands us a fresh `messages` array, so this re-runs through the whole stream.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: re-run per transcript change; the effect reads the DOM.
+  useEffect(() => {
+    const el = chatRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [fb.messages]);
 
   function onTouchStart(e: TouchEvent): void {
     const target = e.target as HTMLElement;
@@ -84,7 +93,7 @@ export function FullBrainSurface({ fb, onOpenNote, onOpenEntity }: Props): React
         </button>
 
         {fb.active ? (
-          <main className="fb-chat" aria-label="Conversation">
+          <main className="fb-chat" aria-label="Conversation" ref={chatRef}>
             {fb.messages.map((m, i) => (
               <Bubble
                 // Transcript is append-only; the positional key is stable.
