@@ -26,6 +26,7 @@ from jbrain.connectors.base import ConnectorRegistry, EgressGuardError, build_eg
 from jbrain.connectors.service import ConnectorService
 from jbrain.db.session import SessionContext
 from jbrain.notes.repo import SqlNotesRepo
+from jbrain.queue import JobEnqueuer
 
 
 def build_connector_handlers(
@@ -101,10 +102,13 @@ def egress_executor(service: ConnectorService) -> LeafExecutor:
     return execute
 
 
-def build_leaf_executor(notes: SqlNotesRepo, connectors: ConnectorService) -> LeafExecutor:
+def build_leaf_executor(
+    notes: SqlNotesRepo, connectors: ConnectorService, jobs: JobEnqueuer
+) -> LeafExecutor:
     """The Proposal executor, dispatching by leaf op: an egress_call fires the
-    connector; everything else (correction/knowledge) re-enters as an agent note."""
-    note_executor = agent_note_executor(notes)
+    connector; everything else (correction/knowledge) re-enters as an agent note
+    (which enqueues ingestion via `jobs`)."""
+    note_executor = agent_note_executor(notes, jobs)
     egress = egress_executor(connectors)
 
     async def execute(ctx: SessionContext, proposal: ProposalRow, node: NodeRow) -> None:

@@ -1,6 +1,7 @@
 """Connector tools STAGE an egress Proposal (never call out), and the egress leaf
 executor fires the connector only on enact (docs/ASSISTANT.md #9)."""
 
+from types import SimpleNamespace
 from typing import Any
 
 from jbrain.agent.connectortools import (
@@ -96,14 +97,23 @@ class FakeNotes:
     def __init__(self) -> None:
         self.created: list[dict] = []
 
-    async def create_note(self, ctx: object, **kwargs: Any) -> tuple[None, bool]:
+    async def create_note(self, ctx: object, **kwargs: Any) -> tuple[Any, bool]:
         self.created.append(kwargs)
-        return None, True
+        return SimpleNamespace(id="n1"), True
+
+
+class FakeJobs:
+    def __init__(self) -> None:
+        self.enqueued: list[tuple[str, dict]] = []
+
+    async def enqueue(self, ctx: object, kind: str, payload: dict) -> str:
+        self.enqueued.append((kind, payload))
+        return "job-1"
 
 
 async def test_leaf_executor_dispatches_by_op() -> None:
-    notes, svc = FakeNotes(), FakeConnectorService()
-    execute = build_leaf_executor(notes, svc)  # type: ignore[arg-type]
+    notes, svc, jobs = FakeNotes(), FakeConnectorService(), FakeJobs()
+    execute = build_leaf_executor(notes, svc, jobs)  # type: ignore[arg-type]
     proposal = ProposalRow("p", "egress", "approved", "health", "t", None)
 
     egress_node = NodeRow(
@@ -123,3 +133,5 @@ async def test_leaf_executor_dispatches_by_op() -> None:
     await execute(HEALTH.session, proposal, note_node)
     assert svc.fetched == [("lookup_condition", {"name": "x"}, "p1")]
     assert notes.created[0]["provenance"] == "agent"
+    # The agent note re-enters ingestion; the egress leaf does not enqueue a note.
+    assert jobs.enqueued == [("ingest_note", {"note_id": "n1"})]

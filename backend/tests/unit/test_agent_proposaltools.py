@@ -48,17 +48,32 @@ async def test_propose_correction_needs_text() -> None:
     assert "needs the correction" in out
 
 
+class FakeNote:
+    def __init__(self, note_id: str) -> None:
+        self.id = note_id
+
+
 class FakeNotes:
-    def __init__(self) -> None:
+    def __init__(self, created: bool = True) -> None:
         self.created: list[dict] = []
+        self._created = created
 
-    async def create_note(self, ctx: object, **kwargs: object) -> tuple[None, bool]:
+    async def create_note(self, ctx: object, **kwargs: object) -> tuple[FakeNote, bool]:
         self.created.append(kwargs)
-        return None, True
+        return FakeNote(f"note-for-{kwargs['client_id']}"), self._created
 
 
-async def test_agent_note_executor_writes_a_flagged_idempotent_note() -> None:
-    notes = FakeNotes()
+class FakeJobs:
+    def __init__(self) -> None:
+        self.enqueued: list[tuple[str, dict]] = []
+
+    async def enqueue(self, ctx: object, kind: str, payload: dict) -> str:
+        self.enqueued.append((kind, payload))
+        return "job-1"
+
+
+async def test_agent_note_executor_writes_a_flagged_idempotent_note_and_enqueues_ingest() -> None:
+    notes, jobs = FakeNotes(), FakeJobs()
     proposal = ProposalRow("prop-1", "correction", "approved", "health", "t", None)
     node = NodeRow(
         "node-1",
@@ -70,17 +85,27 @@ async def test_agent_note_executor_writes_a_flagged_idempotent_note() -> None:
         (),
         "approved",
     )
-    await agent_note_executor(notes)(CTX.session, proposal, node)  # type: ignore[arg-type]
+    await agent_note_executor(notes, jobs)(CTX.session, proposal, node)  # type: ignore[arg-type]
     n = notes.created[0]
     assert n["provenance"] == "agent"
     assert n["source_ref"] == "proposal:prop-1"
     assert n["client_id"] == "proposal-node-1"  # idempotent on the node id
     assert n["body"] == "the fact"
+    # The note re-enters ingestion just like a captured one (else it'd stay 'pending').
+    assert jobs.enqueued == [("ingest_note", {"note_id": "note-for-proposal-node-1"})]
+
+
+async def test_executor_skips_enqueue_on_an_idempotent_re_enact() -> None:
+    notes, jobs = FakeNotes(created=False), FakeJobs()
+    proposal = ProposalRow("p", "correction", "approved", "health", "t", None)
+    node = NodeRow("n", None, "leaf", "add_note", "lbl", {"body": "again"}, (), "approved")
+    await agent_note_executor(notes, jobs)(CTX.session, proposal, node)  # type: ignore[arg-type]
+    assert jobs.enqueued == []  # the note already exists — no duplicate ingest
 
 
 async def test_executor_skips_an_empty_body() -> None:
-    notes = FakeNotes()
+    notes, jobs = FakeNotes(), FakeJobs()
     proposal = ProposalRow("p", "correction", "approved", "health", "t", None)
     node = NodeRow("n", None, "leaf", "add_note", "", {"body": "  "}, (), "approved")
-    await agent_note_executor(notes)(CTX.session, proposal, node)  # type: ignore[arg-type]
-    assert notes.created == []
+    await agent_note_executor(notes, jobs)(CTX.session, proposal, node)  # type: ignore[arg-type]
+    assert notes.created == [] and jobs.enqueued == []
