@@ -1,0 +1,241 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Assistant · tool usage under responses</title>
+<style>
+  :root{
+    --bg:#0E0F11; --surface:#17181B; --surface-2:#1E2024; --surface-composer:#141518; --border:#26282C;
+    --text:#E6E7E9; --text-2:#9A9DA3; --text-3:#5C5F66;
+    --steel:#7FA7C9; --green:#8FBC9A; --amber:#C9A36A; --rose:#CF8A8F; --violet:#A493C9;
+    --steel-tint:rgba(127,167,201,.13); --green-tint:rgba(143,188,154,.13);
+    --amber-tint:rgba(201,163,106,.13); --rose-tint:rgba(207,138,143,.13); --violet-tint:rgba(164,147,201,.13);
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+  body{background:#000;color:var(--text);display:flex;flex-direction:column;align-items:center;gap:14px;padding:18px 0 48px;min-height:100vh;}
+  svg{fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;}
+  mark{background:var(--amber-tint);color:inherit;border-radius:3px;padding:0 2px;}
+  .caption{max-width:430px;padding:0 18px;color:var(--text-2);font-size:13px;line-height:1.55;text-align:center;}
+  .caption b{color:var(--text);font-weight:500;}
+  .caption .tag{display:inline-block;background:var(--steel-tint);color:var(--steel);font-size:11px;padding:2px 8px;border-radius:999px;margin-bottom:6px;}
+
+  .deck{width:430px;max-width:calc(100vw - 24px);background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:13px;display:flex;flex-direction:column;gap:9px;}
+  .row{display:flex;gap:8px;flex-wrap:wrap;}
+  .btn{flex:1;min-width:84px;border:1px solid var(--border);background:var(--surface-2);color:var(--text-2);font-size:12.5px;font-weight:500;padding:8px 10px;border-radius:10px;cursor:pointer;transition:background .12s,color .12s,border-color .12s;}
+  .btn:hover{color:var(--text);}
+  .btn.on{background:var(--steel-tint);color:var(--steel);border-color:transparent;}
+  .deck .desc{font-size:12px;color:var(--text-3);line-height:1.5;min-height:34px;}
+  .deck .desc b{color:var(--text-2);font-weight:600;}
+
+  .phone{width:390px;height:760px;background:var(--bg);border:1px solid #2a2c30;border-radius:34px;overflow:hidden;position:relative;display:flex;flex-direction:column;}
+  .topbar{height:54px;display:flex;align-items:center;justify-content:space-between;padding:0 18px;flex:none;}
+  .wordmark{font-size:21px;font-weight:700;} .wordmark span{color:var(--steel);}
+  .topright{display:flex;align-items:center;gap:13px;color:var(--text-2);}
+  .livedot{width:9px;height:9px;border-radius:999px;background:var(--green);}
+  .fbtitle{align-self:center;font-size:15px;font-weight:600;color:var(--text);padding:6px 0 8px;}
+
+  .chat{flex:1;overflow-y:auto;padding:4px 16px 4px;display:flex;flex-direction:column;}
+  .chat-inner{margin-top:auto;display:flex;flex-direction:column;gap:10px;padding-bottom:8px;}
+  .bubble{max-width:84%;padding:11px 14px;border-radius:16px;font-size:15px;line-height:1.5;}
+  .me{align-self:flex-end;background:var(--steel-tint);border:1px solid rgba(127,167,201,.22);border-bottom-right-radius:5px;}
+  .ai{align-self:flex-start;background:var(--surface);border:1px solid var(--border);border-bottom-left-radius:5px;display:flex;flex-direction:column;}
+  .ai .ans b{font-weight:600;}
+
+  /* shared under-answer area */
+  .under{margin-top:9px;border-top:1px solid var(--border);padding-top:9px;display:flex;flex-direction:column;gap:9px;}
+  .d{width:7px;height:7px;border-radius:999px;flex:none;}
+  .d-general{background:var(--steel);} .d-health{background:var(--rose);} .d-finance{background:var(--violet);} .d-location{background:var(--amber);}
+
+  /* ---------- BEFORE: raw dump ---------- */
+  .rawtool{font-size:12px;color:var(--text-3);display:flex;gap:7px;align-items:flex-start;line-height:1.5;}
+  .rawtool .ok{color:var(--green);flex:none;}
+  .rawtool .raw{white-space:pre-wrap;word-break:break-word;}
+
+  /* ---------- A: collapsed "worked" ---------- */
+  .worked-line{width:100%;display:flex;align-items:center;gap:8px;background:none;border:none;color:var(--text-2);font:inherit;font-size:12.5px;font-weight:500;padding:0;cursor:pointer;}
+  .worked-line .gl{width:14px;height:14px;flex:none;color:var(--text-3);}
+  .worked-line .meta{color:var(--text-3);font-weight:400;}
+  .worked-line .caret{width:13px;height:13px;margin-left:auto;color:var(--text-3);transition:transform .15s ease-out;}
+  .worked.open .caret{transform:rotate(90deg);}
+  .worked-detail{display:none;flex-direction:column;gap:9px;padding-top:10px;}
+  .worked.open .worked-detail{display:flex;}
+  .step{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--text-2);}
+  .step .gl{width:14px;height:14px;flex:none;color:var(--steel);}
+  .step .count{margin-left:auto;font-size:11px;color:var(--text-3);}
+  .srcs{display:flex;flex-direction:column;gap:6px;padding-left:22px;}
+
+  /* source row (A + B) */
+  .srcrow{display:flex;align-items:center;gap:9px;padding:8px 10px;border:1px solid var(--border);border-radius:11px;background:var(--surface-2);cursor:pointer;text-align:left;width:100%;color:var(--text);font:inherit;transition:border-color .12s;}
+  .srcrow:hover{border-color:var(--steel);}
+  .srcrow .smain{min-width:0;display:flex;flex-direction:column;gap:2px;flex:1;}
+  .srcrow .stitle{font-size:12.5px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .srcrow .ssnip{font-size:11px;color:var(--text-3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .srcrow .chev{width:14px;height:14px;margin-left:2px;color:var(--text-3);flex:none;}
+
+  /* ---------- B: always-on source cards ---------- */
+  .src-head{display:flex;align-items:center;gap:7px;font-size:12px;color:var(--text-2);font-weight:500;}
+  .src-head .gl{width:13px;height:13px;flex:none;color:var(--steel);}
+  .src-head .n{color:var(--text-3);font-weight:400;}
+  .src-group{display:flex;flex-direction:column;gap:6px;}
+
+  /* ---------- C: footnote citations ---------- */
+  sup.cite{display:inline-flex;align-items:center;justify-content:center;min-width:14px;height:14px;padding:0 3px;margin:0 1px;border-radius:4px;background:var(--steel-tint);color:var(--steel);font-size:9px;font-weight:700;vertical-align:top;cursor:pointer;line-height:1;}
+  .cites{display:flex;flex-wrap:wrap;gap:6px;}
+  .cite-chip{display:inline-flex;align-items:center;gap:7px;max-width:100%;padding:4px 11px 4px 4px;border:1px solid var(--border);border-radius:999px;background:var(--surface-2);color:var(--text);font:inherit;font-size:12px;cursor:pointer;transition:border-color .12s;}
+  .cite-chip:hover{border-color:var(--steel);}
+  .cite-chip .num{width:17px;height:17px;border-radius:999px;background:var(--steel-tint);color:var(--steel);font-size:10px;font-weight:700;display:inline-flex;align-items:center;justify-content:center;flex:none;}
+  .cite-chip .ct{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .steps-pill{align-self:flex-start;background:none;border:none;color:var(--text-3);font:inherit;font-size:11.5px;cursor:pointer;display:flex;align-items:center;gap:6px;padding:2px 0 0;}
+  .steps-pill .caret{width:12px;height:12px;transition:transform .15s ease-out;}
+  .steps-pill.open .caret{transform:rotate(90deg);}
+  .steps-detail{display:none;flex-direction:column;gap:6px;border-left:2px solid var(--border);margin-left:4px;padding:2px 0 2px 12px;}
+  .steps-detail.open{display:flex;}
+  .tl{font-size:11.5px;color:var(--text-3);display:flex;gap:7px;align-items:center;}
+  .tl .ok{color:var(--green);flex:none;}
+
+  /* composer */
+  .dock{flex:none;padding:8px 14px calc(12px + env(safe-area-inset-bottom));background:var(--bg);}
+  .omnibox{background:var(--surface-composer);border:1px solid var(--border);border-radius:24px;padding:13px;display:flex;flex-direction:column;}
+  .seg{display:flex;border:1px solid var(--border);border-radius:14px;overflow:hidden;}
+  .seg button{flex:1;border:none;background:none;color:var(--text-2);font-size:13px;font-weight:500;padding:9px 0;display:flex;align-items:center;justify-content:center;gap:7px;}
+  .seg .on2{background:var(--steel-tint);color:var(--text);font-weight:600;}
+  .seg .on2 svg{color:var(--steel);}
+  .field{color:var(--text-3);font-size:16px;line-height:1.4;padding:13px 6px 0;min-height:2.8em;}
+  .foot{display:flex;align-items:center;justify-content:space-between;padding:8px 4px 0;color:var(--text-2);font-size:11px;}
+  .foot .left{display:flex;align-items:center;gap:8px;}
+  .foot .mdot{width:11px;height:11px;border-radius:999px;background:var(--steel);flex:none;}
+  .foot .right{display:flex;gap:14px;}
+</style>
+</head>
+<body>
+  <div class="caption">
+    <span class="tag">Full Brain · tool usage under responses</span><br/>
+    The same turn — <i>"When was I born?"</i> — rendered four ways. <b>Before</b> is today's raw dump;
+    <b>A/B/C</b> are three directions. Tap the rows/chips; they're interactive.
+  </div>
+
+  <div class="deck">
+    <div class="row">
+      <button class="btn dirbtn on" data-dir="before">Before</button>
+      <button class="btn dirbtn" data-dir="a">A · Collapsed</button>
+      <button class="btn dirbtn" data-dir="b">B · Source cards</button>
+      <button class="btn dirbtn" data-dir="c">C · Citations</button>
+    </div>
+    <div class="desc" id="desc"></div>
+  </div>
+
+  <div class="phone">
+    <div class="topbar">
+      <div class="wordmark">JBrain<span>.</span></div>
+      <div class="topright"><span class="livedot"></span>
+        <svg width="20" height="20" viewBox="0 0 24 24"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/></svg></div>
+    </div>
+    <div class="fbtitle">Recap</div>
+
+    <main class="chat">
+      <div class="chat-inner">
+        <div class="bubble me">When was I born?</div>
+        <div class="bubble ai" id="aibubble"></div>
+      </div>
+    </main>
+
+    <div class="dock">
+      <div class="omnibox">
+        <div class="seg">
+          <button>＋ Entry</button>
+          <button>🔍 Research</button>
+          <button class="on2"><svg width="15" height="15" viewBox="0 0 24 24"><rect x="4" y="8" width="16" height="12" rx="2"/><path d="M12 8V4M8 4h8"/><circle cx="9" cy="13" r="1"/><circle cx="15" cy="13" r="1"/></svg>Full Brain</button>
+        </div>
+        <div class="field">Talk it out — full tool access…</div>
+        <div class="foot"><div class="left"><span class="mdot"></span> Full tool access · staged writes need approval</div><div class="right">📎 ➤</div></div>
+      </div>
+    </div>
+  </div>
+
+<script>
+  const ICON = {
+    search:'<svg class="gl" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>',
+    doc:'<svg class="gl" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h6"/></svg>',
+    gear:'<svg class="gl" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M19.1 4.9 17 7M7 17l-2.1 2.1"/></svg>',
+    chev:'<svg class="chev" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></svg>',
+    caretR:'<svg class="caret" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></svg>',
+  };
+  const ANS = 'You were born on <b>March&nbsp;19,&nbsp;1986</b>';
+  const SRC = [
+    {n:1, title:"Born March 19, 1986", snip:'…I was <mark>born</mark> March 19, 1986', dom:"general"},
+    {n:2, title:"Name · Jeff Hopkins", snip:"My name is Jeff Hopkins", dom:"general"},
+    {n:3, title:"Albumin graph", snip:"The graph displays albumin concentration in g/dL", dom:"general"},
+  ];
+  const READ = {title:"Born March 19, 1986", snip:"I was born March 19, 1986", dom:"general"};
+
+  const srcRow = (s) => `<button class="srcrow"><span class="d d-${s.dom}"></span>
+      <span class="smain"><span class="stitle">${s.title}</span><span class="ssnip">${s.snip}</span></span>${ICON.chev}</button>`;
+
+  function before(){
+    const dump = SRC.map(s => `- note ${rid()} [general] 2026-06-12: ${s.snip.replace(/…/,'').trim()}`).join('\n');
+    return `<div class="ans">${ANS}.</div>
+      <div class="under">
+        <div class="rawtool"><span class="ok">✓</span><span class="raw">search · ${dump}</span></div>
+        <div class="rawtool"><span class="ok">✓</span><span class="raw">read_note · note ${rid()} [general] 2026-06-12 I was born March 19, 1986</span></div>
+      </div>`;
+  }
+  function a(){
+    return `<div class="ans">${ANS}.</div>
+      <div class="under"><div class="worked">
+        <button class="worked-line js-worked">${ICON.gear}<span>Worked</span><span class="meta">searched notes · read 1</span>${ICON.caretR}</button>
+        <div class="worked-detail">
+          <div class="step">${ICON.search}<span>Searched your notes</span><span class="count">3 results</span></div>
+          <div class="srcs">${SRC.map(srcRow).join('')}</div>
+          <div class="step">${ICON.doc}<span>Read a note</span><span class="count">${READ.title}</span></div>
+        </div>
+      </div></div>`;
+  }
+  function b(){
+    return `<div class="ans">${ANS}.</div>
+      <div class="under">
+        <div class="src-group"><div class="src-head">${ICON.search}<span>Searched your notes</span><span class="n">· 3</span></div>${SRC.map(srcRow).join('')}</div>
+        <div class="src-group"><div class="src-head">${ICON.doc}<span>Read</span><span class="n">· 1</span></div>${srcRow(READ)}</div>
+      </div>`;
+  }
+  function c(){
+    const chips = SRC.map(s => `<button class="cite-chip"><span class="num">${s.n}</span><span class="ct">${s.title}</span></button>`).join('');
+    return `<div class="ans">${ANS}<sup class="cite">1</sup>.</div>
+      <div class="under">
+        <div class="cites">${chips}</div>
+        <button class="steps-pill js-steps">${ICON.caretR}<span>2 steps</span></button>
+        <div class="steps-detail">
+          <div class="tl"><span class="ok">✓</span> Searched your notes — 3 results</div>
+          <div class="tl"><span class="ok">✓</span> Read “Born March 19, 1986”</div>
+        </div>
+      </div>`;
+  }
+  function rid(){ return Math.random().toString(16).slice(2,10); }
+
+  const DESC = {
+    before:'<b>Before.</b> One row per tool, the raw result summary dumped inline — note UUIDs, [domain] tags, dates and snippets. Noisy and unreadable.',
+    a:'<b>A · Collapsed.</b> One quiet "Worked" line by default — the answer leads. Tap to expand the steps and tidy source rows (open the note). Least clutter.',
+    b:'<b>B · Source cards.</b> Always-visible, scannable source cards grouped by step (searched / read). Domain dot + derived title + matched snippet, each opens the note.',
+    c:'<b>C · Citations.</b> Footnote markers in the answer with a numbered Sources tray; the mechanical steps are demoted to a tiny "2 steps" toggle. Most "research assistant".',
+  };
+  const REN = { before, a, b, c };
+  const bubble = document.getElementById('aibubble');
+  const desc = document.getElementById('desc');
+  let dir = 'before';
+
+  function render(){
+    bubble.innerHTML = REN[dir]();
+    desc.innerHTML = DESC[dir];
+    document.querySelectorAll('.dirbtn').forEach(x => x.classList.toggle('on', x.dataset.dir===dir));
+  }
+  document.querySelectorAll('.dirbtn').forEach(x => x.onclick = () => { dir = x.dataset.dir; render(); });
+  // delegated toggles for expandables
+  bubble.addEventListener('click', (e) => {
+    const w = e.target.closest('.js-worked'); if (w){ w.closest('.worked').classList.toggle('open'); }
+    const s = e.target.closest('.js-steps'); if (s){ s.classList.toggle('open'); s.parentElement.querySelector('.steps-detail').classList.toggle('open'); }
+  });
+  render();
+</script>
+</body>
+</html>
