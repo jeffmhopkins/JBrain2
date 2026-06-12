@@ -5,9 +5,16 @@
 // selects a registered component and fills its data-only slots. Adding a
 // component is a deliberate change here, like adding a tool.
 
-import { type ReactNode, useState } from "react";
-import { api } from "../../api/client";
+import { type ReactNode, useEffect, useState } from "react";
 import type { CitationRef, ViewPayload } from "../types";
+import {
+  type LiveList,
+  getLiveList,
+  loadLiveList,
+  seedLiveList,
+  subscribeLiveLists,
+  toggleLiveItem,
+} from "./liveList";
 
 export interface ViewProps {
   data: Record<string, unknown>;
@@ -85,24 +92,53 @@ function asItems(value: unknown): ChecklistItem[] {
   });
 }
 
-/** The owner's checklist: `{title, items: [{id, body, checked}]}` — full-bleed
- * rows (DESIGN.md "Lists"). A checkbox tap toggles the item directly (lists are
- * the owner's own data): optimistic, reverting if the write fails. */
+/** The owner's checklist: `{list_id, title, items: [{id, body, checked}]}` —
+ * full-bleed rows (DESIGN.md "Lists"). Reads LIVE list state from the shared
+ * store keyed on `list_id`, so an older card and a newer one of the same list
+ * always agree, and a checkbox tap (here, in another card, or after the agent
+ * edits it) reflects everywhere. Optimistic, reverting if the write fails. */
 function ListCard({ data }: ViewProps): ReactNode {
-  const [items, setItems] = useState<ChecklistItem[]>(() => asItems(data.items));
+  const listId = String(data.list_id ?? "");
+  const fallback: LiveList = {
+    title: String(data.title ?? "List"),
+    domain: String(data.domain ?? "general"),
+    items: asItems(data.items),
+  };
+  const [live, setLive] = useState<LiveList>(() => getLiveList(listId) ?? fallback);
+
+  // Keyed on the list id only: the payload `fallback` seeds the store the first
+  // time and is otherwise stable, so it's deliberately out of the dep array.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: payload-derived seed, id-keyed
+  useEffect(() => {
+    if (!listId) return;
+    seedLiveList(listId, fallback);
+    const got = getLiveList(listId);
+    if (got) setLive(got);
+    const unsub = subscribeLiveLists(() => {
+      const next = getLiveList(listId);
+      if (next) setLive(next);
+    });
+    void loadLiveList(listId); // pull the current state → emits → setLive
+    return unsub;
+  }, [listId]);
+
+  const items = live.items;
 
   function toggle(target: ChecklistItem): void {
-    const next = !target.checked;
-    setItems((xs) => xs.map((x) => (x.id === target.id ? { ...x, checked: next } : x)));
-    api.setListItemChecked(target.id, next).catch(() => {
-      // The write lost — snap the row back to where it was.
-      setItems((xs) => xs.map((x) => (x.id === target.id ? { ...x, checked: target.checked } : x)));
-    });
+    if (listId) {
+      toggleLiveItem(listId, target.id, !target.checked);
+      return;
+    }
+    // No list id (shouldn't happen for a real list_card) — local-only.
+    setLive((l) => ({
+      ...l,
+      items: l.items.map((x) => (x.id === target.id ? { ...x, checked: !target.checked } : x)),
+    }));
   }
 
   return (
     <div className="tv-list">
-      <div className="tv-list-head">{String(data.title ?? "List")}</div>
+      <div className="tv-list-head">{live.title}</div>
       <ul className="tv-list-items">
         {items.map((it, i) => (
           // Item ids are stable; the index only backs the rare empty-id row.
