@@ -1,0 +1,257 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Lists — card home + editable detail (swipe-down back)</title>
+<style>
+  :root{
+    --bg:#0E0F11; --surface:#17181B; --surface-2:#1E2024; --border:#26282C;
+    --text:#E6E7E9; --text-2:#9A9DA3; --text-3:#5C5F66;
+    --steel:#7FA7C9; --green:#8FBC9A; --amber:#C9A36A; --rose:#CF8A8F; --violet:#A493C9;
+    --steel-tint:rgba(127,167,201,.13); --rose-tint:rgba(207,138,143,.14);
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+  body{background:#000;color:var(--text);display:flex;flex-direction:column;align-items:center;gap:14px;padding:22px 14px 60px;min-height:100vh;}
+  svg{fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;}
+
+  .caption{width:392px;max-width:94vw;padding:0 6px;color:var(--text-2);font-size:12.5px;line-height:1.55;}
+  .caption b{color:var(--text);font-weight:600;}
+  .caption .tag{display:inline-block;font-size:11px;padding:2px 9px;border-radius:999px;margin-bottom:6px;background:var(--steel-tint);color:var(--steel);}
+
+  .phone{width:392px;max-width:94vw;height:680px;background:var(--bg);border:1px solid #2a2c30;border-radius:32px;overflow:hidden;position:relative;display:flex;flex-direction:column;}
+  .top{height:54px;display:flex;align-items:center;justify-content:space-between;padding:0 18px;flex:none;}
+  .wordmark{font-size:20px;font-weight:700;}.wordmark span{color:var(--steel);}
+  .grab{position:absolute;top:7px;left:50%;transform:translateX(-50%);width:36px;height:4px;border-radius:999px;background:var(--border);}
+  .htitle{display:flex;align-items:center;justify-content:space-between;padding:2px 18px 12px;flex:none;}
+  .htitle h1{font-size:25px;font-weight:700;letter-spacing:-.01em;}
+  .add{display:inline-flex;align-items:center;gap:6px;font-size:13px;font-weight:600;color:var(--steel);background:var(--steel-tint);border:none;border-radius:999px;padding:8px 13px;cursor:pointer;}
+  .add svg{width:14px;height:14px;}
+  .body{flex:1;overflow-y:auto;padding:4px 16px 20px;}
+
+  .dot{width:8px;height:8px;border-radius:999px;flex:none;}
+  .d-general{background:var(--steel);}.d-health{background:var(--rose);}.d-finance{background:var(--amber);}.d-location{background:var(--violet);}
+  .count{font-size:12px;color:var(--text-3);font-variant-numeric:tabular-nums;}
+  .bar{height:4px;border-radius:999px;background:var(--surface-2);overflow:hidden;}
+  .bar > i{display:block;height:100%;background:var(--steel);border-radius:999px;transition:width .2s;}
+
+  /* card grid */
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:11px;}
+  .lcard{text-align:left;border:1px solid var(--border);border-radius:16px;background:var(--surface);padding:14px;cursor:pointer;color:var(--text);font:inherit;display:flex;flex-direction:column;gap:9px;min-height:132px;}
+  .lcard:active{background:var(--surface-2);}
+  .lcard .hd{display:flex;align-items:center;gap:8px;}
+  .lcard .nm{font-size:14.5px;font-weight:600;line-height:1.2;}
+  .lcard .prev{font-size:12px;color:var(--text-3);line-height:1.55;flex:1;}
+  .lcard .prev s{opacity:.55;}
+
+  /* detail (slides up; swipe DOWN dismisses — the app-wide back) */
+  .detail{position:absolute;inset:0;background:var(--bg);transform:translateY(100%);transition:transform .28s cubic-bezier(.2,.7,.3,1);z-index:10;display:flex;flex-direction:column;will-change:transform;}
+  .detail.open{transform:translateY(0);}
+  .detail.drag{transition:none;}
+  .dbar{height:54px;display:flex;align-items:center;gap:12px;padding:0 8px 0 14px;border-bottom:1px solid var(--border);flex:none;margin-top:6px;}
+  .dbar .nm{font-size:18px;font-weight:700;flex:1;outline:none;}
+  .dbar .nm[contenteditable="true"]{border-bottom:1.5px dotted var(--steel);}
+  .editbtn{font-size:14px;font-weight:600;color:var(--steel);background:none;border:none;cursor:pointer;padding:8px 10px;}
+  .dbody{flex:1;overflow-y:auto;padding:6px 16px 22px;}
+
+  .items{list-style:none;}
+  .it{display:flex;align-items:center;gap:12px;padding:13px 2px;border-bottom:1px solid var(--border);cursor:pointer;}
+  .it .ck{flex:none;width:21px;height:21px;border-radius:6px;border:1.7px solid var(--text-3);background:none;display:inline-flex;align-items:center;justify-content:center;}
+  .it.done .ck{background:var(--green);border-color:var(--green);}
+  .it.done .ck::after{content:"";width:5px;height:9px;border:solid #0e0f11;border-width:0 2px 2px 0;transform:rotate(45deg);margin-bottom:2px;}
+  .it .t{flex:1;font-size:15.5px;outline:none;}
+  .it.done .t{color:var(--text-3);text-decoration:line-through;}
+  .it .grip,.it .del{display:none;}
+  .it.dragging{opacity:.6;background:var(--surface);}
+
+  /* edit mode */
+  .editing .it{cursor:default;}
+  .editing .it .grip{display:inline-flex;color:var(--text-3);cursor:grab;touch-action:none;}
+  .editing .it .grip svg{width:18px;height:18px;}
+  .editing .it .ck{display:none;}
+  .editing .it .t{border-bottom:1px dotted var(--border);}
+  .editing .it .del{display:inline-flex;flex:none;width:22px;height:22px;border-radius:999px;align-items:center;justify-content:center;background:var(--rose-tint);color:var(--rose);border:none;cursor:pointer;}
+  .editing .it .del svg{width:13px;height:13px;}
+
+  .addrow{display:flex;align-items:center;gap:12px;padding:13px 2px;color:var(--text-3);}
+  .addrow .plus{flex:none;width:21px;height:21px;border:1.5px dashed var(--text-3);border-radius:6px;display:inline-flex;align-items:center;justify-content:center;}
+  .addrow .plus svg{width:12px;height:12px;}
+  .addrow input{flex:1;background:none;border:none;color:var(--text);font:inherit;font-size:15.5px;outline:none;}
+  .addrow input::placeholder{color:var(--text-3);}
+
+  .danger{display:none;margin-top:22px;}
+  .editing .danger{display:block;}
+  .danger button{width:100%;padding:13px;border-radius:12px;border:1px solid var(--rose-tint);background:none;color:var(--rose);font:inherit;font-weight:600;cursor:pointer;}
+
+  .hint{position:absolute;left:50%;top:14px;transform:translate(-50%,-8px);background:var(--surface-2);border:1px solid var(--border);border-radius:999px;padding:7px 15px;font-size:12.5px;color:var(--steel);opacity:0;pointer-events:none;transition:.16s;z-index:30;white-space:nowrap;}
+  .hint.show{transform:translate(-50%,0);opacity:1;}
+</style>
+</head>
+<body>
+  <div class="caption">
+    <span class="tag">Lists · card home + editable detail</span><br/>
+    Tap a card to open its checklist. <b>The whole row toggles</b> an item. <b>Edit</b> flips on reordering
+    (drag the ≡ handle), inline text editing, per-item delete, add-item, rename, and delete-list. <b>Swipe the detail
+    down to go back</b> — the same gesture as chat / launcher / entity. (Swipe the home down too: it returns to the launcher.)
+  </div>
+
+  <div class="phone" id="P">
+    <div class="grab"></div>
+    <div class="top"><div class="wordmark">JBrain<span>.</span></div></div>
+    <div class="htitle"><h1>Lists</h1>
+      <button class="add" id="newList"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>New</button></div>
+    <div class="body" id="home"><div class="grid" id="grid"></div></div>
+
+    <div class="detail" id="detail">
+      <div class="grab"></div>
+      <div class="dbar">
+        <span class="dot" id="dDot"></span>
+        <span class="nm" id="dName"></span>
+        <button class="editbtn" id="editBtn">Edit</button>
+      </div>
+      <div class="dbody" id="dBody">
+        <ul class="items" id="items"></ul>
+        <div class="addrow"><span class="plus"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></span>
+          <input id="addInput" placeholder="add item" /></div>
+        <div class="danger"><button id="delList">Delete list</button></div>
+      </div>
+    </div>
+    <div class="hint" id="hint"></div>
+  </div>
+
+<script>
+  const LISTS = [
+    { id:"groc", nm:"Groceries", dom:"general", items:[
+      {t:"eggs",d:true},{t:"oat milk",d:true},{t:"spinach",d:false},{t:"coffee beans",d:false},{t:"olive oil",d:false}] },
+    { id:"tahoe", nm:"Packing — Tahoe", dom:"general", items:[
+      {t:"down jacket",d:false},{t:"gloves",d:false},{t:"chargers",d:false},{t:"sunscreen",d:false},{t:"boots",d:false},{t:"passport",d:false}] },
+    { id:"meds", nm:"Meds to refill", dom:"health", items:[
+      {t:"vitamin D",d:true},{t:"allergy spray",d:false},{t:"melatonin",d:false}] },
+    { id:"bills", nm:"Bills", dom:"finance", items:[
+      {t:"electric",d:true},{t:"internet",d:true},{t:"water",d:true},{t:"car insurance",d:false}] },
+  ];
+  const esc=(s)=>s.replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
+  const openN=(l)=>l.items.filter(i=>!i.d).length;
+  const pct=(l)=>Math.round(100*(l.items.length-openN(l))/Math.max(1,l.items.length));
+  const $=(s,r=document)=>r.querySelector(s);
+
+  function renderHome(){
+    $("#grid").innerHTML = LISTS.map(l=>`
+      <button class="lcard" data-id="${l.id}">
+        <div class="hd"><span class="dot d-${l.dom}"></span><span class="nm">${esc(l.nm)}</span></div>
+        <div class="prev">${l.items.slice(0,3).map(i=>i.d?`<s>${esc(i.t)}</s>`:esc(i.t)).join("<br/>")}${l.items.length>3?`<br/>+${l.items.length-3} more`:""}</div>
+        <div class="bar"><i style="width:${pct(l)}%"></i></div>
+        <div class="count">${openN(l)}/${l.items.length} open</div>
+      </button>`).join("");
+  }
+  renderHome();
+
+  const itemLi=(i,idx)=>`<li class="it${i.d?" done":""}" data-i="${idx}">
+    <span class="grip"><svg viewBox="0 0 24 24"><path d="M8 6h.01M8 12h.01M8 18h.01M16 6h.01M16 12h.01M16 18h.01"/></svg></span>
+    <button class="ck" aria-label="toggle"></button>
+    <span class="t">${esc(i.t)}</span>
+    <button class="del" aria-label="delete"><svg viewBox="0 0 24 24"><path d="M5 12h14"/></svg></button></li>`;
+
+  // ---- detail open/close ----
+  let current=null;
+  const detail=$("#detail");
+  function openDetail(id){
+    current=LISTS.find(l=>l.id===id);
+    $("#dDot").className=`dot d-${current.dom}`;
+    $("#dName").textContent=current.nm;
+    $("#items").innerHTML=current.items.map(itemLi).join("");
+    detail.classList.remove("editing"); $("#editBtn").textContent="Edit";
+    detail.classList.add("open");
+  }
+  function closeDetail(){ detail.classList.remove("open"); renderHome(); }
+  $("#grid").addEventListener("click",(e)=>{const c=e.target.closest(".lcard"); if(c) openDetail(c.dataset.id);});
+
+  // ---- whole-row toggle (normal mode) ----
+  $("#items").addEventListener("click",(e)=>{
+    if(detail.classList.contains("editing")){
+      if(e.target.closest(".del")){ e.target.closest(".it").remove(); }
+      return;
+    }
+    const li=e.target.closest(".it"); if(!li) return;
+    li.classList.toggle("done");
+  });
+
+  // ---- edit mode ----
+  $("#editBtn").addEventListener("click",()=>{
+    const on=detail.classList.toggle("editing");
+    $("#editBtn").textContent=on?"Done":"Edit";
+    $("#dName").contentEditable=on?"true":"false";
+    $("#items").querySelectorAll(".t").forEach(t=>t.contentEditable=on?"true":"false");
+  });
+
+  // add item
+  $("#addInput").addEventListener("keydown",(e)=>{
+    if(e.key!=="Enter"||!e.target.value.trim()) return;
+    const idx=$("#items").children.length;
+    $("#items").insertAdjacentHTML("beforeend", itemLi({t:e.target.value.trim(),d:false}, idx));
+    if(detail.classList.contains("editing")) $("#items").lastElementChild.querySelector(".t").contentEditable="true";
+    e.target.value="";
+  });
+  $("#delList").addEventListener("click",()=>{ toast("List deleted"); closeDetail(); });
+
+  // ---- drag reorder (grip) ----
+  let dragLi=null, ul=$("#items");
+  ul.addEventListener("pointerdown",(e)=>{
+    const g=e.target.closest(".grip"); if(!g) return;
+    dragLi=g.closest(".it"); dragLi.classList.add("dragging");
+    g.setPointerCapture(e.pointerId); e.preventDefault();
+  });
+  ul.addEventListener("pointermove",(e)=>{
+    if(!dragLi) return;
+    const sibs=[...ul.querySelectorAll(".it:not(.dragging)")];
+    const after=sibs.find(s=>{const r=s.getBoundingClientRect(); return e.clientY < r.top + r.height/2;});
+    if(after) ul.insertBefore(dragLi, after); else ul.appendChild(dragLi);
+  });
+  const endDrag=()=>{ if(dragLi){dragLi.classList.remove("dragging"); dragLi=null;} };
+  ul.addEventListener("pointerup",endDrag); ul.addEventListener("pointercancel",endDrag);
+
+  // ---- swipe DOWN to go back (the app-wide gesture) ----
+  function swipeBack(el, body, onBack){
+    let sy=0, dy=0, active=false;
+    el.addEventListener("pointerdown",(e)=>{
+      if(e.target.closest("input,button,.grip,[contenteditable='true']")) return;
+      if(body.scrollTop>0) return;            // only from the top, like the other screens
+      sy=e.clientY; dy=0; active=true; el.classList.add("drag");
+    });
+    el.addEventListener("pointermove",(e)=>{
+      if(!active) return; dy=Math.max(0,e.clientY-sy);
+      el.style.transform=`translateY(${dy}px)`;
+    });
+    el.addEventListener("pointerup",()=>{
+      if(!active) return; active=false; el.classList.remove("drag"); el.style.transform="";
+      if(dy>90) onBack();
+    });
+  }
+  swipeBack(detail, $("#dBody"), closeDetail);
+
+  // home-level swipe down → back to the launcher (the same app-wide gesture),
+  // shown here as a cue since there's no launcher behind the mock.
+  (function homeSwipe(){
+    const home=$("#home"); let sy=0, active=false;
+    home.addEventListener("pointerdown",(e)=>{
+      if(e.target.closest("button,input")) return;
+      if(home.scrollTop>0) return; sy=e.clientY; active=true;
+    });
+    home.addEventListener("pointermove",(e)=>{
+      if(active && e.clientY-sy>80){ active=false; toast("↓ back to Launcher"); }
+    });
+    home.addEventListener("pointerup",()=>{active=false;});
+  })();
+
+  // ---- new list (mock) ----
+  $("#newList").addEventListener("click",()=>toast("New list — name it, pick a domain"));
+
+  let toastT;
+  function toast(msg){
+    const h=$("#hint"); h.textContent=msg; h.classList.add("show");
+    clearTimeout(toastT); toastT=setTimeout(()=>h.classList.remove("show"),1500);
+  }
+</script>
+</body>
+</html>
