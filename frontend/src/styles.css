@@ -3152,8 +3152,85 @@ button.small {
 .fb-shell .bubble.ai .tool .err {
   color: var(--rose);
 }
-.fb-shell .fb-typing {
-  color: var(--text-3);
+
+/* live AI status line — sits at the surface's bottom edge, above the omnibox.
+   A quiet pulsing dot + a label that shimmers steel while the agent is live,
+   then settles to green (done) or rose (stopped). */
+.fb-shell .fb-status {
+  flex: none;
+  align-self: flex-start;
+  max-width: 100%;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 16px 8px;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--text-2);
+}
+.fb-shell .fb-status-mark {
+  width: 7px;
+  height: 7px;
+  flex: none;
+  border-radius: 999px;
+  background: var(--steel);
+}
+.fb-shell .fb-status.live .fb-status-mark {
+  animation: fb-breathe 1.5s ease-in-out infinite;
+}
+.fb-shell .fb-status.done {
+  color: var(--green);
+}
+.fb-shell .fb-status.done .fb-status-mark {
+  background: var(--green);
+}
+.fb-shell .fb-status.err {
+  color: var(--rose);
+}
+.fb-shell .fb-status.err .fb-status-mark {
+  background: var(--rose);
+}
+.fb-shell .fb-status-lab {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fb-shell .fb-status-lab .tool {
+  color: var(--text);
+  font-weight: 600;
+}
+.fb-shell .fb-status.live .fb-status-lab {
+  background: linear-gradient(100deg, var(--text-3) 30%, var(--steel) 50%, var(--text-3) 70%);
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: fb-sweep 1.9s linear infinite;
+}
+@keyframes fb-sweep {
+  to {
+    background-position: -200% 0;
+  }
+}
+@keyframes fb-breathe {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.4;
+    transform: scale(0.8);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .fb-shell .fb-status.live .fb-status-mark {
+    animation: none;
+  }
+  .fb-shell .fb-status.live .fb-status-lab {
+    animation: none;
+    color: var(--steel);
+  }
 }
 
 /* composer */

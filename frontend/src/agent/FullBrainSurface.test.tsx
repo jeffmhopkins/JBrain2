@@ -77,6 +77,42 @@ describe("FullBrainSurface", () => {
     expect(screen.getByText("search · 2 notes")).toBeInTheDocument();
   });
 
+  it("drives the status line through the turn and drops the floating dots", async () => {
+    let releaseStart!: () => void;
+    let releaseTool!: () => void;
+    const startGate = new Promise<void>((r) => {
+      releaseStart = r;
+    });
+    const toolGate = new Promise<void>((r) => {
+      releaseTool = r;
+    });
+    async function* answer(): AsyncGenerator<ChatEvent> {
+      await startGate;
+      yield { type: "tool_call", id: "c1", name: "search", arguments: {} };
+      await toolGate;
+      yield { type: "tool_result", tool_call_id: "c1", ok: true, summary: "2 notes" };
+      yield { type: "done", stop_reason: "end_turn" };
+    }
+    render(<Harness d={deps({ chat: answer })} />);
+    await waitFor(() => screen.getByLabelText("Conversation"));
+    fireEvent.change(screen.getByLabelText("Composer"), { target: { value: "what labs?" } });
+    fireEvent.click(screen.getByRole("button", { name: "send" }));
+
+    // Before any event: thinking, and no old in-bubble "…".
+    await waitFor(() => expect(screen.getByRole("status").textContent).toContain("Thinking"));
+    expect(document.querySelector(".fb-typing")).toBeNull();
+
+    releaseStart();
+    await waitFor(() =>
+      expect(screen.getByRole("status").textContent).toContain("Searching your notes"),
+    );
+
+    releaseTool();
+    await waitFor(() =>
+      expect(screen.getByRole("status").textContent).toContain("Answered · 1 tool used"),
+    );
+  });
+
   it("a send with no chosen session surfaces the picker instead", async () => {
     const chat = vi.fn(noChat);
     render(<Harness d={deps({ listSessions: vi.fn(async () => []), chat })} />);
