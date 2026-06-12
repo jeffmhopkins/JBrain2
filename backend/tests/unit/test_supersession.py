@@ -500,6 +500,11 @@ def test_asymmetric_predicate_reflects_with_named_inverse() -> None:
     # F-150.ownedBy -> me on the thing's stream).
     assert inverse_predicate("owns") == "ownedBy"
     assert inverse_predicate("ownedBy") == "owns"
+    # Membership: only the unambiguous person->org spelling reciprocates, onto
+    # the org's member list. A bare `member` is directionally ambiguous and
+    # stands alone (no wrong-way edge).
+    assert inverse_predicate("memberOf") == "member"
+    assert inverse_predicate("member") is None
 
 
 def test_unknown_predicate_has_no_inverse() -> None:

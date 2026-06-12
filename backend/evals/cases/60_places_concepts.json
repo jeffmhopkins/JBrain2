@@ -384,6 +384,12 @@
       ],
       "not_person": [
         "Brooklyn"
+      ],
+      "edges": [
+        {
+          "predicate": "homeLocation",
+          "object": "Brooklyn"
+        }
       ]
     }
   },
@@ -537,6 +543,10 @@
         {
           "predicate": "worksFor",
           "object": "Intel"
+        },
+        {
+          "predicate": "homeLocation",
+          "object": "Portland"
         }
       ]
     }

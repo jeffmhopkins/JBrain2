@@ -339,6 +339,20 @@ def test_system_prompt_v9_teaches_inanimate_ownership_edges() -> None:
     assert 'entity_ref is "my truck"' in SYSTEM_PROMPT
 
 
+def test_system_prompt_v9_links_place_and_org_valued_states_to_their_node() -> None:
+    """Follow-up sweep: a state/relationship whose value IS a named entity must
+    point AT that node, not bury it in a string. homeLocation links to the Place
+    (a functional predicate, so the object stays out of its key and Boulder still
+    supersedes Denver), worksFor to the Organization, and organization membership
+    is memberOf so the org gets a reciprocal member edge. An address stays a
+    value string — a full street address is not a place node."""
+    assert '"object_entity_ref": "Denver"' in SYSTEM_PROMPT
+    assert "set object_entity_ref to the Place mention" in SYSTEM_PROMPT
+    assert "memberOf" in SYSTEM_PROMPT
+    assert "object_entity_ref the Organization mention" in SYSTEM_PROMPT
+    assert "a full street address is not a place node" in SYSTEM_PROMPT
+
+
 def test_user_prompt_carries_anchor_with_timezone_domain_and_content() -> None:
     anchor = datetime(2026, 6, 10, 9, 30, tzinfo=UTC)
     prompt = build_user_prompt(["BP was 118/76", "second chunk"], anchor=anchor, domain="health")

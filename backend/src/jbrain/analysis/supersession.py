@@ -99,6 +99,12 @@ INVERSE_PAIRS: dict[str, str] = {
     "owns": "ownedBy",
     "ownedby": "owns",
     "owned_by": "owns",
+    # Membership: a person's memberOf → Org reflects to the org's member list
+    # (Org.member → person). Only the unambiguous person→org spelling reciprocates
+    # — a bare `member` is directionally ambiguous (the prompt steers toward
+    # memberOf), so it is intentionally absent and stands alone rather than
+    # minting a wrong-way edge.
+    "memberof": "member",
 }
 
 

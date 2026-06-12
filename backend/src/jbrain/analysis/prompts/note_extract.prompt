@@ -176,9 +176,10 @@ The note is a private primary source written by its author. Produce:
 
 4. "facts": at most {{ max_facts }} of the most durable, useful statements. Each fact is one property-graph edge entity.predicate[.qualifier] -> value:
 - "predicate": prefer schema.org property names where they exist; otherwise coin snake_case. "qualifier" distinguishes sub-properties; use "" when none. Re-use the SAME predicate name for the SAME concept across notes — the predicate is the identity key that lets a later note update an earlier fact, so drifting between synonyms (relocatedTo vs moved_to) silently forks the history. Prefer these canonical schema.org property names:
-  * residence / where someone lives, a move or relocation: homeLocation
-  * employer / where someone works: worksFor
-  * mailing or street address: address
+  * residence / where someone lives, a move or relocation: homeLocation (the place is an entity — set object_entity_ref to the Place mention AND keep it in value_json {"place": "..."})
+  * employer / where someone works: worksFor (object_entity_ref the Organization mention)
+  * membership in an organization, club, team, band, or board: memberOf (the person -> the org, object_entity_ref the Organization mention; prefer memberOf over a bare "member")
+  * mailing or street address: address (kept as a value string, not an entity — a full street address is not a place node)
   * spouse / marriage: spouse
   * birthday / date of birth: birthDate
   * job title / role: jobTitle
@@ -198,16 +199,16 @@ The note is a private primary source written by its author. Produce:
 - HARD RULE — ONE fact per entity+predicate per note: never restate the same property as multiple facts in different renderings, units, or kinds. Emit the SINGLE most precise value once, with normalized units in value_json (6'4" is ONE height fact with {"value": 76, "unit": "in"} — never also a second height fact phrased differently), and choose its kind ONCE per the kind table above: an adult's height or a birthDate is an `attribute`, never also a `measurement`; a weight or blood-pressure READING is a `measurement`.
 - "statement": one self-contained sentence rendering the fact.
 - "assertion": asserted | negated | hypothetical | reported | question | expected. Second-hand claims are "reported". A FUTURE or planned thing that has not happened yet is "expected", NEVER an asserted `event`: "she wants me back in 3 months", "dentist appointment next Friday", and "I'll start the new job in July" are all `expected`. "doctor wants to rule out diabetes" is hypothetical, NOT an asserted diabetes fact.
-- "entity_ref" (and "object_entity_ref" for relationships) must exactly match a mention's "name" ("Me" for the author).
+- "entity_ref" (and "object_entity_ref" whenever the fact points at another entity — every relationship, plus a state like homeLocation/worksFor whose value is a place or organization) must exactly match a mention's "name" ("Me" for the author).
 - "temporal": resolve every relative time phrase ("last Tuesday", "this morning", "in 3 months") against the capture anchor given with the note, to absolute ISO 8601 with UTC offset, preserving the anchor's local date. Backward phrases count back from the anchor's LOCAL day: from a morning capture, "last night" and "yesterday evening" are the PRIOR calendar day, not the capture day (a note written 7am Thursday saying "last night" means Wednesday evening); "a week ago" is the anchor's date minus seven days. Set "precision" honestly: instant | day | month | year | era | unknown. Never invent dates: if a phrase cannot be resolved, keep the phrase and leave resolved_start null. Use null temporal when the fact has no time dimension.
 - "domain": general | health | finance | location — judged per fact, not per note. When unsure between general and a sensitive domain, choose the sensitive one.
 - "confidence": 0 to 1, honest; lower it for garbled, OCR-derived, or inferred content.
 
 5. "temporal_tokens": every date/time expression in the note, resolved the same way. "kind" is point | range | recurrence; for recurrences also emit an iCalendar RRULE string.
 
-Worked example — "Sarah moved to Denver." (a relocation is a state change):
-  {"predicate": "homeLocation", "qualifier": "", "kind": "state", "statement": "Sarah lives in Denver.", "value_json": {"place": "Denver"}, "assertion": "asserted", "entity_ref": "Sarah", "object_entity_ref": null, "temporal": null, "domain": "location", "confidence": 0.9}
-A later note "Sarah actually moved to Boulder" emits the same homeLocation `state` predicate with "Boulder" — matching predicates let Boulder supersede Denver instead of forking two unrelated facts.
+Worked example — "Sarah moved to Denver." (a relocation is a state change) emits a Place mention ("Denver", kind "Place"/"City") and the residence as an edge to it:
+  {"predicate": "homeLocation", "qualifier": "", "kind": "state", "statement": "Sarah lives in Denver.", "value_json": {"place": "Denver"}, "assertion": "asserted", "entity_ref": "Sarah", "object_entity_ref": "Denver", "temporal": null, "domain": "location", "confidence": 0.9}
+Denver is BOTH the object_entity_ref (so the fact links to the Denver node) and kept in value_json for display. A later note "Sarah actually moved to Boulder" emits the same homeLocation `state` predicate pointing at the Boulder place — matching predicates let Boulder supersede Denver (a residence is functional, so the place object stays out of its identity key) instead of forking two unrelated facts.
 
 Worked example — "Jeff is married to Celine Hopkins." emits TWO Person mentions (Jeff, Celine Hopkins) and the single edge: {"predicate": "spouse", "qualifier": "", "kind": "relationship", "statement": "Jeff is married to Celine Hopkins.", "value_json": null, "assertion": "asserted", "entity_ref": "Jeff", "object_entity_ref": "Celine Hopkins", "temporal": null, "domain": "general", "confidence": 0.95}. Celine is the OBJECT of "married to" yet is just as much a person as Jeff. Likewise "Jeff ate Celine's dinner" names TWO people: emit both Jeff and Celine as Person mentions even though Celine only appears as a possessor.
 

@@ -129,5 +129,5 @@ def test_prompt_content_is_pinned_to_its_version() -> None:
     digest = hashlib.sha256(blob.encode()).hexdigest()
     assert (PROMPT_VERSION, digest) == (
         "note-extract-v9",
-        "35eda827e6ed4ebd615f711141d8d98ab7b4f16177daae9c3bb7c65933f5d641",
+        "4af8acd25f6505d4860f199b7ac8585c85536d5d67ae9df12280e346dcdc1f0d",
     )
