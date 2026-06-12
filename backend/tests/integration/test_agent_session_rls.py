@@ -15,7 +15,9 @@ from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
+from jbrain.agent.runlog import AgentRunLog
 from jbrain.agent.session import AgentSessionRepo, read_context
+from jbrain.agent.transcript_store import AgentTranscript
 from jbrain.auth import service
 from jbrain.auth.repo import SqlAuthRepo
 from jbrain.db.session import SessionContext, scoped_session
@@ -109,3 +111,53 @@ async def test_agent_sessions_are_owner_only(maker: async_sessionmaker) -> None:
     # data, never owner-only tables (it keeps owner identity).
     narrowed = read_context(str(pid), ("general",))
     assert len(await repo.list(narrowed)) == 1
+
+
+async def _owner_ctx(maker: async_sessionmaker) -> SessionContext:
+    await service.rotate_owner_key(SqlAuthRepo(maker))
+    async with scoped_session(maker, OWNER) as session:
+        pid = (
+            await session.execute(text("SELECT id FROM app.principals WHERE kind = 'owner'"))
+        ).scalar()
+    return SessionContext(principal_id=str(pid), principal_kind="owner")
+
+
+async def test_rename_updates_the_title(maker: async_sessionmaker) -> None:
+    owner = await _owner_ctx(maker)
+    repo = AgentSessionRepo(maker)
+    info = await repo.create(owner, domain_scopes=["general"], title="old")
+    await repo.rename(owner, info.id, "new name")
+    assert (await repo.get(owner, info.id)).title == "new name"  # type: ignore[union-attr]
+
+
+async def test_delete_cascades_runs_and_transcript_and_is_owner_only(
+    maker: async_sessionmaker,
+) -> None:
+    owner = await _owner_ctx(maker)
+    repo = AgentSessionRepo(maker)
+    info = await repo.create(owner, domain_scopes=["general"], title="scratch")
+    run_id = await AgentRunLog(maker).start(owner, session_id=info.id, prompt_version="v")
+    await AgentTranscript(maker).record_exchange(
+        owner, session_id=info.id, run_id=run_id, user_text="q", assistant_text="a", tools=[]
+    )
+
+    # A non-owner cannot delete it (RLS blocks the row); it survives.
+    token = SessionContext(principal_kind="capability_token", domain_scopes=("general",))
+    await repo.delete(token, info.id)
+    assert await repo.get(owner, info.id) is not None
+
+    # The owner deletes it; the run and the transcript cascade away.
+    await repo.delete(owner, info.id)
+    assert await repo.get(owner, info.id) is None
+    async with scoped_session(maker, owner) as session:
+        runs = (
+            await session.execute(
+                text("SELECT count(*) FROM app.agent_runs WHERE id = :id"), {"id": run_id}
+            )
+        ).scalar()
+        turns = (
+            await session.execute(
+                text("SELECT count(*) FROM app.agent_turns WHERE session_id = :id"), {"id": info.id}
+            )
+        ).scalar()
+    assert runs == 0 and turns == 0

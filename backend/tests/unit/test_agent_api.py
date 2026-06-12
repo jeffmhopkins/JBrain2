@@ -5,6 +5,7 @@ serialize as `data:`-framed SSE and that the run log is opened and closed."""
 import asyncio
 import json
 from collections.abc import Iterator
+from dataclasses import replace
 from datetime import UTC, datetime
 from typing import cast
 
@@ -55,6 +56,14 @@ class FakeAgentSessions:
 
     async def touch(self, ctx, session_id):  # type: ignore[no-untyped-def]
         self.touched.append(session_id)
+
+    async def rename(self, ctx, session_id, title):  # type: ignore[no-untyped-def]
+        info = self._by_id.get(session_id)
+        if info is not None:
+            self._by_id[session_id] = replace(info, title=title)
+
+    async def delete(self, ctx, session_id):  # type: ignore[no-untyped-def]
+        self._by_id.pop(session_id, None)
 
 
 class FakeRunLog:
@@ -371,3 +380,28 @@ def test_create_and_list_sessions(
 
 def test_sessions_require_owner(client: TestClient) -> None:
     assert client.get("/api/sessions").status_code == 401
+
+
+def test_rename_session(
+    client: TestClient, repo: FakeAuthRepo, sessions_store: FakeAgentSessions
+) -> None:
+    login(client, repo)
+    sessions_store.add(AgentSessionInfo("sess-1", "old", "active", ("general",), (), NOW, NOW))
+    resp = client.patch("/api/sessions/sess-1", json={"title": "renamed"})
+    assert resp.status_code == 204
+    assert sessions_store._by_id["sess-1"].title == "renamed"
+
+
+def test_delete_session(
+    client: TestClient, repo: FakeAuthRepo, sessions_store: FakeAgentSessions
+) -> None:
+    login(client, repo)
+    sessions_store.add(AgentSessionInfo("sess-1", "", "active", ("general",), (), NOW, NOW))
+    resp = client.delete("/api/sessions/sess-1")
+    assert resp.status_code == 204
+    assert client.get("/api/sessions").json() == []
+
+
+def test_rename_and_delete_require_owner(client: TestClient) -> None:
+    assert client.patch("/api/sessions/sess-1", json={"title": "x"}).status_code == 401
+    assert client.delete("/api/sessions/sess-1").status_code == 401

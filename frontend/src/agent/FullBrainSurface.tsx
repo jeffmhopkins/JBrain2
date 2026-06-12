@@ -110,6 +110,8 @@ export function FullBrainSurface({ fb, onOpenNote }: Props): ReactNode {
           onOpen={fb.open}
           onCreate={fb.create}
           onClose={() => setPanel("none")}
+          onRename={fb.rename}
+          onDelete={fb.remove}
         />
       </aside>
 

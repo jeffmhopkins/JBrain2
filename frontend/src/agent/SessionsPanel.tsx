@@ -3,8 +3,10 @@
 // and least-privilege by default — picking domains here sets the firewall the
 // session's tools read under (docs/ASSISTANT.md "Session capabilities").
 
-import { type ReactNode, useState } from "react";
+import { type ReactNode, type TouchEvent, useEffect, useRef, useState } from "react";
 import { Sheet } from "../components/Sheet";
+import { PencilIcon, TrashIcon } from "../components/icons";
+import { type Drag, RAIL_WIDTH, beginDrag, endDrag, moveDrag } from "../notes/swipe";
 import type { AgentSession, SessionCreate } from "./types";
 
 const DOMAINS: { code: string; label: string; desc: string }[] = [
@@ -19,12 +21,35 @@ interface Props {
   onOpen: (session: AgentSession) => void;
   onCreate: (body: SessionCreate) => Promise<AgentSession>;
   onClose: () => void;
+  onRename: (id: string, title: string) => void;
+  onDelete: (id: string) => void;
 }
 
-export function SessionsPanel({ sessions, onOpen, onCreate, onClose }: Props): ReactNode {
+export function SessionsPanel({
+  sessions,
+  onOpen,
+  onCreate,
+  onClose,
+  onRename,
+  onDelete,
+}: Props): ReactNode {
   const [picking, setPicking] = useState(false);
+  // One swipe rail open at a time (like the home stream).
+  const [railId, setRailId] = useState<string | null>(null);
   const active = sessions.filter((s) => s.status === "active");
   const ended = sessions.filter((s) => s.status !== "active");
+
+  const row = (s: AgentSession): ReactNode => (
+    <SessionRow
+      key={s.id}
+      session={s}
+      onOpen={onOpen}
+      onRename={onRename}
+      onDelete={onDelete}
+      railOpen={railId === s.id}
+      onRailChange={(open) => setRailId(open ? s.id : null)}
+    />
+  );
 
   return (
     <section className="panel-content" aria-label="Sessions">
@@ -41,14 +66,10 @@ export function SessionsPanel({ sessions, onOpen, onCreate, onClose }: Props): R
         </button>
 
         {active.length > 0 && <div className="sect">Active</div>}
-        {active.map((s) => (
-          <SessionRow key={s.id} session={s} onOpen={onOpen} />
-        ))}
+        {active.map(row)}
 
         {ended.length > 0 && <div className="sect">Earlier</div>}
-        {ended.map((s) => (
-          <SessionRow key={s.id} session={s} onOpen={onOpen} />
-        ))}
+        {ended.map(row)}
 
         {sessions.length === 0 && (
           <div className="panel-empty">No sessions yet — start one to ask about your brain.</div>
@@ -69,25 +90,163 @@ export function SessionsPanel({ sessions, onOpen, onCreate, onClose }: Props): R
   );
 }
 
+// A session row with the same swipe-left action rail the home notes use (reusing
+// notes/swipe): swipe reveals Rename (inline edit) and Delete (tap-again confirm).
 function SessionRow({
   session,
   onOpen,
+  onRename,
+  onDelete,
+  railOpen,
+  onRailChange,
 }: {
   session: AgentSession;
   onOpen: (s: AgentSession) => void;
+  onRename: (id: string, title: string) => void;
+  onDelete: (id: string) => void;
+  railOpen: boolean;
+  onRailChange: (open: boolean) => void;
 }): ReactNode {
+  const [drag, setDrag] = useState<Drag | null>(null);
+  const dragged = useRef(false);
+  const [confirming, setConfirming] = useState(false);
+  const [renaming, setRenaming] = useState(false);
+  const [draft, setDraft] = useState(session.title);
+
+  useEffect(() => {
+    if (!railOpen) setConfirming(false);
+  }, [railOpen]);
+
+  const dragging = drag !== null && drag.axis === "h";
+  const offset = renaming ? 0 : dragging ? drag.offset : railOpen ? -RAIL_WIDTH : 0;
+
+  // stopPropagation so the row's swipe doesn't reach the shell's panel gestures.
+  function onTouchStart(event: TouchEvent): void {
+    if (renaming) return;
+    event.stopPropagation();
+    dragged.current = false;
+    const t = event.touches[0];
+    if (t) setDrag(beginDrag(t.clientX, t.clientY, railOpen));
+  }
+  function onTouchMove(event: TouchEvent): void {
+    if (drag === null) return;
+    event.stopPropagation();
+    const t = event.touches[0];
+    if (!t) return;
+    const next = moveDrag(drag, t.clientX, t.clientY);
+    if (next.axis === "v") {
+      setDrag(null);
+      return;
+    }
+    setDrag(next);
+  }
+  function onTouchEnd(event: TouchEvent): void {
+    if (drag === null) return;
+    event.stopPropagation();
+    if (drag.axis === "h") {
+      dragged.current = true;
+      onRailChange(endDrag(drag));
+    }
+    setDrag(null);
+  }
+
+  function onTap(): void {
+    if (dragged.current) {
+      dragged.current = false;
+      return;
+    }
+    if (railOpen) {
+      onRailChange(false);
+      return;
+    }
+    onOpen(session);
+  }
+
+  function submitRename(): void {
+    const title = draft.trim();
+    setRenaming(false);
+    onRailChange(false);
+    if (title && title !== session.title) onRename(session.id, title);
+  }
+
   return (
-    <button type="button" className="row session-row" onClick={() => onOpen(session)}>
-      <div className="r-head">{session.title || "Untitled session"}</div>
-      <div className="pills">
-        {session.domain_scopes.map((d) => (
-          <span key={d} className={`pill ${d}`}>
-            {d}
-          </span>
-        ))}
-        {session.domain_scopes.length === 0 && <span className="pill">all domains</span>}
+    <div className="session-wrap">
+      {!renaming && offset < 0 && (
+        <div className="session-rail">
+          <button
+            type="button"
+            className="rail-btn rail-edit"
+            onClick={() => {
+              setDraft(session.title);
+              setRenaming(true);
+            }}
+          >
+            <PencilIcon size={18} />
+            rename
+          </button>
+          <button
+            type="button"
+            className={`rail-btn rail-delete${confirming ? " rail-armed" : ""}`}
+            onClick={() => {
+              if (!confirming) {
+                setConfirming(true);
+                return;
+              }
+              onRailChange(false);
+              onDelete(session.id);
+            }}
+          >
+            {confirming ? (
+              "tap again"
+            ) : (
+              <>
+                <TrashIcon size={18} />
+                delete
+              </>
+            )}
+          </button>
+        </div>
+      )}
+      <div
+        className="row session-slide"
+        style={{ transform: `translateX(${offset}px)` }}
+        onTouchStart={onTouchStart}
+        onTouchMove={onTouchMove}
+        onTouchEnd={onTouchEnd}
+      >
+        {renaming ? (
+          // biome-ignore lint/a11y/noAutofocus: rename should land focused for a quick edit
+          <input
+            className="session-rename"
+            aria-label="Session title"
+            value={draft}
+            autoFocus
+            onChange={(e) => setDraft(e.target.value)}
+            onBlur={submitRename}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                submitRename();
+              } else if (e.key === "Escape") {
+                setRenaming(false);
+              }
+            }}
+          />
+        ) : (
+          <button type="button" className="session-tap" onClick={onTap}>
+            <div className="r-head">{session.title || "Untitled session"}</div>
+            <div className="pills">
+              {session.domain_scopes.map((d) => (
+                <span key={d} className={`pill ${d}`}>
+                  {d}
+                </span>
+              ))}
+              {session.domain_scopes.length === 0 && <span className="pill">all domains</span>}
+            </div>
+          </button>
+        )}
       </div>
-    </button>
+    </div>
   );
 }
 

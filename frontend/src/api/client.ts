@@ -652,6 +652,14 @@ export const api = {
     return (await response.json()) as TranscriptTurn[];
   },
 
+  async renameSession(id: string, title: string): Promise<void> {
+    await request(`/api/sessions/${encodeURIComponent(id)}`, jsonInit("PATCH", { title }));
+  },
+
+  async deleteSession(id: string): Promise<void> {
+    await request(`/api/sessions/${encodeURIComponent(id)}`, { method: "DELETE" });
+  },
+
   // POST /api/chat streams the agent turn as SSE; the body is a ReadableStream
   // (EventSource is GET-only and can't carry a request body). Yields each parsed
   // ChatEvent so the caller renders text/tool activity live.

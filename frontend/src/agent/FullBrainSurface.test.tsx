@@ -27,6 +27,8 @@ function deps(over: Partial<FullBrainDeps> = {}): FullBrainDeps {
     chat: noChat,
     listProposals: vi.fn(async () => []),
     getTranscript: vi.fn(async () => []),
+    renameSession: vi.fn(async () => {}),
+    deleteSession: vi.fn(async () => {}),
     ...over,
   };
 }
@@ -88,7 +90,7 @@ describe("FullBrainSurface", () => {
     await waitFor(() => expect(screen.getByText("kept")).toBeInTheDocument());
 
     // Re-open the already-active session from the (in-DOM) sessions list.
-    fireEvent.click(document.querySelector(".session-row") as HTMLElement);
+    fireEvent.click(document.querySelector(".session-tap") as HTMLElement);
 
     // Its history must not be blanked, and we don't re-fetch the same id.
     expect(screen.getByText("kept")).toBeInTheDocument();

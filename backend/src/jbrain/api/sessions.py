@@ -10,7 +10,7 @@ not to the session list.
 from datetime import datetime
 from typing import Any, cast
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Request, Response
 from pydantic import BaseModel, Field
 
 from jbrain.agent.session import AgentSessionInfo, AgentSessionRepo
@@ -77,6 +77,25 @@ async def create_session(
 async def list_sessions(request: Request, principal: PrincipalDep) -> list[SessionOut]:
     repo = get_agent_sessions(request)
     return [session_out(i) for i in await repo.list(ctx_for(principal))]
+
+
+class SessionRename(BaseModel):
+    title: str
+
+
+@router.patch("/{session_id}")
+async def rename_session(
+    request: Request, principal: PrincipalDep, session_id: str, body: SessionRename
+) -> Response:
+    await get_agent_sessions(request).rename(ctx_for(principal), session_id, body.title)
+    return Response(status_code=204)
+
+
+@router.delete("/{session_id}")
+async def delete_session(request: Request, principal: PrincipalDep, session_id: str) -> Response:
+    """Delete a session; its runs and transcript cascade with it."""
+    await get_agent_sessions(request).delete(ctx_for(principal), session_id)
+    return Response(status_code=204)
 
 
 class TurnOut(BaseModel):

@@ -12,7 +12,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from sqlalchemy import select, update
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from jbrain.agent.contracts import DEFAULT_OWNER_POLICY, PermissionClass, PolicyOutcome
@@ -122,4 +122,19 @@ class AgentSessionRepo:
                 update(AgentSession)
                 .where(AgentSession.id == uuid.UUID(session_id))
                 .values(status="ended")
+            )
+
+    async def rename(self, ctx: SessionContext, session_id: str, title: str) -> None:
+        async with scoped_session(self._maker, ctx) as session:
+            await session.execute(
+                update(AgentSession)
+                .where(AgentSession.id == uuid.UUID(session_id))
+                .values(title=title)
+            )
+
+    async def delete(self, ctx: SessionContext, session_id: str) -> None:
+        """Remove the session; the run log and transcript cascade with it."""
+        async with scoped_session(self._maker, ctx) as session:
+            await session.execute(
+                delete(AgentSession).where(AgentSession.id == uuid.UUID(session_id))
             )
