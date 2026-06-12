@@ -12,6 +12,10 @@ class Settings(BaseSettings):
     backups_dir: str = "/data/backups"
     embed_url: str = "http://embed:80"
     embed_model: str = "BAAI/bge-small-en-v1.5"
+    # Pinned, owner-configured base URLs for the egress connectors (#9). Free,
+    # no-auth NLM services; the egress guard fills only typed slots, never a URL.
+    rxnav_url: str = "https://rxnav.nlm.nih.gov"
+    medlineplus_url: str = "https://connect.medlineplus.gov"
     # Cookies require HTTPS in production; tests and local dev run plain HTTP.
     secure_cookies: bool = True
 
