@@ -3137,6 +3137,70 @@ button.small {
   flex-direction: column;
   gap: 8px;
 }
+
+/* rich text in an assistant answer (agent/markdown.tsx) */
+.fb-shell .bubble.ai .md {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+.fb-shell .md-p {
+  margin: 0;
+  line-height: 1.45;
+}
+.fb-shell .md-h {
+  margin: 2px 0 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+.fb-shell .md-ul,
+.fb-shell .md-ol {
+  margin: 0;
+  padding-left: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.fb-shell .md-code {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 0 4px;
+}
+.fb-shell .md-pre {
+  margin: 0;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-input);
+  padding: 10px 12px;
+  overflow-x: auto;
+}
+.fb-shell .md-pre code {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre;
+}
+.fb-shell .md-quote {
+  margin: 0;
+  padding: 2px 0 2px 12px;
+  border-left: 2px solid var(--border);
+  color: var(--text-2);
+}
+.fb-shell .md-link {
+  color: var(--steel);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+/* a quiet temporal chip — styled, not yet tappable (calendar is unbuilt) */
+.fb-shell .md-temporal {
+  border-bottom: 1px dotted var(--text-3);
+  cursor: help;
+}
+
 /* the collapsed "Worked" block under a response (direction A) */
 .fb-shell .toolwork {
   margin-top: 1px;
