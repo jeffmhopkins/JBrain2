@@ -262,7 +262,7 @@ describe("FullBrainSurface", () => {
     expect(onOpenNote).toHaveBeenCalledWith("n7");
   });
 
-  it("surfaces resolved entities as chips that open the entity page", async () => {
+  it("linkifies a named entity inline and opens it on tap", async () => {
     const onOpenEntity = vi.fn();
     async function* answer(): AsyncGenerator<ChatEvent> {
       yield { type: "tool_call", id: "c1", name: "find_entity", arguments: { name: "celine" } };
@@ -281,7 +281,37 @@ describe("FullBrainSurface", () => {
     fireEvent.change(screen.getByLabelText("Composer"), { target: { value: "who is celine?" } });
     fireEvent.click(screen.getByRole("button", { name: "send" }));
 
-    fireEvent.click(await screen.findByRole("button", { name: "Celine" }));
+    // Once the name lands in the prose it's linked inline (a chip stands in
+    // mid-stream, before the name is typed), with no fallback chip left over.
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Celine" })).toHaveClass("md-entity"),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Celine" }));
+    expect(onOpenEntity).toHaveBeenCalledWith("e9");
+  });
+
+  it("falls back to a chip for an entity the answer never names", async () => {
+    const onOpenEntity = vi.fn();
+    async function* answer(): AsyncGenerator<ChatEvent> {
+      yield { type: "tool_call", id: "c1", name: "find_entity", arguments: { name: "celine" } };
+      yield {
+        type: "tool_result",
+        tool_call_id: "c1",
+        ok: true,
+        summary: "1",
+        entities: [{ kind: "entity", entity_id: "e9", label: "Celine", domain: "general" }],
+      };
+      yield { type: "text_delta", text: "Found one match in your notes." };
+      yield { type: "done", stop_reason: "end_turn" };
+    }
+    render(<Harness d={deps({ chat: answer })} onOpenEntity={onOpenEntity} />);
+    await waitFor(() => screen.getByLabelText("Conversation"));
+    fireEvent.change(screen.getByLabelText("Composer"), { target: { value: "who is celine?" } });
+    fireEvent.click(screen.getByRole("button", { name: "send" }));
+
+    const chip = await screen.findByRole("button", { name: "Celine" });
+    expect(chip).toHaveClass("entity-chip");
+    fireEvent.click(chip);
     expect(onOpenEntity).toHaveBeenCalledWith("e9");
   });
 
