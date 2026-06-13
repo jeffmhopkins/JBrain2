@@ -307,6 +307,20 @@ async def test_dismissal_reopen_is_a_bare_requeue(
     assert reopened["status"] == "open" and reopened["reopen_note"] is None
 
 
+async def test_extraction_truncated_reject_is_a_dismissal(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """The fact-budget notice wrote no graph state, so its only advertised verb
+    (reject) resolves as a bare dismissal — no effects, reopen is a re-queue."""
+    repo = SqlAnalysisRepo(maker)
+    item = await seed_item(
+        maker, "extraction_truncated", {"summary": "this note hit its fact budget"}
+    )
+    resolved = await repo.resolve_review(OWNER, item, "reject", {})
+    assert resolved is not None
+    assert resolved["status"] == "dismissed" and resolved["resolution"]["effects"] == []
+
+
 async def test_resolved_listing_orders_and_tombstones(
     maker: async_sessionmaker[AsyncSession],
 ) -> None:

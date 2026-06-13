@@ -114,6 +114,21 @@ def merge_display(*, keep_name: str, gone_name: str, snippet: str | None) -> dic
     }
 
 
+def truncation_display(*, kept: int, dropped: int, snippet: str | None) -> dict[str, Any]:
+    """extraction_truncated card fields: an informational notice that this note
+    held more durable facts than its per-note budget, so the tail was clipped.
+    Like ambiguous_mention it writes no graph state, so its only verb (reject)
+    is a dismissal — the owner re-runs with a larger budget to capture more."""
+    noun = "fact" if dropped == 1 else "facts"
+    return {
+        "summary": f"this note hit its fact budget — kept {kept}, skipped {dropped} {noun}",
+        "snippet": snippet,
+        "outcomes": {
+            "reject": "the note is left as-is — re-run analysis to capture more of it.",
+        },
+    }
+
+
 def ambiguous_display(*, name: str, snippet: str | None) -> dict[str, Any]:
     """ambiguous_mention card fields. accept is deliberately not advertised:
     linking a specific candidate needs the layer-2/3 resolution machinery."""
