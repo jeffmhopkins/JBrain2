@@ -210,15 +210,19 @@ class SqlAnalysisRepo:
         if kind is not None:
             where.append("e.kind = :kind")
             params["kind"] = kind
-        if q:
-            # The query is a literal substring, never a pattern — escape the
-            # LIKE wildcards so "100%" matches "100%", not everything.
-            escaped = q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-            params["pat"] = f"%{escaped}%"
+        for i, token in enumerate(q.split() if q else []):
+            # Each whitespace token must hit the name or SOME alias — different
+            # tokens may land on different aliases, so "Jeff Hopkins" matches an
+            # entity aliased "Jeff" and "Jeffrey Mark Hopkins" even though no one
+            # alias holds that contiguous run. AND across tokens keeps precision
+            # (a stray "Smith" still excludes). Each token is a literal substring,
+            # never a pattern — escape the LIKE wildcards so "100%" stays literal.
+            escaped = token.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            params[f"tok{i}"] = f"%{escaped}%"
             where.append(
-                "(e.canonical_name ILIKE :pat ESCAPE '\\' OR EXISTS ("
-                " SELECT 1 FROM app.entity_aliases a"
-                " WHERE a.entity_id = e.id AND a.alias ILIKE :pat ESCAPE '\\'))"
+                f"(e.canonical_name ILIKE :tok{i} ESCAPE '\\' OR EXISTS ("
+                f" SELECT 1 FROM app.entity_aliases a"
+                f" WHERE a.entity_id = e.id AND a.alias ILIKE :tok{i} ESCAPE '\\'))"
             )
         sql = f"""
             SELECT e.id::text, e.kind, e.canonical_name, e.status, e.domain_code,

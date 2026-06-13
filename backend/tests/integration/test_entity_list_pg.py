@@ -228,6 +228,50 @@ async def test_list_q_matches_names_and_aliases_literally(
     assert await repo.list_entities(OWNER, q=f"alma%{tag}") == []
 
 
+async def test_list_q_tokens_match_across_different_aliases(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """A multi-word query lands even when its words live on different aliases:
+    "Jeff Hopkins" finds an entity aliased "Jeff" and "Jeffrey Mark Hopkins",
+    which the old contiguous-substring match missed. AND across tokens still
+    keeps precision — a word with no home (Smith) excludes the row."""
+    tag = uuid.uuid4().hex[:8]
+    repo = SqlAnalysisRepo(maker)
+    async with scoped_session(maker, OWNER) as session:
+        me = Entity(
+            kind=f"Person-{tag}",
+            canonical_name=f"Me {tag}",
+            status="confirmed",
+            domain_code="general",
+        )
+        session.add(me)
+        await session.flush()
+        session.add_all(
+            [
+                EntityAlias(
+                    entity_id=me.id,
+                    alias=f"Jeff {tag}",
+                    alias_norm=f"jeff {tag}",
+                    domain_code="general",
+                ),
+                EntityAlias(
+                    entity_id=me.id,
+                    alias=f"Jeffrey Mark Hopkins {tag}",
+                    alias_norm=f"jeffrey mark hopkins {tag}",
+                    domain_code="general",
+                ),
+            ]
+        )
+    mid = str(me.id)
+
+    hit = await repo.list_entities(OWNER, q=f"Jeff Hopkins {tag}")
+    assert [i["id"] for i in hit if i["id"] == mid] == [mid]
+    # Order-independent, and case-insensitive.
+    assert mid in {i["id"] for i in await repo.list_entities(OWNER, q=f"hopkins jeff {tag}")}
+    # Precision: a stray token with no name/alias home drops the row.
+    assert mid not in {i["id"] for i in await repo.list_entities(OWNER, q=f"Jeff Smith {tag}")}
+
+
 async def test_list_kind_filter_and_limit(
     maker: async_sessionmaker[AsyncSession], seeded: dict[str, str]
 ) -> None:
