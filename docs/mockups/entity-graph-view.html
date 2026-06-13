@@ -81,17 +81,15 @@ body{font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
 .fchip .sw{width:16px;height:16px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;}
 .fchip .sw svg{width:11px;height:11px;}
 .fchip .ct{color:var(--text-3);font-variant-numeric:tabular-nums;}
-.fchip[data-dim="true"]{opacity:.38;}
 .fchip.sel{background:var(--accent-tint);border-color:transparent;}
 .fchip.all{position:sticky;left:0;z-index:2;background:var(--surface);}
 .fchip.all.sel{background:var(--accent-tint);}
-.fchip.combine{background:var(--surface);} .fchip.combine.sel{background:var(--steel-tint);color:var(--text);}
 .fchip .ck{position:absolute;top:-4px;right:-4px;width:15px;height:15px;border-radius:50%;background:var(--steel);
   color:var(--bg);display:none;align-items:center;justify-content:center;border:2px solid var(--surface);}
 .fchip .ck svg{width:8px;height:8px;}
 .fchip.sel .ck{display:flex;}
-.filterbar[data-multi="true"] .fchip.type .ck{display:flex;}
-.filterbar[data-multi="true"] .fchip.type:not(.sel) .ck{background:transparent;color:transparent;border:1.5px solid var(--text-3);}
+.filterbar[data-active="true"] .fchip.type .ck{display:flex;}
+.filterbar[data-active="true"] .fchip.type:not(.sel) .ck{background:transparent;color:transparent;border:1.5px solid var(--text-3);}
 
 /* ---- shared screen body ---- */
 .screen{flex:1;min-height:0;display:none;flex-direction:column;position:relative;}
@@ -366,45 +364,32 @@ function discEl(id,size){const e=E[id],k=KIND[e.kind],d=DOMAIN[e.domain];const w
   if(d){const dot=document.createElement('span');dot.className='domdot';dot.style.background=d.hex;w.appendChild(dot);}return w;}
 
 /* ===== shared filter state =====
-   `sel` = the set of types explicitly shown. Empty set == "All" (everything
-   visible). Tap a chip => isolate (sel = {that type}). Tap the active one
-   again => back to All. "Combine" enters a visible multi-select mode where
-   taps add/remove. Tap meaning never changes silently with state. */
-const sel=new Set(); let multiMode=false;
+   `sel` = the set of types shown. Empty set == "All" (everything visible).
+   A chip tap is a plain TOGGLE of that type — meaning never changes with
+   state. From All, toggling one on shows only that type (the one-tap case);
+   further taps are additive; toggling the last off (or "All") resets. */
+const sel=new Set();
 const KINDS_PRESENT=Object.keys(KIND).filter(k=>Object.values(E).some(e=>e.kind===k));
 function kindCount(k){return Object.values(E).filter(e=>e.kind===k).length;}
 function isHidden(kind){return sel.size>0 && !sel.has(kind);}
-function resetFilter(){sel.clear();multiMode=false;}
-function tapChip(k){
-  if(multiMode){ sel.has(k)?sel.delete(k):sel.add(k); }
-  else { if(sel.size===1&&sel.has(k)){sel.clear();} else {sel.clear();sel.add(k);} }
-}
-function longPressChip(k){ if(!multiMode)multiMode=true; sel.add(k); }   // accelerator into multi
-function toggleMulti(){ multiMode=!multiMode; }
+function resetFilter(){sel.clear();}
+function tapChip(k){ sel.has(k)?sel.delete(k):sel.add(k); }
 
 function renderFilterBar(barEl,onChange){
-  barEl.innerHTML=''; barEl.dataset.multi=multiMode;
+  barEl.innerHTML=''; barEl.dataset.active=(sel.size>0);
   const all=document.createElement('button');all.className='fchip all'+(sel.size===0?' sel':'');
   all.innerHTML='<span class="sw" style="background:color-mix(in srgb,var(--steel) 22%,transparent);color:var(--steel)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7h18M3 12h18M3 17h18"/></svg></span>All<span class="ck">'+CHECK+'</span>';
   all.onclick=()=>{resetFilter();onChange();};
   barEl.appendChild(all);
   KINDS_PRESENT.forEach(k=>{
-    const c=document.createElement('button');c.className='fchip type'+(sel.has(k)?' sel':'');c.dataset.dim=isHidden(k);
+    const c=document.createElement('button');c.className='fchip type'+(sel.has(k)?' sel':'');
     const sw=document.createElement('span');sw.className='sw';sw.style.background='color-mix(in srgb,'+KIND[k].c+' 22%,transparent)';
     sw.innerHTML='<svg viewBox="0 0 24 24" fill="none" stroke="'+KIND[k].c+'" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">'+ICONS[k]+'</svg>';
     c.appendChild(sw);
     c.insertAdjacentHTML('beforeend','<span>'+KSHORT[k]+'</span><span class="ct">'+kindCount(k)+'</span><span class="ck">'+CHECK+'</span>');
-    let lp;
-    c.addEventListener('pointerdown',()=>{lp=setTimeout(()=>{lp=null;longPressChip(k);onChange();},480);});
-    c.addEventListener('pointerup',()=>{if(lp&&lp!=='done'){clearTimeout(lp);lp=null;tapChip(k);onChange();}lp=null;});
-    c.addEventListener('pointerleave',()=>{if(lp&&lp!=='done')clearTimeout(lp);lp=null;});
-    c.addEventListener('pointercancel',()=>{if(lp&&lp!=='done')clearTimeout(lp);lp=null;});
+    c.onclick=()=>{tapChip(k);onChange();};
     barEl.appendChild(c);
   });
-  const cb=document.createElement('button');cb.className='fchip combine'+(multiMode?' sel':'');
-  cb.innerHTML='<span class="sw" style="background:var(--surface-2);color:var(--text-2)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg></span>'+(multiMode?'Combining…':'Combine');
-  cb.onclick=()=>{toggleMulti();onChange();};
-  barEl.appendChild(cb);
 }
 function hiddenPillEl(el,onReset){
   const n=Object.values(E).filter(e=>isHidden(e.kind)).length;
@@ -670,8 +655,8 @@ const RATIONALE={
     '<li><b>Two-finger canvas / one-finger node</b> in overview; pinch isn’t the way home.</li></ul>'},
   filter:{title:'Type filter (shared across all three views)',tag:'tap = show only that type',
     body:'<b>Philosophy:</b> the colour legend <i>is</i> the filter — a chip bar pinned under the graph; each chip carries colour + icon + label + count (never colour alone — WCAG 1.4.1).'+
-    '<ul><li><b>Default All. One tap on a type = show only that type</b> (isolate). Tap a different chip to switch; tap the active chip again, or <b>All</b>, to go back. The tap meaning never changes with state — which is what avoids the “mode-slip” error a state-dependent tap causes (NN/g).</li>'+
-    '<li><b>Multi-select is visible &amp; opt-in:</b> the <b>Combine</b> chip turns on checkboxes so you can pick several types; long-press a chip is an accelerator into the same mode. (Research is firm that hiding multi-select behind long-press alone is a discoverability dead-end — like Grafana’s undiscovered ctrl-click.)</li>'+
+    '<ul><li><b>Default All. A chip tap is a plain toggle</b> — so from All, tapping one type shows <i>only</i> that type (the one-tap case), and each further tap is <b>additive</b> (build up several types). Toggling the last one off, or tapping <b>All</b>, returns to everything.</li>'+
+    '<li><b>“All” = empty selection</b>, which keeps the tap meaning constant (always toggle) — no silent isolate→toggle “mode-slip” (NN/g). Selected chips show a filled check; once you’re off All, the rest show empty checkboxes to signal they add.</li>'+
     '<li><b>Fade, don’t re-layout:</b> filtered nodes fade while survivors keep their positions — re-running the force layout would scramble the mental map (Misue/Eades). A persistent “showing only X · N hidden” pill keeps state visible.</li>'+
     '<li><b>Focal node is exempt from its own type filter</b> (an ego view is defined by its centre — Neo4j Bloom greys-not-deletes), marked “shown · focus”; if every neighbour is filtered out you get the lone focal node + “No neighbours match”, never a blank canvas.</li></ul>'},
   orbit:{title:'Orbit — focus-first radial ego',tag:'compare: starts focused, no overview',
