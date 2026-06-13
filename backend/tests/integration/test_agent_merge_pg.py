@@ -92,7 +92,8 @@ async def test_merge_entities_refuses_a_permanent_distinction(
     async with scoped_session(maker, OWNER) as s:
         await s.execute(
             text(
-                "INSERT INTO app.entity_distinctions (id, entity_a, entity_b) VALUES (:id, :a, :b)"
+                "INSERT INTO app.entity_distinctions (id, entity_a, entity_b, domain_code)"
+                " VALUES (:id, :a, :b, 'general')"
             ),
             {"id": str(uuid.uuid4()), "a": lo, "b": hi},
         )
