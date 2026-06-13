@@ -85,6 +85,55 @@ export function focalZoom(v: ViewTransform, fx: number, fy: number, factor: numb
   return { scale, tx: fx - (fx - v.tx) * k, ty: fy - (fy - v.ty) * k };
 }
 
+/** Minimal node shape the label grid needs (Sim is a structural superset). */
+export interface LabelNode {
+  x: number;
+  y: number;
+  op: number;
+}
+
+/**
+ * Decide which node labels to show, screen-space and density-aware (sigma.js
+ * LabelGrid): bucket on-screen nodes into ~cell-sized cells and keep the
+ * highest-priority label per cell, so labels appear wherever there's actually
+ * room — not only when zoomed past a fixed scale. `forced` labels (focal, the
+ * tapped node, the focus ring) always win; below a legibility floor only forced
+ * labels render. Deterministic priority keeps the choice stable (no flicker).
+ */
+export function chooseLabels(args: {
+  nodes: ReadonlyMap<string, LabelNode>;
+  scale: number;
+  tx: number;
+  ty: number;
+  w: number;
+  h: number;
+  forced: ReadonlySet<string>;
+  priority: (id: string) => number;
+  cell?: number;
+  fontPx?: number;
+  floorPx?: number;
+}): Set<string> {
+  const { nodes, scale, tx, ty, w, h, forced, priority } = args;
+  const cell = args.cell ?? 96;
+  const fontPx = args.fontPx ?? 12;
+  const floorPx = args.floorPx ?? 9;
+  const shown = new Set<string>(forced);
+  if (fontPx * scale < floorPx) return shown; // text too small to read; forced only
+  const cols = Math.max(1, Math.ceil(w / cell));
+  const best = new Map<number, string>();
+  for (const [id, n] of nodes) {
+    if (forced.has(id) || n.op < 0.5) continue;
+    const sx = n.x * scale + tx;
+    const sy = n.y * scale + ty;
+    if (sx < 0 || sy < 0 || sx > w || sy > h) continue; // never label off-screen
+    const c = Math.floor(sy / cell) * cols + Math.floor(sx / cell);
+    const cur = best.get(c);
+    if (cur === undefined || priority(id) > priority(cur)) best.set(c, id);
+  }
+  for (const id of best.values()) shown.add(id);
+  return shown;
+}
+
 function selSummary(sel: ReadonlySet<EntityTypeKey>): string {
   if (sel.size === 1) {
     const [only] = sel;
@@ -222,6 +271,7 @@ export function GraphScreen({
   const viewportRef = useRef<HTMLDivElement>(null);
   const nodeEls = useRef(new Map<string, HTMLButtonElement>());
   const edgeEls = useRef(new Map<string, SVGLineElement>());
+  const labelShown = useRef(new Map<string, boolean>()); // last data-label per node
   const vw = useRef({
     nodes: new Map<string, Sim>(),
     mode: "overview" as Mode,
@@ -303,7 +353,10 @@ export function GraphScreen({
     const cx = v.w / 2;
     const cy = v.h / 2;
     if (v.mode === "overview" || !v.focal) {
-      for (const [id, n] of v.nodes) n.top = v.hidden(id) ? 0 : 1;
+      for (const [id, n] of v.nodes) {
+        n.top = v.hidden(id) ? 0 : 1;
+        nodeEls.current.get(id)?.removeAttribute("data-anchor"); // labels below
+      }
       setFocusEmpty(false);
       return;
     }
@@ -314,6 +367,7 @@ export function GraphScreen({
       f.tx = cx;
       f.ty = cy;
       f.top = 1;
+      nodeEls.current.get(fo)?.removeAttribute("data-anchor");
     }
     const R = Math.min(v.w, v.h) * 0.34;
     ring.forEach((id, i) => {
@@ -323,6 +377,8 @@ export function GraphScreen({
         n.tx = cx + R * Math.cos(a);
         n.ty = cy + R * Math.sin(a);
         n.top = 1;
+        // place the label on the node's outer side so it clears the spokes
+        nodeEls.current.get(id)?.setAttribute("data-anchor", n.ty < cy ? "top" : "bottom");
       }
     });
     const onRing = new Set(ring);
@@ -428,9 +484,35 @@ export function GraphScreen({
     }
     const vp = viewportRef.current;
     if (vp) vp.style.transform = `translate(${v.tx}px, ${v.ty}px) scale(${v.scale})`;
-    const stage = stageRef.current;
-    if (stage)
-      stage.dataset.lod = v.scale < 0.7 ? "clusters" : v.scale < 1.25 ? "entities" : "attributes";
+    paintLabels(v);
+  }
+
+  // Per-node label visibility via the screen-space grid; the focal, the focus
+  // ring, and the tapped node are forced on so tap-to-read never needs a zoom.
+  function paintLabels(v: typeof vw.current) {
+    const forced = new Set<string>();
+    if (v.focal) {
+      forced.add(v.focal);
+      if (v.mode === "focus") for (const id of v.visAdj.get(v.focal) ?? []) forced.add(id);
+    }
+    const shown = chooseLabels({
+      nodes: v.nodes,
+      scale: v.scale,
+      tx: v.tx,
+      ty: v.ty,
+      w: v.w,
+      h: v.h,
+      forced,
+      // root/near nodes outrank distant ones; deterministic id tiebreak.
+      priority: (id) => -(hops.get(id) ?? 9),
+    });
+    for (const [id, el] of nodeEls.current) {
+      const on = shown.has(id);
+      if (labelShown.current.get(id) !== on) {
+        el.dataset.label = on ? "on" : "off";
+        labelShown.current.set(id, on);
+      }
+    }
   }
 
   // ---- interactions ----
