@@ -1,0 +1,426 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Direction B — Quick presets / progressive disclosure</title>
+<style>
+  :root{
+    --bg:#0E0F11; --surface:#17181B; --surface-2:#1E2024; --border:#26282C;
+    --text:#E6E7E9; --text-2:#9A9DA3; --text-3:#5C5F66;
+    --steel:#7FA7C9; --green:#8FBC9A; --amber:#C9A36A; --rose:#CF8A8F; --violet:#A493C9;
+    --steel-tint:rgba(127,167,201,.13); --green-tint:rgba(143,188,154,.13);
+    --amber-tint:rgba(201,163,106,.13); --rose-tint:rgba(207,138,143,.13); --violet-tint:rgba(164,147,201,.13);
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+  body{background:#000;color:var(--text);display:flex;flex-direction:column;align-items:center;gap:14px;padding:18px 0 40px;min-height:100vh;}
+  .caption{max-width:392px;padding:0 18px;color:var(--text-2);font-size:13px;line-height:1.55;}
+  .caption b{color:var(--text);font-weight:500;}
+  .caption .tag{display:inline-block;background:var(--steel-tint);color:var(--steel);font-size:11px;padding:2px 8px;border-radius:999px;margin-bottom:6px;}
+  svg{fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;}
+
+  .phone{width:390px;height:780px;background:var(--bg);border:1px solid #2a2c30;border-radius:34px;overflow:hidden;position:relative;display:flex;flex-direction:column;}
+  .panel-bar{height:56px;display:flex;align-items:center;gap:12px;padding:0 14px;border-bottom:1px solid var(--border);flex:none;}
+  .panel-bar .back{color:var(--text-2);width:36px;height:36px;display:flex;align-items:center;justify-content:center;}
+  .panel-bar .ttl{font-size:18px;font-weight:600;}
+  .panel-bar .sub{margin-left:auto;font-size:12px;color:var(--text-3);}
+  .body{flex:1;overflow-y:auto;padding:14px 16px 18px;display:flex;flex-direction:column;gap:10px;}
+
+  .newbtn{border:1px dashed var(--border);color:var(--steel);background:var(--surface);border-radius:14px;padding:14px;font-size:15px;font-weight:500;display:flex;align-items:center;justify-content:center;gap:8px;width:100%;}
+
+  /* search / filter */
+  .search{display:flex;align-items:center;gap:9px;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:0 12px;height:42px;}
+  .search svg{color:var(--text-3);flex:none;}
+  .search input{flex:1;background:none;border:none;outline:none;color:var(--text);font-size:14px;}
+  .search input::placeholder{color:var(--text-3);}
+
+  .sect{font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--text-3);margin:6px 2px 0;}
+  .empty-filter{color:var(--text-3);font-size:13px;text-align:center;padding:20px 0;}
+
+  /* swipe-rail wrapper */
+  .wrap{position:relative;overflow:hidden;border-radius:14px;}
+  .rail{position:absolute;top:0;right:0;bottom:0;width:216px;display:flex;}
+  .rail button{flex:1;border:none;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;font-size:11px;color:var(--text);}
+  .rail .r-edit{background:var(--surface-2);color:var(--steel);}
+  .rail .r-arch{background:var(--surface-2);color:var(--amber);}
+  .rail .r-del{background:var(--rose-tint);color:var(--rose);}
+  .rail .r-del.armed{background:var(--rose);color:#10141a;}
+  .slide{position:relative;transition:transform .22s cubic-bezier(.2,.7,.3,1);background:var(--bg);}
+
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:13px 14px;display:flex;flex-direction:column;gap:8px;}
+  .card.live{border-color:rgba(143,188,154,.4);}
+  .c-head{display:flex;align-items:center;gap:9px;font-size:15px;font-weight:500;}
+  .c-head .g{width:8px;height:8px;border-radius:999px;flex:none;}
+  .c-head .when{margin-left:auto;font-size:12px;color:var(--text-3);font-weight:400;white-space:nowrap;}
+  .c-sub{font-size:13px;color:var(--text-2);line-height:1.45;}
+  .c-foot{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+
+  /* editable scope chip on each card */
+  .scope-chip{font-size:11px;padding:4px 10px;border-radius:999px;display:inline-flex;align-items:center;gap:5px;border:1px solid transparent;}
+  .scope-chip svg{width:12px;height:12px;}
+  .scope-chip.everything{background:var(--steel-tint);color:var(--steel);}
+  .scope-chip.general{background:var(--steel-tint);color:var(--steel);}
+  .scope-chip.medical{background:var(--rose-tint);color:var(--rose);}
+  .scope-chip.financial{background:var(--violet-tint);color:var(--violet);}
+  .scope-chip.location{background:var(--amber-tint);color:var(--amber);}
+  .scope-chip.custom{background:var(--surface-2);color:var(--text-2);border-color:var(--border);}
+
+  .turns{font-size:11px;color:var(--text-3);}
+  .stat{font-size:11px;padding:3px 9px;border-radius:999px;margin-left:auto;}
+  .stat.staged{background:var(--steel-tint);color:var(--steel);}
+  .stat.live{background:var(--green-tint);color:var(--green);}
+
+  /* bottom sheet */
+  .scrim{position:absolute;inset:0;background:rgba(14,15,17,.6);opacity:0;pointer-events:none;transition:.2s;z-index:30;}
+  .scrim.show{opacity:1;pointer-events:auto;}
+  .sheet{position:absolute;left:0;right:0;bottom:0;background:var(--surface);border-top:1px solid var(--border);border-radius:18px 18px 0 0;
+    transform:translateY(100%);transition:transform .24s cubic-bezier(.2,.7,.3,1);z-index:31;padding:8px 16px calc(16px + env(safe-area-inset-bottom));max-height:90%;display:flex;flex-direction:column;}
+  .sheet.show{transform:translateY(0);}
+  .grip{width:40px;height:4px;border-radius:999px;background:var(--border);margin:8px auto 12px;}
+  .sheet h3{font-size:17px;font-weight:600;margin-bottom:2px;}
+  .sheet .lead{font-size:13px;color:var(--text-2);margin-bottom:14px;line-height:1.45;}
+
+  /* big primary start */
+  .start{background:var(--steel);color:#10141a;border:none;border-radius:14px;padding:16px;font-size:17px;font-weight:600;display:flex;flex-direction:column;align-items:center;gap:3px;}
+  .start .hintline{font-weight:400;font-size:12px;color:#10141a;opacity:.8;}
+
+  .or{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--text-3);text-align:center;margin:14px 0 10px;}
+
+  /* preset pill row (segmented, single-select) */
+  .presets{display:flex;gap:8px;overflow-x:auto;padding-bottom:4px;-ms-overflow-style:none;scrollbar-width:none;}
+  .presets::-webkit-scrollbar{display:none;}
+  .preset{flex:none;font-size:13px;padding:9px 15px;border-radius:999px;border:1px solid var(--border);background:var(--surface-2);color:var(--text-2);white-space:nowrap;display:inline-flex;align-items:center;gap:6px;}
+  .preset.on{border-color:var(--steel);color:var(--text);background:var(--steel-tint);}
+
+  .reads{font-size:13px;color:var(--text-2);margin:14px 2px 0;line-height:1.45;}
+  .reads b{color:var(--text);font-weight:500;}
+
+  /* optional title */
+  .title-in{margin-top:14px;width:100%;background:var(--surface-2);border:1px solid var(--border);border-radius:12px;padding:13px 14px;color:var(--text);font-size:15px;outline:none;}
+  .title-in::placeholder{color:var(--text-3);}
+
+  /* advanced grid (progressive disclosure) */
+  .adv{overflow:hidden;max-height:0;transition:max-height .26s ease;}
+  .adv.open{max-height:340px;}
+  .adv-lead{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--text-3);margin:16px 2px 8px;}
+  .opt{display:flex;align-items:center;gap:12px;padding:12px;border:1px solid var(--border);border-radius:12px;margin-bottom:8px;background:var(--surface-2);}
+  .opt .ico{width:30px;height:30px;border-radius:8px;display:flex;align-items:center;justify-content:center;flex:none;font-size:15px;}
+  .opt .meta{flex:1;min-width:0;}
+  .opt .meta .t{font-size:15px;}
+  .opt .meta .d{font-size:12px;color:var(--text-3);}
+  .check{width:24px;height:24px;border-radius:7px;border:1.5px solid var(--border);display:flex;align-items:center;justify-content:center;color:transparent;flex:none;}
+  .opt.on .check{background:var(--steel);border-color:var(--steel);color:#10141a;}
+  .opt.on{border-color:rgba(127,167,201,.5);}
+
+  .writes-note{font-size:12px;color:var(--text-3);text-align:center;margin-top:16px;line-height:1.5;}
+  .writes-note b{color:var(--text-2);}
+</style>
+</head>
+<body>
+  <div class="caption">
+    <span class="tag">Direction B — Quick presets</span><br/>
+    Start a chat in <b>one tap</b> on your last-used scope — no checkbox wall. Below the big Start sits a row of
+    named <b>presets</b> (everything · general · medical · financial · custom); picking one sets the scope instantly,
+    and <b>custom…</b> quietly reveals the full grid only when you ask. Scope rides each card as a small
+    <b>editable chip</b> you can change after the chat has started — it's a rail you nudge, not a gate you climb.
+  </div>
+
+  <div class="phone">
+    <div class="panel-bar">
+      <button class="back"><svg width="22" height="22" viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg></button>
+      <span class="ttl">Chats</span>
+      <span class="sub">swipe right → chat</span>
+    </div>
+
+    <div class="body" id="body">
+      <button class="newbtn" onclick="openNew()">＋ New session</button>
+      <div class="search">
+        <svg width="17" height="17" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+        <input id="filter" placeholder="Search chats" oninput="render()" />
+      </div>
+      <div id="list"></div>
+    </div>
+
+    <!-- new-session sheet: presets + progressive disclosure -->
+    <div class="scrim" id="scrim" onclick="closeNew()"></div>
+    <div class="sheet" id="sheet">
+      <div class="grip"></div>
+      <h3 id="sheet-title">new chat</h3>
+      <div class="lead" id="sheet-lead">pick up where you left off — reads what your last chat read. or choose a preset.</div>
+
+      <button class="start" onclick="startSession()">
+        <span id="start-main">start</span>
+        <span class="hintline" id="start-hint">reads everything</span>
+      </button>
+
+      <div class="or">or choose a preset</div>
+      <div class="presets" id="presets"></div>
+
+      <div class="reads" id="reads-summary">reads <b>everything</b> — all your notes.</div>
+
+      <!-- advanced multi-select, revealed by the custom… preset -->
+      <div class="adv" id="adv">
+        <div class="adv-lead">choose individual sources</div>
+        <div id="adv-grid"></div>
+      </div>
+
+      <input class="title-in" id="title-in" placeholder="title (optional — auto-titled later)" />
+
+      <div class="writes-note">
+        reads only. anything the agent wants to change is <b>staged as a proposal</b> for your okay.
+      </div>
+    </div>
+  </div>
+
+<script>
+// ---- model -------------------------------------------------------------
+const DOMAINS = [
+  {code:"general",  label:"General",   desc:"notes, lists, wiki",        ico:"◆", cls:"general"},
+  {code:"medical",  label:"Medical",   desc:"labs, meds, medical notes", ico:"✚", cls:"medical"},
+  {code:"financial",label:"Financial", desc:"statements, receipts",      ico:"$", cls:"financial"},
+  {code:"location", label:"Location",  desc:"places, geofences",         ico:"⌖", cls:"location"},
+];
+const ALL = DOMAINS.map(d=>d.code);
+
+// named presets -> set of domain codes (null custom = open grid)
+const PRESETS = [
+  {id:"everything", label:"Everything", set:[...ALL]},
+  {id:"general",    label:"General",    set:["general"]},
+  {id:"medical",    label:"Medical",    set:["general","medical"]},
+  {id:"financial",  label:"Financial",  set:["general","financial"]},
+  {id:"custom",     label:"Custom…",    set:null},
+];
+
+// last-used scope drives the smart default
+let lastUsed = [...ALL];
+
+let sessions = [
+  {id:s(), title:"Health wiki cleanup", scope:["general","medical"], group:"active",
+   live:true, staged:1, turns:9, when:"now",
+   preview:"analyzed 7 articles · staged a restructuring plan (split cardiology, 2 merges, retitles)."},
+  {id:s(), title:"Weekly recap & open items", scope:[...ALL], group:"today",
+   live:false, staged:0, turns:14, when:"9:12 AM",
+   preview:"surfaced two open labs and the roof quote. no writes."},
+  {id:s(), title:"Dad's medication list", scope:["general","medical"], group:"today",
+   live:false, staged:0, turns:5, when:"8:03 AM",
+   preview:"read-only review of dad's current meds."},
+  {id:s(), title:"Roof quote — second opinion?", scope:["general","financial"], group:"yesterday",
+   live:false, staged:0, turns:6, when:"Thu",
+   preview:"compared the $4,200 quote against last year's invoices."},
+  {id:s(), title:"Grocery & errands brainstorm", scope:["general"], group:"yesterday",
+   live:false, staged:0, turns:11, when:"Thu",
+   preview:"general planning chat."},
+];
+
+function s(){return Math.random().toString(36).slice(2,9);}
+
+// ---- scope helpers -----------------------------------------------------
+function scopeKind(scope){
+  if(scope.length===ALL.length) return {cls:"everything", label:"everything"};
+  if(scope.length===1) {const d=DOMAINS.find(x=>x.code===scope[0]); return {cls:d.cls, label:d.label.toLowerCase()};}
+  // general + one extra reads as that domain's preset
+  const extra = scope.filter(c=>c!=="general");
+  if(scope.includes("general") && extra.length===1){
+    const d=DOMAINS.find(x=>x.code===extra[0]); return {cls:d.cls, label:d.label.toLowerCase()};
+  }
+  return {cls:"custom", label:scope.map(c=>DOMAINS.find(x=>x.code===c).label.toLowerCase()).join(", ")};
+}
+
+// ---- list render -------------------------------------------------------
+const GROUPS = [["active","Active"],["today","Earlier today"],["yesterday","Yesterday"]];
+
+function render(){
+  const q = document.getElementById("filter").value.trim().toLowerCase();
+  const list = document.getElementById("list");
+  list.innerHTML = "";
+  let shown = 0;
+  for(const [gid,glabel] of GROUPS){
+    const rows = sessions.filter(x=>x.group===gid && !x.archived &&
+      (q==="" || x.title.toLowerCase().includes(q) || x.preview.toLowerCase().includes(q)));
+    if(!rows.length) continue;
+    const h = document.createElement("div"); h.className="sect"; h.textContent=glabel; list.appendChild(h);
+    for(const sess of rows){ list.appendChild(cardEl(sess)); shown++; }
+  }
+  if(shown===0){
+    const e=document.createElement("div"); e.className="empty-filter";
+    e.textContent = q ? "no chats match “"+q+"”" : "no chats yet — start one above.";
+    list.appendChild(e);
+  }
+}
+
+function cardEl(sess){
+  const wrap=document.createElement("div"); wrap.className="wrap";
+
+  // swipe rail
+  const rail=document.createElement("div"); rail.className="rail";
+  rail.innerHTML =
+    '<button class="r-edit"><svg width="17" height="17" viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>rename</button>'+
+    '<button class="r-arch"><svg width="17" height="17" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="4" rx="1"/><path d="M5 8v11a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8"/><path d="M10 12h4"/></svg>archive</button>'+
+    '<button class="r-del"><svg width="17" height="17" viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M6 6l1 14h10l1-14"/></svg>delete</button>';
+  rail.querySelector(".r-edit").onclick=(e)=>{e.stopPropagation();renameSession(sess);closeRail(slide);};
+  rail.querySelector(".r-arch").onclick=(e)=>{e.stopPropagation();sess.archived=true;render();};
+  const del=rail.querySelector(".r-del");
+  del.onclick=(e)=>{e.stopPropagation();
+    if(!del.classList.contains("armed")){del.classList.add("armed");del.lastChild.nodeValue="";del.querySelector("svg").outerHTML="";del.textContent="tap again";return;}
+    sessions=sessions.filter(x=>x.id!==sess.id);render();};
+  wrap.appendChild(rail);
+
+  const slide=document.createElement("div"); slide.className="slide";
+  const card=document.createElement("div"); card.className="card"+(sess.live?" live":"");
+
+  const head=document.createElement("div"); head.className="c-head";
+  if(sess.live){const g=document.createElement("span");g.className="g";g.style.background="var(--green)";head.appendChild(g);}
+  const ttl=document.createElement("span"); ttl.textContent=sess.title; head.appendChild(ttl);
+  if(sess.live){const st=document.createElement("span");st.className="stat live";st.textContent="live";head.appendChild(st);}
+  else{const w=document.createElement("span");w.className="when";w.textContent=sess.when+" · "+sess.turns+" turns";head.appendChild(w);}
+  card.appendChild(head);
+
+  const sub=document.createElement("div"); sub.className="c-sub"; sub.textContent=sess.preview; card.appendChild(sub);
+
+  const foot=document.createElement("div"); foot.className="c-foot";
+  foot.appendChild(scopeChipEl(sess));
+  if(sess.live){const w=document.createElement("span");w.className="turns";w.textContent=sess.turns+" turns";foot.appendChild(w);}
+  if(sess.staged>0){const st=document.createElement("span");st.className="stat staged";st.textContent=sess.staged+" staged";foot.appendChild(st);}
+  card.appendChild(foot);
+
+  slide.appendChild(card);
+  wrap.appendChild(slide);
+
+  // tap-to-toggle the rail (mock stand-in for the real swipe gesture)
+  let open=false;
+  card.onclick=()=>{open=!open;slide.style.transform=open?"translateX(-216px)":"translateX(0)";
+    if(!open){del.classList.remove("armed");}};
+  function closeRail(sl){open=false;sl.style.transform="translateX(0)";}
+
+  return wrap;
+}
+
+function scopeChipEl(sess){
+  const k=scopeKind(sess.scope);
+  const chip=document.createElement("button"); chip.className="scope-chip "+k.cls;
+  chip.innerHTML='<svg width="12" height="12" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-2.7 1.1V21a2 2 0 1 1-4 0v-.1A1.6 1.6 0 0 0 6 19.4a1.6 1.6 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1A1.6 1.6 0 0 0 2.6 14H2.5a2 2 0 1 1 0-4h.1A1.6 1.6 0 0 0 4.2 7.3"/></svg>'+
+    '<span>reads '+k.label+'</span>';
+  chip.onclick=(e)=>{e.stopPropagation();openScopeFor(sess);};
+  return chip;
+}
+
+// ---- new-session / scope sheet ----------------------------------------
+let editing = null;        // session being re-scoped, or null = new
+let selPreset = "everything";
+let custom = new Set();     // codes selected in advanced grid
+
+function buildPresets(){
+  const row=document.getElementById("presets"); row.innerHTML="";
+  for(const p of PRESETS){
+    const b=document.createElement("button"); b.className="preset"+(p.id===selPreset?" on":"");
+    b.textContent=p.label;
+    b.onclick=()=>pickPreset(p.id);
+    row.appendChild(b);
+  }
+}
+function buildGrid(){
+  const g=document.getElementById("adv-grid"); g.innerHTML="";
+  for(const d of DOMAINS){
+    const on=custom.has(d.code);
+    const el=document.createElement("div"); el.className="opt"+(on?" on":"");
+    el.innerHTML='<div class="ico" style="background:var(--'+d.cls+'-tint);color:var(--'+d.cls+')">'+d.ico+'</div>'+
+      '<div class="meta"><div class="t">'+d.label+'</div><div class="d">'+d.desc+'</div></div>'+
+      '<div class="check">✓</div>';
+    el.onclick=()=>{ if(custom.has(d.code))custom.delete(d.code); else custom.add(d.code); buildGrid(); syncReads(); };
+    g.appendChild(el);
+  }
+}
+
+function currentScope(){
+  if(selPreset==="custom") return [...custom];
+  return [...PRESETS.find(p=>p.id===selPreset).set];
+}
+
+function pickPreset(id){
+  selPreset=id;
+  const adv=document.getElementById("adv");
+  if(id==="custom"){
+    if(custom.size===0) custom=new Set(["general"]); // sensible seed
+    adv.classList.add("open"); buildGrid();
+  } else {
+    adv.classList.remove("open");
+  }
+  buildPresets(); syncReads();
+}
+
+function syncReads(){
+  const scope=currentScope();
+  const k = scope.length ? scopeKind(scope) : null;
+  let txt;
+  if(!scope.length) txt='reads <b>nothing yet</b> — pick at least one source.';
+  else if(k.cls==="everything") txt='reads <b>everything</b> — all your notes.';
+  else txt='reads <b>'+k.label+'</b>.';
+  document.getElementById("reads-summary").innerHTML=txt;
+  document.getElementById("start-hint").innerHTML='reads '+(scope.length?(k.cls==="everything"?"everything":k.label):"nothing");
+}
+
+function openNew(){
+  editing=null;
+  selPreset = scopeKindToPreset(lastUsed);
+  custom = new Set();
+  if(selPreset==="custom"){ custom=new Set(lastUsed); }
+  document.getElementById("sheet-title").textContent="new chat";
+  document.getElementById("sheet-lead").textContent="pick up where you left off — reads what your last chat read. or choose a preset.";
+  document.getElementById("start-main").textContent="start";
+  document.getElementById("title-in").style.display="";
+  document.getElementById("title-in").value="";
+  document.getElementById("adv").classList.toggle("open", selPreset==="custom");
+  buildPresets(); buildGrid(); syncReads();
+  show();
+}
+
+function openScopeFor(sess){
+  editing=sess;
+  const pr=scopeKindToPreset(sess.scope);
+  selPreset=pr; custom=new Set();
+  if(pr==="custom") custom=new Set(sess.scope);
+  document.getElementById("sheet-title").textContent="change scope";
+  document.getElementById("sheet-lead").textContent="adjust what this chat can read — not frozen at the start.";
+  document.getElementById("start-main").textContent="save scope";
+  document.getElementById("title-in").style.display="none";
+  document.getElementById("adv").classList.toggle("open", pr==="custom");
+  buildPresets(); buildGrid(); syncReads();
+  show();
+}
+
+// map a scope set onto the preset that produced it (else custom)
+function scopeKindToPreset(scope){
+  for(const p of PRESETS){
+    if(p.set && p.set.length===scope.length && p.set.every(c=>scope.includes(c))) return p.id;
+  }
+  return "custom";
+}
+
+function startSession(){
+  const scope=currentScope();
+  if(!scope.length) return; // guard the empty dead-end
+  if(editing){
+    editing.scope=scope; lastUsed=[...scope]; closeNew(); render(); return;
+  }
+  const title=document.getElementById("title-in").value.trim();
+  lastUsed=[...scope];
+  sessions.unshift({
+    id:s(), title:title||"New chat (auto-titles soon)", scope, group:"active",
+    live:false, staged:0, turns:0, when:"now", preview:"just started — say something to begin.",
+  });
+  closeNew(); render();
+}
+
+function renameSession(sess){
+  const v=prompt("rename chat", sess.title);
+  if(v && v.trim()){ sess.title=v.trim(); render(); }
+}
+
+function show(){document.getElementById("scrim").classList.add("show");document.getElementById("sheet").classList.add("show");}
+function closeNew(){document.getElementById("scrim").classList.remove("show");document.getElementById("sheet").classList.remove("show");}
+
+render();
+</script>
+</body>
+</html>
