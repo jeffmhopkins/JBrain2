@@ -31,6 +31,8 @@ export interface FullBrainDeps {
   getTranscript: (sessionId: string) => Promise<TranscriptTurn[]>;
   renameSession: (id: string, title: string) => Promise<void>;
   deleteSession: (id: string) => Promise<void>;
+  archiveSession: (id: string) => Promise<void>;
+  unarchiveSession: (id: string) => Promise<void>;
 }
 
 const LIVE: FullBrainDeps = {
@@ -41,6 +43,8 @@ const LIVE: FullBrainDeps = {
   getTranscript: api.getTranscript,
   renameSession: api.renameSession,
   deleteSession: api.deleteSession,
+  archiveSession: api.archiveSession,
+  unarchiveSession: api.unarchiveSession,
 };
 
 /** Map a persisted turn back into a transcript message — assistant turns rebuild
@@ -82,13 +86,15 @@ export interface FullBrain {
   open: (session: AgentSession) => void;
   rename: (id: string, title: string) => void;
   remove: (id: string) => void;
+  archive: (id: string) => void;
+  unarchive: (id: string) => void;
 }
 
 /** Drive the Full Brain surface. `enabled` gates the network so nothing loads
  * until the mode is actually on screen; `deps` is injected in tests. */
 export function useFullBrain(enabled: boolean, deps: FullBrainDeps = LIVE): FullBrain {
   const { listSessions, createSession, chat, listProposals, getTranscript } = deps;
-  const { renameSession, deleteSession } = deps;
+  const { renameSession, deleteSession, archiveSession, unarchiveSession } = deps;
   const [sessions, setSessions] = useState<AgentSession[]>([]);
   const [active, setActive] = useState<AgentSession | null>(null);
   const [panel, setPanel] = useState<Panel>("none");
@@ -126,6 +132,18 @@ export function useFullBrain(enabled: boolean, deps: FullBrainDeps = LIVE): Full
       .then((all) => setProposals(all))
       .catch(() => {});
   }, [listProposals]);
+
+  // Refetch the session list and re-sync the open session by id (its title may
+  // have just been auto-generated server-side; the id is unchanged so the
+  // transcript effect doesn't re-fire).
+  const reloadSessions = useCallback(() => {
+    listSessions()
+      .then((all) => {
+        setSessions(all);
+        setActive((cur) => (cur ? (all.find((s) => s.id === cur.id) ?? cur) : cur));
+      })
+      .catch(() => {});
+  }, [listSessions]);
 
   useEffect(() => {
     if (enabled) reloadProposals();
@@ -174,6 +192,9 @@ export function useFullBrain(enabled: boolean, deps: FullBrainDeps = LIVE): Full
       setBusy(false);
       // The turn may have staged a Proposal — refresh the review inbox.
       reloadProposals();
+      // An untitled chat is auto-titled from its first turn server-side; pull the
+      // generated title so the top bar and panel stop saying "New chat".
+      if (!active.title) reloadSessions();
     }
   }
 
@@ -209,6 +230,16 @@ export function useFullBrain(enabled: boolean, deps: FullBrainDeps = LIVE): Full
     }
   }
 
+  async function archive(id: string): Promise<void> {
+    await archiveSession(id);
+    setSessions((prev) => prev.map((s) => (s.id === id ? { ...s, status: "archived" } : s)));
+  }
+
+  async function unarchive(id: string): Promise<void> {
+    await unarchiveSession(id);
+    setSessions((prev) => prev.map((s) => (s.id === id ? { ...s, status: "active" } : s)));
+  }
+
   return {
     active,
     sessions,
@@ -225,5 +256,7 @@ export function useFullBrain(enabled: boolean, deps: FullBrainDeps = LIVE): Full
     open,
     rename: (id, title) => void rename(id, title).catch(() => {}),
     remove: (id) => void remove(id).catch(() => {}),
+    archive: (id) => void archive(id).catch(() => {}),
+    unarchive: (id) => void unarchive(id).catch(() => {}),
   };
 }

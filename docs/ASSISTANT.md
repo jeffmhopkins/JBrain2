@@ -248,6 +248,13 @@ a right-swipe from the Full Brain composer, DESIGN.md):
   **staged**, `external` **staged as an egress Proposal** (#9). A write can target **only an in-scope
   domain** — you cannot stage a write to a domain the session cannot read.
 
+**Chat lifecycle.** A chat the owner doesn't name is **auto-titled** from its first
+exchange — a cheap one-shot summary through the LLM adapter (the `session.title`
+task), best-effort and owner-only metadata, never blocking the turn that produced
+it. A chat can be **archived** (a third status beside `active`/`ended`) to tidy it
+out of the live Chats list without deleting it or its transcript; archiving is
+reversible and orthogonal to read scope.
+
 Non-owner principals are the **same machine with the dials pinned**: an intake link
 is a session whose read scope is fixed to its capability token (one subject × one
 domain) and whose policy is capture-only / everything-else-denied (#8). The owner

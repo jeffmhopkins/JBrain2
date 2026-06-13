@@ -124,6 +124,16 @@ class AgentSessionRepo:
                 .values(status="ended")
             )
 
+    async def set_status(self, ctx: SessionContext, session_id: str, status: str) -> None:
+        """Flip a session's lifecycle status (archived ⇄ active) — archiving tidies a
+        chat out of the live list without deleting it or its transcript."""
+        async with scoped_session(self._maker, ctx) as session:
+            await session.execute(
+                update(AgentSession)
+                .where(AgentSession.id == uuid.UUID(session_id))
+                .values(status=status)
+            )
+
     async def rename(self, ctx: SessionContext, session_id: str, title: str) -> None:
         async with scoped_session(self._maker, ctx) as session:
             await session.execute(

@@ -125,6 +125,8 @@ interface Props {
   onClose: () => void;
   onRename: (id: string, title: string) => void;
   onDelete: (id: string) => void;
+  onArchive: (id: string) => void;
+  onUnarchive: (id: string) => void;
 }
 
 export function SessionsPanel({
@@ -135,18 +137,24 @@ export function SessionsPanel({
   onClose,
   onRename,
   onDelete,
+  onArchive,
+  onUnarchive,
 }: Props): ReactNode {
   const [picking, setPicking] = useState(false);
   const [query, setQuery] = useState("");
+  const [showArchived, setShowArchived] = useState(false);
   // One swipe rail open at a time (like the home stream).
   const [railId, setRailId] = useState<string | null>(null);
 
   const q = query.trim().toLowerCase();
-  const filtered = q
-    ? sessions.filter((s) => (s.title || "untitled chat").toLowerCase().includes(q))
-    : sessions;
+  const matches = (s: AgentSession): boolean =>
+    q === "" || (s.title || "untitled chat").toLowerCase().includes(q);
+  // Archived chats are tucked behind a toggle; the live list never shows them.
+  const live = sessions.filter((s) => s.status !== "archived" && matches(s));
+  const archived = sessions.filter((s) => s.status === "archived" && matches(s));
+
   // Newest-active first, then bucket by recency.
-  const ordered = [...filtered].sort(
+  const ordered = [...live].sort(
     (a, b) => Date.parse(b.last_active_at) - Date.parse(a.last_active_at),
   );
   const now = new Date();
@@ -168,6 +176,8 @@ export function SessionsPanel({
       onOpen={onOpen}
       onRename={onRename}
       onDelete={onDelete}
+      onArchive={onArchive}
+      onUnarchive={onUnarchive}
       railOpen={railId === s.id}
       onRailChange={(open) => setRailId(open ? s.id : null)}
     />
@@ -209,10 +219,29 @@ export function SessionsPanel({
           ) : null,
         )}
 
+        {archived.length > 0 && (
+          <>
+            <button
+              type="button"
+              className="archived-toggle"
+              aria-expanded={showArchived}
+              onClick={() => setShowArchived((v) => !v)}
+            >
+              {showArchived ? "Hide" : "Show"} {archived.length} archived
+            </button>
+            {showArchived && (
+              <div>
+                <div className="sect">Archived</div>
+                {archived.map(row)}
+              </div>
+            )}
+          </>
+        )}
+
         {sessions.length === 0 && (
           <div className="panel-empty">No chats yet — start one to ask about your brain.</div>
         )}
-        {sessions.length > 0 && filtered.length === 0 && (
+        {sessions.length > 0 && live.length === 0 && archived.length === 0 && (
           <div className="panel-empty">No chats match “{query.trim()}”.</div>
         )}
       </div>
@@ -239,6 +268,8 @@ function SessionRow({
   onOpen,
   onRename,
   onDelete,
+  onArchive,
+  onUnarchive,
   railOpen,
   onRailChange,
 }: {
@@ -247,9 +278,12 @@ function SessionRow({
   onOpen: (s: AgentSession) => void;
   onRename: (id: string, title: string) => void;
   onDelete: (id: string) => void;
+  onArchive: (id: string) => void;
+  onUnarchive: (id: string) => void;
   railOpen: boolean;
   onRailChange: (open: boolean) => void;
 }): ReactNode {
+  const isArchived = session.status === "archived";
   const [drag, setDrag] = useState<Drag | null>(null);
   const dragged = useRef(false);
   const renameRef = useRef<HTMLInputElement>(null);
@@ -323,7 +357,7 @@ function SessionRow({
   return (
     <div className="session-wrap">
       {!renaming && offset < 0 && (
-        <div className="session-rail">
+        <div className="session-rail rail-3">
           <button
             type="button"
             className="rail-btn rail-edit"
@@ -334,6 +368,21 @@ function SessionRow({
           >
             <PencilIcon size={18} />
             rename
+          </button>
+          <button
+            type="button"
+            className="rail-btn rail-archive"
+            onClick={() => {
+              onRailChange(false);
+              if (isArchived) {
+                onUnarchive(session.id);
+              } else {
+                onArchive(session.id);
+              }
+            }}
+          >
+            <ArchiveGlyph />
+            {isArchived ? "unarchive" : "archive"}
           </button>
           <button
             type="button"
@@ -400,6 +449,28 @@ function SessionRow({
         )}
       </div>
     </div>
+  );
+}
+
+// A small archive-box glyph for the rail (icons.tsx has no archive icon); sized
+// to match the 18px PencilIcon/TrashIcon beside it.
+function ArchiveGlyph(): ReactNode {
+  return (
+    <svg
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.6"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <rect x="3" y="4" width="18" height="4" rx="1" />
+      <path d="M5 8v11a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8" />
+      <path d="M10 12h4" />
+    </svg>
   );
 }
 

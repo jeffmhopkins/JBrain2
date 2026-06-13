@@ -91,6 +91,20 @@ async def rename_session(
     return Response(status_code=204)
 
 
+@router.post("/{session_id}/archive")
+async def archive_session(request: Request, principal: PrincipalDep, session_id: str) -> Response:
+    """Tidy a chat out of the live list without deleting it (status → archived)."""
+    await get_agent_sessions(request).set_status(ctx_for(principal), session_id, "archived")
+    return Response(status_code=204)
+
+
+@router.post("/{session_id}/unarchive")
+async def unarchive_session(request: Request, principal: PrincipalDep, session_id: str) -> Response:
+    """Restore an archived chat to the live list (status → active)."""
+    await get_agent_sessions(request).set_status(ctx_for(principal), session_id, "active")
+    return Response(status_code=204)
+
+
 @router.delete("/{session_id}")
 async def delete_session(request: Request, principal: PrincipalDep, session_id: str) -> Response:
     """Delete a session; its runs and transcript cascade with it."""

@@ -24,6 +24,8 @@ function fbDeps(): FullBrainDeps {
     getTranscript: vi.fn(async () => []),
     renameSession: vi.fn(async () => {}),
     deleteSession: vi.fn(async () => {}),
+    archiveSession: vi.fn(async () => {}),
+    unarchiveSession: vi.fn(async () => {}),
   };
 }
 

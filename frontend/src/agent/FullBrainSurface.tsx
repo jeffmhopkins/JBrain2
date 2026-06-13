@@ -136,6 +136,8 @@ export function FullBrainSurface({ fb, onOpenNote, onOpenEntity }: Props): React
           onClose={() => setPanel("none")}
           onRename={fb.rename}
           onDelete={fb.remove}
+          onArchive={fb.archive}
+          onUnarchive={fb.unarchive}
         />
       </aside>
 

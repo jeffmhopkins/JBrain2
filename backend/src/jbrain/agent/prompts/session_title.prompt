@@ -1,0 +1,9 @@
+---
+name: session.title
+version: session-title-v1
+description: Title a Full Brain chat from its first exchange.
+strength: low
+config:
+  max_tokens: 24
+---
+You write a short, specific title for a saved chat from its first message (and the assistant's reply, if given). 3–6 words, Title Case, no quotes, no surrounding punctuation, no preamble. Name the topic the way a person would label the conversation to find it later — concrete over generic, never "Chat" or "Conversation". Output only the title.

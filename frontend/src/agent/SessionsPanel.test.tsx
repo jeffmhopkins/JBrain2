@@ -32,6 +32,8 @@ describe("SessionsPanel", () => {
         onClose={vi.fn()}
         onRename={vi.fn()}
         onDelete={vi.fn()}
+        onArchive={vi.fn()}
+        onUnarchive={vi.fn()}
       />,
     );
     expect(screen.getByText("Health wiki cleanup")).toBeInTheDocument();
@@ -50,6 +52,8 @@ describe("SessionsPanel", () => {
         onClose={vi.fn()}
         onRename={vi.fn()}
         onDelete={vi.fn()}
+        onArchive={vi.fn()}
+        onUnarchive={vi.fn()}
       />,
     );
     fireEvent.click(screen.getByText("Health wiki cleanup"));
@@ -66,6 +70,8 @@ describe("SessionsPanel", () => {
         onClose={vi.fn()}
         onRename={vi.fn()}
         onDelete={vi.fn()}
+        onArchive={vi.fn()}
+        onUnarchive={vi.fn()}
       />,
     );
     expect(screen.getByRole("button", { name: /Health wiki cleanup/ })).toHaveAttribute(
@@ -83,6 +89,8 @@ describe("SessionsPanel", () => {
         onClose={vi.fn()}
         onRename={vi.fn()}
         onDelete={vi.fn()}
+        onArchive={vi.fn()}
+        onUnarchive={vi.fn()}
       />,
     );
     fireEvent.click(screen.getByText("＋ New chat"));
@@ -98,6 +106,8 @@ describe("SessionsPanel", () => {
         onClose={vi.fn()}
         onRename={vi.fn()}
         onDelete={vi.fn()}
+        onArchive={vi.fn()}
+        onUnarchive={vi.fn()}
       />,
     );
     fireEvent.click(screen.getByText("＋ New chat"));
@@ -119,6 +129,8 @@ describe("SessionsPanel", () => {
         onClose={vi.fn()}
         onRename={vi.fn()}
         onDelete={vi.fn()}
+        onArchive={vi.fn()}
+        onUnarchive={vi.fn()}
       />,
     );
 
@@ -141,6 +153,8 @@ describe("SessionsPanel", () => {
         onClose={vi.fn()}
         onRename={vi.fn()}
         onDelete={vi.fn()}
+        onArchive={vi.fn()}
+        onUnarchive={vi.fn()}
       />,
     );
     fireEvent.click(screen.getByText("＋ New chat"));
@@ -168,6 +182,8 @@ describe("SessionsPanel", () => {
         onClose={vi.fn()}
         onRename={vi.fn()}
         onDelete={vi.fn()}
+        onArchive={vi.fn()}
+        onUnarchive={vi.fn()}
       />,
     );
     expect(screen.getByLabelText("Search chats")).toBeInTheDocument();
@@ -183,6 +199,8 @@ describe("SessionsPanel", () => {
         onClose={vi.fn()}
         onRename={vi.fn()}
         onDelete={vi.fn()}
+        onArchive={vi.fn()}
+        onUnarchive={vi.fn()}
       />,
     );
     expect(screen.queryByLabelText("Search chats")).not.toBeInTheDocument();
@@ -205,6 +223,8 @@ describe("SessionsPanel", () => {
         onClose={vi.fn()}
         onRename={vi.fn()}
         onDelete={onDelete}
+        onArchive={vi.fn()}
+        onUnarchive={vi.fn()}
       />,
     );
     swipeOpen();
@@ -212,6 +232,59 @@ describe("SessionsPanel", () => {
     expect(onDelete).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: /tap again/ }));
     expect(onDelete).toHaveBeenCalledWith("s1");
+  });
+
+  it("swipe-left → archive fires onArchive", () => {
+    const onArchive = vi.fn();
+    render(
+      <SessionsPanel
+        sessions={[session({})]}
+        onOpen={vi.fn()}
+        onCreate={vi.fn()}
+        onClose={vi.fn()}
+        onRename={vi.fn()}
+        onDelete={vi.fn()}
+        onArchive={onArchive}
+        onUnarchive={vi.fn()}
+      />,
+    );
+    swipeOpen();
+    fireEvent.click(screen.getByRole("button", { name: /^archive/ }));
+    expect(onArchive).toHaveBeenCalledWith("s1");
+  });
+
+  it("hides archived chats behind a toggle that reveals them and offers unarchive", () => {
+    const onUnarchive = vi.fn();
+    render(
+      <SessionsPanel
+        sessions={[
+          session({ id: "live1", title: "Live chat" }),
+          session({ id: "arch1", title: "Old chat", status: "archived" }),
+        ]}
+        onOpen={vi.fn()}
+        onCreate={vi.fn()}
+        onClose={vi.fn()}
+        onRename={vi.fn()}
+        onDelete={vi.fn()}
+        onArchive={vi.fn()}
+        onUnarchive={onUnarchive}
+      />,
+    );
+    // The archived chat is tucked away; the live one shows.
+    expect(screen.getByText("Live chat")).toBeInTheDocument();
+    expect(screen.queryByText("Old chat")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /1 archived/ }));
+    expect(screen.getByText("Old chat")).toBeInTheDocument();
+
+    // Its rail offers unarchive, not archive.
+    const archivedRow = screen.getByText("Old chat").closest(".session-wrap") as HTMLElement;
+    const slide = archivedRow.querySelector(".session-slide") as HTMLElement;
+    fireEvent.touchStart(slide, { touches: [{ clientX: 200, clientY: 50 }] });
+    fireEvent.touchMove(slide, { touches: [{ clientX: 60, clientY: 52 }] });
+    fireEvent.touchEnd(slide);
+    fireEvent.click(screen.getByRole("button", { name: /unarchive/ }));
+    expect(onUnarchive).toHaveBeenCalledWith("arch1");
   });
 
   it("swipe-left → rename edits the title inline and fires onRename", () => {
@@ -224,6 +297,8 @@ describe("SessionsPanel", () => {
         onClose={vi.fn()}
         onRename={onRename}
         onDelete={vi.fn()}
+        onArchive={vi.fn()}
+        onUnarchive={vi.fn()}
       />,
     );
     swipeOpen();

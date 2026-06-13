@@ -62,6 +62,11 @@ class FakeAgentSessions:
         if info is not None:
             self._by_id[session_id] = replace(info, title=title)
 
+    async def set_status(self, ctx, session_id, status):  # type: ignore[no-untyped-def]
+        info = self._by_id.get(session_id)
+        if info is not None:
+            self._by_id[session_id] = replace(info, status=status)
+
     async def delete(self, ctx, session_id):  # type: ignore[no-untyped-def]
         self._by_id.pop(session_id, None)
 
@@ -468,3 +473,48 @@ def test_delete_session(
 def test_rename_and_delete_require_owner(client: TestClient) -> None:
     assert client.patch("/api/sessions/sess-1", json={"title": "x"}).status_code == 401
     assert client.delete("/api/sessions/sess-1").status_code == 401
+
+
+def test_archive_and_unarchive_session(
+    client: TestClient, repo: FakeAuthRepo, sessions_store: FakeAgentSessions
+) -> None:
+    login(client, repo)
+    sessions_store.add(AgentSessionInfo("sess-1", "x", "active", ("general",), (), NOW, NOW))
+    assert client.post("/api/sessions/sess-1/archive").status_code == 204
+    assert sessions_store._by_id["sess-1"].status == "archived"
+    assert client.post("/api/sessions/sess-1/unarchive").status_code == 204
+    assert sessions_store._by_id["sess-1"].status == "active"
+
+
+def test_archive_requires_owner(client: TestClient) -> None:
+    assert client.post("/api/sessions/sess-1/archive").status_code == 401
+    assert client.post("/api/sessions/sess-1/unarchive").status_code == 401
+
+
+def test_chat_autotitles_an_untitled_session(
+    client: TestClient, repo: FakeAuthRepo, sessions_store: FakeAgentSessions
+) -> None:
+    login(client, repo)
+    sessions_store.add(AgentSessionInfo("sess-1", "", "active", ("general",), (), NOW, NOW))
+    fake = FakeLlmClient(
+        responses=["Weekly Recap"],  # what the titler's complete() returns
+        turns=[LlmTurn("hi there", (), "end_turn", LlmUsage(7, 3))],
+        stream_chunks=[["hi ", "there"]],
+    )
+    client.app.state.llm_router = LlmRouter(  # type: ignore[attr-defined]
+        {"xai": fake}, {"agent.turn": ("xai", "grok-4.3")}
+    )
+    client.post("/api/chat", json={"session_id": "sess-1", "message": "what happened this week?"})
+    # The first turn names the chat; the question reached the titler.
+    assert sessions_store._by_id["sess-1"].title == "Weekly Recap"
+    assert any("what happened this week?" in c["user_text"] for c in fake.calls)
+
+
+def test_chat_does_not_retitle_a_named_session(
+    client: TestClient, repo: FakeAuthRepo, sessions_store: FakeAgentSessions
+) -> None:
+    login(client, repo)
+    sessions_store.add(AgentSessionInfo("sess-1", "My Chat", "active", ("general",), (), NOW, NOW))
+    client.post("/api/chat", json={"session_id": "sess-1", "message": "anything"})
+    # An owner-named chat is left alone — auto-titling only fills an empty title.
+    assert sessions_store._by_id["sess-1"].title == "My Chat"

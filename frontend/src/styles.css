@@ -3699,6 +3699,14 @@ button.small {
 .fb-shell .session-rail .rail-btn {
   width: 96px;
 }
+/* Three actions (rename · archive · delete) split the same RAIL_WIDTH. */
+.fb-shell .session-rail.rail-3 .rail-btn {
+  width: 64px;
+}
+.fb-shell .rail-archive {
+  background: var(--steel-tint);
+  color: var(--steel);
+}
 .fb-shell .session-slide {
   position: relative;
   transition: transform 150ms ease-out;
@@ -3796,6 +3804,18 @@ button.small {
 }
 .fb-shell .chat-search input::placeholder {
   color: var(--text-3);
+}
+
+/* the "N archived" disclosure that tucks archived chats out of the live list */
+.fb-shell .archived-toggle {
+  align-self: flex-start;
+  background: none;
+  border: none;
+  color: var(--text-3);
+  font: inherit;
+  font-size: 12px;
+  padding: 4px 2px;
+  margin-top: 2px;
 }
 
 /* the live "you are here" dot on the open chat */

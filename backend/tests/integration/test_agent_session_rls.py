@@ -130,6 +130,24 @@ async def test_rename_updates_the_title(maker: async_sessionmaker) -> None:
     assert (await repo.get(owner, info.id)).title == "new name"  # type: ignore[union-attr]
 
 
+async def test_set_status_archives_and_is_owner_only(maker: async_sessionmaker) -> None:
+    owner = await _owner_ctx(maker)
+    repo = AgentSessionRepo(maker)
+    info = await repo.create(owner, domain_scopes=["general"], title="scratch")
+    assert info.status == "active"
+
+    # A non-owner cannot flip it (RLS hides the row); it stays active.
+    token = SessionContext(principal_kind="capability_token", domain_scopes=("general",))
+    await repo.set_status(token, info.id, "archived")
+    assert (await repo.get(owner, info.id)).status == "active"  # type: ignore[union-attr]
+
+    # The owner archives it, then restores it.
+    await repo.set_status(owner, info.id, "archived")
+    assert (await repo.get(owner, info.id)).status == "archived"  # type: ignore[union-attr]
+    await repo.set_status(owner, info.id, "active")
+    assert (await repo.get(owner, info.id)).status == "active"  # type: ignore[union-attr]
+
+
 async def test_delete_cascades_runs_and_transcript_and_is_owner_only(
     maker: async_sessionmaker,
 ) -> None:
