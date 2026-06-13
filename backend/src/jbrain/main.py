@@ -16,6 +16,7 @@ from jbrain.analysis.repo import SqlAnalysisRepo
 from jbrain.api import agent, analysis, auth, health, notes, ops, proposals, search, sessions
 from jbrain.api import lists as lists_api
 from jbrain.api import settings as settings_api
+from jbrain.appointments.repo import SqlAppointmentsRepo
 from jbrain.auth.repo import SqlAuthRepo
 from jbrain.config import Settings, get_settings
 from jbrain.connectors.base import ConnectorRegistry
@@ -50,6 +51,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.auth_repo = SqlAuthRepo(maker)
         app.state.notes_repo = SqlNotesRepo(maker)
         app.state.lists_repo = SqlListsRepo(maker)
+        app.state.appointments_repo = SqlAppointmentsRepo(maker)
         app.state.blob_store = FsBlobStore(settings.blob_dir)
         app.state.backup_shelf = FsBackupShelf(settings.backups_dir)
         app.state.job_queue = PgJobQueue(maker)
@@ -81,6 +83,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             app.state.agent_proposals,
             connector_registry,
             app.state.lists_repo,
+            app.state.appointments_repo,
         )
         app.state.agent_sessions = AgentSessionRepo(maker)
         app.state.agent_runlog = AgentRunLog(maker)

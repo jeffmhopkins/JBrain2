@@ -436,6 +436,7 @@ def test_build_registry_binds_the_shipped_sidecars() -> None:
         object(),  # type: ignore[arg-type]
         ConnectorRegistry(medical_connectors("http://rx", "http://mp")),
         object(),  # type: ignore[arg-type]
+        object(),  # type: ignore[arg-type]
     )
     shipped = {
         "search",
@@ -449,6 +450,8 @@ def test_build_registry_binds_the_shipped_sidecars() -> None:
         "add_list_item",
         "check_list_item",
         "remove_list_item",
+        "read_appointments",
+        "read_appointment",
         "recall",
         "memory_read",
         "memory_edit",
@@ -554,6 +557,16 @@ def test_sidecars_pinned_to_their_versions() -> None:
             "lookup_condition",
             1,
             "365558e91398836b3dca8ef6728e7fa86a82d49b3f3ccc25fa6efd79ca663af4",
+        ),
+        "read_appointments.tool": (
+            "read_appointments",
+            1,
+            "8ea83f930e0f6cfe662e5349c786d61a2c11bc98eadfd807928f3640d8a65d8d",
+        ),
+        "read_appointment.tool": (
+            "read_appointment",
+            1,
+            "5dc14fae478e6696019b6da85fae655c6e10ac6c36fe1c6a9d2e78dcdb94ee95",
         ),
     }
     for filename, expected in pins.items():

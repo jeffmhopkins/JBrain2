@@ -10,6 +10,7 @@ sidecars (docs/ASSISTANT_PLAN.md P4.4c).
 from pathlib import Path
 from typing import Any, Protocol
 
+from jbrain.agent.appointmenttools import build_appointment_handlers
 from jbrain.agent.connectortools import build_connector_handlers
 from jbrain.agent.contracts import EntityRef, NoteSource
 from jbrain.agent.listtools import build_list_handlers
@@ -20,6 +21,7 @@ from jbrain.agent.proposals import ProposalRepo
 from jbrain.agent.proposaltools import build_proposal_handlers
 from jbrain.agent.toolregistry import ToolRegistry, load_registry
 from jbrain.analysis.relationships import predicate_candidates
+from jbrain.appointments.service import AppointmentsRepo
 from jbrain.connectors.base import ConnectorRegistry
 from jbrain.db.session import SessionContext
 from jbrain.lists.service import ListsRepo
@@ -309,19 +311,22 @@ def build_registry(
     proposals: ProposalRepo,
     connectors: ConnectorRegistry,
     lists: ListsRepo,
+    appointments: AppointmentsRepo,
 ) -> ToolRegistry:
     """The agent's tool registry: every shipped sidecar bound to its handler — the
     read tools, the Tier-A memory tools, the list tools (which write the owner's
-    own data directly), propose_correction (which stages a Proposal, never
-    writes), and the egress connector tools (which stage an egress Proposal, never
-    call out). Fails at startup if a sidecar and handler don't match exactly, so a
-    new .tool can never ship unwired."""
+    own data directly), the appointment read tools (over the notes-derived
+    projection), propose_correction (which stages a Proposal, never writes), and
+    the egress connector tools (which stage an egress Proposal, never call out).
+    Fails at startup if a sidecar and handler don't match exactly, so a new .tool
+    can never ship unwired."""
     return load_registry(
         TOOLS_DIR,
         {
             **build_read_handlers(search, notes, entities),
             **build_entity_handlers(entities),
             **build_list_handlers(lists),
+            **build_appointment_handlers(appointments),
             **build_memory_handlers(memory),
             **build_proposal_handlers(proposals),
             **build_connector_handlers(connectors, proposals),

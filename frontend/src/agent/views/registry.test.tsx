@@ -150,11 +150,41 @@ describe("ToolView registry", () => {
     await waitFor(() => expect(rows().every((r) => r.classList.contains("checked"))).toBe(true));
   });
 
+  it("renders an appointment_card with status flag, location, repeat, attendees", () => {
+    const { getByText } = render(
+      <ToolView
+        payload={payload({
+          view: "appointment_card",
+          data: {
+            id: "A1",
+            title: "Dentist",
+            start: "2026-06-15T14:00:00+00:00",
+            status: "tentative",
+            location: "123 Main St",
+            recurring: true,
+            attendees: ["Dr. Nguyen"],
+          },
+        })}
+      />,
+    );
+    expect(getByText("Dentist")).toBeInTheDocument();
+    expect(getByText("123 Main St")).toBeInTheDocument();
+    expect(getByText("repeats")).toBeInTheDocument();
+    expect(getByText("with Dr. Nguyen")).toBeInTheDocument();
+    // Status is a flag enum the theme colors, never a model-authored color.
+    expect(getByText("tentative")).toHaveClass("flag-tentative");
+  });
+
   it("tolerates missing/extra slots without crashing", () => {
     const { container } = render(<ToolView payload={payload({ view: "data_table" })} />);
     expect(container.querySelector("table")).toBeInTheDocument();
     // A list_card with no items renders the empty row, not a crash.
     const empty = render(<ToolView payload={payload({ view: "list_card" })} />);
     expect(empty.getByText("empty")).toBeInTheDocument();
+    // An appointment_card with only a view name falls back to a default title and
+    // a confirmed status, no crash.
+    const bare = render(<ToolView payload={payload({ view: "appointment_card" })} />);
+    expect(bare.getByText("Appointment")).toBeInTheDocument();
+    expect(bare.getByText("confirmed")).toHaveClass("flag-confirmed");
   });
 });

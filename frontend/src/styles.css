@@ -4615,6 +4615,52 @@ button.small {
   color: var(--text-3);
 }
 
+/* appointment_card — a read-only appointment projected from the owner's notes */
+.fb-shell .tv-appt-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+.fb-shell .tv-appt-title {
+  font-size: 13px;
+  font-weight: 600;
+}
+.fb-shell .tv-appt-status {
+  flex: none;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text-3);
+}
+.fb-shell .tv-appt-status.flag-tentative {
+  color: var(--amber);
+  border-color: var(--amber);
+}
+.fb-shell .tv-appt-status.flag-cancelled {
+  color: var(--rose);
+  border-color: var(--rose);
+}
+.fb-shell .tv-appt.status-cancelled .tv-appt-title {
+  text-decoration: line-through;
+  color: var(--text-3);
+}
+.fb-shell .tv-appt-when {
+  font-size: 13px;
+  margin-top: 3px;
+}
+.fb-shell .tv-appt-loc,
+.fb-shell .tv-appt-repeat,
+.fb-shell .tv-appt-with {
+  font-size: 12px;
+  color: var(--text-2);
+  margin-top: 2px;
+}
+
 /* Proposal tree (the review-inbox detail; docs/ASSISTANT.md "Staging & approval") */
 .fb-shell .proposal-tree {
   flex: 1;
