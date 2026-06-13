@@ -13,8 +13,16 @@ function stubSettingsFetch(initial: "full" | "ocr" = "full") {
   const state = { mode: initial };
   const puts: unknown[] = [];
   const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
-    if (String(input) !== "/api/settings") {
-      throw new Error(`Unexpected fetch: ${String(input)}`);
+    const path = String(input);
+    // The calendar-feed section loads its config on mount; default to disabled.
+    if (path.startsWith("/api/feed/appointments")) {
+      return new Response(JSON.stringify({ enabled: false, token: null }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    if (path !== "/api/settings") {
+      throw new Error(`Unexpected fetch: ${path}`);
     }
     if ((init?.method ?? "GET").toUpperCase() === "PUT") {
       const body = JSON.parse(String(init?.body)) as { image_analysis_mode?: "full" | "ocr" };
@@ -105,5 +113,35 @@ describe("SettingsScreen image analysis", () => {
     );
     await waitFor(() => expect(puts).toEqual([{ image_analysis_mode: "ocr" }]));
     expect(state.mode).toBe("ocr");
+  });
+});
+
+describe("SettingsScreen calendar feed", () => {
+  function json(body: unknown) {
+    return new Response(JSON.stringify(body), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
+  it("generates a subscribe link and shows the URL", async () => {
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      const path = String(input);
+      if (path === "/api/settings") return json({ image_analysis_mode: "full" });
+      if (path === "/api/feed/appointments" && (init?.method ?? "GET").toUpperCase() === "GET") {
+        return json({ enabled: false, token: null });
+      }
+      if (path === "/api/feed/appointments/rotate") {
+        return json({ enabled: true, token: "secret-tok" });
+      }
+      throw new Error(`Unexpected fetch: ${path}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    setup();
+
+    // Disabled on load → a Generate button; after generating, the URL appears.
+    fireEvent.click(await screen.findByRole("button", { name: "Generate link" }));
+    const url = (await screen.findByLabelText("Calendar feed URL")) as HTMLInputElement;
+    expect(url.value).toContain("/api/feed/appointments.ics?token=secret-tok");
   });
 });

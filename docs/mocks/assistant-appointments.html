@@ -1,0 +1,341 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Appointments — card, manage→propose, calendar feed</title>
+<style>
+  :root{
+    --bg:#0E0F11; --surface:#17181B; --surface-2:#1E2024; --border:#26282C;
+    --text:#E6E7E9; --text-2:#9A9DA3; --text-3:#5C5F66;
+    --steel:#7FA7C9; --green:#8FBC9A; --amber:#C9A36A; --rose:#CF8A8F; --violet:#A493C9;
+    --steel-tint:rgba(127,167,201,.13); --green-tint:rgba(143,188,154,.14);
+    --amber-tint:rgba(201,163,106,.15); --rose-tint:rgba(207,138,143,.14);
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+  body{background:#000;color:var(--text);display:flex;flex-direction:column;align-items:center;gap:14px;padding:22px 14px 60px;min-height:100vh;}
+  svg{fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;}
+
+  .caption{width:392px;max-width:94vw;padding:0 6px;color:var(--text-2);font-size:12.5px;line-height:1.55;}
+  .caption b{color:var(--text);font-weight:600;}
+  .caption .tag{display:inline-block;font-size:11px;padding:2px 9px;border-radius:999px;margin-bottom:6px;background:var(--steel-tint);color:var(--steel);}
+
+  .phone{width:392px;max-width:94vw;height:712px;background:var(--bg);border:1px solid #2a2c30;border-radius:32px;overflow:hidden;position:relative;display:flex;flex-direction:column;}
+  .grab{position:absolute;top:7px;left:50%;transform:translateX(-50%);width:36px;height:4px;border-radius:999px;background:var(--border);z-index:5;}
+  .top{height:54px;display:flex;align-items:center;justify-content:space-between;padding:0 18px;flex:none;}
+  .wordmark{font-size:20px;font-weight:700;}.wordmark span{color:var(--steel);}
+  .scopepill{font-size:11px;color:var(--text-2);background:var(--surface-2);border:1px solid var(--border);border-radius:999px;padding:5px 11px;display:inline-flex;align-items:center;gap:6px;}
+  .dot{width:7px;height:7px;border-radius:999px;flex:none;}
+  .d-general{background:var(--steel);}.d-health{background:var(--rose);}.d-finance{background:var(--amber);}.d-location{background:var(--violet);}
+
+  .scene{flex:1;min-height:0;display:none;flex-direction:column;}
+  .scene.on{display:flex;}
+
+  /* ---------- chat ---------- */
+  .stream{flex:1;overflow-y:auto;padding:8px 14px 14px;display:flex;flex-direction:column;gap:12px;}
+  .msg{max-width:84%;font-size:14px;line-height:1.5;}
+  .msg.me{align-self:flex-end;background:var(--steel-tint);color:var(--text);border-radius:16px 16px 4px 16px;padding:9px 13px;}
+  .msg.ai{align-self:flex-start;color:var(--text);}
+  .worked{align-self:flex-start;font-size:11.5px;color:var(--text-3);display:inline-flex;align-items:center;gap:7px;}
+  .worked svg{width:13px;height:13px;color:var(--steel);}
+
+  /* appointment_card — the read_appointment tool view */
+  .appt{align-self:flex-start;width:100%;border:1px solid var(--border);border-radius:14px;background:var(--surface-2);padding:11px 13px;}
+  .appt + .appt{margin-top:-4px;}
+  .appt .hd{display:flex;align-items:baseline;justify-content:space-between;gap:8px;}
+  .appt .ti{font-size:14px;font-weight:600;display:flex;align-items:center;gap:7px;}
+  .appt .st{flex:none;font-size:9.5px;text-transform:uppercase;letter-spacing:.05em;padding:2px 8px;border-radius:999px;background:var(--surface);border:1px solid var(--border);color:var(--text-3);}
+  .appt .st.flag-tentative{color:var(--amber);border-color:var(--amber);}
+  .appt .st.flag-cancelled{color:var(--rose);border-color:var(--rose);}
+  .appt.cancelled .ti{text-decoration:line-through;color:var(--text-3);}
+  .appt .when{font-size:13px;margin-top:4px;}
+  .appt .meta{font-size:12px;color:var(--text-2);margin-top:2px;display:flex;align-items:center;gap:6px;}
+  .appt .meta svg{width:12px;height:12px;color:var(--text-3);}
+
+  /* review-proposal chip */
+  .chip{align-self:flex-start;display:inline-flex;align-items:center;gap:8px;font-size:12.5px;font-weight:600;color:var(--steel);background:var(--steel-tint);border:1px solid transparent;border-radius:999px;padding:8px 13px;cursor:pointer;}
+  .chip svg{width:14px;height:14px;}
+  .chip.done{color:var(--green);background:var(--green-tint);cursor:default;}
+
+  .composer{flex:none;border-top:1px solid var(--border);padding:10px 12px;display:flex;flex-direction:column;gap:8px;}
+  .quick{display:flex;gap:7px;overflow-x:auto;scrollbar-width:none;}
+  .quick::-webkit-scrollbar{display:none;}
+  .qbtn{flex:none;font-size:12px;color:var(--text-2);background:var(--surface-2);border:1px solid var(--border);border-radius:999px;padding:7px 12px;cursor:pointer;white-space:nowrap;}
+  .qbtn:active{background:var(--surface);}
+  .inrow{display:flex;align-items:center;gap:9px;background:var(--surface-2);border:1px solid var(--border);border-radius:999px;padding:7px 8px 7px 15px;}
+  .inrow input{flex:1;background:none;border:none;color:var(--text);font:inherit;font-size:14px;outline:none;}
+  .inrow input::placeholder{color:var(--text-3);}
+  .send{flex:none;width:34px;height:34px;border-radius:999px;border:none;background:var(--steel);color:#0e0f11;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;}
+  .send svg{width:16px;height:16px;stroke:#0e0f11;}
+
+  /* ---------- proposals sheet ---------- */
+  .sheet{position:absolute;inset:0;background:rgba(0,0,0,.5);opacity:0;pointer-events:none;transition:.2s;z-index:20;display:flex;flex-direction:column;justify-content:flex-end;}
+  .sheet.open{opacity:1;pointer-events:auto;}
+  .panel{background:var(--bg);border-radius:22px 22px 0 0;border-top:1px solid var(--border);transform:translateY(20px);transition:transform .24s cubic-bezier(.2,.7,.3,1);padding:8px 16px 20px;max-height:78%;overflow-y:auto;}
+  .sheet.open .panel{transform:translateY(0);}
+  .ph{display:flex;align-items:center;gap:9px;padding:8px 2px 14px;}
+  .ph .badge{width:26px;height:26px;border-radius:8px;background:var(--steel-tint);color:var(--steel);display:inline-flex;align-items:center;justify-content:center;font-size:14px;}
+  .ph h2{font-size:16px;font-weight:700;flex:1;}
+  .ph .x{color:var(--text-3);background:none;border:none;cursor:pointer;}
+  .ph .x svg{width:18px;height:18px;}
+
+  .pcard{border:1px solid var(--border);border-radius:14px;background:var(--surface);padding:13px;}
+  .pcard .lbl{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--text-3);margin-bottom:9px;}
+  .diff{display:flex;align-items:center;gap:10px;}
+  .diff .col{flex:1;border:1px solid var(--border);border-radius:10px;padding:9px 11px;background:var(--surface-2);}
+  .diff .col .k{font-size:10px;color:var(--text-3);text-transform:uppercase;letter-spacing:.05em;}
+  .diff .col .v{font-size:13px;margin-top:3px;}
+  .diff .col.old .v{color:var(--text-3);text-decoration:line-through;}
+  .diff .col.new{border-color:var(--steel);}
+  .diff .arrow{color:var(--text-3);}.diff .arrow svg{width:16px;height:16px;}
+  .src{font-size:11.5px;color:var(--text-3);margin-top:11px;display:flex;align-items:center;gap:6px;}
+  .src svg{width:12px;height:12px;}
+  .pact{display:flex;gap:10px;margin-top:14px;}
+  .pact button{flex:1;padding:12px;border-radius:11px;font:inherit;font-weight:600;font-size:14px;cursor:pointer;border:1px solid var(--border);}
+  .pact .approve{background:var(--green);border-color:var(--green);color:#0e0f11;}
+  .pact .reject{background:none;color:var(--text-2);}
+  .pdone{display:none;flex-direction:column;align-items:center;gap:6px;padding:18px 0 6px;text-align:center;}
+  .pdone svg{width:34px;height:34px;color:var(--green);}
+  .pdone .t{font-size:14px;font-weight:600;}
+  .pdone .s{font-size:12px;color:var(--text-2);line-height:1.5;}
+  .enacted .pcard{display:none;}
+  .enacted .pdone{display:flex;}
+
+  /* ---------- settings: calendar feed ---------- */
+  .sbody{flex:1;overflow-y:auto;padding:8px 16px 20px;}
+  .scard{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:16px;}
+  .scard h2{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--text-3);font-weight:400;margin-bottom:9px;}
+  .smeta{color:var(--text-2);font-size:12.5px;line-height:1.55;margin-bottom:13px;}
+  .smeta b{color:var(--amber);font-weight:600;}
+  .feedurl{width:100%;font-family:ui-monospace,Menlo,monospace;font-size:11px;color:var(--text-2);background:var(--surface-2);border:1px solid var(--border);border-radius:10px;padding:9px 11px;margin-bottom:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .sactions{display:flex;flex-wrap:wrap;gap:8px;}
+  .seg{font-size:13px;font-weight:600;color:var(--steel);background:var(--steel-tint);border:1px solid transparent;border-radius:999px;padding:9px 15px;cursor:pointer;}
+  .seg.ghost{color:var(--text-2);background:var(--surface-2);border-color:var(--border);}
+  .seg.danger{color:var(--rose);background:none;border-color:var(--rose-tint);}
+  .hidden{display:none !important;}
+
+  /* ---------- tab bar ---------- */
+  .tabs{flex:none;display:flex;border-top:1px solid var(--border);background:var(--bg);}
+  .tab{flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;padding:9px 0 11px;color:var(--text-3);background:none;border:none;cursor:pointer;font:inherit;font-size:10.5px;}
+  .tab svg{width:21px;height:21px;}
+  .tab.on{color:var(--steel);}
+
+  .toast{position:absolute;left:50%;bottom:78px;transform:translate(-50%,8px);background:var(--surface-2);border:1px solid var(--border);border-radius:999px;padding:8px 16px;font-size:12.5px;color:var(--steel);opacity:0;pointer-events:none;transition:.18s;z-index:40;white-space:nowrap;}
+  .toast.show{transform:translate(-50%,0);opacity:1;}
+</style>
+</head>
+<body>
+  <div class="caption">
+    <span class="tag">Appointments · read card · manage→propose · calendar feed</span><br/>
+    The agent answers calendar questions with the read-only <b>appointment_card</b> view (status is a flag,
+    never a colour the model picks). Asking to move one <b>stages a Proposal</b> — a tappable “Review proposal”
+    chip, never a silent write — that you approve as a before→after diff; it then re-enters as a dated note.
+    <b>Settings → Calendar feed</b> mints a revocable subscribe URL (labelled that it carries titles off-box).
+    Try the quick-prompts, the chip, and the feed buttons.
+  </div>
+
+  <div class="phone" id="P">
+    <div class="grab"></div>
+    <div class="top">
+      <div class="wordmark">JBrain<span>.</span></div>
+      <span class="scopepill"><span class="dot d-general"></span> Full brain · all domains</span>
+    </div>
+
+    <!-- ASK -->
+    <section class="scene on" id="ask">
+      <div class="stream" id="stream">
+        <div class="msg me">what’s on my calendar this week?</div>
+        <div class="worked"><svg viewBox="0 0 24 24"><path d="M4 12h16M4 6h16M4 18h10"/></svg>read_appointments · 3 found</div>
+        <div class="msg ai">You’ve got three coming up:</div>
+        <div class="appt">
+          <div class="hd"><span class="ti"><span class="dot d-health"></span>Dentist — Dr. Nguyen</span><span class="st flag-tentative">tentative</span></div>
+          <div class="when">Mon Jun 15, 2:00 PM</div>
+          <div class="meta"><svg viewBox="0 0 24 24"><path d="M12 21s-7-5.2-7-10a7 7 0 1 1 14 0c0 4.8-7 10-7 10z"/><circle cx="12" cy="11" r="2.4"/></svg>Maple Dental, 2nd floor</div>
+        </div>
+        <div class="appt">
+          <div class="hd"><span class="ti"><span class="dot d-general"></span>Team standup</span><span class="st">confirmed</span></div>
+          <div class="when">Tue Jun 16, 10:00 AM</div>
+          <div class="meta"><svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></svg>repeats · weekly</div>
+        </div>
+        <div class="appt">
+          <div class="hd"><span class="ti"><span class="dot d-general"></span>Lunch with Sam</span><span class="st">confirmed</span></div>
+          <div class="when">Thu Jun 18, 12:30 PM</div>
+        </div>
+      </div>
+      <div class="composer">
+        <div class="quick" id="quick">
+          <button class="qbtn" data-flow="move">Move my dentist to Mon 3pm</button>
+          <button class="qbtn" data-flow="cancel">Cancel the standup</button>
+          <button class="qbtn" data-flow="recurring">When’s my standup?</button>
+        </div>
+        <div class="inrow">
+          <input id="inp" placeholder="Ask your brain…" />
+          <button class="send" id="send"><svg viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button>
+        </div>
+      </div>
+    </section>
+
+    <!-- SETTINGS -->
+    <section class="scene" id="settings">
+      <div class="sbody">
+        <div class="scard">
+          <h2>Calendar feed</h2>
+          <p class="smeta">Subscribe a calendar app to your appointments, read-only. The link carries appointment
+            titles from <b>every domain — including health and finance</b> — off your box into whatever calendar
+            subscribes, so keep it private; disable it to cut access instantly.</p>
+
+          <div id="feedOff">
+            <button class="seg" id="genBtn">Generate link</button>
+          </div>
+          <div id="feedOn" class="hidden">
+            <div class="feedurl" id="feedUrl"></div>
+            <div class="sactions">
+              <button class="seg" id="copyBtn">Copy link</button>
+              <button class="seg ghost" id="regenBtn">Regenerate</button>
+              <button class="seg danger" id="disBtn">Disable</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- proposals sheet -->
+    <div class="sheet" id="sheet">
+      <div class="panel" id="panel">
+        <div class="grab"></div>
+        <div class="ph">
+          <span class="badge">◷</span>
+          <h2 id="pTitle">Reschedule appointment</h2>
+          <button class="x" id="pClose"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+        </div>
+        <div class="pcard">
+          <div class="lbl" id="pKind">appointment · 1 change</div>
+          <div class="diff" id="pDiff">
+            <div class="col old"><div class="k">Dentist — Dr. Nguyen</div><div class="v">Mon Jun 15, 2:00 PM</div></div>
+            <span class="arrow"><svg viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
+            <div class="col new"><div class="k">Dentist — Dr. Nguyen</div><div class="v">Mon Jun 22, 3:00 PM</div></div>
+          </div>
+          <div class="src"><svg viewBox="0 0 24 24"><path d="M7 8h10M7 12h10M7 16h6"/><rect x="3" y="3" width="18" height="18" rx="3"/></svg>Re-enters as a normal, dated note · provenance: agent</div>
+          <div class="pact">
+            <button class="reject" id="pReject">Reject</button>
+            <button class="approve" id="pApprove">Approve</button>
+          </div>
+        </div>
+        <div class="pdone">
+          <svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg>
+          <div class="t" id="pDoneT">Approved — updating your calendar</div>
+          <div class="s">It re-enters as a dated note, extraction supersedes the old time, and the appointment moves. The ICS feed updates on its next refresh.</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="toast" id="toast"></div>
+
+    <!-- tabs -->
+    <div class="tabs">
+      <button class="tab on" data-scene="ask">
+        <svg viewBox="0 0 24 24"><path d="M21 11.5a8.4 8.4 0 0 1-11.9 7.6L3 21l1.9-5.7A8.4 8.4 0 1 1 21 11.5z"/></svg>Ask</button>
+      <button class="tab" data-scene="settings">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.2"/><path d="M19.4 13a7.6 7.6 0 0 0 .1-2l1.8-1.4-1.8-3-2.2.9a7.4 7.4 0 0 0-1.7-1l-.3-2.3H9.4l-.3 2.3a7.4 7.4 0 0 0-1.7 1l-2.2-.9-1.8 3L5.2 11a7.6 7.6 0 0 0 0 2l-1.8 1.4 1.8 3 2.2-.9c.5.4 1.1.7 1.7 1l.3 2.3h5.2l.3-2.3c.6-.3 1.2-.6 1.7-1l2.2.9 1.8-3z"/></svg>Settings</button>
+    </div>
+  </div>
+
+<script>
+  const $ = s => document.querySelector(s);
+  const stream = $('#stream'), toast = $('#toast');
+  let toastT;
+  function flash(msg){ toast.textContent = msg; toast.classList.add('show'); clearTimeout(toastT); toastT = setTimeout(()=>toast.classList.remove('show'), 1500); }
+  function scrollDown(){ stream.scrollTop = stream.scrollHeight; }
+
+  // tabs
+  document.querySelectorAll('.tab').forEach(t => t.onclick = () => {
+    document.querySelectorAll('.tab').forEach(x=>x.classList.toggle('on', x===t));
+    document.querySelectorAll('.scene').forEach(s=>s.classList.toggle('on', s.id===t.dataset.scene));
+  });
+
+  // append helpers
+  function add(html){ const d=document.createElement('div'); d.innerHTML=html.trim(); const el=d.firstChild; stream.appendChild(el); scrollDown(); return el; }
+  function me(text){ add(`<div class="msg me">${text}</div>`); }
+  function worked(text){ add(`<div class="worked"><svg viewBox="0 0 24 24"><path d="M4 12h16M4 6h16M4 18h10"/></svg>${text}</div>`); }
+
+  // flows triggered by quick-prompts / typed input
+  const flows = {
+    move(){
+      me('Move my dentist to next Monday at 3pm');
+      setTimeout(()=>{ worked('manage_appointment · staged'); }, 350);
+      setTimeout(()=>{
+        add(`<div class="msg ai">I’ve staged that for your approval — I won’t change your calendar until you OK it. It then re-enters as a normal, dated note.</div>`);
+        const chip = add(`<div class="chip" id="reviewChip"><svg viewBox="0 0 24 24"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>Review proposal</div>`);
+        chip.onclick = openSheet;
+      }, 750);
+    },
+    cancel(){
+      me('Cancel the standup');
+      setTimeout(()=> worked('manage_appointment · staged'), 350);
+      setTimeout(()=>{
+        add(`<div class="msg ai">Staged a request to cancel it. Once you approve, it’s marked cancelled — the calendar feed sends a removal to anything subscribed.</div>`);
+        cancelMode = true;
+        const chip = add(`<div class="chip"><svg viewBox="0 0 24 24"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>Review proposal</div>`);
+        chip.onclick = openSheet;
+      }, 750);
+    },
+    recurring(){
+      me('When’s my standup?');
+      setTimeout(()=> worked('read_appointment'), 350);
+      setTimeout(()=>{
+        add(`<div class="msg ai">It’s your weekly team standup:</div>`);
+        const el = add(`<div class="appt">
+          <div class="hd"><span class="ti"><span class="dot d-general"></span>Team standup</span><span class="st">confirmed</span></div>
+          <div class="when">Tue Jun 16, 10:00 AM</div>
+          <div class="meta"><svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></svg>repeats · every Tue (FREQ=WEEKLY;BYDAY=TU)</div>
+        </div>`);
+      }, 700);
+    }
+  };
+  let cancelMode = false;
+
+  document.querySelectorAll('.qbtn').forEach(b => b.onclick = () => { (flows[b.dataset.flow]||(()=>{}))(); });
+  function typed(){ const v=$('#inp').value.trim(); if(!v) return; $('#inp').value=''; me(v);
+    setTimeout(()=>add(`<div class="msg ai">In the real app this runs the tool loop. Try a quick-prompt below to see the appointment card and the propose-to-change flow.</div>`),400); }
+  $('#send').onclick = typed;
+  $('#inp').addEventListener('keydown', e=>{ if(e.key==='Enter') typed(); });
+
+  // proposals sheet
+  const sheet=$('#sheet'), panel=$('#panel');
+  function openSheet(){
+    panel.classList.remove('enacted'); $('#pReject').disabled=false; $('#pApprove').disabled=false;
+    if(cancelMode){
+      $('#pTitle').textContent='Cancel appointment';
+      $('#pKind').textContent='appointment · 1 change';
+      $('#pDiff').innerHTML = `<div class="col old" style="flex:none;width:46px;text-align:center;"><div class="k">was</div><div class="v">✓</div></div>
+        <span class="arrow"><svg viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
+        <div class="col new" style="border-color:var(--rose)"><div class="k">Team standup · Tue 10:00 AM</div><div class="v" style="color:var(--rose)">Cancelled</div></div>`;
+      $('#pDoneT').textContent='Approved — cancelling';
+    } else {
+      $('#pTitle').textContent='Reschedule appointment';
+      $('#pKind').textContent='appointment · 1 change';
+      $('#pDiff').innerHTML = `<div class="col old"><div class="k">Dentist — Dr. Nguyen</div><div class="v">Mon Jun 15, 2:00 PM</div></div>
+        <span class="arrow"><svg viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
+        <div class="col new"><div class="k">Dentist — Dr. Nguyen</div><div class="v">Mon Jun 22, 3:00 PM</div></div>`;
+      $('#pDoneT').textContent='Approved — updating your calendar';
+    }
+    sheet.classList.add('open');
+  }
+  $('#pClose').onclick = ()=> sheet.classList.remove('open');
+  sheet.onclick = e => { if(e.target===sheet) sheet.classList.remove('open'); };
+  $('#pReject').onclick = ()=>{ sheet.classList.remove('open'); flash('Proposal rejected'); };
+  $('#pApprove').onclick = ()=>{ panel.classList.add('enacted');
+    setTimeout(()=>{ sheet.classList.remove('open'); flash(cancelMode?'Standup cancelled':'Dentist moved to Jun 22'); cancelMode=false; }, 1400); };
+
+  // calendar feed
+  const tok = () => 'jbf_' + Math.random().toString(36).slice(2,10) + Math.random().toString(36).slice(2,8);
+  function showFeed(){ $('#feedOff').classList.add('hidden'); $('#feedOn').classList.remove('hidden');
+    $('#feedUrl').textContent = 'https://jbrain.local/api/feed/appointments.ics?token=' + tok(); }
+  $('#genBtn').onclick = showFeed;
+  $('#regenBtn').onclick = ()=>{ showFeed(); flash('New link — old one revoked'); };
+  $('#copyBtn').onclick = ()=>{ flash('Copied'); $('#copyBtn').textContent='Copied'; setTimeout(()=>$('#copyBtn').textContent='Copy link',1200); };
+  $('#disBtn').onclick = ()=>{ $('#feedOn').classList.add('hidden'); $('#feedOff').classList.remove('hidden'); flash('Feed disabled'); };
+</script>
+</body>
+</html>

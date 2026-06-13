@@ -6,6 +6,7 @@ import { MoveDomainSheet } from "./components/MoveDomainSheet";
 import { TopBar } from "./components/TopBar";
 import { useNoteActions } from "./notes/useNoteActions";
 import { type StreamAttachment, type StreamItem, useNotes } from "./notes/useNotes";
+import { CalendarScreen } from "./screens/CalendarScreen";
 import { EntityListScreen } from "./screens/EntityListScreen";
 import { EntityScreen } from "./screens/EntityScreen";
 import { GraphScreen } from "./screens/GraphScreen";
@@ -29,7 +30,7 @@ type Session =
   | { status: "anonymous" }
   | { status: "in"; principal: Principal };
 
-type Card = "ops" | "settings" | "search" | "review" | "entities" | "lists" | "graph";
+type Card = "ops" | "settings" | "search" | "review" | "entities" | "lists" | "calendar" | "graph";
 
 const SCREEN_TITLES: Record<Card, string> = {
   ops: "Ops",
@@ -38,6 +39,7 @@ const SCREEN_TITLES: Record<Card, string> = {
   review: "Review",
   entities: "Entities",
   lists: "Lists",
+  calendar: "Calendar",
   graph: "Map",
 };
 
@@ -295,6 +297,7 @@ export function App() {
             <SettingsScreen deviceLabel={session.principal.label} onLogout={() => void logout()} />
           )}
           {card === "search" && <SearchScreen onOpenResult={openNoteFromSearch} />}
+          {card === "calendar" && <CalendarScreen />}
           {card === "review" && <ReviewScreen />}
           {/* Rows open the same entity layer the analysis chips use. */}
           {card === "entities" && <EntityListScreen onOpenEntity={setEntityView} />}

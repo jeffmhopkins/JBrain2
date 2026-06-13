@@ -161,6 +161,58 @@ function ListCard({ data }: ViewProps): ReactNode {
   );
 }
 
+function fmtWhen(data: Record<string, unknown>): string {
+  const start = typeof data.start === "string" ? data.start : "";
+  if (!start) return "";
+  const d = new Date(start);
+  if (Number.isNaN(d.getTime())) return start;
+  if (data.all_day) {
+    return d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+  }
+  const when = d.toLocaleString(undefined, {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+  const rawEnd = typeof data.end === "string" ? data.end : "";
+  const end = rawEnd ? new Date(rawEnd) : null;
+  if (end && !Number.isNaN(end.getTime())) {
+    return `${when}–${end.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}`;
+  }
+  return when;
+}
+
+// The appointment.yaml Lifecycle enum; the component maps it to a flag class so
+// the theme owns the palette (DESIGN.md: status is a flag enum, never a color).
+const APPT_STATUSES = new Set(["tentative", "confirmed", "cancelled", "occurred"]);
+function apptStatus(value: unknown): string {
+  return typeof value === "string" && APPT_STATUSES.has(value) ? value : "confirmed";
+}
+
+/** One appointment: `{title, start, end?, all_day, status, location?, rrule?,
+ * recurring, attendees: string[]}` — a read-only card projected from the owner's
+ * notes (the manage actions land in P4 PR4). Times localize to the owner's zone;
+ * status is a flag enum the theme colors. */
+function AppointmentCard({ data }: ViewProps): ReactNode {
+  const status = apptStatus(data.status);
+  const location = typeof data.location === "string" ? data.location : "";
+  const attendees = asStrings(data.attendees);
+  return (
+    <div className={`tv-appt status-${status}`}>
+      <div className="tv-appt-head">
+        <span className="tv-appt-title">{String(data.title ?? "Appointment")}</span>
+        <span className={`tv-appt-status flag-${status}`}>{status}</span>
+      </div>
+      <div className="tv-appt-when">{fmtWhen(data)}</div>
+      {location && <div className="tv-appt-loc">{location}</div>}
+      {data.recurring ? <div className="tv-appt-repeat">repeats</div> : null}
+      {attendees.length > 0 && <div className="tv-appt-with">with {attendees.join(", ")}</div>}
+    </div>
+  );
+}
+
 function refKey(ref: CitationRef): string {
   if (ref.kind === "fact") return `fact:${ref.fact_id}`;
   if (ref.kind === "entity") return `entity:${ref.entity_id}`;
@@ -188,6 +240,7 @@ const REGISTRY: Record<string, (props: ViewProps) => ReactNode> = {
   data_table: DataTable,
   citation_card: CitationCard,
   list_card: ListCard,
+  appointment_card: AppointmentCard,
 };
 
 export function isKnownView(name: string): boolean {

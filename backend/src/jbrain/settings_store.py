@@ -20,6 +20,10 @@ IMAGE_ANALYSIS_MODES: tuple[ImageAnalysisMode, ...] = ("full", "ocr")
 IMAGE_ANALYSIS_DEFAULT: ImageAnalysisMode = "full"
 IMAGE_ANALYSIS_KEY = "image_analysis_mode"
 
+# The secret in the read-only appointments ICS feed URL. Absent/null = no feed
+# (disabled); rotating it instantly invalidates the old subscribe URL.
+FEED_TOKEN_KEY = "appointments_feed_token"
+
 
 class SqlSettingsStore:
     def __init__(self, maker: async_sessionmaker[AsyncSession]):

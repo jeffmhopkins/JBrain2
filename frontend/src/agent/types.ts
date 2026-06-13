@@ -150,6 +150,7 @@ export interface ChatRequest {
 export type ProposalKind =
   | "correction"
   | "knowledge"
+  | "appointment"
   | "wiki-restructure"
   | "prompt-edit"
   | "skill-promotion"
