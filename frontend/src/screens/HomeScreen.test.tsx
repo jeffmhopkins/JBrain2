@@ -99,6 +99,37 @@ describe("HomeScreen compose handoff", () => {
     );
     expect(onComposeConsumed).toHaveBeenCalled();
   });
+
+  it("starts an all-domains session when the handoff finds none", async () => {
+    const createSession = vi.fn(async () => ({
+      id: "new",
+      title: "",
+      status: "active",
+      domain_scopes: ["general", "health", "finance", "location"],
+      subject_ids: [],
+      created_at: "2026-06-13T00:00:00Z",
+      last_active_at: "2026-06-13T00:00:00Z",
+    }));
+    const deps = { ...fbDeps(), listSessions: vi.fn(async () => []), createSession };
+    render(
+      <HomeScreen
+        notes={fakeController()}
+        actions={fakeActions()}
+        onOpenNote={vi.fn()}
+        onOpenSearch={vi.fn()}
+        onOpenLauncher={vi.fn()}
+        fbDeps={deps}
+        composePrompt={'Cancel my "Dentist" appointment.'}
+        onComposeConsumed={vi.fn()}
+      />,
+    );
+    // No session existed, so the owner-only handoff starts an all-domains one.
+    await waitFor(() =>
+      expect(createSession).toHaveBeenCalledWith({
+        domain_scopes: ["general", "health", "finance", "location"],
+      }),
+    );
+  });
 });
 
 function streamItem() {
