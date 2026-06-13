@@ -38,6 +38,7 @@ from jbrain.analysis.prompt import (
     PROMPT_VERSION,
     SYSTEM_PROMPT,
     build_user_prompt,
+    fact_cap,
 )
 from jbrain.config import Settings
 from jbrain.llm import build_router
@@ -237,8 +238,9 @@ async def _run(cases: list[dict[str, Any]]) -> list[CaseResult]:
     results: list[CaseResult] = []
     for case in cases:
         anchor = datetime.fromisoformat(case["created_at"])
+        cap = fact_cap(case["body"])
         user = build_user_prompt(
-            [case["body"]], anchor=anchor, domain=case.get("domain", "general")
+            [case["body"]], anchor=anchor, domain=case.get("domain", "general"), max_facts=cap
         )
         try:
             out = await router.complete(
@@ -249,7 +251,7 @@ async def _run(cases: list[dict[str, Any]]) -> list[CaseResult]:
                 max_tokens=EXTRACT_MAX_TOKENS,
                 strength=NOTE_EXTRACT_STRENGTH,
             )
-            r = _score(case, parse_extraction(out.parsed, anchor=anchor), anchor)
+            r = _score(case, parse_extraction(out.parsed, anchor=anchor, max_facts=cap), anchor)
         except Exception as exc:  # a live call can fail many ways; report, don't crash the run
             r = CaseResult(name=case["name"], error=f"{type(exc).__name__}: {exc}")
         _print_case(r)

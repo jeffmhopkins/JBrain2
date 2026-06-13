@@ -24,9 +24,11 @@ from jbrain.analysis.pipeline import local_anchor
 from jbrain.analysis.prompt import (
     EXTRACTION_SCHEMA,
     MAX_FACTS,
+    MIN_FACTS,
     PROMPT_VERSION,
     SYSTEM_PROMPT,
     build_user_prompt,
+    fact_cap,
 )
 
 
@@ -122,12 +124,49 @@ def _raw_fact(i: int) -> dict[str, Any]:
 
 def test_facts_hard_capped_at_max_facts_keeping_first() -> None:
     """H1: the prompt's soft cap has server-side teeth; order is the model's
-    salience ranking, so the FIRST N survive."""
+    salience ranking, so the FIRST N survive. Omitting max_facts defaults to the
+    hard ceiling."""
     payload = valid_payload()
     payload["facts"] = [_raw_fact(i) for i in range(MAX_FACTS + 18)]
     parsed = parse_extraction(payload)
     assert len(parsed.facts) == MAX_FACTS
     assert [f.qualifier for f in parsed.facts] == [f"q{i}" for i in range(MAX_FACTS)]
+
+
+def test_facts_capped_at_the_per_note_budget_passed_in() -> None:
+    """A short note's smaller budget trims harder than the ceiling: the pipeline
+    passes fact_cap(note), and the parser enforces exactly that number."""
+    payload = valid_payload()
+    payload["facts"] = [_raw_fact(i) for i in range(20)]
+    parsed = parse_extraction(payload, max_facts=MIN_FACTS)
+    assert len(parsed.facts) == MIN_FACTS
+    assert [f.qualifier for f in parsed.facts] == [f"q{i}" for i in range(MIN_FACTS)]
+
+
+def test_dropped_facts_reports_the_truncation_count() -> None:
+    """The pipeline surfaces a hit budget as a review card, so the count of
+    clipped tail facts must ride out on the Extraction."""
+    payload = valid_payload()
+    payload["facts"] = [_raw_fact(i) for i in range(MIN_FACTS + 5)]
+    parsed = parse_extraction(payload, max_facts=MIN_FACTS)
+    assert len(parsed.facts) == MIN_FACTS
+    assert parsed.dropped_facts == 5
+
+
+def test_dropped_facts_is_zero_within_budget() -> None:
+    assert parse_extraction(valid_payload()).dropped_facts == 0
+
+
+def test_fact_cap_scales_with_length_and_clamps() -> None:
+    """The budget floors at MIN_FACTS for short notes, scales up with word count,
+    and is bounded by the hard ceiling — so a long entry is no longer truncated
+    at the old static 12 while a one-liner keeps a generous floor."""
+    assert fact_cap("") == MIN_FACTS
+    assert fact_cap(" ".join(["w"] * 30)) == MIN_FACTS  # dense short note: floor
+    assert fact_cap(" ".join(["w"] * 90)) == MIN_FACTS  # still floored
+    mid = fact_cap(" ".join(["w"] * 160))
+    assert MIN_FACTS < mid < MAX_FACTS  # scales between the bounds
+    assert fact_cap(" ".join(["w"] * 4000)) == MAX_FACTS  # bounded by the ceiling
 
 
 def test_oversized_identity_key_rejects_the_fact() -> None:
@@ -265,6 +304,30 @@ def test_system_prompt_v2_teaches_kind_discipline_and_schema_org_names() -> None
     assert "in 3 months" in SYSTEM_PROMPT and "expected" in SYSTEM_PROMPT
 
 
+def test_system_prompt_v10_teaches_enumerated_and_symmetric_relationships() -> None:
+    """The four-daughters discrepancy: the model emitted ONE child edge (Summer)
+    and rendered the twin link as an attribute whose value was the whole
+    sentence. v10 must teach one edge per enumerated individual, the canonical
+    kinship predicates, and that a relationship between named people is never an
+    attribute restating the sentence."""
+    # Enumerated relationships fan out to one edge per person.
+    assert "ONE edge PER named individual" in SYSTEM_PROMPT
+    assert "Me.children -> Summer" in SYSTEM_PROMPT and "Me.children -> Harmony" in SYSTEM_PROMPT
+    # Canonical kinship predicates the model converges on (so reciprocals fire).
+    for canonical in ("children", "parent", "sibling"):
+        assert canonical in SYSTEM_PROMPT, canonical
+    # Twins/siblings are a SYMMETRIC relationship edge, never a twinStatus attribute.
+    assert "twinStatus" in SYSTEM_PROMPT  # named as the anti-pattern
+    assert "Lydian.sibling -> Elora" in SYSTEM_PROMPT
+    assert 'qualifier "twin"' in SYSTEM_PROMPT
+
+
+def test_user_prompt_carries_the_per_note_fact_budget() -> None:
+    anchor = datetime(2026, 6, 10, 9, 30, tzinfo=UTC)
+    prompt = build_user_prompt(["a note"], anchor=anchor, domain="general", max_facts=17)
+    assert "Fact budget for this note: at most 17 facts" in prompt
+
+
 def test_system_prompt_v3_teaches_possessive_decomposition_and_no_normalizing() -> None:
     """Field gap: 'Summer's rat's name is Ricky' came back as ONE owner edge
     (no name attribute on Ricky, kind 'pet'), and a later 'the rat' mention
@@ -323,8 +386,8 @@ def test_system_prompt_v5_teaches_object_person_and_backward_temporal() -> None:
     assert "last night" in SYSTEM_PROMPT and "PRIOR calendar day" in SYSTEM_PROMPT
 
 
-def test_prompt_version_bumped_to_v9() -> None:
-    assert PROMPT_VERSION == "note-extract-v9"
+def test_prompt_version_bumped_to_v10() -> None:
+    assert PROMPT_VERSION == "note-extract-v10"
 
 
 def test_system_prompt_v9_teaches_inanimate_ownership_edges() -> None:

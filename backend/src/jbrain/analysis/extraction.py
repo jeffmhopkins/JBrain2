@@ -93,6 +93,10 @@ class Extraction:
     mentions: list[ExtractedMention]
     facts: list[ExtractedFact]
     tokens: list[ExtractedToken]
+    # How many facts the per-note budget dropped from the tail (0 = none). The
+    # pipeline surfaces a non-zero count as a review card so a truncated long
+    # note is visible, not silently clipped.
+    dropped_facts: int = 0
 
 
 def parse_datetime(value: Any) -> datetime | None:
@@ -620,13 +624,19 @@ def _recover_object_ref(
     return next(iter(named)) if len(named) == 1 else None
 
 
-def parse_extraction(payload: Any, *, anchor: datetime | None = None) -> Extraction:
+def parse_extraction(
+    payload: Any, *, anchor: datetime | None = None, max_facts: int = MAX_FACTS
+) -> Extraction:
     """Validate the parsed JSON into typed extraction objects.
 
     When `anchor` (the capture time in the note's local offset) is given,
     backward relative phrases the model mis-resolved are repaired against it
     (validate_backward_temporal); callers that don't care about temporal
     correctness — most unit tests — omit it and get the raw resolution.
+
+    `max_facts` is the per-note cap (the pipeline passes fact_cap(note); callers
+    that omit it get the hard ceiling). It enforces the same budget the user
+    prompt advertised, so a model that over-extracts is trimmed to the tail.
 
     Raises:
         ExtractionError: the top-level shape is wrong (permanent failure).
@@ -744,12 +754,14 @@ def parse_extraction(payload: Any, *, anchor: datetime | None = None) -> Extract
     # Dedup BEFORE the cap: restatements must not eat salience slots.
     facts = dedup_facts(facts)
 
-    if len(facts) > MAX_FACTS:
+    dropped_facts = max(0, len(facts) - max_facts)
+    if dropped_facts:
         # The prompt's soft cap, enforced: keep the FIRST N — fact order is
         # the model's salience ranking, so the tail is the trivia the prompt
-        # told it to skip (docs/ANALYSIS.md "soft cap on facts-per-note").
-        log.warning("analysis.facts_capped", kept=MAX_FACTS, dropped=len(facts) - MAX_FACTS)
-        facts = facts[:MAX_FACTS]
+        # told it to skip (docs/ANALYSIS.md "soft cap on facts-per-note"). The
+        # count rides out on the Extraction so the pipeline can flag it.
+        log.warning("analysis.facts_capped", kept=max_facts, dropped=dropped_facts)
+        facts = facts[:max_facts]
 
     tokens: list[ExtractedToken] = []
     for raw in payload.get("temporal_tokens") or []:
@@ -804,4 +816,5 @@ def parse_extraction(payload: Any, *, anchor: datetime | None = None) -> Extract
         mentions=mentions,
         facts=facts,
         tokens=tokens,
+        dropped_facts=dropped_facts,
     )

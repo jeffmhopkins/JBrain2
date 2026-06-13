@@ -675,10 +675,11 @@ class SqlAnalysisRepo:
                 {"action": "distinct_from", "a": a, "b": b, "inserted": inserted is not None}
             ]
 
-        if kind == "ambiguous_mention" and action == "reject":
-            # The card's only advertised verb: leaving the mention unlinked
-            # changes no data, so this is a dismissal — layer-2/3 resolution
-            # may re-propose the link with more signal.
+        if kind in ("ambiguous_mention", "extraction_truncated") and action == "reject":
+            # An informational card's only advertised verb: it wrote no graph
+            # state, so resolving it is a dismissal. ambiguous_mention may be
+            # re-proposed with more signal; extraction_truncated is acknowledged
+            # (the owner re-runs with a larger budget if they want the tail).
             return "dismissed", []
 
         if kind == "domain_promotion" and action in ("accept", "reject"):
