@@ -141,6 +141,39 @@ def test_merge_and_distinct_proposals_carried_for_review():
     assert len(plan.distinct_proposals) == 1
 
 
+def test_weight_gated_review_records_below_threshold_reason():
+    plan = plan_intent(
+        _intent(
+            entity_resolutions=[_res()],
+            facts=[_fact(predicate="gender", kind="attribute", inferred=True, attested_span=None)],
+        ),
+        signals={0: _inferred_overwrite_sig()},
+    )
+    assert plan.to_review[0].review_reasons == ("below_threshold",)
+
+
+def test_self_edge_flag_reason_is_not_duplicated():
+    # Same flagged mention as both subject and object → one reason, not two.
+    plan = plan_intent(
+        _intent(
+            entity_resolutions=[_res(cross_subject=True)],
+            facts=[_fact(entity_ref="m1", object_entity_ref="m1")],
+        ),
+        signals={0: _surface_sig()},
+    )
+    assert plan.to_review[0].review_reasons == ("cross_subject_link",)
+
+
+def test_review_severity_violation_does_not_reject():
+    # A surface fact with no span is a REVIEW-level violation, not fatal: the
+    # intent is not rejected (only fatal violations hold the whole intent).
+    plan = plan_intent(
+        _intent(entity_resolutions=[_res()], facts=[_fact(attested_span=None)]),
+        signals={0: _surface_sig()},
+    )
+    assert plan.rejected is False
+
+
 def test_mixed_intent_partitions_correctly():
     plan = plan_intent(
         _intent(

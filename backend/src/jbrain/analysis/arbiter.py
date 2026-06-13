@@ -108,13 +108,21 @@ def plan_intent(
     for i, fact in enumerate(intent.facts):
         weight = effective_weight(fact.self_confidence, sig.get(i, _CONSERVATIVE))
         status = commit_status(fact.kind, weight)
-        reasons = [
-            flagged[ref]
-            for ref in (fact.entity_ref, fact.object_entity_ref)
-            if ref is not None and ref in flagged
-        ]
+        # Order-preserving de-dup: a self-edge (same flagged mention as both
+        # subject and object) must not repeat its reason.
+        reasons = list(
+            dict.fromkeys(
+                flagged[ref]
+                for ref in (fact.entity_ref, fact.object_entity_ref)
+                if ref is not None and ref in flagged
+            )
+        )
         if reasons:
             status = "pending_review"
+        elif status == "pending_review":
+            # Held purely by the weight ceiling — record a machine-readable
+            # reason so the inbox (A1b) needn't reconstruct it from weight+kind.
+            reasons = ["below_threshold"]
         planned.append(
             PlannedFact(fact=fact, weight=weight, status=status, review_reasons=tuple(reasons))
         )
