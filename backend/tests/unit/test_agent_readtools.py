@@ -409,8 +409,15 @@ async def test_relate_needs_a_relationship() -> None:
 
 def test_format_relations_shows_the_edge_and_ids() -> None:
     out = format_relations(
-        [{"id": "e9", "kind": "Person", "canonical_name": "Celine", "domain": "general",
-          "predicate": "spouse"}]
+        [
+            {
+                "id": "e9",
+                "kind": "Person",
+                "canonical_name": "Celine",
+                "domain": "general",
+                "predicate": "spouse",
+            }
+        ]
     )
     assert out == "- spouse → Celine [Person] (general) id=e9"
 
