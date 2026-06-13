@@ -13,7 +13,7 @@ import {
 } from "react";
 import { type ListItemOut, type ListOut, api } from "../api/client";
 import { TopBar } from "../components/TopBar";
-import { XIcon } from "../components/icons";
+import { TrashIcon } from "../components/icons";
 import { DOMAIN_COLOR } from "../notes/modes";
 import type { SyncStatus } from "../notes/useNotes";
 
@@ -224,7 +224,7 @@ export function ListDetailScreen({ listId, syncStatus, onClose }: ListDetailScre
                       aria-label={`Delete ${it.body}`}
                       onClick={() => removeItem(it)}
                     >
-                      <XIcon size={14} />
+                      <TrashIcon size={15} />
                     </button>
                   </li>
                 ) : (

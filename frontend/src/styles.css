@@ -4286,18 +4286,22 @@ input.ld-title {
 }
 .ld-del {
   flex: none;
-  width: 23px;
-  height: 23px;
+  width: 26px;
+  height: 26px;
   border-radius: 999px;
   border: none;
-  /* Solid rose with a dark glyph — the platform's edit-mode delete. A tinted
-     bg with a rose glyph (rose-on-rose) read as an empty pill. */
+  /* Solid rose with a dark glyph — the platform's edit-mode delete. */
   background: var(--rose);
-  color: var(--bg);
   display: inline-flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
+}
+/* Force the glyph color explicitly: the svg's stroke="currentColor" attribute
+   loses to any inherited `color`, so pin the stroke here rather than rely on it. */
+.ld-del svg {
+  stroke: var(--bg);
+  fill: none;
 }
 .ld-add {
   display: flex;
