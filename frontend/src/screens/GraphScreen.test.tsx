@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { type EgoGraph, type EntityOut, type FactOut, api } from "../api/client";
-import { GraphScreen } from "./GraphScreen";
+import { GraphScreen, clampScale, focalZoom } from "./GraphScreen";
 
 const GRAPH: EgoGraph = {
   root: "me",
@@ -63,8 +63,22 @@ const ME_DETAIL: EntityOut = {
   status: "confirmed",
   aliases: [],
   domain: "general",
-  predicates: [{ predicate: "occupation", qualifier: null, current: fact(), history: [fact()] }],
-  inbound: [],
+  predicates: [
+    { predicate: "occupation", qualifier: null, current: fact(), history: [fact()] },
+    {
+      predicate: "owns",
+      qualifier: null,
+      current: fact({
+        id: "f2",
+        predicate: "owns",
+        statement: "owns the F-150",
+        object_entity_id: "truck",
+        object_entity_name: "F-150",
+      }),
+      history: [],
+    },
+  ],
+  inbound: [{ entity_id: "wife", name: "Wife", predicate: "spouse", statement: "married to" }],
   mentions: [],
 };
 
@@ -168,5 +182,61 @@ describe("GraphScreen", () => {
         screen.getByText("couldn't load the graph — check the connection."),
       ).toBeInTheDocument(),
     );
+  });
+
+  it("explains a single-node graph instead of leaving a lone disc", async () => {
+    const [me] = GRAPH.nodes;
+    const lone: EgoGraph = { root: "me", depth: 2, nodes: me ? [me] : [], edges: [] };
+    const load = vi.fn(async () => lone);
+    render(<GraphScreen onOpenEntity={vi.fn()} rootId="me" load={load} />);
+    await waitFor(() => expect(screen.getByText("Me")).toBeInTheDocument());
+    expect(
+      screen.getByText("no connections yet — links appear as more notes are analyzed."),
+    ).toBeInTheDocument();
+  });
+
+  it("peek sheet lists relationships; tapping one off the map opens it", async () => {
+    vi.spyOn(api, "getEntity").mockResolvedValue(ME_DETAIL);
+    const { onOpenEntity } = setup();
+    await loaded();
+    const meNode = () =>
+      screen
+        .getAllByText("Me")
+        .map((l) => l.closest("button"))
+        .find((b) => b?.classList.contains("graph-node")) as HTMLElement;
+    fireEvent.click(meNode());
+    await screen.findByRole("button", { name: "Overview" });
+    fireEvent.click(meNode());
+    expect(await screen.findByText("relationships (2)")).toBeInTheDocument();
+    // The F-150 isn't a node on the loaded map → it opens the full entity page.
+    fireEvent.click(screen.getByText("F-150 →").closest("button") as HTMLElement);
+    expect(onOpenEntity).toHaveBeenCalledWith("truck");
+  });
+});
+
+describe("focalZoom", () => {
+  it("clamps scale to the [0.45, 2.4] range", () => {
+    expect(clampScale(10)).toBe(2.4);
+    expect(clampScale(0.01)).toBe(0.45);
+    expect(clampScale(1)).toBe(1);
+  });
+
+  it("keeps the anchor point fixed across the scale change", () => {
+    const v = { scale: 1, tx: 50, ty: 20 };
+    const z = focalZoom(v, 100, 60, 2);
+    expect(z.scale).toBe(2);
+    // world point under the anchor maps back to the same screen pixel
+    const worldX = (100 - v.tx) / v.scale;
+    const worldY = (60 - v.ty) / v.scale;
+    expect(worldX * z.scale + z.tx).toBeCloseTo(100);
+    expect(worldY * z.scale + z.ty).toBeCloseTo(60);
+  });
+
+  it("anchors zoom-out at the cursor too", () => {
+    const v = { scale: 2, tx: -30, ty: 10 };
+    const z = focalZoom(v, 200, 140, 0.5);
+    expect(z.scale).toBe(1);
+    expect(((200 - v.tx) / v.scale) * z.scale + z.tx).toBeCloseTo(200);
+    expect(((140 - v.ty) / v.scale) * z.scale + z.ty).toBeCloseTo(140);
   });
 });

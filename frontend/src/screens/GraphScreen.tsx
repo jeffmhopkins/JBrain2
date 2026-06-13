@@ -7,10 +7,19 @@
 // labelled control, never a hidden gesture. The chip bar doubles as the legend:
 // "All" is the empty selection, and each tap toggles a type (additive).
 
-import { type PointerEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  type KeyboardEvent,
+  type MouseEvent,
+  type PointerEvent,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { type EgoGraph, type EntityList, type EntityOut, api } from "../api/client";
 import { Sheet } from "../components/Sheet";
-import { ChevronLeftIcon } from "../components/icons";
+import { ChevronLeftIcon, FitIcon, MinusIcon, PlusIcon } from "../components/icons";
 import { EntityTypeIcon, type EntityTypeKey, resolveEntityKind } from "../entities/kinds";
 
 interface GraphScreenProps {
@@ -49,6 +58,32 @@ const KIND_LABEL: Record<EntityTypeKey, string> = {
   Drug: "Drugs",
   Thing: "Things",
 };
+
+const SCALE_MIN = 0.45;
+const SCALE_MAX = 2.4;
+
+export function clampScale(s: number): number {
+  return Math.max(SCALE_MIN, Math.min(SCALE_MAX, s));
+}
+
+/** A pan/zoom transform: content maps screen = world·scale + (tx, ty). */
+export interface ViewTransform {
+  scale: number;
+  tx: number;
+  ty: number;
+}
+
+/**
+ * Zoom about a fixed screen point `(fx, fy)` (stage-local) so whatever sits
+ * under it stays put across the scale change — the anchor-point invariant.
+ * With `transform-origin: 0 0`, naively changing `scale` pivots about the
+ * stage corner, which is the "doesn't zoom where I want" bug; this counters it.
+ */
+export function focalZoom(v: ViewTransform, fx: number, fy: number, factor: number): ViewTransform {
+  const scale = clampScale(v.scale * factor);
+  const k = scale / v.scale;
+  return { scale, tx: fx - (fx - v.tx) * k, ty: fy - (fy - v.ty) * k };
+}
 
 function selSummary(sel: ReadonlySet<EntityTypeKey>): string {
   if (sel.size === 1) {
@@ -434,15 +469,67 @@ export function GraphScreen({
     });
   }
 
-  // pan / pinch — one finger pans empty canvas, two fingers pinch-zoom; node
-  // and control taps are excluded so they never get captured (kills the
-  // pan-vs-tap conflict). Visible controls do the zooming too.
+  // pan / pinch / wheel / keyboard — one finger pans empty canvas, two fingers
+  // pinch-zoom about the finger midpoint; node and control taps are excluded so
+  // they never get captured (kills the pan-vs-tap conflict). All zoom is
+  // focal-anchored (focalZoom): the point under the cursor/fingers stays put.
   const ptrs = useRef(new Map<number, { x: number; y: number }>());
   const gesture = useRef({ sd: 0, ss: 1, panX: 0, panY: 0, midX: 0, midY: 0 });
+
+  // clientX/Y are page coords but tx/ty (and node positions) are stage-local —
+  // subtract the stage's offset to anchor zoom in the right space.
+  function stageOffset() {
+    const r = stageRef.current?.getBoundingClientRect();
+    return { ox: r?.left ?? 0, oy: r?.top ?? 0 };
+  }
+
+  // Keep at least a sliver of the laid-out graph on screen after pan/zoom.
+  function clampPan() {
+    const v = vw.current;
+    const m = 64;
+    let minx = Number.POSITIVE_INFINITY;
+    let miny = Number.POSITIVE_INFINITY;
+    let maxx = Number.NEGATIVE_INFINITY;
+    let maxy = Number.NEGATIVE_INFINITY;
+    for (const n of v.nodes.values()) {
+      minx = Math.min(minx, n.x);
+      miny = Math.min(miny, n.y);
+      maxx = Math.max(maxx, n.x);
+      maxy = Math.max(maxy, n.y);
+    }
+    if (!Number.isFinite(minx)) return;
+    const s = v.scale;
+    const loX = m - s * maxx;
+    const hiX = v.w - m - s * minx;
+    const loY = m - s * maxy;
+    const hiY = v.h - m - s * miny;
+    v.tx = loX > hiX ? (loX + hiX) / 2 : Math.min(hiX, Math.max(loX, v.tx));
+    v.ty = loY > hiY ? (loY + hiY) / 2 : Math.min(hiY, Math.max(loY, v.ty));
+  }
+
+  function zoomAt(fx: number, fy: number, factor: number) {
+    const next = focalZoom(vw.current, fx, fy, factor);
+    vw.current.scale = next.scale;
+    vw.current.tx = next.tx;
+    vw.current.ty = next.ty;
+    clampPan();
+  }
+  function zoom(f: number) {
+    const stage = stageRef.current;
+    if (stage) zoomAt(stage.clientWidth / 2, stage.clientHeight / 2, f);
+  }
+  function fit() {
+    vw.current.scale = 1;
+    vw.current.tx = 0;
+    vw.current.ty = 0;
+  }
+
   function onPointerDown(e: PointerEvent<HTMLDivElement>) {
     if ((e.target as HTMLElement).closest(".graph-node, .graph-overlay, .graph-zoom")) return;
+    e.currentTarget.setPointerCapture?.(e.pointerId);
     ptrs.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
     const g = gesture.current;
+    const { ox, oy } = stageOffset();
     if (ptrs.current.size === 1) {
       g.panX = e.clientX - vw.current.tx;
       g.panY = e.clientY - vw.current.ty;
@@ -451,46 +538,91 @@ export function GraphScreen({
       if (!a || !b) return;
       g.sd = Math.hypot(a.x - b.x, a.y - b.y);
       g.ss = vw.current.scale;
-      g.midX = (a.x + b.x) / 2;
-      g.midY = (a.y + b.y) / 2;
+      g.midX = (a.x + b.x) / 2 - ox;
+      g.midY = (a.y + b.y) / 2 - oy;
     }
   }
   function onPointerMove(e: PointerEvent<HTMLDivElement>) {
     if (!ptrs.current.has(e.pointerId)) return;
     ptrs.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
     const g = gesture.current;
+    const v = vw.current;
     if (ptrs.current.size === 1) {
-      vw.current.tx = e.clientX - g.panX;
-      vw.current.ty = e.clientY - g.panY;
+      v.tx = e.clientX - g.panX;
+      v.ty = e.clientY - g.panY;
+      clampPan();
     } else if (ptrs.current.size === 2 && g.sd > 0) {
       const [a, b] = [...ptrs.current.values()];
       if (!a || !b) return;
+      const { ox, oy } = stageOffset();
       const d = Math.hypot(a.x - b.x, a.y - b.y);
-      vw.current.scale = Math.max(0.45, Math.min(2.4, g.ss * (d / g.sd)));
-      const mx = (a.x + b.x) / 2;
-      const my = (a.y + b.y) / 2;
-      vw.current.tx += mx - g.midX;
-      vw.current.ty += my - g.midY;
+      const mx = (a.x + b.x) / 2 - ox;
+      const my = (a.y + b.y) / 2 - oy;
+      const s1 = clampScale(g.ss * (d / g.sd));
+      const k = s1 / v.scale;
+      // zoom about the current midpoint, then translate by its movement (pan)
+      v.tx = mx - (mx - v.tx) * k;
+      v.ty = my - (my - v.ty) * k;
+      v.scale = s1;
+      v.tx += mx - g.midX;
+      v.ty += my - g.midY;
       g.midX = mx;
       g.midY = my;
+      clampPan();
     }
   }
   function onPointerUp(e: PointerEvent<HTMLDivElement>) {
+    e.currentTarget.releasePointerCapture?.(e.pointerId);
     ptrs.current.delete(e.pointerId);
+    const g = gesture.current;
+    if (ptrs.current.size < 2) g.sd = 0; // clear stale pinch baseline on 2→1
     const p = [...ptrs.current.values()][0];
     if (p) {
-      gesture.current.panX = p.x - vw.current.tx;
-      gesture.current.panY = p.y - vw.current.ty;
+      g.panX = p.x - vw.current.tx;
+      g.panY = p.y - vw.current.ty;
     }
   }
-  function zoom(f: number) {
-    vw.current.scale = Math.max(0.45, Math.min(2.4, vw.current.scale * f));
+  function onDoubleClick(e: MouseEvent<HTMLDivElement>) {
+    if ((e.target as HTMLElement).closest(".graph-node, .graph-overlay, .graph-zoom")) return;
+    const { ox, oy } = stageOffset();
+    zoomAt(e.clientX - ox, e.clientY - oy, 1.8);
   }
-  function fit() {
-    vw.current.scale = 1;
-    vw.current.tx = 0;
-    vw.current.ty = 0;
+  function onKeyDown(e: KeyboardEvent<HTMLDivElement>) {
+    const v = vw.current;
+    if (e.key === "+" || e.key === "=") zoom(1.25);
+    else if (e.key === "-" || e.key === "_") zoom(0.8);
+    else if (e.key === "0") fit();
+    else if (e.key === "ArrowLeft") {
+      v.tx += 40;
+      clampPan();
+    } else if (e.key === "ArrowRight") {
+      v.tx -= 40;
+      clampPan();
+    } else if (e.key === "ArrowUp") {
+      v.ty += 40;
+      clampPan();
+    } else if (e.key === "ArrowDown") {
+      v.ty -= 40;
+      clampPan();
+    } else return;
+    e.preventDefault();
   }
+
+  // Desktop wheel / trackpad-pinch zoom, focal at the cursor. Bound natively so
+  // it can preventDefault (React's onWheel can be passive).
+  // biome-ignore lint/correctness/useExhaustiveDependencies: handler only reads refs (stable); rebinding per render is unnecessary.
+  useEffect(() => {
+    const stage = stageRef.current;
+    if (!stage) return;
+    const handler = (e: WheelEvent) => {
+      if ((e.target as HTMLElement).closest(".graph-zoom, .graph-overlay")) return;
+      e.preventDefault();
+      const r = stage.getBoundingClientRect();
+      zoomAt(e.clientX - r.left, e.clientY - r.top, Math.exp(-e.deltaY * 0.0015));
+    };
+    stage.addEventListener("wheel", handler, { passive: false });
+    return () => stage.removeEventListener("wheel", handler);
+  }, []);
 
   if (phase === "loading") return <main className="screen-body graph-state">loading graph…</main>;
   if (phase === "error")
@@ -525,6 +657,8 @@ export function GraphScreen({
             aria-pressed={sel.has(kind)}
             onClick={() => toggleKind(kind)}
           >
+            {/* Empty box once a selection is active = "taps add a type" cue. */}
+            {sel.size > 0 && <span className="fchip-ck" aria-hidden="true" />}
             <span className="fchip-swatch">
               <EntityTypeIcon kind={kind} size={16} />
             </span>
@@ -539,11 +673,15 @@ export function GraphScreen({
         ref={stageRef}
         data-mode={mode}
         role="application"
-        aria-label="Entity graph"
+        aria-label="Entity graph (zoom: +/- or scroll, fit: 0, pan: arrow keys)"
+        // biome-ignore lint/a11y/noNoninteractiveTabindex: role=application canvas must be focusable for the keyboard zoom/pan handlers below.
+        tabIndex={0}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
         onPointerCancel={onPointerUp}
+        onDoubleClick={onDoubleClick}
+        onKeyDown={onKeyDown}
       >
         <div className="graph-viewport" ref={viewportRef}>
           {/* biome-ignore lint/a11y/noSvgWithoutTitle: edges are decorative; the nodes carry the labels. */}
@@ -552,7 +690,9 @@ export function GraphScreen({
               <line
                 key={edgeKey(e.source, e.target, e.predicate)}
                 ref={(el) => {
-                  if (el) edgeEls.current.set(edgeKey(e.source, e.target, e.predicate), el);
+                  const key = edgeKey(e.source, e.target, e.predicate);
+                  if (el) edgeEls.current.set(key, el);
+                  else edgeEls.current.delete(key);
                 }}
               />
             ))}
@@ -566,6 +706,7 @@ export function GraphScreen({
                 key={n.id}
                 ref={(el) => {
                   if (el) nodeEls.current.set(n.id, el);
+                  else nodeEls.current.delete(n.id);
                 }}
                 className={`graph-node${focused ? " is-focal" : ""}`}
                 data-hop={hops.get(n.id) ?? 2}
@@ -614,13 +755,13 @@ export function GraphScreen({
         {mode === "overview" && (
           <div className="graph-zoom">
             <button type="button" onClick={() => zoom(1.25)} aria-label="Zoom in">
-              +
+              <PlusIcon size={20} />
             </button>
-            <button type="button" onClick={fit} aria-label="Fit">
-              ◇
+            <button type="button" onClick={fit} aria-label="Fit to view">
+              <FitIcon size={18} />
             </button>
             <button type="button" onClick={() => zoom(0.8)} aria-label="Zoom out">
-              −
+              <MinusIcon size={20} />
             </button>
           </div>
         )}
@@ -639,11 +780,19 @@ export function GraphScreen({
         {mode === "focus" && focusEmpty && (
           <p className="graph-empty-note">no neighbours match these filters.</p>
         )}
+
+        {mode === "overview" && graph.edges.length === 0 && (
+          <p className="graph-empty-note">
+            no connections yet — links appear as more notes are analyzed.
+          </p>
+        )}
       </div>
 
       <p className="graph-hint">
         {mode === "overview"
-          ? "tap a node to focus · drag to pan, pinch to zoom"
+          ? graph.edges.length === 0
+            ? "drag to pan · scroll or pinch to zoom"
+            : "tap a node to focus · scroll or pinch to zoom · double-tap to zoom in"
           : "tap a neighbour to re-center · use Overview to return"}
       </p>
 
@@ -660,6 +809,17 @@ export function GraphScreen({
             setSheetId(null);
             onOpenEntity(id);
           }}
+          onNeighbor={(id) => {
+            setSheetId(null);
+            // A neighbour already on the map re-centers in place; anything
+            // further out opens its full page.
+            if (nodeKind.has(id)) {
+              if (mode === "overview") enterFocus(id);
+              else recenter(id);
+            } else {
+              onOpenEntity(id);
+            }
+          }}
         />
       )}
     </main>
@@ -673,11 +833,13 @@ function EntityPeek({
   onClose,
   onFocus,
   onOpen,
+  onNeighbor,
 }: {
   entityId: string;
   onClose: () => void;
   onFocus: (id: string) => void;
   onOpen: (id: string) => void;
+  onNeighbor: (id: string) => void;
 }) {
   const [entity, setEntity] = useState<EntityOut | null>(null);
   const [failed, setFailed] = useState(false);
@@ -697,6 +859,23 @@ function EntityPeek({
     .map((p) => p.current)
     .filter((f): f is NonNullable<typeof f> => f !== null && f.object_entity_id === null)
     .slice(0, 8);
+
+  // Relationships = outbound object-edges + inbound edges, the in-sheet path
+  // back into the graph.
+  const rels: { id: string; name: string; predicate: string }[] = [];
+  for (const p of entity?.predicates ?? []) {
+    const c = p.current;
+    if (c?.object_entity_id) {
+      rels.push({
+        id: c.object_entity_id,
+        name: c.object_entity_name ?? "—",
+        predicate: c.predicate,
+      });
+    }
+  }
+  for (const ib of entity?.inbound ?? []) {
+    rels.push({ id: ib.entity_id, name: ib.name, predicate: ib.predicate });
+  }
 
   return (
     <Sheet title={title} onClose={onClose}>
@@ -729,6 +908,21 @@ function EntityPeek({
             </li>
           ))}
         </ul>
+      )}
+      {rels.length > 0 && (
+        <div className="peek-rels">
+          <h3 className="peek-rels-head">relationships ({rels.length})</h3>
+          <ul className="peek-rels-list">
+            {rels.slice(0, 12).map((r, i) => (
+              <li key={`${r.id}-${r.predicate}-${i}`}>
+                <button type="button" className="peek-rel" onClick={() => onNeighbor(r.id)}>
+                  <span className="peek-rel-pred">{r.predicate}</span>
+                  <span className="peek-rel-name">{r.name} →</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
       )}
     </Sheet>
   );
