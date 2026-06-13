@@ -131,7 +131,10 @@ async def test_read_appointments_defaults_to_upcoming_under_scope() -> None:
     assert "Dentist" in out
     kind, session, since, _until, include_cancelled = fake.calls[0]
     assert kind == "list" and session is CTX.session  # ran under the session's scope
-    assert since is not None and include_cancelled is False  # upcoming-only by default
+    assert include_cancelled is False  # upcoming-only by default
+    # Anchored at the START of today (not "now") so earlier-today / all-day events show.
+    assert since is not None and (since.hour, since.minute, since.second) == (0, 0, 0)
+    assert since.date() == datetime.now(UTC).date()
 
 
 async def test_read_appointments_include_past_and_cancelled_widen_the_window() -> None:

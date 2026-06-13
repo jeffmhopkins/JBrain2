@@ -20,7 +20,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -32,8 +32,13 @@ from jbrain.models.appointments import Appointment
 # appointment.yaml type id; see the harness appointment scenarios).
 APPOINTMENT_KIND = "appointment"
 _SCHEDULED_TIME = "scheduledTime"
+_RECURRENCE = "recurrence"
 _STATUS = "status"
 _DEFAULT_STATUS = "confirmed"
+_CANCELLED = "cancelled"
+# A day/month/year-precision schedule is an all-day event (no meaningful clock
+# time); only an instant precision is a timed slot.
+_ALL_DAY_PRECISIONS = frozenset({"day", "month", "year"})
 
 
 def _parse_dt(value: Any) -> datetime | None:
@@ -69,14 +74,23 @@ async def project_appointments(session: AsyncSession, entity_ids: set[uuid.UUID]
     """Re-derive and upsert (or remove) the projection for each entity that is an
     appointment. Non-appointment, already-deleted, and timeless entities are
     no-ops / deletions, so it is safe to pass the whole touched/purged set."""
-    for eid in entity_ids:
-        await _project_one(session, eid)
-
-
-async def _project_one(session: AsyncSession, eid: uuid.UUID) -> None:
-    ent = (await session.execute(select(Entity).where(Entity.id == eid))).scalar_one_or_none()
-    if ent is None or ent.kind != APPOINTMENT_KIND:
+    if not entity_ids:
         return
+    # One batched query fetches just the appointment entities up front, so the
+    # common case — a note touching only non-appointment entities — costs a single
+    # empty SELECT instead of a round-trip per touched entity on the ingest path,
+    # and _project_one needs no second lookup or kind re-check.
+    ents = (
+        await session.execute(
+            select(Entity).where(Entity.id.in_(entity_ids), Entity.kind == APPOINTMENT_KIND)
+        )
+    ).scalars()
+    for ent in ents:
+        await _project_one(session, ent)
+
+
+async def _project_one(session: AsyncSession, ent: Entity) -> None:
+    eid = ent.id
 
     # The current scheduled time is the single ACTIVE scheduledTime state fact —
     # functional, so supersession (validity-newest-wins) already left exactly one.
@@ -94,11 +108,20 @@ async def _project_one(session: AsyncSession, eid: uuid.UUID) -> None:
         )
     ).first()
 
-    # No live scheduled time (a note edit dropped it, the fact was purged, or it
-    # was never scheduled): there is nothing to put on a calendar, so the
-    # projection row goes. A still-orphaned entity was already cascaded away.
+    status = await _current_status(session, eid)
     if sched is None:
-        await session.execute(delete(Appointment).where(Appointment.entity_id == eid))
+        # No live scheduled time. A CANCELLED appointment keeps its existing row
+        # (marked cancelled) so the feed still emits STATUS:CANCELLED and a
+        # subscribed calendar removes it; anything else timeless (a note edit
+        # dropped it, a purge) is removed outright.
+        if status == _CANCELLED:
+            await session.execute(
+                update(Appointment)
+                .where(Appointment.entity_id == eid)
+                .values(status=_CANCELLED, updated_at=func.now())
+            )
+        else:
+            await session.execute(delete(Appointment).where(Appointment.entity_id == eid))
         return
     fact, token_rrule = sched
     value = fact.value_json or {}
@@ -108,15 +131,19 @@ async def _project_one(session: AsyncSession, eid: uuid.UUID) -> None:
         await session.execute(delete(Appointment).where(Appointment.entity_id == eid))
         return
 
-    status = await _current_status(session, eid)
+    # Recurrence is a SEPARATE `recurrence` predicate fact binding its own token
+    # (facets.yaml Recurrence facet), so the RRULE rarely rides the scheduledTime
+    # token — read the recurrence fact's token and prefer whichever carries it.
+    rrule = token_rrule or await _recurrence_rrule(session, eid)
     values = {
         "domain_code": ent.domain_code,
         "entity_id": eid,
         "title": ent.canonical_name,
         "starts_at": starts_at,
         "ends_at": ends_at,
+        "all_day": fact.temporal_precision in _ALL_DAY_PRECISIONS,
         "status": status,
-        "rrule": token_rrule,
+        "rrule": rrule,
         "source_note_id": fact.note_id,
     }
     # One row per entity. On re-projection update the derived fields in place;
@@ -131,6 +158,7 @@ async def _project_one(session: AsyncSession, eid: uuid.UUID) -> None:
                 "title": stmt.excluded.title,
                 "starts_at": stmt.excluded.starts_at,
                 "ends_at": stmt.excluded.ends_at,
+                "all_day": stmt.excluded.all_day,
                 "status": stmt.excluded.status,
                 "rrule": stmt.excluded.rrule,
                 "source_note_id": stmt.excluded.source_note_id,
@@ -138,6 +166,26 @@ async def _project_one(session: AsyncSession, eid: uuid.UUID) -> None:
             },
         )
     )
+
+
+async def _recurrence_rrule(session: AsyncSession, eid: uuid.UUID) -> str | None:
+    """The RRULE on the entity's active `recurrence` fact's token, if any — the
+    schema binds recurrence on its own predicate, separate from scheduledTime."""
+    row = (
+        await session.execute(
+            select(TemporalToken.rrule)
+            .join(Fact, Fact.temporal_token_id == TemporalToken.id)
+            .where(
+                Fact.entity_id == eid,
+                Fact.predicate == _RECURRENCE,
+                Fact.status == "active",
+                TemporalToken.rrule.isnot(None),
+            )
+            .order_by(Fact.valid_from.desc())
+            .limit(1)
+        )
+    ).first()
+    return row[0] if row is not None else None
 
 
 async def _current_status(session: AsyncSession, eid: uuid.UUID) -> str:

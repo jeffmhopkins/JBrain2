@@ -87,9 +87,14 @@ def build_appointment_handlers(appointments: AppointmentsRepo) -> dict[str, Tool
     async def read_appointments_tool(arguments: dict, ctx: ToolContext) -> ToolOutput:
         include_past = bool(arguments.get("include_past", False))
         include_cancelled = bool(arguments.get("include_cancelled", False))
-        # Default to what's ahead: an agent answering "what's on my calendar"
-        # wants upcoming items, not a lifetime of history.
-        since = None if include_past else datetime.now(UTC)
+        # Default to what's ahead, anchored at the START of today (not "now") so an
+        # appointment earlier today or an all-day event today still shows — "what's
+        # on my calendar" must not drop in-progress or earlier-today items.
+        since = (
+            None
+            if include_past
+            else datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
+        )
         rows = await appointments.list_appointments(
             ctx.session, since=since, include_cancelled=include_cancelled
         )

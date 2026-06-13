@@ -66,6 +66,14 @@ def test_status_map_and_recurrence() -> None:
     assert "STATUS:CONFIRMED" in lines(to_ics([appt(status="occurred")], now=NOW))
 
 
+def test_rrule_control_chars_are_stripped() -> None:
+    # A malformed recurrence token must never break the iCalendar line structure.
+    out = to_ics([appt(rrule="FREQ=WEEKLY\r\nX-EVIL:1")], now=NOW)
+    assert "RRULE:FREQ=WEEKLYX-EVIL:1" in lines(out)
+    # No stray VEVENT-internal newline injected an extra physical line.
+    assert "X-EVIL:1" not in out.split("\r\n")
+
+
 def test_all_day_uses_date_values() -> None:
     body = lines(
         to_ics([appt(all_day=True, starts_at=datetime(2026, 7, 4, 0, 0, tzinfo=UTC))], now=NOW)

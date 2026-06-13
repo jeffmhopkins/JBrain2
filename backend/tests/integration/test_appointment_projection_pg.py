@@ -72,7 +72,7 @@ async def _appointments(maker: async_sessionmaker) -> list[dict]:
             (
                 await s.execute(
                     text(
-                        "SELECT title, starts_at, ends_at, status, rrule, domain_code,"
+                        "SELECT title, starts_at, ends_at, all_day, status, rrule, domain_code,"
                         " source_note_id::text AS source_note_id FROM app.appointments"
                         " ORDER BY starts_at"
                     )
@@ -238,6 +238,118 @@ async def test_direct_projection_carries_rrule_and_explicit_status(
     assert rows[0]["rrule"] == rrule
     assert rows[0]["status"] == "tentative"
     assert rows[0]["starts_at"] == start
+
+
+async def _seed_appointment(s, *, precision: str = "instant") -> tuple[uuid.UUID, uuid.UUID]:
+    """A note + appointment entity + one active scheduledTime fact. Returns
+    (entity_id, note_id). Runs on an owner session `s`."""
+    start = datetime(2026, 7, 1, 16, 0, tzinfo=UTC)
+    eid, note_id = uuid.uuid4(), uuid.uuid4()
+    await s.execute(
+        text(
+            "INSERT INTO app.notes (id, client_id, domain_code, body, created_at)"
+            " VALUES (:i, :c, 'general', 'x', :t)"
+        ),
+        {"i": str(note_id), "c": str(note_id)[:12], "t": start},
+    )
+    await s.execute(
+        text(
+            "INSERT INTO app.entities (id, kind, canonical_name, domain_code)"
+            " VALUES (:i, 'appointment', 'Visit', 'general')"
+        ),
+        {"i": str(eid)},
+    )
+    await s.execute(
+        text(
+            "INSERT INTO app.facts (id, entity_id, predicate, kind, statement, value_json,"
+            " assertion, valid_from, reported_at, temporal_precision, note_id, extractor,"
+            " prompt_version, domain_code) VALUES (gen_random_uuid(), :e, 'scheduledTime',"
+            " 'state', 'Visit', :v, 'expected', :t, :t, :p, :n, 'x', '1', 'general')"
+        ),
+        {
+            "e": str(eid),
+            "n": str(note_id),
+            "t": start,
+            "p": precision,
+            "v": '{"start": "2026-07-01T16:00:00+00:00"}',
+        },
+    )
+    return eid, note_id
+
+
+async def test_recurrence_rides_a_separate_recurrence_fact(maker: async_sessionmaker) -> None:
+    # The real shape: recurrence is its OWN `recurrence` predicate fact with a
+    # recurrence-kind token (facets.yaml), NOT the scheduledTime token. The
+    # projector must still pick up the RRULE.
+    rrule = "FREQ=WEEKLY;BYDAY=TU"
+    async with maker() as s:
+        await s.execute(text("SELECT set_config('app.principal_kind','owner',true)"))
+        eid, note_id = await _seed_appointment(s)
+        tok = uuid.uuid4()
+        start = datetime(2026, 7, 1, 16, 0, tzinfo=UTC)
+        await s.execute(
+            text(
+                "INSERT INTO app.temporal_tokens (id, note_id, surface_phrase, kind,"
+                " resolved_start, temporal_precision, capture_anchor, rrule, domain_code)"
+                " VALUES (:i, :n, 'every Tuesday', 'recurrence', :t, 'instant', :t, :r, 'general')"
+            ),
+            {"i": str(tok), "n": str(note_id), "t": start, "r": rrule},
+        )
+        await s.execute(
+            text(
+                "INSERT INTO app.facts (id, entity_id, predicate, kind, statement, value_json,"
+                " assertion, valid_from, reported_at, temporal_token_id, note_id, extractor,"
+                " prompt_version, domain_code) VALUES (gen_random_uuid(), :e, 'recurrence',"
+                " 'state', 'weekly', NULL, 'expected', :t, :t, :tok, :n, 'x', '1', 'general')"
+            ),
+            {"e": str(eid), "n": str(note_id), "t": start, "tok": str(tok)},
+        )
+        await project_appointments(s, {eid})
+        await s.commit()
+
+    rows = await _appointments(maker)
+    assert len(rows) == 1 and rows[0]["rrule"] == rrule
+
+
+async def test_day_precision_projects_as_all_day(maker: async_sessionmaker) -> None:
+    async with maker() as s:
+        await s.execute(text("SELECT set_config('app.principal_kind','owner',true)"))
+        await project_appointments(s, set())  # empty set is a no-op
+        eid, _ = await _seed_appointment(s, precision="day")
+        await project_appointments(s, {eid})
+        await s.commit()
+    rows = await _appointments(maker)
+    assert len(rows) == 1 and rows[0]["all_day"] is True
+
+
+async def test_cancelled_appointment_keeps_its_row_when_the_time_is_gone(
+    maker: async_sessionmaker,
+) -> None:
+    # A cancellation whose note no longer asserts a time must NOT delete the row —
+    # the feed has to keep emitting STATUS:CANCELLED so subscribers remove it.
+    async with maker() as s:
+        await s.execute(text("SELECT set_config('app.principal_kind','owner',true)"))
+        eid, note_id = await _seed_appointment(s)
+        await project_appointments(s, {eid})  # row exists, confirmed
+        # Retract the scheduledTime, add an active cancelled status, re-project.
+        await s.execute(
+            text("UPDATE app.facts SET status='retracted' WHERE entity_id = :e"),
+            {"e": str(eid)},
+        )
+        await s.execute(
+            text(
+                "INSERT INTO app.facts (id, entity_id, predicate, kind, statement, value_json,"
+                " assertion, reported_at, note_id, extractor, prompt_version, domain_code)"
+                " VALUES (gen_random_uuid(), :e, 'status', 'state', 'Cancelled',"
+                " '{\"value\": \"cancelled\"}', 'asserted', now(), :n, 'x', '1', 'general')"
+            ),
+            {"e": str(eid), "n": str(note_id)},
+        )
+        await project_appointments(s, {eid})
+        await s.commit()
+
+    rows = await _appointments(maker)
+    assert len(rows) == 1 and rows[0]["status"] == "cancelled"
 
 
 async def test_active_time_with_no_resolvable_start_removes_row(

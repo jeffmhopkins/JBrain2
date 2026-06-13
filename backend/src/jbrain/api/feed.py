@@ -13,6 +13,7 @@ titles off-box; it is revocable, and Settings labels it as such.
 """
 
 import secrets
+from datetime import UTC, datetime, timedelta
 from typing import cast
 
 from fastapi import APIRouter, Depends, Request, Response
@@ -28,6 +29,8 @@ router = APIRouter()
 # The feed serves the owner's own data with no request principal — an owner
 # context (unrestricted: all domains) gated entirely by the token check above it.
 _FEED_CTX = SessionContext(principal_kind="owner")
+# How far back the feed reflects; older history is dead weight on every poll.
+_FEED_HISTORY = timedelta(days=365)
 
 
 def _settings(request: Request) -> SqlSettingsStore:
@@ -49,9 +52,13 @@ async def appointments_ics(request: Request, token: str = "") -> Response:
     # Disabled feed or any token mismatch → an opaque 404 (never reveal which).
     if stored is None or not token or not secrets.compare_digest(token, stored):
         return Response(status_code=404)
-    # Past + future, cancelled included (emitted as STATUS:CANCELLED so a
-    # subscribed calendar removes them) — a faithful mirror of the calendar.
-    appts = await _appointments(request).list_appointments(_FEED_CTX, include_cancelled=True)
+    # Recent past + all future, cancelled included (emitted as STATUS:CANCELLED so
+    # a subscribed calendar removes them). A lower bound keeps the polled document
+    # from growing without limit over years of history.
+    since = datetime.now(UTC) - _FEED_HISTORY
+    appts = await _appointments(request).list_appointments(
+        _FEED_CTX, since=since, include_cancelled=True
+    )
     return Response(
         content=to_ics(appts),
         media_type="text/calendar; charset=utf-8",

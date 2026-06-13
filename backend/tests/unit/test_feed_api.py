@@ -117,6 +117,8 @@ def test_rotate_enables_then_serves_the_feed(
     assert resp.headers["content-type"].startswith("text/calendar")
     assert "SUMMARY:Dentist" in resp.text.replace("\r\n ", "")
     assert appointments.calls[-1]["include_cancelled"] is True
+    # The feed is bounded: it asks for a recent-history lower bound, not all time.
+    assert appointments.calls[-1]["since"] is not None
 
 
 def test_wrong_or_missing_token_is_404(client: TestClient, repo: FakeAuthRepo) -> None:

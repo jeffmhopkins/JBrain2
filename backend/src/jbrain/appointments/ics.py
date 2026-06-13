@@ -84,7 +84,10 @@ def _vevent(appt: AppointmentInfo, *, stamp: str) -> list[str]:
         lines.append(f"LOCATION:{_escape(appt.location)}")
     lines.append(f"STATUS:{_STATUS.get(appt.status, 'CONFIRMED')}")
     if appt.rrule:
-        lines.append(f"RRULE:{appt.rrule}")
+        # RRULE is structured, not TEXT (no backslash-escaping), but a stray CR/LF
+        # from a malformed token would break the line structure — strip them.
+        rrule = appt.rrule.replace("\r", "").replace("\n", "")
+        lines.append(f"RRULE:{rrule}")
     lines.append("END:VEVENT")
     return lines
 
