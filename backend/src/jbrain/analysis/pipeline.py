@@ -61,6 +61,7 @@ from jbrain.analysis.extraction import (
     Extraction,
     ExtractionError,
     domain_floor,
+    merge_extractions,
     normalize_future_assertion,
     parse_extraction,
     ratchet_domain,
@@ -73,6 +74,7 @@ from jbrain.analysis.prompt import (
     SYSTEM_PROMPT,
     build_user_prompt,
     fact_cap,
+    group_texts,
     prompt_block,
 )
 from jbrain.analysis.supersession import (
@@ -220,36 +222,42 @@ class AnalysisPipeline:
             prompt_block(r.text, source_kind=r.source_kind, filename=r.filename) for r in chunk_rows
         ] or [body]
 
-        # Length-scaled fact budget: the SAME cap the prompt advertises and the
-        # parser enforces (they must agree), computed once over the content the
-        # model actually sees.
-        cap = fact_cap("\n\n".join(texts))
+        # Chunk-level map-reduce: a long note (a pasted article, a medical-history
+        # dump) is split into token-bounded GROUPS, each extracted with its OWN
+        # length-scaled fact budget, then merged — so the yield scales with the
+        # note instead of clipping at one note-wide cap or a single call's
+        # output-token ceiling. A note that fits one group makes exactly one call,
+        # identical to before. Backward-phrase repair needs the note's LOCAL day;
+        # without a client offset local_anchor falls back to the stored UTC
+        # instant (whose date can be tomorrow for an evening capture), so the
+        # parse anchor is withheld in that case to not clobber a model-correct date.
+        prompt_anchor = local_anchor(captured_at, tz_offset)
+        parse_anchor = prompt_anchor if tz_offset is not None else None
         try:
-            result = await self._router.complete(
-                "note.extract",
-                system=SYSTEM_PROMPT,
-                user_text=build_user_prompt(
-                    texts, anchor=local_anchor(captured_at, tz_offset), domain=domain, max_facts=cap
-                ),
-                json_schema=EXTRACTION_SCHEMA,
-                max_tokens=EXTRACT_MAX_TOKENS,
-                strength=NOTE_EXTRACT_STRENGTH,
-            )
-            # Backward-phrase repair needs the note's LOCAL day; without a
-            # client offset local_anchor falls back to the stored UTC instant,
-            # whose date can be tomorrow for an evening capture. Withhold the
-            # anchor in that case so a model-correct date is never clobbered.
-            extraction = parse_extraction(
-                result.parsed,
-                anchor=local_anchor(captured_at, tz_offset) if tz_offset is not None else None,
-                max_facts=cap,
-            )
+            parts: list[Extraction] = []
+            for group in group_texts(texts):
+                group_cap = fact_cap("\n\n".join(group))
+                result = await self._router.complete(
+                    "note.extract",
+                    system=SYSTEM_PROMPT,
+                    user_text=build_user_prompt(
+                        group, anchor=prompt_anchor, domain=domain, max_facts=group_cap
+                    ),
+                    json_schema=EXTRACTION_SCHEMA,
+                    max_tokens=EXTRACT_MAX_TOKENS,
+                    strength=NOTE_EXTRACT_STRENGTH,
+                )
+                parts.append(
+                    parse_extraction(result.parsed, anchor=parse_anchor, max_facts=group_cap)
+                )
+            extraction = merge_extractions(parts)
         except (LlmBadResponseError, ExtractionError, SchemaError) as exc:
             # The adapter already spent its one re-ask: retrying the job would
             # just re-bill the same garbage. A SchemaError (the registry the
             # parser normalizes through is missing/malformed) is config drift,
             # not transient — retrying re-runs the paid extraction for nothing,
-            # so it is permanent too. Nothing was written.
+            # so it is permanent too. Nothing was written (the merge is in-memory;
+            # _apply runs in a single later transaction).
             raise PermanentJobError(f"note.extract unusable for note {note_id}: {exc}") from exc
 
         provider, model = self._router.spec("note.extract", NOTE_EXTRACT_STRENGTH)

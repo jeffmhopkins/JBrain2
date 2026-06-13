@@ -424,9 +424,25 @@ budget actually clips the tail (`dropped_facts > 0` — a pasted article, a
 medical-history dump), the pipeline files an **`extraction_truncated`** review
 card so the loss is visible, not silent: an informational notice whose only
 verb is dismiss (it wrote no graph state), retired automatically when a
-larger-budget re-run fits. The deeper fix for genuinely long input is
-chunk-level extraction with note-level merge — the fact grammar already
-reconciles facts from many sources — which makes the cap a per-chunk budget.
+larger-budget re-run fits.
+
+**Chunk-level map-reduce for long input [decided].** A long note (a pasted
+article, a medical-history dump) is split into token-bounded **groups** of
+paragraph chunks (`prompt.group_texts`, `GROUP_CHAR_BUDGET`), each extracted in
+its OWN `note.extract` call with its own length-scaled fact budget, then merged
+(`extraction.merge_extractions`) into one note-level extraction. So the yield
+scales with the note instead of clipping at one note-wide cap or a single
+call's output-token ceiling. The reduce reuses the very machinery that
+reconciles facts across NOTES: union the mentions and tokens, **re-run the
+deterministic object binding over the full mention set** (so a relationship
+whose object entity was named in another group still links), then dedup on the
+structural identity key so a property restated across groups collapses to one;
+`dropped_facts` sums each group's truncation for the note-level card. A note
+that fits one group makes exactly one call — the short-note path is unchanged.
+Groups run sequentially and a malformed group fails the note like any single
+extraction (the merge is in-memory; `_apply` runs once, after, in one
+transaction). Cross-group coreference is bounded by group size (several
+paragraphs); a context header for later groups is possible future work.
 
 **Enumerated and symmetric relationships [decided: one edge per individual,
 never a sentence-valued attribute].** "I have four daughters, A, B, C and D"

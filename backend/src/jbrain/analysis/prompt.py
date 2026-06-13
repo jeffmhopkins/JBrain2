@@ -47,6 +47,35 @@ def fact_cap(text: str) -> int:
     return max(MIN_FACTS, min(MAX_FACTS, len(text.split()) // _WORDS_PER_FACT))
 
 
+# Character budget per extraction group (~1500 tokens of body). A note whose
+# whole content fits stays ONE group — one call, exactly as before; a long note
+# (a pasted article, a medical-history dump) fans out so its per-group fact
+# budget is never the bottleneck and a single call's output-token ceiling
+# (EXTRACT_MAX_TOKENS) is never the limit on how much the note can yield. Well
+# under that ceiling so each group's facts JSON always fits its own response.
+GROUP_CHAR_BUDGET = 6000
+
+
+def group_texts(texts: list[str], budget: int = GROUP_CHAR_BUDGET) -> list[list[str]]:
+    """Partition prompt-block texts into ordered groups for chunk-level
+    map-reduce extraction, each (besides a lone oversize block) under `budget`
+    characters. Greedy and order-preserving; never splits a block — paragraph
+    chunks are the atomic citation unit. A note that fits in `budget` yields
+    exactly one group, so short notes keep the single-call path unchanged."""
+    groups: list[list[str]] = []
+    current: list[str] = []
+    size = 0
+    for text in texts:
+        if current and size + len(text) > budget:
+            groups.append(current)
+            current, size = [], 0
+        current.append(text)
+        size += len(text)
+    if current:
+        groups.append(current)
+    return groups or [[]]
+
+
 EXTRACT_MAX_TOKENS: int = int(_PROMPT.config["max_tokens"])
 SYSTEM_PROMPT: str = _PROMPT.render(max_facts=MAX_FACTS)
 EXTRACTION_SCHEMA: dict[str, Any] = _PROMPT.output_schema or {}
