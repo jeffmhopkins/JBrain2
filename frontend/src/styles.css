@@ -5722,7 +5722,8 @@ input.ld-title {
   overflow: visible;
   pointer-events: none;
 }
-.graph-edges line {
+.graph-edges path {
+  fill: none;
   stroke: var(--border);
   stroke-width: 1.4;
 }

@@ -222,6 +222,29 @@ export function GraphScreen({
     return m;
   }, [graph]);
 
+  // Per-edge curvature index: parallel edges between the same pair fan out
+  // symmetrically (…-1, 0, +1…) so they're distinguishable; a lone edge is 0
+  // (straight). Keyed by edge, grouped on the unordered node pair.
+  const edgeOffset = useMemo(() => {
+    const groups = new Map<string, string[]>();
+    for (const e of graph?.edges ?? []) {
+      const pair = e.source < e.target ? `${e.source}|${e.target}` : `${e.target}|${e.source}`;
+      const ek = `${e.source}|${e.target}|${e.predicate}`;
+      let list = groups.get(pair);
+      if (!list) {
+        list = [];
+        groups.set(pair, list);
+      }
+      list.push(ek);
+    }
+    const m = new Map<string, number>();
+    for (const eks of groups.values()) {
+      const k = eks.length;
+      eks.forEach((ek, i) => m.set(ek, i - (k - 1) / 2));
+    }
+    return m;
+  }, [graph]);
+
   const adjacency = useMemo(() => {
     const m = new Map<string, Set<string>>();
     const link = (a: string, b: string) => {
@@ -279,7 +302,7 @@ export function GraphScreen({
   const stageRef = useRef<HTMLDivElement>(null);
   const viewportRef = useRef<HTMLDivElement>(null);
   const nodeEls = useRef(new Map<string, HTMLButtonElement>());
-  const edgeEls = useRef(new Map<string, SVGLineElement>());
+  const edgeEls = useRef(new Map<string, SVGPathElement>());
   const edgeTextEls = useRef(new Map<string, SVGTextElement>());
   const labelShown = useRef(new Map<string, boolean>()); // last data-label per node
   const vw = useRef({
@@ -482,50 +505,63 @@ export function GraphScreen({
       v.mode === "focus" && id === v.focal ? 34 : (hops.get(id) ?? 2) <= 1 ? 25 : 19;
     for (const e of graph?.edges ?? []) {
       const key = edgeKey(e.source, e.target, e.predicate);
-      const line = edgeEls.current.get(key);
+      const path = edgeEls.current.get(key);
       const txt = edgeTextEls.current.get(key);
-      const a = v.nodes.get(e.source);
-      const b = v.nodes.get(e.target);
-      if (!a || !b) continue;
+      const na = v.nodes.get(e.source);
+      const nb = v.nodes.get(e.target);
+      if (!na || !nb) continue;
+      // Orient geometry on the canonical (sorted) pair so parallel edges fan
+      // out to consistent sides regardless of each edge's stored direction.
+      const flip = e.source > e.target;
+      const a = flip ? nb : na;
+      const b = flip ? na : nb;
+      const ra = radiusOf(flip ? e.target : e.source);
+      const rb = radiusOf(flip ? e.source : e.target);
       const dx = b.x - a.x;
       const dy = b.y - a.y;
       const len = Math.hypot(dx, dy) || 1;
-      const ux = dx / len;
-      const uy = dy / len;
-      const ra = radiusOf(e.source);
-      const rb = radiusOf(e.target);
-      const x1 = a.x + ux * ra;
-      const y1 = a.y + uy * ra;
-      const x2 = b.x - ux * rb;
-      const y2 = b.y - uy * rb;
-      const gap = len - ra - rb; // visible segment between the two discs
+      const nx = -dy / len;
+      const ny = dx / len;
+      // apex = perpendicular distance of the curve's peak from the chord; the
+      // quadratic control point sits at twice that. Gentle, length-scaled, capped.
+      const apex = (edgeOffset.get(key) ?? 0) * Math.min(13, 0.16 * len);
+      const mx = (a.x + b.x) / 2;
+      const my = (a.y + b.y) / 2;
+      const cx = mx + nx * apex * 2;
+      const cy = my + ny * apex * 2;
+      // trim each end toward the control point so the curve leaves the disc edge
+      const da = Math.hypot(cx - a.x, cy - a.y) || 1;
+      const db = Math.hypot(cx - b.x, cy - b.y) || 1;
+      const x1 = a.x + ((cx - a.x) / da) * ra;
+      const y1 = a.y + ((cy - a.y) / da) * ra;
+      const x2 = b.x + ((cx - b.x) / db) * rb;
+      const y2 = b.y + ((cy - b.y) / db) * rb;
+      const gap = len - ra - rb; // visible span between the two discs
       const shown =
         !v.hidden(e.source) &&
         !v.hidden(e.target) &&
         (v.mode === "overview" || e.source === v.focal || e.target === v.focal) &&
         gap > 0;
       const op = shown ? `${Math.min(a.op, b.op)}` : "0";
-      if (line) {
-        line.setAttribute("x1", `${x1}`);
-        line.setAttribute("y1", `${y1}`);
-        line.setAttribute("x2", `${x2}`);
-        line.setAttribute("y2", `${y2}`);
-        line.style.opacity = op;
+      if (path) {
+        path.setAttribute("d", `M ${x1} ${y1} Q ${cx} ${cy} ${x2} ${y2}`);
+        path.style.opacity = op;
       }
       if (txt) {
-        // Predicate runs parallel to the line, but only once the on-screen
-        // segment is long enough to read it without crowding the discs.
+        // Predicate runs along its own curve, revealed only once the on-screen
+        // span is long enough to read it without crowding the discs.
         if (shown && gap * v.scale > 80) {
-          const mx = (x1 + x2) / 2;
-          const my = (y1 + y2) / 2;
+          const ax = mx + nx * apex; // curve apex (t=0.5)
+          const ay = my + ny * apex;
+          const s = apex === 0 ? 1 : Math.sign(apex);
+          const lx = ax + nx * 7 * s; // nudge just outside the curve
+          const ly = ay + ny * 7 * s;
           let deg = (Math.atan2(dy, dx) * 180) / Math.PI;
           if (deg > 90) deg -= 180;
           else if (deg < -90) deg += 180;
-          const px = mx - uy * 7; // nudge to the line's side, off the stroke
-          const py = my + ux * 7;
-          txt.setAttribute("x", `${px}`);
-          txt.setAttribute("y", `${py}`);
-          txt.setAttribute("transform", `rotate(${deg} ${px} ${py})`);
+          txt.setAttribute("x", `${lx}`);
+          txt.setAttribute("y", `${ly}`);
+          txt.setAttribute("transform", `rotate(${deg} ${lx} ${ly})`);
           txt.style.opacity = op;
         } else {
           txt.style.opacity = "0";
@@ -822,7 +858,7 @@ export function GraphScreen({
               const key = edgeKey(e.source, e.target, e.predicate);
               return (
                 <g key={key}>
-                  <line
+                  <path
                     ref={(el) => {
                       if (el) edgeEls.current.set(key, el);
                       else edgeEls.current.delete(key);
