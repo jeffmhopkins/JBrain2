@@ -329,3 +329,70 @@ async def test_resolved_listing_orders_and_tombstones(
     assert tomb["status"] == "open" and tomb["resolution"]["reopened_at"]
     open_ids = {i["id"] for i in await repo.list_review(OWNER, "open")}
     assert first in open_ids and second not in open_ids
+
+
+async def test_defer_parks_then_undefer_is_a_clean_requeue(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """Deferring moves an item to its own lane (out of open, not in the
+    decided log); un-deferring returns it to pending with the resolution
+    cleared — no tombstone, because it was never decided."""
+    repo = SqlAnalysisRepo(maker)
+    item = await seed_item(maker, "low_confidence", {"summary": "park me"})
+
+    deferred = await repo.resolve_review(OWNER, item, "defer", {})
+    assert deferred is not None
+    assert deferred["status"] == "deferred" and deferred["resolution"]["effects"] == []
+
+    deferred_ids = {i["id"] for i in await repo.list_review(OWNER, "deferred")}
+    open_ids = {i["id"] for i in await repo.list_review(OWNER, "open")}
+    decided_ids = {i["id"] for i in await repo.list_review(OWNER, "resolved")}
+    assert item in deferred_ids and item not in open_ids and item not in decided_ids
+
+    reopened = await repo.reopen_review(OWNER, item)
+    assert reopened is not None
+    assert reopened["status"] == "open" and reopened["resolution"] is None
+    assert reopened["reopen_note"] is None
+    # A clean re-queue leaves no tombstone in the decided log.
+    assert item not in {i["id"] for i in await repo.list_review(OWNER, "resolved")}
+    assert item in {i["id"] for i in await repo.list_review(OWNER, "open")}
+
+
+async def test_discuss_tags_the_deferred_row_for_the_assistant(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """'discuss' parks like defer but records its own action, so the lane can
+    tag the row as handed to the assistant."""
+    repo = SqlAnalysisRepo(maker)
+    item = await seed_item(maker, "ambiguous_mention", {"summary": "which project?"})
+
+    parked = await repo.resolve_review(OWNER, item, "discuss", {})
+    assert parked is not None
+    assert parked["status"] == "deferred"
+    assert parked["resolution"]["action"] == "discuss"
+
+
+async def test_resolve_batch_commits_good_and_collects_bad(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """The batch applies each decision with its own action: the valid ones
+    commit, the unknown-action and not-found ones come back as errors."""
+    repo = SqlAnalysisRepo(maker)
+    a = await seed_item(maker, "low_confidence", {"summary": "good one"})
+    b = await seed_item(maker, "low_confidence", {"summary": "bad action"})
+    missing = str(uuid.uuid4())
+
+    out = await repo.resolve_review_batch(
+        OWNER,
+        [
+            {"id": a, "action": "defer", "payload": {}},
+            {"id": b, "action": "accept_a", "payload": {}},  # invalid for low_confidence
+            {"id": missing, "action": "dismiss", "payload": {}},
+        ],
+    )
+    assert [i["id"] for i in out["items"]] == [a]
+    assert out["items"][0]["status"] == "deferred"
+    error_ids = {e["id"] for e in out["errors"]}
+    assert error_ids == {b, missing}
+    # The bad item stayed open — a failed batch entry rolls nothing forward.
+    assert b in {i["id"] for i in await repo.list_review(OWNER, "open")}
