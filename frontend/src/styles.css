@@ -1509,6 +1509,12 @@ h3 {
   stroke-linejoin: round;
 }
 
+/* The "Join the meeting" link in an event sheet's online row. */
+.cal-link {
+  color: var(--steel);
+  text-decoration: underline;
+}
+
 .theme-picker {
   display: flex;
   border: 1px solid var(--border);

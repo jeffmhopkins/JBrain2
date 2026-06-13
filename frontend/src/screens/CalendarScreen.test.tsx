@@ -13,6 +13,11 @@ function appt(over: Partial<AppointmentOut>): AppointmentOut {
     all_day: false,
     status: "confirmed",
     location: null,
+    organizer: null,
+    attendance_mode: null,
+    online_url: null,
+    description: null,
+    appointment_type: null,
     rrule: null,
     recurring: false,
     attendees: [],
@@ -100,6 +105,44 @@ describe("CalendarScreen", () => {
     render(<CalendarScreen onOpenNote={noop} onCompose={noop} />);
     fireEvent.click(screen.getByRole("tab", { name: "Tasks" }));
     await waitFor(() => expect(screen.getByText("No upcoming appointments.")).toBeInTheDocument());
+  });
+
+  it("renders the where/who facets in the event sheet", async () => {
+    stubFetch([
+      appt({
+        id: "A1",
+        title: "Dentist",
+        start: today(),
+        location: "Maple Dental",
+        organizer: "Maple Dental Group",
+        attendance_mode: "online",
+        online_url: "https://meet.example/abc",
+        description: "Bring x-rays",
+        appointment_type: "checkup",
+        attendees: [
+          {
+            name: "Dr. Nguyen",
+            entity_id: "p1",
+            role: "chair",
+            status: "accepted",
+            required: true,
+          },
+          { name: "Pat", entity_id: null, role: null, status: "declined", required: false },
+        ],
+      }),
+    ]);
+    render(<CalendarScreen onOpenNote={noop} onCompose={noop} />);
+    fireEvent.click(screen.getByRole("tab", { name: "Tasks" }));
+    await waitFor(() => screen.getByText("Dentist"));
+    fireEvent.click(screen.getByText("Dentist"));
+    expect(screen.getByText("Maple Dental")).toBeInTheDocument();
+    expect(screen.getByText("hosted by Maple Dental Group")).toBeInTheDocument();
+    expect(screen.getByText("checkup")).toBeInTheDocument();
+    expect(screen.getByText("Bring x-rays")).toBeInTheDocument();
+    // The join link, and attendees with a surfaced RSVP decline.
+    const join = screen.getByRole("link", { name: "Join the meeting" });
+    expect(join).toHaveAttribute("href", "https://meet.example/abc");
+    expect(screen.getByText(/with Dr\. Nguyen, Pat \(declined\)/)).toBeInTheDocument();
   });
 
   it("opens the source note from the event sheet when there is one", async () => {

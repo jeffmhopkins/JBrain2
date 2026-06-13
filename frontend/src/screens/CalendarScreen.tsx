@@ -30,6 +30,13 @@ const DAY_START = 7;
 const DAY_END = 20;
 const PXH = 48;
 
+interface Attendee {
+  name: string;
+  role: string | null;
+  status: string | null;
+  required: boolean | null;
+}
+
 interface Ev {
   id: string;
   title: string;
@@ -39,9 +46,14 @@ interface Ev {
   allDay: boolean;
   status: string;
   location: string | null;
+  organizer: string | null;
+  attendanceMode: string | null;
+  onlineUrl: string | null;
+  description: string | null;
+  appointmentType: string | null;
   recurring: boolean;
   rrule: string | null;
-  attendees: string[];
+  attendees: Attendee[];
   sourceNoteId: string | null;
 }
 
@@ -55,11 +67,42 @@ function toEv(a: AppointmentOut): Ev {
     allDay: a.all_day,
     status: a.status,
     location: a.location,
+    organizer: a.organizer,
+    attendanceMode: a.attendance_mode,
+    onlineUrl: a.online_url,
+    description: a.description,
+    appointmentType: a.appointment_type,
     recurring: a.recurring,
     rrule: a.rrule,
-    attendees: a.attendees,
+    attendees: a.attendees.map((p) => ({
+      name: p.name,
+      role: p.role,
+      status: p.status,
+      required: p.required,
+    })),
     sourceNoteId: a.source_note_id,
   };
+}
+
+/** The online/hybrid row label, or null for a plain in-person event (the venue
+ * row already says where). A join link, when present, gets the action wording. */
+function modeLabel(ev: Ev): string | null {
+  if (ev.onlineUrl) return "Join the meeting";
+  if (ev.attendanceMode === "online") return "Online";
+  if (ev.attendanceMode === "hybrid") return "Hybrid";
+  return null;
+}
+
+/** Attendees as "Name, Name (maybe), Name (declined)" — the RSVP shown only when
+ * it changes the plan (a decline/tentative), kept quiet otherwise. */
+function attendeeText(list: Attendee[]): string {
+  return list
+    .map((a) => {
+      const tag =
+        a.status === "declined" ? " (declined)" : a.status === "tentative" ? " (maybe)" : "";
+      return `${a.name}${tag}`;
+    })
+    .join(", ");
 }
 
 const sameDay = (a: Date, b: Date) =>
@@ -577,6 +620,10 @@ const META_ICONS: Record<string, string> = {
   repeat: "M4 9a7 7 0 0 1 12-3l3 3M20 15a7 7 0 0 1-12 3l-3-3",
   pin: "M12 21s-7-5.2-7-10a7 7 0 1 1 14 0c0 4.8-7 10-7 10z M12 11a2.2 2.2 0 1 0 0-4.4 2.2 2.2 0 0 0 0 4.4",
   person: "M12 8a3.4 3.4 0 1 0 0-6.8A3.4 3.4 0 0 0 12 8 M5.5 20a6.5 6.5 0 0 1 13 0",
+  host: "M4 21V4h10v17 M14 9h6v12 M7 8h2 M7 12h2 M7 16h2 M17 13h.01 M17 17h.01",
+  video: "M3 7h11v10H3z M14 10l6-3v10l-6-3z",
+  note: "M5 4h11l3 3v13H5z M9 9h6 M9 13h6 M9 17h4",
+  tag: "M4 4h7l9 9-7 7-9-9z M8 8h.01",
 };
 function MetaRow({ icon, children }: { icon: string; children: ReactNode }): ReactNode {
   return (
@@ -697,10 +744,24 @@ function EventSheet({
             {dur && <span className="cal-sub"> · {dur}</span>}
           </MetaRow>
           {ev.recurring && <MetaRow icon="repeat">{humanRrule(ev.rrule)}</MetaRow>}
+          {ev.appointmentType && <MetaRow icon="tag">{ev.appointmentType}</MetaRow>}
           {ev.location && <MetaRow icon="pin">{ev.location}</MetaRow>}
-          {ev.attendees.length > 0 && (
-            <MetaRow icon="person">with {ev.attendees.join(", ")}</MetaRow>
+          {modeLabel(ev) && (
+            <MetaRow icon="video">
+              {ev.onlineUrl ? (
+                <a className="cal-link" href={ev.onlineUrl} target="_blank" rel="noreferrer">
+                  {modeLabel(ev)}
+                </a>
+              ) : (
+                modeLabel(ev)
+              )}
+            </MetaRow>
           )}
+          {ev.organizer && <MetaRow icon="host">hosted by {ev.organizer}</MetaRow>}
+          {ev.attendees.length > 0 && (
+            <MetaRow icon="person">with {attendeeText(ev.attendees)}</MetaRow>
+          )}
+          {ev.description && <MetaRow icon="note">{ev.description}</MetaRow>}
         </div>
 
         {sourceNoteId ? (

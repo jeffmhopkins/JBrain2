@@ -105,7 +105,17 @@ export interface FeedConfig {
   token: string | null;
 }
 
-/** One appointment from the projection (read-only; ISO times, status is a flag). */
+/** One attendee on an appointment — name plus optional iCalendar params. */
+export interface AttendeeOut {
+  name: string;
+  entity_id: string | null;
+  role: string | null;
+  status: string | null;
+  required: boolean | null;
+}
+
+/** One appointment from the projection (read-only; ISO times, status is a flag).
+ * `location` is present only when the session can see its (location) domain. */
 export interface AppointmentOut {
   id: string;
   title: string;
@@ -115,9 +125,14 @@ export interface AppointmentOut {
   all_day: boolean;
   status: string;
   location: string | null;
+  organizer: string | null;
+  attendance_mode: string | null;
+  online_url: string | null;
+  description: string | null;
+  appointment_type: string | null;
   rrule: string | null;
   recurring: boolean;
-  attendees: string[];
+  attendees: AttendeeOut[];
   source_note_id: string | null;
 }
 
