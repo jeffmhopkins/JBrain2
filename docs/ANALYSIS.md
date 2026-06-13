@@ -80,6 +80,18 @@ transition with history, not an overwrite. The same rule that made
 appointments reschedule-safe applies to every property: identity is
 stable; properties are supersedable bindings.
 
+**Notes source facts; the entity graph arbitrates current truth [decided].**
+"Sole source of truth" above is about *provenance* — every fact traces to a note
+and dies with it. It does **not** mean a note's prose is the current truth: a
+note records the world *as captured*, frozen, while **what holds now** is the
+entity graph after supersession and the review inbox have run — a later note
+supersedes an old value, a correction note retracts an error, a conflict waits
+in review. The live value of `entity.predicate` is the active head of its chain,
+not whatever any one note (old or new) happens to say. Consumers that read raw
+notes — notably the assistant's retrieval tools — must reconcile against the
+graph rather than quote note prose as current (docs/ASSISTANT.md "Notes are the
+source of facts; the entity graph is the arbiter of current truth").
+
 ### Fact kinds and supersession **[decided: per-kind policy]**
 
 | kind | example | temporal | conflict policy |

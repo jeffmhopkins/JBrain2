@@ -63,7 +63,11 @@ async def test_read_note_handler_respects_session_scope(maker: async_sessionmake
                 {"id": ids[code], "cid": f"{run}-{code}", "code": code, "body": f"{code} body"},
             )
 
-    handlers = build_read_handlers(_NoSearch(), SqlNotesRepo(maker))  # type: ignore[arg-type]
+    handlers = build_read_handlers(
+        _NoSearch(),  # type: ignore[arg-type]
+        SqlNotesRepo(maker),
+        SqlAnalysisRepo(maker),
+    )
     narrowed = ToolContext(
         session=read_context(owner.principal_id, ("health",)), scopes=("health",)
     )
@@ -74,6 +78,67 @@ async def test_read_note_handler_respects_session_scope(maker: async_sessionmake
     # The finance note is invisible to a health-scoped session — RLS, not the tool.
     out_of_scope = await handlers["read_note"]({"note_id": ids["finance"]}, narrowed)
     assert "in scope" in out_of_scope
+
+
+async def test_read_note_overlays_superseded_facts_with_the_current_value(
+    maker: async_sessionmaker,
+) -> None:
+    """End to end: read_note appends the currency overlay so the agent sees that
+    a note's value was superseded — and the current value — instead of quoting
+    stale prose. The lookup runs in the session's scope (RLS), like the note read."""
+    owner = await _owner(maker)
+    note_austin, note_denver, sarah = (str(uuid.uuid4()) for _ in range(3))
+    async with scoped_session(maker, owner) as session:
+        await session.execute(
+            text(
+                "INSERT INTO app.entities (id, kind, canonical_name, status, domain_code)"
+                " VALUES (:id, 'Person', 'Sarah', 'confirmed', 'general')"
+            ),
+            {"id": sarah},
+        )
+        for nid, body in (
+            (note_austin, "Sarah lives in Austin."),
+            (note_denver, "Moved to Denver."),
+        ):
+            await session.execute(
+                text(
+                    "INSERT INTO app.notes (id, client_id, domain_code, body)"
+                    " VALUES (:id, :cid, 'general', :body)"
+                ),
+                {"id": nid, "cid": nid[:12], "body": body},
+            )
+        # homeLocation: the Austin note's value was superseded by the active Denver one.
+        for nid, stmt, status in (
+            (note_austin, "Sarah lives in Austin.", "superseded"),
+            (note_denver, "Sarah lives in Denver.", "active"),
+        ):
+            await session.execute(
+                text(
+                    "INSERT INTO app.facts (id, entity_id, predicate, qualifier, kind, statement,"
+                    " value_json, assertion, reported_at, temporal_precision, status, note_id,"
+                    " extractor, prompt_version, domain_code)"
+                    " VALUES (:id, :eid, 'homeLocation', '', 'state', :stmt, NULL, 'asserted',"
+                    " now(), 'unknown', :status, :nid, 'test', 'test-v1', 'general')"
+                ),
+                {"id": str(uuid.uuid4()), "eid": sarah, "stmt": stmt, "status": status, "nid": nid},
+            )
+
+    handlers = build_read_handlers(
+        _NoSearch(),  # type: ignore[arg-type]
+        SqlNotesRepo(maker),
+        SqlAnalysisRepo(maker),
+    )
+    ctx = ToolContext(session=read_context(owner.principal_id, ("general",)), scopes=("general",))
+
+    austin = await handlers["read_note"]({"note_id": note_austin}, ctx)
+    assert "Sarah lives in Austin." in austin  # the original prose stays
+    assert "SUPERSEDED" in austin
+    assert "Current value: Sarah lives in Denver." in austin  # the live value, inlined
+    assert f"read_entity {sarah}" in austin
+
+    # The Denver note states the current value — nothing stale, so no overlay.
+    denver = await handlers["read_note"]({"note_id": note_denver}, ctx)
+    assert "currency overlay" not in denver
 
 
 async def test_read_entity_handler_respects_session_scope(maker: async_sessionmaker) -> None:
