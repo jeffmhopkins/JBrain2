@@ -40,6 +40,9 @@ def test_column_exists_and_defaults_to_pending_integration():
     assert not col.nullable
     assert col.default.arg == "pending_integration"  # python-side default
     assert col.server_default is not None  # DB-side default for backfill
+    # Pin the server-default VALUE so a future typo can't let the python and DB
+    # defaults drift apart unnoticed.
+    assert str(col.server_default.arg) == "pending_integration"
 
 
 def test_migration_chains_from_head():
