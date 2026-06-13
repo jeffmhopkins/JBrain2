@@ -262,7 +262,7 @@ function cardEl(sess){
   rail.querySelector(".r-arch").onclick=(e)=>{e.stopPropagation();sess.archived=true;render();};
   const del=rail.querySelector(".r-del");
   del.onclick=(e)=>{e.stopPropagation();
-    if(!del.classList.contains("armed")){del.classList.add("armed");del.lastChild.nodeValue="";del.querySelector("svg").outerHTML="";del.textContent="tap again";return;}
+    if(!del.classList.contains("armed")){del.classList.add("armed");del.textContent="tap again";return;}
     sessions=sessions.filter(x=>x.id!==sess.id);render();};
   wrap.appendChild(rail);
 
@@ -288,10 +288,11 @@ function cardEl(sess){
   wrap.appendChild(slide);
 
   // tap-to-toggle the rail (mock stand-in for the real swipe gesture)
+  const delIcon='<svg width="17" height="17" viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M6 6l1 14h10l1-14"/></svg>delete';
   let open=false;
   card.onclick=()=>{open=!open;slide.style.transform=open?"translateX(-216px)":"translateX(0)";
-    if(!open){del.classList.remove("armed");}};
-  function closeRail(sl){open=false;sl.style.transform="translateX(0)";}
+    if(!open){del.classList.remove("armed");del.innerHTML=delIcon;}};
+  function closeRail(sl){open=false;sl.style.transform="translateX(0)";del.classList.remove("armed");del.innerHTML=delIcon;}
 
   return wrap;
 }
