@@ -9,9 +9,12 @@ from jbrain.analysis.extraction import (
     ExtractedFact,
     ExtractedMention,
     ExtractedTemporal,
+    ExtractedToken,
+    Extraction,
     ExtractionError,
     dedup_facts,
     link_relationship_objects,
+    merge_extractions,
     normalize_future_assertion,
     parse_datetime,
     parse_extraction,
@@ -23,12 +26,14 @@ from jbrain.analysis.extraction import (
 from jbrain.analysis.pipeline import local_anchor
 from jbrain.analysis.prompt import (
     EXTRACTION_SCHEMA,
+    GROUP_CHAR_BUDGET,
     MAX_FACTS,
     MIN_FACTS,
     PROMPT_VERSION,
     SYSTEM_PROMPT,
     build_user_prompt,
     fact_cap,
+    group_texts,
 )
 
 
@@ -1162,3 +1167,102 @@ def test_parse_extraction_links_relationship_objects() -> None:
     }
     [fact] = parse_extraction(payload).facts
     assert fact.object_entity_ref == "Celine Hopkins"
+
+
+# --- chunk-level map-reduce: grouping + merge -------------------------------
+
+
+def test_group_texts_keeps_a_short_note_as_one_group() -> None:
+    """The common path is unchanged: content under the budget is one group, so
+    a short note still makes exactly one extraction call."""
+    texts = ["a paragraph", "another short one"]
+    assert group_texts(texts) == [texts]
+
+
+def test_group_texts_fans_out_over_the_budget_without_splitting_blocks() -> None:
+    """Long notes partition into ordered groups, each under budget; a block is
+    never split (paragraph chunks are the atomic citation unit)."""
+    half = "x" * (GROUP_CHAR_BUDGET // 2 + 100)  # two of these exceed one budget
+    groups = group_texts([half, half, "tail"])
+    assert groups == [[half], [half, "tail"]]
+    # Every block survives intact and in order across the partition.
+    assert [t for g in groups for t in g] == [half, half, "tail"]
+
+
+def test_group_texts_isolates_a_lone_oversize_block() -> None:
+    big = "y" * (GROUP_CHAR_BUDGET * 2)
+    assert group_texts([big, "small"]) == [[big], ["small"]]
+
+
+def _mr_part(
+    *,
+    title: str = "",
+    tags: list[str] | None = None,
+    mentions: list[ExtractedMention] | None = None,
+    facts: list[ExtractedFact] | None = None,
+    tokens: list[ExtractedToken] | None = None,
+    dropped: int = 0,
+) -> Extraction:
+    return Extraction(
+        title=title,
+        tags=tags or [],
+        mentions=mentions or [],
+        facts=facts or [],
+        tokens=tokens or [],
+        dropped_facts=dropped,
+    )
+
+
+def _mr_rel(entity: str, obj: str | None, *, predicate: str = "spouse") -> ExtractedFact:
+    return ExtractedFact(
+        predicate=predicate,
+        qualifier="",
+        kind="relationship",
+        statement=f"{entity}.{predicate} -> {obj}",
+        value_json=None,
+        assertion="asserted",
+        entity_ref=entity,
+        object_entity_ref=obj,
+        temporal=None,
+        domain="general",
+        confidence=0.9,
+    )
+
+
+def _mr_person(name: str) -> ExtractedMention:
+    return ExtractedMention(name=name, kind="Person", surface_text=name)
+
+
+def test_merge_extractions_passes_a_single_part_through_untouched() -> None:
+    part = _mr_part(title="T", facts=[_mr_rel("Me", "Bob")])
+    assert merge_extractions([part]) is part
+
+
+def test_merge_extractions_unions_metadata_and_sums_dropped() -> None:
+    a = _mr_part(title="First", tags=["x", "y"], mentions=[_mr_person("Ann")], dropped=2)
+    b = _mr_part(
+        title="Second", tags=["y", "z"], mentions=[_mr_person("Ann"), _mr_person("Bob")], dropped=3
+    )
+    merged = merge_extractions([a, b])
+    assert merged.title == "First"  # first non-empty wins
+    assert merged.tags == ["x", "y", "z"]  # ordered union
+    assert [m.name for m in merged.mentions] == ["Ann", "Bob"]  # deduped by name
+    assert merged.dropped_facts == 5  # truncation summed for the note-level card
+
+
+def test_merge_extractions_rebinds_a_relationship_object_named_in_another_group() -> None:
+    """The cross-group win: a relationship whose object entity was mentioned in a
+    DIFFERENT group still links, because the object binding re-runs over the
+    full mention set. A per-group pass could not have snapped the possessive."""
+    group1 = _mr_part(mentions=[_mr_person("Celine")])
+    # The object ref is a possessive near-miss and Celine is not in THIS group's
+    # mentions, so parse's per-group link could not bind it.
+    group2 = _mr_part(mentions=[_mr_person("Jeff")], facts=[_mr_rel("Jeff", "Celine's")])
+    [fact] = merge_extractions([group1, group2]).facts
+    assert fact.object_entity_ref == "Celine"
+
+
+def test_merge_extractions_dedups_a_fact_restated_across_groups() -> None:
+    shared = _mr_rel("Me", "Bob", predicate="sibling")
+    merged = merge_extractions([_mr_part(facts=[shared]), _mr_part(facts=[shared])])
+    assert len(merged.facts) == 1
