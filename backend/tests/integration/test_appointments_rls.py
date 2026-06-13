@@ -143,6 +143,80 @@ async def test_purging_the_entity_cascades_the_appointment(maker: async_sessionm
         assert (await session.execute(exists, {"aid": aid})).scalar() == 0
 
 
+async def _make_location(maker: async_sessionmaker, eid: str, code: str, loc: str) -> None:
+    async with scoped_session(maker, OWNER) as session:
+        await session.execute(
+            text(
+                "INSERT INTO app.appointment_locations (entity_id, domain_code, location)"
+                " VALUES (:e, :c, :loc)"
+            ),
+            {"e": eid, "c": code, "loc": loc},
+        )
+
+
+async def test_appointment_location_sidecar_is_domain_scoped(maker: async_sessionmaker) -> None:
+    pid = await _owner_principal(maker)
+    tag = uuid.uuid4().hex[:8]
+    # A general-domain appointment whose venue rides the LOCATION domain — the
+    # whole point of the sidecar: the row is general, the venue is location.
+    aid, eid = await _make_appt(maker, "general", f"{tag} clinic")
+    await _make_location(maker, eid, "location", f"{tag} 123 Main St")
+    sel = text("SELECT location FROM app.appointment_locations WHERE entity_id = :e")
+    arg = {"e": eid}
+
+    # A location-scoped owner session sees the venue.
+    async with scoped_session(maker, read_context(pid, ("location",))) as session:
+        assert (await session.execute(sel, arg)).scalar() == f"{tag} 123 Main St"
+
+    # A general-only owner session sees the appointment but NOT its venue.
+    async with scoped_session(maker, read_context(pid, ("general",))) as session:
+        assert (
+            await session.execute(
+                text("SELECT count(*) FROM app.appointments WHERE id = :a"), {"a": aid}
+            )
+        ).scalar() == 1
+        assert (await session.execute(sel, arg)).scalar() is None
+
+    # The full owner sees it; a non-owner capability token never does, even with a
+    # matching domain scope (#8).
+    async with scoped_session(maker, OWNER) as session:
+        assert (await session.execute(sel, arg)).scalar() == f"{tag} 123 Main St"
+    token = SessionContext(principal_kind="capability_token", domain_scopes=("location",))
+    async with scoped_session(maker, token) as session:
+        assert (await session.execute(sel, arg)).scalar() is None
+
+
+async def test_narrowed_owner_cannot_write_a_location_outside_scope(
+    maker: async_sessionmaker,
+) -> None:
+    pid = await _owner_principal(maker)
+    _, eid = await _make_appt(maker, "general", "clinic-write")
+    # A health-scoped session cannot insert a location-domain venue — WITH CHECK.
+    health = read_context(pid, ("health",))
+    with pytest.raises(ProgrammingError):
+        async with scoped_session(maker, health) as session:
+            await session.execute(
+                text(
+                    "INSERT INTO app.appointment_locations (entity_id, domain_code, location)"
+                    " VALUES (:e, 'location', 'somewhere')"
+                ),
+                {"e": eid},
+            )
+
+
+async def test_purging_the_entity_cascades_the_location_sidecar(
+    maker: async_sessionmaker,
+) -> None:
+    await _owner_principal(maker)
+    _, eid = await _make_appt(maker, "health", "scan")
+    await _make_location(maker, eid, "location", "Imaging Center")
+    exists = text("SELECT count(*) FROM app.appointment_locations WHERE entity_id = :e")
+    async with scoped_session(maker, OWNER) as session:
+        assert (await session.execute(exists, {"e": eid})).scalar() == 1
+        await session.execute(text("DELETE FROM app.entities WHERE id = :e"), {"e": eid})
+        assert (await session.execute(exists, {"e": eid})).scalar() == 0
+
+
 async def test_appointment_status_is_constrained(maker: async_sessionmaker) -> None:
     await _owner_principal(maker)
     eid = await _make_entity(maker, "general", "bad-status")

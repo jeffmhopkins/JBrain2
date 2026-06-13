@@ -10,6 +10,7 @@ subscribed calendar removes it on the next refresh.
 """
 
 from datetime import UTC, datetime
+from typing import Any
 
 from jbrain.appointments.service import AppointmentInfo
 
@@ -20,6 +21,17 @@ _STATUS = {
     "tentative": "TENTATIVE",
     "cancelled": "CANCELLED",
     "occurred": "CONFIRMED",
+}
+# A CAL-ADDRESS is required on ORGANIZER/ATTENDEE, but the projection only knows
+# names — use the RFC 2606 reserved .invalid TLD so the value is well-formed and
+# provably non-deliverable (the CN carries the display name).
+_NOMAIL = "mailto:noreply@jbrain.invalid"
+# our attendee participation status → iCalendar PARTSTAT.
+_PARTSTAT = {
+    "accepted": "ACCEPTED",
+    "declined": "DECLINED",
+    "tentative": "TENTATIVE",
+    "needs_action": "NEEDS-ACTION",
 }
 
 
@@ -80,8 +92,22 @@ def _vevent(appt: AppointmentInfo, *, stamp: str) -> list[str]:
         if appt.ends_at:
             lines.append(f"DTEND:{_utc(appt.ends_at)}")
     lines.append(f"SUMMARY:{_escape(appt.title)}")
+    if appt.description:
+        lines.append(f"DESCRIPTION:{_escape(appt.description)}")
     if appt.location:
         lines.append(f"LOCATION:{_escape(appt.location)}")
+    if appt.organizer:
+        lines.append(f"ORGANIZER;CN={_escape(appt.organizer)}:{_NOMAIL}")
+    for attendee in appt.attendees:
+        line = _attendee(attendee)
+        if line:
+            lines.append(line)
+    if appt.online_url:
+        # RFC 7986 CONFERENCE: a join URI a calendar surfaces as a "Join" action.
+        url = appt.online_url.replace("\r", "").replace("\n", "")
+        lines.append(f"CONFERENCE;VALUE=URI;FEATURE=VIDEO;LABEL=Join:{url}")
+    if appt.appointment_type:
+        lines.append(f"CATEGORIES:{_escape(appt.appointment_type)}")
     lines.append(f"STATUS:{_STATUS.get(appt.status, 'CONFIRMED')}")
     if appt.rrule:
         # RRULE is structured, not TEXT (no backslash-escaping), but a stray CR/LF
@@ -90,6 +116,23 @@ def _vevent(appt: AppointmentInfo, *, stamp: str) -> list[str]:
         lines.append(f"RRULE:{rrule}")
     lines.append("END:VEVENT")
     return lines
+
+
+def _attendee(attendee: dict[str, Any]) -> str | None:
+    """One ATTENDEE line: CN + ROLE (chair / required vs optional) + PARTSTAT,
+    valued with the non-deliverable placeholder. No name ⇒ nothing to emit."""
+    name = attendee.get("name")
+    if not isinstance(name, str) or not name.strip():
+        return None
+    params = [f"CN={_escape(name)}"]
+    if attendee.get("role") == "chair":
+        params.append("ROLE=CHAIR")
+    elif attendee.get("required") is False or attendee.get("required") == "optional":
+        params.append("ROLE=OPT-PARTICIPANT")
+    status = attendee.get("status")
+    if isinstance(status, str) and status.lower() in _PARTSTAT:
+        params.append(f"PARTSTAT={_PARTSTAT[status.lower()]}")
+    return f"ATTENDEE;{';'.join(params)}:{_NOMAIL}"
 
 
 def to_ics(appts: list[AppointmentInfo], *, now: datetime | None = None) -> str:

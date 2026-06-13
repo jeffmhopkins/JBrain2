@@ -27,7 +27,15 @@ APPT = AppointmentInfo(
     location="Maple Dental",
     status="tentative",
     rrule="FREQ=WEEKLY",
-    attendees=[{"name": "Dr. Nguyen"}, {"name": ""}],
+    organizer="Maple Dental",
+    attendance_mode="in_person",
+    online_url="https://meet.example/abc",
+    description="Bring insurance card",
+    appointment_type="checkup",
+    attendees=[
+        {"name": "Dr. Nguyen", "entity_id": "p1", "role": "chair", "status": "accepted"},
+        {"name": ""},
+    ],
     source_note_id="n1",
     created_at=NOW,
     updated_at=NOW,
@@ -88,7 +96,19 @@ def test_lists_appointments_with_mapped_fields(
     assert a["start"] == "2026-07-01T14:00:00+00:00" and a["end"] == "2026-07-01T15:00:00+00:00"
     assert a["status"] == "tentative" and a["recurring"] is True and a["rrule"] == "FREQ=WEEKLY"
     assert a["location"] == "Maple Dental"
-    assert a["attendees"] == ["Dr. Nguyen"]  # blank names dropped
+    # The where/who facets round-trip; attendees carry their ICS params.
+    assert a["organizer"] == "Maple Dental" and a["attendance_mode"] == "in_person"
+    assert a["online_url"] == "https://meet.example/abc"
+    assert a["description"] == "Bring insurance card" and a["appointment_type"] == "checkup"
+    assert a["attendees"] == [  # blank names dropped
+        {
+            "name": "Dr. Nguyen",
+            "entity_id": "p1",
+            "role": "chair",
+            "status": "accepted",
+            "required": None,
+        }
+    ]
     assert a["source_note_id"] == "n1"  # so the calendar can open the source note
     # Defaults: a year-back lower bound, cancelled included for the calendar.
     call = appts.calls[-1]
