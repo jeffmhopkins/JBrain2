@@ -1,0 +1,278 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Assistant tool use · 1 · inline "Worked" accordion (tap to expand, per-step drill-down)</title>
+<style>
+  :root{
+    --bg:#0e0f11; --surface:#17181b; --surface-2:#1e2024; --border:#26282c;
+    --text:#e6e7e9; --text-2:#9a9da3; --text-3:#5c5f66;
+    --steel:#7fa7c9; --green:#8fbc9a; --amber:#c9a36a; --rose:#cf8a8f; --violet:#a493c9;
+    --steel-tint:rgba(127,167,201,.13); --rose-tint:rgba(207,138,143,.13);
+    --green-tint:rgba(143,188,154,.13);
+    --font-mono:ui-monospace,"SF Mono","Cascadia Mono",Menlo,Consolas,monospace;
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+  body{background:#000;color:var(--text);display:flex;flex-direction:column;align-items:center;gap:14px;padding:22px 14px 60px;min-height:100vh;}
+  svg{fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;}
+
+  .caption{width:392px;max-width:94vw;padding:0 6px;color:var(--text-2);font-size:12.5px;line-height:1.55;}
+  .caption b{color:var(--text);font-weight:600;}
+  .caption .tag{display:inline-block;font-size:11px;padding:2px 9px;border-radius:999px;margin-bottom:6px;background:var(--steel-tint);color:var(--steel);}
+
+  .phone{width:392px;max-width:94vw;height:720px;background:var(--bg);border:1px solid #2a2c30;border-radius:32px;overflow:hidden;position:relative;display:flex;flex-direction:column;}
+  .title{text-align:center;font-size:14px;font-weight:600;padding:14px 0 8px;flex:none;color:var(--text-2);}
+  .chat{flex:1;overflow-y:auto;padding:6px 16px 16px;display:flex;flex-direction:column;gap:10px;}
+
+  .bubble{padding:11px 14px;border-radius:16px;font-size:15px;line-height:1.45;}
+  .me{align-self:flex-end;max-width:82%;background:var(--steel-tint);border:1px solid rgba(127,167,201,.25);border-bottom-right-radius:5px;}
+  .ai{align-self:flex-start;width:88%;background:var(--surface);border:1px solid var(--border);border-bottom-left-radius:5px;padding-bottom:6px;}
+  .ai b{font-weight:700;}
+
+  /* inline numbered citation in the prose (composes with the accordion) */
+  .cite{display:inline-flex;align-items:center;justify-content:center;min-width:16px;height:16px;padding:0 4px;margin:0 1px;border-radius:5px;background:var(--steel-tint);color:var(--steel);font-size:10.5px;font-weight:600;vertical-align:super;line-height:1;cursor:pointer;border:none;font-family:inherit;}
+  .cite:focus-visible{outline:2px solid var(--steel);outline-offset:1px;}
+
+  /* the "Worked" footer button — a real 44px disclosure control, not a corner whisper */
+  .worked{margin-top:8px;border-top:1px solid var(--border);}
+  .worked-btn{display:flex;align-items:center;gap:8px;width:100%;min-height:44px;padding:10px 2px 8px;background:none;border:none;font:inherit;color:var(--text-2);cursor:pointer;text-align:left;}
+  .worked-btn:focus-visible{outline:2px solid var(--steel);outline-offset:2px;border-radius:8px;}
+  .worked-btn .gear{width:15px;height:15px;flex:none;color:var(--text-3);}
+  .worked-btn .lab{font-size:13px;font-weight:500;}
+  .worked-btn .meta{color:var(--text-3);font-weight:400;font-size:12px;}
+  .worked-btn .caret{width:15px;height:15px;flex:none;margin-left:auto;color:var(--text-3);transition:transform .16s ease-out;}
+  .worked.open .worked-btn .caret{transform:rotate(180deg);}
+  /* a turn that had a failure shows it on the collapsed line too (honest status) */
+  .worked-btn .fail{color:var(--rose);font-weight:500;}
+
+  .worked-body{overflow:hidden;display:grid;grid-template-rows:0fr;transition:grid-template-rows .17s ease-out;}
+  .worked.open .worked-body{grid-template-rows:1fr;}
+  .worked-body > .inner{min-height:0;overflow:hidden;}
+  .steps{display:flex;flex-direction:column;gap:2px;padding-top:6px;}
+
+  /* a single tool step — itself a pulldown (B's rung 2 / rung 3) */
+  .step{border-radius:10px;}
+  .step.err{background:var(--rose-tint);}
+  .step-row{display:flex;align-items:center;gap:9px;width:100%;min-height:42px;padding:7px 8px;background:none;border:none;font:inherit;color:var(--text-2);cursor:pointer;text-align:left;}
+  .step-row:focus-visible{outline:2px solid var(--steel);outline-offset:-2px;border-radius:10px;}
+  .step-row .ic{width:15px;height:15px;flex:none;color:var(--steel);}
+  .step.err .step-row .ic{color:var(--rose);}
+  .step-row .lab{font-size:13px;flex:1;color:var(--text);}
+  .step-row .mark{width:7px;height:7px;border-radius:999px;flex:none;background:var(--green);}
+  .step-row .mark.live{background:var(--steel);animation:breathe 1.5s ease-in-out infinite;}
+  .step-row .mark.bad{background:var(--rose);}
+  .step-row .cnt{font-size:11px;color:var(--text-3);}
+  .step-row .scaret{width:14px;height:14px;flex:none;color:var(--text-3);transition:transform .16s ease-out;}
+  .step.open .step-row .scaret{transform:rotate(90deg);}
+
+  .step-detail{overflow:hidden;display:grid;grid-template-rows:0fr;transition:grid-template-rows .16s ease-out;}
+  .step.open .step-detail{grid-template-rows:1fr;}
+  .step-detail > .di{min-height:0;overflow:hidden;padding:0 8px;}
+  .step.open .step-detail > .di{padding:2px 8px 12px;}
+
+  /* arguments — flat key/value, one level deep */
+  .args{display:grid;grid-template-columns:auto 1fr;gap:3px 12px;margin:4px 0 10px;padding-left:24px;}
+  .args dt{font-size:11px;color:var(--text-3);}
+  .args dd{font-size:12px;color:var(--text-2);font-family:var(--font-mono);word-break:break-word;}
+
+  /* result summary — reuse the source-card vocabulary */
+  .reslab{font-size:11px;color:var(--text-3);letter-spacing:.04em;text-transform:uppercase;padding-left:24px;margin-bottom:5px;}
+  .srcs{display:flex;flex-direction:column;gap:6px;padding-left:24px;}
+  .src{display:flex;align-items:center;gap:9px;width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:10px;background:var(--surface-2);font:inherit;text-align:left;cursor:pointer;}
+  .src:hover{border-color:var(--steel);}
+  .src .dot{width:7px;height:7px;border-radius:999px;flex:none;background:var(--steel);}
+  .src .tx{flex:1;font-size:12px;color:var(--text-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .src .chev{width:13px;height:13px;color:var(--text-3);flex:none;}
+  .restxt{padding-left:24px;font-size:12.5px;color:var(--text-2);line-height:1.5;}
+  .restxt.bad{color:var(--rose);}
+
+  /* rung 3 — the raw payload, quarantined behind a toggle */
+  .raw-toggle{margin:9px 0 0 24px;display:inline-flex;align-items:center;gap:5px;background:none;border:1px solid var(--border);border-radius:999px;padding:4px 10px;font:inherit;font-size:11px;color:var(--text-3);cursor:pointer;min-height:30px;}
+  .raw-toggle:hover{color:var(--text-2);border-color:var(--text-3);}
+  .raw-wrap{margin:8px 0 0 24px;position:relative;display:none;}
+  .step .raw-wrap.show{display:block;}
+  .raw{background:var(--surface-2);border:1px solid var(--border);border-radius:10px;padding:10px 12px;padding-right:40px;font-family:var(--font-mono);font-size:11px;line-height:1.55;color:var(--text-2);white-space:pre-wrap;word-break:break-word;max-height:150px;overflow:hidden;}
+  .raw.full{max-height:none;}
+  .raw-copy{position:absolute;top:6px;right:6px;width:30px;height:30px;display:flex;align-items:center;justify-content:center;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text-3);cursor:pointer;}
+  .raw-copy:hover{color:var(--steel);border-color:var(--steel);}
+  .raw-copy svg{width:14px;height:14px;}
+  .raw-more{display:block;margin-top:6px;background:none;border:none;color:var(--steel);font:inherit;font-size:11px;cursor:pointer;padding:2px;}
+
+  /* staged proposal chip */
+  .prop{display:inline-flex;align-items:center;gap:7px;margin:10px 0 2px;padding:8px 12px;border:none;border-radius:11px;background:var(--steel-tint);color:var(--steel);font:inherit;font-size:12.5px;font-weight:600;cursor:pointer;min-height:40px;}
+  .prop svg{width:15px;height:15px;flex:none;}
+
+  /* toast */
+  .toast{position:absolute;left:50%;bottom:18px;transform:translateX(-50%) translateY(8px);background:var(--surface-2);border:1px solid var(--border);color:var(--text);font-size:12px;padding:8px 14px;border-radius:999px;opacity:0;pointer-events:none;transition:opacity .18s,transform .18s;}
+  .toast.on{opacity:1;transform:translateX(-50%) translateY(0);}
+
+  @keyframes breathe{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.4;transform:scale(.8)}}
+  @media (prefers-reduced-motion:reduce){
+    .worked-body,.step-detail{transition:none;}
+    .worked-btn .caret,.step-row .scaret{transition:none;}
+    .step-row .mark.live{animation:none;}
+    .toast{transition:none;}
+  }
+</style>
+</head>
+<body>
+  <div class="caption">
+    <span class="tag">1 · Inline "Worked" accordion — the consensus pick</span><br/>
+    The answer is <b>always visible</b>. A real <b>44px "Worked" button</b> under it (not a 10px corner cue) expands the
+    steps <b>in place</b> — no flip, no swipe, so it stops fighting the Sessions/Proposals swipes. <b>Each step is itself a
+    pulldown</b>: tap one to see its <b>arguments in</b> and <b>result out</b>, then <b>raw</b> for the verbatim payload + copy.
+    The failed step is rose and pre-opened. <b>Tap "Worked", then tap a step, then "raw".</b>
+  </div>
+
+  <div class="phone">
+    <div class="title">Northwind &amp; onboarding</div>
+    <div class="chat">
+      <div class="bubble me">When did I start at Northwind, and who's my manager?</div>
+
+      <div class="bubble ai">
+        You started at <b>Northwind</b> on <b>March&nbsp;19,&nbsp;2025</b><button class="cite" data-cite="1">1</button>.
+        Your manager is <b>Dana&nbsp;Reyes</b><button class="cite" data-cite="2">2</button>, who you've logged two 1:1s with.
+
+        <div class="worked" id="worked">
+          <button class="worked-btn" aria-expanded="false" aria-controls="worked-body">
+            <svg class="gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M19.1 4.9 17 7M7 17l-2.1 2.1"/></svg>
+            <span class="lab">Worked</span>
+            <span class="meta">· 4 steps · 4 sources · <span class="fail">1 failed</span></span>
+            <svg class="caret" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg>
+          </button>
+          <div class="worked-body" id="worked-body"><div class="inner">
+            <div class="steps">
+
+              <!-- step 1: search -->
+              <div class="step" data-step>
+                <button class="step-row" aria-expanded="false">
+                  <svg class="ic" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+                  <span class="lab">Searched your notes</span>
+                  <span class="mark" title="ok"></span>
+                  <span class="cnt">4 results</span>
+                  <svg class="scaret" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></svg>
+                </button>
+                <div class="step-detail"><div class="di">
+                  <dl class="args">
+                    <dt>query</dt><dd>Northwind start date</dd>
+                    <dt>domain</dt><dd>general</dd>
+                    <dt>limit</dt><dd>8</dd>
+                  </dl>
+                  <div class="reslab">result</div>
+                  <div class="srcs">
+                    <button class="src"><span class="dot"></span><span class="tx">Offer signed — Northwind, start Mar 19</span><svg class="chev" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></svg></button>
+                    <button class="src"><span class="dot"></span><span class="tx">First day at Northwind today!</span><svg class="chev" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></svg></button>
+                    <button class="src"><span class="dot"></span><span class="tx">Onboarding checklist — IT, badge, payroll</span><svg class="chev" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></svg></button>
+                    <button class="src"><span class="dot"></span><span class="tx">Manager intro: Dana from the platform team</span><svg class="chev" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></svg></button>
+                  </div>
+                  <button class="raw-toggle" aria-expanded="false">raw result</button>
+                  <div class="raw-wrap"><pre class="raw">- note 7a3f [general] 2025-03-04: Offer signed — Northwind, start <mark>Mar 19</mark>. Comp + equity in the PDF.
+- note 91c2 [general] 2025-03-19: First day at <mark>Northwind</mark> today! Standup at 10, lunch with the team.
+- note b8e1 [general] 2025-03-19: Onboarding checklist — IT, badge, payroll, benefits enrollment by EOW.
+- note c40a [general] 2025-03-20: Manager intro: <mark>Dana</mark> from the platform team. Weekly 1:1 Thursdays.</pre><button class="raw-copy" aria-label="copy raw result"><svg viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg></button></div>
+                </div></div>
+              </div>
+
+              <!-- step 2: read_note -->
+              <div class="step" data-step>
+                <button class="step-row" aria-expanded="false">
+                  <svg class="ic" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h6"/></svg>
+                  <span class="lab">Read a note</span>
+                  <span class="mark" title="ok"></span>
+                  <svg class="scaret" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></svg>
+                </button>
+                <div class="step-detail"><div class="di">
+                  <dl class="args"><dt>note_id</dt><dd>7a3f1c</dd></dl>
+                  <div class="reslab">result</div>
+                  <div class="srcs">
+                    <button class="src"><span class="dot"></span><span class="tx">Offer signed — Northwind, start Mar 19, 2025</span><svg class="chev" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></svg></button>
+                  </div>
+                  <button class="raw-toggle" aria-expanded="false">raw result</button>
+                  <div class="raw-wrap"><pre class="raw">note 7a3f1c [general] 2025-03-04
+Offer signed — Northwind, start Mar 19, 2025.
+Comp + equity details in the attached PDF. Reports to Dana Reyes (platform).</pre><button class="raw-copy" aria-label="copy raw result"><svg viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg></button></div>
+                </div></div>
+              </div>
+
+              <!-- step 3: read_entity -->
+              <div class="step" data-step>
+                <button class="step-row" aria-expanded="false">
+                  <svg class="ic" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h6"/></svg>
+                  <span class="lab">Read entity "Dana Reyes"</span>
+                  <span class="mark" title="ok"></span>
+                  <span class="cnt">3 facts</span>
+                  <svg class="scaret" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></svg>
+                </button>
+                <div class="step-detail"><div class="di">
+                  <dl class="args"><dt>name</dt><dd>Dana Reyes</dd><dt>kind</dt><dd>Person</dd></dl>
+                  <div class="reslab">result</div>
+                  <div class="restxt">Person · platform team lead · your manager since Mar 2025 · 2 logged 1:1s.</div>
+                  <button class="raw-toggle" aria-expanded="false">raw result</button>
+                  <div class="raw-wrap"><pre class="raw">entity e_2f91 "Dana Reyes" [Person, general]
+- role: platform team lead
+- relation: manager (since 2025-03)
+- meetings: 1:1 2025-04-03, 1:1 2025-04-17</pre><button class="raw-copy" aria-label="copy raw result"><svg viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg></button></div>
+                </div></div>
+              </div>
+
+              <!-- step 4: error, auto-open -->
+              <div class="step err open" data-step>
+                <button class="step-row" aria-expanded="true">
+                  <svg class="ic" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg>
+                  <span class="lab">Couldn't read a note</span>
+                  <span class="mark bad" title="failed"></span>
+                  <svg class="scaret" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></svg>
+                </button>
+                <div class="step-detail"><div class="di">
+                  <dl class="args"><dt>note_id</dt><dd>0c41ff</dd></dl>
+                  <div class="reslab">error</div>
+                  <div class="restxt bad">note 0c41ff not found — it may have been deleted since it was indexed.</div>
+                </div></div>
+              </div>
+
+            </div>
+            <button class="prop"><svg viewBox="0 0 24 24"><path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2"/><rect x="9" y="3" width="6" height="4" rx="1"/><path d="m9 14 2 2 4-4"/></svg>Review proposal</button>
+          </div></div>
+        </div>
+      </div>
+    </div>
+    <div class="toast" id="toast">copied</div>
+  </div>
+
+<script>
+  const $=(s,r=document)=>r.querySelector(s), $$=(s,r=document)=>[...r.querySelectorAll(s)];
+  // Worked footer accordion
+  const worked=$("#worked"), wbtn=$(".worked-btn",worked);
+  wbtn.addEventListener("click",()=>{const open=worked.classList.toggle("open");wbtn.setAttribute("aria-expanded",open);});
+  // per-step pulldown
+  $$(".step").forEach(step=>{
+    const row=$(".step-row",step);
+    row.addEventListener("click",()=>{const open=step.classList.toggle("open");row.setAttribute("aria-expanded",open);});
+  });
+  // raw toggle + show-all
+  $$(".raw-toggle").forEach(t=>{
+    const wrap=t.nextElementSibling, raw=$(".raw",wrap);
+    t.addEventListener("click",()=>{const show=wrap.classList.toggle("show");t.setAttribute("aria-expanded",show);t.textContent=show?"hide raw":"raw result";
+      if(show && raw.scrollHeight>raw.clientHeight && !$(".raw-more",wrap)){
+        const more=document.createElement("button");more.className="raw-more";more.textContent="show all lines";
+        more.addEventListener("click",()=>{raw.classList.add("full");more.remove();});wrap.appendChild(more);}
+    });
+  });
+  // copy
+  const toast=$("#toast");let tt;
+  $$(".raw-copy").forEach(b=>b.addEventListener("click",()=>{
+    const txt=$(".raw",b.parentElement).textContent;
+    navigator.clipboard&&navigator.clipboard.writeText(txt).catch(()=>{});
+    toast.classList.add("on");clearTimeout(tt);tt=setTimeout(()=>toast.classList.remove("on"),1400);
+  }));
+  // citation tap → open + flash the matching source (demo)
+  $$(".cite").forEach(c=>c.addEventListener("click",()=>{
+    if(!worked.classList.contains("open")){worked.classList.add("open");wbtn.setAttribute("aria-expanded",true);}
+    const n=+c.dataset.cite, step=$$(".step")[n-1];
+    if(step){step.classList.add("open");$(".step-row",step).setAttribute("aria-expanded",true);step.scrollIntoView({block:"center"});}
+  }));
+</script>
+</body>
+</html>

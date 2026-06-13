@@ -1,0 +1,249 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Assistant tool use · 3 · citation-first (footnotes + sources tray, demoted steps drill-down)</title>
+<style>
+  :root{
+    --bg:#0e0f11; --surface:#17181b; --surface-2:#1e2024; --border:#26282c;
+    --text:#e6e7e9; --text-2:#9a9da3; --text-3:#5c5f66;
+    --steel:#7fa7c9; --green:#8fbc9a; --amber:#c9a36a; --rose:#cf8a8f; --violet:#a493c9;
+    --steel-tint:rgba(127,167,201,.13); --rose-tint:rgba(207,138,143,.13);
+    --font-mono:ui-monospace,"SF Mono","Cascadia Mono",Menlo,Consolas,monospace;
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+  body{background:#000;color:var(--text);display:flex;flex-direction:column;align-items:center;gap:14px;padding:22px 14px 60px;min-height:100vh;}
+  svg{fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;}
+
+  .caption{width:392px;max-width:94vw;padding:0 6px;color:var(--text-2);font-size:12.5px;line-height:1.55;}
+  .caption b{color:var(--text);font-weight:600;}
+  .caption .tag{display:inline-block;font-size:11px;padding:2px 9px;border-radius:999px;margin-bottom:6px;background:var(--steel-tint);color:var(--steel);}
+
+  .phone{width:392px;max-width:94vw;height:720px;background:var(--bg);border:1px solid #2a2c30;border-radius:32px;overflow:hidden;position:relative;display:flex;flex-direction:column;}
+  .title{text-align:center;font-size:14px;font-weight:600;padding:14px 0 8px;flex:none;color:var(--text-2);}
+  .chat{flex:1;overflow-y:auto;padding:6px 16px 16px;display:flex;flex-direction:column;gap:10px;}
+
+  .bubble{padding:11px 14px;border-radius:16px;font-size:15px;line-height:1.5;}
+  .me{align-self:flex-end;max-width:82%;background:var(--steel-tint);border:1px solid rgba(127,167,201,.25);border-bottom-right-radius:5px;}
+  .ai{align-self:flex-start;width:88%;background:var(--surface);border:1px solid var(--border);border-bottom-left-radius:5px;padding-bottom:8px;}
+  .ai b{font-weight:700;}
+
+  /* inline numbered citations — provenance lives IN the prose */
+  .cite{display:inline-flex;align-items:center;justify-content:center;min-width:17px;height:17px;padding:0 4px;margin:0 1px;border-radius:5px;background:var(--steel-tint);color:var(--steel);font-size:11px;font-weight:600;vertical-align:super;line-height:1;cursor:pointer;border:none;font-family:inherit;}
+  .cite:focus-visible{outline:2px solid var(--steel);outline-offset:1px;}
+  .cite.flash{animation:flash .9s ease-out;}
+  @keyframes flash{0%{background:var(--steel);color:#0e0f11;}100%{background:var(--steel-tint);color:var(--steel);}}
+
+  /* sources tray — the source cards collapsed to numbered chips */
+  .tray{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px;padding-top:9px;border-top:1px solid var(--border);}
+  .traylab{flex-basis:100%;font-size:10.5px;letter-spacing:.05em;text-transform:uppercase;color:var(--text-3);margin-bottom:2px;}
+  .chip{display:inline-flex;align-items:center;gap:6px;max-width:100%;padding:6px 10px;border:1px solid var(--border);border-radius:999px;background:var(--surface-2);font:inherit;font-size:12px;color:var(--text-2);cursor:pointer;min-height:32px;}
+  .chip:hover{border-color:var(--steel);}
+  .chip.flash{border-color:var(--steel);background:var(--steel-tint);}
+  .chip .n{display:inline-flex;align-items:center;justify-content:center;width:15px;height:15px;border-radius:999px;background:var(--steel-tint);color:var(--steel);font-size:10px;font-weight:600;flex:none;}
+  .chip .t{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .chip.entity .n{background:rgba(127,167,201,.18);}
+  .chip.entity{color:var(--text);}
+
+  /* demoted "steps" toggle — the mechanical trace for the curious */
+  .stepstoggle{display:inline-flex;align-items:center;gap:6px;margin-top:10px;background:none;border:none;padding:4px 2px;min-height:32px;font:inherit;font-size:12px;color:var(--text-3);cursor:pointer;}
+  .stepstoggle:hover{color:var(--text-2);}
+  .stepstoggle .fail{color:var(--rose);}
+  .stepstoggle .caret{width:14px;height:14px;transition:transform .16s ease-out;}
+  .trace.open .stepstoggle .caret{transform:rotate(180deg);}
+
+  .trace-body{overflow:hidden;display:grid;grid-template-rows:0fr;transition:grid-template-rows .17s ease-out;}
+  .trace.open .trace-body{grid-template-rows:1fr;}
+  .trace-body > .inner{min-height:0;overflow:hidden;}
+  .steps{display:flex;flex-direction:column;gap:2px;padding-top:6px;}
+
+  .step{border-radius:10px;}
+  .step.err{background:var(--rose-tint);}
+  .step-row{display:flex;align-items:center;gap:9px;width:100%;min-height:42px;padding:7px 8px;background:none;border:none;font:inherit;color:var(--text-2);cursor:pointer;text-align:left;}
+  .step-row:focus-visible{outline:2px solid var(--steel);outline-offset:-2px;border-radius:10px;}
+  .step-row .ic{width:15px;height:15px;flex:none;color:var(--steel);}
+  .step.err .step-row .ic{color:var(--rose);}
+  .step-row .lab{font-size:13px;flex:1;color:var(--text);}
+  .step-row .mark{width:7px;height:7px;border-radius:999px;flex:none;background:var(--green);}
+  .step-row .mark.bad{background:var(--rose);}
+  .step-row .cnt{font-size:11px;color:var(--text-3);}
+  .step-row .scaret{width:14px;height:14px;flex:none;color:var(--text-3);transition:transform .16s ease-out;}
+  .step.open .step-row .scaret{transform:rotate(90deg);}
+
+  .step-detail{overflow:hidden;display:grid;grid-template-rows:0fr;transition:grid-template-rows .16s ease-out;}
+  .step.open .step-detail{grid-template-rows:1fr;}
+  .step-detail > .di{min-height:0;overflow:hidden;padding:0 8px;}
+  .step.open .step-detail > .di{padding:2px 8px 12px;}
+
+  .args{display:grid;grid-template-columns:auto 1fr;gap:3px 12px;margin:4px 0 10px;padding-left:24px;}
+  .args dt{font-size:11px;color:var(--text-3);}
+  .args dd{font-size:12px;color:var(--text-2);font-family:var(--font-mono);word-break:break-word;}
+  .reslab{font-size:11px;color:var(--text-3);letter-spacing:.04em;text-transform:uppercase;padding-left:24px;margin-bottom:5px;}
+  .restxt{padding-left:24px;font-size:12.5px;color:var(--text-2);line-height:1.5;}
+  .restxt.bad{color:var(--rose);}
+  .srcs{display:flex;flex-direction:column;gap:6px;padding-left:24px;}
+  .src{display:flex;align-items:center;gap:9px;width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:10px;background:var(--surface-2);font:inherit;text-align:left;cursor:pointer;}
+  .src:hover{border-color:var(--steel);}
+  .src .dot{width:7px;height:7px;border-radius:999px;flex:none;background:var(--steel);}
+  .src .tx{flex:1;font-size:12px;color:var(--text-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .src .chev{width:13px;height:13px;color:var(--text-3);flex:none;}
+
+  .raw-toggle{margin:9px 0 0 24px;display:inline-flex;align-items:center;gap:5px;background:none;border:1px solid var(--border);border-radius:999px;padding:4px 10px;font:inherit;font-size:11px;color:var(--text-3);cursor:pointer;min-height:30px;}
+  .raw-toggle:hover{color:var(--text-2);border-color:var(--text-3);}
+  .raw-wrap{margin:8px 0 0 24px;position:relative;display:none;}
+  .step .raw-wrap.show{display:block;}
+  .raw{background:var(--surface-2);border:1px solid var(--border);border-radius:10px;padding:10px 12px;padding-right:40px;font-family:var(--font-mono);font-size:11px;line-height:1.55;color:var(--text-2);white-space:pre-wrap;word-break:break-word;max-height:150px;overflow:hidden;}
+  .raw.full{max-height:none;}
+  .raw-copy{position:absolute;top:6px;right:6px;width:30px;height:30px;display:flex;align-items:center;justify-content:center;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text-3);cursor:pointer;}
+  .raw-copy:hover{color:var(--steel);border-color:var(--steel);}
+  .raw-copy svg{width:14px;height:14px;}
+  .raw-more{display:block;margin-top:6px;background:none;border:none;color:var(--steel);font:inherit;font-size:11px;cursor:pointer;padding:2px;}
+
+  .prop{display:inline-flex;align-items:center;gap:7px;margin:10px 0 2px;padding:8px 12px;border:none;border-radius:11px;background:var(--steel-tint);color:var(--steel);font:inherit;font-size:12.5px;font-weight:600;cursor:pointer;min-height:40px;}
+  .prop svg{width:15px;height:15px;flex:none;}
+
+  .toast{position:absolute;left:50%;bottom:18px;transform:translateX(-50%) translateY(8px);background:var(--surface-2);border:1px solid var(--border);color:var(--text);font-size:12px;padding:8px 14px;border-radius:999px;opacity:0;pointer-events:none;transition:opacity .18s,transform .18s;}
+  .toast.on{opacity:1;transform:translateX(-50%) translateY(0);}
+
+  @media (prefers-reduced-motion:reduce){
+    .trace-body,.step-detail{transition:none;}
+    .stepstoggle .caret,.step-row .scaret{transition:none;}
+    .cite.flash,.toast{animation:none;transition:none;}
+  }
+</style>
+</head>
+<body>
+  <div class="caption">
+    <span class="tag">3 · Citation-first — provenance lives in the answer</span><br/>
+    Lead with the model's existing <b>[n] citations</b> right in the prose (tap one → it flashes its source chip). A
+    <b>sources tray</b> of numbered chips sits under the answer for the at-a-glance "where did this come from." The mechanical
+    step list is <b>demoted</b> to a quiet "4 steps" toggle — open it for the same <b>per-step drill-down</b> (args · result ·
+    raw + copy). Best when answers are source-heavy. <b>Tap a citation, a chip, then "4 steps".</b>
+  </div>
+
+  <div class="phone">
+    <div class="title">Northwind &amp; onboarding</div>
+    <div class="chat">
+      <div class="bubble me">When did I start at Northwind, and who's my manager?</div>
+
+      <div class="bubble ai" id="ai">
+        You started at <b>Northwind</b> on <b>March&nbsp;19,&nbsp;2025</b><button class="cite" data-cite="1">1</button>.
+        Your manager is <b>Dana&nbsp;Reyes</b><button class="cite" data-cite="3">3</button>, the platform team lead — you've
+        logged two 1:1s with her since<button class="cite" data-cite="2">2</button>.
+
+        <div class="tray">
+          <span class="traylab">sources</span>
+          <button class="chip" data-chip="1"><span class="n">1</span><span class="t">Offer signed — Northwind</span></button>
+          <button class="chip" data-chip="2"><span class="n">2</span><span class="t">First day at Northwind</span></button>
+          <button class="chip entity" data-chip="3"><span class="n">3</span><span class="t">Dana Reyes · person</span></button>
+        </div>
+
+        <div class="trace" id="trace">
+          <button class="stepstoggle" aria-expanded="false" aria-controls="trace-body">
+            <span>4 steps · <span class="fail">1 failed</span></span>
+            <svg class="caret" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg>
+          </button>
+          <div class="trace-body" id="trace-body"><div class="inner">
+            <div class="steps">
+
+              <div class="step" data-step>
+                <button class="step-row" aria-expanded="false">
+                  <svg class="ic" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+                  <span class="lab">Searched your notes</span><span class="mark"></span><span class="cnt">4 results</span>
+                  <svg class="scaret" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></svg>
+                </button>
+                <div class="step-detail"><div class="di">
+                  <dl class="args"><dt>query</dt><dd>Northwind start date</dd><dt>domain</dt><dd>general</dd><dt>limit</dt><dd>8</dd></dl>
+                  <div class="reslab">result</div>
+                  <div class="srcs">
+                    <button class="src"><span class="dot"></span><span class="tx">Offer signed — Northwind, start Mar 19</span><svg class="chev" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></svg></button>
+                    <button class="src"><span class="dot"></span><span class="tx">First day at Northwind today!</span><svg class="chev" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></svg></button>
+                  </div>
+                  <button class="raw-toggle" aria-expanded="false">raw result</button>
+                  <div class="raw-wrap"><pre class="raw">- note 7a3f [general] 2025-03-04: Offer signed — Northwind, start <mark>Mar 19</mark>.
+- note 91c2 [general] 2025-03-19: First day at <mark>Northwind</mark> today!
+- note b8e1 [general] 2025-03-19: Onboarding checklist — IT, badge, payroll.
+- note c40a [general] 2025-03-20: Manager intro: <mark>Dana</mark> from platform.</pre><button class="raw-copy" aria-label="copy raw result"><svg viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg></button></div>
+                </div></div>
+              </div>
+
+              <div class="step" data-step>
+                <button class="step-row" aria-expanded="false">
+                  <svg class="ic" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h6"/></svg>
+                  <span class="lab">Read a note</span><span class="mark"></span>
+                  <svg class="scaret" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></svg>
+                </button>
+                <div class="step-detail"><div class="di">
+                  <dl class="args"><dt>note_id</dt><dd>7a3f1c</dd></dl>
+                  <div class="reslab">result</div>
+                  <div class="srcs"><button class="src"><span class="dot"></span><span class="tx">Offer signed — Northwind, start Mar 19, 2025</span><svg class="chev" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></svg></button></div>
+                  <button class="raw-toggle" aria-expanded="false">raw result</button>
+                  <div class="raw-wrap"><pre class="raw">note 7a3f1c [general] 2025-03-04
+Offer signed — Northwind, start Mar 19, 2025. Reports to Dana Reyes (platform).</pre><button class="raw-copy" aria-label="copy raw result"><svg viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg></button></div>
+                </div></div>
+              </div>
+
+              <div class="step" data-step>
+                <button class="step-row" aria-expanded="false">
+                  <svg class="ic" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h6"/></svg>
+                  <span class="lab">Read entity "Dana Reyes"</span><span class="mark"></span><span class="cnt">3 facts</span>
+                  <svg class="scaret" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></svg>
+                </button>
+                <div class="step-detail"><div class="di">
+                  <dl class="args"><dt>name</dt><dd>Dana Reyes</dd><dt>kind</dt><dd>Person</dd></dl>
+                  <div class="reslab">result</div>
+                  <div class="restxt">Person · platform team lead · your manager since Mar 2025 · 2 logged 1:1s.</div>
+                  <button class="raw-toggle" aria-expanded="false">raw result</button>
+                  <div class="raw-wrap"><pre class="raw">entity e_2f91 "Dana Reyes" [Person, general]
+- role: platform team lead
+- relation: manager (since 2025-03)
+- meetings: 1:1 2025-04-03, 1:1 2025-04-17</pre><button class="raw-copy" aria-label="copy raw result"><svg viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg></button></div>
+                </div></div>
+              </div>
+
+              <div class="step err open" data-step>
+                <button class="step-row" aria-expanded="true">
+                  <svg class="ic" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg>
+                  <span class="lab">Couldn't read a note</span><span class="mark bad"></span>
+                  <svg class="scaret" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></svg>
+                </button>
+                <div class="step-detail"><div class="di">
+                  <dl class="args"><dt>note_id</dt><dd>0c41ff</dd></dl>
+                  <div class="reslab">error</div>
+                  <div class="restxt bad">note 0c41ff not found — it may have been deleted since it was indexed.</div>
+                </div></div>
+              </div>
+
+            </div>
+            <button class="prop"><svg viewBox="0 0 24 24"><path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2"/><rect x="9" y="3" width="6" height="4" rx="1"/><path d="m9 14 2 2 4-4"/></svg>Review proposal</button>
+          </div></div>
+        </div>
+      </div>
+    </div>
+    <div class="toast" id="toast">copied</div>
+  </div>
+
+<script>
+  const $=(s,r=document)=>r.querySelector(s), $$=(s,r=document)=>[...r.querySelectorAll(s)];
+  const trace=$("#trace"), tbtn=$(".stepstoggle",trace);
+  tbtn.addEventListener("click",()=>{const o=trace.classList.toggle("open");tbtn.setAttribute("aria-expanded",o);});
+  $$(".step").forEach(step=>{const row=$(".step-row",step);
+    row.addEventListener("click",()=>{const o=step.classList.toggle("open");row.setAttribute("aria-expanded",o);});});
+  $$(".raw-toggle").forEach(t=>{const wrap=t.nextElementSibling, raw=$(".raw",wrap);
+    t.addEventListener("click",()=>{const show=wrap.classList.toggle("show");t.setAttribute("aria-expanded",show);t.textContent=show?"hide raw":"raw result";
+      if(show && raw.scrollHeight>raw.clientHeight && !$(".raw-more",wrap)){
+        const more=document.createElement("button");more.className="raw-more";more.textContent="show all lines";
+        more.addEventListener("click",()=>{raw.classList.add("full");more.remove();});wrap.appendChild(more);}});});
+  const toast=$("#toast");let tt;
+  $$(".raw-copy").forEach(b=>b.addEventListener("click",()=>{
+    navigator.clipboard&&navigator.clipboard.writeText($(".raw",b.parentElement).textContent).catch(()=>{});
+    toast.classList.add("on");clearTimeout(tt);tt=setTimeout(()=>toast.classList.remove("on"),1400);}));
+  // citation ⇄ chip cross-highlight
+  const flash=el=>{el.classList.add("flash");setTimeout(()=>el.classList.remove("flash"),900);};
+  $$(".cite").forEach(c=>c.addEventListener("click",()=>{const chip=$(`.chip[data-chip="${c.dataset.cite}"]`);if(chip){flash(chip);chip.scrollIntoView({block:"nearest"});}}));
+  $$(".chip").forEach(ch=>ch.addEventListener("click",()=>{const cite=$(`.cite[data-cite="${ch.dataset.chip}"]`);if(cite)flash(cite);}));
+</script>
+</body>
+</html>

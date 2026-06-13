@@ -1,0 +1,48 @@
+{
+  "name": "an enumerated relationship fans out to one edge per named child",
+  "description": "The four-daughters discrepancy (field report): 'I have four daughters, Summer, Harmony, Lydian and Elora' came back with only Summer wired as a child — the other three were bare people with birthdates. v10 teaches ONE relationship edge per enumerated individual, so all four children edges land, and the kinship reciprocity registry mirrors each onto the daughter's `parent` stream. The model emits only the four directed Me.children edges; the reciprocals are the pipeline's job.",
+  "steps": [
+    {
+      "domain": "general",
+      "created_at": "2026-06-12T22:05:00-06:00",
+      "body": "I have four daughters: Summer, Harmony, Lydian and Elora.",
+      "extraction": {
+        "title": "My four daughters",
+        "tags": ["family", "daughters", "children"],
+        "mentions": [
+          {"name": "Me", "kind": "Person", "surface_text": "I"},
+          {"name": "Summer", "kind": "Person", "surface_text": "Summer"},
+          {"name": "Harmony", "kind": "Person", "surface_text": "Harmony"},
+          {"name": "Lydian", "kind": "Person", "surface_text": "Lydian"},
+          {"name": "Elora", "kind": "Person", "surface_text": "Elora"}
+        ],
+        "facts": [
+          {"predicate": "children", "qualifier": "", "kind": "relationship", "statement": "Summer is my daughter.", "value_json": null, "assertion": "asserted", "entity_ref": "Me", "object_entity_ref": "Summer", "temporal": null, "domain": "general", "confidence": 1.0},
+          {"predicate": "children", "qualifier": "", "kind": "relationship", "statement": "Harmony is my daughter.", "value_json": null, "assertion": "asserted", "entity_ref": "Me", "object_entity_ref": "Harmony", "temporal": null, "domain": "general", "confidence": 1.0},
+          {"predicate": "children", "qualifier": "", "kind": "relationship", "statement": "Lydian is my daughter.", "value_json": null, "assertion": "asserted", "entity_ref": "Me", "object_entity_ref": "Lydian", "temporal": null, "domain": "general", "confidence": 1.0},
+          {"predicate": "children", "qualifier": "", "kind": "relationship", "statement": "Elora is my daughter.", "value_json": null, "assertion": "asserted", "entity_ref": "Me", "object_entity_ref": "Elora", "temporal": null, "domain": "general", "confidence": 1.0}
+        ],
+        "temporal_tokens": []
+      }
+    }
+  ],
+  "expect": {
+    "facts": [
+      {"entity": "Me", "predicate": "children", "kind": "relationship", "status": "active", "count": 4},
+      {"entity": "Me", "predicate": "children", "value_contains": "Summer", "status": "active"},
+      {"entity": "Me", "predicate": "children", "value_contains": "Harmony", "status": "active"},
+      {"entity": "Me", "predicate": "children", "value_contains": "Lydian", "status": "active"},
+      {"entity": "Me", "predicate": "children", "value_contains": "Elora", "status": "active"},
+      {"entity": "Summer", "predicate": "parent", "kind": "relationship", "value_contains": "Me", "status": "active"},
+      {"entity": "Harmony", "predicate": "parent", "kind": "relationship", "value_contains": "Me", "status": "active"},
+      {"entity": "Lydian", "predicate": "parent", "kind": "relationship", "value_contains": "Me", "status": "active"},
+      {"entity": "Elora", "predicate": "parent", "kind": "relationship", "value_contains": "Me", "status": "active"}
+    ],
+    "entities": [
+      {"name": "Summer", "kind": "Person", "status": "provisional"},
+      {"name": "Harmony", "kind": "Person", "status": "provisional"},
+      {"name": "Lydian", "kind": "Person", "status": "provisional"},
+      {"name": "Elora", "kind": "Person", "status": "provisional"}
+    ]
+  }
+}

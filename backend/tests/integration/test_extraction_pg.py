@@ -347,6 +347,136 @@ async def test_analyze_note_lands_everything(
     assert usage and usage[0].provider == "xai" and usage[0].model == "grok-4.3"
 
 
+async def test_extraction_reads_paragraph_chunks_not_overlapping_sections(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """The chunker stores two overlapping granularities per source — paragraph
+    (the citation unit) and section (retrieval windows that CONTAIN the
+    paragraphs). Extraction must read paragraphs only, or a multi-paragraph note
+    feeds the body to the model ~2x. Distinct sentinels prove which rows the
+    extractor was handed; the section row exists, so it was FILTERED, not
+    missing."""
+    note_id = await make_note(maker, domain="general", body="PARAGRAPHSENTINEL content here")
+    async with scoped_session(maker, OWNER) as s:
+        for gran, seq, sentinel in (
+            ("paragraph", 0, "PARAGRAPHSENTINEL"),
+            ("section", 1, "SECTIONSENTINEL"),
+        ):
+            await s.execute(
+                text(
+                    "INSERT INTO app.chunks (id, note_id, domain_code, granularity, seq,"
+                    " char_start, char_end, source_kind, text)"
+                    " VALUES (:id, :n, 'general', :g, :seq, 0, 29, 'note', :t)"
+                ),
+                {
+                    "id": str(uuid.uuid4()),
+                    "n": note_id,
+                    "g": gran,
+                    "seq": seq,
+                    "t": f"{sentinel} content here",
+                },
+            )
+
+    fake = FakeLlmClient([json.dumps(extraction_payload())])
+    router = LlmRouter(
+        {"xai": fake},
+        {"note.extract": ("xai", "grok-4.3")},
+        recorder=SqlUsageRecorder(maker),
+    )
+    await AnalysisPipeline(maker, router).analyze_note({"note_id": note_id})
+
+    assert len(fake.calls) == 1
+    prompt = fake.calls[0]["user_text"]
+    assert "PARAGRAPHSENTINEL" in prompt  # the paragraph chunk was fed
+    assert "SECTIONSENTINEL" not in prompt  # the overlapping section was not
+    # The section row still exists — extraction filtered it, it wasn't absent.
+    section_rows = await rows(
+        maker,
+        OWNER,
+        "SELECT 1 FROM app.chunks WHERE note_id = :n AND granularity = 'section'",
+        n=note_id,
+    )
+    assert len(section_rows) == 1
+
+
+def _solo_fact_payload(predicate: str, value: str) -> dict[str, Any]:
+    """A minimal one-attribute extraction on the owner — a group's scripted
+    output for the map-reduce test."""
+    return {
+        "title": "long note",
+        "tags": ["a", "b", "c"],
+        "mentions": [{"name": "Me", "kind": "Person", "surface_text": "I"}],
+        "facts": [
+            {
+                "predicate": predicate,
+                "qualifier": "",
+                "kind": "attribute",
+                "statement": f"My {predicate} is {value}.",
+                "value_json": {"value": value},
+                "assertion": "asserted",
+                "entity_ref": "Me",
+                "object_entity_ref": None,
+                "temporal": None,
+                "domain": "general",
+                "confidence": 0.9,
+            }
+        ],
+        "temporal_tokens": [],
+    }
+
+
+async def test_long_note_fans_out_into_groups_and_merges_their_facts(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """Chunk-level map-reduce: a note whose paragraph chunks exceed one group's
+    char budget is extracted in MULTIPLE calls, and the per-group facts are
+    merged onto the one note — so a long paste yields facts from all of it, not
+    just the head. Two ~4k-char paragraph chunks force two groups; the fake
+    returns a distinct fact per group and both must land."""
+    note_id = await make_note(maker, domain="general", body="long body")
+    async with scoped_session(maker, OWNER) as s:
+        for seq, marker in ((0, "FIRST"), (1, "SECOND")):
+            await s.execute(
+                text(
+                    "INSERT INTO app.chunks (id, note_id, domain_code, granularity, seq,"
+                    " char_start, char_end, source_kind, text)"
+                    " VALUES (:id, :n, 'general', 'paragraph', :seq, 0, 4100, 'note', :t)"
+                ),
+                {
+                    "id": str(uuid.uuid4()),
+                    "n": note_id,
+                    "seq": seq,
+                    "t": f"{marker} " + "word " * 820,
+                },
+            )
+
+    fake = FakeLlmClient(
+        [
+            json.dumps(_solo_fact_payload("favoriteColor", "blue")),
+            json.dumps(_solo_fact_payload("favoriteFood", "pizza")),
+        ]
+    )
+    router = LlmRouter(
+        {"xai": fake},
+        {"note.extract": ("xai", "grok-4.3")},
+        recorder=SqlUsageRecorder(maker),
+    )
+    await AnalysisPipeline(maker, router).analyze_note({"note_id": note_id})
+
+    # Two groups -> two extraction calls (the single-call path is the <=budget case).
+    assert len(fake.calls) == 2
+    assert "FIRST" in fake.calls[0]["user_text"] and "SECOND" not in fake.calls[0]["user_text"]
+    assert "SECOND" in fake.calls[1]["user_text"] and "FIRST" not in fake.calls[1]["user_text"]
+    # Both groups' facts merged onto the one note.
+    preds = {
+        r.predicate
+        for r in await rows(
+            maker, OWNER, "SELECT predicate FROM app.facts WHERE note_id = :n", n=note_id
+        )
+    }
+    assert {"favoriteColor", "favoriteFood"} <= preds
+
+
 async def test_ratcheted_fact_cites_a_derived_chunk_in_its_own_domain(
     maker: async_sessionmaker[AsyncSession], tmp_path: Any
 ) -> None:

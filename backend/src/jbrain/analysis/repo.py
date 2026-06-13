@@ -16,9 +16,15 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from jbrain.analysis.display import mark_snippet
 from jbrain.db.session import SessionContext, scoped_session
 
-# The list view exposes two segments: "resolved" folds in dismissals and
-# reopened tombstones — there is no separate dismissed listing.
-REVIEW_STATUSES = ("open", "resolved")
+# The list view exposes three lanes: "open" is the pending triage queue,
+# "deferred" is the parked lane (defer + discuss), and "resolved" folds in
+# dismissals and reopened tombstones — there is no separate dismissed listing.
+REVIEW_STATUSES = ("open", "resolved", "deferred")
+
+# Parking actions: they move an item to the deferred lane and write no graph
+# effects, so reopening one is a bare re-queue. "discuss" additionally marks
+# the row as handed to the assistant (a follow-up wires the actual handoff).
+DEFER_ACTIONS = ("defer", "discuss")
 
 
 class UnknownAction(Exception):
@@ -368,6 +374,9 @@ class SqlAnalysisRepo:
         if status == "open":
             where = "status = 'open'"
             order = "created_at, id"
+        elif status == "deferred":
+            where = "status = 'deferred'"
+            order = "resolved_at DESC, created_at, id"
         else:
             where = (
                 "status IN ('resolved', 'dismissed')"
@@ -441,6 +450,77 @@ class SqlAnalysisRepo:
             ).one()
         return _item_dict(updated)
 
+    async def resolve_review_batch(
+        self, ctx: SessionContext, decisions: list[dict[str, Any]]
+    ) -> dict[str, list[dict[str, Any]]]:
+        """Apply many resolutions in one RLS-scoped transaction; returns
+        {"items": [updated], "errors": [{id, detail}]}.
+
+        Each decision carries its own action — the caller (which knows each
+        row's kind) picks the right verb per item, so a bulk "approve all" is
+        a list of the correct per-kind actions, not one action guessed here.
+        A bad item is collected as an error and skipped; the good ones still
+        commit, mirroring the per-item optimistic UI.
+        """
+        items: list[dict[str, Any]] = []
+        errors: list[dict[str, Any]] = []
+        async with scoped_session(self._maker, ctx) as session:
+            for decision in decisions:
+                item_id = str(decision.get("id", ""))
+                action = str(decision.get("action", ""))
+                payload = decision.get("payload") or {}
+                iid = _as_uuid(item_id)
+                if iid is None or not action:
+                    errors.append({"id": item_id, "detail": "bad id or action"})
+                    continue
+                row = (
+                    await session.execute(
+                        text(
+                            "SELECT kind, payload, status FROM app.review_items"
+                            " WHERE id = :id FOR UPDATE"
+                        ),
+                        {"id": str(iid)},
+                    )
+                ).first()
+                if row is None:
+                    errors.append({"id": item_id, "detail": "not found"})
+                    continue
+                if row.status != "open":
+                    errors.append({"id": item_id, "detail": "not open"})
+                    continue
+                try:
+                    new_status, effects = await self._apply_resolution(
+                        session, row.kind, row.payload, action, payload
+                    )
+                except UnknownAction as exc:
+                    errors.append({"id": item_id, "detail": str(exc)})
+                    continue
+                await session.execute(
+                    text(
+                        "UPDATE app.review_items"
+                        " SET status = :status, resolution = cast(:resolution AS jsonb),"
+                        "     resolved_at = now() WHERE id = :id"
+                    ),
+                    {
+                        "id": str(iid),
+                        "status": new_status,
+                        "resolution": _json(
+                            {"action": action, "payload": payload, "effects": effects}
+                        ),
+                    },
+                )
+                updated = (
+                    await session.execute(
+                        text(
+                            "SELECT id::text, kind, payload, status, resolution, domain_code,"
+                            " created_at, resolved_at FROM app.review_items WHERE id = :id"
+                        ),
+                        {"id": str(iid)},
+                    )
+                ).one()
+                items.append(_item_dict(updated))
+        return {"items": items, "errors": errors}
+
     async def reopen_review(self, ctx: SessionContext, item_id: str) -> dict[str, Any] | None:
         """Full unwind: reverse the recorded resolution effects in the same
         transaction that re-queues the item; returns the updated item (with a
@@ -469,17 +549,30 @@ class SqlAnalysisRepo:
                 raise AlreadyOpen(item.status)
 
             resolution = dict(item.resolution or {})
-            notes = await self._reverse_effects(session, resolution.get("effects") or [])
-            # The marker is how the UI tombstones the log row; the next
-            # resolve overwrites the whole resolution and clears it.
-            resolution["reopened_at"] = datetime.now(UTC).isoformat()
-            await session.execute(
-                text(
-                    "UPDATE app.review_items SET status = 'open', resolved_at = NULL,"
-                    " resolution = cast(:resolution AS jsonb) WHERE id = :id"
-                ),
-                {"id": str(iid), "resolution": _json(resolution)},
-            )
+            # Un-parking a deferred item is a clean return to pending: it was
+            # never decided, wrote no effects, so it leaves no reopened
+            # tombstone — the resolution is cleared outright.
+            if item.status == "deferred":
+                notes: list[str] = []
+                await session.execute(
+                    text(
+                        "UPDATE app.review_items SET status = 'open', resolved_at = NULL,"
+                        " resolution = NULL WHERE id = :id"
+                    ),
+                    {"id": str(iid)},
+                )
+            else:
+                notes = await self._reverse_effects(session, resolution.get("effects") or [])
+                # The marker is how the UI tombstones the log row; the next
+                # resolve overwrites the whole resolution and clears it.
+                resolution["reopened_at"] = datetime.now(UTC).isoformat()
+                await session.execute(
+                    text(
+                        "UPDATE app.review_items SET status = 'open', resolved_at = NULL,"
+                        " resolution = cast(:resolution AS jsonb) WHERE id = :id"
+                    ),
+                    {"id": str(iid), "resolution": _json(resolution)},
+                )
             updated = (
                 await session.execute(
                     text(
@@ -510,6 +603,24 @@ class SqlAnalysisRepo:
         if action == "dismiss":
             # No graph writes: reopening a dismissal is a bare re-queue.
             return "dismissed", []
+
+        if action in DEFER_ACTIONS:
+            # Parking, not deciding: the item leaves the open queue with no
+            # graph effects, so reopen is a bare re-queue. The recorded action
+            # ("defer" vs "discuss") is how the deferred lane tags each row.
+            return "deferred", []
+
+        if action == "correct":
+            # Correction-note path (docs/DESIGN.md "Edit model"): the human's
+            # fix was filed as a real note (the #7 channel) — its id rides in
+            # the payload. The graph change is the pipeline's when it processes
+            # that note, so the resolve writes no facts; it only closes the
+            # item and remembers the link. Reopen keeps the note (it stands on
+            # its own), so there is nothing to unwind.
+            note_id = payload.get("note_id")
+            if not note_id:
+                raise UnknownAction("correct requires a note_id")
+            return "resolved", [{"action": "corrected", "note_id": note_id}]
 
         if kind in ("attribute_collision", "fact_conflict") and action in ("accept_a", "accept_b"):
             winner = item_payload.get("fact_a" if action == "accept_a" else "fact_b")
@@ -675,10 +786,11 @@ class SqlAnalysisRepo:
                 {"action": "distinct_from", "a": a, "b": b, "inserted": inserted is not None}
             ]
 
-        if kind == "ambiguous_mention" and action == "reject":
-            # The card's only advertised verb: leaving the mention unlinked
-            # changes no data, so this is a dismissal — layer-2/3 resolution
-            # may re-propose the link with more signal.
+        if kind in ("ambiguous_mention", "extraction_truncated") and action == "reject":
+            # An informational card's only advertised verb: it wrote no graph
+            # state, so resolving it is a dismissal. ambiguous_mention may be
+            # re-proposed with more signal; extraction_truncated is acknowledged
+            # (the owner re-runs with a larger budget if they want the tail).
             return "dismissed", []
 
         if kind == "domain_promotion" and action in ("accept", "reject"):
@@ -782,6 +894,10 @@ class SqlAnalysisRepo:
                 notes.append(
                     "the distinct-from edge is permanent and stays — this pair is never re-proposed"
                 )
+            elif action == "corrected":
+                # The correction note is the human's own note: reopening the
+                # review item re-queues it but never deletes the note.
+                notes.append("the correction note stays — it was filed as your own note")
         return notes
 
 

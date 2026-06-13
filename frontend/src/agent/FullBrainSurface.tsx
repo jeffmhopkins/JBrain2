@@ -4,24 +4,18 @@
 // A horizontal swipe is the in-context shortcut (right→Sessions, left→Proposals,
 // the opposite swipe sends the open panel back out); the header buttons do the
 // same for anyone who'd rather tap. The composer is the omnibox, not here — this
-// surface only reads `fb` and renders.
+// surface only reads `fb` and renders. An answer that used tools carries an inline
+// "Worked" disclosure (tap to expand in place); each step is itself a pulldown
+// showing its arguments, result, and raw payload (docs/research/brain-tooluse-ux).
 
-import {
-  type ReactNode,
-  type PointerEvent as ReactPointerEvent,
-  type TouchEvent,
-  useEffect,
-  useLayoutEffect,
-  useRef,
-  useState,
-} from "react";
+import { type ReactNode, type TouchEvent, useEffect, useRef, useState } from "react";
 import { DOMAIN_COLOR } from "../notes/modes";
 import { ProposalTree } from "./ProposalTree";
 import { ProposalsPanel } from "./ProposalsPanel";
 import { SessionsPanel } from "./SessionsPanel";
 import { Markdown, unlinkedEntities } from "./markdown";
 import { type AgentStatus, agentStatus } from "./status";
-import { type SourceRef, toolStep } from "./toolSummary";
+import { type SourceRef, type ToolStep, toolStep } from "./toolSummary";
 import type { ToolActivity, TranscriptMessage } from "./transcript";
 import type { FullBrain } from "./useFullBrain";
 import { ToolView } from "./views/registry";
@@ -51,10 +45,10 @@ export function FullBrainSurface({ fb, onOpenNote, onOpenEntity }: Props): React
 
   function onTouchStart(e: TouchEvent): void {
     const target = e.target as HTMLElement;
-    // Text fields opt out so typing/selection isn't hijacked, and a flip card
-    // owns its own horizontal swipe (answer ⇄ tool use); taps on buttons fall
-    // through (a tap never travels OPEN_PX).
-    if (target.closest("textarea, input, select, .fb-flip")) {
+    // Text fields opt out so typing/selection isn't hijacked; taps on the Worked
+    // disclosure and its step rows fall through (a tap never travels OPEN_PX), so
+    // the horizontal swipe keeps its single meaning — the lateral panels.
+    if (target.closest("textarea, input, select")) {
       drag.current = null;
       return;
     }
@@ -263,131 +257,71 @@ function Bubble({
     </>
   );
 
-  // No tools → a plain bubble. With tools, the bubble is a flip card: the answer
-  // faces front, swipe left to turn it to the tool use (docs/mocks/
-  // assistant-flip-tooluse.html).
-  if (message.tools.length === 0) {
-    return <div className="bubble ai">{answer}</div>;
-  }
+  // No tools → a plain bubble. With tools, the answer carries an inline "Worked"
+  // disclosure that expands in place to the tool steps (docs/research/
+  // brain-tooluse-ux/A-disclosure-patterns.md). Both share the one bubble.
   return (
-    <FlipBubble tools={message.tools} onOpenNote={onOpenNote} onOpenProposal={onOpenProposal}>
+    <div className="bubble ai">
       {answer}
-    </FlipBubble>
+      {message.tools.length > 0 && (
+        <Worked tools={message.tools} onOpenNote={onOpenNote} onOpenProposal={onOpenProposal} />
+      )}
+    </div>
   );
 }
 
-const FLIP_PX = 44; // horizontal travel that commits a flip
-
-// A two-faced assistant bubble: the answer up front, the tool use on the back.
-// A horizontal swipe (or a tap on the corner cue) turns it; the box stays a
-// fixed width pinned to the left so it flips in place, and the height eases to
-// whichever face shows. The back is sized to its own content (top/left/right,
-// no bottom) so a tall tool run is never clipped.
-function FlipBubble({
+// The "Worked" disclosure under an answer: a labelled 44px button (honest status,
+// not a hidden gesture) that expands the tool steps in place. Each step is itself
+// a pulldown (StepRow). No flip, no 3D, no swipe — taps only.
+function Worked({
   tools,
   onOpenNote,
   onOpenProposal,
-  children,
 }: {
   tools: ToolActivity[];
   onOpenNote?: ((noteId: string) => void) | undefined;
   onOpenProposal?: ((proposalId: string) => void) | undefined;
-  children: ReactNode;
 }): ReactNode {
   const [open, setOpen] = useState(false);
-  const wrap = useRef<HTMLDivElement>(null);
-  const flip = useRef<HTMLDivElement>(null);
-  const front = useRef<HTMLDivElement>(null);
-  const back = useRef<HTMLDivElement>(null);
-  // Becomes a real drag only once the gesture proves horizontal — until then a
-  // press falls through so inner cards/chips stay tappable.
-  const drag = useRef<{ x: number; y: number; active: boolean } | null>(null);
+  const bodyId = useRef(`worked-${Math.random().toString(36).slice(2)}`).current;
 
   const steps = tools.map(toolStep);
   const sourceCount = steps.reduce((n, s) => n + s.sources.length, 0);
-  const parts = [`${steps.length} step${steps.length === 1 ? "" : "s"}`];
+  const failCount = steps.filter((s) => s.ok === false).length;
+  const parts: ReactNode[] = [`${steps.length} step${steps.length === 1 ? "" : "s"}`];
   if (sourceCount) parts.push(`${sourceCount} source${sourceCount === 1 ? "" : "s"}`);
   const staged = tools.find((t) => t.proposal)?.proposal;
 
-  function fit(animate: boolean): void {
-    const w = wrap.current;
-    const face = (open ? back.current : front.current)?.offsetHeight;
-    if (!w || face == null) return;
-    w.style.transition = animate ? "height 0.28s cubic-bezier(0.2,0.7,0.3,1)" : "none";
-    w.style.height = `${face}px`;
-  }
-  // Apply the flip + fit the height from `open`. Runs every render so streaming
-  // text re-fits the front; height only animates on an actual turn, and the
-  // hidden face is inert so it's out of the tab order / a11y tree.
-  const prevOpen = useRef(open);
-  useLayoutEffect(() => {
-    if (flip.current) {
-      flip.current.style.transition = "";
-      flip.current.style.transform = `rotateY(${open ? 180 : 0}deg)`;
-    }
-    fit(prevOpen.current !== open);
-    prevOpen.current = open;
-    if (front.current) front.current.inert = open;
-    if (back.current) back.current.inert = !open;
-  });
-
-  function onPointerDown(e: ReactPointerEvent): void {
-    drag.current = { x: e.clientX, y: e.clientY, active: false };
-  }
-  function onPointerMove(e: ReactPointerEvent): void {
-    const d = drag.current;
-    if (!d || !flip.current) return;
-    const dx = e.clientX - d.x;
-    if (!d.active) {
-      // Claim the gesture only when it's clearly horizontal; otherwise let the
-      // vertical scroll have it.
-      if (Math.abs(dx) < 8 || Math.abs(dx) <= Math.abs(e.clientY - d.y)) return;
-      d.active = true;
-      flip.current.style.transition = "none";
-      const w = wrap.current;
-      const h = Math.max(front.current?.offsetHeight ?? 0, back.current?.offsetHeight ?? 0);
-      if (w) {
-        w.style.transition = "none";
-        w.style.height = `${h}px`;
-      }
-      flip.current.setPointerCapture(e.pointerId);
-    }
-    const deg = Math.max(0, Math.min(180, (open ? 180 : 0) + (d.x - e.clientX) * 0.55));
-    flip.current.style.transform = `rotateY(${deg}deg)`;
-  }
-  function onPointerUp(e: ReactPointerEvent): void {
-    const d = drag.current;
-    drag.current = null;
-    if (!d || !d.active) return; // a tap fell through to the inner control
-    const dx = d.x - e.clientX; // a left swipe is positive
-    setOpen(open ? !(dx < -FLIP_PX) : dx > FLIP_PX);
-  }
-
   return (
-    <div className="fb-flipwrap" ref={wrap}>
-      {/* Pointer-only swipe surface; the keyboard path is the cue buttons below. */}
-      <div
-        className="fb-flip"
-        ref={flip}
-        onPointerDown={onPointerDown}
-        onPointerMove={onPointerMove}
-        onPointerUp={onPointerUp}
-        onPointerCancel={() => {
-          drag.current = null;
-        }}
+    <div className={`fb-worked${open ? " open" : ""}`}>
+      <button
+        type="button"
+        className="fb-worked-btn"
+        aria-expanded={open}
+        aria-controls={bodyId}
+        onClick={() => setOpen((o) => !o)}
       >
-        <div className="bubble ai fb-face fb-front" ref={front}>
-          {children}
-          <button type="button" className="fb-cue" onClick={() => setOpen(true)}>
-            <ChevronGlyph className="fb-cue-ic back" />
-            {steps.length} tool{steps.length === 1 ? "" : "s"}
-          </button>
-        </div>
-        <div className="bubble ai fb-face fb-back" ref={back}>
-          <div className="fb-back-head">
-            <GearGlyph />
-            <span>Worked</span>
-            <span className="tw-meta">· {parts.join(" · ")}</span>
+        <GearGlyph />
+        <span className="fb-worked-lab">Worked</span>
+        <span className="fb-worked-meta">
+          {" · "}
+          {parts.map((p, i) => (
+            // biome-ignore lint/suspicious/noArrayIndexKey: fixed positional meta parts
+            <span key={i}>
+              {i > 0 ? " · " : ""}
+              {p}
+            </span>
+          ))}
+          {failCount > 0 && <span className="fb-worked-fail"> · {failCount} failed</span>}
+        </span>
+        <CaretGlyph className="fb-worked-caret" />
+      </button>
+      <div className="fb-worked-body" id={bodyId}>
+        <div className="fb-worked-inner">
+          <div className="fb-steps">
+            {steps.map((s) => (
+              <StepRow key={s.id} step={s} onOpenNote={onOpenNote} />
+            ))}
           </div>
           {staged && (
             <button
@@ -404,34 +338,149 @@ function FlipBubble({
               <ChevronGlyph className="tw-chev" />
             </button>
           )}
-          <div className="toolwork-detail">
-            {steps.map((s) => (
-              <div key={s.id}>
-                <div className="toolwork-step">
-                  <StepGlyph name={s.name} />
-                  <span>{s.label}</span>
-                  {s.name === "search" && (
-                    <span className="tw-count">
-                      {s.sources.length} result{s.sources.length === 1 ? "" : "s"}
-                    </span>
-                  )}
-                </div>
-                {s.sources.length > 0 && (
-                  <div className="toolwork-srcs">
-                    {s.sources.map((src) => (
-                      <SourceCard key={src.noteId} src={src} onOpen={onOpenNote} />
-                    ))}
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-          <button type="button" className="fb-cue" onClick={() => setOpen(false)}>
-            answer
-            <ChevronGlyph className="fb-cue-ic" />
-          </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+// One tool step, itself a pulldown: tap the row to reveal its arguments-in and
+// result-out; a failed step opens by default with its error text. Search/read
+// steps that surfaced source cards also offer a "raw result" rung for the
+// verbatim backend text (docs/research/brain-tooluse-ux/B-verbose-logging.md).
+function StepRow({
+  step,
+  onOpenNote,
+}: {
+  step: ToolStep;
+  onOpenNote?: ((noteId: string) => void) | undefined;
+}): ReactNode {
+  const isErr = step.ok === false;
+  const [open, setOpen] = useState(isErr);
+  // A step that comes back failed opens itself so the error is visible without a
+  // tap — including when it transitions mid-stream (it mounts in-flight).
+  useEffect(() => {
+    if (isErr) setOpen(true);
+  }, [isErr]);
+  const hasSources = step.sources.length > 0;
+  const hasArgs = step.args != null && Object.keys(step.args).length > 0;
+  const summary = step.summary?.trim();
+  // The verbatim raw payload is worth a rung only when the friendly result (the
+  // source cards) hides it; otherwise the result text already is the summary.
+  const rawText = hasSources ? summary : undefined;
+  const mark = isErr ? "bad" : step.ok === undefined ? "live" : "";
+
+  return (
+    <div className={`fb-step${isErr ? " err" : ""}${open ? " open" : ""}`}>
+      <button
+        type="button"
+        className="fb-step-row"
+        aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}
+      >
+        <StepGlyph name={step.name} />
+        <span className="fb-step-lab">{step.label}</span>
+        <span className={`fb-step-mark ${mark}`} aria-hidden="true" />
+        {step.name === "search" && (
+          <span className="fb-step-cnt">
+            {step.sources.length} result{step.sources.length === 1 ? "" : "s"}
+          </span>
+        )}
+        <ChevronGlyph className="fb-step-caret" />
+      </button>
+      <div className="fb-step-detail">
+        <div className="fb-step-di">
+          {hasArgs && <ArgsList args={step.args as Record<string, unknown>} />}
+          {isErr ? (
+            <>
+              <div className="fb-res-lab">error</div>
+              <div className="fb-res-txt err">{summary || "the tool returned an error"}</div>
+            </>
+          ) : hasSources ? (
+            <>
+              <div className="fb-res-lab">result</div>
+              <div className="toolwork-srcs">
+                {step.sources.map((src) => (
+                  <SourceCard key={src.noteId} src={src} onOpen={onOpenNote} />
+                ))}
+              </div>
+              {rawText && <RawBlock text={rawText} />}
+            </>
+          ) : summary ? (
+            <>
+              <div className="fb-res-lab">result</div>
+              <div className="fb-res-txt">{summary}</div>
+            </>
+          ) : null}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// A step's arguments as a flat, one-level key/value list — values are monospace
+// so an id or a date stays legible; deeper structure stringifies rather than
+// recursing (kept calm for a phone).
+function ArgsList({ args }: { args: Record<string, unknown> }): ReactNode {
+  return (
+    <dl className="fb-args">
+      {Object.entries(args).map(([k, v]) => (
+        <div key={k} className="fb-args-row">
+          <dt>{k}</dt>
+          <dd>{typeof v === "string" ? v : JSON.stringify(v)}</dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
+// The raw result rung: the verbatim backend text in a clamped monospace inset,
+// with copy and a "show all lines" grow for a long payload.
+function RawBlock({ text }: { text: string }): ReactNode {
+  const [open, setOpen] = useState(false);
+  const [full, setFull] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const clean = text.replace(/<\/?mark>/g, "");
+  const overflowing = clean.split("\n").length > 6;
+
+  function copy(): void {
+    void navigator.clipboard?.writeText(clean).catch(() => {});
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1400);
+  }
+
+  return (
+    <div className="fb-raw-wrap">
+      <button
+        type="button"
+        className="fb-raw-toggle"
+        aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}
+      >
+        {open ? "hide raw" : "raw result"}
+      </button>
+      {open && (
+        <div className="fb-raw">
+          <pre className={`fb-raw-pre${full ? " full" : ""}`}>{clean}</pre>
+          <button type="button" className="fb-raw-copy" aria-label="copy raw result" onClick={copy}>
+            {copied ? (
+              <svg className="tw-ic" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="m5 13 4 4L19 7" />
+              </svg>
+            ) : (
+              <svg className="tw-ic" viewBox="0 0 24 24" aria-hidden="true">
+                <rect x="9" y="9" width="11" height="11" rx="2" />
+                <path d="M5 15V5a2 2 0 0 1 2-2h10" />
+              </svg>
+            )}
+          </button>
+          {overflowing && !full && (
+            <button type="button" className="fb-raw-more" onClick={() => setFull(true)}>
+              show all lines
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -476,6 +525,15 @@ function ChevronGlyph({ className }: { className: string }): ReactNode {
   return (
     <svg className={className} viewBox="0 0 24 24" aria-hidden="true">
       <path d="m9 6 6 6-6 6" />
+    </svg>
+  );
+}
+
+// A down-caret for the Worked disclosure — rotates 180° when the block is open.
+function CaretGlyph({ className }: { className: string }): ReactNode {
+  return (
+    <svg className={className} viewBox="0 0 24 24" aria-hidden="true">
+      <path d="m6 9 6 6 6-6" />
     </svg>
   );
 }

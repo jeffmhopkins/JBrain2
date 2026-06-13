@@ -2071,6 +2071,26 @@ button.small {
   min-height: 24px;
 }
 
+/* Quiet disclosure under a current edge: opens the property's history sheet.
+   De-emphasized so current values dominate; a full tap target on mobile. */
+.pred-history-toggle {
+  align-self: flex-start;
+  min-height: 44px;
+  padding: 0;
+  margin-top: -8px;
+  background: transparent;
+  border: none;
+  color: var(--text-3);
+  font-size: var(--fs-micro);
+  text-align: left;
+  cursor: pointer;
+}
+
+/* The timeline rail, hosted in the shared sheet rather than inline. */
+.sheet-rail {
+  margin: 4px 0 8px;
+}
+
 /* Vertical timeline rail: newest at top, each dot a fact citing its note. */
 .timeline-rail {
   list-style: none;
@@ -2246,39 +2266,14 @@ button.small {
 
 /* ===== Review inbox: one-at-a-time triage ===== */
 
+/* ===== Review inbox — split-inbox redesign (pending · deferred · decided) ===== */
+
 .review-body {
   display: flex;
   flex-direction: column;
   gap: 14px;
-  /* Clears the fixed skip · reject · accept bar. */
+  /* Clears the fixed bulk bar / detail footer when one is shown. */
   padding-bottom: calc(96px + env(safe-area-inset-bottom));
-}
-
-.progress-dots {
-  display: flex;
-  justify-content: center;
-  gap: 6px;
-  padding: 4px 0;
-}
-
-.progress-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: var(--r-pill);
-  background: var(--surface-2);
-  border: 1px solid var(--border);
-}
-
-.progress-dot.dot-done {
-  background: var(--ok);
-  border-color: transparent;
-}
-
-.review-card {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-  animation: review-in 150ms ease-out;
 }
 
 @keyframes review-in {
@@ -2292,152 +2287,7 @@ button.small {
   }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .review-card {
-    animation: none;
-  }
-}
-
-.review-head {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.review-summary {
-  margin: 0;
-  font-size: var(--fs-secondary);
-  color: var(--text-2);
-}
-
-/* The cited note text is the hero, at editor size. */
-.review-hero {
-  margin: 0;
-  font-size: var(--fs-editor);
-  line-height: 1.6;
-  padding: 4px 0;
-}
-
-.review-outcomes {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  border: 1px solid var(--border);
-  border-radius: var(--r-card);
-  padding: 12px 14px;
-  background: var(--surface);
-}
-
-.outcome-row {
-  margin: 0;
-  font-size: var(--fs-secondary);
-  color: var(--text-2);
-}
-
-.outcome-verb {
-  font-weight: 500;
-}
-
-.outcome-accept {
-  color: var(--green);
-}
-
-.outcome-reject {
-  color: var(--rose);
-}
-
-.review-choices {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.choice-btn {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 2px;
-  width: 100%;
-  min-height: 52px;
-  padding: 10px 14px;
-  text-align: left;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--r-input);
-}
-
-.choice-label {
-  font-size: var(--fs-body);
-  font-weight: 500;
-}
-
-.choice-detail {
-  font-size: var(--fs-micro);
-  color: var(--text-3);
-}
-
-.choice-destructive {
-  color: var(--rose);
-  background: var(--rose-tint);
-}
-
-.choice-destructive.armed {
-  background: var(--rose);
-  color: #fff;
-}
-
-.review-error {
-  margin: 0;
-  font-size: var(--fs-secondary);
-  color: var(--rose);
-}
-
-.review-bar {
-  position: fixed;
-  inset-inline: 0;
-  bottom: 0;
-  max-width: 430px;
-  margin: 0 auto;
-  display: flex;
-  gap: 8px;
-  padding: 10px 16px calc(10px + env(safe-area-inset-bottom));
-  background: var(--bg);
-  border-top: 1px solid var(--border);
-}
-
-.review-bar button {
-  flex: 1;
-  min-height: 44px;
-  font-weight: 500;
-}
-
-.review-skip {
-  background: transparent;
-  color: var(--text-2);
-}
-
-.review-reject {
-  background: var(--rose-tint);
-  border-color: var(--border);
-  color: var(--rose);
-}
-
-.review-accept {
-  background: var(--green-tint);
-  border-color: var(--border);
-  color: var(--green);
-}
-
-.review-reject.armed,
-.review-accept.armed {
-  background: var(--rose);
-  border-color: transparent;
-  color: #fff;
-}
-
-/* ===== Review history: open | resolved segments + the decision log ===== */
-
-/* DESIGN.md segmented control: pill row on --surface-2, accent-tint active. */
+/* Segmented filter: pill row on --surface-2, accent-tint active. */
 .review-segs {
   display: flex;
   gap: 3px;
@@ -2483,51 +2333,122 @@ button.small {
   border-color: transparent;
 }
 
-/* The log has no fixed action bar to clear. */
-.review-body-log {
-  padding-bottom: 24px;
+.rlane-empty {
+  padding: 32px 8px;
+  text-align: center;
 }
 
-.quiet-link {
-  background: none;
-  border: none;
-  padding: 0;
-  font: inherit;
-  color: var(--accent);
-  cursor: pointer;
+/* Confidence: a prompt to verify, color-coded by level. */
+.conf-badge {
+  font-size: var(--fs-micro);
+  padding: 1px 8px;
+  border-radius: var(--r-pill);
+  border: 1px solid var(--border);
 }
 
-.rlist {
+.conf-high {
+  color: var(--green);
+  background: var(--green-tint);
+}
+
+.conf-med {
+  color: var(--amber);
+  background: var(--amber-tint);
+}
+
+.conf-low {
+  color: var(--rose);
+  background: var(--rose-tint);
+}
+
+/* ----- List ----- */
+
+.rlist-tools {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.rtool {
+  min-height: 34px;
+  padding: 0 12px;
+  font-size: var(--fs-secondary);
+  color: var(--text-2);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-input);
+}
+
+.rtool-suggest {
+  margin-left: auto;
+  color: var(--steel);
+  background: var(--steel-tint);
+  border-color: transparent;
+}
+
+.rlist2 {
+  display: flex;
+  flex-direction: column;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--r-card);
   overflow: hidden;
 }
 
-.rrow {
+.rrow2 {
+  display: flex;
+  align-items: stretch;
+  gap: 0;
   border-bottom: 1px solid var(--border);
 }
 
-.rrow:last-child {
+.rrow2:last-child {
   border-bottom: none;
 }
 
-.rrow-btn {
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  gap: 5px;
-  width: 100%;
-  min-height: 44px;
-  padding: 12px 14px;
-  text-align: left;
-  background: transparent;
-  border: none;
-  border-radius: 0;
-  color: inherit;
+.rrow-check {
+  flex: none;
+  width: 44px;
+  display: grid;
+  place-items: center;
+  border-right: 1px solid var(--border);
+  cursor: pointer;
 }
 
-.rrow-top {
+.rrow-cbox {
+  appearance: none;
+  width: 20px;
+  height: 20px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+}
+
+.rrow-cbox:checked {
+  background: var(--steel);
+  border-color: var(--steel);
+}
+
+.rrow-cbox:checked::after {
+  content: "✓";
+  color: #fff;
+  font-size: var(--fs-micro);
+}
+
+.rrow-open {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 14px;
+  text-align: left;
+}
+
+.rrow-line {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -2537,48 +2458,47 @@ button.small {
   margin-left: auto;
   font-size: var(--fs-micro);
   color: var(--text-3);
-  white-space: nowrap;
 }
 
-.rrow-summary {
+.rrow-sum {
   font-size: var(--fs-note);
   color: var(--text);
+  line-height: 1.4;
 }
 
-.rrow-decided {
+.rrow-meta {
   display: flex;
-  align-items: baseline;
-  gap: 6px;
-  font-size: var(--fs-secondary);
-  color: var(--text-2);
+  align-items: center;
+  gap: 8px;
 }
 
-.decided-mark {
-  color: var(--green);
+.rrow-outcome {
+  font-size: var(--fs-micro);
   font-weight: 500;
-  flex: none;
+  color: var(--green);
 }
 
-/* Dismissed rows are muted; reopened rows strike their decided line. */
-.rrow-dismissed .rrow-summary,
-.rrow-dismissed .rrow-decided,
-.rrow-dismissed .decided-mark {
+.rrow-outcome.muted {
+  color: var(--text-3);
+  font-weight: 400;
+}
+
+.rrow-chev {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  color: var(--text-3);
+  font-size: var(--fs-body);
+}
+
+.rrow-dismissed .rrow-sum {
   color: var(--text-3);
 }
 
 .rrow-dismissed .kind-badge {
   background: var(--surface-2);
   color: var(--text-3);
-}
-
-.rrow-reopened .rrow-decided {
-  color: var(--text-3);
-  text-decoration: line-through;
-}
-
-.rrow-reopened .decided-mark {
-  color: var(--text-3);
-  text-decoration: none;
 }
 
 .state-chip {
@@ -2597,23 +2517,286 @@ button.small {
   color: var(--amber);
 }
 
-/* Inline expansion: row-level detail that doesn't warrant navigation. */
-.rrow-detail {
+.chip-discuss {
+  background: var(--steel-tint);
+  color: var(--steel);
+}
+
+/* ----- Bulk action bar (fixed, like the detail footer) ----- */
+
+.rbulk {
+  position: fixed;
+  inset-inline: 0;
+  bottom: 0;
+  max-width: 430px;
+  margin: 0 auto;
   display: flex;
-  flex-direction: column;
-  gap: 12px;
-  padding: 2px 14px 14px;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px calc(10px + env(safe-area-inset-bottom));
+  background: var(--surface-2);
+  border-top: 1px solid var(--border);
   animation: review-in 150ms ease-out;
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .rrow-detail {
-    animation: none;
-  }
+.rbulk-n {
+  font-size: var(--fs-secondary);
+  color: var(--text-2);
+}
 
-  .review-seg {
-    transition: none;
-  }
+.rbulk-defer {
+  min-height: 44px;
+  padding: 0 14px;
+  font-weight: 500;
+  color: var(--amber);
+  background: var(--amber-tint);
+  border: 1px solid transparent;
+  border-radius: var(--r-input);
+}
+
+.rbulk-approve {
+  flex: 1;
+  min-height: 44px;
+  font-weight: 500;
+  color: var(--green);
+  background: var(--green-tint);
+  border: 1px solid transparent;
+  border-radius: var(--r-input);
+}
+
+.rbulk-approve:disabled {
+  opacity: 0.4;
+}
+
+/* ----- Detail ----- */
+
+.rdetail {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  animation: review-in 150ms ease-out;
+}
+
+.rdetail-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.rdetail-back {
+  background: none;
+  border: none;
+  padding: 6px 2px;
+  font-size: var(--fs-note);
+  color: var(--accent);
+}
+
+.rdetail-pos {
+  margin-left: auto;
+  font-size: var(--fs-secondary);
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.rdetail-nav {
+  display: flex;
+  gap: 6px;
+}
+
+.rdetail-nav button {
+  width: 36px;
+  height: 36px;
+  border-radius: var(--r-pill);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font-size: var(--fs-body);
+}
+
+.rdetail-nav button:disabled {
+  opacity: 0.35;
+}
+
+.rdetail-scroll {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.rdetail-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.rdetail-hero {
+  margin: 0;
+  font-size: var(--fs-editor);
+  line-height: 1.4;
+  font-weight: 500;
+}
+
+.rdetail-why {
+  margin: -4px 0 0;
+  font-size: var(--fs-secondary);
+  color: var(--text-2);
+  line-height: 1.5;
+}
+
+.rdetail-cands {
+  margin: 0;
+  font-size: var(--fs-secondary);
+  color: var(--text-2);
+  line-height: 1.5;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-input);
+  padding: 10px 12px;
+}
+
+/* Before -> after value diff (collisions / fact conflicts). */
+.rdiff {
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
+  overflow: hidden;
+}
+
+.rdiff-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 11px 13px;
+}
+
+.rdiff-lbl {
+  font-size: var(--fs-micro);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-3);
+}
+
+.rdiff-val {
+  font-size: var(--fs-note);
+  line-height: 1.5;
+}
+
+.rdiff-before .rdiff-val s {
+  color: var(--rose);
+  text-decoration-color: var(--rose);
+}
+
+.rdiff-arrow {
+  padding: 3px 13px;
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+  background: var(--surface-2);
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+
+.rdiff-after {
+  background: var(--green-tint);
+}
+
+.rdiff-after ins {
+  text-decoration: none;
+  color: var(--text);
+}
+
+/* ----- Proposals (choose among) ----- */
+
+.rproposals {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.rprop {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+  min-height: 52px;
+  padding: 10px 14px;
+  text-align: left;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-input);
+}
+
+.rprop-label {
+  font-size: var(--fs-body);
+  font-weight: 500;
+}
+
+.rprop-detail {
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+}
+
+.rprop-destructive {
+  color: var(--rose);
+  background: var(--rose-tint);
+}
+
+.rprop-destructive.armed {
+  background: var(--rose);
+  color: #fff;
+}
+
+/* Correction-note composer (the #7-safe edit path). */
+.rcompose {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border: 1px solid var(--steel);
+  border-radius: var(--r-card);
+  padding: 12px;
+  background: var(--steel-tint);
+}
+
+.rcompose-box {
+  width: 100%;
+  resize: vertical;
+  font: inherit;
+  font-size: var(--fs-note);
+  line-height: 1.5;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-input);
+  padding: 10px 12px;
+}
+
+.rcompose-hint {
+  margin: 0;
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+}
+
+.rcompose-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.rcompose-cancel {
+  min-height: 40px;
+  padding: 0 14px;
+  color: var(--text-2);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-input);
+}
+
+.rcompose-file {
+  flex: 1;
+  min-height: 40px;
+  font-weight: 500;
+  color: var(--green);
+  background: var(--green-tint);
+  border: 1px solid transparent;
+  border-radius: var(--r-input);
 }
 
 .evidence {
@@ -2660,45 +2843,134 @@ button.small {
   flex: none;
 }
 
-.offered-note {
-  margin: 0;
-  font-size: var(--fs-micro);
-  color: var(--text-3);
-}
-
-.reopen-btn {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 2px;
-  width: 100%;
-  min-height: 44px;
-  padding: 9px 14px;
-  text-align: left;
-  background: var(--amber-tint);
-  color: var(--amber);
-  border: 1px solid var(--border);
-  border-radius: var(--r-input);
-}
-
-.reopen-btn .choice-label {
-  font-size: var(--fs-note);
-}
-
-.reopen-btn .choice-detail {
-  color: var(--text-3);
-}
-
-.reopen-btn.armed {
-  background: var(--amber);
-  border-color: transparent;
-  color: #141518;
-}
-
-.reopened-note {
+.review-error {
   margin: 0;
   font-size: var(--fs-secondary);
+  color: var(--rose);
+}
+
+/* ----- Detail footer (fixed bottom bar) ----- */
+
+.rdetail-foot {
+  position: fixed;
+  inset-inline: 0;
+  bottom: 0;
+  max-width: 430px;
+  margin: 0 auto;
+  display: flex;
+  gap: 8px;
+  padding: 10px 16px calc(10px + env(safe-area-inset-bottom));
+  background: var(--bg);
+  border-top: 1px solid var(--border);
+}
+
+.rdetail-foot button {
+  flex: 1;
+  min-height: 44px;
+  font-weight: 500;
+  border-radius: var(--r-input);
+  border: 1px solid var(--border);
+}
+
+.rfoot-defer {
+  color: var(--amber);
+  background: var(--amber-tint);
+  border-color: transparent;
+}
+
+.rfoot-discuss {
+  color: var(--steel);
+  background: var(--steel-tint);
+  border-color: transparent;
+}
+
+.rfoot-correct {
+  color: var(--text);
+  background: var(--surface-2);
+}
+
+.rfoot-correct.active {
+  color: var(--steel);
+  background: var(--steel-tint);
+  border-color: transparent;
+}
+
+.rfoot-resume {
+  color: var(--steel);
+  background: var(--steel-tint);
+  border-color: transparent;
+}
+
+.rfoot-reopen {
+  color: var(--amber);
+  background: var(--amber-tint);
+  border-color: transparent;
+}
+
+.rfoot-reopen.armed {
+  background: var(--amber);
+  color: #141518;
+  border-color: transparent;
+}
+
+.rfoot-note {
+  flex: 1;
+  align-self: center;
+  text-align: center;
+  font-size: var(--fs-secondary);
   color: var(--text-3);
+}
+
+/* ----- Undo snackbar ----- */
+
+.review-snack {
+  position: fixed;
+  inset-inline: 16px;
+  bottom: calc(80px + env(safe-area-inset-bottom));
+  max-width: 398px;
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 11px 14px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-input);
+  animation: review-in 150ms ease-out;
+}
+
+.snack-msg {
+  flex: 1;
+  font-size: var(--fs-secondary);
+  color: var(--text);
+}
+
+.snack-undo {
+  background: none;
+  border: none;
+  font-size: var(--fs-secondary);
+  font-weight: 500;
+  color: var(--steel);
+}
+
+.snack-x {
+  background: none;
+  border: none;
+  color: var(--text-3);
+  font-size: var(--fs-micro);
+  padding: 4px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rdetail,
+  .rbulk,
+  .review-snack {
+    animation: none;
+  }
+
+  .review-seg {
+    transition: none;
+  }
 }
 
 .tile-badge {
@@ -3312,109 +3584,269 @@ button.small {
   flex: none;
 }
 
-/* assistant bubble flip: the answer faces front, swipe left to turn it to the
-   tool use (docs/mocks/assistant-flip-tooluse.html). One fixed width pinned to
-   the left so it turns in place; only the height eases to the visible face. */
-.fb-shell .fb-flipwrap {
-  width: 82%;
-  align-self: flex-start;
-  perspective: 1300px;
+/* the inline "Worked" disclosure under an answer (docs/research/brain-tooluse-ux).
+   A labelled 44px button expands the tool steps in place — no flip, no 3D, no
+   swipe. The body animates open with a grid-rows ease so content stays in flow. */
+.fb-shell .fb-worked {
+  margin-top: 8px;
+  border-top: 1px solid var(--border);
 }
-.fb-shell .fb-flip {
-  position: relative;
-  width: 100%;
-  transform-style: preserve-3d;
-  transition: transform 0.42s cubic-bezier(0.3, 0.85, 0.3, 1);
-  touch-action: pan-y;
-}
-.fb-shell .fb-face {
-  position: relative;
-  width: 100%;
-  padding-bottom: 26px; /* reserve the corner-cue row, clear of content */
-  backface-visibility: hidden;
-  -webkit-backface-visibility: hidden;
-}
-/* the back sizes to its own content (top/left/right, no bottom) so a tall tool
-   run is measured and shown in full, never clipped to the front's height */
-.fb-shell .fb-back {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  padding-bottom: 30px;
-  transform: rotateY(180deg);
-}
-.fb-shell .fb-back-head {
+.fb-shell .fb-worked-btn {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 12.5px;
-  font-weight: 500;
+  width: 100%;
+  min-height: 44px;
+  padding: 10px 2px 8px;
+  background: none;
+  border: none;
+  font: inherit;
   color: var(--text-2);
-  margin-bottom: 4px;
+  text-align: left;
+  cursor: pointer;
 }
-.fb-shell .fb-back-head .tw-ic {
+.fb-shell .fb-worked-btn .tw-ic {
+  width: 15px;
+  height: 15px;
+  flex: none;
+  color: var(--text-3);
+}
+.fb-shell .fb-worked-lab {
+  font-size: 13px;
+  font-weight: 500;
+}
+.fb-shell .fb-worked-meta {
+  font-size: 12px;
+  color: var(--text-3);
+}
+.fb-shell .fb-worked-fail {
+  color: var(--rose);
+}
+.fb-shell .fb-worked-caret {
+  width: 15px;
+  height: 15px;
+  flex: none;
+  margin-left: auto;
+  color: var(--text-3);
+  transition: transform 0.16s ease-out;
+}
+.fb-shell .fb-worked.open .fb-worked-caret {
+  transform: rotate(180deg);
+}
+.fb-shell .fb-worked-body {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 0.17s ease-out;
+}
+.fb-shell .fb-worked.open .fb-worked-body {
+  grid-template-rows: 1fr;
+}
+.fb-shell .fb-worked-inner {
+  min-height: 0;
+  overflow: hidden;
+}
+.fb-shell .fb-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-top: 4px;
+}
+
+/* a single tool step — itself a pulldown (arguments in · result out · raw) */
+.fb-shell .fb-step {
+  border-radius: 10px;
+}
+.fb-shell .fb-step.err {
+  background: var(--rose-tint);
+}
+.fb-shell .fb-step-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  min-height: 42px;
+  padding: 7px 8px;
+  background: none;
+  border: none;
+  font: inherit;
+  color: var(--text-2);
+  text-align: left;
+  cursor: pointer;
+}
+.fb-shell .fb-step-row .tw-ic {
+  width: 15px;
+  height: 15px;
+  flex: none;
+  color: var(--steel);
+}
+.fb-shell .fb-step.err .fb-step-row .tw-ic {
+  color: var(--rose);
+}
+.fb-shell .fb-step-lab {
+  flex: 1;
+  font-size: 13px;
+  color: var(--text);
+}
+.fb-shell .fb-step-mark {
+  width: 7px;
+  height: 7px;
+  flex: none;
+  border-radius: 999px;
+  background: var(--green);
+}
+.fb-shell .fb-step-mark.bad {
+  background: var(--rose);
+}
+.fb-shell .fb-step-mark.live {
+  background: var(--steel);
+  animation: fb-breathe 1.5s ease-in-out infinite;
+}
+.fb-shell .fb-step-cnt {
+  font-size: 11px;
+  color: var(--text-3);
+}
+.fb-shell .fb-step-caret {
   width: 14px;
   height: 14px;
   flex: none;
   color: var(--text-3);
+  transition: transform 0.16s ease-out;
 }
-.fb-shell .fb-back-head .tw-meta {
+.fb-shell .fb-step.open .fb-step-caret {
+  transform: rotate(90deg);
+}
+.fb-shell .fb-step-detail {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 0.16s ease-out;
+}
+.fb-shell .fb-step.open .fb-step-detail {
+  grid-template-rows: 1fr;
+}
+.fb-shell .fb-step-di {
+  min-height: 0;
+  overflow: hidden;
+}
+.fb-shell .fb-step.open .fb-step-di {
+  padding-bottom: 10px;
+}
+
+/* arguments — a flat one-level key/value list, monospace values */
+.fb-shell .fb-args {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 3px 12px;
+  margin: 4px 0 10px;
+  padding-left: 24px;
+}
+.fb-shell .fb-args-row {
+  display: contents;
+}
+.fb-shell .fb-args dt {
+  font-size: 11px;
   color: var(--text-3);
-  font-weight: 400;
 }
-/* the quiet corner cue naming the other face — also the keyboard/tap fallback */
-.fb-shell .fb-cue {
-  position: absolute;
-  bottom: 8px;
-  right: 11px;
+.fb-shell .fb-args dd {
+  font-size: 12px;
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  word-break: break-word;
+}
+.fb-shell .fb-res-lab {
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  padding-left: 24px;
+  margin-bottom: 5px;
+}
+.fb-shell .fb-res-txt {
+  font-size: 12.5px;
+  color: var(--text-2);
+  line-height: 1.5;
+  padding-left: 24px;
+}
+.fb-shell .fb-res-txt.err {
+  color: var(--rose);
+}
+
+/* the raw result rung — clamped monospace inset with copy + show-all */
+.fb-shell .fb-raw-wrap {
+  padding-left: 24px;
+  margin-top: 9px;
+}
+.fb-shell .fb-raw-toggle {
   display: inline-flex;
   align-items: center;
-  gap: 2px;
+  min-height: 30px;
+  padding: 4px 10px;
   background: none;
-  border: none;
-  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
   font: inherit;
   font-size: 11px;
   color: var(--text-3);
   cursor: pointer;
 }
-.fb-shell .fb-back .fb-cue {
-  color: var(--steel);
+.fb-shell .fb-raw-toggle:hover {
+  color: var(--text-2);
+  border-color: var(--text-3);
 }
-.fb-shell .fb-cue-ic {
-  width: 12px;
-  height: 12px;
-  flex: none;
+.fb-shell .fb-raw {
+  position: relative;
+  margin-top: 8px;
 }
-.fb-shell .fb-cue-ic.back {
-  transform: scaleX(-1); /* point the chevron left, toward "work" */
+.fb-shell .fb-raw-pre {
+  margin: 0;
+  padding: 10px 40px 10px 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.55;
+  color: var(--text-2);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 150px;
+  overflow: hidden;
 }
-.fb-shell .toolwork-detail {
-  display: flex;
-  flex-direction: column;
-  gap: 9px;
-  padding-top: 10px;
+.fb-shell .fb-raw-pre.full {
+  max-height: none;
 }
-.fb-shell .toolwork-detail .tw-ic {
-  width: 14px;
-  height: 14px;
-  flex: none;
-}
-.fb-shell .toolwork-step {
+.fb-shell .fb-raw-copy {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 30px;
+  height: 30px;
   display: flex;
   align-items: center;
-  gap: 8px;
-  font-size: 12.5px;
-  color: var(--text-2);
-}
-.fb-shell .toolwork-step .tw-ic {
-  color: var(--steel);
-}
-.fb-shell .toolwork-step .tw-count {
-  margin-left: auto;
-  font-size: 11px;
+  justify-content: center;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
   color: var(--text-3);
+  cursor: pointer;
+}
+.fb-shell .fb-raw-copy:hover {
+  color: var(--steel);
+  border-color: var(--steel);
+}
+.fb-shell .fb-raw-copy .tw-ic {
+  width: 14px;
+  height: 14px;
+}
+.fb-shell .fb-raw-more {
+  display: block;
+  margin-top: 6px;
+  padding: 2px;
+  background: none;
+  border: none;
+  font: inherit;
+  font-size: 11px;
+  color: var(--steel);
+  cursor: pointer;
 }
 .fb-shell .tw-bullet {
   width: 6px;
@@ -3423,12 +3855,22 @@ button.small {
   background: var(--text-3);
   margin: 0 4px;
 }
+@media (prefers-reduced-motion: reduce) {
+  .fb-shell .fb-worked-body,
+  .fb-shell .fb-step-detail,
+  .fb-shell .fb-worked-caret,
+  .fb-shell .fb-step-caret {
+    transition: none;
+  }
+  .fb-shell .fb-step-mark.live {
+    animation: none;
+  }
+}
 .fb-shell .toolwork-srcs {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  padding-left: 22px;
-  margin-top: 6px;
+  padding-left: 24px;
 }
 .fb-shell .toolwork-card {
   display: flex;

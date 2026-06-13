@@ -637,6 +637,8 @@ const REVIEW_ITEMS: ReviewItem[] = [
       predicate: "birthDate",
       note_id: patelNote.id,
       summary: "two values recorded for Sarah's birthDate",
+      rationale: "a card in this note dates Sarah's birthday differently than the wiki.",
+      confidence: 0.74,
       snippet: "card in the mail for <mark>Sarah's birthday on the 14th</mark>",
       choices: [
         { action: "accept_a", label: "May 2, 1990", detail: "previously recorded" },
@@ -727,6 +729,8 @@ const REVIEW_ITEMS: ReviewItem[] = [
     created_at: daysAgo(3, 8, 10),
     payload: {
       summary: "low-confidence extraction (41%)",
+      rationale: "extracted from an uncertain phrasing — verify against the note.",
+      confidence: 0.41,
       snippet: "Started <mark>vitamin D 2000 IU daily</mark> per Dr. Akin.",
       outcomes: {
         accept: "the fact stands and gets pinned — reprocessing can't drop it.",
@@ -748,6 +752,23 @@ const REVIEW_ITEMS: ReviewItem[] = [
         reject: "stays one car; the mileage conflict goes back to fact review.",
       },
       accept_destructive: true,
+    },
+  }),
+  openReview({
+    id: "rev-8",
+    kind: "extraction_truncated",
+    domain: "general",
+    created_at: daysAgo(0, 9, 40),
+    payload: {
+      note_id: patelNote.id,
+      summary: "this note hit its fact budget — kept 40, skipped 6 facts",
+      snippet:
+        "Dad's full medical history — <mark>1998 appendectomy, 2011 ACL repair</mark>, and more…",
+      // Informational, like a low-confidence notice: it wrote no graph state,
+      // so its only verb (reject) is a dismissal. Re-run captures the tail.
+      outcomes: {
+        reject: "the note is left as-is — re-run analysis to capture more of it.",
+      },
     },
   }),
   // Past decisions seed the resolved segment (newest first when listed):
@@ -922,6 +943,51 @@ function mockEffects(item: ReviewItem, action: string): Record<string, unknown>[
 /** Resolved-log ordering key: a reopened tombstone sorts by its marker. */
 function decidedAt(item: ReviewItem): string {
   return item.resolved_at ?? item.resolution?.reopened_at ?? item.created_at;
+}
+
+/** The actions a row accepts: the universal dismiss/defer/discuss plus the
+ * choices/outcomes its payload advertises — the backend's contract. */
+function advertisedActions(item: ReviewItem): Set<string> {
+  const advertised = new Set(["dismiss", "defer", "discuss", "correct"]);
+  const choices = item.payload.choices;
+  if (Array.isArray(choices)) {
+    for (const choice of choices) {
+      const action = (choice as { action?: unknown }).action;
+      if (typeof action === "string") advertised.add(action);
+    }
+  }
+  const outcomes = item.payload.outcomes;
+  if (outcomes !== null && typeof outcomes === "object") {
+    for (const verb of ["accept", "reject"]) {
+      if (verb in outcomes) advertised.add(verb);
+    }
+  }
+  return advertised;
+}
+
+/** Apply a resolution to fixture state with recorded effects, so triage,
+ * defer, and reopen all round-trip in dev:mock. Returns the mutated item. */
+function applyResolution(
+  item: ReviewItem,
+  action: string,
+  payload: Record<string, unknown>,
+): ReviewItem {
+  const parked = action === "defer" || action === "discuss";
+  const dismissal =
+    action === "dismiss" || (item.kind === "ambiguous_mention" && action === "reject");
+  const corrected = action === "correct";
+  item.status = parked ? "deferred" : dismissal ? "dismissed" : "resolved";
+  item.resolution = {
+    action,
+    payload,
+    effects: corrected
+      ? [{ action: "corrected", note_id: payload.note_id }]
+      : parked || dismissal
+        ? []
+        : mockEffects(item, action),
+  };
+  item.resolved_at = new Date().toISOString();
+  return item;
 }
 
 const LLM_USAGE: LlmUsage = {
@@ -1305,15 +1371,40 @@ export const mockFetch: typeof fetch = async (input, init) => {
 
   if (path === "/api/review" && method === "GET") {
     const status = url.searchParams.get("status") ?? "open";
-    // Mirrors the backend: the resolved log folds in dismissals and
-    // reopened tombstones (still open, marker set), newest decision first.
+    // Mirrors the backend: the decided log folds in dismissals and reopened
+    // tombstones (still open, marker set) but never the deferred lane, which
+    // is its own list; both decided/deferred sort newest decision first.
     const items =
       status === "open"
         ? REVIEW_ITEMS.filter((item) => item.status === "open")
-        : REVIEW_ITEMS.filter(
-            (item) => item.status !== "open" || item.resolution?.reopened_at !== undefined,
-          ).sort((a, b) => decidedAt(b).localeCompare(decidedAt(a)));
+        : status === "deferred"
+          ? REVIEW_ITEMS.filter((item) => item.status === "deferred").sort((a, b) =>
+              decidedAt(b).localeCompare(decidedAt(a)),
+            )
+          : REVIEW_ITEMS.filter(
+              (item) =>
+                item.status === "resolved" ||
+                item.status === "dismissed" ||
+                (item.status === "open" && item.resolution?.reopened_at !== undefined),
+            ).sort((a, b) => decidedAt(b).localeCompare(decidedAt(a)));
     return json({ items });
+  }
+
+  if (path === "/api/review/resolve-batch" && method === "POST") {
+    const body = JSON.parse(String(init?.body)) as {
+      decisions: { id: string; action: string; payload?: Record<string, unknown> }[];
+    };
+    const items: ReviewItem[] = [];
+    const errors: { id: string; detail: string }[] = [];
+    for (const d of body.decisions) {
+      const item = REVIEW_ITEMS.find((r) => r.id === d.id);
+      if (!item) errors.push({ id: d.id, detail: "not found" });
+      else if (item.status !== "open") errors.push({ id: d.id, detail: "not open" });
+      else if (!advertisedActions(item).has(d.action))
+        errors.push({ id: d.id, detail: `invalid action ${d.action}` });
+      else items.push({ ...applyResolution(item, d.action, d.payload ?? {}) });
+    }
+    return json({ items, errors });
   }
 
   const resolveMatch = path.match(/^\/api\/review\/([^/]+)\/resolve$/);
@@ -1325,37 +1416,12 @@ export const mockFetch: typeof fetch = async (input, init) => {
       action: string;
       payload?: Record<string, unknown>;
     };
-    // Mirror the backend's contract: only the actions the payload advertises
-    // (plus dismiss) resolve; anything else is a 400, the item untouched.
-    const advertised = new Set(["dismiss"]);
-    const choices = item.payload.choices;
-    if (Array.isArray(choices)) {
-      for (const choice of choices) {
-        const action = (choice as { action?: unknown }).action;
-        if (typeof action === "string") advertised.add(action);
-      }
-    }
-    const outcomes = item.payload.outcomes;
-    if (outcomes !== null && typeof outcomes === "object") {
-      for (const verb of ["accept", "reject"]) {
-        if (verb in outcomes) advertised.add(verb);
-      }
-    }
-    if (!advertised.has(body.action)) {
+    // Mirror the backend's contract: only advertised actions resolve;
+    // anything else is a 400, the item untouched.
+    if (!advertisedActions(item).has(body.action)) {
       return json({ detail: `action ${body.action} is not valid for kind ${item.kind}` }, 400);
     }
-    // Resolution mutates fixture state (with recorded effects, like the
-    // backend) so triage and reopen round-trip end-to-end in dev:mock.
-    const dismissal =
-      body.action === "dismiss" || (item.kind === "ambiguous_mention" && body.action === "reject");
-    item.status = dismissal ? "dismissed" : "resolved";
-    item.resolution = {
-      action: body.action,
-      payload: body.payload ?? {},
-      effects: dismissal ? [] : mockEffects(item, body.action),
-    };
-    item.resolved_at = new Date().toISOString();
-    return json(item);
+    return json(applyResolution(item, body.action, body.payload ?? {}));
   }
 
   const reopenMatch = path.match(/^\/api\/review\/([^/]+)\/reopen$/);
@@ -1363,6 +1429,13 @@ export const mockFetch: typeof fetch = async (input, init) => {
     const item = REVIEW_ITEMS.find((r) => r.id === decodeURIComponent(reopenMatch[1] ?? ""));
     if (!item) return json({ detail: "review item not found" }, 404);
     if (item.status === "open") return json({ detail: "review item is already open" }, 409);
+    // Un-parking a deferred item is a clean re-queue: no tombstone, no note.
+    if (item.status === "deferred") {
+      item.status = "open";
+      item.resolved_at = null;
+      item.resolution = null;
+      return json({ ...item, reopen_note: null });
+    }
     const keptEdge = (item.resolution?.effects ?? []).some((e) => e.action === "distinct_from");
     item.status = "open";
     item.resolved_at = null;

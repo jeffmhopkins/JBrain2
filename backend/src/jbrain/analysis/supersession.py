@@ -50,6 +50,11 @@ SYMMETRIC_PREDICATES = frozenset(
         "sibling",
         "sibling_of",
         "siblingof",
+        # Twins are siblings whose twin-ness rides the qualifier; a model that
+        # reaches for a bare `twin` predicate instead still reciprocates.
+        "twin",
+        "twin_of",
+        "twinof",
         "friend",
         "friend_of",
         "friendof",
@@ -76,6 +81,14 @@ INVERSE_PAIRS: dict[str, str] = {
     "parentof": "child_of",
     "child_of": "parent_of",
     "childof": "parent_of",
+    # Kinship the prompt steers toward (schema.org `parent` / `children`). The
+    # parent's edge to their kid (Me.children -> Summer) reflects to the kid's
+    # parent edge (Summer.parent -> Me); a bare `child` ("Summer is my child")
+    # reads the same direction as `children`, so it reciprocates to `parent`
+    # too. The `_of` pair above stays for the opposite-direction spelling.
+    "parent": "children",
+    "children": "parent",
+    "child": "parent",
     "manages": "reportsTo",
     "reportsto": "manages",
     "reports_to": "manages",

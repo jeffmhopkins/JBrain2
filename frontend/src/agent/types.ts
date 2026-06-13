@@ -100,6 +100,8 @@ export interface TranscriptTurn {
     id: string;
     name: string;
     ok: boolean | null;
+    /** The call's arguments, persisted so an expanded step replays what it ran. */
+    args?: Record<string, unknown>;
     sources: NoteSource[];
     /** A staged proposal / resolved entities the step surfaced, persisted so the
      * bubble's chips and inline links replay on reopen (not just note sources). */

@@ -337,9 +337,18 @@ node** (`me.blood_pressure → 128/82 mmHg`,
 monospace; subject headers double as entity navigation. Tapping a fact
 cites back to the **highlighted source words**. The **entity page is a
 hub**: centered node with kind/alias/domain meta, current facts as
-outbound edges, **revision histories as vertical timeline rails** (each
-dot a supersession link citing its note), inbound edges from other
-entities, provisional state marked. Correction is never a direct edit —
+outbound edges, inbound edges from other entities, provisional state
+marked. **The page is current-only [decided: declutter]**: each property
+shows its live value (a `pending_review` value stays on the page — it needs
+the owner), and prior **once-true superseded** values collapse behind a
+quiet `N earlier →` disclosure that opens that property's **revision
+timeline rail** (each dot a supersession link citing its note) in the
+shared `Sheet`. Muting stale values inline only dimmed them while keeping
+their full footprint, so a multi-revision entity clogged; the rail is the
+same settled paradigm, just relocated off the default view. **Retracted**
+facts (machine extraction errors — never true) are excluded from the value
+view entirely (audit-only, a later opt-in surface), never shown beside
+once-true history. Correction is never a direct edit —
 facts route to **review / pin** with tap-again confirms; the pipeline owns
 the data. Temper the raw notation toward the lowercase-calm voice during
 implementation (the chosen mock's `~provisional`/`.96` chrome reads too
@@ -349,34 +358,62 @@ input plus kind chips over standard list rows in a card, each row opening
 the entity page — pure reuse of settled paradigms, so it shipped without a
 variant review.
 
-**Review inbox** (settled in the same review — **one-at-a-time triage**
-won over a decision-card stream and a grouped batch queue): full-screen
-card per item with **progress dots**, the **cited note text as the hero**
-at editor size, a bordered "what happens" panel spelling out both
-outcomes, candidate choices as big stacked buttons, and a fixed bottom bar
-**skip · reject · accept** (skip cycles the item to the back of the
-queue). Destructive/permanent choices (splits, `distinct_from`) use the
-armed tap-again. Item kinds: fact conflicts, attribute collisions, merge
-proposals, ambiguous mentions, domain promotions, low-confidence
-extractions.
+**Review inbox** (resettled in review — the **split inbox** won over the
+original one-at-a-time triage: you couldn't move between items, and a
+proposal that was only *reject*-able was a dead end): a segmented filter
+**pending · deferred · decided** with live count pills splits the screen
+into three lanes, and the list is **browsable** — every item in a lane is
+listed (kind badge, domain dot, one-line summary, confidence badge,
+when), not metered out one card at a time. A **select** toggle turns rows
+into checkboxes with a contextual bulk bar (**defer all · approve all**),
+and a one-tap **"approve N high-confidence"** suggestion clears the easy
+volume; bulk actions resolve through one batch call and raise the same
+undo. Tapping a row **pushes a detail** view (back to inbox + **N of M** +
+**prev/next** chevrons, so you move between items without returning to the
+list). The detail leads with the proposal: a **before→after value diff**
+for collisions/conflicts (struck `current` over green `from this note`),
+or a what-happens panel for the rest; then a one-line rationale, a
+confidence badge, the **cited evidence** snippet (provenance), and the
+**proposals to choose among** as stacked buttons (destructive ones —
+splits, `distinct_from` — keep the armed tap-again). Two universal escape
+hatches sit in the footer — **defer** (park for later) and **talk it
+over** (hand to the assistant) — so *reject is never the only way out*:
+the ambiguous-mention case that used to advertise only reject now always
+offers defer and talk-it-over beside it. Every decision raises an **undo
+snackbar** (undo is the server's own unwind — clean for a parked item, a
+reopened tombstone for a real decision). Item kinds unchanged: fact
+conflicts, attribute collisions, merge proposals, ambiguous mentions,
+domain promotions, low-confidence extractions, splits.
 
-**Review history** (settled in a three-way review — **split segments** won
-over a decision journal and a consequence ledger; **reopen = full unwind**
-[decided]): the Review screen carries a segmented control **open |
-resolved** with live count pills. OPEN is the triage flow above,
-unchanged. RESOLVED is the reverse-chronological decision log — each row
-is kind badge, domain dot, one-line summary, **what was decided in plain
-language** (the chosen option's own copy), and resolved-when; dismissed
-rows are muted. Tapping a row expands it inline into the full decision
-record: the cited evidence snippet, the **choices that were offered with
-the chosen one marked**, and an amber **reopen** button (armed tap-again)
-whose consequence text **names the unwind** per kind. Reopening returns
-the item to the open queue (count pills update) and reverses the
-resolution's recorded graph effects; the log row stays behind as a
+**Deferred & decided lanes** (**reopen = full unwind** [decided]): the
+**deferred** lane lists parked items (a *defer* or a *talk-it-over*, the
+latter tagged **with assistant**); its detail offers **resume**, a clean
+re-queue to pending with no tombstone — parking is not a decision. The
+**decided** lane is the reverse-chronological log: each row carries **what
+was decided in plain language** (the chosen option's own copy), dismissed
+rows muted. Its detail shows the cited evidence, the **proposals that were
+offered with the chosen one marked**, and an amber **reopen** (armed
+tap-again) whose consequence text **names the unwind** per kind. Reopening
+returns the item to pending (count pills update) and reverses the
+resolution's recorded graph effects; the decided row stays behind as a
 **struck-through "reopened" tombstone**. The one permanent exception is a
-rejected merge: the `distinct_from` edge survives the reopen by doctrine.
-Inbox zero in Open reads *"inbox zero — N past decisions in resolved."*
-(one `--text-2` sentence, the count linking into the resolved segment).
+rejected merge: the `distinct_from` edge survives by doctrine. Empty lanes
+read as one calm `--text-2` sentence each.
+
+*Edit model:* "approve with edits" has two shapes, neither of which writes
+the graph by hand (honoring non-negotiable #7 — facts aren't edited
+directly). **Choose-among-proposals** picks among the values the pipeline
+already proposed. **Correct it** opens a composer that files the human's
+fix as a real **correction note** (the #7 channel) in the item's domain and
+resolves the item as *corrected*; the pipeline applies it when it processes
+that note (**re-adjudicate**, never a hand-written fact), so the wiki stays
+machine-written and the value lands once extraction runs — reopening keeps
+the note (it's the human's own). The planned third mode, **talk it over
+with the assistant**, is the conversational version of the same — the
+assistant drafts that correction-note body from your intent; until that
+handoff is wired the footer affordance parks the item for the assistant.
+Whether a human may ever pin a typed value directly, short-circuiting the
+pipeline, stays the open #7 decision.
 
 **Search** (settled in the Phase 2 review; input mode revised on-device):
 **live as-you-type** — results update per keystroke behind a 250ms

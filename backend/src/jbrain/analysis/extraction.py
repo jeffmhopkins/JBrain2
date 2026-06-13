@@ -93,6 +93,10 @@ class Extraction:
     mentions: list[ExtractedMention]
     facts: list[ExtractedFact]
     tokens: list[ExtractedToken]
+    # How many facts the per-note budget dropped from the tail (0 = none). The
+    # pipeline surfaces a non-zero count as a review card so a truncated long
+    # note is visible, not silently clipped.
+    dropped_facts: int = 0
 
 
 def parse_datetime(value: Any) -> datetime | None:
@@ -620,13 +624,19 @@ def _recover_object_ref(
     return next(iter(named)) if len(named) == 1 else None
 
 
-def parse_extraction(payload: Any, *, anchor: datetime | None = None) -> Extraction:
+def parse_extraction(
+    payload: Any, *, anchor: datetime | None = None, max_facts: int = MAX_FACTS
+) -> Extraction:
     """Validate the parsed JSON into typed extraction objects.
 
     When `anchor` (the capture time in the note's local offset) is given,
     backward relative phrases the model mis-resolved are repaired against it
     (validate_backward_temporal); callers that don't care about temporal
     correctness — most unit tests — omit it and get the raw resolution.
+
+    `max_facts` is the per-note cap (the pipeline passes fact_cap(note); callers
+    that omit it get the hard ceiling). It enforces the same budget the user
+    prompt advertised, so a model that over-extracts is trimmed to the tail.
 
     Raises:
         ExtractionError: the top-level shape is wrong (permanent failure).
@@ -744,12 +754,14 @@ def parse_extraction(payload: Any, *, anchor: datetime | None = None) -> Extract
     # Dedup BEFORE the cap: restatements must not eat salience slots.
     facts = dedup_facts(facts)
 
-    if len(facts) > MAX_FACTS:
+    dropped_facts = max(0, len(facts) - max_facts)
+    if dropped_facts:
         # The prompt's soft cap, enforced: keep the FIRST N — fact order is
         # the model's salience ranking, so the tail is the trivia the prompt
-        # told it to skip (docs/ANALYSIS.md "soft cap on facts-per-note").
-        log.warning("analysis.facts_capped", kept=MAX_FACTS, dropped=len(facts) - MAX_FACTS)
-        facts = facts[:MAX_FACTS]
+        # told it to skip (docs/ANALYSIS.md "soft cap on facts-per-note"). The
+        # count rides out on the Extraction so the pipeline can flag it.
+        log.warning("analysis.facts_capped", kept=max_facts, dropped=dropped_facts)
+        facts = facts[:max_facts]
 
     tokens: list[ExtractedToken] = []
     for raw in payload.get("temporal_tokens") or []:
@@ -804,4 +816,68 @@ def parse_extraction(payload: Any, *, anchor: datetime | None = None) -> Extract
         mentions=mentions,
         facts=facts,
         tokens=tokens,
+        dropped_facts=dropped_facts,
+    )
+
+
+def merge_extractions(parts: list[Extraction]) -> Extraction:
+    """Reduce per-group extractions (chunk-level map-reduce) into one note-level
+    Extraction.
+
+    Each group was extracted with its OWN fact budget, so a long note yields
+    facts proportional to its content instead of clipping at one note-wide cap.
+    The reduce reuses the very machinery that reconciles facts across NOTES:
+    union the mentions and tokens, re-run the deterministic object binding over
+    the FULL mention set (so a relationship whose object entity was named in a
+    different group still links instead of orphaning), then dedup on the
+    structural identity key so a property restated across groups collapses to
+    one. dropped_facts sums each group's own truncation so the note-level
+    review card still reflects a hit budget.
+
+    A single part passes through untouched — the common short-note path stays
+    byte-identical to the pre-map-reduce pipeline.
+    """
+    if len(parts) == 1:
+        return parts[0]
+
+    title = next((p.title for p in parts if p.title), "")
+
+    tags: list[str] = []
+    for part in parts:
+        for tag in part.tags:
+            if tag not in tags:
+                tags.append(tag)
+
+    mentions: list[ExtractedMention] = []
+    seen_mentions: set[str] = set()
+    for part in parts:
+        for mention in part.mentions:
+            if mention.name not in seen_mentions:
+                seen_mentions.add(mention.name)
+                mentions.append(mention)
+
+    facts = [fact for part in parts for fact in part.facts]
+    # Re-bind objects across the FULL mention set, then collapse cross-group
+    # restatements — the same two passes parse_extraction runs per group, now
+    # over the union so a cross-group edge links and a cross-group duplicate
+    # dedups.
+    facts = link_relationship_objects(facts, mentions)
+    facts = dedup_facts(facts)
+
+    tokens: list[ExtractedToken] = []
+    seen_tokens: set[tuple[str, str]] = set()
+    for part in parts:
+        for token in part.tokens:
+            key = (token.phrase, token.resolved_start.isoformat())
+            if key not in seen_tokens:
+                seen_tokens.add(key)
+                tokens.append(token)
+
+    return Extraction(
+        title=title,
+        tags=tags[:MAX_TAGS],
+        mentions=mentions,
+        facts=facts,
+        tokens=tokens,
+        dropped_facts=sum(part.dropped_facts for part in parts),
     )

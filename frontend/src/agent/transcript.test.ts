@@ -22,6 +22,19 @@ describe("applyEvent reducer", () => {
     expect(turn?.stopReason).toBe("end_turn");
   });
 
+  it("keeps a tool call's non-empty arguments, but omits an empty object", () => {
+    let ms: TranscriptMessage[] = [streaming()];
+    ms = applyEvent(ms, {
+      type: "tool_call",
+      id: "c1",
+      name: "search",
+      arguments: { query: "born", limit: 8 },
+    });
+    ms = applyEvent(ms, { type: "tool_call", id: "c2", name: "recall", arguments: {} });
+    expect(ms[0]?.tools[0]?.args).toEqual({ query: "born", limit: 8 });
+    expect(ms[0]?.tools[1]).not.toHaveProperty("args");
+  });
+
   it("collects tool_view payloads in order", () => {
     let ms: TranscriptMessage[] = [streaming()];
     ms = applyEvent(ms, {

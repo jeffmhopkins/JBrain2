@@ -90,6 +90,29 @@ async def resolve_review(
     return item
 
 
+class BatchDecision(BaseModel):
+    id: str = Field(min_length=1)
+    action: str = Field(min_length=1)
+    payload: dict[str, Any] = {}
+
+
+class ResolveBatchRequest(BaseModel):
+    decisions: list[BatchDecision] = Field(min_length=1, max_length=200)
+
+
+@router.post("/review/resolve-batch")
+async def resolve_review_batch(
+    body: ResolveBatchRequest, request: Request, principal: PrincipalDep
+) -> dict[str, Any]:
+    """Bulk-apply the same-shaped per-item decisions in one transaction; the
+    good ones commit and bad ones come back in `errors` (the UI rolls those
+    rows back). Used by the inbox's select-and-approve / defer-all actions."""
+    repo = get_analysis_repo(request)
+    return await repo.resolve_review_batch(
+        ctx_for(principal), [d.model_dump() for d in body.decisions]
+    )
+
+
 @router.post("/review/{item_id}/reopen")
 async def reopen_review(item_id: str, request: Request, principal: PrincipalDep) -> dict[str, Any]:
     """Full unwind: reverses the resolution's recorded graph effects and
