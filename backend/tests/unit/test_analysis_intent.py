@@ -4,6 +4,8 @@ Pure (no DB): these guard the contract's invariants — the agent emits intent,
 the arbiter validates structure before trusting it.
 """
 
+from typing import Any
+
 from jbrain.analysis.intent import (
     AttestedSpan,
     EntityPairProposal,
@@ -17,7 +19,7 @@ from jbrain.analysis.intent import (
 
 
 def _resolution(ref: str = "m1", **kw) -> EntityResolution:
-    base = dict(
+    base: dict[str, Any] = dict(
         mode="existing", proposed_entity_id="e1", attested_span=AttestedSpan("c1", "Celine")
     )
     base.update(kw)
@@ -25,7 +27,7 @@ def _resolution(ref: str = "m1", **kw) -> EntityResolution:
 
 
 def _fact(entity_ref: str = "m1", **kw) -> IntentFact:
-    base = dict(
+    base: dict[str, Any] = dict(
         predicate="spouse",
         qualifier="",
         kind="relationship",
@@ -43,7 +45,9 @@ def _fact(entity_ref: str = "m1", **kw) -> IntentFact:
 
 
 def _intent(**kw) -> IntegrationIntent:
-    base = dict(note_id="n1", schema_version=1, prompt_version="v13", integrator_version="i1")
+    base: dict[str, Any] = dict(
+        note_id="n1", schema_version=1, prompt_version="v13", integrator_version="i1"
+    )
     base.update(kw)
     return IntegrationIntent(**base)
 
