@@ -305,3 +305,16 @@ def test_plan_to_extraction_existing_resolution_kind_is_thing():
     intent = _intent(entity_resolutions=[_res("m1")], facts=[_fact()])
     plan = plan_intent(intent, signals={0: _surface_sig()})
     assert plan_to_extraction(intent, plan).mentions[0].kind == "Thing"
+
+
+def test_plan_to_extraction_commit_only_excludes_review_facts():
+    # commit_only drops review-held facts (cross-subject here) but keeps every
+    # mention — the A1b-ii-1 safety so a high-weight review fact can't commit.
+    intent = _intent(
+        entity_resolutions=[_res("m1"), _res("m2", cross_subject=True)],
+        facts=[_fact(entity_ref="m1"), _fact(entity_ref="m2")],
+    )
+    plan = plan_intent(intent, signals={0: _surface_sig(), 1: _surface_sig()})
+    ex = plan_to_extraction(intent, plan, commit_only=True)
+    assert [f.entity_ref for f in ex.facts] == ["m1"]
+    assert len(ex.mentions) == 2

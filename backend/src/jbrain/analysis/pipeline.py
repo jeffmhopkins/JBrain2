@@ -27,6 +27,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from jbrain.analysis import purge
 from jbrain.analysis.appointment_projection import project_appointments
+from jbrain.analysis.arbiter import ArbiterPlan, plan_to_extraction
 from jbrain.analysis.canonical import reproject_canonical_name
 from jbrain.analysis.display import (
     ambiguous_display,
@@ -67,6 +68,7 @@ from jbrain.analysis.extraction import (
     parse_extraction,
     ratchet_domain,
 )
+from jbrain.analysis.intent import EntityResolution, IntegrationIntent
 from jbrain.analysis.prompt import (
     EXTRACT_MAX_TOKENS,
     EXTRACTION_SCHEMA,
@@ -91,6 +93,7 @@ from jbrain.embed import EmbedClient
 from jbrain.ingest.chunker import PARAGRAPH
 from jbrain.llm import LlmBadResponseError, LlmError, LlmRouter
 from jbrain.models.analysis import (
+    Entity,
     EntityMention,
     Fact,
     NoteAnalysis,
@@ -279,6 +282,85 @@ class AnalysisPipeline:
             mentions=len(extraction.mentions),
         )
 
+    async def apply_intent(
+        self,
+        session: AsyncSession,
+        *,
+        note_id: uuid.UUID,
+        note_domain: str,
+        captured_at: datetime,
+        chunks: list[_ChunkRef],
+        intent: IntegrationIntent,
+        plan: ArbiterPlan,
+        title: str,
+        tags: list[str],
+        extractor: str,
+    ) -> None:
+        """Commit an arbiter-approved IntegrationIntent through the existing
+        deterministic _apply (plan §9, Option 1). A rejected plan is a no-op: the
+        note stays pending_integration, nothing is written (N5: no partial
+        commit). A1b-ii-1 commits only the active-eligible facts; review-held
+        facts (cross-subject / low weight) are deferred to A1b-ii-2."""
+        if plan.rejected:
+            log.info(
+                "integration.rejected",
+                note_id=str(note_id),
+                violations=[v.code for v in plan.fatal_violations],
+            )
+            return
+        override = await self._resolve_from_intent(
+            session, list(intent.entity_resolutions), note_domain=note_domain
+        )
+        extraction = plan_to_extraction(intent, plan, title=title, tags=tags, commit_only=True)
+        await self._apply(
+            session,
+            note_id=note_id,
+            note_domain=note_domain,
+            captured_at=captured_at,
+            chunks=chunks,
+            extraction=extraction,
+            extractor=extractor,
+            resolution_override=override,
+        )
+
+    async def _resolve_from_intent(
+        self,
+        session: AsyncSession,
+        resolutions: list[EntityResolution],
+        *,
+        note_domain: str,
+    ) -> dict[str, ResolvedEntity | None]:
+        """Validate the agent's coreference into a name(=mention_ref)→entity
+        override (plan §9). An existing-mode ref is honored only if its entity is
+        fetchable under the session's scope; missing/out-of-scope/malformed-id →
+        None (the fact then skips — never a guess, and a synthetic ref can't be
+        re-resolved). new-mode mints a provisional; ambiguous → None."""
+        override: dict[str, ResolvedEntity | None] = {}
+        for r in resolutions:
+            if r.mode == "existing" and r.proposed_entity_id:
+                try:
+                    eid = uuid.UUID(r.proposed_entity_id)
+                except ValueError:
+                    override[r.mention_ref] = None
+                    continue
+                entity = (
+                    await session.execute(select(Entity).where(Entity.id == eid))
+                ).scalar_one_or_none()
+                override[r.mention_ref] = (
+                    ResolvedEntity(
+                        id=entity.id, subject_id=entity.subject_id, created=False, method="llm"
+                    )
+                    if entity is not None
+                    else None
+                )
+            elif r.mode == "new" and r.new_kind and r.new_name:
+                override[r.mention_ref] = await create_provisional(
+                    session, r.new_name, kind_hint=r.new_kind, domain=note_domain
+                )
+            else:
+                override[r.mention_ref] = None
+        return override
+
     async def _apply(
         self,
         session: AsyncSession,
@@ -289,9 +371,10 @@ class AnalysisPipeline:
         chunks: list[_ChunkRef],
         extraction: Extraction,
         extractor: str,
+        resolution_override: dict[str, ResolvedEntity | None] | None = None,
     ) -> None:
         resolved = await self._resolve_entities(
-            session, extraction, note_id, note_domain, chunks, captured_at
+            session, extraction, note_id, note_domain, chunks, captured_at, resolution_override
         )
         anchor_for = await self._rebuild_mentions(
             session, extraction, resolved, note_id, note_domain, chunks
@@ -494,6 +577,7 @@ class AnalysisPipeline:
         note_domain: str,
         chunks: list[_ChunkRef],
         captured_at: datetime,
+        resolution_override: dict[str, ResolvedEntity | None] | None = None,
     ) -> dict[str, ResolvedEntity | None]:
         """Layered resolution for every name the extraction references
         (docs/ANALYSIS.md "Alias resolution & separation"): exact alias, the
@@ -520,6 +604,14 @@ class AnalysisPipeline:
         resolved: dict[str, ResolvedEntity | None] = {}
         pending: dict[str, NeedsDisambiguation] = {}
         for name in names:
+            if resolution_override is not None and name in resolution_override:
+                # The Integrator agent already resolved this mention; honor its
+                # validated choice instead of re-resolving (plan §9, Option 1).
+                # Synthetic mention_ref "names" can't be re-resolved anyway, and
+                # a non-rejected plan covers every fact ref, so this branch is
+                # taken for all of them.
+                resolved[name] = resolution_override[name]
+                continue
             outcome = await resolve_entity(
                 session,
                 name,

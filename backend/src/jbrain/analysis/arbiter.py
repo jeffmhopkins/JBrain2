@@ -176,15 +176,25 @@ def plan_to_extraction(
     *,
     title: str = "",
     tags: list[str] | None = None,
+    commit_only: bool = False,
 ) -> Extraction:
     """Bridge a (non-rejected) plan into the name-based `Extraction` the existing
     `_apply` consumes (plan §9, Option 1). Mentions and fact refs are keyed by
     `mention_ref`; each fact's `confidence` is its deterministic plan weight, not
     the model's self-report. title/tags come from the upstream extract step (the
     intent doesn't carry them). A1b-ii threads the agent's resolutions in as a
-    name→entity override so `_resolve_entities` honors them."""
+    name→entity override so `_resolve_entities` honors them.
+
+    `commit_only` writes only active-eligible facts (`plan.to_commit`) — the
+    A1b-ii-1 safety: a review-held fact (cross-subject, low weight) has no
+    `_apply` path that respects its pending_review disposition yet, and some
+    carry high weight `decide()` would otherwise commit, so they are excluded
+    until A1b-ii-2 writes them as pending_review + a low_confidence_inference
+    card. Mentions still cover every resolution (an entity may be mentioned
+    without a committed fact)."""
     if plan.rejected:
         raise ValueError("cannot build an extraction from a rejected plan")
+    source = plan.to_commit if commit_only else plan.facts
     # kind="Thing" for an existing resolution is harmless under Option 1: the
     # resolution-override (A1b-ii) supplies the entity directly, so kind_hint only
     # matters on the resolver fallback path, which an in-override ref never hits.
@@ -196,5 +206,5 @@ def plan_to_extraction(
         )
         for r in intent.entity_resolutions
     ]
-    facts = [_to_extracted(pf.fact, pf.weight) for pf in plan.facts]
+    facts = [_to_extracted(pf.fact, pf.weight) for pf in source]
     return Extraction(title=title, tags=list(tags or []), mentions=mentions, facts=facts, tokens=[])
