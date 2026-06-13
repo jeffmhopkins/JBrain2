@@ -27,7 +27,9 @@ _NEW = (
 
 def _set_kind_check(values: str) -> None:
     op.execute("ALTER TABLE app.proposals DROP CONSTRAINT proposals_kind_check")
-    op.execute(f"ALTER TABLE app.proposals ADD CONSTRAINT proposals_kind_check CHECK (kind IN {values})")
+    op.execute(
+        f"ALTER TABLE app.proposals ADD CONSTRAINT proposals_kind_check CHECK (kind IN {values})"
+    )
 
 
 def upgrade() -> None:

@@ -205,7 +205,7 @@ async def test_manage_appointment_reschedule_anchors_on_the_existing_appointment
     out = await write_handlers(props, existing)["manage_appointment"](
         {"action": "reschedule", "appointment_id": "A1", "when": "Monday at 3pm"}, OWNER_CTX
     )
-    assert out.proposal is not None
+    assert isinstance(out, ToolOutput) and out.proposal is not None
     _pid, spec = props.staged[0]
     # Title came from the looked-up appointment, so re-extraction resolves to it.
     assert spec.nodes[0].preview["body"] == (
@@ -219,7 +219,7 @@ async def test_manage_appointment_cancel_needs_no_when() -> None:
     out = await write_handlers(props, FakeAppointments())["manage_appointment"](
         {"action": "cancel", "title": "gym session"}, OWNER_CTX
     )
-    assert out.proposal is not None
+    assert isinstance(out, ToolOutput) and out.proposal is not None
     assert props.staged[0][1].nodes[0].preview["body"] == "The gym session has been cancelled."
 
 
