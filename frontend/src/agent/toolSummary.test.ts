@@ -59,6 +59,16 @@ describe("toolStep", () => {
     expect(toolStep(tool({ name: "frobnicate" })).label).toBe("frobnicate");
   });
 
+  it("carries the call's arguments and verbatim summary through for the detail rungs", () => {
+    const step = toolStep(
+      tool({ name: "search", args: { query: "born", limit: 8 }, summary: "raw text" }),
+    );
+    expect(step.args).toEqual({ query: "born", limit: 8 });
+    expect(step.summary).toBe("raw text");
+    // A tool with no arguments leaves args undefined (nothing to render).
+    expect(toolStep(tool({ name: "recall" })).args).toBeUndefined();
+  });
+
   it("carries the in-flight ok state through", () => {
     const t: ToolActivity = { id: "c1", name: "search" };
     expect(toolStep(t).ok).toBeUndefined();

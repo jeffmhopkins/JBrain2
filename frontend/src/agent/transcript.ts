@@ -19,6 +19,9 @@ export interface ToolActivity {
   name: string;
   /** undefined while the call is in flight; set when its result arrives. */
   ok?: boolean;
+  /** The arguments the call went out with — kept so a step can show what it
+   * actually searched/read when its detail is expanded. */
+  args?: Record<string, unknown>;
   summary?: string;
   /** Structured notes the tool surfaced, sent with the result event. */
   sources?: SourceRef[];
@@ -56,7 +59,16 @@ export function applyEvent(messages: TranscriptMessage[], event: ChatEvent): Tra
       next.text += event.text;
       break;
     case "tool_call":
-      next.tools = [...next.tools, { id: event.id, name: event.name }];
+      next.tools = [
+        ...next.tools,
+        {
+          id: event.id,
+          name: event.name,
+          // Keep the arguments only when there are some — an empty object is noise
+          // in the expanded detail.
+          ...(Object.keys(event.arguments).length ? { args: event.arguments } : {}),
+        },
+      ];
       break;
     case "tool_result": {
       const sources = (event.sources ?? []).map((s) => ({
