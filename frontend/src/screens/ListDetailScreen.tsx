@@ -13,6 +13,7 @@ import {
 } from "react";
 import { type ListItemOut, type ListOut, api } from "../api/client";
 import { TopBar } from "../components/TopBar";
+import { XIcon } from "../components/icons";
 import { DOMAIN_COLOR } from "../notes/modes";
 import type { SyncStatus } from "../notes/useNotes";
 
@@ -223,7 +224,7 @@ export function ListDetailScreen({ listId, syncStatus, onClose }: ListDetailScre
                       aria-label={`Delete ${it.body}`}
                       onClick={() => removeItem(it)}
                     >
-                      <MinusGlyph />
+                      <XIcon size={14} />
                     </button>
                   </li>
                 ) : (
@@ -267,18 +268,22 @@ export function ListDetailScreen({ listId, syncStatus, onClose }: ListDetailScre
   );
 }
 
+// Self-sized via attributes (the app's icon convention) — a CSS-only-sized bare
+// <svg> didn't render reliably on the device.
 function GripGlyph() {
   return (
-    <svg className="ld-ic" viewBox="0 0 24 24" aria-hidden="true">
+    <svg
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
       <path d="M8 6h.01M8 12h.01M8 18h.01M16 6h.01M16 12h.01M16 18h.01" />
-    </svg>
-  );
-}
-
-function MinusGlyph() {
-  return (
-    <svg className="ld-ic" viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M5 12h14" />
     </svg>
   );
 }
