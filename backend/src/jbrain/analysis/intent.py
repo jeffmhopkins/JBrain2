@@ -104,11 +104,13 @@ class SupersessionProposal:
 
 @dataclass(frozen=True)
 class EntityPairProposal:
-    """A proposed merge or distinct-from edge. ALWAYS routed to review,
-    regardless of confidence (plan N3) — the agent never folds identity."""
+    """A proposed merge or distinct-from edge between two EXISTING entities
+    (these are entity ids, not mention_refs — you merge entities, not mentions).
+    ALWAYS routed to review, regardless of confidence (plan N3) — the agent
+    never folds identity."""
 
-    entity_a_ref: str
-    entity_b_ref: str
+    entity_a_id: str
+    entity_b_id: str
     rationale: str = ""
 
 
@@ -123,7 +125,9 @@ class IntegrationIntent:
     supersession_proposals: list[SupersessionProposal] = field(default_factory=list)
     merge_proposals: list[EntityPairProposal] = field(default_factory=list)
     distinct_proposals: list[EntityPairProposal] = field(default_factory=list)
-    temporal_tokens: list[IntentTemporal] = field(default_factory=list)
+    # Standalone span-anchored temporal tokens (mirroring Extraction.tokens) land
+    # in Wave 1 with a dedicated IntentToken type; facts carry their own inline
+    # temporal until then.
 
 
 # --- Structural validation -------------------------------------------------
@@ -181,6 +185,25 @@ def validate_intent(intent: IntegrationIntent) -> list[IntentViolation]:
                     f"{r.mention_ref}: cross-subject attribution must be staged",
                 )
             )
+        # Fields that contradict the chosen mode (e.g. mode=new yet also naming an
+        # existing entity) are incoherent intent — exactly what this pre-check
+        # exists to surface rather than let the arbiter silently pick one.
+        if r.mode != "existing" and r.proposed_entity_id:
+            out.append(
+                IntentViolation(
+                    "review",
+                    "resolution_conflicting_mode",
+                    f"{r.mention_ref}: mode={r.mode} but carries proposed_entity_id",
+                )
+            )
+        if r.mode != "new" and (r.new_kind or r.new_name):
+            out.append(
+                IntentViolation(
+                    "review",
+                    "resolution_conflicting_mode",
+                    f"{r.mention_ref}: mode={r.mode} but carries new_kind/new_name",
+                )
+            )
 
     for i, f in enumerate(intent.facts):
         where = f"fact[{i}] {f.entity_ref}.{f.predicate}"
@@ -228,6 +251,25 @@ def validate_intent(intent: IntegrationIntent) -> list[IntentViolation]:
                     f"{sp.entity_ref}.{sp.predicate}: action={sp.action!r}",
                 )
             )
+
+    # Merge/distinct pairs never auto-enact (they route to review), but a
+    # self-pair or an empty id is structurally nonsensical, not a judgment call.
+    for kind, pairs in (("merge", intent.merge_proposals), ("distinct", intent.distinct_proposals)):
+        for p in pairs:
+            if not p.entity_a_id or not p.entity_b_id:
+                out.append(
+                    IntentViolation(
+                        "fatal", f"{kind}_empty_id", f"{kind} proposal with an empty id"
+                    )
+                )
+            elif p.entity_a_id == p.entity_b_id:
+                out.append(
+                    IntentViolation(
+                        "fatal",
+                        f"{kind}_self_pair",
+                        f"{kind} proposal of {p.entity_a_id} with itself",
+                    )
+                )
 
     return out
 

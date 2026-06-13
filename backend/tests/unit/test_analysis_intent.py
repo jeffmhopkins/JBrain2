@@ -128,9 +128,47 @@ def test_bad_supersession_action_is_fatal():
     assert any(x.code == "bad_supersession_action" for x in validate_intent(intent))
 
 
-def test_merge_proposal_carries_two_refs():
-    # Merge proposals never auto-enact; structurally they just carry the pair.
-    mp = EntityPairProposal(entity_a_ref="m1", entity_b_ref="m2", rationale="same person")
-    intent = _intent(merge_proposals=[mp])
-    # No fatal violations from merge proposals alone.
-    assert not has_fatal(validate_intent(intent))
+def test_valid_merge_proposal_is_not_fatal():
+    # Merge proposals never auto-enact; a well-formed pair has no fatal violation.
+    mp = EntityPairProposal(entity_a_id="e1", entity_b_id="e2", rationale="same person")
+    assert not has_fatal(validate_intent(_intent(merge_proposals=[mp])))
+
+
+def test_merge_self_pair_is_fatal():
+    mp = EntityPairProposal(entity_a_id="e1", entity_b_id="e1")
+    assert any(x.code == "merge_self_pair" for x in validate_intent(_intent(merge_proposals=[mp])))
+
+
+def test_distinct_empty_id_is_fatal():
+    dp = EntityPairProposal(entity_a_id="e1", entity_b_id="")
+    assert any(
+        x.code == "distinct_empty_id" for x in validate_intent(_intent(distinct_proposals=[dp]))
+    )
+
+
+def test_conflicting_mode_resolution_is_review():
+    # mode=new but also names an existing entity -> incoherent, surfaced (not fatal).
+    r = EntityResolution(
+        mention_ref="m1", mode="new", new_kind="Person", new_name="X", proposed_entity_id="e9"
+    )
+    v = validate_intent(_intent(entity_resolutions=[r]))
+    assert not has_fatal(v)
+    assert any(x.code == "resolution_conflicting_mode" for x in v)
+
+
+def test_object_ref_to_real_resolution_is_clean():
+    # Happy path of the object branch: object_entity_ref names a second resolution.
+    intent = _intent(
+        entity_resolutions=[_resolution("m1"), _resolution("m2")],
+        facts=[_fact(entity_ref="m1", object_entity_ref="m2")],
+    )
+    assert validate_intent(intent) == []
+
+
+def test_multiple_violations_accumulate():
+    intent = _intent(
+        entity_resolutions=[_resolution("m1")],
+        facts=[_fact(entity_ref="ghost", kind="nope")],
+    )
+    codes = {x.code for x in validate_intent(intent)}
+    assert {"unknown_entity_ref", "bad_kind"} <= codes
