@@ -1,6 +1,6 @@
 ---
 name: note.extract
-version: note-extract-v12
+version: note-extract-v13
 description: Extract facts, entities, and temporal references from one personal note.
 strength: high
 config:
@@ -182,6 +182,7 @@ The note is a private primary source written by its author. Produce:
   * membership in an organization, club, team, band, or board: memberOf (the person -> the org, object_entity_ref the Organization mention; prefer memberOf over a bare "member")
   * mailing or street address: address (kept as a value string, not an entity — a full street address is not a place node)
   * spouse / marriage: spouse
+  * an unmarried romantic or dating partner: partner (symmetric — object_entity_ref the other person). Prefer the gender-neutral partner; keep a gendered boyfriend or girlfriend predicate only when the note's own wording is explicitly gendered.
   * a child, son, or daughter of someone: children (the parent's edge, object_entity_ref the child's mention); a parent, mother, or father of someone: parent (the child's edge, object_entity_ref the parent's mention)
   * a sibling, brother, sister, or twin: sibling (symmetric — object_entity_ref the other person; for twins set qualifier "twin")
   * birthday / date of birth: birthDate

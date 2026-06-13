@@ -58,6 +58,15 @@ SYMMETRIC_PREDICATES = frozenset(
         "friend",
         "friend_of",
         "friendof",
+        # A romantic/dating partner: the gender-neutral predicate the prompt now
+        # steers toward, and the safe default the gendered boyfriend/girlfriend
+        # pair can't be — partnership is mutual, so it reflects with itself for
+        # any couple. A bare `partner` reads the same (business partners et al.
+        # are partners too), so the symmetric reflection is always directionally
+        # right even when the sense is non-romantic.
+        "partner",
+        "significant_other",
+        "significantother",
         "cofounder",
         "co_founder",
         "business_partner",
@@ -101,6 +110,13 @@ INVERSE_PAIRS: dict[str, str] = {
     "mentors": "mentee_of",
     "mentee_of": "mentor_of",
     "menteeof": "mentor_of",
+    # Dating: the gendered words name an asymmetric pair (Summer.boyfriend ->
+    # colin reflects to colin.girlfriend -> Summer). The mapping is the common
+    # different-sex reading; a same-sex couple's reciprocal would be mis-gendered,
+    # but the registry can't see the subjects' genders and the alternative —
+    # leaving the bond one-directional — is the worse default the user hit.
+    "boyfriend": "girlfriend",
+    "girlfriend": "boyfriend",
     "hastreated": "treatedBy",
     "has_treated": "treatedBy",
     "treatedby": "hasTreated",
