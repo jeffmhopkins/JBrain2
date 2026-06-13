@@ -2718,6 +2718,60 @@ button.small {
   color: #fff;
 }
 
+/* Correction-note composer (the #7-safe edit path). */
+.rcompose {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border: 1px solid var(--steel);
+  border-radius: var(--r-card);
+  padding: 12px;
+  background: var(--steel-tint);
+}
+
+.rcompose-box {
+  width: 100%;
+  resize: vertical;
+  font: inherit;
+  font-size: var(--fs-note);
+  line-height: 1.5;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-input);
+  padding: 10px 12px;
+}
+
+.rcompose-hint {
+  margin: 0;
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+}
+
+.rcompose-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.rcompose-cancel {
+  min-height: 40px;
+  padding: 0 14px;
+  color: var(--text-2);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-input);
+}
+
+.rcompose-file {
+  flex: 1;
+  min-height: 40px;
+  font-weight: 500;
+  color: var(--green);
+  background: var(--green-tint);
+  border: 1px solid transparent;
+  border-radius: var(--r-input);
+}
+
 .evidence {
   margin: 0;
   font-size: var(--fs-note);
@@ -2798,6 +2852,17 @@ button.small {
 }
 
 .rfoot-discuss {
+  color: var(--steel);
+  background: var(--steel-tint);
+  border-color: transparent;
+}
+
+.rfoot-correct {
+  color: var(--text);
+  background: var(--surface-2);
+}
+
+.rfoot-correct.active {
   color: var(--steel);
   background: var(--steel-tint);
   border-color: transparent;

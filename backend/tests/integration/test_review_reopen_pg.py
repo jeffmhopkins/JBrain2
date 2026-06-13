@@ -19,7 +19,7 @@ from sqlalchemy.ext.asyncio import (
 )
 from sqlalchemy.pool import NullPool
 
-from jbrain.analysis.repo import AlreadyOpen, SqlAnalysisRepo
+from jbrain.analysis.repo import AlreadyOpen, SqlAnalysisRepo, UnknownAction
 from jbrain.db.session import SessionContext, scoped_session
 from tests.conftest import docker_available
 from tests.integration.test_rls import OWNER, database_url  # noqa: F401
@@ -370,6 +370,37 @@ async def test_discuss_tags_the_deferred_row_for_the_assistant(
     assert parked is not None
     assert parked["status"] == "deferred"
     assert parked["resolution"]["action"] == "discuss"
+
+
+async def test_correct_links_a_note_and_reopen_keeps_it(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """A correction resolves the item by linking the note that carries the
+    human's fix (the graph change is the pipeline's, when it processes that
+    note); reopen re-queues the item but keeps the note."""
+    repo = SqlAnalysisRepo(maker)
+    note = await seed_note(maker)
+    item = await seed_item(maker, "fact_conflict", {"summary": "wrong reading"})
+
+    resolved = await repo.resolve_review(OWNER, item, "correct", {"note_id": note})
+    assert resolved is not None
+    assert resolved["status"] == "resolved"
+    (effect,) = resolved["resolution"]["effects"]
+    assert effect == {"action": "corrected", "note_id": note}
+
+    reopened = await repo.reopen_review(OWNER, item)
+    assert reopened is not None and reopened["status"] == "open"
+    note_text = reopened["reopen_note"]
+    assert note_text is not None and "correction note stays" in note_text
+
+
+async def test_correct_without_a_note_is_rejected(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    repo = SqlAnalysisRepo(maker)
+    item = await seed_item(maker, "fact_conflict", {"summary": "wrong reading"})
+    with pytest.raises(UnknownAction):
+        await repo.resolve_review(OWNER, item, "correct", {})
 
 
 async def test_resolve_batch_commits_good_and_collects_bad(

@@ -391,14 +391,20 @@ resolution's recorded graph effects; the decided row stays behind as a
 rejected merge: the `distinct_from` edge survives by doctrine. Empty lanes
 read as one calm `--text-2` sentence each.
 
-*Edit model (open question, deferred):* "approve with edits" is realized
-today as **choose-among-proposals** — the human picks among the values the
-pipeline proposed (it never types a value into the graph, honoring
-non-negotiable #7: facts aren't edited directly). The planned second mode
-is **talk it over with the assistant** — a conversational correction that
-re-feeds the pipeline rather than writing the graph by hand. Whether a
-human may ever shape a proposed value directly is the open #7 decision; the
-footer affordance is in place ahead of that conversation being wired.
+*Edit model:* "approve with edits" has two shapes, neither of which writes
+the graph by hand (honoring non-negotiable #7 — facts aren't edited
+directly). **Choose-among-proposals** picks among the values the pipeline
+already proposed. **Correct it** opens a composer that files the human's
+fix as a real **correction note** (the #7 channel) in the item's domain and
+resolves the item as *corrected*; the pipeline applies it when it processes
+that note (**re-adjudicate**, never a hand-written fact), so the wiki stays
+machine-written and the value lands once extraction runs — reopening keeps
+the note (it's the human's own). The planned third mode, **talk it over
+with the assistant**, is the conversational version of the same — the
+assistant drafts that correction-note body from your intent; until that
+handoff is wired the footer affordance parks the item for the assistant.
+Whether a human may ever pin a typed value directly, short-circuiting the
+pipeline, stays the open #7 decision.
 
 **Search** (settled in the Phase 2 review; input mode revised on-device):
 **live as-you-type** — results update per keystroke behind a 250ms

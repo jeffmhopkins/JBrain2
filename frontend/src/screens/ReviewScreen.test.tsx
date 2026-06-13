@@ -144,6 +144,9 @@ describe("ReviewScreen (split inbox)", () => {
       if (path === "/api/review?status=open") return jsonResponse({ items: pending });
       if (path === "/api/review?status=deferred") return jsonResponse({ items: deferred });
       if (path === "/api/review?status=resolved") return jsonResponse({ items: decided });
+      if (path === "/api/notes" && init?.method === "POST") {
+        return jsonResponse({ id: "note-new", ...JSON.parse(String(init.body)) });
+      }
       if (path === "/api/review/resolve-batch" && init?.method === "POST") {
         const body = JSON.parse(String(init.body)) as {
           decisions: { id: string; action: string }[];
@@ -268,6 +271,41 @@ describe("ReviewScreen (split inbox)", () => {
     fireEvent.click(screen.getByRole("tab", { name: "deferred 2" }));
     expect(screen.getByText("which Sam?")).toBeInTheDocument();
     expect(screen.getAllByText("with assistant").length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("correct it files a correction note, then resolves the item as corrected", async () => {
+    render(<ReviewScreen />);
+    await screen.findByText("two values recorded for Sarah's birthDate");
+    fireEvent.click(screen.getByRole("button", { name: /two values recorded for Sarah/ }));
+    fireEvent.click(screen.getByRole("button", { name: "correct it" }));
+
+    const box = screen.getByLabelText("correction note");
+    fireEvent.change(box, { target: { value: "Correction — her birthday is March 14, 1988." } });
+    fireEvent.click(screen.getByRole("button", { name: "file correction" }));
+
+    // First a real note is filed in the item's domain...
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/notes",
+        expect.objectContaining({
+          method: "POST",
+          body: expect.stringContaining('"domain":"general"'),
+        }),
+      ),
+    );
+    // ...then the item resolves as corrected, linking that note.
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/review/c1/resolve",
+        expect.objectContaining({
+          method: "POST",
+          body: expect.stringContaining('"action":"correct"'),
+        }),
+      ),
+    );
+    const correctCall = fetchMock.mock.calls.find((c) => String(c[0]) === "/api/review/c1/resolve");
+    expect(String((correctCall?.[1] as RequestInit).body)).toContain('"note_id":"note-new"');
+    expect(screen.getByRole("tab", { name: "pending 3" })).toBeInTheDocument();
   });
 
   it("the high-confidence suggestion bulk-approves via resolve-batch", async () => {

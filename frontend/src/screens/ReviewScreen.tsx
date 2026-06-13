@@ -228,6 +228,7 @@ function decidedVerb(item: ReviewItem): string {
   if (a === undefined) return "decided";
   if (a === "accept" || a === "accept_a" || a === "accept_b") return "approved";
   if (a === "reject") return "rejected";
+  if (a === "correct") return "corrected";
   return a;
 }
 
@@ -242,9 +243,21 @@ interface DetailProps {
   onNav: (delta: number) => void;
 }
 
+function correctionDraft(item: ReviewItem, p: Parsed): string {
+  const lead =
+    item.kind === "ambiguous_mention" && p.candidateName !== null
+      ? `“${p.candidateName}” here refers to `
+      : item.kind === "merge_proposal"
+        ? "these are "
+        : "the right value is ";
+  return `Correction — ${p.summary ?? kindLabel(item.kind)}.\n\n${lead}`;
+}
+
 function Detail({ item, lane, queue, position, onClose, onNav }: DetailProps) {
   const p = parsePayload(item.payload);
   const [armed, tap] = useArmed();
+  const [composing, setComposing] = useState(false);
+  const [draft, setDraft] = useState("");
   const conf = confidenceBadge(p.confidence);
   const proposals = proposalsFor(p);
   const showDiff = p.beforeLabel !== null && p.afterLabel !== null;
@@ -253,6 +266,17 @@ function Detail({ item, lane, queue, position, onClose, onNav }: DetailProps) {
     const key = `prop-${proposal.action}`;
     if (proposal.destructive && !tap(key)) return;
     queue.resolve(item.id, proposal.action, { choice: proposal.label });
+    onClose();
+  }
+
+  function openComposer() {
+    setDraft(correctionDraft(item, p));
+    setComposing(true);
+  }
+
+  function fileCorrection() {
+    if (draft.trim().length === 0) return;
+    queue.correct(item.id, draft.trim());
     onClose();
   }
 
@@ -318,12 +342,41 @@ function Detail({ item, lane, queue, position, onClose, onNav }: DetailProps) {
 
         {p.candidateName !== null && (
           <p className="rdetail-cands">
-            no automatic link yet — defer or talk it over to resolve which {p.candidateName}.
+            no automatic link yet — correct it, defer, or talk it over to resolve which{" "}
+            {p.candidateName}.
           </p>
         )}
 
         {lane === "pending" ? (
           <>
+            {composing && (
+              <div className="rcompose">
+                <h3 className="section-header">file a correction note</h3>
+                <textarea
+                  className="rcompose-box"
+                  value={draft}
+                  onChange={(e) => setDraft(e.target.value)}
+                  aria-label="correction note"
+                  rows={4}
+                />
+                <p className="rcompose-hint">
+                  filed as a note in your {item.domain} domain — the pipeline applies it, so the
+                  wiki stays machine-written.
+                </p>
+                <div className="rcompose-actions">
+                  <button
+                    type="button"
+                    className="rcompose-cancel"
+                    onClick={() => setComposing(false)}
+                  >
+                    cancel
+                  </button>
+                  <button type="button" className="rcompose-file" onClick={fileCorrection}>
+                    file correction
+                  </button>
+                </div>
+              </div>
+            )}
             <h3 className="section-header">choose among proposals</h3>
             <div className="rproposals">
               {proposals.map((proposal) => {
@@ -379,6 +432,13 @@ function Detail({ item, lane, queue, position, onClose, onNav }: DetailProps) {
             </button>
             <button
               type="button"
+              className={`rfoot-correct${composing ? " active" : ""}`}
+              onClick={() => (composing ? setComposing(false) : openComposer())}
+            >
+              correct it
+            </button>
+            <button
+              type="button"
               className="rfoot-discuss"
               onClick={() => {
                 queue.resolve(item.id, "discuss");
@@ -425,6 +485,13 @@ function DecidedRecord({ item, parsed }: { item: ReviewItem; parsed: Parsed }) {
   const proposals = proposalsFor(parsed);
   if (item.resolution?.action === "defer" || item.resolution?.action === "discuss") {
     return <p className="rdetail-cands">parked — resume to bring it back to the pending queue.</p>;
+  }
+  if (action === "correct") {
+    return (
+      <p className="rdetail-cands">
+        corrected — filed as a note; the pipeline applies your fix to the wiki.
+      </p>
+    );
   }
   return (
     <>

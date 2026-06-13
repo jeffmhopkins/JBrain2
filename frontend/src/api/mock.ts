@@ -931,7 +931,7 @@ function decidedAt(item: ReviewItem): string {
 /** The actions a row accepts: the universal dismiss/defer/discuss plus the
  * choices/outcomes its payload advertises — the backend's contract. */
 function advertisedActions(item: ReviewItem): Set<string> {
-  const advertised = new Set(["dismiss", "defer", "discuss"]);
+  const advertised = new Set(["dismiss", "defer", "discuss", "correct"]);
   const choices = item.payload.choices;
   if (Array.isArray(choices)) {
     for (const choice of choices) {
@@ -958,11 +958,16 @@ function applyResolution(
   const parked = action === "defer" || action === "discuss";
   const dismissal =
     action === "dismiss" || (item.kind === "ambiguous_mention" && action === "reject");
+  const corrected = action === "correct";
   item.status = parked ? "deferred" : dismissal ? "dismissed" : "resolved";
   item.resolution = {
     action,
     payload,
-    effects: parked || dismissal ? [] : mockEffects(item, action),
+    effects: corrected
+      ? [{ action: "corrected", note_id: payload.note_id }]
+      : parked || dismissal
+        ? []
+        : mockEffects(item, action),
   };
   item.resolved_at = new Date().toISOString();
   return item;

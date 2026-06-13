@@ -610,6 +610,18 @@ class SqlAnalysisRepo:
             # ("defer" vs "discuss") is how the deferred lane tags each row.
             return "deferred", []
 
+        if action == "correct":
+            # Correction-note path (docs/DESIGN.md "Edit model"): the human's
+            # fix was filed as a real note (the #7 channel) — its id rides in
+            # the payload. The graph change is the pipeline's when it processes
+            # that note, so the resolve writes no facts; it only closes the
+            # item and remembers the link. Reopen keeps the note (it stands on
+            # its own), so there is nothing to unwind.
+            note_id = payload.get("note_id")
+            if not note_id:
+                raise UnknownAction("correct requires a note_id")
+            return "resolved", [{"action": "corrected", "note_id": note_id}]
+
         if kind in ("attribute_collision", "fact_conflict") and action in ("accept_a", "accept_b"):
             winner = item_payload.get("fact_a" if action == "accept_a" else "fact_b")
             loser = item_payload.get("fact_b" if action == "accept_a" else "fact_a")
@@ -881,6 +893,10 @@ class SqlAnalysisRepo:
                 notes.append(
                     "the distinct-from edge is permanent and stays — this pair is never re-proposed"
                 )
+            elif action == "corrected":
+                # The correction note is the human's own note: reopening the
+                # review item re-queues it but never deletes the note.
+                notes.append("the correction note stays — it was filed as your own note")
         return notes
 
 

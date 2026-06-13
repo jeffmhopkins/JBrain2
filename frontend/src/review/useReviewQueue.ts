@@ -30,6 +30,10 @@ export interface ReviewQueueController {
   /** Set after a decision/defer/batch; drives the undo snackbar. */
   undoable: PendingUndo | null;
   resolve(id: string, action: string, payload?: Record<string, unknown>): void;
+  /** File the human's fix as a correction note (the #7 channel), then resolve
+   * the item as corrected. The graph change is the pipeline's, when it
+   * processes the note. */
+  correct(id: string, body: string): void;
   batch(decisions: BatchDecision[], label: string): void;
   reopen(id: string): void;
   undo(): void;
@@ -108,6 +112,22 @@ export function useReviewQueue(): ReviewQueueController {
         });
     },
     [take],
+  );
+
+  const correct = useCallback(
+    (id: string, body: string) => {
+      const current = pendingRef.current?.find((r) => r.id === id);
+      if (current === undefined) return;
+      setActionError(null);
+      // File the correction as a real note in the item's domain; on success,
+      // resolve the item as corrected and link it. resolve() does the
+      // optimistic move once the note id is in hand.
+      api
+        .createNote({ client_id: crypto.randomUUID(), domain: current.domain, body })
+        .then((note) => resolve(id, "correct", { note_id: note.id, summary: body.slice(0, 140) }))
+        .catch(() => setActionError("couldn't file the correction — try again."));
+    },
+    [resolve],
   );
 
   const batch = useCallback(
@@ -246,6 +266,7 @@ export function useReviewQueue(): ReviewQueueController {
     actionError,
     undoable,
     resolve,
+    correct,
     batch,
     reopen,
     undo,
