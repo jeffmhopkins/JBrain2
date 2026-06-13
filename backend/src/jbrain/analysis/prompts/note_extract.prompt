@@ -1,6 +1,6 @@
 ---
 name: note.extract
-version: note-extract-v11
+version: note-extract-v12
 description: Extract facts, entities, and temporal references from one personal note.
 strength: high
 config:
@@ -187,7 +187,7 @@ The note is a private primary source written by its author. Produce:
   * birthday / date of birth: birthDate
   * job title / role: jobTitle
   * weight: weight; height: height; blood pressure: bloodPressure
-  * a scheduled appointment's time: scheduledTime
+  * a scheduled appointment, meeting, or event — a dentist appointment, a 1:1, a flight, a concert: emit the EVENT ITSELF as its OWN mention with kind "appointment", and record its time as a `state` fact on predicate `scheduledTime` whose entity_ref is that event — value_json {"start": "<ISO>"} (add "end" for a range), assertion "expected" while it is still in the future, with the resolved date in "temporal". NEVER hang scheduledTime off the author ("Me") or another person, and NEVER make the place or clinician the OBJECT of scheduledTime. scheduledTime is functional and supersedable, so a later "moved to Monday" RE-STATES the SAME appointment's scheduledTime (it does not fork a new one). A named clinician or invitee is an `attendee` relationship edge on the appointment (object_entity_ref the person)
 
 - "kind": choose by what the fact IS, not by the verb tense of the sentence:
   state - a durable condition that HOLDS OVER AN INTERVAL and changes by being replaced: where someone lives (homeLocation), their employer (worksFor), their address, marital status, a current medication regimen. A residence, employer, address, or marital change is a STATE change: emit the durable fact as a `state` on the canonical predicate above (homeLocation/worksFor/...). The new state supersedes the old one on the same predicate, giving the property a current-value-plus-history rail. You MAY ALSO emit the move itself as a separate `event` (kind=event, e.g. predicate "moved"), but the durable, supersedable fact is the `state` and it is required.
@@ -217,6 +217,11 @@ Worked example — "Sarah moved to Denver." (a relocation is a state change) emi
 Denver is BOTH the object_entity_ref (so the fact links to the Denver node) and kept in value_json for display. A later note "Sarah actually moved to Boulder" emits the same homeLocation `state` predicate pointing at the Boulder place — matching predicates let Boulder supersede Denver (a residence is functional, so the place object stays out of its identity key) instead of forking two unrelated facts.
 
 Worked example — "Jeff is married to Celine Hopkins." emits TWO Person mentions (Jeff, Celine Hopkins) and the single edge: {"predicate": "spouse", "qualifier": "", "kind": "relationship", "statement": "Jeff is married to Celine Hopkins.", "value_json": null, "assertion": "asserted", "entity_ref": "Jeff", "object_entity_ref": "Celine Hopkins", "temporal": null, "domain": "general", "confidence": 0.95}. Celine is the OBJECT of "married to" yet is just as much a person as Jeff. Likewise "Jeff ate Celine's dinner" names TWO people: emit both Jeff and Celine as Person mentions even though Celine only appears as a possessor.
+
+Worked example — "I have an appointment tomorrow at the dentist at 1300." (capture anchor Sat 2026-06-13) — the APPOINTMENT is its OWN entity that OWNS the time; do NOT put scheduledTime on "Me" and do NOT make the dentist the object of scheduledTime:
+  mentions: [{"name": "dentist appointment", "kind": "appointment", "surface_text": "an appointment tomorrow at the dentist"}]
+  facts: [{"predicate": "scheduledTime", "qualifier": "", "kind": "state", "statement": "Dentist appointment is scheduled for Sunday 2026-06-14 at 1:00 PM.", "value_json": {"start": "2026-06-14T13:00:00-06:00"}, "assertion": "expected", "entity_ref": "dentist appointment", "object_entity_ref": null, "temporal": {"phrase": "tomorrow at 1300", "resolved_start": "2026-06-14T13:00:00-06:00", "resolved_end": null, "precision": "instant"}, "domain": "general", "confidence": 0.95}]
+The time is a date-valued `state` ON the appointment entity (value_json.start + temporal), so a later "the dentist moved to Monday" supersedes it and the calendar can project it. "the dentist" here is just where it is, folded into the appointment's name; a NAMED clinician ("Dr. Nguyen") would instead be its own Person mention and an `attendee` edge on the appointment.
 
 Worked example — "My legal name is Jeffrey Mark Hopkins; my kids call me Dad." emits two attribute facts on Me, each with the bare name in value_json: {"predicate": "name.legal", "qualifier": "", "kind": "attribute", "statement": "My legal name is Jeffrey Mark Hopkins.", "value_json": {"value": "Jeffrey Mark Hopkins"}, "assertion": "asserted", "entity_ref": "Me", "object_entity_ref": null, "temporal": null, "domain": "general", "confidence": 1.0} and {"predicate": "name.nickname", "qualifier": "kids", "kind": "attribute", "statement": "My kids call me Dad.", "value_json": {"value": "Dad"}, "assertion": "asserted", "entity_ref": "Me", "object_entity_ref": null, "temporal": null, "domain": "general", "confidence": 1.0}. The name lives in value_json, not only the statement.
 

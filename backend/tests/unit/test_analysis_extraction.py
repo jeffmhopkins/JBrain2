@@ -392,7 +392,7 @@ def test_system_prompt_v5_teaches_object_person_and_backward_temporal() -> None:
 
 
 def test_prompt_version_bumped_to_v10() -> None:
-    assert PROMPT_VERSION == "note-extract-v11"
+    assert PROMPT_VERSION == "note-extract-v12"
 
 
 def test_system_prompt_v9_teaches_inanimate_ownership_edges() -> None:

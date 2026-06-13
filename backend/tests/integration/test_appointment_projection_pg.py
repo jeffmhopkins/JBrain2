@@ -101,6 +101,18 @@ async def test_reschedule_projects_one_current_time(maker: async_sessionmaker) -
     assert appt["source_note_id"] is not None
 
 
+async def test_plainly_worded_appointment_note_reaches_the_calendar(
+    maker: async_sessionmaker,
+) -> None:
+    # The field-bug regression: "I have an appointment tomorrow at the dentist at
+    # 1300" (v12 shape) must land on the calendar, not vanish.
+    await run_scenario(maker, _file("plan_appointment_from_note.json"))
+    rows = await _appointments(maker)
+    assert len(rows) == 1
+    assert rows[0]["title"] == "dentist appointment"
+    assert rows[0]["starts_at"] == datetime(2026, 6, 14, 19, 0, tzinfo=UTC)  # 13:00-06:00
+
+
 async def test_two_distinct_appointments_make_two_rows(maker: async_sessionmaker) -> None:
     await run_scenario(maker, _file("plan_two_distinct_appointments.json"))
     rows = await _appointments(maker)
@@ -240,7 +252,9 @@ async def test_direct_projection_carries_rrule_and_explicit_status(
     assert rows[0]["starts_at"] == start
 
 
-async def _seed_appointment(s, *, precision: str = "instant") -> tuple[uuid.UUID, uuid.UUID]:
+async def _seed_appointment(
+    s, *, precision: str = "instant", kind: str = "appointment"
+) -> tuple[uuid.UUID, uuid.UUID]:
     """A note + appointment entity + one active scheduledTime fact. Returns
     (entity_id, note_id). Runs on an owner session `s`."""
     start = datetime(2026, 7, 1, 16, 0, tzinfo=UTC)
@@ -255,9 +269,9 @@ async def _seed_appointment(s, *, precision: str = "instant") -> tuple[uuid.UUID
     await s.execute(
         text(
             "INSERT INTO app.entities (id, kind, canonical_name, domain_code)"
-            " VALUES (:i, 'appointment', 'Visit', 'general')"
+            " VALUES (:i, :k, 'Visit', 'general')"
         ),
-        {"i": str(eid)},
+        {"i": str(eid), "k": kind},
     )
     await s.execute(
         text(
@@ -350,6 +364,17 @@ async def test_cancelled_appointment_keeps_its_row_when_the_time_is_gone(
 
     rows = await _appointments(maker)
     assert len(rows) == 1 and rows[0]["status"] == "cancelled"
+
+
+async def test_event_kind_with_a_scheduled_time_also_projects(maker: async_sessionmaker) -> None:
+    # The extractor's kinds are free text and schema.org leans "Event"; an Event
+    # entity carrying a scheduledTime is still a calendar appointment.
+    async with maker() as s:
+        await s.execute(text("SELECT set_config('app.principal_kind','owner',true)"))
+        eid, _ = await _seed_appointment(s, kind="Event")
+        await project_appointments(s, {eid})
+        await s.commit()
+    assert len(await _appointments(maker)) == 1
 
 
 async def test_active_time_with_no_resolvable_start_removes_row(
