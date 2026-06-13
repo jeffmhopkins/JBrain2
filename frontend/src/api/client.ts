@@ -285,7 +285,28 @@ export type ReviewKind =
   | "low_confidence"
   | "split_proposal";
 
-export type ReviewStatus = "open" | "resolved" | "dismissed";
+export type ReviewStatus = "open" | "resolved" | "dismissed" | "deferred";
+
+// The inbox's three lanes map onto wire status filters: pending=open,
+// deferred=deferred, decided=resolved (the decided list folds in dismissals
+// and reopened tombstones).
+export type ReviewFilter = "pending" | "deferred" | "decided";
+export const FILTER_STATUS: Record<ReviewFilter, "open" | "deferred" | "resolved"> = {
+  pending: "open",
+  deferred: "deferred",
+  decided: "resolved",
+};
+
+export interface BatchDecision {
+  id: string;
+  action: string;
+  payload?: Record<string, unknown>;
+}
+
+export interface ResolveBatchResult {
+  items: ReviewItem[];
+  errors: { id: string; detail: string }[];
+}
 
 export interface ReviewResolution {
   action: string;
@@ -606,7 +627,7 @@ export const api = {
 
   // "resolved" is the full decision log: it folds in dismissals and
   // reopened tombstones, newest decision first.
-  async reviewQueue(status: "open" | "resolved" = "open"): Promise<ReviewQueue> {
+  async reviewQueue(status: "open" | "resolved" | "deferred" = "open"): Promise<ReviewQueue> {
     const response = await request(`/api/review?status=${status}`);
     return (await response.json()) as ReviewQueue;
   },
@@ -623,6 +644,14 @@ export const api = {
       jsonInit("POST", { action, payload }),
     );
     return (await response.json()) as ReviewItem;
+  },
+
+  // Bulk-apply per-item decisions in one transaction: each carries its own
+  // action (the caller knows each row's kind), the good ones commit, the bad
+  // ones come back in `errors` so the UI can roll exactly those rows back.
+  async reviewResolveBatch(decisions: BatchDecision[]): Promise<ResolveBatchResult> {
+    const response = await request("/api/review/resolve-batch", jsonInit("POST", { decisions }));
+    return (await response.json()) as ResolveBatchResult;
   },
 
   // Full unwind: the backend reverses the resolution's recorded graph
