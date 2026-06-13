@@ -37,6 +37,16 @@ const AUSTIN: FactOut = {
   source_snippet: "moved into the <mark>Austin apartment</mark>",
 };
 
+// A machine extraction error: never true, so it must not appear as a value or
+// count toward "earlier" — audit-only (hidden from the value view).
+const MISREAD: FactOut = {
+  ...AUSTIN,
+  id: "f-misread",
+  statement: "Sarah's home address was in Ostin, TX.",
+  value_json: "Ostin, TX",
+  status: "retracted",
+};
+
 const SARAH: EntityOut = {
   id: "ent-sarah",
   kind: "Person",
@@ -45,8 +55,14 @@ const SARAH: EntityOut = {
   aliases: ["Sarah", "sis"],
   domain: "general",
   predicates: [
-    // History is newest-first per the contract; the rail must keep it so.
-    { predicate: "address", qualifier: "home", current: DENVER, history: [DENVER, AUSTIN] },
+    // History is newest-first per the contract; the sheet keeps it so. The
+    // retracted MISREAD is in the chain but must never surface in the value view.
+    {
+      predicate: "address",
+      qualifier: "home",
+      current: DENVER,
+      history: [DENVER, AUSTIN, MISREAD],
+    },
     {
       predicate: "worksFor",
       qualifier: null,
@@ -123,27 +139,46 @@ describe("EntityScreen", () => {
     expect(screen.getByText("general")).toBeInTheDocument();
   });
 
-  it("history rail: newest first, superseded entries muted, no rail for single facts", async () => {
+  it("page is current-only: history collapses behind a disclosure, no inline rail", async () => {
     setup();
     await screen.findByRole("heading", { name: "Sarah Hopkins" });
 
-    const rail = screen.getByRole("list");
+    // The current value dominates; prior values are NOT in the default footprint.
+    expect(screen.getByText("Denver, CO")).toBeInTheDocument();
+    expect(screen.queryByText("Austin, TX")).not.toBeInTheDocument();
+    expect(screen.queryByRole("list")).not.toBeInTheDocument(); // no inline rail
+    // A pending_review current value stays visible — it needs the owner.
+    expect(screen.getByText("pending review")).toBeInTheDocument();
+
+    // One prior once-true value (Austin); the retracted MISREAD is not counted.
+    const disclosure = screen.getByRole("button", { name: "1 earlier →" });
+    // worksFor has a single active fact -> no disclosure for it.
+    expect(screen.getAllByRole("button", { name: /earlier →/ })).toHaveLength(1);
+
+    // worksFor's object renders as a link to the org node, not the statement.
+    fireEvent.click(screen.getByRole("button", { name: "Ridgeline Architects" }));
+    expect(handlers.onOpenEntity).toHaveBeenCalledWith("ent-ridgeline");
+
+    fireEvent.click(disclosure);
+  });
+
+  it("history sheet: superseded timeline, retracted excluded, dots cite their note", async () => {
+    setup();
+    await screen.findByRole("heading", { name: "Sarah Hopkins" });
+    fireEvent.click(screen.getByRole("button", { name: "1 earlier →" }));
+
+    const sheet = screen.getByRole("dialog");
+    const rail = within(sheet).getByRole("list");
     const dots = within(rail).getAllByRole("listitem");
+    // Current + superseded, newest-first; the retracted MISREAD is filtered out.
     expect(dots).toHaveLength(2);
     expect(dots[0]).toHaveTextContent("Denver, CO");
-    expect(dots[0]).not.toHaveClass("fact-superseded");
     expect(dots[1]).toHaveTextContent("Austin, TX");
     expect(dots[1]).toHaveTextContent("superseded");
     expect(dots[1]).toHaveClass("fact-superseded");
     // Superseded facts stay true about their interval — the span shows it.
     expect(dots[1]).toHaveTextContent("Mar 2023 → Jun 2026");
-
-    // Single-fact predicates render no rail (one list = the address rail).
-    expect(screen.getAllByRole("list")).toHaveLength(1);
-    // worksFor's object renders as a link to the org node, not the statement;
-    // tapping it navigates to that entity.
-    fireEvent.click(screen.getByRole("button", { name: "Ridgeline Architects" }));
-    expect(handlers.onOpenEntity).toHaveBeenCalledWith("ent-ridgeline");
+    expect(within(sheet).queryByText("Ostin, TX")).not.toBeInTheDocument(); // retracted hidden
 
     // Each dot cites its note snippet on tap.
     const head = within(rail).getAllByRole("button")[0];

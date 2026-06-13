@@ -1,71 +1,49 @@
 // Entity page (docs/DESIGN.md "Analysis tab + entity pages" — the hub):
-// centered node with kind/alias/domain meta, current facts as outbound
-// edges, revision histories as vertical timeline rails (each dot a fact
-// citing its note snippet, superseded ones muted), inbound edges, mentions.
-// A slide-up tree layer like the note view: back chevron + swipe-down exit.
+// centered node with kind/alias/domain meta, then each property's CURRENT
+// value as an outbound edge — the page is current-only so it stays a bounded
+// few rows tall regardless of how much revision history exists. Prior once-true
+// values sit behind a quiet "N earlier →" disclosure that opens the property's
+// timeline in the shared <Sheet>; machine-retracted facts are excluded from the
+// value view entirely. Inbound edges, mentions. A slide-up tree layer like the
+// note view: back chevron + swipe-down exit.
 
 import { type TouchEvent, useEffect, useRef, useState } from "react";
-import { EdgeValue, FactCitation, MarkedText, StatusChip } from "../analysis/bits";
-import { edgePath, factSpan } from "../analysis/format";
+import { EdgeValue, MarkedText, StatusChip } from "../analysis/bits";
+import { edgePath } from "../analysis/format";
 import { type EntityOut, type EntityPredicate, type FactOut, api } from "../api/client";
 import { TopBar } from "../components/TopBar";
 import { EntityTypeIcon } from "../entities/kinds";
 import { DOMAIN_COLOR, DOMAIN_TITLE } from "../notes/modes";
 import type { SyncStatus } from "../notes/useNotes";
+import { EntityHistorySheet } from "./EntityHistorySheet";
 
 const SWIPE_DOWN_PX = 56;
 
 type EntityState = { phase: "loading" } | { phase: "error" } | { phase: "done"; entity: EntityOut };
 
-interface RailFactProps {
-  fact: FactOut;
-  onOpenEntity: (entityId: string) => void;
+/** The live value of a predicate: the active fact, else the newest non-retracted
+ * one (a property whose only fact is pending_review still shows it). */
+function predHead(pred: EntityPredicate): FactOut | undefined {
+  return pred.current ?? pred.history.find((f) => f.status !== "retracted") ?? pred.history[0];
 }
 
-/** One dot on a predicate's timeline rail: value, span, source citation. */
-function RailFact({ fact, onOpenEntity }: RailFactProps) {
-  const [open, setOpen] = useState(false);
-  const muted = fact.status === "superseded" || fact.status === "retracted";
-  const toggle = () => setOpen((o) => !o);
-  return (
-    <li className={`rail-fact${muted ? " fact-superseded" : ""}`}>
-      <span className="rail-dot" aria-hidden="true" />
-      <div
-        className="rail-body"
-        // biome-ignore lint/a11y/useSemanticElements: the body hosts a nested object-entity link, which a real <button> cannot wrap.
-        role="button"
-        tabIndex={0}
-        aria-expanded={open}
-        onClick={toggle}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" || e.key === " ") {
-            e.preventDefault();
-            toggle();
-          }
-        }}
-      >
-        <span className="rail-value">
-          <EdgeValue fact={fact} onOpenEntity={onOpenEntity} />
-        </span>
-        <span className="rail-span">
-          {factSpan(fact)}
-          <StatusChip status={fact.status} pinned={fact.pinned} />
-        </span>
-      </div>
-      {open && <FactCitation fact={fact} extractor={null} />}
-    </li>
-  );
+/** Prior once-true values worth a history disclosure: superseded facts (never
+ * the current head, never machine-retracted errors). */
+function priorCount(pred: EntityPredicate, head: FactOut | undefined): number {
+  return pred.history.filter((f) => f.id !== head?.id && f.status !== "retracted").length;
 }
 
 function PredicateBlock({
   pred,
   onOpenEntity,
+  onOpenHistory,
 }: {
   pred: EntityPredicate;
   onOpenEntity: (entityId: string) => void;
+  onOpenHistory: (pred: EntityPredicate) => void;
 }) {
-  const hasRail = pred.history.length > 1;
-  const head = pred.current ?? pred.history[0];
+  const head = predHead(pred);
+  const earlier = priorCount(pred, head);
   return (
     <div className="entity-pred">
       <div className="pred-head">
@@ -78,12 +56,10 @@ function PredicateBlock({
         </span>
         {head && <StatusChip status={head.status} pinned={head.pinned} />}
       </div>
-      {hasRail && (
-        <ul className="timeline-rail">
-          {pred.history.map((fact) => (
-            <RailFact key={fact.id} fact={fact} onOpenEntity={onOpenEntity} />
-          ))}
-        </ul>
+      {earlier > 0 && (
+        <button type="button" className="pred-history-toggle" onClick={() => onOpenHistory(pred)}>
+          {earlier} earlier →
+        </button>
       )}
     </div>
   );
@@ -107,6 +83,7 @@ export function EntityScreen({
   onOpenNote,
 }: EntityScreenProps) {
   const [state, setState] = useState<EntityState>({ phase: "loading" });
+  const [historyPred, setHistoryPred] = useState<EntityPredicate | null>(null);
   const scrollerRef = useRef<HTMLDivElement>(null);
   const swipeStart = useRef<{ x: number; y: number } | null>(null);
 
@@ -194,6 +171,7 @@ export function EntityScreen({
                       key={edgePath(pred.predicate, pred.qualifier)}
                       pred={pred}
                       onOpenEntity={onOpenEntity}
+                      onOpenHistory={setHistoryPred}
                     />
                   ))}
                 </div>
@@ -247,6 +225,14 @@ export function EntityScreen({
                   ))}
                 </div>
               </section>
+            )}
+
+            {historyPred && (
+              <EntityHistorySheet
+                pred={historyPred}
+                onClose={() => setHistoryPred(null)}
+                onOpenEntity={onOpenEntity}
+              />
             )}
           </>
         )}
