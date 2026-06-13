@@ -2141,6 +2141,13 @@ button.small {
   padding: 11px 14px;
 }
 
+/* The source entity reuses the outbound edge-object link style so both
+   directions of a link read identically; flex-start keeps the pill from
+   stretching to the row width. */
+.inbound-source {
+  align-self: flex-start;
+}
+
 .inbound-edge {
   font-size: var(--fs-secondary);
   color: var(--text-2);
