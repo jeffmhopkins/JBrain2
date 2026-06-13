@@ -1,0 +1,871 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+<title>JBrain2 — Entity Graph View · mobile mockups</title>
+<style>
+/* ============================================================
+   Design tokens — verbatim from docs/DESIGN.md / tokens.css
+   ============================================================ */
+:root{
+  --bg:#0e0f11; --surface:#17181b; --surface-2:#1e2024; --border:#26282c;
+  --text:#e6e7e9; --text-2:#9a9da3; --text-3:#5c5f66;
+  --surface-composer:#141518; --scrim:rgba(14,15,17,.6);
+  --shadow-card:none;
+
+  --steel:#7fa7c9;  --steel-tint:rgba(127,167,201,.13);
+  --green:#8fbc9a;  --green-tint:rgba(143,188,154,.13);
+  --amber:#c9a36a;  --amber-tint:rgba(201,163,106,.13);
+  --rose:#cf8a8f;   --rose-tint:rgba(207,138,143,.13);
+  --violet:#a493c9; --violet-tint:rgba(164,147,201,.13);
+  --periwinkle:#8f9fd0; --sage:#a8bd7e; --terracotta:#d0917f;
+  --teal:#6fb6b1; --orchid:#c98ab4; --slate:#9aa0a8;
+
+  --accent:var(--steel); --accent-tint:var(--steel-tint);
+
+  --r-input:12px; --r-seg:14px; --r-card:16px; --r-box:24px; --r-pill:999px;
+  --font-scale:1;
+  --fs-micro:calc(12px * var(--font-scale));
+  --fs-head:calc(13px * var(--font-scale));
+  --fs-secondary:calc(14px * var(--font-scale));
+  --fs-note:calc(15px * var(--font-scale));
+  --fs-body:calc(16px * var(--font-scale));
+  --fs-title:calc(18px * var(--font-scale));
+  --fs-screen:calc(22px * var(--font-scale));
+}
+[data-theme="light"]{
+  --bg:#f7f7f5; --surface:#ffffff; --surface-2:#f0f0ee; --border:#e2e2df;
+  --text:#1a1b1e; --text-2:#5c5f66; --text-3:#9a9da3;
+  --surface-composer:#ffffff; --scrim:rgba(247,247,245,.6);
+  --shadow-card:0 1px 2px rgba(0,0,0,.06);
+}
+
+*{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
+html,body{margin:0;padding:0;}
+body{
+  font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  background:
+    radial-gradient(1200px 600px at 50% -10%, color-mix(in srgb,var(--steel) 8%,transparent), transparent),
+    var(--bg);
+  color:var(--text); line-height:1.4; font-size:var(--fs-body);
+  min-height:100vh; padding:24px 16px 64px;
+}
+@media (prefers-reduced-motion:reduce){ *{animation:none !important; transition:none !important;} }
+
+/* ---- review chrome (outside the phone) ---- */
+.review{max-width:430px;margin:0 auto 18px;text-align:center;}
+.review h1{font-size:var(--fs-screen);font-weight:500;margin:0 0 4px;letter-spacing:-.01em;}
+.review p{font-size:var(--fs-secondary);color:var(--text-2);margin:0 auto;max-width:40ch;}
+.chrome-row{display:flex;gap:8px;align-items:center;justify-content:center;margin-top:14px;flex-wrap:wrap;}
+
+.seg{display:inline-flex;background:var(--surface-2);border-radius:var(--r-seg);padding:4px;gap:2px;border:1px solid var(--border);}
+.seg button{
+  appearance:none;border:0;background:transparent;color:var(--text-2);
+  font-size:var(--fs-secondary);font-weight:500;font-family:inherit;
+  padding:9px 14px;border-radius:10px;cursor:pointer;display:flex;align-items:center;gap:7px;
+  transition:background .15s ease-out,color .15s ease-out;min-height:40px;
+}
+.seg button .dot{width:8px;height:8px;border-radius:var(--r-pill);background:currentColor;opacity:.7;}
+.seg button[aria-selected="true"]{background:var(--accent-tint);color:var(--text);}
+.seg button[aria-selected="true"] .dot{opacity:1;}
+
+.iconbtn{
+  appearance:none;border:1px solid var(--border);background:var(--surface);color:var(--text-2);
+  width:40px;height:40px;border-radius:var(--r-pill);cursor:pointer;display:inline-flex;
+  align-items:center;justify-content:center;transition:color .15s,border-color .15s;
+}
+.iconbtn:hover{color:var(--text);}
+.iconbtn svg{width:20px;height:20px;}
+
+/* ---- phone frame ---- */
+.phone{
+  width:100%;max-width:400px;margin:0 auto;height:812px;max-height:calc(100vh - 120px);
+  background:var(--bg);border:1px solid var(--border);border-radius:38px;
+  box-shadow:0 24px 60px rgba(0,0,0,.45), inset 0 0 0 1px rgba(255,255,255,.02);
+  overflow:hidden;position:relative;display:flex;flex-direction:column;
+}
+.statusbar{height:34px;flex:0 0 auto;display:flex;align-items:center;justify-content:space-between;
+  padding:0 24px;font-size:var(--fs-micro);color:var(--text-2);font-weight:500;}
+.statusbar .right{display:flex;gap:6px;align-items:center;}
+
+/* ---- top bar (per screen) ---- */
+.topbar{flex:0 0 auto;display:flex;align-items:center;gap:10px;padding:8px 12px 10px;
+  border-bottom:1px solid var(--border);min-height:52px;}
+.topbar .back{flex:0 0 auto;width:40px;height:40px;border-radius:var(--r-pill);border:0;background:transparent;
+  color:var(--text-2);display:inline-flex;align-items:center;justify-content:center;cursor:pointer;transition:color .15s;}
+.topbar .back:hover{color:var(--text);}
+.topbar .back svg{width:22px;height:22px;}
+.topbar .title{font-size:var(--fs-title);font-weight:500;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.topbar .title small{display:block;font-size:var(--fs-micro);color:var(--text-3);font-weight:400;text-transform:uppercase;letter-spacing:.08em;}
+.topbar .mode{font-size:var(--fs-micro);font-weight:500;padding:5px 10px;border-radius:var(--r-pill);
+  background:var(--surface-2);color:var(--text-2);white-space:nowrap;}
+
+/* ---- breadcrumb trail (history back-stack) ---- */
+.crumbs{flex:0 0 auto;display:flex;gap:6px;align-items:center;padding:8px 14px;overflow-x:auto;
+  border-bottom:1px solid var(--border);scrollbar-width:none;}
+.crumbs::-webkit-scrollbar{display:none;}
+.crumb{flex:0 0 auto;font-size:var(--fs-micro);color:var(--text-2);background:var(--surface-2);
+  border:1px solid var(--border);border-radius:var(--r-pill);padding:5px 11px;cursor:pointer;
+  display:inline-flex;align-items:center;gap:6px;white-space:nowrap;transition:color .15s;}
+.crumb:hover{color:var(--text);}
+.crumb[aria-current="true"]{background:var(--accent-tint);color:var(--text);border-color:transparent;}
+.crumb .sep{color:var(--text-3);}
+.crumb .cdisc{width:14px;height:14px;border-radius:50%;flex:0 0 auto;}
+
+/* ---- shared screen body ---- */
+.screen{flex:1;min-height:0;display:none;flex-direction:column;position:relative;}
+.screen.active{display:flex;}
+
+.hint{flex:0 0 auto;font-size:var(--fs-micro);color:var(--text-3);text-align:center;padding:7px 16px;
+  display:flex;gap:6px;align-items:center;justify-content:center;}
+.hint svg{width:13px;height:13px;}
+
+/* ============================================================
+   Entity discs / chips (shared)
+   ============================================================ */
+.disc{border-radius:50%;display:inline-flex;align-items:center;justify-content:center;position:relative;flex:0 0 auto;}
+.disc svg{width:55%;height:55%;}
+.disc .domdot{position:absolute;right:-1px;bottom:-1px;width:34%;height:34%;min-width:9px;min-height:9px;
+  border-radius:50%;border:2px solid var(--bg);}
+
+.chip{display:inline-flex;align-items:center;gap:7px;background:var(--surface-2);border:1px solid var(--border);
+  border-radius:var(--r-pill);padding:6px 12px 6px 6px;font-size:var(--fs-secondary);color:var(--text);
+  cursor:pointer;min-height:36px;}
+
+/* ============================================================
+   MOCKUP A — ORBIT (radial ego graph)
+   ============================================================ */
+.orbit-stage{flex:1;min-height:0;position:relative;overflow:hidden;touch-action:none;}
+.orbit-stage svg.edges{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;}
+.orbit-node{position:absolute;transform:translate(-50%,-50%);display:flex;flex-direction:column;
+  align-items:center;gap:5px;cursor:pointer;transition:left .42s cubic-bezier(.22,.61,.36,1),top .42s cubic-bezier(.22,.61,.36,1),opacity .3s;}
+.orbit-node .label{font-size:var(--fs-micro);color:var(--text-2);max-width:78px;text-align:center;
+  line-height:1.25;font-weight:500;
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}
+.orbit-node.center .label{color:var(--text);font-size:var(--fs-secondary);}
+.orbit-node .reldot{font-size:10px;color:var(--text-3);background:var(--surface);padding:1px 7px;border-radius:var(--r-pill);
+  border:1px solid var(--border);}
+.orbit-node .hit{position:absolute;inset:-10px;border-radius:50%;} /* expand touch target ≥44pt */
+.orbit-node:active .disc{transform:scale(.94);}
+.orbit-node .disc{transition:transform .12s ease-out;}
+
+.bundle{position:absolute;transform:translate(-50%,-50%);cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:5px;}
+.bundle .pill{background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r-pill);
+  min-width:48px;min-height:48px;display:flex;flex-direction:column;align-items:center;justify-content:center;
+  color:var(--text-2);font-size:var(--fs-micro);font-weight:500;padding:6px 10px;line-height:1.15;}
+.bundle .pill b{color:var(--text);font-size:var(--fs-secondary);}
+
+/* ============================================================
+   MOCKUP B — CONSTELLATION (force + semantic zoom)
+   ============================================================ */
+.const-stage{flex:1;min-height:0;position:relative;overflow:hidden;touch-action:none;background:
+  radial-gradient(900px 500px at 50% 30%, color-mix(in srgb,var(--steel) 5%,transparent), transparent);}
+.const-viewport{position:absolute;inset:0;transform-origin:0 0;}
+.const-stage svg.edges{position:absolute;inset:0;width:100%;height:100%;overflow:visible;pointer-events:none;}
+.cnode{position:absolute;transform:translate(-50%,-50%);cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:4px;}
+.cnode .label{font-size:var(--fs-micro);color:var(--text-2);max-width:84px;text-align:center;font-weight:500;
+  pointer-events:none;transition:opacity .2s;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:90px;}
+.cnode.focused .label{color:var(--text);}
+.cnode .hit{position:absolute;left:50%;top:0;transform:translateX(-50%);width:48px;height:48px;border-radius:50%;}
+.zoompill{position:absolute;left:50%;bottom:14px;transform:translateX(-50%);display:flex;gap:2px;background:var(--surface);
+  border:1px solid var(--border);border-radius:var(--r-pill);padding:4px;z-index:4;box-shadow:var(--shadow-card);}
+.zoompill button{width:42px;height:42px;border:0;background:transparent;color:var(--text-2);border-radius:var(--r-pill);
+  font-size:20px;cursor:pointer;display:flex;align-items:center;justify-content:center;}
+.zoompill button:hover{color:var(--text);background:var(--surface-2);}
+.lod-tag{position:absolute;left:14px;top:12px;font-size:var(--fs-micro);color:var(--text-3);
+  background:var(--surface);border:1px solid var(--border);border-radius:var(--r-pill);padding:4px 10px;z-index:4;}
+
+/* ============================================================
+   MOCKUP C — THREADS (list / graph hybrid)
+   ============================================================ */
+.threads-scroll{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;}
+.threads-scroll::-webkit-scrollbar{width:0;}
+.focal-card{margin:14px;padding:16px;background:var(--surface);border:1px solid var(--border);border-radius:var(--r-card);box-shadow:var(--shadow-card);}
+.focal-head{display:flex;gap:12px;align-items:center;}
+.focal-head .meta{min-width:0;}
+.focal-head .meta h2{margin:0;font-size:var(--fs-screen);font-weight:500;line-height:1.2;}
+.focal-head .meta .sub{font-size:var(--fs-micro);color:var(--text-3);text-transform:uppercase;letter-spacing:.07em;margin-top:3px;display:flex;align-items:center;gap:7px;}
+.focal-summary{margin-top:12px;font-size:var(--fs-secondary);color:var(--text-2);}
+.minimap{margin-top:14px;height:120px;border-radius:var(--r-input);border:1px solid var(--border);background:var(--surface-composer);position:relative;overflow:hidden;}
+.minimap svg{width:100%;height:100%;}
+.minimap .mmlabel{position:absolute;left:10px;top:8px;font-size:10px;color:var(--text-3);text-transform:uppercase;letter-spacing:.08em;}
+
+.sec-head{font-size:var(--fs-micro);text-transform:uppercase;letter-spacing:.08em;color:var(--text-3);
+  padding:18px 18px 8px;font-weight:500;display:flex;justify-content:space-between;}
+.sec-head .count{color:var(--text-3);}
+.rowcard{margin:0 14px;background:var(--surface);border:1px solid var(--border);border-radius:var(--r-card);overflow:hidden;}
+.row{display:flex;align-items:center;gap:12px;padding:11px 14px;min-height:52px;border-bottom:1px solid var(--border);cursor:pointer;transition:background .12s;}
+.row:last-child{border-bottom:0;}
+.row:active{background:var(--surface-2);}
+.row .rtext{flex:1;min-width:0;}
+.row .rtext .rname{font-size:var(--fs-note);color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.row .rtext .rpred{font-size:var(--fs-micro);color:var(--text-3);margin-top:1px;}
+.row .chev{color:var(--text-3);flex:0 0 auto;}
+.row .chev svg{width:18px;height:18px;}
+.row.attr{cursor:default;}
+.row.attr:active{background:transparent;}
+.row .rval{font-size:var(--fs-note);color:var(--text-2);text-align:right;max-width:48%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.locked-val{color:var(--text-3);font-style:italic;display:inline-flex;align-items:center;gap:5px;}
+.locked-val svg{width:13px;height:13px;}
+.arrowdir{font-size:11px;color:var(--text-3);}
+
+/* ============================================================
+   Bottom sheet (shared) — peek / expanded
+   ============================================================ */
+.scrim{position:absolute;inset:0;background:var(--scrim);opacity:0;pointer-events:none;transition:opacity .2s;z-index:8;}
+.scrim.show{opacity:1;pointer-events:auto;}
+.sheet{position:absolute;left:0;right:0;bottom:0;background:var(--surface);border-top:1px solid var(--border);
+  border-radius:16px 16px 0 0;transform:translateY(105%);transition:transform .26s cubic-bezier(.22,.61,.36,1);
+  z-index:9;max-height:88%;display:flex;flex-direction:column;}
+.sheet.show{transform:translateY(0);}
+.sheet .grab{width:32px;height:4px;border-radius:var(--r-pill);background:var(--border);margin:9px auto 4px;flex:0 0 auto;}
+.sheet .shead{display:flex;gap:12px;align-items:center;padding:8px 16px 12px;border-bottom:1px solid var(--border);}
+.sheet .shead .meta{min-width:0;flex:1;}
+.sheet .shead .meta h3{margin:0;font-size:var(--fs-title);font-weight:500;}
+.sheet .shead .meta .sub{font-size:var(--fs-micro);color:var(--text-3);text-transform:uppercase;letter-spacing:.07em;margin-top:2px;display:flex;gap:7px;align-items:center;}
+.sheet .sbody{overflow-y:auto;padding:6px 16px 22px;}
+.sheet .recenter{margin:10px 16px 0;display:flex;gap:8px;}
+.sheet .recenter button{flex:1;min-height:44px;border-radius:var(--r-input);border:1px solid var(--border);
+  background:var(--surface-2);color:var(--text);font-size:var(--fs-secondary);font-weight:500;font-family:inherit;cursor:pointer;
+  display:inline-flex;align-items:center;justify-content:center;gap:8px;}
+.sheet .recenter button.primary{background:var(--accent-tint);border-color:transparent;color:var(--text);}
+.sheet .recenter button svg{width:18px;height:18px;}
+.fact{display:flex;justify-content:space-between;gap:12px;padding:10px 0;border-bottom:1px solid var(--border);}
+.fact:last-child{border-bottom:0;}
+.fact .fk{font-size:var(--fs-secondary);color:var(--text-2);}
+.fact .fv{font-size:var(--fs-secondary);color:var(--text);text-align:right;max-width:55%;}
+.fact .fk .conf{display:block;font-size:10px;color:var(--text-3);margin-top:2px;}
+.sblock-h{font-size:var(--fs-micro);text-transform:uppercase;letter-spacing:.08em;color:var(--text-3);margin:16px 0 4px;font-weight:500;}
+.relrow{display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--border);cursor:pointer;}
+.relrow:last-child{border-bottom:0;}
+.relrow .rl{flex:1;min-width:0;}
+.relrow .rl .n{font-size:var(--fs-secondary);color:var(--text);}
+.relrow .rl .p{font-size:var(--fs-micro);color:var(--text-3);}
+
+/* rationale panel */
+.rationale{max-width:430px;margin:18px auto 0;background:var(--surface);border:1px solid var(--border);
+  border-radius:var(--r-card);padding:16px 18px;font-size:var(--fs-secondary);color:var(--text-2);display:none;}
+.rationale.show{display:block;}
+.rationale h4{margin:0 0 8px;color:var(--text);font-size:var(--fs-title);font-weight:500;}
+.rationale ul{margin:8px 0 0;padding-left:18px;}
+.rationale li{margin:5px 0;}
+.rationale .tag{display:inline-block;font-size:var(--fs-micro);color:var(--text);background:var(--accent-tint);
+  border-radius:var(--r-pill);padding:2px 10px;margin-bottom:8px;}
+.rationale b{color:var(--text);}
+</style>
+</head>
+<body>
+
+<div class="review">
+  <h1>Entity graph view</h1>
+  <p>Three mobile-first interaction philosophies for navigating entities and their attributes. Each is live — tap, drag, pinch.</p>
+  <div class="chrome-row">
+    <div class="seg" role="tablist" id="switcher">
+      <button role="tab" data-m="orbit" aria-selected="true"><span class="dot"></span>Orbit</button>
+      <button role="tab" data-m="const" aria-selected="false"><span class="dot"></span>Constellation</button>
+      <button role="tab" data-m="threads" aria-selected="false"><span class="dot"></span>Threads</button>
+    </div>
+    <button class="iconbtn" id="themeBtn" title="Toggle theme" aria-label="Toggle theme">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+    </button>
+    <button class="iconbtn" id="infoBtn" title="Design rationale" aria-label="Design rationale">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 16v-4M12 8h.01"/></svg>
+    </button>
+  </div>
+</div>
+
+<div class="phone">
+  <div class="statusbar">
+    <span>9:41</span>
+    <span class="right">
+      <svg width="16" height="11" viewBox="0 0 16 11" fill="currentColor"><rect x="0" y="6" width="3" height="5" rx="1"/><rect x="4" y="4" width="3" height="7" rx="1"/><rect x="8" y="2" width="3" height="9" rx="1"/><rect x="12" y="0" width="3" height="11" rx="1"/></svg>
+      <svg width="22" height="11" viewBox="0 0 22 11" fill="none" stroke="currentColor" stroke-width="1"><rect x=".5" y=".5" width="18" height="10" rx="2.5"/><rect x="2" y="2" width="13" height="7" rx="1" fill="currentColor" stroke="none"/><path d="M20.5 4v3" stroke-linecap="round"/></svg>
+    </span>
+  </div>
+
+  <!-- ====================== MOCKUP A: ORBIT ====================== -->
+  <section class="screen active" id="screen-orbit">
+    <div class="topbar">
+      <button class="back" data-act="orbit-back" aria-label="Back"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg></button>
+      <div class="title">Graph<small>Orbit · radial ego</small></div>
+      <span class="mode">1 hop</span>
+    </div>
+    <div class="crumbs" id="orbit-crumbs"></div>
+    <div class="orbit-stage" id="orbit-stage">
+      <svg class="edges" id="orbit-edges"></svg>
+    </div>
+    <div class="hint">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M9 11.5a2.5 2.5 0 0 1 5 0v3M7 14V9a2 2 0 0 1 4 0M11 9V7a2 2 0 0 1 4 0v1M15 9.5a2 2 0 0 1 4 0V15a6 6 0 0 1-6 6h-1.5a5 5 0 0 1-4-2l-2.6-3.4a1.7 1.7 0 0 1 2.7-2L11 16"/></svg>
+      tap a neighbor to re-center · tap the center for details
+    </div>
+  </section>
+
+  <!-- ====================== MOCKUP B: CONSTELLATION ====================== -->
+  <section class="screen" id="screen-const">
+    <div class="topbar">
+      <button class="back" data-act="const-back" aria-label="Back"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg></button>
+      <div class="title">Graph<small>Constellation · force + zoom</small></div>
+      <span class="mode" id="const-mode">2 hops</span>
+    </div>
+    <div class="const-stage" id="const-stage">
+      <span class="lod-tag" id="const-lod">clusters</span>
+      <div class="const-viewport" id="const-viewport">
+        <svg class="edges" id="const-edges"></svg>
+      </div>
+      <div class="zoompill">
+        <button data-act="zoom-out" aria-label="Zoom out">&#8722;</button>
+        <button data-act="zoom-fit" aria-label="Fit" title="Fit"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M4 9V5a1 1 0 0 1 1-1h4M20 9V5a1 1 0 0 0-1-1h-4M4 15v4a1 1 0 0 0 1 1h4M20 15v4a1 1 0 0 1-1 1h-4"/></svg></button>
+        <button data-act="zoom-in" aria-label="Zoom in">+</button>
+      </div>
+    </div>
+    <div class="hint">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 13V5.5a1.5 1.5 0 0 1 3 0V12M11 6.5a1.5 1.5 0 0 1 3 0V12M14 7.5a1.5 1.5 0 0 1 3 0V15a5 5 0 0 1-5 5h-1a5 5 0 0 1-4-2l-2-2.6a1.6 1.6 0 0 1 2.5-2L8 14"/></svg>
+      one finger taps a node · two fingers pan &amp; pinch the canvas
+    </div>
+  </section>
+
+  <!-- ====================== MOCKUP C: THREADS ====================== -->
+  <section class="screen" id="screen-threads">
+    <div class="topbar">
+      <button class="back" data-act="threads-back" aria-label="Back"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg></button>
+      <div class="title">Graph<small>Threads · list + minimap</small></div>
+      <span class="mode">entity</span>
+    </div>
+    <div class="crumbs" id="threads-crumbs"></div>
+    <div class="threads-scroll" id="threads-scroll"></div>
+  </section>
+
+  <!-- shared sheet -->
+  <div class="scrim" id="scrim"></div>
+  <div class="sheet" id="sheet" role="dialog" aria-modal="true">
+    <div class="grab"></div>
+    <div class="shead" id="sheet-head"></div>
+    <div class="recenter" id="sheet-recenter"></div>
+    <div class="sbody" id="sheet-body"></div>
+  </div>
+</div>
+
+<div class="rationale" id="rationale"></div>
+
+<script>
+/* =====================================================================
+   Shared sample ego-network. Mirrors JBrain2's property-graph model:
+   entities (kind + domain + attribute facts) and directed relationship
+   facts (predicate edges). Kept small on purpose — the whole point is
+   that mobile graphs must never render the full vault.
+   ===================================================================== */
+const KIND = {
+  Person:{c:'var(--steel)', hex:'#7fa7c9'}, Organization:{c:'var(--violet)', hex:'#a493c9'},
+  Place:{c:'var(--green)', hex:'#8fbc9a'}, Event:{c:'var(--amber)', hex:'#c9a36a'},
+  Product:{c:'var(--periwinkle)', hex:'#8f9fd0'}, Animal:{c:'var(--sage)', hex:'#a8bd7e'},
+  CreativeWork:{c:'var(--rose)', hex:'#cf8a8f'}, MedicalCondition:{c:'var(--terracotta)', hex:'#d0917f'},
+  MedicalProcedure:{c:'var(--teal)', hex:'#6fb6b1'}, Drug:{c:'var(--orchid)', hex:'#c98ab4'},
+  Thing:{c:'var(--slate)', hex:'#9aa0a8'}
+};
+const DOMAIN = { general:null, health:{c:'var(--rose)', hex:'#cf8a8f', label:'health'},
+  finance:{c:'var(--violet)', hex:'#a493c9', label:'finance'}, location:{c:'var(--green)', hex:'#8fbc9a', label:'location'} };
+
+const ICONS = {
+  Person:'<circle cx="12" cy="8" r="3.2"/><path d="M5.5 20a6.5 6.5 0 0 1 13 0"/>',
+  Organization:'<path d="M4 21V6l8-3 8 3v15"/><path d="M4 21h16M9 9h.01M15 9h.01M9 13h.01M15 13h.01M9 17h2v4H9z"/>',
+  Place:'<path d="M12 21s7-6.3 7-11a7 7 0 1 0-14 0c0 4.7 7 11 7 11z"/><circle cx="12" cy="10" r="2.5"/>',
+  Event:'<rect x="4" y="5" width="16" height="16" rx="2"/><path d="M4 9h16M8 3v4M16 3v4"/>',
+  Product:'<path d="M21 8l-9-5-9 5 9 5 9-5zM3 8v8l9 5 9-5V8M12 13v8"/>',
+  Animal:'<circle cx="6.5" cy="11" r="1.8"/><circle cx="11" cy="7.5" r="1.8"/><circle cx="16" cy="8.5" r="1.8"/><circle cx="19" cy="12.5" r="1.6"/><path d="M9 16.5c0-2 1.6-3.5 3.2-3.5s3.2 1.5 3.2 3.5c0 1.7-1.3 2.5-3.2 2.5S9 18.2 9 16.5z"/>',
+  CreativeWork:'<path d="M4 5a2 2 0 0 1 2-2h13v16H6a2 2 0 0 0-2 2zM19 19H6"/>',
+  MedicalCondition:'<path d="M20.8 6.6a5 5 0 0 0-8.8-1 5 5 0 0 0-8.8 4C3.2 14 12 20.5 12 20.5S20.8 14 20.8 9.6z"/><path d="M3 12.5h4l1.5-3 2.5 6 2-4 1 1h5" stroke-width="1.3"/>',
+  MedicalProcedure:'<path d="M6 3v5a4 4 0 0 0 8 0V3M6 3h2M12 3h2M10 16a4 4 0 0 0 8 0v-2"/><circle cx="18" cy="12" r="2"/>',
+  Drug:'<rect x="3.5" y="8" width="17" height="8" rx="4" transform="rotate(-45 12 12)"/><path d="M9 9l6 6"/>',
+  Thing:'<circle cx="12" cy="12" r="8"/>'
+};
+
+const E = {
+  jeff:{kind:'Person', domain:'general', name:'Jeff Hopkins', summary:'You. Software engineer in Portland; the focal subject of most notes.',
+    attrs:[['occupation','Software engineer','attribute',.98],['born','12 Apr 1986','attribute',.95],['email','jeff@hey.com','attribute',.9],['height','180 cm','measurement',.8]]},
+  celine:{kind:'Person', domain:'general', name:'Céline Hopkins', summary:'Spouse. Architect.',
+    attrs:[['occupation','Architect','attribute',.93],['born','3 Sep 1988','attribute',.88]]},
+  acme:{kind:'Organization', domain:'general', name:'Acme Robotics', summary:'Employer since 2019.',
+    attrs:[['industry','Robotics / software','attribute',.9],['founded','2009','attribute',.85],['size','240 employees','measurement',.7]]},
+  portland:{kind:'Place', domain:'location', name:'Portland, OR', summary:'Place of residence — location-domain, firewalled.',
+    attrs:[['region','Oregon, US','attribute',.99],['coordinates','locked','attribute',.99],['population','652,000','measurement',.8]]},
+  rex:{kind:'Animal', domain:'general', name:'Rex', summary:'Border collie, family dog.',
+    attrs:[['species','Dog','attribute',.99],['breed','Border collie','attribute',.92],['born','2019','attribute',.7]]},
+  tesla:{kind:'Product', domain:'general', name:'Model 3', summary:'Daily vehicle.',
+    attrs:[['model','Tesla Model 3','attribute',.95],['year','2022','attribute',.9],['color','Midnight silver','attribute',.8]]},
+  sarah:{kind:'Person', domain:'health', name:'Dr. Sarah Lin', summary:'Cardiologist — health-domain.',
+    attrs:[['specialty','Cardiology','attribute',.95],['title','MD','attribute',.95]]},
+  maple:{kind:'Organization', domain:'health', name:'Maple Clinic', summary:'Care provider — health-domain.',
+    attrs:[['type','Clinic','attribute',.9],['city','Portland','attribute',.85]]},
+  htn:{kind:'MedicalCondition', domain:'health', name:'Hypertension', summary:'Diagnosis — health-domain, firewalled.',
+    attrs:[['onset','Nov 2023','attribute',.85],['severity','Stage 1','state',.8],['status','Managed','state',.82]]},
+  lisinopril:{kind:'Drug', domain:'health', name:'Lisinopril', summary:'Medication — health-domain.',
+    attrs:[['dosage','10 mg','measurement',.95],['frequency','Daily','attribute',.9],['started','Dec 2023','attribute',.85]]},
+  checkup:{kind:'Event', domain:'health', name:'Annual checkup', summary:'Appointment — health-domain.',
+    attrs:[['date','20 May 2026','attribute',.95],['outcome','BP improved','state',.7]]},
+  book:{kind:'CreativeWork', domain:'general', name:'The Pragmatic Programmer', summary:'Book finished early 2026.',
+    attrs:[['author','Hunt & Thomas','attribute',.95],['finished','Feb 2026','attribute',.8]]},
+  vanguard:{kind:'Organization', domain:'finance', name:'Vanguard 401(k)', summary:'Retirement account — finance-domain, firewalled.',
+    attrs:[['type','Retirement account','attribute',.95],['since','2012','attribute',.8],['balance','locked','measurement',.99]]}
+};
+// directed relationship edges: [source, predicate, target]
+const EDGES = [
+  ['jeff','spouse','celine'], ['jeff','worksFor','acme'], ['jeff','residence','portland'],
+  ['jeff','owns','rex'], ['jeff','owns','tesla'], ['jeff','physician','sarah'],
+  ['jeff','diagnosedWith','htn'], ['jeff','read','book'], ['jeff','retirementAccount','vanguard'],
+  ['celine','residence','portland'], ['acme','location','portland'],
+  ['sarah','worksFor','maple'], ['maple','location','portland'],
+  ['htn','treatedWith','lisinopril'], ['jeff','attended','checkup'], ['checkup','performedBy','sarah']
+];
+// reverse-predicate phrasing for inbound edges
+const INV = {spouse:'spouse of', worksFor:'employs', residence:'home of', owns:'owned by',
+  physician:'patient', diagnosedWith:'affects', read:'read by', retirementAccount:'held by',
+  location:'located here', treatedWith:'treats', attended:'attended by', performedBy:'performed'};
+
+function neighbors(id){
+  const out=[];
+  EDGES.forEach(([s,p,t])=>{
+    if(s===id) out.push({other:t, pred:p, dir:'out'});
+    if(t===id) out.push({other:s, pred:INV[p]||p, dir:'in'});
+  });
+  // de-dupe (same neighbor via multiple predicates keeps strongest single edge for layout)
+  const seen={}; const res=[];
+  out.forEach(n=>{ if(!seen[n.other]){seen[n.other]=1; res.push(n);} });
+  return res;
+}
+const ns = s => document.createElementNS('http://www.w3.org/2000/svg', s);
+function discEl(id, size){
+  const e=E[id], k=KIND[e.kind], d=DOMAIN[e.domain];
+  const wrap=document.createElement('span'); wrap.className='disc';
+  wrap.style.width=size+'px'; wrap.style.height=size+'px';
+  wrap.style.background='color-mix(in srgb,'+k.c+' 16%,transparent)';
+  wrap.style.border='1px solid color-mix(in srgb,'+k.c+' 40%,transparent)';
+  wrap.innerHTML='<svg viewBox="0 0 24 24" fill="none" stroke="'+k.c+'" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">'+ICONS[e.kind]+'</svg>';
+  if(d){ const dot=document.createElement('span'); dot.className='domdot'; dot.style.background=d.hex; wrap.appendChild(dot); }
+  return wrap;
+}
+function isLocked(id){ return ['health','finance','location'].includes(E[id].domain); }
+
+/* ===== shared bottom sheet ===== */
+const scrim=document.getElementById('scrim'), sheet=document.getElementById('sheet');
+function openSheet(id, onRecenter){
+  const e=E[id], k=KIND[e.kind], d=DOMAIN[e.domain];
+  const head=document.getElementById('sheet-head');
+  head.innerHTML=''; head.appendChild(discEl(id,46));
+  const meta=document.createElement('div'); meta.className='meta';
+  meta.innerHTML='<h3>'+e.name+'</h3><div class="sub"><span>'+e.kind+'</span>'+
+    (d?'<span style="color:'+d.hex+'">● '+d.label+' · firewalled</span>':'<span style="color:var(--text-3)">general</span>')+'</div>';
+  head.appendChild(meta);
+
+  const rc=document.getElementById('sheet-recenter');
+  rc.innerHTML='';
+  const b1=document.createElement('button'); b1.className='primary';
+  b1.innerHTML='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="9"/></svg> Re-center here';
+  b1.onclick=()=>{ closeSheet(); onRecenter && onRecenter(id); };
+  rc.appendChild(b1);
+
+  const body=document.getElementById('sheet-body'); body.innerHTML='';
+  if(e.summary){ const s=document.createElement('div'); s.style.cssText='font-size:var(--fs-secondary);color:var(--text-2);margin:12px 0 4px;'; s.textContent=e.summary; body.appendChild(s); }
+  // attributes
+  const ah=document.createElement('div'); ah.className='sblock-h'; ah.textContent='attributes'; body.appendChild(ah);
+  e.attrs.forEach(([p,v,kind,conf])=>{
+    const f=document.createElement('div'); f.className='fact';
+    const locked=(v==='locked');
+    f.innerHTML='<div class="fk">'+p+'<span class="conf">'+kind+' · '+Math.round(conf*100)+'% conf</span></div>'+
+      '<div class="fv">'+(locked
+        ?'<span class="locked-val"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>domain-locked</span>'
+        :v)+'</div>';
+    body.appendChild(f);
+  });
+  // relationships
+  const nbrs=neighbors(id);
+  if(nbrs.length){
+    const rh=document.createElement('div'); rh.className='sblock-h'; rh.textContent='relationships ('+nbrs.length+')'; body.appendChild(rh);
+    nbrs.forEach(n=>{
+      const r=document.createElement('div'); r.className='relrow';
+      r.appendChild(discEl(n.other,32));
+      const rl=document.createElement('div'); rl.className='rl';
+      rl.innerHTML='<div class="n">'+E[n.other].name+'</div><div class="p">'+(n.dir==='out'?'→ ':'← ')+n.pred+'</div>';
+      r.appendChild(rl);
+      const ch=document.createElement('span'); ch.className='chev'; ch.style.color='var(--text-3)';
+      ch.innerHTML='<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>';
+      r.appendChild(ch);
+      r.onclick=()=>{ closeSheet(); onRecenter && onRecenter(n.other); };
+      body.appendChild(r);
+    });
+  }
+  scrim.classList.add('show'); sheet.classList.add('show');
+}
+function closeSheet(){ scrim.classList.remove('show'); sheet.classList.remove('show'); }
+scrim.onclick=closeSheet;
+
+/* =====================================================================
+   MOCKUP A — ORBIT
+   ===================================================================== */
+const orbit = (()=>{
+  const stage=document.getElementById('orbit-stage');
+  const edgesSvg=document.getElementById('orbit-edges');
+  const crumbsEl=document.getElementById('orbit-crumbs');
+  let focal='jeff'; let trail=['jeff']; let expanded=false;
+  const RING_CAP=8; // max neighbours before overflow collapses to "+N more"
+
+  function render(){
+    [...stage.querySelectorAll('.orbit-node,.bundle')].forEach(n=>n.remove());
+    edgesSvg.innerHTML='';
+    const W=stage.clientWidth, H=stage.clientHeight, cx=W/2, cy=H/2, M=Math.min(W,H);
+    const nbrs=neighbors(focal);
+
+    // dense-handling: collapse overflow into a single "+N more" pill until expanded
+    let items;
+    if(!expanded && nbrs.length>RING_CAP){
+      items=nbrs.slice(0,RING_CAP-1).map(n=>({type:'node',n}));
+      items.push({type:'overflow', count:nbrs.length-(RING_CAP-1)});
+    } else {
+      items=nbrs.map(n=>({type:'node',n}));
+    }
+
+    // one ring up to 8, otherwise split across two balanced concentric rings
+    let rings;
+    if(items.length<=RING_CAP){ rings=[{items, r:M*0.36}]; }
+    else { const n0=Math.ceil(items.length/2);
+      rings=[{items:items.slice(0,n0), r:M*0.28},{items:items.slice(n0), r:M*0.46}]; }
+
+    rings.forEach((ring,ri)=>{
+      const off = ri%2? Math.PI/ring.items.length : 0; // stagger outer ring
+      ring.items.forEach((it,i)=>{
+        const ang=(-Math.PI/2)+off+(i*2*Math.PI/ring.items.length);
+        const x=cx+ring.r*Math.cos(ang), y=cy+ring.r*Math.sin(ang);
+        const line=ns('line'); line.setAttribute('x1',cx); line.setAttribute('y1',cy);
+        line.setAttribute('x2',x); line.setAttribute('y2',y);
+        line.setAttribute('stroke','var(--border)'); line.setAttribute('stroke-width','1.5'); edgesSvg.appendChild(line);
+
+        if(it.type==='node'){
+          const node=document.createElement('div'); node.className='orbit-node';
+          node.style.left=x+'px'; node.style.top=y+'px';
+          node.appendChild(discEl(it.n.other, ri?46:54));
+          const rel=document.createElement('span'); rel.className='reldot'; rel.textContent=it.n.pred; node.appendChild(rel);
+          const lab=document.createElement('span'); lab.className='label'; lab.textContent=E[it.n.other].name; node.appendChild(lab);
+          const hit=document.createElement('span'); hit.className='hit'; node.appendChild(hit);
+          node.onclick=()=>recenter(it.n.other);
+          stage.appendChild(node);
+        } else {
+          const bd=document.createElement('div'); bd.className='bundle'; bd.style.left=x+'px'; bd.style.top=y+'px';
+          const pill=document.createElement('div'); pill.className='pill';
+          pill.innerHTML='<b>+'+it.count+'</b>more ›';
+          bd.appendChild(pill);
+          bd.onclick=()=>{ expanded=true; render(); };
+          stage.appendChild(bd);
+        }
+      });
+    });
+
+    // center node
+    const center=document.createElement('div'); center.className='orbit-node center';
+    center.style.left=cx+'px'; center.style.top=cy+'px';
+    center.appendChild(discEl(focal,72));
+    const lab=document.createElement('span'); lab.className='label'; lab.textContent=E[focal].name; center.appendChild(lab);
+    const hit=document.createElement('span'); hit.className='hit'; center.appendChild(hit);
+    center.onclick=()=>openSheet(focal, recenter);
+    stage.appendChild(center);
+
+    renderCrumbs();
+  }
+  function recenter(id){ if(id===focal) return; focal=id; expanded=false; trail.push(id); render(); }
+  function back(){ if(trail.length>1){ trail.pop(); focal=trail[trail.length-1]; expanded=false; render(); } }
+  function renderCrumbs(){
+    crumbsEl.innerHTML='';
+    trail.forEach((id,i)=>{
+      const c=document.createElement('button'); c.className='crumb'; if(i===trail.length-1) c.setAttribute('aria-current','true');
+      const k=KIND[E[id].kind];
+      const dot=document.createElement('span'); dot.className='cdisc'; dot.style.background='color-mix(in srgb,'+k.c+' 60%,transparent)';
+      c.appendChild(dot);
+      const t=document.createElement('span'); t.textContent=E[id].name; c.appendChild(t);
+      c.onclick=()=>{ trail=trail.slice(0,i+1); focal=id; expanded=false; render(); };
+      crumbsEl.appendChild(c);
+      if(i<trail.length-1){ const s=document.createElement('span'); s.className='sep'; s.textContent='›'; crumbsEl.appendChild(s); }
+    });
+  }
+  return {render, back};
+})();
+
+/* =====================================================================
+   MOCKUP B — CONSTELLATION  (lightweight force sim + semantic zoom)
+   ===================================================================== */
+const constel = (()=>{
+  const stage=document.getElementById('const-stage');
+  const vp=document.getElementById('const-viewport');
+  const edgesSvg=document.getElementById('const-edges');
+  const lodTag=document.getElementById('const-lod');
+  let focal='jeff';
+  let nodes={}, links=[], els={};
+  let scale=1, tx=0, ty=0;             // canvas transform
+  let raf=null;
+
+  function buildModel(){
+    // ego up to 2 hops around focal
+    const dist={}; dist[focal]=0; const q=[focal];
+    while(q.length){ const cur=q.shift(); if(dist[cur]>=2) continue;
+      neighbors(cur).forEach(n=>{ if(dist[n.other]===undefined){ dist[n.other]=dist[cur]+1; q.push(n.other); } }); }
+    nodes={}; const W=stage.clientWidth||360, H=stage.clientHeight||520;
+    Object.keys(dist).forEach(id=>{
+      const r=dist[id]*150+ (Math.random()*40-20);
+      const a=Math.random()*Math.PI*2;
+      nodes[id]={id, x:W/2+Math.cos(a)*r, y:H/2+Math.sin(a)*r, vx:0, vy:0, hop:dist[id]};
+    });
+    links=[];
+    EDGES.forEach(([s,p,t])=>{ if(nodes[s]&&nodes[t]) links.push({s,t,p}); });
+    nodes[focal].x=W/2; nodes[focal].y=H/2;
+  }
+  function buildEls(){
+    [...stage.querySelectorAll('.cnode')].forEach(n=>n.remove());
+    edgesSvg.innerHTML=''; els={};
+    links.forEach(l=>{ const ln=ns('line'); ln.setAttribute('stroke','var(--border)'); ln.setAttribute('stroke-width','1.4'); edgesSvg.appendChild(ln); l._el=ln; });
+    Object.values(nodes).forEach(nd=>{
+      const size = nd.id===focal?64 : nd.hop===1?48:34;
+      const el=document.createElement('div'); el.className='cnode'+(nd.id===focal?' focused':'');
+      el.appendChild(discEl(nd.id,size));
+      const lab=document.createElement('span'); lab.className='label'; lab.textContent=E[nd.id].name; el.appendChild(lab);
+      const hit=document.createElement('span'); hit.className='hit'; el.appendChild(hit);
+      el._lab=lab; el._size=size;
+      el.addEventListener('click',(ev)=>{ ev.stopPropagation(); openSheet(nd.id, recenter); });
+      vp.appendChild(el); els[nd.id]=el;
+    });
+  }
+  function tick(){
+    const ids=Object.keys(nodes);
+    for(let i=0;i<ids.length;i++){ for(let j=i+1;j<ids.length;j++){
+      const a=nodes[ids[i]], b=nodes[ids[j]];
+      let dx=a.x-b.x, dy=a.y-b.y; let d2=dx*dx+dy*dy||1; let d=Math.sqrt(d2);
+      const rep=2600/d2; const fx=dx/d*rep, fy=dy/d*rep;
+      a.vx+=fx; a.vy+=fy; b.vx-=fx; b.vy-=fy;
+    }}
+    links.forEach(l=>{ const a=nodes[l.s], b=nodes[l.t];
+      let dx=b.x-a.x, dy=b.y-a.y; let d=Math.sqrt(dx*dx+dy*dy)||1;
+      const target=118; const f=(d-target)*0.012; const fx=dx/d*f, fy=dy/d*f;
+      a.vx+=fx; a.vy+=fy; b.vx-=fx; b.vy-=fy;
+    });
+    const W=stage.clientWidth, H=stage.clientHeight;
+    Object.values(nodes).forEach(n=>{
+      n.vx+=(W/2-n.x)*0.004; n.vy+=(H/2-n.y)*0.004;     // gentle centering
+      n.vx*=0.82; n.vy*=0.82; n.x+=n.vx; n.y+=n.vy;
+    });
+    nodes[focal].x=W/2; nodes[focal].y=H/2; nodes[focal].vx=0; nodes[focal].vy=0;
+    paint();
+  }
+  function paint(){
+    links.forEach(l=>{ const a=nodes[l.s], b=nodes[l.t];
+      l._el.setAttribute('x1',a.x); l._el.setAttribute('y1',a.y);
+      l._el.setAttribute('x2',b.x); l._el.setAttribute('y2',b.y); });
+    Object.values(nodes).forEach(n=>{ const el=els[n.id]; el.style.left=n.x+'px'; el.style.top=n.y+'px'; });
+    applyTransform();
+  }
+  function applyTransform(){
+    vp.style.transform='translate('+tx+'px,'+ty+'px) scale('+scale+')';
+    // semantic zoom: hide far labels when zoomed out
+    let lod = scale<0.7?'clusters' : scale<1.25?'entities' : 'attributes';
+    lodTag.textContent=lod;
+    Object.values(nodes).forEach(n=>{ const el=els[n.id];
+      let show = (lod==='attributes') || (lod==='entities' && n.hop<=1) || n.id===focal;
+      el._lab.style.opacity = show?1:0;
+    });
+  }
+  let animsLeft=0;
+  function run(n){ animsLeft=n; if(!raf) loop(); }
+  function loop(){ tick(); if(animsLeft-->0){ raf=requestAnimationFrame(loop); } else { raf=null; } }
+
+  function recenter(id){ if(id===focal) return; focal=id; buildModel(); buildEls(); scale=1; tx=0; ty=0; run(220); }
+  function back(){ focal='jeff'; buildModel(); buildEls(); scale=1; tx=0; ty=0; run(220); }
+
+  function init(){ buildModel(); buildEls(); run(260); bindGestures(); }
+  function fit(){ scale=1; tx=0; ty=0; run(60); }
+  function zoom(f){ scale=Math.max(0.45,Math.min(2.4,scale*f)); applyTransform(); }
+
+  /* ----- gestures: 1 finger taps a node (handled per-node);
+           1-finger drag on empty = pan; 2 fingers = pinch-zoom + pan ----- */
+  function bindGestures(){
+    let pointers=new Map(); let startDist=0, startScale=1, panStart=null, lastMid=null;
+    stage.addEventListener('pointerdown',e=>{
+      if(e.target.closest('.cnode')) return;        // node taps handled by node
+      stage.setPointerCapture(e.pointerId);
+      pointers.set(e.pointerId,{x:e.clientX,y:e.clientY});
+      if(pointers.size===1){ panStart={x:e.clientX-tx,y:e.clientY-ty}; }
+      if(pointers.size===2){ const p=[...pointers.values()]; startDist=Math.hypot(p[0].x-p[1].x,p[0].y-p[1].y); startScale=scale;
+        lastMid={x:(p[0].x+p[1].x)/2,y:(p[0].y+p[1].y)/2}; }
+    });
+    stage.addEventListener('pointermove',e=>{
+      if(!pointers.has(e.pointerId)) return;
+      pointers.set(e.pointerId,{x:e.clientX,y:e.clientY});
+      const p=[...pointers.values()];
+      if(pointers.size===1 && panStart){ tx=e.clientX-panStart.x; ty=e.clientY-panStart.y; applyTransform(); }
+      else if(pointers.size===2){
+        const dist=Math.hypot(p[0].x-p[1].x,p[0].y-p[1].y);
+        scale=Math.max(0.45,Math.min(2.4,startScale*(dist/startDist)));
+        const mid={x:(p[0].x+p[1].x)/2,y:(p[0].y+p[1].y)/2};
+        tx+=mid.x-lastMid.x; ty+=mid.y-lastMid.y; lastMid=mid; applyTransform();
+      }
+    });
+    const up=e=>{ pointers.delete(e.pointerId); if(pointers.size<2){ const p=[...pointers.values()][0]; if(p) panStart={x:p.x-tx,y:p.y-ty}; } };
+    stage.addEventListener('pointerup',up); stage.addEventListener('pointercancel',up);
+    stage.addEventListener('wheel',e=>{ e.preventDefault(); zoom(e.deltaY<0?1.1:0.9); },{passive:false});
+  }
+  return {init, back, fit, zoom};
+})();
+
+/* =====================================================================
+   MOCKUP C — THREADS
+   ===================================================================== */
+const threads = (()=>{
+  const scroll=document.getElementById('threads-scroll');
+  const crumbsEl=document.getElementById('threads-crumbs');
+  let focal='jeff'; let trail=['jeff'];
+
+  function render(){
+    const e=E[focal], d=DOMAIN[e.domain];
+    scroll.innerHTML='';
+    // focal card
+    const card=document.createElement('div'); card.className='focal-card';
+    const head=document.createElement('div'); head.className='focal-head';
+    head.appendChild(discEl(focal,56));
+    const meta=document.createElement('div'); meta.className='meta';
+    meta.innerHTML='<h2>'+e.name+'</h2><div class="sub"><span>'+e.kind+'</span>'+
+      (d?'<span style="color:'+d.hex+'">● '+d.label+'</span>':'<span>general</span>')+'</div>';
+    head.appendChild(meta); card.appendChild(head);
+    if(e.summary){ const s=document.createElement('div'); s.className='focal-summary'; s.textContent=e.summary; card.appendChild(s); }
+    card.appendChild(buildMinimap());
+    scroll.appendChild(card);
+
+    // attributes
+    const nbrs=neighbors(focal);
+    const out=nbrs.filter(n=>n.dir==='out'), inb=nbrs.filter(n=>n.dir==='in');
+    secHead('attributes', e.attrs.length);
+    const ac=document.createElement('div'); ac.className='rowcard';
+    e.attrs.forEach(([p,v,kind,conf])=>{
+      const r=document.createElement('div'); r.className='row attr';
+      const locked=(v==='locked');
+      r.innerHTML='<div class="rtext"><div class="rname">'+p+'</div><div class="rpred">'+kind+' · '+Math.round(conf*100)+'%</div></div>'+
+        '<div class="rval">'+(locked?'<span class="locked-val"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>locked</span>':v)+'</div>';
+      ac.appendChild(r);
+    });
+    scroll.appendChild(ac);
+
+    if(out.length){ secHead('relationships', out.length); scroll.appendChild(relCard(out)); }
+    if(inb.length){ secHead('linked from', inb.length); scroll.appendChild(relCard(inb)); }
+    renderCrumbs();
+    scroll.scrollTop=0;
+  }
+  function secHead(t,c){ const h=document.createElement('div'); h.className='sec-head'; h.innerHTML='<span>'+t+'</span><span class="count">'+c+'</span>'; scroll.appendChild(h); }
+  function relCard(list){
+    const c=document.createElement('div'); c.className='rowcard';
+    list.forEach(n=>{
+      const r=document.createElement('div'); r.className='row';
+      r.appendChild(discEl(n.other,38));
+      const tx=document.createElement('div'); tx.className='rtext';
+      tx.innerHTML='<div class="rname">'+E[n.other].name+'</div><div class="rpred"><span class="arrowdir">'+(n.dir==='out'?'→':'←')+'</span> '+n.pred+' · '+E[n.other].kind+'</div>';
+      r.appendChild(tx);
+      const ch=document.createElement('span'); ch.className='chev';
+      ch.innerHTML='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>';
+      r.appendChild(ch);
+      r.onclick=()=>push(n.other);
+      c.appendChild(r);
+    });
+    return c;
+  }
+  function buildMinimap(){
+    const mm=document.createElement('div'); mm.className='minimap';
+    const lab=document.createElement('div'); lab.className='mmlabel'; lab.textContent='local map'; mm.appendChild(lab);
+    const svg=ns('svg'); svg.setAttribute('viewBox','0 0 300 120');
+    const nbrs=neighbors(focal); const cx=150, cy=64, R=44;
+    const shown=nbrs.slice(0,8);
+    shown.forEach((n,i)=>{
+      const a=(-Math.PI/2)+i*2*Math.PI/shown.length; const x=cx+Math.cos(a)*R*1.3, y=cy+Math.sin(a)*R;
+      const ln=ns('line'); ln.setAttribute('x1',cx);ln.setAttribute('y1',cy);ln.setAttribute('x2',x);ln.setAttribute('y2',y);
+      ln.setAttribute('stroke','var(--border)');ln.setAttribute('stroke-width','1.2'); svg.appendChild(ln);
+      const c=ns('circle'); c.setAttribute('cx',x);c.setAttribute('cy',y);c.setAttribute('r',8);
+      c.setAttribute('fill','color-mix(in srgb,'+KIND[E[n.other].kind].c+' 30%,transparent)');
+      c.setAttribute('stroke',KIND[E[n.other].kind].hex); c.setAttribute('stroke-width','1.2');
+      c.style.cursor='pointer'; c.onclick=()=>push(n.other); svg.appendChild(c);
+    });
+    const fc=ns('circle'); fc.setAttribute('cx',cx);fc.setAttribute('cy',cy);fc.setAttribute('r',13);
+    fc.setAttribute('fill','color-mix(in srgb,'+KIND[E[focal].kind].c+' 30%,transparent)');
+    fc.setAttribute('stroke',KIND[E[focal].kind].hex);fc.setAttribute('stroke-width','1.6'); svg.appendChild(fc);
+    mm.appendChild(svg);
+    return mm;
+  }
+  function push(id){ focal=id; trail.push(id); render(); }
+  function back(){ if(trail.length>1){ trail.pop(); focal=trail[trail.length-1]; render(); } }
+  function renderCrumbs(){
+    crumbsEl.innerHTML='';
+    trail.forEach((id,i)=>{
+      const c=document.createElement('button'); c.className='crumb'; if(i===trail.length-1) c.setAttribute('aria-current','true');
+      const dot=document.createElement('span'); dot.className='cdisc'; dot.style.background='color-mix(in srgb,'+KIND[E[id].kind].c+' 60%,transparent)';
+      c.appendChild(dot);
+      const t=document.createElement('span'); t.textContent=E[id].name; c.appendChild(t);
+      c.onclick=()=>{ trail=trail.slice(0,i+1); focal=id; render(); };
+      crumbsEl.appendChild(c);
+      if(i<trail.length-1){ const s=document.createElement('span'); s.className='sep'; s.textContent='›'; crumbsEl.appendChild(s); }
+    });
+  }
+  return {render, back};
+})();
+
+/* =====================================================================
+   Switcher / chrome
+   ===================================================================== */
+const RATIONALE={
+  orbit:{title:'Orbit — radial ego graph', tag:'recommended default',
+    body:'<b>Philosophy:</b> one entity is always the sun; its direct neighbours orbit on a single ring, each edge labelled with its relationship. Tap a neighbour and it animates to the centre — navigation <i>is</i> re-centering. Tap the centre node for the full attribute sheet.'+
+    '<ul><li><b>Beats the hairball:</b> only 1 hop is ever drawn, so density is bounded no matter how big the vault grows.</li>'+
+    '<li><b>Beats fat-fingers:</b> the centre is the biggest target on screen (72px) and every node hit-area is padded past 44pt.</li>'+
+    '<li><b>Beats the pan/drag conflict:</b> nodes aren\'t draggable — a tap means one thing (re-center). No Obsidian-style "graph vanishes" bug.</li>'+
+    '<li><b>Dense nodes</b> collapse overflow neighbours into typed bundles ("3 medical ›") rather than fanning out a hub.</li>'+
+    '<li><b>Trade-off:</b> you lose the global picture — the breadcrumb trail is how you keep your place.</li></ul>'},
+  const:{title:'Constellation — force graph + semantic zoom', tag:'familiar, but tamed',
+    body:'<b>Philosophy:</b> the recognisable floating force graph people expect from Obsidian/Roam — but re-engineered so it actually works on touch. Shows a 2-hop neighbourhood with a live force layout.'+
+    '<ul><li><b>Gesture split:</b> one finger taps a node, two fingers pan &amp; pinch the canvas. This is the documented fix for the single-finger pan-vs-drag conflict.</li>'+
+    '<li><b>Semantic zoom (LOD):</b> zoomed out shows clusters with no labels; mid shows entities; zoomed in reveals every label — managing information-per-pixel.</li>'+
+    '<li><b>Nodes locked from dragging</b> by default; tap opens the detail sheet without leaving the canvas.</li>'+
+    '<li><b>Trade-off:</b> still the most prone to clutter and the heaviest to render — best as an optional "overview", not the landing view.</li></ul>'},
+  threads:{title:'Threads — list / minimap hybrid', tag:'most reliable + accessible',
+    body:'<b>Philosophy:</b> abandon the free canvas. The entity is a card; its attributes and relationships are grouped, tappable 44px+ rows. A small minimap hints at local shape. Tapping a row drills down (back-stack). '+
+    '<ul><li><b>Zero gesture ambiguity:</b> everything is scroll + tap, so nothing fights the browser or the page. Most accessible, works at any data density.</li>'+
+    '<li><b>Attributes are first-class</b> — no occlusion, no tiny dots, screen-reader friendly.</li>'+
+    '<li><b>Domain firewalls</b> render inline as locked values, matching the RLS model.</li>'+
+    '<li><b>Trade-off:</b> you lose spatial intuition; the minimap is only an orientation aid, not the interaction surface.</li></ul>'},
+};
+function show(m){
+  document.querySelectorAll('#switcher button').forEach(b=>b.setAttribute('aria-selected', b.dataset.m===m));
+  document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
+  document.getElementById('screen-'+m).classList.add('active');
+  closeSheet();
+  // (re)render the active mock now that its container has dimensions
+  requestAnimationFrame(()=>{
+    if(m==='orbit') orbit.render();
+    if(m==='const') constel.init();
+    if(m==='threads') threads.render();
+  });
+  const r=document.getElementById('rationale');
+  if(r.classList.contains('show')) fillRationale(m);
+  current=m;
+}
+let current='orbit';
+function fillRationale(m){ const d=RATIONALE[m]; document.getElementById('rationale').innerHTML=
+  '<span class="tag">'+d.tag+'</span><h4>'+d.title+'</h4>'+d.body; }
+
+document.getElementById('switcher').addEventListener('click',e=>{ const b=e.target.closest('button'); if(b) show(b.dataset.m); });
+document.getElementById('themeBtn').onclick=()=>{ const h=document.documentElement; h.dataset.theme = h.dataset.theme==='dark'?'light':'dark';
+  if(current==='const') constel.fit(); };
+document.getElementById('infoBtn').onclick=()=>{ const r=document.getElementById('rationale'); r.classList.toggle('show'); if(r.classList.contains('show')) fillRationale(current); };
+
+// per-screen actions
+document.querySelector('[data-act="orbit-back"]').onclick=()=>orbit.back();
+document.querySelector('[data-act="threads-back"]').onclick=()=>threads.back();
+document.querySelector('[data-act="const-back"]').onclick=()=>constel.back();
+document.querySelector('[data-act="zoom-in"]').onclick=()=>constel.zoom(1.25);
+document.querySelector('[data-act="zoom-out"]').onclick=()=>constel.zoom(0.8);
+document.querySelector('[data-act="zoom-fit"]').onclick=()=>constel.fit();
+
+window.addEventListener('resize',()=>{ if(current==='orbit') orbit.render(); });
+show('orbit');
+</script>
+</body>
+</html>
