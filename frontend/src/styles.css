@@ -4299,20 +4299,6 @@ input.ld-title {
   justify-content: center;
   cursor: pointer;
 }
-.ld-ic {
-  width: 16px;
-  height: 16px;
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 1.8;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-}
-.ld-del .ld-ic {
-  width: 14px;
-  height: 14px;
-  stroke-width: 2.4;
-}
 .ld-add {
   display: flex;
   align-items: center;
