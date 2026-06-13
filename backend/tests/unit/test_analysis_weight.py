@@ -73,6 +73,15 @@ def test_commit_status_uses_per_kind_threshold():
     assert commit_status("preference", 0.6) == "active"
 
 
+def test_commit_status_exact_threshold_commits():
+    # The >= boundary: a weight exactly at the threshold commits active.
+    assert commit_status("attribute", 0.8) == "active"
+
+
+def test_self_confidence_above_one_is_clamped_to_ceiling():
+    assert effective_weight(1.5, _sig()) == 1.0  # surface-attested ceiling is 1.0
+
+
 def test_unknown_kind_uses_default_threshold():
     assert commit_status("mystery", DEFAULT_THRESHOLD) == "active"
     assert commit_status("mystery", DEFAULT_THRESHOLD - 0.01) == "pending_review"

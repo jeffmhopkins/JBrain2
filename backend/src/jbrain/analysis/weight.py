@@ -61,6 +61,10 @@ class ConfidenceSignals:
     predicate_known: bool
     # This fact would supersede an existing active head (vs filling an empty key).
     is_supersede: bool
+    # Future (Wave-1 Track A): an `object_resolved` signal for relationship facts
+    # (an inferred edge to an unresolved object should lower the ceiling). Add as
+    # a defaulted field — the dataclass is frozen but a default keeps it
+    # backward-compatible with existing callers.
 
 
 def ceiling(signals: ConfidenceSignals) -> float:
