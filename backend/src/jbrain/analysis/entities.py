@@ -327,14 +327,27 @@ async def _relationship_hop(
     old behavior for possessive-looking proper names and novel definites."""
     if ref.shape == "role":
         me = await _find_me(session)
-        candidates = (
-            await _role_candidates(session, me.id, ref.noun, at=at, domain=domain) if me else []
-        )
+        if me is None:
+            return AmbiguousEntity(candidate_ids=[])
+        # "my X" is either a role someone fills for Me ("my dentist", a
+        # relationship edge whose predicate denotes the noun) or a thing Me
+        # owns ("my truck", an ownership edge to a noun-matching object). The
+        # named-owner possessive branch below already consults both shapes;
+        # the implicit-owner "my" form must too, or an owned thing never
+        # resolves through its ownership edge (its predicate "owns" denotes
+        # no noun, so the role lookup alone always misses it).
+        candidates = await _role_candidates(session, me.id, ref.noun, at=at, domain=domain)
+        seen = {c.id for c in candidates}
+        candidates += [
+            c
+            for c in await _owned_candidates(session, me.id, ref.noun, at=at, domain=domain)
+            if c.id not in seen
+        ]
         outcome = _hop_outcome(candidates)
         if outcome is not None:
             return outcome
-        # Spec: a role reference with no relationship fact valid at the
-        # note's time goes to the review inbox. Minting a "my dentist"
+        # Spec: a role reference with no relationship or ownership fact valid
+        # at the note's time goes to the review inbox. Minting a "my dentist"
         # entity would permanently fragment the provider's history.
         return AmbiguousEntity(candidate_ids=[])
     if ref.shape == "possessive":
