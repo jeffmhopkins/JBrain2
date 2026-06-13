@@ -57,8 +57,56 @@ async def test_record_mode_captures_pending_prompt(tmp_path):
     pending = tmp_path / "_pending" / f"{exc.value.key}.json"
     assert pending.exists()
     captured = json.loads(pending.read_text())
-    assert captured["response"] is None
+    # The pending file's shape is exactly what replay reads: an op-specific null
+    # slot ("text" for a complete call) the author fills, then promotes.
+    assert captured["text"] is None
     assert captured["prompt"]["user_text"] == "author me"
+
+
+async def test_pending_file_promotes_and_replays_complete(tmp_path):
+    # The headline workflow: record a miss, author the slot, move the file up,
+    # and a fresh strict client replays it.
+    rec = FixtureLlmClient(tmp_path, record=True)
+    with pytest.raises(MissingFixture) as exc:
+        await rec.complete(model="grok", system="sys", user_text="author me")
+    key = exc.value.key
+    data = json.loads((tmp_path / "_pending" / f"{key}.json").read_text())
+    data["text"] = "authored answer"
+    (tmp_path / f"{key}.json").write_text(json.dumps(data))
+
+    rep = FixtureLlmClient(tmp_path)
+    r = await rep.complete(model="grok", system="sys", user_text="author me")
+    assert r.text == "authored answer"
+
+
+async def test_pending_file_promotes_and_replays_converse(tmp_path):
+    rec = FixtureLlmClient(tmp_path, record=True)
+    msgs = [UserMessage(text="find x")]
+    with pytest.raises(MissingFixture) as exc:
+        await rec.converse(model="grok", system="sys", messages=msgs)
+    key = exc.value.key
+    data = json.loads((tmp_path / "_pending" / f"{key}.json").read_text())
+    assert data["turn"] is None  # op-specific slot for a converse call
+    data["turn"] = turn_to_dict(
+        LlmTurn(text="answer", tool_calls=(), stop_reason="end_turn", usage=LlmUsage(0, 0))
+    )
+    (tmp_path / f"{key}.json").write_text(json.dumps(data))
+
+    rep = FixtureLlmClient(tmp_path)
+    t = await rep.converse(model="grok", system="sys", messages=msgs)
+    assert t.text == "answer"
+
+
+async def test_unauthored_promoted_fixture_raises(tmp_path):
+    # A fixture present but with its slot still null must not replay as None.
+    rec = FixtureLlmClient(tmp_path, record=True)
+    with pytest.raises(MissingFixture) as exc:
+        await rec.complete(model="grok", system="sys", user_text="x")
+    key = exc.value.key
+    (tmp_path / f"{key}.json").write_text((tmp_path / "_pending" / f"{key}.json").read_text())
+    rep = FixtureLlmClient(tmp_path)
+    with pytest.raises(MissingFixture):
+        await rep.complete(model="grok", system="sys", user_text="x")
 
 
 async def test_strict_mode_does_not_write_pending(tmp_path):

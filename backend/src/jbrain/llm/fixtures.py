@@ -171,19 +171,24 @@ class FixtureLlmClient:
     def _capture_pending(self, key: str, prompt: dict[str, Any]) -> None:
         pending = self._dir / "_pending"
         pending.mkdir(parents=True, exist_ok=True)
-        # response: null is the slot a human fills, then moves the file up to
-        # <dir>/<key>.json. The prompt is human-readable for authoring.
-        (pending / f"{key}.json").write_text(
-            json.dumps({"key": key, "prompt": prompt, "response": None}, indent=2)
-        )
+        # The pending file's shape is EXACTLY what replay reads (see _write): the
+        # author fills the null slot, then moves the file up to <dir>/<key>.json
+        # and it replays as-is. The slot is op-specific so the author knows
+        # whether to write a text string ("text") or a turn object ("turn").
+        slot = "turn" if prompt["op"] == "converse" else "text"
+        (pending / f"{key}.json").write_text(json.dumps({"prompt": prompt, slot: None}, indent=2))
 
-    def _resolve(self, key: str, prompt: dict[str, Any]) -> dict[str, Any]:
+    def _resolve(self, key: str, prompt: dict[str, Any], slot: str) -> Any:
         fixture = self._load(key)
         if fixture is None:
             if self._record:
                 self._capture_pending(key, prompt)
             raise MissingFixture(key, prompt)
-        return fixture
+        value = fixture.get(slot)
+        if value is None:
+            # A promoted _pending file whose null slot was never authored.
+            raise MissingFixture(key, prompt)
+        return value
 
     # -- authoring helpers (used by dev/tests to write fixtures) --
     def write_complete(
@@ -241,8 +246,7 @@ class FixtureLlmClient:
         )
         key = _key(prompt)
         self.calls.append(prompt)
-        fixture = self._resolve(key, prompt)
-        text = fixture["text"]
+        text = self._resolve(key, prompt, "text")
         parsed = parse_json_payload(text) if json_schema is not None else None
         return LlmResult(text=text, parsed=parsed, usage=_FIXTURE_USAGE)
 
@@ -258,8 +262,7 @@ class FixtureLlmClient:
         prompt = _converse_prompt(model=model, system=system, messages=messages, tools=tools)
         key = _key(prompt)
         self.calls.append(prompt)
-        fixture = self._resolve(key, prompt)
-        return turn_from_dict(fixture["turn"])
+        return turn_from_dict(self._resolve(key, prompt, "turn"))
 
     async def converse_stream(
         self,
