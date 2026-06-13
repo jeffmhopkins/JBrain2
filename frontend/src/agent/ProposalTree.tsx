@@ -5,7 +5,16 @@
 
 import { type ReactNode, useCallback, useEffect, useState } from "react";
 import { api } from "../api/client";
+import { EntityTypeIcon } from "../entities/kinds";
 import type { Decision, EnactResult, ProposalDetail, ProposalNode } from "./types";
+
+// A leaf's op turned into a short human descriptor for its row head — so a node
+// never has to fall back to the raw op string (e.g. "add_note").
+const OP_LABEL: Record<string, string> = {
+  add_note: "New note",
+  egress_call: "External call",
+  merge_entities: "Merge entities",
+};
 
 interface Props {
   proposalId: string;
@@ -65,7 +74,7 @@ export function ProposalTree({
       <div className="panel-body">
         {detail === null && <div className="panel-empty">Loading…</div>}
         {detail?.nodes.map((node) => (
-          <NodeRow key={node.id} node={node} busy={busy} onDecide={decide} />
+          <NodeRow key={node.id} node={node} title={detail.title} busy={busy} onDecide={decide} />
         ))}
         {detail !== null && (
           <button type="button" className="start" disabled={busy} onClick={() => void enact()}>
@@ -87,18 +96,26 @@ export function ProposalTree({
 
 function NodeRow({
   node,
+  title,
   busy,
   onDecide,
 }: {
   node: ProposalNode;
+  title: string;
   busy: boolean;
   onDecide: (nodeId: string, decision: Decision) => void;
 }): ReactNode {
   const body = typeof node.preview.body === "string" ? node.preview.body : "";
+  const isMerge = node.op === "merge_entities";
+  // The panel bar already shows the proposal title; a leaf whose label just repeats
+  // it (single-leaf corrections do) shows its op descriptor instead of echoing it.
+  const heading =
+    node.label && node.label !== title ? node.label : (OP_LABEL[node.op] ?? node.op ?? node.type);
   return (
     <div className={`row node-row status-${node.status}`}>
       <div className="r-head">
-        <span className="node-status">{node.status}</span> {node.label || node.op || node.type}
+        <span className="node-status">{node.status}</span>{" "}
+        {isMerge ? <MergeHead preview={node.preview} /> : heading}
       </div>
       {body && <div className="r-sub">{body}</div>}
       {node.type === "leaf" && node.status === "pending" && (
@@ -122,5 +139,28 @@ function NodeRow({
         </div>
       )}
     </div>
+  );
+}
+
+// A merge leaf shows the two entities as type-tinted chips (their names, not their
+// ids) joined by a combine glyph — so the owner judges a readable effect, never a
+// uuid-laden sentence (docs/DESIGN.md "Entity-type accents").
+function MergeHead({ preview }: { preview: Record<string, unknown> }): ReactNode {
+  const nameA = String(preview.name_a ?? "");
+  const nameB = String(preview.name_b ?? "");
+  const kindA = String(preview.kind_a ?? "Thing");
+  const kindB = String(preview.kind_b ?? "Thing");
+  return (
+    <span className="merge-chips">
+      <span className="merge-chip">
+        <EntityTypeIcon kind={kindA} size={20} /> {nameA}
+      </span>
+      <span className="merge-arrow" aria-label="merge into one">
+        ＋
+      </span>
+      <span className="merge-chip">
+        <EntityTypeIcon kind={kindB} size={20} /> {nameB}
+      </span>
+    </span>
   );
 }

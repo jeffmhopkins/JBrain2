@@ -20,6 +20,7 @@ from jbrain.agent.listtools import build_list_handlers
 from jbrain.agent.loop import ToolContext, ToolHandler, ToolOutput
 from jbrain.agent.memory import MemoryService
 from jbrain.agent.memorytools import build_memory_handlers
+from jbrain.agent.mergetools import build_merge_handlers
 from jbrain.agent.proposals import ProposalRepo
 from jbrain.agent.proposaltools import build_proposal_handlers
 from jbrain.agent.toolregistry import ToolRegistry, load_registry
@@ -319,8 +320,9 @@ def build_registry(
     """The agent's tool registry: every shipped sidecar bound to its handler — the
     read tools, the Tier-A memory tools, the list tools (which write the owner's
     own data directly), the appointment read tools (over the notes-derived
-    projection), propose_correction (which stages a Proposal, never writes), and
-    the egress connector tools (which stage an egress Proposal, never call out).
+    projection), propose_correction and propose_merge (which stage a Proposal,
+    never write), and the egress connector tools (which stage an egress Proposal,
+    never call out).
     Fails at startup if a sidecar and handler don't match exactly, so a new .tool
     can never ship unwired."""
     return load_registry(
@@ -333,6 +335,7 @@ def build_registry(
             **build_appointment_write_handlers(proposals, appointments),
             **build_memory_handlers(memory),
             **build_proposal_handlers(proposals),
+            **build_merge_handlers(proposals, entities),
             **build_connector_handlers(connectors, proposals),
         },
     )

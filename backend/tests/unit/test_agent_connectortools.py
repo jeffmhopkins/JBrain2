@@ -111,9 +111,18 @@ class FakeJobs:
         return "job-1"
 
 
+class FakeAnalysis:
+    def __init__(self) -> None:
+        self.merged: list[tuple[str, str]] = []
+
+    async def merge_entities(self, ctx: object, entity_a: str, entity_b: str) -> object:
+        self.merged.append((entity_a, entity_b))
+        return None
+
+
 async def test_leaf_executor_dispatches_by_op() -> None:
-    notes, svc, jobs = FakeNotes(), FakeConnectorService(), FakeJobs()
-    execute = build_leaf_executor(notes, svc, jobs)  # type: ignore[arg-type]
+    notes, svc, jobs, analysis = FakeNotes(), FakeConnectorService(), FakeJobs(), FakeAnalysis()
+    execute = build_leaf_executor(notes, svc, jobs, analysis)  # type: ignore[arg-type]
     proposal = ProposalRow("p", "egress", "approved", "health", "t", None)
 
     egress_node = NodeRow(
@@ -129,9 +138,22 @@ async def test_leaf_executor_dispatches_by_op() -> None:
     note_node = NodeRow(
         "a", None, "leaf", "add_note", "", {"body": "the fact", "domain": "health"}, (), "approved"
     )
+    merge_node = NodeRow(
+        "m",
+        None,
+        "leaf",
+        "merge_entities",
+        "",
+        {"entity_a": "e1", "entity_b": "e2"},
+        (),
+        "approved",
+    )
     await execute(HEALTH.session, proposal, egress_node)
     await execute(HEALTH.session, proposal, note_node)
+    await execute(HEALTH.session, proposal, merge_node)
     assert svc.fetched == [("lookup_condition", {"name": "x"}, "p1")]
     assert notes.created[0]["provenance"] == "agent"
     # The agent note re-enters ingestion; the egress leaf does not enqueue a note.
     assert jobs.enqueued == [("ingest_note", {"note_id": "n1"})]
+    # A merge leaf folds through the analysis repo, not the note path.
+    assert analysis.merged == [("e1", "e2")]

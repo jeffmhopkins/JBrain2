@@ -194,9 +194,17 @@ tool.
 
 **The tool set stays small** (ACI discipline; every new tool pays a context-and-
 bloat tax): hybrid `search`, `read_note`/`read_entity`/`read_fact`,
-`manage_list`, `manage_appointment`, `propose_correction`, plus the memory tools
-(`remember`/`recall`/`memory.read`/`memory.edit`). Namespaced (`list_add`,
-`list_remove`).
+`manage_list`, `manage_appointment`, `propose_correction`, `propose_merge`, plus
+the memory tools (`remember`/`recall`/`memory.read`/`memory.edit`). Namespaced
+(`list_add`, `list_remove`).
+
+`propose_merge` stages a duplicate-entity merge: the agent passes two entity ids
+(from `find_entity`) and the leaf carries them structurally in its preview, never
+in prose. On enact the merge runs through the **same** fold-and-repoint the review
+inbox uses — the survivor is the more-anchored identity (the owner is never merged
+away), a permanent `distinct_from` blocks it, and a re-enact is idempotent. The
+agent cannot fold entities on its own (the model only ever proposed a free-text
+correction before, which a same-as edge could never actually combine).
 
 **RLS is inherited, not rebuilt.** Every handler receives the RLS-scoped session
 and calls **services, never SQL** (routes→services→repositories). The domain-scope

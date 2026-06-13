@@ -75,7 +75,7 @@ async def test_appointment_proposal_enacts_as_a_dated_agent_note(
     await repo.decide(ctx, node.id, approve=True)
 
     jobs = _Jobs()
-    executor = build_leaf_executor(SqlNotesRepo(maker), object(), jobs)  # type: ignore[arg-type]
+    executor = build_leaf_executor(SqlNotesRepo(maker), object(), jobs, object())  # type: ignore[arg-type]
     plan = await repo.enact(ctx, prop_id, executor)
     assert plan.enactable == (node.id,)
 

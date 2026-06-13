@@ -4835,6 +4835,13 @@ button.small {
 .fb-shell .panel-bar .ttl {
   font-size: 17px;
   font-weight: 600;
+  /* Clamp to one line with an ellipsis: a long proposal title must never wrap and
+     break mid-word (the old "…adf3)a"). min-width:0 lets it shrink in the flex bar. */
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .fb-shell .panel-bar .sub {
   margin-left: auto;
@@ -4867,6 +4874,8 @@ button.small {
   text-align: left;
   color: var(--text);
   font: inherit;
+  /* Let the head's text/chips shrink and ellipsize rather than overflow the card. */
+  min-width: 0;
 }
 .fb-shell .row.new-session {
   border-style: dashed;
@@ -4930,6 +4939,8 @@ button.small {
   align-items: center;
   gap: 8px;
   font-size: 15px;
+  min-width: 0;
+  flex-wrap: wrap;
 }
 .fb-shell .row .r-sub {
   font-size: 13px;
@@ -5444,6 +5455,29 @@ button.small {
 .fb-shell .enact-result {
   color: var(--text-2);
   justify-content: center;
+}
+/* A merge leaf renders its two entities as type-tinted name chips (not a uuid
+   sentence) joined by a combine glyph — reusing the entity-type disc. */
+.fb-shell .merge-chips {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+.fb-shell .merge-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill);
+  padding: 2px 9px 2px 3px;
+  font-size: 13px;
+}
+.fb-shell .merge-arrow {
+  color: var(--text-3);
+  font-size: 14px;
 }
 
 /* ===== Lists (the owner's structured records; screens/ListsScreen + ListDetailScreen) ===== */
