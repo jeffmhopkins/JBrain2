@@ -23,6 +23,23 @@ function Harness({ onSend, onConversation }: HarnessProps) {
 }
 
 describe("Omnibox", () => {
+  it("seeds the composer from a draft handoff and consumes it", () => {
+    const onConsumeDraft = vi.fn();
+    render(
+      <Omnibox
+        seg={{ row: "main", mode: "fullbrain" }}
+        onSegChange={vi.fn()}
+        onSend={vi.fn()}
+        onConversation={vi.fn()}
+        onOpenLauncher={vi.fn()}
+        draft="reschedule my dentist to "
+        onConsumeDraft={onConsumeDraft}
+      />,
+    );
+    expect(screen.getByDisplayValue(/reschedule my dentist to/)).toBeInTheDocument();
+    expect(onConsumeDraft).toHaveBeenCalled();
+  });
+
   it("morphs the segment row when active Entry is tapped, and back", () => {
     render(<Harness />);
     expect(screen.getByRole("tab", { name: "Research" })).toBeInTheDocument();

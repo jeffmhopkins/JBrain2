@@ -10,11 +10,12 @@ once and renders Day/Week/Month/Tasks client-side.
 from datetime import UTC, datetime, timedelta
 from typing import cast
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel
 
 from jbrain.api.deps import PrincipalDep, owner_only
 from jbrain.api.notes import ctx_for
+from jbrain.appointments.ics import to_ics
 from jbrain.appointments.repo import SqlAppointmentsRepo
 from jbrain.appointments.service import AppointmentInfo
 
@@ -84,3 +85,20 @@ async def list_appointments(
         ctx_for(principal), since=start, until=_parse(until), include_cancelled=include_cancelled
     )
     return [AppointmentOut.of(r) for r in rows]
+
+
+@router.get("/{appointment_id}.ics")
+async def appointment_ics(
+    request: Request, principal: PrincipalDep, appointment_id: str
+) -> Response:
+    """One appointment as a downloadable single-event .ics — "add to my calendar"
+    from the detail sheet. Owner-only; a missing/out-of-scope id is a 404. Carries
+    the same off-box-title caveat as the feed, but it is per-event and owner-run."""
+    appt = await get_appointments_repo(request).get_appointment(ctx_for(principal), appointment_id)
+    if appt is None:
+        raise HTTPException(status_code=404, detail="no such appointment")
+    return Response(
+        content=to_ics([appt]),
+        media_type="text/calendar; charset=utf-8",
+        headers={"Content-Disposition": 'attachment; filename="appointment.ics"'},
+    )

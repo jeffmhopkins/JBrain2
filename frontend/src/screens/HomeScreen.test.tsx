@@ -79,6 +79,28 @@ function setup(notes: NotesController = fakeController()) {
   );
 }
 
+describe("HomeScreen compose handoff", () => {
+  it("flips to Full Brain and seeds the composer from a compose prompt", async () => {
+    const onComposeConsumed = vi.fn();
+    render(
+      <HomeScreen
+        notes={fakeController()}
+        actions={fakeActions()}
+        onOpenNote={vi.fn()}
+        onOpenSearch={vi.fn()}
+        onOpenLauncher={vi.fn()}
+        fbDeps={fbDeps()}
+        composePrompt={'Reschedule my "Dentist" appointment to '}
+        onComposeConsumed={onComposeConsumed}
+      />,
+    );
+    await waitFor(() =>
+      expect(screen.getByDisplayValue(/Reschedule my "Dentist"/)).toBeInTheDocument(),
+    );
+    expect(onComposeConsumed).toHaveBeenCalled();
+  });
+});
+
 function streamItem() {
   return {
     key: "k1",

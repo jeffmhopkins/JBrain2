@@ -32,6 +32,13 @@ function stubFetch(events: AppointmentOut[]) {
         headers: { "Content-Type": "application/json" },
       });
     }
+    // The event sheet pulls the source note for an inline snippet.
+    if (path.startsWith("/api/notes/")) {
+      return new Response(JSON.stringify({ id: "note-7", body: "the source note body" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
     throw new Error(`Unexpected fetch: ${path}`);
   });
   vi.stubGlobal("fetch", m);
@@ -56,7 +63,7 @@ function tomorrow(): string {
 describe("CalendarScreen", () => {
   it("defaults to month and shows today's agenda", async () => {
     stubFetch([appt({ id: "A1", title: "Dentist", start: today() })]);
-    render(<CalendarScreen onOpenNote={noop} />);
+    render(<CalendarScreen onOpenNote={noop} onCompose={noop} />);
     // Month is the default tab.
     expect(screen.getByRole("tab", { name: "Month" })).toHaveAttribute("aria-selected", "true");
     // Today is selected, so its agenda lists the appointment.
@@ -68,7 +75,7 @@ describe("CalendarScreen", () => {
       appt({ id: "A1", title: "Dentist", start: today() }),
       appt({ id: "A2", title: "Pay rent", domain: "finance", all_day: true, start: tomorrow() }),
     ]);
-    render(<CalendarScreen onOpenNote={noop} />);
+    render(<CalendarScreen onOpenNote={noop} onCompose={noop} />);
     fireEvent.click(screen.getByRole("tab", { name: "Tasks" }));
     await waitFor(() => expect(screen.getByText("Dentist")).toBeInTheDocument());
     expect(screen.getByText("Pay rent")).toBeInTheDocument();
@@ -79,7 +86,7 @@ describe("CalendarScreen", () => {
 
   it("opens an event sheet noting it's projected from notes", async () => {
     stubFetch([appt({ id: "A1", title: "Dentist", status: "tentative", start: today() })]);
-    render(<CalendarScreen onOpenNote={noop} />);
+    render(<CalendarScreen onOpenNote={noop} onCompose={noop} />);
     fireEvent.click(screen.getByRole("tab", { name: "Tasks" }));
     await waitFor(() => screen.getByText("Dentist"));
     fireEvent.click(screen.getByText("Dentist"));
@@ -90,7 +97,7 @@ describe("CalendarScreen", () => {
 
   it("shows an empty state with no appointments", async () => {
     stubFetch([]);
-    render(<CalendarScreen onOpenNote={noop} />);
+    render(<CalendarScreen onOpenNote={noop} onCompose={noop} />);
     fireEvent.click(screen.getByRole("tab", { name: "Tasks" }));
     await waitFor(() => expect(screen.getByText("No upcoming appointments.")).toBeInTheDocument());
   });
@@ -98,11 +105,35 @@ describe("CalendarScreen", () => {
   it("opens the source note from the event sheet when there is one", async () => {
     const onOpenNote = vi.fn();
     stubFetch([appt({ id: "A1", title: "Dentist", start: today(), source_note_id: "note-7" })]);
-    render(<CalendarScreen onOpenNote={onOpenNote} />);
+    render(<CalendarScreen onOpenNote={onOpenNote} onCompose={noop} />);
     fireEvent.click(screen.getByRole("tab", { name: "Tasks" }));
     await waitFor(() => screen.getByText("Dentist"));
     fireEvent.click(screen.getByText("Dentist"));
-    fireEvent.click(screen.getByText(/open the source note/i));
+    fireEvent.click(screen.getByText("open note"));
     expect(onOpenNote).toHaveBeenCalledWith("note-7");
+  });
+
+  it("hands a reschedule prompt to the agent composer", async () => {
+    const onCompose = vi.fn();
+    stubFetch([appt({ id: "A1", title: "Dentist", start: today() })]);
+    render(<CalendarScreen onOpenNote={noop} onCompose={onCompose} />);
+    fireEvent.click(screen.getByRole("tab", { name: "Tasks" }));
+    await waitFor(() => screen.getByText("Dentist"));
+    fireEvent.click(screen.getByText("Dentist"));
+    fireEvent.click(screen.getByText("reschedule"));
+    expect(onCompose).toHaveBeenCalledWith(expect.stringContaining('Reschedule my "Dentist"'));
+  });
+
+  it("cancel is an armed two-tap before it hands off", async () => {
+    const onCompose = vi.fn();
+    stubFetch([appt({ id: "A1", title: "Dentist", start: today() })]);
+    render(<CalendarScreen onOpenNote={noop} onCompose={onCompose} />);
+    fireEvent.click(screen.getByRole("tab", { name: "Tasks" }));
+    await waitFor(() => screen.getByText("Dentist"));
+    fireEvent.click(screen.getByText("Dentist"));
+    fireEvent.click(screen.getByText("cancel"));
+    expect(onCompose).not.toHaveBeenCalled(); // first tap only arms
+    fireEvent.click(screen.getByText("tap again to cancel"));
+    expect(onCompose).toHaveBeenCalledWith(expect.stringContaining('Cancel my "Dentist"'));
   });
 });

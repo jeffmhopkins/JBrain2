@@ -1,4 +1,4 @@
-import { type CSSProperties, useEffect, useRef, useState } from "react";
+import { type CSSProperties, useCallback, useEffect, useRef, useState } from "react";
 import { FullBrainSurface } from "../agent/FullBrainSurface";
 import { type FullBrainDeps, useFullBrain } from "../agent/useFullBrain";
 import { Omnibox } from "../components/Omnibox";
@@ -20,6 +20,10 @@ interface HomeScreenProps {
   onOpenEntity?: (entityId: string) => void;
   onOpenSearch: () => void;
   onOpenLauncher: () => void;
+  /** A handoff (e.g. the calendar's reschedule) that flips to Full Brain and
+   * seeds the composer with this prompt; cleared via onComposeConsumed. */
+  composePrompt?: string | null;
+  onComposeConsumed?: () => void;
   /** Injected in tests; defaults to the live API client. */
   fbDeps?: FullBrainDeps;
 }
@@ -38,11 +42,25 @@ export function HomeScreen({
   onOpenLauncher,
   onOpenNoteById,
   onOpenEntity,
+  composePrompt,
+  onComposeConsumed,
   fbDeps,
 }: HomeScreenProps) {
   const [seg, setSeg] = useState<SegState>({ row: "main", mode: "entry" });
+  const [pendingDraft, setPendingDraft] = useState("");
   const [toast, setToast] = useState<Toast | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // A compose handoff (the calendar's reschedule/cancel/ask) flips to Full Brain
+  // and hands the prompt to the omnibox; the owner reviews and sends it.
+  useEffect(() => {
+    if (composePrompt) {
+      setSeg({ row: "main", mode: "fullbrain" });
+      setPendingDraft(composePrompt);
+      onComposeConsumed?.();
+    }
+  }, [composePrompt, onComposeConsumed]);
+  const clearDraft = useCallback(() => setPendingDraft(""), []);
   // Full Brain is integral to the home page: the transcript and its lateral
   // panels render in the body while the omnibox below acts as its composer. The
   // controller only does work while the mode is on screen.
@@ -137,6 +155,8 @@ export function HomeScreen({
         }}
         busy={seg.mode === "fullbrain" && fb.busy}
         onOpenLauncher={onOpenLauncher}
+        draft={pendingDraft}
+        onConsumeDraft={clearDraft}
       />
       {toast && (
         <output className="toast">
