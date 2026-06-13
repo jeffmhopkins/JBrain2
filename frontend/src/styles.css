@@ -3526,6 +3526,23 @@ button.small {
   color: var(--steel);
   cursor: pointer;
 }
+/* Full Brain glyphs are inlined line-art SVGs that carry no fill/stroke
+   attributes of their own (unlike components/icons.tsx). Without this they fall
+   back to the SVG default — a solid black fill — so the per-element `color`
+   rules below (steel, text-2, …) never took, which is why the Worked icons read
+   as black on every prior CSS-color pass. Drawing them as outlines that follow
+   `currentColor` is what makes those colors land. */
+.fb-shell .tw-ic,
+.fb-shell .tw-chev,
+.fb-shell .fb-worked-caret,
+.fb-shell .fb-step-caret {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
 /* the "Review proposal" chip — in the answer itself, above the Worked line */
 .fb-shell .proposal-chip {
   display: inline-flex;
