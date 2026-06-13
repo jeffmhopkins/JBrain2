@@ -13,7 +13,7 @@ import { DOMAIN_COLOR } from "../notes/modes";
 import { ProposalTree } from "./ProposalTree";
 import { ProposalsPanel } from "./ProposalsPanel";
 import { SessionsPanel } from "./SessionsPanel";
-import { Markdown, unlinkedEntities } from "./markdown";
+import { Markdown } from "./markdown";
 import { type AgentStatus, agentStatus } from "./status";
 import { type SourceRef, type ToolStep, toolStep } from "./toolSummary";
 import type { ToolActivity, TranscriptMessage } from "./transcript";
@@ -199,8 +199,16 @@ function Bubble({
   if (message.role === "user") {
     return <div className="bubble me">{message.text}</div>;
   }
-  // A turn that's still thinking (no text, no tools, no views yet) shows nothing
-  // here — the status line above the composer carries that state instead.
+  // While the turn is still streaming, hold the whole bubble until the answer
+  // text begins — tool calls alone shouldn't pop an empty Worked block ahead of
+  // any prose. The status line above the omnibox carries "what it's doing" (the
+  // live tool) until the typed answer lands; then the bubble appears with the
+  // prose and its Worked disclosure together.
+  if (message.streaming && !message.text) {
+    return null;
+  }
+  // A settled turn with nothing to show (no text, no tools, no views) renders
+  // nothing — the status line above the composer carries any residual state.
   if (!message.text && message.tools.length === 0 && message.views.length === 0) {
     return null;
   }
@@ -213,42 +221,21 @@ function Bubble({
         if (src) onOpenNote(src.noteId);
       }
     : undefined;
-  // Entities the turn resolved (find_entity), deduped. Those whose name appears
-  // in the answer are linkified inline (Markdown); only the rest fall back to
-  // chips, so a surfaced entity is never left without a tap target.
+  // Entities the turn resolved, deduped. Those whose name appears in the answer
+  // are linkified inline (Markdown). The rest aren't chipped under the prose —
+  // they stay reachable as tappable links inside the Worked step that surfaced
+  // them, so an oblique reference ("your wife") never spawns a loose pill.
   const entities = [
     ...new Map(
       message.tools.flatMap((t) => t.entities ?? []).map((e) => [e.entity_id, e]),
     ).values(),
   ];
-  // Hold the fallback chips until the turn settles: mid-stream the name often
-  // isn't typed yet, so a chip would flash and then vanish as the inline link
-  // takes over. Once streaming ends, chip whatever the prose never named.
-  const looseEntities = message.streaming ? [] : unlinkedEntities(message.text, entities);
 
-  // The answer side: the prose, any fallback entity chips, and tool-result views.
+  // The answer side: the prose and any tool-result views.
   const answer = (
     <>
       {message.text && (
         <Markdown text={message.text} onCite={onCite} entities={entities} onEntity={onOpenEntity} />
-      )}
-      {looseEntities.length > 0 && (
-        <div className="fb-entities">
-          {looseEntities.map((e) => (
-            <button
-              key={e.entity_id}
-              type="button"
-              className="entity-chip"
-              onClick={() => onOpenEntity?.(e.entity_id)}
-            >
-              <span
-                className="ent-dot"
-                style={{ background: DOMAIN_COLOR[e.domain] ?? "var(--text-3)" }}
-              />
-              {e.label}
-            </button>
-          ))}
-        </div>
       )}
       {message.views.map((v, i) => (
         // biome-ignore lint/suspicious/noArrayIndexKey: views append in order
@@ -264,7 +251,12 @@ function Bubble({
     <div className="bubble ai">
       {answer}
       {message.tools.length > 0 && (
-        <Worked tools={message.tools} onOpenNote={onOpenNote} onOpenProposal={onOpenProposal} />
+        <Worked
+          tools={message.tools}
+          onOpenNote={onOpenNote}
+          onOpenProposal={onOpenProposal}
+          onOpenEntity={onOpenEntity}
+        />
       )}
     </div>
   );
@@ -277,10 +269,12 @@ function Worked({
   tools,
   onOpenNote,
   onOpenProposal,
+  onOpenEntity,
 }: {
   tools: ToolActivity[];
   onOpenNote?: ((noteId: string) => void) | undefined;
   onOpenProposal?: ((proposalId: string) => void) | undefined;
+  onOpenEntity?: ((entityId: string) => void) | undefined;
 }): ReactNode {
   const [open, setOpen] = useState(false);
   const bodyId = useRef(`worked-${Math.random().toString(36).slice(2)}`).current;
@@ -320,7 +314,7 @@ function Worked({
         <div className="fb-worked-inner">
           <div className="fb-steps">
             {steps.map((s) => (
-              <StepRow key={s.id} step={s} onOpenNote={onOpenNote} />
+              <StepRow key={s.id} step={s} onOpenNote={onOpenNote} onOpenEntity={onOpenEntity} />
             ))}
           </div>
           {staged && (
@@ -351,9 +345,11 @@ function Worked({
 function StepRow({
   step,
   onOpenNote,
+  onOpenEntity,
 }: {
   step: ToolStep;
   onOpenNote?: ((noteId: string) => void) | undefined;
+  onOpenEntity?: ((entityId: string) => void) | undefined;
 }): ReactNode {
   const isErr = step.ok === false;
   const [open, setOpen] = useState(isErr);
@@ -363,11 +359,14 @@ function StepRow({
     if (isErr) setOpen(true);
   }, [isErr]);
   const hasSources = step.sources.length > 0;
+  const hasEntities = step.entities.length > 0;
   const hasArgs = step.args != null && Object.keys(step.args).length > 0;
   const summary = step.summary?.trim();
-  // The verbatim raw payload is worth a rung only when the friendly result (the
-  // source cards) hides it; otherwise the result text already is the summary.
-  const rawText = hasSources ? summary : undefined;
+  // The verbatim raw payload is worth a rung only when a friendly result (source
+  // cards or entity links) stands in for it; otherwise the text already is the
+  // summary. Entity steps especially: the raw text carries bare ids we'd rather
+  // not parade, so the links are the result and the ids hide behind "raw".
+  const rawText = hasSources || hasEntities ? summary : undefined;
   const mark = isErr ? "bad" : step.ok === undefined ? "live" : "";
 
   return (
@@ -402,6 +401,27 @@ function StepRow({
               <div className="toolwork-srcs">
                 {step.sources.map((src) => (
                   <SourceCard key={src.noteId} src={src} onOpen={onOpenNote} />
+                ))}
+              </div>
+              {rawText && <RawBlock text={rawText} />}
+            </>
+          ) : hasEntities ? (
+            <>
+              <div className="fb-res-lab">result</div>
+              <div className="toolwork-ents">
+                {step.entities.map((e) => (
+                  <button
+                    key={e.entity_id}
+                    type="button"
+                    className="entity-chip"
+                    onClick={() => onOpenEntity?.(e.entity_id)}
+                  >
+                    <span
+                      className="ent-dot"
+                      style={{ background: DOMAIN_COLOR[e.domain] ?? "var(--text-3)" }}
+                    />
+                    {e.label}
+                  </button>
                 ))}
               </div>
               {rawText && <RawBlock text={rawText} />}

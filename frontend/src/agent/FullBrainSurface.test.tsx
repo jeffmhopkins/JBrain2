@@ -120,9 +120,11 @@ describe("FullBrainSurface", () => {
     await waitFor(() => screen.getByLabelText("Conversation"));
     // The staged-proposal chip survives the reopen (it lives on the tool-use face).
     expect(await screen.findByRole("button", { name: /Review proposal/ })).toBeInTheDocument();
-    // The entity links inline in the replayed answer (its name appears in prose).
-    const link = await screen.findByRole("button", { name: "Jeff Hopkins" });
-    expect(link).toHaveClass("md-entity");
+    // The entity links inline in the replayed answer (its name appears in prose);
+    // the same entity is also reachable as a chip inside its Worked step.
+    const links = await screen.findAllByRole("button", { name: "Jeff Hopkins" });
+    expect(links.some((b) => b.classList.contains("md-entity"))).toBe(true);
+    expect(links.some((b) => b.classList.contains("entity-chip"))).toBe(true);
   });
 
   it("replays a turn's tool view (e.g. a list_card)", async () => {
@@ -442,16 +444,23 @@ describe("FullBrainSurface", () => {
     fireEvent.change(screen.getByLabelText("Composer"), { target: { value: "who is celine?" } });
     fireEvent.click(screen.getByRole("button", { name: "send" }));
 
-    // Once the name lands in the prose it's linked inline (a chip stands in
-    // mid-stream, before the name is typed), with no fallback chip left over.
+    // Once the name lands in the prose it's linked inline (md-entity); the same
+    // entity also sits in its Worked step, so disambiguate to the inline link.
     await waitFor(() =>
-      expect(screen.getByRole("button", { name: "Celine" })).toHaveClass("md-entity"),
+      expect(
+        screen
+          .getAllByRole("button", { name: "Celine" })
+          .some((b) => b.classList.contains("md-entity")),
+      ).toBe(true),
     );
-    fireEvent.click(screen.getByRole("button", { name: "Celine" }));
+    const inline = screen
+      .getAllByRole("button", { name: "Celine" })
+      .find((b) => b.classList.contains("md-entity"));
+    fireEvent.click(inline as HTMLElement);
     expect(onOpenEntity).toHaveBeenCalledWith("e9");
   });
 
-  it("falls back to a chip for an entity the answer never names", async () => {
+  it("surfaces an entity the answer never names as a link in the Worked step", async () => {
     const onOpenEntity = vi.fn();
     async function* answer(): AsyncGenerator<ChatEvent> {
       yield { type: "tool_call", id: "c1", name: "find_entity", arguments: { name: "celine" } };
@@ -459,7 +468,7 @@ describe("FullBrainSurface", () => {
         type: "tool_result",
         tool_call_id: "c1",
         ok: true,
-        summary: "1",
+        summary: "- Celine [Person] (general) id=e9",
         entities: [{ kind: "entity", entity_id: "e9", label: "Celine", domain: "general" }],
       };
       yield { type: "text_delta", text: "Found one match in your notes." };
@@ -470,13 +479,18 @@ describe("FullBrainSurface", () => {
     fireEvent.change(screen.getByLabelText("Composer"), { target: { value: "who is celine?" } });
     fireEvent.click(screen.getByRole("button", { name: "send" }));
 
+    // Not a loose pill under the prose: the entity is a tappable link inside the
+    // step that resolved it, reached through the Worked drop-down.
     const chip = await screen.findByRole("button", { name: "Celine" });
     expect(chip).toHaveClass("entity-chip");
+    expect(chip.closest(".fb-worked")).not.toBeNull();
     fireEvent.click(chip);
     expect(onOpenEntity).toHaveBeenCalledWith("e9");
+    // The raw id stays out of sight behind the "raw result" rung.
+    expect(screen.queryByText(/id=e9/)).toBeNull();
   });
 
-  it("holds the fallback chip until the turn settles (no mid-stream flash)", async () => {
+  it("holds the bubble until the answer text begins — tools alone show only status", async () => {
     let release!: () => void;
     const gate = new Promise<void>((r) => {
       release = r;
@@ -487,10 +501,10 @@ describe("FullBrainSurface", () => {
         type: "tool_result",
         tool_call_id: "c1",
         ok: true,
-        summary: "1",
+        summary: "- Celine [Person] (general) id=e9",
         entities: [{ kind: "entity", entity_id: "e9", label: "Celine", domain: "general" }],
       };
-      await gate; // the entity is resolved but the answer hasn't been written yet
+      await gate; // a tool ran, but the answer text hasn't been written yet
       yield { type: "text_delta", text: "Found one match." };
       yield { type: "done", stop_reason: "end_turn" };
     }
@@ -499,12 +513,16 @@ describe("FullBrainSurface", () => {
     fireEvent.change(screen.getByLabelText("Composer"), { target: { value: "who is celine?" } });
     fireEvent.click(screen.getByRole("button", { name: "send" }));
 
-    // Mid-stream: the resolved entity must NOT flash as a chip.
-    await waitFor(() => expect(screen.getByRole("button", { name: /Worked/ })).toBeInTheDocument());
+    // Mid-stream with only a tool run: no bubble, no Worked drop, no entity —
+    // the status line above the omnibox carries it instead.
+    await waitFor(() => expect(screen.getByRole("status").textContent).toContain("Looking up"));
+    expect(screen.queryByRole("button", { name: /Worked/ })).toBeNull();
     expect(screen.queryByRole("button", { name: "Celine" })).toBeNull();
 
-    // Once the turn settles, the unnamed entity gets its chip.
+    // Once the answer text lands, the bubble appears with its Worked drop, and
+    // the unnamed entity is a link inside it.
     release();
+    await waitFor(() => expect(screen.getByRole("button", { name: /Worked/ })).toBeInTheDocument());
     expect(await screen.findByRole("button", { name: "Celine" })).toHaveClass("entity-chip");
   });
 

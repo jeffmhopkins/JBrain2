@@ -20,6 +20,8 @@ const TOOL_LABELS: Record<string, { label: string; emphasis?: string }> = {
   search: { label: "Searching", emphasis: "your notes" },
   read_note: { label: "Reading", emphasis: "a note" },
   read_entity: { label: "Reading", emphasis: "an entity" },
+  find_entity: { label: "Looking up", emphasis: "an entity" },
+  relate: { label: "Following", emphasis: "a relationship" },
   recall: { label: "Recalling", emphasis: "past notes" },
   memory_read: { label: "Reading", emphasis: "memory" },
   memory_edit: { label: "Updating", emphasis: "its scratchpad" },

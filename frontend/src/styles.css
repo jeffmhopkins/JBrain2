@@ -3556,12 +3556,12 @@ button.small {
   opacity: 0.7;
 }
 
-/* entities a response resolved — a tappable chip row under the answer */
-.fb-shell .fb-entities {
+/* entities a step resolved — a tappable chip row inside the Worked step detail,
+   standing in for the raw ids (which retreat to the "raw result" rung) */
+.fb-shell .toolwork-ents {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-  margin-top: 8px;
 }
 .fb-shell .entity-chip {
   display: inline-flex;

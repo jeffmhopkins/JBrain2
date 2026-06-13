@@ -5,6 +5,7 @@
 // just get a friendly label.
 
 import type { SourceRef, ToolActivity } from "./transcript";
+import type { EntityRef } from "./types";
 
 export type { SourceRef };
 
@@ -14,6 +15,9 @@ export interface ToolStep {
   ok: boolean | undefined;
   label: string;
   sources: SourceRef[];
+  /** Entities the tool resolved — rendered as tappable links in the expanded
+   * step, so a name reaches its page without exposing the raw id. */
+  entities: EntityRef[];
   /** The call's arguments, for the expanded-step "arguments" list. */
   args: Record<string, unknown> | undefined;
   /** The verbatim result text, for the expanded step's result/raw rung. */
@@ -24,6 +28,8 @@ const STEP_LABELS: Record<string, string> = {
   search: "Searched your notes",
   read_note: "Read a note",
   read_entity: "Read an entity",
+  find_entity: "Found an entity",
+  relate: "Followed a relationship",
   recall: "Recalled past notes",
   memory_read: "Read memory",
   memory_edit: "Updated its scratchpad",
@@ -80,6 +86,7 @@ export function toolStep(t: ToolActivity): ToolStep {
     ok: t.ok,
     label: stepLabel(t.name),
     sources,
+    entities: t.entities ?? [],
     args: t.args,
     summary: t.summary,
   };
