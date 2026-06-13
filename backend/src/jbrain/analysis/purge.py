@@ -26,6 +26,7 @@ from sqlalchemy import bindparam, delete, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import aliased
 
+from jbrain.analysis.appointment_projection import project_appointments
 from jbrain.models.agent import AgentEpisode, AgentEpisodeRef
 from jbrain.models.analysis import (
     Entity,
@@ -109,6 +110,10 @@ async def purge_note_artifacts(session: AsyncSession, note_id: uuid.UUID) -> Non
     await session.execute(delete(EntityMention).where(EntityMention.note_id == note_id))
     await session.execute(delete(NoteAnalysis).where(NoteAnalysis.note_id == note_id))
     await _delete_orphaned_entities(session, candidates)
+    # An orphaned appointment entity cascaded out with its row; a SURVIVING one
+    # (still mentioned elsewhere) may have lost this note's scheduledTime, so
+    # re-derive its projection — the row is removed when no live time remains.
+    await project_appointments(session, candidates)
     await _purge_episodes(session, note_id)
 
 

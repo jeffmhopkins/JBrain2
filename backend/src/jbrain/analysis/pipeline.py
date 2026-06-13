@@ -26,6 +26,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from jbrain.analysis import purge
+from jbrain.analysis.appointment_projection import project_appointments
 from jbrain.analysis.canonical import reproject_canonical_name
 from jbrain.analysis.display import (
     ambiguous_display,
@@ -338,7 +339,7 @@ class AnalysisPipeline:
                 Fact.status.in_(("active", "pending_review")),
             )
             .values(status="retracted")
-            .returning(Fact.id, Fact.superseded_by, Fact.valid_from)
+            .returning(Fact.id, Fact.superseded_by, Fact.valid_from, Fact.entity_id)
         )
         if touched:
             sweep = sweep.where(Fact.id.not_in(touched))
@@ -359,7 +360,7 @@ class AnalysisPipeline:
                     Fact.status.in_(("active", "pending_review")),
                 )
                 .values(status="retracted")
-                .returning(Fact.id, Fact.superseded_by, Fact.valid_from)
+                .returning(Fact.id, Fact.superseded_by, Fact.valid_from, Fact.entity_id)
             )
         ).all()
         retracted = [*swept, *shadow_swept]
@@ -403,6 +404,14 @@ class AnalysisPipeline:
                 },
             )
         )
+
+        # Refresh the appointments projection for every entity this note touched —
+        # the ones it re-asserted (resolved) and the ones whose facts it retracted
+        # (a reschedule lands on the same appointment entity; a dropped mention
+        # leaves it with no active scheduledTime, so its row is removed).
+        projected = {e.id for e in resolved.values() if e is not None}
+        projected.update(r.entity_id for r in retracted)
+        await project_appointments(session, projected)
 
     async def _sweep_stale_ambiguous(
         self, session: AsyncSession, note_id: uuid.UUID, extraction: Extraction
