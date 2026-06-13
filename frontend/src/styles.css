@@ -5759,11 +5759,10 @@ input.ld-title {
 .graph-node {
   position: absolute;
   transform: translate(-50%, -50%);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 4px;
-  padding: 4px;
+  /* the disc is the only in-flow child, so the node is centred on the disc —
+     edges/arrows meet the circle, not a point shifted down by the label */
+  display: grid;
+  place-items: center;
   /* keep small (hop-2) discs tappable: ≥44px target regardless of label width */
   min-width: 44px;
   min-height: 44px;
@@ -5774,6 +5773,13 @@ input.ld-title {
   cursor: pointer;
 }
 .graph-node-label {
+  /* absolutely placed below the disc so it never moves the anchor point */
+  position: absolute;
+  top: calc(100% + 2px);
+  left: 50%;
+  transform: translateX(-50%);
+  /* size to the name (capped), not shrink-to-fit the narrow anchor box */
+  width: max-content;
   max-width: 104px;
   font-size: var(--fs-graph-label);
   font-weight: 500;
@@ -5795,9 +5801,10 @@ input.ld-title {
 .graph-node[data-label="on"] .graph-node-label {
   opacity: 1;
 }
-/* in focus mode a ring node's label sits on its outer side, off the spokes */
+/* in focus mode a ring node's label sits above the disc (on its outer side) */
 .graph-node[data-anchor="top"] .graph-node-label {
-  order: -1;
+  top: auto;
+  bottom: calc(100% + 2px);
 }
 .graph-stage[data-mode="focus"] .graph-node-label {
   max-width: 132px;
@@ -5812,6 +5819,10 @@ input.ld-title {
   box-shadow: 0 0 0 3px var(--bg), 0 0 0 5px color-mix(in srgb, var(--steel) 70%, transparent);
 }
 .graph-exempt {
+  position: absolute;
+  bottom: calc(100% + 2px);
+  left: 50%;
+  transform: translateX(-50%);
   font-size: var(--fs-micro);
   color: var(--text-3);
   background: var(--surface);

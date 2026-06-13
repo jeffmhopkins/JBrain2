@@ -548,9 +548,11 @@ export function GraphScreen({
       el.style.opacity = `${n.op}`;
       el.style.pointerEvents = n.op > 0.5 ? "auto" : "none";
     }
-    // Disc radius (viewport px) so edges meet the circle's edge, not its center.
+    // Disc radius (viewport px) so edges/arrows meet the circle's edge exactly.
+    // Matches the rendered disc (focal 64 / hop≤1 46 / hop2 34); the focal value
+    // clears its selection ring.
     const radiusOf = (id: string) =>
-      v.mode === "focus" && id === v.focal ? 34 : (hops.get(id) ?? 2) <= 1 ? 25 : 19;
+      v.mode === "focus" && id === v.focal ? 36 : (hops.get(id) ?? 2) <= 1 ? 23 : 17;
     for (const e of graph?.edges ?? []) {
       const key = edgeKey(e.source, e.target, e.predicate);
       if (edgeRender.get(key)?.skip) continue; // folded into its reciprocal partner
