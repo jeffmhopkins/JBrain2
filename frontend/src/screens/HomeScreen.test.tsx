@@ -26,6 +26,7 @@ function fbDeps(): FullBrainDeps {
     deleteSession: vi.fn(async () => {}),
     archiveSession: vi.fn(async () => {}),
     unarchiveSession: vi.fn(async () => {}),
+    rescopeSession: vi.fn(async () => {}),
   };
 }
 

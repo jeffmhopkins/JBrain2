@@ -253,7 +253,11 @@ exchange — a cheap one-shot summary through the LLM adapter (the `session.titl
 task), best-effort and owner-only metadata, never blocking the turn that produced
 it. A chat can be **archived** (a third status beside `active`/`ended`) to tidy it
 out of the live Chats list without deleting it or its transcript; archiving is
-reversible and orthogonal to read scope.
+reversible and orthogonal to read scope. Read scope is **adjustable after start**
+(owner-only endpoint; RLS still enforces the firewall per query) — the resting
+ergonomics of "a rail you nudge", not a one-shot gate. Each Chats card carries its
+turn count, a resume preview (its latest turn), and how many Proposals it has
+staged — derived list-view metadata, never new sources of truth.
 
 Non-owner principals are the **same machine with the dials pinned**: an intake link
 is a session whose read scope is fixed to its capability token (one subject × one

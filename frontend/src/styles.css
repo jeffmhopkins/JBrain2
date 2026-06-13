@@ -3830,13 +3830,37 @@ button.small {
   flex: none;
 }
 
-/* read scope as one calm chip rather than a wall of domain pills */
-.fb-shell .scope-chip {
+/* the chat-card footer: the scope control, turn count, staged badge */
+.fb-shell .c-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.fb-shell .r-turns {
+  font-size: 11px;
+  color: var(--text-3);
+}
+.fb-shell .stat.staged {
   font-size: 11px;
   padding: 3px 9px;
   border-radius: 999px;
+  background: var(--steel-tint);
+  color: var(--steel);
+  margin-left: auto;
+}
+
+/* read scope as one calm chip rather than a wall of domain pills — a tappable
+   control now (re-scope after start), so it carries a button reset. */
+.fb-shell .scope-chip {
+  font-size: 11px;
+  padding: 4px 10px;
+  border-radius: 999px;
   background: var(--surface-2);
   color: var(--text-2);
+  border: 1px solid transparent;
+  font-family: inherit;
+  line-height: 1;
 }
 .fb-shell .scope-chip.everything,
 .fb-shell .scope-chip.general {

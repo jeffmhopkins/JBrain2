@@ -32,6 +32,7 @@ function deps(over: Partial<FullBrainDeps> = {}): FullBrainDeps {
     deleteSession: vi.fn(async () => {}),
     archiveSession: vi.fn(async () => {}),
     unarchiveSession: vi.fn(async () => {}),
+    rescopeSession: vi.fn(async () => {}),
     ...over,
   };
 }

@@ -67,6 +67,11 @@ class FakeAgentSessions:
         if info is not None:
             self._by_id[session_id] = replace(info, status=status)
 
+    async def set_scopes(self, ctx, session_id, domain_scopes):  # type: ignore[no-untyped-def]
+        info = self._by_id.get(session_id)
+        if info is not None:
+            self._by_id[session_id] = replace(info, domain_scopes=tuple(domain_scopes))
+
     async def delete(self, ctx, session_id):  # type: ignore[no-untyped-def]
         self._by_id.pop(session_id, None)
 
@@ -489,6 +494,37 @@ def test_archive_and_unarchive_session(
 def test_archive_requires_owner(client: TestClient) -> None:
     assert client.post("/api/sessions/sess-1/archive").status_code == 401
     assert client.post("/api/sessions/sess-1/unarchive").status_code == 401
+
+
+def test_rescope_session(
+    client: TestClient, repo: FakeAuthRepo, sessions_store: FakeAgentSessions
+) -> None:
+    login(client, repo)
+    sessions_store.add(AgentSessionInfo("sess-1", "x", "active", ("general",), (), NOW, NOW))
+    resp = client.post(
+        "/api/sessions/sess-1/scope", json={"domain_scopes": ["general", "health"]}
+    )
+    assert resp.status_code == 204
+    assert sessions_store._by_id["sess-1"].domain_scopes == ("general", "health")
+
+
+def test_rescope_requires_owner(client: TestClient) -> None:
+    assert (
+        client.post("/api/sessions/sess-1/scope", json={"domain_scopes": ["general"]}).status_code
+        == 401
+    )
+
+
+def test_list_carries_card_metadata(
+    client: TestClient, repo: FakeAuthRepo, sessions_store: FakeAgentSessions
+) -> None:
+    login(client, repo)
+    sessions_store.add(AgentSessionInfo("sess-1", "x", "active", ("general",), (), NOW, NOW))
+    card = client.get("/api/sessions").json()[0]
+    # The card fields are always present on the wire (0/"" when the fake omits them).
+    assert card["turn_count"] == 0
+    assert card["preview"] == ""
+    assert card["staged_count"] == 0
 
 
 def test_chat_autotitles_an_untitled_session(

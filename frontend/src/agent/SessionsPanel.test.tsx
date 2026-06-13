@@ -34,6 +34,7 @@ describe("SessionsPanel", () => {
         onDelete={vi.fn()}
         onArchive={vi.fn()}
         onUnarchive={vi.fn()}
+        onRescope={vi.fn()}
       />,
     );
     expect(screen.getByText("Health wiki cleanup")).toBeInTheDocument();
@@ -54,6 +55,7 @@ describe("SessionsPanel", () => {
         onDelete={vi.fn()}
         onArchive={vi.fn()}
         onUnarchive={vi.fn()}
+        onRescope={vi.fn()}
       />,
     );
     fireEvent.click(screen.getByText("Health wiki cleanup"));
@@ -72,6 +74,7 @@ describe("SessionsPanel", () => {
         onDelete={vi.fn()}
         onArchive={vi.fn()}
         onUnarchive={vi.fn()}
+        onRescope={vi.fn()}
       />,
     );
     expect(screen.getByRole("button", { name: /Health wiki cleanup/ })).toHaveAttribute(
@@ -91,6 +94,7 @@ describe("SessionsPanel", () => {
         onDelete={vi.fn()}
         onArchive={vi.fn()}
         onUnarchive={vi.fn()}
+        onRescope={vi.fn()}
       />,
     );
     fireEvent.click(screen.getByText("＋ New chat"));
@@ -108,6 +112,7 @@ describe("SessionsPanel", () => {
         onDelete={vi.fn()}
         onArchive={vi.fn()}
         onUnarchive={vi.fn()}
+        onRescope={vi.fn()}
       />,
     );
     fireEvent.click(screen.getByText("＋ New chat"));
@@ -131,6 +136,7 @@ describe("SessionsPanel", () => {
         onDelete={vi.fn()}
         onArchive={vi.fn()}
         onUnarchive={vi.fn()}
+        onRescope={vi.fn()}
       />,
     );
 
@@ -155,6 +161,7 @@ describe("SessionsPanel", () => {
         onDelete={vi.fn()}
         onArchive={vi.fn()}
         onUnarchive={vi.fn()}
+        onRescope={vi.fn()}
       />,
     );
     fireEvent.click(screen.getByText("＋ New chat"));
@@ -184,6 +191,7 @@ describe("SessionsPanel", () => {
         onDelete={vi.fn()}
         onArchive={vi.fn()}
         onUnarchive={vi.fn()}
+        onRescope={vi.fn()}
       />,
     );
     expect(screen.getByLabelText("Search chats")).toBeInTheDocument();
@@ -201,6 +209,7 @@ describe("SessionsPanel", () => {
         onDelete={vi.fn()}
         onArchive={vi.fn()}
         onUnarchive={vi.fn()}
+        onRescope={vi.fn()}
       />,
     );
     expect(screen.queryByLabelText("Search chats")).not.toBeInTheDocument();
@@ -225,6 +234,7 @@ describe("SessionsPanel", () => {
         onDelete={onDelete}
         onArchive={vi.fn()}
         onUnarchive={vi.fn()}
+        onRescope={vi.fn()}
       />,
     );
     swipeOpen();
@@ -246,6 +256,7 @@ describe("SessionsPanel", () => {
         onDelete={vi.fn()}
         onArchive={onArchive}
         onUnarchive={vi.fn()}
+        onRescope={vi.fn()}
       />,
     );
     swipeOpen();
@@ -268,6 +279,7 @@ describe("SessionsPanel", () => {
         onDelete={vi.fn()}
         onArchive={vi.fn()}
         onUnarchive={onUnarchive}
+        onRescope={vi.fn()}
       />,
     );
     // The archived chat is tucked away; the live one shows.
@@ -287,6 +299,50 @@ describe("SessionsPanel", () => {
     expect(onUnarchive).toHaveBeenCalledWith("arch1");
   });
 
+  it("shows card metadata: preview, turn count, and a staged badge", () => {
+    render(
+      <SessionsPanel
+        sessions={[session({ preview: "surfaced two open labs", turn_count: 14, staged_count: 1 })]}
+        onOpen={vi.fn()}
+        onCreate={vi.fn()}
+        onClose={vi.fn()}
+        onRename={vi.fn()}
+        onDelete={vi.fn()}
+        onArchive={vi.fn()}
+        onUnarchive={vi.fn()}
+        onRescope={vi.fn()}
+      />,
+    );
+    expect(screen.getByText("surfaced two open labs")).toBeInTheDocument();
+    expect(screen.getByText("14 turns")).toBeInTheDocument();
+    expect(screen.getByText("1 staged")).toBeInTheDocument();
+  });
+
+  it("tapping the scope chip re-scopes the chat (and doesn't open it)", () => {
+    const onOpen = vi.fn();
+    const onRescope = vi.fn();
+    render(
+      <SessionsPanel
+        sessions={[session({ domain_scopes: ["general"] })]}
+        onOpen={onOpen}
+        onCreate={vi.fn()}
+        onClose={vi.fn()}
+        onRename={vi.fn()}
+        onDelete={vi.fn()}
+        onArchive={vi.fn()}
+        onUnarchive={vi.fn()}
+        onRescope={onRescope}
+      />,
+    );
+    // The chip opens the scope sheet, not the chat.
+    fireEvent.click(screen.getByRole("button", { name: /reads general/ }));
+    expect(onOpen).not.toHaveBeenCalled();
+    // Widen to Medical and save.
+    fireEvent.click(screen.getByRole("button", { name: "Medical" }));
+    fireEvent.click(screen.getByRole("button", { name: /Save scope/ }));
+    expect(onRescope).toHaveBeenCalledWith("s1", ["general", "health"]);
+  });
+
   it("swipe-left → rename edits the title inline and fires onRename", () => {
     const onRename = vi.fn();
     render(
@@ -299,6 +355,7 @@ describe("SessionsPanel", () => {
         onDelete={vi.fn()}
         onArchive={vi.fn()}
         onUnarchive={vi.fn()}
+        onRescope={vi.fn()}
       />,
     );
     swipeOpen();

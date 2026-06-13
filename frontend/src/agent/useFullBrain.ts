@@ -33,6 +33,7 @@ export interface FullBrainDeps {
   deleteSession: (id: string) => Promise<void>;
   archiveSession: (id: string) => Promise<void>;
   unarchiveSession: (id: string) => Promise<void>;
+  rescopeSession: (id: string, domainScopes: string[]) => Promise<void>;
 }
 
 const LIVE: FullBrainDeps = {
@@ -45,6 +46,7 @@ const LIVE: FullBrainDeps = {
   deleteSession: api.deleteSession,
   archiveSession: api.archiveSession,
   unarchiveSession: api.unarchiveSession,
+  rescopeSession: api.rescopeSession,
 };
 
 /** Map a persisted turn back into a transcript message — assistant turns rebuild
@@ -88,6 +90,7 @@ export interface FullBrain {
   remove: (id: string) => void;
   archive: (id: string) => void;
   unarchive: (id: string) => void;
+  rescope: (id: string, domainScopes: string[]) => void;
 }
 
 /** Drive the Full Brain surface. `enabled` gates the network so nothing loads
@@ -95,6 +98,7 @@ export interface FullBrain {
 export function useFullBrain(enabled: boolean, deps: FullBrainDeps = LIVE): FullBrain {
   const { listSessions, createSession, chat, listProposals, getTranscript } = deps;
   const { renameSession, deleteSession, archiveSession, unarchiveSession } = deps;
+  const { rescopeSession } = deps;
   const [sessions, setSessions] = useState<AgentSession[]>([]);
   const [active, setActive] = useState<AgentSession | null>(null);
   const [panel, setPanel] = useState<Panel>("none");
@@ -192,9 +196,10 @@ export function useFullBrain(enabled: boolean, deps: FullBrainDeps = LIVE): Full
       setBusy(false);
       // The turn may have staged a Proposal — refresh the review inbox.
       reloadProposals();
-      // An untitled chat is auto-titled from its first turn server-side; pull the
-      // generated title so the top bar and panel stop saying "New chat".
-      if (!active.title) reloadSessions();
+      // Refresh the session so the panel/top bar pick up server-side changes the
+      // turn caused: an auto-generated title (first turn) and the card metadata
+      // (turn count, preview, staged count).
+      reloadSessions();
     }
   }
 
@@ -240,6 +245,14 @@ export function useFullBrain(enabled: boolean, deps: FullBrainDeps = LIVE): Full
     setSessions((prev) => prev.map((s) => (s.id === id ? { ...s, status: "active" } : s)));
   }
 
+  async function rescope(id: string, domainScopes: string[]): Promise<void> {
+    await rescopeSession(id, domainScopes);
+    setSessions((prev) =>
+      prev.map((s) => (s.id === id ? { ...s, domain_scopes: domainScopes } : s)),
+    );
+    if (active?.id === id) setActive({ ...active, domain_scopes: domainScopes });
+  }
+
   return {
     active,
     sessions,
@@ -258,5 +271,6 @@ export function useFullBrain(enabled: boolean, deps: FullBrainDeps = LIVE): Full
     remove: (id) => void remove(id).catch(() => {}),
     archive: (id) => void archive(id).catch(() => {}),
     unarchive: (id) => void unarchive(id).catch(() => {}),
+    rescope: (id, scopes) => void rescope(id, scopes).catch(() => {}),
   };
 }

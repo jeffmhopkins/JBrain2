@@ -127,6 +127,7 @@ interface Props {
   onDelete: (id: string) => void;
   onArchive: (id: string) => void;
   onUnarchive: (id: string) => void;
+  onRescope: (id: string, domainScopes: string[]) => void;
 }
 
 export function SessionsPanel({
@@ -139,10 +140,13 @@ export function SessionsPanel({
   onDelete,
   onArchive,
   onUnarchive,
+  onRescope,
 }: Props): ReactNode {
   const [picking, setPicking] = useState(false);
   const [query, setQuery] = useState("");
   const [showArchived, setShowArchived] = useState(false);
+  // The chat whose scope is being edited (its chip was tapped), or null.
+  const [rescoping, setRescoping] = useState<AgentSession | null>(null);
   // One swipe rail open at a time (like the home stream).
   const [railId, setRailId] = useState<string | null>(null);
 
@@ -178,6 +182,7 @@ export function SessionsPanel({
       onDelete={onDelete}
       onArchive={onArchive}
       onUnarchive={onUnarchive}
+      onEditScope={setRescoping}
       railOpen={railId === s.id}
       onRailChange={(open) => setRailId(open ? s.id : null)}
     />
@@ -247,12 +252,31 @@ export function SessionsPanel({
       </div>
 
       {picking && (
-        <NewSessionSheet
+        <ScopeSheet
+          sheetTitle="New chat"
+          lead="Picks up where you left off — reads what your last chat read. Choose a preset to change it; you can always narrow."
+          seed={readLastScope()}
+          actionLabel="Start"
+          withTitle
           onClose={() => setPicking(false)}
-          onCreate={async (body) => {
-            const created = await onCreate(body);
+          onSubmit={async (scope, title) => {
+            const created = await onCreate({ domain_scopes: scope, title });
             setPicking(false);
             onOpen(created);
+          }}
+        />
+      )}
+
+      {rescoping && (
+        <ScopeSheet
+          sheetTitle="Change scope"
+          lead="Adjust what this chat can read — scope is a rail you nudge, not frozen at the start."
+          seed={rescoping.domain_scopes}
+          actionLabel="Save scope"
+          onClose={() => setRescoping(null)}
+          onSubmit={(scope) => {
+            onRescope(rescoping.id, scope);
+            setRescoping(null);
           }}
         />
       )}
@@ -270,6 +294,7 @@ function SessionRow({
   onDelete,
   onArchive,
   onUnarchive,
+  onEditScope,
   railOpen,
   onRailChange,
 }: {
@@ -280,6 +305,7 @@ function SessionRow({
   onDelete: (id: string) => void;
   onArchive: (id: string) => void;
   onUnarchive: (id: string) => void;
+  onEditScope: (s: AgentSession) => void;
   railOpen: boolean;
   onRailChange: (open: boolean) => void;
 }): ReactNode {
@@ -432,20 +458,45 @@ function SessionRow({
             }}
           />
         ) : (
-          <button
-            type="button"
-            className="session-tap"
-            onClick={onTap}
-            aria-current={active ? "true" : undefined}
-          >
-            <div className="r-head">
-              {active && <span className="live-dot" aria-hidden="true" />}
-              {session.title || "Untitled chat"}
+          <>
+            <button
+              type="button"
+              className="session-tap"
+              onClick={onTap}
+              aria-current={active ? "true" : undefined}
+            >
+              <div className="r-head">
+                {active && <span className="live-dot" aria-hidden="true" />}
+                {session.title || "Untitled chat"}
+              </div>
+              {session.preview ? <div className="r-sub">{session.preview}</div> : null}
+            </button>
+            <div className="c-foot">
+              {/* The scope chip is now a control: tap to re-scope after start. */}
+              <button
+                type="button"
+                className={`scope-chip ${scope.cls}`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (railOpen) {
+                    onRailChange(false);
+                    return;
+                  }
+                  onEditScope(session);
+                }}
+              >
+                reads {scope.label}
+              </button>
+              {session.turn_count ? (
+                <span className="r-turns">
+                  {session.turn_count} turn{session.turn_count === 1 ? "" : "s"}
+                </span>
+              ) : null}
+              {session.staged_count ? (
+                <span className="stat staged">{session.staged_count} staged</span>
+              ) : null}
             </div>
-            <div className="pills">
-              <span className={`scope-chip ${scope.cls}`}>reads {scope.label}</span>
-            </div>
-          </button>
+          </>
         )}
       </div>
     </div>
@@ -474,15 +525,29 @@ function ArchiveGlyph(): ReactNode {
   );
 }
 
-function NewSessionSheet({
+// One sheet for both flows: starting a new chat and re-scoping an existing one.
+// Read scope is the same dial in both — presets up front, the per-domain grid
+// behind Custom — differing only in the verb and whether a title field shows.
+function ScopeSheet({
+  sheetTitle,
+  lead,
+  seed,
+  actionLabel,
+  withTitle = false,
   onClose,
-  onCreate,
+  onSubmit,
 }: {
+  sheetTitle: string;
+  lead: string;
+  /** Initial scope the pills/grid open on. */
+  seed: string[];
+  /** Primary-button verb: "Start" for a new chat, "Save scope" when re-scoping. */
+  actionLabel: string;
+  /** Show the optional title field (new chat only). */
+  withTitle?: boolean;
   onClose: () => void;
-  onCreate: (body: SessionCreate) => void | Promise<void>;
+  onSubmit: (scope: string[], title: string) => void | Promise<void>;
 }): ReactNode {
-  // Seed from last-used: one tap on the primary button starts there.
-  const seed = readLastScope();
   const [preset, setPreset] = useState<string>(() => scopeToPreset(seed));
   const [custom, setCustom] = useState<Set<string>>(() => new Set(seed));
   const [title, setTitle] = useState("");
@@ -512,21 +577,18 @@ function NewSessionSheet({
     });
   }
 
-  function start(): void {
+  function submit(): void {
     if (scope.length === 0) return;
-    writeLastScope(scope);
-    void onCreate({ domain_scopes: scope, title: title.trim() });
+    writeLastScope(scope); // the chosen scope becomes the next chat's default
+    void onSubmit(scope, title.trim());
   }
 
   return (
-    <Sheet title="New chat" onClose={onClose}>
-      <p className="lead">
-        Picks up where you left off — reads what your last chat read. Choose a preset to change it;
-        you can always narrow.
-      </p>
+    <Sheet title={sheetTitle} onClose={onClose}>
+      <p className="lead">{lead}</p>
 
-      <button type="button" className="start-big" disabled={scope.length === 0} onClick={start}>
-        <span className="start-main">Start</span>
+      <button type="button" className="start-big" disabled={scope.length === 0} onClick={submit}>
+        <span className="start-main">{actionLabel}</span>
         <span className="start-hint">
           reads {scope.length === 0 ? "nothing yet" : summary.label}
         </span>
@@ -580,13 +642,15 @@ function NewSessionSheet({
         </div>
       )}
 
-      <input
-        className="session-title"
-        aria-label="Session title"
-        placeholder="Title (optional — auto-titled later)"
-        value={title}
-        onChange={(e) => setTitle(e.target.value)}
-      />
+      {withTitle && (
+        <input
+          className="session-title"
+          aria-label="Session title"
+          placeholder="Title (optional — auto-titled later)"
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+        />
+      )}
 
       <p className="writes-note">
         Reads only. Anything the agent wants to change is <b>staged as a Proposal</b> for your okay.

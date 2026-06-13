@@ -138,6 +138,7 @@ export function FullBrainSurface({ fb, onOpenNote, onOpenEntity }: Props): React
           onDelete={fb.remove}
           onArchive={fb.archive}
           onUnarchive={fb.unarchive}
+          onRescope={fb.rescope}
         />
       </aside>
 
