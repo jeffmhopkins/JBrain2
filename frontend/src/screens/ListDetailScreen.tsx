@@ -13,7 +13,6 @@ import {
 } from "react";
 import { type ListItemOut, type ListOut, api } from "../api/client";
 import { TopBar } from "../components/TopBar";
-import { TrashIcon } from "../components/icons";
 import { DOMAIN_COLOR } from "../notes/modes";
 import type { SyncStatus } from "../notes/useNotes";
 
@@ -218,14 +217,14 @@ export function ListDetailScreen({ listId, syncStatus, onClose }: ListDetailScre
                       onBlur={(e) => renameItem(it, e.target.value)}
                       onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
                     />
+                    {/* The minus is drawn in CSS (::after) — a pseudo-element
+                        renders reliably where the icon svg did not. */}
                     <button
                       type="button"
                       className="ld-del"
                       aria-label={`Delete ${it.body}`}
                       onClick={() => removeItem(it)}
-                    >
-                      <TrashIcon size={15} />
-                    </button>
+                    />
                   </li>
                 ) : (
                   <li key={it.id} className="ld-row" data-id={it.id}>

@@ -4297,11 +4297,16 @@ input.ld-title {
   justify-content: center;
   cursor: pointer;
 }
-/* Force the glyph color explicitly: the svg's stroke="currentColor" attribute
-   loses to any inherited `color`, so pin the stroke here rather than rely on it. */
-.ld-del svg {
-  stroke: var(--bg);
-  fill: none;
+/* The minus, drawn in CSS — a pseudo-element renders reliably where the icon svg
+   did not. Fixed dark ink (the rose accent is theme-independent), like the
+   checkbox tick on its green fill. */
+.ld-del::after {
+  content: "";
+  display: block;
+  width: 12px;
+  height: 2.4px;
+  border-radius: 2px;
+  background: #0e0f11;
 }
 .ld-add {
   display: flex;
