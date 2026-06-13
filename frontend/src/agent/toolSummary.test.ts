@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { toolStep } from "./toolSummary";
 import type { ToolActivity } from "./transcript";
+import type { EntityRef } from "./types";
 
 function tool(over: Partial<ToolActivity> & { name: string }): ToolActivity {
   return { id: "c1", ok: true, ...over };
@@ -57,6 +58,18 @@ describe("toolStep", () => {
 
   it("falls back to the raw name for an unmapped tool", () => {
     expect(toolStep(tool({ name: "frobnicate" })).label).toBe("frobnicate");
+  });
+
+  it("labels the entity-graph tools and carries their resolved entities through", () => {
+    expect(toolStep(tool({ name: "relate" })).label).toBe("Followed a relationship");
+    expect(toolStep(tool({ name: "find_entity" })).label).toBe("Found an entity");
+    const ents: EntityRef[] = [
+      { kind: "entity", entity_id: "e9", label: "Celine", domain: "general" },
+    ];
+    const step = toolStep(tool({ name: "relate", entities: ents }));
+    expect(step.entities).toEqual(ents);
+    // A tool that resolved nothing gets an empty list, never undefined.
+    expect(toolStep(tool({ name: "search" })).entities).toEqual([]);
   });
 
   it("carries the call's arguments and verbatim summary through for the detail rungs", () => {
