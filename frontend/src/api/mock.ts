@@ -7,9 +7,11 @@ import type {
   AttachmentExtract,
   AttachmentOut,
   ContainerStatus,
+  EgoGraph,
   EntityListItem,
   EntityOut,
   FactOut,
+  GraphEdge,
   LlmUsage,
   NoteAnalysis,
   NoteOut,
@@ -1069,6 +1071,56 @@ function mockEntityList(params: URLSearchParams): EntityListItem[] {
     .slice(0, 200);
 }
 
+// Mirrors GET /api/entities/{id}/neighbors: a BFS over the entity-page
+// fixtures' relationship edges (outbound predicate facts + inbound edges) so
+// the graph view and the pages it opens agree in dev:mock.
+function mockNeighbors(rootId: string, depth: number): EgoGraph | null {
+  if (!ENTITIES[rootId]) return null;
+  const hops = Math.max(1, Math.min(depth, 2));
+  const nodeIds = new Set<string>([rootId]);
+  let frontier = new Set<string>([rootId]);
+  const edges = new Map<string, GraphEdge>();
+  for (let h = 0; h < hops && frontier.size > 0; h++) {
+    const next = new Set<string>();
+    const add = (source: string, target: string, predicate: string) => {
+      edges.set(`${source}|${target}|${predicate}`, { source, target, predicate });
+      for (const nid of [source, target]) {
+        if (!nodeIds.has(nid)) {
+          nodeIds.add(nid);
+          next.add(nid);
+        }
+      }
+    };
+    for (const id of frontier) {
+      const e = ENTITIES[id];
+      if (!e) continue;
+      for (const p of e.predicates) {
+        const obj = p.current?.object_entity_id;
+        if (obj && ENTITIES[obj]) add(id, obj, p.current?.predicate ?? p.predicate);
+      }
+      for (const ib of e.inbound) {
+        if (ENTITIES[ib.entity_id]) add(ib.entity_id, id, ib.predicate);
+      }
+    }
+    frontier = next;
+  }
+  const nodes = [...nodeIds].flatMap((id) => {
+    const e = ENTITIES[id];
+    return e
+      ? [
+          {
+            id: e.id,
+            kind: e.kind,
+            canonical_name: e.canonical_name,
+            status: e.status,
+            domain: e.domain,
+          },
+        ]
+      : [];
+  });
+  return { root: rootId, depth: hops, nodes, edges: [...edges.values()] };
+}
+
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
@@ -1361,6 +1413,15 @@ export const mockFetch: typeof fetch = async (input, init) => {
 
   if (path === "/api/entities" && method === "GET") {
     return json({ items: mockEntityList(url.searchParams) });
+  }
+
+  const neighborsMatch = path.match(/^\/api\/entities\/([^/]+)\/neighbors$/);
+  if (neighborsMatch && method === "GET") {
+    const graph = mockNeighbors(
+      decodeURIComponent(neighborsMatch[1] ?? ""),
+      Number(url.searchParams.get("depth") ?? "2"),
+    );
+    return graph ? json(graph) : json({ detail: "entity not found" }, 404);
   }
 
   const entityMatch = path.match(/^\/api\/entities\/([^/]+)$/);

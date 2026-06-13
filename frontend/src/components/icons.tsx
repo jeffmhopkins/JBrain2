@@ -118,6 +118,17 @@ export const ListIcon = (p: IconProps) => (
   </Icon>
 );
 
+export const GraphIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <circle cx="5" cy="6" r="2.4" />
+    <circle cx="18" cy="5" r="2.4" />
+    <circle cx="12" cy="13" r="2.6" />
+    <circle cx="6" cy="19" r="2.4" />
+    <circle cx="18" cy="18" r="2.4" />
+    <path d="M6.8 7.4 10 11.2M16.2 6.4 13.4 11M11.2 15 7 17.3M13.6 14.5l3 2.2" />
+  </Icon>
+);
+
 export const UsersIcon = (p: IconProps) => (
   <Icon {...p}>
     <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
