@@ -25,6 +25,14 @@ nightly: entity hygiene, merge proposals, summary re-embedding,
 Capture-to-searchable never waits on a cloud LLM: embeddings/FTS index
 immediately; facts and entities are async enrichment.
 
+Chunking stores two overlapping granularities per source — **paragraph** (the
+precise citation unit) and **section** (larger retrieval windows that contain
+those paragraphs). Extraction reads **paragraph chunks only** **[decided]**:
+sections exist for search/retrieval, and feeding both concatenated the body to
+the model ~2x on any multi-paragraph note (wasted tokens, a salience drag on
+the fact budget). Paragraph chunks tile every source with no overlap and keep
+span anchoring on the citation unit.
+
 ## Facts
 
 A fact is a **semi-structured statement with a structural identity**, not a

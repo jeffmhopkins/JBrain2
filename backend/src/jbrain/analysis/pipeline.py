@@ -83,6 +83,7 @@ from jbrain.analysis.supersession import (
 )
 from jbrain.db.session import scoped_session
 from jbrain.embed import EmbedClient
+from jbrain.ingest.chunker import PARAGRAPH
 from jbrain.llm import LlmBadResponseError, LlmError, LlmRouter
 from jbrain.models.analysis import (
     EntityMention,
@@ -192,11 +193,21 @@ class AnalysisPipeline:
                 return
             body, domain, captured_at = note.body, note.domain_code, note.created_at
             tz_offset = note.tz_offset_minutes
+            # Extraction reads PARAGRAPH chunks only. The chunker stores two
+            # overlapping granularities per source — paragraph (the precise
+            # citation unit) and section (larger retrieval windows that CONTAIN
+            # those paragraphs) — so concatenating both fed the body to the model
+            # ~2x on any multi-paragraph note: wasted tokens and a salience drag
+            # on the "extract less" budget. Sections exist for search/retrieval;
+            # paragraphs tile every source with no overlap and keep span
+            # anchoring (_locate) on the citation unit. Paragraph chunks always
+            # exist when there is text (chunker.chunk_text), so this never empties
+            # a note that has content.
             chunk_rows = (
                 await session.execute(
                     select(Chunk.id, Chunk.text, Chunk.source_kind, Attachment.filename)
                     .join(Attachment, Chunk.attachment_id == Attachment.id, isouter=True)
-                    .where(Chunk.note_id == note_id)
+                    .where(Chunk.note_id == note_id, Chunk.granularity == PARAGRAPH)
                     .order_by(Chunk.seq)
                 )
             ).all()

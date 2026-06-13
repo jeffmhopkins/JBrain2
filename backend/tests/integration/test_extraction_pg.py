@@ -347,6 +347,58 @@ async def test_analyze_note_lands_everything(
     assert usage and usage[0].provider == "xai" and usage[0].model == "grok-4.3"
 
 
+async def test_extraction_reads_paragraph_chunks_not_overlapping_sections(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """The chunker stores two overlapping granularities per source — paragraph
+    (the citation unit) and section (retrieval windows that CONTAIN the
+    paragraphs). Extraction must read paragraphs only, or a multi-paragraph note
+    feeds the body to the model ~2x. Distinct sentinels prove which rows the
+    extractor was handed; the section row exists, so it was FILTERED, not
+    missing."""
+    note_id = await make_note(maker, domain="general", body="PARAGRAPHSENTINEL content here")
+    async with scoped_session(maker, OWNER) as s:
+        for gran, seq, sentinel in (
+            ("paragraph", 0, "PARAGRAPHSENTINEL"),
+            ("section", 1, "SECTIONSENTINEL"),
+        ):
+            await s.execute(
+                text(
+                    "INSERT INTO app.chunks (id, note_id, domain_code, granularity, seq,"
+                    " char_start, char_end, source_kind, text)"
+                    " VALUES (:id, :n, 'general', :g, :seq, 0, 29, 'note', :t)"
+                ),
+                {
+                    "id": str(uuid.uuid4()),
+                    "n": note_id,
+                    "g": gran,
+                    "seq": seq,
+                    "t": f"{sentinel} content here",
+                },
+            )
+
+    fake = FakeLlmClient([json.dumps(extraction_payload())])
+    router = LlmRouter(
+        {"xai": fake},
+        {"note.extract": ("xai", "grok-4.3")},
+        recorder=SqlUsageRecorder(maker),
+    )
+    await AnalysisPipeline(maker, router).analyze_note({"note_id": note_id})
+
+    assert len(fake.calls) == 1
+    prompt = fake.calls[0]["user_text"]
+    assert "PARAGRAPHSENTINEL" in prompt  # the paragraph chunk was fed
+    assert "SECTIONSENTINEL" not in prompt  # the overlapping section was not
+    # The section row still exists — extraction filtered it, it wasn't absent.
+    section_rows = await rows(
+        maker,
+        OWNER,
+        "SELECT 1 FROM app.chunks WHERE note_id = :n AND granularity = 'section'",
+        n=note_id,
+    )
+    assert len(section_rows) == 1
+
+
 async def test_ratcheted_fact_cites_a_derived_chunk_in_its_own_domain(
     maker: async_sessionmaker[AsyncSession], tmp_path: Any
 ) -> None:
