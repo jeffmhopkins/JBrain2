@@ -208,10 +208,10 @@ export function EntityScreen({
                     <div key={`${edge.entity_id}-${edge.predicate}`} className="inbound-row">
                       <button
                         type="button"
-                        className="entity-chip"
+                        className="edge-object inbound-source"
                         onClick={() => onOpenEntity(edge.entity_id)}
                       >
-                        <span className="entity-chip-name">{edge.name}</span>
+                        {edge.name}
                       </button>
                       <span className="inbound-edge">
                         <span className="edge-path">—{edge.predicate}→</span> {edge.statement}
