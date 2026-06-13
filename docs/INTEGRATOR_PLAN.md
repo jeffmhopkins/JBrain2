@@ -370,6 +370,13 @@ Docker):**
   tested via testcontainers in CI; third-party-reviewed pre-push as the
   non-local safety net.
 
+**Known bridge limitation (A1b-ii / A2+ inherits):** `IntentFact.attested_span`
+(a fact's OWN chunk+surface) has no `ExtractedFact` home, so under Option 1 a
+fact's citation falls back to its mention's span (or `chunks[0]`) via
+`_rebuild_mentions`/`anchor_for`. Acceptable for the happy-path first cut;
+restoring fact-level provenance (the agent already supplies it) is a follow-up —
+likely via the resolution-override carrying spans, or the native Option-2 path.
+
 **Invariant carry-forward:** A1b is the happy-path flow only. N4 (immutable
 `note_id` + `adopt_shadow`), N5 (complete-turn-only sweep), N8
 (`closed_by_fact_id`), N9 (ordering + domain-filtered existence reads) land in

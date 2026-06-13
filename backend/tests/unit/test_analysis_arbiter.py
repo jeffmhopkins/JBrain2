@@ -253,3 +253,55 @@ def test_plan_to_extraction_rejects_a_rejected_plan():
     assert plan.rejected
     with pytest.raises(ValueError):
         plan_to_extraction(_intent(), plan)
+
+
+def test_plan_to_extraction_round_trips_all_fact_fields():
+    # Guard against a silent _to_extracted field-drop: value_json, object ref,
+    # qualifier, assertion must survive the bridge.
+    intent = _intent(
+        entity_resolutions=[_res("m1"), _res("m2")],
+        facts=[
+            _fact(
+                entity_ref="m1",
+                predicate="weight",
+                qualifier="morning",
+                kind="measurement",
+                assertion="reported",
+                value_json={"value": 182, "unit": "lb"},
+                object_entity_ref="m2",
+            )
+        ],
+    )
+    plan = plan_intent(intent, signals={0: _surface_sig()})
+    ef = plan_to_extraction(intent, plan).facts[0]
+    assert ef.qualifier == "morning"
+    assert ef.kind == "measurement"
+    assert ef.assertion == "reported"
+    assert ef.value_json == {"value": 182, "unit": "lb"}
+    assert ef.object_entity_ref == "m2"
+
+
+def test_plan_to_extraction_review_fact_carries_capped_weight():
+    # A below-threshold fact's confidence is its capped plan weight, not the
+    # model's (higher) self_confidence.
+    intent = _intent(
+        entity_resolutions=[_res()],
+        facts=[_fact(kind="attribute", inferred=True, attested_span=None, self_confidence=0.99)],
+    )
+    plan = plan_intent(intent, signals={0: _inferred_overwrite_sig()})
+    ef = plan_to_extraction(intent, plan).facts[0]
+    assert ef.confidence == plan.to_review[0].weight
+    assert ef.confidence < 0.99
+
+
+def test_plan_to_extraction_surface_fallback_to_mention_ref():
+    res = EntityResolution(mention_ref="m1", mode="existing", proposed_entity_id="e1")  # no span
+    intent = _intent(entity_resolutions=[res], facts=[_fact(attested_span=None, inferred=True)])
+    plan = plan_intent(intent, signals={0: _surface_sig()})
+    assert plan_to_extraction(intent, plan).mentions[0].surface_text == "m1"
+
+
+def test_plan_to_extraction_existing_resolution_kind_is_thing():
+    intent = _intent(entity_resolutions=[_res("m1")], facts=[_fact()])
+    plan = plan_intent(intent, signals={0: _surface_sig()})
+    assert plan_to_extraction(intent, plan).mentions[0].kind == "Thing"

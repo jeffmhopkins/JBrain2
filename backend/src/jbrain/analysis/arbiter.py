@@ -185,6 +185,9 @@ def plan_to_extraction(
     name→entity override so `_resolve_entities` honors them."""
     if plan.rejected:
         raise ValueError("cannot build an extraction from a rejected plan")
+    # kind="Thing" for an existing resolution is harmless under Option 1: the
+    # resolution-override (A1b-ii) supplies the entity directly, so kind_hint only
+    # matters on the resolver fallback path, which an in-override ref never hits.
     mentions = [
         ExtractedMention(
             name=r.mention_ref,
