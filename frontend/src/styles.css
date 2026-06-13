@@ -5068,6 +5068,31 @@ input.ld-title {
 .fchip-swatch {
   display: inline-flex;
 }
+/* additive-mode cue: an empty box on each type chip once a selection exists,
+   filled with a check when that type is on — signals "taps add, not replace". */
+.fchip-ck {
+  position: relative;
+  width: 14px;
+  height: 14px;
+  flex: none;
+  border: 1.5px solid var(--border);
+  border-radius: 4px;
+}
+.fchip-on .fchip-ck {
+  background: var(--accent);
+  border-color: transparent;
+}
+.fchip-on .fchip-ck::after {
+  content: "";
+  position: absolute;
+  left: 4px;
+  top: 1px;
+  width: 3px;
+  height: 7px;
+  border: solid var(--bg);
+  border-width: 0 1.5px 1.5px 0;
+  transform: rotate(45deg);
+}
 .fchip-count {
   color: var(--text-3);
   font-variant-numeric: tabular-nums;
@@ -5113,6 +5138,9 @@ input.ld-title {
   align-items: center;
   gap: 4px;
   padding: 4px;
+  /* keep small (hop-2) discs tappable: ≥44px target regardless of label width */
+  min-width: 44px;
+  min-height: 44px;
   border: 0;
   background: none;
   color: inherit;
@@ -5138,7 +5166,7 @@ input.ld-title {
   box-shadow: 0 0 0 3px var(--bg), 0 0 0 5px color-mix(in srgb, var(--steel) 70%, transparent);
 }
 .graph-exempt {
-  font-size: 9px;
+  font-size: var(--fs-micro);
   color: var(--text-3);
   background: var(--surface);
   border: 1px solid var(--border);
@@ -5371,4 +5399,51 @@ input.ld-title {
   font-size: var(--fs-secondary);
   color: var(--text);
   text-align: right;
+}
+.peek-rels {
+  margin-top: 14px;
+}
+.peek-rels-head {
+  margin: 0 0 4px;
+  font-size: var(--fs-micro);
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--text-3);
+}
+.peek-rels-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.peek-rel {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 44px;
+  padding: 10px 0;
+  border: 0;
+  border-top: 1px solid var(--border);
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.peek-rel-pred {
+  font-size: var(--fs-secondary);
+  color: var(--text-2);
+}
+.peek-rel-name {
+  font-size: var(--fs-secondary);
+  color: var(--steel);
+  text-align: right;
+}
+
+/* User-driven pan/zoom stay direct; only decorative transitions are dropped. */
+@media (prefers-reduced-motion: reduce) {
+  .graph-node-label,
+  .fchip {
+    transition: none;
+  }
 }
