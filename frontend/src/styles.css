@@ -1353,18 +1353,144 @@ h3 {
   color: var(--text-3);
   font-size: 12px;
 }
-/* The source-note row is a tappable button when an appointment has a source. */
-.cal-opennote {
+/* Redesigned event detail sheet: header, countdown hero, icon meta rows,
+   source-note preview, action rows. */
+.cal-esheet-hd {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+.cal-esheet-hd h2 {
+  margin: 6px 0 0;
+}
+.cal-hero {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+  font-size: 13.5px;
+  color: var(--text-2);
+  text-transform: capitalize;
+}
+.cal-hero b {
+  color: var(--text);
+  font-weight: 600;
+}
+.cal-hero-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--c);
+  flex: none;
+}
+.cal-meta-rows {
+  margin-top: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.cal-meta {
+  display: flex;
+  align-items: flex-start;
+  gap: 11px;
+  margin: 0;
+  color: var(--text);
+}
+.cal-meta svg {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  margin-top: 1px;
+  fill: none;
+  stroke: var(--text-3);
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.cal-sub {
+  color: var(--text-3);
+}
+.cal-seclabel {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-3);
+  margin: 18px 0 8px;
+}
+.cal-srccard {
   display: block;
   width: 100%;
   text-align: left;
-  background: none;
-  border: none;
-  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  padding: 12px;
   cursor: pointer;
+}
+.cal-srccard:active {
+  background: var(--surface-2);
+}
+.cal-srcsnip {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-2);
+}
+.cal-actions {
+  display: flex;
+  gap: 9px;
+  margin-top: 18px;
+}
+.cal-actions-2 {
+  margin-top: 9px;
+}
+.cal-act {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  font: inherit;
+  font-size: 13.5px;
+  font-weight: 600;
   color: var(--steel);
-  text-decoration: underline;
-  text-underline-offset: 2px;
+  background: color-mix(in srgb, var(--steel) 14%, transparent);
+  border: 1px solid transparent;
+  border-radius: 12px;
+  padding: 12px 8px;
+  cursor: pointer;
+  text-decoration: none;
+}
+.cal-act.ghost {
+  color: var(--text-2);
+  background: var(--surface-2);
+  border-color: var(--border);
+}
+.cal-act.danger {
+  color: var(--rose);
+  background: none;
+  border-color: color-mix(in srgb, var(--rose) 25%, transparent);
+}
+.cal-act.cal-act-icon {
+  flex: none;
+  width: 48px;
+}
+.cal-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+.cal-act svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .theme-picker {

@@ -38,6 +38,7 @@ interface Ev {
   status: string;
   location: string | null;
   recurring: boolean;
+  rrule: string | null;
   attendees: string[];
   sourceNoteId: string | null;
 }
@@ -53,6 +54,7 @@ function toEv(a: AppointmentOut): Ev {
     status: a.status,
     location: a.location,
     recurring: a.recurring,
+    rrule: a.rrule,
     attendees: a.attendees,
     sourceNoteId: a.source_note_id,
   };
@@ -84,6 +86,68 @@ const monFull = (i: number) => MON[i] ?? "";
 const mon3 = (i: number) => monFull(i).slice(0, 3);
 const dow = (i: number) => DOW[i] ?? "";
 const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+
+/** "in 3 days" / "tomorrow" / "in 2 hr" / "now" / "yesterday" / "3 days ago". */
+function relTime(start: Date, now: Date): string {
+  const ms = +start - +now;
+  const past = ms < 0;
+  const abs = Math.abs(ms);
+  const min = Math.round(abs / 60000);
+  const hr = Math.round(abs / 3600000);
+  const day = Math.round(abs / 86400000);
+  let q: string;
+  if (min < 1) return "now";
+  if (min < 60) q = `${min} min`;
+  else if (hr < 24) q = `${hr} hr`;
+  else if (day === 1) return past ? "yesterday" : "tomorrow";
+  else if (day < 14) q = `${day} days`;
+  else q = `${Math.round(day / 7)} wk`;
+  return past ? `${q} ago` : `in ${q}`;
+}
+
+/** "1 hr" / "45 min" / "1 hr 30 min" — null when there's no end. */
+function durationText(start: Date, end: Date | null): string | null {
+  if (!end) return null;
+  const min = Math.round((+end - +start) / 60000);
+  if (min <= 0) return null;
+  const h = Math.floor(min / 60);
+  const m = min % 60;
+  if (h === 0) return `${m} min`;
+  return m === 0 ? `${h} hr` : `${h} hr ${m} min`;
+}
+
+const RRULE_DAYS: Record<string, string> = {
+  MO: "Mon",
+  TU: "Tue",
+  WE: "Wed",
+  TH: "Thu",
+  FR: "Fri",
+  SA: "Sat",
+  SU: "Sun",
+};
+/** Humanize an iCal RRULE to "repeats weekly" / "repeats every Tue". */
+function humanRrule(rrule: string | null): string {
+  if (!rrule) return "repeats";
+  const parts: Record<string, string> = {};
+  for (const p of rrule.split(";")) {
+    const [k, v] = p.split("=");
+    if (k && v) parts[k.toUpperCase()] = v;
+  }
+  const freq = (parts.FREQ ?? "").toLowerCase();
+  if (freq === "weekly" && parts.BYDAY) {
+    const days = parts.BYDAY.split(",")
+      .map((d) => RRULE_DAYS[d] ?? "")
+      .filter(Boolean);
+    if (days.length) return `repeats every ${days.join(", ")}`;
+  }
+  const label: Record<string, string> = {
+    daily: "repeats daily",
+    weekly: "repeats weekly",
+    monthly: "repeats monthly",
+    yearly: "repeats yearly",
+  };
+  return label[freq] ?? "repeats";
+}
 const Repeat = () => (
   <svg className="cal-rep" viewBox="0 0 24 24" aria-hidden="true">
     <path d="M4 9a7 7 0 0 1 12-3l3 3M20 15a7 7 0 0 1-12 3l-3-3" />
@@ -95,7 +159,10 @@ function flag(e: Ev): ReactNode {
   return null;
 }
 
-export function CalendarScreen({ onOpenNote }: { onOpenNote: (noteId: string) => void }) {
+export function CalendarScreen({
+  onOpenNote,
+  onCompose,
+}: { onOpenNote: (noteId: string) => void; onCompose: (prompt: string) => void }) {
   const [events, setEvents] = useState<Ev[] | null>(null);
   const [view, setView] = useState<View>("month");
   const [cur, setCur] = useState<Date>(() => {
@@ -211,7 +278,14 @@ export function CalendarScreen({ onOpenNote }: { onOpenNote: (noteId: string) =>
         )}
       </div>
 
-      {open && <EventSheet ev={open} onClose={() => setOpen(null)} onOpenNote={onOpenNote} />}
+      {open && (
+        <EventSheet
+          ev={open}
+          onClose={() => setOpen(null)}
+          onOpenNote={onOpenNote}
+          onCompose={onCompose}
+        />
+      )}
     </main>
   );
 }
@@ -487,50 +561,155 @@ function TaskRow({ ev, onOpen }: { ev: Ev; onOpen: (e: Ev) => void }): ReactNode
   );
 }
 
+// Leading icons for the meta rows (data-only; the theme owns stroke color).
+const META_ICONS: Record<string, string> = {
+  clock: "M12 7v5l3 2 M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0",
+  repeat: "M4 9a7 7 0 0 1 12-3l3 3M20 15a7 7 0 0 1-12 3l-3-3",
+  pin: "M12 21s-7-5.2-7-10a7 7 0 1 1 14 0c0 4.8-7 10-7 10z M12 11a2.2 2.2 0 1 0 0-4.4 2.2 2.2 0 0 0 0 4.4",
+  person: "M12 8a3.4 3.4 0 1 0 0-6.8A3.4 3.4 0 0 0 12 8 M5.5 20a6.5 6.5 0 0 1 13 0",
+};
+function MetaRow({ icon, children }: { icon: string; children: ReactNode }): ReactNode {
+  return (
+    <div className="cal-row cal-meta">
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d={META_ICONS[icon] ?? ""} />
+      </svg>
+      <span>{children}</span>
+    </div>
+  );
+}
+
 function EventSheet({
   ev,
   onClose,
   onOpenNote,
-}: { ev: Ev; onClose: () => void; onOpenNote: (noteId: string) => void }): ReactNode {
-  const when = ev.allDay
-    ? `All day · ${dow(ev.start.getDay())} ${mon3(ev.start.getMonth())} ${ev.start.getDate()}`
-    : `${dow(ev.start.getDay())} ${mon3(ev.start.getMonth())} ${ev.start.getDate()} · ${fmtT(ev.start)}${ev.end ? `–${fmtT(ev.end)}` : ""}`;
-  // Backdrop and sheet are SIBLINGS (not a button wrapping the content), so the
-  // dimmer is the only click target — no nested interactive / stopPropagation.
+  onCompose,
+}: {
+  ev: Ev;
+  onClose: () => void;
+  onOpenNote: (noteId: string) => void;
+  onCompose: (prompt: string) => void;
+}): ReactNode {
+  const [snippet, setSnippet] = useState<string | null>(null);
+  const [cancelArmed, setCancelArmed] = useState(false);
+
+  // Pull the source note's body for an inline preview (read-only; the link
+  // still opens the full note). One fetch per sheet open, stale-guarded.
+  const sourceNoteId = ev.sourceNoteId;
+  useEffect(() => {
+    if (!sourceNoteId) return;
+    let stale = false;
+    api
+      .getNote(sourceNoteId)
+      .then((n) => {
+        if (!stale) setSnippet(n.body.replace(/\s+/g, " ").trim().slice(0, 160));
+      })
+      .catch(() => {});
+    return () => {
+      stale = true;
+    };
+  }, [sourceNoteId]);
+
+  const cancelled = ev.status === "cancelled";
+  const dateText = `${dow(ev.start.getDay())} ${mon3(ev.start.getMonth())} ${ev.start.getDate()}`;
+  const whenText = ev.allDay ? dateText : `${dateText} · ${fmtT(ev.start)}`;
+  const dur = durationText(ev.start, ev.end);
+
+  function openNote() {
+    onClose();
+    if (sourceNoteId) onOpenNote(sourceNoteId);
+  }
+  function reschedule() {
+    onCompose(`Reschedule my "${ev.title}" appointment (currently ${whenText}) to `);
+  }
+  function cancel() {
+    if (!cancelArmed) {
+      setCancelArmed(true);
+      setTimeout(() => setCancelArmed(false), 2600);
+      return;
+    }
+    onCompose(`Cancel my "${ev.title}" appointment on ${dateText}.`);
+  }
+  function ask() {
+    onCompose(`About my "${ev.title}" appointment: `);
+  }
+
   return (
     <div className="cal-sheet">
       <button type="button" className="cal-backdrop" aria-label="Close" onClick={onClose} />
       <div className={`cal-esheet ${domClass(ev)}`}>
         <span className="cal-grab" aria-hidden="true" />
-        <h2 className={ev.status === "cancelled" ? "cancelled" : ""}>
-          {ev.recurring && <Repeat />}
-          {ev.title}
+        <div className="cal-esheet-hd">
+          <h2 className={cancelled ? "cancelled" : ""}>
+            {ev.recurring && <Repeat />}
+            {ev.title}
+          </h2>
           {flag(ev)}
-        </h2>
-        <span className="cal-domtag">{ev.domain}</span>
-        <div className="cal-row">{when}</div>
-        {ev.recurring && <div className="cal-row">Repeats</div>}
-        {ev.location && <div className="cal-row">{ev.location}</div>}
-        {ev.attendees.length > 0 && <div className="cal-row">with {ev.attendees.join(", ")}</div>}
-        {ev.sourceNoteId ? (
-          // Projected from a note — let the owner jump to it. Closing the sheet
-          // first leaves the note layer unobstructed (cf. App.openNoteFromEntity).
-          <button
-            type="button"
-            className="cal-row cal-note cal-opennote"
-            onClick={() => {
-              const noteId = ev.sourceNoteId;
-              onClose();
-              if (noteId) onOpenNote(noteId);
-            }}
-          >
-            Projected from your notes — open the source note.
-          </button>
+        </div>
+        <div className="cal-hero">
+          <span className="cal-hero-dot" aria-hidden="true" />
+          <span>
+            {cancelled ? "cancelled" : <b>{relTime(ev.start, new Date())}</b>} · {ev.domain}
+          </span>
+        </div>
+
+        <div className="cal-meta-rows">
+          <MetaRow icon="clock">
+            {ev.allDay ? `All day · ${dateText}` : whenText}
+            {ev.end && !ev.allDay ? `–${fmtT(ev.end)}` : ""}
+            {dur && <span className="cal-sub"> · {dur}</span>}
+          </MetaRow>
+          {ev.recurring && <MetaRow icon="repeat">{humanRrule(ev.rrule)}</MetaRow>}
+          {ev.location && <MetaRow icon="pin">{ev.location}</MetaRow>}
+          {ev.attendees.length > 0 && (
+            <MetaRow icon="person">with {ev.attendees.join(", ")}</MetaRow>
+          )}
+        </div>
+
+        {sourceNoteId ? (
+          <>
+            <div className="cal-seclabel">From your notes</div>
+            <button type="button" className="cal-srccard" onClick={openNote}>
+              <span className="cal-srcsnip">{snippet ? `“${snippet}…”` : "open the note"}</span>
+            </button>
+          </>
         ) : (
           <div className="cal-row cal-note">
             Projected from your notes — ask the agent to change it.
           </div>
         )}
+
+        <div className="cal-actions">
+          {!cancelled && (
+            <button type="button" className="cal-act" onClick={reschedule}>
+              reschedule
+            </button>
+          )}
+          {sourceNoteId && (
+            <button type="button" className="cal-act ghost" onClick={openNote}>
+              open note
+            </button>
+          )}
+          <a
+            className="cal-act ghost cal-act-icon"
+            href={`/api/appointments/${encodeURIComponent(ev.id)}.ics`}
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M8 2v4M16 2v4M3 9h18M5 5h14a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z" />
+            </svg>
+            <span className="cal-sr">Add to my calendar</span>
+          </a>
+        </div>
+        <div className="cal-actions cal-actions-2">
+          {!cancelled && (
+            <button type="button" className="cal-act danger" onClick={cancel}>
+              {cancelArmed ? "tap again to cancel" : "cancel"}
+            </button>
+          )}
+          <button type="button" className="cal-act ghost" onClick={ask}>
+            ask the agent
+          </button>
+        </div>
       </div>
     </div>
   );

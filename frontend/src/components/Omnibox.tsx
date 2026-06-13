@@ -7,6 +7,7 @@ import {
   type CSSProperties,
   type ReactNode,
   type TouchEvent,
+  useEffect,
   useLayoutEffect,
   useRef,
   useState,
@@ -45,6 +46,9 @@ interface OmniboxProps {
   /** A turn is streaming — block another send and dim the button. */
   busy?: boolean;
   onOpenLauncher: () => void;
+  /** Text to seed the composer with (e.g. a calendar "reschedule" handoff). */
+  draft?: string;
+  onConsumeDraft?: () => void;
 }
 
 export function Omnibox({
@@ -54,6 +58,8 @@ export function Omnibox({
   onConversation,
   busy = false,
   onOpenLauncher,
+  draft,
+  onConsumeDraft,
 }: OmniboxProps) {
   const [text, setText] = useState("");
   const [files, setFiles] = useState<File[]>([]);
@@ -63,6 +69,16 @@ export function Omnibox({
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const touchStartY = useRef<number | null>(null);
   const touchStartX = useRef<number | null>(null);
+
+  // A handoff (e.g. the calendar's "reschedule") seeds the composer once, then
+  // clears so a re-render can't re-seed; the owner reviews and sends themselves.
+  useEffect(() => {
+    if (draft) {
+      setText(draft);
+      onConsumeDraft?.();
+      inputRef.current?.focus();
+    }
+  }, [draft, onConsumeDraft]);
 
   // Grow the box with the text: collapse to the CSS min (two lines), then take
   // the content height. `text` and `seg.mode` are deliberate triggers — the

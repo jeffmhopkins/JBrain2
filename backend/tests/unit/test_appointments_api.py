@@ -42,6 +42,9 @@ class FakeAppointments:
         self.calls.append({"since": since, "until": until, "include_cancelled": include_cancelled})
         return [APPT]
 
+    async def get_appointment(self, ctx, appt_id):  # noqa: ANN001
+        return APPT if appt_id == APPT.id else None
+
 
 @pytest.fixture
 def repo() -> FakeAuthRepo:
@@ -108,6 +111,22 @@ def test_window_params_are_passed_through(
     assert call["since"] == datetime(2026, 7, 1, tzinfo=UTC)
     assert call["until"] == datetime(2026, 8, 1, tzinfo=UTC)
     assert call["include_cancelled"] is False
+
+
+def test_single_event_ics_download(client: TestClient, repo: FakeAuthRepo) -> None:
+    login(client, repo)
+    resp = client.get("/api/appointments/A1.ics")
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("text/calendar")
+    assert "attachment" in resp.headers["content-disposition"]
+    body = resp.text.replace("\r\n ", "")
+    assert "BEGIN:VEVENT" in body and "SUMMARY:Dentist" in body
+    # A missing/out-of-scope id is a 404, never a leak.
+    assert client.get("/api/appointments/nope.ics").status_code == 404
+
+
+def test_ics_requires_owner(client: TestClient) -> None:
+    assert client.get("/api/appointments/A1.ics").status_code == 401
 
 
 def test_malformed_dates_fall_back_to_defaults(

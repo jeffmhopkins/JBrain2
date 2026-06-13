@@ -1,4 +1,4 @@
-import { type TouchEvent, useEffect, useRef, useState } from "react";
+import { type TouchEvent, useCallback, useEffect, useRef, useState } from "react";
 import { type Principal, type SearchResult, api, setUnauthorizedHandler } from "./api/client";
 import { EditLayer } from "./components/EditLayer";
 import { Launcher, type LauncherTarget } from "./components/Launcher";
@@ -50,6 +50,10 @@ export function App() {
   const [card, setCard] = useState<Card | null>(null);
   const [cardClosing, setCardClosing] = useState(false);
   const [launcherOpen, setLauncherOpen] = useState(false);
+  // A calendar action (reschedule/cancel/ask) hands a prompt to the Full Brain
+  // composer: close the card, then HomeScreen flips to Full Brain and seeds it.
+  const [composePrompt, setComposePrompt] = useState<string | null>(null);
+  const clearCompose = useCallback(() => setComposePrompt(null), []);
   // The note view is its own tree layer above home AND above search results.
   const [noteView, setNoteView] = useState<NoteViewSource | null>(null);
   const [noteClosing, setNoteClosing] = useState(false);
@@ -276,6 +280,8 @@ export function App() {
           onOpenEntity={setEntityView}
           onOpenSearch={() => setCard("search")}
           onOpenLauncher={() => setLauncherOpen(true)}
+          composePrompt={composePrompt}
+          onComposeConsumed={clearCompose}
         />
       </div>
 
@@ -304,7 +310,13 @@ export function App() {
           )}
           {card === "search" && <SearchScreen onOpenResult={openNoteFromSearch} />}
           {card === "calendar" && (
-            <CalendarScreen onOpenNote={(noteId) => void openNoteById(noteId)} />
+            <CalendarScreen
+              onOpenNote={(noteId) => void openNoteById(noteId)}
+              onCompose={(prompt) => {
+                setCard(null);
+                setComposePrompt(prompt);
+              }}
+            />
           )}
           {card === "review" && <ReviewScreen />}
           {/* Rows open the same entity layer the analysis chips use. */}
