@@ -22,7 +22,9 @@ class UnknownDomain(Exception):
 
 @dataclass(frozen=True)
 class AppointmentSpec:
-    """The projector's upsert input: one appointment entity's current state."""
+    """The projector's upsert input: one appointment entity's current row state.
+    The venue is NOT here — it projects into the domain-scoped sidecar separately
+    (see AppointmentLocationSpec)."""
 
     entity_id: str
     domain: str
@@ -30,10 +32,25 @@ class AppointmentSpec:
     starts_at: datetime
     ends_at: datetime | None = None
     all_day: bool = False
-    location: str | None = None
     status: str = "confirmed"
     rrule: str | None = None
+    organizer: str | None = None
+    attendance_mode: str | None = None
+    online_url: str | None = None
+    description: str | None = None
+    appointment_type: str | None = None
     attendees: list[dict[str, Any]] = field(default_factory=list)
+    source_note_id: str | None = None
+
+
+@dataclass(frozen=True)
+class AppointmentLocationSpec:
+    """The venue sidecar's upsert input: the venue string in its OWN domain (the
+    location fact's domain, typically `location`)."""
+
+    entity_id: str
+    domain: str
+    location: str
     source_note_id: str | None = None
 
 
@@ -46,13 +63,22 @@ class AppointmentInfo:
     starts_at: datetime
     ends_at: datetime | None
     all_day: bool
-    location: str | None
     status: str
     rrule: str | None
     attendees: list[dict[str, Any]]
     source_note_id: str | None
     created_at: datetime
     updated_at: datetime
+    # The where/who facets (general-domain, off the row). Default-None so a read
+    # of an older/sparse row needn't name them.
+    organizer: str | None = None
+    attendance_mode: str | None = None
+    online_url: str | None = None
+    description: str | None = None
+    appointment_type: str | None = None
+    # The venue, present only when the reader's session holds its domain (the
+    # sidecar's RLS decides); None when there is none or it is out of scope.
+    location: str | None = None
 
     @property
     def recurring(self) -> bool:

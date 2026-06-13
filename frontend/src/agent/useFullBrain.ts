@@ -84,7 +84,9 @@ export interface FullBrain {
   /** A turn can be sent only once a session (read scope) is chosen and no stream
    * is in flight. */
   canSend: boolean;
-  send: (text: string) => void;
+  /** `appointmentId` rides a calendar handoff so the agent resolves that exact
+   * appointment; the user bubble still shows only `text`. */
+  send: (text: string, opts?: { appointmentId?: string }) => void;
   create: (body: SessionCreate) => Promise<AgentSession>;
   open: (session: AgentSession) => void;
   rename: (id: string, title: string) => void;
@@ -175,7 +177,7 @@ export function useFullBrain(enabled: boolean, deps: FullBrainDeps = LIVE): Full
     };
   }, [enabled, activeId, getTranscript]);
 
-  async function send(textRaw: string): Promise<void> {
+  async function send(textRaw: string, opts?: { appointmentId?: string }): Promise<void> {
     const text = textRaw.trim();
     if (!text || busy) return;
     // No scope yet — surface the picker rather than chatting against nothing.
@@ -187,7 +189,12 @@ export function useFullBrain(enabled: boolean, deps: FullBrainDeps = LIVE): Full
     const history = messages.map((m) => ({ role: m.role, content: m.text }));
     setMessages((ms) => [...ms, userMessage(text), streamingAssistant()]);
     try {
-      for await (const event of chat({ session_id: active.id, message: text, history })) {
+      for await (const event of chat({
+        session_id: active.id,
+        message: text,
+        history,
+        ...(opts?.appointmentId ? { appointment_id: opts.appointmentId } : {}),
+      })) {
         setMessages((ms) => applyEvent(ms, event));
       }
       setMessages((ms) => (ms[ms.length - 1]?.streaming ? endStream(ms, "end_turn") : ms));
@@ -265,7 +272,7 @@ export function useFullBrain(enabled: boolean, deps: FullBrainDeps = LIVE): Full
     messages,
     busy,
     canSend: !busy && active !== null,
-    send: (text) => void send(text),
+    send: (text, opts) => void send(text, opts),
     create,
     open,
     rename: (id, title) => void rename(id, title).catch(() => {}),

@@ -35,6 +35,43 @@ def lines(text: str) -> list[str]:
     return text.replace("\r\n ", "").rstrip("\r\n").split("\r\n")
 
 
+def test_where_who_facets_emit_their_ical_properties() -> None:
+    body = lines(
+        to_ics(
+            [
+                appt(
+                    organizer="Maple Dental",
+                    description="Bring x-rays",
+                    online_url="https://meet.example/abc",
+                    appointment_type="checkup",
+                    attendees=[
+                        {"name": "Dr. Nguyen", "role": "chair", "status": "accepted"},
+                        {"name": "Pat", "required": False},
+                        {"name": ""},  # no name → no ATTENDEE line
+                    ],
+                )
+            ],
+            now=NOW,
+        )
+    )
+    nomail = "mailto:noreply@jbrain.invalid"
+    assert "DESCRIPTION:Bring x-rays" in body
+    assert f"ORGANIZER;CN=Maple Dental:{nomail}" in body
+    assert f"ATTENDEE;CN=Dr. Nguyen;ROLE=CHAIR;PARTSTAT=ACCEPTED:{nomail}" in body
+    assert f"ATTENDEE;CN=Pat;ROLE=OPT-PARTICIPANT:{nomail}" in body
+    assert sum(line.startswith("ATTENDEE") for line in body) == 2  # blank dropped
+    assert "CONFERENCE;VALUE=URI;FEATURE=VIDEO;LABEL=Join:https://meet.example/abc" in body
+    assert "CATEGORIES:checkup" in body
+
+
+def test_a_bare_appointment_omits_the_optional_properties() -> None:
+    body = lines(to_ics([appt()], now=NOW))
+    assert not any(
+        line.startswith(("DESCRIPTION", "ORGANIZER", "ATTENDEE", "CONFERENCE", "CATEGORIES"))
+        for line in body
+    )
+
+
 def test_empty_calendar_is_well_formed() -> None:
     out = to_ics([], now=NOW)
     assert out.endswith("\r\n")

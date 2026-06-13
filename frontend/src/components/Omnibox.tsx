@@ -12,6 +12,7 @@ import {
   useRef,
   useState,
 } from "react";
+import type { AppointmentRef } from "../agent/types";
 import { MODES, type Mode, ROWS, type SegState, tapSegment } from "../notes/modes";
 import type { SendInput } from "../notes/useNotes";
 import {
@@ -49,6 +50,10 @@ interface OmniboxProps {
   /** Text to seed the composer with (e.g. a calendar "reschedule" handoff). */
   draft?: string;
   onConsumeDraft?: () => void;
+  /** A calendar handoff's appointment, shown as a removable pill in the attach
+   * area; its id rides the next Full Brain send so the agent resolves it. */
+  apptRef?: AppointmentRef | null;
+  onClearApptRef?: () => void;
 }
 
 export function Omnibox({
@@ -60,6 +65,8 @@ export function Omnibox({
   onOpenLauncher,
   draft,
   onConsumeDraft,
+  apptRef,
+  onClearApptRef,
 }: OmniboxProps) {
   const [text, setText] = useState("");
   const [files, setFiles] = useState<File[]>([]);
@@ -217,6 +224,22 @@ export function Omnibox({
           onChange={(e) => setText(e.target.value)}
           aria-label="Composer"
         />
+
+        {apptRef && (
+          <div className="staged-files">
+            <button
+              type="button"
+              className="chip chip-staged chip-appt"
+              onClick={onClearApptRef}
+              aria-label={`Remove appointment ${apptRef.title}`}
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M8 2v4M16 2v4M3 9h18M5 5h14a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z" />
+              </svg>
+              {apptRef.title} ×
+            </button>
+          </div>
+        )}
 
         {files.length > 0 && (
           <div className="staged-files">

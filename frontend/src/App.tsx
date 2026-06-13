@@ -10,7 +10,7 @@ import { CalendarScreen } from "./screens/CalendarScreen";
 import { EntityListScreen } from "./screens/EntityListScreen";
 import { EntityScreen } from "./screens/EntityScreen";
 import { GraphScreen } from "./screens/GraphScreen";
-import { HomeScreen } from "./screens/HomeScreen";
+import { type ComposeHandoff, HomeScreen } from "./screens/HomeScreen";
 import { ListDetailScreen } from "./screens/ListDetailScreen";
 import { ListsScreen } from "./screens/ListsScreen";
 import { LoginScreen } from "./screens/LoginScreen";
@@ -52,8 +52,8 @@ export function App() {
   const [launcherOpen, setLauncherOpen] = useState(false);
   // A calendar action (reschedule/cancel/ask) hands a prompt to the Full Brain
   // composer: close the card, then HomeScreen flips to Full Brain and seeds it.
-  const [composePrompt, setComposePrompt] = useState<string | null>(null);
-  const clearCompose = useCallback(() => setComposePrompt(null), []);
+  const [compose, setCompose] = useState<ComposeHandoff | null>(null);
+  const clearCompose = useCallback(() => setCompose(null), []);
   // The note view is its own tree layer above home AND above search results.
   const [noteView, setNoteView] = useState<NoteViewSource | null>(null);
   const [noteClosing, setNoteClosing] = useState(false);
@@ -280,7 +280,7 @@ export function App() {
           onOpenEntity={setEntityView}
           onOpenSearch={() => setCard("search")}
           onOpenLauncher={() => setLauncherOpen(true)}
-          composePrompt={composePrompt}
+          compose={compose}
           onComposeConsumed={clearCompose}
         />
       </div>
@@ -312,9 +312,9 @@ export function App() {
           {card === "calendar" && (
             <CalendarScreen
               onOpenNote={(noteId) => void openNoteById(noteId)}
-              onCompose={(prompt) => {
+              onCompose={(text, appt) => {
                 setCard(null);
-                setComposePrompt(prompt);
+                setCompose({ text, appt });
               }}
             />
           )}

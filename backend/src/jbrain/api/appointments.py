@@ -28,6 +28,14 @@ def get_appointments_repo(request: Request) -> SqlAppointmentsRepo:
     return cast(SqlAppointmentsRepo, request.app.state.appointments_repo)
 
 
+class AttendeeOut(BaseModel):
+    name: str
+    entity_id: str | None = None
+    role: str | None = None
+    status: str | None = None
+    required: bool | None = None
+
+
 class AppointmentOut(BaseModel):
     id: str
     title: str
@@ -37,9 +45,14 @@ class AppointmentOut(BaseModel):
     all_day: bool
     status: str
     location: str | None
+    organizer: str | None
+    attendance_mode: str | None
+    online_url: str | None
+    description: str | None
+    appointment_type: str | None
     rrule: str | None
     recurring: bool
-    attendees: list[str]
+    attendees: list[AttendeeOut]
     source_note_id: str | None
 
     @classmethod
@@ -53,11 +66,27 @@ class AppointmentOut(BaseModel):
             all_day=a.all_day,
             status=a.status,
             location=a.location,
+            organizer=a.organizer,
+            attendance_mode=a.attendance_mode,
+            online_url=a.online_url,
+            description=a.description,
+            appointment_type=a.appointment_type,
             rrule=a.rrule,
             recurring=a.recurring,
-            attendees=[str(p.get("name", "")) for p in a.attendees if p.get("name")],
+            attendees=[_attendee(p) for p in a.attendees if p.get("name")],
             source_note_id=a.source_note_id,
         )
+
+
+def _attendee(p: dict) -> AttendeeOut:
+    required = p.get("required")
+    return AttendeeOut(
+        name=str(p.get("name", "")),
+        entity_id=str(p["entity_id"]) if p.get("entity_id") is not None else None,
+        role=str(p["role"]) if p.get("role") is not None else None,
+        status=str(p["status"]) if p.get("status") is not None else None,
+        required=required if isinstance(required, bool) else None,
+    )
 
 
 def _parse(when: str | None) -> datetime | None:

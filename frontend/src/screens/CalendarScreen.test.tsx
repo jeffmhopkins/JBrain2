@@ -13,6 +13,11 @@ function appt(over: Partial<AppointmentOut>): AppointmentOut {
     all_day: false,
     status: "confirmed",
     location: null,
+    organizer: null,
+    attendance_mode: null,
+    online_url: null,
+    description: null,
+    appointment_type: null,
     rrule: null,
     recurring: false,
     attendees: [],
@@ -102,6 +107,44 @@ describe("CalendarScreen", () => {
     await waitFor(() => expect(screen.getByText("No upcoming appointments.")).toBeInTheDocument());
   });
 
+  it("renders the where/who facets in the event sheet", async () => {
+    stubFetch([
+      appt({
+        id: "A1",
+        title: "Dentist",
+        start: today(),
+        location: "Maple Dental",
+        organizer: "Maple Dental Group",
+        attendance_mode: "online",
+        online_url: "https://meet.example/abc",
+        description: "Bring x-rays",
+        appointment_type: "checkup",
+        attendees: [
+          {
+            name: "Dr. Nguyen",
+            entity_id: "p1",
+            role: "chair",
+            status: "accepted",
+            required: true,
+          },
+          { name: "Pat", entity_id: null, role: null, status: "declined", required: false },
+        ],
+      }),
+    ]);
+    render(<CalendarScreen onOpenNote={noop} onCompose={noop} />);
+    fireEvent.click(screen.getByRole("tab", { name: "Tasks" }));
+    await waitFor(() => screen.getByText("Dentist"));
+    fireEvent.click(screen.getByText("Dentist"));
+    expect(screen.getByText("Maple Dental")).toBeInTheDocument();
+    expect(screen.getByText("hosted by Maple Dental Group")).toBeInTheDocument();
+    expect(screen.getByText("checkup")).toBeInTheDocument();
+    expect(screen.getByText("Bring x-rays")).toBeInTheDocument();
+    // The join link, and attendees with a surfaced RSVP decline.
+    const join = screen.getByRole("link", { name: "Join the meeting" });
+    expect(join).toHaveAttribute("href", "https://meet.example/abc");
+    expect(screen.getByText(/with Dr\. Nguyen, Pat \(declined\)/)).toBeInTheDocument();
+  });
+
   it("opens the source note from the event sheet when there is one", async () => {
     const onOpenNote = vi.fn();
     stubFetch([appt({ id: "A1", title: "Dentist", start: today(), source_note_id: "note-7" })]);
@@ -113,7 +156,7 @@ describe("CalendarScreen", () => {
     expect(onOpenNote).toHaveBeenCalledWith("note-7");
   });
 
-  it("hands a reschedule prompt to the agent composer", async () => {
+  it("reschedule opens a date/time modal that hands off with the appointment id", async () => {
     const onCompose = vi.fn();
     stubFetch([appt({ id: "A1", title: "Dentist", start: today() })]);
     render(<CalendarScreen onOpenNote={noop} onCompose={onCompose} />);
@@ -121,10 +164,16 @@ describe("CalendarScreen", () => {
     await waitFor(() => screen.getByText("Dentist"));
     fireEvent.click(screen.getByText("Dentist"));
     fireEvent.click(screen.getByText("reschedule"));
-    expect(onCompose).toHaveBeenCalledWith(expect.stringContaining('Reschedule my "Dentist"'));
+    // The modal — not the omnibox — collects the new time before handing off.
+    const submit = screen.getByRole("button", { name: "Reschedule" });
+    fireEvent.click(submit);
+    expect(onCompose).toHaveBeenCalledWith(expect.stringContaining('Reschedule my "Dentist"'), {
+      id: "A1",
+      title: "Dentist",
+    });
   });
 
-  it("cancel is an armed two-tap before it hands off", async () => {
+  it("cancel is an armed two-tap before it hands off with the appointment id", async () => {
     const onCompose = vi.fn();
     stubFetch([appt({ id: "A1", title: "Dentist", start: today() })]);
     render(<CalendarScreen onOpenNote={noop} onCompose={onCompose} />);
@@ -134,6 +183,26 @@ describe("CalendarScreen", () => {
     fireEvent.click(screen.getByText("cancel"));
     expect(onCompose).not.toHaveBeenCalled(); // first tap only arms
     fireEvent.click(screen.getByText("tap again to cancel"));
-    expect(onCompose).toHaveBeenCalledWith(expect.stringContaining('Cancel my "Dentist"'));
+    expect(onCompose).toHaveBeenCalledWith(expect.stringContaining('Cancel my "Dentist"'), {
+      id: "A1",
+      title: "Dentist",
+    });
+  });
+
+  it("add to calendar downloads the .ics instead of navigating", async () => {
+    stubFetch([appt({ id: "A1", title: "Dentist", start: today() })]);
+    // jsdom has no object-URL plumbing — stand in the two statics the download uses.
+    const createObjectURL = vi.fn(() => "blob:x");
+    Object.assign(URL, { createObjectURL, revokeObjectURL: vi.fn() });
+    const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+    render(<CalendarScreen onOpenNote={noop} onCompose={noop} />);
+    fireEvent.click(screen.getByRole("tab", { name: "Tasks" }));
+    await waitFor(() => screen.getByText("Dentist"));
+    fireEvent.click(screen.getByText("Dentist"));
+    fireEvent.click(screen.getByText("add to calendar"));
+    // A blob is fetched and clicked through — never an in-place navigation.
+    await waitFor(() => expect(createObjectURL).toHaveBeenCalled());
+    expect(click).toHaveBeenCalled();
+    click.mockRestore();
   });
 });

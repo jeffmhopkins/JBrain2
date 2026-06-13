@@ -423,6 +423,166 @@ async def test_active_time_with_no_resolvable_start_removes_row(
     assert await _appointments(maker) == []
 
 
+async def _entity(s, kind: str, name: str, domain: str) -> uuid.UUID:  # noqa: ANN001
+    eid = uuid.uuid4()
+    await s.execute(
+        text(
+            "INSERT INTO app.entities (id, kind, canonical_name, domain_code)"
+            " VALUES (:i, :k, :n, :d)"
+        ),
+        {"i": str(eid), "k": kind, "n": name, "d": domain},
+    )
+    return eid
+
+
+async def _fact(  # noqa: ANN001, PLR0913
+    s,
+    eid: uuid.UUID,
+    note_id: uuid.UUID,
+    predicate: str,
+    *,
+    kind: str = "state",
+    value_json: str | None = None,
+    object_entity_id: uuid.UUID | None = None,
+    domain: str = "general",
+) -> None:
+    await s.execute(
+        text(
+            "INSERT INTO app.facts (id, entity_id, predicate, kind, statement, value_json,"
+            " object_entity_id, assertion, valid_from, reported_at, note_id, extractor,"
+            " prompt_version, domain_code) VALUES (gen_random_uuid(), :e, :p, :k, :p, :v,"
+            " :o, 'asserted', now(), now(), :n, 'x', '1', :d)"
+        ),
+        {
+            "e": str(eid),
+            "p": predicate,
+            "k": kind,
+            "v": value_json,
+            "o": str(object_entity_id) if object_entity_id else None,
+            "n": str(note_id),
+            "d": domain,
+        },
+    )
+
+
+async def _appt_row(maker: async_sessionmaker) -> dict:
+    async with maker() as s:
+        await s.execute(text("SELECT set_config('app.principal_kind','owner',true)"))
+        row = (
+            (
+                await s.execute(
+                    text(
+                        "SELECT organizer, attendance_mode, online_url, description,"
+                        " appointment_type, attendees FROM app.appointments LIMIT 1"
+                    )
+                )
+            )
+            .mappings()
+            .one()
+        )
+    return dict(row)
+
+
+async def _location(maker: async_sessionmaker, eid: uuid.UUID) -> tuple[str, str] | None:
+    async with maker() as s:
+        await s.execute(text("SELECT set_config('app.principal_kind','owner',true)"))
+        row = (
+            await s.execute(
+                text(
+                    "SELECT domain_code, location FROM app.appointment_locations"
+                    " WHERE entity_id = :e"
+                ),
+                {"e": str(eid)},
+            )
+        ).first()
+    return (row[0], row[1]) if row is not None else None
+
+
+async def test_projects_where_who_facets_and_location_sidecar(maker: async_sessionmaker) -> None:
+    # The expansion: organizer/attendance/online/description/type ride the row;
+    # attendees carry their ICS params; the venue lands in the domain-scoped
+    # sidecar under the location fact's OWN (location) domain, not the row's.
+    async with maker() as s:
+        await s.execute(text("SELECT set_config('app.principal_kind','owner',true)"))
+        eid, note_id = await _seed_appointment(s)
+        org = await _entity(s, "organization", "Maple Dental", "general")
+        person = await _entity(s, "person", "Dr. Nguyen", "general")
+        place = await _entity(s, "place", "123 Main St", "location")
+        await _fact(s, eid, note_id, "organizer", kind="relationship", object_entity_id=org)
+        await _fact(
+            s,
+            eid,
+            note_id,
+            "attendee",
+            kind="relationship",
+            object_entity_id=person,
+            value_json='{"role": "chair", "status": "accepted", "required": true}',
+        )
+        await _fact(s, eid, note_id, "attendanceMode", value_json='{"value": "virtual"}')
+        await _fact(
+            s, eid, note_id, "onlineUrl", kind="attribute", value_json='{"value": "https://m/x"}'
+        )
+        await _fact(s, eid, note_id, "description", value_json='{"value": "bring x-rays"}')
+        await _fact(s, eid, note_id, "appointmentType", value_json='{"value": "checkup"}')
+        # The venue ref to a place; the location fact itself rides the location domain.
+        await _fact(
+            s,
+            eid,
+            note_id,
+            "location",
+            kind="relationship",
+            object_entity_id=place,
+            domain="location",
+        )
+        await project_appointments(s, {eid})
+        await s.commit()
+
+    row = await _appt_row(maker)
+    assert row["organizer"] == "Maple Dental"
+    assert row["attendance_mode"] == "online"  # "virtual" normalized
+    assert row["online_url"] == "https://m/x"
+    assert row["description"] == "bring x-rays"
+    assert row["appointment_type"] == "checkup"
+    assert row["attendees"] == [
+        {
+            "name": "Dr. Nguyen",
+            "entity_id": str(person),
+            "role": "chair",
+            "status": "accepted",
+            "required": True,
+        }
+    ]
+    # The venue is NOT on the row — it is in the sidecar, in the location domain.
+    assert await _location(maker, eid) == ("location", "123 Main St")
+
+
+async def test_address_fact_is_the_location_fallback_and_clears(maker: async_sessionmaker) -> None:
+    # No place ref, but a structured `address` on the appointment: the projector
+    # formats it into the sidecar. Re-projecting after the address is retracted
+    # clears the sidecar row.
+    async with maker() as s:
+        await s.execute(text("SELECT set_config('app.principal_kind','owner',true)"))
+        eid, note_id = await _seed_appointment(s)
+        await _fact(
+            s,
+            eid,
+            note_id,
+            "address",
+            value_json='{"streetAddress": "5 Oak Ave", "addressLocality": "Denver"}',
+            domain="location",
+        )
+        await project_appointments(s, {eid})
+        await s.commit()
+    assert await _location(maker, eid) == ("location", "5 Oak Ave, Denver")
+
+    async with maker() as s:
+        await s.execute(text("SELECT set_config('app.principal_kind','owner',true)"))
+        await s.execute(text("UPDATE app.facts SET status='retracted' WHERE predicate='address'"))
+        await project_appointments(s, {eid})
+        await s.commit()
+    assert await _location(maker, eid) is None
+
+
 async def _purge(maker: async_sessionmaker, note_id: str) -> None:
     async with maker() as s:
         await s.execute(text("SELECT set_config('app.principal_kind','owner',true)"))

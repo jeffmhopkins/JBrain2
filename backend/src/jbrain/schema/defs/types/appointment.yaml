@@ -22,6 +22,42 @@ predicates:
     range_type: person
     kind: relationship
     schema_org_ref: schema:attendee
+    # The ref names WHO attends; an optional value_json carries the iCalendar
+    # ATTENDEE params for that person — {role, status, required} (CHAIR/…,
+    # ACCEPTED/…, true/false). Absent ⇒ a plain invitee.
+  - canonical_name: organizer      # who runs/hosts it — an org or a person
+    value_shape: ref               # polymorphic, like document.issuer (no range_type)
+    kind: relationship
+    functional: true
+    renamed_from: [host, hostOrganization]
+    schema_org_ref: schema:organizer
+  - canonical_name: location       # WHERE it is — a referenceable venue
+    value_shape: ref
+    range_type: place
+    kind: relationship
+    functional: true
+    schema_org_ref: schema:location
+  - canonical_name: attendanceMode # in-person / online / both
+    value_shape: enum
+    enum_values: [in_person, online, hybrid]
+    kind: state
+    functional: true
+    renamed_from: [eventAttendanceMode]
+    schema_org_ref: schema:eventAttendanceMode
+  - canonical_name: onlineUrl      # the join link for a virtual meeting
+    value_shape: scalar
+    kind: attribute
+    renamed_from: [meetingUrl, joinUrl, conferenceUrl, videoLink]
+    schema_org_ref: schema:url
+  - canonical_name: description    # the event's notes / agenda
+    value_shape: text
+    kind: state
+    schema_org_ref: schema:description
+  - canonical_name: appointmentType  # the kind of appointment; open vocabulary
+    value_shape: enum
+    enum_values: [checkup, consult, meeting, call, social, service]
+    kind: state
+    schema_org_ref: schema:keywords
 
 # Lifecycle.status enum for this type:
 status_values: [tentative, confirmed, cancelled, occurred]

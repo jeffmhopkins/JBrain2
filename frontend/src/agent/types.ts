@@ -139,10 +139,20 @@ export interface ChatMessage {
   content: string;
 }
 
+/** A calendar → Full Brain handoff's appointment: the title the owner sees on
+ * the composer pill, the id the agent resolves (read_appointment). */
+export interface AppointmentRef {
+  id: string;
+  title: string;
+}
+
 export interface ChatRequest {
   session_id: string;
   message: string;
   history?: ChatMessage[];
+  /** An appointment the owner is asking about (a calendar handoff). The id lets
+   * the agent resolve the exact appointment; it never enters the transcript. */
+  appointment_id?: string;
 }
 
 // --- Proposals (the review inbox; /api/proposals) ---
