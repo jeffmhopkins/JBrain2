@@ -91,8 +91,8 @@ def test_system_prompt_pinned_to_its_version() -> None:
     editing it must be a deliberate version bump, like every .prompt file."""
     digest = hashlib.sha256(SYSTEM_PROMPT.encode()).hexdigest()
     assert (SYSTEM_VERSION, digest) == (
-        "agent-system-v3",
-        "7d3b325870607a62586ffb05dce8fb9bcf7f37e3825271821dbdeb0064efe2e6",
+        "agent-system-v4",
+        "9d86df3adb7be857a153015a9da2aeb93a48eb17f1807651fa206e52efe61772",
     )
 
 

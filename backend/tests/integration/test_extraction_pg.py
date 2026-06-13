@@ -1418,6 +1418,7 @@ async def test_analysis_and_review_api_round_trip(
                 "temporal_precision",
                 "object_entity_id",
                 "object_entity_name",
+                "object_entity_domain",
                 "source_snippet",
             }
             assert fact_shape["entity_name"] == "Mom"

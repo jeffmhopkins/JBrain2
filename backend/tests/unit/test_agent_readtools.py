@@ -10,9 +10,11 @@ from jbrain.agent.readtools import (
     build_entity_handlers,
     build_read_handlers,
     build_registry,
+    entity_view_objects,
     format_currency,
     format_entity,
     format_note,
+    format_relations,
     format_search,
 )
 from jbrain.agent.toolfile import load_tool
@@ -85,7 +87,13 @@ def entity_view(entity_id: str = "e1") -> dict:
             {
                 "predicate": "spouse",
                 "qualifier": "",
-                "current": {"predicate": "spouse", "statement": "married to Jeff"},
+                "current": {
+                    "predicate": "spouse",
+                    "statement": "married to Jeff",
+                    "object_entity_id": "e2",
+                    "object_entity_name": "Jeff",
+                    "object_entity_domain": "general",
+                },
                 "history": [],
             },
             {"predicate": "employer", "qualifier": "", "current": None, "history": []},
@@ -100,12 +108,15 @@ class FakeEntities:
         self,
         view: dict | None,
         matches: list[dict] | None = None,
+        related: list[dict] | None = None,
         currency: dict[str, list[dict]] | None = None,
     ):
         self.view = view
         self.matches = matches or []
+        self.related = related or []
         self.currency = currency or {}
         self.searched: list[tuple] = []
+        self.traversed: list[tuple] = []
         self.currency_calls: list[list[str]] = []
 
     async def entity_view(self, ctx, entity_id):  # noqa: ANN001
@@ -114,6 +125,10 @@ class FakeEntities:
     async def list_entities(self, ctx, q=None, kind=None, limit=200):  # noqa: ANN001
         self.searched.append((q, kind, limit))
         return self.matches
+
+    async def relate(self, ctx, anchor_id, predicates, limit=8):  # noqa: ANN001
+        self.traversed.append((anchor_id, tuple(predicates), limit))
+        return self.related
 
     async def note_currency(self, ctx, note_ids):  # noqa: ANN001
         self.currency_calls.append(list(note_ids))
@@ -292,14 +307,25 @@ def test_format_entity_shows_kind_aliases_and_edges() -> None:
     out = format_entity(entity_view())
     assert "Celine Hopkins [Person]" in out  # the schema.org kind
     assert "also known as: Celine" in out
-    assert "- spouse: married to Jeff" in out  # current fact as an edge
+    # A relationship edge surfaces the target's id so the model can chain into
+    # read_entity (the "my wife's name" traversal).
+    assert "- spouse: married to Jeff → Jeff (id=e2)" in out
     assert "Jeff spouse this" in out  # inbound edge
     assert "mentioned in 1 note" in out
 
 
+def test_entity_view_objects_are_chips_for_relationship_edges() -> None:
+    objects = entity_view_objects(entity_view())
+    assert objects == (EntityRef(entity_id="e2", label="Jeff", domain="general"),)
+
+
 async def test_read_entity_found_and_missing() -> None:
     tools = build_entity_handlers(FakeEntities(entity_view("abc")))  # type: ignore[arg-type]
-    assert "Celine Hopkins" in await tools["read_entity"]({"entity_id": "abc"}, CTX)
+    found = await tools["read_entity"]({"entity_id": "abc"}, CTX)
+    assert isinstance(found, ToolOutput)
+    assert "Celine Hopkins" in found
+    # The spouse edge's target rides along as a chip the PWA can linkify.
+    assert found.entities == (EntityRef(entity_id="e2", label="Jeff", domain="general"),)
     assert "in scope" in await tools["read_entity"]({"entity_id": "other"}, CTX)
 
 
@@ -342,6 +368,60 @@ async def test_find_entity_handles_no_match_and_empty_name() -> None:
     assert "needs a name" in empty
 
 
+async def test_relate_anchors_on_the_owner_and_maps_the_relationship_word() -> None:
+    related = [
+        {
+            "id": "e9",
+            "kind": "Person",
+            "canonical_name": "Celine",
+            "domain": "general",
+            "aliases": ["Celine Hopkins"],
+            "predicate": "spouse",
+        }
+    ]
+    fake = FakeEntities(None, related=related)
+    out = await build_entity_handlers(fake)["relate"]({"relationship": "wife"}, CTX)  # type: ignore[arg-type]
+    assert isinstance(out, ToolOutput)
+    # The edge → entity line carries the id so the model can read it for the name.
+    assert "spouse → Celine [Person] (general) id=e9" in out
+    assert out.entities == (
+        EntityRef(entity_id="e9", label="Celine", domain="general", aliases=["Celine Hopkins"]),
+    )
+    # No `from` → anchored on the owner ("Me"); "wife" mapped to the spouse predicate.
+    anchor, preds, _ = fake.traversed[0]
+    assert anchor is None
+    assert "spouse" in preds
+
+
+async def test_relate_passes_the_from_anchor_and_handles_no_match() -> None:
+    fake = FakeEntities(None, related=[])
+    out = await build_entity_handlers(fake)["relate"](  # type: ignore[arg-type]
+        {"relationship": "manager", "from": "e1"}, CTX
+    )
+    assert isinstance(out, ToolOutput) and "No 'manager' relationship" in out and out.entities == ()
+    assert fake.traversed[0][0] == "e1"  # the explicit anchor flows through
+
+
+async def test_relate_needs_a_relationship() -> None:
+    out = await build_entity_handlers(FakeEntities(None))["relate"]({}, CTX)  # type: ignore[arg-type]
+    assert "needs a relationship" in out
+
+
+def test_format_relations_shows_the_edge_and_ids() -> None:
+    out = format_relations(
+        [
+            {
+                "id": "e9",
+                "kind": "Person",
+                "canonical_name": "Celine",
+                "domain": "general",
+                "predicate": "spouse",
+            }
+        ]
+    )
+    assert out == "- spouse → Celine [Person] (general) id=e9"
+
+
 # --- registry + version guard --------------------------------------------
 
 
@@ -362,6 +442,7 @@ def test_build_registry_binds_the_shipped_sidecars() -> None:
         "read_note",
         "read_entity",
         "find_entity",
+        "relate",
         "read_lists",
         "read_list",
         "create_list",
@@ -396,13 +477,18 @@ def test_sidecars_pinned_to_their_versions() -> None:
         ),
         "read_entity.tool": (
             "read_entity",
-            1,
-            "e257677a9412e71e1511dbc85d1fad0421703fbe419d957bca819980d8c2727a",
+            2,
+            "74a50fc08a725755a7b54bcf0e0ed00cc4ae23ba67ce5d3a394ebc16f698ff6f",
         ),
         "find_entity.tool": (
             "find_entity",
+            2,
+            "0390b739d089e4185aac81918b0614384d0ef4889bf21bb09d5d43c492856da0",
+        ),
+        "relate.tool": (
+            "relate",
             1,
-            "6643a41ad270a3db2e85fd0fad27427e1c12665fdd953827e699918d99291674",
+            "f709cb46df3116817f8ee611eca38289b47b7b00b23dbedccb5f74bc0f6ca4ae",
         ),
         "read_lists.tool": (
             "read_lists",

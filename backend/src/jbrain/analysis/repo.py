@@ -7,10 +7,11 @@ sessions, so pre-P7 "owner-only" is enforced by Postgres, not checked here.
 
 import json
 import uuid
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import text
+from sqlalchemy import bindparam, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from jbrain.analysis.display import mark_snippet
@@ -53,6 +54,7 @@ _FACT_SELECT = """
            f.valid_from, f.valid_to, f.reported_at, f.temporal_precision,
            f.object_entity_id::text AS object_entity_id,
            oe.canonical_name AS object_entity_name,
+           oe.domain_code AS object_entity_domain,
            c.text AS chunk_text, anchor.char_start, anchor.char_end
     FROM app.facts f
     JOIN app.entities e ON e.id = f.entity_id
@@ -98,6 +100,7 @@ def _fact_dict(row: Any) -> dict[str, Any]:
         "temporal_precision": row.temporal_precision,
         "object_entity_id": row.object_entity_id,
         "object_entity_name": row.object_entity_name,
+        "object_entity_domain": row.object_entity_domain,
         "source_snippet": mark_snippet(row.chunk_text, row.char_start, row.char_end),
     }
 
@@ -248,6 +251,77 @@ class SqlAnalysisRepo:
                 "last_seen": e.last_seen,
             }
             for e in entities
+        ]
+
+    async def relate(
+        self,
+        ctx: SessionContext,
+        anchor_id: str | None,
+        predicates: Sequence[str],
+        limit: int = 8,
+    ) -> list[dict[str, Any]]:
+        """Follow an anchor entity's outbound relationship edges, returning the
+        entities they point at. `anchor_id=None` anchors on the owner's "Me"
+        entity — the implicit center of the graph — so "my wife" needs no id.
+        `predicates` is the candidate predicate spellings (from
+        `relationships.predicate_candidates`); a fact matches when its lowercased
+        predicate is among them. Active, asserted ref edges only. The object join
+        is RLS-scoped, so a relation whose target sits behind a firewall this
+        session can't see simply doesn't come back — never a cross-domain leak.
+        Rows mirror `list_entities` (id/kind/canonical_name/domain/aliases) plus
+        the matched `predicate`, so the agent tools reuse one render path."""
+        preds = sorted({p.lower() for p in predicates if p})
+        if not preds:
+            return []
+        async with scoped_session(self._maker, ctx) as session:
+            if anchor_id is None:
+                anchor = (
+                    await session.execute(
+                        text(
+                            "SELECT id::text FROM app.entities"
+                            " WHERE subject_id IS NOT NULL AND lower(canonical_name) = 'me'"
+                            " AND status <> 'merged' LIMIT 1"
+                        )
+                    )
+                ).scalar()
+                if anchor is None:
+                    return []
+            else:
+                aid = _as_uuid(anchor_id)
+                if aid is None:
+                    return []
+                anchor = str(aid)
+            rows = (
+                await session.execute(
+                    text(
+                        """
+                        SELECT oe.id::text, oe.kind, oe.canonical_name,
+                               oe.domain_code, f.predicate,
+                               (SELECT coalesce(array_agg(a.alias ORDER BY a.alias), '{}')
+                                FROM app.entity_aliases a WHERE a.entity_id = oe.id) AS aliases
+                        FROM app.facts f
+                        JOIN app.entities oe ON oe.id = f.object_entity_id
+                        WHERE f.entity_id = :anchor
+                          AND lower(f.predicate) IN :preds
+                          AND f.status = 'active' AND f.assertion = 'asserted'
+                          AND oe.status <> 'merged'
+                        ORDER BY f.reported_at DESC NULLS LAST, oe.canonical_name
+                        LIMIT :limit
+                        """
+                    ).bindparams(bindparam("preds", expanding=True)),
+                    {"anchor": anchor, "preds": preds, "limit": limit},
+                )
+            ).all()
+        return [
+            {
+                "id": r.id,
+                "kind": r.kind,
+                "canonical_name": r.canonical_name,
+                "domain": r.domain_code,
+                "aliases": list(r.aliases),
+                "predicate": r.predicate,
+            }
+            for r in rows
         ]
 
     async def entity_view(self, ctx: SessionContext, entity_id: str) -> dict[str, Any] | None:
