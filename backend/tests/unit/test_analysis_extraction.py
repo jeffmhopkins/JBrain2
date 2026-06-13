@@ -392,7 +392,7 @@ def test_system_prompt_v5_teaches_object_person_and_backward_temporal() -> None:
 
 
 def test_prompt_version_bumped_to_v10() -> None:
-    assert PROMPT_VERSION == "note-extract-v10"
+    assert PROMPT_VERSION == "note-extract-v11"
 
 
 def test_system_prompt_v9_teaches_inanimate_ownership_edges() -> None:
@@ -407,6 +407,18 @@ def test_system_prompt_v9_teaches_inanimate_ownership_edges() -> None:
     # The worked vehicle example is the exact field case, edge + on-thing props.
     assert '"object_entity_ref": "my truck"' in SYSTEM_PROMPT
     assert 'entity_ref is "my truck"' in SYSTEM_PROMPT
+
+
+def test_system_prompt_teaches_declared_thing_aliases() -> None:
+    """Field gap (Jun 2026): enacting "Create Vehicle F-150 (alias 'my truck')"
+    round-trips as a note, but extraction emitted no naming fact for the alias —
+    it became only the Vehicle's mention name + owns edge — so "my truck" never
+    landed in entity_aliases and never resolved. v11 must teach that an EXPLICITLY
+    declared alias for a thing is a name.nickname attribute ON THE THING carrying
+    the bare alias string, never folded into the owns edge."""
+    assert "EXPLICITLY DECLARED alternate name or alias for a THING" in SYSTEM_PROMPT
+    assert '"predicate": "name.nickname"' in SYSTEM_PROMPT
+    assert '"value_json": {"value": "my truck"}' in SYSTEM_PROMPT
 
 
 def test_system_prompt_v9_links_place_and_org_valued_states_to_their_node() -> None:

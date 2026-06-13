@@ -395,6 +395,52 @@ async def test_role_hop_respects_validity_at_note_time(
     assert outcome.candidate_ids == []
 
 
+async def seed_my_truck_graph(maker: async_sessionmaker[AsyncSession]) -> uuid.UUID:
+    """Me owns the F-150; the only 'truck' evidence is the owns-edge statement,
+    exactly as a live extraction emits it (the description lives on the thing,
+    the noun in the introducing edge). The vehicle's alias is its name "F-150",
+    NOT "my truck", so resolution must reach the ownership hop, not layer 1."""
+    note = await seed_note(maker)
+    async with scoped_session(maker, SYSTEM_CTX) as s:
+        me = await get_or_create_me(s)
+    f150 = await seed_entity(maker, "F-150", kind="Vehicle")
+    await seed_fact(
+        maker,
+        entity_id=me.id,
+        note_id=note,
+        predicate="owns",
+        statement="Jeff owns a truck, the F-150.",
+        object_entity_id=f150,
+    )
+    return f150
+
+
+async def test_role_hop_resolves_my_owned_object(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """ "my truck" is role-shaped ("my X") yet denotes a thing Me OWNS, not a
+    person filling a role. The implicit-owner hop must consult the ownership
+    edge the same way the named-owner "Summer's rat" form does — its predicate
+    "owns" denotes no noun, so the role lookup alone always misses it."""
+    f150 = await seed_my_truck_graph(maker)
+    outcome = await resolve(maker, "my truck", kind_hint="Vehicle")
+    assert isinstance(outcome, ResolvedEntity)
+    assert outcome.id == f150
+    assert outcome.method == "relationship"
+    assert outcome.confidence < 1.0
+
+
+async def test_role_hop_with_no_owned_or_role_match_still_reviews(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """No ownership or role edge for the noun: still the review inbox, never a
+    freshly minted "my X" entity — the fail-closed spec is unchanged."""
+    await seed_my_truck_graph(maker)
+    outcome = await resolve(maker, "my boat", kind_hint="Vehicle")
+    assert isinstance(outcome, AmbiguousEntity)
+    assert outcome.candidate_ids == []
+
+
 async def test_hop_never_crosses_the_domain_firewall(
     maker: async_sessionmaker[AsyncSession],
 ) -> None:
@@ -704,6 +750,24 @@ async def test_declared_alias_is_idempotent_and_ignores_pronouns(
         "SELECT count(*) AS n FROM app.entity_aliases WHERE alias_norm = 'jeffrey mark hopkins'",
     )
     assert count[0].n == 1
+
+
+async def test_declared_thing_alias_resolves_a_later_possessive(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """A note that declares an alias for a thing ("the F-150, alias 'my truck'")
+    registers it on the entity — a possessive-prefixed phrase is NOT a pronoun,
+    so it is not refused — so a later bare "my truck" lands on the F-150 by
+    exact alias, before the ownership hop is even consulted."""
+    f150 = await seed_entity(maker, "F-150", kind="Vehicle")
+    async with scoped_session(maker, SYSTEM_CTX) as s:
+        added = await register_declared_alias(s, f150, "my truck")
+    assert added == "my truck"
+
+    outcome = await resolve(maker, "my truck", kind_hint="Vehicle")
+    assert isinstance(outcome, ResolvedEntity)
+    assert outcome.id == f150 and not outcome.created
+    assert outcome.method == "exact_alias"
 
 
 # --- collision plumbing for declared-name merge proposals --------------------
