@@ -81,12 +81,17 @@ body{font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
 .fchip .sw{width:16px;height:16px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;}
 .fchip .sw svg{width:11px;height:11px;}
 .fchip .ct{color:var(--text-3);font-variant-numeric:tabular-nums;}
-.fchip[data-on="false"]{opacity:.42;background:transparent;}
-.fchip[data-on="false"] .ck{display:none;}
-.fchip.all{background:var(--surface);position:sticky;left:0;z-index:2;}
-.fchip .ck{position:absolute;top:-3px;right:-3px;width:14px;height:14px;border-radius:50%;background:var(--steel);
-  color:var(--bg);display:flex;align-items:center;justify-content:center;border:2px solid var(--surface);}
+.fchip[data-dim="true"]{opacity:.38;}
+.fchip.sel{background:var(--accent-tint);border-color:transparent;}
+.fchip.all{position:sticky;left:0;z-index:2;background:var(--surface);}
+.fchip.all.sel{background:var(--accent-tint);}
+.fchip.combine{background:var(--surface);} .fchip.combine.sel{background:var(--steel-tint);color:var(--text);}
+.fchip .ck{position:absolute;top:-4px;right:-4px;width:15px;height:15px;border-radius:50%;background:var(--steel);
+  color:var(--bg);display:none;align-items:center;justify-content:center;border:2px solid var(--surface);}
 .fchip .ck svg{width:8px;height:8px;}
+.fchip.sel .ck{display:flex;}
+.filterbar[data-multi="true"] .fchip.type .ck{display:flex;}
+.filterbar[data-multi="true"] .fchip.type:not(.sel) .ck{background:transparent;color:transparent;border:1.5px solid var(--text-3);}
 
 /* ---- shared screen body ---- */
 .screen{flex:1;min-height:0;display:none;flex-direction:column;position:relative;}
@@ -360,37 +365,54 @@ function discEl(id,size){const e=E[id],k=KIND[e.kind],d=DOMAIN[e.domain];const w
   w.innerHTML='<svg viewBox="0 0 24 24" fill="none" stroke="'+k.c+'" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">'+ICONS[e.kind]+'</svg>';
   if(d){const dot=document.createElement('span');dot.className='domdot';dot.style.background=d.hex;w.appendChild(dot);}return w;}
 
-/* ===== shared filter state (one set across all views) ===== */
-const hidden=new Set();
+/* ===== shared filter state =====
+   `sel` = the set of types explicitly shown. Empty set == "All" (everything
+   visible). Tap a chip => isolate (sel = {that type}). Tap the active one
+   again => back to All. "Combine" enters a visible multi-select mode where
+   taps add/remove. Tap meaning never changes silently with state. */
+const sel=new Set(); let multiMode=false;
 const KINDS_PRESENT=Object.keys(KIND).filter(k=>Object.values(E).some(e=>e.kind===k));
 function kindCount(k){return Object.values(E).filter(e=>e.kind===k).length;}
+function isHidden(kind){return sel.size>0 && !sel.has(kind);}
+function resetFilter(){sel.clear();multiMode=false;}
+function tapChip(k){
+  if(multiMode){ sel.has(k)?sel.delete(k):sel.add(k); }
+  else { if(sel.size===1&&sel.has(k)){sel.clear();} else {sel.clear();sel.add(k);} }
+}
+function longPressChip(k){ if(!multiMode)multiMode=true; sel.add(k); }   // accelerator into multi
+function toggleMulti(){ multiMode=!multiMode; }
+
 function renderFilterBar(barEl,onChange){
-  barEl.innerHTML='';
-  const all=document.createElement('button');all.className='fchip all';all.setAttribute('data-on', hidden.size===0);
-  all.innerHTML='<span class="sw" style="background:color-mix(in srgb,var(--steel) 22%,transparent);color:var(--steel)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7h18M3 12h18M3 17h18"/></svg></span>All';
-  all.onclick=()=>{hidden.clear();onChange();};
+  barEl.innerHTML=''; barEl.dataset.multi=multiMode;
+  const all=document.createElement('button');all.className='fchip all'+(sel.size===0?' sel':'');
+  all.innerHTML='<span class="sw" style="background:color-mix(in srgb,var(--steel) 22%,transparent);color:var(--steel)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7h18M3 12h18M3 17h18"/></svg></span>All<span class="ck">'+CHECK+'</span>';
+  all.onclick=()=>{resetFilter();onChange();};
   barEl.appendChild(all);
   KINDS_PRESENT.forEach(k=>{
-    const on=!hidden.has(k);
-    const c=document.createElement('button');c.className='fchip';c.setAttribute('data-on',on);
+    const c=document.createElement('button');c.className='fchip type'+(sel.has(k)?' sel':'');c.dataset.dim=isHidden(k);
     const sw=document.createElement('span');sw.className='sw';sw.style.background='color-mix(in srgb,'+KIND[k].c+' 22%,transparent)';
     sw.innerHTML='<svg viewBox="0 0 24 24" fill="none" stroke="'+KIND[k].c+'" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">'+ICONS[k]+'</svg>';
     c.appendChild(sw);
     c.insertAdjacentHTML('beforeend','<span>'+KSHORT[k]+'</span><span class="ct">'+kindCount(k)+'</span><span class="ck">'+CHECK+'</span>');
     let lp;
-    c.addEventListener('pointerdown',()=>{lp=setTimeout(()=>{lp=null;/* isolate: hide all but k */hidden.clear();KINDS_PRESENT.forEach(x=>{if(x!==k)hidden.add(x);});onChange();},480);});
-    const clr=()=>{if(lp){clearTimeout(lp);lp='done';}};
-    c.addEventListener('pointerup',()=>{if(lp&&lp!=='done'){clearTimeout(lp);lp=null;if(on)hidden.add(k);else hidden.delete(k);onChange();}lp=null;});
+    c.addEventListener('pointerdown',()=>{lp=setTimeout(()=>{lp=null;longPressChip(k);onChange();},480);});
+    c.addEventListener('pointerup',()=>{if(lp&&lp!=='done'){clearTimeout(lp);lp=null;tapChip(k);onChange();}lp=null;});
     c.addEventListener('pointerleave',()=>{if(lp&&lp!=='done')clearTimeout(lp);lp=null;});
+    c.addEventListener('pointercancel',()=>{if(lp&&lp!=='done')clearTimeout(lp);lp=null;});
     barEl.appendChild(c);
   });
+  const cb=document.createElement('button');cb.className='fchip combine'+(multiMode?' sel':'');
+  cb.innerHTML='<span class="sw" style="background:var(--surface-2);color:var(--text-2)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg></span>'+(multiMode?'Combining…':'Combine');
+  cb.onclick=()=>{toggleMulti();onChange();};
+  barEl.appendChild(cb);
 }
 function hiddenPillEl(el,onReset){
-  if(hidden.size===0){el.style.display='none';return;}
-  const n=Object.values(E).filter(e=>hidden.has(e.kind)).length;
+  const n=Object.values(E).filter(e=>isHidden(e.kind)).length;
+  if(n===0){el.style.display='none';return;}
   el.style.display='flex';el.innerHTML='';
-  el.insertAdjacentHTML('beforeend','<span>'+n+' hidden by filter</span>');
-  const b=document.createElement('button');b.textContent='Reset';b.onclick=onReset;el.appendChild(b);
+  const showing=sel.size===1?('only '+KSHORT[[...sel][0]].toLowerCase()):(sel.size+' types');
+  el.insertAdjacentHTML('beforeend','<span>showing '+showing+' · '+n+' hidden</span>');
+  const b=document.createElement('button');b.textContent='All';b.onclick=onReset;el.appendChild(b);
 }
 
 /* ===== shared bottom sheet ===== */
@@ -458,8 +480,8 @@ const map=(()=>{
   }
   const isFocalNeighbor=id=>neighbors(focal).some(n=>n.other===id);
   function isVis(id){
-    if(mode==='focus'){if(id===focal)return true;return isFocalNeighbor(id)&&!hidden.has(E[id].kind);}
-    return !hidden.has(E[id].kind);
+    if(mode==='focus'){if(id===focal)return true;return isFocalNeighbor(id)&&!isHidden(E[id].kind);}
+    return !isHidden(E[id].kind);
   }
   function onTap(id){if(mode==='overview')enterFocus(id);else{if(id===focal)openSheet(id,focusOn);else recenter(id);}}
   function focusOn(id){if(mode==='overview')enterFocus(id);else recenter(id);}
@@ -467,7 +489,7 @@ const map=(()=>{
   function setTops(){Object.values(nodes).forEach(n=>{n.top=isVis(n.id)?1:0;});}
   function layoutFocus(){
     const W=stage.clientWidth,H=stage.clientHeight,cx=W/2,cy=H/2,M=Math.min(W,H);
-    const vis=neighbors(focal).filter(n=>!hidden.has(E[n.other].kind));
+    const vis=neighbors(focal).filter(n=>!isHidden(E[n.other].kind));
     nodes[focal].tx=cx;nodes[focal].ty=cy;
     const R=M*0.34;
     vis.forEach((n,i)=>{const a=(-Math.PI/2)+i*2*Math.PI/vis.length;nodes[n.other].tx=cx+R*Math.cos(a);nodes[n.other].ty=cy+R*Math.sin(a);});
@@ -489,7 +511,7 @@ const map=(()=>{
       ?'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 13V5.5a1.5 1.5 0 0 1 3 0V12M11 6.5a1.5 1.5 0 0 1 3 0V12M14 7.5a1.5 1.5 0 0 1 3 0V15a5 5 0 0 1-5 5h-1a5 5 0 0 1-4-2l-2-2.6a1.6 1.6 0 0 1 2.5-2L8 14"/></svg>tap a node to focus · two fingers pan &amp; pinch'
       :'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M5 12h14M5 12l4-4M5 12l4 4"/></svg>tap a neighbour to re-center · use “Overview” to return';
     if(mode==='focus')crumbsRender(crumbsEl,trail,jump);
-    hiddenPillEl(hiddenP,()=>{hidden.clear();afterFilter();});
+    hiddenPillEl(hiddenP,()=>{resetFilter();afterFilter();});
   }
   function afterFilter(){renderFilterBar($('#map-filter'),onFilter);if(mode==='focus')layoutFocus();else setTops();chrome();}
   function onFilter(){afterFilter();}
@@ -512,7 +534,7 @@ const map=(()=>{
       const show=isVis(l.s)&&isVis(l.t)&&(mode==='overview'||l.s===focal||l.t===focal);l._el.style.opacity=show?Math.min(a.op,b.op):0;});
     Object.values(nodes).forEach(n=>{const el=els[n.id];el.style.left=n.x+'px';el.style.top=n.y+'px';el.style.opacity=n.op;el.style.pointerEvents=n.op>0.5?'auto':'none';
       el.classList.toggle('isfocal',mode==='focus'&&n.id===focal);
-      el.classList.toggle('exemptshow',mode==='focus'&&n.id===focal&&hidden.has(E[focal].kind));
+      el.classList.toggle('exemptshow',mode==='focus'&&n.id===focal&&isHidden(E[focal].kind));
       const lod=scale<0.7?'clusters':scale<1.25?'entities':'attributes';
       let sl=(mode==='focus')||(lod==='attributes')||(lod==='entities'&&n.hop<=1)||n.id===root;el._lab.style.opacity=sl?1:0;});
     if(mode==='overview')lodTag.textContent=scale<0.7?'clusters':scale<1.25?'entities':'attributes';
@@ -545,7 +567,7 @@ const map=(()=>{
 const orbit=(()=>{
   const stage=$('#orbit-stage'),edgesSvg=$('#orbit-edges'),crumbsEl=$('#orbit-crumbs'),hiddenP=$('#orbit-hidden'),emptyN=$('#orbit-empty');
   let focal='jeff',trail=['jeff'],expanded=false;const CAP=8;
-  function visNeighbors(){return neighbors(focal).filter(n=>!hidden.has(E[n.other].kind));}
+  function visNeighbors(){return neighbors(focal).filter(n=>!isHidden(E[n.other].kind));}
   function render(){
     renderFilterBar($('#orbit-filter'),()=>{expanded=false;render();});
     [...stage.querySelectorAll('.orbit-node,.bundle')].forEach(n=>n.remove());edgesSvg.innerHTML='';
@@ -567,11 +589,11 @@ const orbit=(()=>{
           const hit=document.createElement('span');hit.className='hit';node.appendChild(hit);node.onclick=()=>recenter(it.n.other);stage.appendChild(node);}
         else{const bd=mk('bundle',x,y);const pill=document.createElement('div');pill.className='pill';pill.innerHTML='<b>+'+it.count+'</b>more ›';bd.appendChild(pill);bd.onclick=()=>{expanded=true;render();};stage.appendChild(bd);}});});
     const center=mk('orbit-node center',cx,cy);center.appendChild(discEl(focal,72));
-    if(hidden.has(E[focal].kind)){const ex=document.createElement('span');ex.className='reldot';ex.style.color='var(--text-3)';ex.textContent='shown · focus';center.appendChild(ex);}
+    if(isHidden(E[focal].kind)){const ex=document.createElement('span');ex.className='reldot';ex.style.color='var(--text-3)';ex.textContent='shown · focus';center.appendChild(ex);}
     const lab=document.createElement('span');lab.className='label';lab.textContent=E[focal].name;center.appendChild(lab);
     const hit=document.createElement('span');hit.className='hit';center.appendChild(hit);center.onclick=()=>openSheet(focal,recenter);stage.appendChild(center);
     crumbsRender(crumbsEl,trail,i=>{trail=trail.slice(0,i+1);focal=trail[i];expanded=false;render();});
-    hiddenPillEl(hiddenP,()=>{hidden.clear();render();});
+    hiddenPillEl(hiddenP,()=>{resetFilter();render();});
   }
   function mk(cls,x,y){const e=document.createElement('div');e.className=cls;e.style.left=x+'px';e.style.top=y+'px';return e;}
   function recenter(id){if(id===focal)return;focal=id;expanded=false;trail.push(id);render();}
@@ -615,7 +637,7 @@ const threads=(()=>{
     crumbsRender(crumbsEl,trail,i=>{trail=trail.slice(0,i+1);focal=trail[i];render();});scroll.scrollTop=0;
   }
   function relSection(title,list){
-    const vis=list.filter(n=>!hidden.has(E[n.other].kind)),hid=list.length-vis.length;if(!list.length)return;
+    const vis=list.filter(n=>!isHidden(E[n.other].kind)),hid=list.length-vis.length;if(!list.length)return;
     secHead(title,vis.length);if(vis.length){const c=document.createElement('div');c.className='rowcard';
       vis.forEach(n=>{const r=document.createElement('div');r.className='row';r.appendChild(discEl(n.other,38));
         const t=document.createElement('div');t.className='rtext';t.innerHTML='<div class="rname">'+E[n.other].name+'</div><div class="rpred"><span class="arrowdir">'+(n.dir==='out'?'→':'←')+'</span> '+n.pred+' · '+E[n.other].kind+'</div>';r.appendChild(t);
@@ -625,7 +647,7 @@ const threads=(()=>{
   }
   function secHead(t,c){const h=document.createElement('div');h.className='sec-head';h.innerHTML='<span>'+t+'</span><span class="count">'+c+'</span>';scroll.appendChild(h);}
   function minimap(){const mm=document.createElement('div');mm.className='minimap';const lab=document.createElement('div');lab.className='mmlabel';lab.textContent='local map';mm.appendChild(lab);
-    const svg=ns('svg');svg.setAttribute('viewBox','0 0 300 120');const cx=150,cy=64,R=44;const shown=neighbors(focal).filter(n=>!hidden.has(E[n.other].kind)).slice(0,8);
+    const svg=ns('svg');svg.setAttribute('viewBox','0 0 300 120');const cx=150,cy=64,R=44;const shown=neighbors(focal).filter(n=>!isHidden(E[n.other].kind)).slice(0,8);
     shown.forEach((n,i)=>{const a=(-Math.PI/2)+i*2*Math.PI/shown.length,x=cx+Math.cos(a)*R*1.3,y=cy+Math.sin(a)*R;
       const ln=ns('line');ln.setAttribute('x1',cx);ln.setAttribute('y1',cy);ln.setAttribute('x2',x);ln.setAttribute('y2',y);ln.setAttribute('stroke','var(--border)');ln.setAttribute('stroke-width','1.2');svg.appendChild(ln);
       const c=ns('circle');c.setAttribute('cx',x);c.setAttribute('cy',y);c.setAttribute('r',8);c.setAttribute('fill','color-mix(in srgb,'+KIND[E[n.other].kind].c+' 30%,transparent)');c.setAttribute('stroke',KIND[E[n.other].kind].hex);c.setAttribute('stroke-width','1.2');c.style.cursor='pointer';c.onclick=()=>push(n.other);svg.appendChild(c);});
@@ -646,11 +668,12 @@ const RATIONALE={
     '<li><b>Staged transition preserves the mental map:</b> the tapped node grows into the centre and its neighbours ease onto the ring while the rest fade — the same DOM nodes move (object constancy), avoiding the “desert-fog” disorientation a hard re-layout causes.</li>'+
     '<li><b>Redundant mode signals</b> (≥2, per NN/g): the mode pill switches overview↔focus, the subtitle changes, the breadcrumb + Overview bar appear only in focus, and the hint text updates — so no “mode slip”.</li>'+
     '<li><b>Two-finger canvas / one-finger node</b> in overview; pinch isn’t the way home.</li></ul>'},
-  filter:{title:'Type filter (shared across all three views)',tag:'legend = filter',
-    body:'<b>Philosophy:</b> the colour legend <i>is</i> the filter — a horizontal chip bar pinned under the graph. Each chip carries colour + icon + label + count (never colour alone — WCAG 1.4.1).'+
-    '<ul><li><b>Default all-on, tap to hide</b> (chip “on” = visible, matching the faceted-search mental model); <b>long-press a chip to isolate</b> just that type; <b>All</b> resets.</li>'+
-    '<li><b>Fade, don’t re-layout:</b> filtered nodes fade out while survivors keep their positions — re-running the force layout would scramble the mental map (Misue/Eades) and is the wrong call on mobile. A persistent “N hidden · Reset” pill keeps state visible.</li>'+
-    '<li><b>Focal node is exempt from its own type filter</b> (an ego view is defined by its centre — Neo4j Bloom greys-not-deletes). It stays, marked “shown · focus”. If every neighbour is filtered out, you get the lone focal node + “No neighbours match” rather than a blank canvas.</li></ul>'},
+  filter:{title:'Type filter (shared across all three views)',tag:'tap = show only that type',
+    body:'<b>Philosophy:</b> the colour legend <i>is</i> the filter — a chip bar pinned under the graph; each chip carries colour + icon + label + count (never colour alone — WCAG 1.4.1).'+
+    '<ul><li><b>Default All. One tap on a type = show only that type</b> (isolate). Tap a different chip to switch; tap the active chip again, or <b>All</b>, to go back. The tap meaning never changes with state — which is what avoids the “mode-slip” error a state-dependent tap causes (NN/g).</li>'+
+    '<li><b>Multi-select is visible &amp; opt-in:</b> the <b>Combine</b> chip turns on checkboxes so you can pick several types; long-press a chip is an accelerator into the same mode. (Research is firm that hiding multi-select behind long-press alone is a discoverability dead-end — like Grafana’s undiscovered ctrl-click.)</li>'+
+    '<li><b>Fade, don’t re-layout:</b> filtered nodes fade while survivors keep their positions — re-running the force layout would scramble the mental map (Misue/Eades). A persistent “showing only X · N hidden” pill keeps state visible.</li>'+
+    '<li><b>Focal node is exempt from its own type filter</b> (an ego view is defined by its centre — Neo4j Bloom greys-not-deletes), marked “shown · focus”; if every neighbour is filtered out you get the lone focal node + “No neighbours match”, never a blank canvas.</li></ul>'},
   orbit:{title:'Orbit — focus-first radial ego',tag:'compare: starts focused, no overview',
     body:'<b>Philosophy:</b> skip the map — land directly in one entity’s neighbourhood and navigate purely by re-centering. Overflow collapses to “+N more” → two rings. Now also filterable.'+
     '<ul><li>Bounded density (1 hop only), biggest central target, no pan/drag gesture conflict.</li><li>Best when you almost always start from “a thing” (a note’s entity) rather than browsing the whole graph.</li></ul>'},
