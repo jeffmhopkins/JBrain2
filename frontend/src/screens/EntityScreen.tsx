@@ -168,7 +168,10 @@ export function EntityScreen({
                 <div className="fact-card">
                   {state.entity.predicates.map((pred) => (
                     <PredicateBlock
-                      key={edgePath(pred.predicate, pred.qualifier)}
+                      // A set-valued predicate (children, owns…) yields one block
+                      // per object, so the path alone collides — key on the
+                      // group's head fact, which is unique per block.
+                      key={pred.history[0]?.id ?? edgePath(pred.predicate, pred.qualifier)}
                       pred={pred}
                       onOpenEntity={onOpenEntity}
                       onOpenHistory={setHistoryPred}

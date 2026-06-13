@@ -1904,6 +1904,77 @@ async def test_conflict_resolution_cascades_to_derived_shadows(
     assert (await rows(maker, OWNER, shadow_status_sql("Bettina")))[0].status == "active"
 
 
+def _children_payload(parent: str, children: list[str]) -> dict[str, Any]:
+    """One note binding `parent` to several kids — a set-valued (non-functional)
+    relationship, each child its own active edge."""
+    return {
+        "title": f"{parent}'s kids",
+        "tags": ["family", parent.lower()],
+        "mentions": [{"name": parent, "kind": "Person", "surface_text": parent}]
+        + [{"name": c, "kind": "Person", "surface_text": c} for c in children],
+        "facts": [
+            {
+                "predicate": "children", "qualifier": "", "kind": "relationship",
+                "statement": f"{parent}'s child is {c}.", "value_json": None,
+                "assertion": "asserted", "entity_ref": parent, "object_entity_ref": c,
+                "temporal": {
+                    "phrase": "", "resolved_start": f"2026-06-{10 + i:02d}T00:00:00+00:00",
+                    "resolved_end": None, "precision": "day",
+                },
+                "domain": "general", "confidence": 0.95,
+            }
+            for i, c in enumerate(children)
+        ],
+        "temporal_tokens": [],
+    }  # fmt: skip
+
+
+async def test_entity_view_set_valued_relationship_shows_every_child(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """A non-functional relationship is set-valued: each child is its OWN live
+    edge on the entity page, not one 'current' value with the rest demoted to a
+    misleading 'N earlier' history. And the auto-materialized kid.parent -> me
+    reciprocals are the same bonds reflected back, so they never echo as
+    independent 'Linked from' rows. Together this keeps the page consistent with
+    the map, which draws one edge per child."""
+    kids = ["Aurelia Childview", "Bramwell Childview", "Cassia Childview", "Drystan Childview"]
+    note_id = await make_note(maker, domain="general", body="Childview kids.")
+    payload = _children_payload("Childview Parent", kids)
+    await analyzer(maker, [json.dumps(payload)]).analyze_note({"note_id": note_id})
+
+    me = (
+        await rows(
+            maker,
+            OWNER,
+            "SELECT id::text AS id FROM app.entities WHERE canonical_name = 'Childview Parent'",
+        )
+    )[0]
+    view = await SqlAnalysisRepo(maker).entity_view(OWNER, me.id)
+    assert view is not None
+
+    child_groups = [p for p in view["predicates"] if p["predicate"] == "children"]
+    # One live block per child — all four, each its own current edge, no history.
+    assert len(child_groups) == len(kids)
+    assert all(g["current"] is not None for g in child_groups)
+    assert all(len(g["history"]) == 1 for g in child_groups)
+    assert {g["current"]["object_entity_name"] for g in child_groups} == set(kids)
+
+    # The reciprocals really exist on the kids' streams (active, derived)...
+    reciprocals = await rows(
+        maker,
+        OWNER,
+        "SELECT 1 FROM app.facts f JOIN app.entities e ON e.id = f.entity_id"
+        " WHERE f.object_entity_id = :id AND f.predicate = 'parent'"
+        " AND f.status = 'active' AND f.derived_from_fact_id IS NOT NULL",
+        id=me.id,
+    )
+    assert len(reciprocals) == len(kids)
+    # ...but they are deduped out of inbound — the bond is already the parent's
+    # own children edge, not an independent inbound claim.
+    assert view["inbound"] == []
+
+
 async def test_domain_floor_raises_clinical_fact_in_general_note(
     maker: async_sessionmaker[AsyncSession],
 ) -> None:
