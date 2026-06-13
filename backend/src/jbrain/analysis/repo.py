@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from jbrain.analysis.display import mark_snippet
 from jbrain.analysis.entities import are_distinct, merge_entity_pair, plan_merge
+from jbrain.analysis.supersession import is_functional
 from jbrain.db.session import SessionContext, scoped_session
 
 # The list view exposes three lanes: "open" is the pending triage queue,
@@ -467,11 +468,24 @@ class SqlAnalysisRepo:
             inbound = (
                 await session.execute(
                     text(
+                        # "Linked from" is OTHER entities' edges into this one, so
+                        # the auto-materialized reciprocal of one of THIS entity's
+                        # own outbound edges (Me.children -> kid mirrored as
+                        # kid.parent -> Me) is dropped: it is the same bond, already
+                        # shown as the subject's own predicate, not an independent
+                        # inbound claim. Either side of the pair may be the derived
+                        # one, so match the reciprocal link in both directions.
                         """
                         SELECT f.entity_id::text, e.canonical_name AS name,
                                f.predicate, f.statement
                         FROM app.facts f JOIN app.entities e ON e.id = f.entity_id
                         WHERE f.object_entity_id = :id AND f.status = 'active'
+                          AND NOT EXISTS (
+                              SELECT 1 FROM app.facts mine
+                              WHERE mine.entity_id = :id
+                                AND (mine.id = f.derived_from_fact_id
+                                     OR mine.derived_from_fact_id = f.id)
+                          )
                         ORDER BY f.created_at DESC
                         """
                     ),
@@ -495,9 +509,18 @@ class SqlAnalysisRepo:
                 )
             ).all()
 
-        predicates: dict[tuple[str, str], dict[str, Any]] = {}
+        # A non-functional relationship is set-valued: every distinct object is a
+        # co-equal LIVE value (the pipeline keeps them all active —
+        # supersession.decide accumulates them), not a revision of one slot. So
+        # those group per object — each child its own current edge — while scalar
+        # attributes and functional relationships (one current value, prior values
+        # are superseded history) keep their single (predicate, qualifier) slot.
+        # Without the object split, four active children collapse to one "current"
+        # plus a misleading "3 earlier", disagreeing with the map's four edges.
+        predicates: dict[tuple[str, str, str | None], dict[str, Any]] = {}
         for row in facts:
-            key = (row.predicate, row.qualifier)
+            set_valued = row.kind == "relationship" and not is_functional(row.predicate)
+            key = (row.predicate, row.qualifier, row.object_entity_id if set_valued else None)
             group = predicates.setdefault(
                 key,
                 {

@@ -201,6 +201,44 @@ describe("EntityScreen", () => {
     expect(handlers.onOpenNote).toHaveBeenCalledWith("n1");
   });
 
+  it("set-valued relationship: every child renders as its own live edge, none 'earlier'", async () => {
+    // children is non-functional: the backend emits one predicate block per
+    // kid, each a current edge with its own one-fact history. The page must
+    // show all of them — never collapse to one + a misleading "N earlier".
+    const child = (id: string, name: string): FactOut => ({
+      ...DENVER,
+      id,
+      predicate: "children",
+      qualifier: null,
+      kind: "relationship",
+      status: "active",
+      value_json: null,
+      object_entity_id: id,
+      object_entity_name: name,
+    });
+    const summer = child("ent-summer", "Summer Hopkins");
+    const harmony = child("ent-harmony", "Harmony Hopkins");
+    const dad: EntityOut = {
+      ...SARAH,
+      predicates: [
+        { predicate: "children", qualifier: null, current: summer, history: [summer] },
+        { predicate: "children", qualifier: null, current: harmony, history: [harmony] },
+      ],
+      inbound: [],
+    };
+    fetchMock.mockImplementation(async (input) => {
+      if (String(input) === "/api/entities/ent-sarah") return jsonResponse(dad);
+      throw new Error(`Unexpected fetch: ${String(input)}`);
+    });
+    setup();
+    await screen.findByRole("heading", { name: "Sarah Hopkins" });
+
+    expect(screen.getByRole("button", { name: "Summer Hopkins" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Harmony Hopkins" })).toBeInTheDocument();
+    // No child is demoted to a history disclosure.
+    expect(screen.queryByRole("button", { name: /earlier →/ })).not.toBeInTheDocument();
+  });
+
   it("shows the quiet error line when the entity fails to load", async () => {
     fetchMock.mockResolvedValue(new Response(null, { status: 500 }));
     setup();
