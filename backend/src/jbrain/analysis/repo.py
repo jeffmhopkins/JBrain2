@@ -8,6 +8,7 @@ sessions, so pre-P7 "owner-only" is enforced by Postgres, not checked here.
 import json
 import uuid
 from collections.abc import Sequence
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
@@ -15,6 +16,7 @@ from sqlalchemy import bindparam, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from jbrain.analysis.display import mark_snippet
+from jbrain.analysis.entities import are_distinct, merge_entity_pair, plan_merge
 from jbrain.db.session import SessionContext, scoped_session
 
 # The list view exposes three lanes: "open" is the pending triage queue,
@@ -45,6 +47,17 @@ def _as_uuid(value: str) -> uuid.UUID | None:
         return uuid.UUID(value)
     except ValueError:
         return None
+
+
+@dataclass(frozen=True)
+class MergeOutcome:
+    """The result of enacting an owner-approved merge proposal: which id survived,
+    which was folded, and whether this call did the fold (a re-enact of an already
+    merged pair is a no-op)."""
+
+    keep_id: str
+    gone_id: str
+    merged: bool
 
 
 _FACT_SELECT = """
@@ -529,6 +542,40 @@ class SqlAnalysisRepo:
             ],
         }
 
+    async def merge_entities(
+        self, ctx: SessionContext, entity_a: str, entity_b: str
+    ) -> MergeOutcome:
+        """Enact a merge the owner approved (the agent's merge_entities leaf). The
+        agent never picks the survivor: plan_merge re-ranks the pair so the
+        more-anchored identity is kept (the owner is never merged away), a permanent
+        distinct_from blocks the fold, and a re-enact whose pair already merged is a
+        no-op (idempotent). Runs through the same merge_entity_pair the review inbox
+        uses, in the caller's RLS scope."""
+        a, b = _as_uuid(entity_a), _as_uuid(entity_b)
+        if a is None or b is None or a == b:
+            raise UnknownAction("merge_entities needs two distinct entity ids")
+        async with scoped_session(self._maker, ctx) as session:
+            rows = {
+                str(r.id): r
+                for r in (
+                    await session.execute(
+                        text("SELECT id, status FROM app.entities WHERE id = ANY(:ids)"),
+                        {"ids": [str(a), str(b)]},
+                    )
+                ).all()
+            }
+            if str(a) not in rows or str(b) not in rows:
+                raise UnknownAction("merge_entities: an entity id is not in scope")
+            # A re-enacted proposal whose pair was already merged is a no-op — never
+            # a second fold onto a tombstone.
+            if any(r.status == "merged" for r in rows.values()):
+                return MergeOutcome(str(a), str(b), merged=False)
+            if await are_distinct(session, a, b):
+                raise UnknownAction("a permanent distinct_from forbids merging these")
+            plan = await plan_merge(session, a, b)
+            await merge_entity_pair(session, keep=plan.keep_id, gone=plan.gone_id)
+            return MergeOutcome(str(plan.keep_id), str(plan.gone_id), merged=True)
+
     async def note_currency(
         self, ctx: SessionContext, note_ids: list[str]
     ) -> dict[str, list[dict[str, Any]]]:
@@ -948,9 +995,9 @@ class SqlAnalysisRepo:
             if not entity_a or not entity_b:
                 raise UnknownAction("item payload lacks entity_a/entity_b")
             if action == "accept":
-                # Tombstone + repoint. RETURNING captures the repointed row
-                # ids — un-merge moves exactly those rows back instead of
-                # guessing from spans.
+                # Tombstone + repoint via the shared fold (merge_entity_pair).
+                # RETURNING captures the repointed row ids — un-merge moves exactly
+                # those rows back instead of guessing from spans.
                 gone_prior = (
                     await session.execute(
                         text(
@@ -960,33 +1007,7 @@ class SqlAnalysisRepo:
                         {"gone": entity_b},
                     )
                 ).first()
-                await session.execute(
-                    text(
-                        "UPDATE app.entities SET status = 'merged', merged_into_id = :keep,"
-                        " updated_at = now() WHERE id = :gone"
-                    ),
-                    {"keep": entity_a, "gone": entity_b},
-                )
-                repointed: dict[str, list[str]] = {}
-                for key, stmt in (
-                    (
-                        "mention_ids",
-                        "UPDATE app.entity_mentions SET entity_id = :keep"
-                        " WHERE entity_id = :gone RETURNING id::text",
-                    ),
-                    (
-                        "fact_ids",
-                        "UPDATE app.facts SET entity_id = :keep"
-                        " WHERE entity_id = :gone RETURNING id::text",
-                    ),
-                    (
-                        "object_fact_ids",
-                        "UPDATE app.facts SET object_entity_id = :keep"
-                        " WHERE object_entity_id = :gone RETURNING id::text",
-                    ),
-                ):
-                    result = await session.execute(text(stmt), {"keep": entity_a, "gone": entity_b})
-                    repointed[key] = list(result.scalars())
+                repointed = await merge_entity_pair(session, keep=entity_a, gone=entity_b)
                 return "resolved", [
                     {
                         "action": "merged",

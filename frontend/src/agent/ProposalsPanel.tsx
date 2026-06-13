@@ -9,6 +9,7 @@ import type { ProposalKind, ProposalSummary } from "./types";
 const BADGE: Record<ProposalKind, string> = {
   "wiki-restructure": "⤴",
   knowledge: "＋",
+  merge: "⧉",
   correction: "✎",
   appointment: "◷",
   "prompt-edit": "⌥",

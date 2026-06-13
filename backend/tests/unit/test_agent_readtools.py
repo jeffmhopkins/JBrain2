@@ -458,6 +458,7 @@ def test_build_registry_binds_the_shipped_sidecars() -> None:
         "memory_edit",
         "remember",
         "propose_correction",
+        "propose_merge",
         "lookup_medication",
         "lookup_condition",
     }

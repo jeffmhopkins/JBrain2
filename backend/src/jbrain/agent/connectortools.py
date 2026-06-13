@@ -13,6 +13,7 @@ agent-note kinds (correction/knowledge) and egress.
 import uuid
 
 from jbrain.agent.loop import ToolContext, ToolHandler
+from jbrain.agent.mergetools import entity_merge_executor
 from jbrain.agent.proposals import (
     LeafExecutor,
     NodeRow,
@@ -22,6 +23,7 @@ from jbrain.agent.proposals import (
     ProposalSpec,
 )
 from jbrain.agent.proposaltools import agent_note_executor
+from jbrain.analysis.repo import SqlAnalysisRepo
 from jbrain.connectors.base import ConnectorRegistry, EgressGuardError, build_egress
 from jbrain.connectors.service import ConnectorService
 from jbrain.db.session import SessionContext
@@ -103,19 +105,26 @@ def egress_executor(service: ConnectorService) -> LeafExecutor:
 
 
 def build_leaf_executor(
-    notes: SqlNotesRepo, connectors: ConnectorService, jobs: JobEnqueuer
+    notes: SqlNotesRepo,
+    connectors: ConnectorService,
+    jobs: JobEnqueuer,
+    analysis: SqlAnalysisRepo,
 ) -> LeafExecutor:
     """The Proposal executor, dispatching by leaf op: an egress_call fires the
-    connector; everything else (correction/knowledge, and a manage_appointment
+    connector; a merge_entities leaf folds one entity into another through the
+    analysis repo; everything else (correction/knowledge, and a manage_appointment
     change) re-enters as an agent note from its preview `body` (which enqueues
     ingestion via `jobs`) — so an approved appointment flows through extraction to
     the projection like any note."""
     note_executor = agent_note_executor(notes, jobs)
     egress = egress_executor(connectors)
+    merge = entity_merge_executor(analysis)
 
     async def execute(ctx: SessionContext, proposal: ProposalRow, node: NodeRow) -> None:
         if node.op == "egress_call":
             await egress(ctx, proposal, node)
+        elif node.op == "merge_entities":
+            await merge(ctx, proposal, node)
         else:
             await note_executor(ctx, proposal, node)
 

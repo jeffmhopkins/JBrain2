@@ -27,6 +27,17 @@ from jbrain.queue import JobEnqueuer
 _TITLE_LEN = 80
 
 
+def _label(text: str, limit: int = _TITLE_LEN) -> str:
+    """A short title from prose: truncate on a word boundary with an ellipsis so a
+    long correction never gets sliced mid-word (the old `correction[:80]` cut inside
+    a word — e.g. "…adf3)a")."""
+    text = text.strip()
+    if len(text) <= limit:
+        return text
+    head = text[:limit].rsplit(" ", 1)[0] or text[:limit]
+    return head.rstrip() + "…"
+
+
 def build_proposal_handlers(proposals: ProposalRepo) -> dict[str, ToolHandler]:
     async def propose_correction_tool(arguments: dict, ctx: ToolContext) -> str:
         correction = str(arguments.get("correction", "")).strip()
@@ -44,13 +55,13 @@ def build_proposal_handlers(proposals: ProposalRepo) -> dict[str, ToolHandler]:
             id=str(uuid.uuid4()),
             type="leaf",
             op="add_note",
-            label=correction[:_TITLE_LEN],
+            label=_label(correction),
             preview={"body": correction, "domain": domain},
         )
         spec = ProposalSpec(
             kind="correction",
             domain=domain,
-            title=correction[:_TITLE_LEN],
+            title=_label(correction),
             nodes=[node],
             provenance={"source": "chat"},
         )

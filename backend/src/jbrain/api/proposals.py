@@ -15,6 +15,7 @@ from pydantic import BaseModel
 
 from jbrain.agent.connectortools import build_leaf_executor
 from jbrain.agent.proposals import ProposalRepo
+from jbrain.analysis.repo import SqlAnalysisRepo
 from jbrain.api.deps import owner_only
 from jbrain.api.notes import ctx_for
 from jbrain.auth.service import PrincipalInfo
@@ -41,6 +42,10 @@ def get_connector_service(request: Request) -> ConnectorService:
 
 def get_job_queue(request: Request) -> JobEnqueuer:
     return cast(JobEnqueuer, request.app.state.job_queue)
+
+
+def get_analysis_repo(request: Request) -> SqlAnalysisRepo:
+    return cast(SqlAnalysisRepo, request.app.state.analysis_repo)
 
 
 class ProposalSummaryOut(BaseModel):
@@ -134,7 +139,10 @@ async def enact_proposal(request: Request, principal: OwnerDep, proposal_id: str
     # One executor dispatching by leaf op: agent-note kinds re-enter the pipeline;
     # an egress leaf fires its connector (the call the owner just approved).
     executor = build_leaf_executor(
-        get_notes_repo(request), get_connector_service(request), get_job_queue(request)
+        get_notes_repo(request),
+        get_connector_service(request),
+        get_job_queue(request),
+        get_analysis_repo(request),
     )
     try:
         plan = await repo.enact(ctx_for(principal), proposal_id, executor)

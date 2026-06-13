@@ -815,6 +815,43 @@ async def plan_merge(session: AsyncSession, a: uuid.UUID, b: uuid.UUID) -> Merge
     return MergePlan(keep.id, keep.canonical_name, gone.id, gone.canonical_name)
 
 
+async def merge_entity_pair(
+    session: AsyncSession, *, keep: uuid.UUID | str, gone: uuid.UUID | str
+) -> dict[str, list[str]]:
+    """Fold `gone` into `keep`: tombstone it and repoint its mentions and facts
+    (as subject and as object) onto the survivor. The one fold-and-repoint both the
+    review-inbox merge and the owner-approved agent merge proposal run, so the two
+    paths can never diverge. Returns the repointed row ids (mention_ids, fact_ids,
+    object_fact_ids) so an un-merge can move exactly those rows back."""
+    await session.execute(
+        text(
+            "UPDATE app.entities SET status = 'merged', merged_into_id = :keep,"
+            " updated_at = now() WHERE id = :gone"
+        ),
+        {"keep": str(keep), "gone": str(gone)},
+    )
+    repointed: dict[str, list[str]] = {}
+    for key, stmt in (
+        (
+            "mention_ids",
+            "UPDATE app.entity_mentions SET entity_id = :keep"
+            " WHERE entity_id = :gone RETURNING id::text",
+        ),
+        (
+            "fact_ids",
+            "UPDATE app.facts SET entity_id = :keep WHERE entity_id = :gone RETURNING id::text",
+        ),
+        (
+            "object_fact_ids",
+            "UPDATE app.facts SET object_entity_id = :keep"
+            " WHERE object_entity_id = :gone RETURNING id::text",
+        ),
+    ):
+        result = await session.execute(text(stmt), {"keep": str(keep), "gone": str(gone)})
+        repointed[key] = list(result.scalars())
+    return repointed
+
+
 async def resolve_entity(
     session: AsyncSession,
     name: str,
