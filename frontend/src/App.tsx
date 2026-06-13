@@ -227,6 +227,12 @@ export function App() {
   const subRef = useRef<HTMLDivElement | null>(null);
 
   function onSubTouchStart(event: TouchEvent) {
+    // The Map owns vertical drags (pan/pinch), so don't arm the down-swipe
+    // dismiss over it — use the back/bolt controls to leave instead.
+    if (card === "graph") {
+      swipeStart.current = null;
+      return;
+    }
     const scroller = subRef.current?.querySelector("main");
     if ((scroller?.scrollTop ?? 0) > 4) {
       swipeStart.current = null;
