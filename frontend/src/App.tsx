@@ -254,8 +254,8 @@ export function App() {
 
   return (
     <div className="shell">
-      <TopBar syncStatus={notes.syncStatus} onBolt={() => setLauncherOpen(true)} />
-
+      {/* The home top bar lives inside HomeScreen so it can swap the wordmark for
+          the active Full Brain session; sub-screen overlays bring their own. */}
       {/* Home stays mounted so stream scroll position survives sub-screens. */}
       <div className={`screen-home${card === null && !launcherOpen ? "" : " screen-hidden"}`}>
         <HomeScreen

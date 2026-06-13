@@ -8,20 +8,28 @@ const SYNC_TEXT: Record<SyncStatus, string> = {
 };
 
 interface TopBarProps {
-  /** Sub-screen title; omitted on home, where the wordmark shows instead. */
+  /** Sub-screen title; omitted on home, where the wordmark (or session) shows. */
   title?: string;
   onBack?: () => void;
   syncStatus: SyncStatus;
   onBolt: () => void;
+  /** On home, the active Full Brain session: its name takes the wordmark's slot
+   *  so the conversation doesn't spend a second row on a title, and a tap reopens
+   *  the Sessions list. Absent in the other home modes, where the wordmark shows. */
+  session?: { title: string; onOpen: () => void } | undefined;
 }
 
-export function TopBar({ title, onBack, syncStatus, onBolt }: TopBarProps) {
+export function TopBar({ title, onBack, syncStatus, onBolt, session }: TopBarProps) {
   return (
     <header className="top-bar">
       {title ? (
         <button type="button" className="back-btn" onClick={onBack} aria-label="Back">
           <ChevronLeftIcon size={22} />
           <span className="screen-title">{title}</span>
+        </button>
+      ) : session ? (
+        <button type="button" className="session-title" onClick={session.onOpen}>
+          {session.title}
         </button>
       ) : (
         <span className="wordmark">

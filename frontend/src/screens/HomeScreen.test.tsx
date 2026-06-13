@@ -129,10 +129,16 @@ describe("HomeScreen mode scoping", () => {
 
   it("Full Brain renders the live conversation surface inline; Entry sub-modes keep the stream", async () => {
     setup();
+    // Entry mode shows the wordmark; no session has taken the top bar yet.
+    expect(document.querySelector(".session-title")).not.toBeInTheDocument();
+    expect(document.querySelector(".wordmark")).toBeInTheDocument();
+
     fireEvent.click(screen.getByRole("tab", { name: "Full Brain" }));
-    // The real surface, not a placeholder: the session name and the transcript.
+    // The real surface, not a placeholder: the transcript, with the session name
+    // standing in for the wordmark up in the top bar (no extra title row).
     await waitFor(() => expect(screen.getByLabelText("Conversation")).toBeInTheDocument());
-    expect(document.querySelector(".fb-title")?.textContent).toBe("Recap");
+    expect(document.querySelector(".session-title")?.textContent).toBe("Recap");
+    expect(document.querySelector(".wordmark")).not.toBeInTheDocument();
 
     // Back to Entry, then into the Medical sub-mode: still the note stream.
     fireEvent.click(screen.getByRole("tab", { name: "Entry" }));
@@ -141,6 +147,16 @@ describe("HomeScreen mode scoping", () => {
     expect(
       screen.getByText("Nothing captured yet — write your first entry below."),
     ).toBeInTheDocument();
+  });
+
+  it("tapping the session name in the top bar reopens the Sessions panel", async () => {
+    setup();
+    fireEvent.click(screen.getByRole("tab", { name: "Full Brain" }));
+    await waitFor(() => screen.getByLabelText("Conversation"));
+    expect(document.querySelector(".panel.left.open")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Recap" }));
+    expect(document.querySelector(".panel.left.open")).toBeInTheDocument();
   });
 
   it("a Full Brain send from the omnibox streams into the inline transcript", async () => {

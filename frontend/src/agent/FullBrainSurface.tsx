@@ -85,10 +85,8 @@ export function FullBrainSurface({ fb, onOpenNote, onOpenEntity }: Props): React
     }
   }
 
-  // Just the session's name up top — the panels are a swipe away (right for
-  // Sessions, left for Proposals). Tapping the name reopens the Sessions list.
-  const title = fb.active ? fb.active.title || "Untitled session" : "Full Brain";
-
+  // The session's name lives in the top bar (HomeScreen owns it); the panels are
+  // a swipe away — right for Sessions, left for Proposals.
   return (
     <div
       className="fb-shell"
@@ -97,10 +95,6 @@ export function FullBrainSurface({ fb, onOpenNote, onOpenEntity }: Props): React
       onTouchEnd={onTouchEnd}
     >
       <div className="fullbrain">
-        <button type="button" className="fb-title" onClick={() => setPanel("sessions")}>
-          {title}
-        </button>
-
         {fb.active ? (
           <main className="fb-chat" aria-label="Conversation" ref={chatRef}>
             {fb.messages.map((m, i) => (
