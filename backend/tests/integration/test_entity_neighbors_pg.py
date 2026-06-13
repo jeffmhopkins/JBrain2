@@ -8,6 +8,7 @@ suffix and assertions filter to this seed's ids before comparing.
 
 import uuid
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
@@ -60,7 +61,7 @@ def rel(src: uuid.UUID, dst: uuid.UUID, note_id: uuid.UUID, predicate: str, doma
         assertion="asserted",
         status="active",
         valid_from=None,
-        reported_at=None,
+        reported_at=datetime(2026, 6, 1, 12, 0, tzinfo=UTC),
         note_id=note_id,
         extractor="test",
         prompt_version="test",
