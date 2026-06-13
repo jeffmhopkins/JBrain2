@@ -118,6 +118,7 @@ export interface AppointmentOut {
   rrule: string | null;
   recurring: boolean;
   attendees: string[];
+  source_note_id: string | null;
 }
 
 export interface NoteOut {

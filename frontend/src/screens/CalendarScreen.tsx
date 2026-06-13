@@ -39,6 +39,7 @@ interface Ev {
   location: string | null;
   recurring: boolean;
   attendees: string[];
+  sourceNoteId: string | null;
 }
 
 function toEv(a: AppointmentOut): Ev {
@@ -53,6 +54,7 @@ function toEv(a: AppointmentOut): Ev {
     location: a.location,
     recurring: a.recurring,
     attendees: a.attendees,
+    sourceNoteId: a.source_note_id,
   };
 }
 
@@ -93,7 +95,7 @@ function flag(e: Ev): ReactNode {
   return null;
 }
 
-export function CalendarScreen() {
+export function CalendarScreen({ onOpenNote }: { onOpenNote: (noteId: string) => void }) {
   const [events, setEvents] = useState<Ev[] | null>(null);
   const [view, setView] = useState<View>("month");
   const [cur, setCur] = useState<Date>(() => {
@@ -209,7 +211,7 @@ export function CalendarScreen() {
         )}
       </div>
 
-      {open && <EventSheet ev={open} onClose={() => setOpen(null)} />}
+      {open && <EventSheet ev={open} onClose={() => setOpen(null)} onOpenNote={onOpenNote} />}
     </main>
   );
 }
@@ -485,7 +487,11 @@ function TaskRow({ ev, onOpen }: { ev: Ev; onOpen: (e: Ev) => void }): ReactNode
   );
 }
 
-function EventSheet({ ev, onClose }: { ev: Ev; onClose: () => void }): ReactNode {
+function EventSheet({
+  ev,
+  onClose,
+  onOpenNote,
+}: { ev: Ev; onClose: () => void; onOpenNote: (noteId: string) => void }): ReactNode {
   const when = ev.allDay
     ? `All day · ${dow(ev.start.getDay())} ${mon3(ev.start.getMonth())} ${ev.start.getDate()}`
     : `${dow(ev.start.getDay())} ${mon3(ev.start.getMonth())} ${ev.start.getDate()} · ${fmtT(ev.start)}${ev.end ? `–${fmtT(ev.end)}` : ""}`;
@@ -506,9 +512,25 @@ function EventSheet({ ev, onClose }: { ev: Ev; onClose: () => void }): ReactNode
         {ev.recurring && <div className="cal-row">Repeats</div>}
         {ev.location && <div className="cal-row">{ev.location}</div>}
         {ev.attendees.length > 0 && <div className="cal-row">with {ev.attendees.join(", ")}</div>}
-        <div className="cal-row cal-note">
-          Projected from your notes — ask the agent to change it.
-        </div>
+        {ev.sourceNoteId ? (
+          // Projected from a note — let the owner jump to it. Closing the sheet
+          // first leaves the note layer unobstructed (cf. App.openNoteFromEntity).
+          <button
+            type="button"
+            className="cal-row cal-note cal-opennote"
+            onClick={() => {
+              const noteId = ev.sourceNoteId;
+              onClose();
+              if (noteId) onOpenNote(noteId);
+            }}
+          >
+            Projected from your notes — open the source note.
+          </button>
+        ) : (
+          <div className="cal-row cal-note">
+            Projected from your notes — ask the agent to change it.
+          </div>
+        )}
       </div>
     </div>
   );
