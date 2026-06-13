@@ -1,0 +1,436 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Direction A — Chats-first · scope recedes maximally</title>
+<style>
+  :root{
+    --bg:#0E0F11; --surface:#17181B; --surface-2:#1E2024; --border:#26282C;
+    --text:#E6E7E9; --text-2:#9A9DA3; --text-3:#5C5F66;
+    --steel:#7FA7C9; --green:#8FBC9A; --amber:#C9A36A; --rose:#CF8A8F; --violet:#A493C9;
+    --steel-tint:rgba(127,167,201,.13); --green-tint:rgba(143,188,154,.13);
+    --amber-tint:rgba(201,163,106,.13); --rose-tint:rgba(207,138,143,.13); --violet-tint:rgba(164,147,201,.13);
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+  body{background:#000;color:var(--text);display:flex;flex-direction:column;align-items:center;gap:14px;padding:18px 0 40px;min-height:100vh;}
+  .caption{max-width:392px;padding:0 18px;color:var(--text-2);font-size:13px;line-height:1.55;}
+  .caption b{color:var(--text);font-weight:500;}
+  .caption .tag{display:inline-block;background:var(--steel-tint);color:var(--steel);font-size:11px;padding:2px 8px;border-radius:999px;margin-bottom:6px;}
+  svg{fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;}
+
+  .phone{width:390px;height:780px;background:var(--bg);border:1px solid #2a2c30;border-radius:34px;overflow:hidden;position:relative;display:flex;flex-direction:column;}
+
+  /* top bar — title + ambient scope chip (the only place domains live) */
+  .panel-bar{height:56px;display:flex;align-items:center;gap:10px;padding:0 12px 0 14px;border-bottom:1px solid var(--border);flex:none;}
+  .panel-bar .back{color:var(--text-2);width:32px;height:32px;display:flex;align-items:center;justify-content:center;}
+  .panel-bar .ttl{font-size:18px;font-weight:600;}
+  .scopechip{margin-left:auto;display:inline-flex;align-items:center;gap:6px;font-size:12px;
+    padding:7px 11px;border-radius:999px;background:var(--steel-tint);color:var(--steel);border:1px solid transparent;min-height:34px;}
+  .scopechip .dot{width:7px;height:7px;border-radius:999px;background:currentColor;flex:none;}
+  .scopechip svg{width:14px;height:14px;opacity:.8;}
+  .scopechip.medical{background:var(--rose-tint);color:var(--rose);}
+  .scopechip.financial{background:var(--violet-tint);color:var(--violet);}
+  .scopechip.location{background:var(--amber-tint);color:var(--amber);}
+  .scopechip.general{background:var(--green-tint);color:var(--green);}
+
+  .body{flex:1;overflow-y:auto;padding:12px 14px 18px;display:flex;flex-direction:column;gap:10px;}
+
+  /* one-tap new chat — an invitation, a verb, not a config chore */
+  .newbtn{border:none;background:var(--steel);color:#10141a;border-radius:14px;padding:15px;font-size:16px;font-weight:600;
+    display:flex;align-items:center;justify-content:center;gap:9px;min-height:52px;}
+  .newbtn svg{width:20px;height:20px;stroke:#10141a;stroke-width:2;}
+
+  .sect{font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--text-3);margin:8px 4px 0;}
+
+  /* rich messaging-style chat card */
+  .wrap{position:relative;border-radius:14px;overflow:hidden;}
+  .rail{position:absolute;inset:0 0 0 auto;width:213px;display:flex;}
+  .rail button{flex:1;border:none;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;
+    font-size:11px;color:var(--text);background:var(--surface-2);}
+  .rail .r-rename{background:var(--steel-tint);color:var(--steel);}
+  .rail .r-archive{background:var(--amber-tint);color:var(--amber);}
+  .rail .r-delete{background:var(--rose-tint);color:var(--rose);}
+  .rail svg{width:18px;height:18px;}
+
+  .card{position:relative;background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:13px 14px;
+    display:flex;flex-direction:column;gap:6px;transition:transform .22s cubic-bezier(.2,.7,.3,1);will-change:transform;}
+  .card.live{border-color:rgba(143,188,154,.42);}
+  .card .c-top{display:flex;align-items:center;gap:9px;}
+  .card .avatar{width:36px;height:36px;border-radius:11px;background:var(--surface-2);display:flex;align-items:center;justify-content:center;
+    color:var(--text-2);flex:none;position:relative;}
+  .card .avatar svg{width:18px;height:18px;}
+  .card.live .avatar{background:var(--green-tint);color:var(--green);}
+  .live-dot{position:absolute;right:-2px;bottom:-2px;width:11px;height:11px;border-radius:999px;background:var(--green);border:2px solid var(--surface);}
+  .card .c-mid{flex:1;min-width:0;}
+  .card .c-title{font-size:15px;font-weight:500;display:flex;align-items:center;gap:7px;}
+  .card .c-title .when{margin-left:auto;font-size:12px;color:var(--text-3);font-weight:400;flex:none;}
+  .card .c-prev{font-size:13px;color:var(--text-2);line-height:1.4;margin-top:2px;
+    overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:1;-webkit-box-orient:vertical;}
+  .card .c-foot{display:flex;align-items:center;gap:8px;margin-top:2px;padding-left:45px;}
+  .meta{font-size:11px;color:var(--text-3);display:inline-flex;align-items:center;gap:4px;}
+  .meta svg{width:12px;height:12px;}
+  .badge-staged{font-size:11px;padding:3px 9px;border-radius:999px;background:var(--steel-tint);color:var(--steel);font-weight:500;}
+  .youhere{font-size:10.5px;letter-spacing:.05em;text-transform:uppercase;color:var(--green);
+    background:var(--green-tint);padding:2px 8px;border-radius:999px;font-weight:600;}
+  .arch-toggle{align-self:center;margin-top:6px;font-size:12px;color:var(--text-3);background:transparent;border:none;
+    display:inline-flex;align-items:center;gap:6px;padding:8px;}
+
+  /* generic bottom sheet + scrim */
+  .scrim{position:absolute;inset:0;background:rgba(14,15,17,.62);opacity:0;pointer-events:none;transition:.2s;z-index:30;}
+  .scrim.show{opacity:1;pointer-events:auto;}
+  .sheet{position:absolute;left:0;right:0;bottom:0;background:var(--surface);border-top:1px solid var(--border);border-radius:18px 18px 0 0;
+    transform:translateY(100%);transition:transform .24s cubic-bezier(.2,.7,.3,1);z-index:31;
+    padding:8px 16px calc(16px + env(safe-area-inset-bottom));max-height:88%;display:flex;flex-direction:column;}
+  .sheet.show{transform:translateY(0);}
+  .grip{width:40px;height:4px;border-radius:999px;background:var(--border);margin:8px auto 12px;}
+  .sheet h3{font-size:17px;font-weight:600;margin-bottom:2px;}
+  .sheet .lead{font-size:13px;color:var(--text-2);margin-bottom:14px;line-height:1.45;}
+
+  /* scope presets — calm, named, one tap each */
+  .preset{display:flex;align-items:center;gap:12px;padding:13px;border:1px solid var(--border);border-radius:12px;margin-bottom:8px;background:var(--surface-2);}
+  .preset .ico{width:30px;height:30px;border-radius:8px;display:flex;align-items:center;justify-content:center;flex:none;font-size:15px;}
+  .preset .meta-b{flex:1;min-width:0;}
+  .preset .meta-b .t{font-size:15px;}
+  .preset .meta-b .d{font-size:12px;color:var(--text-3);margin-top:1px;}
+  .preset .tick{width:22px;height:22px;border-radius:999px;border:1.5px solid var(--border);display:flex;align-items:center;justify-content:center;color:transparent;flex:none;}
+  .preset.on{border-color:rgba(127,167,201,.5);}
+  .preset.on .tick{background:var(--steel);border-color:var(--steel);color:#10141a;}
+  .preset.on .tick svg{width:13px;height:13px;stroke:#10141a;stroke-width:2.4;}
+  .ico.s-steel{background:var(--steel-tint);color:var(--steel);}
+  .ico.s-green{background:var(--green-tint);color:var(--green);}
+  .ico.s-rose{background:var(--rose-tint);color:var(--rose);}
+  .ico.s-violet{background:var(--violet-tint);color:var(--violet);}
+  .ico.s-amber{background:var(--amber-tint);color:var(--amber);}
+  .sheet-note{font-size:12px;color:var(--text-3);text-align:center;margin-top:10px;line-height:1.5;}
+
+  /* row action menu (alt to swipe — tap the ⋯) */
+  .menu-row{display:flex;align-items:center;gap:12px;padding:14px 6px;font-size:15px;border-bottom:1px solid var(--border);}
+  .menu-row:last-of-type{border-bottom:none;}
+  .menu-row svg{width:19px;height:19px;color:var(--text-2);}
+  .menu-row.danger{color:var(--rose);} .menu-row.danger svg{color:var(--rose);}
+
+  /* just-in-time unlock prompt — iOS "Allow Once" register */
+  .unlock h3{display:flex;align-items:center;gap:9px;}
+  .unlock .key{width:30px;height:30px;border-radius:9px;background:var(--rose-tint);color:var(--rose);display:flex;align-items:center;justify-content:center;flex:none;}
+  .unlock .key svg{width:17px;height:17px;}
+  .unlock .ask{font-size:13px;color:var(--text-2);line-height:1.5;margin:6px 0 16px;}
+  .unlock .ask b{color:var(--text);}
+  .unlock .btns{display:flex;flex-direction:column;gap:8px;}
+  .unlock .btns button{border-radius:13px;padding:14px;font-size:15px;font-weight:500;border:1px solid var(--border);background:var(--surface-2);color:var(--text);}
+  .unlock .btns .allow-once{background:var(--rose);color:#160e0f;border:none;font-weight:600;}
+  .unlock .btns .allow-chat{background:var(--surface-2);color:var(--rose);border-color:rgba(207,138,143,.4);}
+
+  /* demo control strip outside the phone */
+  .demo{max-width:392px;padding:0 18px;display:flex;gap:8px;flex-wrap:wrap;}
+  .demo button{font-size:12px;padding:8px 12px;border-radius:999px;border:1px solid var(--border);background:var(--surface);color:var(--text-2);}
+  .start{margin-top:auto;background:var(--steel);color:#10141a;border:none;border-radius:13px;padding:15px;font-size:16px;font-weight:600;display:flex;align-items:center;justify-content:center;gap:8px;}
+</style>
+</head>
+<body>
+  <div class="caption">
+    <span class="tag">Direction A — Chats-first</span><br/>
+    Domains recede all the way: this reads like a <b>messaging app's chat list</b>, not a config screen.
+    <b>＋ new chat</b> starts instantly at your default (all sources — you already hold every scope), and
+    scope lives as <b>one quiet chip</b> up top that you tap to tighten. When the agent needs a locked
+    domain it asks <b>just in time</b>, iOS "allow once" style — never a wall of pills, never a gate.
+  </div>
+
+  <div class="phone">
+    <div class="panel-bar">
+      <button class="back"><svg width="22" height="22" viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg></button>
+      <span class="ttl">Chats</span>
+      <!-- the ONE ambient scope control -->
+      <button class="scopechip" id="scopechip" onclick="openScope()">
+        <span class="dot"></span><span id="scopelabel">all sources</span>
+        <svg viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>
+      </button>
+    </div>
+
+    <div class="body" id="body">
+      <button class="newbtn" onclick="newChat()">
+        <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+        new chat
+      </button>
+      <!-- chat cards injected here -->
+      <div id="list"></div>
+
+      <button class="arch-toggle" id="archToggle" onclick="toggleArchived()">
+        <svg width="14" height="14" viewBox="0 0 24 24"><path d="M21 8v13H3V8M1 3h22v5H1zM10 12h4"/></svg>
+        <span id="archLabel">1 archived</span>
+      </button>
+    </div>
+
+    <!-- ============ scope presets sheet ============ -->
+    <div class="scrim" id="scrim-scope" onclick="closeAll()"></div>
+    <div class="sheet" id="sheet-scope">
+      <div class="grip"></div>
+      <h3>what can this chat read?</h3>
+      <div class="lead">it reads everything by default. tap a preset to narrow — you can change this any time, even mid-chat.</div>
+
+      <div class="preset on" data-scope="all" data-label="all sources" data-class="" onclick="pickPreset(this)">
+        <div class="ico s-steel">✦</div>
+        <div class="meta-b"><div class="t">everything</div><div class="d">all your notes — the default</div></div>
+        <div class="tick"><svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg></div>
+      </div>
+      <div class="preset" data-scope="general" data-label="general only" data-class="general" onclick="pickPreset(this)">
+        <div class="ico s-green">◆</div>
+        <div class="meta-b"><div class="t">general only</div><div class="d">notes, lists, the wiki</div></div>
+        <div class="tick"><svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg></div>
+      </div>
+      <div class="preset" data-scope="medical" data-label="medical only" data-class="medical" onclick="pickPreset(this)">
+        <div class="ico s-rose">✚</div>
+        <div class="meta-b"><div class="t">medical only</div><div class="d">labs, meds, health notes</div></div>
+        <div class="tick"><svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg></div>
+      </div>
+      <div class="preset" data-scope="financial" data-label="financial only" data-class="financial" onclick="pickPreset(this)">
+        <div class="ico s-violet">$</div>
+        <div class="meta-b"><div class="t">financial only</div><div class="d">statements, receipts</div></div>
+        <div class="tick"><svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg></div>
+      </div>
+      <div class="preset" data-scope="location" data-label="location only" data-class="location" onclick="pickPreset(this)">
+        <div class="ico s-amber">⌖</div>
+        <div class="meta-b"><div class="t">location only</div><div class="d">places, geofences</div></div>
+        <div class="tick"><svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg></div>
+      </div>
+
+      <div class="sheet-note">anything the agent wants to change is staged for your ok — reading is all this dial sets.</div>
+    </div>
+
+    <!-- ============ row action menu sheet ============ -->
+    <div class="scrim" id="scrim-menu" onclick="closeAll()"></div>
+    <div class="sheet" id="sheet-menu">
+      <div class="grip"></div>
+      <h3 id="menu-title">chat</h3>
+      <div class="lead">manage this chat.</div>
+      <div class="menu-row" onclick="doRename()"><svg viewBox="0 0 24 24"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg> rename</div>
+      <div class="menu-row" onclick="doArchive()"><svg viewBox="0 0 24 24"><path d="M21 8v13H3V8M1 3h22v5H1zM10 12h4"/></svg> archive</div>
+      <div class="menu-row danger" onclick="doDelete()"><svg viewBox="0 0 24 24"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6"/></svg> delete</div>
+    </div>
+
+    <!-- ============ just-in-time unlock prompt ============ -->
+    <div class="scrim" id="scrim-unlock" onclick="closeAll()"></div>
+    <div class="sheet unlock" id="sheet-unlock">
+      <div class="grip"></div>
+      <h3><span class="key"><svg viewBox="0 0 24 24"><circle cx="8" cy="15" r="5"/><path d="M11.5 11.5L20 3M17 6l2 2M14 9l2 2"/></svg></span> needs medical</h3>
+      <div class="ask">to answer <b>"how's my a1c trending?"</b> this chat needs to read your <b>medical</b> notes. it can't right now — allow it?</div>
+      <div class="btns">
+        <button class="allow-once" onclick="unlockOnce()">allow once</button>
+        <button class="allow-chat" onclick="unlockChat()">allow for this chat</button>
+        <button onclick="closeAll()">not now</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="demo">
+    <button onclick="openUnlock()">▶ demo: just-in-time unlock</button>
+    <button onclick="resetDemo()">↺ reset</button>
+  </div>
+
+<script>
+/* ---------- model: a chat list, newest first ---------- */
+let chats = [
+  {id:1, title:"a1c & last labs", prev:"you: how's my a1c trending since march?", when:"now", turns:9,
+   live:true, staged:1, scope:"all", scopeLabel:"all sources", archived:false},
+  {id:2, title:"weekly recap & open items", prev:"agent: two open labs and the roof quote are still hanging.", when:"9:12 am", turns:14,
+   live:false, staged:0, scope:"all", scopeLabel:"all sources", archived:false},
+  {id:3, title:"dad's medication list", prev:"you: read me dad's current meds, nothing else.", when:"8:03 am", turns:5,
+   live:false, staged:0, scope:"medical", scopeLabel:"medical only", archived:false},
+  {id:4, title:"roof quote — second opinion?", prev:"agent: the $4,200 quote is 18% over last year's.", when:"yesterday", turns:6,
+   live:false, staged:0, scope:"financial", scopeLabel:"financial only", archived:false},
+  {id:5, title:"grocery & errands brainstorm", prev:"you: dump everything i need before the weekend.", when:"yesterday", turns:11,
+   live:false, staged:0, scope:"general", scopeLabel:"general only", archived:true},
+];
+let nextId = 6;
+let showArchived = false;
+let menuTarget = null;
+
+const ICON_CHAT = '<svg viewBox="0 0 24 24"><path d="M21 11.5a8.4 8.4 0 0 1-9 8.4L3 21l1.1-3.3A8.4 8.4 0 1 1 21 11.5z"/></svg>';
+const ICON_DOTS = '<svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.4"/><circle cx="12" cy="12" r="1.4"/><circle cx="19" cy="12" r="1.4"/></svg>';
+
+function esc(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;');}
+
+/* ---------- render ---------- */
+function render(){
+  const list = document.getElementById('list');
+  const active = chats.filter(c=>c.live && !c.archived);
+  const recent = chats.filter(c=>!c.live && !c.archived);
+  const arch   = chats.filter(c=>c.archived);
+
+  let html = '';
+  if(active.length){ html += '<div class="sect">active · you are here</div>'; active.forEach(c=>html+=cardHTML(c)); }
+  if(recent.length){ html += '<div class="sect">recent</div>'; recent.forEach(c=>html+=cardHTML(c)); }
+  if(showArchived && arch.length){ html += '<div class="sect">archived</div>'; arch.forEach(c=>html+=cardHTML(c)); }
+  list.innerHTML = html;
+
+  // archive toggle visibility
+  const at = document.getElementById('archToggle');
+  document.getElementById('archLabel').textContent = (showArchived?'hide ':'')+arch.length+' archived';
+  at.style.display = arch.length ? '' : 'none';
+
+  wireSwipe();
+}
+
+function cardHTML(c){
+  const youhere = c.live ? '<span class="youhere">you are here</span>' : '';
+  const staged  = c.staged ? `<span class="badge-staged">${c.staged} staged</span>` : '';
+  const dot     = c.live ? '<span class="live-dot"></span>' : '';
+  return `
+  <div class="wrap" data-id="${c.id}">
+    <div class="rail">
+      <button class="r-rename" onclick="quickRename(${c.id})"><svg viewBox="0 0 24 24"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>rename</button>
+      <button class="r-archive" onclick="quickArchive(${c.id})"><svg viewBox="0 0 24 24"><path d="M21 8v13H3V8M1 3h22v5H1zM10 12h4"/></svg>archive</button>
+      <button class="r-delete" onclick="quickDelete(${c.id})"><svg viewBox="0 0 24 24"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6"/></svg>delete</button>
+    </div>
+    <div class="card${c.live?' live':''}" data-card="${c.id}" onclick="cardTap(${c.id})">
+      <div class="c-top">
+        <div class="avatar">${ICON_CHAT}${dot}</div>
+        <div class="c-mid">
+          <div class="c-title">${esc(c.title)} ${youhere}<span class="when">${c.when}</span></div>
+          <div class="c-prev">${esc(c.prev)}</div>
+        </div>
+      </div>
+      <div class="c-foot">
+        <span class="meta"><svg viewBox="0 0 24 24"><path d="M21 11.5a8.4 8.4 0 0 1-9 8.4L3 21l1.1-3.3A8.4 8.4 0 1 1 21 11.5z"/></svg>${c.turns} turns</span>
+        ${staged}
+        <span style="margin-left:auto" class="meta" onclick="event.stopPropagation();openMenu(${c.id})">${ICON_DOTS}</span>
+      </div>
+    </div>
+  </div>`;
+}
+
+/* ---------- new chat: one tap, lands instantly at default = all sources ---------- */
+function newChat(){
+  // un-live the current active one (only one "you are here")
+  chats.forEach(c=>c.live=false);
+  chats.unshift({id:nextId++, title:"new chat", prev:"agent: ask anything — i can read your whole brain.",
+    when:"now", turns:0, live:true, staged:0, scope:"all", scopeLabel:"all sources", archived:false});
+  setScope("all","all sources","");
+  render();
+  flash("new chat started · reads all sources");
+}
+
+function cardTap(id){
+  if(closeRailIfOpen()) return;
+  const c = chats.find(x=>x.id===id); if(!c) return;
+  chats.forEach(x=>x.live=false); c.live=true;
+  setScope(c.scope, c.scopeLabel, presetClass(c.scope));
+  render();
+  flash('opened · '+c.title);
+}
+
+/* ---------- ambient scope chip ---------- */
+function openScope(){ markPreset(); show('scope'); }
+function setScope(scope,label,cls){
+  document.getElementById('scopelabel').textContent = label;
+  const chip = document.getElementById('scopechip');
+  chip.className = 'scopechip' + (cls?(' '+cls):'');
+  const live = chats.find(c=>c.live); if(live){ live.scope=scope; live.scopeLabel=label; }
+}
+function presetClass(scope){
+  const m={all:'',general:'general',medical:'medical',financial:'financial',location:'location'}; return m[scope]||'';
+}
+function markPreset(){
+  const live = chats.find(c=>c.live);
+  const cur = live?live.scope:'all';
+  document.querySelectorAll('#sheet-scope .preset').forEach(p=>p.classList.toggle('on', p.dataset.scope===cur));
+}
+function pickPreset(el){
+  document.querySelectorAll('#sheet-scope .preset').forEach(p=>p.classList.remove('on'));
+  el.classList.add('on');
+  setScope(el.dataset.scope, el.dataset.label, el.dataset.class);
+  render();
+  setTimeout(closeAll,160);
+  flash('scope · '+el.dataset.label);
+}
+
+/* ---------- row action menu ---------- */
+function openMenu(id){ menuTarget=id; const c=chats.find(x=>x.id===id);
+  document.getElementById('menu-title').textContent=c?c.title:'chat'; show('menu'); }
+function doRename(){ closeAll(); quickRename(menuTarget); }
+function doArchive(){ closeAll(); quickArchive(menuTarget); }
+function doDelete(){ closeAll(); quickDelete(menuTarget); }
+
+function quickRename(id){ const c=chats.find(x=>x.id===id); if(!c) return;
+  const v=prompt('rename chat', c.title); if(v&&v.trim()){ c.title=v.trim(); render(); flash('renamed'); } else closeRail(); }
+function quickArchive(id){ const c=chats.find(x=>x.id===id); if(!c) return;
+  c.archived=!c.archived; c.live=false; render(); flash(c.archived?'archived':'unarchived'); }
+function quickDelete(id){ const c=chats.find(x=>x.id===id); if(!c) return;
+  if(confirm('delete "'+c.title+'"? this drops its transcript.')){ chats=chats.filter(x=>x.id!==id); render(); flash('deleted'); } else closeRail(); }
+
+function toggleArchived(){ showArchived=!showArchived; render(); }
+
+/* ---------- just-in-time unlock ---------- */
+function openUnlock(){ show('unlock'); }
+function unlockOnce(){ closeAll(); flash('medical unlocked · this answer only'); }
+function unlockChat(){
+  closeAll();
+  const live = chats.find(c=>c.live);
+  // widening to "all" for the chat — chip reflects new ambient scope
+  setScope('all','all sources','');
+  if(live){ render(); }
+  flash('medical added to this chat');
+}
+
+/* ---------- swipe rail (touch + mouse drag) ---------- */
+let openRail=null;
+function closeRail(){ if(openRail){ openRail.style.transform=''; openRail=null; } }
+function closeRailIfOpen(){ if(openRail){ closeRail(); return true; } return false; }
+function wireSwipe(){
+  document.querySelectorAll('.card').forEach(card=>{
+    let sx=0, dragging=false, moved=false;
+    const RAIL=213;
+    const start=x=>{ sx=x; dragging=true; moved=false; };
+    const move=x=>{ if(!dragging) return; let dx=x-sx;
+      if(openRail===card) dx-=RAIL;
+      if(dx>0) dx=0; if(dx<-RAIL) dx=-RAIL;
+      card.style.transition='none'; card.style.transform=`translateX(${dx}px)`;
+      if(Math.abs(x-sx)>6) moved=true; };
+    const end=x=>{ if(!dragging) return; dragging=false; card.style.transition='';
+      let dx=x-sx; if(openRail===card) dx-=RAIL;
+      if(dx < -RAIL/2){ if(openRail&&openRail!==card) closeRail(); card.style.transform=`translateX(-${RAIL}px)`; openRail=card; }
+      else { card.style.transform=''; if(openRail===card) openRail=null; } };
+    card.addEventListener('touchstart',e=>start(e.touches[0].clientX),{passive:true});
+    card.addEventListener('touchmove',e=>move(e.touches[0].clientX),{passive:true});
+    card.addEventListener('touchend',e=>end(e.changedTouches[0].clientX));
+    card.addEventListener('mousedown',e=>{ start(e.clientX);
+      const mm=ev=>move(ev.clientX), mu=ev=>{ end(ev.clientX); document.removeEventListener('mousemove',mm); document.removeEventListener('mouseup',mu); };
+      document.addEventListener('mousemove',mm); document.addEventListener('mouseup',mu); });
+    // swallow click after a drag so cardTap doesn't fire
+    card.addEventListener('click',e=>{ if(moved){ e.stopImmediatePropagation(); moved=false; } },true);
+  });
+}
+
+/* ---------- sheet plumbing ---------- */
+function show(name){
+  closeAll();
+  document.getElementById('scrim-'+name).classList.add('show');
+  document.getElementById('sheet-'+name).classList.add('show');
+}
+function closeAll(){
+  ['scope','menu','unlock'].forEach(n=>{
+    document.getElementById('scrim-'+n).classList.remove('show');
+    document.getElementById('sheet-'+n).classList.remove('show');
+  });
+}
+
+/* ---------- tiny toast ---------- */
+let toastT;
+function flash(msg){
+  let t=document.getElementById('toast');
+  if(!t){ t=document.createElement('div'); t.id='toast';
+    t.style.cssText='position:absolute;left:50%;bottom:18px;transform:translateX(-50%);background:var(--surface-2);'+
+      'border:1px solid var(--border);color:var(--text);font-size:12px;padding:9px 14px;border-radius:999px;'+
+      'z-index:40;opacity:0;transition:.2s;pointer-events:none;max-width:80%;text-align:center;';
+    document.querySelector('.phone').appendChild(t); }
+  t.textContent=msg; t.style.opacity='1';
+  clearTimeout(toastT); toastT=setTimeout(()=>t.style.opacity='0',1600);
+}
+
+function resetDemo(){ location.reload(); }
+
+render();
+</script>
+</body>
+</html>
