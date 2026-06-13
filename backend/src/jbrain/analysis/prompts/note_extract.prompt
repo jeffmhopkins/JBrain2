@@ -1,6 +1,6 @@
 ---
 name: note.extract
-version: note-extract-v12
+version: note-extract-v13
 description: Extract facts, entities, and temporal references from one personal note.
 strength: high
 config:
