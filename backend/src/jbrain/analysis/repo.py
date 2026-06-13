@@ -374,9 +374,10 @@ class SqlAnalysisRepo:
                 if not frontier:
                     break
                 ids = sorted(frontier)
-                rows = (await session.execute(out_sql, {"ids": ids})).all() + (
-                    await session.execute(in_sql, {"ids": ids})
-                ).all()
+                rows = [
+                    *(await session.execute(out_sql, {"ids": ids})).all(),
+                    *(await session.execute(in_sql, {"ids": ids})).all(),
+                ]
                 nxt: set[str] = set()
                 for r in rows:
                     edges.setdefault(
