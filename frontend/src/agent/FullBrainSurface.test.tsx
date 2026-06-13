@@ -122,6 +122,41 @@ describe("FullBrainSurface", () => {
     expect(link).toHaveClass("md-entity");
   });
 
+  it("replays a turn's tool view (e.g. a list_card)", async () => {
+    const getTranscript = vi.fn(
+      async (): Promise<TranscriptTurn[]> => [
+        { role: "user", content: "my groceries?", tools: [] },
+        {
+          role: "assistant",
+          content: "Here's your list.",
+          tools: [
+            {
+              id: "c1",
+              name: "read_list",
+              ok: true,
+              sources: [],
+              view: {
+                view: "list_card",
+                surface: "inline",
+                data: {
+                  list_id: "L1",
+                  title: "Groceries",
+                  items: [{ id: "a", body: "eggs", checked: false }],
+                },
+                refs: [],
+              },
+            },
+          ],
+        },
+      ],
+    );
+    render(<Harness d={deps({ getTranscript })} />);
+    await waitFor(() => screen.getByLabelText("Conversation"));
+    // The persisted list_card view rebuilds on reopen.
+    expect(await screen.findByText("Groceries")).toBeInTheDocument();
+    expect(screen.getByText("eggs")).toBeInTheDocument();
+  });
+
   it("keeps the active session's history when it is re-opened from the list", async () => {
     const getTranscript = vi.fn(
       async (): Promise<TranscriptTurn[]> => [{ role: "user", content: "kept", tools: [] }],

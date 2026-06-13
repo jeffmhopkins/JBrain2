@@ -58,7 +58,8 @@ function fromTurn(t: TranscriptTurn): TranscriptMessage {
       ...(tool.proposal ? { proposal: tool.proposal } : {}),
       ...(tool.entities?.length ? { entities: tool.entities } : {}),
     })),
-    views: [],
+    // Rebuild the rich tool-result views (e.g. a list_card) so they replay too.
+    views: t.tools.flatMap((tool) => (tool.view ? [tool.view] : [])),
     streaming: false,
   };
 }

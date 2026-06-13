@@ -203,6 +203,12 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
                             step["proposal"] = event.proposal.model_dump()
                         if event.entities:
                             step["entities"] = [e.model_dump() for e in event.entities]
+                elif event.type == "tool_view":
+                    # Persist the rich view (e.g. a list_card) on its tool step so
+                    # the bubble's tool-result views replay on reopen.
+                    step = steps.get(event.tool_call_id)
+                    if step is not None:
+                        step["view"] = event.view.model_dump()
                 elif event.type == "done":
                     stop_reason, status = event.stop_reason, "ended"
                 yield f"data: {event.model_dump_json()}\n\n".encode()

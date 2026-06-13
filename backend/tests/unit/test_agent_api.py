@@ -12,7 +12,7 @@ from typing import cast
 import pytest
 from fastapi.testclient import TestClient
 
-from jbrain.agent.contracts import EntityRef, NoteSource, ProposalRef, ToolSpec
+from jbrain.agent.contracts import EntityRef, NoteSource, ProposalRef, ToolSpec, ViewPayload
 from jbrain.agent.loop import ToolOutput
 from jbrain.agent.session import AgentSessionInfo
 from jbrain.agent.toolfile import ToolFile
@@ -316,6 +316,34 @@ def test_chat_persists_proposal_and_entity_chips(
     assert step["entities"] == [
         {"kind": "entity", "entity_id": "e1", "label": "Me", "domain": "general", "aliases": []}
     ]
+
+
+def test_chat_persists_a_tool_view(
+    client: TestClient,
+    repo: FakeAuthRepo,
+    sessions_store: FakeAgentSessions,
+    transcript: FakeTranscript,
+) -> None:
+    login(client, repo)
+    sessions_store.add(AgentSessionInfo("sess-1", "", "active", ("general",), (), NOW, NOW))
+
+    async def show(arguments, ctx):  # type: ignore[no-untyped-def]
+        return ToolOutput("here", view=ViewPayload(view="list_card", data={"title": "Groceries"}))
+
+    client.app.state.agent_registry = registry_with_tool("read_list", show)  # type: ignore[attr-defined]
+    client.app.state.llm_router = stream_router(  # type: ignore[attr-defined]
+        [
+            LlmTurn("", (ToolCall("c1", "read_list", {}),), "tool_use", LlmUsage(1, 1)),
+            LlmTurn("done", (), "end_turn", LlmUsage(1, 1)),
+        ],
+        stream_chunks=[[""], ["your list"]],
+    )
+    client.post("/api/chat", json={"session_id": "sess-1", "message": "show my list"})
+
+    # The view rides on its tool step so the bubble replays the card on reopen.
+    step = transcript.recorded[-1]["tools"][0]
+    assert step["view"]["view"] == "list_card"
+    assert step["view"]["data"] == {"title": "Groceries"}
 
 
 def test_session_transcript_endpoint_replays_stored_turns(

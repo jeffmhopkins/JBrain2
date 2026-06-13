@@ -105,6 +105,8 @@ export interface TranscriptTurn {
      * bubble's chips and inline links replay on reopen (not just note sources). */
     proposal?: ProposalRef | null;
     entities?: EntityRef[];
+    /** A rich tool-result view (e.g. a list_card), persisted so it replays too. */
+    view?: ViewPayload | null;
   }[];
 }
 
