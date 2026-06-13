@@ -105,6 +105,21 @@ export interface FeedConfig {
   token: string | null;
 }
 
+/** One appointment from the projection (read-only; ISO times, status is a flag). */
+export interface AppointmentOut {
+  id: string;
+  title: string;
+  domain: string;
+  start: string;
+  end: string | null;
+  all_day: boolean;
+  status: string;
+  location: string | null;
+  rrule: string | null;
+  recurring: boolean;
+  attendees: string[];
+}
+
 export interface NoteOut {
   id: string;
   client_id: string;
@@ -566,6 +581,12 @@ export const api = {
 
   async disableFeed(): Promise<void> {
     await request("/api/feed/appointments", { method: "DELETE" });
+  },
+
+  // The owner's read-only calendar (Day/Week/Month/Tasks read this projection).
+  async appointments(): Promise<AppointmentOut[]> {
+    const response = await request("/api/appointments");
+    return (await response.json()) as AppointmentOut[];
   },
 
   async noteAnalysis(noteId: string): Promise<NoteAnalysis> {
