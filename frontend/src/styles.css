@@ -3312,109 +3312,269 @@ button.small {
   flex: none;
 }
 
-/* assistant bubble flip: the answer faces front, swipe left to turn it to the
-   tool use (docs/mocks/assistant-flip-tooluse.html). One fixed width pinned to
-   the left so it turns in place; only the height eases to the visible face. */
-.fb-shell .fb-flipwrap {
-  width: 82%;
-  align-self: flex-start;
-  perspective: 1300px;
+/* the inline "Worked" disclosure under an answer (docs/research/brain-tooluse-ux).
+   A labelled 44px button expands the tool steps in place — no flip, no 3D, no
+   swipe. The body animates open with a grid-rows ease so content stays in flow. */
+.fb-shell .fb-worked {
+  margin-top: 8px;
+  border-top: 1px solid var(--border);
 }
-.fb-shell .fb-flip {
-  position: relative;
-  width: 100%;
-  transform-style: preserve-3d;
-  transition: transform 0.42s cubic-bezier(0.3, 0.85, 0.3, 1);
-  touch-action: pan-y;
-}
-.fb-shell .fb-face {
-  position: relative;
-  width: 100%;
-  padding-bottom: 26px; /* reserve the corner-cue row, clear of content */
-  backface-visibility: hidden;
-  -webkit-backface-visibility: hidden;
-}
-/* the back sizes to its own content (top/left/right, no bottom) so a tall tool
-   run is measured and shown in full, never clipped to the front's height */
-.fb-shell .fb-back {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  padding-bottom: 30px;
-  transform: rotateY(180deg);
-}
-.fb-shell .fb-back-head {
+.fb-shell .fb-worked-btn {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 12.5px;
-  font-weight: 500;
+  width: 100%;
+  min-height: 44px;
+  padding: 10px 2px 8px;
+  background: none;
+  border: none;
+  font: inherit;
   color: var(--text-2);
-  margin-bottom: 4px;
+  text-align: left;
+  cursor: pointer;
 }
-.fb-shell .fb-back-head .tw-ic {
+.fb-shell .fb-worked-btn .tw-ic {
+  width: 15px;
+  height: 15px;
+  flex: none;
+  color: var(--text-3);
+}
+.fb-shell .fb-worked-lab {
+  font-size: 13px;
+  font-weight: 500;
+}
+.fb-shell .fb-worked-meta {
+  font-size: 12px;
+  color: var(--text-3);
+}
+.fb-shell .fb-worked-fail {
+  color: var(--rose);
+}
+.fb-shell .fb-worked-caret {
+  width: 15px;
+  height: 15px;
+  flex: none;
+  margin-left: auto;
+  color: var(--text-3);
+  transition: transform 0.16s ease-out;
+}
+.fb-shell .fb-worked.open .fb-worked-caret {
+  transform: rotate(180deg);
+}
+.fb-shell .fb-worked-body {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 0.17s ease-out;
+}
+.fb-shell .fb-worked.open .fb-worked-body {
+  grid-template-rows: 1fr;
+}
+.fb-shell .fb-worked-inner {
+  min-height: 0;
+  overflow: hidden;
+}
+.fb-shell .fb-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-top: 4px;
+}
+
+/* a single tool step — itself a pulldown (arguments in · result out · raw) */
+.fb-shell .fb-step {
+  border-radius: 10px;
+}
+.fb-shell .fb-step.err {
+  background: var(--rose-tint);
+}
+.fb-shell .fb-step-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  min-height: 42px;
+  padding: 7px 8px;
+  background: none;
+  border: none;
+  font: inherit;
+  color: var(--text-2);
+  text-align: left;
+  cursor: pointer;
+}
+.fb-shell .fb-step-row .tw-ic {
+  width: 15px;
+  height: 15px;
+  flex: none;
+  color: var(--steel);
+}
+.fb-shell .fb-step.err .fb-step-row .tw-ic {
+  color: var(--rose);
+}
+.fb-shell .fb-step-lab {
+  flex: 1;
+  font-size: 13px;
+  color: var(--text);
+}
+.fb-shell .fb-step-mark {
+  width: 7px;
+  height: 7px;
+  flex: none;
+  border-radius: 999px;
+  background: var(--green);
+}
+.fb-shell .fb-step-mark.bad {
+  background: var(--rose);
+}
+.fb-shell .fb-step-mark.live {
+  background: var(--steel);
+  animation: fb-breathe 1.5s ease-in-out infinite;
+}
+.fb-shell .fb-step-cnt {
+  font-size: 11px;
+  color: var(--text-3);
+}
+.fb-shell .fb-step-caret {
   width: 14px;
   height: 14px;
   flex: none;
   color: var(--text-3);
+  transition: transform 0.16s ease-out;
 }
-.fb-shell .fb-back-head .tw-meta {
+.fb-shell .fb-step.open .fb-step-caret {
+  transform: rotate(90deg);
+}
+.fb-shell .fb-step-detail {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 0.16s ease-out;
+}
+.fb-shell .fb-step.open .fb-step-detail {
+  grid-template-rows: 1fr;
+}
+.fb-shell .fb-step-di {
+  min-height: 0;
+  overflow: hidden;
+}
+.fb-shell .fb-step.open .fb-step-di {
+  padding-bottom: 10px;
+}
+
+/* arguments — a flat one-level key/value list, monospace values */
+.fb-shell .fb-args {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 3px 12px;
+  margin: 4px 0 10px;
+  padding-left: 24px;
+}
+.fb-shell .fb-args-row {
+  display: contents;
+}
+.fb-shell .fb-args dt {
+  font-size: 11px;
   color: var(--text-3);
-  font-weight: 400;
 }
-/* the quiet corner cue naming the other face — also the keyboard/tap fallback */
-.fb-shell .fb-cue {
-  position: absolute;
-  bottom: 8px;
-  right: 11px;
+.fb-shell .fb-args dd {
+  font-size: 12px;
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  word-break: break-word;
+}
+.fb-shell .fb-res-lab {
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  padding-left: 24px;
+  margin-bottom: 5px;
+}
+.fb-shell .fb-res-txt {
+  font-size: 12.5px;
+  color: var(--text-2);
+  line-height: 1.5;
+  padding-left: 24px;
+}
+.fb-shell .fb-res-txt.err {
+  color: var(--rose);
+}
+
+/* the raw result rung — clamped monospace inset with copy + show-all */
+.fb-shell .fb-raw-wrap {
+  padding-left: 24px;
+  margin-top: 9px;
+}
+.fb-shell .fb-raw-toggle {
   display: inline-flex;
   align-items: center;
-  gap: 2px;
+  min-height: 30px;
+  padding: 4px 10px;
   background: none;
-  border: none;
-  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
   font: inherit;
   font-size: 11px;
   color: var(--text-3);
   cursor: pointer;
 }
-.fb-shell .fb-back .fb-cue {
-  color: var(--steel);
+.fb-shell .fb-raw-toggle:hover {
+  color: var(--text-2);
+  border-color: var(--text-3);
 }
-.fb-shell .fb-cue-ic {
-  width: 12px;
-  height: 12px;
-  flex: none;
+.fb-shell .fb-raw {
+  position: relative;
+  margin-top: 8px;
 }
-.fb-shell .fb-cue-ic.back {
-  transform: scaleX(-1); /* point the chevron left, toward "work" */
+.fb-shell .fb-raw-pre {
+  margin: 0;
+  padding: 10px 40px 10px 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.55;
+  color: var(--text-2);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 150px;
+  overflow: hidden;
 }
-.fb-shell .toolwork-detail {
-  display: flex;
-  flex-direction: column;
-  gap: 9px;
-  padding-top: 10px;
+.fb-shell .fb-raw-pre.full {
+  max-height: none;
 }
-.fb-shell .toolwork-detail .tw-ic {
-  width: 14px;
-  height: 14px;
-  flex: none;
-}
-.fb-shell .toolwork-step {
+.fb-shell .fb-raw-copy {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 30px;
+  height: 30px;
   display: flex;
   align-items: center;
-  gap: 8px;
-  font-size: 12.5px;
-  color: var(--text-2);
-}
-.fb-shell .toolwork-step .tw-ic {
-  color: var(--steel);
-}
-.fb-shell .toolwork-step .tw-count {
-  margin-left: auto;
-  font-size: 11px;
+  justify-content: center;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
   color: var(--text-3);
+  cursor: pointer;
+}
+.fb-shell .fb-raw-copy:hover {
+  color: var(--steel);
+  border-color: var(--steel);
+}
+.fb-shell .fb-raw-copy .tw-ic {
+  width: 14px;
+  height: 14px;
+}
+.fb-shell .fb-raw-more {
+  display: block;
+  margin-top: 6px;
+  padding: 2px;
+  background: none;
+  border: none;
+  font: inherit;
+  font-size: 11px;
+  color: var(--steel);
+  cursor: pointer;
 }
 .fb-shell .tw-bullet {
   width: 6px;
@@ -3423,12 +3583,22 @@ button.small {
   background: var(--text-3);
   margin: 0 4px;
 }
+@media (prefers-reduced-motion: reduce) {
+  .fb-shell .fb-worked-body,
+  .fb-shell .fb-step-detail,
+  .fb-shell .fb-worked-caret,
+  .fb-shell .fb-step-caret {
+    transition: none;
+  }
+  .fb-shell .fb-step-mark.live {
+    animation: none;
+  }
+}
 .fb-shell .toolwork-srcs {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  padding-left: 22px;
-  margin-top: 6px;
+  padding-left: 24px;
 }
 .fb-shell .toolwork-card {
   display: flex;

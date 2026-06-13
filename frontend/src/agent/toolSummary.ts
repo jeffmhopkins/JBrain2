@@ -14,6 +14,10 @@ export interface ToolStep {
   ok: boolean | undefined;
   label: string;
   sources: SourceRef[];
+  /** The call's arguments, for the expanded-step "arguments" list. */
+  args: Record<string, unknown> | undefined;
+  /** The verbatim result text, for the expanded step's result/raw rung. */
+  summary: string | undefined;
 }
 
 const STEP_LABELS: Record<string, string> = {
@@ -70,5 +74,13 @@ export function toolStep(t: ToolActivity): ToolStep {
   } else {
     sources = [];
   }
-  return { id: t.id, name: t.name, ok: t.ok, label: stepLabel(t.name), sources };
+  return {
+    id: t.id,
+    name: t.name,
+    ok: t.ok,
+    label: stepLabel(t.name),
+    sources,
+    args: t.args,
+    summary: t.summary,
+  };
 }

@@ -54,6 +54,7 @@ function fromTurn(t: TranscriptTurn): TranscriptMessage {
       id: tool.id,
       name: tool.name,
       ...(tool.ok === null ? {} : { ok: tool.ok }),
+      ...(tool.args ? { args: tool.args } : {}),
       sources: tool.sources.map((s) => ({ noteId: s.note_id, domain: s.domain, text: s.snippet })),
       ...(tool.proposal ? { proposal: tool.proposal } : {}),
       ...(tool.entities?.length ? { entities: tool.entities } : {}),
