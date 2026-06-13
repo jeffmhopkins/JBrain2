@@ -4290,8 +4290,10 @@ input.ld-title {
   height: 23px;
   border-radius: 999px;
   border: none;
-  background: var(--rose-tint, rgba(207, 138, 143, 0.14));
-  color: var(--rose);
+  /* Solid rose with a dark glyph — the platform's edit-mode delete. A tinted
+     bg with a rose glyph (rose-on-rose) read as an empty pill. */
+  background: var(--rose);
+  color: var(--bg);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -4307,8 +4309,9 @@ input.ld-title {
   stroke-linejoin: round;
 }
 .ld-del .ld-ic {
-  width: 13px;
-  height: 13px;
+  width: 14px;
+  height: 14px;
+  stroke-width: 2.4;
 }
 .ld-add {
   display: flex;
