@@ -764,6 +764,21 @@ export const api = {
     await request(`/api/sessions/${encodeURIComponent(id)}`, { method: "DELETE" });
   },
 
+  async archiveSession(id: string): Promise<void> {
+    await request(`/api/sessions/${encodeURIComponent(id)}/archive`, { method: "POST" });
+  },
+
+  async unarchiveSession(id: string): Promise<void> {
+    await request(`/api/sessions/${encodeURIComponent(id)}/unarchive`, { method: "POST" });
+  },
+
+  async rescopeSession(id: string, domainScopes: string[]): Promise<void> {
+    await request(
+      `/api/sessions/${encodeURIComponent(id)}/scope`,
+      jsonInit("POST", { domain_scopes: domainScopes }),
+    );
+  },
+
   // POST /api/chat streams the agent turn as SSE; the body is a ReadableStream
   // (EventSource is GET-only and can't carry a request body). Yields each parsed
   // ChatEvent so the caller renders text/tool activity live.

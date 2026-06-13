@@ -30,6 +30,9 @@ function deps(over: Partial<FullBrainDeps> = {}): FullBrainDeps {
     getTranscript: vi.fn(async () => []),
     renameSession: vi.fn(async () => {}),
     deleteSession: vi.fn(async () => {}),
+    archiveSession: vi.fn(async () => {}),
+    unarchiveSession: vi.fn(async () => {}),
+    rescopeSession: vi.fn(async () => {}),
     ...over,
   };
 }
@@ -523,9 +526,9 @@ describe("FullBrainSurface", () => {
         d={deps({ listSessions: vi.fn(async () => []), createSession: vi.fn(async () => created) })}
       />,
     );
-    await waitFor(() => screen.getByText("＋ New session — choose sources"));
-    fireEvent.click(screen.getByText("＋ New session — choose sources"));
-    fireEvent.click(screen.getByRole("button", { name: /Start session/ }));
+    await waitFor(() => screen.getByText("＋ New chat"));
+    fireEvent.click(screen.getByText("＋ New chat"));
+    fireEvent.click(screen.getByRole("button", { name: /Start/ }));
 
     // The created session becomes active: its transcript shows and the picker
     // closes behind it. (Its name surfaces in the top bar, tested at HomeScreen.)

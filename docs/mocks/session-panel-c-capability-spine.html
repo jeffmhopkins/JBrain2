@@ -1,0 +1,467 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Direction C — Capability spine (Chats ← chat → Proposals)</title>
+<style>
+  :root{
+    --bg:#0E0F11; --surface:#17181B; --surface-2:#1E2024; --border:#26282C;
+    --text:#E6E7E9; --text-2:#9A9DA3; --text-3:#5C5F66;
+    --steel:#7FA7C9; --green:#8FBC9A; --amber:#C9A36A; --rose:#CF8A8F; --violet:#A493C9;
+    --steel-tint:rgba(127,167,201,.13); --green-tint:rgba(143,188,154,.13);
+    --amber-tint:rgba(201,163,106,.13); --rose-tint:rgba(207,138,143,.13); --violet-tint:rgba(164,147,201,.13);
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+  body{background:#000;color:var(--text);display:flex;flex-direction:column;align-items:center;gap:14px;padding:18px 0 40px;min-height:100vh;}
+  .caption{max-width:392px;padding:0 18px;color:var(--text-2);font-size:13px;line-height:1.55;}
+  .caption b{color:var(--text);font-weight:500;}
+  .caption .tag{display:inline-block;background:var(--violet-tint);color:var(--violet);font-size:11px;padding:2px 8px;border-radius:999px;margin-bottom:6px;}
+  .caption code{background:var(--surface-2);border:1px solid var(--border);border-radius:5px;padding:1px 5px;font-size:12px;color:var(--text);}
+  svg{fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;}
+
+  .phone{width:390px;height:780px;background:var(--bg);border:1px solid #2a2c30;border-radius:34px;overflow:hidden;position:relative;display:flex;flex-direction:column;}
+
+  /* ── top bar: ambient scope chip is the star ───────────────────────── */
+  .topbar{height:56px;display:flex;align-items:center;gap:10px;padding:0 12px;flex:none;border-bottom:1px solid var(--border);}
+  .edge{width:34px;height:34px;border-radius:10px;display:flex;align-items:center;justify-content:center;color:var(--text-3);background:var(--surface);border:1px solid var(--border);flex:none;position:relative;}
+  .edge .count{position:absolute;top:-5px;right:-5px;min-width:17px;height:17px;border-radius:999px;background:var(--violet);color:#15101a;font-size:10px;font-weight:700;display:flex;align-items:center;justify-content:center;padding:0 4px;}
+  .scope-wrap{flex:1;display:flex;justify-content:center;}
+  /* the ambient scope chip — colored by current scope, always visible, tap to edit */
+  .scopechip{font-size:12px;padding:6px 12px;border-radius:999px;display:inline-flex;gap:7px;align-items:center;font-weight:500;
+    background:var(--steel-tint);color:var(--steel);border:1px solid transparent;transition:.18s;max-width:230px;}
+  .scopechip .sdot{width:8px;height:8px;border-radius:999px;background:currentColor;flex:none;}
+  .scopechip .lbl{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .scopechip svg{width:13px;height:13px;opacity:.7;flex:none;}
+
+  /* ── the spine: thin peeking rails flanking the chat ──────────────── */
+  .stage{flex:1;display:flex;min-height:0;}
+  .rail{width:30px;flex:none;background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;align-items:center;
+    padding:14px 0;gap:0;position:relative;}
+  .rail.r{border-right:none;border-left:1px solid var(--border);}
+  .rail .glyph{color:var(--text-3);margin-bottom:10px;}
+  .rail .vlabel{writing-mode:vertical-rl;font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--text-3);}
+  .rail.l .vlabel{color:var(--steel);}
+  .rail.r .vlabel{color:var(--violet);transform:rotate(180deg);}
+  .rail .railcount{margin-top:auto;font-size:11px;font-weight:700;color:#15101a;background:var(--violet);border-radius:999px;min-width:20px;height:20px;display:flex;align-items:center;justify-content:center;padding:0 5px;}
+  .rail.l .railhint{margin-top:auto;font-size:10px;color:var(--text-3);writing-mode:vertical-rl;}
+
+  .center{flex:1;min-width:0;display:flex;flex-direction:column;}
+  .chat{flex:1;overflow-y:auto;padding:10px 14px 4px;display:flex;flex-direction:column;}
+  .chat-inner{margin-top:auto;display:flex;flex-direction:column;gap:10px;padding-bottom:8px;}
+  .bubble{max-width:84%;padding:11px 14px;border-radius:16px;font-size:15px;line-height:1.45;}
+  .me{align-self:flex-end;background:var(--steel-tint);border:1px solid rgba(127,167,201,.25);border-bottom-right-radius:5px;}
+  .ai{align-self:flex-start;background:var(--surface);border:1px solid var(--border);border-bottom-left-radius:5px;}
+  .ai .tool{margin-top:8px;font-size:12px;color:var(--text-3);display:flex;align-items:center;gap:7px;border-top:1px solid var(--border);padding-top:7px;}
+  .ai .tool .ok{color:var(--green);}
+
+  /* ── in-context just-in-time unlock prompt (the centerpiece) ──────── */
+  .unlock{align-self:stretch;border:1px solid rgba(207,138,143,.4);background:var(--rose-tint);border-radius:14px;padding:13px 14px;display:none;flex-direction:column;gap:11px;}
+  .unlock.show{display:flex;animation:rise .26s cubic-bezier(.2,.7,.3,1);}
+  @keyframes rise{from{opacity:0;transform:translateY(8px);}to{opacity:1;transform:translateY(0);}}
+  .unlock .u-head{display:flex;align-items:center;gap:9px;font-size:14px;font-weight:500;color:var(--text);}
+  .unlock .u-ico{width:26px;height:26px;border-radius:8px;background:rgba(207,138,143,.18);color:var(--rose);display:flex;align-items:center;justify-content:center;flex:none;}
+  .unlock .u-body{font-size:13px;color:var(--text-2);line-height:1.45;}
+  .unlock .u-body b{color:var(--text);font-weight:500;}
+  .unlock .u-acts{display:flex;gap:8px;}
+  .unlock .u-acts button{flex:1;border-radius:11px;padding:11px;font-size:13.5px;font-weight:600;border:1px solid var(--border);background:var(--surface-2);color:var(--text-2);min-height:44px;}
+  .unlock .u-acts .allow-once{background:var(--rose-tint);color:var(--rose);border-color:rgba(207,138,143,.5);}
+  .unlock .u-acts .allow-session{background:var(--rose);color:#1a1011;border-color:var(--rose);}
+
+  /* composer */
+  .composer{margin:0 14px 14px;border:1px solid var(--border);border-radius:16px;background:var(--surface);padding:10px;flex:none;}
+  .field{color:var(--text-3);font-size:16px;padding:12px 8px 8px;}
+  .foot{display:flex;align-items:center;justify-content:space-between;padding:4px 6px 2px;}
+  .foot .left{display:flex;align-items:center;gap:8px;color:var(--text-2);font-size:12px;}
+  .foot .left .mdot{width:9px;height:9px;border-radius:999px;background:var(--steel);flex:none;}
+  .foot .right{display:flex;gap:14px;color:var(--text-2);align-items:center;}
+  .simbtn{font-size:11px;color:var(--amber);border:1px dashed rgba(201,163,106,.5);border-radius:999px;padding:5px 9px;background:var(--amber-tint);}
+
+  /* ── full lateral panels (Chats left, Proposals right) ──────────────── */
+  .panel{position:absolute;inset:0;background:var(--bg);z-index:20;display:flex;flex-direction:column;transition:transform 220ms cubic-bezier(.2,.7,.3,1);}
+  .panel.left{transform:translateX(-100%);}
+  .panel.right{transform:translateX(100%);}
+  .panel.open{transform:translateX(0);}
+  .panel-bar{height:56px;display:flex;align-items:center;gap:10px;padding:0 14px;border-bottom:1px solid var(--border);flex:none;}
+  .panel-bar .back{color:var(--text-2);width:34px;height:34px;display:flex;align-items:center;justify-content:center;flex:none;}
+  .panel-bar .ttl{font-size:17px;font-weight:600;}
+  /* mirrored sub-lines make the pair read as capability ↔ consequences */
+  .panel-bar .sub{margin-left:auto;font-size:11.5px;color:var(--text-3);text-align:right;line-height:1.3;}
+  .panel-bar.spineL .ttl{color:var(--steel);} .panel-bar.spineR .ttl{color:var(--violet);}
+  .panel-body{flex:1;overflow-y:auto;padding:14px 16px 18px;display:flex;flex-direction:column;gap:10px;}
+
+  .newbtn{border:1px dashed var(--border);color:var(--steel);background:var(--surface);border-radius:14px;padding:14px;font-size:15px;font-weight:500;display:flex;align-items:center;justify-content:center;gap:8px;min-height:44px;}
+  .sect{font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--text-3);margin:6px 2px 0;}
+
+  /* rich chat/session cards (R2) */
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:13px 14px;display:flex;flex-direction:column;gap:8px;text-align:left;}
+  .card.live{border-color:rgba(143,188,154,.4);}
+  .card.here{border-color:rgba(127,167,201,.55);background:linear-gradient(var(--steel-tint),var(--steel-tint)),var(--surface);}
+  .c-head{display:flex;align-items:center;gap:9px;font-size:15px;font-weight:500;}
+  .c-head .g{width:8px;height:8px;border-radius:999px;flex:none;}
+  .c-head .when{margin-left:auto;font-size:12px;color:var(--text-3);font-weight:400;}
+  .c-sub{font-size:13px;color:var(--text-2);line-height:1.45;}
+  .here-tag{font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--steel);font-weight:600;}
+  .pills{display:flex;flex-wrap:wrap;gap:6px;align-items:center;}
+  .pill{font-size:11px;padding:3px 9px;border-radius:999px;background:var(--surface-2);color:var(--text-2);display:inline-flex;align-items:center;gap:5px;}
+  .pill.general{background:var(--steel-tint);color:var(--steel);}
+  .pill.medical{background:var(--rose-tint);color:var(--rose);}
+  .pill.financial{background:var(--violet-tint);color:var(--violet);}
+  .pill.location{background:var(--amber-tint);color:var(--amber);}
+  .pill.live{background:var(--green-tint);color:var(--green);}
+  .pill.subj{background:transparent;border:1px solid var(--border);}
+  .stat{font-size:11px;padding:3px 8px;border-radius:999px;margin-left:auto;}
+  .stat.staged{background:var(--violet-tint);color:var(--violet);}
+  .scope-lead{font-size:11px;color:var(--text-3);margin-right:2px;}
+
+  /* proposals rows */
+  .badge{font-size:11px;font-weight:700;color:#15101a;background:var(--violet);border-radius:999px;min-width:20px;height:20px;padding:0 6px;display:inline-flex;align-items:center;justify-content:center;flex:none;}
+  .prow{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:13px 14px;display:flex;flex-direction:column;gap:7px;}
+  .prow .r-head{display:flex;align-items:center;gap:9px;font-size:15px;font-weight:500;}
+  .prow .r-sub{font-size:13px;color:var(--text-2);line-height:1.45;}
+  .prow .r-meta{font-size:12px;color:var(--text-3);display:flex;gap:8px;align-items:center;flex-wrap:wrap;}
+  .spine-note{font-size:12px;color:var(--text-3);line-height:1.5;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:11px 13px;display:flex;gap:9px;align-items:flex-start;}
+  .spine-note .ar{color:var(--text-2);font-weight:600;}
+
+  /* ── bottom sheet (scope presets) ─────────────────────────────────── */
+  .scrim{position:absolute;inset:0;background:rgba(14,15,17,.6);opacity:0;pointer-events:none;transition:.2s;z-index:30;}
+  .scrim.show{opacity:1;pointer-events:auto;}
+  .sheet{position:absolute;left:0;right:0;bottom:0;background:var(--surface);border-top:1px solid var(--border);border-radius:18px 18px 0 0;
+    transform:translateY(100%);transition:transform .24s cubic-bezier(.2,.7,.3,1);z-index:31;padding:8px 16px calc(16px + env(safe-area-inset-bottom));max-height:90%;display:flex;flex-direction:column;}
+  .sheet.show{transform:translateY(0);}
+  .grip{width:40px;height:4px;border-radius:999px;background:var(--border);margin:8px auto 12px;}
+  .sheet h3{font-size:17px;font-weight:600;margin-bottom:2px;}
+  .sheet .lead{font-size:13px;color:var(--text-2);margin-bottom:14px;line-height:1.45;}
+  .preset{display:flex;align-items:center;gap:12px;padding:12px;border:1px solid var(--border);border-radius:12px;margin-bottom:8px;background:var(--surface-2);width:100%;text-align:left;min-height:44px;}
+  .preset .ico{width:30px;height:30px;border-radius:8px;display:flex;align-items:center;justify-content:center;flex:none;font-size:15px;}
+  .preset .meta{flex:1;min-width:0;}
+  .preset .meta .t{font-size:15px;}
+  .preset .meta .d{font-size:12px;color:var(--text-3);}
+  .preset .check{width:22px;height:22px;border-radius:999px;border:1.5px solid var(--border);display:flex;align-items:center;justify-content:center;color:transparent;flex:none;font-size:13px;}
+  .preset.on{border-color:rgba(127,167,201,.5);}
+  .preset.on .check{background:var(--steel);border-color:var(--steel);color:#10141a;}
+  .adv{font-size:13px;color:var(--steel);text-align:center;padding:10px;}
+  .writes-note{font-size:12px;color:var(--text-3);text-align:center;margin-top:8px;line-height:1.5;}
+  .writes-note b{color:var(--text-2);}
+
+  .toast{position:absolute;left:50%;bottom:96px;transform:translate(-50%,14px);background:var(--surface-2);border:1px solid var(--border);
+    border-radius:999px;padding:9px 16px;font-size:13px;color:var(--green);opacity:0;pointer-events:none;transition:.18s;z-index:40;white-space:nowrap;}
+  .toast.show{transform:translate(-50%,0);opacity:1;}
+</style>
+</head>
+<body>
+  <div class="caption">
+    <span class="tag">Direction C — Capability spine</span><br/>
+    A chat is a <b>capability, not an identity</b>: the left rail (<b>Chats</b>) is what it can <b>see</b>,
+    the right rail (<b>Proposals</b>) is what it wants to <b>change</b> — a matched inputs↔outputs spine flanking the conversation.
+    Scope is an <b>ambient top-bar chip</b>, colored by what's open and editable any time; when the agent reaches a locked area it
+    <b>asks in context</b> (<code>Allow once / for this chat</code>) instead of gating you at the door.
+  </div>
+
+  <div class="phone" id="phone">
+    <!-- top bar: edge buttons + ambient scope chip -->
+    <div class="topbar">
+      <button class="edge" onclick="openPanel('chats')" aria-label="Chats">
+        <svg width="18" height="18" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+      </button>
+      <div class="scope-wrap">
+        <button class="scopechip" id="scopechip" onclick="openSheet()">
+          <span class="sdot"></span><span class="lbl" id="scopelabel">Everyday</span>
+          <svg viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>
+        </button>
+      </div>
+      <button class="edge" onclick="openPanel('proposals')" aria-label="Proposals">
+        <svg width="18" height="18" viewBox="0 0 24 24"><path d="M9 11l3 3 8-8"/><path d="M20 12v6a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h9"/></svg>
+        <span class="count" id="edgecount">2</span>
+      </button>
+    </div>
+
+    <!-- the spine: peeking rails left/right of the chat -->
+    <div class="stage">
+      <button class="rail l" onclick="openPanel('chats')" aria-label="Open Chats">
+        <span class="glyph"><svg width="15" height="15" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></span>
+        <span class="vlabel">Chats · can see</span>
+        <span class="railhint">‹ swipe</span>
+      </button>
+
+      <div class="center">
+        <main class="chat" id="chat">
+          <div class="chat-inner" id="chatinner">
+            <div class="bubble ai">Morning. I pulled your week from your everyday notes — the roof quote and a couple of errands are still open. Want a recap?</div>
+            <div class="bubble me">Yeah. Also — is Dad's blood-pressure med due for a refill this week?</div>
+
+            <!-- centerpiece: in-context just-in-time unlock prompt -->
+            <div class="unlock" id="unlock">
+              <div class="u-head">
+                <span class="u-ico"><svg width="15" height="15" viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg></span>
+                This answer needs <b style="color:var(--rose)">&nbsp;Medical</b>
+              </div>
+              <div class="u-body">To check Dad's refills I'd read his <b>Medical</b> notes — that's outside what this chat can see right now. Open it?</div>
+              <div class="u-acts">
+                <button onclick="denyUnlock()">Not now</button>
+                <button class="allow-once" onclick="allowUnlock(false)">Allow once</button>
+                <button class="allow-session" onclick="allowUnlock(true)">For this chat</button>
+              </div>
+            </div>
+          </div>
+        </main>
+
+        <div class="composer">
+          <div class="field">Talk it out — I only read; changes get staged…</div>
+          <div class="foot">
+            <div class="left"><span class="mdot"></span> staged writes need approval</div>
+            <div class="right">
+              <button class="simbtn" id="simbtn" onclick="triggerUnlock()">⚡ simulate locked-domain reach</button>
+              <span>➤</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <button class="rail r" onclick="openPanel('proposals')" aria-label="Open Proposals">
+        <span class="glyph"><svg width="15" height="15" viewBox="0 0 24 24"><path d="M9 11l3 3 8-8"/><path d="M20 12v6a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h9"/></svg></span>
+        <span class="vlabel">Proposals · will change</span>
+        <span class="railcount" id="railcount">2</span>
+      </button>
+    </div>
+
+    <!-- toast -->
+    <div class="toast" id="toast"></div>
+
+    <!-- ══ Chats panel (left = capability / inputs) ═════════════════════ -->
+    <div class="panel left" id="chats">
+      <div class="panel-bar spineL">
+        <button class="back" onclick="closePanels()"><svg width="22" height="22" viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg></button>
+        <span class="ttl">Chats</span>
+        <span class="sub">what each chat can <b style="color:var(--text-2)">see</b><br/>(capability)</span>
+      </div>
+      <div class="panel-body">
+        <button class="newbtn" onclick="newChat()">＋ New chat</button>
+
+        <div class="sect">Now — you are here</div>
+        <div class="card here">
+          <div class="c-head"><span class="here-tag">● Active</span> Weekly recap &amp; Dad's meds <span class="when">now · 4 turns</span></div>
+          <div class="c-sub">Recapping the week; just reached for Dad's refill schedule.</div>
+          <div class="pills"><span class="scope-lead">sees</span><span class="pill general" id="herepill-general">Everyday</span><span class="pill subj">me</span></div>
+        </div>
+
+        <div class="sect">Earlier today</div>
+        <div class="card live">
+          <div class="c-head"><span class="g" style="background:var(--green)"></span>Health wiki cleanup <span class="stat staged">1 staged</span></div>
+          <div class="c-sub">Analyzed 7 articles · staged a restructuring plan (split Cardiology, 2 merges).</div>
+          <div class="pills"><span class="scope-lead">sees</span><span class="pill medical">Medical</span><span class="pill subj">me</span></div>
+        </div>
+        <div class="card">
+          <div class="c-head">Dad's medication list<span class="when">8:03 AM · 5 turns</span></div>
+          <div class="c-sub">Read-only review of Dad's current meds. No changes.</div>
+          <div class="pills"><span class="scope-lead">sees</span><span class="pill medical">Medical</span><span class="pill subj">Dad</span></div>
+        </div>
+
+        <div class="sect">Yesterday</div>
+        <div class="card">
+          <div class="c-head">Roof quote — second opinion?<span class="when">6 turns</span></div>
+          <div class="c-sub">Compared the $4,200 quote against last year's invoices.</div>
+          <div class="pills"><span class="scope-lead">sees</span><span class="pill financial">Financial</span><span class="pill subj">me</span></div>
+        </div>
+        <div class="card">
+          <div class="c-head">Grocery &amp; errands brainstorm<span class="when">11 turns</span></div>
+          <div class="c-sub">General planning chat.</div>
+          <div class="pills"><span class="scope-lead">sees</span><span class="pill general">Everyday</span><span class="pill subj">me</span></div>
+        </div>
+
+        <div class="spine-note" style="margin-top:8px">
+          <span class="ar" style="color:var(--violet)">→</span>
+          <span>The right side, <b style="color:var(--text-2)">Proposals</b>, is the consequence of these chats — everything they want to change waits there for you.</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══ Proposals panel (right = consequences / outputs) ════════════ -->
+    <div class="panel right" id="proposals">
+      <div class="panel-bar spineR">
+        <button class="back" onclick="closePanels()"><svg width="22" height="22" viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg></button>
+        <span class="ttl">Proposals</span>
+        <span class="sub">what your chats want to <b style="color:var(--text-2)">change</b><br/>(consequences)</span>
+      </div>
+      <div class="panel-body">
+        <div class="prow">
+          <div class="r-head"><span class="badge">⤴</span> Restructure — Health wiki cleanup</div>
+          <div class="r-sub">6 operations across 3 articles · the agent never writes prose; the builder enacts what you approve.</div>
+          <div class="r-meta">from <b style="color:var(--text-2)">Health wiki cleanup</b> · 4 source notes · <span class="pill medical">Medical</span></div>
+          <div class="pills" style="margin-top:2px"><span class="pill" style="background:var(--steel-tint);color:var(--steel)">Open tree →</span></div>
+        </div>
+        <div class="prow" style="opacity:.8">
+          <div class="r-head"><span class="badge" style="background:var(--green)">＋</span> Add fact — "PCP is Dr. Lin"</div>
+          <div class="r-sub">Knowledge proposal · re-enters as an agent-authored note.</div>
+          <div class="r-meta">from <b style="color:var(--text-2)">Dad's medication list</b> · <span class="pill medical">Medical</span></div>
+        </div>
+        <div class="spine-note" style="margin-top:8px">
+          <span class="ar" style="color:var(--steel)">←</span>
+          <span>The left side, <b style="color:var(--text-2)">Chats</b>, is where these came from — the capability that proposed each change. Nothing here is real until you approve it.</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══ scope presets sheet ═════════════════════════════════════════ -->
+    <div class="scrim" id="scrim" onclick="closeSheet()"></div>
+    <div class="sheet" id="sheet">
+      <div class="grip"></div>
+      <h3>What can this chat see?</h3>
+      <div class="lead">Pick a preset, or open a single area. You can widen or narrow this any time — even mid-conversation.</div>
+
+      <button class="preset" data-preset="everyday" onclick="pickPreset(this)">
+        <div class="ico" style="background:var(--steel-tint);color:var(--steel)">◆</div>
+        <div class="meta"><div class="t">Everyday</div><div class="d">notes, lists, the wiki</div></div>
+        <div class="check">✓</div>
+      </button>
+      <button class="preset" data-preset="everything" onclick="pickPreset(this)">
+        <div class="ico" style="background:var(--green-tint);color:var(--green)">✦</div>
+        <div class="meta"><div class="t">Everything</div><div class="d">everyday · medical · financial · location</div></div>
+        <div class="check">✓</div>
+      </button>
+      <button class="preset" data-preset="medical" onclick="pickPreset(this)">
+        <div class="ico" style="background:var(--rose-tint);color:var(--rose)">✚</div>
+        <div class="meta"><div class="t">Medical only</div><div class="d">labs, meds, medical notes</div></div>
+        <div class="check">✓</div>
+      </button>
+      <button class="preset" data-preset="financial" onclick="pickPreset(this)">
+        <div class="ico" style="background:var(--violet-tint);color:var(--violet)">$</div>
+        <div class="meta"><div class="t">Financial only</div><div class="d">statements, receipts</div></div>
+        <div class="check">✓</div>
+      </button>
+
+      <div class="adv">＋ Open a single area…</div>
+      <div class="writes-note">This only sets what the chat can <b>read</b>. Any change it wants to make is <b>staged as a Proposal</b> for your approval.</div>
+    </div>
+  </div>
+
+<script>
+/* ── scope model ──────────────────────────────────────────────────────
+   The chip is colored by current scope. Presets map domain→token color.   */
+const SCOPES={
+  everyday:   {label:'Everyday',          color:'steel',   tint:'--steel-tint',   ink:'--steel',   has:['general']},
+  everything: {label:'Everything',        color:'green',   tint:'--green-tint',   ink:'--green',   has:['general','medical','financial','location']},
+  medical:    {label:'Medical only',      color:'rose',    tint:'--rose-tint',    ink:'--rose',    has:['medical']},
+  financial:  {label:'Financial only',    color:'violet',  tint:'--violet-tint',  ink:'--violet',  has:['financial']},
+};
+let current='everyday';
+let medicalUnlocked=false;          // set by just-in-time grant
+
+const $=id=>document.getElementById(id);
+const cssv=v=>getComputedStyle(document.documentElement).getPropertyValue(v);
+
+function paintChip(){
+  const s=SCOPES[current];
+  const chip=$('scopechip');
+  chip.style.background=cssv(s.tint);
+  chip.style.color=cssv('--'+s.color);
+  // build label: preset name, plus an ambient "+ Medical" if granted in-context
+  let label=s.label;
+  if(medicalUnlocked && !s.has.includes('medical')) label += ' + Medical';
+  $('scopelabel').textContent=label;
+}
+
+/* ── scope presets sheet ─────────────────────────────────────────────── */
+function openSheet(){$('scrim').classList.add('show');$('sheet').classList.add('show');markPreset();}
+function closeSheet(){$('scrim').classList.remove('show');$('sheet').classList.remove('show');}
+function markPreset(){
+  document.querySelectorAll('.preset').forEach(p=>p.classList.toggle('on',p.dataset.preset===current));
+}
+function pickPreset(el){
+  current=el.dataset.preset;
+  if(SCOPES[current].has.includes('medical')) medicalUnlocked=false; // preset already covers it
+  markPreset();paintChip();
+  toast('Scope set to '+SCOPES[current].label);
+  setTimeout(closeSheet,260);
+}
+
+/* ── just-in-time unlock (centerpiece) ───────────────────────────────── */
+function triggerUnlock(){
+  if(SCOPES[current].has.includes('medical')||medicalUnlocked){
+    toast('Medical already open — no prompt needed');return;
+  }
+  $('unlock').classList.add('show');
+  $('chat').scrollTop=$('chat').scrollHeight;
+}
+function denyUnlock(){
+  $('unlock').classList.remove('show');
+  addBubble('ai',"No problem — I'll skip the medical lookup. I can still help with everything else in this chat.");
+}
+function allowUnlock(forSession){
+  $('unlock').classList.remove('show');
+  if(forSession){
+    medicalUnlocked=true;                          // ambient: chip now shows "+ Medical"
+    paintChip();
+    // the active "you are here" card reflects the widened scope too
+    $('herepill-general').insertAdjacentHTML('afterend','<span class="pill medical">Medical</span>');
+    toast('Medical open for this chat');
+  }else{
+    toast('Medical opened once');                  // allow-once: chip stays, no persistent widen
+  }
+  addBubble('ai',"Thanks. Dad's lisinopril has 6 days left — I'd reorder it Thursday. Want me to draft a refill reminder? (That'd go to Proposals for your ok.)");
+}
+
+function addBubble(role,text){
+  const b=document.createElement('div');
+  b.className='bubble '+role;b.textContent=text;
+  $('chatinner').appendChild(b);
+  $('chat').scrollTop=$('chat').scrollHeight;
+}
+
+/* ── lateral panels ──────────────────────────────────────────────────── */
+function openPanel(which){closePanels();$(which==='chats'?'chats':'proposals').classList.add('open');}
+function closePanels(){$('chats').classList.remove('open');$('proposals').classList.remove('open');}
+function newChat(){
+  closePanels();
+  // one-tap: drop straight into chat at the remembered default scope, no gate
+  current='everyday';medicalUnlocked=false;paintChip();
+  $('chatinner').innerHTML='<div class="bubble ai">New chat. I can see your <b>Everyday</b> notes — ask anything. I only read; changes get staged.</div>';
+  toast('New chat · Everyday');
+}
+
+/* ── proposals count badge ───────────────────────────────────────────── */
+let proposals=2;
+function bumpProposals(){
+  proposals++;
+  $('edgecount').textContent=proposals;
+  $('railcount').textContent=proposals;
+  $('edgecount').animate([{transform:'scale(1)'},{transform:'scale(1.4)'},{transform:'scale(1)'}],{duration:300});
+}
+
+function toast(t){const e=$('toast');e.textContent=t;e.classList.add('show');clearTimeout(toast._t);toast._t=setTimeout(()=>e.classList.remove('show'),1300);}
+
+/* ── swipe the chat to peek a panel (mirrors lateral-swipe mock) ──────── */
+(function(){
+  const zone=$('phone');let sx,sy,axis,active=false,lastDx=0,W=390;
+  const chats=$('chats'),props=$('proposals');let armed=null;
+  const pt=e=>e.touches?e.touches[0]:e;
+  const reset=el=>{el.classList.remove('dragging');el.style.transform='';};
+  function down(e){
+    if(chats.classList.contains('open')||props.classList.contains('open'))return;
+    if(e.target.closest('.composer')||e.target.closest('.unlock')||e.target.closest('.scopechip')||e.target.closest('.edge'))return;
+    const p=pt(e);sx=p.clientX;sy=p.clientY;axis=null;active=true;armed=null;lastDx=0;
+  }
+  function move(e){
+    if(!active)return;const p=pt(e);const dx=p.clientX-sx,dy=p.clientY-sy;lastDx=dx;
+    if(axis===null&&(Math.abs(dx)>10||Math.abs(dy)>10))axis=Math.abs(dx)>Math.abs(dy)?'h':'v';
+    if(axis!=='h')return;if(e.cancelable)e.preventDefault();
+    if(dx>0){if(armed==='p')reset(props);armed='c';const pr=Math.min(1,dx/(W*.6));
+      chats.style.transition='none';chats.style.transform=`translateX(${-100+pr*100}%)`;}
+    else{if(armed==='c')reset(chats);armed='p';const pr=Math.min(1,-dx/(W*.6));
+      props.style.transition='none';props.style.transform=`translateX(${100-pr*100}%)`;}
+  }
+  function up(){
+    if(!active)return;active=false;if(axis!=='h'||!armed){if(armed)reset(armed==='c'?chats:props);return;}
+    const el=armed==='c'?chats:props;el.style.transition='';
+    if(Math.abs(lastDx)>W*.28){el.style.transform='';el.classList.add('open');}else reset(el);
+    armed=null;
+  }
+  zone.addEventListener('mousedown',down);window.addEventListener('mousemove',move);window.addEventListener('mouseup',up);
+  zone.addEventListener('touchstart',down,{passive:true});zone.addEventListener('touchmove',move,{passive:false});zone.addEventListener('touchend',up);
+})();
+
+paintChip();
+</script>
+</body>
+</html>

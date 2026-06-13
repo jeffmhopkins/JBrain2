@@ -122,6 +122,10 @@ export interface AgentSession {
   subject_ids: string[];
   created_at: string;
   last_active_at: string;
+  /** Chats-card metadata (server fills these on the list; absent elsewhere). */
+  turn_count?: number;
+  preview?: string;
+  staged_count?: number;
 }
 
 export interface SessionCreate {

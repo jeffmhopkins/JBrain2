@@ -224,11 +224,20 @@ a right-swipe from the Full Brain composer, DESIGN.md):
   every query, retrieval, and tool the session runs is physically bounded to it: a
   session opened "general only" cannot read a health fact even when asked, and
   injected content in it cannot reach what the session cannot see. The default is a
-  deliberate minimal/last-used set; **widening scope is an explicit owner act, never
-  the resting state.** This dissolves the omni-scoped-owner problem at the source —
-  the session's read scope is the **upper bound** on any episode's domain, so the
-  fail-closed episodic scoping (non-negotiable #4) is trivially satisfied and the
-  write-time classifier only ever chooses *among the scopes already selected*.
+  **last-used set**, seeded — for the owner, who already holds every scope — to
+  **all domains** on first run; narrowing then sticks as remembered intent. Scope is
+  presented as a rail you nudge, not a gate you climb (the Chats picker starts a chat
+  in one tap on the last-used scope, with named presets and a Custom grid behind
+  progressive disclosure — docs/mocks/session-panel-b-quick-presets.html). The
+  blast-radius cost of an all-domains owner default is bounded by the parts that
+  *are* the boundary: RLS scoping at the DB, writes that only ever stage Proposals,
+  and the egress chokepoint that approves the exact payload — none of which the read
+  dial moves. **For non-owner principals the dials stay pinned** (an intake link is
+  one subject × one domain, §"Non-owner principals"); there, widening is not a
+  resting state but an impossibility. The session's read scope is still the **upper
+  bound** on any episode's domain, so the fail-closed episodic scoping
+  (non-negotiable #4) is trivially satisfied and the write-time classifier only ever
+  chooses *among the scopes already selected*.
 
 - **Writes and sensitive actions, never standing — always staged.** Within its read
   scope a session reads freely; anything that *changes* state, or that the owner has
@@ -238,6 +247,17 @@ a right-swipe from the Full Brain composer, DESIGN.md):
   denied}. Default owner policy: `read` direct within scope, `mutate` and `sensitive`
   **staged**, `external` **staged as an egress Proposal** (#9). A write can target **only an in-scope
   domain** — you cannot stage a write to a domain the session cannot read.
+
+**Chat lifecycle.** A chat the owner doesn't name is **auto-titled** from its first
+exchange — a cheap one-shot summary through the LLM adapter (the `session.title`
+task), best-effort and owner-only metadata, never blocking the turn that produced
+it. A chat can be **archived** (a third status beside `active`/`ended`) to tidy it
+out of the live Chats list without deleting it or its transcript; archiving is
+reversible and orthogonal to read scope. Read scope is **adjustable after start**
+(owner-only endpoint; RLS still enforces the firewall per query) — the resting
+ergonomics of "a rail you nudge", not a one-shot gate. Each Chats card carries its
+turn count, a resume preview (its latest turn), and how many Proposals it has
+staged — derived list-view metadata, never new sources of truth.
 
 Non-owner principals are the **same machine with the dials pinned**: an intake link
 is a session whose read scope is fixed to its capability token (one subject × one

@@ -124,11 +124,15 @@ export function FullBrainSurface({ fb, onOpenNote, onOpenEntity }: Props): React
       >
         <SessionsPanel
           sessions={fb.sessions}
+          activeId={fb.active?.id ?? null}
           onOpen={fb.open}
           onCreate={fb.create}
           onClose={() => setPanel("none")}
           onRename={fb.rename}
           onDelete={fb.remove}
+          onArchive={fb.archive}
+          onUnarchive={fb.unarchive}
+          onRescope={fb.rescope}
         />
       </aside>
 

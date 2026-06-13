@@ -45,6 +45,10 @@ class SessionOut(BaseModel):
     subject_ids: list[str]
     created_at: datetime
     last_active_at: datetime
+    # Chats-card metadata (0/"" outside the list view).
+    turn_count: int = 0
+    preview: str = ""
+    staged_count: int = 0
 
 
 def session_out(info: AgentSessionInfo) -> SessionOut:
@@ -56,6 +60,9 @@ def session_out(info: AgentSessionInfo) -> SessionOut:
         subject_ids=list(info.subject_ids),
         created_at=info.created_at,
         last_active_at=info.last_active_at,
+        turn_count=info.turn_count,
+        preview=info.preview,
+        staged_count=info.staged_count,
     )
 
 
@@ -88,6 +95,34 @@ async def rename_session(
     request: Request, principal: PrincipalDep, session_id: str, body: SessionRename
 ) -> Response:
     await get_agent_sessions(request).rename(ctx_for(principal), session_id, body.title)
+    return Response(status_code=204)
+
+
+class SessionRescope(BaseModel):
+    domain_scopes: list[str]
+
+
+@router.post("/{session_id}/scope")
+async def rescope_session(
+    request: Request, principal: PrincipalDep, session_id: str, body: SessionRescope
+) -> Response:
+    """Adjust a chat's read scope after start — owner-only; RLS still enforces the
+    firewall on every query the session's tools run."""
+    await get_agent_sessions(request).set_scopes(ctx_for(principal), session_id, body.domain_scopes)
+    return Response(status_code=204)
+
+
+@router.post("/{session_id}/archive")
+async def archive_session(request: Request, principal: PrincipalDep, session_id: str) -> Response:
+    """Tidy a chat out of the live list without deleting it (status → archived)."""
+    await get_agent_sessions(request).set_status(ctx_for(principal), session_id, "archived")
+    return Response(status_code=204)
+
+
+@router.post("/{session_id}/unarchive")
+async def unarchive_session(request: Request, principal: PrincipalDep, session_id: str) -> Response:
+    """Restore an archived chat to the live list (status → active)."""
+    await get_agent_sessions(request).set_status(ctx_for(principal), session_id, "active")
     return Response(status_code=204)
 
 

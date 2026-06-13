@@ -27,6 +27,7 @@ from jbrain.agent.loop import SYSTEM_VERSION, AgentLoop
 from jbrain.agent.memory import MemoryService
 from jbrain.agent.runlog import AgentRunLog
 from jbrain.agent.session import AgentSessionInfo, AgentSessionRepo, read_context
+from jbrain.agent.titler import SessionTitler
 from jbrain.agent.toolregistry import ToolRegistry
 from jbrain.agent.transcript_store import AgentTranscript
 from jbrain.api.deps import owner_only
@@ -126,6 +127,27 @@ async def _record_transcript(
         )
 
 
+async def _maybe_autotitle(
+    request: Request,
+    owner_ctx: SessionContext,
+    sessions: AgentSessionRepo,
+    session: AgentSessionInfo,
+    question: str,
+    answer_parts: list[str],
+) -> None:
+    """Name a chat the owner left untitled, from its first exchange. Owner-only
+    metadata, best-effort: a failed or empty title leaves the chat untitled (the
+    UI shows a placeholder) and never breaks the turn that produced it."""
+    if session.title.strip():
+        return
+    with contextlib.suppress(Exception):
+        title = await SessionTitler(get_llm_router(request)).title_for(
+            question=question, answer="".join(answer_parts)
+        )
+        if title:
+            await sessions.rename(owner_ctx, session.id, title)
+
+
 def _conversation(body: ChatRequest) -> list[LlmMessage]:
     messages: list[LlmMessage] = [
         UserMessage(text=m.content) if m.role == "user" else AssistantMessage(text=m.content)
@@ -223,6 +245,7 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
                     answer,
                     [steps[i] for i in order],
                 )
+                await _maybe_autotitle(request, owner_ctx, sessions, session, body.message, answer)
         except asyncio.CancelledError:
             # The client disconnected mid-stream (closed the PWA, lost signal) —
             # a benign abort, not a failure. Record it as such, then re-raise so

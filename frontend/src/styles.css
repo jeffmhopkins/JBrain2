@@ -4149,6 +4149,14 @@ button.small {
 .fb-shell .session-rail .rail-btn {
   width: 96px;
 }
+/* Three actions (rename · archive · delete) split the same RAIL_WIDTH. */
+.fb-shell .session-rail.rail-3 .rail-btn {
+  width: 64px;
+}
+.fb-shell .rail-archive {
+  background: var(--steel-tint);
+  color: var(--steel);
+}
 .fb-shell .session-slide {
   position: relative;
   transition: transform 150ms ease-out;
@@ -4218,6 +4226,106 @@ button.small {
   color: var(--violet);
 }
 .fb-shell .pill.location {
+  background: var(--amber-tint);
+  color: var(--amber);
+}
+
+/* search/filter, shown once chats pile up */
+.fb-shell .chat-search {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 0 12px;
+  height: 42px;
+  color: var(--text-3);
+}
+.fb-shell .chat-search input {
+  flex: 1;
+  min-width: 0;
+  background: none;
+  border: none;
+  outline: none;
+  color: var(--text);
+  font: inherit;
+  font-size: 14px;
+}
+.fb-shell .chat-search input::placeholder {
+  color: var(--text-3);
+}
+
+/* the "N archived" disclosure that tucks archived chats out of the live list */
+.fb-shell .archived-toggle {
+  align-self: flex-start;
+  background: none;
+  border: none;
+  color: var(--text-3);
+  font: inherit;
+  font-size: 12px;
+  padding: 4px 2px;
+  margin-top: 2px;
+}
+
+/* the live "you are here" dot on the open chat */
+.fb-shell .row.session-slide.live {
+  border-color: color-mix(in srgb, var(--green) 40%, var(--border));
+}
+.fb-shell .live-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--green);
+  flex: none;
+}
+
+/* the chat-card footer: the scope control, turn count, staged badge */
+.fb-shell .c-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.fb-shell .r-turns {
+  font-size: 11px;
+  color: var(--text-3);
+}
+.fb-shell .stat.staged {
+  font-size: 11px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: var(--steel-tint);
+  color: var(--steel);
+  margin-left: auto;
+}
+
+/* read scope as one calm chip rather than a wall of domain pills — a tappable
+   control now (re-scope after start), so it carries a button reset. */
+.fb-shell .scope-chip {
+  font-size: 11px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--text-2);
+  border: 1px solid transparent;
+  font-family: inherit;
+  line-height: 1;
+}
+.fb-shell .scope-chip.everything,
+.fb-shell .scope-chip.general {
+  background: var(--steel-tint);
+  color: var(--steel);
+}
+.fb-shell .scope-chip.medical {
+  background: var(--rose-tint);
+  color: var(--rose);
+}
+.fb-shell .scope-chip.financial {
+  background: var(--violet-tint);
+  color: var(--violet);
+}
+.fb-shell .scope-chip.location {
   background: var(--amber-tint);
   color: var(--amber);
 }
@@ -4294,6 +4402,84 @@ button.small {
 }
 .sheet .start:disabled {
   opacity: 0.4;
+}
+
+/* Direction B new-chat picker: a big primary Start on the last-used scope, named
+   preset pills, and the per-domain grid only when Custom is asked for. */
+.sheet .start-big {
+  width: 100%;
+  margin-top: 4px;
+  border: none;
+  background: var(--steel);
+  color: var(--bg);
+  border-radius: 14px;
+  padding: 15px;
+  font: inherit;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+.sheet .start-big:disabled {
+  opacity: 0.4;
+}
+.sheet .start-big .start-main {
+  font-size: 17px;
+  font-weight: 600;
+}
+.sheet .start-big .start-hint {
+  font-size: 12px;
+  opacity: 0.8;
+}
+.sheet .or {
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  text-align: center;
+  margin: 14px 0 10px;
+}
+.sheet .presets {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+  scrollbar-width: none;
+}
+.sheet .presets::-webkit-scrollbar {
+  display: none;
+}
+.sheet .preset {
+  flex: none;
+  font-size: 13px;
+  padding: 9px 15px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text-2);
+  white-space: nowrap;
+}
+.sheet .preset.on {
+  border-color: var(--steel);
+  background: var(--steel-tint);
+  color: var(--text);
+}
+.sheet .reads-summary {
+  font-size: 13px;
+  color: var(--text-2);
+  line-height: 1.45;
+  margin: 14px 2px 0;
+}
+.sheet .reads-summary b {
+  color: var(--text);
+  font-weight: 500;
+}
+.sheet .domain-opts {
+  margin-top: 12px;
+}
+.sheet .session-title {
+  margin-top: 14px;
+  margin-bottom: 0;
 }
 .sheet .writes-note {
   font-size: 12px;

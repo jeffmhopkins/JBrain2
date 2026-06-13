@@ -130,6 +130,74 @@ async def test_rename_updates_the_title(maker: async_sessionmaker) -> None:
     assert (await repo.get(owner, info.id)).title == "new name"  # type: ignore[union-attr]
 
 
+async def test_set_scopes_rescopes_and_is_owner_only(maker: async_sessionmaker) -> None:
+    owner = await _owner_ctx(maker)
+    repo = AgentSessionRepo(maker)
+    info = await repo.create(owner, domain_scopes=["general"], title="scratch")
+
+    # A non-owner cannot re-scope it (RLS hides the row); scope is unchanged.
+    token = SessionContext(principal_kind="capability_token", domain_scopes=("general",))
+    await repo.set_scopes(token, info.id, ["general", "health"])
+    assert (await repo.get(owner, info.id)).domain_scopes == ("general",)  # type: ignore[union-attr]
+
+    # The owner widens then narrows it.
+    await repo.set_scopes(owner, info.id, ["general", "health"])
+    assert (await repo.get(owner, info.id)).domain_scopes == ("general", "health")  # type: ignore[union-attr]
+    await repo.set_scopes(owner, info.id, ["health"])
+    assert (await repo.get(owner, info.id)).domain_scopes == ("health",)  # type: ignore[union-attr]
+
+
+async def test_list_aggregates_turns_preview_and_staged(maker: async_sessionmaker) -> None:
+    owner = await _owner_ctx(maker)
+    repo = AgentSessionRepo(maker)
+    info = await repo.create(owner, domain_scopes=["general"], title="recap")
+    run_id = await AgentRunLog(maker).start(owner, session_id=info.id, prompt_version="v")
+    await AgentTranscript(maker).record_exchange(
+        owner,
+        session_id=info.id,
+        run_id=run_id,
+        user_text="what's open?",
+        assistant_text="two labs",
+        tools=[],
+    )
+    # A staged Proposal linked to this session.
+    async with scoped_session(maker, owner) as session:
+        pid = (
+            await session.execute(text("SELECT id FROM app.principals WHERE kind = 'owner'"))
+        ).scalar()
+        await session.execute(
+            text(
+                "INSERT INTO app.proposals"
+                " (id, session_id, principal_id, kind, status, domain_code)"
+                " VALUES (gen_random_uuid(), :sid, :pid, 'correction', 'staged', 'general')"
+            ),
+            {"sid": info.id, "pid": pid},
+        )
+
+    card = next(c for c in await repo.list(owner) if c.id == info.id)
+    assert card.turn_count == 1  # one user turn
+    assert card.preview == "two labs"  # the latest turn, the resume hint
+    assert card.staged_count == 1
+
+
+async def test_set_status_archives_and_is_owner_only(maker: async_sessionmaker) -> None:
+    owner = await _owner_ctx(maker)
+    repo = AgentSessionRepo(maker)
+    info = await repo.create(owner, domain_scopes=["general"], title="scratch")
+    assert info.status == "active"
+
+    # A non-owner cannot flip it (RLS hides the row); it stays active.
+    token = SessionContext(principal_kind="capability_token", domain_scopes=("general",))
+    await repo.set_status(token, info.id, "archived")
+    assert (await repo.get(owner, info.id)).status == "active"  # type: ignore[union-attr]
+
+    # The owner archives it, then restores it.
+    await repo.set_status(owner, info.id, "archived")
+    assert (await repo.get(owner, info.id)).status == "archived"  # type: ignore[union-attr]
+    await repo.set_status(owner, info.id, "active")
+    assert (await repo.get(owner, info.id)).status == "active"  # type: ignore[union-attr]
+
+
 async def test_delete_cascades_runs_and_transcript_and_is_owner_only(
     maker: async_sessionmaker,
 ) -> None:
