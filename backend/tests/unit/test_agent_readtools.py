@@ -146,8 +146,10 @@ def handlers(
     currency: dict[str, list[dict]] | None = None,
 ):
     resp = search_resp if search_resp is not None else SearchResponse(degraded=False, results=[])
-    return build_read_handlers(  # type: ignore[arg-type]
-        FakeSearch(resp), FakeNotes(stored), FakeEntities(None, currency=currency)
+    return build_read_handlers(
+        FakeSearch(resp),  # type: ignore[arg-type]
+        FakeNotes(stored),  # type: ignore[arg-type]
+        FakeEntities(None, currency=currency),  # type: ignore[arg-type]
     )
 
 

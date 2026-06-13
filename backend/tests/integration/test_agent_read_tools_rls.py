@@ -63,8 +63,10 @@ async def test_read_note_handler_respects_session_scope(maker: async_sessionmake
                 {"id": ids[code], "cid": f"{run}-{code}", "code": code, "body": f"{code} body"},
             )
 
-    handlers = build_read_handlers(  # type: ignore[arg-type]
-        _NoSearch(), SqlNotesRepo(maker), SqlAnalysisRepo(maker)
+    handlers = build_read_handlers(
+        _NoSearch(),  # type: ignore[arg-type]
+        SqlNotesRepo(maker),
+        SqlAnalysisRepo(maker),
     )
     narrowed = ToolContext(
         session=read_context(owner.principal_id, ("health",)), scopes=("health",)
@@ -121,8 +123,10 @@ async def test_read_note_overlays_superseded_facts_with_the_current_value(
                 {"id": str(uuid.uuid4()), "eid": sarah, "stmt": stmt, "status": status, "nid": nid},
             )
 
-    handlers = build_read_handlers(  # type: ignore[arg-type]
-        _NoSearch(), SqlNotesRepo(maker), SqlAnalysisRepo(maker)
+    handlers = build_read_handlers(
+        _NoSearch(),  # type: ignore[arg-type]
+        SqlNotesRepo(maker),
+        SqlAnalysisRepo(maker),
     )
     ctx = ToolContext(session=read_context(owner.principal_id, ("general",)), scopes=("general",))
 
