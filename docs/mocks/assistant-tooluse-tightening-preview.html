@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Worked UI · tightened bottom + steel iconography (collapsed vs expanded)</title>
+<style>
+  /* Real production tokens (frontend/src/styles/tokens.css) */
+  :root{
+    --bg:#0e0f11; --surface:#17181b; --surface-2:#1e2024; --border:#26282c;
+    --text:#e6e7e9; --text-2:#9a9da3; --text-3:#5c5f66;
+    --steel:#7fa7c9; --green:#8fbc9a; --rose:#cf8a8f; --rose-tint:rgba(207,138,143,.13);
+    --font-mono:ui-monospace,"SF Mono","Cascadia Mono",Menlo,Consolas,monospace;
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+  body{background:#000;color:var(--text);display:flex;flex-direction:column;align-items:center;gap:14px;padding:22px 14px 60px;}
+  svg{fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;}
+  .caption{width:392px;max-width:94vw;color:var(--text-2);font-size:12.5px;line-height:1.55;}
+  .caption b{color:var(--text);} .caption .tag{display:inline-block;font-size:11px;padding:2px 9px;border-radius:999px;margin-bottom:6px;background:rgba(127,167,201,.13);color:var(--steel);}
+  .phone{width:392px;max-width:94vw;background:var(--bg);border:1px solid #2a2c30;border-radius:32px;padding:16px;display:flex;flex-direction:column;gap:10px;}
+
+  /* --- copied verbatim from frontend/src/styles.css (.fb-shell scope dropped) --- */
+  .bubble{max-width:80%;padding:11px 14px;border-radius:16px;font-size:15px;line-height:1.45;}
+  .bubble.ai{align-self:flex-start;background:var(--surface);border:1px solid var(--border);border-bottom-left-radius:5px;display:flex;flex-direction:column;gap:8px;}
+
+  .fb-worked{margin-top:-4px;margin-bottom:-8px;border-top:1px solid var(--border);}
+  .fb-worked-btn{display:flex;align-items:center;gap:6px;width:100%;min-height:28px;padding:2px;background:none;border:none;font:inherit;color:var(--text-2);text-align:left;cursor:pointer;}
+  .fb-worked-btn .tw-ic{width:12px;height:12px;flex:none;color:var(--steel);}
+  .fb-worked-lab{font-size:11px;font-weight:500;}
+  .fb-worked-meta{font-size:10.5px;color:var(--text-2);}
+  .fb-worked-fail{color:var(--rose);}
+  .fb-worked-caret{width:14px;height:14px;flex:none;margin-left:auto;color:var(--steel);transition:transform .16s ease-out;}
+  .fb-worked.open .fb-worked-caret{transform:rotate(180deg);}
+  .fb-worked-body{display:grid;grid-template-rows:0fr;transition:grid-template-rows .17s ease-out;}
+  .fb-worked.open .fb-worked-body{grid-template-rows:1fr;}
+  .fb-worked-inner{min-height:0;overflow:hidden;}
+  .fb-steps{display:flex;flex-direction:column;gap:2px;padding-top:4px;}
+
+  .fb-step{border-radius:10px;} .fb-step.err{background:var(--rose-tint);}
+  .fb-step-row{display:flex;align-items:center;gap:8px;width:100%;min-height:38px;padding:5px 8px;background:none;border:none;font:inherit;color:var(--text-2);text-align:left;cursor:pointer;}
+  .fb-step-row .tw-ic{width:15px;height:15px;flex:none;color:var(--steel);}
+  .fb-step.err .fb-step-row .tw-ic{color:var(--rose);}
+  .fb-step-row .tw-bullet{width:7px;height:7px;margin:0 4px;border-radius:999px;background:var(--steel);}
+  .fb-step-lab{flex:1;font-size:12.5px;color:var(--text);}
+  .fb-step-mark{width:7px;height:7px;flex:none;border-radius:999px;background:var(--green);}
+  .fb-step-mark.bad{background:var(--rose);}
+  .fb-step-cnt{font-size:10.5px;color:var(--text-3);}
+  .fb-step-caret{width:14px;height:14px;flex:none;color:var(--text-2);transition:transform .16s ease-out;}
+  .fb-step.open .fb-step-caret{transform:rotate(90deg);}
+  .fb-step-detail{display:grid;grid-template-rows:0fr;transition:grid-template-rows .16s ease-out;}
+  .fb-step.open .fb-step-detail{grid-template-rows:1fr;}
+  .fb-step-di{min-height:0;overflow:hidden;}
+  .fb-step.open .fb-step-di{padding-bottom:6px;}
+
+  .fb-args{display:grid;grid-template-columns:auto 1fr;gap:2px 12px;margin:2px 0 8px;padding-left:23px;}
+  .fb-args dt{font-size:10.5px;color:var(--text-3);}
+  .fb-args dd{font-size:11.5px;color:var(--text-2);font-family:var(--font-mono);word-break:break-word;}
+  .fb-res-lab{font-size:10.5px;letter-spacing:.04em;text-transform:uppercase;color:var(--text-3);padding-left:23px;margin-bottom:4px;}
+  .fb-res-txt{font-size:12px;color:var(--text-2);line-height:1.45;padding-left:23px;}
+  .toolwork-srcs{display:flex;flex-direction:column;gap:5px;padding-left:23px;}
+  .toolwork-card{display:flex;align-items:center;gap:9px;width:100%;padding:6px 10px;border:1px solid var(--border);border-radius:10px;background:var(--surface-2);color:var(--text);font:inherit;text-align:left;cursor:pointer;}
+  .toolwork-card .tw-dot{width:7px;height:7px;border-radius:999px;flex:none;background:var(--green);}
+  .toolwork-card .tw-text{flex:1;font-size:11.5px;color:var(--text-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .toolwork-card .tw-chev{width:14px;height:14px;flex:none;color:var(--text-2);}
+  .fb-raw-wrap{padding-left:23px;margin-top:7px;}
+  .fb-raw-toggle{display:inline-flex;align-items:center;min-height:28px;padding:3px 10px;background:none;border:1px solid var(--border);border-radius:999px;font:inherit;font-size:10.5px;color:var(--text-2);cursor:pointer;}
+</style>
+</head>
+<body>
+  <div class="caption">
+    <span class="tag">Tightened — collapsed bottom + steel icons</span><br/>
+    Left card is the <b>collapsed</b> state (your screenshot): the "Worked" line now sits in a 36px row pulled flush to the
+    card's foot — no tall dead zone — and the <b>gear + caret are steel</b>, not near-black. Right card is <b>expanded</b>:
+    note the <code>find_entity</code> dot is a small steel mark (no big disc), and the rows/args/raw are denser.
+    <b>Tap a "Worked" line to toggle.</b>
+  </div>
+
+  <!-- COLLAPSED -->
+  <div class="phone">
+    <div class="bubble ai">
+      You were born March 19, 1986 (note 177710ac).
+      <div class="fb-worked">
+        <button class="fb-worked-btn">
+          <svg class="tw-ic" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M19.1 4.9 17 7M7 17l-2.1 2.1"/></svg>
+          <span class="fb-worked-lab">Worked</span>
+          <span class="fb-worked-meta">· 2 steps · 5 sources</span>
+          <svg class="fb-worked-caret" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg>
+        </button>
+        <div class="fb-worked-body"><div class="fb-worked-inner"><div class="fb-steps">
+          <div class="fb-step"><button class="fb-step-row"><span class="tw-ic tw-bullet"></span><span class="fb-step-lab">find_entity</span><span class="fb-step-mark"></span><svg class="fb-step-caret" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></svg></button></div>
+        </div></div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- EXPANDED -->
+  <div class="phone">
+    <div class="bubble ai">
+      You were born March 19, 1986 (note 177710ac).
+      <div class="fb-worked open">
+        <button class="fb-worked-btn">
+          <svg class="tw-ic" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M19.1 4.9 17 7M7 17l-2.1 2.1"/></svg>
+          <span class="fb-worked-lab">Worked</span>
+          <span class="fb-worked-meta">· 2 steps · 5 sources</span>
+          <svg class="fb-worked-caret" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg>
+        </button>
+        <div class="fb-worked-body"><div class="fb-worked-inner"><div class="fb-steps">
+          <div class="fb-step open">
+            <button class="fb-step-row"><span class="tw-ic tw-bullet"></span><span class="fb-step-lab">find_entity</span><span class="fb-step-mark"></span><svg class="fb-step-caret" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></svg></button>
+            <div class="fb-step-detail"><div class="fb-step-di">
+              <dl class="fb-args"><dt>name</dt><dd>Jeff Hopkins</dd><dt>kind</dt><dd>Person</dd></dl>
+              <div class="fb-res-lab">result</div>
+              <div class="fb-res-txt">No entity matching 'Jeff Hopkins' in scope.</div>
+            </div></div>
+          </div>
+          <div class="fb-step open">
+            <button class="fb-step-row"><svg class="tw-ic" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><span class="fb-step-lab">Searched your notes</span><span class="fb-step-mark"></span><span class="fb-step-cnt">5 results</span><svg class="fb-step-caret" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></svg></button>
+            <div class="fb-step-detail"><div class="fb-step-di">
+              <dl class="fb-args"><dt>query</dt><dd>age OR birthday OR "born"</dd><dt>limit</dt><dd>5</dd></dl>
+              <div class="fb-res-lab">result</div>
+              <div class="toolwork-srcs">
+                <button class="toolwork-card"><span class="tw-dot"></span><span class="tw-text">have four daughters. Summer is 17…</span><svg class="tw-chev" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></svg></button>
+                <button class="toolwork-card"><span class="tw-dot"></span><span class="tw-text">full name Jeffrey Mark Hopkins. I g…</span><svg class="tw-chev" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></svg></button>
+                <button class="toolwork-card"><span class="tw-dot"></span><span class="tw-text">My wife is Anna</span><svg class="tw-chev" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></svg></button>
+              </div>
+              <button class="fb-raw-toggle">raw result</button>
+            </div></div>
+          </div>
+        </div></div></div>
+      </div>
+    </div>
+  </div>
+
+<script>
+  document.querySelectorAll(".fb-worked-btn").forEach(b=>b.addEventListener("click",()=>b.closest(".fb-worked").classList.toggle("open")));
+  document.querySelectorAll(".fb-step-row").forEach(r=>r.addEventListener("click",()=>r.closest(".fb-step").classList.toggle("open")));
+</script>
+</body>
+</html>

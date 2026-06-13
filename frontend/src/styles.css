@@ -3588,16 +3588,19 @@ button.small {
    A labelled 44px button expands the tool steps in place — no flip, no 3D, no
    swipe. The body animates open with a grid-rows ease so content stays in flow. */
 .fb-shell .fb-worked {
-  margin-top: 6px;
+  /* trim the gap to the answer above and pull the block flush to the card's foot
+     so a collapsed Worked line leaves no tall dead zone */
+  margin-top: -4px;
+  margin-bottom: -8px;
   border-top: 1px solid var(--border);
 }
 .fb-shell .fb-worked-btn {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   width: 100%;
-  min-height: 44px;
-  padding: 8px 2px 6px;
+  min-height: 28px;
+  padding: 2px;
   background: none;
   border: none;
   font: inherit;
@@ -3606,28 +3609,28 @@ button.small {
   cursor: pointer;
 }
 .fb-shell .fb-worked-btn .tw-ic {
-  width: 14px;
-  height: 14px;
+  width: 12px;
+  height: 12px;
   flex: none;
-  color: var(--text-2);
+  color: var(--steel);
 }
 .fb-shell .fb-worked-lab {
-  font-size: 12.5px;
+  font-size: 11px;
   font-weight: 500;
 }
 .fb-shell .fb-worked-meta {
-  font-size: 11.5px;
-  color: var(--text-3);
+  font-size: 10.5px;
+  color: var(--text-2);
 }
 .fb-shell .fb-worked-fail {
   color: var(--rose);
 }
 .fb-shell .fb-worked-caret {
-  width: 15px;
-  height: 15px;
+  width: 14px;
+  height: 14px;
   flex: none;
   margin-left: auto;
-  color: var(--text-2);
+  color: var(--steel);
   transition: transform 0.16s ease-out;
 }
 .fb-shell .fb-worked.open .fb-worked-caret {
@@ -3688,7 +3691,7 @@ button.small {
   width: 7px;
   height: 7px;
   margin: 0 4px;
-  background: var(--text-2);
+  background: var(--steel);
 }
 .fb-shell .fb-step-lab {
   flex: 1;
