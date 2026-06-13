@@ -93,6 +93,10 @@ class Extraction:
     mentions: list[ExtractedMention]
     facts: list[ExtractedFact]
     tokens: list[ExtractedToken]
+    # How many facts the per-note budget dropped from the tail (0 = none). The
+    # pipeline surfaces a non-zero count as a review card so a truncated long
+    # note is visible, not silently clipped.
+    dropped_facts: int = 0
 
 
 def parse_datetime(value: Any) -> datetime | None:
@@ -750,11 +754,13 @@ def parse_extraction(
     # Dedup BEFORE the cap: restatements must not eat salience slots.
     facts = dedup_facts(facts)
 
-    if len(facts) > max_facts:
+    dropped_facts = max(0, len(facts) - max_facts)
+    if dropped_facts:
         # The prompt's soft cap, enforced: keep the FIRST N — fact order is
         # the model's salience ranking, so the tail is the trivia the prompt
-        # told it to skip (docs/ANALYSIS.md "soft cap on facts-per-note").
-        log.warning("analysis.facts_capped", kept=max_facts, dropped=len(facts) - max_facts)
+        # told it to skip (docs/ANALYSIS.md "soft cap on facts-per-note"). The
+        # count rides out on the Extraction so the pipeline can flag it.
+        log.warning("analysis.facts_capped", kept=max_facts, dropped=dropped_facts)
         facts = facts[:max_facts]
 
     tokens: list[ExtractedToken] = []
@@ -810,4 +816,5 @@ def parse_extraction(
         mentions=mentions,
         facts=facts,
         tokens=tokens,
+        dropped_facts=dropped_facts,
     )

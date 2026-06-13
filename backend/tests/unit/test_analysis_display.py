@@ -8,6 +8,7 @@ from jbrain.analysis.display import (
     collision_display,
     mark_snippet,
     promotion_display,
+    truncation_display,
     value_label,
 )
 
@@ -111,3 +112,12 @@ class TestReviewDisplays:
         display = ambiguous_display(name="Sam", snippet="<mark>Sam</mark> said")
         assert display["summary"] == "which Sam?"
         assert set(display["outcomes"]) == {"reject"}
+
+    def test_truncation_is_informational_and_pluralizes(self) -> None:
+        # Like ambiguous_mention it wrote no graph state, so its only verb is a
+        # dismissal (reject). Counts read naturally for one vs many.
+        many = truncation_display(kept=40, dropped=7, snippet="<mark>…</mark>")
+        assert set(many["outcomes"]) == {"reject"}
+        assert "kept 40, skipped 7 facts" in many["summary"]
+        one = truncation_display(kept=40, dropped=1, snippet=None)
+        assert "skipped 1 fact" in one["summary"]

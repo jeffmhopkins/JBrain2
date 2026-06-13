@@ -671,6 +671,13 @@
         "predicate": "stepCount",
         "value_contains": "2026-05-30"
       }
+    ],
+    "review_items": [
+      {
+        "kind": "extraction_truncated",
+        "status": "open",
+        "count": 1
+      }
     ]
   }
 }

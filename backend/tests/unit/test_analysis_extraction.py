@@ -143,6 +143,20 @@ def test_facts_capped_at_the_per_note_budget_passed_in() -> None:
     assert [f.qualifier for f in parsed.facts] == [f"q{i}" for i in range(MIN_FACTS)]
 
 
+def test_dropped_facts_reports_the_truncation_count() -> None:
+    """The pipeline surfaces a hit budget as a review card, so the count of
+    clipped tail facts must ride out on the Extraction."""
+    payload = valid_payload()
+    payload["facts"] = [_raw_fact(i) for i in range(MIN_FACTS + 5)]
+    parsed = parse_extraction(payload, max_facts=MIN_FACTS)
+    assert len(parsed.facts) == MIN_FACTS
+    assert parsed.dropped_facts == 5
+
+
+def test_dropped_facts_is_zero_within_budget() -> None:
+    assert parse_extraction(valid_payload()).dropped_facts == 0
+
+
 def test_fact_cap_scales_with_length_and_clamps() -> None:
     """The budget floors at MIN_FACTS for short notes, scales up with word count,
     and is bounded by the hard ceiling — so a long entry is no longer truncated

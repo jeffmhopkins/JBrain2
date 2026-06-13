@@ -33,6 +33,7 @@ from jbrain.analysis.display import (
     mark_snippet,
     merge_display,
     promotion_display,
+    truncation_display,
     value_label,
 )
 from jbrain.analysis.entities import (
@@ -356,6 +357,9 @@ class AnalysisPipeline:
             # entered the doomed set, so both survive untouched.
             await purge.delete_review_items(session, set(doomed_links), statuses=("open",))
         await self._sweep_stale_ambiguous(session, note_id, extraction)
+        await self._sync_truncation_review(
+            session, note_id, note_domain, chunks, extraction.dropped_facts, len(extraction.facts)
+        )
         await self._reproject_entities(session, resolved)
 
         stmt = pg_insert(NoteAnalysis).values(
@@ -404,6 +408,55 @@ class AnalysisPipeline:
             stmt = stmt.bindparams(bindparam("names", expanding=True))
             params["names"] = sorted(names)
         await session.execute(stmt, params)
+
+    async def _sync_truncation_review(
+        self,
+        session: AsyncSession,
+        note_id: uuid.UUID,
+        note_domain: str,
+        chunks: list[_ChunkRef],
+        dropped: int,
+        kept: int,
+    ) -> None:
+        """Surface a hit fact-budget as a review card, and clear it once a re-run
+        no longer truncates. The cap keeps the model's salient head and drops the
+        tail silently (extraction.parse_extraction); for a genuinely long note
+        (a pasted article, a medical-history dump) that tail is real signal, so
+        the owner gets a dismissible notice with the re-run hint. One open card
+        per note: dedup like the ambiguous sweep so re-analysis never stacks
+        duplicates, and a larger-budget re-run that fits retires the stale card."""
+        if dropped <= 0:
+            await session.execute(
+                text(
+                    "DELETE FROM app.review_items WHERE kind = 'extraction_truncated'"
+                    " AND status = 'open' AND payload->>'note_id' = :nid"
+                ),
+                {"nid": str(note_id)},
+            )
+            return
+        existing = (
+            await session.execute(
+                text(
+                    "SELECT id FROM app.review_items WHERE kind = 'extraction_truncated'"
+                    " AND status = 'open' AND payload->>'note_id' = :nid LIMIT 1"
+                ),
+                {"nid": str(note_id)},
+            )
+        ).first()
+        payload = {
+            "note_id": str(note_id),
+            **truncation_display(kept=kept, dropped=dropped, snippet=_cite(None, chunks)),
+        }
+        if existing is not None:
+            # Refresh the counts in place — a re-run may clip a different amount —
+            # without churning the row's identity or its open status.
+            await session.execute(
+                update(ReviewItem).where(ReviewItem.id == existing.id).values(payload=payload)
+            )
+            return
+        session.add(
+            ReviewItem(kind="extraction_truncated", payload=payload, domain_code=note_domain)
+        )
 
     async def _resolve_entities(
         self,
