@@ -5726,6 +5726,18 @@ input.ld-title {
   stroke: var(--border);
   stroke-width: 1.4;
 }
+.graph-edge-label {
+  font-size: var(--fs-micro);
+  fill: var(--text-3);
+  text-anchor: middle;
+  dominant-baseline: middle;
+  /* a --bg halo keeps the predicate readable where it crosses the stroke */
+  paint-order: stroke;
+  stroke: var(--bg);
+  stroke-width: 3px;
+  pointer-events: none;
+  transition: opacity 0.2s ease-out;
+}
 .graph-node {
   position: absolute;
   transform: translate(-50%, -50%);
