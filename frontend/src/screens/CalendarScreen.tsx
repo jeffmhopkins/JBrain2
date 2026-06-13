@@ -1,5 +1,7 @@
 import { type ReactNode, useEffect, useMemo, useState } from "react";
+import type { AppointmentRef } from "../agent/types";
 import { type AppointmentOut, api } from "../api/client";
+import { Sheet } from "../components/Sheet";
 
 // The owner's read-only calendar over the appointments projection: Day / Week /
 // Month / Tasks (docs/mocks/appointments-calendar-views.html). Appointments are
@@ -78,6 +80,11 @@ function fmtT(d: Date): string {
   h = h % 12 || 12;
   return `${h}${m ? `:${String(m).padStart(2, "0")}` : ""} ${ap}`;
 }
+// Local-zone parts for the reschedule <input>s (the value attributes want the
+// owner's wall-clock date/time, not the UTC the ISO string would give).
+const pad2 = (n: number) => String(n).padStart(2, "0");
+const isoDate = (d: Date) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+const isoTime = (d: Date) => `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
 const domClass = (e: Ev) =>
   `dom-${["general", "health", "finance", "location"].includes(e.domain) ? e.domain : "general"}`;
 // Total accessors — the project's noUncheckedIndexedAccess types a fixed-array
@@ -162,7 +169,10 @@ function flag(e: Ev): ReactNode {
 export function CalendarScreen({
   onOpenNote,
   onCompose,
-}: { onOpenNote: (noteId: string) => void; onCompose: (prompt: string) => void }) {
+}: {
+  onOpenNote: (noteId: string) => void;
+  onCompose: (text: string, appt: AppointmentRef) => void;
+}) {
   const [events, setEvents] = useState<Ev[] | null>(null);
   const [view, setView] = useState<View>("month");
   const [cur, setCur] = useState<Date>(() => {
@@ -588,10 +598,12 @@ function EventSheet({
   ev: Ev;
   onClose: () => void;
   onOpenNote: (noteId: string) => void;
-  onCompose: (prompt: string) => void;
+  onCompose: (text: string, appt: AppointmentRef) => void;
 }): ReactNode {
   const [snippet, setSnippet] = useState<string | null>(null);
   const [cancelArmed, setCancelArmed] = useState(false);
+  const [rescheduling, setRescheduling] = useState(false);
+  const [saved, setSaved] = useState(false);
 
   // Pull the source note's body for an inline preview (read-only; the link
   // still opens the full note). One fetch per sheet open, stale-guarded.
@@ -615,12 +627,16 @@ function EventSheet({
   const whenText = ev.allDay ? dateText : `${dateText} · ${fmtT(ev.start)}`;
   const dur = durationText(ev.start, ev.end);
 
+  // Every agent handoff carries the appointment id so the agent resolves THIS
+  // appointment (read_appointment) instead of guessing by title, and closes the
+  // sheet first so its scrim can't sit over the composer it hands to.
+  function hand(text: string) {
+    onClose();
+    onCompose(text, { id: ev.id, title: ev.title });
+  }
   function openNote() {
     onClose();
     if (sourceNoteId) onOpenNote(sourceNoteId);
-  }
-  function reschedule() {
-    onCompose(`Reschedule my "${ev.title}" appointment (currently ${whenText}) to `);
   }
   function cancel() {
     if (!cancelArmed) {
@@ -628,10 +644,31 @@ function EventSheet({
       setTimeout(() => setCancelArmed(false), 2600);
       return;
     }
-    onCompose(`Cancel my "${ev.title}" appointment on ${dateText}.`);
+    hand(`Cancel my "${ev.title}" appointment on ${dateText}.`);
   }
   function ask() {
-    onCompose(`About my "${ev.title}" appointment: `);
+    hand(`About my "${ev.title}" appointment: `);
+  }
+
+  // "Add to calendar" fetches the single-event .ics as a blob and lets the OS
+  // open it. A plain <a href> navigates, which the PWA's offline fallback
+  // answers with the app shell — landing the owner back in their notes.
+  async function addToCalendar() {
+    try {
+      const blob = await api.appointmentIcs(ev.id);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${ev.title || "appointment"}.ics`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2200);
+    } catch {
+      // A failed download leaves the button as-is; the owner can retry.
+    }
   }
 
   return (
@@ -681,7 +718,7 @@ function EventSheet({
 
         {!cancelled && (
           <div className="cal-actions">
-            <button type="button" className="cal-act" onClick={reschedule}>
+            <button type="button" className="cal-act" onClick={() => setRescheduling(true)}>
               reschedule
             </button>
             <button type="button" className="cal-act danger" onClick={cancel}>
@@ -700,14 +737,67 @@ function EventSheet({
           </button>
         </div>
         <div className="cal-actions cal-actions-2">
-          <a className="cal-act ghost" href={`/api/appointments/${encodeURIComponent(ev.id)}.ics`}>
+          <button type="button" className="cal-act ghost" onClick={addToCalendar}>
             <svg viewBox="0 0 24 24" aria-hidden="true">
               <path d="M8 2v4M16 2v4M3 9h18M5 5h14a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z" />
             </svg>
-            add to calendar
-          </a>
+            {saved ? "saved to your device" : "add to calendar"}
+          </button>
         </div>
       </div>
+      {rescheduling && (
+        <RescheduleSheet
+          ev={ev}
+          onClose={() => setRescheduling(false)}
+          onSubmit={(when) => hand(`Reschedule my "${ev.title}" appointment to ${when}.`)}
+        />
+      )}
     </div>
+  );
+}
+
+// The reschedule picker: a date (+ time, unless all-day) the owner sets, which
+// hands the agent a clear "when" to stage a Proposal from — appointments stay
+// derived from notes (#7), so this never writes the calendar itself.
+function RescheduleSheet({
+  ev,
+  onClose,
+  onSubmit,
+}: {
+  ev: Ev;
+  onClose: () => void;
+  onSubmit: (when: string) => void;
+}): ReactNode {
+  const [date, setDate] = useState(() => isoDate(ev.start));
+  const [time, setTime] = useState(() => (ev.allDay ? "" : isoTime(ev.start)));
+
+  function submit() {
+    if (!date) return;
+    // Build the picked moment from local date/time parts, then phrase it the way
+    // the owner reads it on the calendar — unambiguous for the agent to parse.
+    const [y, m, d] = date.split("-");
+    const [hh, mm] = (ev.allDay || !time ? "0:0" : time).split(":");
+    const picked = new Date(Number(y), Number(m) - 1, Number(d), Number(hh), Number(mm));
+    const dateText = `${dow(picked.getDay())} ${mon3(picked.getMonth())} ${picked.getDate()}, ${picked.getFullYear()}`;
+    onClose();
+    onSubmit(ev.allDay || !time ? dateText : `${dateText} at ${fmtT(picked)}`);
+  }
+
+  return (
+    <Sheet title={`Reschedule ${ev.title}`} onClose={onClose}>
+      <label className="sheet-field">
+        Date
+        <input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+      </label>
+      {!ev.allDay && (
+        <label className="sheet-field">
+          Time
+          <input type="time" value={time} onChange={(e) => setTime(e.target.value)} />
+        </label>
+      )}
+      <button type="button" className="sheet-primary" onClick={submit} disabled={!date}>
+        Reschedule
+      </button>
+    </Sheet>
   );
 }

@@ -412,6 +412,22 @@ h3 {
   cursor: pointer;
 }
 
+/* The calendar handoff's appointment pill — the agent reference, in the attach
+   row, in the steel of the Full Brain mode it rides into. */
+.chip-appt {
+  background: var(--steel-tint);
+  color: var(--steel);
+}
+.chip-appt svg {
+  width: 12px;
+  height: 12px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
 /* ===== Omnibox ===== */
 
 .dock {
@@ -1837,6 +1853,16 @@ button.small {
   flex-direction: column;
   gap: 6px;
   margin-top: 12px;
+}
+
+.sheet-field input {
+  font: inherit;
+  min-height: 44px;
+  padding: 8px 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--text);
 }
 
 .sheet-primary {

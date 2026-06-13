@@ -113,7 +113,7 @@ describe("CalendarScreen", () => {
     expect(onOpenNote).toHaveBeenCalledWith("note-7");
   });
 
-  it("hands a reschedule prompt to the agent composer", async () => {
+  it("reschedule opens a date/time modal that hands off with the appointment id", async () => {
     const onCompose = vi.fn();
     stubFetch([appt({ id: "A1", title: "Dentist", start: today() })]);
     render(<CalendarScreen onOpenNote={noop} onCompose={onCompose} />);
@@ -121,10 +121,16 @@ describe("CalendarScreen", () => {
     await waitFor(() => screen.getByText("Dentist"));
     fireEvent.click(screen.getByText("Dentist"));
     fireEvent.click(screen.getByText("reschedule"));
-    expect(onCompose).toHaveBeenCalledWith(expect.stringContaining('Reschedule my "Dentist"'));
+    // The modal — not the omnibox — collects the new time before handing off.
+    const submit = screen.getByRole("button", { name: "Reschedule" });
+    fireEvent.click(submit);
+    expect(onCompose).toHaveBeenCalledWith(expect.stringContaining('Reschedule my "Dentist"'), {
+      id: "A1",
+      title: "Dentist",
+    });
   });
 
-  it("cancel is an armed two-tap before it hands off", async () => {
+  it("cancel is an armed two-tap before it hands off with the appointment id", async () => {
     const onCompose = vi.fn();
     stubFetch([appt({ id: "A1", title: "Dentist", start: today() })]);
     render(<CalendarScreen onOpenNote={noop} onCompose={onCompose} />);
@@ -134,6 +140,26 @@ describe("CalendarScreen", () => {
     fireEvent.click(screen.getByText("cancel"));
     expect(onCompose).not.toHaveBeenCalled(); // first tap only arms
     fireEvent.click(screen.getByText("tap again to cancel"));
-    expect(onCompose).toHaveBeenCalledWith(expect.stringContaining('Cancel my "Dentist"'));
+    expect(onCompose).toHaveBeenCalledWith(expect.stringContaining('Cancel my "Dentist"'), {
+      id: "A1",
+      title: "Dentist",
+    });
+  });
+
+  it("add to calendar downloads the .ics instead of navigating", async () => {
+    stubFetch([appt({ id: "A1", title: "Dentist", start: today() })]);
+    // jsdom has no object-URL plumbing — stand in the two statics the download uses.
+    const createObjectURL = vi.fn(() => "blob:x");
+    Object.assign(URL, { createObjectURL, revokeObjectURL: vi.fn() });
+    const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+    render(<CalendarScreen onOpenNote={noop} onCompose={noop} />);
+    fireEvent.click(screen.getByRole("tab", { name: "Tasks" }));
+    await waitFor(() => screen.getByText("Dentist"));
+    fireEvent.click(screen.getByText("Dentist"));
+    fireEvent.click(screen.getByText("add to calendar"));
+    // A blob is fetched and clicked through — never an in-place navigation.
+    await waitFor(() => expect(createObjectURL).toHaveBeenCalled());
+    expect(click).toHaveBeenCalled();
+    click.mockRestore();
   });
 });

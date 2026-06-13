@@ -40,6 +40,25 @@ describe("Omnibox", () => {
     expect(onConsumeDraft).toHaveBeenCalled();
   });
 
+  it("shows the appointment pill and clears it on tap", () => {
+    const onClearApptRef = vi.fn();
+    render(
+      <Omnibox
+        seg={{ row: "main", mode: "fullbrain" }}
+        onSegChange={vi.fn()}
+        onSend={vi.fn()}
+        onConversation={vi.fn()}
+        onOpenLauncher={vi.fn()}
+        apptRef={{ id: "A1", title: "Dentist" }}
+        onClearApptRef={onClearApptRef}
+      />,
+    );
+    const pill = screen.getByRole("button", { name: "Remove appointment Dentist" });
+    expect(pill).toHaveTextContent("Dentist");
+    fireEvent.click(pill);
+    expect(onClearApptRef).toHaveBeenCalled();
+  });
+
   it("morphs the segment row when active Entry is tapped, and back", () => {
     render(<Harness />);
     expect(screen.getByRole("tab", { name: "Research" })).toBeInTheDocument();

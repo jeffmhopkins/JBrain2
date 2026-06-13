@@ -1,5 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
+import type { ChatRequest } from "../agent/types";
 import type { FullBrainDeps } from "../agent/useFullBrain";
 import type { NoteActions } from "../notes/useNoteActions";
 import type { NotesController } from "../notes/useNotes";
@@ -90,7 +91,7 @@ describe("HomeScreen compose handoff", () => {
         onOpenSearch={vi.fn()}
         onOpenLauncher={vi.fn()}
         fbDeps={fbDeps()}
-        composePrompt={'Reschedule my "Dentist" appointment to '}
+        compose={{ text: 'Reschedule my "Dentist" appointment to ' }}
         onComposeConsumed={onComposeConsumed}
       />,
     );
@@ -98,6 +99,38 @@ describe("HomeScreen compose handoff", () => {
       expect(screen.getByDisplayValue(/Reschedule my "Dentist"/)).toBeInTheDocument(),
     );
     expect(onComposeConsumed).toHaveBeenCalled();
+  });
+
+  it("attaches the appointment pill and sends its id with the turn", async () => {
+    const calls: ChatRequest[] = [];
+    const deps = fbDeps();
+    deps.chat = async function* (body) {
+      calls.push(body);
+      yield { type: "done", stop_reason: "end_turn" };
+    };
+    render(
+      <HomeScreen
+        notes={fakeController()}
+        actions={fakeActions()}
+        onOpenNote={vi.fn()}
+        onOpenSearch={vi.fn()}
+        onOpenLauncher={vi.fn()}
+        fbDeps={deps}
+        compose={{
+          text: 'About my "Dentist" appointment: ',
+          appt: { id: "A1", title: "Dentist" },
+        }}
+        onComposeConsumed={vi.fn()}
+      />,
+    );
+    // The pill names the appointment in the composer's attach row.
+    await screen.findByRole("button", { name: /Remove appointment Dentist/ });
+
+    fireEvent.change(screen.getByLabelText("Composer"), { target: { value: "is it confirmed?" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    await waitFor(() => expect(calls).toHaveLength(1));
+    expect(calls[0]?.appointment_id).toBe("A1");
   });
 
   it("starts an all-domains session when the handoff finds none", async () => {
@@ -119,7 +152,7 @@ describe("HomeScreen compose handoff", () => {
         onOpenSearch={vi.fn()}
         onOpenLauncher={vi.fn()}
         fbDeps={deps}
-        composePrompt={'Cancel my "Dentist" appointment.'}
+        compose={{ text: 'Cancel my "Dentist" appointment.' }}
         onComposeConsumed={vi.fn()}
       />,
     );

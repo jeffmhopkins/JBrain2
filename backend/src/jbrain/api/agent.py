@@ -15,6 +15,7 @@ never copied note bodies.
 
 import asyncio
 import contextlib
+import uuid
 from collections.abc import AsyncIterator
 from typing import Annotated, Literal, cast
 
@@ -55,6 +56,11 @@ class ChatRequest(BaseModel):
     session_id: str
     message: str
     history: list[ChatMessageIn] = Field(default_factory=list)
+    # An appointment the owner is asking about, handed from the calendar. The id
+    # rides as a turn-local hint so the agent resolves the exact appointment
+    # (read_appointment) instead of guessing by title — it never reaches the
+    # persisted transcript, which records `message` verbatim.
+    appointment_id: str | None = None
 
 
 def get_agent_sessions(request: Request) -> AgentSessionRepo:
@@ -148,12 +154,39 @@ async def _maybe_autotitle(
             await sessions.rename(owner_ctx, session.id, title)
 
 
+def _appt_hint(appointment_id: str | None) -> str | None:
+    """A calendar handoff's appointment id, validated as a UUID before it rides
+    into the prompt. Anything malformed is dropped rather than pasted in — the
+    field is owner-supplied and goes straight to the model."""
+    if not appointment_id:
+        return None
+    try:
+        return str(uuid.UUID(appointment_id))
+    except ValueError:
+        return None
+
+
+def _model_message(body: ChatRequest) -> str:
+    """The model-facing user turn. A calendar handoff appends the appointment id
+    as an explicit instruction so the agent reads that exact appointment rather
+    than re-deriving it from the title; `body.message` stays clean for the
+    transcript and the episodic trace."""
+    appt_id = _appt_hint(body.appointment_id)
+    if appt_id is None:
+        return body.message
+    return (
+        f"{body.message}\n\n"
+        f"(The owner is asking about the appointment with id={appt_id}. "
+        "Call read_appointment with this id before answering or staging any change.)"
+    )
+
+
 def _conversation(body: ChatRequest) -> list[LlmMessage]:
     messages: list[LlmMessage] = [
         UserMessage(text=m.content) if m.role == "user" else AssistantMessage(text=m.content)
         for m in body.history
     ]
-    messages.append(UserMessage(text=body.message))
+    messages.append(UserMessage(text=_model_message(body)))
     return messages
 
 

@@ -417,6 +417,48 @@ def test_chat_history_is_replayed_into_the_turn(
     assert sent[-1].text == "and the second?"
 
 
+def test_chat_appointment_id_rides_the_turn_not_the_transcript(
+    client: TestClient,
+    repo: FakeAuthRepo,
+    sessions_store: FakeAgentSessions,
+    transcript: FakeTranscript,
+) -> None:
+    login(client, repo)
+    sessions_store.add(AgentSessionInfo("sess-1", "", "active", ("general",), (), NOW, NOW))
+    router: LlmRouter = client.app.state.llm_router  # type: ignore[attr-defined]
+    fake = cast(FakeLlmClient, router._clients["xai"])
+    appt_id = "2c5ea4dc-36eb-4d2a-a922-362b9e155667"
+
+    resp = client.post(
+        "/api/chat",
+        json={"session_id": "sess-1", "message": "what's this about?", "appointment_id": appt_id},
+    )
+    assert resp.status_code == 200
+    # The model turn gains the id as an explicit read_appointment instruction…
+    sent = fake.stream_calls[0]["messages"]
+    assert appt_id in sent[-1].text
+    assert "read_appointment" in sent[-1].text
+    # …but the persisted transcript keeps the owner's words verbatim.
+    assert transcript.recorded[-1]["user"] == "what's this about?"
+
+
+def test_chat_ignores_a_non_uuid_appointment_id(
+    client: TestClient, repo: FakeAuthRepo, sessions_store: FakeAgentSessions
+) -> None:
+    login(client, repo)
+    sessions_store.add(AgentSessionInfo("sess-1", "", "active", ("general",), (), NOW, NOW))
+    router: LlmRouter = client.app.state.llm_router  # type: ignore[attr-defined]
+    fake = cast(FakeLlmClient, router._clients["xai"])
+
+    resp = client.post(
+        "/api/chat",
+        json={"session_id": "sess-1", "message": "hi", "appointment_id": "not-a-uuid"},
+    )
+    assert resp.status_code == 200
+    # A malformed id never reaches the prompt — the message is sent clean.
+    assert fake.stream_calls[0]["messages"][-1].text == "hi"
+
+
 def test_chat_model_failure_emits_error_done_and_marks_run_failed(
     client: TestClient,
     repo: FakeAuthRepo,

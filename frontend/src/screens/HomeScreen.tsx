@@ -1,5 +1,6 @@
 import { type CSSProperties, useCallback, useEffect, useRef, useState } from "react";
 import { FullBrainSurface } from "../agent/FullBrainSurface";
+import type { AppointmentRef } from "../agent/types";
 import { type FullBrainDeps, useFullBrain } from "../agent/useFullBrain";
 import { Omnibox } from "../components/Omnibox";
 import { Stream } from "../components/Stream";
@@ -13,6 +14,13 @@ const TOAST_MS = 4000;
 // session it auto-starts spans all of them (no scope picker for the owner).
 const ALL_DOMAINS = ["general", "health", "finance", "location"];
 
+/** A calendar → Full Brain handoff: the prose that seeds the composer plus the
+ * appointment it's about (the agent resolves the id; the owner sees the pill). */
+export interface ComposeHandoff {
+  text: string;
+  appt?: AppointmentRef;
+}
+
 interface HomeScreenProps {
   notes: NotesController;
   actions: NoteActions;
@@ -24,8 +32,9 @@ interface HomeScreenProps {
   onOpenSearch: () => void;
   onOpenLauncher: () => void;
   /** A handoff (e.g. the calendar's reschedule) that flips to Full Brain and
-   * seeds the composer with this prompt; cleared via onComposeConsumed. */
-  composePrompt?: string | null;
+   * seeds the composer, attaching the appointment pill; cleared via
+   * onComposeConsumed. */
+  compose?: ComposeHandoff | null;
   onComposeConsumed?: () => void;
   /** Injected in tests; defaults to the live API client. */
   fbDeps?: FullBrainDeps;
@@ -45,12 +54,15 @@ export function HomeScreen({
   onOpenLauncher,
   onOpenNoteById,
   onOpenEntity,
-  composePrompt,
+  compose,
   onComposeConsumed,
   fbDeps,
 }: HomeScreenProps) {
   const [seg, setSeg] = useState<SegState>({ row: "main", mode: "entry" });
   const [pendingDraft, setPendingDraft] = useState("");
+  // The appointment a calendar handoff is about — shown as a composer pill and
+  // sent with the next turn so the agent resolves it (not by title).
+  const [pendingAppt, setPendingAppt] = useState<AppointmentRef | null>(null);
   const composingRef = useRef(false);
   const [toast, setToast] = useState<Toast | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -58,14 +70,23 @@ export function HomeScreen({
   // A compose handoff (the calendar's reschedule/cancel/ask) flips to Full Brain
   // and hands the prompt to the omnibox; the owner reviews and sends it.
   useEffect(() => {
-    if (composePrompt) {
+    if (compose) {
       setSeg({ row: "main", mode: "fullbrain" });
-      setPendingDraft(composePrompt);
+      setPendingDraft(compose.text);
+      setPendingAppt(compose.appt ?? null);
       composingRef.current = true;
       onComposeConsumed?.();
     }
-  }, [composePrompt, onComposeConsumed]);
+  }, [compose, onComposeConsumed]);
   const clearDraft = useCallback(() => setPendingDraft(""), []);
+  const clearAppt = useCallback(() => setPendingAppt(null), []);
+  // The appointment pill belongs to a Full Brain turn; drop it if the owner
+  // navigates to another mode so it can't leak into an unrelated send. (A mode
+  // switch the handoff itself drives uses setSeg directly, keeping the pill.)
+  const changeSeg = useCallback((next: SegState) => {
+    if (next.mode !== "fullbrain") setPendingAppt(null);
+    setSeg(next);
+  }, []);
   // Full Brain is integral to the home page: the transcript and its lateral
   // panels render in the body while the omnibox below acts as its composer. The
   // controller only does work while the mode is on screen.
@@ -166,18 +187,22 @@ export function HomeScreen({
       )}
       <Omnibox
         seg={seg}
-        onSegChange={setSeg}
+        onSegChange={changeSeg}
         onSend={(input) => void notes.send(input)}
         onConversation={(body) => {
           // The omnibox is Full Brain's composer: a send streams into the
           // transcript above. Research's read-only surface is still Phase 4.
-          if (seg.mode === "fullbrain") fb.send(body);
-          else showToast("Conversations arrive in Phase 4");
+          if (seg.mode === "fullbrain") {
+            fb.send(body, pendingAppt ? { appointmentId: pendingAppt.id } : undefined);
+            setPendingAppt(null);
+          } else showToast("Conversations arrive in Phase 4");
         }}
         busy={seg.mode === "fullbrain" && fb.busy}
         onOpenLauncher={onOpenLauncher}
         draft={pendingDraft}
         onConsumeDraft={clearDraft}
+        apptRef={pendingAppt}
+        onClearApptRef={clearAppt}
       />
       {toast && (
         <output className="toast">

@@ -617,6 +617,14 @@ export const api = {
     return (await response.json()) as AppointmentOut[];
   },
 
+  // One appointment as a single-event .ics blob, fetched (not navigated) so the
+  // PWA's service worker can't swap the download for the app shell — the browser
+  // hands the blob to the OS calendar.
+  async appointmentIcs(id: string): Promise<Blob> {
+    const response = await request(`/api/appointments/${encodeURIComponent(id)}.ics`);
+    return await response.blob();
+  },
+
   async noteAnalysis(noteId: string): Promise<NoteAnalysis> {
     const response = await request(`/api/notes/${encodeURIComponent(noteId)}/analysis`);
     return (await response.json()) as NoteAnalysis;
