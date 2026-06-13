@@ -318,3 +318,60 @@ agent's eval/budget machinery.
 - Whether the bounded Integrator loop is `max_steps` 2 or 3 (start at 2; raise
   only if traversal demonstrably needs it).
 - Bootstrap: how much of the (to-be-wiped) corpus is regenerated vs seeded fresh.
+
+---
+
+## 9. Track A · A1b design (the DB executor) — grounded in the real pipeline
+
+A1a (the pure `arbiter.plan_intent`) is done. A1b takes an `ArbiterPlan` + the
+agent's `IntegrationIntent` and performs the writes through the existing
+deterministic primitives. Reading the live code pinned the key facts:
+`_resolve_entities` returns a **name-keyed** `dict[str, ResolvedEntity | None]`;
+`_upsert_fact` consumes an **`ExtractedFact`**, runs `domain_floor`/`ratchet` →
+`Candidate` → `_existing_facts` → `decide()`, with the fact's `confidence`
+flowing through to the row.
+
+**The impedance mismatch.** The pipeline is **name-based** (mentions carry
+names; facts reference names; resolution maps names→entities). The intent is
+**mention_ref-based with identity pre-resolved** (the agent supplies
+`entity_id`s). A1b must bridge the two.
+
+**Decision — A1b ships Option 1 (adapter + resolution override); Option 2 is a
+later migration.**
+
+- **Option 1 (chosen for A1b):** an additive `apply_intent(...)` that
+  (a) synthesizes an `Extraction` from the plan (each committed/review
+  `IntentFact` → an `ExtractedFact` with `confidence = plan weight`; each
+  `EntityResolution` → an `ExtractedMention`), (b) builds a name-keyed
+  `resolution_override: dict[str, ResolvedEntity | None]` from the agent's
+  *validated* resolutions, and (c) calls the existing `_apply` with the override
+  threaded into `_resolve_entities` (use the agent's entity when present —
+  validated for existence / in-scope / not `distinct_from` — else fall back to
+  the deterministic resolver; `ambiguous` → None + the existing card). This
+  reuses `_rebuild_mentions`, `_upsert_tokens`, `_upsert_fact`, the sweep, and
+  `decide()` **unchanged**. Smallest new surface; gets the end-to-end flow green.
+- **Plan-review routing:** after `decide()` returns, a fact the plan marked
+  `pending_review` is forced to `status=pending_review` and files a
+  `low_confidence_inference` review item (new kind, Wave-1·C) — the arbiter's
+  per-kind threshold is stricter than `decide()`'s `LOW_CONFIDENCE` guard, so the
+  plan's decision must win. (Commit facts flow through `decide()` as today.)
+- **Option 2 (deferred):** a native id-based `apply_intent` that never round-trips
+  through names. Cleaner once the agent owns resolution end-to-end, but a large
+  rewrite of mention/token/fact upsert — not worth blocking A1b.
+
+**Decomposition (so as much as possible is locally verifiable despite no local
+Docker):**
+- **A1b-i (pure, local):** `plan_to_extraction(intent, plan) -> Extraction` — the
+  IntentFact→ExtractedFact / EntityResolution→ExtractedMention adapter, weight→
+  confidence. Unit-tested locally.
+- **A1b-ii (DB, CI):** the `resolution_override` param on `_apply`/
+  `_resolve_entities`, the validated `resolve_from_intent`, the plan-review
+  forcing + `low_confidence_inference` card, and `apply_intent`. Integration-
+  tested via testcontainers in CI; third-party-reviewed pre-push as the
+  non-local safety net.
+
+**Invariant carry-forward:** A1b is the happy-path flow only. N4 (immutable
+`note_id` + `adopt_shadow`), N5 (complete-turn-only sweep), N8
+(`closed_by_fact_id`), N9 (ordering + domain-filtered existence reads) land in
+A2–A6 on top of this; A1b must not contradict them (e.g. it keeps the existing
+single-transaction `_apply`, so N5's no-partial-write holds by construction).

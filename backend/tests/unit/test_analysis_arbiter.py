@@ -6,13 +6,16 @@ composing validate_intent (N3) and the weight model (N11).
 
 from typing import Any
 
-from jbrain.analysis.arbiter import plan_intent
+import pytest
+
+from jbrain.analysis.arbiter import plan_intent, plan_to_extraction
 from jbrain.analysis.intent import (
     AttestedSpan,
     EntityPairProposal,
     EntityResolution,
     IntegrationIntent,
     IntentFact,
+    IntentTemporal,
 )
 from jbrain.analysis.weight import ConfidenceSignals
 
@@ -189,3 +192,64 @@ def test_mixed_intent_partitions_correctly():
     assert len(plan.to_review) == 1
     assert plan.to_commit[0].fact.entity_ref == "m1"
     assert plan.to_review[0].fact.entity_ref == "m2"
+
+
+def test_plan_to_extraction_maps_mentions_facts_and_weight():
+    intent = _intent(entity_resolutions=[_res("m1")], facts=[_fact(self_confidence=0.95)])
+    plan = plan_intent(intent, signals={0: _surface_sig()})
+    extraction = plan_to_extraction(intent, plan, title="A day", tags=["life"])
+
+    assert extraction.title == "A day"
+    assert extraction.tags == ["life"]
+    # Mentions/facts are keyed by mention_ref (Option 1 bridge).
+    assert [m.name for m in extraction.mentions] == ["m1"]
+    assert len(extraction.facts) == 1
+    ef = extraction.facts[0]
+    assert ef.entity_ref == "m1"
+    assert ef.predicate == "spouse"
+    # confidence is the deterministic plan weight, not the model's self-report.
+    assert ef.confidence == plan.to_commit[0].weight
+    # domain is deferred to the note's domain in _upsert_fact.
+    assert ef.domain == ""
+
+
+def test_plan_to_extraction_includes_review_facts_too():
+    # Both committed and review-held facts must be written (review as pending).
+    intent = _intent(
+        entity_resolutions=[_res("m1"), _res("m2", cross_subject=True)],
+        facts=[_fact(entity_ref="m1"), _fact(entity_ref="m2")],
+    )
+    plan = plan_intent(intent, signals={0: _surface_sig(), 1: _surface_sig()})
+    extraction = plan_to_extraction(intent, plan)
+    assert {f.entity_ref for f in extraction.facts} == {"m1", "m2"}
+
+
+def test_plan_to_extraction_maps_temporal():
+    from datetime import UTC, datetime
+
+    when = datetime(2021, 6, 1, tzinfo=UTC)
+    temporal = IntentTemporal(
+        phrase="last June", resolved_start=when, resolved_end=None, precision="month"
+    )
+    intent = _intent(entity_resolutions=[_res("m1")], facts=[_fact(temporal=temporal)])
+    plan = plan_intent(intent, signals={0: _surface_sig()})
+    ef = plan_to_extraction(intent, plan).facts[0]
+    assert ef.temporal is not None
+    assert ef.temporal.phrase == "last June"
+    assert ef.temporal.resolved_start == when
+    assert ef.temporal.precision == "month"
+
+
+def test_plan_to_extraction_uses_new_kind_for_minted_mention():
+    res = EntityResolution(mention_ref="m9", mode="new", new_kind="Organization", new_name="Globex")
+    intent = _intent(entity_resolutions=[res], facts=[_fact(entity_ref="m9")])
+    plan = plan_intent(intent, signals={0: _surface_sig()})
+    mention = plan_to_extraction(intent, plan).mentions[0]
+    assert mention.kind == "Organization"
+
+
+def test_plan_to_extraction_rejects_a_rejected_plan():
+    plan = plan_intent(_intent(entity_resolutions=[_res("m1")], facts=[_fact(entity_ref="ghost")]))
+    assert plan.rejected
+    with pytest.raises(ValueError):
+        plan_to_extraction(_intent(), plan)

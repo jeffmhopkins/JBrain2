@@ -27,6 +27,12 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 
+from jbrain.analysis.extraction import (
+    ExtractedFact,
+    ExtractedMention,
+    ExtractedTemporal,
+    Extraction,
+)
 from jbrain.analysis.intent import (
     EntityPairProposal,
     IntegrationIntent,
@@ -134,3 +140,58 @@ def plan_intent(
         merge_proposals=tuple(intent.merge_proposals),
         distinct_proposals=tuple(intent.distinct_proposals),
     )
+
+
+def _to_extracted(fact: IntentFact, confidence: float) -> ExtractedFact:
+    temporal = (
+        ExtractedTemporal(
+            phrase=fact.temporal.phrase,
+            resolved_start=fact.temporal.resolved_start,
+            resolved_end=fact.temporal.resolved_end,
+            precision=fact.temporal.precision,
+        )
+        if fact.temporal is not None
+        else None
+    )
+    # domain="" defers to the note's domain in _upsert_fact (`fact.domain or
+    # note_domain`); the arbiter never overrides the firewall's floor/ratchet.
+    return ExtractedFact(
+        predicate=fact.predicate,
+        qualifier=fact.qualifier,
+        kind=fact.kind,
+        statement=fact.statement,
+        value_json=fact.value_json,
+        assertion=fact.assertion,
+        entity_ref=fact.entity_ref,
+        object_entity_ref=fact.object_entity_ref,
+        temporal=temporal,
+        domain="",
+        confidence=confidence,
+    )
+
+
+def plan_to_extraction(
+    intent: IntegrationIntent,
+    plan: ArbiterPlan,
+    *,
+    title: str = "",
+    tags: list[str] | None = None,
+) -> Extraction:
+    """Bridge a (non-rejected) plan into the name-based `Extraction` the existing
+    `_apply` consumes (plan §9, Option 1). Mentions and fact refs are keyed by
+    `mention_ref`; each fact's `confidence` is its deterministic plan weight, not
+    the model's self-report. title/tags come from the upstream extract step (the
+    intent doesn't carry them). A1b-ii threads the agent's resolutions in as a
+    name→entity override so `_resolve_entities` honors them."""
+    if plan.rejected:
+        raise ValueError("cannot build an extraction from a rejected plan")
+    mentions = [
+        ExtractedMention(
+            name=r.mention_ref,
+            kind=r.new_kind or "Thing",
+            surface_text=r.attested_span.surface if r.attested_span else r.mention_ref,
+        )
+        for r in intent.entity_resolutions
+    ]
+    facts = [_to_extracted(pf.fact, pf.weight) for pf in plan.facts]
+    return Extraction(title=title, tags=list(tags or []), mentions=mentions, facts=facts, tokens=[])
