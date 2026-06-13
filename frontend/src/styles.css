@@ -804,6 +804,25 @@ h3 {
   margin: 0 0 12px;
 }
 
+/* The appointments ICS feed URL + its actions */
+.feed-url {
+  width: 100%;
+  box-sizing: border-box;
+  font-family: var(--font-mono, monospace);
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-seg);
+  padding: 8px 10px;
+  margin-bottom: 10px;
+}
+.settings-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .theme-picker {
   display: flex;
   border: 1px solid var(--border);

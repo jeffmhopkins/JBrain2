@@ -13,7 +13,7 @@ from jbrain.agent.runlog import AgentRunLog
 from jbrain.agent.session import AgentSessionRepo
 from jbrain.agent.transcript_store import AgentTranscript
 from jbrain.analysis.repo import SqlAnalysisRepo
-from jbrain.api import agent, analysis, auth, health, notes, ops, proposals, search, sessions
+from jbrain.api import agent, analysis, auth, feed, health, notes, ops, proposals, search, sessions
 from jbrain.api import lists as lists_api
 from jbrain.api import settings as settings_api
 from jbrain.appointments.repo import SqlAppointmentsRepo
@@ -99,6 +99,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(agent.router, prefix="/api")
     app.include_router(analysis.router, prefix="/api")
     app.include_router(auth.router, prefix="/api")
+    app.include_router(feed.router, prefix="/api")
     app.include_router(lists_api.router, prefix="/api")
     app.include_router(notes.router, prefix="/api")
     app.include_router(ops.router, prefix="/api")

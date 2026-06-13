@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { ImageAnalysisMode } from "../api/client";
+import type { FeedConfig, ImageAnalysisMode } from "../api/client";
 import { api } from "../api/client";
 import { FONT_SCALES, type FontScale, getFontScale, setFontScale } from "../fontScale";
 import { isLocationCaptureEnabled, setLocationCaptureEnabled } from "../location";
@@ -46,6 +46,53 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
       stale = true;
     };
   }, []);
+
+  // The read-only appointments ICS feed — a revocable subscribe URL the owner
+  // hands to a calendar app. Server-held token; absent => the feed is off.
+  const [feed, setFeed] = useState<FeedConfig | null>(null);
+  const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    let stale = false;
+    api
+      .feedConfig()
+      .then((f) => {
+        if (!stale) setFeed(f);
+      })
+      .catch(() => {
+        if (!stale) setFeed({ enabled: false, token: null });
+      });
+    return () => {
+      stale = true;
+    };
+  }, []);
+
+  const feedUrl =
+    feed?.token != null
+      ? `${window.location.origin}/api/feed/appointments.ics?token=${feed.token}`
+      : "";
+
+  function generateFeed() {
+    setCopied(false);
+    void api
+      .rotateFeed()
+      .then(setFeed)
+      .catch(() => {});
+  }
+
+  function disableFeed() {
+    setCopied(false);
+    void api
+      .disableFeed()
+      .then(() => setFeed({ enabled: false, token: null }))
+      .catch(() => {});
+  }
+
+  function copyFeed() {
+    if (feedUrl) {
+      void navigator.clipboard?.writeText(feedUrl);
+      setCopied(true);
+    }
+  }
 
   function pick(pref: ThemePref) {
     setThemePref(pref);
@@ -140,6 +187,41 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
             </button>
           ))}
         </div>
+      </section>
+
+      <section className="settings-card">
+        <h2 className="settings-label">Calendar feed</h2>
+        <p className="settings-meta">
+          subscribe a calendar app to your appointments, read-only. the link carries appointment
+          titles from every domain — including health and finance — off your box into whatever
+          calendar subscribes, so keep it private; disable it to cut access instantly.
+        </p>
+        {feed?.enabled && feedUrl ? (
+          <>
+            <input
+              className="feed-url"
+              readOnly
+              value={feedUrl}
+              aria-label="Calendar feed URL"
+              onFocus={(e) => e.currentTarget.select()}
+            />
+            <div className="settings-actions">
+              <button type="button" className="seg" onClick={copyFeed}>
+                {copied ? "Copied" : "Copy link"}
+              </button>
+              <button type="button" className="seg" onClick={generateFeed}>
+                Regenerate
+              </button>
+              <button type="button" className="btn-destructive" onClick={disableFeed}>
+                Disable
+              </button>
+            </div>
+          </>
+        ) : (
+          <button type="button" className="seg" onClick={generateFeed} disabled={feed === null}>
+            Generate link
+          </button>
+        )}
       </section>
 
       <section className="settings-card">

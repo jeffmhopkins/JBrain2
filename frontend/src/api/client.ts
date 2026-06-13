@@ -99,6 +99,12 @@ export interface AppSettings {
   image_analysis_mode: ImageAnalysisMode;
 }
 
+/** The read-only appointments ICS feed: enabled state + the URL token (owner-only). */
+export interface FeedConfig {
+  enabled: boolean;
+  token: string | null;
+}
+
 export interface NoteOut {
   id: string;
   client_id: string;
@@ -545,6 +551,21 @@ export const api = {
   async updateSettings(patch: Partial<AppSettings>): Promise<AppSettings> {
     const response = await request("/api/settings", jsonInit("PUT", patch));
     return (await response.json()) as AppSettings;
+  },
+
+  // ----- Appointments ICS feed (a revocable, read-only subscribe URL) -----
+  async feedConfig(): Promise<FeedConfig> {
+    const response = await request("/api/feed/appointments");
+    return (await response.json()) as FeedConfig;
+  },
+
+  async rotateFeed(): Promise<FeedConfig> {
+    const response = await request("/api/feed/appointments/rotate", { method: "POST" });
+    return (await response.json()) as FeedConfig;
+  },
+
+  async disableFeed(): Promise<void> {
+    await request("/api/feed/appointments", { method: "DELETE" });
   },
 
   async noteAnalysis(noteId: string): Promise<NoteAnalysis> {
