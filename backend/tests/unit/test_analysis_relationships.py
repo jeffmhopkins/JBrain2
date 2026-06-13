@@ -24,6 +24,13 @@ def test_work_words_map_to_the_owners_outbound_edge() -> None:
     assert "works_for" in employer and "worksfor" in employer
 
 
+def test_dating_words_and_abbreviations_map_to_their_predicates() -> None:
+    # The abbreviations resolve to the stored gendered predicate.
+    assert "boyfriend" in predicate_candidates("bf")
+    assert "girlfriend" in predicate_candidates("gf")
+    assert "boyfriend" in predicate_candidates("boyfriend")
+
+
 def test_an_exact_predicate_name_passes_through() -> None:
     # An unknown word is an attractor, never a gate: it still matches itself,
     # so a literal predicate like "owns" or "memberOf" works directly.

@@ -509,6 +509,10 @@ def test_asymmetric_predicate_reflects_with_named_inverse() -> None:
     assert inverse_predicate("child_of") == "parent_of"
     assert inverse_predicate("manages") == "reportsTo"
     assert inverse_predicate("hasTreated") == "treatedBy"
+    # Dating reciprocates with the opposite gendered word, so a `boyfriend` edge
+    # mirrors to a `girlfriend` edge on the other party's stream (and back).
+    assert inverse_predicate("boyfriend") == "girlfriend"
+    assert inverse_predicate("girlfriend") == "boyfriend"
     # Ownership reciprocates owner <-> possession (me.owns -> F-150 reflects to
     # F-150.ownedBy -> me on the thing's stream).
     assert inverse_predicate("owns") == "ownedBy"

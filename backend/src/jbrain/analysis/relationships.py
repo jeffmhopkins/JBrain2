@@ -56,6 +56,11 @@ _RELATIONSHIP_WORDS: dict[str, tuple[str, ...]] = {
     "sister": ("sibling", "sibling_of", "siblingof"),
     "twin": ("twin", "sibling"),
     "cousin": ("cousin",),
+    # Dating: the bare word is the stored predicate; the abbreviations map to it.
+    "boyfriend": ("boyfriend",),
+    "bf": ("boyfriend",),
+    "girlfriend": ("girlfriend",),
+    "gf": ("girlfriend",),
     "friend": ("friend", "friend_of", "friendof"),
     "neighbor": ("neighbor",),
     "neighbour": ("neighbor",),
