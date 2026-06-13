@@ -1,0 +1,447 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>JBrain2 Reviews — Concept A · Flow</title>
+<style>
+:root{
+  --bg:#0E0F11; --surface:#17181B; --surface-2:#1E2024; --border:#26282C;
+  --text:#E6E7E9; --text-2:#9A9DA3; --text-3:#5C5F66;
+  --steel:#7FA7C9; --steel-t:rgba(127,167,201,.13);
+  --green:#8FBC9A; --green-t:rgba(143,188,154,.13);
+  --amber:#C9A36A; --amber-t:rgba(201,163,106,.13);
+  --rose:#CF8A8F;  --rose-t:rgba(207,138,143,.13);
+  --violet:#A493C9;--violet-t:rgba(164,147,201,.13);
+  --r-input:12px; --r-card:16px; --r-pill:999px;
+  --font:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+}
+[data-theme="light"]{
+  --bg:#F7F7F5; --surface:#FFFFFF; --surface-2:#F0F0EE; --border:#E2E2DF;
+  --text:#1A1B1E; --text-2:#5C5F66; --text-3:#9A9DA3;
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;height:100%}
+body{background:#000;color:var(--text);font-family:var(--font);display:flex;align-items:center;justify-content:center;min-height:100vh;padding:20px;gap:24px;flex-wrap:wrap}
+.desknote{max-width:230px;color:#8a8d93;font-size:13px;line-height:1.6}
+.desknote h1{font-size:15px;color:#cfd2d6;margin:0 0 8px}
+.desknote kbd{background:#1c1d20;border:1px solid #2a2c30;border-radius:5px;padding:1px 5px;font-family:var(--font);font-size:11px;color:#cfd2d6}
+.phone{width:430px;max-width:100%;height:880px;max-height:94vh;background:var(--bg);border:1px solid var(--border);border-radius:34px;overflow:hidden;display:flex;flex-direction:column;position:relative;box-shadow:0 0 0 8px #000}
+/* top bar */
+.bar{padding:14px 16px 10px;border-bottom:1px solid var(--border);background:var(--bg);position:relative;z-index:5}
+.bar-row{display:flex;align-items:center;gap:10px}
+.title{font-size:22px;font-weight:500;letter-spacing:-.2px}
+.count{margin-left:auto;font-size:13px;color:var(--text-2);font-variant-numeric:tabular-nums}
+.iconbtn{width:34px;height:34px;border-radius:var(--r-pill);border:1px solid var(--border);background:var(--surface);color:var(--text-2);font-size:15px;cursor:pointer;display:grid;place-items:center}
+.iconbtn:hover{color:var(--text)}
+.pbar{height:3px;border-radius:var(--r-pill);background:var(--surface-2);margin-top:10px;overflow:hidden}
+.pbar > i{display:block;height:100%;background:var(--steel);width:0;transition:width .25s ease-out}
+/* jump rail */
+.rail{display:flex;gap:6px;padding:12px 16px 6px;align-items:center}
+.dot{flex:1;height:28px;min-width:0;border:1px solid var(--border);background:var(--surface);border-radius:8px;cursor:pointer;position:relative;display:grid;place-items:center;padding:0;transition:transform .12s ease-out}
+.dot:hover{transform:translateY(-1px)}
+.dot .core{width:8px;height:8px;border-radius:var(--r-pill)}
+.dot.health .core{background:var(--rose)} .dot.general .core{background:var(--steel)} .dot.financial .core{background:var(--violet)}
+.dot.cur{border-color:var(--text-3);background:var(--surface-2)}
+.dot.cur:after{content:"";position:absolute;inset:-1px;border:1px solid var(--steel);border-radius:9px;pointer-events:none}
+.dot.done{background:var(--green-t);border-color:transparent}
+.dot.done .core{background:var(--green);width:6px;height:6px}
+.dot.done:before{content:"✓";color:var(--green);font-size:12px;position:absolute}
+.dot.done .core{display:none}
+.dot.deferred{background:var(--amber-t)} .dot.deferred .core{background:var(--amber)}
+.deferchip{font-size:12px;color:var(--amber);background:var(--amber-t);border:1px solid var(--border);border-radius:var(--r-pill);padding:3px 9px;cursor:pointer;white-space:nowrap}
+/* scroll area */
+.scroll{flex:1;overflow-y:auto;padding:6px 16px 120px;-webkit-overflow-scrolling:touch}
+/* card */
+.card{display:flex;flex-direction:column;gap:13px;animation:in .15s ease-out}
+@keyframes in{from{transform:translateY(12px);opacity:0}to{transform:translateY(0);opacity:1}}
+@keyframes out{to{transform:translateX(-16px);opacity:0}}
+.meta{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.kind{font-size:12px;font-weight:500;letter-spacing:.2px;color:var(--text-2);background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r-pill);padding:3px 9px}
+.ddot{width:9px;height:9px;border-radius:var(--r-pill)}
+.ddot.health{background:var(--rose)} .ddot.general{background:var(--steel)} .ddot.financial{background:var(--violet)}
+.dlabel{font-size:12px;color:var(--text-2)}
+.conf{margin-left:auto;font-size:12px;padding:2px 8px;border-radius:var(--r-pill);border:1px solid var(--border)}
+.conf.high{color:var(--green);background:var(--green-t)} .conf.med{color:var(--amber);background:var(--amber-t)} .conf.low{color:var(--rose);background:var(--rose-t)}
+.hero{font-size:20px;line-height:1.4;font-weight:500;letter-spacing:-.2px;padding:2px 0}
+.rationale{font-size:14px;color:var(--text-2);line-height:1.5;margin-top:-4px}
+/* before/after */
+.ba{border:1px solid var(--border);border-radius:var(--r-card);overflow:hidden}
+.ba .seg{padding:11px 13px}
+.ba .lbl{font-size:12px;color:var(--text-3);text-transform:uppercase;letter-spacing:.6px;margin-bottom:5px}
+.ba .before{background:var(--surface)}
+.ba .before .val{font-size:15px;line-height:1.5;color:var(--text-2)}
+.ba .before .val s{color:var(--rose);text-decoration-color:var(--rose)}
+.ba .arrow{border-top:1px solid var(--border);border-bottom:1px solid var(--border);background:var(--surface-2);font-size:12px;color:var(--text-3);padding:4px 13px;display:flex;align-items:center;gap:6px}
+.ba .after{background:var(--green-t)}
+.ba .after .val{font-size:15px;line-height:1.5;color:var(--text);outline:none}
+.ba .after .val.editing{background:var(--surface);border:1px solid var(--steel);border-radius:8px;padding:6px 8px;margin:-6px -8px}
+.ba .after ins{color:var(--green);text-decoration:none;background:rgba(143,188,154,.16);border-radius:3px;padding:0 2px}
+.edithint{font-size:12px;color:var(--text-3);display:flex;align-items:center;gap:6px;margin-top:7px}
+.edited-flag{color:var(--steel)}
+/* candidates */
+.cands{display:flex;flex-direction:column;gap:8px}
+.cand{display:flex;align-items:center;gap:10px;min-height:48px;padding:9px 12px;border:1px solid var(--border);border-radius:var(--r-input);background:var(--surface);cursor:pointer;text-align:left;color:var(--text);font-size:15px;width:100%;font-family:var(--font)}
+.cand .num{font-size:11px;color:var(--text-3);border:1px solid var(--border);border-radius:6px;width:20px;height:20px;display:grid;place-items:center;flex:none}
+.cand .sub{font-size:12px;color:var(--text-3);display:block;margin-top:2px}
+.cand:hover{border-color:var(--text-3)}
+.cand.sel{border-color:var(--steel);background:var(--steel-t)}
+.cand.sel .num{color:var(--steel);border-color:var(--steel)}
+.cand.muted{color:var(--text-2);font-style:italic}
+/* provenance */
+.prov{border:1px solid var(--border);border-radius:var(--r-input);background:var(--surface);overflow:hidden}
+.prov summary{list-style:none;cursor:pointer;padding:10px 13px;font-size:13px;color:var(--text-2);display:flex;align-items:center;gap:8px}
+.prov summary::-webkit-details-marker{display:none}
+.prov summary .chev{margin-left:auto;color:var(--text-3);transition:transform .15s}
+.prov[open] summary .chev{transform:rotate(90deg)}
+.prov .body{padding:0 13px 12px}
+.prov .snip{font-size:15px;line-height:1.6;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r-input);padding:10px 12px;color:var(--text)}
+.prov .snip mark{background:var(--amber-t);color:var(--amber);border-radius:3px;padding:0 2px}
+.prov .notemeta{font-size:12px;color:var(--text-3);margin-top:8px;display:flex;gap:6px;align-items:center}
+.viewnote{margin-left:auto;color:var(--steel);background:none;border:none;font-size:12px;cursor:pointer;font-family:var(--font)}
+.outcome{font-size:13px;color:var(--text-2);line-height:1.5;display:flex;gap:8px}
+.outcome b{color:var(--text);font-weight:500}
+/* action bar */
+.actions{position:absolute;left:0;right:0;bottom:0;background:var(--bg);border-top:1px solid var(--border);padding:10px 16px calc(10px + env(safe-area-inset-bottom));display:flex;gap:8px}
+.act{flex:1;min-height:48px;border-radius:var(--r-input);border:1px solid var(--border);font-size:15px;font-weight:500;font-family:var(--font);cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;background:var(--surface);color:var(--text)}
+.act .k{font-size:10px;color:var(--text-3);font-weight:400}
+.act.reject{background:var(--rose-t);color:var(--rose);border-color:transparent}
+.act.reject.armed{background:var(--rose);color:#fff}
+.act.defer{background:var(--amber-t);color:var(--amber);border-color:transparent}
+.act.edit{background:var(--surface-2);color:var(--text)}
+.act.approve{background:var(--green-t);color:var(--green);border-color:transparent}
+.act.approve .k{color:var(--green)}
+/* snackbar */
+.snack{position:absolute;left:16px;right:16px;bottom:84px;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r-input);padding:11px 14px;display:flex;align-items:center;gap:10px;font-size:14px;transform:translateY(20px);opacity:0;pointer-events:none;transition:.18s ease-out;z-index:20}
+.snack.show{transform:none;opacity:1;pointer-events:auto}
+.snack .msg{flex:1;color:var(--text)}
+.snack .msg small{display:block;color:var(--text-3);font-size:12px;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.snack .undo{color:var(--steel);background:none;border:none;font-size:14px;font-weight:500;cursor:pointer;font-family:var(--font)}
+/* completion */
+.done-screen{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:32px;gap:14px;animation:in .2s ease-out}
+.done-ring{width:74px;height:74px;border-radius:var(--r-pill);border:2px solid var(--green);display:grid;place-items:center;color:var(--green);font-size:32px;background:var(--green-t)}
+.done-screen h2{font-size:22px;font-weight:500;margin:0}
+.done-screen p{color:var(--text-2);font-size:15px;margin:0;line-height:1.5}
+.summary{display:flex;gap:8px;margin-top:4px}
+.stat{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-input);padding:8px 14px;font-size:13px}
+.stat b{display:block;font-size:20px;font-weight:500}
+.stat.ap b{color:var(--green)} .stat.ed b{color:var(--steel)} .stat.df b{color:var(--amber)}
+.done-screen .ghostbtn{margin-top:8px;background:var(--amber-t);color:var(--amber);border:1px solid var(--border);border-radius:var(--r-input);padding:11px 18px;font-size:14px;font-weight:500;cursor:pointer;font-family:var(--font)}
+/* help overlay */
+.help{position:absolute;inset:0;background:rgba(0,0,0,.55);display:none;align-items:flex-end;z-index:30}
+.help.show{display:flex}
+.help-sheet{background:var(--surface);border:1px solid var(--border);border-radius:18px 18px 0 0;padding:18px 18px calc(20px + env(safe-area-inset-bottom));width:100%;animation:in .18s ease-out}
+.help-sheet h3{margin:0 0 12px;font-size:16px;font-weight:500}
+.krow{display:flex;align-items:center;gap:12px;padding:7px 0;font-size:14px;color:var(--text-2);border-bottom:1px solid var(--border)}
+.krow:last-child{border:none}
+.krow kbd{background:var(--surface-2);border:1px solid var(--border);border-radius:6px;padding:2px 8px;color:var(--text);font-family:var(--font);font-size:12px;min-width:24px;text-align:center}
+.krow span{margin-left:auto;color:var(--text)}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+</head>
+<body>
+<div class="desknote">
+  <h1>Concept A · Flow</h1>
+  <p>Keyboard-driven focused triage. One card at a time, but you can <b>jump anywhere</b> via the rail and every proposal is <b>inline-editable</b> — fix-and-approve instead of reject.</p>
+  <p style="margin-top:12px">Try: <kbd>J</kbd>/<kbd>K</kbd> move · <kbd>A</kbd> approve · <kbd>E</kbd> edit · <kbd>R</kbd> reject · <kbd>D</kbd> defer · <kbd>U</kbd> undo · <kbd>?</kbd> help</p>
+</div>
+
+<div class="phone" id="app" tabindex="0">
+  <div class="bar">
+    <div class="bar-row">
+      <div class="title">Reviews</div>
+      <div class="count" id="count">1 of 8</div>
+      <button class="iconbtn" id="themeBtn" aria-label="Toggle theme">◐</button>
+      <button class="iconbtn" id="helpBtn" aria-label="Keyboard shortcuts">?</button>
+    </div>
+    <div class="pbar"><i id="pfill"></i></div>
+  </div>
+  <div class="rail" id="rail"></div>
+  <div class="scroll" id="scroll"></div>
+  <div class="actions" id="actions"></div>
+  <div class="snack" id="snack">
+    <div class="msg" id="snackMsg"></div>
+    <button class="undo" id="undoBtn">Undo</button>
+  </div>
+  <div class="help" id="help">
+    <div class="help-sheet">
+      <h3>Keyboard shortcuts</h3>
+      <div class="krow"><kbd>J</kbd><kbd>K</kbd> Previous / next review <span></span></div>
+      <div class="krow"><kbd>A</kbd> Approve (commits edits if any) <span></span></div>
+      <div class="krow"><kbd>E</kbd> Edit proposed text inline <span></span></div>
+      <div class="krow"><kbd>R</kbd> Reject (press twice to confirm) <span></span></div>
+      <div class="krow"><kbd>D</kbd> Defer / snooze <span></span></div>
+      <div class="krow"><kbd>1</kbd>–<kbd>9</kbd> Select candidate <span></span></div>
+      <div class="krow"><kbd>U</kbd> Undo last decision <span></span></div>
+      <div class="krow"><kbd>?</kbd> Toggle this sheet <span></span></div>
+    </div>
+  </div>
+</div>
+
+<script>
+const REVIEWS=[
+ {id:'r1',kind:'fact_conflict',domain:'health',conf:.86,subject:'Resting heart rate',
+  rationale:'A note from Jun 11 reports a lower resting HR than the wiki currently holds.',
+  before:'Resting heart rate is <s>72 bpm</s>.',after:'Resting heart rate is 58 bpm.',editable:true,
+  snip:'Apple Watch shows <mark>resting HR around 58 bpm</mark> lately, down since I started running.',
+  note:'Note · 2026-06-11 · "Morning check-in"',
+  outcome:'Approving pins <b>58 bpm</b> and retracts the old value (72 bpm). Rejecting keeps 72.'},
+ {id:'r2',kind:'attribute_collision',domain:'general',conf:.74,subject:'Employer name',
+  rationale:'A new note spells your employer differently than the wiki.',
+  before:'Employer: <s>Acme Corp</s>',after:'Employer: Acme Corporation, Inc.',editable:true,
+  snip:'First week at <mark>Acme Corporation, Inc.</mark> went well.',
+  note:'Note · 2026-06-09 · "Job start"',
+  outcome:'Approving sets the canonical employer name. Edit it first if neither form is right.'},
+ {id:'r3',kind:'merge_proposal',domain:'health',conf:.69,subject:'Merge two people into one?',
+  rationale:'Two entities look like the same cardiologist.',
+  cands:[{t:'Merge into one entity',s:'“Dr. Sarah Chen” + “Sarah Chen, MD” → single person'},
+         {t:'Keep them distinct',s:'Records a permanent “distinct_from” edge'}],
+  snip:'Saw <mark>Sarah Chen, MD</mark> for the cardiology follow-up.',
+  note:'Note · 2026-06-08 · "Cardiology"',
+  outcome:'Merging combines both entities’ facts. You can edit which name wins after selecting merge.',editName:true},
+ {id:'r4',kind:'ambiguous_mention',domain:'general',conf:.52,subject:'“the project” — which entity?',
+  rationale:'A mention could point to several entities. (This used to be reject-only.)',
+  cands:[{t:'JBrain (software)',s:'Hint: “got the indexing working” matches this'},
+         {t:'Home Renovation',s:'Active since May'},
+         {t:'Q3 Marketing Plan',s:'Work entity'},
+         {t:'None — leave unlinked',s:'Re-propose later with more signal',muted:true},
+         {t:'Create new entity…',s:'If it’s something not yet tracked',muted:true}],
+  snip:'Spent all weekend on <mark>the project</mark>, finally got the indexing working.',
+  note:'Note · 2026-06-12 · "Weekend"',
+  outcome:'Linking attaches this mention to the chosen entity. No more dead-end reject — pick, skip, or create.'},
+ {id:'r5',kind:'domain_promotion',domain:'financial',conf:.81,subject:'Move salary fact to Financial?',
+  rationale:'A compensation fact currently sits in the General domain.',
+  before:'Domain: <s>General</s> · “Annual compensation is $145,000.”',after:'Domain: Financial · “Annual compensation is $145,000.”',editable:false,
+  cands:[{t:'Approve move → Financial',s:'Locks it behind the finance firewall'},
+         {t:'Keep in General',s:'No change'},
+         {t:'Choose a different domain…',s:'Health · Location · Other',muted:true}],
+  snip:'Offer was <mark>$145k base</mark>, signed today.',
+  note:'Note · 2026-06-10 · "Offer"',
+  outcome:'Promoting moves the fact behind the Financial domain firewall and pins it.'},
+ {id:'r6',kind:'low_confidence',domain:'health',conf:.41,subject:'Allergic to penicillin?',
+  rationale:'A low-confidence extraction from an uncertain note — verify the source carefully.',
+  before:'(no allergy recorded)',after:'Allergy: Penicillin',editable:true,
+  snip:'doc asked about penicillin — <mark>I think I had a reaction as a kid?</mark>',
+  note:'Note · 2026-06-07 · "Checkup"',
+  outcome:'Low confidence (41%). Approve only if accurate — or edit to “possible penicillin reaction (unconfirmed)”.'},
+ {id:'r7',kind:'split_proposal',domain:'financial',conf:.63,subject:'Split “Chase” into two entities?',
+  rationale:'One entity may be conflating a bank and a coworker.',
+  cands:[{t:'Split into two',s:'“Chase (bank/credit card)” + “Chase Whitman (coworker)”'},
+         {t:'Keep as one entity',s:'No change'},
+         {t:'Edit the split assignment…',s:'Reassign facts between the two',muted:true}],
+  snip:'<mark>Chase</mark> covered the team lunch; put it on the <mark>Chase</mark> card.',
+  note:'Note · 2026-06-11 · "Team lunch"',
+  outcome:'Splitting separates the facts so the bank and the person stop sharing one record.'},
+ {id:'r8',kind:'fact_conflict',domain:'general',conf:.78,subject:'Coffee order',
+  rationale:'A new note contradicts a stored preference.',
+  before:'Prefers <s>oat milk lattes</s>.',after:'Prefers plain black coffee.',editable:true,
+  snip:'Cutting dairy, <mark>just black coffee now</mark>.',
+  note:'Note · 2026-06-13 · "Habits"',
+  outcome:'Approving updates the preference and retracts the oat-latte fact.'},
+];
+const KIND_LABEL={fact_conflict:'fact conflict',attribute_collision:'attribute collision',merge_proposal:'merge proposal',ambiguous_mention:'ambiguous mention',domain_promotion:'domain promotion',low_confidence:'low confidence',split_proposal:'split proposal'};
+function confClass(c){return c>=.75?'high':c>=.5?'med':'low'}
+function confLabel(c){return (c>=.75?'High':c>=.5?'Med':'Low')+' · '+Math.round(c*100)+'%'}
+
+const state=REVIEWS.map(r=>({...r,status:'pending',decision:null,sel:null,editedAfter:null}));
+let cur=0, lastAction=null, snackTimer=null, rejectArmed=false;
+
+const $=id=>document.getElementById(id);
+const scroll=$('scroll'), rail=$('rail'), actions=$('actions'), app=$('app');
+
+function pendingIdxFrom(start,dir){
+  for(let n=1;n<=state.length;n++){const i=((start+dir*n)%state.length+state.length)%state.length; if(state[i].status==='pending')return i;}
+  return -1;
+}
+function allDecided(){return state.every(s=>s.status!=='pending')}
+function deferredCount(){return state.filter(s=>s.status==='deferred').length}
+
+function renderRail(){
+  rail.innerHTML='';
+  state.forEach((s,i)=>{
+    const b=document.createElement('button');
+    b.className='dot '+s.domain+(i===cur?' cur':'')+(s.status==='resolved'?' done':'')+(s.status==='deferred'?' deferred':'');
+    b.setAttribute('aria-label','Review '+(i+1)+' — '+KIND_LABEL[s.kind]);
+    b.innerHTML='<span class="core"></span>';
+    b.onclick=()=>{cur=i;rejectArmed=false;render()};
+    rail.appendChild(b);
+  });
+  const dc=deferredCount();
+  if(dc){const c=document.createElement('button');c.className='deferchip';c.textContent='⏰ '+dc;c.title='Deferred';
+    c.onclick=()=>{const i=state.findIndex(s=>s.status==='deferred');if(i>=0){cur=i;render()}};rail.appendChild(c);}
+}
+function renderProgress(){
+  const decided=state.filter(s=>s.status==='resolved').length;
+  $('pfill').style.width=(decided/state.length*100)+'%';
+  $('count').textContent=(cur+1)+' of '+state.length;
+}
+function render(){
+  renderRail();renderProgress();
+  if(allDecided()){renderDone();return;}
+  const s=state[cur];
+  scroll.innerHTML='';actions.style.display='flex';
+  const card=document.createElement('div');card.className='card';
+
+  let editedNote = s.editedAfter!=null ? `<div class="edithint edited-flag">✎ edited — “Approve” will commit your version</div>`:'';
+  let baHtml='';
+  if(s.cands){
+    baHtml=`<div class="cands">`+s.cands.map((c,i)=>`
+      <button class="cand ${c.muted?'muted':''} ${s.sel===i?'sel':''}" data-cand="${i}">
+        <span class="num">${i+1}</span>
+        <span>${c.t}<small class="sub">${c.s}</small></span>
+      </button>`).join('')+`</div>`;
+  } else {
+    const afterEditable = s.editable!==false;
+    const afterVal = s.editedAfter!=null ? s.editedAfter : s.after;
+    baHtml=`<div class="ba">
+      <div class="seg before"><div class="lbl">Current</div><div class="val">${s.before}</div></div>
+      <div class="arrow">▼ proposed change</div>
+      <div class="seg after"><div class="lbl">Proposed${afterEditable?' · tap to edit':''}</div>
+        <div class="val" id="afterVal" ${afterEditable?'contenteditable="false"':''}>${afterVal}</div></div>
+    </div>${afterEditable?`<div class="edithint" id="editHint">✎ Press <b>E</b> or tap the proposed text to fix it, then Approve</div>`:''}${editedNote}`;
+  }
+
+  card.innerHTML=`
+    <div class="meta">
+      <span class="kind">${KIND_LABEL[s.kind]}</span>
+      <span class="ddot ${s.domain}"></span><span class="dlabel">${s.domain}</span>
+      <span class="conf ${confClass(s.conf)}">${confLabel(s.conf)}</span>
+    </div>
+    <div class="hero">${s.subject}</div>
+    <div class="rationale">${s.rationale}</div>
+    ${baHtml}
+    <details class="prov">
+      <summary>Source note <span class="chev">›</span></summary>
+      <div class="body">
+        <div class="snip">${s.snip}</div>
+        <div class="notemeta">${s.note}<button class="viewnote">view in note →</button></div>
+      </div>
+    </details>
+    <div class="outcome">↪ <div>${s.outcome}</div></div>`;
+  scroll.appendChild(card);
+
+  // wire candidates
+  card.querySelectorAll('[data-cand]').forEach(btn=>{
+    btn.onclick=()=>{s.sel=+btn.dataset.cand;render();};
+  });
+  // wire inline edit
+  const av=$('afterVal');
+  if(av && s.editable!==false){
+    const enable=()=>{av.setAttribute('contenteditable','true');av.classList.add('editing');av.focus();
+      const r=document.createRange();r.selectNodeContents(av);r.collapse(false);const sel=getSelection();sel.removeAllRanges();sel.addRange(r);};
+    av.onclick=enable;
+    av.addEventListener('input',()=>{s.editedAfter=av.innerHTML;updateActionPrimary();});
+    av._enable=enable;
+  }
+  renderActions();
+}
+function updateActionPrimary(){
+  const ap=actions.querySelector('.approve .lbl-t');
+  if(ap) ap.textContent = state[cur].editedAfter!=null ? 'Approve edits' : 'Approve';
+}
+function renderActions(){
+  const s=state[cur];
+  const primaryLabel = s.editedAfter!=null?'Approve edits':(s.cands?'Confirm':'Approve');
+  actions.innerHTML=`
+    <button class="act reject ${rejectArmed?'armed':''}" id="aReject"><span class="lbl-t">${rejectArmed?'Confirm reject':'Reject'}</span><span class="k">R</span></button>
+    <button class="act defer" id="aDefer"><span>Defer</span><span class="k">D</span></button>
+    ${s.cands?'':'<button class="act edit" id="aEdit"><span>Edit</span><span class="k">E</span></button>'}
+    <button class="act approve" id="aApprove"><span class="lbl-t">${primaryLabel}</span><span class="k">A</span></button>`;
+  $('aReject').onclick=doReject;
+  $('aDefer').onclick=()=>decide('deferred','Deferred');
+  $('aApprove').onclick=doApprove;
+  const e=$('aEdit'); if(e) e.onclick=()=>{const av=$('afterVal');if(av&&av._enable)av._enable();};
+}
+function doApprove(){
+  const s=state[cur];
+  if(s.cands && s.sel==null){ flashHint('Pick an option first'); return; }
+  let label='Approved';
+  if(s.cands){ label='Resolved: '+s.cands[s.sel].t; }
+  else if(s.editedAfter!=null){ label='Approved with edits'; }
+  decide('resolved',label);
+}
+function doReject(){
+  if(!rejectArmed){rejectArmed=true;renderActions();
+    clearTimeout(window._rt);window._rt=setTimeout(()=>{rejectArmed=false;renderActions();},2600);return;}
+  rejectArmed=false;decide('resolved','Rejected',true);
+}
+function flashHint(t){
+  showSnack(t,'',null);
+}
+function decide(status,label,isReject){
+  const s=state[cur];
+  const prev={status:s.status,decision:s.decision};
+  s.status=status; s.decision=label;
+  lastAction={idx:cur,prev};
+  let detail='';
+  if(status==='resolved'){
+    if(s.cands && s.sel!=null) detail=s.cands[s.sel].t;
+    else if(s.editedAfter!=null) detail='“'+stripTags(s.editedAfter)+'”';
+    else if(!isReject && !s.cands) detail='“'+stripTags(s.after)+'”';
+  }
+  showSnack(label, detail, ()=>undo());
+  // auto-advance
+  const next=pendingIdxFrom(cur,1);
+  setTimeout(()=>{ if(next>=0){cur=next;rejectArmed=false;} render(); },120);
+}
+function undo(){
+  if(!lastAction)return;
+  const s=state[lastAction.idx];
+  s.status=lastAction.prev.status; s.decision=lastAction.prev.decision;
+  cur=lastAction.idx; lastAction=null; hideSnack(); render();
+}
+function showSnack(msg,detail,onUndo){
+  $('snackMsg').innerHTML=msg+(detail?`<small>${detail}</small>`:'');
+  $('undoBtn').style.display=onUndo?'':'none';
+  $('undoBtn').onclick=onUndo||null;
+  $('snack').classList.add('show');
+  clearTimeout(snackTimer);snackTimer=setTimeout(hideSnack,6000);
+}
+function hideSnack(){$('snack').classList.remove('show')}
+function stripTags(h){const d=document.createElement('div');d.innerHTML=h;return d.textContent}
+
+function renderDone(){
+  actions.style.display='none';hideSnack();
+  const ap=state.filter(s=>s.status==='resolved'&&!/edit/i.test(s.decision||'')&&!/Reject/.test(s.decision||'')).length;
+  const ed=state.filter(s=>/edit/i.test(s.decision||'')).length;
+  const df=deferredCount();
+  scroll.innerHTML=`<div class="done-screen">
+    <div class="done-ring">✓</div>
+    <h2>All caught up</h2>
+    <p>Every review has a decision. The wiki updates in the background.</p>
+    <div class="summary">
+      <div class="stat ap"><b>${state.filter(s=>s.status==='resolved').length}</b>resolved</div>
+      <div class="stat ed"><b>${ed}</b>edited</div>
+      <div class="stat df"><b>${df}</b>deferred</div>
+    </div>
+    ${df?`<button class="ghostbtn" id="revDef">Review ${df} deferred →</button>`:''}
+  </div>`;
+  const rd=$('revDef'); if(rd) rd.onclick=()=>{const i=state.findIndex(s=>s.status==='deferred');state.forEach(s=>{if(s.status==='deferred')s.status='pending'});cur=i;render();};
+}
+
+// keyboard
+document.addEventListener('keydown',e=>{
+  if($('help').classList.contains('show') && e.key!=='?'&&e.key!=='Escape')return;
+  const editing=document.activeElement && document.activeElement.getAttribute('contenteditable')==='true';
+  if(e.key==='?'){e.preventDefault();$('help').classList.toggle('show');return;}
+  if(e.key==='Escape'){$('help').classList.remove('show');if(editing)document.activeElement.blur();return;}
+  if(editing)return;
+  if(allDecided())return;
+  const s=state[cur];
+  if(e.key==='j'||e.key==='ArrowRight'){const n=pendingIdxFrom(cur,1);if(n>=0){cur=n;rejectArmed=false;render();}}
+  else if(e.key==='k'||e.key==='ArrowLeft'){const n=pendingIdxFrom(cur,-1);if(n>=0){cur=n;rejectArmed=false;render();}}
+  else if(e.key==='a'){doApprove();}
+  else if(e.key==='e'){const av=$('afterVal');if(av&&av._enable)av._enable();}
+  else if(e.key==='r'){doReject();}
+  else if(e.key==='d'){decide('deferred','Deferred');}
+  else if(e.key==='u'){undo();}
+  else if(/[1-9]/.test(e.key) && s.cands){const i=+e.key-1;if(i<s.cands.length){s.sel=i;render();}}
+});
+$('helpBtn').onclick=()=>$('help').classList.toggle('show');
+$('help').onclick=e=>{if(e.target===$('help'))$('help').classList.remove('show')};
+$('themeBtn').onclick=()=>{const h=document.documentElement;h.dataset.theme=h.dataset.theme==='dark'?'light':'dark';};
+app.focus();
+render();
+</script>
+</body>
+</html>
