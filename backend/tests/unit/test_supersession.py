@@ -491,6 +491,10 @@ def test_symmetric_predicate_reflects_with_same_predicate() -> None:
     # so "Lydian and Elora are twins" mirrors onto Elora's stream.
     assert inverse_predicate("sibling") == "sibling"
     assert inverse_predicate("twin") == "twin"
+    # The gender-neutral romantic predicate reflects with itself, the safe
+    # default the gendered boyfriend/girlfriend pair can't be.
+    assert inverse_predicate("partner") == "partner"
+    assert inverse_predicate("significant_other") == "significant_other"
 
 
 def test_kinship_parent_child_reflect_with_named_inverse() -> None:

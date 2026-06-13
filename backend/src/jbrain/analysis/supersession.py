@@ -58,6 +58,15 @@ SYMMETRIC_PREDICATES = frozenset(
         "friend",
         "friend_of",
         "friendof",
+        # A romantic/dating partner: the gender-neutral predicate the prompt now
+        # steers toward, and the safe default the gendered boyfriend/girlfriend
+        # pair can't be — partnership is mutual, so it reflects with itself for
+        # any couple. A bare `partner` reads the same (business partners et al.
+        # are partners too), so the symmetric reflection is always directionally
+        # right even when the sense is non-romantic.
+        "partner",
+        "significant_other",
+        "significantother",
         "cofounder",
         "co_founder",
         "business_partner",
