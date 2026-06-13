@@ -4290,23 +4290,26 @@ input.ld-title {
   height: 26px;
   border-radius: 999px;
   border: none;
-  /* Solid rose with a dark glyph — the platform's edit-mode delete. */
-  background: var(--rose);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
+  /* Faint rose-tint pill with a rose minus — the edit-mode delete affordance. */
+  background: var(--rose-tint, rgba(207, 138, 143, 0.14));
+  /* The device's webview drops flex layout inside a <button>: every prior
+     attempt centered the glyph with `display: inline-flex` and the content
+     collapsed to an empty pill. Center via absolute positioning instead — the
+     same pattern as the checkbox tick (.ld-box::after), which renders fine. */
+  position: relative;
   cursor: pointer;
 }
-/* The minus, drawn in CSS — a pseudo-element renders reliably where the icon svg
-   did not. Fixed dark ink (the rose accent is theme-independent), like the
-   checkbox tick on its green fill. */
+/* The minus, drawn in CSS, centered absolutely (no flex on the button). */
 .ld-del::after {
   content: "";
-  display: block;
+  position: absolute;
+  left: 50%;
+  top: 50%;
   width: 12px;
   height: 2.4px;
   border-radius: 2px;
-  background: #0e0f11;
+  background: var(--rose);
+  transform: translate(-50%, -50%);
 }
 .ld-add {
   display: flex;
