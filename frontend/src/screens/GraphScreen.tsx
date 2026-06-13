@@ -85,6 +85,15 @@ export function focalZoom(v: ViewTransform, fx: number, fy: number, factor: numb
   return { scale, tx: fx - (fx - v.tx) * k, ty: fy - (fy - v.ty) * k };
 }
 
+/** Humanize a predicate for an edge label: "worksFor" → "works for". */
+export function edgeLabelText(predicate: string): string {
+  return predicate
+    .replace(/[_]+/g, " ")
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .toLowerCase()
+    .trim();
+}
+
 /** Minimal node shape the label grid needs (Sim is a structural superset). */
 export interface LabelNode {
   x: number;
@@ -213,6 +222,29 @@ export function GraphScreen({
     return m;
   }, [graph]);
 
+  // Per-edge curvature index: parallel edges between the same pair fan out
+  // symmetrically (…-1, 0, +1…) so they're distinguishable; a lone edge is 0
+  // (straight). Keyed by edge, grouped on the unordered node pair.
+  const edgeOffset = useMemo(() => {
+    const groups = new Map<string, string[]>();
+    for (const e of graph?.edges ?? []) {
+      const pair = e.source < e.target ? `${e.source}|${e.target}` : `${e.target}|${e.source}`;
+      const ek = `${e.source}|${e.target}|${e.predicate}`;
+      let list = groups.get(pair);
+      if (!list) {
+        list = [];
+        groups.set(pair, list);
+      }
+      list.push(ek);
+    }
+    const m = new Map<string, number>();
+    for (const eks of groups.values()) {
+      const k = eks.length;
+      eks.forEach((ek, i) => m.set(ek, i - (k - 1) / 2));
+    }
+    return m;
+  }, [graph]);
+
   const adjacency = useMemo(() => {
     const m = new Map<string, Set<string>>();
     const link = (a: string, b: string) => {
@@ -270,7 +302,8 @@ export function GraphScreen({
   const stageRef = useRef<HTMLDivElement>(null);
   const viewportRef = useRef<HTMLDivElement>(null);
   const nodeEls = useRef(new Map<string, HTMLButtonElement>());
-  const edgeEls = useRef(new Map<string, SVGLineElement>());
+  const edgeEls = useRef(new Map<string, SVGPathElement>());
+  const edgeTextEls = useRef(new Map<string, SVGTextElement>());
   const labelShown = useRef(new Map<string, boolean>()); // last data-label per node
   const vw = useRef({
     nodes: new Map<string, Sim>(),
@@ -467,20 +500,73 @@ export function GraphScreen({
       el.style.opacity = `${n.op}`;
       el.style.pointerEvents = n.op > 0.5 ? "auto" : "none";
     }
+    // Disc radius (viewport px) so edges meet the circle's edge, not its center.
+    const radiusOf = (id: string) =>
+      v.mode === "focus" && id === v.focal ? 34 : (hops.get(id) ?? 2) <= 1 ? 25 : 19;
     for (const e of graph?.edges ?? []) {
-      const line = edgeEls.current.get(edgeKey(e.source, e.target, e.predicate));
-      const a = v.nodes.get(e.source);
-      const b = v.nodes.get(e.target);
-      if (!line || !a || !b) continue;
-      line.setAttribute("x1", `${a.x}`);
-      line.setAttribute("y1", `${a.y}`);
-      line.setAttribute("x2", `${b.x}`);
-      line.setAttribute("y2", `${b.y}`);
+      const key = edgeKey(e.source, e.target, e.predicate);
+      const path = edgeEls.current.get(key);
+      const txt = edgeTextEls.current.get(key);
+      const na = v.nodes.get(e.source);
+      const nb = v.nodes.get(e.target);
+      if (!na || !nb) continue;
+      // Orient geometry on the canonical (sorted) pair so parallel edges fan
+      // out to consistent sides regardless of each edge's stored direction.
+      const flip = e.source > e.target;
+      const a = flip ? nb : na;
+      const b = flip ? na : nb;
+      const ra = radiusOf(flip ? e.target : e.source);
+      const rb = radiusOf(flip ? e.source : e.target);
+      const dx = b.x - a.x;
+      const dy = b.y - a.y;
+      const len = Math.hypot(dx, dy) || 1;
+      const nx = -dy / len;
+      const ny = dx / len;
+      // apex = perpendicular distance of the curve's peak from the chord; the
+      // quadratic control point sits at twice that. Gentle, length-scaled, capped.
+      const apex = (edgeOffset.get(key) ?? 0) * Math.min(13, 0.16 * len);
+      const mx = (a.x + b.x) / 2;
+      const my = (a.y + b.y) / 2;
+      const cx = mx + nx * apex * 2;
+      const cy = my + ny * apex * 2;
+      // trim each end toward the control point so the curve leaves the disc edge
+      const da = Math.hypot(cx - a.x, cy - a.y) || 1;
+      const db = Math.hypot(cx - b.x, cy - b.y) || 1;
+      const x1 = a.x + ((cx - a.x) / da) * ra;
+      const y1 = a.y + ((cy - a.y) / da) * ra;
+      const x2 = b.x + ((cx - b.x) / db) * rb;
+      const y2 = b.y + ((cy - b.y) / db) * rb;
+      const gap = len - ra - rb; // visible span between the two discs
       const shown =
         !v.hidden(e.source) &&
         !v.hidden(e.target) &&
-        (v.mode === "overview" || e.source === v.focal || e.target === v.focal);
-      line.style.opacity = shown ? `${Math.min(a.op, b.op)}` : "0";
+        (v.mode === "overview" || e.source === v.focal || e.target === v.focal) &&
+        gap > 0;
+      const op = shown ? `${Math.min(a.op, b.op)}` : "0";
+      if (path) {
+        path.setAttribute("d", `M ${x1} ${y1} Q ${cx} ${cy} ${x2} ${y2}`);
+        path.style.opacity = op;
+      }
+      if (txt) {
+        // Predicate runs along its own curve, revealed only once the on-screen
+        // span is long enough to read it without crowding the discs.
+        if (shown && gap * v.scale > 80) {
+          const ax = mx + nx * apex; // curve apex (t=0.5)
+          const ay = my + ny * apex;
+          const s = apex === 0 ? 1 : Math.sign(apex);
+          const lx = ax + nx * 7 * s; // nudge just outside the curve
+          const ly = ay + ny * 7 * s;
+          let deg = (Math.atan2(dy, dx) * 180) / Math.PI;
+          if (deg > 90) deg -= 180;
+          else if (deg < -90) deg += 180;
+          txt.setAttribute("x", `${lx}`);
+          txt.setAttribute("y", `${ly}`);
+          txt.setAttribute("transform", `rotate(${deg} ${lx} ${ly})`);
+          txt.style.opacity = op;
+        } else {
+          txt.style.opacity = "0";
+        }
+      }
     }
     const vp = viewportRef.current;
     if (vp) vp.style.transform = `translate(${v.tx}px, ${v.ty}px) scale(${v.scale})`;
@@ -768,16 +854,28 @@ export function GraphScreen({
         <div className="graph-viewport" ref={viewportRef}>
           {/* biome-ignore lint/a11y/noSvgWithoutTitle: edges are decorative; the nodes carry the labels. */}
           <svg className="graph-edges">
-            {graph.edges.map((e) => (
-              <line
-                key={edgeKey(e.source, e.target, e.predicate)}
-                ref={(el) => {
-                  const key = edgeKey(e.source, e.target, e.predicate);
-                  if (el) edgeEls.current.set(key, el);
-                  else edgeEls.current.delete(key);
-                }}
-              />
-            ))}
+            {graph.edges.map((e) => {
+              const key = edgeKey(e.source, e.target, e.predicate);
+              return (
+                <g key={key}>
+                  <path
+                    ref={(el) => {
+                      if (el) edgeEls.current.set(key, el);
+                      else edgeEls.current.delete(key);
+                    }}
+                  />
+                  <text
+                    className="graph-edge-label"
+                    ref={(el) => {
+                      if (el) edgeTextEls.current.set(key, el);
+                      else edgeTextEls.current.delete(key);
+                    }}
+                  >
+                    {edgeLabelText(e.predicate)}
+                  </text>
+                </g>
+              );
+            })}
           </svg>
           {graph.nodes.map((n) => {
             const focused = mode === "focus" && n.id === focal;

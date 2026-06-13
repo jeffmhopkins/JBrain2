@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { type EgoGraph, type EntityOut, type FactOut, api } from "../api/client";
-import { GraphScreen, chooseLabels, clampScale, focalZoom } from "./GraphScreen";
+import { GraphScreen, chooseLabels, clampScale, edgeLabelText, focalZoom } from "./GraphScreen";
 
 const GRAPH: EgoGraph = {
   root: "me",
@@ -277,5 +277,13 @@ describe("chooseLabels", () => {
   it("drops non-forced labels when text would be too small to read", () => {
     const nodes = new Map([["a", node(100, 100)]]);
     expect(chooseLabels({ ...base, scale: 0.3, nodes, forced: new Set() }).size).toBe(0);
+  });
+});
+
+describe("edgeLabelText", () => {
+  it("humanizes camelCase and snake_case predicates", () => {
+    expect(edgeLabelText("worksFor")).toBe("works for");
+    expect(edgeLabelText("seen_at")).toBe("seen at");
+    expect(edgeLabelText("spouse")).toBe("spouse");
   });
 });
