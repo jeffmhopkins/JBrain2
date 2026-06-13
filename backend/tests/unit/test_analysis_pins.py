@@ -154,6 +154,37 @@ def test_pin_for_second_occurrence_invalid_if_one_removed():
     assert pin_holds(pin, "Bob, just once now.") is False
 
 
+def test_self_overlapping_surface_non_boundary_offset_is_none():
+    # "aa" in "aaaa": non-overlapping matches are at 0 and 2. Offset 1 is inside
+    # the first match, not a real boundary -> None (occurrence_index_at and
+    # locate_occurrence stay on one consistent enumeration).
+    assert occurrence_index_at("aaaa", "aa", 1) is None
+    assert occurrence_index_at("aaaa", "aa", 0) == 0
+    assert occurrence_index_at("aaaa", "aa", 2) == 1
+    assert locate_occurrence("aaaa", "aa", 1) == 2
+
+
+def test_new_earlier_occurrence_replays_onto_shifted_ordinal_accepted_residual():
+    # Documents the accepted A8 residual: pinning occurrence 0 of "Globex", then
+    # inserting a NEW earlier "Globex", makes ordinal 0 name the new occurrence.
+    # pin_holds still returns True (replays the old decision) — the deliberate
+    # cost of offset-independence. This test pins the KNOWN behavior so the
+    # trade-off is intentional, not accidental.
+    text = "Acme then Globex."
+    pin = build_pin(
+        note_id="n",
+        chunk_id="c",
+        decision_kind="identity",
+        text=text,
+        surface="Globex",
+        start=text.index("Globex"),
+        entity_id="e1",
+    )
+    assert pin is not None and pin.occurrence_index == 0
+    edited = "New Globex first. " + text
+    assert pin_holds(pin, edited) is True  # accepted residual, not a fix target
+
+
 def test_predicate_key_pin():
     text = "weighs 182 lb"
     pin = build_pin(

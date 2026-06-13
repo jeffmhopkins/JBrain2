@@ -17,9 +17,21 @@ The hard lessons from the data-integrity red team (A8) are baked in here:
   (`build_pin` returns None), so a pronoun with no real surface can't seed a
   pin that cross-talks with another.
 
-This module is pure (operates on chunk text). Two pieces stay in the arbiter
-(Track A), needing DB state, and are NOT here: a human-`pinned` fact always
-wins over a replayed pin, and a pin is invalidated when that flag flips.
+This module is pure (operates on chunk text). Track-A (the arbiter) owns what
+needs DB state and is NOT here:
+- a human-`pinned` fact always wins over a replayed pin, and a pin is
+  invalidated when that flag flips;
+- occurrence_index here is CHUNK-relative; the persisted key is note-scoped
+  `(note_id, occurrence_index, decision_kind)`, so the arbiter must include
+  `chunk_id` in the key or convert chunk→note-relative before persisting;
+- `surface` is plaintext note-derived text — it cascades on note delete (N15),
+  but any field-level redaction applied to note bodies must also cover it.
+
+Accepted residual: a pin is span-LOCAL. If a newly inserted EARLIER occurrence
+of the same surface shifts what the ordinal names, or if surrounding context
+changes the referent while the span text doesn't, `pin_holds` still returns
+True and replays the prior decision. This is the deliberate cost of choosing
+insert-above stability (A8) over offset keying — a pin cannot be both.
 """
 
 from __future__ import annotations
@@ -38,16 +50,26 @@ def span_text_hash(surface: str) -> str:
 
 def occurrence_index_at(text: str, surface: str, start: int) -> int | None:
     """Which 0-based occurrence of `surface` sits exactly at `start`, or None if
-    `text` doesn't actually contain `surface` at that offset."""
+    `text` doesn't contain `surface` at that offset or `start` isn't a real
+    occurrence boundary."""
     if not surface or text[start : start + len(surface)] != surface:
         return None
-    # Count non-overlapping occurrences strictly before `start`.
-    count = 0
+    # Enumerate non-overlapping matches from the start — the SAME enumeration
+    # locate_occurrence uses — and return the index of the match at `start`. If
+    # `start` falls inside a prior match (only possible for a self-overlapping
+    # surface like "aa" in "aaaa"), it is not an occurrence boundary -> None.
+    # Keeping both functions on one enumeration removes the round-trip wart where
+    # build_pin and pin_holds would disagree on which span an index names.
     pos = text.find(surface)
-    while pos != -1 and pos < start:
-        count += 1
+    idx = 0
+    while pos != -1:
+        if pos == start:
+            return idx
+        if pos > start:
+            return None
+        idx += 1
         pos = text.find(surface, pos + len(surface))
-    return count
+    return None
 
 
 def locate_occurrence(text: str, surface: str, occurrence_index: int) -> int | None:
@@ -119,4 +141,11 @@ def pin_holds(pin: ResolutionPin, current_text: str) -> bool:
     False (re-decide) when the span was edited or removed."""
     if locate_occurrence(current_text, pin.surface, pin.occurrence_index) is None:
         return False
+    # The hash is redundant-by-construction here — we relocated by searching for
+    # pin.surface, so the match IS pin.surface — but is kept for parity with the
+    # persisted resolution_pin key and as a guard if relocation ever becomes
+    # offset-based. NOTE the accepted residual (module docstring): a newly
+    # inserted EARLIER occurrence of the same surface shifts what the ordinal
+    # names, and pin_holds will not detect it — the dual cost of offset-
+    # independence (A8). It cannot also be insert-above-stable.
     return span_text_hash(pin.surface) == pin.span_text_hash
