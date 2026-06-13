@@ -10,7 +10,10 @@ sidecars (docs/ASSISTANT_PLAN.md P4.4c).
 from pathlib import Path
 from typing import Any, Protocol
 
-from jbrain.agent.appointmenttools import build_appointment_handlers
+from jbrain.agent.appointmenttools import (
+    build_appointment_handlers,
+    build_appointment_write_handlers,
+)
 from jbrain.agent.connectortools import build_connector_handlers
 from jbrain.agent.contracts import EntityRef, NoteSource
 from jbrain.agent.listtools import build_list_handlers
@@ -327,6 +330,7 @@ def build_registry(
             **build_entity_handlers(entities),
             **build_list_handlers(lists),
             **build_appointment_handlers(appointments),
+            **build_appointment_write_handlers(proposals, appointments),
             **build_memory_handlers(memory),
             **build_proposal_handlers(proposals),
             **build_connector_handlers(connectors, proposals),

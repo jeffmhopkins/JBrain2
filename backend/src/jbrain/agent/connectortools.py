@@ -106,8 +106,10 @@ def build_leaf_executor(
     notes: SqlNotesRepo, connectors: ConnectorService, jobs: JobEnqueuer
 ) -> LeafExecutor:
     """The Proposal executor, dispatching by leaf op: an egress_call fires the
-    connector; everything else (correction/knowledge) re-enters as an agent note
-    (which enqueues ingestion via `jobs`)."""
+    connector; everything else (correction/knowledge, and a manage_appointment
+    change) re-enters as an agent note from its preview `body` (which enqueues
+    ingestion via `jobs`) — so an approved appointment flows through extraction to
+    the projection like any note."""
     note_executor = agent_note_executor(notes, jobs)
     egress = egress_executor(connectors)
 

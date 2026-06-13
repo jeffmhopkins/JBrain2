@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 
 from jbrain.agent.appointmenttools import (
     build_appointment_handlers,
+    build_appointment_write_handlers,
     format_appointment,
     format_appointments,
 )
@@ -14,6 +15,10 @@ from jbrain.appointments.service import AppointmentInfo
 from jbrain.db.session import SessionContext
 
 CTX = ToolContext(session=SessionContext(principal_kind="owner"), scopes=("general",))
+# A write needs an owner principal on the session (the stage stamps it).
+OWNER_CTX = ToolContext(
+    session=SessionContext(principal_kind="owner", principal_id="p1"), scopes=("general",)
+)
 NOW = datetime(2026, 6, 1, tzinfo=UTC)
 
 
@@ -158,3 +163,75 @@ async def test_read_appointment_missing_and_needs_id() -> None:
     assert "in scope" in missing
     needs = await handlers(FakeAppointments())["read_appointment"]({}, CTX)
     assert "needs an appointment_id" in needs
+
+
+# --- manage_appointment (the write path: stage a Proposal) ----------------
+
+
+class FakeProposals:
+    def __init__(self) -> None:
+        self.staged: list = []
+
+    async def stage(self, ctx, *, principal_id, spec):  # noqa: ANN001
+        self.staged.append((principal_id, spec))
+        return "P1"
+
+
+def write_handlers(props: FakeProposals, appts: FakeAppointments):
+    return build_appointment_write_handlers(props, appts)  # type: ignore[arg-type]
+
+
+async def test_manage_appointment_create_stages_a_dated_note() -> None:
+    props = FakeProposals()
+    out = await write_handlers(props, FakeAppointments())["manage_appointment"](
+        {"action": "create", "title": "dentist", "when": "next Friday 2pm"}, OWNER_CTX
+    )
+    assert isinstance(out, ToolOutput)
+    assert out.proposal is not None and out.proposal.kind == "appointment"
+    principal_id, spec = props.staged[0]
+    assert principal_id == "p1" and spec.kind == "appointment"
+    node = spec.nodes[0]
+    assert node.op == "manage_appointment"
+    assert node.preview["body"] == "dentist is scheduled for next Friday 2pm."
+    assert node.preview["action"] == "create" and node.preview["domain"] == "general"
+
+
+async def test_manage_appointment_reschedule_anchors_on_the_existing_appointment() -> None:
+    props = FakeProposals()
+    existing = FakeAppointments(one=appt("A1", "Dentist with Dr. Nguyen"))
+    out = await write_handlers(props, existing)["manage_appointment"](
+        {"action": "reschedule", "appointment_id": "A1", "when": "Monday at 3pm"}, OWNER_CTX
+    )
+    assert out.proposal is not None
+    _pid, spec = props.staged[0]
+    # Title came from the looked-up appointment, so re-extraction resolves to it.
+    assert spec.nodes[0].preview["body"] == (
+        "The Dentist with Dr. Nguyen has been rescheduled to Monday at 3pm."
+    )
+    assert spec.nodes[0].preview["appointment_id"] == "A1"
+
+
+async def test_manage_appointment_cancel_needs_no_when() -> None:
+    props = FakeProposals()
+    out = await write_handlers(props, FakeAppointments())["manage_appointment"](
+        {"action": "cancel", "title": "gym session"}, OWNER_CTX
+    )
+    assert out.proposal is not None
+    assert props.staged[0][1].nodes[0].preview["body"] == "The gym session has been cancelled."
+
+
+async def test_manage_appointment_guards() -> None:
+    props = FakeProposals()
+    h = write_handlers(props, FakeAppointments(one=appt("A1", "x")))["manage_appointment"]
+    assert "must be create" in await h({"action": "delete", "title": "x", "when": "now"}, OWNER_CTX)
+    assert "needs a 'when'" in await h({"action": "create", "title": "x"}, OWNER_CTX)
+    assert "needs a title" in await h({"action": "create", "when": "now"}, OWNER_CTX)
+    assert "isn't scoped to it" in await h(
+        {"action": "create", "title": "x", "when": "now", "domain": "health"}, OWNER_CTX
+    )
+    # An unknown appointment_id can't be anchored to.
+    assert "in scope" in await h({"action": "cancel", "appointment_id": "missing"}, OWNER_CTX)
+    # No owner principal on the session → can't stage.
+    assert "without an owner principal" in await h({"action": "cancel", "title": "x"}, CTX)
+    # Nothing staged on any guard failure.
+    assert props.staged == []

@@ -452,6 +452,7 @@ def test_build_registry_binds_the_shipped_sidecars() -> None:
         "remove_list_item",
         "read_appointments",
         "read_appointment",
+        "manage_appointment",
         "recall",
         "memory_read",
         "memory_edit",
@@ -567,6 +568,11 @@ def test_sidecars_pinned_to_their_versions() -> None:
             "read_appointment",
             1,
             "5dc14fae478e6696019b6da85fae655c6e10ac6c36fe1c6a9d2e78dcdb94ee95",
+        ),
+        "manage_appointment.tool": (
+            "manage_appointment",
+            1,
+            "7fcd25cf5705ae0de9199a7a7c926b0551eb91e0fa3db62a8d03dd32c108fc7e",
         ),
     }
     for filename, expected in pins.items():

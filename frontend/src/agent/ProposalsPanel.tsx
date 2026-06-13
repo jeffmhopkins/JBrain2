@@ -10,6 +10,7 @@ const BADGE: Record<ProposalKind, string> = {
   "wiki-restructure": "⤴",
   knowledge: "＋",
   correction: "✎",
+  appointment: "◷",
   "prompt-edit": "⌥",
   "skill-promotion": "★",
   egress: "↗",
