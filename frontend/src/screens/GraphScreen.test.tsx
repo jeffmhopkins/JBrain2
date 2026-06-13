@@ -1,7 +1,14 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { type EgoGraph, type EntityOut, type FactOut, api } from "../api/client";
-import { GraphScreen, chooseLabels, clampScale, edgeLabelText, focalZoom } from "./GraphScreen";
+import {
+  GraphScreen,
+  chooseLabels,
+  clampScale,
+  edgeLabelText,
+  focalZoom,
+  planEdges,
+} from "./GraphScreen";
 
 const GRAPH: EgoGraph = {
   root: "me",
@@ -285,5 +292,50 @@ describe("edgeLabelText", () => {
     expect(edgeLabelText("worksFor")).toBe("works for");
     expect(edgeLabelText("seen_at")).toBe("seen at");
     expect(edgeLabelText("spouse")).toBe("spouse");
+  });
+});
+
+describe("planEdges", () => {
+  it("folds a reciprocal pair into one bidirectional link", () => {
+    const plan = planEdges([
+      { source: "a", target: "b", predicate: "owns" },
+      { source: "b", target: "a", predicate: "ownedBy" },
+    ]);
+    const fwd = plan.get("a|b|owns");
+    const bwd = plan.get("b|a|ownedBy");
+    expect(fwd).toMatchObject({ arrowStart: true, arrowEnd: true, skip: false, idx: 0 });
+    expect(fwd?.label).toBe("owns · owned by"); // both predicates, arrow both ends
+    expect(bwd?.skip).toBe(true); // drawn once, by its partner
+  });
+
+  it("shows a symmetric reciprocal as a single predicate", () => {
+    const plan = planEdges([
+      { source: "a", target: "b", predicate: "spouse" },
+      { source: "b", target: "a", predicate: "spouse" },
+    ]);
+    expect(plan.get("a|b|spouse")?.label).toBe("spouse");
+  });
+
+  it("keeps a lone edge directional (arrow at the target)", () => {
+    const plan = planEdges([{ source: "a", target: "b", predicate: "child" }]);
+    expect(plan.get("a|b|child")).toMatchObject({
+      arrowStart: false,
+      arrowEnd: true,
+      skip: false,
+      label: "child",
+    });
+  });
+
+  it("fans distinct same-direction edges and points each at its target", () => {
+    const plan = planEdges([
+      { source: "a", target: "b", predicate: "worksFor" },
+      { source: "a", target: "b", predicate: "founded" },
+    ]);
+    const a = plan.get("a|b|worksFor");
+    const b = plan.get("a|b|founded");
+    expect(a?.arrowEnd && b?.arrowEnd).toBe(true);
+    expect(a?.skip || b?.skip).toBe(false);
+    expect(a?.idx).toBeCloseTo(-0.5);
+    expect(b?.idx).toBeCloseTo(0.5);
   });
 });
