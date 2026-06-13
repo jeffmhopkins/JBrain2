@@ -97,3 +97,66 @@ async def test_read_entity_handler_respects_session_scope(maker: async_sessionma
         session=read_context(owner.principal_id, ("finance",)), scopes=("finance",)
     )
     assert "in scope" in await tools["read_entity"]({"entity_id": eid}, finance)
+
+
+async def test_relate_anchors_on_me_and_respects_the_firewall(maker: async_sessionmaker) -> None:
+    owner = await _owner(maker)
+    run = uuid.uuid4().hex[:8]
+    me, spouse, note = (str(uuid.uuid4()) for _ in range(3))
+    subject = str(uuid.uuid4())
+    async with scoped_session(maker, owner) as session:
+        # The "Me" anchor lives in general; the spouse and the edge linking them
+        # live in health — so a session without health cannot traverse the bond.
+        await session.execute(
+            text("INSERT INTO app.subjects (id, display_name, kind) VALUES (:id, 'Me', 'person')"),
+            {"id": subject},
+        )
+        await session.execute(
+            text(
+                "INSERT INTO app.entities"
+                " (id, kind, canonical_name, status, subject_id, domain_code)"
+                " VALUES (:id, 'Person', 'Me', 'confirmed', :sub, 'general')"
+            ),
+            {"id": me, "sub": subject},
+        )
+        await session.execute(
+            text(
+                "INSERT INTO app.entities (id, kind, canonical_name, status, domain_code)"
+                " VALUES (:id, 'Person', 'Renata Kwon', 'confirmed', 'health')"
+            ),
+            {"id": spouse},
+        )
+        await session.execute(
+            text(
+                "INSERT INTO app.notes (id, client_id, domain_code, body)"
+                " VALUES (:id, :cid, 'health', 'my wife Renata')"
+            ),
+            {"id": note, "cid": f"{run}-n"},
+        )
+        await session.execute(
+            text(
+                "INSERT INTO app.facts"
+                " (id, entity_id, predicate, kind, statement, assertion, object_entity_id,"
+                "  reported_at, note_id, extractor, prompt_version, domain_code, status)"
+                " VALUES (gen_random_uuid(), :me, 'spouse', 'relationship', 'married to Renata',"
+                "  'asserted', :spouse, now(), :note, 'test', 'v1', 'health', 'active')"
+            ),
+            {"me": me, "spouse": spouse, "note": note},
+        )
+
+    tools = build_entity_handlers(SqlAnalysisRepo(maker))
+
+    # With health in scope, "my wife" anchors on Me and follows the spouse edge.
+    full = ToolContext(
+        session=read_context(owner.principal_id, ("general", "health")),
+        scopes=("general", "health"),
+    )
+    found = await tools["relate"]({"relationship": "wife"}, full)
+    assert "Renata Kwon" in found
+
+    # Without health, the spouse edge is invisible — no cross-firewall leak.
+    general = ToolContext(
+        session=read_context(owner.principal_id, ("general",)), scopes=("general",)
+    )
+    blocked = await tools["relate"]({"relationship": "wife"}, general)
+    assert "Renata" not in blocked and "No 'wife' relationship" in blocked

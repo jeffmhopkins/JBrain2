@@ -19,6 +19,7 @@ from jbrain.agent.memorytools import build_memory_handlers
 from jbrain.agent.proposals import ProposalRepo
 from jbrain.agent.proposaltools import build_proposal_handlers
 from jbrain.agent.toolregistry import ToolRegistry, load_registry
+from jbrain.analysis.relationships import predicate_candidates
 from jbrain.connectors.base import ConnectorRegistry
 from jbrain.db.session import SessionContext
 from jbrain.lists.service import ListsRepo
@@ -31,7 +32,8 @@ _DEFAULT_LIMIT = 8
 
 class EntityReader(Protocol):
     """The slice of the analysis repo the entity tools need — the entity-page view
-    and the name/alias search behind find_entity."""
+    behind read_entity, the name/alias search behind find_entity, and the
+    relationship traversal behind relate."""
 
     async def entity_view(self, ctx: SessionContext, entity_id: str) -> dict[str, Any] | None: ...
 
@@ -41,6 +43,14 @@ class EntityReader(Protocol):
         q: str | None = None,
         kind: str | None = None,
         limit: int = 200,
+    ) -> list[dict[str, Any]]: ...
+
+    async def relate(
+        self,
+        ctx: SessionContext,
+        anchor_id: str | None,
+        predicates: Any,
+        limit: int = 8,
     ) -> list[dict[str, Any]]: ...
 
 
@@ -73,23 +83,53 @@ def _note_snippet(body: str, limit: int = 140) -> str:
     return line[:limit]
 
 
+def _edge_line(f: dict[str, Any]) -> str:
+    """One current fact as an edge. A relationship edge names another entity —
+    surface its id so the model can read_entity it and follow the relationship
+    one hop further (the chain behind "my wife's name")."""
+    base = f"- {f['predicate']}: {f['statement']}"
+    if obj := f.get("object_entity_id"):
+        name = f.get("object_entity_name") or ""
+        return f"{base} → {name} (id={obj})"
+    return base
+
+
+def _current_facts(view: dict[str, Any]) -> list[dict[str, Any]]:
+    return [p["current"] for p in view.get("predicates", []) if p.get("current")]
+
+
 def format_entity(view: dict[str, Any]) -> str:
-    """The structured/graph view: schema.org kind, names, facts-as-edges, inbound
-    edges, and a mention count. Text-only now; an entity_card view comes with the
-    component registry (the text-first tool path, ASSISTANT_PLAN.md)."""
+    """The structured/graph view: schema.org kind, names, facts-as-edges (with the
+    target entity's id on relationship edges, so they can be chained through),
+    inbound edges, and a mention count. Text-only now; an entity_card view comes
+    with the component registry (the text-first tool path, ASSISTANT_PLAN.md)."""
     lines = [f"{view['canonical_name']} [{view['kind']}] ({view['domain']})"]
     if aliases := view.get("aliases"):
         lines.append("also known as: " + ", ".join(aliases))
-    current = [p["current"] for p in view.get("predicates", []) if p.get("current")]
-    if current:
+    if current := _current_facts(view):
         lines.append("facts:")
-        lines += [f"- {f['predicate']}: {f['statement']}" for f in current]
+        lines += [_edge_line(f) for f in current]
     if inbound := view.get("inbound"):
         lines.append("referenced by:")
         lines += [f"- {r['name']} {r['predicate']} this" for r in inbound]
     if mentions := view.get("mentions"):
         lines.append(f"mentioned in {len(mentions)} note(s).")
     return "\n".join(lines)
+
+
+def entity_view_objects(view: dict[str, Any]) -> tuple[EntityRef, ...]:
+    """The entities this one points at via its relationship edges — tappable chips
+    so the PWA linkifies a related name the agent mentions, and a structured twin
+    of the ids `format_entity` prints for the model to chain on."""
+    return tuple(
+        EntityRef(
+            entity_id=str(f["object_entity_id"]),
+            label=str(f.get("object_entity_name") or f["object_entity_id"]),
+            domain=f.get("object_entity_domain") or view.get("domain", "general"),
+        )
+        for f in _current_facts(view)
+        if f.get("object_entity_id")
+    )
 
 
 def build_read_handlers(search: SearchService, notes: NotesRepo) -> dict[str, ToolHandler]:
@@ -138,13 +178,24 @@ def format_entities(rows: list[dict[str, Any]]) -> str:
     )
 
 
+def format_relations(rows: list[dict[str, Any]]) -> str:
+    """The model-facing list for relate: which edge led to which entity, with ids
+    to chain into read_entity (e.g. read the spouse for their name)."""
+    return "\n".join(
+        f"- {r['predicate']} → {r['canonical_name']} [{r['kind']}] ({r['domain']}) id={r['id']}"
+        for r in rows
+    )
+
+
 def build_entity_handlers(entities: EntityReader) -> dict[str, ToolHandler]:
-    async def read_entity_tool(arguments: dict, ctx: ToolContext) -> str:
+    async def read_entity_tool(arguments: dict, ctx: ToolContext) -> ToolOutput:
         entity_id = str(arguments.get("entity_id", "")).strip()
         if not entity_id:
-            return "read_entity needs an entity_id."
+            return ToolOutput("read_entity needs an entity_id.")
         view = await entities.entity_view(ctx.session, entity_id)
-        return format_entity(view) if view is not None else "No entity with that id is in scope."
+        if view is None:
+            return ToolOutput("No entity with that id is in scope.")
+        return ToolOutput(format_entity(view), entities=entity_view_objects(view))
 
     async def find_entity_tool(arguments: dict, ctx: ToolContext) -> ToolOutput:
         name = str(arguments.get("name", "")).strip()
@@ -158,7 +209,24 @@ def build_entity_handlers(entities: EntityReader) -> dict[str, ToolHandler]:
             return ToolOutput(f"No entity matching '{name}' in scope.")
         return ToolOutput(format_entities(rows), entities=entity_refs(rows))
 
-    return {"read_entity": read_entity_tool, "find_entity": find_entity_tool}
+    async def relate_tool(arguments: dict, ctx: ToolContext) -> ToolOutput:
+        relationship = str(arguments.get("relationship", "")).strip()
+        if not relationship:
+            return ToolOutput("relate needs a relationship.")
+        anchor = str(arguments.get("from", "")).strip() or None
+        rows = await entities.relate(
+            ctx.session, anchor, predicate_candidates(relationship), _ENTITY_LIMIT
+        )
+        if not rows:
+            whose = "the owner" if anchor is None else "that entity"
+            return ToolOutput(f"No '{relationship}' relationship for {whose} in scope.")
+        return ToolOutput(format_relations(rows), entities=entity_refs(rows))
+
+    return {
+        "read_entity": read_entity_tool,
+        "find_entity": find_entity_tool,
+        "relate": relate_tool,
+    }
 
 
 def build_registry(
