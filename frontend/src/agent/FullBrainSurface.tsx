@@ -17,6 +17,7 @@ import { Markdown } from "./markdown";
 import { type AgentStatus, agentStatus } from "./status";
 import { type SourceRef, type ToolStep, toolStep } from "./toolSummary";
 import type { ToolActivity, TranscriptMessage } from "./transcript";
+import type { ProposalRef } from "./types";
 import type { FullBrain } from "./useFullBrain";
 import { ToolView } from "./views/registry";
 
@@ -231,7 +232,11 @@ function Bubble({
     ).values(),
   ];
 
-  // The answer side: the prose and any tool-result views.
+  // A proposal the turn staged — surfaced in the answer itself (not buried in the
+  // Worked drop-down) so reviewing it is a single tap on the response.
+  const staged = message.tools.find((t) => t.proposal)?.proposal;
+
+  // The answer side: the prose, any tool-result views, and the proposal affordance.
   const answer = (
     <>
       {message.text && (
@@ -241,6 +246,7 @@ function Bubble({
         // biome-ignore lint/suspicious/noArrayIndexKey: views append in order
         <ToolView key={i} payload={v} />
       ))}
+      {staged && <ProposalChip proposal={staged} onOpen={onOpenProposal} />}
     </>
   );
 
@@ -251,12 +257,7 @@ function Bubble({
     <div className="bubble ai">
       {answer}
       {message.tools.length > 0 && (
-        <Worked
-          tools={message.tools}
-          onOpenNote={onOpenNote}
-          onOpenProposal={onOpenProposal}
-          onOpenEntity={onOpenEntity}
-        />
+        <Worked tools={message.tools} onOpenNote={onOpenNote} onOpenEntity={onOpenEntity} />
       )}
     </div>
   );
@@ -268,12 +269,10 @@ function Bubble({
 function Worked({
   tools,
   onOpenNote,
-  onOpenProposal,
   onOpenEntity,
 }: {
   tools: ToolActivity[];
   onOpenNote?: ((noteId: string) => void) | undefined;
-  onOpenProposal?: ((proposalId: string) => void) | undefined;
   onOpenEntity?: ((entityId: string) => void) | undefined;
 }): ReactNode {
   const [open, setOpen] = useState(false);
@@ -284,7 +283,6 @@ function Worked({
   const failCount = steps.filter((s) => s.ok === false).length;
   const parts: ReactNode[] = [`${steps.length} step${steps.length === 1 ? "" : "s"}`];
   if (sourceCount) parts.push(`${sourceCount} source${sourceCount === 1 ? "" : "s"}`);
-  const staged = tools.find((t) => t.proposal)?.proposal;
 
   return (
     <div className={`fb-worked${open ? " open" : ""}`}>
@@ -317,24 +315,36 @@ function Worked({
               <StepRow key={s.id} step={s} onOpenNote={onOpenNote} onOpenEntity={onOpenEntity} />
             ))}
           </div>
-          {staged && (
-            <button
-              type="button"
-              className="proposal-chip"
-              onClick={() => onOpenProposal?.(staged.proposal_id)}
-            >
-              <svg className="tw-ic" viewBox="0 0 24 24" aria-hidden="true">
-                <path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2" />
-                <rect x="9" y="3" width="6" height="4" rx="1" />
-                <path d="m9 14 2 2 4-4" />
-              </svg>
-              Review proposal
-              <ChevronGlyph className="tw-chev" />
-            </button>
-          )}
         </div>
       </div>
     </div>
+  );
+}
+
+// The "Review proposal" affordance, shown in the answer itself so acting on a
+// staged change is one tap on the response (not buried in the Worked drop-down).
+// DEFERRED CONCEPT: this is a navigational chip — it opens the Proposals panel.
+// The richer idea (an interactive inline component that shows the proposal's
+// diff, takes approve/reject in place, reflects live state, AND notifies the
+// agent of the outcome so it can follow up) is a separate, larger change that
+// needs a backend feedback loop; it is intentionally not built here.
+function ProposalChip({
+  proposal,
+  onOpen,
+}: {
+  proposal: ProposalRef;
+  onOpen?: ((proposalId: string) => void) | undefined;
+}): ReactNode {
+  return (
+    <button type="button" className="proposal-chip" onClick={() => onOpen?.(proposal.proposal_id)}>
+      <svg className="tw-ic" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2" />
+        <rect x="9" y="3" width="6" height="4" rx="1" />
+        <path d="m9 14 2 2 4-4" />
+      </svg>
+      Review proposal
+      <ChevronGlyph className="tw-chev" />
+    </button>
   );
 }
 

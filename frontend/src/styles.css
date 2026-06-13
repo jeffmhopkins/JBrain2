@@ -3526,7 +3526,7 @@ button.small {
   color: var(--steel);
   cursor: pointer;
 }
-/* the "Review proposal" chip above the Worked line */
+/* the "Review proposal" chip — in the answer itself, above the Worked line */
 .fb-shell .proposal-chip {
   display: inline-flex;
   align-items: center;
