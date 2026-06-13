@@ -57,6 +57,21 @@ async def entity_detail(
     return view
 
 
+@router.get("/entities/{entity_id}/neighbors")
+async def entity_neighbors(
+    entity_id: str,
+    request: Request,
+    principal: PrincipalDep,
+    depth: Annotated[int, Query(ge=1, le=2)] = 1,
+) -> dict[str, Any]:
+    """Ego subgraph for the graph view (nodes + directed edges to `depth`
+    hops). RLS-scoped, so firewalled neighbours and their edges never leak."""
+    view = await get_analysis_repo(request).ego_graph(ctx_for(principal), entity_id, depth=depth)
+    if view is None:
+        raise HTTPException(status_code=404, detail="entity not found")
+    return view
+
+
 @router.get("/review")
 async def review_list(
     request: Request,

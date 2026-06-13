@@ -260,6 +260,33 @@ export interface EntityList {
   items: EntityListItem[];
 }
 
+// ----- Graph view (the ego subgraph; GET /api/entities/{id}/neighbors) -----
+
+/** One node in the ego subgraph; mirrors the browse-list shape, no facts. */
+export interface GraphNode {
+  id: string;
+  kind: string;
+  canonical_name: string;
+  status: string;
+  domain: string;
+}
+
+/** A directed relationship edge source --predicate--> target. */
+export interface GraphEdge {
+  source: string;
+  target: string;
+  predicate: string;
+}
+
+export interface EgoGraph {
+  /** The focal entity the subgraph is centered on. */
+  root: string;
+  /** Hops actually traversed (server clamps to 1–2). */
+  depth: number;
+  nodes: GraphNode[];
+  edges: GraphEdge[];
+}
+
 // ===== Lists (the owner's structured records; /api/lists) =====
 
 export interface ListItemOut {
@@ -571,6 +598,15 @@ export const api = {
   async getEntity(entityId: string): Promise<EntityOut> {
     const response = await request(`/api/entities/${encodeURIComponent(entityId)}`);
     return (await response.json()) as EntityOut;
+  },
+
+  // The ego subgraph for the graph view: the focal entity plus everything
+  // within `depth` relationship hops, RLS-scoped server-side.
+  async getNeighbors(entityId: string, depth = 2): Promise<EgoGraph> {
+    const response = await request(
+      `/api/entities/${encodeURIComponent(entityId)}/neighbors?depth=${depth}`,
+    );
+    return (await response.json()) as EgoGraph;
   },
 
   // ----- Lists: the owner managing their own data directly -----

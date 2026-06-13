@@ -1,0 +1,172 @@
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
+import { type EgoGraph, type EntityOut, type FactOut, api } from "../api/client";
+import { GraphScreen } from "./GraphScreen";
+
+const GRAPH: EgoGraph = {
+  root: "me",
+  depth: 2,
+  nodes: [
+    { id: "me", kind: "Person", canonical_name: "Me", status: "confirmed", domain: "general" },
+    { id: "wife", kind: "Person", canonical_name: "Wife", status: "confirmed", domain: "general" },
+    {
+      id: "acme",
+      kind: "Organization",
+      canonical_name: "Acme",
+      status: "confirmed",
+      domain: "general",
+    },
+    {
+      id: "pdx",
+      kind: "Place",
+      canonical_name: "Portland",
+      status: "confirmed",
+      domain: "location",
+    },
+  ],
+  edges: [
+    { source: "me", target: "wife", predicate: "spouse" },
+    { source: "me", target: "acme", predicate: "worksFor" },
+    { source: "me", target: "pdx", predicate: "residence" },
+  ],
+};
+
+function fact(over: Partial<FactOut> = {}): FactOut {
+  return {
+    id: "f1",
+    entity_id: "me",
+    entity_name: "Me",
+    predicate: "occupation",
+    qualifier: null,
+    kind: "attribute",
+    statement: "Software engineer",
+    value_json: null,
+    assertion: "asserted",
+    status: "active",
+    pinned: false,
+    confidence: 0.9,
+    valid_from: null,
+    valid_to: null,
+    reported_at: "2026-06-10T09:00:00Z",
+    temporal_precision: "day",
+    object_entity_id: null,
+    object_entity_name: null,
+    source_snippet: null,
+    ...over,
+  };
+}
+
+const ME_DETAIL: EntityOut = {
+  id: "me",
+  kind: "Person",
+  canonical_name: "Me",
+  status: "confirmed",
+  aliases: [],
+  domain: "general",
+  predicates: [{ predicate: "occupation", qualifier: null, current: fact(), history: [fact()] }],
+  inbound: [],
+  mentions: [],
+};
+
+function setup() {
+  const load = vi.fn(async () => GRAPH);
+  const onOpenEntity = vi.fn();
+  render(<GraphScreen onOpenEntity={onOpenEntity} rootId="me" load={load} />);
+  return { load, onOpenEntity };
+}
+
+async function loaded() {
+  await waitFor(() => expect(screen.queryByText("loading graph…")).not.toBeInTheDocument());
+}
+
+describe("GraphScreen", () => {
+  it("loads the root ego graph and renders nodes + type chips", async () => {
+    const { load } = setup();
+    await loaded();
+    expect(load).toHaveBeenCalledWith("me", 2);
+    for (const name of ["Me", "Wife", "Acme", "Portland"]) {
+      expect(screen.getByText(name)).toBeInTheDocument();
+    }
+    const bar = screen.getByLabelText("Type filter");
+    // Chips derive from the data: People (2), Orgs (1), Places (1), plus All.
+    expect(within(bar).getByRole("button", { name: /People/ })).toBeInTheDocument();
+    expect(within(bar).getByRole("button", { name: /Orgs/ })).toBeInTheDocument();
+    expect(within(bar).getByRole("button", { name: "All" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+  });
+
+  it("tap a type chip shows only that type; All resets (additive model, empty = All)", async () => {
+    setup();
+    await loaded();
+    const bar = screen.getByLabelText("Type filter");
+    fireEvent.click(within(bar).getByRole("button", { name: /Orgs/ }));
+    expect(within(bar).getByRole("button", { name: /Orgs/ })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    // 3 of 4 nodes (People×2, Place) are hidden; the focal-less overview pill says so.
+    expect(screen.getByText(/showing only orgs · 3 hidden/)).toBeInTheDocument();
+    // Adding a second type is additive, not radio.
+    fireEvent.click(within(bar).getByRole("button", { name: /People/ }));
+    expect(screen.getByText(/showing 2 types · 1 hidden/)).toBeInTheDocument();
+    fireEvent.click(within(bar).getByRole("button", { name: "All" }));
+    expect(screen.queryByText(/hidden/)).not.toBeInTheDocument();
+  });
+
+  it("tap enters radial focus; Overview returns (no hidden gesture)", async () => {
+    setup();
+    await loaded();
+    expect(screen.queryByRole("button", { name: "Overview" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByText("Wife").closest("button") as HTMLElement);
+    const overview = await screen.findByRole("button", { name: "Overview" });
+    // Breadcrumb reflects the focal entity (the crumb, not the node label).
+    expect(screen.getByText("Wife", { selector: ".graph-crumb" })).toBeInTheDocument();
+    fireEvent.click(overview);
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: "Overview" })).not.toBeInTheDocument(),
+    );
+  });
+
+  it("tapping the focal node opens the peek sheet; Open entity navigates", async () => {
+    const getEntity = vi.spyOn(api, "getEntity").mockResolvedValue(ME_DETAIL);
+    const { onOpenEntity } = setup();
+    await loaded();
+    const meNode = () =>
+      screen
+        .getAllByText("Me")
+        .map((l) => l.closest("button"))
+        .find((b) => b?.classList.contains("graph-node")) as HTMLElement;
+    fireEvent.click(meNode()); // overview -> focus on Me
+    await screen.findByRole("button", { name: "Overview" });
+    fireEvent.click(meNode()); // focal tap -> peek sheet
+    expect(await screen.findByRole("button", { name: "Open entity →" })).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText("Software engineer")).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: "Open entity →" }));
+    expect(onOpenEntity).toHaveBeenCalledWith("me");
+    getEntity.mockRestore();
+  });
+
+  it("shows the calm empty state when the root has no graph", async () => {
+    const load = vi.fn(async () => ({ root: "me", depth: 2, nodes: [], edges: [] }));
+    render(<GraphScreen onOpenEntity={vi.fn()} rootId="me" load={load} />);
+    await waitFor(() =>
+      expect(
+        screen.getByText("no entities yet — they appear as notes are analyzed."),
+      ).toBeInTheDocument(),
+    );
+  });
+
+  it("shows the quiet error state when the load fails", async () => {
+    const load = vi.fn(async () => {
+      throw new Error("down");
+    });
+    render(<GraphScreen onOpenEntity={vi.fn()} rootId="me" load={load} />);
+    await waitFor(() =>
+      expect(
+        screen.getByText("couldn't load the graph — check the connection."),
+      ).toBeInTheDocument(),
+    );
+  });
+});

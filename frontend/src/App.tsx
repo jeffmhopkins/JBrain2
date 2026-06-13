@@ -8,6 +8,7 @@ import { useNoteActions } from "./notes/useNoteActions";
 import { type StreamAttachment, type StreamItem, useNotes } from "./notes/useNotes";
 import { EntityListScreen } from "./screens/EntityListScreen";
 import { EntityScreen } from "./screens/EntityScreen";
+import { GraphScreen } from "./screens/GraphScreen";
 import { HomeScreen } from "./screens/HomeScreen";
 import { ListDetailScreen } from "./screens/ListDetailScreen";
 import { ListsScreen } from "./screens/ListsScreen";
@@ -28,7 +29,7 @@ type Session =
   | { status: "anonymous" }
   | { status: "in"; principal: Principal };
 
-type Card = "ops" | "settings" | "search" | "review" | "entities" | "lists";
+type Card = "ops" | "settings" | "search" | "review" | "entities" | "lists" | "graph";
 
 const SCREEN_TITLES: Record<Card, string> = {
   ops: "Ops",
@@ -37,6 +38,7 @@ const SCREEN_TITLES: Record<Card, string> = {
   review: "Review",
   entities: "Entities",
   lists: "Lists",
+  graph: "Map",
 };
 
 const CARD_EXIT_MS = 150;
@@ -296,6 +298,8 @@ export function App() {
           {card === "review" && <ReviewScreen />}
           {/* Rows open the same entity layer the analysis chips use. */}
           {card === "entities" && <EntityListScreen onOpenEntity={setEntityView} />}
+          {/* The graph Map drills into focus in place; the sheet opens the entity layer. */}
+          {card === "graph" && <GraphScreen onOpenEntity={setEntityView} />}
           {/* Cards open the list detail layer; listsKey remounts on its close. */}
           {card === "lists" && <ListsScreen key={listsKey} onOpenList={setListView} />}
         </div>

@@ -10,6 +10,7 @@ import {
   CheckSquareIcon,
   FlaskIcon,
   GaugeIcon,
+  GraphIcon,
   ListIcon,
   SearchIcon,
   SettingsIcon,
@@ -17,7 +18,14 @@ import {
   XIcon,
 } from "./icons";
 
-export type LauncherTarget = "ops" | "settings" | "search" | "review" | "entities" | "lists";
+export type LauncherTarget =
+  | "ops"
+  | "settings"
+  | "search"
+  | "review"
+  | "entities"
+  | "lists"
+  | "graph";
 
 interface Tile {
   title: string;
@@ -41,6 +49,7 @@ const SECTIONS: Section[] = [
       { title: "Calendar", icon: <CalendarIcon size={24} />, phase: "P4" },
       { title: "Lists", icon: <ListIcon size={24} />, target: "lists" },
       { title: "Entities", icon: <UsersIcon size={24} />, target: "entities" },
+      { title: "Map", icon: <GraphIcon size={24} />, target: "graph" },
       { title: "Labs", icon: <FlaskIcon size={24} />, phase: "P7" },
     ],
   },

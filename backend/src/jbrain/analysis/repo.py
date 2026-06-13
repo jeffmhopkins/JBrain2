@@ -328,6 +328,91 @@ class SqlAnalysisRepo:
             for r in rows
         ]
 
+    async def ego_graph(
+        self, ctx: SessionContext, entity_id: str, depth: int = 1
+    ) -> dict[str, Any] | None:
+        """The graph view's ego subgraph: the focal entity plus everything
+        within `depth` relationship hops in either direction, as nodes plus
+        directed edges. Active asserted relationship facts only; merged
+        tombstones are skipped. Every query is RLS-scoped, so a neighbour (or
+        the edge to it) behind a firewall this session can't see never comes
+        back — never a cross-domain leak. Node rows mirror `list_entities`
+        (id/kind/canonical_name/status/domain) so the UI reuses one render path.
+        """
+        eid = _as_uuid(entity_id)
+        if eid is None:
+            return None
+        hops = max(1, min(depth, 2))
+        out_sql = text(
+            "SELECT f.entity_id::text AS src, f.object_entity_id::text AS dst, f.predicate"
+            " FROM app.facts f JOIN app.entities oe ON oe.id = f.object_entity_id"
+            " WHERE f.entity_id IN :ids AND f.object_entity_id IS NOT NULL"
+            " AND f.status = 'active' AND f.assertion = 'asserted' AND oe.status <> 'merged'"
+        ).bindparams(bindparam("ids", expanding=True))
+        in_sql = text(
+            "SELECT f.entity_id::text AS src, f.object_entity_id::text AS dst, f.predicate"
+            " FROM app.facts f JOIN app.entities se ON se.id = f.entity_id"
+            " WHERE f.object_entity_id IN :ids"
+            " AND f.status = 'active' AND f.assertion = 'asserted' AND se.status <> 'merged'"
+        ).bindparams(bindparam("ids", expanding=True))
+        async with scoped_session(self._maker, ctx) as session:
+            root = (
+                await session.execute(
+                    text(
+                        "SELECT id::text, kind, canonical_name, status, domain_code"
+                        " FROM app.entities WHERE id = :id AND status <> 'merged'"
+                    ),
+                    {"id": str(eid)},
+                )
+            ).first()
+            if root is None:
+                return None
+            node_ids: set[str] = {root.id}
+            frontier: set[str] = {root.id}
+            edges: dict[tuple[str, str, str], dict[str, str]] = {}
+            for _ in range(hops):
+                if not frontier:
+                    break
+                ids = sorted(frontier)
+                rows = (await session.execute(out_sql, {"ids": ids})).all() + (
+                    await session.execute(in_sql, {"ids": ids})
+                ).all()
+                nxt: set[str] = set()
+                for r in rows:
+                    edges.setdefault(
+                        (r.src, r.dst, r.predicate),
+                        {"source": r.src, "target": r.dst, "predicate": r.predicate},
+                    )
+                    for nid in (r.src, r.dst):
+                        if nid not in node_ids:
+                            node_ids.add(nid)
+                            nxt.add(nid)
+                frontier = nxt
+            nodes = (
+                await session.execute(
+                    text(
+                        "SELECT id::text, kind, canonical_name, status, domain_code"
+                        " FROM app.entities WHERE id IN :ids"
+                    ).bindparams(bindparam("ids", expanding=True)),
+                    {"ids": sorted(node_ids)},
+                )
+            ).all()
+        return {
+            "root": root.id,
+            "depth": hops,
+            "nodes": [
+                {
+                    "id": n.id,
+                    "kind": n.kind,
+                    "canonical_name": n.canonical_name,
+                    "status": n.status,
+                    "domain": n.domain_code,
+                }
+                for n in nodes
+            ],
+            "edges": list(edges.values()),
+        }
+
     async def entity_view(self, ctx: SessionContext, entity_id: str) -> dict[str, Any] | None:
         eid = _as_uuid(entity_id)
         if eid is None:
