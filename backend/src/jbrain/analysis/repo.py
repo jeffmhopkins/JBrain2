@@ -439,6 +439,72 @@ class SqlAnalysisRepo:
             ],
         }
 
+    async def note_currency(
+        self, ctx: SessionContext, note_ids: list[str]
+    ) -> dict[str, list[dict[str, Any]]]:
+        """Per note id, the facts derived from it that are NO LONGER the live
+        value: `superseded` (a newer note replaced it), `retracted` (no longer
+        asserted — an extraction error or a correction), or `pending_review`
+        (contested, unverified). Each carries the entity it belongs to and, for a
+        superseded value, the CURRENT active value on that same
+        entity.predicate[.qualifier] address.
+
+        Runs in the caller's RLS scope, so out-of-scope facts never leak. This is
+        what lets the agent's retrieval tools overlay the supersession/review
+        outcome onto raw note prose: the note text is the original record, but the
+        graph knows what has since changed. Derived inverse shadows are excluded —
+        they mirror a primary edge, so reporting them would double-count the
+        reciprocal.
+        """
+        ids = [str(u) for u in (_as_uuid(n) for n in note_ids) if u is not None]
+        if not ids:
+            return {}
+        async with scoped_session(self._maker, ctx) as session:
+            rows = (
+                await session.execute(
+                    text(
+                        """
+                        SELECT f.note_id::text AS note_id, e.id::text AS entity_id,
+                               e.canonical_name AS entity_name, f.predicate,
+                               f.qualifier, f.status, f.statement AS stale_value,
+                               cur.statement AS current_value
+                        FROM app.facts f
+                        JOIN app.entities e ON e.id = f.entity_id
+                        LEFT JOIN LATERAL (
+                            SELECT a.statement FROM app.facts a
+                            WHERE a.entity_id = f.entity_id
+                              AND a.predicate = f.predicate
+                              AND a.qualifier = f.qualifier
+                              AND a.status = 'active'
+                            ORDER BY coalesce(a.valid_from, a.reported_at) DESC,
+                                     a.reported_at DESC, a.created_at DESC
+                            LIMIT 1
+                        ) cur ON true
+                        WHERE f.note_id::text = ANY(:ids)
+                          AND f.derived_from_fact_id IS NULL
+                          AND f.status IN ('superseded', 'retracted', 'pending_review')
+                        ORDER BY f.note_id, f.predicate, f.qualifier,
+                                 coalesce(f.valid_from, f.reported_at) DESC
+                        """
+                    ),
+                    {"ids": ids},
+                )
+            ).all()
+        out: dict[str, list[dict[str, Any]]] = {}
+        for r in rows:
+            out.setdefault(r.note_id, []).append(
+                {
+                    "entity_id": r.entity_id,
+                    "entity_name": r.entity_name,
+                    "predicate": r.predicate,
+                    "qualifier": r.qualifier,
+                    "status": r.status,
+                    "stale_value": r.stale_value,
+                    "current_value": r.current_value,
+                }
+            )
+        return out
+
     async def list_review(self, ctx: SessionContext, status: str) -> list[dict[str, Any]]:
         """Open queue oldest-first for triage; the resolved log (decisions,
         dismissals, and reopened tombstones) newest-decision-first.

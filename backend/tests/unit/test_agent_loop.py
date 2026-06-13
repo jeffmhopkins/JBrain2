@@ -91,9 +91,18 @@ def test_system_prompt_pinned_to_its_version() -> None:
     editing it must be a deliberate version bump, like every .prompt file."""
     digest = hashlib.sha256(SYSTEM_PROMPT.encode()).hexdigest()
     assert (SYSTEM_VERSION, digest) == (
-        "agent-system-v3",
-        "cab7e519533f495ff8b0a41539edaff3cfed9e5171d46d01ca5af6774d12f325",
+        "agent-system-v4",
+        "9d86df3adb7be857a153015a9da2aeb93a48eb17f1807651fa206e52efe61772",
     )
+
+
+def test_system_prompt_states_current_truth_arbitration() -> None:
+    """v3: the agent must treat the entity graph (kept current by supersession +
+    review) as the arbiter of truth, not raw note prose — the disposition behind
+    the retrieval tools' currency overlay."""
+    assert "arbiter of what is true today" in SYSTEM_PROMPT
+    assert "read_entity to confirm" in SYSTEM_PROMPT
+    assert "a superseded or retracted claim as if it were current" in SYSTEM_PROMPT
 
 
 async def test_answers_immediately_without_tools() -> None:

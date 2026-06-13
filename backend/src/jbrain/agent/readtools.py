@@ -31,9 +31,10 @@ _DEFAULT_LIMIT = 8
 
 
 class EntityReader(Protocol):
-    """The slice of the analysis repo the entity tools need — the entity-page view
-    behind read_entity, the name/alias search behind find_entity, and the
-    relationship traversal behind relate."""
+    """The slice of the analysis repo the read/entity tools need — the entity-page
+    view behind read_entity, the name/alias search behind find_entity, the
+    relationship traversal behind relate, and the note-currency overlay that tells
+    the retrieval tools which of a note's facts are no longer live."""
 
     async def entity_view(self, ctx: SessionContext, entity_id: str) -> dict[str, Any] | None: ...
 
@@ -53,16 +54,77 @@ class EntityReader(Protocol):
         limit: int = 8,
     ) -> list[dict[str, Any]]: ...
 
+    async def note_currency(
+        self, ctx: SessionContext, note_ids: list[str]
+    ) -> dict[str, list[dict[str, Any]]]: ...
 
-def format_search(resp: SearchResponse) -> str:
+
+def _search_flag(stale: list[dict[str, Any]]) -> str:
+    """A compact currency flag under a hit whose note has non-live facts — so the
+    agent knows BEFORE acting on the snippet, and where the current value lives."""
+    statuses = sorted({f["status"].replace("_review", "") for f in stale})
+    ids = sorted({f["entity_id"] for f in stale})
+    return (
+        f"  ⚠ {len(stale)} fact(s) here are no longer current ({', '.join(statuses)})"
+        f" — read_entity {', '.join(ids)} for current values"
+    )
+
+
+def format_search(
+    resp: SearchResponse, currency: dict[str, list[dict[str, Any]]] | None = None
+) -> str:
     if not resp.results:
         return "No matching notes in scope."
     lines = ["(keyword-only search — semantic ranking unavailable)"] if resp.degraded else []
-    lines += [
-        f"- note {r.note_id} [{r.domain}] {r.created_at:%Y-%m-%d}: {r.snippet.strip()}"
-        for r in resp.results
-    ]
+    for r in resp.results:
+        line = f"- note {r.note_id} [{r.domain}] {r.created_at:%Y-%m-%d}: {r.snippet.strip()}"
+        stale = (currency or {}).get(r.note_id)
+        if stale:
+            line += "\n" + _search_flag(stale)
+        lines.append(line)
     return "\n".join(lines)
+
+
+def _currency_address(f: dict[str, Any]) -> str:
+    qualifier = f.get("qualifier")
+    return f"{f['entity_name']}.{f['predicate']}" + (f".{qualifier}" if qualifier else "")
+
+
+def _currency_line(f: dict[str, Any]) -> str:
+    pointer = f" → read_entity {f['entity_id']} for the current value."
+    if f["status"] == "superseded":
+        current = f.get("current_value")
+        now = f" Current value: {current}." if current else " No current value is recorded."
+        return (
+            f"- {_currency_address(f)}: SUPERSEDED — this note's value was replaced"
+            f" by a newer note.{now}{pointer}"
+        )
+    if f["status"] == "retracted":
+        return (
+            f"- {_currency_address(f)}: RETRACTED — no longer asserted (an extraction"
+            f" error or a correction)."
+            f"{pointer}"
+        )
+    return (
+        f"- {_currency_address(f)}: PENDING REVIEW — unverified, contested by the"
+        f" review process."
+        f"{pointer}"
+    )
+
+
+def format_currency(stale: list[dict[str, Any]]) -> str:
+    """The currency overlay appended to a note's prose: which facts the note
+    states are no longer the live value, and where the current value lives. The
+    note above is the original record; the graph knows what has since changed, so
+    the agent should prefer the current values (or read_entity to confirm)."""
+    if not stale:
+        return ""
+    header = (
+        "\n\n⚠ currency overlay (from the fact graph — the note text above is the"
+        " original record, but these facts are no longer current; prefer the values"
+        " below):"
+    )
+    return header + "\n" + "\n".join(_currency_line(f) for f in stale)
 
 
 def format_note(note: NoteInfo) -> str:
@@ -132,14 +194,19 @@ def entity_view_objects(view: dict[str, Any]) -> tuple[EntityRef, ...]:
     )
 
 
-def build_read_handlers(search: SearchService, notes: NotesRepo) -> dict[str, ToolHandler]:
+def build_read_handlers(
+    search: SearchService, notes: NotesRepo, entities: EntityReader
+) -> dict[str, ToolHandler]:
     async def search_tool(arguments: dict, ctx: ToolContext) -> ToolOutput:
         query = str(arguments.get("query", "")).strip()
         if not query:
             return ToolOutput("search needs a non-empty query.")
         limit = int(arguments.get("limit", _DEFAULT_LIMIT))
         resp = await search.search(ctx.session, query, None, limit)
-        return ToolOutput(format_search(resp), search_sources(resp))
+        # Overlay the supersession/review outcome the snippet's prose can't show.
+        note_ids = list({r.note_id for r in resp.results})
+        currency = await entities.note_currency(ctx.session, note_ids) if note_ids else {}
+        return ToolOutput(format_search(resp, currency), search_sources(resp))
 
     async def read_note_tool(arguments: dict, ctx: ToolContext) -> ToolOutput:
         note_id = str(arguments.get("note_id", "")).strip()
@@ -148,8 +215,13 @@ def build_read_handlers(search: SearchService, notes: NotesRepo) -> dict[str, To
         note = await notes.get_note(ctx.session, note_id)
         if note is None:
             return ToolOutput("No note with that id is in scope.")
+        # The note body is the original record; the graph knows what has since
+        # changed — append the currency overlay so the agent doesn't quote a value
+        # a later note superseded or a correction retracted.
+        currency = await entities.note_currency(ctx.session, [note.id])
+        body = format_note(note) + format_currency(currency.get(note.id, []))
         source = NoteSource(note_id=note.id, domain=note.domain, snippet=_note_snippet(note.body))
-        return ToolOutput(format_note(note), (source,))
+        return ToolOutput(body, (source,))
 
     return {"search": search_tool, "read_note": read_note_tool}
 
@@ -247,7 +319,7 @@ def build_registry(
     return load_registry(
         TOOLS_DIR,
         {
-            **build_read_handlers(search, notes),
+            **build_read_handlers(search, notes, entities),
             **build_entity_handlers(entities),
             **build_list_handlers(lists),
             **build_memory_handlers(memory),
