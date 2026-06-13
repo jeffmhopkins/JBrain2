@@ -112,7 +112,6 @@ export function useReviewQueue(): ReviewQueueController {
 
   const batch = useCallback(
     (decisions: BatchDecision[], label: string) => {
-      const ids = decisions.map((d) => d.id);
       const byId = new Map((pendingRef.current ?? []).map((r) => [r.id, r]));
       const moving = decisions.filter((d) => byId.has(d.id));
       if (moving.length === 0) return;
@@ -172,7 +171,6 @@ export function useReviewQueue(): ReviewQueueController {
           setUndoable(null);
           setActionError("couldn't save those decisions — try again.");
         });
-      void ids;
     },
     [take],
   );
