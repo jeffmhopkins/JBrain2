@@ -3316,7 +3316,7 @@ button.small {
    A labelled 44px button expands the tool steps in place — no flip, no 3D, no
    swipe. The body animates open with a grid-rows ease so content stays in flow. */
 .fb-shell .fb-worked {
-  margin-top: 8px;
+  margin-top: 6px;
   border-top: 1px solid var(--border);
 }
 .fb-shell .fb-worked-btn {
@@ -3325,7 +3325,7 @@ button.small {
   gap: 8px;
   width: 100%;
   min-height: 44px;
-  padding: 10px 2px 8px;
+  padding: 8px 2px 6px;
   background: none;
   border: none;
   font: inherit;
@@ -3334,17 +3334,17 @@ button.small {
   cursor: pointer;
 }
 .fb-shell .fb-worked-btn .tw-ic {
-  width: 15px;
-  height: 15px;
+  width: 14px;
+  height: 14px;
   flex: none;
-  color: var(--text-3);
+  color: var(--text-2);
 }
 .fb-shell .fb-worked-lab {
-  font-size: 13px;
+  font-size: 12.5px;
   font-weight: 500;
 }
 .fb-shell .fb-worked-meta {
-  font-size: 12px;
+  font-size: 11.5px;
   color: var(--text-3);
 }
 .fb-shell .fb-worked-fail {
@@ -3355,7 +3355,7 @@ button.small {
   height: 15px;
   flex: none;
   margin-left: auto;
-  color: var(--text-3);
+  color: var(--text-2);
   transition: transform 0.16s ease-out;
 }
 .fb-shell .fb-worked.open .fb-worked-caret {
@@ -3390,10 +3390,10 @@ button.small {
 .fb-shell .fb-step-row {
   display: flex;
   align-items: center;
-  gap: 9px;
+  gap: 8px;
   width: 100%;
-  min-height: 42px;
-  padding: 7px 8px;
+  min-height: 38px;
+  padding: 5px 8px;
   background: none;
   border: none;
   font: inherit;
@@ -3410,9 +3410,17 @@ button.small {
 .fb-shell .fb-step.err .fb-step-row .tw-ic {
   color: var(--rose);
 }
+/* the fallback dot for a tool with no dedicated glyph — a small centered mark,
+   not the full 15px icon box (which would render as a big muted disc) */
+.fb-shell .fb-step-row .tw-bullet {
+  width: 7px;
+  height: 7px;
+  margin: 0 4px;
+  background: var(--text-2);
+}
 .fb-shell .fb-step-lab {
   flex: 1;
-  font-size: 13px;
+  font-size: 12.5px;
   color: var(--text);
 }
 .fb-shell .fb-step-mark {
@@ -3430,14 +3438,14 @@ button.small {
   animation: fb-breathe 1.5s ease-in-out infinite;
 }
 .fb-shell .fb-step-cnt {
-  font-size: 11px;
+  font-size: 10.5px;
   color: var(--text-3);
 }
 .fb-shell .fb-step-caret {
   width: 14px;
   height: 14px;
   flex: none;
-  color: var(--text-3);
+  color: var(--text-2);
   transition: transform 0.16s ease-out;
 }
 .fb-shell .fb-step.open .fb-step-caret {
@@ -3456,43 +3464,43 @@ button.small {
   overflow: hidden;
 }
 .fb-shell .fb-step.open .fb-step-di {
-  padding-bottom: 10px;
+  padding-bottom: 6px;
 }
 
 /* arguments — a flat one-level key/value list, monospace values */
 .fb-shell .fb-args {
   display: grid;
   grid-template-columns: auto 1fr;
-  gap: 3px 12px;
-  margin: 4px 0 10px;
-  padding-left: 24px;
+  gap: 2px 12px;
+  margin: 2px 0 8px;
+  padding-left: 23px;
 }
 .fb-shell .fb-args-row {
   display: contents;
 }
 .fb-shell .fb-args dt {
-  font-size: 11px;
+  font-size: 10.5px;
   color: var(--text-3);
 }
 .fb-shell .fb-args dd {
-  font-size: 12px;
+  font-size: 11.5px;
   color: var(--text-2);
   font-family: var(--font-mono);
   word-break: break-word;
 }
 .fb-shell .fb-res-lab {
-  font-size: 11px;
+  font-size: 10.5px;
   letter-spacing: 0.04em;
   text-transform: uppercase;
   color: var(--text-3);
-  padding-left: 24px;
-  margin-bottom: 5px;
+  padding-left: 23px;
+  margin-bottom: 4px;
 }
 .fb-shell .fb-res-txt {
-  font-size: 12.5px;
+  font-size: 12px;
   color: var(--text-2);
-  line-height: 1.5;
-  padding-left: 24px;
+  line-height: 1.45;
+  padding-left: 23px;
 }
 .fb-shell .fb-res-txt.err {
   color: var(--rose);
@@ -3500,20 +3508,20 @@ button.small {
 
 /* the raw result rung — clamped monospace inset with copy + show-all */
 .fb-shell .fb-raw-wrap {
-  padding-left: 24px;
-  margin-top: 9px;
+  padding-left: 23px;
+  margin-top: 7px;
 }
 .fb-shell .fb-raw-toggle {
   display: inline-flex;
   align-items: center;
-  min-height: 30px;
-  padding: 4px 10px;
+  min-height: 28px;
+  padding: 3px 10px;
   background: none;
   border: 1px solid var(--border);
   border-radius: 999px;
   font: inherit;
-  font-size: 11px;
-  color: var(--text-3);
+  font-size: 10.5px;
+  color: var(--text-2);
   cursor: pointer;
 }
 .fb-shell .fb-raw-toggle:hover {
@@ -3526,13 +3534,13 @@ button.small {
 }
 .fb-shell .fb-raw-pre {
   margin: 0;
-  padding: 10px 40px 10px 12px;
+  padding: 8px 40px 8px 12px;
   background: var(--surface-2);
   border: 1px solid var(--border);
   border-radius: 10px;
   font-family: var(--font-mono);
-  font-size: 11px;
-  line-height: 1.55;
+  font-size: 10.5px;
+  line-height: 1.5;
   color: var(--text-2);
   white-space: pre-wrap;
   word-break: break-word;
@@ -3597,17 +3605,17 @@ button.small {
 .fb-shell .toolwork-srcs {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding-left: 24px;
+  gap: 5px;
+  padding-left: 23px;
 }
 .fb-shell .toolwork-card {
   display: flex;
   align-items: center;
   gap: 9px;
   width: 100%;
-  padding: 8px 10px;
+  padding: 6px 10px;
   border: 1px solid var(--border);
-  border-radius: 11px;
+  border-radius: 10px;
   background: var(--surface-2);
   color: var(--text);
   font: inherit;
@@ -3628,7 +3636,7 @@ button.small {
 }
 .fb-shell .toolwork-card .tw-text {
   flex: 1;
-  font-size: 12px;
+  font-size: 11.5px;
   color: var(--text-2);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -3638,7 +3646,7 @@ button.small {
   width: 14px;
   height: 14px;
   flex: none;
-  color: var(--text-3);
+  color: var(--text-2);
 }
 
 /* live AI status line — sits at the surface's bottom edge, above the omnibox.

@@ -551,5 +551,12 @@ function StepGlyph({ name }: { name: string }): ReactNode {
       </svg>
     );
   }
+  if (name.includes("list")) {
+    return (
+      <svg className="tw-ic" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01" />
+      </svg>
+    );
+  }
   return <span className="tw-ic tw-bullet" aria-hidden="true" />;
 }
