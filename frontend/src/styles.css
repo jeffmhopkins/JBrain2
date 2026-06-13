@@ -4297,10 +4297,11 @@ input.ld-title {
   justify-content: center;
   cursor: pointer;
 }
-/* Force the glyph color explicitly: the svg's stroke="currentColor" attribute
-   loses to any inherited `color`, so pin the stroke here rather than rely on it. */
+/* Fixed dark ink on the rose pill. The accent is theme-independent, so the glyph
+   must be too: var(--bg) flips to light in light mode → a light glyph on rose,
+   invisible. Matches the checkbox tick's ink on its green fill. */
 .ld-del svg {
-  stroke: var(--bg);
+  stroke: #0e0f11;
   fill: none;
 }
 .ld-add {
