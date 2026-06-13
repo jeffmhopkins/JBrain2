@@ -337,9 +337,18 @@ node** (`me.blood_pressure → 128/82 mmHg`,
 monospace; subject headers double as entity navigation. Tapping a fact
 cites back to the **highlighted source words**. The **entity page is a
 hub**: centered node with kind/alias/domain meta, current facts as
-outbound edges, **revision histories as vertical timeline rails** (each
-dot a supersession link citing its note), inbound edges from other
-entities, provisional state marked. Correction is never a direct edit —
+outbound edges, inbound edges from other entities, provisional state
+marked. **The page is current-only [decided: declutter]**: each property
+shows its live value (a `pending_review` value stays on the page — it needs
+the owner), and prior **once-true superseded** values collapse behind a
+quiet `N earlier →` disclosure that opens that property's **revision
+timeline rail** (each dot a supersession link citing its note) in the
+shared `Sheet`. Muting stale values inline only dimmed them while keeping
+their full footprint, so a multi-revision entity clogged; the rail is the
+same settled paradigm, just relocated off the default view. **Retracted**
+facts (machine extraction errors — never true) are excluded from the value
+view entirely (audit-only, a later opt-in surface), never shown beside
+once-true history. Correction is never a direct edit —
 facts route to **review / pin** with tap-again confirms; the pipeline owns
 the data. Temper the raw notation toward the lowercase-calm voice during
 implementation (the chosen mock's `~provisional`/`.96` chrome reads too

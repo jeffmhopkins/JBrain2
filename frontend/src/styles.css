@@ -2071,6 +2071,26 @@ button.small {
   min-height: 24px;
 }
 
+/* Quiet disclosure under a current edge: opens the property's history sheet.
+   De-emphasized so current values dominate; a full tap target on mobile. */
+.pred-history-toggle {
+  align-self: flex-start;
+  min-height: 44px;
+  padding: 0;
+  margin-top: -8px;
+  background: transparent;
+  border: none;
+  color: var(--text-3);
+  font-size: var(--fs-micro);
+  text-align: left;
+  cursor: pointer;
+}
+
+/* The timeline rail, hosted in the shared sheet rather than inline. */
+.sheet-rail {
+  margin: 4px 0 8px;
+}
+
 /* Vertical timeline rail: newest at top, each dot a fact citing its note. */
 .timeline-rail {
   list-style: none;
