@@ -3,6 +3,7 @@ import { FullBrainSurface } from "../agent/FullBrainSurface";
 import { type FullBrainDeps, useFullBrain } from "../agent/useFullBrain";
 import { Omnibox } from "../components/Omnibox";
 import { Stream } from "../components/Stream";
+import { TopBar } from "../components/TopBar";
 import { MODES, type SegState } from "../notes/modes";
 import type { NoteActions } from "../notes/useNoteActions";
 import type { NotesController, StreamItem } from "../notes/useNotes";
@@ -70,8 +71,19 @@ export function HomeScreen({
   const conversational = seg.mode === "research" || seg.mode === "fullbrain";
   const meta = MODES[seg.mode];
 
+  // In Full Brain the session's name owns the top bar (a tap reopens the list),
+  // so the transcript starts right under it; other modes keep the wordmark.
+  const fbSession =
+    seg.mode === "fullbrain"
+      ? {
+          title: fb.active ? fb.active.title || "Untitled session" : "Full Brain",
+          onOpen: () => fb.setPanel("sessions"),
+        }
+      : undefined;
+
   return (
     <>
+      <TopBar syncStatus={notes.syncStatus} onBolt={onOpenLauncher} session={fbSession} />
       {seg.mode === "fullbrain" ? (
         <FullBrainSurface fb={fb} onOpenNote={onOpenNoteById} onOpenEntity={onOpenEntity} />
       ) : conversational ? (

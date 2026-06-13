@@ -130,6 +130,23 @@ h3 {
   font-style: normal;
 }
 
+/* The Full Brain session name standing in for the wordmark: same weight/size so
+   it sits in the wordmark's slot, but it can shrink and ellipsize a long title
+   (min-width:0) without crowding the sync dot / launcher controls. */
+.session-title {
+  border: none;
+  background: none;
+  padding: 0;
+  font-weight: 700;
+  font-size: var(--fs-screen);
+  color: var(--text);
+  text-align: left;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .back-btn {
   background: none;
   border: none;
@@ -3098,23 +3115,6 @@ button.small {
   text-align: center;
   line-height: 1.5;
 }
-/* Just the session name, centered and quiet — the panels are a swipe away. */
-.fb-shell .fb-title {
-  align-self: center;
-  border: none;
-  background: none;
-  font: inherit;
-  font-size: 15px;
-  font-weight: 600;
-  letter-spacing: 0.01em;
-  color: var(--text);
-  padding: 12px 16px 6px;
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 /* transcript */
 .fb-shell .fb-chat {
   flex: 1;

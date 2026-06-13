@@ -149,10 +149,11 @@ describe("FullBrainSurface", () => {
     await waitFor(() => expect(listProposals.mock.calls.length).toBeGreaterThan(initial));
   });
 
-  it("shows the active session's name up top with panels closed", async () => {
+  it("opens the active session's chat with the panels closed", async () => {
     render(<Harness d={deps()} />);
     await waitFor(() => expect(screen.getByLabelText("Conversation")).toBeInTheDocument());
-    expect(document.querySelector(".fb-title")?.textContent).toBe("Recap");
+    // The session name now rides in the top bar (HomeScreen owns it); here the
+    // surface just lands on the transcript with no panel pulled in.
     expect(document.querySelector(".panel.left.open")).not.toBeInTheDocument();
   });
 
@@ -429,16 +430,10 @@ describe("FullBrainSurface", () => {
     fireEvent.click(screen.getByText("＋ New session — choose sources"));
     fireEvent.click(screen.getByRole("button", { name: /Start session/ }));
 
+    // The created session becomes active: its transcript shows and the picker
+    // closes behind it. (Its name surfaces in the top bar, tested at HomeScreen.)
     await waitFor(() => expect(screen.getByLabelText("Conversation")).toBeInTheDocument());
-    expect(document.querySelector(".fb-title")?.textContent).toBe("labs");
-  });
-
-  it("tapping the session name reopens the Sessions panel", async () => {
-    render(<Harness d={deps()} />);
-    await waitFor(() => screen.getByLabelText("Conversation"));
-
-    fireEvent.click(screen.getByRole("button", { name: "Recap" }));
-    expect(document.querySelector(".panel.left.open")).toBeInTheDocument();
+    expect(document.querySelector(".panel.left.open")).not.toBeInTheDocument();
   });
 
   it("swipes shuttle the panels in and the opposite swipe sends them back", async () => {
