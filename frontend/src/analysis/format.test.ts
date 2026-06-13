@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { FactOut } from "../api/client";
-import { factValue, fmtQuantity, fmtTemporal } from "./format";
+import { dedupeTokens, factValue, fmtQuantity, fmtTemporal } from "./format";
 
 // The field bug only reproduces in a negative-offset zone: UTC-midnight
 // calendar dates rendered locally slip to the previous evening. Node re-reads
@@ -31,9 +31,11 @@ describe("fmtTemporal", () => {
     expect(fmtTemporal("1986-03-19T00:00:00Z", "unknown")).toBe("Mar 19, 1986");
   });
 
-  it("instant precision keeps local rendering — a real moment in time", () => {
-    // 03:00 UTC is the prior evening in Denver (UTC-6/-7): locals saw it then.
-    expect(fmtTemporal("2026-06-10T03:00:00Z", "instant")).toBe("Jun 9, 2026");
+  it("instant precision renders local date AND time — a real moment", () => {
+    // 03:00 UTC is the prior evening in Denver (UTC-6/-7): 9:00 PM the day before.
+    expect(fmtTemporal("2026-06-10T03:00:00Z", "instant")).toBe("Jun 9, 2026, 9:00 PM");
+    // An appointment instant shows its clock time, not just the date.
+    expect(fmtTemporal("2026-06-16T20:00:00Z", "instant")).toBe("Jun 16, 2026, 2:00 PM");
   });
 
   it("null renders the em-dash placeholder", () => {
@@ -108,5 +110,46 @@ describe("fmtQuantity / factValue imperial display", () => {
       object_entity_name: "Celine Hopkins",
     };
     expect(factValue(spouse)).toBe("Celine Hopkins");
+  });
+
+  it("a date-valued fact (scheduledTime) renders the time, not the sentence", () => {
+    const sched: FactOut = {
+      ...fact({ start: "2026-06-16T20:00:00Z", precision: "instant" }),
+      predicate: "scheduledTime",
+      kind: "state",
+      temporal_precision: "instant",
+      statement: "Hematologist appointment is scheduled for Tuesday at 2:00 PM.",
+    };
+    expect(factValue(sched)).toBe("Jun 16, 2026, 2:00 PM");
+    // Falls back to the fact's temporal_precision when value_json omits it.
+    expect(factValue({ ...sched, value_json: { start: "2026-06-16T20:00:00Z" } })).toBe(
+      "Jun 16, 2026, 2:00 PM",
+    );
+  });
+});
+
+describe("dedupeTokens", () => {
+  function tok(start: string | null, phrase: string, end: string | null = null) {
+    return { resolved_start: start, resolved_end: end, surface_phrase: phrase };
+  }
+
+  it("collapses tokens that resolve to the same instant, keeping the first", () => {
+    const out = dedupeTokens([
+      tok("2026-06-16T20:00:00Z", "Tuesday"),
+      tok("2026-06-16T20:00:00Z", "Tuesday"),
+      tok("2026-06-16T20:00:00Z", "1400 on Tuesday"),
+    ]);
+    expect(out).toHaveLength(1);
+    expect(out[0]?.surface_phrase).toBe("Tuesday");
+  });
+
+  it("keeps distinct instants and distinct unresolved phrases", () => {
+    const out = dedupeTokens([
+      tok("2026-06-16T20:00:00Z", "Tuesday"),
+      tok("2026-06-18T20:00:00Z", "Thursday"),
+      tok(null, "sometime"),
+      tok(null, "later"),
+    ]);
+    expect(out).toHaveLength(4);
   });
 });

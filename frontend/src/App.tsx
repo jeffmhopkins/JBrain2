@@ -303,7 +303,9 @@ export function App() {
             <SettingsScreen deviceLabel={session.principal.label} onLogout={() => void logout()} />
           )}
           {card === "search" && <SearchScreen onOpenResult={openNoteFromSearch} />}
-          {card === "calendar" && <CalendarScreen />}
+          {card === "calendar" && (
+            <CalendarScreen onOpenNote={(noteId) => void openNoteById(noteId)} />
+          )}
           {card === "review" && <ReviewScreen />}
           {/* Rows open the same entity layer the analysis chips use. */}
           {card === "entities" && <EntityListScreen onOpenEntity={setEntityView} />}

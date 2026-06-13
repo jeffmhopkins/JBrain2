@@ -1353,6 +1353,19 @@ h3 {
   color: var(--text-3);
   font-size: 12px;
 }
+/* The source-note row is a tappable button when an appointment has a source. */
+.cal-opennote {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  color: var(--steel);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
 
 .theme-picker {
   display: flex;

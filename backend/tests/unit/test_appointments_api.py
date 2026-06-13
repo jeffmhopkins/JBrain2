@@ -86,6 +86,7 @@ def test_lists_appointments_with_mapped_fields(
     assert a["status"] == "tentative" and a["recurring"] is True and a["rrule"] == "FREQ=WEEKLY"
     assert a["location"] == "Maple Dental"
     assert a["attendees"] == ["Dr. Nguyen"]  # blank names dropped
+    assert a["source_note_id"] == "n1"  # so the calendar can open the source note
     # Defaults: a year-back lower bound, cancelled included for the calendar.
     call = appts.calls[-1]
     assert call["since"] is not None and call["include_cancelled"] is True

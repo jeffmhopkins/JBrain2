@@ -50,6 +50,12 @@ export function factValue(fact: FactOut): string {
     for (const key of ["name", "place"] as const) {
       if (typeof o[key] === "string") return o[key] as string;
     }
+    // A date-valued state fact (scheduledTime, startDate, …) stores its datum as
+    // {start: ISO}; render the concise date/time, not the prose statement.
+    if (typeof o.start === "string") {
+      const precision = typeof o.precision === "string" ? o.precision : fact.temporal_precision;
+      return fmtTemporal(o.start, precision);
+    }
   }
   return fact.statement;
 }
@@ -74,12 +80,43 @@ export function fmtTemporal(iso: string | null, precision: string): string {
   if (precision === "month") {
     return d.toLocaleDateString(undefined, { month: "short", year: "numeric", timeZone });
   }
+  if (precision === "instant") {
+    // An instant is a real clock time — show it (local zone), so an appointment
+    // reads "Jun 16, 2026, 2:00 PM" instead of just the date. Day/month/year
+    // stay date-only below so a calendar date never shows a spurious 12:00 AM.
+    return d.toLocaleString(undefined, {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    });
+  }
   return d.toLocaleDateString(undefined, {
     month: "short",
     day: "numeric",
     year: "numeric",
     timeZone,
   });
+}
+
+/** Collapse temporal tokens that resolve to the SAME instant. The extractor
+ * emits a token per date PHRASE plus one per fact temporal, so "Tuesday" and
+ * "1400 on Tuesday" become two pills for one time; keep the first per resolved
+ * (start, end). Unresolved phrases (null start) stay distinct by phrase. */
+export function dedupeTokens<
+  T extends { resolved_start: string | null; resolved_end: string | null; surface_phrase: string },
+>(tokens: T[]): T[] {
+  const seen = new Set<string>();
+  const out: T[] = [];
+  for (const t of tokens) {
+    const key =
+      t.resolved_start === null ? `p:${t.surface_phrase}` : `${t.resolved_start}|${t.resolved_end}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(t);
+  }
+  return out;
 }
 
 /** A fact's validity span for timeline rails: "Mar 2023 → Jun 2026". */

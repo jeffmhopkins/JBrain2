@@ -16,9 +16,12 @@ function appt(over: Partial<AppointmentOut>): AppointmentOut {
     rrule: null,
     recurring: false,
     attendees: [],
+    source_note_id: null,
     ...over,
   };
 }
+
+const noop = () => {};
 
 function stubFetch(events: AppointmentOut[]) {
   const m = vi.fn<typeof fetch>(async (input) => {
@@ -53,7 +56,7 @@ function tomorrow(): string {
 describe("CalendarScreen", () => {
   it("defaults to month and shows today's agenda", async () => {
     stubFetch([appt({ id: "A1", title: "Dentist", start: today() })]);
-    render(<CalendarScreen />);
+    render(<CalendarScreen onOpenNote={noop} />);
     // Month is the default tab.
     expect(screen.getByRole("tab", { name: "Month" })).toHaveAttribute("aria-selected", "true");
     // Today is selected, so its agenda lists the appointment.
@@ -65,7 +68,7 @@ describe("CalendarScreen", () => {
       appt({ id: "A1", title: "Dentist", start: today() }),
       appt({ id: "A2", title: "Pay rent", domain: "finance", all_day: true, start: tomorrow() }),
     ]);
-    render(<CalendarScreen />);
+    render(<CalendarScreen onOpenNote={noop} />);
     fireEvent.click(screen.getByRole("tab", { name: "Tasks" }));
     await waitFor(() => expect(screen.getByText("Dentist")).toBeInTheDocument());
     expect(screen.getByText("Pay rent")).toBeInTheDocument();
@@ -76,7 +79,7 @@ describe("CalendarScreen", () => {
 
   it("opens an event sheet noting it's projected from notes", async () => {
     stubFetch([appt({ id: "A1", title: "Dentist", status: "tentative", start: today() })]);
-    render(<CalendarScreen />);
+    render(<CalendarScreen onOpenNote={noop} />);
     fireEvent.click(screen.getByRole("tab", { name: "Tasks" }));
     await waitFor(() => screen.getByText("Dentist"));
     fireEvent.click(screen.getByText("Dentist"));
@@ -87,8 +90,19 @@ describe("CalendarScreen", () => {
 
   it("shows an empty state with no appointments", async () => {
     stubFetch([]);
-    render(<CalendarScreen />);
+    render(<CalendarScreen onOpenNote={noop} />);
     fireEvent.click(screen.getByRole("tab", { name: "Tasks" }));
     await waitFor(() => expect(screen.getByText("No upcoming appointments.")).toBeInTheDocument());
+  });
+
+  it("opens the source note from the event sheet when there is one", async () => {
+    const onOpenNote = vi.fn();
+    stubFetch([appt({ id: "A1", title: "Dentist", start: today(), source_note_id: "note-7" })]);
+    render(<CalendarScreen onOpenNote={onOpenNote} />);
+    fireEvent.click(screen.getByRole("tab", { name: "Tasks" }));
+    await waitFor(() => screen.getByText("Dentist"));
+    fireEvent.click(screen.getByText("Dentist"));
+    fireEvent.click(screen.getByText(/open the source note/i));
+    expect(onOpenNote).toHaveBeenCalledWith("note-7");
   });
 });

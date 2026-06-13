@@ -39,6 +39,7 @@ class AppointmentOut(BaseModel):
     rrule: str | None
     recurring: bool
     attendees: list[str]
+    source_note_id: str | None
 
     @classmethod
     def of(cls, a: AppointmentInfo) -> "AppointmentOut":
@@ -54,6 +55,7 @@ class AppointmentOut(BaseModel):
             rrule=a.rrule,
             recurring=a.recurring,
             attendees=[str(p.get("name", "")) for p in a.attendees if p.get("name")],
+            source_note_id=a.source_note_id,
         )
 
 

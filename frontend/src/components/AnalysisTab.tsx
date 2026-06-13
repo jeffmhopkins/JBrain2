@@ -8,7 +8,7 @@
 
 import { type KeyboardEvent, useCallback, useEffect, useRef, useState } from "react";
 import { EdgeValue, FactCitation, KindBadge, StatusChip } from "../analysis/bits";
-import { edgePath, fmtConfidence, fmtTemporal } from "../analysis/format";
+import { dedupeTokens, edgePath, fmtConfidence, fmtTemporal } from "../analysis/format";
 import { type AnalysisEntity, type FactOut, type NoteAnalysis, api } from "../api/client";
 import { awaitingImageCount } from "../notes/lifecycle";
 import type { StreamAttachment } from "../notes/useNotes";
@@ -488,7 +488,7 @@ export function AnalysisTab({
         <section>
           <h3 className="section-header">Dates</h3>
           <div className="token-row">
-            {analysis.temporal_tokens.map((token) => (
+            {dedupeTokens(analysis.temporal_tokens).map((token) => (
               <span key={token.id} className="token-chip">
                 {fmtTemporal(token.resolved_start, token.temporal_precision)}
                 {token.resolved_end !== null &&
