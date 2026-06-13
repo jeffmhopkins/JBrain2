@@ -487,6 +487,19 @@ def test_symmetric_predicate_reflects_with_same_predicate() -> None:
     assert inverse_predicate("spouse") == "spouse"
     assert inverse_predicate("sibling_of") == "sibling_of"
     assert inverse_predicate("co_founder") == "co_founder"
+    # Twins are siblings; a bare `twin` predicate reciprocates symmetrically too,
+    # so "Lydian and Elora are twins" mirrors onto Elora's stream.
+    assert inverse_predicate("sibling") == "sibling"
+    assert inverse_predicate("twin") == "twin"
+
+
+def test_kinship_parent_child_reflect_with_named_inverse() -> None:
+    # The four-daughters fix: the kinship predicates the prompt steers toward
+    # reciprocate, so a parent's `children` edge mirrors to the child's `parent`
+    # edge (and a bare `child` reads the same direction as `children`).
+    assert inverse_predicate("children") == "parent"
+    assert inverse_predicate("parent") == "children"
+    assert inverse_predicate("child") == "parent"
 
 
 def test_asymmetric_predicate_reflects_with_named_inverse() -> None:

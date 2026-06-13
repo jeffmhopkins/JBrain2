@@ -1,0 +1,37 @@
+{
+  "name": "twins are a symmetric sibling edge, mirrored onto the other twin",
+  "description": "The twin half of the four-daughters discrepancy: 'Lydian and Elora are identical twin girls' came back as an `attribute` (twinStatus) on Lydian whose VALUE was the whole sentence — so Elora carried nothing and the value rendered as prose instead of an edge. v10 teaches that a relationship between two named people is a `sibling` relationship edge (qualifier 'twin'), never a sentence-valued attribute; the pipeline then materializes the symmetric reciprocal on Elora's stream. The model emits only the one directed edge.",
+  "steps": [
+    {
+      "domain": "general",
+      "created_at": "2026-06-12T22:05:00-06:00",
+      "body": "Lydian and Elora are identical twin girls.",
+      "extraction": {
+        "title": "Lydian and Elora",
+        "tags": ["family", "twins", "daughters"],
+        "mentions": [
+          {"name": "Lydian", "kind": "Person", "surface_text": "Lydian"},
+          {"name": "Elora", "kind": "Person", "surface_text": "Elora"}
+        ],
+        "facts": [
+          {"predicate": "sibling", "qualifier": "twin", "kind": "relationship", "statement": "Lydian and Elora are identical twin sisters.", "value_json": null, "assertion": "asserted", "entity_ref": "Lydian", "object_entity_ref": "Elora", "temporal": null, "domain": "general", "confidence": 0.95}
+        ],
+        "temporal_tokens": []
+      }
+    }
+  ],
+  "expect": {
+    "facts": [
+      {"entity": "Lydian", "predicate": "sibling", "qualifier": "twin", "kind": "relationship", "value_contains": "Elora", "status": "active", "chained": false},
+      {"entity": "Elora", "predicate": "sibling", "qualifier": "twin", "kind": "relationship", "value_contains": "Lydian", "status": "active", "chained": false}
+    ],
+    "absent_facts": [
+      {"predicate": "twinStatus"},
+      {"entity": "Lydian", "kind": "attribute", "value_contains": "twin"}
+    ],
+    "entities": [
+      {"name": "Lydian", "kind": "Person", "status": "provisional"},
+      {"name": "Elora", "kind": "Person", "status": "provisional"}
+    ]
+  }
+}

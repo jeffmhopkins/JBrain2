@@ -71,6 +71,7 @@ from jbrain.analysis.prompt import (
     PROMPT_VERSION,
     SYSTEM_PROMPT,
     build_user_prompt,
+    fact_cap,
     prompt_block,
 )
 from jbrain.analysis.supersession import (
@@ -207,12 +208,16 @@ class AnalysisPipeline:
             prompt_block(r.text, source_kind=r.source_kind, filename=r.filename) for r in chunk_rows
         ] or [body]
 
+        # Length-scaled fact budget: the SAME cap the prompt advertises and the
+        # parser enforces (they must agree), computed once over the content the
+        # model actually sees.
+        cap = fact_cap("\n\n".join(texts))
         try:
             result = await self._router.complete(
                 "note.extract",
                 system=SYSTEM_PROMPT,
                 user_text=build_user_prompt(
-                    texts, anchor=local_anchor(captured_at, tz_offset), domain=domain
+                    texts, anchor=local_anchor(captured_at, tz_offset), domain=domain, max_facts=cap
                 ),
                 json_schema=EXTRACTION_SCHEMA,
                 max_tokens=EXTRACT_MAX_TOKENS,
@@ -225,6 +230,7 @@ class AnalysisPipeline:
             extraction = parse_extraction(
                 result.parsed,
                 anchor=local_anchor(captured_at, tz_offset) if tz_offset is not None else None,
+                max_facts=cap,
             )
         except (LlmBadResponseError, ExtractionError, SchemaError) as exc:
             # The adapter already spent its one re-ask: retrying the job would
