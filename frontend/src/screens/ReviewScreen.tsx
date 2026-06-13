@@ -1,48 +1,53 @@
-// Review inbox (docs/DESIGN.md "Review inbox" — split segments, settled in
-// a three-way review): a segmented control with live count pills splits the
-// screen into OPEN — the one-at-a-time triage flow (full-screen card with
-// progress dots, the cited note text as the hero, a "what happens" panel,
-// stacked choices, fixed skip · reject · accept bar) — and RESOLVED, the
-// reverse-chronological decision log. Log rows expand inline into the full
-// decision record (cited evidence, choices offered with the chosen one
-// marked) and carry an amber tap-again reopen whose consequence text names
-// the unwind; reopened rows tombstone in place (struck-through decided
-// line). Destructive choices use the armed tap-again with a 3s auto-disarm.
+// Review inbox — split-inbox redesign (docs/DESIGN.md "Review inbox"). Three
+// lanes (pending · deferred · decided) behind a segmented filter. The list is
+// browsable with a selection mode for bulk actions; tapping a row pushes a
+// detail view with prev/next so you move between items without returning to
+// the list. The detail shows the proposal as a before→after (collisions) or a
+// what-happens panel, the cited evidence, and the proposals to choose among —
+// plus two universal escape hatches, defer and "talk it over", so no item is
+// ever a reject-only dead end. Every decision raises an undo snackbar (undo is
+// the server's own unwind). Decided rows reopen; deferred rows resume.
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { MarkedText } from "../analysis/bits";
 import type { ReviewItem } from "../api/client";
+import type { ReviewFilter } from "../api/client";
 import { DOMAIN_COLOR, DOMAIN_TITLE } from "../notes/modes";
 import { type ReviewQueueController, useReviewQueue } from "../review/useReviewQueue";
 
 const DISARM_MS = 3000;
 
-interface ParsedChoice {
+interface Proposal {
   action: string;
   label: string;
   detail: string | null;
   destructive: boolean;
 }
 
-interface ParsedPayload {
+interface Parsed {
   summary: string | null;
+  rationale: string | null;
   snippet: string | null;
+  confidence: number | null;
   accept: string | null;
   reject: string | null;
-  choices: ParsedChoice[];
+  choices: Proposal[];
   acceptDestructive: boolean;
   rejectDestructive: boolean;
+  beforeLabel: string | null;
+  afterLabel: string | null;
+  candidateName: string | null;
 }
 
-/** The contract leaves `payload` free-form; read the mock convention defensively. */
-function parsePayload(payload: Record<string, unknown>): ParsedPayload {
+function parsePayload(payload: Record<string, unknown>): Parsed {
   const str = (v: unknown): string | null => (typeof v === "string" ? v : null);
+  const num = (v: unknown): number | null => (typeof v === "number" ? v : null);
   const outcomes =
     payload.outcomes !== null && typeof payload.outcomes === "object"
       ? (payload.outcomes as Record<string, unknown>)
       : {};
-  const choices = Array.isArray(payload.choices)
-    ? payload.choices.flatMap((c: unknown): ParsedChoice[] => {
+  const choices: Proposal[] = Array.isArray(payload.choices)
+    ? payload.choices.flatMap((c: unknown): Proposal[] => {
         if (c === null || typeof c !== "object") return [];
         const o = c as Record<string, unknown>;
         const action = str(o.action);
@@ -51,24 +56,82 @@ function parsePayload(payload: Record<string, unknown>): ParsedPayload {
         return [{ action, label, detail: str(o.detail), destructive: o.destructive === true }];
       })
     : [];
+  const before = choices.find((c) => c.action === "accept_a") ?? null;
+  const after = choices.find((c) => c.action === "accept_b") ?? null;
   return {
     summary: str(payload.summary),
+    rationale: str(payload.rationale),
     snippet: str(payload.snippet),
+    confidence: num(payload.confidence),
     accept: str(outcomes.accept),
     reject: str(outcomes.reject),
     choices,
     acceptDestructive: payload.accept_destructive === true,
     rejectDestructive: payload.reject_destructive === true,
+    beforeLabel: before?.label ?? null,
+    afterLabel: after?.label ?? null,
+    candidateName: str(payload.name),
   };
+}
+
+/** The proposals to choose among, per kind. Choices carry their own; the
+ * outcome kinds synthesize accept/reject buttons from their what-happens copy.
+ * There is always at least one — and defer/discuss sit beside them — so reject
+ * is never the only way out. */
+function proposalsFor(p: Parsed): Proposal[] {
+  if (p.choices.length > 0) return p.choices;
+  const out: Proposal[] = [];
+  if (p.accept !== null)
+    out.push({
+      action: "accept",
+      label: "approve",
+      detail: p.accept,
+      destructive: p.acceptDestructive,
+    });
+  if (p.reject !== null)
+    out.push({
+      action: "reject",
+      label: p.accept === null ? "leave unlinked" : "reject",
+      detail: p.reject,
+      destructive: p.rejectDestructive,
+    });
+  return out;
+}
+
+/** The action a bulk "approve" applies to this row, or null if it has no
+ * unambiguous approve (ambiguous mentions advertise no accept). */
+function approveActionFor(
+  item: ReviewItem,
+): { action: string; payload: Record<string, unknown> } | null {
+  const p = parsePayload(item.payload);
+  const b = p.choices.find((c) => c.action === "accept_b");
+  if (b) return { action: "accept_b", payload: { choice: b.label } };
+  if (p.accept !== null && !p.acceptDestructive) return { action: "accept", payload: {} };
+  return null;
 }
 
 function kindLabel(kind: string): string {
   return kind.replaceAll("_", " ");
 }
 
-/** Armed tap-again state shared by every destructive control on a pane:
- * first tap arms one control, a second within 3s confirms, anything else
- * (timeout, another control, advancing) disarms. */
+function confidenceBadge(c: number | null): { text: string; cls: string } | null {
+  if (c === null) return null;
+  const pct = `${Math.round(c * 100)}%`;
+  if (c >= 0.75) return { text: `high · ${pct}`, cls: "conf-high" };
+  if (c >= 0.5) return { text: `med · ${pct}`, cls: "conf-med" };
+  return { text: `low · ${pct}`, cls: "conf-low" };
+}
+
+function fmtWhen(item: ReviewItem): string {
+  const iso = item.resolved_at ?? item.resolution?.reopened_at ?? item.created_at;
+  const d = new Date(iso);
+  if (d.toDateString() === new Date().toDateString())
+    return d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+/** Armed tap-again for destructive controls: first tap arms, a second within
+ * 3s confirms; a timeout or any other control disarms. */
 function useArmed(): [string | null, (key: string) => boolean] {
   const [armed, setArmed] = useState<string | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -94,387 +157,587 @@ function useArmed(): [string | null, (key: string) => boolean] {
   return [armed, tap];
 }
 
-interface ReviewCardProps {
-  item: ReviewItem;
-  queue: ReviewQueueController;
-  canSkip: boolean;
+function DomainDot({ domain }: { domain: string }) {
+  return (
+    <span
+      className="domain-dot"
+      style={{ background: DOMAIN_COLOR[domain] ?? "var(--steel)" }}
+      title={DOMAIN_TITLE[domain] ?? domain}
+    />
+  );
 }
 
-function ReviewCard({ item, queue, canSkip }: ReviewCardProps) {
-  const parsed = parsePayload(item.payload);
-  const [armed, tap] = useArmed();
+// ===== List =====
 
-  function fire(
-    key: string,
-    destructive: boolean,
-    action: string,
-    payload?: Record<string, unknown>,
-  ) {
-    if (destructive && !tap(key)) return;
-    queue.resolve(action, payload);
-  }
+interface ListRowProps {
+  item: ReviewItem;
+  selectable: boolean;
+  selected: boolean;
+  onToggle: () => void;
+  onOpen: () => void;
+}
 
+function ListRow({ item, selectable, selected, onToggle, onOpen }: ListRowProps) {
+  const p = parsePayload(item.payload);
+  const conf = confidenceBadge(p.confidence);
+  const decided = item.status === "resolved" || item.status === "dismissed";
+  const dismissed = item.status === "dismissed";
+  const isDiscuss = item.resolution?.action === "discuss";
   return (
-    <div className="review-card">
-      <div className="review-head">
-        <span className="kind-badge">{kindLabel(item.kind)}</span>
-        <span
-          className="domain-dot"
-          style={{ background: DOMAIN_COLOR[item.domain] ?? "var(--steel)" }}
-          title={DOMAIN_TITLE[item.domain] ?? item.domain}
-        />
-        {item.resolution?.reopened_at !== undefined && (
-          <span className="state-chip chip-reopened">reopened</span>
-        )}
-      </div>
-
-      {parsed.summary !== null && <p className="review-summary">{parsed.summary}</p>}
-
-      {parsed.snippet !== null && (
-        <blockquote className="review-hero">
-          <MarkedText text={parsed.snippet} />
-        </blockquote>
+    <div className={`rrow2${dismissed ? " rrow-dismissed" : ""}`}>
+      {selectable && (
+        <label className="rrow-check">
+          <input
+            type="checkbox"
+            className="rrow-cbox"
+            checked={selected}
+            aria-label={`select ${p.summary ?? item.kind}`}
+            onChange={onToggle}
+          />
+        </label>
       )}
-
-      {(parsed.accept !== null || parsed.reject !== null) && (
-        <div className="review-outcomes">
-          <h3 className="section-header">What happens</h3>
-          {parsed.accept !== null && (
-            <p className="outcome-row">
-              <span className="outcome-verb outcome-accept">accept</span> — {parsed.accept}
-            </p>
+      <button type="button" className="rrow-open" onClick={onOpen}>
+        <span className="rrow-line">
+          <span className="kind-badge">{kindLabel(item.kind)}</span>
+          <DomainDot domain={item.domain} />
+          {isDiscuss && <span className="state-chip chip-discuss">with assistant</span>}
+          <span className="rrow-when">{fmtWhen(item)}</span>
+        </span>
+        <span className="rrow-sum">{p.summary ?? item.kind}</span>
+        <span className="rrow-meta">
+          {decided ? (
+            <span className={`rrow-outcome${dismissed ? " muted" : ""}`}>
+              {dismissed ? "dismissed" : decidedVerb(item)}
+            </span>
+          ) : (
+            conf && <span className={`conf-badge ${conf.cls}`}>{conf.text}</span>
           )}
-          {parsed.reject !== null && (
-            <p className="outcome-row">
-              <span className="outcome-verb outcome-reject">reject</span> — {parsed.reject}
-            </p>
-          )}
-        </div>
+        </span>
+      </button>
+      {!selectable && (
+        <span className="rrow-chev" aria-hidden="true">
+          ›
+        </span>
       )}
-
-      {parsed.choices.length > 0 && (
-        <div className="review-choices">
-          {parsed.choices.map((choice) => {
-            const key = `choice-${choice.action}`;
-            const isArmed = armed === key;
-            return (
-              <button
-                key={key}
-                type="button"
-                className={`choice-btn${choice.destructive ? " choice-destructive" : ""}${isArmed ? " armed" : ""}`}
-                onClick={() =>
-                  fire(key, choice.destructive, choice.action, { choice: choice.label })
-                }
-              >
-                <span className="choice-label">
-                  {isArmed ? "tap again — this is permanent" : choice.label}
-                </span>
-                {!isArmed && choice.detail !== null && (
-                  <span className="choice-detail">{choice.detail}</span>
-                )}
-              </button>
-            );
-          })}
-        </div>
-      )}
-
-      {queue.actionError !== null && <p className="review-error">{queue.actionError}</p>}
-
-      {/* The outcomes panel advertises exactly the footer verbs the resolve
-          endpoint accepts for this kind (collisions resolve through their
-          choices instead): no outcome text, no button. */}
-      <footer className="review-bar">
-        <button type="button" className="review-skip" disabled={!canSkip} onClick={queue.skip}>
-          skip
-        </button>
-        {parsed.reject !== null && (
-          <button
-            type="button"
-            className={`review-reject${armed === "reject" ? " armed" : ""}`}
-            onClick={() => fire("reject", parsed.rejectDestructive, "reject")}
-          >
-            {armed === "reject" ? "tap again — permanent" : "reject"}
-          </button>
-        )}
-        {parsed.accept !== null && (
-          <button
-            type="button"
-            className={`review-accept${armed === "accept" ? " armed" : ""}`}
-            onClick={() => fire("accept", parsed.acceptDestructive, "accept")}
-          >
-            {armed === "accept" ? "tap again — permanent" : "accept"}
-          </button>
-        )}
-      </footer>
     </div>
   );
 }
 
-interface OfferedRow {
-  label: string;
-  chosen: boolean;
+function decidedVerb(item: ReviewItem): string {
+  const a = item.resolution?.action;
+  if (a === undefined) return "decided";
+  if (a === "accept" || a === "accept_a" || a === "accept_b") return "approved";
+  if (a === "reject") return "rejected";
+  if (a === "correct") return "corrected";
+  return a;
 }
 
-/** Every choice the card advertised, with the taken one marked — collisions
- * via their choice list, verb cards via the accept/reject outcome rows. */
-function offeredChoices(item: ReviewItem): OfferedRow[] {
-  const parsed = parsePayload(item.payload);
-  const action = item.resolution?.action ?? null;
-  if (parsed.choices.length > 0) {
-    return parsed.choices.map((c) => ({
-      label: c.detail !== null ? `${c.label} — ${c.detail}` : c.label,
-      chosen: c.action === action,
-    }));
-  }
-  const rows: OfferedRow[] = [];
-  if (parsed.accept !== null) {
-    rows.push({ label: `accept — ${parsed.accept}`, chosen: action === "accept" });
-  }
-  if (parsed.reject !== null) {
-    rows.push({ label: `reject — ${parsed.reject}`, chosen: action === "reject" });
-  }
-  return rows;
-}
+// ===== Detail =====
 
-/** What was decided, in plain language: the chosen option's own copy. */
-function decidedText(item: ReviewItem): string {
-  const action = item.resolution?.action;
-  if (action === undefined || action === "dismiss") {
-    return "dismissed — skipped without a decision";
-  }
-  return offeredChoices(item).find((o) => o.chosen)?.label ?? action;
-}
-
-/** Consequence copy for the reopen button: name the unwind, per kind. */
-function unwindText(item: ReviewItem): string {
-  const base = "puts it back in the open queue";
-  const action = item.resolution?.action;
-  if (item.status === "dismissed" || action === "dismiss") {
-    return `${base} — nothing was written, nothing to unwind`;
-  }
-  if (item.kind === "merge_proposal" && action === "accept") {
-    return `${base} and unwinds the merge — both entities and their mentions are restored`;
-  }
-  if (item.kind === "merge_proposal" && action === "reject") {
-    return `${base} — the distinct-from edge is permanent and stays`;
-  }
-  if (item.kind === "domain_promotion") {
-    return `${base} — the fact returns to its prior domain, the pin is released`;
-  }
-  if (item.kind === "attribute_collision" || item.kind === "fact_conflict") {
-    return `${base} and unwinds the decision — the pinned winner is released, the retracted value restored`;
-  }
-  return `${base} and unwinds the decision`;
-}
-
-/** When the decision (or its reopening) happened: time today, date before. */
-function fmtWhen(item: ReviewItem): string {
-  const iso = item.resolved_at ?? item.resolution?.reopened_at ?? item.created_at;
-  const d = new Date(iso);
-  if (d.toDateString() === new Date().toDateString()) {
-    return d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
-  }
-  return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
-}
-
-interface ResolvedRowProps {
+interface DetailProps {
   item: ReviewItem;
-  expanded: boolean;
-  onToggle: () => void;
-  armed: string | null;
-  tap: (key: string) => boolean;
-  onReopen: () => void;
+  lane: ReviewFilter;
+  queue: ReviewQueueController;
+  position: { index: number; total: number } | null;
+  onClose: () => void;
+  onNav: (delta: number) => void;
 }
 
-function ResolvedRow({ item, expanded, onToggle, armed, tap, onReopen }: ResolvedRowProps) {
-  const parsed = parsePayload(item.payload);
-  // A log row whose item is open again is the reopened tombstone.
-  const reopened = item.status === "open";
-  const dismissed = item.status === "dismissed";
-  const offered = offeredChoices(item);
-  const reopenKey = `reopen-${item.id}`;
-  const isArmed = armed === reopenKey;
+function correctionDraft(item: ReviewItem, p: Parsed): string {
+  const lead =
+    item.kind === "ambiguous_mention" && p.candidateName !== null
+      ? `“${p.candidateName}” here refers to `
+      : item.kind === "merge_proposal"
+        ? "these are "
+        : "the right value is ";
+  return `Correction — ${p.summary ?? kindLabel(item.kind)}.\n\n${lead}`;
+}
+
+function Detail({ item, lane, queue, position, onClose, onNav }: DetailProps) {
+  const p = parsePayload(item.payload);
+  const [armed, tap] = useArmed();
+  const [composing, setComposing] = useState(false);
+  const [draft, setDraft] = useState("");
+  const conf = confidenceBadge(p.confidence);
+  const proposals = proposalsFor(p);
+  const showDiff = p.beforeLabel !== null && p.afterLabel !== null;
+
+  function choose(proposal: Proposal) {
+    const key = `prop-${proposal.action}`;
+    if (proposal.destructive && !tap(key)) return;
+    queue.resolve(item.id, proposal.action, { choice: proposal.label });
+    onClose();
+  }
+
+  function openComposer() {
+    setDraft(correctionDraft(item, p));
+    setComposing(true);
+  }
+
+  function fileCorrection() {
+    if (draft.trim().length === 0) return;
+    queue.correct(item.id, draft.trim());
+    onClose();
+  }
 
   return (
-    <div className={`rrow${dismissed ? " rrow-dismissed" : ""}${reopened ? " rrow-reopened" : ""}`}>
-      <button type="button" className="rrow-btn" aria-expanded={expanded} onClick={onToggle}>
-        <span className="rrow-top">
-          <span className="kind-badge">{kindLabel(item.kind)}</span>
-          <span
-            className="domain-dot"
-            style={{ background: DOMAIN_COLOR[item.domain] ?? "var(--steel)" }}
-            title={DOMAIN_TITLE[item.domain] ?? item.domain}
-          />
-          {dismissed && <span className="state-chip chip-dismissed">dismissed</span>}
-          {reopened && <span className="state-chip chip-reopened">reopened</span>}
-          <span className="rrow-when">{fmtWhen(item)}</span>
-        </span>
-        {parsed.summary !== null && <span className="rrow-summary">{parsed.summary}</span>}
-        <span className="rrow-decided">
-          <span className="decided-mark">{dismissed ? "—" : "✓"}</span>
-          <span className="decided-text">{decidedText(item)}</span>
-        </span>
-      </button>
-
-      {expanded && (
-        <div className="rrow-detail">
-          {parsed.snippet !== null && (
-            <>
-              <h3 className="section-header">cited evidence</h3>
-              <blockquote className="evidence">
-                <MarkedText text={parsed.snippet} />
-              </blockquote>
-            </>
-          )}
-          {offered.length > 0 && (
-            <>
-              <h3 className="section-header">choices offered</h3>
-              <div className="offered">
-                {offered.map((o) => (
-                  <div key={o.label} className={`offered-row${o.chosen ? " chosen" : ""}`}>
-                    <span className="offered-mark">{o.chosen ? "✓" : ""}</span>
-                    <span>{o.label}</span>
-                  </div>
-                ))}
-              </div>
-            </>
-          )}
-          {dismissed && (
-            <p className="offered-note">skipped without a decision — nothing was written.</p>
-          )}
-          {reopened ? (
-            <p className="reopened-note">reopened — waiting in the open queue.</p>
-          ) : (
+    <section className="rdetail">
+      <header className="rdetail-bar">
+        <button type="button" className="rdetail-back" onClick={onClose}>
+          ‹ inbox
+        </button>
+        {position && (
+          <span className="rdetail-pos">
+            {position.index + 1} of {position.total}
+          </span>
+        )}
+        {lane === "pending" && position && position.total > 1 && (
+          <span className="rdetail-nav">
             <button
               type="button"
-              className={`reopen-btn${isArmed ? " armed" : ""}`}
+              aria-label="previous"
+              disabled={position.index === 0}
+              onClick={() => onNav(-1)}
+            >
+              ‹
+            </button>
+            <button
+              type="button"
+              aria-label="next"
+              disabled={position.index >= position.total - 1}
+              onClick={() => onNav(1)}
+            >
+              ›
+            </button>
+          </span>
+        )}
+      </header>
+
+      <div className="rdetail-scroll">
+        <div className="rdetail-meta">
+          <span className="kind-badge">{kindLabel(item.kind)}</span>
+          <DomainDot domain={item.domain} />
+          {conf && <span className={`conf-badge ${conf.cls}`}>{conf.text}</span>}
+        </div>
+        {p.summary !== null && <h2 className="rdetail-hero">{p.summary}</h2>}
+        {p.rationale !== null && <p className="rdetail-why">{p.rationale}</p>}
+
+        {showDiff && (
+          <div className="rdiff" aria-label="before and after">
+            <div className="rdiff-row rdiff-before">
+              <span className="rdiff-lbl">current</span>
+              <span className="rdiff-val">
+                <s>{p.beforeLabel}</s>
+              </span>
+            </div>
+            <div className="rdiff-arrow">↓ proposed</div>
+            <div className="rdiff-row rdiff-after">
+              <span className="rdiff-lbl">from this note</span>
+              <span className="rdiff-val">
+                <ins>{p.afterLabel}</ins>
+              </span>
+            </div>
+          </div>
+        )}
+
+        {p.candidateName !== null && (
+          <p className="rdetail-cands">
+            no automatic link yet — correct it, defer, or talk it over to resolve which{" "}
+            {p.candidateName}.
+          </p>
+        )}
+
+        {lane === "pending" ? (
+          <>
+            {composing && (
+              <div className="rcompose">
+                <h3 className="section-header">file a correction note</h3>
+                <textarea
+                  className="rcompose-box"
+                  value={draft}
+                  onChange={(e) => setDraft(e.target.value)}
+                  aria-label="correction note"
+                  rows={4}
+                />
+                <p className="rcompose-hint">
+                  filed as a note in your {item.domain} domain — the pipeline applies it, so the
+                  wiki stays machine-written.
+                </p>
+                <div className="rcompose-actions">
+                  <button
+                    type="button"
+                    className="rcompose-cancel"
+                    onClick={() => setComposing(false)}
+                  >
+                    cancel
+                  </button>
+                  <button type="button" className="rcompose-file" onClick={fileCorrection}>
+                    file correction
+                  </button>
+                </div>
+              </div>
+            )}
+            <h3 className="section-header">choose among proposals</h3>
+            <div className="rproposals">
+              {proposals.map((proposal) => {
+                const key = `prop-${proposal.action}`;
+                const isArmed = armed === key;
+                return (
+                  <button
+                    key={proposal.action}
+                    type="button"
+                    className={`rprop${proposal.destructive ? " rprop-destructive" : ""}${
+                      isArmed ? " armed" : ""
+                    }`}
+                    onClick={() => choose(proposal)}
+                  >
+                    <span className="rprop-label">
+                      {isArmed ? "tap again — this is permanent" : proposal.label}
+                    </span>
+                    {!isArmed && proposal.detail !== null && (
+                      <span className="rprop-detail">{proposal.detail}</span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          </>
+        ) : (
+          <DecidedRecord item={item} parsed={p} />
+        )}
+
+        {p.snippet !== null && (
+          <>
+            <h3 className="section-header">cited evidence</h3>
+            <blockquote className="evidence">
+              <MarkedText text={p.snippet} />
+            </blockquote>
+          </>
+        )}
+        {queue.actionError !== null && <p className="review-error">{queue.actionError}</p>}
+      </div>
+
+      <footer className="rdetail-foot">
+        {lane === "pending" ? (
+          <>
+            <button
+              type="button"
+              className="rfoot-defer"
               onClick={() => {
-                if (tap(reopenKey)) onReopen();
+                queue.resolve(item.id, "defer");
+                onClose();
               }}
             >
-              <span className="choice-label">
-                {isArmed ? "tap again — back in the queue, decision unwound" : "reopen"}
-              </span>
-              {!isArmed && <span className="choice-detail">{unwindText(item)}</span>}
+              defer
+            </button>
+            <button
+              type="button"
+              className={`rfoot-correct${composing ? " active" : ""}`}
+              onClick={() => (composing ? setComposing(false) : openComposer())}
+            >
+              correct it
+            </button>
+            <button
+              type="button"
+              className="rfoot-discuss"
+              onClick={() => {
+                queue.resolve(item.id, "discuss");
+                onClose();
+              }}
+            >
+              talk it over
+            </button>
+          </>
+        ) : lane === "deferred" ? (
+          <button
+            type="button"
+            className="rfoot-resume"
+            onClick={() => {
+              queue.reopen(item.id);
+              onClose();
+            }}
+          >
+            resume — back to pending
+          </button>
+        ) : item.status === "open" ? (
+          <span className="rfoot-note">reopened — waiting in pending.</span>
+        ) : (
+          <button
+            type="button"
+            className={`rfoot-reopen${armed === "reopen" ? " armed" : ""}`}
+            onClick={() => {
+              if (tap("reopen")) {
+                queue.reopen(item.id);
+                onClose();
+              }
+            }}
+          >
+            {armed === "reopen" ? "tap again — decision unwound" : "reopen — unwind this decision"}
+          </button>
+        )}
+      </footer>
+    </section>
+  );
+}
+
+function DecidedRecord({ item, parsed }: { item: ReviewItem; parsed: Parsed }) {
+  const action = item.resolution?.action ?? null;
+  const proposals = proposalsFor(parsed);
+  if (item.resolution?.action === "defer" || item.resolution?.action === "discuss") {
+    return <p className="rdetail-cands">parked — resume to bring it back to the pending queue.</p>;
+  }
+  if (action === "correct") {
+    return (
+      <p className="rdetail-cands">
+        corrected — filed as a note; the pipeline applies your fix to the wiki.
+      </p>
+    );
+  }
+  return (
+    <>
+      <h3 className="section-header">what was decided</h3>
+      <div className="offered">
+        {proposals.map((proposal) => {
+          const chosen = proposal.action === action;
+          const text =
+            proposal.detail !== null ? `${proposal.label} — ${proposal.detail}` : proposal.label;
+          return (
+            <div key={proposal.action} className={`offered-row${chosen ? " chosen" : ""}`}>
+              <span className="offered-mark">{chosen ? "✓" : ""}</span>
+              <span>{text}</span>
+            </div>
+          );
+        })}
+        {action === "dismiss" && (
+          <div className="offered-row">dismissed — skipped without a decision</div>
+        )}
+      </div>
+    </>
+  );
+}
+
+// ===== List view (rows, selection, bulk) =====
+
+interface ListViewProps {
+  lane: ReviewFilter;
+  items: ReviewItem[] | null;
+  queue: ReviewQueueController;
+  onOpen: (id: string) => void;
+}
+
+function ListView({ lane, items, queue, onOpen }: ListViewProps) {
+  const [selecting, setSelecting] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+
+  // Reset selection when the lane changes out from under us.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: lane is the trigger.
+  useEffect(() => {
+    setSelecting(false);
+    setSelected(new Set());
+  }, [lane]);
+
+  if (items === null) return <p className="analysis-quiet">loading…</p>;
+  if (items.length === 0) return <EmptyLane lane={lane} />;
+
+  const toggle = (id: string) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+
+  const approvable = items.filter((i) => approveActionFor(i) !== null);
+  const highConf = approvable.filter((i) => {
+    const c = parsePayload(i.payload).confidence;
+    return c !== null && c >= 0.75;
+  });
+
+  function bulkApprove(ids: string[]) {
+    const decisions = ids
+      .map((id) => {
+        const item = items?.find((i) => i.id === id);
+        const a = item ? approveActionFor(item) : null;
+        return a ? { id, action: a.action, payload: a.payload } : null;
+      })
+      .filter(
+        (d): d is { id: string; action: string; payload: Record<string, unknown> } => d !== null,
+      );
+    if (decisions.length > 0) queue.batch(decisions, `approved ${decisions.length}`);
+    setSelecting(false);
+    setSelected(new Set());
+  }
+  function bulkDefer(ids: string[]) {
+    queue.batch(
+      ids.map((id) => ({ id, action: "defer", payload: {} })),
+      `parked ${ids.length}`,
+    );
+    setSelecting(false);
+    setSelected(new Set());
+  }
+
+  return (
+    <>
+      {lane === "pending" && (
+        <div className="rlist-tools">
+          <button type="button" className="rtool" onClick={() => setSelecting((s) => !s)}>
+            {selecting ? "done" : "select"}
+          </button>
+          {!selecting && highConf.length >= 2 && (
+            <button
+              type="button"
+              className="rtool rtool-suggest"
+              onClick={() => bulkApprove(highConf.map((i) => i.id))}
+            >
+              approve {highConf.length} high-confidence
             </button>
           )}
         </div>
       )}
-    </div>
-  );
-}
 
-function ResolvedPane({ queue }: { queue: ReviewQueueController }) {
-  const [expanded, setExpanded] = useState<string | null>(null);
-  const [armed, tap] = useArmed();
-  const items = queue.resolvedItems;
-
-  if (items === null) {
-    return <p className="analysis-quiet">loading past decisions…</p>;
-  }
-  if (items.length === 0) {
-    return <p className="analysis-quiet">no decisions yet — resolved items collect here.</p>;
-  }
-  return (
-    <>
-      <div className="rlist">
+      <div className="rlist2">
         {items.map((item) => (
-          <ResolvedRow
+          <ListRow
             key={item.id}
             item={item}
-            expanded={expanded === item.id}
-            onToggle={() => setExpanded((cur) => (cur === item.id ? null : item.id))}
-            armed={armed}
-            tap={tap}
-            onReopen={() => queue.reopen(item.id)}
+            selectable={selecting}
+            selected={selected.has(item.id)}
+            onToggle={() => toggle(item.id)}
+            onOpen={() => onOpen(item.id)}
           />
         ))}
       </div>
-      {queue.actionError !== null && <p className="review-error">{queue.actionError}</p>}
+
+      {selecting && selected.size > 0 && (
+        <div className="rbulk" role="toolbar" aria-label="bulk actions">
+          <span className="rbulk-n">{selected.size} selected</span>
+          <button type="button" className="rbulk-defer" onClick={() => bulkDefer([...selected])}>
+            defer all
+          </button>
+          <button
+            type="button"
+            className="rbulk-approve"
+            disabled={[...selected].every((id) => {
+              const item = items.find((i) => i.id === id);
+              return !item || approveActionFor(item) === null;
+            })}
+            onClick={() => bulkApprove([...selected])}
+          >
+            approve all
+          </button>
+        </div>
+      )}
     </>
   );
 }
 
-interface OpenPaneProps {
-  queue: ReviewQueueController;
-  onShowResolved: () => void;
+function EmptyLane({ lane }: { lane: ReviewFilter }) {
+  const copy: Record<ReviewFilter, string> = {
+    pending: "pending is clear — new items arrive as notes are analyzed.",
+    deferred: "nothing parked — items you defer or talk over collect here.",
+    decided: "no decisions yet — resolved items collect here.",
+  };
+  return <p className="analysis-quiet rlane-empty">{copy[lane]}</p>;
 }
 
-function OpenPane({ queue, onShowResolved }: OpenPaneProps) {
-  if (queue.loadError) {
-    return <p className="analysis-quiet">couldn't load the review inbox — reopen to retry.</p>;
-  }
-  if (queue.items === null) {
-    return <p className="analysis-quiet">loading the inbox…</p>;
-  }
-
-  const current = queue.items[0];
-  const total = queue.resolved + queue.items.length;
-  const decisions = queue.resolvedItems?.length ?? 0;
-
-  if (current === undefined) {
-    if (decisions === 0) {
-      return <p className="analysis-quiet">inbox zero — new items arrive as notes are analyzed.</p>;
-    }
-    return (
-      <p className="analysis-quiet">
-        inbox zero — {decisions} past decision{decisions === 1 ? "" : "s"} in{" "}
-        <button type="button" className="quiet-link" onClick={onShowResolved}>
-          resolved
-        </button>
-        .
-      </p>
-    );
-  }
-
-  return (
-    <>
-      <div className="progress-dots" aria-label={`${queue.resolved} of ${total} resolved`}>
-        {Array.from({ length: total }, (_, i) => (
-          // biome-ignore lint/suspicious/noArrayIndexKey: dots are positional by definition.
-          <span key={i} className={`progress-dot${i < queue.resolved ? " dot-done" : ""}`} />
-        ))}
-      </div>
-      <ReviewCard key={current.id} item={current} queue={queue} canSkip={queue.items.length > 1} />
-    </>
-  );
-}
+// ===== Screen =====
 
 export function ReviewScreen() {
   const queue = useReviewQueue();
-  const [seg, setSeg] = useState<"open" | "resolved">("open");
+  const [filter, setFilter] = useState<ReviewFilter>("pending");
+  const [detailId, setDetailId] = useState<string | null>(null);
 
-  const openCount = queue.items?.length;
-  const resolvedCount = queue.resolvedItems?.length;
+  const lanes: Record<ReviewFilter, ReviewItem[] | null> = {
+    pending: queue.pending,
+    deferred: queue.deferred,
+    decided: queue.decided,
+  };
+  const items = lanes[filter];
+
+  const position = useMemo(() => {
+    if (detailId === null || items === null) return null;
+    const index = items.findIndex((i) => i.id === detailId);
+    return index < 0 ? null : { index, total: items.length };
+  }, [detailId, items]);
+
+  const detailItem = detailId !== null ? (items?.find((i) => i.id === detailId) ?? null) : null;
+
+  // If the open item leaves the lane (decided/deferred from the detail), close.
+  useEffect(() => {
+    if (detailId !== null && detailItem === null) setDetailId(null);
+  }, [detailId, detailItem]);
+
+  // The undo snackbar lingers, then fades — undo stays reachable from the
+  // decided/deferred lanes after it goes.
+  const { undoable, dismissUndo } = queue;
+  useEffect(() => {
+    if (undoable === null) return;
+    const t = setTimeout(dismissUndo, 7000);
+    return () => clearTimeout(t);
+  }, [undoable, dismissUndo]);
+
+  function nav(delta: number) {
+    if (items === null || position === null) return;
+    const next = items[position.index + delta];
+    if (next) setDetailId(next.id);
+  }
+
+  const counts: Record<ReviewFilter, number | undefined> = {
+    pending: queue.pending?.length,
+    deferred: queue.deferred?.length,
+    decided: queue.decided?.length,
+  };
 
   return (
-    <main className={`screen-body review-body${seg === "resolved" ? " review-body-log" : ""}`}>
-      <div className="review-segs" role="tablist">
-        <button
-          type="button"
-          role="tab"
-          aria-selected={seg === "open"}
-          className={`review-seg${seg === "open" ? " seg-active" : ""}`}
-          onClick={() => setSeg("open")}
-        >
-          open
-          {openCount !== undefined && <span className="seg-count">{openCount}</span>}
-        </button>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={seg === "resolved"}
-          className={`review-seg${seg === "resolved" ? " seg-active" : ""}`}
-          onClick={() => setSeg("resolved")}
-        >
-          resolved
-          {resolvedCount !== undefined && <span className="seg-count">{resolvedCount}</span>}
-        </button>
-      </div>
-      {seg === "open" ? (
-        <OpenPane queue={queue} onShowResolved={() => setSeg("resolved")} />
+    <main className="screen-body review-body">
+      {detailItem === null ? (
+        <>
+          <div className="review-segs" role="tablist">
+            {(["pending", "deferred", "decided"] as ReviewFilter[]).map((f) => (
+              <button
+                key={f}
+                type="button"
+                role="tab"
+                aria-selected={filter === f}
+                className={`review-seg${filter === f ? " seg-active" : ""}`}
+                onClick={() => setFilter(f)}
+              >
+                {f}
+                {counts[f] !== undefined && <span className="seg-count">{counts[f]}</span>}
+              </button>
+            ))}
+          </div>
+          {queue.loadError && filter === "pending" ? (
+            <p className="analysis-quiet">couldn't load the inbox — reopen to retry.</p>
+          ) : (
+            <ListView lane={filter} items={items} queue={queue} onOpen={setDetailId} />
+          )}
+        </>
       ) : (
-        <ResolvedPane queue={queue} />
+        <Detail
+          item={detailItem}
+          lane={filter}
+          queue={queue}
+          position={position}
+          onClose={() => setDetailId(null)}
+          onNav={nav}
+        />
+      )}
+
+      {queue.undoable !== null && (
+        <output className="review-snack">
+          <span className="snack-msg">{queue.undoable.label}</span>
+          <button type="button" className="snack-undo" onClick={queue.undo}>
+            undo
+          </button>
+          <button
+            type="button"
+            className="snack-x"
+            aria-label="dismiss"
+            onClick={queue.dismissUndo}
+          >
+            ✕
+          </button>
+        </output>
       )}
     </main>
   );
