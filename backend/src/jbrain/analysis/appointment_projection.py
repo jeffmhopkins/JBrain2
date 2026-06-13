@@ -28,9 +28,13 @@ from jbrain.appointments.service import STATUSES
 from jbrain.models.analysis import Entity, Fact, TemporalToken
 from jbrain.models.appointments import Appointment
 
-# The entity `kind` the extractor stamps on an appointment mention (the
-# appointment.yaml type id; see the harness appointment scenarios).
-APPOINTMENT_KIND = "appointment"
+# The entity kinds that count as a calendar appointment. The extractor is told
+# to use "appointment" (appointment.yaml's type id), but its kinds are free text
+# and schema.org leans "Event" — so accept both, case-insensitively. The active
+# scheduledTime requirement below is the real gate, so a non-scheduled "event"
+# entity never projects, and a person/place (e.g. a misplaced Me.scheduledTime)
+# is excluded by kind.
+_APPOINTMENT_KINDS = frozenset({"appointment", "event"})
 _SCHEDULED_TIME = "scheduledTime"
 _RECURRENCE = "recurrence"
 _STATUS = "status"
@@ -82,7 +86,9 @@ async def project_appointments(session: AsyncSession, entity_ids: set[uuid.UUID]
     # and _project_one needs no second lookup or kind re-check.
     ents = (
         await session.execute(
-            select(Entity).where(Entity.id.in_(entity_ids), Entity.kind == APPOINTMENT_KIND)
+            select(Entity).where(
+                Entity.id.in_(entity_ids), func.lower(Entity.kind).in_(_APPOINTMENT_KINDS)
+            )
         )
     ).scalars()
     for ent in ents:

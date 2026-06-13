@@ -1,0 +1,30 @@
+{
+  "name": "a plainly-worded appointment note becomes its own appointment entity",
+  "description": "Field-observed regression (grok-4.3, note-extract-v11): the note 'I have an appointment tomorrow at the dentist at 1300' extracted as Me -scheduledTime-> the dentist (kind event), so NO appointment entity existed and the calendar projection found nothing. v12 teaches the model that a scheduled appointment is its OWN entity (kind 'appointment') that OWNS a date-valued scheduledTime STATE fact — value_json.start + temporal — never a relationship hung off the author or the place. This scenario pins that corrected shape: one provisional appointment entity with exactly one active scheduledTime state fact at the resolved time.",
+  "steps": [
+    {
+      "domain": "general",
+      "created_at": "2026-06-13T12:23:00-06:00",
+      "body": "I have an appointment tomorrow at the dentist at 1300.",
+      "extraction": {
+        "title": "Dentist appointment",
+        "tags": ["appointment", "dentist", "schedule"],
+        "mentions": [
+          {"name": "dentist appointment", "kind": "appointment", "surface_text": "an appointment tomorrow at the dentist"}
+        ],
+        "facts": [
+          {"predicate": "scheduledTime", "qualifier": "", "kind": "state", "statement": "Dentist appointment is scheduled for Sunday 2026-06-14 at 1:00 PM.", "value_json": {"start": "2026-06-14T13:00:00-06:00"}, "assertion": "expected", "entity_ref": "dentist appointment", "object_entity_ref": null, "temporal": {"phrase": "tomorrow at 1300", "resolved_start": "2026-06-14T13:00:00-06:00", "resolved_end": null, "precision": "instant"}, "domain": "general", "confidence": 0.95}
+        ],
+        "temporal_tokens": []
+      }
+    }
+  ],
+  "expect": {
+    "entities": [
+      {"name": "dentist appointment", "kind": "appointment", "status": "provisional"}
+    ],
+    "facts": [
+      {"entity": "dentist appointment", "predicate": "scheduledTime", "kind": "state", "value_contains": "2026-06-14T13:00:00", "status": "active", "count": 1}
+    ]
+  }
+}
