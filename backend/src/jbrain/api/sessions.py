@@ -108,9 +108,7 @@ async def rescope_session(
 ) -> Response:
     """Adjust a chat's read scope after start — owner-only; RLS still enforces the
     firewall on every query the session's tools run."""
-    await get_agent_sessions(request).set_scopes(
-        ctx_for(principal), session_id, body.domain_scopes
-    )
+    await get_agent_sessions(request).set_scopes(ctx_for(principal), session_id, body.domain_scopes)
     return Response(status_code=204)
 
 

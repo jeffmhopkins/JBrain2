@@ -501,9 +501,7 @@ def test_rescope_session(
 ) -> None:
     login(client, repo)
     sessions_store.add(AgentSessionInfo("sess-1", "x", "active", ("general",), (), NOW, NOW))
-    resp = client.post(
-        "/api/sessions/sess-1/scope", json={"domain_scopes": ["general", "health"]}
-    )
+    resp = client.post("/api/sessions/sess-1/scope", json={"domain_scopes": ["general", "health"]})
     assert resp.status_code == 204
     assert sessions_store._by_id["sess-1"].domain_scopes == ("general", "health")
 
