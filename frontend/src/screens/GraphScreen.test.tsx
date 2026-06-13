@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { type EgoGraph, type EntityOut, type FactOut, api } from "../api/client";
-import { GraphScreen, clampScale, focalZoom } from "./GraphScreen";
+import { GraphScreen, chooseLabels, clampScale, focalZoom } from "./GraphScreen";
 
 const GRAPH: EgoGraph = {
   root: "me",
@@ -238,5 +238,44 @@ describe("focalZoom", () => {
     expect(z.scale).toBe(1);
     expect(((200 - v.tx) / v.scale) * z.scale + z.tx).toBeCloseTo(200);
     expect(((140 - v.ty) / v.scale) * z.scale + z.ty).toBeCloseTo(140);
+  });
+});
+
+describe("chooseLabels", () => {
+  const node = (x: number, y: number, op = 1) => ({ x, y, op });
+  const base = { scale: 1, tx: 0, ty: 0, w: 360, h: 560, priority: () => 0 };
+
+  it("shows every label when nodes occupy different cells (room available)", () => {
+    const nodes = new Map([
+      ["a", node(20, 20)],
+      ["b", node(300, 500)],
+    ]);
+    expect(chooseLabels({ ...base, nodes, forced: new Set() })).toEqual(new Set(["a", "b"]));
+  });
+
+  it("keeps only the higher-priority label when two share a cell", () => {
+    const nodes = new Map([
+      ["a", node(20, 20)],
+      ["b", node(30, 30)],
+    ]);
+    const shown = chooseLabels({
+      ...base,
+      nodes,
+      forced: new Set(),
+      priority: (id) => (id === "a" ? 1 : 0),
+    });
+    expect(shown.has("a")).toBe(true);
+    expect(shown.has("b")).toBe(false);
+  });
+
+  it("always shows forced labels — off-screen or below the legibility floor", () => {
+    const nodes = new Map([["a", node(-999, -999)]]);
+    const shown = chooseLabels({ ...base, scale: 0.1, nodes, forced: new Set(["a"]) });
+    expect(shown.has("a")).toBe(true);
+  });
+
+  it("drops non-forced labels when text would be too small to read", () => {
+    const nodes = new Map([["a", node(100, 100)]]);
+    expect(chooseLabels({ ...base, scale: 0.3, nodes, forced: new Set() }).size).toBe(0);
   });
 });

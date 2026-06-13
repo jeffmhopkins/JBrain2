@@ -54,6 +54,10 @@
      (Settings → Text size, default 0.75). fontScale.ts sets --font-scale. */
   --font-scale: 0.75;
   --fs-micro: calc(12px * var(--font-scale));
+  /* Graph node labels float free on a busy canvas, so they keep a 12px floor
+     regardless of the text-size setting (the 0.75 default would shrink micro
+     to 9px); 100% nudges them up to 15px. */
+  --fs-graph-label: clamp(12px, calc(13px * var(--font-scale)), 15px);
   --fs-head: calc(13px * var(--font-scale)); /* note-row metadata */
   --fs-secondary: calc(14px * var(--font-scale));
   --fs-note: calc(15px * var(--font-scale)); /* stream body, segments */

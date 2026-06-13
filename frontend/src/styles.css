@@ -5744,18 +5744,38 @@ input.ld-title {
   cursor: pointer;
 }
 .graph-node-label {
-  max-width: 92px;
-  font-size: var(--fs-micro);
+  max-width: 104px;
+  font-size: var(--fs-graph-label);
   font-weight: 500;
   color: var(--text-2);
   text-align: center;
+  /* up to two lines so names like "Celine Hopkins" aren't clipped to "Celine…" */
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  /* halo lifts the text off the dark canvas and the faint edges crossing it */
+  text-shadow: 0 0 3px var(--bg), 0 0 3px var(--bg);
   pointer-events: none;
+  /* the label grid decides visibility per node (data-label); hidden by default */
+  opacity: 0;
   transition: opacity 0.2s ease-out;
 }
+.graph-node[data-label="on"] .graph-node-label {
+  opacity: 1;
+}
+/* in focus mode a ring node's label sits on its outer side, off the spokes */
+.graph-node[data-anchor="top"] .graph-node-label {
+  order: -1;
+}
+.graph-stage[data-mode="focus"] .graph-node-label {
+  max-width: 132px;
+}
 .graph-node.is-focal .graph-node-label {
+  max-width: 140px;
+  font-size: var(--fs-secondary);
+  font-weight: 600;
   color: var(--text);
 }
 .graph-node.is-focal .etype-disc {
@@ -5769,16 +5789,6 @@ input.ld-title {
   border-radius: var(--r-pill);
   padding: 1px 6px;
   white-space: nowrap;
-}
-/* semantic zoom: drop labels by level-of-detail unless focused */
-.graph-stage[data-lod="clusters"] .graph-node-label {
-  opacity: 0;
-}
-.graph-stage[data-lod="entities"] .graph-node[data-hop="2"] .graph-node-label {
-  opacity: 0;
-}
-.graph-stage[data-mode="focus"] .graph-node-label {
-  opacity: 1;
 }
 
 .graph-lod {
