@@ -25,6 +25,14 @@ nightly: entity hygiene, merge proposals, summary re-embedding,
 Capture-to-searchable never waits on a cloud LLM: embeddings/FTS index
 immediately; facts and entities are async enrichment.
 
+Chunking stores two overlapping granularities per source — **paragraph** (the
+precise citation unit) and **section** (larger retrieval windows that contain
+those paragraphs). Extraction reads **paragraph chunks only** **[decided]**:
+sections exist for search/retrieval, and feeding both concatenated the body to
+the model ~2x on any multi-paragraph note (wasted tokens, a salience drag on
+the fact budget). Paragraph chunks tile every source with no overlap and keep
+span anchoring on the citation unit.
+
 ## Facts
 
 A fact is a **semi-structured statement with a structural identity**, not a
@@ -406,15 +414,39 @@ tokens ≈ $0.01/note at grok-4.3 rates. Conflict detection is bounded by candid
 retrieval (SQL identity match, else pgvector top-k scoped to same
 entity+domain+kind) — never corpus-wide comparison. Concurrent offline-sync
 bursts serialize per (entity, predicate) to keep supersession chains
-deterministic. Over-extraction is the known quality risk: soft cap on
-facts-per-note, honest confidence, review-inbox rejection rate as the
-prompt-tuning signal.
+deterministic. Over-extraction is the known quality risk: a soft cap on
+facts-per-note that **scales with note length** (`prompt.fact_cap`: a
+word-count proxy clamped to `[MIN_FACTS, MAX_FACTS]` — a one-liner and a long
+journal entry no longer share one ceiling), advertised in the per-note prompt
+and enforced in `parse_extraction` (the two read the same number); honest
+confidence; review-inbox rejection rate as the prompt-tuning signal. When the
+budget actually clips the tail (`dropped_facts > 0` — a pasted article, a
+medical-history dump), the pipeline files an **`extraction_truncated`** review
+card so the loss is visible, not silent: an informational notice whose only
+verb is dismiss (it wrote no graph state), retired automatically when a
+larger-budget re-run fits. The deeper fix for genuinely long input is
+chunk-level extraction with note-level merge — the fact grammar already
+reconciles facts from many sources — which makes the cap a per-chunk budget.
+
+**Enumerated and symmetric relationships [decided: one edge per individual,
+never a sentence-valued attribute].** "I have four daughters, A, B, C and D"
+must emit a separate relationship edge per named child (each its own
+`object_entity_ref`), not one edge to the first-named with the rest left as
+bare mentions — the prompt teaches the fan-out and the dedup key (which
+includes `object_entity_ref`) keeps the distinct edges. A relationship between
+two named people is always a `relationship` edge, never an `attribute` whose
+value restates the sentence ("Lydian and Elora are identical twins" is
+`Lydian.sibling →twin Elora`, not `twinStatus → "…the whole sentence…"`); the
+reciprocity registry then materializes the symmetric mirror on the other
+party's stream, and kinship (`children`/`parent`, alongside the existing
+`parent_of`/`child_of`) reciprocates the same way.
 
 ## Review inbox integration
 
 One generic `review_items` queue (already designed) absorbs: fact
 conflicts, attribute collisions, entity-merge proposals, ambiguous
-mentions, domain promotions/demotions, low-confidence extractions.
+mentions, domain promotions/demotions, low-confidence extractions,
+fact-budget truncations (`extraction_truncated`).
 Resolutions write pinned overrides and, where the fix is prose-shaped,
 draft correction notes.
 

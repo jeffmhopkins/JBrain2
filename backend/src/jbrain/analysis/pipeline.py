@@ -33,6 +33,7 @@ from jbrain.analysis.display import (
     mark_snippet,
     merge_display,
     promotion_display,
+    truncation_display,
     value_label,
 )
 from jbrain.analysis.entities import (
@@ -71,6 +72,7 @@ from jbrain.analysis.prompt import (
     PROMPT_VERSION,
     SYSTEM_PROMPT,
     build_user_prompt,
+    fact_cap,
     prompt_block,
 )
 from jbrain.analysis.supersession import (
@@ -83,6 +85,7 @@ from jbrain.analysis.supersession import (
 )
 from jbrain.db.session import scoped_session
 from jbrain.embed import EmbedClient
+from jbrain.ingest.chunker import PARAGRAPH
 from jbrain.llm import LlmBadResponseError, LlmError, LlmRouter
 from jbrain.models.analysis import (
     EntityMention,
@@ -192,11 +195,21 @@ class AnalysisPipeline:
                 return
             body, domain, captured_at = note.body, note.domain_code, note.created_at
             tz_offset = note.tz_offset_minutes
+            # Extraction reads PARAGRAPH chunks only. The chunker stores two
+            # overlapping granularities per source — paragraph (the precise
+            # citation unit) and section (larger retrieval windows that CONTAIN
+            # those paragraphs) — so concatenating both fed the body to the model
+            # ~2x on any multi-paragraph note: wasted tokens and a salience drag
+            # on the "extract less" budget. Sections exist for search/retrieval;
+            # paragraphs tile every source with no overlap and keep span
+            # anchoring (_locate) on the citation unit. Paragraph chunks always
+            # exist when there is text (chunker.chunk_text), so this never empties
+            # a note that has content.
             chunk_rows = (
                 await session.execute(
                     select(Chunk.id, Chunk.text, Chunk.source_kind, Attachment.filename)
                     .join(Attachment, Chunk.attachment_id == Attachment.id, isouter=True)
-                    .where(Chunk.note_id == note_id)
+                    .where(Chunk.note_id == note_id, Chunk.granularity == PARAGRAPH)
                     .order_by(Chunk.seq)
                 )
             ).all()
@@ -207,12 +220,16 @@ class AnalysisPipeline:
             prompt_block(r.text, source_kind=r.source_kind, filename=r.filename) for r in chunk_rows
         ] or [body]
 
+        # Length-scaled fact budget: the SAME cap the prompt advertises and the
+        # parser enforces (they must agree), computed once over the content the
+        # model actually sees.
+        cap = fact_cap("\n\n".join(texts))
         try:
             result = await self._router.complete(
                 "note.extract",
                 system=SYSTEM_PROMPT,
                 user_text=build_user_prompt(
-                    texts, anchor=local_anchor(captured_at, tz_offset), domain=domain
+                    texts, anchor=local_anchor(captured_at, tz_offset), domain=domain, max_facts=cap
                 ),
                 json_schema=EXTRACTION_SCHEMA,
                 max_tokens=EXTRACT_MAX_TOKENS,
@@ -225,6 +242,7 @@ class AnalysisPipeline:
             extraction = parse_extraction(
                 result.parsed,
                 anchor=local_anchor(captured_at, tz_offset) if tz_offset is not None else None,
+                max_facts=cap,
             )
         except (LlmBadResponseError, ExtractionError, SchemaError) as exc:
             # The adapter already spent its one re-ask: retrying the job would
@@ -350,6 +368,9 @@ class AnalysisPipeline:
             # entered the doomed set, so both survive untouched.
             await purge.delete_review_items(session, set(doomed_links), statuses=("open",))
         await self._sweep_stale_ambiguous(session, note_id, extraction)
+        await self._sync_truncation_review(
+            session, note_id, note_domain, chunks, extraction.dropped_facts, len(extraction.facts)
+        )
         await self._reproject_entities(session, resolved)
 
         stmt = pg_insert(NoteAnalysis).values(
@@ -398,6 +419,55 @@ class AnalysisPipeline:
             stmt = stmt.bindparams(bindparam("names", expanding=True))
             params["names"] = sorted(names)
         await session.execute(stmt, params)
+
+    async def _sync_truncation_review(
+        self,
+        session: AsyncSession,
+        note_id: uuid.UUID,
+        note_domain: str,
+        chunks: list[_ChunkRef],
+        dropped: int,
+        kept: int,
+    ) -> None:
+        """Surface a hit fact-budget as a review card, and clear it once a re-run
+        no longer truncates. The cap keeps the model's salient head and drops the
+        tail silently (extraction.parse_extraction); for a genuinely long note
+        (a pasted article, a medical-history dump) that tail is real signal, so
+        the owner gets a dismissible notice with the re-run hint. One open card
+        per note: dedup like the ambiguous sweep so re-analysis never stacks
+        duplicates, and a larger-budget re-run that fits retires the stale card."""
+        if dropped <= 0:
+            await session.execute(
+                text(
+                    "DELETE FROM app.review_items WHERE kind = 'extraction_truncated'"
+                    " AND status = 'open' AND payload->>'note_id' = :nid"
+                ),
+                {"nid": str(note_id)},
+            )
+            return
+        existing = (
+            await session.execute(
+                text(
+                    "SELECT id FROM app.review_items WHERE kind = 'extraction_truncated'"
+                    " AND status = 'open' AND payload->>'note_id' = :nid LIMIT 1"
+                ),
+                {"nid": str(note_id)},
+            )
+        ).first()
+        payload = {
+            "note_id": str(note_id),
+            **truncation_display(kept=kept, dropped=dropped, snippet=_cite(None, chunks)),
+        }
+        if existing is not None:
+            # Refresh the counts in place — a re-run may clip a different amount —
+            # without churning the row's identity or its open status.
+            await session.execute(
+                update(ReviewItem).where(ReviewItem.id == existing.id).values(payload=payload)
+            )
+            return
+        session.add(
+            ReviewItem(kind="extraction_truncated", payload=payload, domain_code=note_domain)
+        )
 
     async def _resolve_entities(
         self,

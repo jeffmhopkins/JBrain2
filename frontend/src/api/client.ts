@@ -283,7 +283,8 @@ export type ReviewKind =
   | "ambiguous_mention"
   | "domain_promotion"
   | "low_confidence"
-  | "split_proposal";
+  | "split_proposal"
+  | "extraction_truncated";
 
 export type ReviewStatus = "open" | "resolved" | "dismissed" | "deferred";
 

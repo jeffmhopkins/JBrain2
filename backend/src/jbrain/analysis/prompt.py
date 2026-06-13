@@ -24,9 +24,29 @@ _PROMPT = load_prompt(Path(__file__).parent / "prompts" / "note_extract.prompt")
 PROMPT_VERSION: str = _PROMPT.version
 # Capability tier the router resolves to a concrete model (jbrain.llm.router).
 NOTE_EXTRACT_STRENGTH: str = _PROMPT.strength
-# Facts-per-note cap: taught in the prompt body (rendered below) and enforced
-# server-side in extraction.parse_extraction.
+# Facts-per-note budget. The cap scales with note length: a one-line note and a
+# long journal entry should not share a 12-fact ceiling — the static cap silently
+# truncated the tail of long, fact-dense notes. MAX_FACTS is the absolute hard
+# ceiling (server-side abuse/runaway bound, rendered into the system prompt);
+# MIN_FACTS the floor that keeps short notes at today's generous budget. The
+# per-note value (fact_cap) is communicated in the user prompt AND enforced in
+# extraction.parse_extraction — the two MUST agree, so the pipeline computes it
+# once and threads it to both.
 MAX_FACTS: int = int(_PROMPT.config["max_facts"])
+MIN_FACTS: int = int(_PROMPT.config["min_facts"])
+# Roughly one durable fact per this many words: a generous CEILING (the model is
+# still told "extract less, not more"), not a target. Tuned so a ~90-word note
+# lands on the floor and a long entry climbs toward the ceiling.
+_WORDS_PER_FACT = 8
+
+
+def fact_cap(text: str) -> int:
+    """The per-note fact budget for `text`, scaled by length and clamped to
+    [MIN_FACTS, MAX_FACTS]. A whitespace word count is a deliberately coarse
+    proxy — the cap only bounds runaway extraction, it never sets a target."""
+    return max(MIN_FACTS, min(MAX_FACTS, len(text.split()) // _WORDS_PER_FACT))
+
+
 EXTRACT_MAX_TOKENS: int = int(_PROMPT.config["max_tokens"])
 SYSTEM_PROMPT: str = _PROMPT.render(max_facts=MAX_FACTS)
 EXTRACTION_SCHEMA: dict[str, Any] = _PROMPT.output_schema or {}
@@ -54,14 +74,20 @@ def prompt_block(text: str, *, source_kind: str, filename: str | None) -> str:
     return text
 
 
-def build_user_prompt(texts: list[str], *, anchor: datetime, domain: str) -> str:
+def build_user_prompt(
+    texts: list[str], *, anchor: datetime, domain: str, max_facts: int = MAX_FACTS
+) -> str:
     """The per-note prompt: capture anchor (with timezone — the resolution
-    target for every relative phrase), capture domain, and the chunk texts."""
+    target for every relative phrase), capture domain, the per-note fact budget,
+    and the chunk texts. `max_facts` defaults to the ceiling so callers that
+    don't scale it still get a valid budget; the pipeline passes fact_cap(...)."""
     content = "\n\n".join(t for t in texts if t.strip())
     guidance = DOMAIN_GUIDANCE.get(domain)
     block = f"\n{guidance}\n" if guidance else ""
     return (
         f"Capture anchor (note creation time): {anchor.isoformat()}\n"
-        f"Note capture domain: {domain}\n{block}\n"
+        f"Note capture domain: {domain}\n"
+        f"Fact budget for this note: at most {max_facts} facts "
+        f"(extract only what the note genuinely contains; fewer is fine).\n{block}\n"
         f"Note content:\n{content}"
     )

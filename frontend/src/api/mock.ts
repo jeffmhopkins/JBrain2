@@ -754,6 +754,23 @@ const REVIEW_ITEMS: ReviewItem[] = [
       accept_destructive: true,
     },
   }),
+  openReview({
+    id: "rev-8",
+    kind: "extraction_truncated",
+    domain: "general",
+    created_at: daysAgo(0, 9, 40),
+    payload: {
+      note_id: patelNote.id,
+      summary: "this note hit its fact budget — kept 40, skipped 6 facts",
+      snippet:
+        "Dad's full medical history — <mark>1998 appendectomy, 2011 ACL repair</mark>, and more…",
+      // Informational, like a low-confidence notice: it wrote no graph state,
+      // so its only verb (reject) is a dismissal. Re-run captures the tail.
+      outcomes: {
+        reject: "the note is left as-is — re-run analysis to capture more of it.",
+      },
+    },
+  }),
   // Past decisions seed the resolved segment (newest first when listed):
   // an accepted merge, a decided collision, a rejected merge (permanent
   // distinct_from — its reopen keeps the edge), and a muted dismissal.

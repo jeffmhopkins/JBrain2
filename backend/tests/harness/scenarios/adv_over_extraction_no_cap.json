@@ -1,6 +1,6 @@
 {
-  "name": "over-extraction past MAX_FACTS is capped server-side",
-  "description": "Adversarial H1 fact-cap probe. MAX_FACTS=12 used to live only in the prompt text (analysis.prompt) with ZERO server-side limit. One extraction emits 30 distinct stepCount measurements (distinct days, so they accumulate as a time-series with no supersession). GAP (closed): extraction.parse_extraction now hard-caps facts at MAX_FACTS, keeping the FIRST 12 (fact order is the model's salience ranking) and logging the overflow, alongside per-field size guards (identity-key length rejects, statement truncates, oversized value_json drops). The 30th day's fact (2026-05-30) is beyond the cap and must be ABSENT; exactly 12 stepCount facts land (docs/ANALYSIS.md 'Over-extraction is the known quality risk: soft cap on facts-per-note').",
+  "name": "over-extraction past the per-note fact budget is capped server-side",
+  "description": "Adversarial H1 fact-cap probe. The cap used to live only in the prompt text with ZERO server-side limit. One extraction emits 30 distinct stepCount measurements (distinct days, so they accumulate as a time-series with no supersession). GAP (closed): extraction.parse_extraction now hard-caps facts at the per-note budget the pipeline computes (prompt.fact_cap, scaled by note length and clamped to [MIN_FACTS, MAX_FACTS]); this ~90-word note lands on the MIN_FACTS=12 floor, so the FIRST 12 facts survive (fact order is the model's salience ranking) and the overflow is logged, alongside per-field size guards (identity-key length rejects, statement truncates, oversized value_json drops). The 30th day's fact (2026-05-30) is beyond the cap and must be ABSENT; exactly 12 stepCount facts land (docs/ANALYSIS.md 'Over-extraction is the known quality risk: soft cap on facts-per-note').",
   "steps": [
     {
       "domain": "general",
@@ -670,6 +670,13 @@
         "entity": "Me",
         "predicate": "stepCount",
         "value_contains": "2026-05-30"
+      }
+    ],
+    "review_items": [
+      {
+        "kind": "extraction_truncated",
+        "status": "open",
+        "count": 1
       }
     ]
   }
