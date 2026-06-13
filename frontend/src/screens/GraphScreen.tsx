@@ -94,6 +94,74 @@ export function edgeLabelText(predicate: string): string {
     .trim();
 }
 
+export interface EdgePlan {
+  /** Symmetric fan index for parallel connections (0 = straight). */
+  idx: number;
+  /** Arrowhead at the canonical-start / canonical-end of the p→q geometry. */
+  arrowStart: boolean;
+  arrowEnd: boolean;
+  /** This edge is folded into its reciprocal partner and isn't drawn. */
+  skip: boolean;
+  label: string;
+}
+
+/**
+ * Decide how each directed edge renders. A pair of opposite edges (A→B and
+ * B→A) collapses into one connection with arrowheads at both ends — so
+ * reciprocal facts like owns/owned-by or spouse/spouse read as a single
+ * bidirectional link instead of two parallel curves. Everything else stays a
+ * directional arrow (parent→child et al.), with same-pair siblings fanned out.
+ */
+export function planEdges(
+  edges: readonly { source: string; target: string; predicate: string }[],
+): Map<string, EdgePlan> {
+  const groups = new Map<string, { source: string; target: string; predicate: string }[]>();
+  for (const e of edges) {
+    const pair = e.source < e.target ? `${e.source}|${e.target}` : `${e.target}|${e.source}`;
+    let list = groups.get(pair);
+    if (!list) {
+      list = [];
+      groups.set(pair, list);
+    }
+    list.push(e);
+  }
+  const key = (e: { source: string; target: string; predicate: string }) =>
+    `${e.source}|${e.target}|${e.predicate}`;
+  const plan = new Map<string, EdgePlan>();
+  for (const [pair, list] of groups) {
+    const [p, q] = pair.split("|");
+    if (list.length === 2) {
+      const fwd = list.find((e) => e.source === p);
+      const bwd = list.find((e) => e.source === q);
+      if (fwd && bwd) {
+        const fl = edgeLabelText(fwd.predicate);
+        const bl = edgeLabelText(bwd.predicate);
+        plan.set(key(fwd), {
+          idx: 0,
+          arrowStart: true,
+          arrowEnd: true,
+          skip: false,
+          label: fl === bl ? fl : `${fl} · ${bl}`,
+        });
+        plan.set(key(bwd), { idx: 0, arrowStart: false, arrowEnd: false, skip: true, label: "" });
+        continue;
+      }
+    }
+    const k = list.length;
+    list.forEach((e, i) => {
+      const arrowEnd = e.target === q; // geometry runs p→q; arrow points at target
+      plan.set(key(e), {
+        idx: i - (k - 1) / 2,
+        arrowStart: !arrowEnd,
+        arrowEnd,
+        skip: false,
+        label: edgeLabelText(e.predicate),
+      });
+    });
+  }
+  return plan;
+}
+
 /** Minimal node shape the label grid needs (Sim is a structural superset). */
 export interface LabelNode {
   x: number;
@@ -222,28 +290,8 @@ export function GraphScreen({
     return m;
   }, [graph]);
 
-  // Per-edge curvature index: parallel edges between the same pair fan out
-  // symmetrically (…-1, 0, +1…) so they're distinguishable; a lone edge is 0
-  // (straight). Keyed by edge, grouped on the unordered node pair.
-  const edgeOffset = useMemo(() => {
-    const groups = new Map<string, string[]>();
-    for (const e of graph?.edges ?? []) {
-      const pair = e.source < e.target ? `${e.source}|${e.target}` : `${e.target}|${e.source}`;
-      const ek = `${e.source}|${e.target}|${e.predicate}`;
-      let list = groups.get(pair);
-      if (!list) {
-        list = [];
-        groups.set(pair, list);
-      }
-      list.push(ek);
-    }
-    const m = new Map<string, number>();
-    for (const eks of groups.values()) {
-      const k = eks.length;
-      eks.forEach((ek, i) => m.set(ek, i - (k - 1) / 2));
-    }
-    return m;
-  }, [graph]);
+  // How each edge draws: fan index, arrowheads, reciprocal-merge, label.
+  const edgeRender = useMemo(() => planEdges(graph?.edges ?? []), [graph]);
 
   const adjacency = useMemo(() => {
     const m = new Map<string, Set<string>>();
@@ -505,6 +553,7 @@ export function GraphScreen({
       v.mode === "focus" && id === v.focal ? 34 : (hops.get(id) ?? 2) <= 1 ? 25 : 19;
     for (const e of graph?.edges ?? []) {
       const key = edgeKey(e.source, e.target, e.predicate);
+      if (edgeRender.get(key)?.skip) continue; // folded into its reciprocal partner
       const path = edgeEls.current.get(key);
       const txt = edgeTextEls.current.get(key);
       const na = v.nodes.get(e.source);
@@ -524,7 +573,7 @@ export function GraphScreen({
       const ny = dx / len;
       // apex = perpendicular distance of the curve's peak from the chord; the
       // quadratic control point sits at twice that. Gentle, length-scaled, capped.
-      const apex = (edgeOffset.get(key) ?? 0) * Math.min(13, 0.16 * len);
+      const apex = (edgeRender.get(key)?.idx ?? 0) * Math.min(13, 0.16 * len);
       const mx = (a.x + b.x) / 2;
       const my = (a.y + b.y) / 2;
       const cx = mx + nx * apex * 2;
@@ -854,11 +903,28 @@ export function GraphScreen({
         <div className="graph-viewport" ref={viewportRef}>
           {/* biome-ignore lint/a11y/noSvgWithoutTitle: edges are decorative; the nodes carry the labels. */}
           <svg className="graph-edges">
+            <defs>
+              <marker
+                id="graph-arrow"
+                viewBox="0 0 8 8"
+                refX="8"
+                refY="4"
+                markerWidth="6"
+                markerHeight="6"
+                orient="auto-start-reverse"
+              >
+                <path d="M0 0 L8 4 L0 8 Z" />
+              </marker>
+            </defs>
             {graph.edges.map((e) => {
               const key = edgeKey(e.source, e.target, e.predicate);
+              const r = edgeRender.get(key);
+              if (r?.skip) return null;
               return (
                 <g key={key}>
                   <path
+                    markerStart={r?.arrowStart ? "url(#graph-arrow)" : undefined}
+                    markerEnd={r?.arrowEnd ? "url(#graph-arrow)" : undefined}
                     ref={(el) => {
                       if (el) edgeEls.current.set(key, el);
                       else edgeEls.current.delete(key);
@@ -871,7 +937,7 @@ export function GraphScreen({
                       else edgeTextEls.current.delete(key);
                     }}
                   >
-                    {edgeLabelText(e.predicate)}
+                    {r?.label ?? edgeLabelText(e.predicate)}
                   </text>
                 </g>
               );

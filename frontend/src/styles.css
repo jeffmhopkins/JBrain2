@@ -5727,6 +5727,10 @@ input.ld-title {
   stroke: var(--border);
   stroke-width: 1.4;
 }
+.graph-edges marker path {
+  fill: var(--border);
+  stroke: none;
+}
 .graph-edge-label {
   font-size: var(--fs-micro);
   fill: var(--text-3);
