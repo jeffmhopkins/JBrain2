@@ -206,6 +206,20 @@ GUC filters every query, so a `health`-scoped session physically cannot read
 layer** is the security boundary. Mutating tools route through the
 correction-note / review-inbox path — the agent proposes, the pipeline disposes.
 
+**Notes are the source of facts; the entity graph is the arbiter of current
+truth [decided].** A note is an immutable *provenance* record — every fact traces
+to one, and deleting a note purges its derived facts (docs/ANALYSIS.md
+"notes-as-sole-truth"). But a note's prose is the record *as captured*, frozen in
+time; **what is true now** is the fact graph after the supersession and review
+machinery has run — the entity layer, where a later note supersedes an old value,
+a correction retracts an error, and the review inbox adjudicates conflicts. So
+the retrieval tools must not let the agent read raw note prose as current truth:
+`search` and `read_note` overlay a **currency check** (`SqlAnalysisRepo.
+note_currency`) flagging any of a note's facts that are now superseded, retracted,
+or pending review, inlining the current value and pointing at `read_entity` — the
+authoritative entrance to the entity tree. The agent prefers the entity graph's
+live value; the note explains *where it came from*, not *whether it still holds*.
+
 **Testability.** The adapter fake drives the loop with scripted `tool_use` blocks
 for deterministic multi-turn tests; handlers test as plain async service calls
 against real Postgres via testcontainers, with the mandatory per-table RLS

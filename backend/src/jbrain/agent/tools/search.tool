@@ -1,6 +1,6 @@
 ---
 name: search
-version: 1
+version: 2
 permission: read
 params:
   type: object
@@ -18,3 +18,9 @@ and return the most relevant matches. Use this first to ground an answer in the
 owner's own data. Each result shows the source note id (pass it to read_note for
 the full note), its domain, the date, and a snippet. You only ever see notes this
 session is scoped to.
+
+A note's text is the original record at capture time, not necessarily what is true
+now. When a result's note contains facts that have since been superseded, retracted,
+or left pending review, the result carries a ⚠ currency flag naming the entity ids
+whose current values you should confirm with read_entity before relying on that
+note's claims.

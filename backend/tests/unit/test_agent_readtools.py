@@ -10,6 +10,7 @@ from jbrain.agent.readtools import (
     build_entity_handlers,
     build_read_handlers,
     build_registry,
+    format_currency,
     format_entity,
     format_note,
     format_search,
@@ -95,10 +96,17 @@ def entity_view(entity_id: str = "e1") -> dict:
 
 
 class FakeEntities:
-    def __init__(self, view: dict | None, matches: list[dict] | None = None):
+    def __init__(
+        self,
+        view: dict | None,
+        matches: list[dict] | None = None,
+        currency: dict[str, list[dict]] | None = None,
+    ):
         self.view = view
         self.matches = matches or []
+        self.currency = currency or {}
         self.searched: list[tuple] = []
+        self.currency_calls: list[list[str]] = []
 
     async def entity_view(self, ctx, entity_id):  # noqa: ANN001
         return self.view if self.view is not None and entity_id == self.view["id"] else None
@@ -107,10 +115,40 @@ class FakeEntities:
         self.searched.append((q, kind, limit))
         return self.matches
 
+    async def note_currency(self, ctx, note_ids):  # noqa: ANN001
+        self.currency_calls.append(list(note_ids))
+        return {n: self.currency[n] for n in note_ids if n in self.currency}
 
-def handlers(search_resp: SearchResponse | None = None, stored: NoteInfo | None = None):
+
+def stale(
+    status: str = "superseded",
+    entity_id: str = "e9",
+    entity_name: str = "Sarah",
+    predicate: str = "homeLocation",
+    qualifier: str = "",
+    stale_value: str = "Sarah lives in Austin.",
+    current_value: str | None = "Sarah lives in Denver.",
+) -> dict:
+    return {
+        "entity_id": entity_id,
+        "entity_name": entity_name,
+        "predicate": predicate,
+        "qualifier": qualifier,
+        "status": status,
+        "stale_value": stale_value,
+        "current_value": current_value,
+    }
+
+
+def handlers(
+    search_resp: SearchResponse | None = None,
+    stored: NoteInfo | None = None,
+    currency: dict[str, list[dict]] | None = None,
+):
     resp = search_resp if search_resp is not None else SearchResponse(degraded=False, results=[])
-    return build_read_handlers(FakeSearch(resp), FakeNotes(stored))  # type: ignore[arg-type]
+    return build_read_handlers(  # type: ignore[arg-type]
+        FakeSearch(resp), FakeNotes(stored), FakeEntities(None, currency=currency)
+    )
 
 
 # --- formatting ----------------------------------------------------------
@@ -133,12 +171,53 @@ def test_format_note_includes_body_and_domain() -> None:
     assert format_note(note(body="my note")) == "note n1 [health] 2026-06-01\nmy note"
 
 
+# --- currency overlay ----------------------------------------------------
+
+
+def test_format_currency_inlines_the_current_value_for_superseded() -> None:
+    out = format_currency([stale()])
+    assert "currency overlay" in out
+    assert "Sarah.homeLocation: SUPERSEDED" in out
+    assert "Current value: Sarah lives in Denver." in out  # inlined, not just a pointer
+    assert "read_entity e9 for the current value" in out
+
+
+def test_format_currency_distinguishes_retracted_and_pending() -> None:
+    out = format_currency(
+        [
+            stale(status="retracted", current_value=None),
+            stale(status="pending_review", predicate="birthDate", current_value=None),
+        ]
+    )
+    assert "RETRACTED — no longer asserted" in out
+    assert "PENDING REVIEW — unverified" in out
+
+
+def test_format_currency_empty_is_blank() -> None:
+    assert format_currency([]) == ""
+
+
+def test_format_currency_qualifier_in_the_address() -> None:
+    out = format_currency([stale(predicate="name", qualifier="nickname")])
+    assert "Sarah.name.nickname:" in out
+
+
+def test_format_search_flags_a_hit_whose_note_has_stale_facts() -> None:
+    resp = SearchResponse(degraded=False, results=[result(note_id="n1"), result(note_id="n2")])
+    out = format_search(resp, {"n1": [stale(), stale(status="retracted")]})
+    assert "⚠ 2 fact(s) here are no longer current (retracted, superseded)" in out
+    assert "read_entity e9" in out
+    # The clean hit (n2) carries no flag.
+    n2_line = [ln for ln in out.splitlines() if "note n2" in ln][0]
+    assert "⚠" not in n2_line
+
+
 # --- handlers ------------------------------------------------------------
 
 
 async def test_search_tool_forwards_scope_and_query() -> None:
     fake = FakeSearch(SearchResponse(degraded=False, results=[result()]))
-    tools = build_read_handlers(fake, FakeNotes(None))  # type: ignore[arg-type]
+    tools = build_read_handlers(fake, FakeNotes(None), FakeEntities(None))  # type: ignore[arg-type]
     out = await tools["search"]({"query": "groceries", "limit": 3}, CTX)
     assert "note n1" in out
     # The handler ran the search under the session's scope, with its query.
@@ -185,6 +264,26 @@ async def test_read_note_needs_an_id() -> None:
     out = await handlers()["read_note"]({}, CTX)
     assert isinstance(out, ToolOutput)
     assert "needs a note_id" in out
+
+
+async def test_read_note_appends_the_currency_overlay() -> None:
+    tools = handlers(
+        stored=note(note_id="abc", body="Sarah lives in Austin."),
+        currency={"abc": [stale()]},
+    )
+    out = await tools["read_note"]({"note_id": "abc"}, CTX)
+    assert isinstance(out, ToolOutput)
+    assert "Sarah lives in Austin." in out  # the original note prose
+    assert "SUPERSEDED" in out and "Current value: Sarah lives in Denver." in out
+
+
+async def test_search_tool_flags_stale_hits_and_scopes_the_lookup() -> None:
+    resp = SearchResponse(degraded=False, results=[result(note_id="n1")])
+    entities = FakeEntities(None, currency={"n1": [stale(status="retracted", current_value=None)]})
+    tools = build_read_handlers(FakeSearch(resp), FakeNotes(None), entities)  # type: ignore[arg-type]
+    out = await tools["search"]({"query": "where does sarah live"}, CTX)
+    assert "no longer current (retracted)" in out
+    assert entities.currency_calls == [["n1"]]  # looked up exactly the hit notes
 
 
 def test_format_entity_shows_kind_aliases_and_edges() -> None:
@@ -285,13 +384,13 @@ def test_sidecars_pinned_to_their_versions() -> None:
     pins = {
         "search.tool": (
             "search",
-            1,
-            "7d3db2e761fa949b5e63799cc9a06e0535c2eb2d8f97d870a3da839c35aa4267",
+            2,
+            "b67c76b8f8bf8a7a0910fbbaed57d35332c787bec7c9408c07219b3acc982ac4",
         ),
         "read_note.tool": (
             "read_note",
-            1,
-            "17ae0e655486be95b41ba0b9ab1c1952b45be0f63822e831276cc238b93f66c8",
+            2,
+            "5ab04ed74de5965d5bf67befcb0071c9ea9edc1e4b16d00871c373e216296a40",
         ),
         "read_entity.tool": (
             "read_entity",
