@@ -4,15 +4,15 @@ Archiving tidies a chat out of the live Chats list without deleting it or its
 transcript — a third lifecycle state alongside `active` and `ended`. Widen the
 status CHECK from migration 0015 to admit it.
 
-Revision ID: 0023
-Revises: 0022
+Revision ID: 0025
+Revises: 0024
 Create Date: 2026-06-13
 """
 
 from alembic import op
 
-revision = "0023"
-down_revision = "0022"
+revision = "0025"
+down_revision = "0024"
 branch_labels = None
 depends_on = None
 
