@@ -224,11 +224,20 @@ a right-swipe from the Full Brain composer, DESIGN.md):
   every query, retrieval, and tool the session runs is physically bounded to it: a
   session opened "general only" cannot read a health fact even when asked, and
   injected content in it cannot reach what the session cannot see. The default is a
-  deliberate minimal/last-used set; **widening scope is an explicit owner act, never
-  the resting state.** This dissolves the omni-scoped-owner problem at the source —
-  the session's read scope is the **upper bound** on any episode's domain, so the
-  fail-closed episodic scoping (non-negotiable #4) is trivially satisfied and the
-  write-time classifier only ever chooses *among the scopes already selected*.
+  **last-used set**, seeded — for the owner, who already holds every scope — to
+  **all domains** on first run; narrowing then sticks as remembered intent. Scope is
+  presented as a rail you nudge, not a gate you climb (the Chats picker starts a chat
+  in one tap on the last-used scope, with named presets and a Custom grid behind
+  progressive disclosure — docs/mocks/session-panel-b-quick-presets.html). The
+  blast-radius cost of an all-domains owner default is bounded by the parts that
+  *are* the boundary: RLS scoping at the DB, writes that only ever stage Proposals,
+  and the egress chokepoint that approves the exact payload — none of which the read
+  dial moves. **For non-owner principals the dials stay pinned** (an intake link is
+  one subject × one domain, §"Non-owner principals"); there, widening is not a
+  resting state but an impossibility. The session's read scope is still the **upper
+  bound** on any episode's domain, so the fail-closed episodic scoping
+  (non-negotiable #4) is trivially satisfied and the write-time classifier only ever
+  chooses *among the scopes already selected*.
 
 - **Writes and sensitive actions, never standing — always staged.** Within its read
   scope a session reads freely; anything that *changes* state, or that the owner has
