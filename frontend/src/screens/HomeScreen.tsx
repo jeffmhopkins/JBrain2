@@ -9,6 +9,9 @@ import type { NoteActions } from "../notes/useNoteActions";
 import type { NotesController, StreamItem } from "../notes/useNotes";
 
 const TOAST_MS = 4000;
+// The calendar's agent handoff is owner-only and may read every domain, so a
+// session it auto-starts spans all of them (no scope picker for the owner).
+const ALL_DOMAINS = ["general", "health", "finance", "location"];
 
 interface HomeScreenProps {
   notes: NotesController;
@@ -48,6 +51,7 @@ export function HomeScreen({
 }: HomeScreenProps) {
   const [seg, setSeg] = useState<SegState>({ row: "main", mode: "entry" });
   const [pendingDraft, setPendingDraft] = useState("");
+  const composingRef = useRef(false);
   const [toast, setToast] = useState<Toast | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -57,6 +61,7 @@ export function HomeScreen({
     if (composePrompt) {
       setSeg({ row: "main", mode: "fullbrain" });
       setPendingDraft(composePrompt);
+      composingRef.current = true;
       onComposeConsumed?.();
     }
   }, [composePrompt, onComposeConsumed]);
@@ -65,6 +70,22 @@ export function HomeScreen({
   // panels render in the body while the omnibox below acts as its composer. The
   // controller only does work while the mode is on screen.
   const fb = useFullBrain(seg.mode === "fullbrain", fbDeps);
+
+  // The handoff needs a session to send into. If Full Brain loaded with none
+  // (it would otherwise drop the owner on the scope picker), start an all-domains
+  // session so the seeded request is ready to send.
+  useEffect(() => {
+    if (!composingRef.current || seg.mode !== "fullbrain") return;
+    if (fb.active) {
+      composingRef.current = false;
+    } else if (fb.panel === "sessions") {
+      composingRef.current = false;
+      void fb
+        .create({ domain_scopes: ALL_DOMAINS })
+        .then(fb.open)
+        .catch(() => {});
+    }
+  }, [seg.mode, fb.active, fb.panel, fb.create, fb.open]);
 
   function showToast(message: string, action?: Toast["action"]) {
     if (toastTimer.current) clearTimeout(toastTimer.current);

@@ -679,36 +679,33 @@ function EventSheet({
           </div>
         )}
 
-        <div className="cal-actions">
-          {!cancelled && (
+        {!cancelled && (
+          <div className="cal-actions">
             <button type="button" className="cal-act" onClick={reschedule}>
               reschedule
             </button>
-          )}
+            <button type="button" className="cal-act danger" onClick={cancel}>
+              {cancelArmed ? "tap again to cancel" : "cancel"}
+            </button>
+          </div>
+        )}
+        <div className="cal-actions cal-actions-2">
           {sourceNoteId && (
             <button type="button" className="cal-act ghost" onClick={openNote}>
               open note
             </button>
           )}
-          <a
-            className="cal-act ghost cal-act-icon"
-            href={`/api/appointments/${encodeURIComponent(ev.id)}.ics`}
-          >
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M8 2v4M16 2v4M3 9h18M5 5h14a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z" />
-            </svg>
-            <span className="cal-sr">Add to my calendar</span>
-          </a>
-        </div>
-        <div className="cal-actions cal-actions-2">
-          {!cancelled && (
-            <button type="button" className="cal-act danger" onClick={cancel}>
-              {cancelArmed ? "tap again to cancel" : "cancel"}
-            </button>
-          )}
           <button type="button" className="cal-act ghost" onClick={ask}>
             ask the agent
           </button>
+        </div>
+        <div className="cal-actions cal-actions-2">
+          <a className="cal-act ghost" href={`/api/appointments/${encodeURIComponent(ev.id)}.ics`}>
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M8 2v4M16 2v4M3 9h18M5 5h14a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z" />
+            </svg>
+            add to calendar
+          </a>
         </div>
       </div>
     </div>
