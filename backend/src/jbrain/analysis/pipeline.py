@@ -382,7 +382,10 @@ class AnalysisPipeline:
         predicate."""
         for pf in plan.to_review:
             fact = pf.fact
-            # Mirror _upsert_fact's domain derivation (fact.domain is "" here).
+            # Mirror _upsert_fact's domain derivation. An IntentFact carries no
+            # domain (plan_to_extraction emits ExtractedFact.domain=""), so
+            # _upsert_fact's `fact.domain or note_domain` collapses to note_domain
+            # — we start there, then apply the same floor + ratchet.
             extracted = note_domain
             floor = domain_floor(fact.predicate)
             if floor is not None and note_domain == "general":
