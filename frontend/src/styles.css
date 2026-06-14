@@ -851,12 +851,25 @@ h3 {
 }
 .llm-high {
   --llm-accent: var(--rose);
+  --llm-accent-tint: var(--rose-tint);
 }
 .llm-light {
   --llm-accent: var(--green);
+  --llm-accent-tint: var(--green-tint);
 }
 .llm-vision {
   --llm-accent: var(--amber);
+  --llm-accent-tint: var(--amber-tint);
+}
+
+/* The ambient --mode-tint that .seg-on fills with isn't set on this screen, so
+   a selected segment had no fill and was nearly invisible in both themes. Tie
+   the selected reasoning/provider segment to its tier accent — a tinted fill
+   plus a hairline ring reads clearly on light and dark surfaces alike. */
+.llm-group .seg-on {
+  color: var(--text);
+  background: var(--llm-accent-tint, var(--accent-tint));
+  box-shadow: inset 0 0 0 1px var(--llm-accent, var(--accent));
 }
 
 .llm-group-head {
