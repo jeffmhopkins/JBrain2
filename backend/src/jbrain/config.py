@@ -2,7 +2,12 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="JBRAIN_", env_file=".env", extra="ignore")
+    # env_ignore_empty: an unset compose var arrives as "" (e.g. ${FOO:-});
+    # treat that as absent so it falls back to the default rather than failing to
+    # parse — load-bearing for the wipe one-shot's off-by-default bool guard.
+    model_config = SettingsConfigDict(
+        env_prefix="JBRAIN_", env_file=".env", extra="ignore", env_ignore_empty=True
+    )
 
     database_url: str = "postgresql+asyncpg://jbrain_app:jbrain_app@localhost:5432/jbrain"
     supervisor_url: str = "http://supervisor:9000"
@@ -18,6 +23,12 @@ class Settings(BaseSettings):
     medlineplus_url: str = "https://connect.medlineplus.gov"
     # Cookies require HTTPS in production; tests and local dev run plain HTTP.
     secure_cookies: bool = True
+
+    # One-time install reset (W3.3 cutover): when set, the `jbrain.install_wipe`
+    # one-shot drops + rebuilds the schema, clears blob/backup storage, and
+    # enables the v3 pipeline — then writes a sentinel so it NEVER runs twice.
+    # Off by default; a deliberate, destructive opt-in for a fresh install.
+    wipe_on_first_deploy: bool = False
 
     anthropic_api_key: str = ""
     xai_api_key: str = ""
