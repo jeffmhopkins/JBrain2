@@ -55,12 +55,25 @@ def load_registry(defs_dir: Path | None = None) -> SchemaRegistry:
     # lookup keyed on entities.kind hits whichever convention the kind follows.
     by_kind: dict[str, EntityType] = {t.id: t for t in types.values()}
     by_kind.update({t.name: t for t in types.values()})
+    # Every predicate any type declares functional, by normalization key — the
+    # registry-driven cardinality is_functional consults (union across types).
+    functional_predicates = frozenset(
+        _norm_key(p.canonical_name)
+        for t in types.values()
+        for p in t.effective_predicates
+        if p.functional
+    )
+    known_predicates = frozenset(
+        _norm_key(p.canonical_name) for t in types.values() for p in t.effective_predicates
+    )
     return SchemaRegistry(
         meta=meta,
         facets=facets,
         types=types,
         normalization=normalization,
         by_kind=by_kind,
+        functional_predicates=functional_predicates,
+        known_predicates=known_predicates,
     )
 
 

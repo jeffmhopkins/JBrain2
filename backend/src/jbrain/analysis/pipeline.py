@@ -107,7 +107,7 @@ from jbrain.models.analysis import (
 )
 from jbrain.models.notes import Attachment, Chunk, Note
 from jbrain.queue import SYSTEM_CTX, PermanentJobError
-from jbrain.schema import SchemaError
+from jbrain.schema import SchemaError, get_registry
 
 log = structlog.get_logger()
 
@@ -1493,6 +1493,13 @@ class AnalysisPipeline:
             )
             return existing_id
 
+        await self._shape_check(
+            session,
+            entity_id=entity.id,
+            predicate=fact.predicate,
+            value_json=fact.value_json,
+            object_present=object_id is not None,
+        )
         anchor = anchor_for.get(fact.entity_ref)
         base_chunk = anchor[0] if anchor else (chunks[0].id if chunks else None)
         chunk_id = await self._citation_chunk(
@@ -1529,6 +1536,44 @@ class AnalysisPipeline:
         session.add(held)
         await session.flush()
         return held.id
+
+    async def _shape_check(
+        self,
+        session: AsyncSession,
+        *,
+        entity_id: uuid.UUID,
+        predicate: str,
+        value_json: dict[str, Any] | None,
+        object_present: bool,
+    ) -> None:
+        """Log-only typed value-shape validation (Phase 1, docs/PREDICATE_CANONICALIZATION.md):
+        warn when a committed fact's value_json violates its predicate's declared
+        value_shape. Never rejects yet — enforcement (drop-value-keep-fact) flips
+        on once a real-Grok eval confirms the conservative validator does not
+        false-positive. The kind is per-entity-type, so this runs here (the
+        entity is resolved) rather than at parse time."""
+        if value_json is None:
+            return
+        registry = get_registry()
+        # Skip the kind lookup for the many drift/unknown predicates no type
+        # declares — they have no shape to validate and are never rejected.
+        if not registry.declares_predicate(predicate):
+            return
+        kind = (
+            await session.execute(select(Entity.kind).where(Entity.id == entity_id))
+        ).scalar_one_or_none()
+        if kind is None:
+            return
+        pred = registry.predicate_for_kind(kind, predicate)
+        if pred is not None and not registry.validate_value(
+            pred, value_json, object_present=object_present
+        ):
+            log.warning(
+                "analysis.fact_value_shape_mismatch",
+                predicate=predicate,
+                shape=pred.value_shape,
+                kind=kind,
+            )
 
     async def _upsert_fact(
         self,
@@ -1592,6 +1637,13 @@ class AnalysisPipeline:
                     chunks,
                 )
 
+        await self._shape_check(
+            session,
+            entity_id=entity.id,
+            predicate=fact.predicate,
+            value_json=fact.value_json,
+            object_present=object_entity is not None,
+        )
         candidate = Candidate(
             kind=fact.kind,
             statement=fact.statement,
