@@ -1,11 +1,12 @@
 // The entity graph "Map": a force-directed overview that drills into a radial
-// ego focus on tap (docs/DESIGN.md, graph-view mockups). One dataset (the
-// root's 2-hop ego) backs both modes; focus re-lays-out the same nodes around
-// a focal entity, so node elements persist across the transition (object
-// constancy) and the force layout is never re-run on a filter — survivors keep
-// their positions, filtered types just fade. Return to overview is an explicit
-// labelled control, never a hidden gesture. The chip bar doubles as the legend:
-// "All" is the empty selection, and each tap toggles a type (additive).
+// ego focus on tap (docs/DESIGN.md, graph-view mockups). One dataset backs both
+// modes — by default the whole graph (every entity, disconnected ones included,
+// centered on "Me"), or a root's 2-hop ego when one is named. Focus re-lays-out
+// the same nodes around a focal entity, so node elements persist across the
+// transition (object constancy) and the force layout is never re-run on a
+// filter — survivors keep their positions, filtered types just fade. Return to
+// overview is an explicit labelled control, never a hidden gesture. The chip bar
+// doubles as the legend: "All" is the empty selection, each tap toggles a type.
 
 import {
   type KeyboardEvent,
@@ -17,17 +18,17 @@ import {
   useRef,
   useState,
 } from "react";
-import { type EgoGraph, type EntityList, type EntityOut, api } from "../api/client";
+import { type EgoGraph, type EntityOut, api } from "../api/client";
 import { Sheet } from "../components/Sheet";
 import { ChevronLeftIcon, FitIcon, MinusIcon, PlusIcon } from "../components/icons";
 import { EntityTypeIcon, type EntityTypeKey, resolveEntityKind } from "../entities/kinds";
 
 interface GraphScreenProps {
   onOpenEntity: (entityId: string) => void;
-  /** Entity to center on; when absent, the most-recently-seen entity is used. */
+  /** Entity to center an ego view on; when absent, the whole graph loads. */
   rootId?: string;
   load?: (entityId: string, depth: number) => Promise<EgoGraph>;
-  list?: (q?: string, kind?: string) => Promise<EntityList>;
+  loadFull?: () => Promise<EgoGraph>;
 }
 
 type Phase = "loading" | "ready" | "empty" | "error";
@@ -227,11 +228,10 @@ export function GraphScreen({
   onOpenEntity,
   rootId,
   load = api.getNeighbors,
-  list = api.listEntities,
+  loadFull = api.getFullGraph,
 }: GraphScreenProps) {
   const [phase, setPhase] = useState<Phase>("loading");
   const [graph, setGraph] = useState<EgoGraph | null>(null);
-  const [root, setRoot] = useState<string | null>(rootId ?? null);
   const [mode, setMode] = useState<Mode>("overview");
   const [focal, setFocal] = useState<string | null>(null);
   const [trail, setTrail] = useState<string[]>([]);
@@ -239,34 +239,13 @@ export function GraphScreen({
   const [sheetId, setSheetId] = useState<string | null>(null);
   const [focusEmpty, setFocusEmpty] = useState(false);
 
-  // Resolve a root: the prop wins; otherwise the most-recently-seen entity.
+  // The single dataset both modes draw from: the whole graph by default
+  // (centered on "Me"), or a 2-hop ego view when an explicit root is given.
+  // Selecting a node still narrows to a radial focus over this same dataset.
   useEffect(() => {
-    if (rootId) {
-      setRoot(rootId);
-      return;
-    }
-    let stale = false;
-    list()
-      .then((r) => {
-        if (stale) return;
-        const first = r.items[0]?.id ?? null;
-        setRoot(first);
-        if (first === null) setPhase("empty");
-      })
-      .catch(() => {
-        if (!stale) setPhase("error");
-      });
-    return () => {
-      stale = true;
-    };
-  }, [rootId, list]);
-
-  // Load the root's 2-hop ego — the single dataset both modes draw from.
-  useEffect(() => {
-    if (!root) return;
     let stale = false;
     setPhase("loading");
-    load(root, 2)
+    (rootId ? load(rootId, 2) : loadFull())
       .then((g) => {
         if (stale) return;
         setGraph(g);
@@ -281,7 +260,7 @@ export function GraphScreen({
     return () => {
       stale = true;
     };
-  }, [root, load]);
+  }, [rootId, load, loadFull]);
 
   // ---- derived graph structure ----
   const nodeKind = useMemo(() => {

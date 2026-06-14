@@ -101,6 +101,32 @@ async function loaded() {
 }
 
 describe("GraphScreen", () => {
+  it("defaults to the whole graph (loadFull), not a root ego view", async () => {
+    // A disconnected island must still render in the everything-graph default.
+    const full: EgoGraph = {
+      ...GRAPH,
+      depth: 0,
+      nodes: [
+        ...GRAPH.nodes,
+        {
+          id: "island",
+          kind: "Animal",
+          canonical_name: "Island Cat",
+          status: "confirmed",
+          domain: "general",
+        },
+      ],
+    };
+    const load = vi.fn(async () => GRAPH);
+    const loadFull = vi.fn(async () => full);
+    render(<GraphScreen onOpenEntity={vi.fn()} load={load} loadFull={loadFull} />);
+    await loaded();
+    expect(loadFull).toHaveBeenCalled();
+    expect(load).not.toHaveBeenCalled();
+    // Edgeless node included — the whole graph, not just what connects to "Me".
+    expect(screen.getByText("Island Cat")).toBeInTheDocument();
+  });
+
   it("loads the root ego graph and renders nodes + type chips", async () => {
     const { load } = setup();
     await loaded();
