@@ -7,3 +7,11 @@ __pycache__/
 .ruff_cache/
 node_modules/
 dist/
+
+# Secrets must never be committed. Runtime config (incl. the xAI API key) lives
+# in an untracked .env / environment variables, read via pydantic-settings.
+.env
+.env.*
+!.env.example
+*.key
+secrets/
