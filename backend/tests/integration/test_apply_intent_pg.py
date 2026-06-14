@@ -134,7 +134,7 @@ async def test_apply_intent_commits_a_surface_fact_and_mints_entity(maker, tmp_p
     assert facts[0].status == "active"
 
 
-async def test_apply_intent_excludes_cross_subject_review_fact(maker, tmp_path):  # noqa: F811
+async def test_apply_intent_holds_cross_subject_review_fact(maker, tmp_path):  # noqa: F811
     note_id = await make_note(maker, domain="general", body="Globex and Initech notes.")
     await ingest(maker, note_id, tmp_path)
     intent = _intent(
@@ -166,19 +166,208 @@ async def test_apply_intent_excludes_cross_subject_review_fact(maker, tmp_path):
         cards = (
             (
                 await session.execute(
-                    select(ReviewItem).where(ReviewItem.kind == "low_confidence_inference")
+                    select(ReviewItem).where(
+                        ReviewItem.kind == "low_confidence_inference",
+                        ReviewItem.payload["note_id"].astext == note_id,
+                    )
                 )
             )
             .scalars()
             .all()
         )
-    # The cross-subject fact (review-held) is excluded by commit_only; only the
-    # clean fact committed — and the held fact surfaces as a review card (A1b-ii-2).
-    assert len(facts) == 1
-    assert facts[0].statement == "Globex is in tech"
+    # The clean fact commits active; the cross-subject fact is HELD as a
+    # pending_review row (A1b-ii-2) — not dropped — and its card links to it.
+    by_stmt = {f.statement: f for f in facts}
+    assert by_stmt["Globex is in tech"].status == "active"
+    held = by_stmt["Initech is in tech"]
+    assert held.status == "pending_review"
+    assert held.pinned is False
     assert len(cards) == 1
     assert cards[0].payload["reasons"] == ["cross_subject_link"]
     assert cards[0].payload["statement"] == "Initech is in tech"
+    assert cards[0].payload["fact_id"] == str(held.id)  # card → row linkage
+
+
+async def test_apply_intent_holds_below_threshold_fact_decide_would_commit(maker, tmp_path):  # noqa: F811
+    # A low-weight fact (no cross-subject) the weight model holds below threshold:
+    # routed to _insert_held_fact, it must land pending_review even though decide()
+    # — fed the same fact — would have inserted it ACTIVE (no existing head).
+    note_id = await make_note(maker, domain="general", body="Globex notes.")
+    await ingest(maker, note_id, tmp_path)
+    intent = _intent(
+        note_id,
+        [
+            EntityResolution(
+                mention_ref="m1", mode="new", new_kind="Organization", new_name="Globex"
+            )
+        ],
+        [_fact("m1", inferred=True, self_confidence=0.2)],
+    )
+    # Inferred + low self-confidence + no surface signal → weight under the commit
+    # threshold → held (below_threshold), not active.
+    plan = plan_intent(intent, signals={0: ConfidenceSignals(False, True, False)})
+    assert plan.to_review and not plan.to_commit
+    await _run(maker, note_id, intent, plan, tmp_path=tmp_path)
+
+    async with scoped_session(maker, SYSTEM_CTX) as session:
+        facts = (
+            (await session.execute(select(Fact).where(Fact.note_id == uuid.UUID(note_id))))
+            .scalars()
+            .all()
+        )
+    assert len(facts) == 1 and facts[0].status == "pending_review"
+
+
+async def _seed_entity(maker, name: str, *, domain: str = "general") -> str:  # noqa: F811
+    async with scoped_session(maker, SYSTEM_CTX) as session:
+        ent = Entity(
+            kind="Organization", canonical_name=name, status="confirmed", domain_code=domain
+        )
+        session.add(ent)
+        await session.flush()
+        return str(ent.id)
+
+
+async def _seed_active_fact(maker, *, predicate: str, statement: str, domain: str = "general"):  # noqa: F811
+    """An existing active entity + fact (from a PRIOR note), to prove a held fact
+    never supersedes it. The prior note is what owns the active fact's note_id."""
+    prior_note = await make_note(maker, domain=domain, body="prior fact note")
+    async with scoped_session(maker, SYSTEM_CTX) as session:
+        ent = Entity(
+            kind="Organization", canonical_name="Acme", status="confirmed", domain_code=domain
+        )
+        session.add(ent)
+        await session.flush()
+        fact = Fact(
+            entity_id=ent.id,
+            predicate=predicate,
+            qualifier="",
+            kind="attribute",
+            statement=statement,
+            assertion="asserted",
+            status="active",
+            reported_at=datetime.now(UTC),
+            note_id=uuid.UUID(prior_note),
+            extractor="test:fake",
+            prompt_version="v1",
+            domain_code=domain,
+        )
+        session.add(fact)
+        await session.flush()
+        return str(ent.id), str(fact.id)
+
+
+async def test_held_fact_does_not_supersede_an_existing_active_fact(maker, tmp_path):  # noqa: F811
+    ent_id, active_id = await _seed_active_fact(maker, predicate="industry", statement="Acme: old")
+    note_id = await make_note(maker, domain="general", body="Acme notes.")
+    await ingest(maker, note_id, tmp_path)
+    # Resolve to the EXISTING Acme, cross_subject → the new industry value is held.
+    intent = _intent(
+        note_id,
+        [
+            EntityResolution(
+                mention_ref="m1", mode="existing", proposed_entity_id=ent_id, cross_subject=True
+            )
+        ],
+        [_fact("m1", statement="Acme: new")],
+    )
+    plan = plan_intent(intent, signals={0: _SURFACE})
+    await _run(maker, note_id, intent, plan, tmp_path=tmp_path)
+
+    async with scoped_session(maker, SYSTEM_CTX) as session:
+        active = (
+            await session.execute(select(Fact).where(Fact.id == uuid.UUID(active_id)))
+        ).scalar_one()
+        held = (
+            (await session.execute(select(Fact).where(Fact.note_id == uuid.UUID(note_id))))
+            .scalars()
+            .all()
+        )
+    assert active.status == "active" and active.superseded_by is None  # untouched
+    assert len(held) == 1 and held[0].status == "pending_review"
+    assert held[0].statement == "Acme: new"
+
+
+async def test_held_fact_is_idempotent_across_reanalysis(maker, tmp_path):  # noqa: F811
+    # Real reprocessing resolves a mention to the SAME existing entity (the agent
+    # sees it in graph context, so mode="existing"), so re-running must refresh the
+    # held row in place — stable id, one row — not churn a duplicate that orphans
+    # the card's fact_id. (mode="new" always mints a fresh entity, committed or
+    # held alike, so it is not the reprocessing scenario this guards.)
+    ent_id = await _seed_entity(maker, "Initech")
+    note_id = await make_note(maker, domain="general", body="Initech notes.")
+    await ingest(maker, note_id, tmp_path)
+    intent = _intent(
+        note_id,
+        [
+            EntityResolution(
+                mention_ref="m1", mode="existing", proposed_entity_id=ent_id, cross_subject=True
+            )
+        ],
+        [_fact("m1", statement="Initech is in tech")],
+    )
+    plan = plan_intent(intent, signals={0: _SURFACE})
+    await _run(maker, note_id, intent, plan, tmp_path=tmp_path)
+    await _run(maker, note_id, intent, plan, tmp_path=tmp_path)  # re-analysis
+
+    async with scoped_session(maker, SYSTEM_CTX) as session:
+        held = (
+            (await session.execute(select(Fact).where(Fact.note_id == uuid.UUID(note_id))))
+            .scalars()
+            .all()
+        )
+        cards = (
+            (
+                await session.execute(
+                    select(ReviewItem).where(
+                        ReviewItem.kind == "low_confidence_inference",
+                        ReviewItem.payload["note_id"].astext == note_id,
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+    assert len(held) == 1 and held[0].status == "pending_review"  # not duplicated
+    assert len(cards) == 1
+    assert cards[0].payload["fact_id"] == str(held[0].id)  # link still valid
+
+
+async def test_held_health_fact_floors_to_health_on_row_and_card(maker, tmp_path):  # noqa: F811
+    # Firewall: a cross-subject health-predicate fact held in a GENERAL note must
+    # floor to the health domain on BOTH the pending_review row and its card, so
+    # the firewall (RLS) keeps it out of a general-scoped read.
+    note_id = await make_note(maker, domain="general", body="Mom's medication notes.")
+    await ingest(maker, note_id, tmp_path)
+    intent = _intent(
+        note_id,
+        [
+            EntityResolution(
+                mention_ref="m1", mode="new", new_kind="Person", new_name="Mom", cross_subject=True
+            )
+        ],
+        [_fact("m1", predicate="medication", statement="Mom takes lisinopril")],
+    )
+    plan = plan_intent(intent, signals={0: _SURFACE})
+    await _run(maker, note_id, intent, plan, tmp_path=tmp_path)
+
+    async with scoped_session(maker, SYSTEM_CTX) as session:
+        held = (
+            (await session.execute(select(Fact).where(Fact.note_id == uuid.UUID(note_id))))
+            .scalars()
+            .all()
+        )
+        card = (
+            await session.execute(
+                select(ReviewItem).where(
+                    ReviewItem.kind == "low_confidence_inference",
+                    ReviewItem.payload["note_id"].astext == note_id,
+                )
+            )
+        ).scalar_one()
+    assert len(held) == 1 and held[0].status == "pending_review"
+    assert held[0].domain_code == "health"  # floored despite the general note
+    assert card.domain_code == "health"  # card rides the same floor — no leak
 
 
 async def test_apply_intent_rejected_plan_is_a_noop(maker, tmp_path):  # noqa: F811

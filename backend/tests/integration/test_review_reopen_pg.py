@@ -159,6 +159,66 @@ async def test_collision_reopen_restores_fact_statuses(
         await repo.reopen_review(OWNER, item)
 
 
+async def test_inference_accept_pins_held_fact_and_reopen_restores(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """accept on a low_confidence_inference card pins the held pending_review fact
+    active (so it survives reprocessing); reopen restores it to pending_review."""
+    repo = SqlAnalysisRepo(maker)
+    note = await seed_note(maker)
+    entity = await seed_entity(maker, "Held Inference Subject")
+    fact = await seed_fact(maker, note, entity, predicate="industry", status="pending_review")
+    item = await seed_item(maker, "low_confidence_inference", {"fact_id": fact})
+
+    resolved = await repo.resolve_review(OWNER, item, "accept", {})
+    assert resolved is not None
+    assert [e["action"] for e in resolved["resolution"]["effects"]] == ["pinned"]
+    row = await one_row(
+        maker, OWNER, "SELECT status, pinned FROM app.facts WHERE id = :id", id=fact
+    )
+    assert (row.status, row.pinned) == ("active", True)
+
+    reopened = await repo.reopen_review(OWNER, item)
+    assert reopened is not None and reopened["status"] == "open"
+    row = await one_row(
+        maker,
+        OWNER,
+        "SELECT status, pinned, superseded_by FROM app.facts WHERE id = :id",
+        id=fact,
+    )
+    assert (row.status, row.pinned, row.superseded_by) == ("pending_review", False, None)
+
+
+async def test_inference_reject_retracts_held_fact_and_reopen_restores(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """reject retracts the held fact; reopen restores it to pending_review."""
+    repo = SqlAnalysisRepo(maker)
+    note = await seed_note(maker)
+    entity = await seed_entity(maker, "Rejected Inference Subject")
+    fact = await seed_fact(maker, note, entity, predicate="industry", status="pending_review")
+    item = await seed_item(maker, "low_confidence_inference", {"fact_id": fact})
+
+    resolved = await repo.resolve_review(OWNER, item, "reject", {})
+    assert resolved is not None
+    assert [e["action"] for e in resolved["resolution"]["effects"]] == ["retracted"]
+    row = await one_row(maker, OWNER, "SELECT status FROM app.facts WHERE id = :id", id=fact)
+    assert row.status == "retracted"
+
+    await repo.reopen_review(OWNER, item)
+    row = await one_row(maker, OWNER, "SELECT status FROM app.facts WHERE id = :id", id=fact)
+    assert row.status == "pending_review"
+
+
+async def test_inference_resolution_requires_a_fact_id(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    item = await seed_item(maker, "low_confidence_inference", {})  # no fact_id
+    repo = SqlAnalysisRepo(maker)
+    with pytest.raises(UnknownAction):
+        await repo.resolve_review(OWNER, item, "accept", {})
+
+
 async def test_merge_accept_reopen_restores_entities_and_mentions(
     maker: async_sessionmaker[AsyncSession],
 ) -> None:

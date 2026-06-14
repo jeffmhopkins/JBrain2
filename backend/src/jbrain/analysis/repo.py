@@ -1075,6 +1075,53 @@ class SqlAnalysisRepo:
                 ]
             return "resolved", []
 
+        if kind == "low_confidence_inference" and action in ("accept", "reject"):
+            # The held fact lives as a pending_review row linked by fact_id.
+            # accept pins it active (pinning survives the re-analysis sweep, like
+            # domain_promotion / collision accept); reject retracts it. Both use
+            # the pinned/retracted effect shapes _reverse_effects already undoes,
+            # so reopen restores the pending_review state with no new code. A
+            # missing fact_id is a malformed card; a vanished row (swept) just
+            # closes the card.
+            fact_id = item_payload.get("fact_id")
+            if not fact_id:
+                raise UnknownAction("low_confidence_inference resolution requires a fact_id")
+            prior = (
+                await session.execute(
+                    text(
+                        "SELECT status, pinned, superseded_by::text AS superseded_by"
+                        " FROM app.facts WHERE id = :id"
+                    ),
+                    {"id": fact_id},
+                )
+            ).first()
+            if prior is None:
+                return "resolved", []
+            if action == "accept":
+                await session.execute(
+                    text(
+                        "UPDATE app.facts SET status = 'active', pinned = true,"
+                        " superseded_by = NULL WHERE id = :id"
+                    ),
+                    {"id": fact_id},
+                )
+                return "resolved", [
+                    {
+                        "action": "pinned",
+                        "fact_id": fact_id,
+                        "prior_status": prior.status,
+                        "prior_pinned": prior.pinned,
+                        "prior_superseded_by": prior.superseded_by,
+                    }
+                ]
+            await session.execute(
+                text("UPDATE app.facts SET status = 'retracted' WHERE id = :id"),
+                {"id": fact_id},
+            )
+            return "resolved", [
+                {"action": "retracted", "fact_id": fact_id, "prior_status": prior.status}
+            ]
+
         raise UnknownAction(f"action {action!r} is not valid for kind {kind!r}")
 
     async def _reverse_effects(

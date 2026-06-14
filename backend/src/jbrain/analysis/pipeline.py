@@ -32,6 +32,7 @@ from jbrain.analysis.canonical import reproject_canonical_name
 from jbrain.analysis.display import (
     ambiguous_display,
     collision_display,
+    inference_display,
     mark_snippet,
     merge_display,
     promotion_display,
@@ -421,8 +422,10 @@ class AnalysisPipeline:
         """Commit an arbiter-approved IntegrationIntent through the existing
         deterministic _apply (plan §9, Option 1). A rejected plan is a no-op: the
         note stays pending_integration, nothing is written (N5: no partial
-        commit). A1b-ii-1 commits only the active-eligible facts; review-held
-        facts (cross-subject / low weight) are deferred to A1b-ii-2."""
+        commit). Active-eligible facts commit; review-held facts (cross-subject,
+        ambiguous, low weight) are written as inert `pending_review` rows and each
+        linked to its low_confidence_inference card — all in this one transaction
+        (N5), so a human can later accept (pin) or reject (retract) it."""
         if plan.rejected:
             log.info(
                 "integration.rejected",
@@ -433,8 +436,15 @@ class AnalysisPipeline:
         override = await self._resolve_from_intent(
             session, list(intent.entity_resolutions), note_domain=note_domain
         )
-        extraction = plan_to_extraction(intent, plan, title=title, tags=tags, commit_only=True)
-        await self._apply(
+        # All facts (commit_only=False); held ones are routed to the pending_review
+        # path by INDEX — extraction.facts[i] is 1:1 with plan.facts[i], so the key
+        # is exact even when two facts share entity_ref.predicate.qualifier (e.g.
+        # enumerated children edges).
+        extraction = plan_to_extraction(intent, plan, title=title, tags=tags)
+        held_indices = frozenset(
+            i for i, pf in enumerate(plan.facts) if pf.status == "pending_review"
+        )
+        held_ids = await self._apply(
             session,
             note_id=note_id,
             note_domain=note_domain,
@@ -443,9 +453,10 @@ class AnalysisPipeline:
             extraction=extraction,
             extractor=extractor,
             resolution_override=override,
+            held_indices=held_indices,
         )
         await self._file_inference_reviews(
-            session, note_id=note_id, note_domain=note_domain, plan=plan
+            session, note_id=note_id, note_domain=note_domain, plan=plan, held_ids=held_ids
         )
 
     async def _resolve_from_intent(
@@ -493,16 +504,20 @@ class AnalysisPipeline:
         note_id: uuid.UUID,
         note_domain: str,
         plan: ArbiterPlan,
+        held_ids: dict[int, uuid.UUID],
     ) -> None:
         """Surface every review-held fact (cross-subject, ambiguous, or
         below-threshold) the arbiter would not auto-commit as a
         low_confidence_inference card, so it is owner-visible rather than dropped
-        (plan N11, A1b-ii-2). Card-only for now — the proposal lives in the
-        payload; promoting it into a fact on approval is a later resolver brick.
-        The card's domain rides the same floor/ratchet the fact would, so a
-        sensitive inference never lands in a less-restricted scope than its
+        (plan N11, A1b-ii-2). The held fact is also written as a pending_review
+        row (_insert_held_fact); `held_ids[i]` is that row's id (by plan.facts
+        index), carried in the payload as `fact_id` so accept pins it / reject
+        retracts it. The card's domain rides the same floor/ratchet the fact does,
+        so a sensitive inference never lands in a less-restricted scope than its
         predicate."""
-        for pf in plan.to_review:
+        for i, pf in enumerate(plan.facts):
+            if pf.status != "pending_review":
+                continue
             fact = pf.fact
             # Mirror _upsert_fact's domain derivation. An IntentFact carries no
             # domain (plan_to_extraction emits ExtractedFact.domain=""), so
@@ -533,6 +548,7 @@ class AnalysisPipeline:
             ).first()
             if existing is not None:
                 continue
+            held_id = held_ids.get(i)
             session.add(
                 ReviewItem(
                     kind="low_confidence_inference",
@@ -546,8 +562,16 @@ class AnalysisPipeline:
                         "weight": pf.weight,
                         "reasons": list(pf.review_reasons),
                         "title": fact.statement,
-                        "summary": "Held for review: "
-                        + (", ".join(pf.review_reasons) or "low confidence"),
+                        # fact_id links the card to the pending_review row it
+                        # represents — accept pins it, reject retracts it. None
+                        # only if the held fact couldn't be written (unresolved
+                        # entity); the card still surfaces it.
+                        "fact_id": str(held_id) if held_id is not None else None,
+                        **inference_display(
+                            statement=fact.statement,
+                            reasons=list(pf.review_reasons),
+                            snippet=None,
+                        ),
                     },
                     domain_code=card_domain,
                 )
@@ -564,7 +588,13 @@ class AnalysisPipeline:
         extraction: Extraction,
         extractor: str,
         resolution_override: dict[str, ResolvedEntity | None] | None = None,
-    ) -> None:
+        held_indices: frozenset[int] = frozenset(),
+    ) -> dict[int, uuid.UUID]:
+        """Write a note's extraction. Facts whose index is in `held_indices` are
+        written as inert `pending_review` rows (the arbiter held them); the rest
+        go through the normal commit path. Returns {index: fact_id} for the held
+        rows so the caller can link each to its review card. The default empty set
+        is the original direct-write behavior (analyze_note)."""
         resolved = await self._resolve_entities(
             session, extraction, note_id, note_domain, chunks, captured_at, resolution_override
         )
@@ -576,19 +606,40 @@ class AnalysisPipeline:
         )
 
         touched: set[uuid.UUID] = set()
-        for fact in extraction.facts:
-            fact_id = await self._upsert_fact(
-                session,
-                fact=fact,
-                resolved=resolved,
-                token_ids=token_ids,
-                anchor_for=anchor_for,
-                note_id=note_id,
-                note_domain=note_domain,
-                captured_at=captured_at,
-                chunks=chunks,
-                extractor=extractor,
-            )
+        held_ids: dict[int, uuid.UUID] = {}
+        for i, fact in enumerate(extraction.facts):
+            if i in held_indices:
+                fact_id = await self._insert_held_fact(
+                    session,
+                    fact=fact,
+                    resolved=resolved,
+                    token_ids=token_ids,
+                    anchor_for=anchor_for,
+                    note_id=note_id,
+                    note_domain=note_domain,
+                    captured_at=captured_at,
+                    chunks=chunks,
+                    extractor=extractor,
+                )
+                if fact_id is not None:
+                    held_ids[i] = fact_id
+            else:
+                fact_id = await self._upsert_fact(
+                    session,
+                    fact=fact,
+                    resolved=resolved,
+                    token_ids=token_ids,
+                    anchor_for=anchor_for,
+                    note_id=note_id,
+                    note_domain=note_domain,
+                    captured_at=captured_at,
+                    chunks=chunks,
+                    extractor=extractor,
+                )
+            # Both paths' ids enter `touched` so the sweep below never retracts a
+            # fact this run still asserts — including a still-held pending_review
+            # row (without this, re-analysis would churn its id and orphan the
+            # open card's fact_id link).
             if fact_id is not None:
                 touched.add(fact_id)
             await session.flush()
@@ -687,6 +738,7 @@ class AnalysisPipeline:
         projected = {e.id for e in resolved.values() if e is not None}
         projected.update(r.entity_id for r in retracted)
         await project_appointments(session, projected)
+        return held_ids
 
     async def _sweep_stale_ambiguous(
         self, session: AsyncSession, note_id: uuid.UUID, extraction: Extraction
@@ -1327,6 +1379,156 @@ class AnalysisPipeline:
             {"new": str(new_id), "d": fact_domain, "anchor": src, "src_id": src},
         )
         return new_id
+
+    async def _insert_held_fact(
+        self,
+        session: AsyncSession,
+        *,
+        fact: ExtractedFact,
+        resolved: dict[str, ResolvedEntity | None],
+        token_ids: dict[tuple[str, str], uuid.UUID],
+        anchor_for: dict[str, _Span],
+        note_id: uuid.UUID,
+        note_domain: str,
+        captured_at: datetime,
+        chunks: list[_ChunkRef],
+        extractor: str,
+    ) -> uuid.UUID | None:
+        """Write an arbiter-held fact (cross-subject / ambiguous / below-threshold)
+        as an inert `pending_review` row. Deliberately NOT through decide(): a held
+        fact must never supersede, activate, or materialize an inverse — that is the
+        review guarantee (N3). It still gets the deterministic domain floor/ratchet
+        (firewall) and a citation chunk. Idempotent on re-analysis: this note's
+        existing pending_review row for the same identity key is refreshed in place,
+        so the id (and the open card's fact_id link) survives. Returns the row id so
+        _apply adds it to `touched` and the card can reference it; None when the
+        entity (or object) didn't resolve, exactly like _upsert_fact."""
+        fact = normalize_future_assertion(fact, captured_at)
+        entity = resolved.get(fact.entity_ref)
+        if entity is None:
+            log.info("analysis.held_fact_skipped", reason="unlinked entity", ref=fact.entity_ref)
+            return None
+        object_entity: ResolvedEntity | None = None
+        if fact.object_entity_ref:
+            object_entity = resolved.get(fact.object_entity_ref)
+            if object_entity is None:
+                log.info(
+                    "analysis.held_fact_skipped",
+                    reason="unlinked object",
+                    ref=fact.object_entity_ref,
+                )
+                return None
+
+        extracted_domain = fact.domain or note_domain
+        floor = domain_floor(fact.predicate)
+        if floor is not None and extracted_domain == "general":
+            extracted_domain = floor
+        # A held fact is not promoting anything yet, so the ratchet's promotion
+        # flag is intentionally ignored (no domain_promotion card for a held row).
+        fact_domain, _ = ratchet_domain(extracted_domain, note_domain)
+
+        valid_from = valid_to = None
+        precision = "unknown"
+        token_id: uuid.UUID | None = None
+        if fact.temporal is not None:
+            valid_from = fact.temporal.resolved_start
+            valid_to = fact.temporal.resolved_end
+            precision = fact.temporal.precision
+            if fact.temporal.phrase and valid_from is not None:
+                token_id = await self._token_for_fact(
+                    session,
+                    fact.temporal.phrase,
+                    valid_from,
+                    valid_to,
+                    precision,
+                    token_ids,
+                    note_id,
+                    note_domain,
+                    captured_at,
+                    chunks,
+                )
+
+        object_id = object_entity.id if object_entity else None
+        # Idempotency: refresh this note's existing held row for the identity key
+        # rather than churn a fresh id (which the sweep would then orphan the card
+        # off of). decide() is bypassed, so this lookup stands in for its refresh.
+        obj_clause = (
+            Fact.object_entity_id == object_id
+            if object_id is not None
+            else Fact.object_entity_id.is_(None)
+        )
+        existing_id = (
+            (
+                await session.execute(
+                    select(Fact.id).where(
+                        Fact.note_id == note_id,
+                        Fact.entity_id == entity.id,
+                        Fact.predicate == fact.predicate,
+                        Fact.qualifier == fact.qualifier,
+                        obj_clause,
+                        Fact.domain_code == fact_domain,
+                        Fact.status == "pending_review",
+                    )
+                )
+            )
+            .scalars()
+            .first()
+        )
+        if existing_id is not None:
+            await session.execute(
+                update(Fact)
+                .where(Fact.id == existing_id)
+                .values(
+                    statement=fact.statement,
+                    value_json=fact.value_json,
+                    assertion=fact.assertion,
+                    valid_from=valid_from,
+                    valid_to=valid_to,
+                    temporal_precision=precision,
+                    temporal_token_id=token_id,
+                    confidence=fact.confidence,
+                    extractor=extractor,
+                    prompt_version=PROMPT_VERSION,
+                )
+            )
+            return existing_id
+
+        anchor = anchor_for.get(fact.entity_ref)
+        base_chunk = anchor[0] if anchor else (chunks[0].id if chunks else None)
+        chunk_id = await self._citation_chunk(
+            session,
+            source_chunk_id=base_chunk,
+            fact_domain=fact_domain,
+            note_domain=note_domain,
+            note_id=note_id,
+        )
+        held = Fact(
+            id=uuid.uuid4(),
+            subject_id=entity.subject_id,
+            entity_id=entity.id,
+            predicate=fact.predicate,
+            qualifier=fact.qualifier,
+            kind=fact.kind,
+            statement=fact.statement,
+            value_json=fact.value_json,
+            object_entity_id=object_id,
+            assertion=fact.assertion,
+            valid_from=valid_from,
+            valid_to=valid_to,
+            reported_at=captured_at,
+            temporal_precision=precision,
+            temporal_token_id=token_id,
+            status="pending_review",
+            note_id=note_id,
+            chunk_id=chunk_id,
+            extractor=extractor,
+            prompt_version=PROMPT_VERSION,
+            confidence=fact.confidence,
+            domain_code=fact_domain,
+        )
+        session.add(held)
+        await session.flush()
+        return held.id
 
     async def _upsert_fact(
         self,

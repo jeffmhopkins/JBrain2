@@ -139,3 +139,19 @@ def ambiguous_display(*, name: str, snippet: str | None) -> dict[str, Any]:
             "reject": "the mention stays unlinked — it can be re-proposed with more signal.",
         },
     }
+
+
+def inference_display(*, statement: str, reasons: list[str], snippet: str | None) -> dict[str, Any]:
+    """low_confidence_inference card fields: a held fact (cross-subject, ambiguous,
+    or below the commit threshold) written as a pending_review row. accept pins it
+    active and durable through reprocessing; reject retracts it. Both are POST
+    /resolve verbs carried by the generic accept/reject footer."""
+    why = ", ".join(reasons) or "low confidence"
+    return {
+        "summary": f"hold for review ({why}): {statement}",
+        "snippet": snippet,
+        "outcomes": {
+            "accept": "the fact is recorded and pinned — reprocessing won't drop it.",
+            "reject": "the fact is discarded.",
+        },
+    }
