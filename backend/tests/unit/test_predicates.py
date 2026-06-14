@@ -4,7 +4,10 @@ band decision (Phase 3, nearest_predicates faked). No DB."""
 
 from __future__ import annotations
 
+from typing import cast
+
 import pytest
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from jbrain.analysis import predicates as pmod
 from jbrain.analysis.predicates import (
@@ -14,6 +17,10 @@ from jbrain.analysis.predicates import (
     registry_seed_rows,
 )
 from jbrain.schema.models import EntityType, Meta, Predicate, SchemaRegistry
+
+# nearest_predicates is monkeypatched in these tests, so the session is never
+# touched — a typed null keeps the decide_predicate signature honest for pyright.
+_NO_SESSION = cast(AsyncSession, None)
 
 
 class _FakeEmbed:
@@ -38,7 +45,7 @@ def test_raw_descriptor_includes_token_statement_and_kind() -> None:
 async def test_decide_predicate_strong(monkeypatch: pytest.MonkeyPatch) -> None:
     _patch_nearest(monkeypatch, [("spouse", 0.95), ("knows", 0.60)])
     d = await decide_predicate(
-        None,
+        _NO_SESSION,
         predicate="marriedTo",
         statement="x",
         kind="relationship",
@@ -50,7 +57,7 @@ async def test_decide_predicate_strong(monkeypatch: pytest.MonkeyPatch) -> None:
 async def test_decide_predicate_weak(monkeypatch: pytest.MonkeyPatch) -> None:
     _patch_nearest(monkeypatch, [("spouse", 0.82)])
     d = await decide_predicate(
-        None,
+        _NO_SESSION,
         predicate="partneredWith",
         statement="x",
         kind=None,
@@ -62,7 +69,7 @@ async def test_decide_predicate_weak(monkeypatch: pytest.MonkeyPatch) -> None:
 async def test_decide_predicate_cold(monkeypatch: pytest.MonkeyPatch) -> None:
     _patch_nearest(monkeypatch, [])
     d = await decide_predicate(
-        None,
+        _NO_SESSION,
         predicate="frobnicates",
         statement="x",
         kind=None,
