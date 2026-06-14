@@ -57,6 +57,7 @@ class _ScriptedFake:
         images: Sequence[LlmImage] = (),
         json_schema: dict[str, Any] | None = None,
         max_tokens: int = 4096,
+        reasoning_effort: str | None = None,
     ) -> LlmResult:
         i = len(self.calls)
         self.calls.append({"user_text": user_text})

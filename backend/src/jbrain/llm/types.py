@@ -160,6 +160,7 @@ class LlmClient(Protocol):
         images: Sequence[LlmImage] = (),
         json_schema: dict[str, Any] | None = None,
         max_tokens: int = DEFAULT_MAX_TOKENS,
+        reasoning_effort: str | None = None,
     ) -> LlmResult: ...
 
     async def converse(
@@ -170,6 +171,7 @@ class LlmClient(Protocol):
         messages: Sequence[LlmMessage],
         tools: Sequence[LlmTool] = (),
         max_tokens: int = DEFAULT_MAX_TOKENS,
+        reasoning_effort: str | None = None,
     ) -> LlmTurn: ...
 
     def converse_stream(
@@ -180,6 +182,7 @@ class LlmClient(Protocol):
         messages: Sequence[LlmMessage],
         tools: Sequence[LlmTool] = (),
         max_tokens: int = DEFAULT_MAX_TOKENS,
+        reasoning_effort: str | None = None,
     ) -> AsyncIterator[StreamPart]:
         """Stream one tool-aware turn: incremental TextChunks then one final
         LlmTurn (see StreamPart). An async generator, so it is declared — not

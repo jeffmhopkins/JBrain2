@@ -839,6 +839,160 @@ h3 {
   gap: 8px;
 }
 
+/* ===== LLM Settings (Strategy C — tiered groups) ===== */
+
+/* Each tier is a card with a colored left rail keying its role. */
+.llm-group {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
+  overflow: hidden;
+  box-shadow: var(--shadow-card);
+}
+.llm-high {
+  --llm-accent: var(--rose);
+}
+.llm-light {
+  --llm-accent: var(--green);
+}
+.llm-vision {
+  --llm-accent: var(--amber);
+}
+
+.llm-group-head {
+  padding: 14px 16px;
+  border-left: 3px solid var(--llm-accent, var(--steel));
+}
+
+.llm-group-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.llm-group-name {
+  font-size: var(--fs-title);
+  font-weight: 500;
+}
+.llm-group-count {
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill);
+  padding: 1px 8px;
+}
+.llm-group-desc {
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+  margin: 3px 0 10px;
+}
+
+/* Uppercase field caption above each control, mirroring .settings-label. */
+.llm-field-tag {
+  display: block;
+  font-size: var(--fs-micro);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  margin: 12px 0 6px;
+}
+.llm-field-tag:first-of-type {
+  margin-top: 0;
+}
+
+.llm-select {
+  width: 100%;
+  box-sizing: border-box;
+  background: var(--surface-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--r-input);
+  padding: 9px 10px;
+  font-size: var(--fs-secondary);
+  font-family: inherit;
+}
+
+/* The reasoning control is a <fieldset> for its native group semantics; strip
+   the element's default chrome so it renders as a plain segmented row. */
+.llm-seg-row {
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+}
+
+/* Shown in place of the reasoning segments when the provider isn't grok. */
+.llm-na-note {
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+  margin: 0;
+}
+
+/* Expandable per-task overrides, divided from the head by a hairline. */
+.llm-expand {
+  border-top: 1px solid var(--border);
+}
+.llm-exp-toggle {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 11px 16px;
+  background: transparent;
+  border: none;
+  font-family: inherit;
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+  cursor: pointer;
+}
+.llm-exp-caret {
+  transition: transform 200ms ease-out;
+}
+.llm-exp-caret.llm-exp-open {
+  transform: rotate(90deg);
+}
+
+.llm-members {
+  background: var(--surface-2);
+}
+.llm-member {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  border-top: 1px solid var(--border);
+}
+.llm-member-name {
+  flex: 1;
+  font-size: var(--fs-secondary);
+}
+.llm-member-id {
+  display: block;
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+}
+.llm-member-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.llm-member-select {
+  width: auto;
+  flex: none;
+  padding: 5px 7px;
+  font-size: var(--fs-micro);
+}
+.llm-member-seg {
+  width: auto;
+  flex: none;
+}
+.llm-member-na {
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+  min-width: 54px;
+  text-align: right;
+}
+
 /* ===== Calendar (Day / Week / Month / Tasks) ===== */
 .calendar {
   padding: 0;

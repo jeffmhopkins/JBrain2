@@ -49,6 +49,7 @@ class FakeLlmClient:
         images: Sequence[LlmImage] = (),
         json_schema: dict[str, Any] | None = None,
         max_tokens: int = DEFAULT_MAX_TOKENS,
+        reasoning_effort: str | None = None,
     ) -> LlmResult:
         self.calls.append(
             {
@@ -58,6 +59,7 @@ class FakeLlmClient:
                 "images": list(images),
                 "json_schema": json_schema,
                 "max_tokens": max_tokens,
+                "reasoning_effort": reasoning_effort,
             }
         )
         text = self._responses[min(len(self.calls) - 1, len(self._responses) - 1)]
@@ -72,6 +74,7 @@ class FakeLlmClient:
         messages: Sequence[LlmMessage],
         tools: Sequence[LlmTool] = (),
         max_tokens: int = DEFAULT_MAX_TOKENS,
+        reasoning_effort: str | None = None,
     ) -> LlmTurn:
         self.converse_calls.append(
             {
@@ -80,6 +83,7 @@ class FakeLlmClient:
                 "messages": list(messages),
                 "tools": list(tools),
                 "max_tokens": max_tokens,
+                "reasoning_effort": reasoning_effort,
             }
         )
         if not self._turns:
@@ -94,6 +98,7 @@ class FakeLlmClient:
         messages: Sequence[LlmMessage],
         tools: Sequence[LlmTool] = (),
         max_tokens: int = DEFAULT_MAX_TOKENS,
+        reasoning_effort: str | None = None,
     ) -> AsyncIterator[StreamPart]:
         self.stream_calls.append(
             {
@@ -102,6 +107,7 @@ class FakeLlmClient:
                 "messages": list(messages),
                 "tools": list(tools),
                 "max_tokens": max_tokens,
+                "reasoning_effort": reasoning_effort,
             }
         )
         idx = len(self.stream_calls) - 1

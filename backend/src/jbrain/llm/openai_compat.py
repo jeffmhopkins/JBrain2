@@ -109,6 +109,7 @@ class OpenAiCompatClient:
         images: Sequence[LlmImage] = (),
         json_schema: dict[str, Any] | None = None,
         max_tokens: int = DEFAULT_MAX_TOKENS,
+        reasoning_effort: str | None = None,
     ) -> LlmResult:
         user_content: str | list[dict[str, Any]]
         if images:
@@ -135,6 +136,7 @@ class OpenAiCompatClient:
                 "type": "json_schema",
                 "json_schema": {"name": "response", "schema": json_schema, "strict": True},
             }
+        self._apply_reasoning(payload, reasoning_effort)
         # Local servers run keyless; omitting the header beats sending "Bearer ".
         headers = {"Authorization": f"Bearer {self._api_key}"} if self._api_key else {}
         data = await post_json(
@@ -159,6 +161,12 @@ class OpenAiCompatClient:
         parsed = parse_json_payload(text) if json_schema is not None else None
         return LlmResult(text=text, parsed=parsed, usage=usage)
 
+    def _apply_reasoning(self, payload: dict[str, Any], reasoning_effort: str | None) -> None:
+        # `reasoning_effort` is an xAI Grok parameter; a local OpenAI-compatible
+        # server would reject the unknown field, so it is xai-only by design.
+        if reasoning_effort is not None and self.provider == "xai":
+            payload["reasoning_effort"] = reasoning_effort
+
     def _converse_payload(
         self,
         *,
@@ -167,6 +175,7 @@ class OpenAiCompatClient:
         messages: Sequence[LlmMessage],
         tools: Sequence[LlmTool],
         max_tokens: int,
+        reasoning_effort: str | None = None,
     ) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "model": model,
@@ -185,6 +194,7 @@ class OpenAiCompatClient:
                 }
                 for t in tools
             ]
+        self._apply_reasoning(payload, reasoning_effort)
         return payload
 
     def _auth_headers(self) -> dict[str, str]:
@@ -199,9 +209,15 @@ class OpenAiCompatClient:
         messages: Sequence[LlmMessage],
         tools: Sequence[LlmTool] = (),
         max_tokens: int = DEFAULT_MAX_TOKENS,
+        reasoning_effort: str | None = None,
     ) -> LlmTurn:
         payload = self._converse_payload(
-            model=model, system=system, messages=messages, tools=tools, max_tokens=max_tokens
+            model=model,
+            system=system,
+            messages=messages,
+            tools=tools,
+            max_tokens=max_tokens,
+            reasoning_effort=reasoning_effort,
         )
         headers = self._auth_headers()
         data = await post_json(
@@ -251,6 +267,7 @@ class OpenAiCompatClient:
         messages: Sequence[LlmMessage],
         tools: Sequence[LlmTool] = (),
         max_tokens: int = DEFAULT_MAX_TOKENS,
+        reasoning_effort: str | None = None,
     ) -> AsyncIterator[StreamPart]:
         """Stream a turn over chat-completions SSE chunks. Content deltas stream
         live; tool_call deltas arrive fragmented and keyed by index (id/name on
@@ -258,7 +275,12 @@ class OpenAiCompatClient:
         `include_usage` asks for a trailing usage-only chunk (local servers may
         omit it; usage then stays zero, as in `converse`)."""
         payload = self._converse_payload(
-            model=model, system=system, messages=messages, tools=tools, max_tokens=max_tokens
+            model=model,
+            system=system,
+            messages=messages,
+            tools=tools,
+            max_tokens=max_tokens,
+            reasoning_effort=reasoning_effort,
         )
         payload["stream"] = True
         payload["stream_options"] = {"include_usage": True}

@@ -34,6 +34,9 @@ class Settings(BaseSettings):
     xai_api_key: str = ""
     # Future-GPU escape hatch: any OpenAI-compatible server (Ollama default).
     local_llm_url: str = "http://localhost:11434/v1"
+    # The model name the `local` provider spec resolves to (local:<model>) — the
+    # local server's served model. A plain default so the spec is always concrete.
+    local_llm_model: str = "local"
     # JSON object of per-task "provider:model" overrides, merged over the
     # adapter defaults — see jbrain.llm.router.TASK_DEFAULTS.
     llm_tasks: dict[str, str] = {}

@@ -12,10 +12,13 @@ import type {
   EntityOut,
   FactOut,
   GraphEdge,
+  LlmProviderId,
+  LlmSettings,
   LlmUsage,
   NoteAnalysis,
   NoteOut,
   Principal,
+  ReasoningEffort,
   ReviewItem,
   SearchMatch,
   SearchResult,
@@ -71,6 +74,56 @@ const analyzingNotes = new Set<string>();
 
 // The first server-synced settings object (theme/text-size stay local).
 const SETTINGS: AppSettings = { image_analysis_mode: "full" };
+
+// Per-task LLM routing fixture (GET/PUT /api/settings/llm). Only grok carries
+// a reasoning level; reasoning_effort is null for any task off grok, mirroring
+// the wire contract the screen relies on for hiding the reasoning control.
+const LLM_REASONING_DEFAULT: ReasoningEffort = "low";
+const LLM_SETTINGS: LlmSettings = {
+  providers: [
+    { id: "grok", label: "Grok 4.3", supports_reasoning: true },
+    { id: "claude", label: "Claude Sonnet 4.6", supports_reasoning: false },
+    { id: "local", label: "Local model", supports_reasoning: false },
+  ],
+  reasoning_efforts: ["none", "low", "medium", "high"],
+  reasoning_default: LLM_REASONING_DEFAULT,
+  tasks: [
+    { id: "agent.turn", label: "Agent turn", provider: "grok", reasoning_effort: "medium" },
+    { id: "integrate.note", label: "Integrate note", provider: "grok", reasoning_effort: "medium" },
+    { id: "fact.adjudicate", label: "Fact adjudicate", provider: "grok", reasoning_effort: "high" },
+    {
+      id: "entity.disambiguate",
+      label: "Entity disambiguate",
+      provider: "grok",
+      reasoning_effort: "medium",
+    },
+    { id: "note.extract", label: "Note extract", provider: "grok", reasoning_effort: "low" },
+    {
+      id: "correction_note.extract",
+      label: "Correction extract",
+      provider: "grok",
+      reasoning_effort: "low",
+    },
+    { id: "session.title", label: "Session title", provider: "claude", reasoning_effort: null },
+    { id: "vision.ocr", label: "Vision OCR", provider: "local", reasoning_effort: null },
+    { id: "vision.caption", label: "Vision caption", provider: "grok", reasoning_effort: "low" },
+  ],
+};
+
+// Apply one task patch like the backend would: grok keeps/sets a reasoning
+// level (defaulting when absent); any other provider nulls it out.
+function applyLlmPatch(
+  taskId: string,
+  patch: { provider: LlmProviderId; reasoning_effort?: ReasoningEffort },
+): void {
+  const task = LLM_SETTINGS.tasks.find((t) => t.id === taskId);
+  if (!task) return;
+  task.provider = patch.provider;
+  task.reasoning_effort =
+    patch.provider === "grok"
+      ? (patch.reasoning_effort ?? task.reasoning_effort ?? LLM_REASONING_DEFAULT)
+      : null;
+}
 
 function makeAttachment(
   filename: string,
@@ -1376,6 +1429,15 @@ export const mockFetch: typeof fetch = async (input, init) => {
       SETTINGS.image_analysis_mode = value;
     }
     return json(SETTINGS);
+  }
+
+  if (path === "/api/settings/llm" && method === "GET") return json(LLM_SETTINGS);
+  if (path === "/api/settings/llm" && method === "PUT") {
+    const body = JSON.parse(String(init?.body)) as {
+      tasks: Record<string, { provider: LlmProviderId; reasoning_effort?: ReasoningEffort }>;
+    };
+    for (const [taskId, patch] of Object.entries(body.tasks)) applyLlmPatch(taskId, patch);
+    return json(LLM_SETTINGS);
   }
 
   const blobMatch = path.match(/^\/api\/attachments\/([^/]+)$/);

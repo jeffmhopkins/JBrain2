@@ -29,6 +29,7 @@ from jbrain.api import (
     appointments as appointments_api,
 )
 from jbrain.api import lists as lists_api
+from jbrain.api import llm_settings as llm_settings_api
 from jbrain.api import settings as settings_api
 from jbrain.appointments.repo import SqlAppointmentsRepo
 from jbrain.auth.repo import SqlAuthRepo
@@ -41,7 +42,7 @@ from jbrain.embed import TeiEmbedClient
 from jbrain.lists.repo import SqlListsRepo
 from jbrain.llm import build_router
 from jbrain.notes.repo import SqlNotesRepo
-from jbrain.queue import PgJobQueue
+from jbrain.queue import SYSTEM_CTX, PgJobQueue
 from jbrain.search.repo import SqlSearchRepo
 from jbrain.search.service import SearchService
 from jbrain.settings_store import SqlSettingsStore
@@ -73,10 +74,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             SqlSearchRepo(maker), TeiEmbedClient(settings.embed_url)
         )
         app.state.analysis_repo = SqlAnalysisRepo(maker)
-        app.state.settings_store = SqlSettingsStore(maker)
+        settings_store = SqlSettingsStore(maker)
+        app.state.settings_store = settings_store
         # Any API-side LLM call must flow through this router so its tokens
-        # land in app.llm_usage like the worker's do.
-        app.state.llm_router = build_router(settings, recorder=SqlUsageRecorder(maker))
+        # land in app.llm_usage like the worker's do. The overrides loader reads
+        # the live per-task routing/reasoning settings (SYSTEM_CTX owner session)
+        # on each call so the settings screen takes effect without a restart.
+        app.state.llm_router = build_router(
+            settings,
+            recorder=SqlUsageRecorder(maker),
+            overrides_loader=lambda: settings_store.llm_task_overrides(SYSTEM_CTX),
+        )
         # The agent: Tier-A memory, the tool registry (validated against the .tool
         # sidecars at startup), the session capability store, and the run log.
         app.state.agent_memory = MemoryService(
@@ -116,6 +124,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(auth.router, prefix="/api")
     app.include_router(feed.router, prefix="/api")
     app.include_router(lists_api.router, prefix="/api")
+    app.include_router(llm_settings_api.router, prefix="/api")
     app.include_router(notes.router, prefix="/api")
     app.include_router(ops.router, prefix="/api")
     app.include_router(proposals.router, prefix="/api")

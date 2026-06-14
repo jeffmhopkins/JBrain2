@@ -74,3 +74,23 @@ class FakeSettingsStore:
     async def image_analysis_mode(self, ctx: object) -> str:
         mode = self.values.get("image_analysis_mode", "full")
         return mode if mode in ("full", "ocr") else "full"
+
+    async def llm_task_overrides(self, ctx: object) -> dict[str, dict[str, str]]:
+        # Mirrors the SQL store's sanitizing read (drops malformed entries).
+        raw = self.values.get("llm_task_overrides", {})
+        if not isinstance(raw, dict):
+            return {}
+        clean: dict[str, dict[str, str]] = {}
+        for task, entry in raw.items():
+            if not isinstance(task, str) or not isinstance(entry, dict):
+                continue
+            sane: dict[str, str] = {}
+            spec = entry.get("spec")
+            if isinstance(spec, str) and spec:
+                sane["spec"] = spec
+            effort = entry.get("reasoning_effort")
+            if effort in ("none", "low", "medium", "high"):
+                sane["reasoning_effort"] = effort
+            if sane:
+                clean[task] = sane
+        return clean

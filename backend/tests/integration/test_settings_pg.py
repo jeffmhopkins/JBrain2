@@ -83,6 +83,32 @@ async def test_store_defaults_and_upsert_round_trip(
     assert await store.image_analysis_mode(OWNER) == "full"
 
 
+async def test_llm_task_overrides_round_trip_and_sanitizes(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    from jbrain.settings_store import LLM_TASK_OVERRIDES_KEY
+
+    store = SqlSettingsStore(maker)
+    # Absent → empty (the router then uses static config).
+    assert await store.llm_task_overrides(OWNER) == {}
+
+    await store.upsert(
+        OWNER,
+        LLM_TASK_OVERRIDES_KEY,
+        {
+            "agent.turn": {"spec": "xai:grok-4.3", "reasoning_effort": "high"},
+            "note.extract": {"spec": "anthropic:claude-sonnet-4-6"},
+            # Malformed entries must be dropped on read, never crash a call.
+            "bad.effort": {"reasoning_effort": "extreme"},
+            "junk": "not-a-dict",
+        },
+    )
+    overrides = await store.llm_task_overrides(OWNER)
+    assert overrides["agent.turn"] == {"spec": "xai:grok-4.3", "reasoning_effort": "high"}
+    assert overrides["note.extract"] == {"spec": "anthropic:claude-sonnet-4-6"}
+    assert "bad.effort" not in overrides and "junk" not in overrides
+
+
 async def test_analysis_job_kind_follows_the_cutover_toggle(
     maker: async_sessionmaker[AsyncSession],
 ) -> None:

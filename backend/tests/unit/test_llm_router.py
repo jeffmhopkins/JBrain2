@@ -172,3 +172,82 @@ def test_build_router_marks_pinned_tasks_so_pins_beat_tiers() -> None:
     assert router.spec("note.extract", "high") == ("anthropic", "claude-sonnet-4-6")
     # An unpinned task still honours the tier.
     assert router.spec("vision.ocr", "high") == ("xai", "grok-4.3")
+
+
+# --- live DB overrides (the settings screen) ---------------------------------
+
+
+def _override_router(
+    clients: dict[str, FakeLlmClient], overrides: dict[str, dict[str, str]], *, pinned=frozenset()
+) -> LlmRouter:
+    async def load() -> dict[str, dict[str, str]]:
+        return overrides
+
+    return LlmRouter(
+        clients,
+        {"note.extract": ("xai", "grok-4.3")},
+        tiers={"high": ("xai", "grok-strong"), "low": ("xai", "grok-cheap")},
+        pinned=pinned,
+        overrides_loader=load,
+    )
+
+
+async def test_stored_spec_overrides_env_pin_and_tier() -> None:
+    xai, anthropic = FakeLlmClient(["x"]), FakeLlmClient(["a"])
+    # Task is env-pinned AND a strength tier is requested; the stored spec must
+    # win over both — the UI is the live control surface.
+    router = _override_router(
+        {"xai": xai, "anthropic": anthropic},
+        {"note.extract": {"spec": "anthropic:claude-x"}},
+        pinned=frozenset({"note.extract"}),
+    )
+    await router.complete("note.extract", system="s", user_text="u", strength="high")
+    assert anthropic.calls[0]["model"] == "claude-x" and not xai.calls
+
+
+async def test_stored_reasoning_effort_reaches_xai_client() -> None:
+    xai = FakeLlmClient(["x"])
+    router = _override_router({"xai": xai}, {"note.extract": {"reasoning_effort": "high"}})
+    await router.complete("note.extract", system="s", user_text="u")
+    assert xai.calls[0]["reasoning_effort"] == "high"
+
+
+async def test_reasoning_effort_dropped_when_override_routes_off_xai() -> None:
+    xai, anthropic = FakeLlmClient(["x"]), FakeLlmClient(["a"])
+    # A stored effort is meaningless once the spec routes to anthropic.
+    router = _override_router(
+        {"xai": xai, "anthropic": anthropic},
+        {"note.extract": {"spec": "anthropic:claude-x", "reasoning_effort": "high"}},
+    )
+    await router.complete("note.extract", system="s", user_text="u")
+    assert anthropic.calls[0]["reasoning_effort"] is None
+
+
+async def test_bad_stored_spec_falls_back_without_crashing() -> None:
+    xai = FakeLlmClient(["x"])
+    router = _override_router({"xai": xai}, {"note.extract": {"spec": "garbage"}})
+    result = await router.complete("note.extract", system="s", user_text="u")
+    # Malformed spec ignored; the call still succeeds on the resolved default.
+    assert result.text == "x" and xai.calls[0]["model"] == "grok-4.3"
+
+
+async def test_no_loader_keeps_legacy_behavior() -> None:
+    xai = FakeLlmClient(["x"])
+    router = LlmRouter({"xai": xai}, {"note.extract": ("xai", "grok-4.3")})
+    await router.complete("note.extract", system="s", user_text="u")
+    assert xai.calls[0]["reasoning_effort"] is None
+
+
+async def test_converse_threads_stored_reasoning_effort() -> None:
+    xai = FakeLlmClient(["x"])
+    router = _override_router({"xai": xai}, {"note.extract": {"reasoning_effort": "low"}})
+    await router.converse("note.extract", system="s", messages=[])
+    assert xai.converse_calls[0]["reasoning_effort"] == "low"
+
+
+async def test_converse_stream_threads_stored_reasoning_effort() -> None:
+    xai = FakeLlmClient(["x"])
+    router = _override_router({"xai": xai}, {"note.extract": {"reasoning_effort": "medium"}})
+    async for _ in router.converse_stream("note.extract", system="s", messages=[]):
+        pass
+    assert xai.stream_calls[0]["reasoning_effort"] == "medium"

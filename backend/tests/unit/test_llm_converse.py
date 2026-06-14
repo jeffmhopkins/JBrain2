@@ -74,3 +74,13 @@ async def test_fake_scripts_a_tool_using_exchange() -> None:
 
     assert len(fake.converse_calls) == 2
     assert isinstance(fake.converse_calls[1]["messages"][-1], ToolResultMessage)
+
+
+async def test_fake_records_reasoning_effort() -> None:
+    fake = FakeLlmClient(["ok"])
+    await fake.complete(model="m", system="s", user_text="u", reasoning_effort="high")
+    await fake.converse(
+        model="m", system="s", messages=[UserMessage(text="u")], reasoning_effort="low"
+    )
+    assert fake.calls[0]["reasoning_effort"] == "high"
+    assert fake.converse_calls[0]["reasoning_effort"] == "low"

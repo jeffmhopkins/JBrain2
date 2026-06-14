@@ -105,6 +105,45 @@ export interface FeedConfig {
   token: string | null;
 }
 
+// ----- Per-task LLM routing (GET/PUT /api/settings/llm) -----
+
+export type LlmProviderId = "grok" | "claude" | "local";
+export type ReasoningEffort = "none" | "low" | "medium" | "high";
+
+export interface LlmProvider {
+  id: LlmProviderId;
+  label: string;
+  /** Only grok exposes a reasoning level; the UI hides the control otherwise. */
+  supports_reasoning: boolean;
+}
+
+/** One routable task: which provider runs it, and (grok only) how hard it thinks. */
+export interface LlmTask {
+  id: string;
+  label: string;
+  provider: LlmProviderId;
+  /** null whenever provider !== "grok" — the wire mirrors the UI's disabling. */
+  reasoning_effort: ReasoningEffort | null;
+}
+
+export interface LlmSettings {
+  providers: LlmProvider[];
+  reasoning_efforts: ReasoningEffort[];
+  reasoning_default: ReasoningEffort;
+  tasks: LlmTask[];
+}
+
+/** One task's desired routing; reasoning_effort is sent only for grok. */
+export interface LlmTaskPatch {
+  provider: LlmProviderId;
+  reasoning_effort?: ReasoningEffort;
+}
+
+/** A partial update keyed by task id — only the touched tasks travel. */
+export interface LlmSettingsPatch {
+  tasks: Record<string, LlmTaskPatch>;
+}
+
 /** One attendee on an appointment — name plus optional iCalendar params. */
 export interface AttendeeOut {
   name: string;
@@ -610,6 +649,18 @@ export const api = {
   async updateSettings(patch: Partial<AppSettings>): Promise<AppSettings> {
     const response = await request("/api/settings", jsonInit("PUT", patch));
     return (await response.json()) as AppSettings;
+  },
+
+  // Per-task LLM routing: the provider each task runs on, plus grok's reasoning
+  // level. Grouping into tiers is a frontend concern (the wire is a flat list).
+  async getLlmSettings(): Promise<LlmSettings> {
+    const response = await request("/api/settings/llm");
+    return (await response.json()) as LlmSettings;
+  },
+
+  async updateLlmSettings(patch: LlmSettingsPatch): Promise<LlmSettings> {
+    const response = await request("/api/settings/llm", jsonInit("PUT", patch));
+    return (await response.json()) as LlmSettings;
   },
 
   // ----- Appointments ICS feed (a revocable, read-only subscribe URL) -----

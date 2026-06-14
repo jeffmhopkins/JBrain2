@@ -151,7 +151,14 @@ async def run() -> None:
     predicate_embedder = PredicateEmbedder(
         maker, TeiEmbedClient(settings.embed_url), settings.embed_model
     )
-    router = build_router(settings, recorder=SqlUsageRecorder(maker))
+    # Live per-task routing/reasoning overrides apply to worker LLM calls too,
+    # so the settings screen governs background analysis without a restart.
+    worker_settings_store = SqlSettingsStore(maker)
+    router = build_router(
+        settings,
+        recorder=SqlUsageRecorder(maker),
+        overrides_loader=lambda: worker_settings_store.llm_task_overrides(queue.SYSTEM_CTX),
+    )
     # The embed client also powers entity-resolution layer 2 (similarity);
     # without it the resolver still runs layers 1/2b/3.
     analyzer = AnalysisPipeline(
