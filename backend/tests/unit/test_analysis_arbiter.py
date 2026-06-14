@@ -8,7 +8,7 @@ from typing import Any
 
 import pytest
 
-from jbrain.analysis.arbiter import plan_intent, plan_to_extraction
+from jbrain.analysis.arbiter import compute_signals, plan_intent, plan_to_extraction
 from jbrain.analysis.intent import (
     AttestedSpan,
     EntityPairProposal,
@@ -16,8 +16,10 @@ from jbrain.analysis.intent import (
     IntegrationIntent,
     IntentFact,
     IntentTemporal,
+    SupersessionProposal,
 )
 from jbrain.analysis.weight import ConfidenceSignals
+from jbrain.schema import get_registry
 
 
 def _res(ref: str = "m1", **kw) -> EntityResolution:
@@ -318,3 +320,60 @@ def test_plan_to_extraction_commit_only_excludes_review_facts():
     ex = plan_to_extraction(intent, plan, commit_only=True)
     assert [f.entity_ref for f in ex.facts] == ["m1"]
     assert len(ex.mentions) == 2
+
+
+def test_compute_signals_surface_attested_requires_present_and_not_inferred():
+    intent = _intent(
+        entity_resolutions=[_res()],
+        facts=[_fact(attested_span=AttestedSpan("c1", "Globex"), inferred=False)],
+    )
+    assert compute_signals(intent, ["I work at Globex now."])[0].surface_attested is True
+
+
+def test_compute_signals_inferred_is_not_surface_attested():
+    intent = _intent(
+        entity_resolutions=[_res()],
+        facts=[_fact(attested_span=AttestedSpan("c1", "Globex"), inferred=True)],
+    )
+    assert compute_signals(intent, ["I work at Globex now."])[0].surface_attested is False
+
+
+def test_compute_signals_surface_not_in_text_is_not_attested():
+    intent = _intent(
+        entity_resolutions=[_res()],
+        facts=[_fact(attested_span=AttestedSpan("c1", "Initech"), inferred=False)],
+    )
+    assert compute_signals(intent, ["I work at Globex now."])[0].surface_attested is False
+
+
+def test_compute_signals_predicate_known_matches_registry():
+    reg = get_registry()
+
+    def known(pred: str) -> bool:
+        return any(t.predicate(pred) is not None for t in reg.types.values())
+
+    intent = _intent(
+        entity_resolutions=[_res()],
+        facts=[_fact(predicate="zzz_made_up_predicate"), _fact(predicate="spouse")],
+    )
+    sigs = compute_signals(intent, ["x"])
+    assert sigs[0].predicate_known is False  # a coined long-tail predicate
+    assert sigs[1].predicate_known == known("spouse")  # matches the registry, no hardcoding
+
+
+def test_compute_signals_is_supersede_from_agent_proposal():
+    intent = _intent(
+        entity_resolutions=[_res()],
+        facts=[_fact(predicate="employer")],
+        supersession_proposals=[
+            SupersessionProposal(
+                entity_ref="m1", predicate="employer", qualifier="", action="supersede"
+            )
+        ],
+    )
+    assert compute_signals(intent, ["x"])[0].is_supersede is True
+
+
+def test_compute_signals_no_supersede_proposal_is_false():
+    intent = _intent(entity_resolutions=[_res()], facts=[_fact(predicate="employer")])
+    assert compute_signals(intent, ["x"])[0].is_supersede is False

@@ -47,6 +47,7 @@ from jbrain.analysis.weight import (
     commit_status,
     effective_weight,
 )
+from jbrain.schema import get_registry
 
 # When the executor couldn't supply signals for a fact, assume the most cautious
 # reading: inferred, predicate unknown, would-overwrite. A safe default can only
@@ -140,6 +141,47 @@ def plan_intent(
         merge_proposals=tuple(intent.merge_proposals),
         distinct_proposals=tuple(intent.distinct_proposals),
     )
+
+
+def compute_signals(
+    intent: IntegrationIntent, chunk_texts: list[str]
+) -> dict[int, ConfidenceSignals]:
+    """Derive each fact's deterministic ConfidenceSignals (for the weight model,
+    N11) from the intent + the note's chunk texts — no DB required:
+
+    - surface_attested: the agent did NOT flag the fact inferred AND its attested
+      surface text actually appears in the note. (Both must hold: an agent could
+      claim a span it didn't read; requiring the surface to be present in the
+      chunks is the deterministic check.)
+    - predicate_known: the (already-normalized) predicate is a declared registry
+      predicate, not a coined long-tail one.
+    - is_supersede: the agent proposed superseding this fact's key. Derivable from
+      the intent alone, so it's available at plan time (before entity resolution).
+    """
+    registry = get_registry()
+    # Predicates are declared per entity-type; the entity's type isn't known until
+    # the arbiter resolves it, so "known" here means declared by ANY type — a
+    # sound global proxy for the minor unknown-predicate weight penalty.
+    types = registry.types.values()
+    haystack = "\n".join(chunk_texts)
+    supersede_keys = {
+        (s.entity_ref, s.predicate, s.qualifier)
+        for s in intent.supersession_proposals
+        if s.action in ("supersede", "conflict")
+    }
+    out: dict[int, ConfidenceSignals] = {}
+    for i, fact in enumerate(intent.facts):
+        surface_attested = (
+            not fact.inferred
+            and fact.attested_span is not None
+            and fact.attested_span.surface in haystack
+        )
+        out[i] = ConfidenceSignals(
+            surface_attested=surface_attested,
+            predicate_known=any(t.predicate(fact.predicate) is not None for t in types),
+            is_supersede=(fact.entity_ref, fact.predicate, fact.qualifier) in supersede_keys,
+        )
+    return out
 
 
 def _to_extracted(fact: IntentFact, confidence: float) -> ExtractedFact:
