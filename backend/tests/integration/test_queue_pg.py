@@ -367,4 +367,3 @@ async def test_backfill_unembedded_notes_targets_null_embeddings_once(
 
     # The queued job suppresses duplicates on the next sweep.
     assert await queue.backfill_unembedded_notes(maker, OWNER) == 0
-

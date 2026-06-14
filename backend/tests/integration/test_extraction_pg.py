@@ -610,13 +610,26 @@ async def test_long_note_fans_out_into_groups_and_merges_their_facts(
     # calls positionally; integrate_note reads the seeded chunks directly.
     intent = {
         "resolutions": [
-            {"mention_ref": "Me", "mode": "new", "new_kind": "Person", "new_name": "Me",
-             "surface": "I"}
+            {
+                "mention_ref": "Me",
+                "mode": "new",
+                "new_kind": "Person",
+                "new_name": "Me",
+                "surface": "I",
+            }
         ],
         "facts": [
-            {"entity_ref": "Me", "predicate": p, "kind": "attribute", "assertion": "asserted",
-             "statement": f"My {p} is {v}.", "value_json": {"value": v}, "self_confidence": 0.9,
-             "inferred": False, "surface": "word"}
+            {
+                "entity_ref": "Me",
+                "predicate": p,
+                "kind": "attribute",
+                "assertion": "asserted",
+                "statement": f"My {p} is {v}.",
+                "value_json": {"value": v},
+                "self_confidence": 0.9,
+                "inferred": False,
+                "surface": "word",
+            }
             for p, v in (("favoriteColor", "blue"), ("favoriteFood", "pizza"))
         ],
     }
@@ -941,6 +954,8 @@ async def test_reanalysis_is_idempotent(
 
     assert tuple(first) == tuple(second)
     assert fact_ids_before == fact_ids_after  # upsert on the identity key, not re-insert
+
+
 async def _seed_provisional_namesake(maker: async_sessionmaker[AsyncSession], name: str) -> str:
     """A prior note that minted `name` as its own provisional person — the
     entity a later self-naming declaration collides with. Kept on a unique
@@ -1096,6 +1111,8 @@ async def test_rejected_merge_is_never_re_proposed(
     )
     # No new open card — the negative edge blocked the re-proposal.
     assert await _open_merge_proposals(maker, namesake, declarer_id) == []
+
+
 async def test_state_change_forms_supersession_chain(
     maker: async_sessionmaker[AsyncSession], tmp_path: Any
 ) -> None:
@@ -1269,6 +1286,8 @@ async def test_malformed_extraction_is_permanent_and_writes_nothing(
 
 async def test_missing_note_is_a_noop(maker: async_sessionmaker[AsyncSession]) -> None:
     await analyzer(maker, ["{}"]).analyze_note({"note_id": str(uuid.uuid4())})
+
+
 @pytest.mark.skip(reason=_CUTOVER_SKIP)
 async def test_ambiguous_mention_review_and_reject_dismissal(
     maker: async_sessionmaker[AsyncSession], tmp_path: Any

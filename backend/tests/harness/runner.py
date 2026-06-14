@@ -323,9 +323,9 @@ async def run_scenario(maker: async_sessionmaker, scenario: Scenario) -> Snapsho
         # The intent is compiled against the graph AS IT STANDS now (prior steps
         # committed), so an existing-mode reference resolves to the live entity.
         intent_json = await _compile_intent(maker, step, domain)
-        await _integrator(
-            maker, json.dumps(step.extraction), intent_json
-        ).integrate_note({"note_id": note_id})
+        await _integrator(maker, json.dumps(step.extraction), intent_json).integrate_note(
+            {"note_id": note_id}
+        )
     return await _snapshot(maker)
 
 
