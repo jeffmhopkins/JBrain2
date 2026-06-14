@@ -25,6 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 # Reuse the proven candidate engines rather than reinvent name/vector matching.
 # Underscore-private, but same-package: graph_context is a sibling of entities.
 from jbrain.analysis.entities import (
+    FIRST_PERSON,
     _embedding_candidates,
     _exact_matches,
     normalize_alias,
@@ -218,6 +219,7 @@ async def _owner_neighbor_ids(
                 WHERE f.object_entity_id = :oid
                   AND f.status = 'active' AND f.assertion = 'asserted'
                   AND se.status != 'merged' AND f.domain_code IN (:dom, 'general')
+                ORDER BY nid
                 """
             ),
             {"oid": str(owner_id), "dom": note_domain},
@@ -231,13 +233,18 @@ async def _load_entity(
 ) -> CandidateEntity | None:
     """One entity as a CandidateEntity: its row, in-domain aliases, and active
     in-domain facts (newest-first; rank_and_bound re-orders by identity)."""
+    # The entity ROW carries its own domain (independent of any fact's), so it
+    # must be domain-filtered too: an exact/alias name match or an ego-graph hop
+    # can reach a restricted-domain entity, and its name/kind would leak into a
+    # general note without this. Out-of-domain -> None -> dropped by the caller.
     ent = (
         await session.execute(
             text(
                 "SELECT id::text AS id, canonical_name, kind FROM app.entities"
                 " WHERE id = :id AND status != 'merged'"
+                " AND domain_code IN (:dom, 'general')"
             ),
-            {"id": str(entity_id)},
+            {"id": str(entity_id), "dom": note_domain},
         )
     ).first()
     if ent is None:
@@ -313,7 +320,7 @@ async def build_graph_context(
     ordered_ids: list[str] = []
     for mention in mentions:
         norm = normalize_alias(mention.name)
-        if not norm or norm == "me":
+        if not norm or norm in FIRST_PERSON:  # the author resolves to the owner, not a lookup
             continue
         picks = [str(row.id) for row in await _exact_matches(session, norm)]
         if embedder is not None and len(picks) < per_mention_cap:

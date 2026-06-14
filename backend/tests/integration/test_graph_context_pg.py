@@ -116,7 +116,11 @@ async def seeded(maker: async_sessionmaker[AsyncSession], tmp_path: Any) -> dict
         employer = ent("Acme", "Organization", "general")
         clinic = ent("Clinic", "Organization", "health")
         okafor = ent("Dr. Okafor", "Person", "general")
-        session.add_all([me, wife, employer, clinic, okafor])
+        # A health-domain namesake of the general okafor: a general note mentioning
+        # "Dr. Okafor" must surface the general entity and NEVER the health one
+        # (the entity-row firewall, not just the fact/edge filters).
+        okafor_health = ent("Dr. Okafor", "Person", "health")
+        session.add_all([me, wife, employer, clinic, okafor, okafor_health])
         await session.flush()
         session.add_all(
             [
@@ -134,6 +138,7 @@ async def seeded(maker: async_sessionmaker[AsyncSession], tmp_path: Any) -> dict
         "employer": str(employer.id),
         "clinic": str(clinic.id),
         "okafor": str(okafor.id),
+        "okafor_health": str(okafor_health.id),
     }
 
 
@@ -194,6 +199,17 @@ async def test_firewall_excludes_health_entity_and_facts_from_a_general_note(
     assert seeded["wife"] in out
     assert "gender -> female" in out
     assert "diagnosis" not in out and "hypertension" not in out
+
+
+async def test_firewall_excludes_a_health_entity_whose_name_matches_a_general_mention(
+    maker: async_sessionmaker[AsyncSession], seeded: dict[str, str]
+) -> None:
+    # The exact-name path: a general note mentions "Dr. Okafor"; both a general
+    # and a health entity carry that name. Only the general one may surface —
+    # the entity-row domain filter must drop the health namesake.
+    out = await _context(maker, seeded, [_mention(f"Dr. Okafor {seeded['tag']}")])
+    assert seeded["okafor"] in out
+    assert seeded["okafor_health"] not in out
 
 
 async def test_no_embedder_still_returns_exact_and_graph_candidates(
