@@ -16,7 +16,7 @@ chunk in the fact's domain — a citation never crosses the firewall
 """
 
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta, timezone
 from typing import Any
 
@@ -35,6 +35,7 @@ from jbrain.analysis.display import (
     inference_display,
     mark_snippet,
     merge_display,
+    new_predicate_display,
     promotion_display,
     truncation_display,
     value_label,
@@ -74,6 +75,7 @@ from jbrain.analysis.graph_context import build_graph_context
 from jbrain.analysis.integrate import Integrator
 from jbrain.analysis.integrate_prompt import INTEGRATE_STRENGTH
 from jbrain.analysis.intent import EntityResolution, IntegrationIntent
+from jbrain.analysis.predicates import decide_predicates
 from jbrain.analysis.prompt import (
     EXTRACT_MAX_TOKENS,
     EXTRACTION_SCHEMA,
@@ -108,6 +110,7 @@ from jbrain.models.analysis import (
 from jbrain.models.notes import Attachment, Chunk, Note
 from jbrain.queue import SYSTEM_CTX, PermanentJobError
 from jbrain.schema import SchemaError, get_registry
+from jbrain.settings_store import SqlSettingsStore
 
 log = structlog.get_logger()
 
@@ -183,6 +186,17 @@ def _locate(surface: str, chunks: list[_ChunkRef]) -> _Span | None:
 _SCHEMA_VERSION = 1
 
 
+def _review_card_domain(predicate: str, note_domain: str) -> str:
+    """The domain a review card rides: a sensitive predicate floors a general note
+    into its restricted domain, then the ratchet applies — so a card never lands
+    in a less-restricted scope than its predicate (the firewall, shared by every
+    card filer)."""
+    floor = domain_floor(predicate)
+    extracted = floor if (floor is not None and note_domain == "general") else note_domain
+    card_domain, _ = ratchet_domain(extracted, note_domain)
+    return card_domain
+
+
 async def _extract_note(
     router: LlmRouter,
     texts: list[str],
@@ -226,6 +240,7 @@ class AnalysisPipeline:
         *,
         embedder: EmbedClient | None = None,
         embed_model: str = "",
+        settings: SqlSettingsStore | None = None,
     ):
         self._maker = maker
         self._router = router
@@ -237,6 +252,9 @@ class AnalysisPipeline:
         # call sites keep their exact behavior.
         self._embedder = embedder
         self._embed_model = embed_model
+        # Read of the predicate_canonicalization toggle (Phase 3); None ⇒ the
+        # feature is off, so the harness/older call sites are byte-unchanged.
+        self._settings = settings
 
     async def analyze_note(self, payload: dict[str, Any]) -> None:
         """Handle an analyze_note job: {note_id}; missing note is a no-op."""
@@ -377,6 +395,10 @@ class AnalysisPipeline:
             schema_version=_SCHEMA_VERSION,
             note_text=note_text,
         )
+        # Canonicalize unknown predicates BEFORE the arbiter keys facts, so a
+        # STRONG embedding match collapses the committed graph address and the
+        # weight model sees the canonical name (Phase 3 §3.1; no-op when off).
+        await self._canonicalize_predicates(intent, note_domain=domain)
         plan = plan_intent(intent, compute_signals(intent, [c.text for c in chunks]))
 
         provider, model = self._router.spec("integrate.note", INTEGRATE_STRENGTH)
@@ -523,11 +545,7 @@ class AnalysisPipeline:
             # domain (plan_to_extraction emits ExtractedFact.domain=""), so
             # _upsert_fact's `fact.domain or note_domain` collapses to note_domain
             # — we start there, then apply the same floor + ratchet.
-            extracted = note_domain
-            floor = domain_floor(fact.predicate)
-            if floor is not None and note_domain == "general":
-                extracted = floor
-            card_domain, _ = ratchet_domain(extracted, note_domain)
+            card_domain = _review_card_domain(fact.predicate, note_domain)
             # Re-analysis must not multiply identical open cards.
             existing = (
                 await session.execute(
@@ -576,6 +594,108 @@ class AnalysisPipeline:
                     domain_code=card_domain,
                 )
             )
+
+    async def _canonicalize_predicates(
+        self, intent: IntegrationIntent, *, note_domain: str
+    ) -> None:
+        """Embedding-canonicalize each unknown predicate in the intent before the
+        arbiter keys it (Phase 3 §3.1). A STRONG match rewrites the fact's
+        predicate in place (collapsing the committed graph address); WEAK/cold
+        leave it raw and file a new_predicate review card. No-op without an
+        embedder or with the setting off — the name is never rejected."""
+        if self._embedder is None or self._settings is None:
+            return
+        if not await self._settings.predicate_canonicalization(SYSTEM_CTX):
+            return
+        registry = get_registry()
+        unknown = [
+            (i, f)
+            for i, f in enumerate(intent.facts)
+            if not registry.declares_predicate(f.predicate)
+        ]
+        if not unknown:
+            return
+        note_id = uuid.UUID(intent.note_id)
+        carded: set[str] = set()  # one new_predicate card per raw predicate per run
+        async with scoped_session(self._maker, SYSTEM_CTX) as session:
+            # One embed call for every unknown predicate, not one per fact.
+            decisions = await decide_predicates(
+                session,
+                [(f.predicate, f.statement, f.kind) for _, f in unknown],
+                embedder=self._embedder,
+            )
+            for (i, fact), decision in zip(unknown, decisions, strict=True):
+                if decision.band == "strong" and decision.canonical:
+                    intent.facts[i] = replace(fact, predicate=decision.canonical)
+                    self._rewrite_supersession(intent, fact.predicate, decision.canonical)
+                    log.info(
+                        "predicate.canonicalized", raw=fact.predicate, canonical=decision.canonical
+                    )
+                elif fact.predicate not in carded:
+                    carded.add(fact.predicate)
+                    await self._file_new_predicate_review(
+                        session,
+                        note_id=note_id,
+                        note_domain=note_domain,
+                        predicate=fact.predicate,
+                        statement=fact.statement,
+                        kind=fact.kind,
+                        suggestions=decision.suggestions,
+                    )
+
+    @staticmethod
+    def _rewrite_supersession(intent: IntegrationIntent, raw: str, canonical: str) -> None:
+        """Carry a STRONG predicate rewrite into the matching supersession
+        proposals, so compute_signals keys is_supersede on the SAME (canonical)
+        predicate the rewritten fact now uses — otherwise the proposal would name
+        the raw predicate and the supersession would silently drop."""
+        for j, sp in enumerate(intent.supersession_proposals):
+            if sp.predicate == raw:
+                intent.supersession_proposals[j] = replace(sp, predicate=canonical)
+
+    async def _file_new_predicate_review(
+        self,
+        session: AsyncSession,
+        *,
+        note_id: uuid.UUID,
+        note_domain: str,
+        predicate: str,
+        statement: str,
+        kind: str,
+        suggestions: tuple[tuple[str, float], ...],
+    ) -> None:
+        """File an idempotent new_predicate card for an unknown predicate the
+        canonicalizer could not confidently merge (Phase 3 §3.1a). The fact has
+        already committed under its raw name; this surfaces it for accept/map
+        (Phase 3b). One open card per raw predicate — re-analysis never piles up.
+        The card rides the predicate's floor/ratchet domain like inference cards."""
+        card_domain = _review_card_domain(predicate, note_domain)
+        existing = (
+            await session.execute(
+                text(
+                    "SELECT 1 FROM app.review_items"
+                    " WHERE kind = 'new_predicate' AND status = 'open'"
+                    " AND payload->>'predicate' = :pred LIMIT 1"
+                ),
+                {"pred": predicate},
+            )
+        ).first()
+        if existing is not None:
+            return
+        session.add(
+            ReviewItem(
+                kind="new_predicate",
+                payload={
+                    "predicate": predicate,
+                    "statement": statement,
+                    "fact_kind": kind,
+                    "note_id": str(note_id),
+                    "suggestions": [{"name": n, "score": s} for n, s in suggestions],
+                    **new_predicate_display(predicate=predicate, suggestions=suggestions),
+                },
+                domain_code=card_domain,
+            )
+        )
 
     async def _apply(
         self,

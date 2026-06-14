@@ -13,15 +13,24 @@ from __future__ import annotations
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass
+from typing import Literal
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from jbrain.embed import vector_literal
+from jbrain.embed import EmbedClient, vector_literal
 from jbrain.schema import get_registry
 from jbrain.schema.models import Predicate, SchemaRegistry
 
 _CAMEL = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
+
+# Canonicalization bands (predicate canonicalization Phase 3, docs §3.1). Seeded
+# at the entity-resolution values but NAMED separately: predicate descriptors are
+# definition-vs-definition (a different distribution than name-vs-name), so
+# Phase 4's eval recalibrates these without touching entity resolution.
+_PRED_STRONG = 0.90  # >= this: canonicalize to the match automatically
+_PRED_WEAK = 0.78  # [WEAK, STRONG): propose via a review card; below: cold (mint-proposal)
+_PRED_TOPK = 5
 
 
 def _humanize(canonical_name: str) -> str:
@@ -80,6 +89,65 @@ def registry_seed_rows(registry: SchemaRegistry | None = None) -> list[SeedRow]:
             )
         )
     return rows
+
+
+def raw_descriptor(predicate: str, statement: str, kind: str | None = None) -> str:
+    """Embed text for an INCOMING (unregistered) predicate: its humanized token
+    plus the fact's statement (the model's intended meaning) and a kind hint.
+    The sibling of predicate_descriptor, which needs a registry Predicate the
+    incoming one isn't. The statement is the main signal — `worksFor` and
+    `worksWith` diverge on it even when the tokens are lexically close."""
+    parts = [_humanize(predicate), statement.strip(), f"({kind})" if kind else ""]
+    return " ".join(p for p in parts if p)
+
+
+@dataclass(frozen=True)
+class PredicateDecision:
+    """The canonicalization verdict for one unknown predicate (Phase 3 §3.1)."""
+
+    band: Literal["strong", "weak", "cold"]
+    canonical: str | None  # the STRONG match to rewrite to; None for weak/cold
+    suggestions: tuple[tuple[str, float], ...]  # top-k (canonical_name, similarity)
+
+
+def band_for(neighbors: tuple[tuple[str, float], ...]) -> PredicateDecision:
+    """The band verdict for a predicate's nearest canonicals: STRONG (top
+    >= _PRED_STRONG) canonicalizes; WEAK proposes the neighbours for review; cold
+    (no/distant neighbour) is a mint proposal."""
+    top = neighbors[0][1] if neighbors else 0.0
+    if top >= _PRED_STRONG:
+        return PredicateDecision("strong", neighbors[0][0], neighbors)
+    return PredicateDecision("weak" if top >= _PRED_WEAK else "cold", None, neighbors)
+
+
+async def decide_predicates(
+    session: AsyncSession,
+    items: Sequence[tuple[str, str, str | None]],
+    *,
+    embedder: EmbedClient,
+    k: int = _PRED_TOPK,
+) -> list[PredicateDecision]:
+    """Cosine-match a batch of unknown predicates against the canonical index in
+    ONE embed call (each item is (predicate, statement, kind)). The storage
+    invariant holds for every band — the predicate name is never rejected."""
+    if not items:
+        return []
+    vectors = await embedder.embed([raw_descriptor(p, s, kd) for p, s, kd in items])
+    return [band_for(tuple(await nearest_predicates(session, v, k))) for v in vectors]
+
+
+async def decide_predicate(
+    session: AsyncSession,
+    *,
+    predicate: str,
+    statement: str,
+    kind: str | None,
+    embedder: EmbedClient,
+    k: int = _PRED_TOPK,
+) -> PredicateDecision:
+    """Single-predicate convenience over decide_predicates."""
+    out = await decide_predicates(session, [(predicate, statement, kind)], embedder=embedder, k=k)
+    return out[0]
 
 
 async def nearest_predicates(
