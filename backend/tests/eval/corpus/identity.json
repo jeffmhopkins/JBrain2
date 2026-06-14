@@ -1,18 +1,463 @@
 [
-  {"id": "nickname-goes-by-single", "category": "names", "domain": "general", "note_text": "My brother Samuel moved back to Portland last month. Everyone in the family just calls him Sammy.", "expect": {"resolutions": [{"mention": "Me", "mode": "existing", "entity_id": "owner-1"}, {"mention": "Samuel", "mode": "new"}], "forbidden_entities": ["Sammy"], "facts": [{"entity": "Samuel", "predicate": "name.nickname", "kind": "attribute", "value": "Sammy", "assertion": "asserted", "inferred": false, "disposition": "commit"}, {"entity": "Me", "predicate": "sibling", "kind": "relationship", "object": "Samuel", "assertion": "asserted", "inferred": false}], "rationale": "A 'calls him X' nickname is a name.nickname VALUE on the person, never its own entity."}},
-  {"id": "nickname-multi-declaration-prod-bug", "category": "names", "domain": "general", "note_text": "My wife's full name is Celine Kitina Hopkins, but she goes by Celine. The kids call her Mom, and her old college friends still call her CeeCee.", "expect": {"resolutions": [{"mention": "Me", "mode": "existing", "entity_id": "owner-1"}], "forbidden_entities": ["Mom", "CeeCee"], "max_entities": 1, "facts": [{"entity": "Me", "predicate": "spouse", "kind": "relationship", "object": "Celine", "assertion": "asserted", "inferred": false}], "rationale": "PRODUCTION BUG: a multi-nickname declaration is ONE person entity (max_entities 1); Mom/CeeCee are name VALUES, never entities."}},
-  {"id": "alias-aka-the-beast-thing", "category": "names", "domain": "general", "note_text": "I finally bought a 2019 Ford F-150. I've started calling it the Beast because it barely fits in the garage.", "expect": {"resolutions": [{"mention": "Me", "mode": "existing", "entity_id": "owner-1"}], "max_entities": 1, "rationale": "An owned thing is ONE entity (max_entities 1); 'the Beast' is its nickname value, not a 2nd entity."}},
-  {"id": "value-fidelity-birthdate-bare", "category": "value_fidelity", "domain": "general", "note_text": "My daughter Priya was born on March 3rd, 2015 at the downtown hospital.", "expect": {"resolutions": [{"mention": "Me", "mode": "existing", "entity_id": "owner-1"}, {"mention": "Priya", "mode": "new"}], "facts": [{"entity": "Priya", "predicate": "birthDate", "kind": "attribute", "value": "2015-03-03", "assertion": "asserted", "inferred": false}, {"entity": "Me", "predicate": "children", "kind": "relationship", "object": "Priya", "assertion": "asserted", "inferred": false}], "rationale": "birthDate value_json must be the bare date, not the sentence."}},
-  {"id": "value-fidelity-measurement-unit", "category": "value_fidelity", "domain": "health", "note_text": "Weighed myself this morning: 178 lb. Doctor's chart says I'm 5 foot 11.", "expect": {"resolutions": [{"mention": "Me", "mode": "existing", "entity_id": "owner-1"}], "facts": [{"entity": "Me", "predicate": "weight", "kind": "measurement", "value": {"value": 178, "unit": "lb"}, "assertion": "asserted", "inferred": false, "disposition": "commit"}], "rationale": "Measurement value_json holds bare {value,unit}, never a sentence."}},
-  {"id": "value-fidelity-blood-type-attribute", "category": "value_fidelity", "domain": "health", "note_text": "Reminder for the file: my blood type is O negative.", "expect": {"resolutions": [{"mention": "Me", "mode": "existing", "entity_id": "owner-1"}], "facts": [{"entity": "Me", "predicate": "bloodType", "kind": "attribute", "value": "O negative", "assertion": "asserted", "inferred": false}], "rationale": "Blood type is a timeless attribute; value_json is the bare 'O negative' datum."}},
-  {"id": "dedup-name-variant-prod-bug", "category": "dedup", "domain": "general", "note_text": "Had dinner with Celine Hopkins last night. Celine Kitina Hopkins is finally feeling settled after the move.", "expect": {"resolutions": [{"mention": "Me", "mode": "existing", "entity_id": "owner-1"}], "max_entities": 1, "rationale": "PRODUCTION BUG: two surface forms of one person in one note must resolve to ONE entity (max_entities 1), not a duplicate."}},
-  {"id": "dedup-pronoun-coreference", "category": "dedup", "domain": "health", "note_text": "Took Mom to see Dr. Patel about the dizziness. She wants Mom to get an MRI next week and she ordered bloodwork too.", "advisory": true, "expect": {"resolutions": [{"mention": "Me", "mode": "existing", "entity_id": "owner-1"}, {"mention": "Dr. Patel", "mode": "new"}], "forbidden_entities": ["she"], "rationale": "Pronoun 'she' coreferences Dr. Patel; must not mint a 'she' entity."}},
-  {"id": "resolve-existing-by-name", "category": "resolve_existing", "domain": "general", "note_text": "Theo scored two goals at his soccer game this morning.", "seed": [{"id": "ent-theo", "name": "Theo Hopkins", "kind": "Person", "aliases": ["Theo"]}, {"id": "ent-celine", "name": "Celine Hopkins", "kind": "Person"}],"graph_context": "Owner/author: entity id 'owner-1' name 'Me' (Person).\nKnown entities:\n- id 'ent-theo' name 'Theo Hopkins' (Person)\n  fact Theo Hopkins.name.preferred -> Theo [attribute/asserted]\n- id 'ent-celine' name 'Celine Hopkins' (Person)\n  fact Me.spouse -> Celine Hopkins [relationship/asserted]", "expect": {"resolutions": [{"mention": "Theo", "mode": "existing", "entity_id": "ent-theo"}], "rationale": "Bare 'Theo' matching an existing entity resolves to ent-theo, not a new mint."}},
-  {"id": "resolve-existing-ambiguous", "category": "resolve_existing", "domain": "general", "note_text": "Got coffee with Chris yesterday, good catch-up.", "graph_context": "Owner/author: entity id 'owner-1' name 'Me' (Person).\nKnown entities:\n- id 'ent-chris-a' name 'Chris Alvarez' (Person)\n  fact Me.worksWith -> Chris Alvarez [relationship/asserted]\n- id 'ent-chris-b' name 'Chris Bennett' (Person)\n  fact Me.sibling -> Chris Bennett [relationship/asserted]", "expect": {"resolutions": [{"mention": "Me", "mode": "existing", "entity_id": "owner-1"}, {"mention": "Chris", "mode": "ambiguous"}], "rationale": "Two existing 'Chris' entities could match a bare 'Chris'; must be ambiguous, never guess."}},
-  {"id": "relationship-enumerated-children", "category": "relationship", "domain": "general", "note_text": "We took the kids camping: my daughters Summer, Harmony, and Lydian had a blast.", "expect": {"facts": [{"entity": "Me", "predicate": "children", "kind": "relationship", "object": "Summer"}, {"entity": "Me", "predicate": "children", "kind": "relationship", "object": "Harmony"}, {"entity": "Me", "predicate": "children", "kind": "relationship", "object": "Lydian"}], "rationale": "Enumerated relationship -> one edge per child (3 children edges), never one combined fact."}},
-  {"id": "relationship-symmetric-twins", "category": "relationship", "domain": "general", "note_text": "My nephews Marcus and Devon are twins — they turned six this week.", "expect": {"max_entities": 2, "forbidden_entities": ["twins"], "rationale": "Twins -> two person entities, never a 'twins' entity; the symmetric edge is the arbiter's to mirror."}},
-  {"id": "relationship-reciprocal-direction", "category": "relationship", "domain": "general", "note_text": "Aunt Rosa is my mother's older sister; she's visiting from Lima next month.", "advisory": true, "graph_context": "Owner/author: entity id 'owner-1' name 'Me' (Person).\nKnown entities:\n- id 'ent-mother' name 'Elena Vargas' (Person)\n  fact Me.parent -> Elena Vargas [relationship/asserted]", "expect": {"resolutions": [{"mention": "Me", "mode": "existing", "entity_id": "owner-1"}, {"mention": "Aunt Rosa", "mode": "new"}], "facts": [{"entity": "Aunt Rosa", "predicate": "gender", "kind": "state", "value": "female", "assertion": "asserted", "inferred": true}], "rationale": "'Aunt' implies female (inferred); direction of sibling edge is judgment."}},
-  {"id": "ownership-pet-with-name", "category": "relationship", "domain": "general", "note_text": "We adopted a golden retriever this weekend. Her name is Biscuit and she's about two years old.", "expect": {"resolutions": [{"mention": "Me", "mode": "existing", "entity_id": "owner-1"}], "max_entities": 1, "rationale": "Pet ownership -> ONE animal entity (max_entities 1); 'Biscuit' is its name value, not a 2nd entity."}},
-  {"id": "classify-five-kinds", "category": "value_fidelity", "domain": "general", "note_text": "Quick log on Dad: born April 2nd 1958, fasting glucose came back at 102 mg/dL today, he now lives in Tucson after the move, he saw his cardiologist last Tuesday, and he can't stand cilantro.", "advisory": true, "expect": {"resolutions": [{"mention": "Me", "mode": "existing", "entity_id": "owner-1"}, {"mention": "Dad", "mode": "new"}], "forbidden_entities": ["cilantro"], "facts": [{"entity": "Dad", "predicate": "birthDate", "kind": "attribute", "value": "1958-04-02", "assertion": "asserted", "inferred": false}], "rationale": "Exercises five kinds; birthDate bare value is the hard part, predicate spellings advisory."}},
-  {"id": "future-state-expected-not-asserted", "category": "value_fidelity", "domain": "general", "note_text": "Big news: I start my new job at Northwind Labs on July 6th. Last day at my current place is June 30th.", "seed": [{"id": "owner-1", "owner": true, "facts": [{"predicate": "worksFor", "kind": "state", "object": "ent-acme", "valid_from": "2021-03-01"}]}, {"id": "ent-acme", "name": "Acme Corp", "kind": "Organization"}],"graph_context": "Owner/author: entity id 'owner-1' name 'Me' (Person).\nKnown entities:\n- id 'ent-acme' name 'Acme Corp' (Organization)\n  fact Me.worksFor -> Acme Corp [relationship/asserted]", "expect": {"resolutions": [{"mention": "Me", "mode": "existing", "entity_id": "owner-1"}, {"mention": "Northwind Labs", "mode": "new"}], "facts": [{"entity": "Me", "predicate": "worksFor", "kind": "state", "object": "Northwind Labs", "assertion": "expected", "inferred": false}], "absent_facts": [{"entity": "Me", "predicate": "worksFor", "object": "Northwind Labs", "assertion": "asserted"}], "rationale": "A future employer is assertion=expected; must NOT supersede current worksFor today."}}
+  {
+    "id": "nickname-goes-by-single",
+    "category": "names",
+    "domain": "general",
+    "note_text": "My brother Samuel moved back to Portland last month. Everyone in the family just calls him Sammy.",
+    "expect": {
+      "resolutions": [
+        {
+          "mention": "Me",
+          "mode": "existing",
+          "entity_id": "owner-1"
+        },
+        {
+          "mention": "Samuel",
+          "mode": "new"
+        }
+      ],
+      "forbidden_entities": [
+        "Sammy"
+      ],
+      "facts": [
+        {
+          "entity": "Samuel",
+          "predicate": "name.nickname",
+          "kind": "attribute",
+          "value": "Sammy",
+          "assertion": "asserted",
+          "inferred": false,
+          "disposition": "commit"
+        },
+        {
+          "entity": "Me",
+          "predicate": "sibling",
+          "kind": "relationship",
+          "object": "Samuel",
+          "assertion": "asserted",
+          "inferred": false
+        }
+      ],
+      "rationale": "A 'calls him X' nickname is a name.nickname VALUE on the person, never its own entity."
+    }
+  },
+  {
+    "id": "nickname-multi-declaration-prod-bug",
+    "category": "names",
+    "domain": "general",
+    "note_text": "My wife's full name is Celine Kitina Hopkins, but she goes by Celine. The kids call her Mom, and her old college friends still call her CeeCee.",
+    "expect": {
+      "resolutions": [
+        {
+          "mention": "Me",
+          "mode": "existing",
+          "entity_id": "owner-1"
+        }
+      ],
+      "forbidden_entities": [
+        "Mom",
+        "CeeCee"
+      ],
+      "max_entities": 1,
+      "facts": [
+        {
+          "entity": "Me",
+          "predicate": "spouse",
+          "kind": "relationship",
+          "object": "Celine",
+          "assertion": "asserted",
+          "inferred": false
+        }
+      ],
+      "rationale": "PRODUCTION BUG: a multi-nickname declaration is ONE person entity (max_entities 1); Mom/CeeCee are name VALUES, never entities."
+    }
+  },
+  {
+    "id": "alias-aka-the-beast-thing",
+    "category": "names",
+    "domain": "general",
+    "note_text": "I finally bought a 2019 Ford F-150. I've started calling it the Beast because it barely fits in the garage.",
+    "expect": {
+      "resolutions": [
+        {
+          "mention": "Me",
+          "mode": "existing",
+          "entity_id": "owner-1"
+        }
+      ],
+      "max_entities": 1,
+      "rationale": "An owned thing is ONE entity (max_entities 1); 'the Beast' is its nickname value, not a 2nd entity."
+    }
+  },
+  {
+    "id": "value-fidelity-birthdate-bare",
+    "category": "value_fidelity",
+    "domain": "general",
+    "note_text": "My daughter Priya was born on March 3rd, 2015 at the downtown hospital.",
+    "expect": {
+      "resolutions": [
+        {
+          "mention": "Me",
+          "mode": "existing",
+          "entity_id": "owner-1"
+        },
+        {
+          "mention": "Priya",
+          "mode": "new"
+        }
+      ],
+      "facts": [
+        {
+          "entity": "Priya",
+          "predicate": "birthDate",
+          "kind": "attribute",
+          "value": "2015-03-03",
+          "assertion": "asserted",
+          "inferred": false
+        },
+        {
+          "entity": "Me",
+          "predicate": "children",
+          "kind": "relationship",
+          "object": "Priya",
+          "assertion": "asserted",
+          "inferred": false
+        }
+      ],
+      "rationale": "birthDate value_json must be the bare date, not the sentence."
+    }
+  },
+  {
+    "id": "value-fidelity-measurement-unit",
+    "category": "value_fidelity",
+    "domain": "health",
+    "note_text": "Weighed myself this morning: 178 lb. Doctor's chart says I'm 5 foot 11.",
+    "expect": {
+      "resolutions": [
+        {
+          "mention": "Me",
+          "mode": "existing",
+          "entity_id": "owner-1"
+        }
+      ],
+      "facts": [
+        {
+          "entity": "Me",
+          "predicate": "weight",
+          "kind": "measurement",
+          "value": {
+            "value": 178,
+            "unit": "lb"
+          },
+          "assertion": "asserted",
+          "inferred": false,
+          "disposition": "commit"
+        }
+      ],
+      "rationale": "Measurement value_json holds bare {value,unit}, never a sentence."
+    }
+  },
+  {
+    "id": "value-fidelity-blood-type-attribute",
+    "category": "value_fidelity",
+    "domain": "health",
+    "note_text": "Reminder for the file: my blood type is O negative.",
+    "expect": {
+      "resolutions": [
+        {
+          "mention": "Me",
+          "mode": "existing",
+          "entity_id": "owner-1"
+        }
+      ],
+      "facts": [
+        {
+          "entity": "Me",
+          "predicate": "bloodType",
+          "kind": "attribute",
+          "value": "O negative",
+          "assertion": "asserted",
+          "inferred": false
+        }
+      ],
+      "rationale": "Blood type is a timeless attribute; value_json is the bare 'O negative' datum."
+    }
+  },
+  {
+    "id": "dedup-name-variant-prod-bug",
+    "category": "dedup",
+    "domain": "general",
+    "note_text": "Had dinner with Celine Hopkins last night. Celine Kitina Hopkins is finally feeling settled after the move.",
+    "expect": {
+      "resolutions": [
+        {
+          "mention": "Me",
+          "mode": "existing",
+          "entity_id": "owner-1"
+        }
+      ],
+      "max_entities": 1,
+      "rationale": "PRODUCTION BUG: two surface forms of one person in one note must resolve to ONE entity (max_entities 1), not a duplicate."
+    }
+  },
+  {
+    "id": "dedup-pronoun-coreference",
+    "category": "dedup",
+    "domain": "health",
+    "note_text": "Took Mom to see Dr. Patel about the dizziness. She wants Mom to get an MRI next week and she ordered bloodwork too.",
+    "advisory": true,
+    "expect": {
+      "resolutions": [
+        {
+          "mention": "Me",
+          "mode": "existing",
+          "entity_id": "owner-1"
+        },
+        {
+          "mention": "Dr. Patel",
+          "mode": "new"
+        }
+      ],
+      "forbidden_entities": [
+        "she"
+      ],
+      "rationale": "Pronoun 'she' coreferences Dr. Patel; must not mint a 'she' entity."
+    }
+  },
+  {
+    "id": "resolve-existing-by-name",
+    "category": "resolve_existing",
+    "domain": "general",
+    "note_text": "Theo scored two goals at his soccer game this morning.",
+    "seed": [
+      {
+        "id": "ent-theo",
+        "name": "Theo Hopkins",
+        "kind": "Person",
+        "aliases": [
+          "Theo"
+        ]
+      },
+      {
+        "id": "ent-celine",
+        "name": "Celine Hopkins",
+        "kind": "Person"
+      }
+    ],
+    "graph_context": "Owner/author: entity id 'owner-1' name 'Me' (Person).\nKnown entities:\n- id 'ent-theo' name 'Theo Hopkins' (Person)\n  fact Theo Hopkins.name.preferred -> Theo [attribute/asserted]\n- id 'ent-celine' name 'Celine Hopkins' (Person)\n  fact Me.spouse -> Celine Hopkins [relationship/asserted]",
+    "expect": {
+      "resolutions": [
+        {
+          "mention": "Theo",
+          "mode": "existing",
+          "entity_id": "ent-theo"
+        }
+      ],
+      "rationale": "Bare 'Theo' matching an existing entity resolves to ent-theo, not a new mint."
+    }
+  },
+  {
+    "id": "resolve-existing-ambiguous",
+    "category": "resolve_existing",
+    "domain": "general",
+    "note_text": "Got coffee with Chris yesterday, good catch-up.",
+    "graph_context": "Owner/author: entity id 'owner-1' name 'Me' (Person).\nKnown entities:\n- id 'ent-chris-a' name 'Chris Alvarez' (Person)\n  fact Me.worksWith -> Chris Alvarez [relationship/asserted]\n- id 'ent-chris-b' name 'Chris Bennett' (Person)\n  fact Me.sibling -> Chris Bennett [relationship/asserted]",
+    "expect": {
+      "resolutions": [
+        {
+          "mention": "Me",
+          "mode": "existing",
+          "entity_id": "owner-1"
+        },
+        {
+          "mention": "Chris",
+          "mode": "ambiguous"
+        }
+      ],
+      "rationale": "Two existing 'Chris' entities could match a bare 'Chris'; must be ambiguous, never guess."
+    }
+  },
+  {
+    "id": "relationship-enumerated-children",
+    "category": "relationship",
+    "domain": "general",
+    "note_text": "We took the kids camping: my daughters Summer, Harmony, and Lydian had a blast.",
+    "expect": {
+      "facts": [
+        {
+          "entity": "Me",
+          "predicate": "children",
+          "kind": "relationship",
+          "object": "Summer"
+        },
+        {
+          "entity": "Me",
+          "predicate": "children",
+          "kind": "relationship",
+          "object": "Harmony"
+        },
+        {
+          "entity": "Me",
+          "predicate": "children",
+          "kind": "relationship",
+          "object": "Lydian"
+        }
+      ],
+      "rationale": "Enumerated relationship -> one edge per child (3 children edges), never one combined fact."
+    }
+  },
+  {
+    "id": "relationship-symmetric-twins",
+    "category": "relationship",
+    "domain": "general",
+    "note_text": "My nephews Marcus and Devon are twins — they turned six this week.",
+    "expect": {
+      "max_entities": 2,
+      "forbidden_entities": [
+        "twins"
+      ],
+      "rationale": "Twins -> two person entities, never a 'twins' entity; the symmetric edge is the arbiter's to mirror."
+    }
+  },
+  {
+    "id": "relationship-reciprocal-direction",
+    "category": "relationship",
+    "domain": "general",
+    "note_text": "Aunt Rosa is my mother's older sister; she's visiting from Lima next month.",
+    "advisory": true,
+    "graph_context": "Owner/author: entity id 'owner-1' name 'Me' (Person).\nKnown entities:\n- id 'ent-mother' name 'Elena Vargas' (Person)\n  fact Me.parent -> Elena Vargas [relationship/asserted]",
+    "expect": {
+      "resolutions": [
+        {
+          "mention": "Me",
+          "mode": "existing",
+          "entity_id": "owner-1"
+        },
+        {
+          "mention": "Aunt Rosa",
+          "mode": "new"
+        }
+      ],
+      "facts": [
+        {
+          "entity": "Aunt Rosa",
+          "predicate": "gender",
+          "kind": "state",
+          "value": "female",
+          "assertion": "asserted",
+          "inferred": true
+        }
+      ],
+      "rationale": "'Aunt' implies female (inferred); direction of sibling edge is judgment."
+    }
+  },
+  {
+    "id": "ownership-pet-with-name",
+    "category": "relationship",
+    "domain": "general",
+    "note_text": "We adopted a golden retriever this weekend. Her name is Biscuit and she's about two years old.",
+    "expect": {
+      "resolutions": [
+        {
+          "mention": "Me",
+          "mode": "existing",
+          "entity_id": "owner-1"
+        }
+      ],
+      "max_entities": 1,
+      "rationale": "Pet ownership -> ONE animal entity (max_entities 1); 'Biscuit' is its name value, not a 2nd entity."
+    }
+  },
+  {
+    "id": "classify-five-kinds",
+    "category": "value_fidelity",
+    "domain": "general",
+    "note_text": "Quick log on Dad: born April 2nd 1958, fasting glucose came back at 102 mg/dL today, he now lives in Tucson after the move, he saw his cardiologist last Tuesday, and he can't stand cilantro.",
+    "advisory": true,
+    "expect": {
+      "resolutions": [
+        {
+          "mention": "Me",
+          "mode": "existing",
+          "entity_id": "owner-1"
+        },
+        {
+          "mention": "Dad",
+          "mode": "new"
+        }
+      ],
+      "forbidden_entities": [
+        "cilantro"
+      ],
+      "facts": [
+        {
+          "entity": "Dad",
+          "predicate": "birthDate",
+          "kind": "attribute",
+          "value": "1958-04-02",
+          "assertion": "asserted",
+          "inferred": false
+        }
+      ],
+      "rationale": "Exercises five kinds; birthDate bare value is the hard part, predicate spellings advisory."
+    }
+  },
+  {
+    "id": "future-state-expected-not-asserted",
+    "category": "value_fidelity",
+    "domain": "general",
+    "note_text": "Big news: I start my new job at Northwind Labs on July 6th. Last day at my current place is June 30th.",
+    "seed": [
+      {
+        "id": "owner-1",
+        "owner": true,
+        "facts": [
+          {
+            "predicate": "worksFor",
+            "kind": "state",
+            "object": "ent-acme",
+            "valid_from": "2021-03-01"
+          }
+        ]
+      },
+      {
+        "id": "ent-acme",
+        "name": "Acme Corp",
+        "kind": "Organization"
+      }
+    ],
+    "graph_context": "Owner/author: entity id 'owner-1' name 'Me' (Person).\nKnown entities:\n- id 'ent-acme' name 'Acme Corp' (Organization)\n  fact Me.worksFor -> Acme Corp [relationship/asserted]",
+    "expect": {
+      "resolutions": [
+        {
+          "mention": "Me",
+          "mode": "existing",
+          "entity_id": "owner-1"
+        },
+        {
+          "mention": "Northwind Labs",
+          "mode": "new"
+        }
+      ],
+      "facts": [
+        {
+          "entity": "Me",
+          "predicate": "worksFor",
+          "kind": "state",
+          "object": "Northwind Labs",
+          "assertion": "expected",
+          "inferred": false
+        }
+      ],
+      "absent_facts": [
+        {
+          "entity": "Me",
+          "predicate": "worksFor",
+          "object": "Northwind Labs",
+          "assertion": "asserted"
+        }
+      ],
+      "rationale": "A future employer is assertion=expected; must NOT supersede current worksFor today."
+    }
+  }
 ]

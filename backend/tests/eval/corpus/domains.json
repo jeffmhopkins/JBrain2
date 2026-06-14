@@ -1,20 +1,483 @@
 [
-  {"id": "health-medication-owner", "category": "health", "domain": "health", "note_text": "Started taking metformin 500mg twice daily for my blood sugar. Refilled at the pharmacy this morning.", "graph_context": "Owner/author: entity id 'owner-1' name 'Me' (Person).", "expect": {"resolutions": [{"mention": "Me", "mode": "existing", "entity_id": "owner-1", "cross_subject": false}], "facts": [{"entity": "Me", "predicate": "medication", "qualifier": "metformin", "kind": "state", "value": "metformin", "object": null, "assertion": "asserted", "inferred": false, "domain": "health", "disposition": "commit"}], "rationale": "Owner-authored first-party medication is a health fact; not cross-subject, commits."}, "advisory": true},
-  {"id": "health-diagnosis-owner", "category": "health", "domain": "health", "note_text": "Dr. Reyes confirmed today that I have type 2 diabetes. We'll manage it with diet first.", "graph_context": "Owner/author: entity id 'owner-1' name 'Me' (Person).", "expect": {"resolutions": [{"mention": "Me", "mode": "existing", "entity_id": "owner-1", "cross_subject": false}, {"mention": "Dr. Reyes", "mode": "new", "cross_subject": false}], "facts": [{"entity": "Me", "predicate": "diagnosis", "qualifier": "type 2 diabetes", "kind": "state", "value": "type 2 diabetes", "object": null, "assertion": "asserted", "inferred": false, "domain": "health", "disposition": "commit"}], "rationale": "Owner's own confirmed diagnosis is an asserted health state; commits under health."}, "advisory": true},
-  {"id": "health-lab-reading-value-unit", "category": "health", "domain": "health", "note_text": "Fasting glucose came back at 142 mg/dL this morning. Higher than last time.", "graph_context": "Owner/author: entity id 'owner-1' name 'Me' (Person).", "expect": {"resolutions": [{"mention": "Me", "mode": "existing", "entity_id": "owner-1", "cross_subject": false}], "facts": [{"entity": "Me", "predicate": "glucose", "qualifier": "fasting", "kind": "measurement", "value": {"value": 142, "unit": "mg/dL"}, "object": null, "assertion": "asserted", "inferred": false, "domain": "health", "disposition": "commit"}], "rationale": "Lab reading is a measurement (value+unit) under health; measurements accumulate, never supersede."}, "advisory": true},
-  {"id": "health-procedure-owner", "category": "health", "domain": "health", "note_text": "Had my gallbladder removed last Tuesday. Recovery is going fine.", "graph_context": "Owner/author: entity id 'owner-1' name 'Me' (Person).", "expect": {"resolutions": [{"mention": "Me", "mode": "existing", "entity_id": "owner-1", "cross_subject": false}], "facts": [{"entity": "Me", "predicate": "procedure", "qualifier": "cholecystectomy", "kind": "event", "value": "gallbladder removal", "object": null, "assertion": "asserted", "inferred": false, "domain": "health", "disposition": "commit"}], "rationale": "A completed procedure is a past health event; events accumulate and commit under health."}, "advisory": true},
-  {"id": "health-appointment-clinician", "category": "health", "domain": "health", "note_text": "Booked a follow-up with Dr. Patel for next Thursday at 2pm to review my thyroid.", "graph_context": "Owner/author: entity id 'owner-1' name 'Me' (Person).", "expect": {"resolutions": [{"mention": "Me", "mode": "existing", "entity_id": "owner-1", "cross_subject": false}, {"mention": "Dr. Patel", "mode": "new", "cross_subject": false}], "facts": [{"entity": "Me", "predicate": "appointment", "qualifier": "Dr. Patel", "kind": "event", "value": "thyroid follow-up", "object": "Dr. Patel", "assertion": "expected", "inferred": false, "domain": "health", "disposition": "commit"}], "rationale": "A future appointment with a clinician is an expected health event; expected must not overwrite present truth, but the appointment fact itself commits under health."}, "advisory": true},
-  {"id": "finance-account", "category": "finance", "domain": "finance", "note_text": "Opened a high-yield savings account at Ally to park the emergency fund.", "graph_context": "Owner/author: entity id 'owner-1' name 'Me' (Person).", "expect": {"resolutions": [{"mention": "Me", "mode": "existing", "entity_id": "owner-1", "cross_subject": false}, {"mention": "Ally", "mode": "new", "cross_subject": false}], "facts": [{"entity": "Me", "predicate": "account", "qualifier": "Ally savings", "kind": "state", "value": "high-yield savings", "object": "Ally", "assertion": "asserted", "inferred": false, "domain": "finance", "disposition": "commit"}], "rationale": "Owner's bank account is a finance fact; commits under finance."}, "advisory": true},
-  {"id": "finance-balance-amount-currency", "category": "finance", "domain": "finance", "note_text": "Checking balance is $3,420.18 after the rent payment cleared.", "graph_context": "Owner/author: entity id 'owner-1' name 'Me' (Person).", "expect": {"resolutions": [{"mention": "Me", "mode": "existing", "entity_id": "owner-1", "cross_subject": false}], "facts": [{"entity": "Me", "predicate": "balance", "qualifier": "checking", "kind": "measurement", "value": {"value": 3420.18, "currency": "USD"}, "object": null, "assertion": "asserted", "inferred": false, "domain": "finance", "disposition": "commit"}], "rationale": "Account balance is a measurement (amount+currency) under finance; accumulates as a time series."}, "advisory": true},
-  {"id": "finance-institution", "category": "finance", "domain": "finance", "note_text": "Moved my mortgage servicing over to Wells Fargo this month.", "graph_context": "Owner/author: entity id 'owner-1' name 'Me' (Person).", "expect": {"resolutions": [{"mention": "Me", "mode": "existing", "entity_id": "owner-1", "cross_subject": false}, {"mention": "Wells Fargo", "mode": "new", "cross_subject": false}], "facts": [{"entity": "Me", "predicate": "mortgageServicer", "qualifier": "", "kind": "relationship", "value": "Wells Fargo", "object": "Wells Fargo", "assertion": "asserted", "inferred": false, "domain": "finance", "disposition": "commit"}], "rationale": "Financial institution relationship is a finance fact; functional (single servicer) so supersession applies, commits under finance."}, "advisory": true},
-  {"id": "finance-fund-roth", "category": "finance", "domain": "finance", "note_text": "Maxed out my Roth IRA contributions for the year at Vanguard.", "graph_context": "Owner/author: entity id 'owner-1' name 'Me' (Person).", "expect": {"resolutions": [{"mention": "Me", "mode": "existing", "entity_id": "owner-1", "cross_subject": false}, {"mention": "Vanguard", "mode": "new", "cross_subject": false}], "facts": [{"entity": "Me", "predicate": "retirementAccount", "qualifier": "Roth IRA", "kind": "state", "value": "Roth IRA", "object": "Vanguard", "assertion": "asserted", "inferred": false, "domain": "finance", "disposition": "commit"}], "rationale": "A Roth IRA fund held at an institution is a finance fact; commits under finance."}, "advisory": true},
-  {"id": "location-address-is-value-not-entity", "category": "location", "domain": "location", "note_text": "My new address is 482 Birch Lane, Portland, OR 97214.", "graph_context": "Owner/author: entity id 'owner-1' name 'Me' (Person).", "expect": {"resolutions": [{"mention": "Me", "mode": "existing", "entity_id": "owner-1", "cross_subject": false}], "forbidden_entities": ["482 Birch Lane, Portland, OR 97214"], "facts": [{"entity": "Me", "predicate": "address", "qualifier": "home", "kind": "state", "value": "482 Birch Lane, Portland, OR 97214", "object": null, "assertion": "asserted", "inferred": false, "domain": "location", "disposition": "commit"}], "rationale": "An address is a value string on the owner's address fact, NOT a place entity; commits under location."}, "advisory": true},
-  {"id": "location-home-move", "category": "location", "domain": "location", "note_text": "We finally moved out of the old apartment on Elm Street into the house in Beaverton.", "graph_context": "Owner/author: entity id 'owner-1' name 'Me' (Person).", "expect": {"resolutions": [{"mention": "Me", "mode": "existing", "entity_id": "owner-1", "cross_subject": false}], "facts": [{"entity": "Me", "predicate": "address", "qualifier": "home", "kind": "state", "value": "house in Beaverton", "object": null, "assertion": "asserted", "inferred": false, "domain": "location", "disposition": "commit"}], "rationale": "A home move is a newest-wins state transition on the owner's address; the move supersedes the prior address, both under location."}, "advisory": true},
-  {"id": "location-place-visited", "category": "location", "domain": "location", "note_text": "Spent the weekend in Sedona hiking Cathedral Rock. Stunning trip.", "graph_context": "Owner/author: entity id 'owner-1' name 'Me' (Person).", "expect": {"resolutions": [{"mention": "Me", "mode": "existing", "entity_id": "owner-1", "cross_subject": false}, {"mention": "Sedona", "mode": "new", "cross_subject": false}], "facts": [{"entity": "Me", "predicate": "visited", "qualifier": "Sedona", "kind": "event", "value": "Sedona", "object": "Sedona", "assertion": "asserted", "inferred": false, "domain": "location", "disposition": "commit"}], "rationale": "A place visited is a location event; Sedona is a real Place entity (unlike a bare address string); commits under location."}, "advisory": true},
-  {"id": "cross-subject-relayed-medication", "category": "cross_subject", "domain": "general", "note_text": "Talked to Mom on the phone. She says she takes lisinopril for her blood pressure now.", "graph_context": "Owner/author: entity id 'owner-1' name 'Me' (Person).\nKnown entities:\n- id 'ent-mom' name 'Mom' (Person)", "expect": {"resolutions": [{"mention": "Me", "cross_subject": false}, {"mention": "Mom", "cross_subject": true}], "absent_facts": [{"entity": "Me", "predicate": "medication"}], "rationale": "Relayed claim -> Mom cross_subject=true; never an owner medication fact."}},
-  {"id": "cross-subject-quoted-speech", "category": "cross_subject", "domain": "general", "note_text": "Got a text from my brother Marcus. He wrote: \"I just got diagnosed with celiac, finally an answer.\"", "graph_context": "Owner/author: entity id 'owner-1' name 'Me' (Person).\nKnown entities:\n- id 'ent-marcus' name 'Marcus' (Person)", "expect": {"resolutions": [{"mention": "Me", "cross_subject": false}, {"mention": "Marcus", "cross_subject": true}], "absent_facts": [{"entity": "Me", "predicate": "diagnosis"}], "rationale": "Quoted 'I' attributes to the speaker (Marcus), cross_subject; never an owner diagnosis."}},
-  {"id": "cross-subject-record-whole-family", "category": "cross_subject", "domain": "general", "note_text": "Honestly everyone in the house is diabetic, me included. It's a family thing.", "graph_context": "Owner/author: entity id 'owner-1' name 'Me' (Person).\nKnown entities:\n- id 'ent-celine' name 'Celine' (Person)\n- id 'ent-theo' name 'Theo' (Person)", "expect": {"absent_facts": [{"entity": "Celine", "predicate": "diagnosis"}, {"entity": "Theo", "predicate": "diagnosis"}], "rationale": "A vague collective claim must not auto-write diabetes onto named family members."}},
-  {"id": "not-cross-subject-owner-first-party-spouse", "category": "cross_subject", "domain": "general", "note_text": "Took my wife Celine to the airport this morning before work.", "graph_context": "Owner/author: entity id 'owner-1' name 'Me' (Person).\nKnown entities:\n- id 'ent-celine' name 'Celine' (Person)", "expect": {"resolutions": [{"mention": "Celine", "cross_subject": false}], "rationale": "'my wife Celine' is owner-authored first-party, NOT cross_subject."}},
-  {"id": "mixed-domain-journal", "category": "mixed_domain", "domain": "general", "note_text": "Long day. Took my daughter Lily to her allergist who upped her EpiPen prescription. Then a brutal sprint review at work where we slipped the launch to August. Trying to keep up my morning runs through all this.", "seed": [{"id": "ent-lily", "name": "Lily", "kind": "Person"}],"graph_context": "Owner/author: entity id 'owner-1' name 'Me' (Person).\nKnown entities:\n- id 'ent-lily' name 'Lily' (Person)", "expect": {"resolutions": [{"mention": "Me", "mode": "existing", "entity_id": "owner-1", "cross_subject": false}, {"mention": "Lily", "mode": "existing", "entity_id": "ent-lily", "cross_subject": false}], "facts": [{"entity": "Lily", "predicate": "medication", "qualifier": "EpiPen", "kind": "state", "value": "EpiPen", "object": null, "assertion": "asserted", "inferred": false, "domain": "health", "disposition": "commit"}, {"entity": "Me", "predicate": "project", "qualifier": "launch", "kind": "state", "value": "launch slipped to August", "object": null, "assertion": "asserted", "inferred": false, "domain": "general", "disposition": "commit"}, {"entity": "Me", "predicate": "hobby", "qualifier": "running", "kind": "state", "value": "morning runs", "object": null, "assertion": "asserted", "inferred": false, "domain": "general", "disposition": "commit"}], "rationale": "One general-captured journal note carries per-fact domains: Lily's medication floors to health even from a general note (and is owner-observed about a dependent child, first-party not cross_subject); the work and habit facts stay general. Each fact gets its own domain."}, "advisory": true},
-  {"id": "domain-floor-health-predicate-in-general-note", "category": "firewall", "domain": "general", "note_text": "Quick brain dump before bed. Need to email the landlord, pick up dry cleaning, and my blood pressure was 148/95 at the drugstore machine today which is too high.", "graph_context": "Owner/author: entity id 'owner-1' name 'Me' (Person).", "expect": {"resolutions": [{"mention": "Me", "mode": "existing", "entity_id": "owner-1", "cross_subject": false}], "facts": [{"entity": "Me", "predicate": "bloodPressure", "qualifier": "", "kind": "measurement", "value": {"systolic": 148, "diastolic": 95, "unit": "mmHg"}, "object": null, "assertion": "asserted", "inferred": false, "domain": "health", "disposition": "commit"}], "rationale": "Domain floor: a health-predicate fact (blood pressure reading) in a general-captured note still gets domain=health, ratcheting up without review. The errands are not durable facts."}, "advisory": true}
+  {
+    "id": "health-medication-owner",
+    "category": "health",
+    "domain": "health",
+    "note_text": "Started taking metformin 500mg twice daily for my blood sugar. Refilled at the pharmacy this morning.",
+    "graph_context": "Owner/author: entity id 'owner-1' name 'Me' (Person).",
+    "expect": {
+      "resolutions": [
+        {
+          "mention": "Me",
+          "mode": "existing",
+          "entity_id": "owner-1",
+          "cross_subject": false
+        }
+      ],
+      "committed_domains": {
+        "health": 1
+      },
+      "rationale": "Owner-authored first-party medication floors to health (DB-mode asserts the domain, not Grok's variable predicate spelling)."
+    },
+    "advisory": true,
+    "db_advisory": false
+  },
+  {
+    "id": "health-diagnosis-owner",
+    "category": "health",
+    "domain": "health",
+    "note_text": "Dr. Reyes confirmed today that I have type 2 diabetes. We'll manage it with diet first.",
+    "graph_context": "Owner/author: entity id 'owner-1' name 'Me' (Person).",
+    "expect": {
+      "resolutions": [
+        {
+          "mention": "Me",
+          "mode": "existing",
+          "entity_id": "owner-1",
+          "cross_subject": false
+        },
+        {
+          "mention": "Dr. Reyes",
+          "mode": "new",
+          "cross_subject": false
+        }
+      ],
+      "committed_domains": {
+        "health": 1
+      },
+      "rationale": "Owner's own confirmed diagnosis floors to health (predicate spelling is Grok latitude; the domain is the gate)."
+    },
+    "advisory": true,
+    "db_advisory": false
+  },
+  {
+    "id": "health-lab-reading-value-unit",
+    "category": "health",
+    "domain": "health",
+    "note_text": "Fasting glucose came back at 142 mg/dL this morning. Higher than last time.",
+    "graph_context": "Owner/author: entity id 'owner-1' name 'Me' (Person).",
+    "expect": {
+      "resolutions": [
+        {
+          "mention": "Me",
+          "mode": "existing",
+          "entity_id": "owner-1",
+          "cross_subject": false
+        }
+      ],
+      "committed_domains": {
+        "health": 1
+      },
+      "rationale": "Lab reading floors to health (value-fidelity is gated by the value-fidelity-* cases; here the firewall domain is the point)."
+    },
+    "advisory": true,
+    "db_advisory": false
+  },
+  {
+    "id": "health-procedure-owner",
+    "category": "health",
+    "domain": "health",
+    "note_text": "Had my gallbladder removed last Tuesday. Recovery is going fine.",
+    "graph_context": "Owner/author: entity id 'owner-1' name 'Me' (Person).",
+    "expect": {
+      "resolutions": [
+        {
+          "mention": "Me",
+          "mode": "existing",
+          "entity_id": "owner-1",
+          "cross_subject": false
+        }
+      ],
+      "committed_domains": {
+        "health": 1
+      },
+      "rationale": "A completed procedure floors to health (the procedure predicate/qualifier is Grok latitude)."
+    },
+    "advisory": true,
+    "db_advisory": false
+  },
+  {
+    "id": "health-appointment-clinician",
+    "category": "health",
+    "domain": "health",
+    "note_text": "Booked a follow-up with Dr. Patel for next Thursday at 2pm to review my thyroid.",
+    "graph_context": "Owner/author: entity id 'owner-1' name 'Me' (Person).",
+    "expect": {
+      "resolutions": [
+        {
+          "mention": "Me",
+          "mode": "existing",
+          "entity_id": "owner-1",
+          "cross_subject": false
+        },
+        {
+          "mention": "Dr. Patel",
+          "mode": "new",
+          "cross_subject": false
+        }
+      ],
+      "committed_domains": {
+        "health": 1
+      },
+      "rationale": "A clinician appointment floors to health; the predicate spelling (appointment/scheduledAppointment) is Grok latitude."
+    },
+    "advisory": true,
+    "db_advisory": false
+  },
+  {
+    "id": "finance-account",
+    "category": "finance",
+    "domain": "finance",
+    "note_text": "Opened a high-yield savings account at Ally to park the emergency fund.",
+    "graph_context": "Owner/author: entity id 'owner-1' name 'Me' (Person).",
+    "expect": {
+      "resolutions": [
+        {
+          "mention": "Me",
+          "mode": "existing",
+          "entity_id": "owner-1",
+          "cross_subject": false
+        },
+        {
+          "mention": "Ally",
+          "mode": "new",
+          "cross_subject": false
+        }
+      ],
+      "committed_domains": {
+        "finance": 1
+      },
+      "rationale": "Owner's bank account floors to finance (predicate spelling is Grok latitude)."
+    },
+    "advisory": true,
+    "db_advisory": false
+  },
+  {
+    "id": "finance-balance-amount-currency",
+    "category": "finance",
+    "domain": "finance",
+    "note_text": "Checking balance is $3,420.18 after the rent payment cleared.",
+    "graph_context": "Owner/author: entity id 'owner-1' name 'Me' (Person).",
+    "expect": {
+      "resolutions": [
+        {
+          "mention": "Me",
+          "mode": "existing",
+          "entity_id": "owner-1",
+          "cross_subject": false
+        }
+      ],
+      "committed_domains": {
+        "finance": 1
+      },
+      "rationale": "Account balance floors to finance; value-fidelity (amount+currency) is gated by the value-fidelity-* cases."
+    },
+    "advisory": true,
+    "db_advisory": false
+  },
+  {
+    "id": "finance-institution",
+    "category": "finance",
+    "domain": "finance",
+    "note_text": "Moved my mortgage servicing over to Wells Fargo this month.",
+    "graph_context": "Owner/author: entity id 'owner-1' name 'Me' (Person).",
+    "expect": {
+      "resolutions": [
+        {
+          "mention": "Me",
+          "mode": "existing",
+          "entity_id": "owner-1",
+          "cross_subject": false
+        },
+        {
+          "mention": "Wells Fargo",
+          "mode": "new",
+          "cross_subject": false
+        }
+      ],
+      "committed_domains": {
+        "finance": 1
+      },
+      "rationale": "Financial-institution relationship floors to finance (predicate spelling is Grok latitude)."
+    },
+    "advisory": true,
+    "db_advisory": false
+  },
+  {
+    "id": "finance-fund-roth",
+    "category": "finance",
+    "domain": "finance",
+    "note_text": "Maxed out my Roth IRA contributions for the year at Vanguard.",
+    "graph_context": "Owner/author: entity id 'owner-1' name 'Me' (Person).",
+    "expect": {
+      "resolutions": [
+        {
+          "mention": "Me",
+          "mode": "existing",
+          "entity_id": "owner-1",
+          "cross_subject": false
+        },
+        {
+          "mention": "Vanguard",
+          "mode": "new",
+          "cross_subject": false
+        }
+      ],
+      "committed_domains": {
+        "finance": 1
+      },
+      "rationale": "A Roth IRA held at an institution floors to finance (predicate spelling is Grok latitude)."
+    },
+    "advisory": true,
+    "db_advisory": false
+  },
+  {
+    "id": "location-address-is-value-not-entity",
+    "category": "location",
+    "domain": "location",
+    "note_text": "My new address is 482 Birch Lane, Portland, OR 97214.",
+    "graph_context": "Owner/author: entity id 'owner-1' name 'Me' (Person).",
+    "expect": {
+      "resolutions": [
+        {
+          "mention": "Me",
+          "mode": "existing",
+          "entity_id": "owner-1",
+          "cross_subject": false
+        }
+      ],
+      "forbidden_entities": [
+        "482 Birch Lane, Portland, OR 97214"
+      ],
+      "facts": [
+        {
+          "entity": "Me",
+          "predicate": "address",
+          "qualifier": "home",
+          "kind": "state",
+          "value": "482 Birch Lane, Portland, OR 97214",
+          "object": null,
+          "assertion": "asserted",
+          "inferred": false,
+          "domain": "location",
+          "disposition": "commit"
+        }
+      ],
+      "rationale": "An address is a value string on the owner's address fact, NOT a place entity; commits under location."
+    },
+    "advisory": true
+  },
+  {
+    "id": "location-home-move",
+    "category": "location",
+    "domain": "location",
+    "note_text": "We finally moved out of the old apartment on Elm Street into the house in Beaverton.",
+    "graph_context": "Owner/author: entity id 'owner-1' name 'Me' (Person).",
+    "expect": {
+      "resolutions": [
+        {
+          "mention": "Me",
+          "mode": "existing",
+          "entity_id": "owner-1",
+          "cross_subject": false
+        }
+      ],
+      "rationale": "A home move is a newest-wins state transition on the owner's address; the move supersedes the prior address, both under location.",
+      "committed_domains": {
+        "location": 1
+      }
+    },
+    "advisory": true,
+    "db_advisory": false
+  },
+  {
+    "id": "location-place-visited",
+    "category": "location",
+    "domain": "location",
+    "note_text": "Spent the weekend in Sedona hiking Cathedral Rock. Stunning trip.",
+    "graph_context": "Owner/author: entity id 'owner-1' name 'Me' (Person).",
+    "expect": {
+      "resolutions": [
+        {
+          "mention": "Me",
+          "mode": "existing",
+          "entity_id": "owner-1",
+          "cross_subject": false
+        },
+        {
+          "mention": "Sedona",
+          "mode": "new",
+          "cross_subject": false
+        }
+      ],
+      "rationale": "A place visited is a location event; Sedona is a real Place entity (unlike a bare address string); commits under location.",
+      "committed_domains": {
+        "location": 1
+      }
+    },
+    "advisory": true,
+    "db_advisory": false
+  },
+  {
+    "id": "cross-subject-relayed-medication",
+    "category": "cross_subject",
+    "domain": "general",
+    "note_text": "Talked to Mom on the phone. She says she takes lisinopril for her blood pressure now.",
+    "graph_context": "Owner/author: entity id 'owner-1' name 'Me' (Person).\nKnown entities:\n- id 'ent-mom' name 'Mom' (Person)",
+    "expect": {
+      "resolutions": [
+        {
+          "mention": "Me",
+          "cross_subject": false
+        },
+        {
+          "mention": "Mom",
+          "cross_subject": true
+        }
+      ],
+      "absent_facts": [
+        {
+          "entity": "Me",
+          "predicate": "medication"
+        }
+      ],
+      "rationale": "Relayed claim -> Mom cross_subject=true; never an owner medication fact."
+    }
+  },
+  {
+    "id": "cross-subject-quoted-speech",
+    "category": "cross_subject",
+    "domain": "general",
+    "note_text": "Got a text from my brother Marcus. He wrote: \"I just got diagnosed with celiac, finally an answer.\"",
+    "graph_context": "Owner/author: entity id 'owner-1' name 'Me' (Person).\nKnown entities:\n- id 'ent-marcus' name 'Marcus' (Person)",
+    "expect": {
+      "resolutions": [
+        {
+          "mention": "Me",
+          "cross_subject": false
+        },
+        {
+          "mention": "Marcus",
+          "cross_subject": true
+        }
+      ],
+      "absent_facts": [
+        {
+          "entity": "Me",
+          "predicate": "diagnosis"
+        }
+      ],
+      "rationale": "Quoted 'I' attributes to the speaker (Marcus), cross_subject; never an owner diagnosis."
+    }
+  },
+  {
+    "id": "cross-subject-record-whole-family",
+    "category": "cross_subject",
+    "domain": "general",
+    "note_text": "Honestly everyone in the house is diabetic, me included. It's a family thing.",
+    "graph_context": "Owner/author: entity id 'owner-1' name 'Me' (Person).\nKnown entities:\n- id 'ent-celine' name 'Celine' (Person)\n- id 'ent-theo' name 'Theo' (Person)",
+    "expect": {
+      "absent_facts": [
+        {
+          "entity": "Celine",
+          "predicate": "diagnosis"
+        },
+        {
+          "entity": "Theo",
+          "predicate": "diagnosis"
+        }
+      ],
+      "rationale": "A vague collective claim must not auto-write diabetes onto named family members."
+    }
+  },
+  {
+    "id": "not-cross-subject-owner-first-party-spouse",
+    "category": "cross_subject",
+    "domain": "general",
+    "note_text": "Took my wife Celine to the airport this morning before work.",
+    "graph_context": "Owner/author: entity id 'owner-1' name 'Me' (Person).\nKnown entities:\n- id 'ent-celine' name 'Celine' (Person)",
+    "expect": {
+      "resolutions": [
+        {
+          "mention": "Celine",
+          "cross_subject": false
+        }
+      ],
+      "rationale": "'my wife Celine' is owner-authored first-party, NOT cross_subject."
+    }
+  },
+  {
+    "id": "mixed-domain-journal",
+    "category": "mixed_domain",
+    "domain": "general",
+    "note_text": "Long day. Took my daughter Lily to her allergist who upped her EpiPen prescription. Then a brutal sprint review at work where we slipped the launch to August. Trying to keep up my morning runs through all this.",
+    "seed": [
+      {
+        "id": "ent-lily",
+        "name": "Lily",
+        "kind": "Person"
+      }
+    ],
+    "graph_context": "Owner/author: entity id 'owner-1' name 'Me' (Person).\nKnown entities:\n- id 'ent-lily' name 'Lily' (Person)",
+    "expect": {
+      "resolutions": [
+        {
+          "mention": "Me",
+          "mode": "existing",
+          "entity_id": "owner-1",
+          "cross_subject": false
+        },
+        {
+          "mention": "Lily",
+          "mode": "existing",
+          "entity_id": "ent-lily",
+          "cross_subject": false
+        }
+      ],
+      "rationale": "One general-captured journal note carries per-fact domains: Lily's medication floors to health even from a general note (and is owner-observed about a dependent child, first-party not cross_subject); the work and habit facts stay general. Each fact gets its own domain.",
+      "committed_domains": {
+        "health": 1,
+        "general": 1
+      }
+    },
+    "advisory": true,
+    "db_advisory": false
+  },
+  {
+    "id": "domain-floor-health-predicate-in-general-note",
+    "category": "firewall",
+    "domain": "general",
+    "note_text": "Quick brain dump before bed. Need to email the landlord, pick up dry cleaning, and my blood pressure was 148/95 at the drugstore machine today which is too high.",
+    "graph_context": "Owner/author: entity id 'owner-1' name 'Me' (Person).",
+    "expect": {
+      "resolutions": [
+        {
+          "mention": "Me",
+          "mode": "existing",
+          "entity_id": "owner-1",
+          "cross_subject": false
+        }
+      ],
+      "facts": [
+        {
+          "entity": "Me",
+          "predicate": "bloodPressure",
+          "qualifier": "",
+          "kind": "measurement",
+          "value": {
+            "systolic": 148,
+            "diastolic": 95,
+            "unit": "mmHg"
+          },
+          "object": null,
+          "assertion": "asserted",
+          "inferred": false,
+          "domain": "health",
+          "disposition": "commit"
+        }
+      ],
+      "rationale": "Domain floor: a health-predicate fact (blood pressure reading) in a general-captured note still gets domain=health, ratcheting up without review. The errands are not durable facts."
+    },
+    "advisory": true
+  }
 ]

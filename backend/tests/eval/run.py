@@ -39,7 +39,9 @@ class _Tally:
         self.calls += 1
 
 
-async def _evaluate(cases: list[Case], run_one: Callable[[Case], Awaitable[list[str]]]) -> int:
+async def _evaluate(
+    cases: list[Case], run_one: Callable[[Case], Awaitable[list[str]]], *, db: bool = False
+) -> int:
     failed: list[str] = []
     advisory_failed: list[str] = []
     for case in cases:
@@ -47,8 +49,9 @@ async def _evaluate(cases: list[Case], run_one: Callable[[Case], Awaitable[list[
             fails = await run_one(case)
         except Exception as exc:  # noqa: BLE001 - the eval surfaces whatever happens
             fails = [f"RAISED {type(exc).__name__}: {exc}"]
-        tag = "ADVISORY" if case.advisory else ("FAIL" if fails else "PASS")
-        if fails and case.advisory:
+        advisory = case.advisory_for(db=db)
+        tag = "ADVISORY" if advisory else ("FAIL" if fails else "PASS")
+        if fails and advisory:
             advisory_failed.append(case.id)
         elif fails:
             failed.append(case.id)
@@ -100,7 +103,7 @@ async def _db_loop(cases: list[Case], app_url: str, tmp: str, reset) -> int:
         return check_case_db(case, commit)
 
     try:
-        code = await _evaluate(cases, run_one)
+        code = await _evaluate(cases, run_one, db=True)
         _print_cost(tally, db=True)
         return code
     finally:

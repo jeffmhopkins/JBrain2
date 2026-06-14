@@ -321,6 +321,17 @@ def check_case_db(case: Case, commit: DbCommit) -> list[str]:
                 f" (status={[s.status for s in prior]})"
             )
 
+    # --- firewall floor: committed facts landed in the right domain_code ---
+    if ex.committed_domains:
+        counts: dict[str, int] = {}
+        for f in commit.facts:
+            counts[f.domain_code or ""] = counts.get(f.domain_code or "", 0) + 1
+        for dom, need in ex.committed_domains.items():
+            if counts.get(dom, 0) < need:
+                fails.append(
+                    f"domain floor: {counts.get(dom, 0)} committed facts in {dom!r} < {need}"
+                )
+
     # --- over-extraction bound (committed facts this note wrote) ---
     if ex.max_facts is not None and len(commit.facts) > ex.max_facts:
         fails.append(f"too many committed facts: {len(commit.facts)} > max {ex.max_facts}")

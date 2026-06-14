@@ -297,6 +297,24 @@ def test_max_entities_exceeded_is_caught() -> None:
     assert any("too many entities" in f for f in fails)
 
 
+def test_domain_floor_count_passes() -> None:
+    case = case_from_dict(
+        {"id": "c", "note_text": "x", "expect": {"committed_domains": {"health": 1}}}
+    )
+    commit = _commit((_cf("e", "Mom", "medication", domain_code="health"),))
+    assert check_case_db(case, commit) == []
+
+
+def test_domain_floor_count_missing_is_caught() -> None:
+    case = case_from_dict(
+        {"id": "c", "note_text": "x", "expect": {"committed_domains": {"health": 1}}}
+    )
+    # The note committed nothing under health → floor not met.
+    commit = _commit((_cf("e", "Me", "errand", domain_code="general"),))
+    fails = check_case_db(case, commit)
+    assert any("domain floor" in f and "health" in f for f in fails)
+
+
 def test_absent_fact_committed_is_caught() -> None:
     case = case_from_dict(
         {

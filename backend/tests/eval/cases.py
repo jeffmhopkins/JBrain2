@@ -63,6 +63,10 @@ class Expect:
     supersede: tuple[dict[str, Any], ...] = ()
     max_facts: int | None = None
     max_entities: int | None = None  # non-owner resolutions (the no-duplicate gate)
+    # DB-mode firewall floor: min committed facts per domain_code, independent of
+    # the (Grok-variable) predicate spelling — e.g. {"health": 1} proves a health
+    # note's facts floored to health.
+    committed_domains: dict[str, int] = field(default_factory=dict)
     rationale: str = ""
 
 
@@ -105,8 +109,17 @@ class Case:
     domain: str = "general"
     graph_context: str = ""
     advisory: bool = False
+    # Per-mode override: a case can be a hard gate in DB-mode (committed-state
+    # invariants are deterministic) while staying advisory at intent-level, or
+    # vice versa. None → falls back to `advisory`.
+    db_advisory: bool | None = None
     seed: tuple[SeedEntity, ...] = ()
     expect: Expect = field(default_factory=Expect)
+
+    def advisory_for(self, *, db: bool) -> bool:
+        if db and self.db_advisory is not None:
+            return self.db_advisory
+        return self.advisory
 
 
 # --- committed-state contract for DB-mode (pure data; no session/ORM) ---------
@@ -167,6 +180,7 @@ def _expect(raw: dict[str, Any]) -> Expect:
         supersede=tuple(raw.get("supersede", [])),
         max_facts=raw.get("max_facts"),
         max_entities=raw.get("max_entities"),
+        committed_domains=raw.get("committed_domains", {}),
         rationale=raw.get("rationale", ""),
     )
 
@@ -194,6 +208,7 @@ def case_from_dict(raw: dict[str, Any]) -> Case:
         domain=raw.get("domain", "general"),
         graph_context=raw.get("graph_context", ""),
         advisory=raw.get("advisory", False),
+        db_advisory=raw.get("db_advisory"),
         seed=_seed(raw.get("seed", [])),
         expect=_expect(raw.get("expect", {})),
     )

@@ -61,7 +61,11 @@ async def run_case(router: LlmRouter, case: Case) -> tuple[IntegrationIntent, Ar
 
 
 async def _seed_graph(
-    session: AsyncSession, case: Case, owner_id: uuid.UUID, prior_note_id: uuid.UUID
+    session: AsyncSession,
+    case: Case,
+    owner_id: uuid.UUID,
+    owner_subject_id: uuid.UUID | None,
+    prior_note_id: uuid.UUID,
 ) -> tuple[dict[str, str], list[tuple[str, str, str, uuid.UUID]]]:
     """Materialize the case's `seed` block as real rows so the run resolves
     against known entities. Returns (symbolic_id -> real UUID) and the prior
@@ -71,11 +75,14 @@ async def _seed_graph(
 
     seeded: dict[str, str] = {}
     names: dict[str, str] = {}
+    subjects: dict[str, uuid.UUID | None] = {}
     for ent in case.seed:
         if ent.owner:
             seeded[ent.id] = str(owner_id)
             names[ent.id] = "Me"
+            subjects[ent.id] = owner_subject_id
             continue
+        subjects[ent.id] = None
         row = Entity(
             id=uuid.uuid4(),
             kind=ent.kind,
@@ -104,6 +111,10 @@ async def _seed_graph(
             fact = Fact(
                 id=uuid.uuid4(),
                 entity_id=uuid.UUID(seeded[ent.id]),
+                # Owner facts carry the owner's subject_id; the supersession
+                # candidate query matches on it, so a NULL here would hide the
+                # prior edge and the new note would never supersede it.
+                subject_id=subjects[ent.id],
                 object_entity_id=(uuid.UUID(seeded[sf.object]) if sf.object else None),
                 predicate=sf.predicate,
                 qualifier=sf.qualifier,
@@ -152,7 +163,9 @@ async def run_case_db(
     # production integrate_note does — RLS does not scope SYSTEM_CTX).
     async with scoped_session(maker, SYSTEM_CTX) as session:
         owner = await get_or_create_me(session)
-        seeded_ids, watched = await _seed_graph(session, case, owner.id, uuid.UUID(prior_note))
+        seeded_ids, watched = await _seed_graph(
+            session, case, owner.id, owner.subject_id, uuid.UUID(prior_note)
+        )
     owner_id = str(owner.id)
 
     async with scoped_session(maker, SYSTEM_CTX) as session:
@@ -243,11 +256,13 @@ async def _read_commit(
             else []
         )
         names = {str(e.id): e.canonical_name for e in ent_rows}
+        # Any review item tied to this note, regardless of kind: a held fact can
+        # carry a low_confidence_inference card (payload.fact_id) OR a conflict
+        # card (attribute_conflict etc., payload.fact_b = the held new fact).
         cards = list(
             (
                 await session.execute(
                     select(ReviewItem).where(
-                        ReviewItem.kind == "low_confidence_inference",
                         ReviewItem.payload["note_id"].astext == note_id,
                     )
                 )
@@ -282,7 +297,7 @@ async def _read_commit(
         for f in fact_rows
     )
     review_fact_ids = frozenset(
-        str(c.payload["fact_id"]) for c in cards if c.payload.get("fact_id")
+        str(c.payload[k]) for c in cards for k in ("fact_id", "fact_b") if c.payload.get(k)
     )
 
     def _state(sym: str, name: str, pred: str, row: Fact) -> SeededFactState:
