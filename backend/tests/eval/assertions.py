@@ -59,9 +59,7 @@ def _fact_matches_spec(fact: IntentFact, spec: dict[str, Any]) -> bool:
         return False
     if "object" in spec and not _name_match(spec["object"], fact.object_entity_ref):
         return False
-    if "assertion" in spec and fact.assertion != spec["assertion"]:
-        return False
-    return True
+    return not ("assertion" in spec and fact.assertion != spec["assertion"])
 
 
 def _find_fact(intent: IntegrationIntent, ef: ExpectFact) -> IntentFact | None:
@@ -160,7 +158,8 @@ def check_case(case: Case, intent: IntegrationIntent, plan: ArbiterPlan) -> list
             got = status_by_id.get(id(f))
             if got != want:
                 fails.append(
-                    f"{ef.entity}.{ef.predicate}: disposition {got!r} != {want!r} ({ef.disposition})"
+                    f"{ef.entity}.{ef.predicate}: disposition {got!r} != {want!r}"
+                    f" ({ef.disposition})"
                 )
 
     # --- facts that must NOT appear ---

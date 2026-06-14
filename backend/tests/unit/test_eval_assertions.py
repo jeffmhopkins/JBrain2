@@ -50,7 +50,7 @@ def _plan(facts: list[IntentFact], statuses: list[str]) -> ArbiterPlan:
         fatal_violations=(),
         facts=tuple(
             PlannedFact(fact=f, weight=0.9, status=cast(CommitStatus, s))
-            for f, s in zip(facts, statuses)
+            for f, s in zip(facts, statuses, strict=True)
         ),
         merge_proposals=(),
         distinct_proposals=(),
