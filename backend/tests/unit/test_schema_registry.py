@@ -82,6 +82,62 @@ def test_predicate_normalization_collapses_drift_spellings(registry: SchemaRegis
     assert registry.normalize_predicate("coffee_order") == "coffee_order"
 
 
+def test_is_functional_reads_the_registry_flag(registry: SchemaRegistry) -> None:
+    # Functional predicates the schema declares (any-type union), via canonical
+    # and drift spellings — and a non-functional relationship stays accumulating.
+    assert registry.is_functional("spouse")
+    assert registry.is_functional("location")  # appointment.location (relationship)
+    assert registry.is_functional("organizer")  # appointment.organizer (relationship)
+    assert registry.is_functional("scheduled_time")  # drift -> scheduledTime (functional)
+    assert not registry.is_functional("knows")
+    assert not registry.is_functional("coffee_order")
+
+
+def test_predicate_for_kind_resolves_by_id_and_schema_org_name(registry: SchemaRegistry) -> None:
+    # entities.kind may be the schema.org name ("Person") or the type id ("person").
+    assert registry.predicate_for_kind("Person", "spouse") is not None
+    assert registry.predicate_for_kind("person", "spouse") is not None
+    # Normalizes the drift spelling before lookup.
+    assert registry.predicate_for_kind("Person", "legalName") is not None
+    # Unknown kind or undeclared predicate -> None (never a storage gate).
+    assert registry.predicate_for_kind("Nonsense", "spouse") is None
+    assert registry.predicate_for_kind("Person", "coffee_order") is None
+
+
+def test_validate_value_is_conservative(registry: SchemaRegistry) -> None:
+    spouse = registry.predicate_for_kind("Person", "spouse")  # value_shape: ref
+    legal = registry.predicate_for_kind("Person", "name.legal")  # value_shape: text
+    assert spouse is not None and legal is not None
+    # None always passes (the datum lives in the statement / temporal token).
+    assert registry.validate_value(spouse, None, object_present=True)
+    # ref: an edge needs an object, a scalar payload with no object is the violation.
+    assert registry.validate_value(spouse, None, object_present=True)
+    assert not registry.validate_value(spouse, {"value": "Jane"}, object_present=False)
+    # text/scalar never reject (value_fidelity lives in the statement).
+    assert registry.validate_value(legal, {"value": "Celine Kitina Hopkins"}, object_present=False)
+
+
+def test_validate_value_enum_and_structured(registry: SchemaRegistry) -> None:
+    from jbrain.schema.models import Predicate
+
+    reg = registry
+    addr = Predicate(
+        canonical_name="address", value_shape="structured", kind="state", shape="postal_address"
+    )
+    assert reg.validate_value(addr, {"addressLocality": "Portland"}, object_present=False)
+    assert not reg.validate_value(addr, {"bogusKey": "x"}, object_present=False)
+    enum = Predicate(
+        canonical_name="status", value_shape="enum", kind="state", enum_values=("active", "closed")
+    )
+    assert reg.validate_value(enum, {"value": "active"}, object_present=False)
+    assert not reg.validate_value(enum, {"value": "frobnicated"}, object_present=False)
+    # quantity tolerates multi-field measurements; only a non-dict is a violation.
+    qty = Predicate(canonical_name="bp", value_shape="quantity", kind="measurement")
+    assert reg.validate_value(
+        qty, {"systolic": 120, "diastolic": 80, "unit": "mmHg"}, object_present=False
+    )
+
+
 def test_conflicting_renamed_from_fails_to_load(tmp_path: Path) -> None:
     _write_min_registry(tmp_path)
     # Two predicates both claim the alias "aka" — an unresolvable attractor.
