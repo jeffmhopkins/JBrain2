@@ -67,8 +67,6 @@ class JobEnqueuer(Protocol):
 
     async def has_active_analysis(self, ctx: SessionContext, note_id: str) -> bool: ...
 
-    async def analysis_job_kind(self, ctx: SessionContext) -> str: ...
-
 
 class PgJobQueue:
     """Bound-sessionmaker facade over the module functions, for DI in the app."""
@@ -97,11 +95,6 @@ class PgJobQueue:
 
     async def has_active_analysis(self, ctx: SessionContext, note_id: str) -> bool:
         return await has_active_analysis(self._maker, ctx, note_id)
-
-    async def analysis_job_kind(self, ctx: SessionContext) -> str:
-        from jbrain.settings_store import SqlSettingsStore
-
-        return await SqlSettingsStore(self._maker).analysis_job_kind(ctx)
 
 
 def reclaim_attempts(attempts: int, max_attempts: int) -> tuple[int, bool]:
@@ -177,17 +170,14 @@ async def has_active_analysis(
     *,
     statuses: tuple[str, ...] = ACTIVE_STATUSES,
 ) -> bool:
-    """Whether EITHER analysis kind (analyze_note or integrate_note) is active
-    for this note. The cutover toggle switches which kind the trigger enqueues,
-    and has_active is per-kind, so a single-kind guard could let one note get
-    both an in-flight analyze_note and a fresh integrate_note — wasteful churn
-    (both write the same note). Guarding on both kinds closes that
-    transition-window race (W3.3 coexistence)."""
+    """Whether an integrate_note job is active for this note — the guard that
+    keeps the trigger from enqueuing a second pass over a note already in
+    flight (both would write the same note)."""
     async with scoped_session(maker, ctx) as session:
         row = (
             await session.execute(
                 text(
-                    "SELECT 1 FROM app.jobs WHERE kind IN ('analyze_note', 'integrate_note')"
+                    "SELECT 1 FROM app.jobs WHERE kind = 'integrate_note'"
                     " AND status IN :statuses AND payload->>'note_id' = :nid LIMIT 1"
                 ).bindparams(bindparam("statuses", expanding=True)),
                 {"statuses": list(statuses), "nid": note_id},
@@ -372,52 +362,6 @@ async def backfill_pending_notes(
         return cast(CursorResult[Any], result).rowcount or 0
 
 
-async def backfill_unanalyzed_notes(
-    maker: async_sessionmaker[AsyncSession], ctx: SessionContext
-) -> int:
-    """Enqueue analyze_note for indexed notes lacking a note_analysis row.
-
-    Notes written before extraction shipped never analyze until edited (only
-    ingest enqueues analysis); the missing note_analysis row is the durable
-    marker, so this sweep self-heals them at startup. Indexed-only on
-    purpose: analysis reads chunks, and a pending note's own ingest will
-    enqueue analysis anyway. Notes with outstanding OCR are skipped too — a
-    worker restart mid-OCR must not analyze before the vision text lands
-    (the OCR handler's re-ingest enqueues analysis when it does).
-    """
-    async with scoped_session(maker, ctx) as session:
-        result = await session.execute(
-            text(
-                """
-                INSERT INTO app.jobs (id, kind, payload)
-                SELECT gen_random_uuid(), 'analyze_note',
-                       jsonb_build_object('note_id', n.id)
-                FROM app.notes n
-                WHERE n.ingest_state = 'indexed'
-                  AND n.deleted_at IS NULL
-                  AND NOT EXISTS (
-                      SELECT 1 FROM app.note_analysis a WHERE a.note_id = n.id
-                  )
-                  AND NOT EXISTS (
-                      SELECT 1 FROM app.jobs j
-                      WHERE j.kind = 'analyze_note'
-                        AND j.status IN ('queued', 'running')
-                        AND j.payload ->> 'note_id' = n.id::text
-                  )
-                  AND NOT EXISTS (
-                      SELECT 1 FROM app.jobs j
-                      JOIN app.attachments att
-                        ON att.id::text = j.payload ->> 'attachment_id'
-                      WHERE j.kind = 'ocr_attachment'
-                        AND j.status IN ('queued', 'running')
-                        AND att.note_id = n.id
-                  )
-                """
-            )
-        )
-        return cast(CursorResult[Any], result).rowcount or 0
-
-
 INTEGRATION_BACKFILL_LIMIT = 100
 
 
@@ -433,9 +377,9 @@ async def backfill_pending_integration(
     whole corpus through the costlier Integrator at once. Oldest-first
     (created_at); each integrated note drops out of `integration_state <>
     'integrated'`, so repeated boots drain the backlog within budget. Skips a note
-    with an active analysis job of EITHER kind (cross-kind, like the trigger) or
-    outstanding OCR. (Owner-ahead ordering, N14, is moot today — all notes are
-    owner-authored — and lands with the provenance column.)"""
+    with an active integrate_note job or outstanding OCR. (Owner-ahead ordering,
+    N14, is moot today — all notes are owner-authored — and lands with the
+    provenance column.)"""
     async with scoped_session(maker, ctx) as session:
         result = await session.execute(
             text(
@@ -449,7 +393,7 @@ async def backfill_pending_integration(
                   AND n.integration_state <> 'integrated'
                   AND NOT EXISTS (
                       SELECT 1 FROM app.jobs j
-                      WHERE j.kind IN ('analyze_note', 'integrate_note')
+                      WHERE j.kind = 'integrate_note'
                         AND j.status IN ('queued', 'running')
                         AND j.payload ->> 'note_id' = n.id::text
                   )
@@ -466,50 +410,6 @@ async def backfill_pending_integration(
                 """
             ),
             {"lim": limit},
-        )
-        return cast(CursorResult[Any], result).rowcount or 0
-
-
-async def backfill_unlinked_relationship_facts(
-    maker: async_sessionmaker[AsyncSession], ctx: SessionContext
-) -> int:
-    """Re-analyze notes whose relationship edges never bound to their object.
-
-    A primary relationship fact (spouse, worksFor, owns…) with a NULL object
-    is an extraction defect: the model folded the object person into the
-    statement instead of naming it, so the property renders its whole sentence
-    instead of the entity ("spouse → 'I have a wife Celine Hopkins.'"). The
-    deterministic linking net (extraction.link_relationship_objects) recovers
-    that binding on re-analysis, so this sweep self-heals the corpus written
-    before it shipped. It self-limits: a note drops out the moment its edge
-    binds, and the active-job guard keeps a single re-run in flight per note.
-    """
-    async with scoped_session(maker, ctx) as session:
-        result = await session.execute(
-            text(
-                """
-                INSERT INTO app.jobs (id, kind, payload)
-                SELECT gen_random_uuid(), 'analyze_note',
-                       jsonb_build_object('note_id', n.id)
-                FROM app.notes n
-                WHERE n.ingest_state = 'indexed'
-                  AND n.deleted_at IS NULL
-                  AND EXISTS (
-                      SELECT 1 FROM app.facts f
-                      WHERE f.note_id = n.id
-                        AND f.kind = 'relationship'
-                        AND f.status = 'active'
-                        AND f.object_entity_id IS NULL
-                        AND f.derived_from_fact_id IS NULL
-                  )
-                  AND NOT EXISTS (
-                      SELECT 1 FROM app.jobs j
-                      WHERE j.kind = 'analyze_note'
-                        AND j.status IN ('queued', 'running')
-                        AND j.payload ->> 'note_id' = n.id::text
-                  )
-                """
-            )
         )
         return cast(CursorResult[Any], result).rowcount or 0
 

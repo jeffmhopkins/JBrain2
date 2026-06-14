@@ -40,7 +40,7 @@ from jbrain.llm import LlmImage, LlmRouter
 from jbrain.llm.promptfile import load_prompt
 from jbrain.models.notes import Attachment, AttachmentExtract, Note
 from jbrain.queue import SYSTEM_CTX
-from jbrain.settings_store import IMAGE_ANALYSIS_MODES, SqlSettingsStore
+from jbrain.settings_store import IMAGE_ANALYSIS_MODES
 from jbrain.storage import BlobStore
 
 log = structlog.get_logger()
@@ -76,10 +76,10 @@ async def enqueue_analysis_fallback(
     """OCR retry exhaustion fallback: analyze the note body-only.
 
     The failed job row stays the durable record; analysis must not wait on
-    text that will never arrive. Enqueues analyze_note DIRECTLY — a re-ingest
+    text that will never arrive. Enqueues integrate_note DIRECTLY — a re-ingest
     would re-enqueue OCR for the still-cache-less attachment and loop. Skipped
     while another ocr_attachment job for the note is still active (that job's
-    own completion or exhaustion triggers analysis) or an analyze_note job is
+    own completion or exhaustion triggers analysis) or an integrate_note job is
     already queued/running. Returns the job id, or None when nothing was
     enqueued.
     """
@@ -94,8 +94,7 @@ async def enqueue_analysis_fallback(
         return None
     if await queue.has_active_analysis(maker, SYSTEM_CTX, nid):
         return None
-    kind = await SqlSettingsStore(maker).analysis_job_kind(SYSTEM_CTX)
-    job_id = await queue.enqueue(maker, SYSTEM_CTX, kind, {"note_id": nid})
+    job_id = await queue.enqueue(maker, SYSTEM_CTX, "integrate_note", {"note_id": nid})
     log.warning("ocr.analysis_fallback", attachment_id=attachment_id, note_id=nid, job_id=job_id)
     return job_id
 

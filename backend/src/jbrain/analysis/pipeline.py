@@ -1,5 +1,5 @@
-"""The analyze_note job handler: one note.extract call -> facts, entities,
-mentions, temporal tokens, review items, note_analysis (docs/ANALYSIS.md).
+"""The integrate_note job handler: one note.extract call -> Integrator -> facts,
+entities, mentions, temporal tokens, review items, note_analysis (docs/ANALYSIS.md).
 
 Failure contract: transient LLM faults propagate and ride the queue's normal
 retry backoff; an extraction that stayed malformed through the adapter's
@@ -207,8 +207,8 @@ async def _extract_note(
     note_id: str,
 ) -> Extraction:
     """Run the note.extract call(s) over a note's chunk groups and merge them into
-    one Extraction. Shared by analyze_note (the current path) and integrate_note
-    (the v3 path) so the extraction logic lives in one place. Raises
+    one Extraction, the shared front half of integrate_note so the extraction
+    logic lives in one place. Raises
     PermanentJobError if the output is unusable after the adapter's one re-ask —
     retrying would just re-bill the same garbage; a SchemaError is config drift,
     also permanent. Nothing is written here (the merge is in-memory)."""
@@ -244,8 +244,7 @@ class AnalysisPipeline:
     ):
         self._maker = maker
         self._router = router
-        # The v3 note→graph judgment agent (docs/INTEGRATOR_PLAN.md Track B),
-        # used by integrate_note. analyze_note (the current path) does not use it.
+        # The note→graph judgment agent (docs/INTEGRATOR_PLAN.md Track B).
         self._integrator = Integrator(router)
         # Optional on purpose: without an embed client, resolution layer 2 is
         # skipped entirely (no degraded guessing) — the harness and older
@@ -256,86 +255,10 @@ class AnalysisPipeline:
         # feature is off, so the harness/older call sites are byte-unchanged.
         self._settings = settings
 
-    async def analyze_note(self, payload: dict[str, Any]) -> None:
-        """Handle an analyze_note job: {note_id}; missing note is a no-op."""
-        note_id = str(payload["note_id"])
-        async with scoped_session(self._maker, SYSTEM_CTX) as session:
-            note = (
-                await session.execute(select(Note).where(Note.id == note_id))
-            ).scalar_one_or_none()
-            if note is None or note.deleted_at is not None:
-                log.info("analysis.skipped", note_id=note_id, reason="missing or deleted")
-                return
-            body, domain, captured_at = note.body, note.domain_code, note.created_at
-            tz_offset = note.tz_offset_minutes
-            # Extraction reads PARAGRAPH chunks only. The chunker stores two
-            # overlapping granularities per source — paragraph (the precise
-            # citation unit) and section (larger retrieval windows that CONTAIN
-            # those paragraphs) — so concatenating both fed the body to the model
-            # ~2x on any multi-paragraph note: wasted tokens and a salience drag
-            # on the "extract less" budget. Sections exist for search/retrieval;
-            # paragraphs tile every source with no overlap and keep span
-            # anchoring (_locate) on the citation unit. Paragraph chunks always
-            # exist when there is text (chunker.chunk_text), so this never empties
-            # a note that has content.
-            chunk_rows = (
-                await session.execute(
-                    select(Chunk.id, Chunk.text, Chunk.source_kind, Attachment.filename)
-                    .join(Attachment, Chunk.attachment_id == Attachment.id, isouter=True)
-                    .where(Chunk.note_id == note_id, Chunk.granularity == PARAGRAPH)
-                    .order_by(Chunk.seq)
-                )
-            ).all()
-        chunks = [_ChunkRef(id=r.id, text=r.text) for r in chunk_rows]
-        # Span anchoring (_locate) works on the raw chunk text; only the
-        # prompt blocks carry the OCR/caption provenance markers.
-        texts = [
-            prompt_block(r.text, source_kind=r.source_kind, filename=r.filename) for r in chunk_rows
-        ] or [body]
-
-        # Chunk-level map-reduce: a long note (a pasted article, a medical-history
-        # dump) is split into token-bounded GROUPS, each extracted with its OWN
-        # length-scaled fact budget, then merged — so the yield scales with the
-        # note instead of clipping at one note-wide cap or a single call's
-        # output-token ceiling. A note that fits one group makes exactly one call,
-        # identical to before. Backward-phrase repair needs the note's LOCAL day;
-        # without a client offset local_anchor falls back to the stored UTC
-        # instant (whose date can be tomorrow for an evening capture), so the
-        # parse anchor is withheld in that case to not clobber a model-correct date.
-        prompt_anchor = local_anchor(captured_at, tz_offset)
-        parse_anchor = prompt_anchor if tz_offset is not None else None
-        extraction = await _extract_note(
-            self._router,
-            texts,
-            domain=domain,
-            prompt_anchor=prompt_anchor,
-            parse_anchor=parse_anchor,
-            note_id=note_id,
-        )
-
-        provider, model = self._router.spec("note.extract", NOTE_EXTRACT_STRENGTH)
-        async with scoped_session(self._maker, SYSTEM_CTX) as session:
-            await self._apply(
-                session,
-                note_id=uuid.UUID(note_id),
-                note_domain=domain,
-                captured_at=captured_at,
-                chunks=chunks,
-                extraction=extraction,
-                extractor=f"{provider}:{model}",
-            )
-        log.info(
-            "analysis.done",
-            note_id=note_id,
-            facts=len(extraction.facts),
-            mentions=len(extraction.mentions),
-        )
-
     async def integrate_note(self, payload: dict[str, Any]) -> None:
-        """The v3 note→graph path (docs/INTEGRATOR_PLAN.md): extract → Integrator
+        """The note→graph path (docs/INTEGRATOR_PLAN.md): extract → Integrator
         (graph-aware agent judgment) → plan_intent (deterministic disposition) →
-        apply_intent (deterministic commit + review cards). Additive alongside
-        analyze_note; the trigger cutover (W3.3) is deferred. Missing/deleted note
+        apply_intent (deterministic commit + review cards). Missing/deleted note
         is a no-op."""
         note_id = str(payload["note_id"])
         async with scoped_session(self._maker, SYSTEM_CTX) as session:
@@ -720,7 +643,7 @@ class AnalysisPipeline:
         written as inert `pending_review` rows (the arbiter held them); the rest
         go through the normal commit path. Returns {index: fact_id} for the held
         rows so the caller can link each to its review card. The default empty set
-        is the original direct-write behavior (analyze_note)."""
+        commits every fact through the normal path."""
         resolved = await self._resolve_entities(
             session, extraction, note_id, note_domain, chunks, captured_at, resolution_override
         )

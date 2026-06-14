@@ -1,5 +1,14 @@
-"""Run a Scenario against a real Postgres through the genuine analyze_note
+"""Run a Scenario against a real Postgres through the genuine integrate_note
 pipeline, then snapshot the graph for the checker.
+
+We are BOTH models: each step scripts the note.extract response (the
+extraction) and the integrate.note response (the Integrator's intent). The
+intent is compiled from the step — explicit when the scenario authored one,
+else a faithful default (name-match resolution against the live graph, every
+surface-attested fact committed) — with existing-entity references resolved to
+their live ids at step time, the way the real agent reads them from graph
+context. Everything downstream (canonicalize → plan_intent → apply_intent →
+the arbiter's supersession/inverse/review writes) is the real pipeline.
 
 Usable two ways:
   - pytest (tests/integration/test_harness_scenarios.py) drives run_scenario
@@ -13,16 +22,21 @@ Usable two ways:
 from __future__ import annotations
 
 import asyncio
+import json
 import sys
 import uuid
 from datetime import datetime
+from typing import Any
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
+from jbrain.analysis.entities import get_or_create_me
 from jbrain.analysis.pipeline import AnalysisPipeline
+from jbrain.db.session import scoped_session
 from jbrain.llm import FakeLlmClient, LlmRouter
+from jbrain.queue import SYSTEM_CTX
 from tests.harness.scenario import (
     EntityRow,
     FactRow,
@@ -35,14 +49,133 @@ from tests.harness.scenario import (
 )
 
 
-def _analyzer(maker: async_sessionmaker, extraction_json: str) -> AnalysisPipeline:
-    """A pipeline whose note.extract returns exactly this scenario step's JSON
-    (we are the model); routing/tasks mirror the real default."""
+def _integrator(
+    maker: async_sessionmaker, extraction_json: str, intent_json: str
+) -> AnalysisPipeline:
+    """A pipeline whose two model calls return exactly this step's scripted JSON
+    (we are both models); routing/tasks mirror the real default."""
     router = LlmRouter(
-        {"xai": FakeLlmClient([extraction_json])},
-        {"note.extract": ("xai", "grok-4.3")},
+        {"xai": FakeLlmClient([extraction_json, intent_json])},
+        {"note.extract": ("xai", "grok-4.3"), "integrate.note": ("xai", "grok-4.3")},
     )
     return AnalysisPipeline(maker, router)
+
+
+async def _entity_id_by_name(maker: async_sessionmaker, name: str, domain: str) -> str | None:
+    """The live id of the most recent non-retracted entity with this canonical
+    name — how the runner, acting as the agent, resolves an existing-mode
+    reference (and merge/distinct pairs) to a real id at step time. 'Me' is the
+    owner, which lives in the general domain; everyone else is matched within the
+    note's own domain (the firewall the real resolver respects)."""
+    async with scoped_session(maker, SYSTEM_CTX) as s:
+        return (
+            await s.execute(
+                text(
+                    "SELECT id::text FROM app.entities"
+                    " WHERE canonical_name = :n AND status <> 'retracted'"
+                    "   AND (:d = 'general' OR domain_code = :d OR canonical_name = 'Me')"
+                    " ORDER BY created_at DESC LIMIT 1"
+                ),
+                {"n": name, "d": domain},
+            )
+        ).scalar_one_or_none()
+
+
+async def _compile_intent(maker: async_sessionmaker, step: Step, domain: str) -> str:
+    """Produce the integrate.note JSON for this step.
+
+    Default (no scripted intent): one resolution per referenced name — existing
+    when a live entity already carries that canonical name (so name-stable
+    dedup/supersession works across steps), else new; one fact per extraction
+    fact, surface-attested (so the arbiter commits it) at its subject's surface.
+
+    Explicit intent: passed through, but every existing-mode resolution and
+    merge/distinct pair names its entity (`name`/`entity_a`/`entity_b`); the
+    runner swaps each for its live id here so authors never hard-code uuids."""
+    extraction = step.extraction
+    # Ensure the owner exists before we resolve "Me" to it.
+    async with scoped_session(maker, SYSTEM_CTX) as s:
+        await get_or_create_me(s)
+
+    if step.intent is not None:
+        return await _compile_explicit_intent(maker, step.intent, domain)
+
+    mentions = extraction.get("mentions", [])
+    kind_by_name = {m["name"]: m.get("kind", "Thing") for m in mentions}
+    surface_by_name = {m["name"]: m.get("surface_text", m["name"]) for m in mentions}
+    body_surface = next(iter(surface_by_name.values()), step.body[:24])
+
+    # Default: resolve every referenced name, commit every fact.
+    refs: list[str] = []
+    for m in extraction.get("mentions", []):
+        if m["name"] not in refs:
+            refs.append(m["name"])
+    for f in extraction.get("facts", []):
+        for ref in (f.get("entity_ref"), f.get("object_entity_ref")):
+            if ref and ref not in refs:
+                refs.append(ref)
+
+    resolutions = []
+    for name in refs:
+        existing = await _entity_id_by_name(maker, name, domain)
+        if existing is not None:
+            resolutions.append({"mention_ref": name, "mode": "existing", "entity_id": existing})
+        else:
+            resolutions.append(
+                {
+                    "mention_ref": name,
+                    "mode": "new",
+                    "new_kind": kind_by_name.get(name, "Thing"),
+                    "new_name": name,
+                }
+            )
+
+    facts = []
+    for f in extraction.get("facts", []):
+        surface = surface_by_name.get(f.get("entity_ref"), body_surface)
+        facts.append(
+            {
+                "entity_ref": f["entity_ref"],
+                "predicate": f["predicate"],
+                "qualifier": f.get("qualifier", ""),
+                "kind": f["kind"],
+                "statement": f["statement"],
+                "value_json": f.get("value_json"),
+                "assertion": f["assertion"],
+                "object_entity_ref": f.get("object_entity_ref"),
+                "self_confidence": f.get("confidence", 0.9),
+                "inferred": False,
+                "surface": surface,
+                "temporal": f.get("temporal"),
+            }
+        )
+    return json.dumps({"resolutions": resolutions, "facts": facts})
+
+
+async def _compile_explicit_intent(
+    maker: async_sessionmaker, intent: dict[str, Any], domain: str
+) -> str:
+    """Resolve the name-based references in an authored intent to live ids."""
+    out: dict[str, Any] = {"resolutions": [], "facts": list(intent.get("facts", []))}
+    for r in intent.get("resolutions", []):
+        r = dict(r)
+        if r.get("mode") == "existing" and "entity_id" not in r:
+            name = r.get("name", r["mention_ref"])
+            r["entity_id"] = await _entity_id_by_name(maker, name, domain)
+        out["resolutions"].append(r)
+    for key in ("supersession_proposals", "merge_proposals", "distinct_proposals"):
+        items = intent.get(key)
+        if not items:
+            continue
+        resolved = []
+        for p in items:
+            p = dict(p)
+            for end in ("entity_a", "entity_b"):
+                if end in p:
+                    p[f"{end}_id"] = await _entity_id_by_name(maker, p.pop(end), domain)
+            resolved.append(p)
+        out[key] = resolved
+    return json.dumps(out)
 
 
 async def _seed_note(maker: async_sessionmaker, step: Step) -> str:
@@ -135,18 +268,26 @@ async def _snapshot(maker: async_sessionmaker) -> Snapshot:
 
 async def run_scenario(maker: async_sessionmaker, scenario: Scenario) -> Snapshot:
     """Apply every step in order through the real pipeline; return the graph."""
-    import json
-
     note_ids: list[str] = []
+    domains: list[str] = []
     for step in scenario.steps:
         if step.reanalyze_step is not None:
             # Re-analysis of an earlier step's note: same row, same chunk,
-            # same reported_at — only the scripted extraction changes.
+            # same reported_at (and same domain) — only the extraction/intent
+            # changes.
             note_id = note_ids[step.reanalyze_step]
+            domain = domains[step.reanalyze_step]
         else:
             note_id = await _seed_note(maker, step)
+            domain = step.domain
         note_ids.append(note_id)
-        await _analyzer(maker, json.dumps(step.extraction)).analyze_note({"note_id": note_id})
+        domains.append(domain)
+        # The intent is compiled against the graph AS IT STANDS now (prior steps
+        # committed), so an existing-mode reference resolves to the live entity.
+        intent_json = await _compile_intent(maker, step, domain)
+        await _integrator(
+            maker, json.dumps(step.extraction), intent_json
+        ).integrate_note({"note_id": note_id})
     return await _snapshot(maker)
 
 

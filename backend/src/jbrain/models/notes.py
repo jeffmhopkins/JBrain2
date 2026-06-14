@@ -38,9 +38,7 @@ class Note(Base):
     ingest_state: Mapped[str] = mapped_column(Text, default="pending", server_default="pending")
     indexed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     # The note→graph Integrator lifecycle (INTEGRATION_STATES). An indexed note
-    # is 'pending_integration' until the Integrator agent runs. Additive for now:
-    # the existing analyze_note path still runs and nothing consumes this yet;
-    # the trigger cutover (plan W3.3) flips it on.
+    # is 'pending_integration' until the integrate_note job runs and commits it.
     integration_state: Mapped[str] = mapped_column(
         Text, default="pending_integration", server_default="pending_integration"
     )
@@ -67,7 +65,7 @@ class Note(Base):
     # Whether note.extract has produced this note's note_analysis row — the
     # API's "analysis done" signal for the lifecycle chip. A correlated EXISTS
     # (the has_extracts pattern) so list/get serialization needs no second
-    # query; the row only appears when the analyze_note job commits.
+    # query; the row only appears when the integrate_note job commits.
     analyzed: Mapped[bool] = column_property(
         select(NoteAnalysis.note_id).where(NoteAnalysis.note_id == id).exists()
     )

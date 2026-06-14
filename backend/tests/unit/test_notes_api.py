@@ -48,16 +48,8 @@ class FakeJobQueue:
     async def has_active_ocr_for_note(self, ctx: SessionContext, note_id: str) -> bool:
         return note_id in self.active_ocr_notes
 
-    # The cutover toggle kind the trigger/endpoint enqueues (default v1).
-    pipeline_kind: str = "analyze_note"
-
     async def has_active_analysis(self, ctx: SessionContext, note_id: str) -> bool:
-        return any(
-            (k, "note_id", note_id) in self.active for k in ("analyze_note", "integrate_note")
-        )
-
-    async def analysis_job_kind(self, ctx: SessionContext) -> str:
-        return self.pipeline_kind
+        return ("integrate_note", "note_id", note_id) in self.active
 
 
 @dataclass
@@ -374,7 +366,7 @@ def test_note_responses_expose_analyzed(
     assert created["analyzed"] is False
     assert c.get("/api/notes").json()["notes"][0]["analyzed"] is False
 
-    # Once the analyze_note job lands its note_analysis row, every read path
+    # Once the integrate_note job lands its note_analysis row, every read path
     # (list, single note, PATCH echo) carries analyzed=true.
     repo.notes[0] = dataclasses.replace(repo.notes[0], analyzed=True)
     assert c.get("/api/notes").json()["notes"][0]["analyzed"] is True
@@ -607,7 +599,7 @@ def _indexed_note(c: TestClient, repo: FakeNotesRepo, client_id: str = "rn1") ->
     return note["id"]
 
 
-def test_analyze_note_enqueues_a_plain_analyze_job(
+def test_analyze_note_enqueues_an_integrate_job(
     client: tuple[TestClient, FakeNotesRepo, FakeJobQueue],
 ) -> None:
     c, repo, jobs = client
@@ -617,22 +609,7 @@ def test_analyze_note_enqueues_a_plain_analyze_job(
     resp = c.post(f"/api/notes/{note_id}/analyze")
     assert resp.status_code == 202
     assert resp.json()["job_id"]
-    # A plain analyze_note job — no special re-run kind, no mode payload.
-    assert jobs.enqueued == [("analyze_note", {"note_id": note_id})]
-
-
-def test_analyze_note_routes_through_the_cutover_toggle(
-    client: tuple[TestClient, FakeNotesRepo, FakeJobQueue],
-) -> None:
-    # With the toggle flipped to v3, the manual endpoint enqueues integrate_note
-    # (the routing the cutover depends on), not a hardcoded analyze_note.
-    c, repo, jobs = client
-    note_id = _indexed_note(c, repo)
-    jobs.enqueued.clear()
-    jobs.pipeline_kind = "integrate_note"
-
-    resp = c.post(f"/api/notes/{note_id}/analyze")
-    assert resp.status_code == 202
+    # A plain integrate_note job — no special re-run kind, no mode payload.
     assert jobs.enqueued == [("integrate_note", {"note_id": note_id})]
 
 
@@ -648,7 +625,7 @@ def test_analyze_note_409_when_analysis_in_flight(
 ) -> None:
     c, repo, jobs = client
     note_id = _indexed_note(c, repo)
-    jobs.active.add(("analyze_note", "note_id", note_id))
+    jobs.active.add(("integrate_note", "note_id", note_id))
     jobs.enqueued.clear()
 
     resp = c.post(f"/api/notes/{note_id}/analyze")
