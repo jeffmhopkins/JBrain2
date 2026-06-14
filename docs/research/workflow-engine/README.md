@@ -23,6 +23,7 @@ dossiers. This README is the decision surface.
 | C | [pipeline-as-data & run-log](C-pipeline-and-runlog.md) | Pipeline-definition format, run/run-step schema, run-log UI | It's a **linear-sequence-with-fan-out** problem, not a DAG; JSONB def + action registry; the **DBOS two-table run-log shape**; poll-don't-SSE mobile UI; skip OTel |
 | D | [DBOS deep-dive](D-dbos-deep-dive.md) | Fit of DBOS Transact against the two flagship workflows | **Adopt with caveats** — ingestion (OCR gate + fan-out) and nightly wiki (multi-day human-approval pause) map onto native primitives; the system-DB/RLS and code-vs-data tensions are managed, not blockers; **4 conditions decide it** |
 | E | [durable-workflow comparison](E-durable-workflow-comparison.md) | DBOS vs Temporal/Restate/Prefect/Windmill/Hatchet/… | **Nothing beats DBOS** for the single-box, in-process, Postgres-only, multi-day human-in-the-loop profile; Windmill is the only spoiler (data-defined flows + approval UI) but costs a separate server |
+| F | [spike & de-confliction](F-spike-and-deconfliction.md) | The live proof-of-concept + the collision-free contract | DBOS validated end-to-end (durable approval pause/resume, fan-out, IDs-not-payloads guard) in a **new-files-only** `workflow/` package — zero collision with the concurrent ingestion→entity-graph session |
 
 ## The decision
 
