@@ -15,13 +15,14 @@ from sqlalchemy import text
 
 from jbrain.analysis.pipeline import AnalysisPipeline
 from jbrain.analysis.predicates import raw_descriptor
+from jbrain.analysis.repo import SqlAnalysisRepo
 from jbrain.db.session import scoped_session
 from jbrain.llm import FakeLlmClient, LlmRouter
 from jbrain.queue import SYSTEM_CTX
 from jbrain.settings_store import PREDICATE_CANON_KEY, SqlSettingsStore
 from tests.conftest import docker_available
 from tests.integration.test_extraction_pg import ingest, make_note, maker  # noqa: F401
-from tests.integration.test_rls import database_url  # noqa: F401
+from tests.integration.test_rls import OWNER, database_url  # noqa: F401
 
 pytestmark = [
     pytest.mark.integration,
@@ -153,16 +154,20 @@ async def test_cold_match_keeps_raw_and_files_a_card(maker, tmp_path):  # noqa: 
 
     assert pred in await _committed_predicates(maker, note_id)  # raw, never rejected
     async with scoped_session(maker, SYSTEM_CTX) as session:
-        card = (
+        row = (
             await session.execute(
                 text(
-                    "SELECT payload FROM app.review_items"
+                    "SELECT id, payload FROM app.review_items"
                     " WHERE kind = 'new_predicate' AND payload->>'predicate' = :p"
                 ),
                 {"p": pred},
             )
-        ).scalar_one()
-    assert card["predicate"] == pred and card["note_id"] == note_id
+        ).one()
+    assert row.payload["predicate"] == pred and row.payload["note_id"] == note_id
+    # The card is dismissable in 3a (accept/map land in 3b): reject must NOT
+    # raise UnknownAction — it leaves the fact under its raw name.
+    resolved = await SqlAnalysisRepo(maker).resolve_review(OWNER, str(row.id), "reject", {})
+    assert resolved is not None and resolved["status"] != "open"
 
 
 async def test_canonicalization_is_inert_when_the_setting_is_off(maker, tmp_path):  # noqa: F811

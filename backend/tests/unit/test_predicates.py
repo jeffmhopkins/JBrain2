@@ -43,7 +43,6 @@ async def test_decide_predicate_strong(monkeypatch: pytest.MonkeyPatch) -> None:
         statement="x",
         kind="relationship",
         embedder=_FakeEmbed(),
-        embed_model="m",
     )
     assert d.band == "strong" and d.canonical == "spouse"
 
@@ -56,7 +55,6 @@ async def test_decide_predicate_weak(monkeypatch: pytest.MonkeyPatch) -> None:
         statement="x",
         kind=None,
         embedder=_FakeEmbed(),
-        embed_model="m",
     )
     assert d.band == "weak" and d.canonical is None and d.suggestions[0][0] == "spouse"
 
@@ -69,7 +67,6 @@ async def test_decide_predicate_cold(monkeypatch: pytest.MonkeyPatch) -> None:
         statement="x",
         kind=None,
         embedder=_FakeEmbed(),
-        embed_model="m",
     )
     assert d.band == "cold" and d.canonical is None and d.suggestions == ()
 

@@ -110,6 +110,32 @@ class PredicateDecision:
     suggestions: tuple[tuple[str, float], ...]  # top-k (canonical_name, similarity)
 
 
+def band_for(neighbors: tuple[tuple[str, float], ...]) -> PredicateDecision:
+    """The band verdict for a predicate's nearest canonicals: STRONG (top
+    >= _PRED_STRONG) canonicalizes; WEAK proposes the neighbours for review; cold
+    (no/distant neighbour) is a mint proposal."""
+    top = neighbors[0][1] if neighbors else 0.0
+    if top >= _PRED_STRONG:
+        return PredicateDecision("strong", neighbors[0][0], neighbors)
+    return PredicateDecision("weak" if top >= _PRED_WEAK else "cold", None, neighbors)
+
+
+async def decide_predicates(
+    session: AsyncSession,
+    items: Sequence[tuple[str, str, str | None]],
+    *,
+    embedder: EmbedClient,
+    k: int = _PRED_TOPK,
+) -> list[PredicateDecision]:
+    """Cosine-match a batch of unknown predicates against the canonical index in
+    ONE embed call (each item is (predicate, statement, kind)). The storage
+    invariant holds for every band — the predicate name is never rejected."""
+    if not items:
+        return []
+    vectors = await embedder.embed([raw_descriptor(p, s, kd) for p, s, kd in items])
+    return [band_for(tuple(await nearest_predicates(session, v, k))) for v in vectors]
+
+
 async def decide_predicate(
     session: AsyncSession,
     *,
@@ -117,19 +143,11 @@ async def decide_predicate(
     statement: str,
     kind: str | None,
     embedder: EmbedClient,
-    embed_model: str,
     k: int = _PRED_TOPK,
 ) -> PredicateDecision:
-    """Cosine-match an unknown predicate against the canonical index. STRONG (the
-    nearest is >= _PRED_STRONG) canonicalizes automatically; WEAK proposes the
-    neighbours for review; cold (no/distant neighbour) is a mint proposal. The
-    storage invariant holds either way — the predicate name is never rejected."""
-    [vec] = await embedder.embed([raw_descriptor(predicate, statement, kind)])
-    neighbors = tuple(await nearest_predicates(session, vec, k))
-    top = neighbors[0][1] if neighbors else 0.0
-    if top >= _PRED_STRONG:
-        return PredicateDecision("strong", neighbors[0][0], neighbors)
-    return PredicateDecision("weak" if top >= _PRED_WEAK else "cold", None, neighbors)
+    """Single-predicate convenience over decide_predicates."""
+    out = await decide_predicates(session, [(predicate, statement, kind)], embedder=embedder, k=k)
+    return out[0]
 
 
 async def nearest_predicates(

@@ -176,3 +176,24 @@ def test_multiple_violations_accumulate():
     )
     codes = {x.code for x in validate_intent(intent)}
     assert {"unknown_entity_ref", "bad_kind"} <= codes
+
+
+def test_rewrite_supersession_carries_a_strong_predicate_rename() -> None:
+    # A STRONG canonicalization rewrites a fact's predicate; the matching
+    # supersession proposal must follow, or compute_signals keys is_supersede on
+    # the raw name and the supersession silently drops.
+    from jbrain.analysis.pipeline import AnalysisPipeline
+
+    intent = _intent(
+        facts=[_fact(predicate="isHitchedTo")],
+        supersession_proposals=[
+            SupersessionProposal(
+                entity_ref="m1", predicate="isHitchedTo", qualifier="", action="supersede"
+            ),
+            SupersessionProposal(
+                entity_ref="m2", predicate="worksFor", qualifier="", action="supersede"
+            ),
+        ],
+    )
+    AnalysisPipeline._rewrite_supersession(intent, "isHitchedTo", "spouse")
+    assert [sp.predicate for sp in intent.supersession_proposals] == ["spouse", "worksFor"]

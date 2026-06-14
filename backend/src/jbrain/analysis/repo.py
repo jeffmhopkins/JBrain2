@@ -1060,11 +1060,15 @@ class SqlAnalysisRepo:
                 {"action": "distinct_from", "a": a, "b": b, "inserted": inserted is not None}
             ]
 
-        if kind in ("ambiguous_mention", "extraction_truncated") and action == "reject":
+        if kind in ("ambiguous_mention", "extraction_truncated", "new_predicate") and (
+            action == "reject"
+        ):
             # An informational card's only advertised verb: it wrote no graph
             # state, so resolving it is a dismissal. ambiguous_mention may be
             # re-proposed with more signal; extraction_truncated is acknowledged
-            # (the owner re-runs with a larger budget if they want the tail).
+            # (the owner re-runs with a larger budget if they want the tail);
+            # a new_predicate card dismissal leaves the fact under its raw name
+            # (accept/map land with their handlers in Phase 3b).
             return "dismissed", []
 
         if kind == "domain_promotion" and action in ("accept", "reject"):

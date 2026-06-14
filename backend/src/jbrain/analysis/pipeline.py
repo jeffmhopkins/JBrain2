@@ -75,7 +75,7 @@ from jbrain.analysis.graph_context import build_graph_context
 from jbrain.analysis.integrate import Integrator
 from jbrain.analysis.integrate_prompt import INTEGRATE_STRENGTH
 from jbrain.analysis.intent import EntityResolution, IntegrationIntent
-from jbrain.analysis.predicates import decide_predicate
+from jbrain.analysis.predicates import decide_predicates
 from jbrain.analysis.prompt import (
     EXTRACT_MAX_TOKENS,
     EXTRACTION_SCHEMA,
@@ -184,6 +184,17 @@ def _locate(surface: str, chunks: list[_ChunkRef]) -> _Span | None:
 # fact-level stamping + the agent-curated schema land in Wave 2; until then the
 # registry is at v1 (schema/defs/_meta.yaml).
 _SCHEMA_VERSION = 1
+
+
+def _review_card_domain(predicate: str, note_domain: str) -> str:
+    """The domain a review card rides: a sensitive predicate floors a general note
+    into its restricted domain, then the ratchet applies — so a card never lands
+    in a less-restricted scope than its predicate (the firewall, shared by every
+    card filer)."""
+    floor = domain_floor(predicate)
+    extracted = floor if (floor is not None and note_domain == "general") else note_domain
+    card_domain, _ = ratchet_domain(extracted, note_domain)
+    return card_domain
 
 
 async def _extract_note(
@@ -534,11 +545,7 @@ class AnalysisPipeline:
             # domain (plan_to_extraction emits ExtractedFact.domain=""), so
             # _upsert_fact's `fact.domain or note_domain` collapses to note_domain
             # — we start there, then apply the same floor + ratchet.
-            extracted = note_domain
-            floor = domain_floor(fact.predicate)
-            if floor is not None and note_domain == "general":
-                extracted = floor
-            card_domain, _ = ratchet_domain(extracted, note_domain)
+            card_domain = _review_card_domain(fact.predicate, note_domain)
             # Re-analysis must not multiply identical open cards.
             existing = (
                 await session.execute(
@@ -609,24 +616,23 @@ class AnalysisPipeline:
         if not unknown:
             return
         note_id = uuid.UUID(intent.note_id)
+        carded: set[str] = set()  # one new_predicate card per raw predicate per run
         async with scoped_session(self._maker, SYSTEM_CTX) as session:
-            for i, fact in unknown:
-                decision = await decide_predicate(
-                    session,
-                    predicate=fact.predicate,
-                    statement=fact.statement,
-                    kind=fact.kind,
-                    embedder=self._embedder,
-                    embed_model=self._embed_model,
-                )
+            # One embed call for every unknown predicate, not one per fact.
+            decisions = await decide_predicates(
+                session,
+                [(f.predicate, f.statement, f.kind) for _, f in unknown],
+                embedder=self._embedder,
+            )
+            for (i, fact), decision in zip(unknown, decisions, strict=True):
                 if decision.band == "strong" and decision.canonical:
                     intent.facts[i] = replace(fact, predicate=decision.canonical)
+                    self._rewrite_supersession(intent, fact.predicate, decision.canonical)
                     log.info(
-                        "predicate.canonicalized",
-                        raw=fact.predicate,
-                        canonical=decision.canonical,
+                        "predicate.canonicalized", raw=fact.predicate, canonical=decision.canonical
                     )
-                else:
+                elif fact.predicate not in carded:
+                    carded.add(fact.predicate)
                     await self._file_new_predicate_review(
                         session,
                         note_id=note_id,
@@ -636,6 +642,16 @@ class AnalysisPipeline:
                         kind=fact.kind,
                         suggestions=decision.suggestions,
                     )
+
+    @staticmethod
+    def _rewrite_supersession(intent: IntegrationIntent, raw: str, canonical: str) -> None:
+        """Carry a STRONG predicate rewrite into the matching supersession
+        proposals, so compute_signals keys is_supersede on the SAME (canonical)
+        predicate the rewritten fact now uses — otherwise the proposal would name
+        the raw predicate and the supersession would silently drop."""
+        for j, sp in enumerate(intent.supersession_proposals):
+            if sp.predicate == raw:
+                intent.supersession_proposals[j] = replace(sp, predicate=canonical)
 
     async def _file_new_predicate_review(
         self,
@@ -653,9 +669,7 @@ class AnalysisPipeline:
         already committed under its raw name; this surfaces it for accept/map
         (Phase 3b). One open card per raw predicate — re-analysis never piles up.
         The card rides the predicate's floor/ratchet domain like inference cards."""
-        floor = domain_floor(predicate)
-        extracted = floor if (floor is not None and note_domain == "general") else note_domain
-        card_domain, _ = ratchet_domain(extracted, note_domain)
+        card_domain = _review_card_domain(predicate, note_domain)
         existing = (
             await session.execute(
                 text(
