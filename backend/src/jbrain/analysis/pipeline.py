@@ -1569,6 +1569,18 @@ class AnalysisPipeline:
                 )
 
         object_id = object_entity.id if object_entity else None
+        # Shape-check once up front so both the in-place refresh and the fresh
+        # held row commit the same (possibly value-dropped) payload.
+        fact = replace(
+            fact,
+            value_json=await self._shape_check(
+                session,
+                entity_id=entity.id,
+                predicate=fact.predicate,
+                value_json=fact.value_json,
+                object_present=object_id is not None,
+            ),
+        )
         # Idempotency: refresh this note's existing held row for the identity key
         # rather than churn a fresh id (which the sweep would then orphan the card
         # off of). decide() is bypassed, so this lookup stands in for its refresh.
@@ -1613,13 +1625,6 @@ class AnalysisPipeline:
             )
             return existing_id
 
-        await self._shape_check(
-            session,
-            entity_id=entity.id,
-            predicate=fact.predicate,
-            value_json=fact.value_json,
-            object_present=object_id is not None,
-        )
         anchor = anchor_for.get(fact.entity_ref)
         base_chunk = anchor[0] if anchor else (chunks[0].id if chunks else None)
         chunk_id = await self._citation_chunk(
@@ -1665,35 +1670,35 @@ class AnalysisPipeline:
         predicate: str,
         value_json: dict[str, Any] | None,
         object_present: bool,
-    ) -> None:
-        """Log-only typed value-shape validation (Phase 1, docs/PREDICATE_CANONICALIZATION.md):
-        warn when a committed fact's value_json violates its predicate's declared
-        value_shape. Never rejects yet — enforcement (drop-value-keep-fact) flips
-        on once a real-Grok eval confirms the conservative validator does not
-        false-positive. The kind is per-entity-type, so this runs here (the
-        entity is resolved) rather than at parse time."""
+    ) -> dict[str, Any] | None:
+        """Typed value-shape validation (Phase 1/4, docs/PREDICATE_CANONICALIZATION.md).
+        Returns the value_json to commit: unchanged when it fits the predicate's
+        declared shape, or None (dropped — the fact survives on its statement, the
+        storage invariant) when it violates the shape AND the value_shape_enforce
+        setting is on. Default is log-only (returns it unchanged); enforcement is
+        flipped live after the eval confirms no false drops. Kind is per
+        entity-type, so this runs here (entity resolved) not at parse time."""
         if value_json is None:
-            return
+            return None
         registry = get_registry()
         # Skip the kind lookup for the many drift/unknown predicates no type
         # declares — they have no shape to validate and are never rejected.
         if not registry.declares_predicate(predicate):
-            return
+            return value_json
         kind = (
             await session.execute(select(Entity.kind).where(Entity.id == entity_id))
         ).scalar_one_or_none()
         if kind is None:
-            return
+            return value_json
         pred = registry.predicate_for_kind(kind, predicate)
-        if pred is not None and not registry.validate_value(
-            pred, value_json, object_present=object_present
-        ):
-            log.warning(
-                "analysis.fact_value_shape_mismatch",
-                predicate=predicate,
-                shape=pred.value_shape,
-                kind=kind,
-            )
+        if pred is None or registry.validate_value(pred, value_json, object_present=object_present):
+            return value_json
+        enforce = self._settings is not None and await self._settings.value_shape_enforce(
+            SYSTEM_CTX
+        )
+        event = "fact_value_shape_dropped" if enforce else "fact_value_shape_mismatch"
+        log.warning(f"analysis.{event}", predicate=predicate, shape=pred.value_shape, kind=kind)
+        return None if enforce else value_json
 
     async def _upsert_fact(
         self,
@@ -1757,12 +1762,18 @@ class AnalysisPipeline:
                     chunks,
                 )
 
-        await self._shape_check(
-            session,
-            entity_id=entity.id,
-            predicate=fact.predicate,
-            value_json=fact.value_json,
-            object_present=object_entity is not None,
+        # Rebuild the fact with the shape-checked value so every downstream write
+        # (the Candidate decide() reads, the fresh insert, an in-place close) uses
+        # it — enforcement drops a shape-violating value_json here, once.
+        fact = replace(
+            fact,
+            value_json=await self._shape_check(
+                session,
+                entity_id=entity.id,
+                predicate=fact.predicate,
+                value_json=fact.value_json,
+                object_present=object_entity is not None,
+            ),
         )
         candidate = Candidate(
             kind=fact.kind,
