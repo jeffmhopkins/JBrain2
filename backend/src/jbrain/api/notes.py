@@ -321,7 +321,8 @@ async def analyze_note(
     repo: NotesRepoDep,
     jobs: JobQueueDep,
 ) -> dict[str, str]:
-    """On-demand re-analysis of one note: a plain analyze_note job, the same
+    """On-demand re-analysis of one note: the configured analysis pipeline
+    (analyze_note v1 / integrate_note v3, per the cutover toggle), the same
     incremental upsert + retraction sweep an edit triggers — no special re-run
     job kind. Refused while the pipeline would run it anyway (ingest pending
     or OCR outstanding): the ingest gate owns that sequencing."""
@@ -329,7 +330,9 @@ async def analyze_note(
     note = await repo.get_note(ctx, note_id)
     if note is None:
         raise HTTPException(status_code=404, detail="note not found")
-    if await jobs.has_active(ctx, "analyze_note", payload_field="note_id", value=note_id):
+    # Cross-kind: a 409 if EITHER analysis kind is active, so the toggle can't
+    # be raced into double-processing one note.
+    if await jobs.has_active_analysis(ctx, note_id):
         raise HTTPException(status_code=409, detail="analysis already queued or running")
     if note.ingest_state in ("pending", "processing") or await jobs.has_active_ocr_for_note(
         ctx, note_id
@@ -338,7 +341,7 @@ async def analyze_note(
             status_code=409,
             detail="note is still being processed; analysis will run automatically",
         )
-    job_id = await jobs.enqueue(ctx, "analyze_note", {"note_id": note_id})
+    job_id = await jobs.enqueue(ctx, await jobs.analysis_job_kind(ctx), {"note_id": note_id})
     return {"job_id": job_id}
 
 

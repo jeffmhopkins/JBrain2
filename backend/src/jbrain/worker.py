@@ -98,13 +98,21 @@ async def run_loop(maker: async_sessionmaker[AsyncSession], handlers: dict[str, 
             if not backfilled:
                 ingests = await queue.backfill_pending_notes(maker, queue.SYSTEM_CTX)
                 embeds = await queue.backfill_unembedded_notes(maker, queue.SYSTEM_CTX)
-                # Notes ingested before extraction shipped never analyze
-                # until edited; the missing note_analysis row marks them.
-                analyses = await queue.backfill_unanalyzed_notes(maker, queue.SYSTEM_CTX)
-                # Relationship edges left unlinked by a sloppy model render their
-                # whole statement instead of the object entity; re-analysis binds
-                # them via the deterministic linking net.
-                relinks = await queue.backfill_unlinked_relationship_facts(maker, queue.SYSTEM_CTX)
+                # The analysis backfill follows the cutover toggle: under v3 drain
+                # the un-integrated backlog (bounded, oldest-first); the legacy
+                # analyze backfills target the old marker/kind and are inert there.
+                if await SqlSettingsStore(maker).note_pipeline(queue.SYSTEM_CTX) == "integrate":
+                    analyses = await queue.backfill_pending_integration(maker, queue.SYSTEM_CTX)
+                    relinks = 0
+                else:
+                    # Notes ingested before extraction shipped never analyze until
+                    # edited; the missing note_analysis row marks them.
+                    analyses = await queue.backfill_unanalyzed_notes(maker, queue.SYSTEM_CTX)
+                    # Unlinked relationship edges render their whole statement;
+                    # re-analysis binds them via the deterministic linking net.
+                    relinks = await queue.backfill_unlinked_relationship_facts(
+                        maker, queue.SYSTEM_CTX
+                    )
                 # Notes deleted before the purge cascade shipped left orphaned
                 # derived artifacts (incl. resolved review history quoting
                 # their text); sweep them once per boot.
@@ -150,7 +158,12 @@ async def run() -> None:
     handlers: dict[str, Handler] = {
         "ingest_note": pipeline.ingest_note,
         "embed_note": embedder.embed_note,
+        # Both analysis pipelines stay registered through and after the W3.3
+        # cutover: the toggle decides which one the trigger ENQUEUES, but an
+        # already-queued job of either kind must always find its handler (an
+        # unknown kind hard-fails the job), and analyze_note is the rollback path.
         "analyze_note": analyzer.analyze_note,
+        "integrate_note": analyzer.integrate_note,
         # The vision handler reads the image-analysis mode setting per job.
         "ocr_attachment": OcrPipeline(maker, blobs, router, SqlSettingsStore(maker)).ocr_attachment,
         # Retroactive predicate normalization; trigger is the Phase-5 engine.

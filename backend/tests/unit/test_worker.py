@@ -20,9 +20,12 @@ class FakeQueue:
         self.embed_backfills = 0
         self.analyze_backfills = 0
         self.relink_backfills = 0
+        self.integration_backfills = 0
         self.consolidate_backfills = 0
         self.purge_backfills = 0
         self.backfill_error: Exception | None = None
+        # The cutover toggle the boot backfill reads (default v1).
+        self.pipeline_mode = "analyze"
         # Whether a non-permanent fail() burned the last attempt.
         self.fail_exhausts = False
 
@@ -59,6 +62,10 @@ class FakeQueue:
         self.relink_backfills += 1
         return 0
 
+    async def backfill_pending_integration(self, maker: Any, ctx: Any) -> int:
+        self.integration_backfills += 1
+        return 0
+
     async def backfill_consolidate(self, maker: Any, ctx: Any) -> int:
         self.consolidate_backfills += 1
         return 0
@@ -73,9 +80,21 @@ def install(monkeypatch: pytest.MonkeyPatch, fake: FakeQueue) -> None:
         "backfill_unembedded_notes",
         "backfill_unanalyzed_notes",
         "backfill_unlinked_relationship_facts",
+        "backfill_pending_integration",
         "backfill_consolidate",
     ):
         monkeypatch.setattr(worker.queue, name, getattr(fake, name))
+
+    # The boot backfill reads the cutover toggle to pick which analysis backfill
+    # to run; fake the store so the loop tests don't touch a DB.
+    class _FakeStore:
+        def __init__(self, maker: Any) -> None:
+            pass
+
+        async def note_pipeline(self, ctx: Any) -> str:
+            return fake.pipeline_mode
+
+    monkeypatch.setattr(worker, "SqlSettingsStore", _FakeStore)
 
     # The orphan-purge sweep rides the same startup pass; SQL behavior is
     # integration-tested (test_note_purge_pg), so stub it here like the rest.
@@ -239,6 +258,26 @@ async def test_run_loop_backfills_once_then_polls(monkeypatch: pytest.MonkeyPatc
     assert fake.relink_backfills == 1
     assert fake.purge_backfills == 1
     assert fake.consolidate_backfills == 1
+    assert fake.integration_backfills == 0  # v3 backfill inert under the v1 toggle
+
+
+async def test_run_loop_under_integrate_toggle_runs_the_v3_backfill(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake = FakeQueue()
+    fake.pipeline_mode = "integrate"
+    install(monkeypatch, fake)
+
+    async def fake_sleep(seconds: float) -> None:
+        raise asyncio.CancelledError
+
+    monkeypatch.setattr(worker.asyncio, "sleep", fake_sleep)
+    with pytest.raises(asyncio.CancelledError):
+        await worker.run_loop(None, {})  # type: ignore[arg-type]
+    # The v3 backfill runs; the legacy analyze/relink backfills stay inert.
+    assert fake.integration_backfills == 1
+    assert fake.analyze_backfills == 0
+    assert fake.relink_backfills == 0
 
 
 async def test_run_loop_survives_transient_errors_and_retries_backfill(
@@ -282,6 +321,7 @@ async def test_run_registers_all_job_handlers(
         "ingest_note",
         "embed_note",
         "analyze_note",
+        "integrate_note",
         "ocr_attachment",
         "consolidate_predicates",
     }
