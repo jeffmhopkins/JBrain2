@@ -244,6 +244,44 @@ describe("ReviewScreen (split inbox)", () => {
     expect(screen.getByRole("button", { name: "undo" })).toBeInTheDocument();
   });
 
+  it("a new_predicate map-to-existing choice echoes its canonical_name into the resolve", async () => {
+    const newPred: ReviewItem = {
+      id: "np1",
+      kind: "new_predicate",
+      domain: "general",
+      created_at: "2026-06-10T07:00:00Z",
+      status: "open",
+      resolution: null,
+      resolved_at: null,
+      payload: {
+        summary: "unknown predicate “marriedTo” — map it or mint it?",
+        choices: [
+          { action: "map_to_existing", label: "use spouse", canonical_name: "spouse" },
+          { action: "accept_as_new", label: "keep marriedTo as new" },
+          { action: "reject", label: "drop it", destructive: true },
+        ],
+      },
+    };
+    serve([newPred], [], []);
+    render(<ReviewScreen />);
+    await screen.findByText(/unknown predicate/);
+    fireEvent.click(screen.getByRole("button", { name: /unknown predicate/ }));
+    fireEvent.click(screen.getByRole("button", { name: /use spouse/ }));
+
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/review/np1/resolve",
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify({
+            action: "map_to_existing",
+            payload: { choice: "use spouse", canonical_name: "spouse" },
+          }),
+        }),
+      ),
+    );
+  });
+
   it("an ambiguous mention is never reject-only: defer and talk-it-over are offered", async () => {
     render(<ReviewScreen />);
     await screen.findByText("two values recorded for Sarah's birthDate");
