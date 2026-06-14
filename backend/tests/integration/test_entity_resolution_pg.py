@@ -606,7 +606,9 @@ async def run_note(
         embedder=embedder,
         embed_model="test-embed",
     )
-    await pipeline.analyze_note({"note_id": str(note_id)})
+    # Only the (skipped) resolver-through-pipeline tests call this; under integrate
+    # that path is the agent's job. Reference the real handler so it type-checks.
+    await pipeline.integrate_note({"note_id": str(note_id)})
 
 
 BOTH_TASKS = {
