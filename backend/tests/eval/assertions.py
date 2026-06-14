@@ -20,7 +20,7 @@ from typing import Any
 from jbrain.analysis.arbiter import ArbiterPlan
 from jbrain.analysis.intent import IntegrationIntent, IntentFact
 from jbrain.schema import get_registry
-from tests.eval.cases import UNSET, Case, ExpectFact
+from tests.eval.cases import UNSET, Case, CommittedFact, DbCommit, ExpectFact
 
 
 def _norm(predicate: str) -> str:
@@ -181,5 +181,146 @@ def check_case(case: Case, intent: IntegrationIntent, plan: ArbiterPlan) -> list
     # --- over-extraction bound ---
     if ex.max_facts is not None and len(intent.facts) > ex.max_facts:
         fails.append(f"too many facts: {len(intent.facts)} > max {ex.max_facts}")
+
+    return fails
+
+
+# --- DB-mode: assert on COMMITTED rows, not proposals -------------------------
+
+
+def _committed_match(ef: ExpectFact, facts: tuple[CommittedFact, ...]) -> CommittedFact | None:
+    pred = _norm(ef.predicate)
+    for f in facts:
+        if not _name_match(ef.entity, f.entity_name) or _norm(f.predicate) != pred:
+            continue
+        if ef.qualifier and f.qualifier != ef.qualifier:
+            continue
+        if ef.object is not None and not _name_match(ef.object, f.object_name):
+            continue
+        return f
+    return None
+
+
+def _committed_matches_spec(f: CommittedFact, spec: dict[str, Any]) -> bool:
+    if "entity" in spec and not _name_match(spec["entity"], f.entity_name):
+        return False
+    if "predicate" in spec and _norm(spec["predicate"]) != _norm(f.predicate):
+        return False
+    if "object" in spec and not _name_match(spec["object"], f.object_name):
+        return False
+    return not ("assertion" in spec and f.assertion != spec["assertion"])
+
+
+def check_case_db(case: Case, commit: DbCommit) -> list[str]:
+    """The DB-mode gate: assert a case's `expect` against the COMMITTED graph
+    (dispositions as active/pending_review rows + cards, supersession closure,
+    resolve-to-existing onto the seeded UUID, domain floors on the row). Pure over
+    the DbCommit, so it is unit-testable without Postgres."""
+    fails: list[str] = []
+    ex = case.expect
+    seeded_vals = set(commit.seeded_ids.values())
+
+    # Entities this note REFERENCED that are neither the owner nor a seed = newly
+    # minted. The no-duplicate / no-junk-entity gate works off this set.
+    new_ents = {
+        eid: name
+        for eid, name in commit.entities.items()
+        if eid != commit.owner_id and eid not in seeded_vals
+    }
+
+    # --- forbidden entities (a name minted as its own row) ---
+    for name in ex.forbidden_entities:
+        nlow = name.casefold().strip()
+        for minted in new_ents.values():
+            m = (minted or "").casefold().strip()
+            if m == nlow or nlow in m:
+                fails.append(f"forbidden entity committed: {name!r} (as {minted!r})")
+                break
+
+    # --- entity-count bound ---
+    if ex.max_entities is not None and len(new_ents) > ex.max_entities:
+        names_seen = list(new_ents.values())
+        fails.append(f"too many entities: {len(new_ents)} > max {ex.max_entities} ({names_seen})")
+
+    # --- resolve-to-existing: a known mention must NOT fork a new row ---
+    for er in ex.resolutions:
+        if er.mode != "existing" or not er.entity_id:
+            continue
+        target = (
+            commit.owner_id if er.entity_id == "owner-1" else commit.seeded_ids.get(er.entity_id)
+        )
+        if target is None:
+            continue  # case didn't seed this id; nothing to verify in DB mode
+        forked = [
+            name
+            for eid, name in new_ents.items()
+            if _name_match(er.mention, name) and eid != target
+        ]
+        if forked:
+            fails.append(
+                f"{er.mention!r}: forked a new entity {forked} instead of resolving to existing"
+            )
+
+    # --- required committed facts ---
+    for ef in ex.facts:
+        f = _committed_match(ef, commit.facts)
+        if f is None:
+            fails.append(f"expected committed fact {ef.entity}.{ef.predicate} not found")
+            continue
+        if ef.value is not UNSET:
+            if f.value_json is None:
+                fails.append(
+                    f"{ef.entity}.{ef.predicate}: value_json is None"
+                    f" (sentence regression?), expected {ef.value!r}"
+                )
+            elif not _value_match(ef.value, f.value_json):
+                fails.append(
+                    f"{ef.entity}.{ef.predicate}: value {_bare(f.value_json)!r} != {ef.value!r}"
+                )
+        if ef.kind and f.kind != ef.kind:
+            fails.append(f"{ef.entity}.{ef.predicate}: kind {f.kind!r} != {ef.kind!r}")
+        if ef.assertion and f.assertion != ef.assertion:
+            fails.append(
+                f"{ef.entity}.{ef.predicate}: assertion {f.assertion!r} != {ef.assertion!r}"
+            )
+        if ef.domain and f.domain_code != ef.domain:
+            fails.append(f"{ef.entity}.{ef.predicate}: domain {f.domain_code!r} != {ef.domain!r}")
+        if ef.disposition:
+            has_card = f.id in commit.review_fact_ids
+            if ef.disposition == "commit" and (f.status != "active" or has_card):
+                fails.append(
+                    f"{ef.entity}.{ef.predicate}: expected active commit, got"
+                    f" status={f.status!r} card={has_card}"
+                )
+            elif ef.disposition == "review" and (f.status != "pending_review" or not has_card):
+                fails.append(
+                    f"{ef.entity}.{ef.predicate}: expected pending_review + card, got"
+                    f" status={f.status!r} card={has_card}"
+                )
+
+    # --- facts that must NOT be committed ---
+    for spec in ex.absent_facts:
+        if any(_committed_matches_spec(f, spec) for f in commit.facts):
+            fails.append(f"forbidden committed fact present: {spec}")
+
+    # --- supersession EFFECT: the prior seeded edge is actually closed ---
+    for spec in ex.supersede:
+        pred = _norm(spec["predicate"])
+        prior = [
+            s
+            for s in commit.seeded_facts
+            if _name_match(spec["entity"], s.entity_name) and _norm(s.predicate) == pred
+        ]
+        if not prior:
+            fails.append(f"no seeded prior fact for supersede {spec['entity']}.{spec['predicate']}")
+        elif not any(s.status == "superseded" and s.superseded_by for s in prior):
+            fails.append(
+                f"prior {spec['entity']}.{spec['predicate']} not superseded"
+                f" (status={[s.status for s in prior]})"
+            )
+
+    # --- over-extraction bound (committed facts this note wrote) ---
+    if ex.max_facts is not None and len(commit.facts) > ex.max_facts:
+        fails.append(f"too many committed facts: {len(commit.facts)} > max {ex.max_facts}")
 
     return fails
