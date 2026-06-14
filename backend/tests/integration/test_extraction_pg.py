@@ -47,6 +47,17 @@ HEALTH_ONLY = SessionContext(principal_kind="capability_token", domain_scopes=("
 GENERAL_ONLY = SessionContext(principal_kind="capability_token", domain_scopes=("general",))
 
 
+@pytest.fixture(autouse=True)
+async def _pin_v1_pipeline(maker: async_sessionmaker[AsyncSession]) -> None:  # noqa: F811
+    # This file exercises the v1 analyze_note pipeline directly; integrate is now
+    # the default, so pin the toggle to analyze so the ingest-enqueue assertions
+    # still see analyze_note. Migrated to integrate_note in the cutover
+    # (docs/CUTOVER_V1_REMOVAL.md).
+    from jbrain.settings_store import NOTE_PIPELINE_KEY, SqlSettingsStore
+
+    await SqlSettingsStore(maker).upsert(SYSTEM_CTX, NOTE_PIPELINE_KEY, "analyze")
+
+
 @pytest.fixture
 async def maker(database_url: str) -> AsyncIterator[async_sessionmaker[AsyncSession]]:  # noqa: F811
     engine: AsyncEngine = create_async_engine(database_url, poolclass=NullPool)
