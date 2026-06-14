@@ -121,18 +121,17 @@ async def _compile_intent(maker: async_sessionmaker, step: Step, domain: str) ->
 
     resolutions = []
     for name in refs:
+        # The mention's own surface rides the resolution so plan_to_extraction
+        # reprojects it (else the mention_ref doubles as the surface_text).
+        res: dict[str, Any] = {"mention_ref": name, "surface": surface_by_name.get(name, name)}
         existing = await _entity_id_by_name(maker, name, domain)
         if existing is not None:
-            resolutions.append({"mention_ref": name, "mode": "existing", "entity_id": existing})
+            res.update({"mode": "existing", "entity_id": existing})
         else:
-            resolutions.append(
-                {
-                    "mention_ref": name,
-                    "mode": "new",
-                    "new_kind": kind_by_name.get(name, "Thing"),
-                    "new_name": name,
-                }
+            res.update(
+                {"mode": "new", "new_kind": kind_by_name.get(name, "Thing"), "new_name": name}
             )
+        resolutions.append(res)
 
     facts = []
     for f in extraction.facts:

@@ -21,7 +21,8 @@ from sqlalchemy.ext.asyncio import (
 )
 from sqlalchemy.pool import NullPool
 
-from jbrain.analysis.pipeline import AnalysisPipeline
+from jbrain.analysis.extraction import Extraction
+from jbrain.analysis.pipeline import AnalysisPipeline, _extract_note, local_anchor
 from jbrain.analysis.repo import SqlAnalysisRepo
 from jbrain.auth import service
 from jbrain.auth.repo import SqlAuthRepo
@@ -45,17 +46,6 @@ pytestmark = [
 
 HEALTH_ONLY = SessionContext(principal_kind="capability_token", domain_scopes=("health",))
 GENERAL_ONLY = SessionContext(principal_kind="capability_token", domain_scopes=("general",))
-
-
-@pytest.fixture(autouse=True)
-async def _pin_v1_pipeline(maker: async_sessionmaker[AsyncSession]) -> None:  # noqa: F811
-    # This file exercises the v1 analyze_note pipeline directly; integrate is now
-    # the default, so pin the toggle to analyze so the ingest-enqueue assertions
-    # still see analyze_note. Migrated to integrate_note in the cutover
-    # (docs/CUTOVER_V1_REMOVAL.md).
-    from jbrain.settings_store import NOTE_PIPELINE_KEY, SqlSettingsStore
-
-    await SqlSettingsStore(maker).upsert(SYSTEM_CTX, NOTE_PIPELINE_KEY, "analyze")
 
 
 @pytest.fixture
@@ -89,14 +79,159 @@ async def ingest(maker: async_sessionmaker[AsyncSession], note_id: str, tmp_path
     await IngestPipeline(maker, FsBlobStore(tmp_path)).ingest_note({"note_id": note_id})
 
 
-def analyzer(maker: async_sessionmaker[AsyncSession], responses: list[str]) -> AnalysisPipeline:
-    fake = FakeLlmClient(responses)
-    router = LlmRouter(
-        {"xai": fake},
-        {"note.extract": ("xai", "grok-4.3")},
-        recorder=SqlUsageRecorder(maker),
-    )
-    return AnalysisPipeline(maker, router)
+async def _entity_id_by_name(
+    maker: async_sessionmaker[AsyncSession], name: str, domain: str
+) -> str | None:
+    """The live id of the most recent non-retracted entity with this canonical
+    name — how the default intent resolves an existing-mode reference (and
+    name-stable dedup across notes). 'Me' is the owner (general domain)."""
+    async with scoped_session(maker, SYSTEM_CTX) as s:
+        return (
+            await s.execute(
+                text(
+                    "SELECT id::text FROM app.entities"
+                    " WHERE canonical_name = :n AND status <> 'retracted'"
+                    "   AND (:d = 'general' OR domain_code = :d OR canonical_name = 'Me')"
+                    " ORDER BY created_at DESC LIMIT 1"
+                ),
+                {"n": name, "d": domain},
+            )
+        ).scalar_one_or_none()
+
+
+def _temporal_json(temporal: Any) -> dict[str, Any] | None:
+    if temporal is None:
+        return None
+    return {
+        "phrase": temporal.phrase,
+        "resolved_start": temporal.resolved_start.isoformat() if temporal.resolved_start else None,
+        "resolved_end": temporal.resolved_end.isoformat() if temporal.resolved_end else None,
+        "precision": temporal.precision,
+    }
+
+
+async def _default_intent(
+    maker: async_sessionmaker[AsyncSession], extraction: Extraction, domain: str, body: str
+) -> str:
+    """The integrate.note JSON a faithful agent would emit for a PARSED
+    extraction (the same dedup/cap/temporal-repair pass integrate_note runs):
+    resolve each referenced name (existing when a live entity already carries it,
+    else new) and commit each surface-attested fact. Mirrors the scenario
+    harness's default so this suite exercises the same path.
+
+    These tests decouple the note body from the scripted extraction, so a
+    mention's surface_text may not appear in the body; the fact's attested
+    surface then falls back to the body itself (always in the haystack) so the
+    weight model treats it as attested — reproducing analyze_note's
+    commit-everything default. A test that wants a fact HELD scripts its own
+    intent (cross_subject / ambiguous / inferred)."""
+    from jbrain.analysis.entities import get_or_create_me
+
+    async with scoped_session(maker, SYSTEM_CTX) as s:
+        await get_or_create_me(s)
+
+    def attesting(surface: str | None) -> str:
+        return surface if surface and surface in body else body
+
+    kind_by_name = {m.name: m.kind for m in extraction.mentions}
+    surface_by_name = {m.name: m.surface_text for m in extraction.mentions}
+    body_surface = next(iter(surface_by_name.values()), body)
+
+    refs: list[str] = []
+    for m in extraction.mentions:
+        if m.name not in refs:
+            refs.append(m.name)
+    for f in extraction.facts:
+        for ref in (f.entity_ref, f.object_entity_ref):
+            if ref and ref not in refs:
+                refs.append(ref)
+
+    resolutions = []
+    for name in refs:
+        # The mention's own surface rides the resolution so plan_to_extraction
+        # reprojects it (else the mention_ref doubles as the surface_text).
+        res: dict[str, Any] = {"mention_ref": name, "surface": surface_by_name.get(name, name)}
+        existing = await _entity_id_by_name(maker, name, domain)
+        if existing is not None:
+            res.update({"mode": "existing", "entity_id": existing})
+        else:
+            res.update(
+                {"mode": "new", "new_kind": kind_by_name.get(name, "Thing"), "new_name": name}
+            )
+        resolutions.append(res)
+    out_facts = [
+        {
+            "entity_ref": f.entity_ref,
+            "predicate": f.predicate,
+            "qualifier": f.qualifier,
+            "kind": f.kind,
+            "statement": f.statement,
+            "value_json": f.value_json,
+            "assertion": f.assertion,
+            "object_entity_ref": f.object_entity_ref,
+            "self_confidence": f.confidence,
+            "inferred": False,
+            "surface": attesting(surface_by_name.get(f.entity_ref, body_surface)),
+            "temporal": _temporal_json(f.temporal),
+        }
+        for f in extraction.facts
+    ]
+    return json.dumps({"resolutions": resolutions, "facts": out_facts})
+
+
+class _IntegrateDriver:
+    """Drives integrate_note for an ingested note while presenting analyze_note's
+    one-call surface: it scripts note.extract (the given responses) and a default
+    integrate.note intent compiled from the PARSED extraction, so this suite
+    exercises the real integrate path with the resolver/arbiter doing their work."""
+
+    def __init__(self, maker: async_sessionmaker[AsyncSession], responses: list[str]):
+        self._maker = maker
+        self._responses = responses
+
+    async def analyze_note(self, payload: dict[str, Any]) -> None:
+        note_id = str(payload["note_id"])
+        async with scoped_session(self._maker, SYSTEM_CTX) as s:
+            row = (
+                await s.execute(
+                    text(
+                        "SELECT domain_code, body, created_at, tz_offset_minutes"
+                        " FROM app.notes WHERE id = :i"
+                    ),
+                    {"i": note_id},
+                )
+            ).one_or_none()
+        responses = list(self._responses)
+        # A missing note is a no-op (mirrors integrate_note); skip the intent compile.
+        if row is not None and responses:
+            prompt_anchor = local_anchor(row.created_at, row.tz_offset_minutes)
+            parse_anchor = prompt_anchor if row.tz_offset_minutes is not None else None
+            parse_router = LlmRouter(
+                {"xai": FakeLlmClient(list(responses))},
+                {"note.extract": ("xai", "grok-4.3")},
+            )
+            extraction = await _extract_note(
+                parse_router,
+                [row.body],
+                domain=row.domain_code,
+                prompt_anchor=prompt_anchor,
+                parse_anchor=parse_anchor,
+                note_id=note_id,
+            )
+            responses.append(
+                await _default_intent(self._maker, extraction, row.domain_code, row.body)
+            )
+        fake = FakeLlmClient(responses)
+        router = LlmRouter(
+            {"xai": fake},
+            {"note.extract": ("xai", "grok-4.3"), "integrate.note": ("xai", "grok-4.3")},
+            recorder=SqlUsageRecorder(self._maker),
+        )
+        await AnalysisPipeline(self._maker, router).integrate_note({"note_id": note_id})
+
+
+def analyzer(maker: async_sessionmaker[AsyncSession], responses: list[str]) -> _IntegrateDriver:
+    return _IntegrateDriver(maker, responses)
 
 
 async def rows(
@@ -255,7 +390,7 @@ async def test_analyze_note_lands_everything(
         "SELECT kind FROM app.jobs WHERE payload->>'note_id' = :nid ORDER BY kind",
         nid=note_id,
     )
-    assert "analyze_note" in {j.kind for j in jobs}
+    assert "integrate_note" in {j.kind for j in jobs}
 
     # The API's lifecycle flag rides the note row as a correlated EXISTS:
     # false until the analysis header lands, true right after.
