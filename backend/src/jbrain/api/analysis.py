@@ -72,6 +72,15 @@ async def entity_neighbors(
     return view
 
 
+@router.get("/graph")
+async def full_graph(request: Request, principal: PrincipalDep) -> dict[str, Any]:
+    """The graph view's default: the whole graph (every visible entity, including
+    disconnected ones, + all relationship edges), centered on the "Me" entity.
+    RLS-scoped, so firewalled entities and their edges never leak. An empty
+    knowledge base returns an empty graph rather than 404."""
+    return await get_analysis_repo(request).full_graph(ctx_for(principal))
+
+
 @router.get("/review")
 async def review_list(
     request: Request,

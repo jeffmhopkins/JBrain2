@@ -1174,6 +1174,33 @@ function mockNeighbors(rootId: string, depth: number): EgoGraph | null {
   return { root: rootId, depth: hops, nodes, edges: [...edges.values()] };
 }
 
+// Mirrors GET /api/graph: the whole graph — every entity (including ones with
+// no edges) plus all relationship edges, centered on "Me".
+function mockFullGraph(): EgoGraph {
+  const ids = Object.keys(ENTITIES);
+  const edges = new Map<string, GraphEdge>();
+  for (const e of Object.values(ENTITIES)) {
+    for (const p of e.predicates) {
+      const obj = p.current?.object_entity_id;
+      if (obj && ENTITIES[obj]) {
+        const predicate = p.current?.predicate ?? p.predicate;
+        edges.set(`${e.id}|${obj}|${predicate}`, { source: e.id, target: obj, predicate });
+      }
+    }
+  }
+  const nodes = ids.map((id) => {
+    const e = ENTITIES[id] as EntityOut;
+    return {
+      id: e.id,
+      kind: e.kind,
+      canonical_name: e.canonical_name,
+      status: e.status,
+      domain: e.domain,
+    };
+  });
+  return { root: ENTITIES["ent-me"] ? "ent-me" : "", depth: 0, nodes, edges: [...edges.values()] };
+}
+
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
@@ -1475,6 +1502,10 @@ export const mockFetch: typeof fetch = async (input, init) => {
 
   if (path === "/api/entities" && method === "GET") {
     return json({ items: mockEntityList(url.searchParams) });
+  }
+
+  if (path === "/api/graph" && method === "GET") {
+    return json(mockFullGraph());
   }
 
   const neighborsMatch = path.match(/^\/api\/entities\/([^/]+)\/neighbors$/);

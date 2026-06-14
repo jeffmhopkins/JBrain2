@@ -355,9 +355,9 @@ export interface GraphEdge {
 }
 
 export interface EgoGraph {
-  /** The focal entity the subgraph is centered on. */
+  /** The entity the view centers on; "" when the whole graph has no "Me". */
   root: string;
-  /** Hops actually traversed (server clamps to 1–2). */
+  /** Hops traversed (ego: 1–2); 0 marks the whole-graph default. */
   depth: number;
   nodes: GraphNode[];
   edges: GraphEdge[];
@@ -724,6 +724,13 @@ export const api = {
     const response = await request(
       `/api/entities/${encodeURIComponent(entityId)}/neighbors?depth=${depth}`,
     );
+    return (await response.json()) as EgoGraph;
+  },
+
+  // The whole graph for the default view: every visible entity (including
+  // disconnected ones) + all relationship edges, `root` = the "Me" entity.
+  async getFullGraph(): Promise<EgoGraph> {
+    const response = await request("/api/graph");
     return (await response.json()) as EgoGraph;
   },
 

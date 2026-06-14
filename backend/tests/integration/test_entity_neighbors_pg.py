@@ -1,6 +1,8 @@
-"""GET /api/entities/{id}/neighbors (the graph-view ego subgraph) against real
-Postgres: depth, directed edges, merged tombstones excluded, and the RLS
-firewall (CLAUDE.md rule 3 — every new read path needs an isolation test).
+"""The graph-view read paths against real Postgres: GET /api/entities/{id}/
+neighbors (the ego subgraph) and GET /api/graph (the whole-graph default,
+disconnected entities included, centered on "Me") — depth, directed edges,
+merged tombstones excluded, and the RLS firewall (CLAUDE.md rule 3 — every new
+read path needs an isolation test).
 
 The module database is shared, so the seed tags every name/kind with a unique
 suffix and assertions filter to this seed's ids before comparing.
@@ -13,6 +15,7 @@ from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -78,6 +81,7 @@ async def seeded(maker: async_sessionmaker[AsyncSession], tmp_path: Any) -> dict
     me --seenAt--> clinic        (HEALTH, 1 hop)
     wife --sibling--> distant    (general, 2 hops)
     clinic --prescribes--> med   (HEALTH, 2 hops)
+    + an island entity with no edges (only the full graph surfaces it)
     + a merged tombstone me points at, which must never surface.
     """
     tag = uuid.uuid4().hex[:8]
@@ -102,7 +106,8 @@ async def seeded(maker: async_sessionmaker[AsyncSession], tmp_path: Any) -> dict
         clinic = ent("Clinic", "Organization", "health")
         distant = ent("Sibling", "Person", "general")
         med = ent("Med", "Drug", "health")
-        session.add_all([me, wife, employer, clinic, distant, med])
+        island = ent("Island", "Place", "general")
+        session.add_all([me, wife, employer, clinic, distant, med, island])
         await session.flush()
         gone = ent("Ghost", "Person", "general", status="merged")
         gone.merged_into_id = wife.id
@@ -126,6 +131,7 @@ async def seeded(maker: async_sessionmaker[AsyncSession], tmp_path: Any) -> dict
         "clinic": str(clinic.id),
         "distant": str(distant.id),
         "med": str(med.id),
+        "island": str(island.id),
         "gone": str(gone.id),
     }
 
@@ -209,3 +215,93 @@ async def test_neighbors_api_round_trip(
         too_deep = client.get(f"/api/entities/{seeded['me']}/neighbors", params={"depth": 9})
         assert too_deep.status_code == 422  # depth clamped to [1, 2] by the validator
         assert client.get(f"/api/entities/{uuid.uuid4()}/neighbors").status_code == 404
+
+
+async def _seed_me_subject(session: AsyncSession, tag: str) -> str:
+    """A subject-backed entity named exactly "Me" — the graph's natural center,
+    which `full_graph` resolves as its root."""
+    sub = uuid.uuid4()
+    me = uuid.uuid4()
+    await session.execute(
+        text("INSERT INTO app.subjects (id, display_name, kind) VALUES (:id, 'Me', 'person')"),
+        {"id": str(sub)},
+    )
+    await session.execute(
+        text(
+            "INSERT INTO app.entities"
+            " (id, kind, canonical_name, status, subject_id, domain_code)"
+            " VALUES (:id, :kind, 'Me', 'confirmed', :sub, 'general')"
+        ),
+        {"id": str(me), "kind": f"Person-{tag}", "sub": str(sub)},
+    )
+    return str(me)
+
+
+async def test_full_graph_includes_disconnected_entities_and_all_edges(
+    maker: async_sessionmaker[AsyncSession], seeded: dict[str, str]
+) -> None:
+    graph = await SqlAnalysisRepo(maker).full_graph(OWNER)
+    ids = node_ids(graph)
+    # Every seeded entity is present — the island included, which no ego view
+    # would ever reach since it has no edges.
+    assert {
+        seeded["me"],
+        seeded["wife"],
+        seeded["employer"],
+        seeded["clinic"],
+        seeded["distant"],
+        seeded["med"],
+        seeded["island"],
+    } <= ids
+    assert seeded["gone"] not in ids  # merged tombstones never surface
+    # Edges span the whole graph, not just one entity's neighbourhood.
+    es = edge_set(graph)
+    assert (seeded["me"], seeded["wife"], "spouse") in es
+    assert (seeded["clinic"], seeded["med"], "prescribes") in es
+
+
+async def test_full_graph_centers_on_me(
+    maker: async_sessionmaker[AsyncSession], seeded: dict[str, str]
+) -> None:
+    async with scoped_session(maker, OWNER) as session:
+        me = await _seed_me_subject(session, seeded["tag"])
+    graph = await SqlAnalysisRepo(maker).full_graph(OWNER)
+    by_id = {n["id"]: n for n in graph["nodes"]}
+    # Root resolves to the subject-backed "Me", the view's natural center.
+    assert graph["root"] == me
+    assert by_id[graph["root"]]["canonical_name"].lower() == "me"
+    assert graph["depth"] == 0  # the whole-graph sentinel
+
+
+async def test_full_graph_is_rls_scoped(
+    maker: async_sessionmaker[AsyncSession], seeded: dict[str, str]
+) -> None:
+    graph = await SqlAnalysisRepo(maker).full_graph(GENERAL_ONLY)
+    ids = node_ids(graph)
+    # The health firewall holds in the everything-graph too: the clinic, the
+    # drug behind it, and every edge touching the clinic all vanish.
+    assert seeded["clinic"] not in ids and seeded["med"] not in ids
+    assert not any(
+        e["source"] == seeded["clinic"] or e["target"] == seeded["clinic"] for e in graph["edges"]
+    )
+    # General entities — connected and disconnected alike — still resolve.
+    assert {seeded["me"], seeded["wife"], seeded["island"]} <= ids
+
+
+async def test_full_graph_api_round_trip(
+    database_url: str,  # noqa: F811
+    maker: async_sessionmaker[AsyncSession],
+    seeded: dict[str, str],
+) -> None:
+    key = await service.rotate_owner_key(SqlAuthRepo(maker))
+    app = create_app(Settings(secure_cookies=False, database_url=database_url))
+    with TestClient(app) as client:
+        login = client.post("/api/auth/session", json={"owner_key": key, "device_label": "it"})
+        assert login.status_code == 204
+        graph = client.get("/api/graph").json()
+        ids = {n["id"] for n in graph["nodes"]}
+        assert {seeded["island"], seeded["wife"]} <= ids
+        # Frozen wire shape — identical to the ego view so the UI reuses it.
+        assert set(graph) == {"root", "depth", "nodes", "edges"}
+        assert set(graph["nodes"][0]) == {"id", "kind", "canonical_name", "status", "domain"}
+        assert graph["depth"] == 0

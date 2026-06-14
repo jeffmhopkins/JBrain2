@@ -448,6 +448,70 @@ class SqlAnalysisRepo:
             "edges": list(edges.values()),
         }
 
+    async def full_graph(self, ctx: SessionContext) -> dict[str, Any]:
+        """The graph view's default: every non-merged entity as a node — even
+        ones with no relationships — plus all active asserted relationship edges
+        between visible entities. RLS-scoped, so firewalled entities and any
+        edge touching one never come back. `root` is the owner's "Me" entity
+        (the natural center the UI pins), or "" when there is none. Node rows
+        mirror `ego_graph`/`list_entities` so the UI reuses one render path."""
+        async with scoped_session(self._maker, ctx) as session:
+            nodes = (
+                await session.execute(
+                    text(
+                        "SELECT id::text, kind, canonical_name, status, domain_code"
+                        " FROM app.entities WHERE status <> 'merged'"
+                    )
+                )
+            ).all()
+            # The object join (and RLS) drops edges to an entity this session
+            # can't see; subject side is filtered to the visible node set below.
+            edge_rows = (
+                await session.execute(
+                    text(
+                        "SELECT f.entity_id::text AS src, f.object_entity_id::text AS dst,"
+                        " f.predicate FROM app.facts f"
+                        " JOIN app.entities se ON se.id = f.entity_id"
+                        " JOIN app.entities oe ON oe.id = f.object_entity_id"
+                        " WHERE f.object_entity_id IS NOT NULL"
+                        " AND f.status = 'active' AND f.assertion = 'asserted'"
+                        " AND se.status <> 'merged' AND oe.status <> 'merged'"
+                    )
+                )
+            ).all()
+            me = (
+                await session.execute(
+                    text(
+                        "SELECT id::text FROM app.entities"
+                        " WHERE subject_id IS NOT NULL AND lower(canonical_name) = 'me'"
+                        " AND status <> 'merged' LIMIT 1"
+                    )
+                )
+            ).scalar()
+        node_ids = {n.id for n in nodes}
+        edges: dict[tuple[str, str, str], dict[str, str]] = {}
+        for r in edge_rows:
+            if r.src in node_ids and r.dst in node_ids:
+                edges.setdefault(
+                    (r.src, r.dst, r.predicate),
+                    {"source": r.src, "target": r.dst, "predicate": r.predicate},
+                )
+        return {
+            "root": me or "",
+            "depth": 0,
+            "nodes": [
+                {
+                    "id": n.id,
+                    "kind": n.kind,
+                    "canonical_name": n.canonical_name,
+                    "status": n.status,
+                    "domain": n.domain_code,
+                }
+                for n in nodes
+            ],
+            "edges": list(edges.values()),
+        }
+
     async def entity_view(self, ctx: SessionContext, entity_id: str) -> dict[str, Any] | None:
         eid = _as_uuid(entity_id)
         if eid is None:
