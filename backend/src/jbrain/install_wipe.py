@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import json
 import os
 import shutil
 from datetime import UTC, datetime
@@ -35,7 +34,6 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from jbrain.config import Settings, get_settings
-from jbrain.settings_store import NOTE_PIPELINE_KEY
 
 log = structlog.get_logger()
 
@@ -86,25 +84,6 @@ def _rebuild_schema() -> None:
     command.upgrade(cfg, "head")
 
 
-async def _enable_v3(migration_url: str) -> None:
-    # Write the integrate toggle explicitly for THIS install. The code default is
-    # now "integrate" too, so this is belt-and-suspenders — it pins v3 even if the
-    # default ever changes. Done on the superuser connection (bypasses RLS) after
-    # the rebuild, so app.settings exists.
-    engine = create_async_engine(migration_url)
-    try:
-        async with engine.begin() as conn:
-            await conn.execute(
-                text(
-                    "INSERT INTO app.settings (key, value) VALUES (:k, cast(:v AS jsonb))"
-                    " ON CONFLICT (key) DO UPDATE SET value = excluded.value, updated_at = now()"
-                ),
-                {"k": NOTE_PIPELINE_KEY, "v": json.dumps("integrate")},
-            )
-    finally:
-        await engine.dispose()
-
-
 def main() -> int:
     settings = get_settings()
     sentinel = _sentinel_path(settings)
@@ -130,7 +109,6 @@ def main() -> int:
     clear_dir(settings.blob_dir)
     clear_dir(settings.backups_dir)
     _rebuild_schema()
-    asyncio.run(_enable_v3(migration_url))
 
     # Sentinel LAST: a failure before here leaves the wipe un-marked, so a re-run
     # finishes the reset rather than skipping a half-done one.

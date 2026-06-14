@@ -32,7 +32,6 @@ from jbrain.ingest.extract import (
 from jbrain.ingest.ocr import MAX_OCR_BYTES
 from jbrain.models.notes import AttachmentExtract, Chunk, Note
 from jbrain.queue import SYSTEM_CTX
-from jbrain.settings_store import SqlSettingsStore
 from jbrain.storage import BlobStore
 
 log = structlog.get_logger()
@@ -125,10 +124,7 @@ class IngestPipeline:
         if not outstanding and not await queue.has_active_analysis(
             self._maker, SYSTEM_CTX, note_id, statuses=("queued",)
         ):
-            # The cutover toggle picks analyze_note (v1) vs integrate_note (v3);
-            # the guard above is cross-kind so a flip can't double-enqueue.
-            kind = await SqlSettingsStore(self._maker).analysis_job_kind(SYSTEM_CTX)
-            await queue.enqueue(self._maker, SYSTEM_CTX, kind, {"note_id": note_id})
+            await queue.enqueue(self._maker, SYSTEM_CTX, "integrate_note", {"note_id": note_id})
         log.info("ingest.indexed", note_id=note_id, chunks=len(chunks))
 
     async def _load_extracts(

@@ -24,22 +24,6 @@ IMAGE_ANALYSIS_KEY = "image_analysis_mode"
 # (disabled); rotating it instantly invalidates the old subscribe URL.
 FEED_TOKEN_KEY = "appointments_feed_token"
 
-# The note→graph pipeline the analysis trigger enqueues — the W3.3 cutover
-# toggle. "analyze" = the v1 single-shot path (analyze_note); "integrate" = the
-# v3 graph-aware path (integrate_note). DB-backed so it stays reversible LIVE
-# (no redeploy). Default is now "integrate" — v3 is the shipped pipeline, so a
-# fresh install runs it with no settings step; absent/unrecognized falls back to
-# it. The toggle + the legacy analyze_note path are slated for removal once the
-# extraction test suite is migrated off it — see docs/CUTOVER_V1_REMOVAL.md.
-NotePipeline = Literal["analyze", "integrate"]
-NOTE_PIPELINES: tuple[NotePipeline, ...] = ("analyze", "integrate")
-NOTE_PIPELINE_DEFAULT: NotePipeline = "integrate"
-NOTE_PIPELINE_KEY = "note_analysis_pipeline"
-
-# The two analysis job kinds the toggle selects between.
-ANALYZE_JOB = "analyze_note"
-INTEGRATE_JOB = "integrate_note"
-
 # Embedding-assisted predicate canonicalization (docs/PREDICATE_CANONICALIZATION.md
 # Phase 3): when on, the integrate pipeline cosine-matches an unknown predicate
 # against the canonical index and either rewrites it (STRONG) or files a
@@ -109,17 +93,6 @@ class SqlSettingsStore:
             if mode in IMAGE_ANALYSIS_MODES
             else (IMAGE_ANALYSIS_DEFAULT)
         )
-
-    async def note_pipeline(self, ctx: SessionContext) -> NotePipeline:
-        """The configured note→graph pipeline (cutover toggle), defaulting (and
-        falling back on any unrecognized stored value) to the v1 path."""
-        mode = await self.get(ctx, NOTE_PIPELINE_KEY, NOTE_PIPELINE_DEFAULT)
-        return cast(NotePipeline, mode) if mode in NOTE_PIPELINES else NOTE_PIPELINE_DEFAULT
-
-    async def analysis_job_kind(self, ctx: SessionContext) -> str:
-        """The job kind the analysis trigger should enqueue right now — the one
-        source of truth every enqueue site shares so the cutover is atomic."""
-        return INTEGRATE_JOB if await self.note_pipeline(ctx) == "integrate" else ANALYZE_JOB
 
     async def predicate_canonicalization(self, ctx: SessionContext) -> bool:
         """Whether embedding-assisted predicate canonicalization is on (Phase 3).

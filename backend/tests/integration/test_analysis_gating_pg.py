@@ -53,14 +53,7 @@ def blobs(tmp_path: Path) -> FsBlobStore:
     return FsBlobStore(tmp_path)
 
 
-@pytest.fixture(autouse=True)
-async def _pin_v1_pipeline(maker: async_sessionmaker[AsyncSession]) -> None:  # noqa: F811
-    # This suite asserts the v1 analyze_note gate. integrate is now the default
-    # pipeline, so pin the toggle to analyze explicitly; the full cutover migrates
-    # these onto integrate_note (docs/CUTOVER_V1_REMOVAL.md).
-    from jbrain.settings_store import NOTE_PIPELINE_KEY
-
-    await SqlSettingsStore(maker).upsert(queue.SYSTEM_CTX, NOTE_PIPELINE_KEY, "analyze")
+EMPTY_INTENT = '{"resolutions": [], "facts": []}'
 
 
 async def make_note(maker: async_sessionmaker[AsyncSession], body: str = "plain note") -> str:
@@ -130,8 +123,13 @@ def handlers(
         {"xai": FakeLlmClient(ocr_responses)},
         {"vision.ocr": ("xai", "grok-4.3"), "vision.caption": ("xai", "grok-4.3")},
     )
+    # integrate_note makes two model calls (note.extract, then integrate.note);
+    # one fake serves both positionally, so each scripted extraction is followed
+    # by an empty intent. These gate tests assert sequencing, not graph content.
+    interleaved = [r for resp in extract_responses for r in (resp, EMPTY_INTENT)]
     extract = LlmRouter(
-        {"xai": FakeLlmClient(extract_responses)}, {"note.extract": ("xai", "grok-4.3")}
+        {"xai": FakeLlmClient(interleaved)},
+        {"note.extract": ("xai", "grok-4.3"), "integrate.note": ("xai", "grok-4.3")},
     )
 
     async def embed_noop(payload: dict[str, Any]) -> None:
@@ -140,7 +138,7 @@ def handlers(
     return {
         "ingest_note": IngestPipeline(maker, blobs).ingest_note,
         "ocr_attachment": OcrPipeline(maker, blobs, vision, SqlSettingsStore(maker)).ocr_attachment,
-        "analyze_note": AnalysisPipeline(maker, extract).analyze_note,
+        "integrate_note": AnalysisPipeline(maker, extract).integrate_note,
         "embed_note": embed_noop,
     }
 
@@ -158,7 +156,7 @@ async def test_image_note_ingest_enqueues_ocr_but_not_analyze(
     await IngestPipeline(maker, blobs).ingest_note({"note_id": note_id})
 
     assert await jobs_for(maker, "ocr_attachment", "attachment_id", att_id) == ["queued"]
-    assert await jobs_for(maker, "analyze_note", "note_id", note_id) == []
+    assert await jobs_for(maker, "integrate_note", "note_id", note_id) == []
     # Embedding stays ungated: keyword/vector search never waits on vision.
     assert await jobs_for(maker, "embed_note", "note_id", note_id) == ["queued"]
 
@@ -172,7 +170,7 @@ async def test_oversized_image_note_analyzes_immediately(
     await IngestPipeline(maker, blobs).ingest_note({"note_id": note_id})
 
     assert await jobs_for(maker, "ocr_attachment", "attachment_id", att_id) == []
-    assert await jobs_for(maker, "analyze_note", "note_id", note_id) == ["queued"]
+    assert await jobs_for(maker, "integrate_note", "note_id", note_id) == ["queued"]
 
 
 async def test_imageless_note_analyzes_immediately(
@@ -180,7 +178,7 @@ async def test_imageless_note_analyzes_immediately(
 ) -> None:
     note_id = await make_note(maker)
     await IngestPipeline(maker, blobs).ingest_note({"note_id": note_id})
-    assert await jobs_for(maker, "analyze_note", "note_id", note_id) == ["queued"]
+    assert await jobs_for(maker, "integrate_note", "note_id", note_id) == ["queued"]
 
 
 async def test_queued_analyze_dedups_but_running_does_not(
@@ -191,19 +189,19 @@ async def test_queued_analyze_dedups_but_running_does_not(
     await pipeline.ingest_note({"note_id": note_id})
     await pipeline.ingest_note({"note_id": note_id})
     # A queued job covers the re-ingest: it will read the rebuilt chunks.
-    assert await jobs_for(maker, "analyze_note", "note_id", note_id) == ["queued"]
+    assert await jobs_for(maker, "integrate_note", "note_id", note_id) == ["queued"]
 
     async with scoped_session(maker, OWNER) as s:
         await s.execute(
             text(
                 "UPDATE app.jobs SET status = 'running', locked_at = now()"
-                " WHERE kind = 'analyze_note' AND payload->>'note_id' = :nid"
+                " WHERE kind = 'integrate_note' AND payload->>'note_id' = :nid"
             ),
             {"nid": note_id},
         )
     await pipeline.ingest_note({"note_id": note_id})
     # A RUNNING analyze may have read stale chunks: a fresh pass must follow.
-    assert await jobs_for(maker, "analyze_note", "note_id", note_id) == ["running", "queued"]
+    assert await jobs_for(maker, "integrate_note", "note_id", note_id) == ["running", "queued"]
 
 
 async def test_full_chain_runs_exactly_one_analysis(
@@ -223,7 +221,7 @@ async def test_full_chain_runs_exactly_one_analysis(
     await queue.enqueue(maker, OWNER, "ingest_note", {"note_id": note_id})
     await drain(maker, h)
 
-    assert await jobs_for(maker, "analyze_note", "note_id", note_id) == ["done"]
+    assert await jobs_for(maker, "integrate_note", "note_id", note_id) == ["done"]
     async with scoped_session(maker, OWNER) as s:
         analyzed = (
             await s.execute(
@@ -267,7 +265,7 @@ async def test_on_demand_analyze_of_cached_attachment_does_not_deadlock(
     assert await jobs_for(maker, "ocr_attachment", "attachment_id", att_id) == ["done", "done"]
     # One analysis per pass — the first from the initial chain, the second
     # following the on-demand re-describe — and neither deadlocked.
-    assert await jobs_for(maker, "analyze_note", "note_id", note_id) == ["done", "done"]
+    assert await jobs_for(maker, "integrate_note", "note_id", note_id) == ["done", "done"]
 
 
 async def test_ocr_exhaustion_falls_back_to_body_only_analysis(
@@ -282,7 +280,7 @@ async def test_ocr_exhaustion_falls_back_to_body_only_analysis(
     await add_image(maker, note_id, filename="two.png")
     h = handlers(maker, blobs, ocr_responses=["unused"], extract_responses=[EMPTY_EXTRACTION])
     await IngestPipeline(maker, blobs).ingest_note({"note_id": note_id})
-    assert await jobs_for(maker, "analyze_note", "note_id", note_id) == []
+    assert await jobs_for(maker, "integrate_note", "note_id", note_id) == []
     async with scoped_session(maker, OWNER) as s:
         await s.execute(text("UPDATE app.jobs SET max_attempts = 1 WHERE kind = 'ocr_attachment'"))
     await drain(maker, h)
@@ -297,7 +295,7 @@ async def test_ocr_exhaustion_falls_back_to_body_only_analysis(
             )
         ).scalar_one()
     assert failed == 2  # the failed rows stay the durable record
-    assert await jobs_for(maker, "analyze_note", "note_id", note_id) == ["done"]
+    assert await jobs_for(maker, "integrate_note", "note_id", note_id) == ["done"]
 
 
 async def test_backfill_skips_notes_with_active_ocr(
@@ -315,8 +313,8 @@ async def test_backfill_skips_notes_with_active_ocr(
         )
     await queue.enqueue(maker, OWNER, "ocr_attachment", {"attachment_id": att_id})
 
-    await queue.backfill_unanalyzed_notes(maker, OWNER)
-    assert await jobs_for(maker, "analyze_note", "note_id", note_id) == []
+    await queue.backfill_pending_integration(maker, OWNER)
+    assert await jobs_for(maker, "integrate_note", "note_id", note_id) == []
 
     async with scoped_session(maker, OWNER) as s:
         await s.execute(
@@ -326,5 +324,5 @@ async def test_backfill_skips_notes_with_active_ocr(
             ),
             {"aid": att_id},
         )
-    await queue.backfill_unanalyzed_notes(maker, OWNER)
-    assert await jobs_for(maker, "analyze_note", "note_id", note_id) == ["queued"]
+    await queue.backfill_pending_integration(maker, OWNER)
+    assert await jobs_for(maker, "integrate_note", "note_id", note_id) == ["queued"]

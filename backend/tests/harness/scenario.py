@@ -16,7 +16,9 @@ SCENARIOS_DIR = Path(__file__).parent / "scenarios"
 
 @dataclass(frozen=True)
 class Step:
-    """One note: its capture metadata plus the extraction a model would emit."""
+    """One note: its capture metadata plus the extraction a model would emit,
+    and (optionally) the Integrator intent — the agent's resolution/supersession
+    judgment over that extraction."""
 
     body: str
     extraction: dict[str, Any]
@@ -31,6 +33,15 @@ class Step:
     # extraction matters. This is how a scenario scripts "the model now reads
     # the same note differently" (re-extraction after an edit or upgrade).
     reanalyze_step: int | None = None
+    # The agent's IntegrationIntent for this step. Omit it and the runner derives
+    # a faithful default (name-match resolution against the live graph, every
+    # surface-attested fact committed) — enough for scenarios whose point is the
+    # arbiter/apply behavior, not a specific coreference call. Author it
+    # explicitly when the resolution itself is under test (cross-subject holds,
+    # an agent picking an existing entity by id, a proposed merge). Existing-mode
+    # resolutions and merge/distinct pairs reference entities by NAME; the runner
+    # resolves each to its live id at step time. See _compile_intent.
+    intent: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -59,6 +70,7 @@ def load_scenario(path: Path) -> Scenario:
                 domain=s.get("domain", "general"),
                 created_at=s.get("created_at", "2026-06-10T12:00:00-06:00"),
                 reanalyze_step=s.get("reanalyze_step"),
+                intent=s.get("intent"),
             )
             for s in raw["steps"]
         ],

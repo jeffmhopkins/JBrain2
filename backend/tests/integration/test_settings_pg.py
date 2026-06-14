@@ -107,21 +107,3 @@ async def test_llm_task_overrides_round_trip_and_sanitizes(
     assert overrides["agent.turn"] == {"spec": "xai:grok-4.3", "reasoning_effort": "high"}
     assert overrides["note.extract"] == {"spec": "anthropic:claude-sonnet-4-6"}
     assert "bad.effort" not in overrides and "junk" not in overrides
-
-
-async def test_analysis_job_kind_follows_the_cutover_toggle(
-    maker: async_sessionmaker[AsyncSession],
-) -> None:
-    from jbrain.settings_store import NOTE_PIPELINE_KEY
-
-    store = SqlSettingsStore(maker)
-    # Absent → the v3 path (the shipped default).
-    assert await store.analysis_job_kind(OWNER) == "integrate_note"
-    # The legacy v1 path is still selectable as a live rollback.
-    await store.upsert(OWNER, NOTE_PIPELINE_KEY, "analyze")
-    assert await store.analysis_job_kind(OWNER) == "analyze_note"
-    await store.upsert(OWNER, NOTE_PIPELINE_KEY, "integrate")
-    assert await store.analysis_job_kind(OWNER) == "integrate_note"
-    # An unrecognized value falls back to the default (now v3).
-    await store.upsert(OWNER, NOTE_PIPELINE_KEY, "bogus")
-    assert await store.analysis_job_kind(OWNER) == "integrate_note"

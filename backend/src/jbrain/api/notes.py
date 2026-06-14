@@ -63,7 +63,7 @@ class NoteOut(BaseModel):
     ingest_state: str
     # Hidden from the home stream (still searchable); see POST /notes/{id}/hide.
     hidden: bool
-    # True once the analyze_note job has written the note_analysis row —
+    # True once the integrate_note job has written the note_analysis row —
     # the client's lifecycle chip disappears on it.
     analyzed: bool
     attachments: list[AttachmentOut]
@@ -321,8 +321,7 @@ async def analyze_note(
     repo: NotesRepoDep,
     jobs: JobQueueDep,
 ) -> dict[str, str]:
-    """On-demand re-analysis of one note: the configured analysis pipeline
-    (analyze_note v1 / integrate_note v3, per the cutover toggle), the same
+    """On-demand re-analysis of one note: the integrate_note pipeline, the same
     incremental upsert + retraction sweep an edit triggers — no special re-run
     job kind. Refused while the pipeline would run it anyway (ingest pending
     or OCR outstanding): the ingest gate owns that sequencing."""
@@ -330,8 +329,8 @@ async def analyze_note(
     note = await repo.get_note(ctx, note_id)
     if note is None:
         raise HTTPException(status_code=404, detail="note not found")
-    # Cross-kind: a 409 if EITHER analysis kind is active, so the toggle can't
-    # be raced into double-processing one note.
+    # A 409 if integration is already in flight, so the note can't be raced
+    # into double-processing.
     if await jobs.has_active_analysis(ctx, note_id):
         raise HTTPException(status_code=409, detail="analysis already queued or running")
     if note.ingest_state in ("pending", "processing") or await jobs.has_active_ocr_for_note(
@@ -341,7 +340,7 @@ async def analyze_note(
             status_code=409,
             detail="note is still being processed; analysis will run automatically",
         )
-    job_id = await jobs.enqueue(ctx, await jobs.analysis_job_kind(ctx), {"note_id": note_id})
+    job_id = await jobs.enqueue(ctx, "integrate_note", {"note_id": note_id})
     return {"job_id": job_id}
 
 

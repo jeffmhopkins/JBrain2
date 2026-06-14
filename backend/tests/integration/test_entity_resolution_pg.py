@@ -47,6 +47,17 @@ pytestmark = [
     pytest.mark.skipif(not docker_available(), reason="requires a Docker daemon"),
 ]
 
+# These exercise the DETERMINISTIC resolver / disambiguation through the full
+# pipeline (run_note -> analyze). Under integrate the agent resolves every
+# mention, so that resolver path is bypassed; the resolver layers stay covered
+# by the direct resolve_entity unit tests in this file, and declared-name /
+# collision by the harness scenarios (name_legal_reprojects_canonical,
+# adv_same_first_name_collapses). Tracked in docs/CUTOVER_V1_REMOVAL.md.
+_CUTOVER_SKIP = (
+    "deterministic resolver via pipeline is bypassed under integrate;"
+    " see docs/CUTOVER_V1_REMOVAL.md"
+)
+
 NOTE_TIME = datetime(2026, 6, 2, 16, 0, tzinfo=UTC)
 EARLIER = datetime(2026, 4, 1, 12, 0, tzinfo=UTC)
 MAY_FIRST = datetime(2026, 5, 1, tzinfo=UTC)
@@ -532,6 +543,7 @@ async def test_embedding_below_band_creates_provisional(
     assert outcome.created
 
 
+@pytest.mark.skip(reason=_CUTOVER_SKIP)
 async def test_embedding_never_autolinks_subject_bearing_entities(
     maker: async_sessionmaker[AsyncSession],
 ) -> None:
@@ -608,6 +620,7 @@ async def fetch_rows(maker: async_sessionmaker[AsyncSession], sql: str) -> list[
         return list((await s.execute(text(sql))).all())
 
 
+@pytest.mark.skip(reason=_CUTOVER_SKIP)
 async def test_disambiguation_call_shape_and_link(
     maker: async_sessionmaker[AsyncSession],
 ) -> None:
@@ -643,6 +656,7 @@ async def test_disambiguation_call_shape_and_link(
     assert await fetch_rows(maker, "SELECT 1 FROM app.review_items") == []
 
 
+@pytest.mark.skip(reason=_CUTOVER_SKIP)
 async def test_disambiguation_none_creates_provisional(
     maker: async_sessionmaker[AsyncSession],
 ) -> None:
@@ -663,6 +677,7 @@ async def test_disambiguation_none_creates_provisional(
     assert await fetch_rows(maker, "SELECT 1 FROM app.review_items") == []
 
 
+@pytest.mark.skip(reason=_CUTOVER_SKIP)
 async def test_disambiguation_degrades_to_review_when_task_unrouted(
     maker: async_sessionmaker[AsyncSession],
 ) -> None:
@@ -852,6 +867,7 @@ def _declare_name_extraction() -> str:
     )
 
 
+@pytest.mark.skip(reason=_CUTOVER_SKIP)
 async def test_declared_name_near_duplicate_files_merge_proposal(
     maker: async_sessionmaker[AsyncSession],
 ) -> None:
@@ -906,6 +922,7 @@ def _declare_given_name_extraction() -> str:
     )
 
 
+@pytest.mark.skip(reason=_CUTOVER_SKIP)
 async def test_given_name_does_not_propose_a_merge(
     maker: async_sessionmaker[AsyncSession],
 ) -> None:
@@ -923,6 +940,7 @@ async def test_given_name_does_not_propose_a_merge(
     assert await fetch_rows(maker, "SELECT 1 FROM app.review_items") == []
 
 
+@pytest.mark.skip(reason=_CUTOVER_SKIP)
 async def test_near_duplicate_across_subjects_is_never_proposed(
     maker: async_sessionmaker[AsyncSession],
 ) -> None:
