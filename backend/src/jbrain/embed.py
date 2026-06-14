@@ -103,3 +103,67 @@ class NoteEmbedder:
                 ],
             )
         log.info("embed.done", note_id=note_id, chunks=len(rows))
+
+
+class PredicateEmbedder:
+    """The sync_predicates job: keep the canonical_predicates index in step with
+    the live schema registry (predicate canonicalization Phase 2). Upserts a row
+    per registry-declared canonical (the registry is the source of truth, not a
+    frozen migration snapshot), then fills missing/stale embeddings. Idempotent:
+    re-running inserts nothing new and re-embeds only rows whose model changed."""
+
+    def __init__(self, maker: async_sessionmaker[AsyncSession], client: EmbedClient, model: str):
+        self._maker = maker
+        self._client = client
+        self._model = model
+
+    async def sync_predicates(self, _payload: dict[str, Any]) -> None:
+        from jbrain.analysis.predicates import registry_seed_rows
+
+        seeds = registry_seed_rows()
+        async with scoped_session(self._maker, SYSTEM_CTX) as session:
+            await session.execute(
+                text(
+                    "INSERT INTO app.canonical_predicates"
+                    " (canonical_name, descriptor, value_shape, kind, functional, origin)"
+                    " VALUES (:canonical_name, :descriptor, :value_shape, :kind,"
+                    " :functional, 'seed')"
+                    " ON CONFLICT (canonical_name) DO NOTHING"
+                ),
+                [
+                    {
+                        "canonical_name": s.canonical_name,
+                        "descriptor": s.descriptor,
+                        "value_shape": s.value_shape,
+                        "kind": s.kind,
+                        "functional": s.functional,
+                    }
+                    for s in seeds
+                ],
+            )
+            todo = (
+                await session.execute(
+                    text(
+                        "SELECT canonical_name, descriptor FROM app.canonical_predicates"
+                        " WHERE embedding IS NULL OR embedding_model IS DISTINCT FROM :model"
+                    ),
+                    {"model": self._model},
+                )
+            ).all()
+        if not todo:
+            log.info("predicates.synced", upserted=len(seeds), embedded=0)
+            return
+        vectors = await self._client.embed([r.descriptor for r in todo])
+        async with scoped_session(self._maker, SYSTEM_CTX) as session:
+            await session.execute(
+                text(
+                    "UPDATE app.canonical_predicates"
+                    " SET embedding = cast(:emb AS vector), embedding_model = :model"
+                    " WHERE canonical_name = :name"
+                ),
+                [
+                    {"name": r.canonical_name, "emb": vector_literal(vec), "model": self._model}
+                    for r, vec in zip(todo, vectors, strict=True)
+                ],
+            )
+        log.info("predicates.synced", upserted=len(seeds), embedded=len(todo))

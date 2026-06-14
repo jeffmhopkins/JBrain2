@@ -536,6 +536,31 @@ async def backfill_consolidate(maker: async_sessionmaker[AsyncSession], ctx: Ses
         return cast(CursorResult[Any], result).rowcount or 0
 
 
+async def backfill_sync_predicates(
+    maker: async_sessionmaker[AsyncSession], ctx: SessionContext
+) -> int:
+    """Enqueue ONE sync_predicates job at boot when none is pending — the
+    self-heal that keeps the canonical_predicates index in step with the schema
+    registry (predicate canonicalization Phase 2). The job is idempotent (upsert
+    DO NOTHING + embed only missing/stale rows), so scheduling is unconditional
+    beyond the no-duplicate guard, mirroring backfill_consolidate. This is what
+    seeds the empty table on first boot."""
+    async with scoped_session(maker, ctx) as session:
+        result = await session.execute(
+            text(
+                """
+                INSERT INTO app.jobs (id, kind, payload)
+                SELECT gen_random_uuid(), 'sync_predicates', '{}'::jsonb
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM app.jobs
+                    WHERE kind = 'sync_predicates' AND status IN ('queued', 'running')
+                )
+                """
+            )
+        )
+        return cast(CursorResult[Any], result).rowcount or 0
+
+
 async def backfill_unembedded_notes(
     maker: async_sessionmaker[AsyncSession], ctx: SessionContext
 ) -> int:

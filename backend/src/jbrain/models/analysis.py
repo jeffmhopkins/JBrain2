@@ -215,3 +215,24 @@ class ReviewItem(Base):
     domain_code: Mapped[str] = mapped_column(Text, ForeignKey("app.domains.code"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class CanonicalPredicate(Base):
+    """One global reference row per canonical predicate (predicate
+    canonicalization Phase 2, docs/PREDICATE_CANONICALIZATION.md §3.3).
+
+    `embedding` (pgvector vector(384)) is deliberately unmapped — written and
+    cosine-queried via raw SQL exactly like Entity.summary_embedding; the ORM
+    never touches it. Not domain-scoped: predicates are global vocabulary."""
+
+    __tablename__ = "canonical_predicates"
+    __table_args__ = {"schema": "app"}
+
+    canonical_name: Mapped[str] = mapped_column(Text, primary_key=True)
+    descriptor: Mapped[str] = mapped_column(Text)
+    embedding_model: Mapped[str | None] = mapped_column(Text, nullable=True)
+    value_shape: Mapped[str] = mapped_column(Text)
+    kind: Mapped[str] = mapped_column(Text)
+    functional: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    origin: Mapped[str] = mapped_column(Text, default="seed", server_default="seed")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
