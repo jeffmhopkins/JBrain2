@@ -22,6 +22,9 @@ interface Proposal {
   label: string;
   detail: string | null;
   destructive: boolean;
+  // Extra fields a choice carries into the resolve payload (e.g. the
+  // canonical_name a new_predicate map_to_existing choice must echo back).
+  payload?: Record<string, unknown>;
 }
 
 interface Parsed {
@@ -53,7 +56,16 @@ function parsePayload(payload: Record<string, unknown>): Parsed {
         const action = str(o.action);
         const label = str(o.label);
         if (action === null || label === null) return [];
-        return [{ action, label, detail: str(o.detail), destructive: o.destructive === true }];
+        const canonical = str(o.canonical_name);
+        return [
+          {
+            action,
+            label,
+            detail: str(o.detail),
+            destructive: o.destructive === true,
+            ...(canonical !== null ? { payload: { canonical_name: canonical } } : {}),
+          },
+        ];
       })
     : [];
   const before = choices.find((c) => c.action === "accept_a") ?? null;
@@ -229,7 +241,11 @@ function decidedVerb(item: ReviewItem): string {
   if (a === "accept" || a === "accept_a" || a === "accept_b") return "approved";
   if (a === "reject") return "rejected";
   if (a === "correct") return "corrected";
-  return a;
+  // new_predicate outcomes: a mapped predicate and a minted one read better as
+  // verbs than their raw resolve actions.
+  if (a === "map_to_existing" || a === "suggest_better") return "mapped";
+  if (a === "accept_as_new") return "kept as new";
+  return a.replaceAll("_", " ");
 }
 
 // ===== Detail =====
@@ -265,7 +281,10 @@ function Detail({ item, lane, queue, position, onClose, onNav }: DetailProps) {
   function choose(proposal: Proposal) {
     const key = `prop-${proposal.action}`;
     if (proposal.destructive && !tap(key)) return;
-    queue.resolve(item.id, proposal.action, { choice: proposal.label });
+    queue.resolve(item.id, proposal.action, {
+      choice: proposal.label,
+      ...(proposal.payload ?? {}),
+    });
     onClose();
   }
 

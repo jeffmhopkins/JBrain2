@@ -348,7 +348,8 @@ export type ReviewKind =
   | "domain_promotion"
   | "low_confidence"
   | "split_proposal"
-  | "extraction_truncated";
+  | "extraction_truncated"
+  | "new_predicate";
 
 export type ReviewStatus = "open" | "resolved" | "dismissed" | "deferred";
 
