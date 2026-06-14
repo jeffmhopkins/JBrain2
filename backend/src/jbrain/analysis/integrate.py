@@ -28,7 +28,7 @@ from jbrain.llm import LlmRouter
 
 # Stamped on every IntegrationIntent alongside the prompt version; CI-guarded
 # bump when the driver's contract changes (mirrors PROMPT_VERSION discipline).
-INTEGRATOR_VERSION = "integrator-v1"
+INTEGRATOR_VERSION = "integrator-v2"
 
 
 class Integrator:
@@ -42,6 +42,7 @@ class Integrator:
         extraction: Extraction,
         graph_context: str,
         schema_version: int,
+        note_text: str = "",
     ) -> IntegrationIntent:
         """Produce a validated IntegrationIntent for one note. Raises
         IntentParseError if the model output is unusable after the adapter's
@@ -49,7 +50,7 @@ class Integrator:
         result = await self._router.complete(
             "integrate.note",
             system=INTEGRATE_SYSTEM,
-            user_text=build_integrate_prompt(extraction, graph_context),
+            user_text=build_integrate_prompt(extraction, graph_context, note_text),
             json_schema=INTENT_SCHEMA,
             max_tokens=INTEGRATE_MAX_TOKENS,
             strength=INTEGRATE_STRENGTH,

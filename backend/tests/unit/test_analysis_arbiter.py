@@ -80,7 +80,7 @@ def test_surface_attested_fact_commits():
     assert plan.rejected is False
     assert len(plan.to_commit) == 1
     assert plan.to_commit[0].status == "active"
-    assert plan.to_commit[0].weight == 0.9
+    assert plan.to_commit[0].weight == 1.0  # surface-attested → full ceiling
 
 
 def test_inferred_attribute_overwrite_routes_to_review():

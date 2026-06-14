@@ -161,3 +161,13 @@ def test_non_dict_value_json_becomes_none():
 def test_object_entity_ref_passthrough():
     payload = _payload(facts=[_fact(object_entity_ref="m2")])
     assert parse_intent(payload, **_PROV).facts[0].object_entity_ref == "m2"
+
+
+def test_attested_span_from_surface_alone():
+    # chunk_id is optional — the arbiter relocates the chunk from the surface, so
+    # the agent (which has no real chunk ids) only needs to quote the surface.
+    payload = _payload(facts=[_fact(surface="Celine")])
+    span = parse_intent(payload, **_PROV).facts[0].attested_span
+    assert span is not None
+    assert span.surface == "Celine"
+    assert span.chunk_id == ""

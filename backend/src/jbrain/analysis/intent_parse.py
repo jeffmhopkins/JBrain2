@@ -102,10 +102,12 @@ class IntentParseError(Exception):
 
 
 def _span(raw: dict[str, Any]) -> AttestedSpan | None:
-    chunk_id = raw.get("chunk_id")
+    # Only `surface` is required: the agent has no real chunk ids, and the arbiter
+    # re-locates the chunk from the surface anyway (_locate). chunk_id is optional
+    # provenance, never load-bearing for attestation.
     surface = raw.get("surface")
-    if chunk_id and surface:
-        return AttestedSpan(chunk_id=str(chunk_id), surface=str(surface))
+    if surface:
+        return AttestedSpan(chunk_id=str(raw.get("chunk_id") or ""), surface=str(surface))
     return None
 
 

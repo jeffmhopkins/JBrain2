@@ -20,11 +20,12 @@ INTEGRATE_MAX_TOKENS: int = int(_PROMPT.config["max_tokens"])
 INTEGRATE_SYSTEM: str = _PROMPT.render()
 
 
-def build_integrate_prompt(extraction: Extraction, graph_context: str) -> str:
-    """The per-note user text: the note's extraction and the known graph context,
-    both wrapped as DATA (the system prompt's data/instruction boundary). The
-    mention `name` is the `mention_ref` the agent's resolutions and facts key on,
-    so the two stay aligned end to end."""
+def build_integrate_prompt(extraction: Extraction, graph_context: str, note_text: str = "") -> str:
+    """The per-note user text: the note's raw text (for coreference + surface
+    citation), its extraction, and the known graph context — all wrapped as DATA
+    (the system prompt's data/instruction boundary). The mention `name` is the
+    `mention_ref` the agent's resolutions and facts key on, so the two stay
+    aligned end to end."""
     lines = ["Mentions:"]
     for m in extraction.mentions:
         lines.append(f"- {m.name} (kind: {m.kind}; surface: {m.surface_text!r})")
@@ -38,8 +39,11 @@ def build_integrate_prompt(extraction: Extraction, graph_context: str) -> str:
         )
     note_block = "\n".join(lines)
     ctx = graph_context.strip() or "(no related entities found in the graph)"
+    body = note_text.strip() or "(raw note text unavailable; use the extraction)"
     return (
-        "<note_extraction>\n"
+        "<note_text>\n"
+        + body
+        + "\n</note_text>\n\n<note_extraction>\n"
         + note_block
         + "\n</note_extraction>\n\n<graph_context>\n"
         + ctx

@@ -56,7 +56,14 @@ def test_self_confidence_can_only_lower_never_raise():
 
 
 def test_effective_weight_never_negative():
-    assert effective_weight(-5.0, _sig()) == 0.0
+    # The self-report only applies to inferred facts; a negative one floors at 0.
+    assert effective_weight(-5.0, _sig(surface_attested=False)) == 0.0
+
+
+def test_surface_attested_ignores_low_self_confidence():
+    # A literally-stated fact gets its full ceiling even if the model under-rates
+    # itself (the note is the authority; self-report is noisy run-to-run).
+    assert effective_weight(0.3, _sig()) == 1.0
 
 
 def test_ceiling_clamped_to_zero_floor():
@@ -97,6 +104,7 @@ def test_inferred_attribute_conflict_routes_to_review():
 
 
 def test_surface_attested_fact_commits():
+    # Surface-attested → full ceiling (1.0), not bounded by the self-report.
     weight, status = assess("relationship", 0.9, _sig())
-    assert weight == 0.9
+    assert weight == 1.0
     assert status == "active"

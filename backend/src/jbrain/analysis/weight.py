@@ -78,9 +78,19 @@ def ceiling(signals: ConfidenceSignals) -> float:
 
 
 def effective_weight(self_confidence: float, signals: ConfidenceSignals) -> float:
-    """The committed confidence: the model's self-report bounded by the ceiling.
-    Self-confidence may only LOWER it (N11), never raise it."""
-    return max(0.0, min(self_confidence, ceiling(signals)))
+    """The committed confidence (N11, refined by real-model calibration):
+
+    - A SURFACE-ATTESTED fact (the note literally states it) gets its full
+      ceiling. The note is the authority, not the agent's self-report — which is
+      noisy run-to-run — so a stated fact is never dragged into review by the
+      agent under-rating its own certainty.
+    - An INFERRED fact's weight is the model's self-confidence bounded by the
+      ceiling: it may only LOWER it, never inflate (the anti-inflation rule that
+      keeps a confident guess from buying a commit)."""
+    cap = ceiling(signals)
+    if signals.surface_attested:
+        return cap
+    return max(0.0, min(self_confidence, cap))
 
 
 def commit_status(kind: str, weight: float) -> CommitStatus:

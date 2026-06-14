@@ -355,11 +355,13 @@ class AnalysisPipeline:
         # enhancement, best tuned against real model output (docs/INTEGRATOR_PLAN.md
         # Track B). The wiring below is identical either way.
         graph_context = ""
+        note_text = "\n\n".join(c.text for c in chunks) or body
         intent = await self._integrator.integrate(
             note_id=note_id,
             extraction=extraction,
             graph_context=graph_context,
             schema_version=_SCHEMA_VERSION,
+            note_text=note_text,
         )
         plan = plan_intent(intent, compute_signals(intent, [c.text for c in chunks]))
 
