@@ -15,6 +15,7 @@ EXPECTED_TASKS = {
     "vision.caption",
     "agent.turn",
     "session.title",
+    "integrate.note",
 }
 
 

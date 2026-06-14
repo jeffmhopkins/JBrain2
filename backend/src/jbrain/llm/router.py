@@ -49,6 +49,10 @@ TASK_DEFAULTS: dict[str, str] = {
     # The tool-using personal agent's turn (docs/ASSISTANT.md). Strong tier by
     # default — agent reasoning over tools is the high-stakes path.
     "agent.turn": "xai:grok-4.3",
+    # The note→graph Integrator: graph-aware coreference/relationship/gender
+    # judgment that produces an IntegrationIntent (docs/INTEGRATOR_PLAN.md). Strong
+    # tier — it owns the hard decisions the deterministic core then validates.
+    "integrate.note": "xai:grok-4.3",
     # Auto-titling a chat from its first exchange — a cheap one-shot summary; the
     # prompt declares the `low` tier, this default is just the operator-override hook.
     "session.title": "xai:grok-4.3",
