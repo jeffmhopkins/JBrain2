@@ -88,9 +88,7 @@ class LlmSettingsPut(BaseModel):
     tasks: dict[str, TaskOverrideIn]
 
 
-def _effective(
-    settings: Settings, task: str, overrides: dict[str, dict[str, str]]
-) -> TaskInfo:
+def _effective(settings: Settings, task: str, overrides: dict[str, dict[str, str]]) -> TaskInfo:
     """The EFFECTIVE provider/effort for a task after merging stored overrides
     over the task default — the same precedence the router applies."""
     entry = overrides.get(task) or {}
@@ -104,9 +102,7 @@ def _effective(
             id=task, label=TASK_LABELS[task], provider=provider_label, reasoning_effort=None
         )
     effort = entry.get("reasoning_effort") or REASONING_DEFAULT if provider_id == "grok" else None
-    return TaskInfo(
-        id=task, label=TASK_LABELS[task], provider=provider_id, reasoning_effort=effort
-    )
+    return TaskInfo(id=task, label=TASK_LABELS[task], provider=provider_id, reasoning_effort=effort)
 
 
 async def _snapshot(

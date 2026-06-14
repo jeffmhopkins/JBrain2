@@ -158,9 +158,7 @@ class LlmRouter:
         except KeyError:
             raise LlmError(f"unknown LLM task: {task!r}") from None
 
-    async def _resolve_live(
-        self, task: str, strength: str | None
-    ) -> tuple[str, str, str | None]:
+    async def _resolve_live(self, task: str, strength: str | None) -> tuple[str, str, str | None]:
         """Resolve (provider, model, reasoning_effort) folding in the live DB
         overrides. A stored `spec` is the HIGHEST-precedence selector — above an
         env pin, the strength tier, and the task default — because the settings
