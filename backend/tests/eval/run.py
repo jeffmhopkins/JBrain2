@@ -209,7 +209,9 @@ async def main() -> int:
     if not settings.xai_api_key:
         print("JBRAIN_XAI_API_KEY not set — the real-Grok eval is opt-in.")
         return 2
-    cases = _selected(sys.argv[1:])
+    # Canonicalization is a DB-mode behavior; intent-mode check_case can't assert
+    # a requires_canon case, so skip them rather than burn Grok calls for nothing.
+    cases = [c for c in _selected(sys.argv[1:]) if not c.requires_canon]
     tally = _Tally()
     router = build_router(settings, recorder=tally)
 
