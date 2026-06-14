@@ -93,19 +93,35 @@ genuinely new concept, or a worse spelling of one we have?"
 ### 3.1a The new-predicate review action
 
 Reuses the existing review-item machinery (`pending_review` + cards, the
-accept/reject resolution path in `analysis/repo.py`). A `new_predicate` card
-carries: the raw predicate, its `descriptor`/sample statement, the entity kind,
-and the top-k nearest existing predicates with similarity scores. The reviewer —
-owner in the UI, or the agent per `docs/ASSISTANT.md` — chooses one of:
+accept/reject resolution path in `analysis/repo.py`). The card is **suggestion-led**:
+it doesn't make the reviewer recall the vocabulary, it proposes ranked
+alternatives and asks them to pick.
 
-- **Accept as new** → mint the canonical predicate (`origin='minted'`), embed +
-  index it; future occurrences hit the synonym/index fast path.
-- **Map to an existing predicate** → register the raw spelling as a `renamed_from`
-  of that canonical (so it auto-collapses next time), and queue a consolidation
-  rewrite of the already-committed facts.
-- **Suggest a better name** → mint under a reviewer-supplied canonical (e.g. the
-  model said `mortgageServicingProvider`, the reviewer pins `mortgageServicer`),
-  registering the raw as a `renamed_from` of it.
+The card carries the raw predicate, its `descriptor`/sample statement, the entity
+kind, and a ranked list of **suggested alternate predicates**, drawn from two
+sources:
+
+- the **embedding neighbors** — the top-k existing canonicals by cosine
+  similarity (free; the search already ran to land in this band); and,
+  optionally,
+- an **LLM-proposed shortlist** — one cheap `complete` call that, given the raw
+  predicate + statement + entity kind, proposes a canonical name (and may surface
+  a good existing one the embedding missed, e.g. a synonym that isn't lexically
+  close). This is the same "model proposes, deterministic layer disposes" shape
+  the integrator already uses.
+
+The reviewer — owner in the UI, or the agent per `docs/ASSISTANT.md` — then:
+
+- **Picks a suggested alternate** → register the raw spelling as a `renamed_from`
+  of that canonical (so it auto-collapses next time) and queue a consolidation
+  rewrite of the already-committed facts. (One click for the common case: "yes,
+  this is just `mortgageServicer`.")
+- **Accepts as new** → mint the canonical predicate (`origin='minted'`), embed +
+  index it; future occurrences hit the synonym/index fast path. A suggestion can
+  seed the name, so "accept" and "suggest a better name" are the same control
+  with the field pre-filled.
+- **Types their own** → mint under a reviewer-supplied canonical the suggestions
+  didn't cover.
 
 Whichever is chosen, `consolidation.py plan_renames` (which already rewrites drift
 spellings to canonical) heals the **stored** facts — so the graph converges, not
@@ -252,3 +268,9 @@ on:
 - **Cost**: one embed per *unknown* predicate per note. Known predicates
   short-circuit, so steady-state cost is ~zero; worth confirming on a real
   corpus.
+- **LLM-proposed suggestions (§3.1a)**: worth the extra `complete` call, or do
+  embedding neighbors alone make good enough suggestions? It only fires when a
+  card is *created* (a miss that needs review), not per fact — but it should be
+  deferred to review time, batched across pending cards, not run on the hot
+  ingest path. Start with embedding-only suggestions; add the LLM shortlist if
+  the eval shows the neighbors miss obvious canonicals.
