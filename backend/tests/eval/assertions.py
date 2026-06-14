@@ -332,6 +332,26 @@ def check_case_db(case: Case, commit: DbCommit) -> list[str]:
                     f"domain floor: {counts.get(dom, 0)} committed facts in {dom!r} < {need}"
                 )
 
+    # --- review cards (the new_predicate canonicalization card, Phase 4) ---
+    for spec in ex.review_cards:
+        kind = spec.get("kind")
+        pred = spec.get("predicate")
+        need = spec.get("min_suggestions", 0)
+        match = next(
+            (
+                c
+                for c in commit.review_cards
+                if c.kind == kind
+                and (pred is None or _name_match(pred, c.predicate))
+                and len(c.suggestions) >= need
+            ),
+            None,
+        )
+        if match is None:
+            fails.append(
+                f"expected review card {kind!r} for {pred!r} (>= {need} suggestions) missing"
+            )
+
     # --- over-extraction bound (committed facts this note wrote) ---
     if ex.max_facts is not None and len(commit.facts) > ex.max_facts:
         fails.append(f"too many committed facts: {len(commit.facts)} > max {ex.max_facts}")

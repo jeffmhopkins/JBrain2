@@ -23,6 +23,8 @@ from tests.eval.cases import Case, DbCommit
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+    from jbrain.embed import EmbedClient
+
 _OWNER_LINE = "Owner/author: entity id 'owner-1' name 'Me' (Person)."
 
 
@@ -137,12 +139,21 @@ async def _seed_graph(
 
 
 async def run_case_db(
-    router: LlmRouter, case: Case, *, maker: async_sessionmaker[AsyncSession], tmp_path: object
+    router: LlmRouter,
+    case: Case,
+    *,
+    maker: async_sessionmaker[AsyncSession],
+    tmp_path: object,
+    embedder: EmbedClient | None = None,
+    embed_model: str = "",
+    canonicalize: bool = False,
 ) -> DbCommit:
     """Run a case through the full production chain — extract → integrate →
-    plan_intent → apply_intent → COMMIT — against real Postgres, then read the
-    committed graph back into a DbCommit for check_case_db. Reuses the SAME two
-    Grok calls as run_case (token-neutral); only the testcontainer is new."""
+    [canonicalize] → plan_intent → apply_intent → COMMIT — against real Postgres,
+    then read the committed graph back into a DbCommit for check_case_db. Reuses
+    the SAME two Grok calls as run_case (token-neutral); only the testcontainer is
+    new. With `canonicalize`, an embedder + the predicate_canonicalization setting
+    must be live so unknown predicates are matched against the canonical index."""
     from sqlalchemy import select
 
     from jbrain.analysis.entities import get_or_create_me
@@ -152,9 +163,12 @@ async def run_case_db(
     from jbrain.ingest.chunker import PARAGRAPH
     from jbrain.models.notes import Chunk
     from jbrain.queue import SYSTEM_CTX
+    from jbrain.settings_store import SqlSettingsStore
     from tests.integration.test_extraction_pg import ingest, make_note
 
-    pipeline = AnalysisPipeline(maker, router)
+    pipeline = AnalysisPipeline(
+        maker, router, embedder=embedder, embed_model=embed_model, settings=SqlSettingsStore(maker)
+    )
     note_id = await make_note(maker, domain=case.domain, body=case.note_text)
     await ingest(maker, note_id, tmp_path)
     prior_note = await make_note(maker, domain=case.domain, body="seed: prior knowledge")
@@ -194,8 +208,8 @@ async def run_case_db(
             owner_id=owner.id,
             mentions=extraction.mentions,
             note_domain=case.domain,
-            embedder=None,
-            embed_model="",
+            embedder=embedder,
+            embed_model=embed_model,
         )
     intent = await Integrator(router).integrate(
         note_id=note_id,
@@ -204,6 +218,10 @@ async def run_case_db(
         schema_version=1,
         note_text="\n\n".join(texts),
     )
+    # Canonicalize unknown predicates before the arbiter keys facts (Phase 3 §3.1);
+    # self-gates on the setting + embedder, so it's inert unless --canon armed both.
+    if canonicalize:
+        await pipeline.canonicalize_intent(intent, note_domain=case.domain)
     plan = plan_intent(intent, compute_signals(intent, texts))
 
     async with scoped_session(maker, SYSTEM_CTX) as session:
@@ -235,7 +253,7 @@ async def _read_commit(
     from jbrain.db.session import scoped_session
     from jbrain.models.analysis import Entity, Fact, ReviewItem
     from jbrain.queue import SYSTEM_CTX
-    from tests.eval.cases import CommittedFact, SeededFactState
+    from tests.eval.cases import CommittedFact, ReviewCard, SeededFactState
 
     async with scoped_session(maker, SYSTEM_CTX) as session:
         fact_rows = list(
@@ -313,6 +331,15 @@ async def _read_commit(
     seeded_facts = tuple(
         _state(sym, name, pred, watched_rows[wid]) for sym, name, pred, wid in watched
     )
+    review_cards = tuple(
+        ReviewCard(
+            kind=c.kind,
+            predicate=c.payload.get("predicate"),
+            suggestions=tuple((s["name"], s["score"]) for s in c.payload.get("suggestions", [])),
+        )
+        for c in cards
+        if c.kind == "new_predicate"
+    )
     return DbCommit(
         owner_id=owner_id,
         note_id=note_id,
@@ -321,4 +348,5 @@ async def _read_commit(
         entities=names,
         review_fact_ids=review_fact_ids,
         seeded_facts=seeded_facts,
+        review_cards=review_cards,
     )

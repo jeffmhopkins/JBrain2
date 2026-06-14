@@ -8,15 +8,22 @@ feeds it real rows (dispositions round-trip, seeded entities resolve, prior
 facts read back). The real-Grok run (tests/eval/run.py --db) is the opt-in gate.
 """
 
+import hashlib
 import json
+import random
 import re
 from collections.abc import Sequence
 from typing import Any
 
 import pytest
+from sqlalchemy import text
 
+from jbrain.analysis.predicates import raw_descriptor
+from jbrain.db.session import scoped_session
 from jbrain.llm import LlmRouter
 from jbrain.llm.types import LlmImage, LlmResult, LlmUsage, parse_json_payload
+from jbrain.queue import SYSTEM_CTX
+from jbrain.settings_store import PREDICATE_CANON_KEY, SqlSettingsStore
 from tests.conftest import docker_available
 from tests.eval.assertions import check_case_db
 from tests.eval.cases import case_from_dict
@@ -216,3 +223,95 @@ async def test_run_case_db_resolves_to_seeded_entity(maker, tmp_path):  # noqa: 
     # The seeded prior fact read back (its supersession state is observable).
     assert any(s.predicate == "industry" for s in commit.seeded_facts)
     assert check_case_db(case, commit) == []
+
+
+_CANON_MODEL = "test-embed-v1"
+_HIRE_STMT = "Pat was hired by Globex."
+
+
+def _canon_vec(t: str) -> list[float]:
+    rng = random.Random(int.from_bytes(hashlib.sha256(t.encode()).digest()[:8], "big"))
+    return [rng.uniform(-1, 1) for _ in range(384)]
+
+
+class _CanonEmbed:
+    async def embed(self, texts: list[str]) -> list[list[float]]:
+        return [_canon_vec(t) for t in texts]
+
+
+async def test_run_case_db_canonicalizes_a_drift_predicate(maker, tmp_path):  # noqa: F811
+    # Proves the --canon harness wiring: with the flag on + an embedder, an
+    # unknown predicate that embeds STRONG to a seeded canonical is rewritten
+    # before the arbiter keys the fact — the committed predicate is the canonical.
+    await SqlSettingsStore(maker).upsert(SYSTEM_CTX, PREDICATE_CANON_KEY, True)
+    # Seed 'worksFor' with the exact vector the unknown predicate's descriptor
+    # embeds to (cosine 1 -> STRONG).
+    async with scoped_session(maker, SYSTEM_CTX) as session:
+        await session.execute(
+            text(
+                "INSERT INTO app.canonical_predicates"
+                " (canonical_name, descriptor, value_shape, kind, embedding, embedding_model)"
+                " VALUES ('worksFor', 'd', 'ref', 'relationship', cast(:emb AS vector), :m)"
+            ),
+            {
+                "emb": "["
+                + ",".join(
+                    map(str, _canon_vec(raw_descriptor("isHiredBy", _HIRE_STMT, "relationship")))
+                )
+                + "]",
+                "m": _CANON_MODEL,
+            },
+        )
+
+    extract = json.dumps(
+        {
+            "title": "Work",
+            "tags": [],
+            "mentions": [
+                {"name": "Pat", "kind": "Person", "surface_text": "Pat"},
+                {"name": "Globex", "kind": "Organization", "surface_text": "Globex"},
+            ],
+            "facts": [],
+            "temporal_tokens": [],
+        }
+    )
+    intent = json.dumps(
+        {
+            "resolutions": [
+                {"mention_ref": "m1", "mode": "new", "new_kind": "Person", "new_name": "Pat"},
+                {
+                    "mention_ref": "m2",
+                    "mode": "new",
+                    "new_kind": "Organization",
+                    "new_name": "Globex",
+                },
+            ],
+            "facts": [
+                {
+                    "entity_ref": "m1",
+                    "predicate": "isHiredBy",
+                    "kind": "relationship",
+                    "assertion": "asserted",
+                    "statement": _HIRE_STMT,
+                    "object_entity_ref": "m2",
+                    "self_confidence": 0.95,
+                    "surface": "hired",
+                }
+            ],
+        }
+    )
+    case = case_from_dict({"id": "canon-wire", "note_text": _HIRE_STMT})
+
+    commit = await run_case_db(
+        _router([_fixed(extract), _fixed(intent)]),
+        case,
+        maker=maker,
+        tmp_path=tmp_path,
+        embedder=_CanonEmbed(),
+        embed_model=_CANON_MODEL,
+        canonicalize=True,
+    )
+
+    preds = {f.predicate for f in commit.facts}
+    assert "worksFor" in preds  # the drift predicate was rewritten to the canonical
+    assert "isHiredBy" not in {p.lower() for p in preds}

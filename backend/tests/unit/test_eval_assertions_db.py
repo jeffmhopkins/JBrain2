@@ -10,7 +10,13 @@ means something if this logic is itself proven.
 from typing import Any
 
 from tests.eval.assertions import check_case_db
-from tests.eval.cases import CommittedFact, DbCommit, SeededFactState, case_from_dict
+from tests.eval.cases import (
+    CommittedFact,
+    DbCommit,
+    ReviewCard,
+    SeededFactState,
+    case_from_dict,
+)
 
 OWNER = "owner-uuid"
 
@@ -38,6 +44,7 @@ def _commit(
     seeded_ids: dict[str, str] | None = None,
     review_fact_ids: frozenset[str] = frozenset(),
     seeded_facts: tuple[SeededFactState, ...] = (),
+    review_cards: tuple[ReviewCard, ...] = (),
 ) -> DbCommit:
     return DbCommit(
         owner_id=OWNER,
@@ -47,6 +54,7 @@ def _commit(
         entities=entities if entities is not None else {OWNER: "Me"},
         review_fact_ids=review_fact_ids,
         seeded_facts=seeded_facts,
+        review_cards=review_cards,
     )
 
 
@@ -328,3 +336,49 @@ def test_absent_fact_committed_is_caught() -> None:
     commit = _commit((_cf(OWNER, "Me", "worksFor", object_name="EvilCorp"),))
     fails = check_case_db(case, commit)
     assert any("forbidden committed fact present" in f for f in fails)
+
+
+# --- new_predicate review cards (Phase 4) ------------------------------------
+
+
+def test_review_card_present_passes() -> None:
+    case = case_from_dict(
+        {
+            "id": "c",
+            "note_text": "x",
+            "expect": {"review_cards": [{"kind": "new_predicate", "min_suggestions": 1}]},
+        }
+    )
+    commit = _commit(
+        (),
+        review_cards=(
+            ReviewCard(
+                kind="new_predicate", predicate="favoriteColor", suggestions=(("hue", 0.8),)
+            ),
+        ),
+    )
+    assert check_case_db(case, commit) == []
+
+
+def test_review_card_missing_is_caught() -> None:
+    case = case_from_dict(
+        {"id": "c", "note_text": "x", "expect": {"review_cards": [{"kind": "new_predicate"}]}}
+    )
+    fails = check_case_db(case, _commit(()))  # no cards filed
+    assert any("expected review card" in f for f in fails)
+
+
+def test_review_card_too_few_suggestions_is_caught() -> None:
+    case = case_from_dict(
+        {
+            "id": "c",
+            "note_text": "x",
+            "expect": {"review_cards": [{"kind": "new_predicate", "min_suggestions": 1}]},
+        }
+    )
+    # A cold card with no suggestions fails a WEAK (>=1 suggestion) expectation.
+    commit = _commit(
+        (), review_cards=(ReviewCard(kind="new_predicate", predicate="x", suggestions=()),)
+    )
+    fails = check_case_db(case, commit)
+    assert any("expected review card" in f for f in fails)

@@ -1,0 +1,36 @@
+[
+  {
+    "id": "canon-novel-files-a-card",
+    "category": "canonicalization",
+    "domain": "general",
+    "note_text": "Just noting for the record that my favorite color is teal.",
+    "requires_canon": true,
+    "db_advisory": false,
+    "advisory": true,
+    "expect": {
+      "review_cards": [
+        {
+          "kind": "new_predicate"
+        }
+      ],
+      "rationale": "A genuinely novel concept (no near canonical) is a cold band -> the unknown predicate commits on its raw name and files exactly one new_predicate review card. The exact predicate Grok emits is latitude, so the card is asserted by kind."
+    }
+  },
+  {
+    "id": "canon-novel-second-files-a-card",
+    "category": "canonicalization",
+    "domain": "general",
+    "note_text": "Random fact about me: I can wiggle my ears on command.",
+    "requires_canon": true,
+    "db_advisory": false,
+    "advisory": true,
+    "expect": {
+      "review_cards": [
+        {
+          "kind": "new_predicate"
+        }
+      ],
+      "rationale": "Another novel-concept cold case -> a new_predicate card. Drift->STRONG-rewrite and near-miss->WEAK cases are authored during the Phase-4 calibration run, where the real Grok predicate + embedding sims are observed."
+    }
+  }
+]
