@@ -398,7 +398,7 @@ class AnalysisPipeline:
         # Canonicalize unknown predicates BEFORE the arbiter keys facts, so a
         # STRONG embedding match collapses the committed graph address and the
         # weight model sees the canonical name (Phase 3 §3.1; no-op when off).
-        await self._canonicalize_predicates(intent, note_domain=domain)
+        await self.canonicalize_intent(intent, note_domain=domain)
         plan = plan_intent(intent, compute_signals(intent, [c.text for c in chunks]))
 
         provider, model = self._router.spec("integrate.note", INTEGRATE_STRENGTH)
@@ -594,6 +594,12 @@ class AnalysisPipeline:
                     domain_code=card_domain,
                 )
             )
+
+    async def canonicalize_intent(self, intent: IntegrationIntent, *, note_domain: str) -> None:
+        """Public entry for the embedding predicate-canonicalization pass — the
+        supported seam the eval harness calls (production integrate_note uses it
+        too). Inert without an embedder or with the setting off."""
+        await self._canonicalize_predicates(intent, note_domain=note_domain)
 
     async def _canonicalize_predicates(
         self, intent: IntegrationIntent, *, note_domain: str

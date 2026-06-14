@@ -1,4 +1,4 @@
-"""CLI for the real-Grok eval: `uv run python -m tests.eval.run [--db] [id-filter]`.
+"""CLI for the real-Grok eval: `uv run python -m tests.eval.run [--db] [--canon] [id-filter]`.
 
 The opt-in quality gate to run BEFORE shipping a prompt change. Needs
 JBRAIN_XAI_API_KEY. Prints per-case PASS / FAIL / ADVISORY, the failures, and the
@@ -10,6 +10,12 @@ fail the run.
 testcontainer and asserts on the COMMITTED graph (dispositions, supersession
 closure, resolve-to-existing, domain floors) — same two Grok calls, more gate.
 Needs Docker. The graph is reset between cases so they don't contaminate.
+
+`--canon` (implies --db) additionally turns predicate canonicalization ON: it
+seeds + embeds the canonical_predicates index (the real bootstrap job) and runs
+the requires_canon cases (drift→STRONG rewrite, novel→cold card, near-miss→WEAK
+card). Needs the TEI embed container up as well as Docker + Grok — the Phase-4
+band-calibration run.
 """
 
 from __future__ import annotations
@@ -75,7 +81,7 @@ def _print_cost(tally: _Tally, *, db: bool) -> None:
     print(f"{tally.calls} calls ~${cost:.3f}{' · DB-mode' if db else ''}")
 
 
-async def _db_loop(cases: list[Case], app_url: str, tmp: str, reset) -> int:
+async def _db_loop(cases: list[Case], app_url: str, tmp: str, reset, *, canon: bool = False) -> int:
     # The async engine binds to this loop, so it is created here (not in the sync
     # bootstrap). build_router's recorder tallies the same two Grok calls per case.
     from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -86,13 +92,36 @@ async def _db_loop(cases: list[Case], app_url: str, tmp: str, reset) -> int:
     engine = create_async_engine(app_url, poolclass=NullPool)
     maker = async_sessionmaker(engine, expire_on_commit=False)
     tally = _Tally()
-    router = build_router(Settings(), recorder=tally)
+    settings = Settings()
+    router = build_router(settings, recorder=tally)
+
+    embedder = None
+    embed_model = ""
+    if canon:
+        # Real embeddings + the predicate_canonicalization setting ON, and seed the
+        # canonical index once via the real bootstrap job (needs the TEI container).
+        from jbrain.embed import PredicateEmbedder, TeiEmbedClient
+        from jbrain.queue import SYSTEM_CTX
+        from jbrain.settings_store import PREDICATE_CANON_KEY, SqlSettingsStore
+
+        embedder = TeiEmbedClient(settings.embed_url)
+        embed_model = settings.embed_model
+        await SqlSettingsStore(maker).upsert(SYSTEM_CTX, PREDICATE_CANON_KEY, True)
+        await PredicateEmbedder(maker, embedder, embed_model).sync_predicates({})
 
     debug = bool(os.environ.get("JBRAIN_EVAL_DEBUG"))
 
     async def run_one(case: Case) -> list[str]:
         reset()
-        commit = await run_case_db(router, case, maker=maker, tmp_path=tmp)
+        commit = await run_case_db(
+            router,
+            case,
+            maker=maker,
+            tmp_path=tmp,
+            embedder=embedder,
+            embed_model=embed_model,
+            canonicalize=canon,
+        )
         if debug:
             for f in commit.facts:
                 obj = f" -> {f.object_name}" if f.object_name else ""
@@ -131,7 +160,12 @@ def run_db_mode(args: list[str]) -> int:
         print("--db needs a Docker daemon for the Postgres testcontainer.")
         return 2
 
+    canon = "--canon" in args
     cases = _selected(args)
+    if not canon:
+        # canon-only cases (drift/novel/near-miss) need predicate canonicalization
+        # live; they never file their cards without it, so skip them otherwise.
+        cases = [c for c in cases if not c.requires_canon]
     with pgvector_container() as pg, tempfile.TemporaryDirectory() as tmp:
         admin = sqlalchemy.create_engine(
             pg.get_connection_url(driver="psycopg"), isolation_level="AUTOCOMMIT"
@@ -148,13 +182,16 @@ def run_db_mode(args: list[str]) -> int:
         def reset() -> None:
             # Wipe the per-case graph but keep reference/migration rows: domains
             # holds the seeded firewall codes a note's domain FKs to; truncating
-            # it would make every health/finance/location note fail the FK.
+            # it would make every health/finance/location note fail the FK. In
+            # --canon mode the canonical_predicates index is seeded once up front,
+            # so it is preserved too (empty and harmless to exempt otherwise).
             with admin.connect() as conn:
                 rows = conn.execute(
                     text(
                         "SELECT schemaname, tablename FROM pg_tables WHERE schemaname"
                         " NOT IN ('pg_catalog', 'information_schema')"
-                        " AND tablename NOT IN ('alembic_version', 'domains')"
+                        " AND tablename NOT IN"
+                        " ('alembic_version', 'domains', 'canonical_predicates')"
                     )
                 ).all()
                 if rows:
@@ -162,7 +199,7 @@ def run_db_mode(args: list[str]) -> int:
                     conn.execute(text(f"TRUNCATE {targets} CASCADE"))
 
         try:
-            return asyncio.run(_db_loop(cases, app_url, tmp, reset))
+            return asyncio.run(_db_loop(cases, app_url, tmp, reset, canon=canon))
         finally:
             admin.dispose()
 
@@ -186,6 +223,7 @@ async def main() -> int:
 
 
 if __name__ == "__main__":
-    if "--db" in sys.argv[1:]:
+    # --canon implies DB-mode (it asserts the committed graph).
+    if "--db" in sys.argv[1:] or "--canon" in sys.argv[1:]:
         raise SystemExit(run_db_mode(sys.argv[1:]))
     raise SystemExit(asyncio.run(main()))

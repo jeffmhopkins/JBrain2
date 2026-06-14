@@ -67,6 +67,9 @@ class Expect:
     # the (Grok-variable) predicate spelling — e.g. {"health": 1} proves a health
     # note's facts floored to health.
     committed_domains: dict[str, int] = field(default_factory=dict)
+    # DB-mode review cards a case must file — each spec {kind, predicate?,
+    # min_suggestions?} (the new_predicate canonicalization card, Phase 4).
+    review_cards: tuple[dict[str, Any], ...] = ()
     rationale: str = ""
 
 
@@ -113,6 +116,9 @@ class Case:
     # invariants are deterministic) while staying advisory at intent-level, or
     # vice versa. None → falls back to `advisory`.
     db_advisory: bool | None = None
+    # Only meaningful with predicate canonicalization ON — skipped unless the
+    # eval runs in --canon mode (Phase 4).
+    requires_canon: bool = False
     seed: tuple[SeedEntity, ...] = ()
     expect: Expect = field(default_factory=Expect)
 
@@ -156,6 +162,16 @@ class SeededFactState:
 
 
 @dataclass(frozen=True)
+class ReviewCard:
+    """A review-inbox card committed by a case (Phase 4: the new_predicate card a
+    WEAK/cold canonicalization files)."""
+
+    kind: str
+    predicate: str | None
+    suggestions: tuple[tuple[str, float], ...]
+
+
+@dataclass(frozen=True)
 class DbCommit:
     """Everything a DB-mode case exposes for assertion, read back from committed
     rows. Pure data so check_case_db is testable without Postgres or Grok."""
@@ -167,6 +183,7 @@ class DbCommit:
     entities: dict[str, str]  # entity UUID -> canonical_name (referenced by this note)
     review_fact_ids: frozenset[str]  # fact ids carrying a low_confidence_inference card
     seeded_facts: tuple[SeededFactState, ...] = ()
+    review_cards: tuple[ReviewCard, ...] = ()  # cards this note filed (e.g. new_predicate)
 
 
 def _expect(raw: dict[str, Any]) -> Expect:
@@ -181,6 +198,7 @@ def _expect(raw: dict[str, Any]) -> Expect:
         max_facts=raw.get("max_facts"),
         max_entities=raw.get("max_entities"),
         committed_domains=raw.get("committed_domains", {}),
+        review_cards=tuple(raw.get("review_cards", [])),
         rationale=raw.get("rationale", ""),
     )
 
@@ -209,6 +227,7 @@ def case_from_dict(raw: dict[str, Any]) -> Case:
         graph_context=raw.get("graph_context", ""),
         advisory=raw.get("advisory", False),
         db_advisory=raw.get("db_advisory"),
+        requires_canon=raw.get("requires_canon", False),
         seed=_seed(raw.get("seed", [])),
         expect=_expect(raw.get("expect", {})),
     )
