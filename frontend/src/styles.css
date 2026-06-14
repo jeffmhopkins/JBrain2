@@ -976,18 +976,25 @@ h3 {
   border-top: 1px solid var(--border);
 }
 .llm-member-name {
+  /* min-width:0 lets the name shrink/truncate so the controls always fit the
+     card — without it a long task id forces the row past the card's clipped edge. */
   flex: 1;
+  min-width: 0;
   font-size: var(--fs-secondary);
 }
 .llm-member-id {
   display: block;
   font-size: var(--fs-micro);
   color: var(--text-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .llm-member-controls {
   display: flex;
   align-items: center;
   gap: 8px;
+  flex: none;
 }
 .llm-member-select {
   width: auto;
@@ -995,9 +1002,16 @@ h3 {
   padding: 5px 7px;
   font-size: var(--fs-micro);
 }
+/* Single-letter (N/L/M/H) segments: a fixed compact width keeps the four
+   buttons legible and inside the card. */
 .llm-member-seg {
   width: auto;
   flex: none;
+}
+.llm-member-seg .seg {
+  min-width: 26px;
+  padding: 0.5em 0;
+  font-size: var(--fs-micro);
 }
 .llm-member-na {
   font-size: var(--fs-micro);
