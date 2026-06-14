@@ -848,6 +848,11 @@ h3 {
   border-radius: var(--r-card);
   overflow: hidden;
   box-shadow: var(--shadow-card);
+  /* The screen body is both the scroll container and a flex column, so cards
+     default to flex-shrink:1 — expanding one would compress the others and clip
+     their content past the rounded corners. Pin natural height; let the body
+     scroll instead. */
+  flex: none;
 }
 .llm-high {
   --llm-accent: var(--rose);
