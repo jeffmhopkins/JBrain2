@@ -38,6 +38,14 @@ NOTE_PIPELINE_KEY = "note_analysis_pipeline"
 ANALYZE_JOB = "analyze_note"
 INTEGRATE_JOB = "integrate_note"
 
+# Embedding-assisted predicate canonicalization (docs/PREDICATE_CANONICALIZATION.md
+# Phase 3): when on, the integrate pipeline cosine-matches an unknown predicate
+# against the canonical index and either rewrites it (STRONG) or files a
+# new_predicate review card. DB-backed, default OFF — the feature ships inert and
+# is flipped live after the Phase-4 eval calibrates the bands.
+PREDICATE_CANON_KEY = "predicate_canonicalization"
+PREDICATE_CANON_DEFAULT = False
+
 
 class SqlSettingsStore:
     def __init__(self, maker: async_sessionmaker[AsyncSession]):
@@ -87,3 +95,8 @@ class SqlSettingsStore:
         """The job kind the analysis trigger should enqueue right now — the one
         source of truth every enqueue site shares so the cutover is atomic."""
         return INTEGRATE_JOB if await self.note_pipeline(ctx) == "integrate" else ANALYZE_JOB
+
+    async def predicate_canonicalization(self, ctx: SessionContext) -> bool:
+        """Whether embedding-assisted predicate canonicalization is on (Phase 3).
+        Defaults OFF; only an explicit `true` enables it."""
+        return await self.get(ctx, PREDICATE_CANON_KEY, PREDICATE_CANON_DEFAULT) is True

@@ -1,10 +1,77 @@
-"""Pure tests for the canonical-predicate helpers (predicate canonicalization
-Phase 2): descriptor synthesis and the registry -> seed-row collapse. No DB."""
+"""Pure tests for the canonical-predicate helpers (predicate canonicalization):
+descriptor synthesis + registry seed-row collapse (Phase 2), and the embedding
+band decision (Phase 3, nearest_predicates faked). No DB."""
 
 from __future__ import annotations
 
-from jbrain.analysis.predicates import predicate_descriptor, registry_seed_rows
+import pytest
+
+from jbrain.analysis import predicates as pmod
+from jbrain.analysis.predicates import (
+    decide_predicate,
+    predicate_descriptor,
+    raw_descriptor,
+    registry_seed_rows,
+)
 from jbrain.schema.models import EntityType, Meta, Predicate, SchemaRegistry
+
+
+class _FakeEmbed:
+    async def embed(self, texts: list[str]) -> list[list[float]]:
+        return [[0.0] * 384 for _ in texts]
+
+
+def _patch_nearest(monkeypatch: pytest.MonkeyPatch, neighbors: list[tuple[str, float]]) -> None:
+    async def fake(session: object, vec: object, k: int) -> list[tuple[str, float]]:
+        return neighbors
+
+    monkeypatch.setattr(pmod, "nearest_predicates", fake)
+
+
+def test_raw_descriptor_includes_token_statement_and_kind() -> None:
+    d = raw_descriptor("worksAtCompany", "Pat works at Globex", "relationship")
+    assert "works at company" in d and "Globex" in d and "relationship" in d
+    # Degrades to the bare humanized token when there's nothing else.
+    assert raw_descriptor("x", "", None) == "x"
+
+
+async def test_decide_predicate_strong(monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch_nearest(monkeypatch, [("spouse", 0.95), ("knows", 0.60)])
+    d = await decide_predicate(
+        None,
+        predicate="marriedTo",
+        statement="x",
+        kind="relationship",
+        embedder=_FakeEmbed(),
+        embed_model="m",
+    )
+    assert d.band == "strong" and d.canonical == "spouse"
+
+
+async def test_decide_predicate_weak(monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch_nearest(monkeypatch, [("spouse", 0.82)])
+    d = await decide_predicate(
+        None,
+        predicate="partneredWith",
+        statement="x",
+        kind=None,
+        embedder=_FakeEmbed(),
+        embed_model="m",
+    )
+    assert d.band == "weak" and d.canonical is None and d.suggestions[0][0] == "spouse"
+
+
+async def test_decide_predicate_cold(monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch_nearest(monkeypatch, [])
+    d = await decide_predicate(
+        None,
+        predicate="frobnicates",
+        statement="x",
+        kind=None,
+        embedder=_FakeEmbed(),
+        embed_model="m",
+    )
+    assert d.band == "cold" and d.canonical is None and d.suggestions == ()
 
 
 def test_predicate_descriptor_humanizes_name_and_adds_shape_hint() -> None:

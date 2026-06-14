@@ -12,6 +12,7 @@ action POST /review/{id}/resolve accepts, and the wording stays in the UI's
 lowercase-calm register (frontend mock.ts is the reference fixtures).
 """
 
+from collections.abc import Sequence
 from typing import Any
 
 SNIPPET_CHARS = 240
@@ -154,4 +155,22 @@ def inference_display(*, statement: str, reasons: list[str], snippet: str | None
             "accept": "the fact is recorded and pinned — reprocessing won't drop it.",
             "reject": "the fact is discarded.",
         },
+    }
+
+
+def new_predicate_display(
+    *, predicate: str, suggestions: Sequence[tuple[str, float]], snippet: str | None = None
+) -> dict[str, Any]:
+    """new_predicate card fields: an unknown predicate the canonicalizer could not
+    confidently merge (Phase 3 §3.1a). The fact already committed under its raw
+    name; this surfaces it so the owner/agent can keep it or map it onto a
+    suggested canonical. The map/accept CHOICES land with their resolve handlers
+    (Phase 3b); until then the card is informational + reject-to-dismiss, so it
+    advertises only verbs /resolve already accepts."""
+    near = ", ".join(f"{name} ({sim:.2f})" for name, sim in suggestions[:3])
+    hint = f" — nearest: {near}" if near else " — no close match"
+    return {
+        "summary": f"new predicate '{predicate}'{hint}",
+        "snippet": snippet,
+        "outcomes": {"reject": "the predicate is left as-is on the fact's statement."},
     }

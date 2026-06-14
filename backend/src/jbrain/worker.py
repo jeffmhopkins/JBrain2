@@ -155,7 +155,12 @@ async def run() -> None:
     # The embed client also powers entity-resolution layer 2 (similarity);
     # without it the resolver still runs layers 1/2b/3.
     analyzer = AnalysisPipeline(
-        maker, router, embedder=TeiEmbedClient(settings.embed_url), embed_model=settings.embed_model
+        maker,
+        router,
+        embedder=TeiEmbedClient(settings.embed_url),
+        embed_model=settings.embed_model,
+        # The predicate_canonicalization toggle (Phase 3); default-off until the eval.
+        settings=SqlSettingsStore(maker),
     )
     # Eager-load the schema registry so a missing/malformed defs/ fails the
     # worker LOUDLY at startup — never mid-note, where the SchemaError would
