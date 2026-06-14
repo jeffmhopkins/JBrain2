@@ -8,7 +8,6 @@ import pytest
 
 from jbrain import install_wipe
 from jbrain.config import Settings
-from jbrain.settings_store import NOTE_PIPELINE_KEY
 
 
 def test_should_wipe_truth_table() -> None:
@@ -49,12 +48,8 @@ def _stub_destructive(monkeypatch: pytest.MonkeyPatch, calls: list[str]) -> None
     def _rebuild() -> None:
         calls.append("rebuild")
 
-    async def _enable(url: str) -> None:
-        calls.append("enable")
-
     monkeypatch.setattr(install_wipe, "_drop_schema", _drop)
     monkeypatch.setattr(install_wipe, "_rebuild_schema", _rebuild)
-    monkeypatch.setattr(install_wipe, "_enable_v3", _enable)
 
 
 def test_main_noops_when_flag_off(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -94,7 +89,7 @@ def test_main_refuses_without_migration_url(
     assert calls == []
 
 
-def test_main_wipes_rebuilds_enables_and_writes_sentinel_last(
+def test_main_wipes_rebuilds_and_writes_sentinel_last(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     settings = _settings(tmp_path, enabled=True)
@@ -107,8 +102,8 @@ def test_main_wipes_rebuilds_enables_and_writes_sentinel_last(
     monkeypatch.setenv(install_wipe.MIGRATION_URL_ENV, "postgresql+asyncpg://x")
 
     assert install_wipe.main() == 0
-    # Order: drop schema → clear storage → rebuild → enable v3 (then sentinel).
-    assert calls == ["drop", "rebuild", "enable"]
+    # Order: drop schema → clear storage → rebuild (then sentinel).
+    assert calls == ["drop", "rebuild"]
     assert (Path(settings.blob_dir) / "stale.bin").exists() is False  # storage cleared
     assert install_wipe._sentinel_path(settings).exists()  # written last
 
@@ -137,9 +132,3 @@ def test_empty_string_flag_env_falls_back_to_off(monkeypatch: pytest.MonkeyPatch
     # must parse as off, not crash the one-shot (env_ignore_empty).
     monkeypatch.setenv("JBRAIN_WIPE_ON_FIRST_DEPLOY", "")
     assert Settings().wipe_on_first_deploy is False
-
-
-def test_enable_v3_writes_the_integrate_toggle_key() -> None:
-    # Guard against the key drifting from settings_store; the wipe must write the
-    # exact toggle the trigger reads.
-    assert NOTE_PIPELINE_KEY == "note_analysis_pipeline"

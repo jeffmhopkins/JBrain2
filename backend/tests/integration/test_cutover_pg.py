@@ -1,6 +1,5 @@
-"""W3.3 cutover machinery against real Postgres: the cross-kind active guard and
-the bounded v3 backfill. The toggle helper itself is covered in test_settings_pg.
-"""
+"""Integration backfill machinery against real Postgres: the active-integration
+guard and the bounded integration backfill."""
 
 import uuid
 from collections.abc import AsyncIterator
@@ -91,15 +90,10 @@ async def _integrate_jobs(maker, note_id: str) -> int:  # noqa: F811
         ).scalar_one()
 
 
-async def test_has_active_analysis_is_cross_kind(maker) -> None:  # noqa: F811
+async def test_has_active_analysis_detects_the_integrate_job(maker) -> None:  # noqa: F811
     note = await _seed_note(maker, created="2026-01-01T00:00:00+00:00")
-    await _seed_job(maker, "analyze_note", note)
-    # The cross-kind guard sees the v1 job; a naive per-kind integrate check misses it.
+    await _seed_job(maker, "integrate_note", note)
     assert await queue.has_active_analysis(maker, OWNER, note) is True
-    assert (
-        await queue.has_active(maker, OWNER, "integrate_note", payload_field="note_id", value=note)
-        is False
-    )
     other = await _seed_note(maker, created="2026-01-01T00:00:00+00:00")
     assert await queue.has_active_analysis(maker, OWNER, other) is False
 
@@ -110,7 +104,7 @@ async def test_backfill_pending_integration_bounded_oldest_first_and_skips(maker
     n_new = await _seed_note(maker, created="2026-03-01T00:00:00+00:00")
     n_done = await _seed_note(maker, integrated=True, created="2025-01-01T00:00:00+00:00")
     n_busy = await _seed_note(maker, created="2025-06-01T00:00:00+00:00")
-    await _seed_job(maker, "analyze_note", n_busy)  # active v1 job → cross-kind skip
+    await _seed_job(maker, "integrate_note", n_busy)  # active job → skip (no second job)
     n_pending = await _seed_note(maker, indexed=False, created="2025-01-01T00:00:00+00:00")
 
     # Bounded: only the two oldest eligible (old, mid) — not new, integrated,
@@ -121,7 +115,8 @@ async def test_backfill_pending_integration_bounded_oldest_first_and_skips(maker
     assert await _integrate_jobs(maker, n_mid) == 1
     assert await _integrate_jobs(maker, n_new) == 0
     assert await _integrate_jobs(maker, n_done) == 0
-    assert await _integrate_jobs(maker, n_busy) == 0
+    # n_busy keeps only its pre-existing active job — the backfill added none.
+    assert await _integrate_jobs(maker, n_busy) == 1
     assert await _integrate_jobs(maker, n_pending) == 0
 
     # Second pass drains the remainder (n_new) but never re-enqueues a note that
