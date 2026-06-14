@@ -117,3 +117,31 @@ def test_build_integrate_prompt_includes_note_text_and_fallback():
     assert "RAW NOTE HERE" in build_integrate_prompt(_extraction(), "", note_text="RAW NOTE HERE")
     # Empty note text → the explicit fallback marker, never a blank block.
     assert "raw note text unavailable" in build_integrate_prompt(_extraction(), "")
+
+
+def test_build_integrate_prompt_surfaces_value_json():
+    # The agent must SEE the extraction's structured value to carry it forward —
+    # without it, attribute values regress to whole sentences (the v5 fix).
+    extraction = Extraction(
+        title="",
+        tags=[],
+        mentions=[ExtractedMention(name="Celine", kind="Person", surface_text="Celine")],
+        facts=[
+            ExtractedFact(
+                predicate="name.legal",
+                qualifier="",
+                kind="attribute",
+                statement="Celine's full name is Celine Kitina Hopkins.",
+                value_json={"value": "Celine Kitina Hopkins"},
+                assertion="asserted",
+                entity_ref="Celine",
+                object_entity_ref=None,
+                temporal=None,
+                domain="",
+                confidence=1.0,
+            )
+        ],
+        tokens=[],
+    )
+    text = build_integrate_prompt(extraction, "")
+    assert "value_json={'value': 'Celine Kitina Hopkins'}" in text

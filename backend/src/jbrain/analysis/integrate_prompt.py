@@ -34,8 +34,10 @@ def build_integrate_prompt(extraction: Extraction, graph_context: str, note_text
     for f in extraction.facts:
         qual = f".{f.qualifier}" if f.qualifier else ""
         obj = f" -> {f.object_entity_ref}" if f.object_entity_ref else ""
+        vj = f" value_json={f.value_json}" if f.value_json is not None else ""
         lines.append(
-            f"- {f.entity_ref}.{f.predicate}{qual}{obj} [{f.kind}/{f.assertion}]: {f.statement!r}"
+            f"- {f.entity_ref}.{f.predicate}{qual}{obj} "
+            f"[{f.kind}/{f.assertion}]{vj}: {f.statement!r}"
         )
     note_block = "\n".join(lines)
     ctx = graph_context.strip() or "(no related entities found in the graph)"

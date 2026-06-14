@@ -148,6 +148,14 @@ def test_oversized_statement_is_truncated():
     assert len(parse_intent(payload, **_PROV).facts[0].statement) == MAX_STATEMENT_CHARS
 
 
+def test_value_json_dict_passes_through():
+    # The bare structured datum the agent carries forward must survive parsing —
+    # the v5 fix depends on it reaching the committed fact (else values regress
+    # to whole sentences).
+    payload = _payload(facts=[_fact(value_json={"value": "Celine Kitina Hopkins"})])
+    assert parse_intent(payload, **_PROV).facts[0].value_json == {"value": "Celine Kitina Hopkins"}
+
+
 def test_oversized_value_json_is_dropped():
     payload = _payload(facts=[_fact(value_json={"k": "v" * 20000})])
     assert parse_intent(payload, **_PROV).facts[0].value_json is None

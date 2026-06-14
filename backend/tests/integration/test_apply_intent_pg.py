@@ -370,6 +370,37 @@ async def test_held_health_fact_floors_to_health_on_row_and_card(maker, tmp_path
     assert card.domain_code == "health"  # card rides the same floor — no leak
 
 
+async def test_apply_intent_commits_fact_value_json(maker, tmp_path):  # noqa: F811
+    # End of the value_json path (the v5 fix): a name attribute's bare datum must
+    # land on the committed fact row, not regress to the statement sentence.
+    note_id = await make_note(maker, domain="general", body="Celine Kitina Hopkins notes.")
+    await ingest(maker, note_id, tmp_path)
+    intent = _intent(
+        note_id,
+        [EntityResolution(mention_ref="m1", mode="new", new_kind="Person", new_name="Celine")],
+        [
+            _fact(
+                "m1",
+                predicate="name.legal",
+                kind="attribute",
+                statement="Celine's full name is Celine Kitina Hopkins.",
+                value_json={"value": "Celine Kitina Hopkins"},
+            )
+        ],
+    )
+    plan = plan_intent(intent, signals={0: _SURFACE})
+    await _run(maker, note_id, intent, plan, tmp_path=tmp_path)
+
+    async with scoped_session(maker, SYSTEM_CTX) as session:
+        fact = (
+            (await session.execute(select(Fact).where(Fact.note_id == uuid.UUID(note_id))))
+            .scalars()
+            .one()
+        )
+    assert fact.status == "active"
+    assert fact.value_json == {"value": "Celine Kitina Hopkins"}  # bare value, not the sentence
+
+
 async def test_apply_intent_rejected_plan_is_a_noop(maker, tmp_path):  # noqa: F811
     note_id = await make_note(maker, domain="general", body="Globex note.")
     await ingest(maker, note_id, tmp_path)
