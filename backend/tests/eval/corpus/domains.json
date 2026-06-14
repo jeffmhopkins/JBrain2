@@ -434,14 +434,13 @@
           "cross_subject": false
         }
       ],
-      "rationale": "One general-captured journal note carries per-fact domains: Lily's medication floors to health even from a general note (and is owner-observed about a dependent child, first-party not cross_subject); the work and habit facts stay general. Each fact gets its own domain.",
+      "rationale": "Per-fact domains from one general note: Lily's medication should floor to health, but that floor depends on Grok using a registry-recognized health predicate (non-deterministic today) — advisory until predicate canonicalization lands.",
       "committed_domains": {
         "health": 1,
         "general": 1
       }
     },
-    "advisory": true,
-    "db_advisory": false
+    "advisory": true
   },
   {
     "id": "domain-floor-health-predicate-in-general-note",
