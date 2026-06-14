@@ -19,10 +19,8 @@ from sqlalchemy.ext.asyncio import (
 )
 from sqlalchemy.pool import NullPool
 
-from jbrain.analysis.pipeline import AnalysisPipeline
 from jbrain.db.session import scoped_session
 from jbrain.ingest.pipeline import IngestPipeline
-from jbrain.llm import FakeLlmClient, LlmRouter
 from jbrain.notes.repo import SqlNotesRepo
 from jbrain.storage import FsBlobStore
 from tests.conftest import docker_available
@@ -95,10 +93,12 @@ async def analyzed_note(
 async def analyze(
     maker: async_sessionmaker[AsyncSession], note_id: str, extraction_json: str
 ) -> None:
-    router = LlmRouter(
-        {"xai": FakeLlmClient([extraction_json])}, {"note.extract": ("xai", "grok-4.3")}
-    )
-    await AnalysisPipeline(maker, router).analyze_note({"note_id": note_id})
+    # Drive integrate_note through the shared driver: it parses this scripted
+    # extraction and commits via a name-match default intent, so re-running with
+    # a different extraction exercises the genuine retraction/supersession sweep.
+    from tests.integration.test_extraction_pg import analyzer
+
+    await analyzer(maker, [extraction_json]).analyze_note({"note_id": note_id})
 
 
 async def fact_rows(maker: async_sessionmaker[AsyncSession], *note_ids: str) -> list[dict]:

@@ -282,16 +282,23 @@ async def test_analyze_prompt_marks_ocr_chunks_so_the_model_knows(
     ).ocr_attachment({"attachment_id": attachment_id})
     await pipeline.ingest_note({"note_id": note_id})
 
+    # One fake serves both calls positionally; the intent is empty (this test
+    # only asserts what reached the note.extract prompt — calls[0]).
     extract_fake = FakeLlmClient(
         [
             '{"title": "t", "tags": ["a", "b", "c"], "mentions": [], "facts": [],'
-            ' "temporal_tokens": []}'
+            ' "temporal_tokens": []}',
+            '{"resolutions": [], "facts": []}',
         ]
     )
     analyzer = AnalysisPipeline(
-        maker, LlmRouter({"xai": extract_fake}, {"note.extract": ("xai", "grok-4.3")})
+        maker,
+        LlmRouter(
+            {"xai": extract_fake},
+            {"note.extract": ("xai", "grok-4.3"), "integrate.note": ("xai", "grok-4.3")},
+        ),
     )
-    await analyzer.analyze_note({"note_id": note_id})
+    await analyzer.integrate_note({"note_id": note_id})
 
     user_text = extract_fake.calls[0]["user_text"]
     assert "[ocr from receipt.png]\nTotal: $41.20" in user_text
