@@ -260,14 +260,15 @@ practice and lean on the review loop (3b).
    policy + isolation test), bootstrap embed of the registry vocab, reads wired
    for `value_shape`/`functional`.
 3. **Embedding canonicalization + the new-predicate review action.** The
-   STRONG/WEAK/cold decision in the normalization path, behind a setting (default
-   off): STRONG auto-merges; WEAK/cold keep the raw predicate and file a
-   `new_predicate` review card (§3.1a) with accept / map-to-existing /
-   suggest-better resolutions. Descriptor embedding for both index rows and
-   incoming predicates.
+   STRONG/WEAK/cold decision in the normalization path, behind a setting (now
+   default ON post-calibration; flip off live to disable): STRONG auto-merges;
+   WEAK/cold keep the raw predicate and file a `new_predicate` review card
+   (§3.1a) with accept / map-to-existing / suggest-better resolutions. Descriptor
+   embedding for both index rows and incoming predicates.
 4. **Eval calibration.** Drift/mint/near-miss corpus cases; tune bands; re-pin
    the firewall predicates and flip `mixed-domain-journal`; confirm stability
-   over repeated runs. Enable the setting once green.
+   over repeated runs. Bands calibrated and the setting now defaults ON
+   (`predicate_canonicalization` / `value_shape_enforce`).
 5. **Self-improvement loop.** Agent reviews minted predicates, proposes
    merges/renames into the registry YAML via correction notes; consolidation
    sweep heals stored drift.

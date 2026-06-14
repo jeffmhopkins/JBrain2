@@ -166,7 +166,8 @@ async def run() -> None:
         router,
         embedder=TeiEmbedClient(settings.embed_url),
         embed_model=settings.embed_model,
-        # The predicate_canonicalization toggle (Phase 3); default-off until the eval.
+        # Reads the predicate_canonicalization + value_shape_enforce toggles
+        # (Phase 3/4); both default ON, flip off live via a settings upsert.
         settings=SqlSettingsStore(maker),
     )
     # Eager-load the schema registry so a missing/malformed defs/ fails the

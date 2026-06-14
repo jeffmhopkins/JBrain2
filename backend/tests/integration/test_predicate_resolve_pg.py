@@ -1,7 +1,8 @@
 """new_predicate card resolution (predicate canonicalization Phase 3b) against
-real Postgres: accept_as_new / suggest_better mint a canonical predicate;
-map_to_existing rewrites stored facts onto the canonical and enqueues the
-consolidation sweep; reopen reverses a map but keeps a mint (durable vocabulary).
+real Postgres: accept_as_new mints the raw predicate; suggest_better mints under
+a corrected name AND renames the committed fact onto it; map_to_existing rewrites
+stored facts onto the canonical and enqueues the consolidation sweep; reopen
+reverses a map/rename but keeps a mint (durable vocabulary).
 """
 
 import json
@@ -122,13 +123,15 @@ async def test_accept_as_new_mints_the_predicate(maker):  # noqa: F811
     assert row["kind"] == "state" and row["no_emb"]  # embedding left for the sync job
 
 
-async def test_suggest_better_mints_under_the_supplied_name(maker):  # noqa: F811
+async def test_suggest_better_mints_and_renames_the_fact(maker):  # noqa: F811
+    fact_id, _ = await _seed_fact(maker, "zzqRawForm")
     card = await _insert_card(maker, "zzqRawForm")
     await SqlAnalysisRepo(maker).resolve_review(
         OWNER, card, "suggest_better", {"canonical_name": "zzqBetterName"}
     )
     assert (await _canonical(maker, "zzqBetterName")) is not None
     assert (await _canonical(maker, "zzqRawForm")) is None  # minted under the better name only
+    assert await _fact_predicate(maker, fact_id) == "zzqBetterName"  # the fact adopts the name
 
 
 async def test_map_to_existing_rewrites_facts_and_enqueues_consolidation(maker):  # noqa: F811
@@ -174,3 +177,13 @@ async def test_reopen_reverses_a_map_but_keeps_a_mint(maker):  # noqa: F811
     await repo.resolve_review(OWNER, accept_card, "accept_as_new", {})
     await repo.reopen_review(OWNER, accept_card)
     assert (await _canonical(maker, "zzqReopenMint")) is not None  # not un-minted
+
+    # suggest_better -> reopen restores the raw predicate on the fact but keeps
+    # the mint (it renames like a map and mints like an accept).
+    sb_fact, _ = await _seed_fact(maker, "zzqReopenSuggest")
+    sb_card = await _insert_card(maker, "zzqReopenSuggest")
+    await repo.resolve_review(OWNER, sb_card, "suggest_better", {"canonical_name": "zzqSuggested"})
+    assert await _fact_predicate(maker, sb_fact) == "zzqSuggested"
+    await repo.reopen_review(OWNER, sb_card)
+    assert await _fact_predicate(maker, sb_fact) == "zzqReopenSuggest"  # rename reversed
+    assert (await _canonical(maker, "zzqSuggested")) is not None  # mint kept

@@ -282,6 +282,42 @@ describe("ReviewScreen (split inbox)", () => {
     );
   });
 
+  it("a new_predicate card lets you name the predicate yourself via suggest_better", async () => {
+    const newPred: ReviewItem = {
+      id: "np2",
+      kind: "new_predicate",
+      domain: "general",
+      created_at: "2026-06-10T07:00:00Z",
+      status: "open",
+      resolution: null,
+      resolved_at: null,
+      payload: {
+        summary: "unknown predicate “marriedTo” — map it or mint it?",
+        choices: [{ action: "accept_as_new", label: "keep marriedTo as new" }],
+      },
+    };
+    serve([newPred], [], []);
+    render(<ReviewScreen />);
+    await screen.findByText(/unknown predicate/);
+    fireEvent.click(screen.getByRole("button", { name: /unknown predicate/ }));
+
+    // The free-text control is gated behind a non-empty name.
+    const box = screen.getByLabelText("better predicate name");
+    expect(screen.getByRole("button", { name: "use this name" })).toBeDisabled();
+    fireEvent.change(box, { target: { value: "  spouse  " } });
+    fireEvent.click(screen.getByRole("button", { name: "use this name" }));
+
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/review/np2/resolve",
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify({ action: "suggest_better", payload: { canonical_name: "spouse" } }),
+        }),
+      ),
+    );
+  });
+
   it("an ambiguous mention is never reject-only: defer and talk-it-over are offered", async () => {
     render(<ReviewScreen />);
     await screen.findByText("two values recorded for Sarah's birthDate");
@@ -405,6 +441,30 @@ describe("ReviewScreen (split inbox)", () => {
         expect.objectContaining({ method: "POST" }),
       ),
     );
+  });
+
+  it("a decided suggest_better card reports the name the owner gave", async () => {
+    const decided: ReviewItem = {
+      id: "sb-decided",
+      kind: "new_predicate",
+      domain: "general",
+      created_at: "2026-06-09T10:00:00Z",
+      status: "resolved",
+      resolved_at: "2026-06-09T11:00:00Z",
+      resolution: { action: "suggest_better", payload: { canonical_name: "spouse" }, effects: [] },
+      payload: {
+        summary: "new predicate marriedTo",
+        choices: [{ action: "accept_as_new", label: "keep marriedTo" }],
+      },
+    };
+    serve([], [], [decided]);
+    render(<ReviewScreen />);
+    await screen.findByText("pending is clear — new items arrive as notes are analyzed.");
+    fireEvent.click(screen.getByRole("tab", { name: "decided 1" }));
+    fireEvent.click(screen.getByRole("button", { name: /new predicate marriedTo/ }));
+
+    // No offered row is ticked (suggest_better isn't a choice) — the name is named.
+    expect(screen.getByText(/named it yourself/)).toHaveTextContent("spouse");
   });
 
   it("shows per-lane empty states", async () => {
