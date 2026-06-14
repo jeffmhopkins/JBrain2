@@ -1008,10 +1008,12 @@ h3 {
   font-size: var(--fs-micro);
 }
 /* Single-letter (N/L/M/H) segments: a fixed compact width keeps the four
-   buttons legible and inside the card. */
+   buttons legible and inside the card. Square corners so the selection ring on
+   the end buttons (N, H) sits flush instead of clashing with a rounded edge. */
 .llm-member-seg {
   width: auto;
   flex: none;
+  border-radius: 0;
 }
 .llm-member-seg .seg {
   min-width: 26px;
