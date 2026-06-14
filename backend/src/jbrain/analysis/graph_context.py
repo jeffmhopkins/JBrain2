@@ -84,6 +84,14 @@ def _select_facts(facts: tuple[FactLine, ...], cap: int) -> tuple[FactLine, ...]
     return tuple(sorted(facts, key=_fact_sort_key)[:cap])
 
 
+def _clean(value: str) -> str:
+    # The block is line-oriented: a stray newline in a name/alias/value would
+    # split one fact across lines and read as a dangling fragment to the agent.
+    # Collapse internal whitespace so every rendered datum stays on its own line.
+    # (entity_id is never cleaned — it must round-trip verbatim.)
+    return " ".join(value.split())
+
+
 def rank_and_bound(
     owner: CandidateEntity | None,
     candidates: list[CandidateEntity],
@@ -109,14 +117,13 @@ def rank_and_bound(
 def _render_fact(subject: str, fact: FactLine) -> str:
     predicate = f"{fact.predicate}.{fact.qualifier}" if fact.qualifier else fact.predicate
     when = f", valid_from {fact.valid_from.date().isoformat()}" if fact.valid_from else ""
-    return (
-        f"  fact {subject}.{predicate} -> {fact.value or '-'} [{fact.kind}/{fact.assertion}]{when}"
-    )
+    value = _clean(fact.value) or "-"
+    return f"  fact {_clean(subject)}.{predicate} -> {value} [{fact.kind}/{fact.assertion}]{when}"
 
 
 def _render_entity(cand: CandidateEntity) -> list[str]:
-    alias = (", alias " + ", ".join(f"'{a}'" for a in cand.aliases)) if cand.aliases else ""
-    lines = [f"- id '{cand.entity_id}' name '{cand.name}' ({cand.kind}){alias}"]
+    alias = (", alias " + ", ".join(f"'{_clean(a)}'" for a in cand.aliases)) if cand.aliases else ""
+    lines = [f"- id '{cand.entity_id}' name '{_clean(cand.name)}' ({cand.kind}){alias}"]
     lines += [_render_fact(cand.name, f) for f in cand.facts]
     return lines
 
@@ -129,7 +136,9 @@ def render_graph_context(ranked: list[CandidateEntity]) -> str:
     if not ranked:
         return ""
     owner, others = ranked[0], ranked[1:]
-    lines = [f"Owner/author: entity id '{owner.entity_id}' name '{owner.name}' ({owner.kind})."]
+    lines = [
+        f"Owner/author: entity id '{owner.entity_id}' name '{_clean(owner.name)}' ({owner.kind})."
+    ]
     lines += [_render_fact(owner.name, f) for f in owner.facts]
     if others:
         lines.append("Known entities:")

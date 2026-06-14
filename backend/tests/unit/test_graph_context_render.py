@@ -120,3 +120,61 @@ def test_empty_value_renders_as_dash():
     )
     out = render_graph_context(rank_and_bound(_owner(), [ent]))
     assert "fact Pat.retired -> - [state/asserted]" in out
+
+
+def test_dotted_identity_predicate_survives_the_cap():
+    # name.legal is a canonical DOTTED predicate (stored predicate="name.legal",
+    # qualifier=""), the dispositive identity signal. It must outrank filler and
+    # survive a tight per-entity fact cap, and render as name.legal.
+    facts = (
+        _fact("favoriteColor", "blue", kind="attribute"),
+        _fact("name.legal", "Patricia Vance", kind="attribute"),
+    )
+    ent = CandidateEntity(entity_id="ent-1", name="Pat", kind="Person", facts=facts)
+    kept = rank_and_bound(_owner(), [ent], facts_per_entity=1)[1].facts
+    assert len(kept) == 1 and kept[0].predicate == "name.legal"
+    out = render_graph_context(rank_and_bound(_owner(), [ent], facts_per_entity=1))
+    assert "fact Pat.name.legal -> Patricia Vance [attribute/asserted]" in out
+
+
+def test_qualifier_bearing_name_predicate_is_identity_and_renders_dotted():
+    # name.nickname.kids = predicate "name.nickname" + qualifier "kids": the BARE
+    # predicate is the identity match, the rendered edge appends the qualifier.
+    fact = FactLine(
+        predicate="name.nickname",
+        qualifier="kids",
+        kind="attribute",
+        assertion="asserted",
+        value="Dad",
+    )
+    ent = CandidateEntity(
+        entity_id="ent-1",
+        name="Pat",
+        kind="Person",
+        facts=(_fact("mood", "good", kind="state"), fact),
+    )
+    kept = rank_and_bound(_owner(), [ent], facts_per_entity=1)[1].facts
+    assert kept[0].predicate == "name.nickname"  # identity beat the filler state
+    out = render_graph_context(rank_and_bound(_owner(), [ent], facts_per_entity=1))
+    assert "fact Pat.name.nickname.kids -> Dad [attribute/asserted]" in out
+
+
+def test_newline_in_value_or_name_is_collapsed_to_stay_one_line():
+    ent = CandidateEntity(
+        entity_id="ent-1",
+        name="Pat\nVance",
+        kind="Person",
+        facts=(_fact("note", "line1\nline2", kind="state"),),
+    )
+    out = render_graph_context(rank_and_bound(_owner(), [ent]))
+    assert "name 'Pat Vance'" in out
+    assert "fact Pat Vance.note -> line1 line2 [state/asserted]" in out
+    # every fact stays on exactly one line (no orphaned fragment)
+    assert all(line.strip() for line in out.splitlines())
+
+
+def test_zero_caps_are_handled():
+    cands = [CandidateEntity(entity_id="ent-1", name="X", kind="Person", facts=(_fact("a", "b"),))]
+    assert rank_and_bound(_owner(), cands, total_cap=0) == []  # nothing, not even owner
+    kept = rank_and_bound(_owner(), cands, facts_per_entity=0)[1].facts
+    assert kept == ()
