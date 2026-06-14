@@ -70,14 +70,48 @@ raw predicate
   └─ registry.normalize_predicate(raw)            # exact/alias (synonym table)
        ├─ hit  → canonical                         # zero cost, unchanged
        └─ miss → embed(descriptor(raw)) and cosine-search the predicate index
-                  ├─ sim ≥ STRONG        → canonicalize to the match
-                  ├─ WEAK ≤ sim < STRONG → accept raw + file a predicate-proposal review card
-                  └─ sim < WEAK          → MINT a new canonical predicate (self-extending), index it
+                  ├─ sim ≥ STRONG        → canonicalize to the match (auto, no review)
+                  ├─ WEAK ≤ sim < STRONG → keep raw + file a NEW-PREDICATE review action
+                  │                          (suggested mapping = the near match)
+                  └─ sim < WEAK          → keep raw + file a NEW-PREDICATE review action
+                                             (no suggestion; proposes minting it as canonical)
 ```
 
 Bands mirror entity resolution (reuse, then re-calibrate via eval). The synonym
 table stays the fast path; embedding is touched **only on a miss**, so the steady
 state (known predicates) costs nothing.
+
+**A new predicate is a review action, never a silent auto-mint.** Only the STRONG
+band acts automatically (it merges into an *existing* canonical, which is safe and
+reversible). Both other bands are *proposals*: the fact still commits immediately
+with its raw predicate (the storage invariant — a predicate name is never
+rejected — holds), and the canonicalization is deferred to a review item. This
+keeps the registry from sprawling on the model's whim and puts a human (or the
+self-improving agent) in the loop exactly where judgment is needed: "is this a
+genuinely new concept, or a worse spelling of one we have?"
+
+### 3.1a The new-predicate review action
+
+Reuses the existing review-item machinery (`pending_review` + cards, the
+accept/reject resolution path in `analysis/repo.py`). A `new_predicate` card
+carries: the raw predicate, its `descriptor`/sample statement, the entity kind,
+and the top-k nearest existing predicates with similarity scores. The reviewer —
+owner in the UI, or the agent per `docs/ASSISTANT.md` — chooses one of:
+
+- **Accept as new** → mint the canonical predicate (`origin='minted'`), embed +
+  index it; future occurrences hit the synonym/index fast path.
+- **Map to an existing predicate** → register the raw spelling as a `renamed_from`
+  of that canonical (so it auto-collapses next time), and queue a consolidation
+  rewrite of the already-committed facts.
+- **Suggest a better name** → mint under a reviewer-supplied canonical (e.g. the
+  model said `mortgageServicingProvider`, the reviewer pins `mortgageServicer`),
+  registering the raw as a `renamed_from` of it.
+
+Whichever is chosen, `consolidation.py plan_renames` (which already rewrites drift
+spellings to canonical) heals the **stored** facts — so the graph converges, not
+just future writes. The card is idempotent: repeated occurrences of the same
+unresolved raw predicate update one open card, they don't pile up (mirrors the
+held-fact idempotency the apply path already guarantees).
 
 Critically, **embed a descriptor, not the bare token.** Short predicate strings
 embed poorly — `worksFor` and `worksWith` are lexically close but opposite in
@@ -119,8 +153,11 @@ at runtime:
 | `embedding` | `vector(384)`, HNSW `vector_cosine_ops` |
 | `embedding_model` | provenance, like chunks/entities |
 | `value_shape`, `kind`, `functional` | mirrored from the registry for runtime reads |
-| `origin` | `seed` (from YAML) \| `minted` (embedding cold-miss) |
+| `origin` | `seed` (from YAML) \| `minted` (accepted via a new-predicate review) |
 | `created_at` | minted-at, for review/sweeps |
+
+A predicate only enters this table as `seed` (bootstrap) or `minted` *after* a
+new-predicate review action accepts it (§3.1a) — never directly from the model.
 
 It is **global reference data** (predicates are not domain-scoped), so it follows
 the `app.domains` precedent (`migrations/0001`, `domains_read … USING (true)`)
@@ -140,17 +177,21 @@ backfill discipline as entities/chunks).
 
 ## 4. Drift control (the real risk)
 
-A self-minting vocabulary can sprawl. Mitigations:
+A self-extending vocabulary can sprawl. Mitigations:
 
-- **High STRONG threshold** so near-duplicates merge, low-confidence mints are
-  rare; tune on the eval, not by guess.
-- **Mints are visible**: `origin='minted'` + a review card, so the owner/agent
-  can confirm-merge or rename. This is squarely `docs/ASSISTANT.md`
-  self-improvement territory — the agent periodically reviews minted predicates
-  and proposes merges back into the registry YAML (a correction note, never a
-  silent edit — CLAUDE.md rule 7).
-- **A minted predicate's value-type** is inferred from its first `value_json`
-  shape and held for review, not trusted blindly.
+- **New predicates are gated by review, not auto-minted** (§3.1a): the cold and
+  WEAK bands raise a proposal a human/agent must accept, so the registry never
+  grows on the model's whim. Only the STRONG band (merge into an *existing*
+  canonical) is automatic.
+- **High STRONG threshold** so near-duplicates auto-merge and the review queue
+  stays small; tune on the eval, not by guess.
+- **The agent is a valid reviewer** — `docs/ASSISTANT.md` self-improvement: it
+  batches new-predicate cards, proposes accept/map/rename, and the accepted
+  merges flow back into the registry YAML via a correction note (never a silent
+  edit — CLAUDE.md rule 7).
+- **A minted predicate's value-type** is the reviewer's choice (defaulting to the
+  shape inferred from its first `value_json`), captured when the proposal is
+  accepted — not trusted from the model blindly.
 - **Consolidation already exists** (`consolidation.py plan_renames`): once a
   mint is confirmed-merged, the nightly sweep rewrites stored drift rows to the
   canonical — so history heals, not just new writes.
@@ -183,9 +224,12 @@ on:
 2. **`canonical_predicates` table + seed.** Migration (table, HNSW index, RLS
    policy + isolation test), bootstrap embed of the registry vocab, reads wired
    for `value_shape`/`functional`.
-3. **Embedding canonicalization in the hook.** The STRONG/WEAK/cold decision in
-   the normalization path, behind a setting (default off). Descriptor embedding
-   for both index rows and incoming predicates. Review cards for WEAK + minted.
+3. **Embedding canonicalization + the new-predicate review action.** The
+   STRONG/WEAK/cold decision in the normalization path, behind a setting (default
+   off): STRONG auto-merges; WEAK/cold keep the raw predicate and file a
+   `new_predicate` review card (§3.1a) with accept / map-to-existing /
+   suggest-better resolutions. Descriptor embedding for both index rows and
+   incoming predicates.
 4. **Eval calibration.** Drift/mint/near-miss corpus cases; tune bands; re-pin
    the firewall predicates and flip `mixed-domain-journal`; confirm stability
    over repeated runs. Enable the setting once green.
