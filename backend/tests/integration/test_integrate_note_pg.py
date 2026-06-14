@@ -112,6 +112,43 @@ async def test_integrate_note_end_to_end(maker, tmp_path):  # noqa: F811
     assert note.integration_state == "integrated"  # the job flipped the lifecycle
 
 
+async def test_integrate_note_passes_graph_context_to_the_agent(maker, tmp_path):  # noqa: F811
+    # B3 wiring: an existing entity matching a mention must reach the integrate
+    # call via the retrieved graph_context, so the agent is no longer blind. The
+    # name is tagged to stay isolated in the shared module DB.
+    tag = uuid.uuid4().hex[:8]
+    name = f"Globex {tag}"
+    note_id = await make_note(maker, domain="general", body=f"Notes about {name} and its plans.")
+    await ingest(maker, note_id, tmp_path)
+    async with scoped_session(maker, SYSTEM_CTX) as session:
+        ent = Entity(
+            kind="Organization", canonical_name=name, status="confirmed", domain_code="general"
+        )
+        session.add(ent)
+        await session.flush()
+        ent_id = str(ent.id)
+
+    extract = json.dumps(
+        {
+            "title": "Work",
+            "tags": ["work", "career", "tech"],
+            "mentions": [{"name": name, "kind": "Organization", "surface_text": name}],
+            "facts": [],
+            "temporal_tokens": [],
+        }
+    )
+    fake = FakeLlmClient(responses=[extract, json.dumps({"resolutions": [], "facts": []})])
+    router = LlmRouter(
+        {"xai": fake},
+        {"note.extract": ("xai", "grok-4.3"), "integrate.note": ("xai", "grok-4.3")},
+    )
+    await AnalysisPipeline(maker, router).integrate_note({"note_id": note_id})
+
+    user_text = fake.calls[1]["user_text"]  # 0 = note.extract, 1 = integrate.note
+    assert "Owner/author" in user_text  # the owner anchor is present
+    assert ent_id in user_text  # the existing entity reached the agent (was "" before B3)
+
+
 async def test_integrate_note_missing_note_is_noop(maker, tmp_path):  # noqa: F811
     # A missing note must not raise (mirrors analyze_note's skip).
     await _pipeline(maker).integrate_note({"note_id": str(uuid.uuid4())})

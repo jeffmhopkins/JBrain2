@@ -52,6 +52,7 @@ from jbrain.analysis.entities import (
     build_disambiguation_prompt,
     create_provisional,
     declared_alias,
+    get_or_create_me,
     near_duplicate_entity,
     parse_disambiguation,
     plan_merge,
@@ -68,6 +69,7 @@ from jbrain.analysis.extraction import (
     parse_extraction,
     ratchet_domain,
 )
+from jbrain.analysis.graph_context import build_graph_context
 from jbrain.analysis.integrate import Integrator
 from jbrain.analysis.integrate_prompt import INTEGRATE_STRENGTH
 from jbrain.analysis.intent import EntityResolution, IntegrationIntent
@@ -350,11 +352,22 @@ class AnalysisPipeline:
             note_id=note_id,
         )
 
-        # First cut: empty graph context. Retrieving candidate entities + their
-        # current facts to make the agent genuinely graph-aware is the next
-        # enhancement, best tuned against real model output (docs/INTEGRATOR_PLAN.md
-        # Track B). The wiring below is identical either way.
-        graph_context = ""
+        # Graph-aware context: the existing entities + active facts near this
+        # note's mentions, so the agent can resolve to known entities and propose
+        # merges/supersessions instead of always minting new. Runs under the
+        # all-seeing SYSTEM_CTX; build_graph_context applies the domain firewall
+        # itself (RLS does not scope SYSTEM_CTX). get_or_create_me anchors the
+        # owner the agent resolves first person to.
+        async with scoped_session(self._maker, SYSTEM_CTX) as session:
+            owner = await get_or_create_me(session)
+            graph_context = await build_graph_context(
+                session,
+                owner_id=owner.id,
+                mentions=extraction.mentions,
+                note_domain=domain,
+                embedder=self._embedder,
+                embed_model=self._embed_model,
+            )
         note_text = "\n\n".join(c.text for c in chunks) or body
         intent = await self._integrator.integrate(
             note_id=note_id,
