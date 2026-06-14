@@ -163,14 +163,25 @@ def new_predicate_display(
 ) -> dict[str, Any]:
     """new_predicate card fields: an unknown predicate the canonicalizer could not
     confidently merge (Phase 3 §3.1a). The fact already committed under its raw
-    name; this surfaces it so the owner/agent can keep it or map it onto a
-    suggested canonical. The map/accept CHOICES land with their resolve handlers
-    (Phase 3b); until then the card is informational + reject-to-dismiss, so it
-    advertises only verbs /resolve already accepts."""
+    name; the card is suggestion-led — map it onto a nearby canonical, keep it as
+    a new one, or dismiss. Each advertised action is one /resolve accepts
+    (map_to_existing carries the chosen canonical_name; suggest_better is the same
+    control as accept with the name field edited, so it has no static choice)."""
     near = ", ".join(f"{name} ({sim:.2f})" for name, sim in suggestions[:3])
     hint = f" — nearest: {near}" if near else " — no close match"
+    choices: list[dict[str, Any]] = [
+        {
+            "action": "map_to_existing",
+            "label": name,
+            "detail": f"map onto {name} (≈ {sim:.2f})",
+            "canonical_name": name,
+        }
+        for name, sim in suggestions[:3]
+    ]
+    choices.append({"action": "accept_as_new", "label": f"keep '{predicate}' as a new predicate"})
+    choices.append({"action": "reject", "label": "dismiss", "detail": "leave it as-is"})
     return {
         "summary": f"new predicate '{predicate}'{hint}",
         "snippet": snippet,
-        "outcomes": {"reject": "the predicate is left as-is on the fact's statement."},
+        "choices": choices,
     }

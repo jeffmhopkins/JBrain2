@@ -21,10 +21,10 @@ recurring nightly + on-demand scheduling lands with the Phase-5 workflow engine
 
 from __future__ import annotations
 
-from typing import Any, cast
+from typing import Any
 
 import structlog
-from sqlalchemy import CursorResult, text
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from jbrain.db.session import scoped_session
@@ -45,6 +45,39 @@ def plan_renames(stored: set[str], registry: SchemaRegistry) -> dict[str, str]:
     return plan
 
 
+async def rewrite_predicate(session: AsyncSession, old: str, canonical: str) -> list[str]:
+    """Move every drift fact under `old` onto `canonical` IN PLACE (same row, id,
+    citations) where the canonical identity key is free, and return the rewritten
+    fact ids. The one guarded rewrite shared by the nightly sweep and the
+    new_predicate map_to_existing resolution, so their safety rules can't drift:
+
+    - Pinned facts are human history and never move (CLAUDE.md #7); a retracted
+      row is dead and not worth an address.
+    - Only a LIVE canonical twin blocks the move. A superseded/dead tombstone on
+      the canonical address must NOT strand the active drift chain there — that
+      would fork the property's history, the exact harm this exists to prevent.
+    """
+    result = await session.execute(
+        text(
+            "UPDATE app.facts f SET predicate = :canon"
+            " WHERE f.predicate = :old"
+            "   AND f.pinned = false"
+            "   AND f.status <> 'retracted'"
+            "   AND NOT EXISTS ("
+            "     SELECT 1 FROM app.facts g"
+            "     WHERE g.entity_id = f.entity_id"
+            "       AND g.subject_id IS NOT DISTINCT FROM f.subject_id"
+            "       AND g.qualifier = f.qualifier"
+            "       AND g.predicate = :canon"
+            "       AND g.status IN ('active', 'pending_review')"
+            "   )"
+            " RETURNING f.id::text"
+        ),
+        {"canon": canonical, "old": old},
+    )
+    return list(result.scalars().all())
+
+
 async def consolidate_predicates(session: AsyncSession) -> dict[str, int]:
     """Rename every drift predicate onto its canonical address where the target
     key is free. Returns counts of rows renamed and collisions left in place."""
@@ -56,31 +89,7 @@ async def consolidate_predicates(session: AsyncSession) -> dict[str, int]:
     # (legalName + legal_name -> name.legal), the first claims the key and the
     # second is left as a collision rather than merging two chains silently.
     for old, canonical in sorted(plan.items()):
-        result = await session.execute(
-            text(
-                "UPDATE app.facts f SET predicate = :canon"
-                " WHERE f.predicate = :old"
-                # Pinned facts are human history and never enter the sweep
-                # (CLAUDE.md #7, docs/ANALYSIS.md "Reprocessing"); a retracted
-                # row is dead and not worth an address.
-                "   AND f.pinned = false"
-                "   AND f.status <> 'retracted'"
-                # Only a LIVE canonical twin blocks the move. A superseded/dead
-                # tombstone on the canonical address must NOT strand the active
-                # drift chain there — that would fork the property's history,
-                # the exact harm this sweep exists to prevent.
-                "   AND NOT EXISTS ("
-                "     SELECT 1 FROM app.facts g"
-                "     WHERE g.entity_id = f.entity_id"
-                "       AND g.subject_id IS NOT DISTINCT FROM f.subject_id"
-                "       AND g.qualifier = f.qualifier"
-                "       AND g.predicate = :canon"
-                "       AND g.status IN ('active', 'pending_review')"
-                "   )"
-            ),
-            {"canon": canonical, "old": old},
-        )
-        renamed += cast(CursorResult[Any], result).rowcount or 0
+        renamed += len(await rewrite_predicate(session, old, canonical))
 
     # A collision is a LIVE, non-pinned drift row that could not move because a
     # live canonical twin holds its address — the merge machinery's job. Counted
