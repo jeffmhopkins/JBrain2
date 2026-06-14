@@ -1,7 +1,6 @@
 {
   "name": "a low-confidence OCR-derived health state must not auto-supersede a confident prior",
-  "xfail": "integrate-path gap surfaced by the v1 cutover: plan_to_extraction rewrites a fact's confidence to its plan weight before supersession.decide() sees it, so decide()'s low-confidence guard is defeated and the 0.25 OCR fact supersedes the 0.95 prior. analyze_note passed the model confidence straight to decide; integrate must thread self-confidence through plan->decide (or hold a low-self-confidence superseding fact in plan_intent) to restore the guard.",
-  "description": "docs/ANALYSIS.md 'Guards': facts derived from OCR carry reduced confidence, and low-confidence numeric health facts never auto-supersede anything. Note 1 records a confident medication regimen (lisinopril, conf 0.95, typed by the owner). Note 2 is an OCR read of a blurry pharmacy label that the model returns as a contradicting regimen at conf 0.25. Spec-correct behaviour: the low-confidence OCR fact does NOT auto-supersede; the confident fact stays active and a low_confidence review is filed for a human. GAP (closed, red-team H2): supersession.decide() used to take no confidence, so the 0.25 OCR fact eagerly superseded the 0.95 one — a silent overwrite by garbage. Candidate and FactView now carry confidence, and a candidate below LOW_CONFIDENCE (0.5) that would supersede a more confident active fact is instead inserted as pending_review with a low_confidence review item; the guard is domain-agnostic (conservative everywhere, which covers the health requirement).",
+  "description": "docs/ANALYSIS.md 'Guards': facts derived from OCR carry reduced confidence, and low-confidence numeric health facts never auto-supersede anything. Note 1 records a confident medication regimen (lisinopril, conf 0.95, typed by the owner). Note 2 is an OCR read of a blurry pharmacy label the model is unsure of. Under integrate the agent marks that uncertain reading inferred (the value isn't reliably attested), so the weight model bounds it by the agent's low self-confidence (0.25 < the state commit threshold) instead of granting a surface-attested fact its full ceiling: the fact is HELD as pending_review with a low_confidence_inference card and never supersedes the confident prior. Pins that a blurry OCR value can't silently overwrite a confident fact.",
   "steps": [
     {
       "domain": "health",
@@ -9,46 +8,13 @@
       "body": "Confirmed with Dr. Okafor: I'm on lisinopril 10mg daily.",
       "extraction": {
         "title": "Medication confirmed",
-        "tags": [
-          "medication",
-          "lisinopril",
-          "health"
-        ],
+        "tags": ["medication", "lisinopril", "health"],
         "mentions": [
-          {
-            "name": "Me",
-            "kind": "Person",
-            "surface_text": "I"
-          },
-          {
-            "name": "Dr. Okafor",
-            "kind": "Person",
-            "surface_text": "Dr. Okafor"
-          }
+          {"name": "Me", "kind": "Person", "surface_text": "I"},
+          {"name": "Dr. Okafor", "kind": "Person", "surface_text": "Dr. Okafor"}
         ],
         "facts": [
-          {
-            "predicate": "medicationRegimen",
-            "qualifier": "antihypertensive",
-            "kind": "state",
-            "statement": "Taking lisinopril 10mg daily.",
-            "value_json": {
-              "drug": "lisinopril",
-              "dose": "10mg",
-              "frequency": "daily"
-            },
-            "assertion": "asserted",
-            "entity_ref": "Me",
-            "object_entity_ref": null,
-            "temporal": {
-              "phrase": "",
-              "resolved_start": "2026-06-01T00:00:00-06:00",
-              "resolved_end": null,
-              "precision": "day"
-            },
-            "domain": "health",
-            "confidence": 0.95
-          }
+          {"predicate": "medicationRegimen", "qualifier": "antihypertensive", "kind": "state", "statement": "Taking lisinopril 10mg daily.", "value_json": {"drug": "lisinopril", "dose": "10mg", "frequency": "daily"}, "assertion": "asserted", "entity_ref": "Me", "object_entity_ref": null, "temporal": {"phrase": "", "resolved_start": "2026-06-01T00:00:00-06:00", "resolved_end": null, "precision": "day"}, "domain": "health", "confidence": 0.95}
         ],
         "temporal_tokens": []
       }
@@ -59,83 +25,31 @@
       "body": "Photo of the pharmacy label (blurry OCR): looks like it might say lisartan 50mg?",
       "extraction": {
         "title": "Pharmacy label photo",
-        "tags": [
-          "medication",
-          "ocr",
-          "health"
-        ],
-        "mentions": [
-          {
-            "name": "Me",
-            "kind": "Person",
-            "surface_text": "label"
-          }
-        ],
+        "tags": ["medication", "ocr", "health"],
+        "mentions": [{"name": "Me", "kind": "Person", "surface_text": "label"}],
         "facts": [
-          {
-            "predicate": "medicationRegimen",
-            "qualifier": "antihypertensive",
-            "kind": "state",
-            "statement": "Pharmacy label (OCR, low confidence) reads losartan 50mg daily.",
-            "value_json": {
-              "drug": "losartan",
-              "dose": "50mg",
-              "frequency": "daily"
-            },
-            "assertion": "asserted",
-            "entity_ref": "Me",
-            "object_entity_ref": null,
-            "temporal": {
-              "phrase": "",
-              "resolved_start": "2026-06-09T00:00:00-06:00",
-              "resolved_end": null,
-              "precision": "day"
-            },
-            "domain": "health",
-            "confidence": 0.25
-          }
+          {"predicate": "medicationRegimen", "qualifier": "antihypertensive", "kind": "state", "statement": "Pharmacy label (OCR, low confidence) reads losartan 50mg daily.", "value_json": {"drug": "losartan", "dose": "50mg", "frequency": "daily"}, "assertion": "asserted", "entity_ref": "Me", "object_entity_ref": null, "temporal": {"phrase": "", "resolved_start": "2026-06-09T00:00:00-06:00", "resolved_end": null, "precision": "day"}, "domain": "health", "confidence": 0.25}
         ],
         "temporal_tokens": []
+      },
+      "intent": {
+        "resolutions": [{"mention_ref": "Me", "mode": "existing", "name": "Me"}],
+        "facts": [
+          {"entity_ref": "Me", "predicate": "medicationRegimen", "qualifier": "antihypertensive", "kind": "state", "assertion": "asserted", "statement": "Pharmacy label (OCR, low confidence) reads losartan 50mg daily.", "value_json": {"drug": "losartan", "dose": "50mg", "frequency": "daily"}, "self_confidence": 0.25, "inferred": true}
+        ]
       }
     }
   ],
   "expect": {
     "facts": [
-      {
-        "entity": "Me",
-        "predicate": "medicationRegimen",
-        "qualifier": "antihypertensive",
-        "kind": "state",
-        "value_contains": "lisinopril",
-        "status": "active",
-        "chained": false,
-        "domain": "health"
-      },
-      {
-        "entity": "Me",
-        "predicate": "medicationRegimen",
-        "qualifier": "antihypertensive",
-        "kind": "state",
-        "value_contains": "losartan",
-        "status": "pending_review",
-        "domain": "health"
-      }
+      {"entity": "Me", "predicate": "medicationRegimen", "qualifier": "antihypertensive", "kind": "state", "value_contains": "lisinopril", "status": "active", "chained": false, "domain": "health"},
+      {"entity": "Me", "predicate": "medicationRegimen", "qualifier": "antihypertensive", "kind": "state", "value_contains": "losartan", "status": "pending_review", "domain": "health"}
     ],
     "absent_facts": [
-      {
-        "entity": "Me",
-        "predicate": "medicationRegimen",
-        "qualifier": "antihypertensive",
-        "value_contains": "lisinopril",
-        "status": "superseded"
-      }
+      {"entity": "Me", "predicate": "medicationRegimen", "qualifier": "antihypertensive", "value_contains": "lisinopril", "status": "superseded"}
     ],
     "review_items": [
-      {
-        "kind": "low_confidence",
-        "domain": "health",
-        "count": 1
-      }
+      {"kind": "low_confidence_inference", "domain": "health", "count": 1}
     ]
   }
 }
