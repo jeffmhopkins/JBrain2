@@ -291,40 +291,87 @@ def test_system_prompt_carries_the_fact_grammar() -> None:
         assert needle in SYSTEM_PROMPT, needle
 
 
-def test_system_prompt_v2_teaches_kind_discipline_and_schema_org_names() -> None:
-    """Bug 1/3: the prompt must steer relocation/residence/employer to a
-    `state` on canonical schema.org predicates, reuse predicate names across
-    notes, and type future follow-ups as `expected`."""
-    # Canonical predicate vocabulary the model must converge on.
-    for canonical in ("homeLocation", "worksFor", "address", "spouse", "birthDate"):
-        assert canonical in SYSTEM_PROMPT, canonical
-    # Kind-selection rules: residence/employer/address/marital are states.
-    assert "state change" in SYSTEM_PROMPT
-    for concept in ("residence", "employer", "address", "marital"):
-        assert concept in SYSTEM_PROMPT, concept
-    # The worked relocation example renders Denver -> homeLocation state.
-    assert "homeLocation" in SYSTEM_PROMPT and "Denver" in SYSTEM_PROMPT
-    assert "Boulder" in SYSTEM_PROMPT  # supersession by matching predicate
-    # Future follow-ups are expected, not asserted events.
-    assert "in 3 months" in SYSTEM_PROMPT and "expected" in SYSTEM_PROMPT
+def test_system_prompt_teaches_the_capture_contract() -> None:
+    """v14 reframes extraction as the high-recall CAPTURE stage of a two-stage
+    pipeline: capture everything stated, defer all judgment (identity,
+    supersession, inference) to the integrator. The data/instruction boundary
+    is load-bearing for prompt-injection resistance."""
+    assert "CAPTURE stage of a two-stage" in SYSTEM_PROMPT
+    assert "CAPTURE EVERYTHING THE NOTE STATES" in SYSTEM_PROMPT
+    assert "CAPTURE ONLY WHAT THE NOTE STATES" in SYSTEM_PROMPT
+    # Judgment is explicitly the integrator's job, not extraction's.
+    assert "the integrator" in SYSTEM_PROMPT
+    assert "Inference, identity, and supersession are the integrator's job." in SYSTEM_PROMPT
+    assert "Do not infer unstated facts" in SYSTEM_PROMPT
+    # Prompt-injection boundary.
+    assert "DATA, NOT INSTRUCTIONS" in SYSTEM_PROMPT
 
 
-def test_system_prompt_v10_teaches_enumerated_and_symmetric_relationships() -> None:
-    """The four-daughters discrepancy: the model emitted ONE child edge (Summer)
-    and rendered the twin link as an attribute whose value was the whole
-    sentence. v10 must teach one edge per enumerated individual, the canonical
-    kinship predicates, and that a relationship between named people is never an
-    attribute restating the sentence."""
+def test_system_prompt_teaches_mentions_in_any_grammatical_role() -> None:
+    """A person is a mention in ANY role (object, possessor, appositive), the
+    author is "Me", and a reference phrase is kept verbatim — extraction never
+    invents a proper name or guesses identity (the integrator owns that)."""
+    assert "in ANY grammatical role" in SYSTEM_PROMPT
+    for needle in (
+        "OBJECT of a verb or preposition",
+        "POSSESSOR",
+        "appositive",
+        "including in a tag",
+    ):
+        assert needle in SYSTEM_PROMPT, needle
+    assert '"Me"' in SYSTEM_PROMPT
+    # Reference mentions stay verbatim; no invented proper names.
+    assert "never invent a proper name" in SYSTEM_PROMPT
+    assert "The integrator owns identity" in SYSTEM_PROMPT
+    # Animal kinds are the species, never the useless "pet".
+    assert 'never "pet"' in SYSTEM_PROMPT
+
+
+def test_system_prompt_teaches_the_fact_grammar() -> None:
+    """The property-graph edge grammar: the six kinds, a relationship's object
+    must also be a mention, enumerated relationships fan out one edge per person,
+    and a measurement carries value+unit in value_json."""
+    for kind in ("state", "event", "measurement", "attribute", "preference", "relationship"):
+        assert kind in SYSTEM_PROMPT, kind
+    # A relationship's object must be a real mention, not buried in the statement.
+    assert "object_entity_ref to the OTHER party's mention name" in SYSTEM_PROMPT
+    assert 'MUST also appear in "mentions"' in SYSTEM_PROMPT
     # Enumerated relationships fan out to one edge per person.
-    assert "ONE edge PER named individual" in SYSTEM_PROMPT
-    assert "Me.children -> Summer" in SYSTEM_PROMPT and "Me.children -> Harmony" in SYSTEM_PROMPT
-    # Canonical kinship predicates the model converges on (so reciprocals fire).
-    for canonical in ("children", "parent", "sibling"):
-        assert canonical in SYSTEM_PROMPT, canonical
-    # Twins/siblings are a SYMMETRIC relationship edge, never a twinStatus attribute.
-    assert "twinStatus" in SYSTEM_PROMPT  # named as the anti-pattern
-    assert "Lydian.sibling -> Elora" in SYSTEM_PROMPT
-    assert 'qualifier "twin"' in SYSTEM_PROMPT
+    assert "ONE edge PER person" in SYSTEM_PROMPT
+    # Measurement value shape.
+    assert '{"value": 178, "unit": "lb"}' in SYSTEM_PROMPT
+
+
+def test_system_prompt_teaches_declared_names_and_aliases() -> None:
+    """A declared name/alias must become its own name.* attribute carrying the
+    bare string in value_json — the datum entity_aliases resolution depends on —
+    never folded into a statement or the ownership edge. Possessive
+    introductions decompose into owns edge + name attribute."""
+    assert "A name or alias the note DECLARES" in SYSTEM_PROMPT
+    for predicate in ("name.legal", "name.preferred", "name.nickname"):
+        assert predicate in SYSTEM_PROMPT, predicate
+    assert 'value_json {"value": "..."}' in SYSTEM_PROMPT
+    assert "BOTH the owns edge AND the name attribute" in SYSTEM_PROMPT
+
+
+def test_system_prompt_teaches_assertions_and_backward_temporal() -> None:
+    """Assertion typing (future->expected, second-hand->reported, weighed
+    possibility->hypothetical, denial->negated) and backward temporal: a
+    relative phrase resolves against the anchor's LOCAL day, never invented."""
+    assert "expected" in SYSTEM_PROMPT and 'is "reported"' in SYSTEM_PROMPT
+    assert "hypothetical" in SYSTEM_PROMPT and "negated" in SYSTEM_PROMPT
+    # Backward temporal: "last night" from a morning capture is the prior day.
+    assert "last night" in SYSTEM_PROMPT and "PRIOR calendar day" in SYSTEM_PROMPT
+    assert "Never invent a date" in SYSTEM_PROMPT
+
+
+def test_system_prompt_teaches_per_fact_domain_for_the_firewall() -> None:
+    """Domain is judged PER FACT regardless of the note's capture domain, so a
+    family member's health fact in a general journal still floors to health —
+    the firewall's input. When unsure, choose the sensitive domain."""
+    assert "judged PER FACT" in SYSTEM_PROMPT
+    assert "health even inside a general journal" in SYSTEM_PROMPT
+    assert "choose the sensitive one" in SYSTEM_PROMPT
 
 
 def test_user_prompt_carries_the_per_note_fact_budget() -> None:
@@ -333,106 +380,8 @@ def test_user_prompt_carries_the_per_note_fact_budget() -> None:
     assert "Fact budget for this note: at most 17 facts" in prompt
 
 
-def test_system_prompt_v3_teaches_possessive_decomposition_and_no_normalizing() -> None:
-    """Field gap: 'Summer's rat's name is Ricky' came back as ONE owner edge
-    (no name attribute on Ricky, kind 'pet'), and a later 'the rat' mention
-    was normalized to the invented name 'Rat'. v3 must teach the two-fact
-    decomposition, species kinds, and that reference phrases stay verbatim."""
-    # Possessive introductions decompose into owns edge + name attribute.
-    assert "DECOMPOSE" in SYSTEM_PROMPT
-    assert "X.owns -> N" in SYSTEM_PROMPT and "Me.owns -> N" in SYSTEM_PROMPT
-    assert '"species"' in SYSTEM_PROMPT
-    # Reference mentions are never normalized to invented proper names.
-    assert "Never normalize a reference mention" in SYSTEM_PROMPT
-    assert "resolver owns identity" in SYSTEM_PROMPT
-    # Animal kinds are the species or Animal, never the useless "pet".
-    assert 'never "pet"' in SYSTEM_PROMPT
-    # The worked dog/rat example renders the exact field case.
-    for needle in ("Bella", "Ricky", '"species": "dog"', '"species": "rat"', "FOUR facts"):
-        assert needle in SYSTEM_PROMPT, needle
-    assert '"the rat"' in SYSTEM_PROMPT
-
-
-def test_system_prompt_v4_forbids_same_predicate_restatement() -> None:
-    """Field gap: one note ('Jeff is ... born March 19, 1986, is 6\\'4" 255lb')
-    came back with height THREE times (two attribute renderings + a
-    measurement) and birthDate twice at different precisions. v4 must demand
-    one fact per entity+predicate per note, normalized units, and a single
-    kind choice per the kind table."""
-    assert "ONE fact per entity+predicate per note" in SYSTEM_PROMPT
-    assert "renderings, units, or kinds" in SYSTEM_PROMPT
-    # The exact field case is the worked normalization example.
-    assert '{"value": 76, "unit": "in"}' in SYSTEM_PROMPT
-    # Kind chosen once: adult height/birthDate attribute, readings measurement.
-    assert "never also a `measurement`" in SYSTEM_PROMPT
-    assert "READING is a `measurement`" in SYSTEM_PROMPT
-
-
-def test_system_prompt_v5_teaches_object_person_and_backward_temporal() -> None:
-    """Field gaps (Jun 2026): 'Jeff is married to Celine Hopkins' dropped Celine
-    entirely (object-of-relation), 'Jeff ate Celine's dinner' kept Celine only
-    as a tag, and 'last night' resolved to the capture day. v5 must teach that a
-    person in ANY grammatical role is a mention, that a relationship's object
-    MUST also be a mention, and how backward phrases count from the local day."""
-    # A non-subject person is still a mention — object, possessor, appositive.
-    assert "NO MATTER THEIR GRAMMATICAL ROLE" in SYSTEM_PROMPT
-    for needle in ("POSSESSOR", "appositive", "including in a tag"):
-        assert needle in SYSTEM_PROMPT, needle
-    # The relationship object must appear in mentions, not just the statement.
-    assert 'MUST also appear in "mentions"' in SYSTEM_PROMPT
-    assert "never drop the object" in SYSTEM_PROMPT
-    # The worked Person<->Person example is the exact marriage field case.
-    for needle in (
-        '"object_entity_ref": "Celine Hopkins"',
-        "only appears as a possessor",
-    ):
-        assert needle in SYSTEM_PROMPT, needle
-    # Backward temporal: "last night" from a morning capture is the prior day.
-    assert "last night" in SYSTEM_PROMPT and "PRIOR calendar day" in SYSTEM_PROMPT
-
-
-def test_prompt_version_bumped_to_v10() -> None:
-    assert PROMPT_VERSION == "note-extract-v13"
-
-
-def test_system_prompt_v9_teaches_inanimate_ownership_edges() -> None:
-    """Field gap (Jun 2026): "My truck is a white f150 from 2005" produced a lone
-    Me.owns fact whose object was buried in the statement sentence, while the
-    truck's attributes (color/year/engine) had no entity to hang off. v9 must
-    teach that an owned inanimate thing is its own entity, the ownership is an
-    object_entity_ref edge, and the description lives on the THING — not folded
-    into the owns statement."""
-    assert "An owned INANIMATE thing" in SYSTEM_PROMPT
-    assert "object_entity_ref the Thing's mention" in SYSTEM_PROMPT
-    # The worked vehicle example is the exact field case, edge + on-thing props.
-    assert '"object_entity_ref": "my truck"' in SYSTEM_PROMPT
-    assert 'entity_ref is "my truck"' in SYSTEM_PROMPT
-
-
-def test_system_prompt_teaches_declared_thing_aliases() -> None:
-    """Field gap (Jun 2026): enacting "Create Vehicle F-150 (alias 'my truck')"
-    round-trips as a note, but extraction emitted no naming fact for the alias —
-    it became only the Vehicle's mention name + owns edge — so "my truck" never
-    landed in entity_aliases and never resolved. v11 must teach that an EXPLICITLY
-    declared alias for a thing is a name.nickname attribute ON THE THING carrying
-    the bare alias string, never folded into the owns edge."""
-    assert "EXPLICITLY DECLARED alternate name or alias for a THING" in SYSTEM_PROMPT
-    assert '"predicate": "name.nickname"' in SYSTEM_PROMPT
-    assert '"value_json": {"value": "my truck"}' in SYSTEM_PROMPT
-
-
-def test_system_prompt_v9_links_place_and_org_valued_states_to_their_node() -> None:
-    """Follow-up sweep: a state/relationship whose value IS a named entity must
-    point AT that node, not bury it in a string. homeLocation links to the Place
-    (a functional predicate, so the object stays out of its key and Boulder still
-    supersedes Denver), worksFor to the Organization, and organization membership
-    is memberOf so the org gets a reciprocal member edge. An address stays a
-    value string — a full street address is not a place node."""
-    assert '"object_entity_ref": "Denver"' in SYSTEM_PROMPT
-    assert "set object_entity_ref to the Place mention" in SYSTEM_PROMPT
-    assert "memberOf" in SYSTEM_PROMPT
-    assert "object_entity_ref the Organization mention" in SYSTEM_PROMPT
-    assert "a full street address is not a place node" in SYSTEM_PROMPT
+def test_prompt_version_is_v14() -> None:
+    assert PROMPT_VERSION == "note-extract-v14"
 
 
 def test_user_prompt_carries_anchor_with_timezone_domain_and_content() -> None:

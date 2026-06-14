@@ -117,6 +117,7 @@ def build_user_prompt(
         f"Capture anchor (note creation time): {anchor.isoformat()}\n"
         f"Note capture domain: {domain}\n"
         f"Fact budget for this note: at most {max_facts} facts "
-        f"(extract only what the note genuinely contains; fewer is fine).\n{block}\n"
+        f"(a ceiling, not a target — capture every real fact the note states, but do "
+        f"not pad).\n{block}\n"
         f"Note content:\n{content}"
     )
