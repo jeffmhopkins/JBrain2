@@ -87,9 +87,10 @@ def _rebuild_schema() -> None:
 
 
 async def _enable_v3(migration_url: str) -> None:
-    # Enable the integrate pipeline for THIS install by writing the toggle the
-    # trigger reads. Done on the superuser connection (bypasses RLS) after the
-    # rebuild, so app.settings exists. The code default stays "analyze".
+    # Write the integrate toggle explicitly for THIS install. The code default is
+    # now "integrate" too, so this is belt-and-suspenders — it pins v3 even if the
+    # default ever changes. Done on the superuser connection (bypasses RLS) after
+    # the rebuild, so app.settings exists.
     engine = create_async_engine(migration_url)
     try:
         async with engine.begin() as conn:
