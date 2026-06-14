@@ -24,12 +24,19 @@ from jbrain.schema.models import Predicate, SchemaRegistry
 
 _CAMEL = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
 
-# Canonicalization bands (predicate canonicalization Phase 3, docs §3.1). Seeded
-# at the entity-resolution values but NAMED separately: predicate descriptors are
-# definition-vs-definition (a different distribution than name-vs-name), so
-# Phase 4's eval recalibrates these without touching entity resolution.
-_PRED_STRONG = 0.90  # >= this: canonicalize to the match automatically
-_PRED_WEAK = 0.78  # [WEAK, STRONG): propose via a review card; below: cold (mint-proposal)
+# Canonicalization bands (predicate canonicalization, docs §3.1/§5). Calibrated
+# against bge-small embeddings of the descriptors (Phase 4): true drifts that
+# should merge land only at ~0.57-0.72 (marriedTo->spouse 0.71) and OVERLAP with
+# genuine novels (favoriteColor->color 0.66) — no threshold cleanly separates
+# them, and nearest-neighbours are sometimes wrong (allergicTo->prescriber). So:
+# - STRONG stays high (0.90): auto-merge effectively never fires, which is the
+#   safe default — auto-merging onto a WRONG canonical is worse than minting.
+# - WEAK is low (0.55): unknown predicates file a review card that CARRIES the
+#   top suggestions (which are right for the clean drifts), so the feature acts as
+#   a suggestion-led review assistant, not an auto-merger. A richer descriptor
+#   (docs §7) is the lever to make reliable auto-merge possible later.
+_PRED_STRONG = 0.90  # >= this: canonicalize to the match automatically (rare by design)
+_PRED_WEAK = 0.55  # [WEAK, STRONG): card WITH suggestions; below: cold (no suggestion)
 _PRED_TOPK = 5
 
 

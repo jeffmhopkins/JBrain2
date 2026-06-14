@@ -228,6 +228,25 @@ on:
   new predicate (cold band), and that a near-miss files a proposal (WEAK band).
 - Calibrate STRONG/WEAK against this corpus the same way entity bands were.
 
+### 5a. Calibration finding (Phase 4)
+
+A token-free band calibration — bge-small embeddings of the descriptors, no Grok —
+was decisive: **the descriptor signal is too weak to separate drift from novel.**
+True drifts that should merge land only at ~0.57–0.72 (`marriedTo`→spouse 0.71,
+`dateOfBirth`→birthDate 0.72) and OVERLAP with genuine novels (`favoriteColor`→
+color 0.66); several nearest-neighbours are simply wrong (`allergicTo`→prescriber,
+`livesAt`→lastLocation). No threshold cleanly separates them.
+
+So the bands were tuned to make the feature a **suggestion-led review assistant,
+not an auto-merger**: `_PRED_STRONG` stays 0.90 (auto-merge effectively never
+fires — safe, since auto-merging onto a *wrong* canonical is worse than minting),
+and `_PRED_WEAK` drops to 0.55 so an unknown predicate files a `new_predicate`
+card that CARRIES the top suggestions (which ARE right for the clean drifts) for a
+human/agent to confirm. Reliable STRONG auto-merge is gated on a **richer
+descriptor** (§7) — a definition/example, or the entity kind — which is the next
+lever before lowering STRONG. Until then the live flips keep auto-merge off in
+practice and lean on the review loop (3b).
+
 ## 6. Phased plan
 
 1. **Typed value-shape validation (no embeddings).** Turn on the deferred
