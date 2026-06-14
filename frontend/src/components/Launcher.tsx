@@ -6,6 +6,7 @@ import { type ReactNode, type TouchEvent, useCallback, useEffect, useRef, useSta
 import { api } from "../api/client";
 import {
   BookIcon,
+  BotIcon,
   CalendarIcon,
   CheckSquareIcon,
   FlaskIcon,
@@ -21,6 +22,7 @@ import {
 export type LauncherTarget =
   | "ops"
   | "settings"
+  | "llm-settings"
   | "search"
   | "review"
   | "entities"
@@ -65,6 +67,7 @@ const SECTIONS: Section[] = [
     tiles: [
       { title: "Ops", icon: <GaugeIcon size={24} />, target: "ops" },
       { title: "Settings", icon: <SettingsIcon size={24} />, target: "settings" },
+      { title: "LLM", icon: <BotIcon size={24} />, target: "llm-settings" },
     ],
   },
 ];

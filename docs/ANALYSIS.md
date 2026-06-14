@@ -280,6 +280,19 @@ docs must not claim the domain firewall is a network-privacy boundary: the
 adapter is the egress point. Intake-link subjects' data (Phase 7) re-raises
 this decision explicitly before launch.
 
+**Runtime routing overrides.** Per-task provider selection and (for Grok)
+reasoning effort are runtime-editable from the settings screen, persisted in
+`app.settings` under `llm_task_overrides` (task → `{spec, reasoning_effort}`).
+The router reads this map on every call and merges it at the **highest**
+precedence — **DB override > env pin (`JBRAIN_LLM_TASKS`) > strength tier >
+task default** — so the screen is the live control surface and takes effect
+without a restart. `reasoning_effort` (`none|low|medium|high`, xAI's own
+default when unset is `low`) is sent **only** to the xAI/Grok provider; it is
+never sent to `local` (an OpenAI-compatible server would reject the field) nor
+to Anthropic (which steers reasoning via a separate `thinking` mechanism, out
+of scope here). A malformed stored override is ignored on read — bad saved
+config must never break an LLM call. Exposed via `GET`/`PUT /api/settings/llm`.
+
 ## Reprocessing and corrections
 
 - Re-extraction (model/prompt upgrade) **upserts on the structural identity

@@ -11,6 +11,7 @@ import { EntityListScreen } from "./screens/EntityListScreen";
 import { EntityScreen } from "./screens/EntityScreen";
 import { GraphScreen } from "./screens/GraphScreen";
 import { type ComposeHandoff, HomeScreen } from "./screens/HomeScreen";
+import { LLMSettingsScreen } from "./screens/LLMSettingsScreen";
 import { ListDetailScreen } from "./screens/ListDetailScreen";
 import { ListsScreen } from "./screens/ListsScreen";
 import { LoginScreen } from "./screens/LoginScreen";
@@ -30,11 +31,21 @@ type Session =
   | { status: "anonymous" }
   | { status: "in"; principal: Principal };
 
-type Card = "ops" | "settings" | "search" | "review" | "entities" | "lists" | "calendar" | "graph";
+type Card =
+  | "ops"
+  | "settings"
+  | "llm-settings"
+  | "search"
+  | "review"
+  | "entities"
+  | "lists"
+  | "calendar"
+  | "graph";
 
 const SCREEN_TITLES: Record<Card, string> = {
   ops: "Ops",
   settings: "Settings",
+  "llm-settings": "LLM Settings",
   search: "Search",
   review: "Review",
   entities: "Entities",
@@ -308,6 +319,7 @@ export function App() {
           {card === "settings" && (
             <SettingsScreen deviceLabel={session.principal.label} onLogout={() => void logout()} />
           )}
+          {card === "llm-settings" && <LLMSettingsScreen />}
           {card === "search" && <SearchScreen onOpenResult={openNoteFromSearch} />}
           {card === "calendar" && (
             <CalendarScreen

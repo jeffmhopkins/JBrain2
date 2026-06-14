@@ -117,6 +117,10 @@ class AnthropicClient:
         images: Sequence[LlmImage] = (),
         json_schema: dict[str, Any] | None = None,
         max_tokens: int = DEFAULT_MAX_TOKENS,
+        # Anthropic steers reasoning via a separate `thinking` mechanism, not
+        # xAI's `reasoning_effort`; accept the kwarg for protocol compatibility
+        # and ignore it (out of scope for this control surface).
+        reasoning_effort: str | None = None,
     ) -> LlmResult:
         content: list[dict[str, Any]] = [
             {
@@ -184,6 +188,7 @@ class AnthropicClient:
         messages: Sequence[LlmMessage],
         tools: Sequence[LlmTool] = (),
         max_tokens: int = DEFAULT_MAX_TOKENS,
+        reasoning_effort: str | None = None,  # ignored — see `complete`
     ) -> LlmTurn:
         payload = self._converse_payload(
             model=model, system=system, messages=messages, tools=tools, max_tokens=max_tokens
@@ -222,6 +227,7 @@ class AnthropicClient:
         messages: Sequence[LlmMessage],
         tools: Sequence[LlmTool] = (),
         max_tokens: int = DEFAULT_MAX_TOKENS,
+        reasoning_effort: str | None = None,  # ignored — see `complete`
     ) -> AsyncIterator[StreamPart]:
         """Stream a turn over the Messages SSE events. Text deltas stream live;
         tool_use blocks arrive as `input_json_delta` fragments accumulated per

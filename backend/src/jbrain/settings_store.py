@@ -61,6 +61,14 @@ PREDICATE_CANON_DEFAULT = False
 VALUE_SHAPE_ENFORCE_KEY = "value_shape_enforce"
 VALUE_SHAPE_ENFORCE_DEFAULT = False
 
+# Runtime-editable per-task LLM routing + reasoning effort (the settings screen's
+# live control surface). A JSON map task → {"spec": "provider:model"?,
+# "reasoning_effort": "none|low|medium|high"?}. The router reads this each call
+# and merges it OVER env/defaults so the operator can re-route a task without a
+# redeploy — see jbrain.llm.router._resolve_live. Absent = use static config.
+LLM_TASK_OVERRIDES_KEY = "llm_task_overrides"
+_VALID_REASONING_EFFORTS = ("none", "low", "medium", "high")
+
 
 class SqlSettingsStore:
     def __init__(self, maker: async_sessionmaker[AsyncSession]):
@@ -120,3 +128,28 @@ class SqlSettingsStore:
         """Whether a shape-violating value_json is DROPPED (vs only logged).
         Defaults OFF; only an explicit `true` enables enforcement."""
         return await self.get(ctx, VALUE_SHAPE_ENFORCE_KEY, VALUE_SHAPE_ENFORCE_DEFAULT) is True
+
+    async def llm_task_overrides(self, ctx: SessionContext) -> dict[str, dict[str, str]]:
+        """The live per-task LLM routing/reasoning overrides, sanitized.
+
+        Defensive on read — this feeds every LLM call, so a malformed stored
+        value (wrong types, bad effort, junk keys) is dropped rather than allowed
+        to crash a call. Only `spec` (str) and `reasoning_effort` (a known effort)
+        survive; a task entry with neither is omitted entirely."""
+        raw = await self.get(ctx, LLM_TASK_OVERRIDES_KEY, {})
+        if not isinstance(raw, dict):
+            return {}
+        clean: dict[str, dict[str, str]] = {}
+        for task, entry in raw.items():
+            if not isinstance(task, str) or not isinstance(entry, dict):
+                continue
+            sane: dict[str, str] = {}
+            spec = entry.get("spec")
+            if isinstance(spec, str) and spec:
+                sane["spec"] = spec
+            effort = entry.get("reasoning_effort")
+            if effort in _VALID_REASONING_EFFORTS:
+                sane["reasoning_effort"] = effort
+            if sane:
+                clean[task] = sane
+        return clean

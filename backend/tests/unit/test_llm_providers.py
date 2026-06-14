@@ -377,3 +377,78 @@ async def test_openai_converse_rejects_non_object_tool_arguments() -> None:
     )
     with pytest.raises(LlmBadResponseError):
         await client.converse(model="m", system="s", messages=[UserMessage(text="hi")])
+
+
+# --- reasoning_effort: xai-only, threaded through every surface ---------------
+
+
+def _sse(*events: str) -> bytes:
+    return ("\n\n".join(events) + "\n\n").encode()
+
+
+def _stream_transport(seen: list[httpx.Request]) -> httpx.MockTransport:
+    body = _sse(
+        'data: {"choices":[{"delta":{"content":"hi"},"finish_reason":"stop"}]}',
+        "data: [DONE]",
+    )
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, content=body, headers={"content-type": "text/event-stream"})
+
+    return httpx.MockTransport(handle)
+
+
+async def test_xai_complete_includes_reasoning_effort() -> None:
+    seen: list[httpx.Request] = []
+    client = OpenAiCompatClient(
+        "https://api.x.ai/v1", "k", provider="xai", transport=capture_transport(seen, OPENAI_OK)
+    )
+    await client.complete(model="m", system="s", user_text="u", reasoning_effort="high")
+    assert json.loads(seen[0].content)["reasoning_effort"] == "high"
+
+
+async def test_xai_converse_includes_reasoning_effort() -> None:
+    seen: list[httpx.Request] = []
+    client = OpenAiCompatClient(
+        "https://api.x.ai/v1", "k", provider="xai", transport=capture_transport(seen, OPENAI_OK)
+    )
+    await client.converse(
+        model="m", system="s", messages=[UserMessage(text="u")], reasoning_effort="low"
+    )
+    assert json.loads(seen[0].content)["reasoning_effort"] == "low"
+
+
+async def test_xai_converse_stream_includes_reasoning_effort() -> None:
+    seen: list[httpx.Request] = []
+    client = OpenAiCompatClient(
+        "https://api.x.ai/v1", "k", provider="xai", transport=_stream_transport(seen)
+    )
+    async for _ in client.converse_stream(
+        model="m", system="s", messages=[UserMessage(text="u")], reasoning_effort="medium"
+    ):
+        pass
+    assert json.loads(seen[0].content)["reasoning_effort"] == "medium"
+
+
+async def test_local_never_sends_reasoning_effort_even_when_passed() -> None:
+    seen: list[httpx.Request] = []
+    client = OpenAiCompatClient(
+        "http://localhost:11434/v1",
+        "",
+        provider="local",
+        transport=capture_transport(seen, OPENAI_OK),
+    )
+    await client.complete(model="m", system="s", user_text="u", reasoning_effort="high")
+    await client.converse(
+        model="m", system="s", messages=[UserMessage(text="u")], reasoning_effort="high"
+    )
+    assert all("reasoning_effort" not in json.loads(r.content) for r in seen)
+
+
+async def test_anthropic_ignores_reasoning_effort_kwarg() -> None:
+    seen: list[httpx.Request] = []
+    client = AnthropicClient("k", transport=capture_transport(seen, ANTHROPIC_OK))
+    # Accepts the kwarg without error and never leaks it onto the wire.
+    await client.complete(model="m", system="s", user_text="u", reasoning_effort="high")
+    assert "reasoning_effort" not in json.loads(seen[0].content)

@@ -126,6 +126,7 @@ class LlmRouter:
         recorder: UsageRecorder | None = None,
         tiers: Mapping[str, tuple[str, str]] | None = None,
         pinned: frozenset[str] = frozenset(),
+        overrides_loader: Callable[[], Awaitable[Mapping[str, Mapping[str, str]]]] | None = None,
     ):
         self._clients = clients
         self._tasks = tasks
@@ -136,6 +137,9 @@ class LlmRouter:
         # only tasks) can resolve a prompt's declared strength.
         self._tiers = dict(tiers) if tiers is not None else resolve_tiers({})
         self._pinned = pinned
+        # Loads the live DB-backed per-task overrides (spec + reasoning_effort).
+        # None in tests/fakes → behaves exactly as the static config did.
+        self._overrides_loader = overrides_loader
 
     def _resolve(self, task: str, strength: str | None) -> tuple[str, str]:
         """Precedence: an explicit per-task pin (JBRAIN_LLM_TASKS) wins; else the
@@ -153,6 +157,34 @@ class LlmRouter:
             return self._tasks[task]
         except KeyError:
             raise LlmError(f"unknown LLM task: {task!r}") from None
+
+    async def _resolve_live(
+        self, task: str, strength: str | None
+    ) -> tuple[str, str, str | None]:
+        """Resolve (provider, model, reasoning_effort) folding in the live DB
+        overrides. A stored `spec` is the HIGHEST-precedence selector — above an
+        env pin, the strength tier, and the task default — because the settings
+        screen is the operator's live control surface and must win over any
+        deploy-time config. A stored `reasoning_effort` applies only when the
+        resolved provider is xai (the only provider that honors it). Malformed
+        stored entries are ignored: a bad saved setting must never break a call."""
+        provider, model = self._resolve(task, strength)
+        reasoning_effort: str | None = None
+        if self._overrides_loader is not None:
+            overrides = await self._overrides_loader()
+            entry = overrides.get(task) or {}
+            spec = entry.get("spec")
+            if spec is not None:
+                try:
+                    provider, model = _split_spec(task, spec)
+                except LlmError:
+                    log.warning("llm.override_bad_spec", task=task, spec=spec)
+            effort = entry.get("reasoning_effort")
+            if effort is not None and provider == "xai":
+                reasoning_effort = effort
+        if provider != "xai":
+            reasoning_effort = None
+        return provider, model, reasoning_effort
 
     def spec(self, task: str, strength: str | None = None) -> tuple[str, str]:
         """The (provider, model) a task resolves to — callers stamp it as
@@ -179,7 +211,7 @@ class LlmRouter:
         max_tokens: int = DEFAULT_MAX_TOKENS,
         strength: str | None = None,
     ) -> LlmResult:
-        provider, model = self._resolve(task, strength)
+        provider, model, reasoning_effort = await self._resolve_live(task, strength)
         client = self._clients[provider]
         result = await client.complete(
             model=model,
@@ -188,6 +220,7 @@ class LlmRouter:
             images=images,
             json_schema=json_schema,
             max_tokens=max_tokens,
+            reasoning_effort=reasoning_effort,
         )
         # Recorded per provider call (the re-ask spends tokens too): the
         # ledger tracks what was billed, not what was usable.
@@ -201,6 +234,7 @@ class LlmRouter:
                 images=images,
                 json_schema=json_schema,
                 max_tokens=max_tokens,
+                reasoning_effort=reasoning_effort,
             )
             await self._record(task, provider, model, result.usage)
             if result.parsed is None:
@@ -230,7 +264,7 @@ class LlmRouter:
         """One tool-aware turn for the agent loop. Unlike `complete` there is no
         JSON re-ask — tool calls are structured by the provider, and the loop
         owns retry/continuation. Usage is recorded per call like everything else."""
-        provider, model = self._resolve(task, strength)
+        provider, model, reasoning_effort = await self._resolve_live(task, strength)
         client = self._clients[provider]
         turn = await client.converse(
             model=model,
@@ -238,6 +272,7 @@ class LlmRouter:
             messages=messages,
             tools=tools,
             max_tokens=max_tokens,
+            reasoning_effort=reasoning_effort,
         )
         await self._record(task, provider, model, turn.usage)
         log.info(
@@ -265,7 +300,7 @@ class LlmRouter:
         """Stream a tool-aware turn for the agent loop (StreamPart events). Usage
         is recorded once from the closing LlmTurn — the streamed text chunks
         carry no usage, only the final turn does."""
-        provider, model = self._resolve(task, strength)
+        provider, model, reasoning_effort = await self._resolve_live(task, strength)
         client = self._clients[provider]
         final: LlmTurn | None = None
         async for part in client.converse_stream(
@@ -274,6 +309,7 @@ class LlmRouter:
             messages=messages,
             tools=tools,
             max_tokens=max_tokens,
+            reasoning_effort=reasoning_effort,
         ):
             if isinstance(part, LlmTurn):
                 final = part
@@ -298,8 +334,11 @@ def build_router(
     transport: httpx.AsyncBaseTransport | None = None,
     sleep: Callable[[float], Awaitable[None]] | None = None,
     recorder: UsageRecorder | None = None,
+    overrides_loader: Callable[[], Awaitable[Mapping[str, Mapping[str, str]]]] | None = None,
 ) -> LlmRouter:
-    """Wire the three providers from settings; transport/sleep injectable for tests."""
+    """Wire the three providers from settings; transport/sleep injectable for tests.
+    `overrides_loader` supplies the live DB-backed per-task overrides (None keeps
+    the static-config behavior)."""
     extra: dict[str, Any] = {"transport": transport}
     if sleep is not None:
         extra["sleep"] = sleep
@@ -314,4 +353,5 @@ def build_router(
         recorder=recorder,
         tiers=resolve_tiers(settings.llm_tiers),
         pinned=frozenset(settings.llm_tasks),
+        overrides_loader=overrides_loader,
     )
