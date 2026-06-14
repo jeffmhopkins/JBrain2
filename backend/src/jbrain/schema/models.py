@@ -119,6 +119,10 @@ class SchemaRegistry:
     # _norm_key(canonical) of every predicate any type declares `functional` —
     # the registry-driven half of analysis.supersession.is_functional.
     functional_predicates: frozenset[str]
+    # _norm_key(canonical) of every predicate any type declares — a cheap
+    # kind-agnostic membership test so callers can skip work for the many
+    # drift/unknown predicates no type defines.
+    known_predicates: frozenset[str]
 
     def type(self, type_id: str) -> EntityType:
         """The type by id; KeyError if unknown (callers know their type ids)."""
@@ -137,6 +141,12 @@ class SchemaRegistry:
         functional if ANY type declares it so (mirrors the by-any-type proxy the
         arbiter uses for `predicate_known`)."""
         return _norm_key(self.normalize_predicate(predicate)) in self.functional_predicates
+
+    def declares_predicate(self, predicate: str) -> bool:
+        """Whether ANY type declares this (canonical or drift) predicate — a cheap
+        registry-only check, no entity kind needed, so a caller can skip a
+        kind lookup for the drift/unknown predicates no type defines."""
+        return _norm_key(self.normalize_predicate(predicate)) in self.known_predicates
 
     def predicate_for_kind(self, kind: str, predicate: str) -> Predicate | None:
         """The declared `Predicate` for an entity `kind` (entities.kind, by id or

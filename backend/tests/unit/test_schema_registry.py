@@ -104,6 +104,13 @@ def test_predicate_for_kind_resolves_by_id_and_schema_org_name(registry: SchemaR
     assert registry.predicate_for_kind("Person", "coffee_order") is None
 
 
+def test_declares_predicate_is_kind_agnostic(registry: SchemaRegistry) -> None:
+    # Cheap membership across all types (canonical + drift), no kind needed.
+    assert registry.declares_predicate("spouse")
+    assert registry.declares_predicate("legalName")  # drift -> name.legal
+    assert not registry.declares_predicate("coffee_order")
+
+
 def test_validate_value_is_conservative(registry: SchemaRegistry) -> None:
     spouse = registry.predicate_for_kind("Person", "spouse")  # value_shape: ref
     legal = registry.predicate_for_kind("Person", "name.legal")  # value_shape: text
@@ -111,7 +118,7 @@ def test_validate_value_is_conservative(registry: SchemaRegistry) -> None:
     # None always passes (the datum lives in the statement / temporal token).
     assert registry.validate_value(spouse, None, object_present=True)
     # ref: an edge needs an object, a scalar payload with no object is the violation.
-    assert registry.validate_value(spouse, None, object_present=True)
+    assert registry.validate_value(spouse, {"value": "Jane"}, object_present=True)
     assert not registry.validate_value(spouse, {"value": "Jane"}, object_present=False)
     # text/scalar never reject (value_fidelity lives in the statement).
     assert registry.validate_value(legal, {"value": "Celine Kitina Hopkins"}, object_present=False)

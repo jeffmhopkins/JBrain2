@@ -1554,12 +1554,16 @@ class AnalysisPipeline:
         entity is resolved) rather than at parse time."""
         if value_json is None:
             return
+        registry = get_registry()
+        # Skip the kind lookup for the many drift/unknown predicates no type
+        # declares — they have no shape to validate and are never rejected.
+        if not registry.declares_predicate(predicate):
+            return
         kind = (
             await session.execute(select(Entity.kind).where(Entity.id == entity_id))
         ).scalar_one_or_none()
         if kind is None:
             return
-        registry = get_registry()
         pred = registry.predicate_for_kind(kind, predicate)
         if pred is not None and not registry.validate_value(
             pred, value_json, object_present=object_present

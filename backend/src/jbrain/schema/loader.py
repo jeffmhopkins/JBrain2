@@ -63,6 +63,9 @@ def load_registry(defs_dir: Path | None = None) -> SchemaRegistry:
         for p in t.effective_predicates
         if p.functional
     )
+    known_predicates = frozenset(
+        _norm_key(p.canonical_name) for t in types.values() for p in t.effective_predicates
+    )
     return SchemaRegistry(
         meta=meta,
         facets=facets,
@@ -70,6 +73,7 @@ def load_registry(defs_dir: Path | None = None) -> SchemaRegistry:
         normalization=normalization,
         by_kind=by_kind,
         functional_predicates=functional_predicates,
+        known_predicates=known_predicates,
     )
 
 
