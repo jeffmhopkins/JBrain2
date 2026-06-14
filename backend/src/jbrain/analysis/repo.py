@@ -34,6 +34,23 @@ REVIEW_STATUSES = ("open", "resolved", "deferred")
 DEFER_ACTIONS = ("defer", "discuss")
 
 
+async def _enqueue_consolidate_predicates(session: AsyncSession) -> None:
+    """Queue the predicate-consolidation sweep once, deduped like
+    backfill_consolidate so repeated maps don't pile up sweeps. Shared by the
+    map_to_existing and suggest_better resolutions, which both heal stored facts
+    onto a canonical the registry alias (Phase 5) will later own."""
+    await session.execute(
+        text(
+            "INSERT INTO app.jobs (id, kind, payload)"
+            " SELECT gen_random_uuid(), 'consolidate_predicates', '{}'::jsonb"
+            " WHERE NOT EXISTS ("
+            "   SELECT 1 FROM app.jobs"
+            "   WHERE kind = 'consolidate_predicates'"
+            "     AND status IN ('queued', 'running'))"
+        )
+    )
+
+
 class UnknownAction(Exception):
     """The resolve action is not valid for the item's kind."""
 
@@ -1099,18 +1116,8 @@ class SqlAnalysisRepo:
                 # registry alias is a Phase-5 correction note.
                 rewritten = await rewrite_predicate(session, raw, canonical)
                 # Forward-compat: once the alias lands in the registry (Phase 5),
-                # the sweep heals any row this pass had to skip. Deduped like
-                # backfill_consolidate so repeated maps don't pile up sweeps.
-                await session.execute(
-                    text(
-                        "INSERT INTO app.jobs (id, kind, payload)"
-                        " SELECT gen_random_uuid(), 'consolidate_predicates', '{}'::jsonb"
-                        " WHERE NOT EXISTS ("
-                        "   SELECT 1 FROM app.jobs"
-                        "   WHERE kind = 'consolidate_predicates'"
-                        "     AND status IN ('queued', 'running'))"
-                    )
-                )
+                # the sweep heals any row this pass had to skip.
+                await _enqueue_consolidate_predicates(session)
                 return "resolved", [
                     {
                         "action": "predicate_remapped",
@@ -1122,8 +1129,12 @@ class SqlAnalysisRepo:
 
             # accept_as_new / suggest_better -> mint the predicate into the index.
             # The minted row's embedding is left NULL; the sync_predicates job
-            # backfills it (and never clobbers a minted row).
+            # backfills it (and never clobbers a minted row). A suggested name is
+            # trimmed so a stray-whitespace variant can't mint a near-duplicate
+            # canonical (the UI trims too, but the invariant is enforced here).
             name = payload.get("canonical_name") if action == "suggest_better" else raw
+            if action == "suggest_better" and isinstance(name, str):
+                name = name.strip()
             if not name:
                 raise UnknownAction("suggest_better requires a canonical_name")
             fact_kind = item_payload.get("fact_kind")
@@ -1151,7 +1162,24 @@ class SqlAnalysisRepo:
                         "kind": fact_kind,
                     },
                 )
-            return "resolved", [{"action": "minted", "canonical_name": name}]
+            effects: list[dict[str, Any]] = [{"action": "minted", "canonical_name": name}]
+            # suggest_better corrects the predicate's NAME, so the already-committed
+            # fact adopts it: heal raw -> name in place (the same guarded rewrite
+            # map_to_existing uses) and enqueue the sweep. accept_as_new keeps the
+            # raw name (name == raw), so there is nothing to move.
+            if name != raw:
+                rewritten = await rewrite_predicate(session, raw, name)
+                await _enqueue_consolidate_predicates(session)
+                effects.insert(
+                    0,
+                    {
+                        "action": "predicate_remapped",
+                        "raw": raw,
+                        "canonical": name,
+                        "fact_ids": rewritten,
+                    },
+                )
+            return "resolved", effects
 
         if kind == "domain_promotion" and action in ("accept", "reject"):
             if action == "accept":
