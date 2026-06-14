@@ -90,6 +90,46 @@ async def test_sync_predicates_reembeds_on_model_change(maker):  # noqa: F811
     assert models == {"test-embed-v2"}
 
 
+async def test_sync_predicates_refreshes_a_drifted_descriptor(maker):  # noqa: F811
+    # A row whose descriptor went stale (a registry edit) must be rewritten AND
+    # re-embedded, not left matching the old vector.
+    target = registry_seed_rows()[0]
+    async with scoped_session(maker, SYSTEM_CTX) as session:
+        # Force the stale state whether or not a prior test already seeded the row
+        # (the module shares one DB).
+        await session.execute(
+            text(
+                "INSERT INTO app.canonical_predicates"
+                " (canonical_name, descriptor, value_shape, kind, embedding, embedding_model)"
+                " VALUES (:n, 'STALE DESCRIPTOR', :vs, :k, cast(:emb AS vector), :model)"
+                " ON CONFLICT (canonical_name) DO UPDATE SET"
+                " descriptor = 'STALE DESCRIPTOR',"
+                " embedding = cast(:emb AS vector), embedding_model = :model"
+            ),
+            {
+                "n": target.canonical_name,
+                "vs": target.value_shape,
+                "k": target.kind,
+                "emb": "[" + ",".join(["0.0"] * 384) + "]",
+                "model": _MODEL,
+            },
+        )
+
+    await PredicateEmbedder(maker, _FakeEmbed(), _MODEL).sync_predicates({})
+
+    async with scoped_session(maker, SYSTEM_CTX) as session:
+        descriptor = (
+            await session.execute(
+                text("SELECT descriptor FROM app.canonical_predicates WHERE canonical_name = :n"),
+                {"n": target.canonical_name},
+            )
+        ).scalar_one()
+        near = await nearest_predicates(session, _vec(target.descriptor), k=1)
+    assert descriptor == target.descriptor  # refreshed from the registry
+    # re-embedded against the NEW descriptor (the zero vector would not match it)
+    assert near[0][0] == target.canonical_name and near[0][1] > 0.99
+
+
 async def test_nearest_predicates_returns_closest(maker):  # noqa: F811
     await PredicateEmbedder(maker, _FakeEmbed(), _MODEL).sync_predicates({})
     target = registry_seed_rows()[0]

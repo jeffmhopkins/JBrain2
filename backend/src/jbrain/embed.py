@@ -121,14 +121,33 @@ class PredicateEmbedder:
         from jbrain.analysis.predicates import registry_seed_rows
 
         seeds = registry_seed_rows()
+        if not seeds:  # a degenerate/empty registry — never executemany on []
+            log.warning("predicates.synced", upserted=0, embedded=0, reason="empty registry")
+            return
         async with scoped_session(self._maker, SYSTEM_CTX) as session:
+            # Upsert from the live registry: refresh descriptor + metadata on a
+            # seed row that drifted, and NULL its embedding when the descriptor
+            # changed so the backfill below re-embeds it (otherwise a registry
+            # edit would leave the row matching a stale vector). origin='minted'
+            # rows (Phase 3) are left untouched.
             await session.execute(
                 text(
                     "INSERT INTO app.canonical_predicates"
                     " (canonical_name, descriptor, value_shape, kind, functional, origin)"
                     " VALUES (:canonical_name, :descriptor, :value_shape, :kind,"
                     " :functional, 'seed')"
-                    " ON CONFLICT (canonical_name) DO NOTHING"
+                    " ON CONFLICT (canonical_name) DO UPDATE SET"
+                    " descriptor = EXCLUDED.descriptor,"
+                    " value_shape = EXCLUDED.value_shape,"
+                    " kind = EXCLUDED.kind,"
+                    " functional = EXCLUDED.functional,"
+                    " embedding = CASE WHEN app.canonical_predicates.descriptor"
+                    " IS DISTINCT FROM EXCLUDED.descriptor THEN NULL"
+                    " ELSE app.canonical_predicates.embedding END,"
+                    " embedding_model = CASE WHEN app.canonical_predicates.descriptor"
+                    " IS DISTINCT FROM EXCLUDED.descriptor THEN NULL"
+                    " ELSE app.canonical_predicates.embedding_model END"
+                    " WHERE app.canonical_predicates.origin = 'seed'"
                 ),
                 [
                     {
