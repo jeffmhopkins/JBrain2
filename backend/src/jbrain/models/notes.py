@@ -18,6 +18,12 @@ from sqlalchemy.orm import Mapped, column_property, mapped_column, relationship
 from jbrain.models.analysis import NoteAnalysis
 from jbrain.models.core import Base
 
+# The note→graph Integrator lifecycle (docs/INTEGRATOR_PLAN.md §4). Mirrored in
+# migration 0029's CHECK constraint — keep the two in sync.
+INTEGRATION_STATES = frozenset(
+    {"pending_integration", "integrating", "integrated", "stale", "skipped"}
+)
+
 
 class Note(Base):
     __tablename__ = "notes"
@@ -31,6 +37,13 @@ class Note(Base):
     # 'indexed' means chunked + FTS-searchable; embeddings arrive in Step 3.
     ingest_state: Mapped[str] = mapped_column(Text, default="pending", server_default="pending")
     indexed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # The note→graph Integrator lifecycle (INTEGRATION_STATES). An indexed note
+    # is 'pending_integration' until the Integrator agent runs. Additive for now:
+    # the existing analyze_note path still runs and nothing consumes this yet;
+    # the trigger cutover (plan W3.3) flips it on.
+    integration_state: Mapped[str] = mapped_column(
+        Text, default="pending_integration", server_default="pending_integration"
+    )
     # Capture location: owner-eyes metadata, excluded from Phase 7 scoped views.
     latitude: Mapped[float | None] = mapped_column(Double, nullable=True)
     longitude: Mapped[float | None] = mapped_column(Double, nullable=True)

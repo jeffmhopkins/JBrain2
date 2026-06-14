@@ -81,3 +81,20 @@ async def test_store_defaults_and_upsert_round_trip(
     await store.upsert(OWNER, "image_analysis_mode", "everything")
     assert await store.get(OWNER, "image_analysis_mode") == "everything"
     assert await store.image_analysis_mode(OWNER) == "full"
+
+
+async def test_analysis_job_kind_follows_the_cutover_toggle(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    from jbrain.settings_store import NOTE_PIPELINE_KEY
+
+    store = SqlSettingsStore(maker)
+    # Absent → the v1 path (the safe pre-cutover default).
+    assert await store.analysis_job_kind(OWNER) == "analyze_note"
+    await store.upsert(OWNER, NOTE_PIPELINE_KEY, "integrate")
+    assert await store.analysis_job_kind(OWNER) == "integrate_note"
+    # Flip back is a live update; an unrecognized value falls back to v1.
+    await store.upsert(OWNER, NOTE_PIPELINE_KEY, "analyze")
+    assert await store.analysis_job_kind(OWNER) == "analyze_note"
+    await store.upsert(OWNER, NOTE_PIPELINE_KEY, "bogus")
+    assert await store.analysis_job_kind(OWNER) == "analyze_note"

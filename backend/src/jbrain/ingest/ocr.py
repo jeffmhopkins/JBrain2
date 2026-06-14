@@ -40,7 +40,7 @@ from jbrain.llm import LlmImage, LlmRouter
 from jbrain.llm.promptfile import load_prompt
 from jbrain.models.notes import Attachment, AttachmentExtract, Note
 from jbrain.queue import SYSTEM_CTX
-from jbrain.settings_store import IMAGE_ANALYSIS_MODES
+from jbrain.settings_store import IMAGE_ANALYSIS_MODES, SqlSettingsStore
 from jbrain.storage import BlobStore
 
 log = structlog.get_logger()
@@ -92,11 +92,10 @@ async def enqueue_analysis_fallback(
     nid = str(note_id)
     if await queue.has_active_ocr_for_note(maker, SYSTEM_CTX, nid):
         return None
-    if await queue.has_active(
-        maker, SYSTEM_CTX, "analyze_note", payload_field="note_id", value=nid
-    ):
+    if await queue.has_active_analysis(maker, SYSTEM_CTX, nid):
         return None
-    job_id = await queue.enqueue(maker, SYSTEM_CTX, "analyze_note", {"note_id": nid})
+    kind = await SqlSettingsStore(maker).analysis_job_kind(SYSTEM_CTX)
+    job_id = await queue.enqueue(maker, SYSTEM_CTX, kind, {"note_id": nid})
     log.warning("ocr.analysis_fallback", attachment_id=attachment_id, note_id=nid, job_id=job_id)
     return job_id
 

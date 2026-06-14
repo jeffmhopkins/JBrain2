@@ -67,6 +67,29 @@ services:
       db:
         condition: service_healthy
 
+  # One-time DESTRUCTIVE install reset (docker compose run --rm wipe), run ONCE
+  # on a fresh install before bringing the stack up: drops + rebuilds the schema,
+  # clears blob/backup storage, and enables the v3 pipeline. Guarded by
+  # JBRAIN_WIPE_ON_FIRST_DEPLOY (off here by default) AND a sentinel on the blob
+  # volume, so it can never run twice or fire by accident. Needs the superuser
+  # URL like migrate; mounts the same storage volumes it clears.
+  wipe:
+    image: jbrain2-api:local
+    profiles: [tools]
+    command: ["python", "-m", "jbrain.install_wipe"]
+    environment:
+      JBRAIN_MIGRATION_DATABASE_URL: postgresql+asyncpg://jbrain:${POSTGRES_PASSWORD}@db:5432/jbrain
+      JBRAIN_WIPE_ON_FIRST_DEPLOY: ${WIPE_ON_FIRST_DEPLOY:-}
+      JBRAIN_BLOB_DIR: /data/blobs
+      JBRAIN_BACKUPS_DIR: /data/backups
+    volumes:
+      - blobs:/data/blobs
+      - ./backups:/data/backups
+    networks: [internal]
+    depends_on:
+      db:
+        condition: service_healthy
+
   worker:
     image: jbrain2-api:local
     restart: unless-stopped
