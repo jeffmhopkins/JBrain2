@@ -26,12 +26,14 @@ FEED_TOKEN_KEY = "appointments_feed_token"
 
 # The note→graph pipeline the analysis trigger enqueues — the W3.3 cutover
 # toggle. "analyze" = the v1 single-shot path (analyze_note); "integrate" = the
-# v3 graph-aware path (integrate_note). DB-backed so the cutover is reversible
-# LIVE (no redeploy). Defaults to "analyze" until the flip; absent/unrecognized
-# falls back to the default.
+# v3 graph-aware path (integrate_note). DB-backed so it stays reversible LIVE
+# (no redeploy). Default is now "integrate" — v3 is the shipped pipeline, so a
+# fresh install runs it with no settings step; absent/unrecognized falls back to
+# it. The toggle + the legacy analyze_note path are slated for removal once the
+# extraction test suite is migrated off it — see docs/CUTOVER_V1_REMOVAL.md.
 NotePipeline = Literal["analyze", "integrate"]
 NOTE_PIPELINES: tuple[NotePipeline, ...] = ("analyze", "integrate")
-NOTE_PIPELINE_DEFAULT: NotePipeline = "analyze"
+NOTE_PIPELINE_DEFAULT: NotePipeline = "integrate"
 NOTE_PIPELINE_KEY = "note_analysis_pipeline"
 
 # The two analysis job kinds the toggle selects between.

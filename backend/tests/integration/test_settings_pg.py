@@ -89,12 +89,13 @@ async def test_analysis_job_kind_follows_the_cutover_toggle(
     from jbrain.settings_store import NOTE_PIPELINE_KEY
 
     store = SqlSettingsStore(maker)
-    # Absent → the v1 path (the safe pre-cutover default).
+    # Absent → the v3 path (the shipped default).
+    assert await store.analysis_job_kind(OWNER) == "integrate_note"
+    # The legacy v1 path is still selectable as a live rollback.
+    await store.upsert(OWNER, NOTE_PIPELINE_KEY, "analyze")
     assert await store.analysis_job_kind(OWNER) == "analyze_note"
     await store.upsert(OWNER, NOTE_PIPELINE_KEY, "integrate")
     assert await store.analysis_job_kind(OWNER) == "integrate_note"
-    # Flip back is a live update; an unrecognized value falls back to v1.
-    await store.upsert(OWNER, NOTE_PIPELINE_KEY, "analyze")
-    assert await store.analysis_job_kind(OWNER) == "analyze_note"
+    # An unrecognized value falls back to the default (now v3).
     await store.upsert(OWNER, NOTE_PIPELINE_KEY, "bogus")
-    assert await store.analysis_job_kind(OWNER) == "analyze_note"
+    assert await store.analysis_job_kind(OWNER) == "integrate_note"

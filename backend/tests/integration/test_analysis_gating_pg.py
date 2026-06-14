@@ -53,6 +53,16 @@ def blobs(tmp_path: Path) -> FsBlobStore:
     return FsBlobStore(tmp_path)
 
 
+@pytest.fixture(autouse=True)
+async def _pin_v1_pipeline(maker: async_sessionmaker[AsyncSession]) -> None:  # noqa: F811
+    # This suite asserts the v1 analyze_note gate. integrate is now the default
+    # pipeline, so pin the toggle to analyze explicitly; the full cutover migrates
+    # these onto integrate_note (docs/CUTOVER_V1_REMOVAL.md).
+    from jbrain.settings_store import NOTE_PIPELINE_KEY
+
+    await SqlSettingsStore(maker).upsert(queue.SYSTEM_CTX, NOTE_PIPELINE_KEY, "analyze")
+
+
 async def make_note(maker: async_sessionmaker[AsyncSession], body: str = "plain note") -> str:
     note, _ = await SqlNotesRepo(maker).create_note(
         OWNER, client_id=f"gate-{uuid.uuid4()}", domain="general", destination=None, body=body
