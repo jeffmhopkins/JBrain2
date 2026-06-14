@@ -282,8 +282,7 @@ async def test_full_graph_is_rls_scoped(
     # drug behind it, and every edge touching the clinic all vanish.
     assert seeded["clinic"] not in ids and seeded["med"] not in ids
     assert not any(
-        e["source"] == seeded["clinic"] or e["target"] == seeded["clinic"]
-        for e in graph["edges"]
+        e["source"] == seeded["clinic"] or e["target"] == seeded["clinic"] for e in graph["edges"]
     )
     # General entities — connected and disconnected alike — still resolve.
     assert {seeded["me"], seeded["wife"], seeded["island"]} <= ids
