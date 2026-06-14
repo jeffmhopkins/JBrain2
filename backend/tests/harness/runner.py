@@ -33,7 +33,8 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
 from jbrain.analysis.entities import get_or_create_me
-from jbrain.analysis.pipeline import AnalysisPipeline
+from jbrain.analysis.extraction import Extraction
+from jbrain.analysis.pipeline import AnalysisPipeline, _extract_note, local_anchor
 from jbrain.db.session import scoped_session
 from jbrain.llm import FakeLlmClient, LlmRouter
 from jbrain.queue import SYSTEM_CTX
@@ -84,15 +85,19 @@ async def _entity_id_by_name(maker: async_sessionmaker, name: str, domain: str) 
 async def _compile_intent(maker: async_sessionmaker, step: Step, domain: str) -> str:
     """Produce the integrate.note JSON for this step.
 
-    Default (no scripted intent): one resolution per referenced name — existing
-    when a live entity already carries that canonical name (so name-stable
-    dedup/supersession works across steps), else new; one fact per extraction
-    fact, surface-attested (so the arbiter commits it) at its subject's surface.
+    Default (no scripted intent): the extraction is parsed exactly as
+    integrate_note parses it (the same dedup/fact-cap/drop-invalid pass), then we
+    are a faithful agent over the survivors — one resolution per referenced name
+    (existing when a live entity already carries that canonical name, so
+    name-stable dedup/supersession works across steps; else new) and one
+    surface-attested fact per surviving extraction fact, so the arbiter commits
+    it. Behaviour the integrate path itself does not carry — e.g. the
+    extraction_truncated review, which `plan_to_extraction` reconstructs away — is
+    out of the harness's reach by design.
 
     Explicit intent: passed through, but every existing-mode resolution and
     merge/distinct pair names its entity (`name`/`entity_a`/`entity_b`); the
     runner swaps each for its live id here so authors never hard-code uuids."""
-    extraction = step.extraction
     # Ensure the owner exists before we resolve "Me" to it.
     async with scoped_session(maker, SYSTEM_CTX) as s:
         await get_or_create_me(s)
@@ -100,20 +105,19 @@ async def _compile_intent(maker: async_sessionmaker, step: Step, domain: str) ->
     if step.intent is not None:
         return await _compile_explicit_intent(maker, step.intent, domain)
 
-    mentions = extraction.get("mentions", [])
-    kind_by_name = {m["name"]: m.get("kind", "Thing") for m in mentions}
-    surface_by_name = {m["name"]: m.get("surface_text", m["name"]) for m in mentions}
+    extraction = await _parse_extraction(step, domain)
+    surface_by_name = {m.name: m.surface_text for m in extraction.mentions}
     body_surface = next(iter(surface_by_name.values()), step.body[:24])
 
-    # Default: resolve every referenced name, commit every fact.
     refs: list[str] = []
-    for m in extraction.get("mentions", []):
-        if m["name"] not in refs:
-            refs.append(m["name"])
-    for f in extraction.get("facts", []):
-        for ref in (f.get("entity_ref"), f.get("object_entity_ref")):
+    for m in extraction.mentions:
+        if m.name not in refs:
+            refs.append(m.name)
+    for f in extraction.facts:
+        for ref in (f.entity_ref, f.object_entity_ref):
             if ref and ref not in refs:
                 refs.append(ref)
+    kind_by_name = {m.name: m.kind for m in extraction.mentions}
 
     resolutions = []
     for name in refs:
@@ -131,25 +135,60 @@ async def _compile_intent(maker: async_sessionmaker, step: Step, domain: str) ->
             )
 
     facts = []
-    for f in extraction.get("facts", []):
-        surface = surface_by_name.get(f.get("entity_ref"), body_surface)
+    for f in extraction.facts:
         facts.append(
             {
-                "entity_ref": f["entity_ref"],
-                "predicate": f["predicate"],
-                "qualifier": f.get("qualifier", ""),
-                "kind": f["kind"],
-                "statement": f["statement"],
-                "value_json": f.get("value_json"),
-                "assertion": f["assertion"],
-                "object_entity_ref": f.get("object_entity_ref"),
-                "self_confidence": f.get("confidence", 0.9),
+                "entity_ref": f.entity_ref,
+                "predicate": f.predicate,
+                "qualifier": f.qualifier,
+                "kind": f.kind,
+                "statement": f.statement,
+                "value_json": f.value_json,
+                "assertion": f.assertion,
+                "object_entity_ref": f.object_entity_ref,
+                "self_confidence": f.confidence,
                 "inferred": False,
-                "surface": surface,
-                "temporal": f.get("temporal"),
+                "surface": surface_by_name.get(f.entity_ref, body_surface),
+                "temporal": _temporal_json(f.temporal),
             }
         )
     return json.dumps({"resolutions": resolutions, "facts": facts})
+
+
+def _temporal_json(temporal: Any) -> dict[str, Any] | None:
+    """Serialize a parsed ExtractedTemporal back into the intent's temporal shape."""
+    if temporal is None:
+        return None
+    return {
+        "phrase": temporal.phrase,
+        "resolved_start": temporal.resolved_start.isoformat() if temporal.resolved_start else None,
+        "resolved_end": temporal.resolved_end.isoformat() if temporal.resolved_end else None,
+        "precision": temporal.precision,
+    }
+
+
+async def _parse_extraction(step: Step, domain: str) -> Extraction:
+    """Run the note's scripted extraction through the genuine note.extract parse
+    (dedup, fact-cap, drop-invalid), the same front half integrate_note runs, so
+    the default intent reflects extraction-layer behaviour rather than the raw
+    scripted JSON."""
+    created = datetime.fromisoformat(step.created_at)
+    offset = created.utcoffset()
+    tz = int(offset.total_seconds() // 60) if offset is not None else None
+    prompt_anchor = local_anchor(created, tz)
+    parse_anchor = prompt_anchor if tz is not None else None
+    router = LlmRouter(
+        {"xai": FakeLlmClient([json.dumps(step.extraction)])},
+        {"note.extract": ("xai", "grok-4.3")},
+    )
+    return await _extract_note(
+        router,
+        [step.body],
+        domain=domain,
+        prompt_anchor=prompt_anchor,
+        parse_anchor=parse_anchor,
+        note_id="harness",
+    )
 
 
 async def _compile_explicit_intent(
