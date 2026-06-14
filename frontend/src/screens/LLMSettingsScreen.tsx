@@ -45,6 +45,15 @@ const REASONING_LABEL: Record<ReasoningEffort, string> = {
   high: "High",
 };
 
+// Per-task override rows are tight (name + provider + reasoning on one line), so
+// the override control uses single-letter labels to stay inside the card.
+const REASONING_ABBR: Record<ReasoningEffort, string> = {
+  none: "N",
+  low: "L",
+  medium: "M",
+  high: "H",
+};
+
 interface ResolvedGroup extends GroupDef {
   tasks: LlmTask[];
 }
@@ -320,9 +329,11 @@ export function LLMSettingsScreen() {
                                   type="button"
                                   className={`seg${task.reasoning_effort === effort ? " seg-on" : ""}`}
                                   aria-pressed={task.reasoning_effort === effort}
+                                  aria-label={REASONING_LABEL[effort]}
+                                  title={REASONING_LABEL[effort]}
                                   onClick={() => setTaskReasoning(task.id, effort)}
                                 >
-                                  {REASONING_LABEL[effort]}
+                                  {REASONING_ABBR[effort]}
                                 </button>
                               ))}
                             </fieldset>
