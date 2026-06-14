@@ -22,6 +22,9 @@ interface Proposal {
   label: string;
   detail: string | null;
   destructive: boolean;
+  // Extra fields a choice carries into the resolve payload (e.g. the
+  // canonical_name a new_predicate map_to_existing choice must echo back).
+  payload?: Record<string, unknown>;
 }
 
 interface Parsed {
@@ -53,7 +56,16 @@ function parsePayload(payload: Record<string, unknown>): Parsed {
         const action = str(o.action);
         const label = str(o.label);
         if (action === null || label === null) return [];
-        return [{ action, label, detail: str(o.detail), destructive: o.destructive === true }];
+        const canonical = str(o.canonical_name);
+        return [
+          {
+            action,
+            label,
+            detail: str(o.detail),
+            destructive: o.destructive === true,
+            ...(canonical !== null ? { payload: { canonical_name: canonical } } : {}),
+          },
+        ];
       })
     : [];
   const before = choices.find((c) => c.action === "accept_a") ?? null;
@@ -229,7 +241,11 @@ function decidedVerb(item: ReviewItem): string {
   if (a === "accept" || a === "accept_a" || a === "accept_b") return "approved";
   if (a === "reject") return "rejected";
   if (a === "correct") return "corrected";
-  return a;
+  // new_predicate outcomes: a mapped predicate and a minted one read better as
+  // verbs than their raw resolve actions.
+  if (a === "map_to_existing" || a === "suggest_better") return "mapped";
+  if (a === "accept_as_new") return "kept as new";
+  return a.replaceAll("_", " ");
 }
 
 // ===== Detail =====
@@ -258,6 +274,7 @@ function Detail({ item, lane, queue, position, onClose, onNav }: DetailProps) {
   const [armed, tap] = useArmed();
   const [composing, setComposing] = useState(false);
   const [draft, setDraft] = useState("");
+  const [betterName, setBetterName] = useState("");
   const conf = confidenceBadge(p.confidence);
   const proposals = proposalsFor(p);
   const showDiff = p.beforeLabel !== null && p.afterLabel !== null;
@@ -265,7 +282,10 @@ function Detail({ item, lane, queue, position, onClose, onNav }: DetailProps) {
   function choose(proposal: Proposal) {
     const key = `prop-${proposal.action}`;
     if (proposal.destructive && !tap(key)) return;
-    queue.resolve(item.id, proposal.action, { choice: proposal.label });
+    queue.resolve(item.id, proposal.action, {
+      choice: proposal.label,
+      ...(proposal.payload ?? {}),
+    });
     onClose();
   }
 
@@ -277,6 +297,16 @@ function Detail({ item, lane, queue, position, onClose, onNav }: DetailProps) {
   function fileCorrection() {
     if (draft.trim().length === 0) return;
     queue.correct(item.id, draft.trim());
+    onClose();
+  }
+
+  // new_predicate only: when none of the suggested canonicals fit, the owner
+  // names the predicate themselves. The backend mints it and renames this fact
+  // onto it (the suggest_better resolution).
+  function suggestBetter() {
+    const name = betterName.trim();
+    if (name.length === 0) return;
+    queue.resolve(item.id, "suggest_better", { canonical_name: name });
     onClose();
   }
 
@@ -401,6 +431,32 @@ function Detail({ item, lane, queue, position, onClose, onNav }: DetailProps) {
                 );
               })}
             </div>
+            {item.kind === "new_predicate" && (
+              <div className="rsuggest">
+                <h3 className="section-header">…or name it yourself</h3>
+                <div className="rsuggest-row">
+                  <input
+                    type="text"
+                    className="rsuggest-box"
+                    value={betterName}
+                    onChange={(e) => setBetterName(e.target.value)}
+                    aria-label="better predicate name"
+                    placeholder="e.g. spouse"
+                  />
+                  <button
+                    type="button"
+                    className="rsuggest-go"
+                    disabled={betterName.trim().length === 0}
+                    onClick={suggestBetter}
+                  >
+                    use this name
+                  </button>
+                </div>
+                <p className="rsuggest-hint">
+                  registers your name as the canonical predicate and renames this fact to use it.
+                </p>
+              </div>
+            )}
           </>
         ) : (
           <DecidedRecord item={item} parsed={p} />
@@ -490,6 +546,19 @@ function DecidedRecord({ item, parsed }: { item: ReviewItem; parsed: Parsed }) {
     return (
       <p className="rdetail-cands">
         corrected — filed as a note; the pipeline applies your fix to the wiki.
+      </p>
+    );
+  }
+  // suggest_better is a free-text control, not one of the card's choices, so it
+  // has no row to tick in the offered list — report the name the owner gave.
+  if (action === "suggest_better") {
+    const named = item.resolution?.payload.canonical_name;
+    const name = typeof named === "string" ? named : null;
+    return (
+      <p className="rdetail-cands">
+        {name !== null
+          ? `named it yourself — “${name}” is now the canonical predicate and this fact uses it.`
+          : "named it yourself — registered a canonical predicate and renamed this fact."}
       </p>
     );
   }

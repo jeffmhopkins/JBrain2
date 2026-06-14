@@ -208,6 +208,50 @@ async def test_domains_are_readable_reference_data(app_engine: AsyncEngine) -> N
     assert codes == {"general", "health", "finance", "location"}
 
 
+_CP_INSERT = (
+    "INSERT INTO app.canonical_predicates (canonical_name, descriptor, value_shape, kind)"
+    " VALUES (:name, 'd', 'scalar', 'attribute')"
+)
+
+
+async def test_canonical_predicates_are_global_reference_data(app_engine: AsyncEngine) -> None:
+    # Owner seeds a predicate; a domain-scoped reader still sees it — the index is
+    # global vocabulary (the app.domains pattern), not domain-partitioned.
+    async with scoped_session(maker(app_engine), OWNER) as session:
+        await session.execute(text(_CP_INSERT), {"name": "x.global"})
+    scoped = SessionContext(principal_kind="capability_token", domain_scopes=("general",))
+    async with scoped_session(maker(app_engine), scoped) as session:
+        names = set(
+            (
+                await session.execute(text("SELECT canonical_name FROM app.canonical_predicates"))
+            ).scalars()
+        )
+    assert "x.global" in names
+
+
+async def test_canonical_predicates_writes_are_owner_only(app_engine: AsyncEngine) -> None:
+    from sqlalchemy.exc import ProgrammingError
+
+    scoped = SessionContext(principal_kind="capability_token", domain_scopes=("general",))
+    # A non-owner (capability token) cannot mint a predicate — the is_owner() gate.
+    with pytest.raises(ProgrammingError):
+        async with scoped_session(maker(app_engine), scoped) as session:
+            await session.execute(text(_CP_INSERT), {"name": "x.denied"})
+    # The owner can — proving it's an owner gate, not a blanket write denial.
+    async with scoped_session(maker(app_engine), OWNER) as session:
+        await session.execute(text(_CP_INSERT), {"name": "x.allowed"})
+    async with scoped_session(maker(app_engine), OWNER) as session:
+        got = (
+            await session.execute(
+                text(
+                    "SELECT count(*) FROM app.canonical_predicates"
+                    " WHERE canonical_name = 'x.allowed'"
+                )
+            )
+        ).scalar()
+    assert got == 1
+
+
 def test_cli_init_prints_owner_key_once(
     database_url: str, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -20,7 +20,7 @@ from jbrain.analysis import purge
 from jbrain.analysis.consolidation import Consolidator
 from jbrain.analysis.pipeline import AnalysisPipeline
 from jbrain.config import get_settings
-from jbrain.embed import NoteEmbedder, TeiEmbedClient
+from jbrain.embed import NoteEmbedder, PredicateEmbedder, TeiEmbedClient
 from jbrain.ingest import ocr
 from jbrain.ingest.ocr import OcrPipeline
 from jbrain.ingest.pipeline import IngestPipeline
@@ -119,6 +119,8 @@ async def run_loop(maker: async_sessionmaker[AsyncSession], handlers: dict[str, 
                 purged = await purge.backfill_deleted_note_artifacts(maker)
                 # Normalize predicate drift left by older prompt versions.
                 consolidations = await queue.backfill_consolidate(maker, queue.SYSTEM_CTX)
+                # Seed/refresh the canonical_predicates index from the registry.
+                predicate_syncs = await queue.backfill_sync_predicates(maker, queue.SYSTEM_CTX)
                 backfilled = True
                 log.info(
                     "worker.backfill",
@@ -128,6 +130,7 @@ async def run_loop(maker: async_sessionmaker[AsyncSession], handlers: dict[str, 
                     relink_jobs=relinks,
                     purged_notes=purged,
                     consolidate_jobs=consolidations,
+                    predicate_sync_jobs=predicate_syncs,
                 )
             if await process_one(maker, handlers):
                 continue
@@ -145,11 +148,20 @@ async def run() -> None:
     blobs = FsBlobStore(settings.blob_dir)
     pipeline = IngestPipeline(maker, blobs)
     embedder = NoteEmbedder(maker, TeiEmbedClient(settings.embed_url), settings.embed_model)
+    predicate_embedder = PredicateEmbedder(
+        maker, TeiEmbedClient(settings.embed_url), settings.embed_model
+    )
     router = build_router(settings, recorder=SqlUsageRecorder(maker))
     # The embed client also powers entity-resolution layer 2 (similarity);
     # without it the resolver still runs layers 1/2b/3.
     analyzer = AnalysisPipeline(
-        maker, router, embedder=TeiEmbedClient(settings.embed_url), embed_model=settings.embed_model
+        maker,
+        router,
+        embedder=TeiEmbedClient(settings.embed_url),
+        embed_model=settings.embed_model,
+        # Reads the predicate_canonicalization + value_shape_enforce toggles
+        # (Phase 3/4); both default ON, flip off live via a settings upsert.
+        settings=SqlSettingsStore(maker),
     )
     # Eager-load the schema registry so a missing/malformed defs/ fails the
     # worker LOUDLY at startup — never mid-note, where the SchemaError would
@@ -168,6 +180,8 @@ async def run() -> None:
         "ocr_attachment": OcrPipeline(maker, blobs, router, SqlSettingsStore(maker)).ocr_attachment,
         # Retroactive predicate normalization; trigger is the Phase-5 engine.
         "consolidate_predicates": Consolidator(maker).run,
+        # Keep the canonical_predicates index in step with the schema registry.
+        "sync_predicates": predicate_embedder.sync_predicates,
     }
     try:
         await run_loop(maker, handlers)

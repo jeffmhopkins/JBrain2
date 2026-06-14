@@ -12,6 +12,7 @@ action POST /review/{id}/resolve accepts, and the wording stays in the UI's
 lowercase-calm register (frontend mock.ts is the reference fixtures).
 """
 
+from collections.abc import Sequence
 from typing import Any
 
 SNIPPET_CHARS = 240
@@ -154,4 +155,33 @@ def inference_display(*, statement: str, reasons: list[str], snippet: str | None
             "accept": "the fact is recorded and pinned — reprocessing won't drop it.",
             "reject": "the fact is discarded.",
         },
+    }
+
+
+def new_predicate_display(
+    *, predicate: str, suggestions: Sequence[tuple[str, float]], snippet: str | None = None
+) -> dict[str, Any]:
+    """new_predicate card fields: an unknown predicate the canonicalizer could not
+    confidently merge (Phase 3 §3.1a). The fact already committed under its raw
+    name; the card is suggestion-led — map it onto a nearby canonical, keep it as
+    a new one, or dismiss. Each advertised action is one /resolve accepts
+    (map_to_existing carries the chosen canonical_name; suggest_better is the same
+    control as accept with the name field edited, so it has no static choice)."""
+    near = ", ".join(f"{name} ({sim:.2f})" for name, sim in suggestions[:3])
+    hint = f" — nearest: {near}" if near else " — no close match"
+    choices: list[dict[str, Any]] = [
+        {
+            "action": "map_to_existing",
+            "label": name,
+            "detail": f"map onto {name} (≈ {sim:.2f})",
+            "canonical_name": name,
+        }
+        for name, sim in suggestions[:3]
+    ]
+    choices.append({"action": "accept_as_new", "label": f"keep '{predicate}' as a new predicate"})
+    choices.append({"action": "reject", "label": "dismiss", "detail": "leave it as-is"})
+    return {
+        "summary": f"new predicate '{predicate}'{hint}",
+        "snippet": snippet,
+        "choices": choices,
     }

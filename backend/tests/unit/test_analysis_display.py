@@ -7,10 +7,28 @@ from jbrain.analysis.display import (
     ambiguous_display,
     collision_display,
     mark_snippet,
+    new_predicate_display,
     promotion_display,
     truncation_display,
     value_label,
 )
+
+
+def test_new_predicate_advertises_map_accept_reject_choices() -> None:
+    card = new_predicate_display(predicate="isHitchedTo", suggestions=[("spouse", 0.85)])
+    actions = {c["action"] for c in card["choices"]}
+    # Every advertised action is one _apply_resolution accepts (display invariant).
+    assert actions == {"map_to_existing", "accept_as_new", "reject"}
+    # The map choice carries the canonical the resolve handler reads back.
+    mapped = next(c for c in card["choices"] if c["action"] == "map_to_existing")
+    assert mapped["canonical_name"] == "spouse"
+
+
+def test_new_predicate_with_no_suggestions_still_offers_accept_and_reject() -> None:
+    card = new_predicate_display(predicate="frobnicates", suggestions=[])
+    actions = {c["action"] for c in card["choices"]}
+    assert actions == {"accept_as_new", "reject"}  # nothing to map onto
+    assert "no close match" in card["summary"]
 
 
 class TestMarkSnippet:

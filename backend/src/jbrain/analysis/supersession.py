@@ -17,17 +17,23 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
-# Functional relationship predicates: at most one current value, so a new
-# binding supersedes (state semantics). Everything else accumulates.
-# Spec allowlist is employer/spouse/residence; the schema.org spellings the
-# prompt steers toward are included so identity keys still match.
+# Residual raw-spelling allowlist for functional concepts the registry models as
+# reified role-edges (employer/residence via hasRole), NOT as bare functional
+# predicates — so dropping these would silently break their supersession. The
+# registry's `functional` flag is the authoritative source for everything it
+# names (spouse, appointment.organizer/location, …); is_functional unions the two
+# until those role-edge concepts are modeled as functional registry predicates.
 FUNCTIONAL_PREDICATES = frozenset(
     {"employer", "worksfor", "works_for", "spouse", "residence", "homelocation", "home_location"}
 )
 
 
 def is_functional(predicate: str) -> bool:
-    return predicate.lower() in FUNCTIONAL_PREDICATES
+    """At most one current value, so a new binding supersedes. True if either the
+    residual allowlist or the schema registry's `functional` flag says so."""
+    from jbrain.schema import get_registry
+
+    return predicate.lower() in FUNCTIONAL_PREDICATES or get_registry().is_functional(predicate)
 
 
 # Reciprocity registry (docs/research/fix-options/2-mutual-inverse-edges.md,

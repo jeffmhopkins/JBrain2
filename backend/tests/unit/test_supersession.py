@@ -341,10 +341,15 @@ def test_functional_relationship_supersedes() -> None:
 
 
 def test_functional_predicate_allowlist() -> None:
+    # Residual hardcoded set (role-edge concepts the registry doesn't name as
+    # bare predicates) — behavior preserved.
     assert is_functional("employer")
     assert is_functional("worksFor")
-    assert is_functional("spouse")
     assert is_functional("residence")
+    # Registry-driven half: the schema's `functional` flag now governs too.
+    assert is_functional("spouse")  # both sources
+    assert is_functional("location")  # appointment.location — registry only (new)
+    assert is_functional("organizer")  # appointment.organizer — registry only (new)
     assert not is_functional("memberOf")
     assert not is_functional("knows")
 

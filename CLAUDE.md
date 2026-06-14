@@ -4,9 +4,11 @@ Personal knowledge system: notes in → RAG indexing → LLM-maintained wiki wit
 notes as the sole sources of truth. See `docs/ARCHITECTURE.md` for the full
 design, `docs/ROADMAP.md` for phases, `docs/DEVELOPMENT.md` for binding
 standards, `docs/DESIGN.md` for the binding GUI design system,
-`docs/ANALYSIS.md` for the note-analysis pipeline (Phases 2-3), and
+`docs/ANALYSIS.md` for the note-analysis pipeline (Phases 2-3),
 `docs/ASSISTANT.md` (+ `docs/ASSISTANT_PLAN.md`) for the self-improving agent
-design and its implementation plan.
+design and its implementation plan, and
+`docs/PREDICATE_CANONICALIZATION.md` for the proposed embedding-assisted
+predicate registry + typed value shapes.
 
 ## Non-negotiables for all code in this repo
 

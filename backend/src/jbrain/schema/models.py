@@ -116,6 +116,13 @@ class SchemaRegistry:
     # entities.kind -> type, keyed by BOTH the type id and its schema.org `name`,
     # so a "Person"/"person" or "Event"/"appointment" entity both resolve.
     by_kind: dict[str, EntityType]
+    # _norm_key(canonical) of every predicate any type declares `functional` —
+    # the registry-driven half of analysis.supersession.is_functional.
+    functional_predicates: frozenset[str]
+    # _norm_key(canonical) of every predicate any type declares — a cheap
+    # kind-agnostic membership test so callers can skip work for the many
+    # drift/unknown predicates no type defines.
+    known_predicates: frozenset[str]
 
     def type(self, type_id: str) -> EntityType:
         """The type by id; KeyError if unknown (callers know their type ids)."""
@@ -127,6 +134,62 @@ class SchemaRegistry:
         unchanged: this is normalization toward a preferred name, NEVER a
         rejection (docs/entity.md invariant)."""
         return self.normalization.get(_norm_key(predicate), predicate)
+
+    def is_functional(self, predicate: str) -> bool:
+        """Whether a (canonical or drift) predicate is functional in the schema —
+        at most one current value, so a new binding supersedes. Union semantics:
+        functional if ANY type declares it so (mirrors the by-any-type proxy the
+        arbiter uses for `predicate_known`)."""
+        return _norm_key(self.normalize_predicate(predicate)) in self.functional_predicates
+
+    def declares_predicate(self, predicate: str) -> bool:
+        """Whether ANY type declares this (canonical or drift) predicate — a cheap
+        registry-only check, no entity kind needed, so a caller can skip a
+        kind lookup for the drift/unknown predicates no type defines."""
+        return _norm_key(self.normalize_predicate(predicate)) in self.known_predicates
+
+    def predicate_for_kind(self, kind: str, predicate: str) -> Predicate | None:
+        """The declared `Predicate` for an entity `kind` (entities.kind, by id or
+        schema.org name) and a canonical predicate name, or None when the kind is
+        unknown or the type does not declare it. Never a storage gate — only the
+        typed-value validator and projections read it."""
+        entity_type = self.by_kind.get(kind)
+        if entity_type is None:
+            return None
+        return entity_type.predicate(self.normalize_predicate(predicate))
+
+    def validate_value(
+        self, pred: Predicate, value_json: dict | None, *, object_present: bool
+    ) -> bool:
+        """Whether `value_json` is acceptable for the predicate's declared
+        `value_shape`. CONSERVATIVE: returns True unless the value clearly
+        violates the shape, so a sound `value_json` is never dropped on a shape
+        the registry under-specifies. `scalar`/`text`/`date` always pass (the
+        datum lives in the statement or a temporal token, not `value_json`)."""
+        if value_json is None:
+            return True
+        shape = pred.value_shape
+        if shape == "ref":
+            # An edge predicate: the value belongs on object_entity, not a scalar
+            # payload. A literal value with no object is the classic "minted a
+            # value as if it were the target" violation.
+            return object_present
+        if shape == "enum" and pred.enum_values:
+            datum = value_json.get("value") if isinstance(value_json, dict) else None
+            if datum is None:
+                return True  # value carried in the statement, not value_json
+            allowed = {v.casefold() for v in pred.enum_values}
+            return str(datum).casefold() in allowed
+        if shape == "quantity":
+            # Tolerant of multi-field measurements ({systolic,diastolic,unit}):
+            # only a non-dict (a bare scalar) is an unambiguous violation.
+            return isinstance(value_json, dict)
+        if shape == "structured" and pred.shape:
+            allowed_keys = set(self.meta.shapes.get(pred.shape, {}))
+            return isinstance(value_json, dict) and (
+                not allowed_keys or set(value_json).issubset(allowed_keys)
+            )
+        return True
 
 
 __all__ = [

@@ -22,6 +22,7 @@ class FakeQueue:
         self.relink_backfills = 0
         self.integration_backfills = 0
         self.consolidate_backfills = 0
+        self.predicate_sync_backfills = 0
         self.purge_backfills = 0
         self.backfill_error: Exception | None = None
         # The cutover toggle the boot backfill reads (default v1).
@@ -70,6 +71,10 @@ class FakeQueue:
         self.consolidate_backfills += 1
         return 0
 
+    async def backfill_sync_predicates(self, maker: Any, ctx: Any) -> int:
+        self.predicate_sync_backfills += 1
+        return 0
+
 
 def install(monkeypatch: pytest.MonkeyPatch, fake: FakeQueue) -> None:
     for name in (
@@ -82,6 +87,7 @@ def install(monkeypatch: pytest.MonkeyPatch, fake: FakeQueue) -> None:
         "backfill_unlinked_relationship_facts",
         "backfill_pending_integration",
         "backfill_consolidate",
+        "backfill_sync_predicates",
     ):
         monkeypatch.setattr(worker.queue, name, getattr(fake, name))
 
@@ -258,6 +264,7 @@ async def test_run_loop_backfills_once_then_polls(monkeypatch: pytest.MonkeyPatc
     assert fake.relink_backfills == 1
     assert fake.purge_backfills == 1
     assert fake.consolidate_backfills == 1
+    assert fake.predicate_sync_backfills == 1
     assert fake.integration_backfills == 0  # v3 backfill inert under the v1 toggle
 
 
@@ -324,6 +331,7 @@ async def test_run_registers_all_job_handlers(
         "integrate_note",
         "ocr_attachment",
         "consolidate_predicates",
+        "sync_predicates",
     }
 
 
