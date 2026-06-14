@@ -41,25 +41,25 @@ INTEGRATE_JOB = "integrate_note"
 # Embedding-assisted predicate canonicalization (docs/PREDICATE_CANONICALIZATION.md
 # Phase 3): when on, the integrate pipeline cosine-matches an unknown predicate
 # against the canonical index and either rewrites it (STRONG) or files a
-# new_predicate review card. DB-backed, default OFF — the feature ships inert and
-# is flipped live after the Phase-4 eval calibrates the bands.
+# new_predicate review card. DB-backed; default ON now that the Phase-4 eval has
+# calibrated the bands — flip off live (a settings upsert) to disable without a
+# redeploy. Inert anyway unless the integrate pipeline is the active path and an
+# embedder is configured (the worker seeds the index at boot).
 PREDICATE_CANON_KEY = "predicate_canonicalization"
-PREDICATE_CANON_DEFAULT = False
+PREDICATE_CANON_DEFAULT = True
 
 # Typed value-shape enforcement (docs/PREDICATE_CANONICALIZATION.md Phase 1/4):
-# when off (default) a value_json that violates its predicate's declared shape is
-# only logged; when on, it is DROPPED (the fact survives on its statement, per
-# the storage invariant). DB-backed + default-off so it ships inert and is
-# flipped live only after the Phase-4 eval confirms the conservative validator
-# never drops a sound value — and is reversible without a redeploy.
-# Flip-time note: re-analyzing a note whose fact already holds a shape-invalid
-# value now commits value_json=None, which decide() won't see as an idempotent
-# refresh of the stored bad-value row — so that one fact may churn (supersede /
-# duplicate) until rewritten. The eval first counts the affected population (it
-# should be tiny — only genuinely-malformed values); a one-time backfill-drop can
-# precede the flip if it matters.
+# when off a value_json that violates its predicate's declared shape is only
+# logged; when ON (default) it is DROPPED (the fact survives on its statement,
+# per the storage invariant). DB-backed; flip off live (a settings upsert) to
+# revert to log-only without a redeploy.
+# Flip-time note: enabling this over a DB that ALREADY holds shape-invalid facts
+# re-commits those value_json as None, which decide() won't see as an idempotent
+# refresh of the stored bad-value row — so each such fact may churn (supersede /
+# duplicate) once until rewritten. A fresh DB has none, so this is a no-op there;
+# over an existing corpus a one-time backfill-drop can precede enabling it.
 VALUE_SHAPE_ENFORCE_KEY = "value_shape_enforce"
-VALUE_SHAPE_ENFORCE_DEFAULT = False
+VALUE_SHAPE_ENFORCE_DEFAULT = True
 
 
 class SqlSettingsStore:
@@ -113,10 +113,10 @@ class SqlSettingsStore:
 
     async def predicate_canonicalization(self, ctx: SessionContext) -> bool:
         """Whether embedding-assisted predicate canonicalization is on (Phase 3).
-        Defaults OFF; only an explicit `true` enables it."""
+        Defaults ON; an explicit `false` (or any non-true value) disables it."""
         return await self.get(ctx, PREDICATE_CANON_KEY, PREDICATE_CANON_DEFAULT) is True
 
     async def value_shape_enforce(self, ctx: SessionContext) -> bool:
         """Whether a shape-violating value_json is DROPPED (vs only logged).
-        Defaults OFF; only an explicit `true` enables enforcement."""
+        Defaults ON; an explicit `false` (or any non-true value) disables it."""
         return await self.get(ctx, VALUE_SHAPE_ENFORCE_KEY, VALUE_SHAPE_ENFORCE_DEFAULT) is True
