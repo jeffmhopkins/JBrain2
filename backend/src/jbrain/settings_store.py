@@ -52,6 +52,12 @@ PREDICATE_CANON_DEFAULT = False
 # the storage invariant). DB-backed + default-off so it ships inert and is
 # flipped live only after the Phase-4 eval confirms the conservative validator
 # never drops a sound value — and is reversible without a redeploy.
+# Flip-time note: re-analyzing a note whose fact already holds a shape-invalid
+# value now commits value_json=None, which decide() won't see as an idempotent
+# refresh of the stored bad-value row — so that one fact may churn (supersede /
+# duplicate) until rewritten. The eval first counts the affected population (it
+# should be tiny — only genuinely-malformed values); a one-time backfill-drop can
+# precede the flip if it matters.
 VALUE_SHAPE_ENFORCE_KEY = "value_shape_enforce"
 VALUE_SHAPE_ENFORCE_DEFAULT = False
 
