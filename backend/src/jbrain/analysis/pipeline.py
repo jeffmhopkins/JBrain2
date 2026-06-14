@@ -27,7 +27,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from jbrain.analysis import purge
 from jbrain.analysis.appointment_projection import project_appointments
-from jbrain.analysis.arbiter import ArbiterPlan, plan_to_extraction
+from jbrain.analysis.arbiter import ArbiterPlan, compute_signals, plan_intent, plan_to_extraction
 from jbrain.analysis.canonical import reproject_canonical_name
 from jbrain.analysis.display import (
     ambiguous_display,
@@ -68,6 +68,8 @@ from jbrain.analysis.extraction import (
     parse_extraction,
     ratchet_domain,
 )
+from jbrain.analysis.integrate import Integrator
+from jbrain.analysis.integrate_prompt import INTEGRATE_STRENGTH
 from jbrain.analysis.intent import EntityResolution, IntegrationIntent
 from jbrain.analysis.prompt import (
     EXTRACT_MAX_TOKENS,
@@ -172,6 +174,47 @@ def _locate(surface: str, chunks: list[_ChunkRef]) -> _Span | None:
     return chunks[0].id, 0, 0
 
 
+# The schema version stamped on an IntegrationIntent's provenance. Versioned
+# fact-level stamping + the agent-curated schema land in Wave 2; until then the
+# registry is at v1 (schema/defs/_meta.yaml).
+_SCHEMA_VERSION = 1
+
+
+async def _extract_note(
+    router: LlmRouter,
+    texts: list[str],
+    *,
+    domain: str,
+    prompt_anchor: datetime,
+    parse_anchor: datetime | None,
+    note_id: str,
+) -> Extraction:
+    """Run the note.extract call(s) over a note's chunk groups and merge them into
+    one Extraction. Shared by analyze_note (the current path) and integrate_note
+    (the v3 path) so the extraction logic lives in one place. Raises
+    PermanentJobError if the output is unusable after the adapter's one re-ask —
+    retrying would just re-bill the same garbage; a SchemaError is config drift,
+    also permanent. Nothing is written here (the merge is in-memory)."""
+    try:
+        parts: list[Extraction] = []
+        for group in group_texts(texts):
+            group_cap = fact_cap("\n\n".join(group))
+            result = await router.complete(
+                "note.extract",
+                system=SYSTEM_PROMPT,
+                user_text=build_user_prompt(
+                    group, anchor=prompt_anchor, domain=domain, max_facts=group_cap
+                ),
+                json_schema=EXTRACTION_SCHEMA,
+                max_tokens=EXTRACT_MAX_TOKENS,
+                strength=NOTE_EXTRACT_STRENGTH,
+            )
+            parts.append(parse_extraction(result.parsed, anchor=parse_anchor, max_facts=group_cap))
+        return merge_extractions(parts)
+    except (LlmBadResponseError, ExtractionError, SchemaError) as exc:
+        raise PermanentJobError(f"note.extract unusable for note {note_id}: {exc}") from exc
+
+
 class AnalysisPipeline:
     def __init__(
         self,
@@ -183,6 +226,9 @@ class AnalysisPipeline:
     ):
         self._maker = maker
         self._router = router
+        # The v3 note→graph judgment agent (docs/INTEGRATOR_PLAN.md Track B),
+        # used by integrate_note. analyze_note (the current path) does not use it.
+        self._integrator = Integrator(router)
         # Optional on purpose: without an embed client, resolution layer 2 is
         # skipped entirely (no degraded guessing) — the harness and older
         # call sites keep their exact behavior.
@@ -237,32 +283,14 @@ class AnalysisPipeline:
         # parse anchor is withheld in that case to not clobber a model-correct date.
         prompt_anchor = local_anchor(captured_at, tz_offset)
         parse_anchor = prompt_anchor if tz_offset is not None else None
-        try:
-            parts: list[Extraction] = []
-            for group in group_texts(texts):
-                group_cap = fact_cap("\n\n".join(group))
-                result = await self._router.complete(
-                    "note.extract",
-                    system=SYSTEM_PROMPT,
-                    user_text=build_user_prompt(
-                        group, anchor=prompt_anchor, domain=domain, max_facts=group_cap
-                    ),
-                    json_schema=EXTRACTION_SCHEMA,
-                    max_tokens=EXTRACT_MAX_TOKENS,
-                    strength=NOTE_EXTRACT_STRENGTH,
-                )
-                parts.append(
-                    parse_extraction(result.parsed, anchor=parse_anchor, max_facts=group_cap)
-                )
-            extraction = merge_extractions(parts)
-        except (LlmBadResponseError, ExtractionError, SchemaError) as exc:
-            # The adapter already spent its one re-ask: retrying the job would
-            # just re-bill the same garbage. A SchemaError (the registry the
-            # parser normalizes through is missing/malformed) is config drift,
-            # not transient — retrying re-runs the paid extraction for nothing,
-            # so it is permanent too. Nothing was written (the merge is in-memory;
-            # _apply runs in a single later transaction).
-            raise PermanentJobError(f"note.extract unusable for note {note_id}: {exc}") from exc
+        extraction = await _extract_note(
+            self._router,
+            texts,
+            domain=domain,
+            prompt_anchor=prompt_anchor,
+            parse_anchor=parse_anchor,
+            note_id=note_id,
+        )
 
         provider, model = self._router.spec("note.extract", NOTE_EXTRACT_STRENGTH)
         async with scoped_session(self._maker, SYSTEM_CTX) as session:
@@ -280,6 +308,85 @@ class AnalysisPipeline:
             note_id=note_id,
             facts=len(extraction.facts),
             mentions=len(extraction.mentions),
+        )
+
+    async def integrate_note(self, payload: dict[str, Any]) -> None:
+        """The v3 note→graph path (docs/INTEGRATOR_PLAN.md): extract → Integrator
+        (graph-aware agent judgment) → plan_intent (deterministic disposition) →
+        apply_intent (deterministic commit + review cards). Additive alongside
+        analyze_note; the trigger cutover (W3.3) is deferred. Missing/deleted note
+        is a no-op."""
+        note_id = str(payload["note_id"])
+        async with scoped_session(self._maker, SYSTEM_CTX) as session:
+            note = (
+                await session.execute(select(Note).where(Note.id == note_id))
+            ).scalar_one_or_none()
+            if note is None or note.deleted_at is not None:
+                log.info("integration.skipped", note_id=note_id, reason="missing or deleted")
+                return
+            body, domain, captured_at = note.body, note.domain_code, note.created_at
+            tz_offset = note.tz_offset_minutes
+            chunk_rows = (
+                await session.execute(
+                    select(Chunk.id, Chunk.text, Chunk.source_kind, Attachment.filename)
+                    .join(Attachment, Chunk.attachment_id == Attachment.id, isouter=True)
+                    .where(Chunk.note_id == note_id, Chunk.granularity == PARAGRAPH)
+                    .order_by(Chunk.seq)
+                )
+            ).all()
+        chunks = [_ChunkRef(id=r.id, text=r.text) for r in chunk_rows]
+        texts = [
+            prompt_block(r.text, source_kind=r.source_kind, filename=r.filename) for r in chunk_rows
+        ] or [body]
+
+        prompt_anchor = local_anchor(captured_at, tz_offset)
+        parse_anchor = prompt_anchor if tz_offset is not None else None
+        extraction = await _extract_note(
+            self._router,
+            texts,
+            domain=domain,
+            prompt_anchor=prompt_anchor,
+            parse_anchor=parse_anchor,
+            note_id=note_id,
+        )
+
+        # First cut: empty graph context. Retrieving candidate entities + their
+        # current facts to make the agent genuinely graph-aware is the next
+        # enhancement, best tuned against real model output (docs/INTEGRATOR_PLAN.md
+        # Track B). The wiring below is identical either way.
+        graph_context = ""
+        intent = await self._integrator.integrate(
+            note_id=note_id,
+            extraction=extraction,
+            graph_context=graph_context,
+            schema_version=_SCHEMA_VERSION,
+        )
+        plan = plan_intent(intent, compute_signals(intent, [c.text for c in chunks]))
+
+        provider, model = self._router.spec("integrate.note", INTEGRATE_STRENGTH)
+        async with scoped_session(self._maker, SYSTEM_CTX) as session:
+            await self.apply_intent(
+                session,
+                note_id=uuid.UUID(note_id),
+                note_domain=domain,
+                captured_at=captured_at,
+                chunks=chunks,
+                intent=intent,
+                plan=plan,
+                title=extraction.title,
+                tags=extraction.tags,
+                extractor=f"{provider}:{model}",
+            )
+            await session.execute(
+                update(Note)
+                .where(Note.id == uuid.UUID(note_id))
+                .values(integration_state="integrated")
+            )
+        log.info(
+            "integration.done",
+            note_id=note_id,
+            committed=len(plan.to_commit),
+            review=len(plan.to_review),
         )
 
     async def apply_intent(
