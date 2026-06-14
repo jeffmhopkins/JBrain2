@@ -15,6 +15,7 @@ ceiling downstream (weight model, N11).
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import structlog
@@ -23,6 +24,8 @@ from jbrain.analysis.extraction import (
     ASSERTIONS,
     FACT_KINDS,
     MAX_KEY_CHARS,
+    MAX_STATEMENT_CHARS,
+    MAX_VALUE_JSON_BYTES,
     parse_datetime,
 )
 from jbrain.analysis.intent import (
@@ -165,14 +168,28 @@ def _parse_fact(raw: Any) -> IntentFact | None:
     ):
         log.warning("integrate.fact_dropped", reason="invalid fields", predicate=predicate[:80])
         return None
+    # Same hygiene/abuse bounds as parse_extraction: a statement is rendering
+    # only (truncate harmlessly); an oversized value_json is dropped (the fact
+    # survives on its statement). The agent path is where a runaway value is most
+    # likely, so these must not be skipped here.
+    if len(statement) > MAX_STATEMENT_CHARS:
+        log.warning(
+            "integrate.fact_statement_truncated", predicate=predicate, length=len(statement)
+        )
+        statement = statement[:MAX_STATEMENT_CHARS]
     value_json = raw.get("value_json")
+    if not isinstance(value_json, dict):
+        value_json = None
+    elif len(json.dumps(value_json)) > MAX_VALUE_JSON_BYTES:
+        log.warning("integrate.fact_value_json_dropped", predicate=predicate)
+        value_json = None
     return IntentFact(
         entity_ref=entity_ref,
         predicate=predicate,
         qualifier=qualifier,
         kind=kind,
         statement=statement,
-        value_json=value_json if isinstance(value_json, dict) else None,
+        value_json=value_json,
         assertion=assertion,
         object_entity_ref=(str(raw["object_entity_ref"]) if raw.get("object_entity_ref") else None),
         temporal=_parse_temporal(raw.get("temporal")),

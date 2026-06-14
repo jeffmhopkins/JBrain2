@@ -139,3 +139,25 @@ def test_bad_supersession_action_dropped():
 def test_pair_missing_id_dropped():
     payload = _payload(merge_proposals=[{"entity_a_id": "e1"}])
     assert parse_intent(payload, **_PROV).merge_proposals == []
+
+
+def test_oversized_statement_is_truncated():
+    from jbrain.analysis.extraction import MAX_STATEMENT_CHARS
+
+    payload = _payload(facts=[_fact(statement="x" * (MAX_STATEMENT_CHARS + 500))])
+    assert len(parse_intent(payload, **_PROV).facts[0].statement) == MAX_STATEMENT_CHARS
+
+
+def test_oversized_value_json_is_dropped():
+    payload = _payload(facts=[_fact(value_json={"k": "v" * 20000})])
+    assert parse_intent(payload, **_PROV).facts[0].value_json is None
+
+
+def test_non_dict_value_json_becomes_none():
+    payload = _payload(facts=[_fact(value_json=["not", "a", "dict"])])
+    assert parse_intent(payload, **_PROV).facts[0].value_json is None
+
+
+def test_object_entity_ref_passthrough():
+    payload = _payload(facts=[_fact(object_entity_ref="m2")])
+    assert parse_intent(payload, **_PROV).facts[0].object_entity_ref == "m2"
