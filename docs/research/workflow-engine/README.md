@@ -24,6 +24,7 @@ dossiers. This README is the decision surface.
 | D | [DBOS deep-dive](D-dbos-deep-dive.md) | Fit of DBOS Transact against the two flagship workflows | **Adopt with caveats** — ingestion (OCR gate + fan-out) and nightly wiki (multi-day human-approval pause) map onto native primitives; the system-DB/RLS and code-vs-data tensions are managed, not blockers; **4 conditions decide it** |
 | E | [durable-workflow comparison](E-durable-workflow-comparison.md) | DBOS vs Temporal/Restate/Prefect/Windmill/Hatchet/… | **Nothing beats DBOS** for the single-box, in-process, Postgres-only, multi-day human-in-the-loop profile; Windmill is the only spoiler (data-defined flows + approval UI) but costs a separate server |
 | F | [spike & de-confliction](F-spike-and-deconfliction.md) | The live proof-of-concept + the collision-free contract | DBOS validated end-to-end (durable approval pause/resume, fan-out, IDs-not-payloads guard) in a **new-files-only** `workflow/` package — zero collision with the concurrent ingestion→entity-graph session |
+| G | [engine design](G-engine-design.md) | The authoring standard + the promotion path | Determinism + IDs-not-payloads as a binding standard (ready for `DEVELOPMENT.md`); promotion crosses an autonomy boundary, so **a standing pipeline may read and propose, never auto-write** |
 
 ## The decision
 
@@ -85,17 +86,21 @@ a standing scheduled/triggered pipeline).
 
 ## Still open (for the implementation plan)
 
-1. **The promotion path** — when an agent skill graduates into a standing
-   scheduled/triggered pipeline, and what gates it (review inbox +
-   skill-promotion machinery). The one genuinely new design decision left; the
-   seam between the two surfaces.
-2. **The four DBOS conditions** above, each made concrete (the guard test, the
-   `DEVELOPMENT.md` determinism standard, the migrate/deploy procedure).
+1. ~~**The promotion path**~~ — **designed** (G, Part 2): a standing pipeline may
+   read and propose, never auto-write. One policy choice flagged for confirmation
+   (whether eval-gated low-risk autonomous mutation is ever allowed — recommended
+   **no**).
+2. **The four DBOS conditions** — #1/#2 now have a concrete standard (G, Part 1)
+   and an enforced guard (F); #3 (migrate/deploy boundary) and #4 (version-aware
+   deploy) land with the dependency commit.
 3. **Pipeline parameterization vs topology** (D §7) — how much stays data
    (config rows read in an early step) vs code (the workflow body).
 4. **Run-log retention** on a small box (C) and the IDs-not-content property of
-   `runs`/`run_steps` so the engine's audit log keeps the queue's one-policy
-   security class.
+   the run log so the engine's audit trail keeps the queue's one-policy security
+   class.
+5. **Dependency commit sequencing** — adding `dbos` to `pyproject`/`uv.lock` +
+   `dev-setup.sh` (#8), sequenced after the concurrent ingestion work merges to
+   avoid lock conflict.
 
 ## The through-line
 
