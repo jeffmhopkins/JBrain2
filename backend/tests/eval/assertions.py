@@ -251,10 +251,12 @@ def check_case_db(case: Case, commit: DbCommit) -> list[str]:
         )
         if target is None:
             continue  # case didn't seed this id; nothing to verify in DB mode
+        # A fork is a NEW entity carrying the mention's own name (exact, not the
+        # loose substring _name_match — else short mentions like "Me" trip on any
+        # word that contains them, e.g. "metformin").
+        m = er.mention.casefold().strip()
         forked = [
-            name
-            for eid, name in new_ents.items()
-            if _name_match(er.mention, name) and eid != target
+            name for eid, name in new_ents.items() if name.casefold().strip() == m and eid != target
         ]
         if forked:
             fails.append(

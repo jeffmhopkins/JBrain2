@@ -15,6 +15,7 @@ Needs Docker. The graph is reset between cases so they don't contaminate.
 from __future__ import annotations
 
 import asyncio
+import os
 import sys
 from collections.abc import Awaitable, Callable
 
@@ -61,10 +62,55 @@ async def _evaluate(cases: list[Case], run_one: Callable[[Case], Awaitable[list[
     return 1 if failed else 0
 
 
-async def _run_db_mode(cases: list[Case], router: object) -> int:
-    """Each case through apply_intent against a throwaway Postgres, asserting the
-    committed graph. The graph is truncated between cases so a minted/seeded
-    entity from one case can't resolve a later case's mention."""
+def _selected(args: list[str]) -> list[Case]:
+    flt = next((a for a in args if not a.startswith("--")), "")
+    return [c for c in load_corpus() if not flt or flt in c.id]
+
+
+def _print_cost(tally: _Tally, *, db: bool) -> None:
+    cost = tally.inp / 1e6 * _PRICE_IN + tally.out / 1e6 * _PRICE_OUT
+    print(f"{tally.calls} calls ~${cost:.3f}{' · DB-mode' if db else ''}")
+
+
+async def _db_loop(cases: list[Case], app_url: str, tmp: str, reset) -> int:
+    # The async engine binds to this loop, so it is created here (not in the sync
+    # bootstrap). build_router's recorder tallies the same two Grok calls per case.
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+    from sqlalchemy.pool import NullPool
+
+    from tests.eval.runner import run_case_db
+
+    engine = create_async_engine(app_url, poolclass=NullPool)
+    maker = async_sessionmaker(engine, expire_on_commit=False)
+    tally = _Tally()
+    router = build_router(Settings(), recorder=tally)
+
+    debug = bool(os.environ.get("JBRAIN_EVAL_DEBUG"))
+
+    async def run_one(case: Case) -> list[str]:
+        reset()
+        commit = await run_case_db(router, case, maker=maker, tmp_path=tmp)
+        if debug:
+            for f in commit.facts:
+                obj = f" -> {f.object_name}" if f.object_name else ""
+                print(
+                    f"      · {f.entity_name}.{f.predicate}{obj} = {f.value_json}"
+                    f" [{f.kind}/{f.assertion}/{f.status}/{f.domain_code}]"
+                )
+        return check_case_db(case, commit)
+
+    try:
+        code = await _evaluate(cases, run_one)
+        _print_cost(tally, db=True)
+        return code
+    finally:
+        await engine.dispose()
+
+
+def run_db_mode(args: list[str]) -> int:
+    """Synchronous orchestrator for --db: the testcontainer + Alembic bootstrap
+    must run OUTSIDE the event loop (Alembic's env.py drives asyncio.run itself),
+    then the async per-case loop runs under one asyncio.run."""
     import argparse
     import tempfile
 
@@ -72,16 +118,17 @@ async def _run_db_mode(cases: list[Case], router: object) -> int:
     from alembic import command
     from alembic.config import Config
     from sqlalchemy import text
-    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-    from sqlalchemy.pool import NullPool
 
     from tests.conftest import docker_available, pgvector_container
-    from tests.eval.runner import run_case_db
 
+    if not Settings().xai_api_key:
+        print("JBRAIN_XAI_API_KEY not set — the real-Grok eval is opt-in.")
+        return 2
     if not docker_available():
         print("--db needs a Docker daemon for the Postgres testcontainer.")
         return 2
 
+    cases = _selected(args)
     with pgvector_container() as pg, tempfile.TemporaryDirectory() as tmp:
         admin = sqlalchemy.create_engine(
             pg.get_connection_url(driver="psycopg"), isolation_level="AUTOCOMMIT"
@@ -94,31 +141,26 @@ async def _run_db_mode(cases: list[Case], router: object) -> int:
         command.upgrade(cfg, "head")
         host, port = pg.get_container_host_ip(), pg.get_exposed_port(5432)
         app_url = f"postgresql+asyncpg://jbrain_app:app_test_pw@{host}:{port}/{pg.dbname}"
-        engine = create_async_engine(app_url, poolclass=NullPool)
-        maker = async_sessionmaker(engine, expire_on_commit=False)
 
-        def _reset() -> None:
+        def reset() -> None:
+            # Wipe the per-case graph but keep reference/migration rows: domains
+            # holds the seeded firewall codes a note's domain FKs to; truncating
+            # it would make every health/finance/location note fail the FK.
             with admin.connect() as conn:
                 rows = conn.execute(
                     text(
                         "SELECT schemaname, tablename FROM pg_tables WHERE schemaname"
                         " NOT IN ('pg_catalog', 'information_schema')"
-                        " AND tablename != 'alembic_version'"
+                        " AND tablename NOT IN ('alembic_version', 'domains')"
                     )
                 ).all()
                 if rows:
                     targets = ", ".join(f'"{s}"."{t}"' for s, t in rows)
                     conn.execute(text(f"TRUNCATE {targets} CASCADE"))
 
-        async def run_one(case: Case) -> list[str]:
-            _reset()
-            commit = await run_case_db(router, case, maker=maker, tmp_path=tmp)  # type: ignore[arg-type]
-            return check_case_db(case, commit)
-
         try:
-            return await _evaluate(cases, run_one)
+            return asyncio.run(_db_loop(cases, app_url, tmp, reset))
         finally:
-            await engine.dispose()
             admin.dispose()
 
 
@@ -127,10 +169,7 @@ async def main() -> int:
     if not settings.xai_api_key:
         print("JBRAIN_XAI_API_KEY not set — the real-Grok eval is opt-in.")
         return 2
-    args = sys.argv[1:]
-    db_mode = "--db" in args
-    flt = next((a for a in args if not a.startswith("--")), "")
-    cases = [c for c in load_corpus() if not flt or flt in c.id]
+    cases = _selected(sys.argv[1:])
     tally = _Tally()
     router = build_router(settings, recorder=tally)
 
@@ -138,11 +177,12 @@ async def main() -> int:
         intent, plan = await run_case(router, case)
         return check_case(case, intent, plan)
 
-    code = await _run_db_mode(cases, router) if db_mode else await _evaluate(cases, run_one_intent)
-    cost = tally.inp / 1e6 * _PRICE_IN + tally.out / 1e6 * _PRICE_OUT
-    print(f"{tally.calls} calls ~${cost:.3f}{' · DB-mode' if db_mode else ''}")
+    code = await _evaluate(cases, run_one_intent)
+    _print_cost(tally, db=False)
     return code
 
 
 if __name__ == "__main__":
+    if "--db" in sys.argv[1:]:
+        raise SystemExit(run_db_mode(sys.argv[1:]))
     raise SystemExit(asyncio.run(main()))
