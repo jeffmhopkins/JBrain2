@@ -23,7 +23,7 @@ from jbrain.analysis.weight import ConfidenceSignals
 from jbrain.db.session import scoped_session
 from jbrain.ingest.chunker import PARAGRAPH
 from jbrain.llm import FakeLlmClient, LlmRouter
-from jbrain.models.analysis import Entity, Fact
+from jbrain.models.analysis import Entity, Fact, ReviewItem
 from jbrain.models.notes import Chunk
 from jbrain.queue import SYSTEM_CTX
 from tests.conftest import docker_available
@@ -163,10 +163,22 @@ async def test_apply_intent_excludes_cross_subject_review_fact(maker, tmp_path):
             .scalars()
             .all()
         )
+        cards = (
+            (
+                await session.execute(
+                    select(ReviewItem).where(ReviewItem.kind == "low_confidence_inference")
+                )
+            )
+            .scalars()
+            .all()
+        )
     # The cross-subject fact (review-held) is excluded by commit_only; only the
-    # clean fact committed.
+    # clean fact committed — and the held fact surfaces as a review card (A1b-ii-2).
     assert len(facts) == 1
     assert facts[0].statement == "Globex is in tech"
+    assert len(cards) == 1
+    assert cards[0].payload["reasons"] == ["cross_subject_link"]
+    assert cards[0].payload["statement"] == "Initech is in tech"
 
 
 async def test_apply_intent_rejected_plan_is_a_noop(maker, tmp_path):  # noqa: F811

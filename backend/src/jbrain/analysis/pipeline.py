@@ -322,6 +322,9 @@ class AnalysisPipeline:
             extractor=extractor,
             resolution_override=override,
         )
+        await self._file_inference_reviews(
+            session, note_id=note_id, note_domain=note_domain, plan=plan
+        )
 
     async def _resolve_from_intent(
         self,
@@ -360,6 +363,70 @@ class AnalysisPipeline:
             else:
                 override[r.mention_ref] = None
         return override
+
+    async def _file_inference_reviews(
+        self,
+        session: AsyncSession,
+        *,
+        note_id: uuid.UUID,
+        note_domain: str,
+        plan: ArbiterPlan,
+    ) -> None:
+        """Surface every review-held fact (cross-subject, ambiguous, or
+        below-threshold) the arbiter would not auto-commit as a
+        low_confidence_inference card, so it is owner-visible rather than dropped
+        (plan N11, A1b-ii-2). Card-only for now — the proposal lives in the
+        payload; promoting it into a fact on approval is a later resolver brick.
+        The card's domain rides the same floor/ratchet the fact would, so a
+        sensitive inference never lands in a less-restricted scope than its
+        predicate."""
+        for pf in plan.to_review:
+            fact = pf.fact
+            # Mirror _upsert_fact's domain derivation (fact.domain is "" here).
+            extracted = note_domain
+            floor = domain_floor(fact.predicate)
+            if floor is not None and note_domain == "general":
+                extracted = floor
+            card_domain, _ = ratchet_domain(extracted, note_domain)
+            # Re-analysis must not multiply identical open cards.
+            existing = (
+                await session.execute(
+                    text(
+                        "SELECT 1 FROM app.review_items"
+                        " WHERE kind = 'low_confidence_inference' AND status = 'open'"
+                        " AND payload->>'note_id' = :nid AND payload->>'entity_ref' = :ref"
+                        " AND payload->>'predicate' = :pred AND payload->>'qualifier' = :qual"
+                        " LIMIT 1"
+                    ),
+                    {
+                        "nid": str(note_id),
+                        "ref": fact.entity_ref,
+                        "pred": fact.predicate,
+                        "qual": fact.qualifier,
+                    },
+                )
+            ).first()
+            if existing is not None:
+                continue
+            session.add(
+                ReviewItem(
+                    kind="low_confidence_inference",
+                    payload={
+                        "note_id": str(note_id),
+                        "entity_ref": fact.entity_ref,
+                        "predicate": fact.predicate,
+                        "qualifier": fact.qualifier,
+                        "fact_kind": fact.kind,
+                        "statement": fact.statement,
+                        "weight": pf.weight,
+                        "reasons": list(pf.review_reasons),
+                        "title": fact.statement,
+                        "summary": "Held for review: "
+                        + (", ".join(pf.review_reasons) or "low confidence"),
+                    },
+                    domain_code=card_domain,
+                )
+            )
 
     async def _apply(
         self,
