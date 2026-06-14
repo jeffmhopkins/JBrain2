@@ -437,6 +437,59 @@ async def test_value_shape_mismatch_is_logged_not_dropped(maker, tmp_path):  # n
     assert any(e.get("event") == "analysis.fact_value_shape_mismatch" for e in logs)
 
 
+async def test_value_shape_mismatch_drops_value_when_enforced(maker, tmp_path):  # noqa: F811
+    # Phase 4 ENFORCE: with value_shape_enforce on, the same shape-violating
+    # value_json is dropped — the fact still commits (active), on its statement.
+    import structlog.testing
+
+    from jbrain.settings_store import VALUE_SHAPE_ENFORCE_KEY, SqlSettingsStore
+
+    await SqlSettingsStore(maker).upsert(SYSTEM_CTX, VALUE_SHAPE_ENFORCE_KEY, True)
+    note_id = await make_note(maker, domain="general", body="A note about Pat.")
+    await ingest(maker, note_id, tmp_path)
+    intent = _intent(
+        note_id,
+        [EntityResolution(mention_ref="m1", mode="new", new_kind="Person", new_name="Pat")],
+        [
+            _fact(
+                "m1",
+                predicate="spouse",
+                kind="relationship",
+                statement="Pat's spouse is Jane",
+                value_json={"value": "Jane"},
+            )
+        ],
+    )
+    plan = plan_intent(intent, signals={0: _SURFACE})
+    router = LlmRouter({"xai": FakeLlmClient()}, {"note.extract": ("xai", "grok-4.3")})
+    pipeline = AnalysisPipeline(maker, router, settings=SqlSettingsStore(maker))
+    chunks = await _load_chunks(maker, note_id)
+    with structlog.testing.capture_logs() as logs:
+        async with scoped_session(maker, SYSTEM_CTX) as session:
+            await pipeline.apply_intent(
+                session,
+                note_id=uuid.UUID(note_id),
+                note_domain="general",
+                captured_at=datetime.now(UTC),
+                chunks=chunks,
+                intent=intent,
+                plan=plan,
+                title="t",
+                tags=[],
+                extractor="test:fake",
+            )
+
+    async with scoped_session(maker, SYSTEM_CTX) as session:
+        fact = (
+            (await session.execute(select(Fact).where(Fact.note_id == uuid.UUID(note_id))))
+            .scalars()
+            .one()
+        )
+    assert fact.value_json is None  # enforced: the bad value was dropped
+    assert fact.status == "active"  # the fact itself is kept (storage invariant)
+    assert any(e.get("event") == "analysis.fact_value_shape_dropped" for e in logs)
+
+
 async def test_apply_intent_rejected_plan_is_a_noop(maker, tmp_path):  # noqa: F811
     note_id = await make_note(maker, domain="general", body="Globex note.")
     await ingest(maker, note_id, tmp_path)

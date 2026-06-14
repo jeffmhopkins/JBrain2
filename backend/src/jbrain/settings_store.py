@@ -46,6 +46,15 @@ INTEGRATE_JOB = "integrate_note"
 PREDICATE_CANON_KEY = "predicate_canonicalization"
 PREDICATE_CANON_DEFAULT = False
 
+# Typed value-shape enforcement (docs/PREDICATE_CANONICALIZATION.md Phase 1/4):
+# when off (default) a value_json that violates its predicate's declared shape is
+# only logged; when on, it is DROPPED (the fact survives on its statement, per
+# the storage invariant). DB-backed + default-off so it ships inert and is
+# flipped live only after the Phase-4 eval confirms the conservative validator
+# never drops a sound value — and is reversible without a redeploy.
+VALUE_SHAPE_ENFORCE_KEY = "value_shape_enforce"
+VALUE_SHAPE_ENFORCE_DEFAULT = False
+
 
 class SqlSettingsStore:
     def __init__(self, maker: async_sessionmaker[AsyncSession]):
@@ -100,3 +109,8 @@ class SqlSettingsStore:
         """Whether embedding-assisted predicate canonicalization is on (Phase 3).
         Defaults OFF; only an explicit `true` enables it."""
         return await self.get(ctx, PREDICATE_CANON_KEY, PREDICATE_CANON_DEFAULT) is True
+
+    async def value_shape_enforce(self, ctx: SessionContext) -> bool:
+        """Whether a shape-violating value_json is DROPPED (vs only logged).
+        Defaults OFF; only an explicit `true` enables enforcement."""
+        return await self.get(ctx, VALUE_SHAPE_ENFORCE_KEY, VALUE_SHAPE_ENFORCE_DEFAULT) is True
