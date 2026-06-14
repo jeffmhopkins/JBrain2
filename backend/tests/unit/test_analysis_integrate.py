@@ -111,3 +111,9 @@ def test_build_integrate_prompt_includes_mentions_facts_and_context_fallback():
     assert "Celine" in text
     assert "spouse" in text
     assert "no related entities" in text  # empty-context fallback
+
+
+def test_build_integrate_prompt_includes_note_text_and_fallback():
+    assert "RAW NOTE HERE" in build_integrate_prompt(_extraction(), "", note_text="RAW NOTE HERE")
+    # Empty note text → the explicit fallback marker, never a blank block.
+    assert "raw note text unavailable" in build_integrate_prompt(_extraction(), "")
