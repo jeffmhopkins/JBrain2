@@ -1,6 +1,6 @@
 {
   "name": "a low-confidence OCR-derived health state must not auto-supersede a confident prior",
-  "description": "docs/ANALYSIS.md 'Guards': facts derived from OCR carry reduced confidence, and low-confidence numeric health facts never auto-supersede anything. Note 1 records a confident medication regimen (lisinopril, conf 0.95, typed by the owner). Note 2 is an OCR read of a blurry pharmacy label the model is unsure of. Under integrate the agent marks that uncertain reading inferred (the value isn't reliably attested), so the weight model bounds it by the agent's low self-confidence (0.25 < the state commit threshold) instead of granting a surface-attested fact its full ceiling: the fact is HELD as pending_review with a low_confidence_inference card and never supersedes the confident prior. Pins that a blurry OCR value can't silently overwrite a confident fact.",
+  "description": "docs/ANALYSIS.md 'Guards': low-confidence numeric health facts never auto-supersede anything. Note 1 records a confident medication regimen (lisinopril, conf 0.95). Note 2 is a blurry OCR read the model returns at conf 0.25. Even though the OCR text is surface-attested (so the weight model would commit it), supersession.decide()'s low-confidence guard is keyed on the model's SELF-confidence, not the plan weight: a 0.25 read that would supersede a more-confident active fact is parked as pending_review behind a low_confidence card, and the confident fact stays active. Pins that a blurry OCR value can't silently overwrite a confident fact (regression: integrate must thread self-confidence to decide(), not the plan weight a surface-attested fact carries).",
   "steps": [
     {
       "domain": "health",
@@ -22,7 +22,7 @@
     {
       "domain": "health",
       "created_at": "2026-06-09T09:00:00-06:00",
-      "body": "Photo of the pharmacy label (blurry OCR): looks like it might say lisartan 50mg?",
+      "body": "Photo of the pharmacy label (blurry OCR): looks like it might say losartan 50mg?",
       "extraction": {
         "title": "Pharmacy label photo",
         "tags": ["medication", "ocr", "health"],
@@ -31,12 +31,6 @@
           {"predicate": "medicationRegimen", "qualifier": "antihypertensive", "kind": "state", "statement": "Pharmacy label (OCR, low confidence) reads losartan 50mg daily.", "value_json": {"drug": "losartan", "dose": "50mg", "frequency": "daily"}, "assertion": "asserted", "entity_ref": "Me", "object_entity_ref": null, "temporal": {"phrase": "", "resolved_start": "2026-06-09T00:00:00-06:00", "resolved_end": null, "precision": "day"}, "domain": "health", "confidence": 0.25}
         ],
         "temporal_tokens": []
-      },
-      "intent": {
-        "resolutions": [{"mention_ref": "Me", "mode": "existing", "name": "Me"}],
-        "facts": [
-          {"entity_ref": "Me", "predicate": "medicationRegimen", "qualifier": "antihypertensive", "kind": "state", "assertion": "asserted", "statement": "Pharmacy label (OCR, low confidence) reads losartan 50mg daily.", "value_json": {"drug": "losartan", "dose": "50mg", "frequency": "daily"}, "self_confidence": 0.25, "inferred": true}
-        ]
       }
     }
   ],
@@ -49,7 +43,7 @@
       {"entity": "Me", "predicate": "medicationRegimen", "qualifier": "antihypertensive", "value_contains": "lisinopril", "status": "superseded"}
     ],
     "review_items": [
-      {"kind": "low_confidence_inference", "domain": "health", "count": 1}
+      {"kind": "low_confidence", "domain": "health", "count": 1}
     ]
   }
 }

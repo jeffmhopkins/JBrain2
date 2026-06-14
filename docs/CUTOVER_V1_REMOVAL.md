@@ -30,17 +30,19 @@ deterministic resolver / per-fact tag). These tests are **skipped** with a
   stay covered by the direct `resolve_entity` units in the same file, and
   declared-name/collision by harness scenarios.
 
-Two real integrate-path gaps the cutover exposed (no longer masked by v1):
+Integrate-path gaps the cutover exposed (no longer masked by v1):
 
 - The `extraction_truncated` review is never filed: `plan_to_extraction`
   reconstructs the `Extraction` with `dropped_facts=0`, so the per-note fact cap
   still fires but the user-facing card does not. (Drove the removal of the
-  `adv_over_extraction_no_cap` harness scenario.)
-- A low-confidence OCR fact only stays held if the agent marks it `inferred`:
-  `effective_weight` grants a surface-attested fact its full ceiling regardless
-  of self-confidence (weight.py), so a blurry-OCR reading tagged
-  `inferred=False` would commit and supersede a confident prior. The harness
-  `health_low_confidence_ocr_guard` scenario now scripts the `inferred` intent.
+  `adv_over_extraction_no_cap` harness scenario.) **Still open.**
+- ~~A low-confidence OCR fact could supersede a confident prior.~~ **Fixed
+  (#186):** `decide()`'s low-confidence guard now keys on the model's
+  self-confidence (threaded through `ExtractedFact.self_confidence` →
+  `Candidate.self_confidence`), not the plan weight a surface-attested fact
+  carries — so a blurry-OCR read is parked behind a `low_confidence` card even
+  at full weight. The `health_low_confidence_ocr_guard` scenario runs the
+  realistic default-intent path again.
 
 ## How the test suites were migrated (for reference)
 

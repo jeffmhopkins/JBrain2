@@ -209,6 +209,9 @@ def _to_extracted(fact: IntentFact, confidence: float) -> ExtractedFact:
         temporal=temporal,
         domain="",
         confidence=confidence,
+        # The model's self-report rides alongside the plan weight so the
+        # supersession guard can still hold a low-confidence overwrite (N11).
+        self_confidence=fact.self_confidence,
     )
 
 

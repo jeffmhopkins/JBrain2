@@ -1714,6 +1714,7 @@ class AnalysisPipeline:
             valid_to=valid_to,
             reported_at=captured_at,
             confidence=fact.confidence,
+            self_confidence=fact.self_confidence,
         )
         existing = await self._existing_facts(
             session,
@@ -2019,6 +2020,7 @@ class AnalysisPipeline:
             valid_to=valid_to,
             reported_at=captured_at,
             confidence=fact.confidence,
+            self_confidence=fact.self_confidence,
         )
         existing = await self._existing_facts(
             session,
