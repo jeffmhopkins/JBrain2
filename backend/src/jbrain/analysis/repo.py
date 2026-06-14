@@ -15,11 +15,13 @@ from typing import Any
 from sqlalchemy import bindparam, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from jbrain.analysis.consolidation import rewrite_predicate
 from jbrain.analysis.display import mark_snippet
 from jbrain.analysis.entities import are_distinct, merge_entity_pair, plan_merge
 from jbrain.analysis.predicates import raw_descriptor
 from jbrain.analysis.supersession import is_functional
 from jbrain.db.session import SessionContext, scoped_session
+from jbrain.schema import get_registry
 
 # The list view exposes three lanes: "open" is the pending triage queue,
 # "deferred" is the parked lane (defer + discuss), and "resolved" folds in
@@ -1091,42 +1093,31 @@ class SqlAnalysisRepo:
                 ).first()
                 if known is None:
                     raise UnknownAction(f"map target {canonical!r} is not a canonical predicate")
-                # Heal stored facts raw -> canonical directly: there is no runtime
-                # renamed_from store the YAML-backed normalize_predicate reads, so
-                # the durable registry alias is a Phase-5 correction note. Mirror
-                # consolidate_predicates' guards — never move a pinned/retracted row
-                # or one whose entity already has a live fact under the canonical key.
-                rewritten = list(
-                    (
-                        await session.execute(
-                            text(
-                                "UPDATE app.facts f SET predicate = :canon"
-                                " WHERE f.predicate = :raw AND f.pinned = false"
-                                " AND f.status <> 'retracted'"
-                                " AND NOT EXISTS ("
-                                "   SELECT 1 FROM app.facts g"
-                                "   WHERE g.entity_id = f.entity_id"
-                                "     AND g.subject_id IS NOT DISTINCT FROM f.subject_id"
-                                "     AND g.qualifier = f.qualifier AND g.predicate = :canon"
-                                "     AND g.status IN ('active', 'pending_review'))"
-                                " RETURNING id::text"
-                            ),
-                            {"raw": raw, "canon": canonical},
-                        )
-                    )
-                    .scalars()
-                    .all()
-                )
+                # Heal stored facts raw -> canonical directly (the shared, guarded
+                # rewrite the nightly sweep uses): there is no runtime renamed_from
+                # store the YAML-backed normalize_predicate reads, so the durable
+                # registry alias is a Phase-5 correction note.
+                rewritten = await rewrite_predicate(session, raw, canonical)
                 # Forward-compat: once the alias lands in the registry (Phase 5),
-                # the sweep heals any row this pass had to skip. A no-op today.
+                # the sweep heals any row this pass had to skip. Deduped like
+                # backfill_consolidate so repeated maps don't pile up sweeps.
                 await session.execute(
                     text(
                         "INSERT INTO app.jobs (id, kind, payload)"
-                        " VALUES (gen_random_uuid(), 'consolidate_predicates', '{}'::jsonb)"
+                        " SELECT gen_random_uuid(), 'consolidate_predicates', '{}'::jsonb"
+                        " WHERE NOT EXISTS ("
+                        "   SELECT 1 FROM app.jobs"
+                        "   WHERE kind = 'consolidate_predicates'"
+                        "     AND status IN ('queued', 'running'))"
                     )
                 )
                 return "resolved", [
-                    {"action": "predicate_remapped", "raw": raw, "fact_ids": rewritten}
+                    {
+                        "action": "predicate_remapped",
+                        "raw": raw,
+                        "canonical": canonical,
+                        "fact_ids": rewritten,
+                    }
                 ]
 
             # accept_as_new / suggest_better -> mint the predicate into the index.
@@ -1138,21 +1129,29 @@ class SqlAnalysisRepo:
             fact_kind = item_payload.get("fact_kind")
             if not fact_kind:
                 raise UnknownAction("new_predicate card payload lacks 'fact_kind'")
-            descriptor = raw_descriptor(name, item_payload.get("statement", ""), fact_kind)
-            inserted = (
+            # A name the registry already declares is its own canonical — minting a
+            # 'minted' row would shadow the seed sync (origin='seed') will install,
+            # so skip the mint and let the registry own it.
+            if not get_registry().declares_predicate(name):
+                descriptor = raw_descriptor(name, item_payload.get("statement", ""), fact_kind)
+                # A relationship predicate's value is an edge; everything else a
+                # scalar for now (typed-shape inference is Phase-5 work).
+                value_shape = "ref" if fact_kind == "relationship" else "scalar"
                 await session.execute(
                     text(
                         "INSERT INTO app.canonical_predicates"
                         " (canonical_name, descriptor, value_shape, kind, functional, origin)"
-                        " VALUES (:name, :descriptor, 'scalar', :kind, false, 'minted')"
-                        " ON CONFLICT (canonical_name) DO NOTHING RETURNING canonical_name"
+                        " VALUES (:name, :descriptor, :shape, :kind, false, 'minted')"
+                        " ON CONFLICT (canonical_name) DO NOTHING"
                     ),
-                    {"name": name, "descriptor": descriptor, "kind": fact_kind},
+                    {
+                        "name": name,
+                        "descriptor": descriptor,
+                        "shape": value_shape,
+                        "kind": fact_kind,
+                    },
                 )
-            ).first()
-            return "resolved", [
-                {"action": "minted", "canonical_name": name, "inserted": inserted is not None}
-            ]
+            return "resolved", [{"action": "minted", "canonical_name": name}]
 
         if kind == "domain_promotion" and action in ("accept", "reject"):
             if action == "accept":
@@ -1307,12 +1306,16 @@ class SqlAnalysisRepo:
                 # review item re-queues it but never deletes the note.
                 notes.append("the correction note stays — it was filed as your own note")
             elif action == "predicate_remapped":
-                # Move the rewritten facts back to their raw predicate. Only the
-                # ids this map actually moved are reversed.
+                # Move the rewritten facts back to their raw predicate — but only
+                # rows STILL at the canonical from this map (a later supersession
+                # or re-map may have moved one on; don't clobber that).
                 for row_id in effect.get("fact_ids") or []:
                     await session.execute(
-                        text("UPDATE app.facts SET predicate = :raw WHERE id = :id"),
-                        {"raw": effect["raw"], "id": row_id},
+                        text(
+                            "UPDATE app.facts SET predicate = :raw"
+                            " WHERE id = :id AND predicate = :canon"
+                        ),
+                        {"raw": effect["raw"], "id": row_id, "canon": effect["canonical"]},
                     )
             elif action == "minted":
                 # A minted canonical predicate is durable vocabulary other facts
