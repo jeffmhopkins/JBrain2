@@ -63,7 +63,42 @@ class Expect:
     supersede: tuple[dict[str, Any], ...] = ()
     max_facts: int | None = None
     max_entities: int | None = None  # non-owner resolutions (the no-duplicate gate)
+    # DB-mode firewall floor: min committed facts per domain_code, independent of
+    # the (Grok-variable) predicate spelling — e.g. {"health": 1} proves a health
+    # note's facts floored to health.
+    committed_domains: dict[str, int] = field(default_factory=dict)
     rationale: str = ""
+
+
+@dataclass(frozen=True)
+class SeedFact:
+    """A prior fact to materialize on a seeded entity before the case runs, so
+    DB-mode can assert supersession/resolution against real rows. `object` is the
+    symbolic id of another seeded entity (an edge); `value` becomes value_json."""
+
+    predicate: str
+    qualifier: str = ""
+    kind: str = "state"
+    value: Any = None
+    object: str | None = None
+    assertion: str = "asserted"
+    valid_from: str | None = None  # ISO date/datetime
+
+
+@dataclass(frozen=True)
+class SeedEntity:
+    """An existing entity to materialize before a DB-mode run. `id` is a symbolic
+    handle the corpus references (e.g. 'ent-acme'); the runner maps it to the real
+    minted UUID. `owner=True` attaches facts/aliases to the canonical "Me" entity
+    instead of minting a new one."""
+
+    id: str
+    name: str = "Me"
+    kind: str = "Person"
+    domain: str = "general"
+    owner: bool = False
+    aliases: tuple[str, ...] = ()
+    facts: tuple[SeedFact, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -74,7 +109,64 @@ class Case:
     domain: str = "general"
     graph_context: str = ""
     advisory: bool = False
+    # Per-mode override: a case can be a hard gate in DB-mode (committed-state
+    # invariants are deterministic) while staying advisory at intent-level, or
+    # vice versa. None → falls back to `advisory`.
+    db_advisory: bool | None = None
+    seed: tuple[SeedEntity, ...] = ()
     expect: Expect = field(default_factory=Expect)
+
+    def advisory_for(self, *, db: bool) -> bool:
+        if db and self.db_advisory is not None:
+            return self.db_advisory
+        return self.advisory
+
+
+# --- committed-state contract for DB-mode (pure data; no session/ORM) ---------
+
+
+@dataclass(frozen=True)
+class CommittedFact:
+    """One app.facts row written by the case's note, flattened for assertion."""
+
+    id: str
+    entity_id: str
+    entity_name: str
+    predicate: str
+    qualifier: str
+    kind: str | None
+    value_json: Any
+    assertion: str | None
+    status: str
+    domain_code: str | None
+    object_entity_id: str | None = None
+    object_name: str | None = None
+
+
+@dataclass(frozen=True)
+class SeededFactState:
+    """The post-apply state of a seeded prior fact — the supersession signal."""
+
+    entity_symbolic: str
+    entity_name: str
+    predicate: str
+    status: str
+    superseded_by: str | None
+    valid_to: str | None
+
+
+@dataclass(frozen=True)
+class DbCommit:
+    """Everything a DB-mode case exposes for assertion, read back from committed
+    rows. Pure data so check_case_db is testable without Postgres or Grok."""
+
+    owner_id: str
+    note_id: str
+    seeded_ids: dict[str, str]  # symbolic id -> real UUID
+    facts: tuple[CommittedFact, ...]  # facts this note wrote
+    entities: dict[str, str]  # entity UUID -> canonical_name (referenced by this note)
+    review_fact_ids: frozenset[str]  # fact ids carrying a low_confidence_inference card
+    seeded_facts: tuple[SeededFactState, ...] = ()
 
 
 def _expect(raw: dict[str, Any]) -> Expect:
@@ -88,7 +180,23 @@ def _expect(raw: dict[str, Any]) -> Expect:
         supersede=tuple(raw.get("supersede", [])),
         max_facts=raw.get("max_facts"),
         max_entities=raw.get("max_entities"),
+        committed_domains=raw.get("committed_domains", {}),
         rationale=raw.get("rationale", ""),
+    )
+
+
+def _seed(raw: list[dict[str, Any]]) -> tuple[SeedEntity, ...]:
+    return tuple(
+        SeedEntity(
+            id=e["id"],
+            name=e.get("name", "Me"),
+            kind=e.get("kind", "Person"),
+            domain=e.get("domain", "general"),
+            owner=e.get("owner", False),
+            aliases=tuple(e.get("aliases", [])),
+            facts=tuple(SeedFact(**f) for f in e.get("facts", [])),
+        )
+        for e in raw
     )
 
 
@@ -100,6 +208,8 @@ def case_from_dict(raw: dict[str, Any]) -> Case:
         domain=raw.get("domain", "general"),
         graph_context=raw.get("graph_context", ""),
         advisory=raw.get("advisory", False),
+        db_advisory=raw.get("db_advisory"),
+        seed=_seed(raw.get("seed", [])),
         expect=_expect(raw.get("expect", {})),
     )
 
