@@ -912,6 +912,65 @@ function Detail({ item, lane, queue, position, onClose, onNav }: DetailProps) {
   );
 }
 
+/** The decided record for a new_predicate card — Direction C (docs/mocks/
+ * decided-view-mockups.html): a before→after diff of the change the decision
+ * made. Derived entirely from the resolution + payload — no re-ticking of the
+ * offered rows (which all share one map_to_existing action and so all ticked). */
+function DecidedNewPredicate({ item, parsed }: { item: ReviewItem; parsed: Parsed }) {
+  const action = item.resolution?.action ?? null;
+  const named = item.resolution?.payload.canonical_name;
+  const canonical = typeof named === "string" ? named : null;
+  const before = parsed.predicate ?? "";
+  const subject = parsed.subject ?? "this";
+  const value = parsed.value ?? parsed.statement ?? "?";
+
+  let after = before;
+  let verb = "Decided";
+  let tone = "tone-muted";
+  let nowSub = "";
+  if (action === "map_to_existing" && canonical !== null) {
+    after = canonical;
+    verb = "Mapped to";
+    tone = "tone-ok";
+    nowSub = "an existing relation it now uses";
+  } else if (action === "suggest_better" && canonical !== null) {
+    after = canonical;
+    verb = "Renamed to";
+    tone = "tone-ok";
+    nowSub = "your canonical — the fact now uses it";
+  } else if (action === "accept_as_new") {
+    verb = "Kept as new";
+    tone = "tone-steel";
+    nowSub = "registered as its own canonical relation";
+  } else {
+    verb = "Dismissed";
+    nowSub = "left under its raw name — unchanged";
+  }
+
+  return (
+    <div className={`rdc ${tone}`}>
+      <div className="rdc-row rdc-was">
+        <span className="rdc-lbl">was</span>
+        <span className="rdc-pred was">{before}</span>
+        <span className="rdc-sub">unrecognized — coined from the note</span>
+      </div>
+      <div className="rdc-mid">
+        <span className="rdc-ln" />
+        {after !== before ? `${verb} ${after}` : verb}
+        <span className="rdc-ln" />
+      </div>
+      <div className="rdc-row rdc-now">
+        <span className="rdc-lbl">now</span>
+        <span className="rdc-pred now">{after}</span>
+        <span className="rdc-sub">{nowSub}</span>
+        <span className="rdc-edge">
+          → <b>{`${subject}.${after} → ${value}`}</b>
+        </span>
+      </div>
+    </div>
+  );
+}
+
 function DecidedRecord({ item, parsed }: { item: ReviewItem; parsed: Parsed }) {
   const action = item.resolution?.action ?? null;
   const proposals = proposalsFor(parsed);
@@ -925,18 +984,10 @@ function DecidedRecord({ item, parsed }: { item: ReviewItem; parsed: Parsed }) {
       </p>
     );
   }
-  // suggest_better is a free-text control, not one of the card's choices, so it
-  // has no row to tick in the offered list — report the name the owner gave.
-  if (action === "suggest_better") {
-    const named = item.resolution?.payload.canonical_name;
-    const name = typeof named === "string" ? named : null;
-    return (
-      <p className="rdetail-cands">
-        {name !== null
-          ? `named it yourself — “${name}” is now the canonical predicate and this fact uses it.`
-          : "named it yourself — registered a canonical predicate and renamed this fact."}
-      </p>
-    );
+  // new_predicate states its outcome as a before→after diff (map/keep/rename/
+  // dismiss), so it never re-ticks the offered rows.
+  if (item.kind === "new_predicate") {
+    return <DecidedNewPredicate item={item} parsed={parsed} />;
   }
   return (
     <>

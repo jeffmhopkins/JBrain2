@@ -1,0 +1,421 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Review — decided view, 3 directions (interactive mock)</title>
+    <style>
+      /* Design tokens — copied from frontend/src/styles/tokens.css. Dark only. */
+      :root {
+        color-scheme: dark;
+        --bg: #0e0f11;
+        --surface: #17181b;
+        --surface-2: #1e2024;
+        --border: #26282c;
+        --text: #e6e7e9;
+        --text-2: #9a9da3;
+        --text-3: #5c5f66;
+        --steel: #7fa7c9;
+        --steel-tint: rgba(127, 167, 201, 0.13);
+        --green: #8fbc9a;
+        --green-tint: rgba(143, 188, 154, 0.13);
+        --amber: #c9a36a;
+        --amber-tint: rgba(201, 163, 106, 0.13);
+        --rose: #cf8a8f;
+        --rose-tint: rgba(207, 138, 143, 0.13);
+        --accent: var(--steel);
+        --font-scale: 1;
+        --fs-micro: calc(12px * var(--font-scale));
+        --fs-head: calc(13px * var(--font-scale));
+        --fs-secondary: calc(14px * var(--font-scale));
+        --fs-note: calc(15px * var(--font-scale));
+        --fs-body: calc(16px * var(--font-scale));
+        --fs-title: calc(18px * var(--font-scale));
+        --fs-screen: calc(22px * var(--font-scale));
+        --r-input: 12px;
+        --r-card: 16px;
+        --r-pill: 999px;
+        --font-mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0; background: #060708; color: var(--text);
+        font: 400 var(--fs-body) / 1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+        display: flex; flex-direction: column; align-items: center; gap: 14px;
+        padding: 22px 14px 48px; min-height: 100vh;
+      }
+      .demo-bar { width: 100%; max-width: 460px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+      .demo-title { font-size: var(--fs-secondary); color: var(--text-2); margin-right: auto; }
+      .demo-title b { color: var(--text); font-weight: 600; }
+      .seg { display: inline-flex; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-pill); padding: 3px; }
+      .seg button {
+        appearance: none; border: none; background: none; color: var(--text-2);
+        font: inherit; font-size: var(--fs-secondary); padding: 6px 13px; border-radius: var(--r-pill); cursor: pointer;
+      }
+      .seg button[aria-pressed="true"] { background: var(--steel-tint); color: var(--steel); font-weight: 600; }
+      .seg.scen button { font-size: var(--fs-micro); padding: 5px 11px; }
+      .seg.scen button[aria-pressed="true"] { background: var(--surface-2); color: var(--text); }
+      .dir-blurb {
+        width: 100%; max-width: 460px; font-size: var(--fs-secondary); color: var(--text-2);
+        line-height: 1.5; min-height: 3em; border-left: 2px solid var(--steel); padding: 2px 0 2px 12px;
+      }
+      .dir-blurb b { color: var(--text); font-weight: 600; }
+      .demo-note { width: 100%; max-width: 460px; font-size: var(--fs-head); color: var(--text-3); line-height: 1.55; }
+      .demo-note code { font-family: var(--font-mono); color: var(--text-2); }
+
+      .phone {
+        width: 100%; max-width: 460px; height: 880px; background: var(--bg);
+        border: 1px solid var(--border); border-radius: 30px; overflow: hidden;
+        position: relative; display: flex; flex-direction: column;
+      }
+      .statusbar {
+        display: flex; justify-content: space-between; align-items: center;
+        padding: 14px 22px 4px; font-size: var(--fs-secondary); font-weight: 600; color: var(--text);
+      }
+      .statusbar .right { display: flex; gap: 7px; align-items: center; color: var(--text-2); font-weight: 500; }
+      .batt { border: 1px solid var(--text-2); border-radius: 4px; padding: 1px 4px; font-size: 11px; }
+      .screenhead { display: flex; align-items: center; gap: 12px; padding: 8px 16px 4px; }
+      .screenhead .back { font-size: var(--fs-screen); color: var(--text); background: none; border: none; }
+      .screenhead h1 { margin: 0; font-size: var(--fs-screen); font-weight: 600; }
+      .screenhead .spacer { margin-left: auto; }
+      .live-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--green); }
+      .bolt { color: var(--text-2); font-size: var(--fs-title); }
+      .body { flex: 1; overflow-y: auto; padding: 12px 16px 90px; display: flex; flex-direction: column; gap: 12px; }
+
+      .rdetail-bar { display: flex; align-items: center; gap: 10px; }
+      .rdetail-back { background: none; border: none; padding: 6px 2px; font-size: var(--fs-note); color: var(--accent); }
+      .rdetail-pos { margin-left: auto; font-size: var(--fs-secondary); color: var(--text-2); }
+      .rdetail-meta { display: flex; align-items: center; gap: 10px; }
+      .kind-badge { font-size: var(--fs-micro); padding: 1px 8px; border-radius: var(--r-pill); background: var(--steel-tint); color: var(--steel); }
+      .state-chip { font-size: var(--fs-micro); padding: 1px 9px; border-radius: var(--r-pill); }
+      .chip-decided { background: var(--green-tint); color: var(--green); }
+      .chip-dismissed { background: var(--surface-2); color: var(--text-3); }
+      .domain-dot { width: 7px; height: 7px; border-radius: var(--r-pill); background: var(--green); flex: none; }
+
+      /* Cleaned question line — the card's topic, without the cosine noise. */
+      .q { font-size: var(--fs-title); font-weight: 500; line-height: 1.35; margin: 0; }
+      .q code { font-family: var(--font-mono); color: var(--text); }
+      .section-header {
+        font-size: var(--fs-micro); letter-spacing: 0.08em; text-transform: uppercase;
+        color: var(--text-3); font-weight: 400; margin: 4px 2px 0;
+      }
+      .when { font-size: var(--fs-micro); color: var(--text-3); }
+      .mono { font-family: var(--font-mono); }
+
+      /* tone helpers */
+      .tone-ok { --tone: var(--green); --tone-tint: var(--green-tint); }
+      .tone-steel { --tone: var(--steel); --tone-tint: var(--steel-tint); }
+      .tone-muted { --tone: var(--text-3); --tone-tint: var(--surface-2); }
+
+      .dir { display: none; flex-direction: column; gap: 12px; }
+      body[data-dir="a"] .dir-a { display: flex; }
+      body[data-dir="b"] .dir-b { display: flex; }
+      body[data-dir="c"] .dir-c { display: flex; }
+
+      /* ============ A — outcome banner ============ */
+      .da-banner {
+        display: flex; align-items: center; gap: 13px;
+        background: var(--tone-tint); border: 1px solid var(--border);
+        border-left: 3px solid var(--tone); border-radius: var(--r-card); padding: 14px 15px;
+      }
+      .da-mark {
+        width: 26px; height: 26px; border-radius: 50%; flex: none;
+        display: grid; place-items: center; background: var(--tone); color: #0b0c0e;
+        font-size: var(--fs-note); font-weight: 700;
+      }
+      .da-verb { font-size: var(--fs-title); font-weight: 600; }
+      .da-verb .to { color: var(--tone); }
+      .da-result { font-family: var(--font-mono); font-size: var(--fs-secondary); color: var(--text-2); margin-top: 2px; }
+      .da-result b { color: var(--green); }
+      .da-offered-toggle {
+        align-self: flex-start; background: none; border: none; color: var(--text-3);
+        font: inherit; font-size: var(--fs-micro); cursor: pointer; padding: 2px;
+      }
+      .da-offered { display: none; flex-direction: column; gap: 6px; }
+      .da-offered.open { display: flex; }
+      .offered-row {
+        display: flex; align-items: center; gap: 9px; font-size: var(--fs-secondary);
+        color: var(--text-3); padding: 8px 12px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-input);
+      }
+      .offered-row.picked { color: var(--text); border-color: var(--green); }
+      .offered-row .om { color: var(--green); width: 12px; }
+
+      /* ============ B — receipt ============ */
+      .db {
+        background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-card);
+        overflow: hidden;
+      }
+      .db-row { display: flex; flex-direction: column; gap: 3px; padding: 12px 14px; border-bottom: 1px solid var(--border); }
+      .db-row:last-child { border-bottom: none; }
+      .db-k { font-size: var(--fs-micro); text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-3); }
+      .db-v { font-size: var(--fs-note); }
+      .db-v.chose { font-weight: 600; color: var(--tone); }
+      .db-v .mono { font-family: var(--font-mono); }
+      .db-v .ed { font-family: var(--font-mono); font-size: var(--fs-secondary); color: var(--text-2); }
+      .db-v .ed b { color: var(--green); }
+
+      /* ============ C — before → after ============ */
+      .dc { border: 1px solid var(--border); border-radius: var(--r-card); overflow: hidden; }
+      .dc-row { display: flex; flex-direction: column; gap: 5px; padding: 13px 15px; }
+      .dc-was { background: var(--surface); }
+      .dc-now { background: var(--tone-tint); border-top: 1px solid var(--border); }
+      .dc-lbl { font-size: var(--fs-micro); text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-3); }
+      .dc-pred { font-family: var(--font-mono); font-size: var(--fs-note); }
+      .dc-pred.was { color: var(--amber); text-decoration: line-through; text-decoration-color: var(--text-3); }
+      .dc-pred.now { color: var(--tone); font-weight: 600; }
+      .dc-sub { font-size: var(--fs-micro); color: var(--text-3); }
+      .dc-edge { font-family: var(--font-mono); font-size: var(--fs-micro); color: var(--text-2); }
+      .dc-edge b { color: var(--green); }
+      .dc-mid { display: flex; align-items: center; gap: 8px; padding: 6px 15px; background: var(--bg); font-size: var(--fs-micro); color: var(--tone); }
+      .dc-mid .ln { flex: 1; height: 1px; background: var(--border); }
+
+      .rdetail-foot {
+        position: absolute; inset-inline: 0; bottom: 0; display: flex; gap: 8px;
+        padding: 10px 16px 18px; background: var(--bg); border-top: 1px solid var(--border);
+      }
+      .rfoot-reopen {
+        flex: 1; min-height: 44px; font: inherit; font-weight: 600; border-radius: var(--r-input);
+        border: 1px solid transparent; background: var(--amber-tint); color: var(--amber); cursor: pointer;
+      }
+      .snack {
+        position: absolute; left: 16px; right: 16px; bottom: 84px; display: flex; align-items: center; gap: 12px;
+        padding: 11px 14px; background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--r-input);
+        font-size: var(--fs-secondary); color: var(--text-2); opacity: 0; transform: translateY(8px);
+        transition: opacity 0.2s, transform 0.2s; pointer-events: none;
+      }
+      .snack.show { opacity: 1; transform: none; }
+    </style>
+  </head>
+  <body data-dir="a" data-scen="mapped">
+    <div class="demo-bar">
+      <span class="demo-title"><b>Review</b> · decided view — pick a direction</span>
+      <span class="seg" role="group" aria-label="direction">
+        <button id="d-a" aria-pressed="true">A · outcome</button>
+        <button id="d-b" aria-pressed="false">B · receipt</button>
+        <button id="d-c" aria-pressed="false">C · before→after</button>
+      </span>
+    </div>
+    <div class="demo-bar">
+      <span class="demo-title" style="font-size: var(--fs-micro)">decision taken:</span>
+      <span class="seg scen" role="group" aria-label="scenario">
+        <button id="s-mapped" aria-pressed="true">mapped</button>
+        <button id="s-kept" aria-pressed="false">kept as new</button>
+        <button id="s-dismissed" aria-pressed="false">dismissed</button>
+      </span>
+    </div>
+    <p class="dir-blurb" id="blurb"></p>
+    <p class="demo-note">
+      The decided record for a <code>new_predicate</code> card. Today it re-lists every option with a ✓
+      (and ticks all three "map onto…" rows, since they share one action) and keeps the raw cosine
+      numbers. All three directions state the <b>one thing that happened</b> and offer reopen. Flip the
+      <b>decision taken</b> row to see each outcome.
+    </p>
+
+    <div class="phone" id="phone">
+      <div class="statusbar">
+        <span>09:11</span>
+        <span class="right">●●●●&nbsp; 🛜 <span class="batt">67</span></span>
+      </div>
+      <div class="screenhead">
+        <button class="back">‹</button>
+        <h1>Review</h1>
+        <span class="spacer"></span>
+        <span class="live-dot"></span>
+        <span class="bolt">⚡</span>
+      </div>
+
+      <div class="body">
+        <div class="rdetail-bar">
+          <button class="rdetail-back">‹ inbox</button>
+          <span class="rdetail-pos">1 of 1</span>
+        </div>
+        <div class="rdetail-meta">
+          <span class="kind-badge">new predicate</span>
+          <span class="state-chip" id="state-chip"></span>
+          <span class="domain-dot"></span>
+        </div>
+
+        <p class="q">
+          Unknown relation <code>marriedTo</code> — was it a known one?
+        </p>
+
+        <div class="dir dir-a" id="body-a"></div>
+        <div class="dir dir-b" id="body-b"></div>
+        <div class="dir dir-c" id="body-c"></div>
+      </div>
+
+      <div class="snack" id="snack">reopened — back in the pending queue</div>
+
+      <div class="rdetail-foot">
+        <button class="rfoot-reopen" id="reopen">reopen — unwind this decision</button>
+      </div>
+    </div>
+
+    <script>
+      const $ = (id) => document.getElementById(id);
+
+      // The same decided card under each possible decision. The edge previews
+      // reuse the new-predicate example: a note said "Pat is married to Dana".
+      const SCEN = {
+        mapped: {
+          chip: ["decided", "chip-decided"],
+          mark: "✓",
+          tone: "tone-ok",
+          verb: "Mapped to",
+          to: "spouse",
+          result: "Pat.spouse → Dana",
+          asked: "Unknown relation marriedTo — map it or mint it?",
+          chose: "Mapped onto spouse",
+          effect: "marriedTo now resolves to spouse; the coined name is retired.",
+          wasSub: "unrecognized — coined from the note",
+          nowPred: "spouse",
+          nowSub: "an existing relation it now uses",
+        },
+        kept: {
+          chip: ["decided", "chip-decided"],
+          mark: "✓",
+          tone: "tone-steel",
+          verb: "Kept as new",
+          to: "",
+          result: "Pat.marriedTo → Dana",
+          asked: "Unknown relation marriedTo — map it or mint it?",
+          chose: "Kept marriedTo as a new relation",
+          effect: "marriedTo is now its own canonical relation; future notes reuse it.",
+          wasSub: "unrecognized — coined from the note",
+          nowPred: "marriedTo",
+          nowSub: "registered as its own canonical relation",
+        },
+        dismissed: {
+          chip: ["dismissed", "chip-dismissed"],
+          mark: "✕",
+          tone: "tone-muted",
+          verb: "Dismissed",
+          to: "",
+          result: "Pat.marriedTo → Dana",
+          asked: "Unknown relation marriedTo — map it or mint it?",
+          chose: "Dismissed — left as-is",
+          effect: "nothing changed; the fact stays under its raw name.",
+          wasSub: "unrecognized — coined from the note",
+          nowPred: "marriedTo",
+          nowSub: "left under its raw name",
+        },
+      };
+
+      function scen() {
+        return SCEN[document.body.dataset.scen];
+      }
+
+      const BLURBS = {
+        a: "<b>A · Outcome banner.</b> One tinted banner states the result — <i>Mapped to spouse</i> — with the edge it produced, then the timestamp; the options you chose from collapse behind a quiet toggle. Foregrounds <b>what happened</b>, hides the noise. Fixes the all-ticked bug by naming the single outcome, not re-ticking rows.",
+        b: "<b>B · Receipt.</b> A four-line record — asked → chose → effect → when — reading like a transaction receipt. Most auditable: you can see exactly what the question was, what you decided, and what it changed to the graph.",
+        c: "<b>C · Before → after.</b> A diff: the coined <code>marriedTo</code> (struck through) flows down to what it became. Most visual about the <i>change</i> a decision made; great for map/keep, gracefully shows “unchanged” for dismiss.",
+      };
+
+      function renderChip() {
+        const s = scen();
+        const chip = $("state-chip");
+        chip.textContent = s.chip[0];
+        chip.className = `state-chip ${s.chip[1]}`;
+      }
+
+      /* ---------- A ---------- */
+      function renderA() {
+        const s = scen();
+        $("body-a").className = `dir dir-a ${s.tone}`;
+        $("body-a").innerHTML = `
+          <div class="da-banner">
+            <span class="da-mark">${s.mark}</span>
+            <div>
+              <div class="da-verb">${s.verb}${s.to ? ` <span class="to">${s.to}</span>` : ""}</div>
+              <div class="da-result">${s.to ? "→ <b>" + s.result + "</b>" : s.result}</div>
+            </div>
+          </div>
+          <div class="when">decided Jun 15, 2026 · 9:11 AM</div>
+          <button class="da-offered-toggle" id="a-toggle">options you chose from ▾</button>
+          <div class="da-offered" id="a-offered">
+            ${[["spouse", s.to === "spouse"], ["partner", false], ["sibling", false], ["keep as new", s.verb === "Kept as new"], ["dismiss", s.verb === "Dismissed"]]
+              .map(
+                ([label, picked]) =>
+                  `<div class="offered-row${picked ? " picked" : ""}"><span class="om">${picked ? "✓" : ""}</span>${label}</div>`
+              )
+              .join("")}
+          </div>`;
+        $("a-toggle").onclick = () => {
+          const open = $("a-offered").classList.toggle("open");
+          $("a-toggle").textContent = open ? "options you chose from ▴" : "options you chose from ▾";
+        };
+      }
+
+      /* ---------- B ---------- */
+      function renderB() {
+        const s = scen();
+        $("body-b").className = `dir dir-b ${s.tone}`;
+        $("body-b").innerHTML = `
+          <div class="db">
+            <div class="db-row"><span class="db-k">you were asked</span><span class="db-v">${s.asked}</span></div>
+            <div class="db-row"><span class="db-k">you chose</span><span class="db-v chose">${s.chose}</span></div>
+            <div class="db-row"><span class="db-k">effect</span><span class="db-v"><span class="ed">${s.to ? "→ <b>" + s.result + "</b>" : s.result}</span><br/>${s.effect}</span></div>
+            <div class="db-row"><span class="db-k">when</span><span class="db-v">Jun 15, 2026 · 9:11 AM</span></div>
+          </div>`;
+      }
+
+      /* ---------- C ---------- */
+      function renderC() {
+        const s = scen();
+        $("body-c").className = `dir dir-c ${s.tone}`;
+        const unchanged = s.nowPred === "marriedTo" && s.verb !== "Kept as new";
+        $("body-c").innerHTML = `
+          <div class="dc">
+            <div class="dc-row dc-was">
+              <span class="dc-lbl">was</span>
+              <span class="dc-pred was">marriedTo</span>
+              <span class="dc-sub">${s.wasSub}</span>
+            </div>
+            <div class="dc-mid"><span class="ln"></span>${s.verb}${s.to ? " " + s.to : ""}<span class="ln"></span></div>
+            <div class="dc-row dc-now">
+              <span class="dc-lbl">now</span>
+              <span class="dc-pred now">${s.nowPred}</span>
+              <span class="dc-sub">${unchanged ? "unchanged — " + s.nowSub : s.nowSub}</span>
+              <span class="dc-edge">→ <b>${s.result}</b></span>
+            </div>
+          </div>
+          <div class="when">decided Jun 15, 2026 · 9:11 AM</div>`;
+      }
+
+      function renderAll() {
+        renderChip();
+        renderA();
+        renderB();
+        renderC();
+      }
+
+      /* ---------- switchers ---------- */
+      function pick(dir) {
+        document.body.dataset.dir = dir;
+        $("blurb").innerHTML = BLURBS[dir];
+        ["a", "b", "c"].forEach((d) => $("d-" + d).setAttribute("aria-pressed", String(d === dir)));
+      }
+      function scenPick(name) {
+        document.body.dataset.scen = name;
+        ["mapped", "kept", "dismissed"].forEach((n) =>
+          $("s-" + n).setAttribute("aria-pressed", String(n === name))
+        );
+        renderAll();
+      }
+      $("d-a").onclick = () => pick("a");
+      $("d-b").onclick = () => pick("b");
+      $("d-c").onclick = () => pick("c");
+      $("s-mapped").onclick = () => scenPick("mapped");
+      $("s-kept").onclick = () => scenPick("kept");
+      $("s-dismissed").onclick = () => scenPick("dismissed");
+      $("reopen").onclick = () => {
+        const sn = $("snack");
+        sn.classList.add("show");
+        setTimeout(() => sn.classList.remove("show"), 2400);
+      };
+
+      renderAll();
+      pick("a");
+    </script>
+  </body>
+</html>
