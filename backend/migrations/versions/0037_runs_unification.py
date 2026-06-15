@@ -3,8 +3,8 @@
 `agent_runs`/`agent_steps` become `runs`/`run_steps` IN PLACE (a RENAME, not a
 copy) so the same tables can also hold integration/pipeline runs without breaking
 the agent (docs/WORKFLOW_ENGINE_PLAN.md §3, §5 Track A). A rename is chosen over a
-new table specifically so the dependent FKs from `agent_episodes`, `agent_turns`,
-and `agent_memory` (which all reference `agent_runs.id`) follow the table
+new table specifically so the dependent FKs from `agent_episodes` and
+`agent_turns` (which reference `agent_runs.id`) follow the table
 automatically — Postgres rewrites those constraints to point at the renamed table,
 so no repoint is needed and no agent history is orphaned.
 
@@ -32,7 +32,7 @@ depends_on = None
 
 def upgrade() -> None:
     # --- rename in place: dependent FKs follow the table automatically --------
-    # agent_episodes / agent_turns / agent_memory reference agent_runs(id); a
+    # agent_episodes / agent_turns reference agent_runs(id); a
     # RENAME rewrites those constraints to the new name, so they keep working
     # untouched (verified by the agent regression tests still passing).
     op.execute("ALTER TABLE app.agent_runs RENAME TO runs")
