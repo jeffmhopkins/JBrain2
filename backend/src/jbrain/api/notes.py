@@ -4,6 +4,7 @@ from typing import Annotated, cast
 from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from jbrain.api.deps import PrincipalDep
 from jbrain.auth.service import PrincipalInfo
@@ -11,6 +12,7 @@ from jbrain.db.session import SessionContext
 from jbrain.notes.service import NoteInfo, NotesRepo, NoteUpdate, UnknownDomain
 from jbrain.queue import JobEnqueuer
 from jbrain.storage import BlobStore
+from jbrain.workflow import events as wf_events
 
 router = APIRouter()
 
@@ -29,9 +31,14 @@ def get_job_queue(request: Request) -> JobEnqueuer:
     return cast(JobEnqueuer, request.app.state.job_queue)
 
 
+def get_session_maker(request: Request) -> async_sessionmaker[AsyncSession]:
+    return cast("async_sessionmaker[AsyncSession]", request.app.state.session_maker)
+
+
 NotesRepoDep = Annotated[NotesRepo, Depends(get_notes_repo)]
 BlobStoreDep = Annotated[BlobStore, Depends(get_blob_store)]
 JobQueueDep = Annotated[JobEnqueuer, Depends(get_job_queue)]
+SessionMakerDep = Annotated["async_sessionmaker[AsyncSession]", Depends(get_session_maker)]
 
 
 def ctx_for(principal: PrincipalInfo) -> SessionContext:
@@ -133,7 +140,11 @@ class NoteListOut(BaseModel):
 
 @router.post("/notes", status_code=201)
 async def create_note(
-    body: CreateNoteRequest, principal: PrincipalDep, repo: NotesRepoDep, jobs: JobQueueDep
+    body: CreateNoteRequest,
+    principal: PrincipalDep,
+    repo: NotesRepoDep,
+    jobs: JobQueueDep,
+    maker: SessionMakerDep,
 ) -> NoteOut:
     ctx = ctx_for(principal)
     try:
@@ -155,6 +166,19 @@ async def create_note(
     # job (or finished one). Payload carries the id only, never note content.
     if created:
         await jobs.enqueue(ctx, "ingest_note", {"note_id": note.id})
+        # SHADOW (Wave 1): emit a note.created event ALONGSIDE the enqueue (E7a) so
+        # the dispatcher can diff its would-be enqueue against this one. Best-effort
+        # — a failed emit never blocks note creation; the hardcoded enqueue above
+        # owns the real path this wave.
+        await wf_events.emit_event(
+            maker,
+            ctx,
+            type=wf_events.NOTE_CREATED,
+            domain_code=note.domain,
+            payload={"note_id": note.id},
+            enqueued=wf_events.shadow_enqueued("ingest_note", {"note_id": note.id}),
+            principal_id=ctx.principal_id,
+        )
     return note_out(note)
 
 
