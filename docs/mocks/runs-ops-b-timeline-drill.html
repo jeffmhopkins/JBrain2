@@ -1,0 +1,325 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Runs · Ops — live activity timeline + full-screen step drill</title>
+<style>
+  :root{
+    --bg:#0E0F11; --surface:#17181B; --surface-2:#1E2024; --border:#26282C;
+    --text:#E6E7E9; --text-2:#9A9DA3; --text-3:#5C5F66;
+    --steel:#7FA7C9; --green:#8FBC9A; --amber:#C9A36A; --rose:#CF8A8F; --violet:#A493C9;
+    --steel-tint:rgba(127,167,201,.13); --green-tint:rgba(143,188,154,.13);
+    --amber-tint:rgba(201,163,106,.13); --rose-tint:rgba(207,138,143,.13); --violet-tint:rgba(164,147,201,.13);
+    --ok:var(--green); --warn:var(--amber); --danger:var(--rose); --info:var(--steel);
+    --font-mono:ui-monospace,"SF Mono","Cascadia Mono",Menlo,Consolas,monospace;
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  }
+  [data-theme="light"]{
+    color-scheme:light;
+    --bg:#F7F7F5; --surface:#FFFFFF; --surface-2:#F0F0EE; --border:#E2E2DF;
+    --text:#1A1B1E; --text-2:#5C5F66; --text-3:#9A9DA3;
+  }
+  [data-theme="dark"]{ color-scheme:dark; }
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+  body{background:#000;color:var(--text);display:flex;flex-direction:column;align-items:center;gap:14px;padding:18px 0 40px;min-height:100vh;}
+  svg{fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;}
+
+  .caption{max-width:392px;padding:0 18px;color:var(--text-2);font-size:13px;line-height:1.55;}
+  .caption b{color:var(--text);font-weight:500;}
+  .caption .tag{display:inline-block;background:var(--steel-tint);color:var(--steel);font-size:11px;padding:2px 8px;border-radius:999px;margin-bottom:6px;}
+  .toggle{display:inline-flex;background:var(--surface);border:1px solid var(--border);border-radius:999px;padding:3px;margin-left:8px;}
+  .toggle button{appearance:none;border:none;background:none;color:var(--text-2);font:inherit;font-size:11px;padding:4px 11px;border-radius:999px;cursor:pointer;}
+  .toggle button[aria-pressed="true"]{background:var(--steel-tint);color:var(--steel);font-weight:600;}
+
+  .phone{width:390px;height:800px;background:var(--bg);border:1px solid #2a2c30;border-radius:34px;overflow:hidden;position:relative;display:flex;flex-direction:column;}
+
+  .bar{height:56px;display:flex;align-items:center;gap:12px;padding:0 14px;border-bottom:1px solid var(--border);flex:none;}
+  .bar .back{color:var(--text-2);background:none;border:none;padding:4px;}
+  .bar .ttl{font-size:18px;font-weight:600;}
+  .bar .right{margin-left:auto;display:flex;align-items:center;gap:8px;}
+  .bar .dot{width:8px;height:8px;border-radius:999px;background:var(--green);}
+  .bar .health{font-size:12px;color:var(--text-2);}
+  .bar .bolt{color:var(--amber);background:none;border:none;padding:5px;cursor:pointer;}
+
+  /* live banner */
+  .live-strip{flex:none;display:flex;align-items:center;gap:9px;padding:9px 16px;background:var(--green-tint);border-bottom:1px solid var(--border);font-size:12.5px;color:var(--green);}
+  .live-strip .bd{width:7px;height:7px;border-radius:999px;background:var(--green);animation:pulse 1.4s ease-in-out infinite;flex:none;}
+  @keyframes pulse{0%,100%{opacity:1;}50%{opacity:.3;}}
+  .live-strip b{font-weight:600;}
+
+  .body{flex:1;overflow-y:auto;padding:14px 16px 16px;position:relative;}
+
+  /* timeline spine */
+  .tl{position:relative;padding-left:26px;}
+  .tl::before{content:"";position:absolute;left:8px;top:6px;bottom:6px;width:1px;background:var(--border);}
+  .tl-day{font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--text-3);margin:6px 0 12px -26px;padding-left:26px;}
+  .ev{position:relative;margin-bottom:14px;}
+  .ev .node{position:absolute;left:-26px;top:14px;width:18px;height:18px;border-radius:999px;background:var(--bg);border:1.5px solid var(--border);display:flex;align-items:center;justify-content:center;}
+  .ev.running .node{border-color:var(--green);color:var(--green);}
+  .ev.failed .node{border-color:var(--rose);color:var(--rose);background:var(--rose-tint);}
+  .ev.done .node{border-color:var(--text-3);color:var(--text-3);}
+  .ev.running .node svg{animation:spin 1.1s linear infinite;}
+  @keyframes spin{to{transform:rotate(360deg);}}
+  .evcard{width:100%;text-align:left;background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:12px 13px;color:inherit;font:inherit;cursor:pointer;display:block;}
+  .evcard:hover{border-color:var(--steel);}
+  .ev.failed .evcard{border-color:rgba(207,138,143,.4);}
+  .ev.running .evcard{border-color:rgba(143,188,154,.4);}
+  .eh{display:flex;align-items:center;gap:8px;}
+  .kpill{font-size:10px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;padding:2px 7px;border-radius:6px;flex:none;}
+  .kpill.agent{background:var(--steel-tint);color:var(--steel);}
+  .kpill.integration{background:var(--green-tint);color:var(--green);}
+  .kpill.pipeline{background:var(--violet-tint);color:var(--violet);}
+  .ename{font-size:14.5px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0;}
+  .etime{font-size:11px;color:var(--text-3);flex:none;font-variant-numeric:tabular-nums;}
+  .emeta{font-size:12px;color:var(--text-3);margin-top:6px;display:flex;flex-wrap:wrap;gap:4px 9px;font-variant-numeric:tabular-nums;}
+  .emeta .sep{color:var(--border);}
+  /* progress meter for running */
+  .meter{height:5px;border-radius:999px;background:var(--surface-2);margin-top:9px;overflow:hidden;}
+  .meter .fill{height:100%;background:var(--green);border-radius:999px;}
+  .eerr{margin-top:8px;font-size:12px;color:var(--rose);background:var(--rose-tint);border-radius:8px;padding:6px 9px;line-height:1.45;display:flex;gap:7px;align-items:flex-start;}
+  .eerr svg{flex:none;margin-top:1px;}
+
+  /* full-screen drill layer */
+  .layer{position:absolute;inset:0;background:var(--bg);transform:translateY(100%);transition:transform .22s cubic-bezier(.2,.7,.3,1);z-index:20;display:flex;flex-direction:column;}
+  .layer.show{transform:translateY(0);}
+  .drill-head{display:flex;align-items:flex-start;gap:11px;padding:14px 16px 12px;border-bottom:1px solid var(--border);flex:none;}
+  .drill-head .close{color:var(--text-2);background:none;border:none;padding:4px;margin-top:1px;}
+  .dh-main{flex:1;min-width:0;}
+  .dh-name{font-size:17px;font-weight:600;line-height:1.3;}
+  .dh-meta{font-size:12px;color:var(--text-3);margin-top:5px;display:flex;flex-wrap:wrap;gap:4px 9px;font-variant-numeric:tabular-nums;}
+  .dh-badge{font-size:11px;padding:2px 9px;border-radius:999px;display:inline-flex;align-items:center;gap:5px;flex:none;margin-top:2px;}
+  .dh-badge.running{background:var(--green-tint);color:var(--green);}
+  .dh-badge.done{background:var(--surface-2);color:var(--text-2);}
+  .dh-badge.failed{background:var(--rose-tint);color:var(--rose);}
+  .dh-badge .bd{width:6px;height:6px;border-radius:999px;background:currentColor;}
+  .dh-badge.running .bd{animation:pulse 1.4s ease-in-out infinite;}
+
+  .drill-body{flex:1;overflow-y:auto;padding:14px 16px 16px;}
+  .steptl{position:relative;padding-left:24px;}
+  .steptl::before{content:"";position:absolute;left:9px;top:8px;bottom:8px;width:1px;background:var(--border);}
+  .st{position:relative;margin-bottom:4px;}
+  .st .snode{position:absolute;left:-24px;top:12px;width:18px;height:18px;border-radius:999px;background:var(--bg);border:1.5px solid var(--border);display:flex;align-items:center;justify-content:center;color:var(--text-3);}
+  .st.ok .snode{border-color:var(--green);color:var(--green);}
+  .st.err .snode{border-color:var(--rose);color:var(--rose);background:var(--rose-tint);}
+  .st.run .snode{border-color:var(--green);color:var(--green);}
+  .st.run .snode svg{animation:spin 1.1s linear infinite;}
+  .strow{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:11px 12px;}
+  .st.err .strow{border-color:rgba(207,138,143,.4);}
+  .stline{display:flex;align-items:center;gap:8px;}
+  .skind{font-size:10px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;padding:2px 7px;border-radius:6px;flex:none;}
+  .skind.model{background:var(--steel-tint);color:var(--steel);}
+  .skind.tool{background:var(--surface-2);color:var(--text-2);}
+  .skind.job{background:var(--violet-tint);color:var(--violet);}
+  .sname{font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .scost{margin-left:auto;font-size:11px;color:var(--text-3);flex:none;font-variant-numeric:tabular-nums;}
+  .ssub{font-size:11.5px;color:var(--text-3);margin-top:4px;}
+  .serr{margin-top:7px;font-size:12px;color:var(--rose);font-family:var(--font-mono);background:var(--bg);border:1px solid var(--border);border-radius:7px;padding:7px 9px;line-height:1.5;}
+
+  .drill-foot{flex:none;border-top:1px solid var(--border);background:var(--surface);padding:12px 16px calc(13px + env(safe-area-inset-bottom));display:flex;gap:10px;}
+  .drill-foot button{flex:1;border:1px solid var(--border);background:var(--surface-2);color:var(--text-2);font:inherit;font-size:14px;font-weight:500;border-radius:12px;padding:12px;display:flex;align-items:center;justify-content:center;gap:8px;cursor:pointer;}
+  .drill-foot button.rerun{background:var(--steel-tint);color:var(--steel);border-color:transparent;}
+
+  /* emergency trigger sheet */
+  .scrim{position:absolute;inset:0;background:rgba(14,15,17,.6);opacity:0;pointer-events:none;transition:.2s;z-index:30;}
+  .sheet{position:absolute;left:0;right:0;bottom:0;background:var(--surface);border-top:1px solid var(--border);border-radius:18px 18px 0 0;transform:translateY(100%);transition:transform .24s cubic-bezier(.2,.7,.3,1);z-index:31;padding:8px 16px calc(18px + env(safe-area-inset-bottom));}
+  .sheet h3{font-size:17px;font-weight:600;margin-bottom:3px;}
+
+  .toast{position:absolute;left:16px;right:16px;bottom:24px;background:var(--surface-2);border:1px solid var(--border);border-radius:12px;padding:12px 14px;font-size:13px;color:var(--text-2);transform:translateY(160%);opacity:0;transition:.2s;z-index:40;display:flex;gap:9px;align-items:center;}
+  .toast.show{transform:translateY(0);opacity:1;}
+  .toast .ti{color:var(--steel);flex:none;}
+</style>
+</head>
+<body>
+  <div class="caption">
+    <span class="tag">Runs · B — timeline-first</span>
+    <span class="toggle" role="group" aria-label="theme">
+      <button id="b-dark" aria-pressed="true" onclick="setTheme('dark')">dark</button>
+      <button id="b-light" aria-pressed="false" onclick="setTheme('light')">light</button>
+    </span><br/>
+    A <b>live activity timeline</b> down a spine — running runs sit at top with a progress meter and pulse;
+    finished and failed runs flow below by time. Tapping any run <b>opens a full-screen step drill</b> (its
+    timeline of model turns, tool calls, jobs). Emergency-trigger lives behind the top-bar <b>bolt</b>.
+  </div>
+
+  <div class="phone">
+    <div class="bar">
+      <button class="back"><svg width="22" height="22" viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg></button>
+      <span class="ttl">Runs</span>
+      <span class="right">
+        <span class="dot"></span><span class="health">live</span>
+        <button class="bolt" onclick="openSweep()" aria-label="run a sweep now"><svg width="20" height="20" viewBox="0 0 24 24"><path d="M13 2 4 14h7l-1 8 9-12h-7l1-8Z"/></svg></button>
+      </span>
+    </div>
+
+    <div class="live-strip"><span class="bd"></span><span><b>2 runs active</b> — integrating roof-quote note · nightly predicate sweep</span></div>
+
+    <div class="body">
+      <div class="tl" id="tl"></div>
+    </div>
+
+    <!-- drill layer -->
+    <div class="layer" id="layer">
+      <div class="drill-head">
+        <button class="close" onclick="closeDrill()"><svg width="22" height="22" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg></button>
+        <div class="dh-main">
+          <div class="dh-name" id="dh-name"></div>
+          <div class="dh-meta" id="dh-meta"></div>
+        </div>
+        <span class="dh-badge" id="dh-badge"></span>
+      </div>
+      <div class="drill-body"><div class="steptl" id="steptl"></div></div>
+      <div class="drill-foot">
+        <button onclick="toast('Opened raw log tail for this run.')"><svg width="16" height="16" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"/></svg>View log</button>
+        <button class="rerun" id="rerunbtn"><svg width="16" height="16" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 4v4h-4"/></svg>Re-run</button>
+      </div>
+    </div>
+
+    <div class="scrim" id="scrim" onclick="closeSweep()"></div>
+    <div class="sheet" id="sheet">
+      <div style="width:40px;height:4px;border-radius:999px;background:var(--border);margin:8px auto 14px;"></div>
+      <h3>Fire a trigger now</h3>
+      <div style="font-size:13px;color:var(--text-2);margin-bottom:14px;line-height:1.45;">Runs the bound pipeline immediately, no service restart. Idempotent — safe to re-fire.</div>
+      <div id="sweeplist"></div>
+    </div>
+
+    <div class="toast" id="toast"></div>
+  </div>
+
+<script>
+function setTheme(t){
+  document.documentElement.dataset.theme=t;
+  document.getElementById('b-dark').setAttribute('aria-pressed',String(t==='dark'));
+  document.getElementById('b-light').setAttribute('aria-pressed',String(t==='light'));
+}
+
+const RUNS=[
+  {id:'r1',kind:'integration',name:'Integrate · roof-quote note',status:'running',time:'now',trigger:'note created',dur:'12s',pct:60,steps:'3 of 5',cost:'4.1k',day:'Today',
+    step:[
+      {kind:'model',name:'classify domain',state:'ok',sub:'→ finance',cost:'0.3k'},
+      {kind:'tool',name:'entity_resolve',state:'ok',sub:'resolved "RoofCo" → org',cost:'1.2k'},
+      {kind:'model',name:'extract facts',state:'run',sub:'streaming…',cost:'2.6k'},
+      {kind:'job',name:'enqueue embed_note',state:'pending',sub:'waits on extract',cost:'—'},
+      {kind:'job',name:'enqueue consolidate',state:'pending',sub:'waits on extract',cost:'—'},
+    ]},
+  {id:'r2',kind:'pipeline',name:'Nightly predicate sweep',status:'running',time:'2m ago',trigger:'schedule · 02:00',dur:'2m 04s',pct:50,steps:'1 of 2',cost:'0.8k',day:'Today',
+    step:[
+      {kind:'job',name:'consolidate_predicates',state:'run',sub:'42 of 91 predicates',cost:'0.8k'},
+      {kind:'job',name:'sync_predicates',state:'pending',sub:'queued',cost:'—'},
+    ]},
+  {id:'r3',kind:'integration',name:'Integrate · labs PDF note',status:'failed',time:'18m ago',trigger:'note created',dur:'31s',steps:'4 of 6',cost:'6.7k',day:'Today',
+    err:'ocr_attachment: vision adapter timeout after 30s (attempt 3/3) — permanent',
+    step:[
+      {kind:'model',name:'classify domain',state:'ok',sub:'→ health',cost:'0.3k'},
+      {kind:'job',name:'ocr_attachment · labs.pdf',state:'err',sub:'attempt 3 of 3 — permanent',cost:'1.1k',serr:'TimeoutError: vision adapter timeout after 30s (attempt 3/3) — marked PermanentJobError. Downstream extract skipped.'},
+      {kind:'job',name:'extract facts',state:'skip',sub:'skipped — upstream failed',cost:'—'},
+    ]},
+  {id:'r4',kind:'agent',name:'Health wiki cleanup',status:'done',time:'1h ago',trigger:'session · Full Brain',dur:'48s',steps:'9',cost:'21.4k',day:'Today',
+    step:[
+      {kind:'model',name:'plan turn',state:'ok',sub:'read scope: health · me',cost:'3.1k'},
+      {kind:'tool',name:'search_notes',state:'ok',sub:'7 articles',cost:'1.0k'},
+      {kind:'tool',name:'read_entity · me',state:'ok',sub:'',cost:'0.9k'},
+      {kind:'model',name:'draft proposal',state:'ok',sub:'staged restructure tree',cost:'8.2k'},
+    ]},
+  {id:'r5',kind:'integration',name:'Integrate · grocery note',status:'done',time:'2h ago',trigger:'note created',dur:'9s',steps:'5',cost:'3.0k',day:'Today',
+    step:[
+      {kind:'model',name:'classify domain',state:'ok',sub:'→ general',cost:'0.3k'},
+      {kind:'model',name:'extract facts',state:'ok',sub:'4 facts',cost:'2.4k'},
+      {kind:'job',name:'enqueue embed_note',state:'ok',sub:'',cost:'0.3k'},
+    ]},
+  {id:'r6',kind:'pipeline',name:'Backfill unembedded notes',status:'done',time:'02:00',trigger:'startup · self-heal',dur:'1m 51s',steps:'12',cost:'5.5k',day:'Yesterday',
+    step:[
+      {kind:'job',name:'embed_note ×12',state:'ok',sub:'all caught up',cost:'5.5k'},
+    ]},
+];
+
+function nodeIco(status){
+  return status==='running'?'<svg width="11" height="11" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-2.6-6.4"/></svg>'
+    :status==='failed'?'<svg width="11" height="11" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg>'
+    :'<svg width="11" height="11" viewBox="0 0 24 24"><path d="M5 12l4 4L19 7"/></svg>';
+}
+
+function evCard(r){
+  return `<div class="ev ${r.status}">
+    <div class="node">${nodeIco(r.status)}</div>
+    <button class="evcard" onclick="openDrill('${r.id}')">
+      <div class="eh">
+        <span class="kpill ${r.kind}">${r.kind}</span>
+        <span class="ename">${r.name}</span>
+        <span class="etime">${r.time}</span>
+      </div>
+      <div class="emeta">
+        <span>${r.trigger}</span><span class="sep">·</span><span>${r.dur}</span><span class="sep">·</span>
+        <span>${r.steps} steps</span><span class="sep">·</span><span>${r.cost} tok</span>
+      </div>
+      ${r.status==='running'?`<div class="meter"><div class="fill" style="width:${r.pct}%"></div></div>`:''}
+      ${r.err?`<div class="eerr"><svg width="14" height="14" viewBox="0 0 24 24"><path d="M12 9v4M12 17h.01"/><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg>${r.err}</div>`:''}
+    </button>
+  </div>`;
+}
+
+function renderTimeline(){
+  const days={};
+  RUNS.forEach(r=>{(days[r.day]=days[r.day]||[]).push(r);});
+  let html='';
+  ['Today','Yesterday'].forEach(d=>{ if(days[d]){ html+=`<div class="tl-day">${d}</div>`+days[d].map(evCard).join(''); } });
+  document.getElementById('tl').innerHTML=html;
+}
+
+function stepIco(st){
+  return st==='run'?'<svg width="11" height="11" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-2.6-6.4"/></svg>'
+    :st==='err'?'<svg width="11" height="11" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg>'
+    :st==='ok'?'<svg width="11" height="11" viewBox="0 0 24 24"><path d="M5 12l4 4L19 7"/></svg>'
+    :'<svg width="11" height="11" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/></svg>';
+}
+function stepNodeClass(st){return st==='run'?'run':st==='err'?'err':st==='ok'?'ok':'';}
+
+function openDrill(id){
+  const r=RUNS.find(x=>x.id===id);
+  document.getElementById('dh-name').textContent=r.name;
+  document.getElementById('dh-meta').innerHTML=`<span>${r.kind}</span><span class="sep">·</span><span>${r.trigger}</span><span class="sep">·</span><span>${r.time}</span><span class="sep">·</span><span>${r.dur}</span><span class="sep">·</span><span>${r.cost} tok</span>`;
+  const b=document.getElementById('dh-badge');b.className=`dh-badge ${r.status}`;b.innerHTML=`${r.status==='running'?'<span class="bd"></span>':''}${r.status}`;
+  document.getElementById('steptl').innerHTML=r.step.map(s=>`
+    <div class="st ${stepNodeClass(s.state)}">
+      <div class="snode">${stepIco(s.state)}</div>
+      <div class="strow">
+        <div class="stline"><span class="skind ${s.kind}">${s.kind}</span><span class="sname">${s.name}</span><span class="scost">${s.cost}</span></div>
+        ${s.sub?`<div class="ssub">${s.sub}</div>`:''}
+        ${s.serr?`<div class="serr">${s.serr}</div>`:''}
+      </div>
+    </div>`).join('');
+  document.getElementById('rerunbtn').onclick=()=>{closeDrill();toast(`Re-running “${r.name}” — new run queued.`);};
+  document.getElementById('layer').classList.add('show');
+}
+function closeDrill(){document.getElementById('layer').classList.remove('show');}
+
+const SWEEPS=[
+  {n:'Consolidate predicates',d:'merge near-duplicate predicates · schedule 02:00'},
+  {n:'Sync predicates',d:'re-embed the canonical registry'},
+  {n:'Backfill pending integration',d:'pick up notes that missed their trigger'},
+  {n:'Purge deleted-note artifacts',d:'reap orphaned chunks + blobs'},
+];
+function openSweep(){
+  document.getElementById('sweeplist').innerHTML=SWEEPS.map(s=>`
+    <button onclick="fireSweep('${s.n}')" style="width:100%;text-align:left;background:var(--surface-2);border:1px solid var(--border);border-radius:12px;padding:12px 13px;margin-bottom:8px;display:flex;align-items:center;gap:11px;color:inherit;font:inherit;cursor:pointer;">
+      <span style="width:30px;height:30px;border-radius:8px;background:var(--amber-tint);color:var(--amber);display:flex;align-items:center;justify-content:center;flex:none;">
+        <svg width="16" height="16" viewBox="0 0 24 24"><path d="M13 2 4 14h7l-1 8 9-12h-7l1-8Z"/></svg></span>
+      <span style="flex:1;min-width:0;"><span style="display:block;font-size:14.5px;">${s.n}</span><span style="display:block;font-size:12px;color:var(--text-3);margin-top:2px;">${s.d}</span></span>
+      <svg width="15" height="15" viewBox="0 0 24 24" style="color:var(--text-3);flex:none;"><path d="M9 6l6 6-6 6"/></svg>
+    </button>`).join('');
+  document.getElementById('scrim').style.opacity=1;document.getElementById('scrim').style.pointerEvents='auto';
+  document.getElementById('sheet').style.transform='translateY(0)';
+}
+function closeSweep(){document.getElementById('scrim').style.opacity=0;document.getElementById('scrim').style.pointerEvents='none';document.getElementById('sheet').style.transform='translateY(100%)';}
+function fireSweep(n){closeSweep();toast(`Fired “${n}” now — watch the timeline.`);}
+
+function toast(msg){
+  const t=document.getElementById('toast');
+  t.innerHTML=`<svg class="ti" width="16" height="16" viewBox="0 0 24 24"><path d="M5 12l4 4L19 7"/></svg>${msg}`;
+  t.classList.add('show');clearTimeout(toast._t);toast._t=setTimeout(()=>t.classList.remove('show'),3400);
+}
+
+renderTimeline();
+</script>
+</body>
+</html>
