@@ -680,10 +680,13 @@ def parse_extraction(
         kind, assertion = raw.get("kind"), raw.get("assertion")
         entity_ref = str(raw.get("entity_ref", "")).strip()
         statement = str(raw.get("statement", "")).strip()
-        # Normalize drift spellings (legalName/legal_name -> name.full) onto the
-        # registry's canonical predicate BEFORE the identity key is read, so the
+        # Normalize drift spellings (legalName/legal_name -> name.full) and recover
+        # a qualifier the model folded into the dotted path (name.nickname.kids ->
+        # name.nickname + "kids") BEFORE the identity key is read, so the
         # supersession chain and dedup see one stable address (docs/entity.md).
-        predicate = get_registry().normalize_predicate(str(raw.get("predicate", "")).strip())
+        predicate, qualifier = get_registry().decompose_predicate(
+            str(raw.get("predicate", "")).strip(), str(raw.get("qualifier") or "").strip()
+        )
         if (
             kind not in FACT_KINDS
             or assertion not in ASSERTIONS
@@ -691,7 +694,6 @@ def parse_extraction(
         ):
             log.warning("analysis.fact_dropped", reason="invalid fields", predicate=predicate)
             continue
-        qualifier = str(raw.get("qualifier") or "").strip()
         if len(predicate) > MAX_KEY_CHARS or len(qualifier) > MAX_KEY_CHARS:
             log.warning(
                 "analysis.fact_dropped",

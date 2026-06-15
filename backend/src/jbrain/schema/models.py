@@ -123,6 +123,9 @@ class SchemaRegistry:
     # kind-agnostic membership test so callers can skip work for the many
     # drift/unknown predicates no type defines.
     known_predicates: frozenset[str]
+    # _norm_key(canonical) of every predicate declared with a qualifier_vocab —
+    # the predicates whose qualifier a model may fold into the dotted path.
+    qualifier_predicates: frozenset[str]
 
     def type(self, type_id: str) -> EntityType:
         """The type by id; KeyError if unknown (callers know their type ids)."""
@@ -134,6 +137,26 @@ class SchemaRegistry:
         unchanged: this is normalization toward a preferred name, NEVER a
         rejection (docs/entity.md invariant)."""
         return self.normalization.get(_norm_key(predicate), predicate)
+
+    def decompose_predicate(self, predicate: str, qualifier: str) -> tuple[str, str]:
+        """Normalize a predicate and recover a qualifier a model folded into its
+        dotted path: ``("name.nickname.kids", "")`` → ``("name.nickname", "kids")``.
+
+        Only splits when the incoming qualifier is empty, the full predicate is
+        NOT itself declared, and stripping the trailing segment leaves a declared
+        predicate that TAKES a qualifier (declares a ``qualifier_vocab``). So a
+        genuine novel ``a.b``, an already-correct ``name.nickname`` + qualifier,
+        and a dotted canonical like ``name.full`` are all left untouched — this is
+        normalization toward the schema's shape, never a rejection."""
+        norm = self.normalize_predicate(predicate)
+        if qualifier or _norm_key(norm) in self.known_predicates:
+            return norm, qualifier
+        base, sep, segment = norm.rpartition(".")
+        if sep and segment:
+            base_norm = self.normalize_predicate(base)
+            if _norm_key(base_norm) in self.qualifier_predicates:
+                return base_norm, segment
+        return norm, qualifier
 
     def is_functional(self, predicate: str) -> bool:
         """Whether a (canonical or drift) predicate is functional in the schema —
