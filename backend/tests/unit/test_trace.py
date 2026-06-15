@@ -2,29 +2,35 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+from typing import Any
+
 from jbrain.analysis.arbiter import PlannedFact
 from jbrain.analysis.intent import EntityResolution, IntentFact
 from jbrain.analysis.trace import build_trace
 from jbrain.analysis.weight import ConfidenceSignals, assess
 
+_BASE_FACT = IntentFact(
+    entity_ref="Me",
+    predicate="name.full",
+    qualifier="",
+    kind="state",
+    statement="My full name is Jeffrey Mark Hopkins.",
+    value_json={"value": "Jeffrey Mark Hopkins"},
+    assertion="asserted",
+    object_entity_ref=None,
+    temporal=None,
+    attested_span=None,
+    self_confidence=0.85,
+    inferred=True,
+)
+_DEFAULT_RESOLUTION = EntityResolution(
+    mention_ref="Me", mode="existing", proposed_entity_id="owner-1"
+)
 
-def _fact(**over) -> IntentFact:
-    base = dict(
-        entity_ref="Me",
-        predicate="name.full",
-        qualifier="",
-        kind="state",
-        statement="My full name is Jeffrey Mark Hopkins.",
-        value_json={"value": "Jeffrey Mark Hopkins"},
-        assertion="asserted",
-        object_entity_ref=None,
-        temporal=None,
-        attested_span=None,
-        self_confidence=0.85,
-        inferred=True,
-    )
-    base.update(over)
-    return IntentFact(**base)
+
+def _fact(**over: Any) -> IntentFact:
+    return replace(_BASE_FACT, **over)
 
 
 def _planned(fact: IntentFact, signals: ConfidenceSignals) -> PlannedFact:
@@ -33,18 +39,23 @@ def _planned(fact: IntentFact, signals: ConfidenceSignals) -> PlannedFact:
     return PlannedFact(fact=fact, weight=weight, status=status, review_reasons=reasons)
 
 
-def _trace(fact: IntentFact, signals: ConfidenceSignals, **over):
-    kw = dict(
-        resolution=EntityResolution(
-            mention_ref="Me", mode="existing", proposed_entity_id="owner-1"
-        ),
-        supersession_action=None,
+def _trace(
+    fact: IntentFact,
+    signals: ConfidenceSignals,
+    *,
+    resolution: EntityResolution | None = _DEFAULT_RESOLUTION,
+    supersession_action: str | None = None,
+) -> dict[str, Any]:
+    return build_trace(
+        fact,
+        _planned(fact, signals),
+        signals,
+        resolution=resolution,
+        supersession_action=supersession_action,
         extract_version="note-extract-v16",
         integrate_version="integrate-v7",
         integrator_version="integrator-v2",
     )
-    kw.update(over)
-    return build_trace(fact, _planned(fact, signals), signals, **kw)
 
 
 def _rows(stage: dict) -> dict[str, str]:
