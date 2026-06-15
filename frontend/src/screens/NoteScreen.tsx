@@ -294,7 +294,9 @@ export function NoteScreen({
   onOpenEntity,
 }: NoteScreenProps) {
   const [view, setView] = useState(source);
-  const [tab, setTab] = useState<"note" | "attachments" | "analysis">("note");
+  // Analysis is the most useful surface once a note exists, so it opens first;
+  // the Note body is one tap away.
+  const [tab, setTab] = useState<"note" | "attachments" | "analysis">("analysis");
 
   // Keep the local view in step when App refreshes the source (saved edits,
   // attachment changes from the editor layer).

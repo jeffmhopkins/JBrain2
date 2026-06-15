@@ -245,6 +245,7 @@ describe("NoteScreen", () => {
 
   it("renders the body as paragraphs; attachments live in their own tab", () => {
     setup();
+    fireEvent.click(screen.getByRole("tab", { name: "Note" }));
     expect(screen.getByText("first paragraph")).toBeInTheDocument();
     expect(screen.getByText("second paragraph")).toBeInTheDocument();
     expect(screen.queryByText("lab-orders.pdf")).not.toBeInTheDocument();
@@ -452,6 +453,7 @@ describe("NoteScreen", () => {
     };
     const resolve = vi.fn(async () => ITEM);
     setup(noteViewFromSearch(result), resolve);
+    fireEvent.click(screen.getByRole("tab", { name: "Note" }));
 
     expect(screen.getByText("loading the full note…")).toBeInTheDocument();
     await waitFor(() => expect(screen.getByText("second paragraph")).toBeInTheDocument());
