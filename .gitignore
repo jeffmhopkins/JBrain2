@@ -15,3 +15,6 @@ dist/
 !.env.example
 *.key
 secrets/
+
+# Claude Code agent worktrees (harness scratch)
+.claude/worktrees/
