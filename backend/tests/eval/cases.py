@@ -52,6 +52,9 @@ class ExpectFact:
     inferred: bool | None = None
     domain: str | None = None
     disposition: str | None = None  # "commit" | "review"
+    # True = the committed fact must be CLOSED (valid_to set, a FORMER value);
+    # False = must be OPEN (current). None = don't check.
+    former: bool | None = None
 
 
 @dataclass(frozen=True)
@@ -147,6 +150,8 @@ class CommittedFact:
     domain_code: str | None
     object_entity_id: str | None = None
     object_name: str | None = None
+    # set when the interval is CLOSED — a FORMER value, not the current head.
+    valid_to: str | None = None
 
 
 @dataclass(frozen=True)
