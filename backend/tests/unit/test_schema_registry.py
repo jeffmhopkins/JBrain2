@@ -56,6 +56,18 @@ def test_lifecycle_status_enum_is_filled_from_status_values(registry: SchemaRegi
     assert set(status.enum_values) == {"tentative", "confirmed", "cancelled", "occurred"}
 
 
+def test_person_gender_is_a_closed_enum(registry: SchemaRegistry) -> None:
+    # gender is a closed set, not free text: a member commits, a non-member is a
+    # shape violation routed to review (the storage invariant still keeps the
+    # fact on its statement — validate_value only gates value_json).
+    gender = registry.predicate_for_kind("Person", "gender")
+    assert gender is not None
+    assert gender.value_shape == "enum"
+    assert set(gender.enum_values) == {"male", "female", "unknown"}
+    assert registry.validate_value(gender, {"value": "Female"}, object_present=False)
+    assert not registry.validate_value(gender, {"value": "wife"}, object_present=False)
+
+
 def test_person_carries_display_precedence_and_alias_seeding(registry: SchemaRegistry) -> None:
     # The schema data future projections will consume (kept + loader-validated
     # even though the projection methods aren't built): the display-name

@@ -18,7 +18,8 @@ predicates:
     kind: event
     functional: true
   - canonical_name: gender
-    value_shape: text              # free text allowed; 🔒
+    value_shape: enum              # closed set; non-members route to review, never silently stored; 🔒
+    enum_values: [male, female, unknown]
     kind: state
     functional: true
     schema_org_ref: schema:gender
