@@ -241,9 +241,7 @@ async def promote_if_corroborated(session: AsyncSession, entity_id: uuid.UUID) -
     if await corroboration_count(session, entity_id, row.domain_code) < CORROBORATION_THRESHOLD:
         return PromotionOutcome("none", entity_id)
     if await _has_live_namesake(session, entity_id, row.domain_code):
-        return PromotionOutcome(
-            "propose", entity_id, row.canonical_name, row.kind, row.domain_code
-        )
+        return PromotionOutcome("propose", entity_id, row.canonical_name, row.kind, row.domain_code)
     # status is provisional (read above, same transaction), so the guarded UPDATE
     # always flips it — idempotent across re-analysis (a second run reads the
     # now-confirmed status and no-ops at the guard above).

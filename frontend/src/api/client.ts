@@ -393,7 +393,8 @@ export type ReviewKind =
   | "low_confidence_inference"
   | "split_proposal"
   | "extraction_truncated"
-  | "new_predicate";
+  | "new_predicate"
+  | "confirm_entity";
 
 export type ReviewStatus = "open" | "resolved" | "dismissed" | "deferred";
 
