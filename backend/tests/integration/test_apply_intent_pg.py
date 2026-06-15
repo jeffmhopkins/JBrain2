@@ -411,6 +411,38 @@ async def test_apply_intent_commits_fact_value_json(maker, tmp_path):  # noqa: F
     assert fact.value_json == {"value": "Celine Kitina Hopkins"}  # bare value, not the sentence
 
 
+async def test_enum_value_is_coerced_to_its_member(maker, tmp_path):  # noqa: F811
+    # The screenshot bug: the integrator wrote its rationale into a gender value
+    # ("Female (inferred from 'wife')"). gender is a closed enum, so _shape_check
+    # coerces the stored datum to the bare member — the proposed-fact panel then
+    # reads "female", not the prose.
+    note_id = await make_note(maker, domain="general", body="A note about Celine.")
+    await ingest(maker, note_id, tmp_path)
+    intent = _intent(
+        note_id,
+        [EntityResolution(mention_ref="m1", mode="new", new_kind="Person", new_name="Celine")],
+        [
+            _fact(
+                "m1",
+                predicate="gender",
+                kind="state",
+                statement="Female (inferred from 'wife').",
+                value_json={"value": "Female (inferred from 'wife')."},
+            )
+        ],
+    )
+    plan = plan_intent(intent, signals={0: _SURFACE})
+    await _run(maker, note_id, intent, plan, tmp_path=tmp_path)
+
+    async with scoped_session(maker, SYSTEM_CTX) as session:
+        fact = (
+            (await session.execute(select(Fact).where(Fact.note_id == uuid.UUID(note_id))))
+            .scalars()
+            .one()
+        )
+    assert fact.value_json == {"value": "female"}  # coerced to the enum member
+
+
 async def test_value_shape_mismatch_is_logged_not_dropped(maker, tmp_path):  # noqa: F811
     # Phase 1 typed value-shape validation is LOG-ONLY: a ref predicate (spouse)
     # handed a scalar value_json with no object violates its declared shape, so we

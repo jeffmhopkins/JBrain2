@@ -68,6 +68,28 @@ def test_person_gender_is_a_closed_enum(registry: SchemaRegistry) -> None:
     assert not registry.validate_value(gender, {"value": "wife"}, object_present=False)
 
 
+def test_coerce_value_normalizes_enum_prose(registry: SchemaRegistry) -> None:
+    # The screenshot bug: the model wrote its rationale into the value. Coercion
+    # pulls the bare member out so the card reads "female", not the prose — and
+    # "male" inside "female" never mis-fires (whole-word match, exactly one).
+    gender = registry.predicate_for_kind("Person", "gender")
+    assert gender is not None
+    assert registry.coerce_value(gender, {"value": "Female (inferred from 'wife')."}) == {
+        "value": "female"
+    }
+    assert registry.coerce_value(gender, {"value": "Male"}) == {"value": "male"}
+    # Already canonical, ambiguous, or no member: left untouched (validate_value gates).
+    assert registry.coerce_value(gender, {"value": "female"}) == {"value": "female"}
+    assert registry.coerce_value(gender, {"value": "either male or female"}) == {
+        "value": "either male or female"
+    }
+    assert registry.coerce_value(gender, {"value": "nonbinary"}) == {"value": "nonbinary"}
+    # A non-enum predicate is never touched.
+    full = registry.predicate_for_kind("Person", "name.full")
+    assert full is not None
+    assert registry.coerce_value(full, {"value": "Celine"}) == {"value": "Celine"}
+
+
 def test_person_carries_display_precedence_and_alias_seeding(registry: SchemaRegistry) -> None:
     # The schema data future projections will consume (kept + loader-validated
     # even though the projection methods aren't built): the display-name

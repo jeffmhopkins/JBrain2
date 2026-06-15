@@ -1669,12 +1669,15 @@ class AnalysisPipeline:
         object_present: bool,
     ) -> dict[str, Any] | None:
         """Typed value-shape validation (Phase 1/4, docs/PREDICATE_CANONICALIZATION.md).
-        Returns the value_json to commit: unchanged when it fits the predicate's
-        declared shape, or None (dropped — the fact survives on its statement, the
-        storage invariant) when it violates the shape AND the value_shape_enforce
-        setting is on. Default is log-only (returns it unchanged); enforcement is
-        flipped live after the eval confirms no false drops. Kind is per
-        entity-type, so this runs here (entity resolved) not at parse time."""
+        Returns the value_json to commit: an enum value is first coerced to its
+        declared member (so a card reads "female", not the model's "Female
+        (inferred from 'wife')"); the result is then returned unchanged when it
+        fits the predicate's declared shape, or None (dropped — the fact survives
+        on its statement, the storage invariant) when it violates the shape AND the
+        value_shape_enforce setting is on. Default is log-only (returns it
+        unchanged); enforcement is flipped live after the eval confirms no false
+        drops. Kind is per entity-type, so this runs here (entity resolved) not at
+        parse time."""
         if value_json is None:
             return None
         registry = get_registry()
@@ -1688,7 +1691,13 @@ class AnalysisPipeline:
         if kind is None:
             return value_json
         pred = registry.predicate_for_kind(kind, predicate)
-        if pred is None or registry.validate_value(pred, value_json, object_present=object_present):
+        if pred is None:
+            return value_json
+        # Normalize an enum value the model wrote as prose ("Female (inferred from
+        # 'wife')") down to its member ("female") BEFORE validating, so the stored
+        # datum — and the review card that renders it — reads as the clean member.
+        value_json = registry.coerce_value(pred, value_json)
+        if registry.validate_value(pred, value_json, object_present=object_present):
             return value_json
         enforce = self._settings is not None and await self._settings.value_shape_enforce(
             SYSTEM_CTX
