@@ -327,11 +327,24 @@ review inbox, never an auto-link.
   resolution layer itself was already active in production (the worker passes
   the embed client); it stays conservative — a single strong, non-subject
   candidate auto-links, everything else degrades to review.
-- `provisional → confirmed` promotion — **deferred, needs a ratified signal.** The
-  obvious "corroborated by ≥2 notes" rule contradicts the current golden harness,
-  which asserts entities stay `provisional` across multiple notes; auto-promotion
-  is a behaviour change the owner must define (and the goldens be updated for),
-  not a silent fix. Until then only the hard-coded "Me" is `confirmed`.
+- `provisional → confirmed` promotion — **shipped, behind the `entity_promotion`
+  setting (default OFF).** Signal: an entity corroborated by ≥
+  `CORROBORATION_THRESHOLD` (=3) DISTINCT same-domain notes — counted over its
+  live, non-derived facts (as subject or object) and its mentions — is
+  auto-confirmed. The count is *same-domain only* so a status flip can't leak the
+  existence of a firewalled note, and *distinct-note* so two mentions in one note
+  never confirm. Contested identity (a live namesake) routes to a `confirm_entity`
+  review card instead of auto-cementing a possibly-wrong identity (`canonical.py
+  promote_if_corroborated`, wired eager in the apply path — eager is complete
+  because an entity only crosses the bar on a note that references it). The owner
+  "Me" (subject-linked) is never promoted. "confirmed" is meaningful: it survives
+  the deletion of any one source note (purge keeps it) and outranks a one-note
+  entity in a merge. Promotion is one-way — no recount-based revert, to avoid
+  re-analysis flicker; confirmed entities persist even when their last note is
+  deleted (the established purge invariant — "knowledge outlives the note"), so
+  husk-GC of zero-reference confirmed entities is left as future work. Default OFF
+  so the golden harness (which asserts multi-note entities stay `provisional`) is
+  unaffected until the goldens are migrated to expect confirmation.
 
 ## Entity vehicles: graph vs. typed record **[proposed]**
 

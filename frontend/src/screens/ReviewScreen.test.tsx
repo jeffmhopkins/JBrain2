@@ -364,6 +364,35 @@ describe("ReviewScreen (split inbox)", () => {
     expect(within(proposed).getByText("Jeff")).toBeInTheDocument();
   });
 
+  it("a confirm_entity card renders its question with approve/reject", async () => {
+    const confirm: ReviewItem = {
+      id: "ce1",
+      kind: "confirm_entity",
+      domain: "general",
+      created_at: "2026-06-15T20:33:00Z",
+      status: "open",
+      resolution: null,
+      resolved_at: null,
+      payload: {
+        entity_id: "ent-zane",
+        entity_name: "Zane",
+        entity_kind: "Person",
+        summary: "is this person “Zane” a single, confirmed entity?",
+        outcomes: {
+          accept: "the entity is confirmed — it survives note deletion and isn't auto-purged.",
+          reject: "left provisional — it stays purge-eligible and is never re-proposed.",
+        },
+      },
+    };
+    serve([confirm], [], []);
+    render(<ReviewScreen />);
+    await screen.findByText(/single, confirmed entity/);
+    fireEvent.click(screen.getByRole("button", { name: /single, confirmed entity/ }));
+    // Renders via the generic summary + outcomes path: an approve and a reject.
+    expect(await screen.findByRole("button", { name: /^approve/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^reject/ })).toBeInTheDocument();
+  });
+
   it("an inference card plays back the three-stage trace, with a copyable console", async () => {
     const writeText = vi.fn();
     vi.stubGlobal("navigator", { clipboard: { writeText } });

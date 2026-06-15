@@ -501,3 +501,44 @@ async def test_resolve_batch_commits_good_and_collects_bad(
     assert error_ids == {b, missing}
     # The bad item stayed open — a failed batch entry rolls nothing forward.
     assert b in {i["id"] for i in await repo.list_review(OWNER, "open")}
+
+
+async def test_confirm_entity_accept_confirms_and_reopen_restores(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """accept on a confirm_entity card flips the provisional entity to confirmed;
+    reopen restores it to provisional via the entity_confirmed effect."""
+    repo = SqlAnalysisRepo(maker)
+    entity = await seed_entity(maker, "Contested Zane")  # provisional by default
+    item = await seed_item(
+        maker,
+        "confirm_entity",
+        {"entity_id": entity, "entity_name": "Zane", "entity_kind": "Person"},
+    )
+
+    resolved = await repo.resolve_review(OWNER, item, "accept", {})
+    assert resolved is not None
+    assert [e["action"] for e in resolved["resolution"]["effects"]] == ["entity_confirmed"]
+    row = await one_row(maker, OWNER, "SELECT status FROM app.entities WHERE id = :id", id=entity)
+    assert row.status == "confirmed"
+
+    reopened = await repo.reopen_review(OWNER, item)
+    assert reopened is not None and reopened["status"] == "open"
+    row = await one_row(maker, OWNER, "SELECT status FROM app.entities WHERE id = :id", id=entity)
+    assert row.status == "provisional"  # reopen reverts the confirmation
+
+
+async def test_confirm_entity_reject_leaves_provisional(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """reject on a confirm_entity card records no effect and leaves the entity
+    provisional (purge-eligible)."""
+    repo = SqlAnalysisRepo(maker)
+    entity = await seed_entity(maker, "Rejected Zane")
+    item = await seed_item(maker, "confirm_entity", {"entity_id": entity, "entity_name": "Zane"})
+
+    resolved = await repo.resolve_review(OWNER, item, "reject", {})
+    assert resolved is not None
+    assert resolved["resolution"]["effects"] == []
+    row = await one_row(maker, OWNER, "SELECT status FROM app.entities WHERE id = :id", id=entity)
+    assert row.status == "provisional"
