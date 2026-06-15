@@ -113,6 +113,37 @@ describe("OpsScreen", () => {
     expect(screen.getByText("no usage data yet.")).toBeInTheDocument();
   });
 
+  it("opens the Runs surface from the Ops header (Direction C, reachable from Ops)", async () => {
+    fetchMock.mockImplementation(async (input) => {
+      const path = String(input);
+      if (path === "/api/ops/status") return json(STATUS);
+      if (path === "/api/runs")
+        return json([
+          {
+            id: "r1",
+            kind: "integration",
+            status: "running",
+            name: "integrate_note",
+            started_at: new Date().toISOString(),
+            duration_ms: null,
+            step_count: 3,
+            cost_tokens: 4100,
+            last_error: null,
+          },
+        ]);
+      // The sweep-trigger list is sibling Track B's; absent here.
+      if (path === "/api/ops/triggers") return new Response(null, { status: 404 });
+      return new Response(null, { status: 500 });
+    });
+
+    render(<OpsScreen />);
+    fireEvent.click(await screen.findByRole("button", { name: "Runs" }));
+
+    // The Runs sub-screen mounts and loads its log.
+    expect(await screen.findByText("Recent runs")).toBeInTheDocument();
+    expect(await screen.findByText("integrate_note")).toBeInTheDocument();
+  });
+
   function mockExportFlow() {
     fetchMock.mockImplementation(async (input, init) => {
       const path = String(input);
