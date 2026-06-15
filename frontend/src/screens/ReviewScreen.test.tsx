@@ -623,17 +623,25 @@ describe("ReviewScreen (split inbox)", () => {
     );
   });
 
-  it("a decided suggest_better card reports the name the owner gave", async () => {
+  it("a decided new_predicate card shows the before→after of the decision", async () => {
     const decided: ReviewItem = {
-      id: "sb-decided",
+      id: "np-decided",
       kind: "new_predicate",
       domain: "general",
       created_at: "2026-06-09T10:00:00Z",
       status: "resolved",
       resolved_at: "2026-06-09T11:00:00Z",
-      resolution: { action: "suggest_better", payload: { canonical_name: "spouse" }, effects: [] },
+      resolution: {
+        action: "map_to_existing",
+        payload: { canonical_name: "spouse" },
+        effects: [{ action: "predicate_remapped", raw: "marriedTo", canonical: "spouse" }],
+      },
       payload: {
         summary: "new predicate marriedTo",
+        predicate: "marriedTo",
+        subject: "Pat",
+        value: "Dana",
+        suggestions: [{ name: "spouse", score: 0.78 }],
         choices: [{ action: "accept_as_new", label: "keep marriedTo" }],
       },
     };
@@ -643,8 +651,11 @@ describe("ReviewScreen (split inbox)", () => {
     fireEvent.click(screen.getByRole("tab", { name: "decided 1" }));
     fireEvent.click(screen.getByRole("button", { name: /new predicate marriedTo/ }));
 
-    // No offered row is ticked (suggest_better isn't a choice) — the name is named.
-    expect(screen.getByText(/named it yourself/)).toHaveTextContent("spouse");
+    // The outcome is a before→after diff, not a list of re-ticked options.
+    expect(screen.getByText("was")).toBeInTheDocument();
+    expect(screen.getByText("Mapped to spouse")).toBeInTheDocument();
+    expect(screen.getByText("Pat.spouse → Dana")).toBeInTheDocument();
+    expect(screen.queryByText("what was decided")).not.toBeInTheDocument();
   });
 
   it("shows per-lane empty states", async () => {

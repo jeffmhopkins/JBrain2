@@ -4099,6 +4099,97 @@ button.small {
   cursor: default;
 }
 
+/* Decided new_predicate record — Direction C (docs/mocks/decided-view-mockups
+   .html): a before→after diff of the change the decision made. */
+.rdc {
+  --tone: var(--text-3);
+  --tone-tint: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
+  overflow: hidden;
+}
+
+.rdc.tone-ok {
+  --tone: var(--green);
+  --tone-tint: var(--green-tint);
+}
+
+.rdc.tone-steel {
+  --tone: var(--steel);
+  --tone-tint: var(--steel-tint);
+}
+
+.rdc-row {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 13px 15px;
+}
+
+.rdc-was {
+  background: var(--surface);
+}
+
+.rdc-now {
+  background: var(--tone-tint);
+  border-top: 1px solid var(--border);
+}
+
+.rdc-lbl {
+  font-size: var(--fs-micro);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-3);
+}
+
+.rdc-pred {
+  font-family: var(--font-mono);
+  font-size: var(--fs-note);
+}
+
+.rdc-pred.was {
+  color: var(--amber);
+  text-decoration: line-through;
+  text-decoration-color: var(--text-3);
+}
+
+.rdc-pred.now {
+  color: var(--tone);
+  font-weight: 600;
+}
+
+.rdc-sub {
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+}
+
+.rdc-edge {
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+
+.rdc-edge b {
+  color: var(--green);
+}
+
+.rdc-mid {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 15px;
+  background: var(--bg);
+  font-size: var(--fs-micro);
+  color: var(--tone);
+}
+
+.rdc-ln {
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+
 /* Before -> after value diff (collisions / fact conflicts). */
 .rdiff {
   border: 1px solid var(--border);
