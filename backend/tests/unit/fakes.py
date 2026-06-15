@@ -75,6 +75,10 @@ class FakeSettingsStore:
         mode = self.values.get("image_analysis_mode", "full")
         return mode if mode in ("full", "ocr") else "full"
 
+    async def workflow_dispatch_mode(self, ctx: object) -> str:
+        mode = self.values.get("workflow_dispatch_mode", "shadow")
+        return mode if mode in ("shadow", "live", "off") else "shadow"
+
     async def owner_timezone(self, ctx: object) -> str | None:
         from jbrain.settings_store import is_valid_timezone
 

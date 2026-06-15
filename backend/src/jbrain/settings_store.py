@@ -110,6 +110,20 @@ ENTITY_PROMOTION_DEFAULT = False
 INTEGRATION_PERSIST_KEY = "integration_persist"
 INTEGRATION_PERSIST_DEFAULT = True
 
+# The dispatcher's enqueue mode (docs/WORKFLOW_ENGINE_PLAN.md §5 Wave 2, §E7a):
+# "shadow" (default) computes the would-be enqueue + diffs it but never enqueues —
+# the hardcoded trigger points still own the real path; "live" actually enqueues
+# the engine's resolved jobs (the Wave-2 cutover, gated here so prod stays shadow
+# until the diff is clean); "off" silences the dispatcher tick entirely. Separate
+# from the master `workflow_dispatch` on/off switch (dispatcher.WORKFLOW_DISPATCH_KEY):
+# that gate, when false, stops the tick regardless of mode. DB-backed, read live so
+# the cutover is a settings upsert, not a redeploy. Default "shadow": flipping
+# prod to live is an explicit operator action, never the deploy default.
+WorkflowDispatchMode = Literal["shadow", "live", "off"]
+WORKFLOW_DISPATCH_MODES: tuple[WorkflowDispatchMode, ...] = ("shadow", "live", "off")
+WORKFLOW_DISPATCH_MODE_DEFAULT: WorkflowDispatchMode = "shadow"
+WORKFLOW_DISPATCH_MODE_KEY = "workflow_dispatch_mode"
+
 
 class SqlSettingsStore:
     def __init__(self, maker: async_sessionmaker[AsyncSession]):
@@ -214,6 +228,18 @@ class SqlSettingsStore:
         """Whether the Integrator persists its run + resolution pins (§E7b).
         Defaults ON; an explicit `false` (or any non-true value) disables it."""
         return await self.get(ctx, INTEGRATION_PERSIST_KEY, INTEGRATION_PERSIST_DEFAULT) is True
+
+    async def workflow_dispatch_mode(self, ctx: SessionContext) -> WorkflowDispatchMode:
+        """The dispatcher's enqueue mode: "shadow" (default — diff only, never
+        enqueue), "live" (the Wave-2 cutover — actually enqueue), or "off". An
+        unrecognized stored value falls back to "shadow": a junk mode must never
+        read as "live" (fail-closed toward the prod-safe default)."""
+        mode = await self.get(ctx, WORKFLOW_DISPATCH_MODE_KEY, WORKFLOW_DISPATCH_MODE_DEFAULT)
+        return (
+            cast(WorkflowDispatchMode, mode)
+            if mode in WORKFLOW_DISPATCH_MODES
+            else WORKFLOW_DISPATCH_MODE_DEFAULT
+        )
 
     async def llm_task_overrides(self, ctx: SessionContext) -> dict[str, dict[str, str]]:
         """The live per-task LLM routing/reasoning overrides, sanitized.

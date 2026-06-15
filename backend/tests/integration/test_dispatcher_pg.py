@@ -36,6 +36,7 @@ from jbrain.storage import FsBlobStore
 from jbrain.workflow import dispatcher
 from jbrain.workflow import events as wf_events
 from jbrain.workflow.registry import ACTION_SPECS, build_registry
+from jbrain.workflow.runlog import PipelineRunLog
 from jbrain.workflow.scheduler import PURGE_ACTION
 from tests.conftest import docker_available
 from tests.integration.test_rls import OWNER, database_url  # noqa: F401
@@ -305,6 +306,172 @@ async def _count_consolidate(maker: async_sessionmaker[AsyncSession]) -> int:
                 text("SELECT count(*) FROM app.jobs WHERE kind = 'consolidate_predicates'")
             )
         ).scalar_one()
+
+
+async def _insert_event(
+    maker: async_sessionmaker[AsyncSession],
+    *,
+    type: str,
+    domain: str,
+    principal_id: str,
+    payload: dict,
+) -> str:
+    """Insert one undispatched event directly (no hardcoded enqueue alongside), so a
+    LIVE tick is the ONLY thing that enqueues for it — the clean once-only path."""
+    import json
+
+    event_id = str(uuid.uuid4())
+    async with scoped_session(maker, OWNER) as s:
+        await s.execute(
+            text(
+                "INSERT INTO app.events (id, type, payload, domain_code, principal_id)"
+                " VALUES (:id, :t, cast(:p AS jsonb), :d, :pid)"
+            ),
+            {"id": event_id, "t": type, "p": json.dumps(payload), "d": domain, "pid": principal_id},
+        )
+    return event_id
+
+
+async def _pipeline_runs_for(
+    maker: async_sessionmaker[AsyncSession], *, pipeline: str, note_id: str
+) -> list[dict]:
+    """Pipeline runs for `pipeline` whose enqueued job targets `note_id` — scoped to
+    one note so a run written by a sibling test (the testcontainer is shared across
+    the module) never leaks into this assertion."""
+    async with scoped_session(maker, OWNER) as s:
+        rows = (
+            await s.execute(
+                text(
+                    "SELECT DISTINCT r.id::text AS id, r.kind, r.ran_as, r.domain_code,"
+                    " r.principal_id::text AS principal_id, r.trigger_id::text AS trigger_id,"
+                    " r.step_count, r.status"
+                    " FROM app.runs r"
+                    " JOIN app.run_steps rs ON rs.run_id = r.id"
+                    " JOIN app.jobs j ON j.id = rs.job_id"
+                    " WHERE r.kind = 'pipeline' AND r.pipeline = :p"
+                    " AND j.payload->>'note_id' = :nid"
+                ),
+                {"p": pipeline, "nid": note_id},
+            )
+        ).all()
+    return [dict(r._mapping) for r in rows]
+
+
+async def _run_step_job_ids(maker: async_sessionmaker[AsyncSession], *, run_id: str) -> list[str]:
+    async with scoped_session(maker, OWNER) as s:
+        rows = (
+            await s.execute(
+                text(
+                    "SELECT job_id::text AS job_id, kind, name FROM app.run_steps"
+                    " WHERE run_id = :rid ORDER BY idx"
+                ),
+                {"rid": run_id},
+            )
+        ).all()
+    return [r.job_id for r in rows]
+
+
+async def test_live_tick_enqueues_exactly_once_and_writes_a_pipeline_run(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """LIVE crux: an undispatched note.ingested event drives the seeded integrate
+    pipeline to EXACTLY ONE integrate_note job, stamped with the event's scope, and
+    a runs(kind='pipeline') + run_steps(job_id) row records the dispatch (§8)."""
+    pid = await _seed_owner_principal(maker)
+    note_id = await _make_note(maker, domain="general", body="live dispatch")
+    # A synthetic event with NO hardcoded enqueue alongside, so the live tick owns
+    # the only enqueue for this note.
+    await _insert_event(
+        maker,
+        type=wf_events.NOTE_INGESTED,
+        domain="general",
+        principal_id=pid,
+        payload={"note_id": note_id},
+    )
+
+    before = await _count_jobs(maker, kind="integrate_note", note_id=note_id)
+    assert before == 0
+
+    diffs = await dispatcher.dispatcher_tick(
+        maker, _registry(), live=True, run_log=PipelineRunLog(maker)
+    )
+    mine = [d for d in diffs if d.event_type == wf_events.NOTE_INGESTED]
+    assert mine and all(d.error is None for d in mine)
+
+    # Enqueued EXACTLY once, carrying the event's E1 stamp.
+    assert await _count_jobs(maker, kind="integrate_note", note_id=note_id) == 1
+    async with scoped_session(maker, OWNER) as s:
+        stamp = (
+            await s.execute(
+                text(
+                    "SELECT principal_id::text AS principal_id, domain_code FROM app.jobs"
+                    " WHERE kind = 'integrate_note' AND payload->>'note_id' = :nid"
+                ),
+                {"nid": note_id},
+            )
+        ).first()
+    assert stamp is not None and stamp.principal_id == pid and stamp.domain_code == "general"
+
+    # A pipeline run + a step referencing the enqueued job were written.
+    runs = await _pipeline_runs_for(maker, pipeline="event_integrate_note", note_id=note_id)
+    assert len(runs) == 1
+    run = runs[0]
+    assert run["kind"] == "pipeline"
+    assert run["ran_as"] == "scoped"
+    assert run["domain_code"] == "general"
+    assert run["principal_id"] == pid
+    assert run["step_count"] == 1
+    job_ids = await _run_step_job_ids(maker, run_id=run["id"])
+    assert len(job_ids) == 1 and job_ids[0] is not None
+
+
+async def test_live_tick_skips_a_target_with_an_active_job_no_double_enqueue(
+    maker: async_sessionmaker[AsyncSession], blobs: FsBlobStore
+) -> None:
+    """Idempotency: a real ingest enqueues integrate (queued) AND emits the event;
+    the LIVE tick must SKIP its would-be integrate (the note already has an active
+    job) — no double-enqueue, no run logged for the skipped dispatch (E4)."""
+    await _seed_owner_principal(maker)
+    note_id = await _make_note(maker, domain="general", body="dedup me")
+    await IngestPipeline(maker, blobs).ingest_note({"note_id": note_id})
+    # The hardcoded path enqueued exactly one (queued) integrate job.
+    assert await _count_jobs(maker, kind="integrate_note", note_id=note_id) == 1
+
+    diffs = await dispatcher.dispatcher_tick(
+        maker, _registry(), live=True, run_log=PipelineRunLog(maker)
+    )
+    mine = [d for d in diffs if d.event_type == wf_events.NOTE_INGESTED]
+    assert mine and all(d.error is None for d in mine)
+
+    # SKIPPED: still exactly one integrate job (the hardcoded one) — never doubled.
+    assert await _count_jobs(maker, kind="integrate_note", note_id=note_id) == 1
+    # And no pipeline run was written for the deduped (zero-enqueue) dispatch.
+    assert await _pipeline_runs_for(maker, pipeline="event_integrate_note", note_id=note_id) == []
+
+
+async def test_shadow_tick_never_enqueues_even_after_the_live_capability(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """SHADOW is the default and still never enqueues: the same synthetic event,
+    dispatched with live=False, marks dispatched + diffs but submits nothing and
+    writes no pipeline run."""
+    pid = await _seed_owner_principal(maker)
+    note_id = await _make_note(maker, domain="general", body="shadow only")
+    await _insert_event(
+        maker,
+        type=wf_events.NOTE_INGESTED,
+        domain="general",
+        principal_id=pid,
+        payload={"note_id": note_id},
+    )
+
+    await dispatcher.dispatcher_tick(maker, _registry(), live=False, run_log=PipelineRunLog(maker))
+
+    assert await _count_jobs(maker, kind="integrate_note", note_id=note_id) == 0
+    assert await _pipeline_runs_for(maker, pipeline="event_integrate_note", note_id=note_id) == []
+    # The event is still drained from the undispatched set.
+    events = await _undispatched_events(maker, type=wf_events.NOTE_INGESTED, note_id=note_id)
+    assert len(events) == 1 and events[0]["dispatched_at"] is not None
 
 
 async def test_events_rls_isolates_by_domain(maker: async_sessionmaker[AsyncSession]) -> None:
