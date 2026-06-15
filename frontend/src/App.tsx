@@ -25,6 +25,7 @@ import { OpsScreen } from "./screens/OpsScreen";
 import { ReviewScreen } from "./screens/ReviewScreen";
 import { SearchScreen } from "./screens/SearchScreen";
 import { SettingsScreen } from "./screens/SettingsScreen";
+import { useBackGesture } from "./useBackGesture";
 
 type Session =
   | { status: "loading" }
@@ -268,6 +269,34 @@ export function App() {
       closeCardToLauncher();
     }
   }
+
+  // The platform back gesture climbs one level, exactly like swipe-down: close
+  // the topmost open layer, in the same z-order the overlays render. The edit
+  // layer and move sheet run their own dismissal, so they sit on top here too.
+  const overlayDepth =
+    (actions.editing !== null ? 1 : 0) +
+    (actions.moveTarget !== null ? 1 : 0) +
+    (entityView !== null ? 1 : 0) +
+    (noteView !== null ? 1 : 0) +
+    (listView !== null ? 1 : 0) +
+    (card !== null ? 1 : 0) +
+    (launcherOpen ? 1 : 0);
+
+  function closeTopLayer() {
+    if (actions.editing !== null) return actions.cancelEdit();
+    if (actions.moveTarget !== null) return actions.cancelMove();
+    if (entityView !== null) return closeEntityView();
+    if (noteView !== null) return closeNoteView();
+    if (listView !== null) {
+      setListView(null);
+      setListsKey((k) => k + 1);
+      return;
+    }
+    if (card !== null) return closeCardToLauncher();
+    if (launcherOpen) return setLauncherOpen(false);
+  }
+
+  useBackGesture(overlayDepth, closeTopLayer);
 
   if (session.status === "loading") {
     return <main className="centered muted">Loading…</main>;
