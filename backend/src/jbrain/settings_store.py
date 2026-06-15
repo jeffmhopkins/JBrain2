@@ -73,6 +73,16 @@ def is_valid_timezone(tz: str) -> bool:
     return True
 
 
+# Provisional -> confirmed entity promotion (docs/entity.md "Entity lifecycle"):
+# when on, an entity corroborated by >= CORROBORATION_THRESHOLD distinct
+# same-domain notes is auto-confirmed; if its identity is contested (a live
+# namesake), a `confirm_entity` review card is filed instead of auto-confirming.
+# DB-backed; flip live. Default OFF until the goldens are migrated to expect
+# confirmation (the rule deliberately changes entity status across notes).
+ENTITY_PROMOTION_KEY = "entity_promotion"
+ENTITY_PROMOTION_DEFAULT = False
+
+
 class SqlSettingsStore:
     def __init__(self, maker: async_sessionmaker[AsyncSession]):
         self._maker = maker
@@ -127,6 +137,11 @@ class SqlSettingsStore:
         rather than trusted — a bad zone must never crash a render."""
         tz = await self.get(ctx, OWNER_TIMEZONE_KEY, None)
         return tz if isinstance(tz, str) and is_valid_timezone(tz) else None
+
+    async def entity_promotion(self, ctx: SessionContext) -> bool:
+        """Whether provisional->confirmed entity promotion is on (docs/entity.md).
+        Defaults OFF; an explicit `true` enables it."""
+        return await self.get(ctx, ENTITY_PROMOTION_KEY, ENTITY_PROMOTION_DEFAULT) is True
 
     async def llm_task_overrides(self, ctx: SessionContext) -> dict[str, dict[str, str]]:
         """The live per-task LLM routing/reasoning overrides, sanitized.

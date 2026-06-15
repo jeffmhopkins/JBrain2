@@ -28,10 +28,15 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from jbrain.analysis import purge
 from jbrain.analysis.appointment_projection import project_appointments
 from jbrain.analysis.arbiter import ArbiterPlan, compute_signals, plan_intent, plan_to_extraction
-from jbrain.analysis.canonical import reproject_canonical_name
+from jbrain.analysis.canonical import (
+    PromotionOutcome,
+    promote_if_corroborated,
+    reproject_canonical_name,
+)
 from jbrain.analysis.display import (
     ambiguous_display,
     collision_display,
+    confirm_entity_display,
     inference_display,
     mark_snippet,
     merge_display,
@@ -839,6 +844,7 @@ class AnalysisPipeline:
             session, note_id, note_domain, chunks, extraction.dropped_facts, len(extraction.facts)
         )
         await self._reproject_entities(session, resolved)
+        await self._promote_corroborated(session, resolved)
 
         stmt = pg_insert(NoteAnalysis).values(
             note_id=note_id,
@@ -1205,6 +1211,59 @@ class AnalysisPipeline:
                 continue
             seen.add(entity.id)
             await reproject_canonical_name(session, entity.id)
+
+    async def _promote_corroborated(
+        self, session: AsyncSession, resolved: dict[str, ResolvedEntity | None]
+    ) -> None:
+        """Confirm each touched provisional entity that >= CORROBORATION_THRESHOLD
+        distinct same-domain notes now corroborate (docs/entity.md). Eager and
+        complete: an entity only crosses the bar on a note that references it, and
+        that note's refs are exactly `resolved`, so no sweep is needed. A
+        contested identity (a live namesake) files a deduped confirm_entity card
+        instead of auto-confirming. Gated by the entity_promotion setting
+        (default off until the goldens expect confirmation)."""
+        if self._settings is None or not await self._settings.entity_promotion(SYSTEM_CTX):
+            return
+        seen: set[uuid.UUID] = set()
+        for entity in resolved.values():
+            if entity is None or entity.id in seen:
+                continue
+            seen.add(entity.id)
+            outcome = await promote_if_corroborated(session, entity.id)
+            if outcome.action == "confirmed":
+                log.info("entity.promoted", entity_id=str(entity.id))
+            elif outcome.action == "propose":
+                await self._file_confirm_entity_card(session, outcome)
+
+    async def _file_confirm_entity_card(
+        self, session: AsyncSession, outcome: "PromotionOutcome"
+    ) -> None:
+        """File a confirm_entity card for a corroborated-but-contested entity,
+        deduped on entity_id across ALL statuses so a dismissed proposal never
+        nags again on re-analysis."""
+        exists = (
+            await session.execute(
+                text(
+                    "SELECT 1 FROM app.review_items WHERE kind = 'confirm_entity'"
+                    " AND payload->>'entity_id' = :id LIMIT 1"
+                ),
+                {"id": str(outcome.entity_id)},
+            )
+        ).first()
+        if exists is not None:
+            return
+        session.add(
+            ReviewItem(
+                kind="confirm_entity",
+                payload={
+                    "entity_id": str(outcome.entity_id),
+                    "entity_name": outcome.name,
+                    "entity_kind": outcome.kind,
+                    **confirm_entity_display(name=outcome.name, kind=outcome.kind),
+                },
+                domain_code=outcome.domain,
+            )
+        )
 
     async def _register_declared_aliases(
         self,

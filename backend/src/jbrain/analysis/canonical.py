@@ -7,9 +7,12 @@ spouse stayed displayed as the nickname "Sammy"). After a note's facts land, the
 touched entities are reprojected by their type's `display_name` precedence. The
 owner "Me" keeps its explicit override (the graph's deliberate center).
 
-Promotion confirms a provisional entity once a SECOND note corroborates it —
-the "implicitly confirmed later" ANALYSIS describes but the code never did
-(nothing but the hard-coded "Me" was ever confirmed).
+Promotion confirms a provisional entity once enough distinct notes corroborate
+it — the "implicitly confirmed later" ANALYSIS describes. `promote_if_corroborated`
+implements it (≥ CORROBORATION_THRESHOLD distinct same-domain notes; a contested
+identity routes to a confirm_entity review card instead of auto-confirming). It is
+gated by the `entity_promotion` setting (default OFF) and called eager in the
+apply path; see docs/entity.md "Entity lifecycle".
 """
 
 from __future__ import annotations
@@ -17,6 +20,7 @@ from __future__ import annotations
 import json
 import re
 import uuid
+from dataclasses import dataclass
 from typing import Any
 
 from sqlalchemy import text
@@ -146,3 +150,108 @@ async def reproject_canonical_name(session: AsyncSession, entity_id: uuid.UUID) 
         {"n": projected, "id": str(entity_id)},
     )
     return projected
+
+
+# --- provisional -> confirmed promotion (docs/entity.md "Entity lifecycle")
+
+# Distinct corroborating notes that confirm an entity is real (durable across the
+# loss of any one note, and outranking a one-note upstart in a merge — the two
+# things `status='confirmed'` already controls in purge.py / entities.plan_merge).
+# Conservative N: tuned against the golden harness, not by guess (mirrors
+# weight.COMMIT_THRESHOLDS discipline).
+CORROBORATION_THRESHOLD = 3
+
+
+@dataclass(frozen=True)
+class PromotionOutcome:
+    """What a promotion pass decided for one entity. `action` is `confirmed`
+    (auto-promoted in place), `propose` (corroborated but identity contested — the
+    caller files a confirm_entity card), or `none` (below threshold / ineligible).
+    The name/kind/domain ride along so the caller can build the card without a
+    second read."""
+
+    action: str
+    entity_id: uuid.UUID
+    name: str = ""
+    kind: str = ""
+    domain: str = "general"
+
+
+async def corroboration_count(session: AsyncSession, entity_id: uuid.UUID, domain: str) -> int:
+    """Distinct SAME-DOMAIN notes that reference the entity via a live, non-derived
+    fact (as subject or object) or a mention. Same-domain only: counting across the
+    firewall would let a health note's existence be inferred from a general
+    entity's status flip. Derived shadows are excluded — a reciprocal inverse edge
+    is the same note's claim, not independent corroboration."""
+    n = await session.scalar(
+        text(
+            "SELECT count(DISTINCT note_id) FROM ("
+            "  SELECT note_id FROM app.facts"
+            "    WHERE (entity_id = :id OR object_entity_id = :id)"
+            "      AND derived_from_fact_id IS NULL AND status = 'active'"
+            "      AND domain_code = :dom"
+            "  UNION"
+            "  SELECT note_id FROM app.entity_mentions"
+            "    WHERE entity_id = :id AND domain_code = :dom"
+            ") refs"
+        ),
+        {"id": str(entity_id), "dom": domain},
+    )
+    return int(n or 0)
+
+
+async def _has_live_namesake(session: AsyncSession, entity_id: uuid.UUID, domain: str) -> bool:
+    """Whether another non-merged same-domain entity shares a normalized alias —
+    the "two people, one name" case. Auto-confirming either would cement an
+    unresolved identity, so a namesake routes promotion to review instead."""
+    return bool(
+        await session.scalar(
+            text(
+                "SELECT 1 FROM app.entity_aliases a"
+                " JOIN app.entity_aliases b ON b.alias_norm = a.alias_norm"
+                "   AND b.entity_id <> a.entity_id"
+                " JOIN app.entities e ON e.id = b.entity_id"
+                " WHERE a.entity_id = :id AND e.status <> 'merged'"
+                "   AND e.domain_code = :dom LIMIT 1"
+            ),
+            {"id": str(entity_id), "dom": domain},
+        )
+    )
+
+
+async def promote_if_corroborated(session: AsyncSession, entity_id: uuid.UUID) -> PromotionOutcome:
+    """Confirm a provisional entity once >= CORROBORATION_THRESHOLD distinct
+    same-domain notes corroborate it. Auto-confirms in place (idempotent: a
+    guarded UPDATE only ever flips provisional -> confirmed); but when identity is
+    contested (a live namesake) it returns `propose` so the caller files a
+    confirm_entity card instead of cementing a possibly-wrong identity. The owner
+    (subject-linked) and already-confirmed/merged entities are no-ops."""
+    row = (
+        await session.execute(
+            text(
+                "SELECT canonical_name, kind, domain_code, status, subject_id FROM app.entities"
+                " WHERE id = :id"
+            ),
+            {"id": str(entity_id)},
+        )
+    ).first()
+    # Only a provisional, non-owner entity is promotable; everything else no-ops.
+    if row is None or row.subject_id is not None or row.status != "provisional":
+        return PromotionOutcome("none", entity_id)
+    if await corroboration_count(session, entity_id, row.domain_code) < CORROBORATION_THRESHOLD:
+        return PromotionOutcome("none", entity_id)
+    if await _has_live_namesake(session, entity_id, row.domain_code):
+        return PromotionOutcome(
+            "propose", entity_id, row.canonical_name, row.kind, row.domain_code
+        )
+    # status is provisional (read above, same transaction), so the guarded UPDATE
+    # always flips it — idempotent across re-analysis (a second run reads the
+    # now-confirmed status and no-ops at the guard above).
+    await session.execute(
+        text(
+            "UPDATE app.entities SET status = 'confirmed', updated_at = now()"
+            " WHERE id = :id AND status = 'provisional'"
+        ),
+        {"id": str(entity_id)},
+    )
+    return PromotionOutcome("confirmed", entity_id, row.canonical_name, row.kind, row.domain_code)

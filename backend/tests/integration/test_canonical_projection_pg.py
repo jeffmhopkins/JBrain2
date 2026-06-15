@@ -18,7 +18,12 @@ from sqlalchemy.ext.asyncio import (
 )
 from sqlalchemy.pool import NullPool
 
-from jbrain.analysis.canonical import reproject_canonical_name
+from jbrain.analysis.canonical import (
+    CORROBORATION_THRESHOLD,
+    corroboration_count,
+    promote_if_corroborated,
+    reproject_canonical_name,
+)
 from jbrain.db.session import scoped_session
 from jbrain.queue import SYSTEM_CTX
 from tests.conftest import docker_available
@@ -112,6 +117,7 @@ async def seed_fact(
     note_id: uuid.UUID,
     predicate: str,
     value_json: dict | None,
+    domain: str = "general",
 ) -> None:
     async with scoped_session(maker, SYSTEM_CTX) as s:
         await s.execute(
@@ -120,7 +126,7 @@ async def seed_fact(
                 " value_json, assertion, reported_at, temporal_precision, status, note_id,"
                 " extractor, prompt_version, domain_code)"
                 " VALUES (:id, :eid, :pred, '', 'attribute', :stmt, CAST(:vj AS jsonb),"
-                " 'asserted', :ts, 'unknown', 'active', :nid, 'test', 'test-v1', 'general')"
+                " 'asserted', :ts, 'unknown', 'active', :nid, 'test', 'test-v1', :dom)"
             ),
             {
                 "id": str(uuid.uuid4()),
@@ -130,8 +136,42 @@ async def seed_fact(
                 "vj": json.dumps(value_json) if value_json is not None else None,
                 "ts": NOTE_TIME,
                 "nid": str(note_id),
+                "dom": domain,
             },
         )
+
+
+async def seed_alias(
+    maker: async_sessionmaker[AsyncSession],
+    *,
+    entity_id: uuid.UUID,
+    alias: str,
+    domain: str = "general",
+) -> None:
+    async with scoped_session(maker, SYSTEM_CTX) as s:
+        await s.execute(
+            text(
+                "INSERT INTO app.entity_aliases (id, entity_id, alias, alias_norm, domain_code)"
+                " VALUES (:i, :e, :a, :n, :d)"
+            ),
+            {
+                "i": str(uuid.uuid4()),
+                "e": str(entity_id),
+                "a": alias,
+                "n": alias.casefold(),
+                "d": domain,
+            },
+        )
+
+
+async def _status(maker: async_sessionmaker[AsyncSession], entity_id: uuid.UUID) -> str:
+    async with scoped_session(maker, SYSTEM_CTX) as s:
+        return (
+            await s.execute(
+                text("SELECT status FROM app.entities WHERE id = :id"),
+                {"id": str(entity_id)},
+            )
+        ).scalar_one()
 
 
 async def _canonical(maker: async_sessionmaker[AsyncSession], entity_id: uuid.UUID) -> str:
@@ -267,3 +307,85 @@ async def test_does_not_reproject_onto_a_name_another_entity_owns(
     async with scoped_session(maker, SYSTEM_CTX) as s:
         assert await reproject_canonical_name(s, declarer) is None
     assert await _canonical(maker, declarer) == "Ansel B."
+
+
+# --- promotion (provisional -> confirmed) -----------------------------------
+
+
+async def _corroborate(
+    maker: async_sessionmaker[AsyncSession], entity: uuid.UUID, n: int, *, domain: str = "general"
+) -> None:
+    """Reference `entity` from `n` distinct notes via a fact, so its
+    corroboration count rises to n."""
+    for _ in range(n):
+        note = await seed_note(maker)
+        await seed_fact(
+            maker, entity_id=entity, note_id=note, predicate="note", value_json=None, domain=domain
+        )
+
+
+async def test_promotes_after_threshold_distinct_notes(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    entity = await seed_entity(maker, name="Marcus")
+    await _corroborate(maker, entity, CORROBORATION_THRESHOLD)
+    async with scoped_session(maker, SYSTEM_CTX) as s:
+        assert await corroboration_count(s, entity, "general") == CORROBORATION_THRESHOLD
+        assert (await promote_if_corroborated(s, entity)).action == "confirmed"
+    assert await _status(maker, entity) == "confirmed"
+
+
+async def test_below_threshold_stays_provisional(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    entity = await seed_entity(maker, name="Nadia")
+    await _corroborate(maker, entity, CORROBORATION_THRESHOLD - 1)
+    async with scoped_session(maker, SYSTEM_CTX) as s:
+        assert (await promote_if_corroborated(s, entity)).action == "none"
+    assert await _status(maker, entity) == "provisional"
+
+
+async def test_promotion_is_idempotent(maker: async_sessionmaker[AsyncSession]) -> None:
+    entity = await seed_entity(maker, name="Priya")
+    await _corroborate(maker, entity, CORROBORATION_THRESHOLD)
+    async with scoped_session(maker, SYSTEM_CTX) as s:
+        assert (await promote_if_corroborated(s, entity)).action == "confirmed"
+        # A second pass reads the now-confirmed status and no-ops at the guard.
+        assert (await promote_if_corroborated(s, entity)).action == "none"
+    assert await _status(maker, entity) == "confirmed"
+
+
+async def test_owner_is_never_promoted(maker: async_sessionmaker[AsyncSession]) -> None:
+    me = await seed_entity(maker, name="Me", status="confirmed", with_subject=True)
+    await _corroborate(maker, me, CORROBORATION_THRESHOLD + 1)
+    async with scoped_session(maker, SYSTEM_CTX) as s:
+        assert (await promote_if_corroborated(s, me)).action == "none"
+
+
+async def test_namesake_routes_to_proposal_not_auto_confirm(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    # Two live entities share a normalized alias ("Zane") -> auto-confirming
+    # either would cement an unresolved identity, so promotion proposes review.
+    one = await seed_entity(maker, name="Zane")
+    two = await seed_entity(maker, name="Zane")
+    await seed_alias(maker, entity_id=one, alias="Zane")
+    await seed_alias(maker, entity_id=two, alias="Zane")
+    await _corroborate(maker, one, CORROBORATION_THRESHOLD)
+    async with scoped_session(maker, SYSTEM_CTX) as s:
+        assert (await promote_if_corroborated(s, one)).action == "propose"
+    assert await _status(maker, one) == "provisional"  # not auto-confirmed
+
+
+async def test_cross_domain_corroboration_does_not_count(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    # A general entity must not be confirmed by health-domain notes — the count
+    # is scoped to the entity's own domain so a status flip can't leak the
+    # existence of a firewalled note.
+    entity = await seed_entity(maker, name="Dana")  # domain general
+    await _corroborate(maker, entity, CORROBORATION_THRESHOLD, domain="health")
+    async with scoped_session(maker, SYSTEM_CTX) as s:
+        assert await corroboration_count(s, entity, "general") == 0
+        assert (await promote_if_corroborated(s, entity)).action == "none"
+    assert await _status(maker, entity) == "provisional"

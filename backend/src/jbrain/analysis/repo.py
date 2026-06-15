@@ -1323,6 +1323,34 @@ class SqlAnalysisRepo:
                 {"action": "retracted", "fact_id": fact_id, "prior_status": prior.status}
             ]
 
+        if kind == "confirm_entity" and action in ("accept", "reject"):
+            # A corroborated-but-contested entity (a live namesake). accept
+            # confirms it (the guarded UPDATE only flips provisional -> confirmed,
+            # so a vanished/merged/already-confirmed entity just closes the card);
+            # reject leaves it provisional. The entity_confirmed effect lets reopen
+            # restore the prior status.
+            entity_id = item_payload.get("entity_id")
+            if not entity_id:
+                raise UnknownAction("confirm_entity resolution requires an entity_id")
+            prior = (
+                await session.execute(
+                    text("SELECT status FROM app.entities WHERE id = :id"),
+                    {"id": entity_id},
+                )
+            ).first()
+            if prior is None or action == "reject":
+                return "resolved", []
+            await session.execute(
+                text(
+                    "UPDATE app.entities SET status = 'confirmed', updated_at = now()"
+                    " WHERE id = :id AND status = 'provisional'"
+                ),
+                {"id": entity_id},
+            )
+            return "resolved", [
+                {"action": "entity_confirmed", "entity_id": entity_id, "prior_status": prior.status}
+            ]
+
         raise UnknownAction(f"action {action!r} is not valid for kind {kind!r}")
 
     async def _reverse_effects(
@@ -1375,6 +1403,14 @@ class SqlAnalysisRepo:
                             text(f"{stmt} WHERE id = :id"),
                             {"gone": effect["entity_id"], "id": row_id},
                         )
+            elif action == "entity_confirmed":
+                await session.execute(
+                    text(
+                        "UPDATE app.entities SET status = :status, updated_at = now()"
+                        " WHERE id = :id"
+                    ),
+                    {"id": effect["entity_id"], "status": effect["prior_status"]},
+                )
             elif action == "domain_changed":
                 await session.execute(
                     text(
