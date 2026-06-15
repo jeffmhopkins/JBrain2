@@ -18,6 +18,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { factValue } from "../analysis/format";
 import { type EgoGraph, type EntityOut, api } from "../api/client";
 import { Sheet } from "../components/Sheet";
 import { ChevronLeftIcon, FitIcon, MinusIcon, PlusIcon } from "../components/icons";
@@ -1131,7 +1132,7 @@ function EntityPeek({
           {attrs.map((f) => (
             <li key={f.id} className="peek-attr">
               <span className="peek-attr-pred">{f.predicate}</span>
-              <span className="peek-attr-val">{f.statement}</span>
+              <span className="peek-attr-val">{factValue(f)}</span>
             </li>
           ))}
         </ul>

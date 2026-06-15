@@ -380,8 +380,8 @@ def test_user_prompt_carries_the_per_note_fact_budget() -> None:
     assert "Fact budget for this note: at most 17 facts" in prompt
 
 
-def test_prompt_version_is_v14() -> None:
-    assert PROMPT_VERSION == "note-extract-v16"
+def test_prompt_version_is_current() -> None:
+    assert PROMPT_VERSION == "note-extract-v17"
 
 
 def test_user_prompt_carries_anchor_with_timezone_domain_and_content() -> None:

@@ -443,6 +443,100 @@ async def test_enum_value_is_coerced_to_its_member(maker, tmp_path):  # noqa: F8
     assert fact.value_json == {"value": "female"}  # coerced to the enum member
 
 
+async def test_inference_card_renders_the_committed_coerced_value(maker, tmp_path):  # noqa: F811
+    # The card and the note view must agree: a held gender inference is shape-
+    # checked/coerced on the committed row, and the card sources its value from
+    # that row — so both surfaces read "female", never the model's raw prose.
+    note_id = await make_note(maker, domain="general", body="A note about Celine.")
+    await ingest(maker, note_id, tmp_path)
+    intent = _intent(
+        note_id,
+        [EntityResolution(mention_ref="m1", mode="new", new_kind="Person", new_name="Celine")],
+        [
+            _fact(
+                "m1",
+                predicate="gender",
+                kind="state",
+                statement="Celine's gender is female.",
+                value_json={"value": "Female (inferred from 'wife')."},
+                inferred=True,
+                self_confidence=0.6,
+                attested_span=None,
+            )
+        ],
+    )
+    # Inferred (not surface-attested): weight is capped to 0.6 < the 0.7 state
+    # threshold, so the fact is held and an inference card is filed.
+    plan = plan_intent(intent, signals={0: ConfidenceSignals(False, True, False)})
+    await _run(maker, note_id, intent, plan, tmp_path=tmp_path)
+
+    async with scoped_session(maker, SYSTEM_CTX) as session:
+        fact = (
+            (await session.execute(select(Fact).where(Fact.note_id == uuid.UUID(note_id))))
+            .scalars()
+            .one()
+        )
+        card = (
+            (
+                await session.execute(
+                    select(ReviewItem).where(
+                        ReviewItem.kind == "low_confidence_inference",
+                        ReviewItem.payload["note_id"].astext == note_id,
+                    )
+                )
+            )
+            .scalars()
+            .one()
+        )
+    assert fact.status == "pending_review"
+    assert fact.value_json == {"value": "female"}
+    # The card mirrors the committed row, not the raw planned value.
+    assert card.payload["value_json"] == {"value": "female"}
+    assert card.payload["fact_id"] == str(fact.id)
+
+
+async def test_nicknames_for_different_audiences_coexist(maker, tmp_path):  # noqa: F811
+    # Agglutination by audience: name.nickname is non-functional and keyed by its
+    # qualifier, so "Sammy" (general) and "Mom" (kids) are DISTINCT addresses that
+    # both commit — neither overwrites the other (no attribute_collision).
+    note_id = await make_note(maker, domain="general", body="Celine, aka Sammy; kids call her Mom.")
+    await ingest(maker, note_id, tmp_path)
+    intent = _intent(
+        note_id,
+        [EntityResolution(mention_ref="m1", mode="new", new_kind="Person", new_name="Celine")],
+        [
+            _fact(
+                "m1",
+                predicate="name.nickname",
+                qualifier="",
+                kind="attribute",
+                statement="Celine goes by Sammy.",
+                value_json={"value": "Sammy"},
+            ),
+            _fact(
+                "m1",
+                predicate="name.nickname",
+                qualifier="kids",
+                kind="attribute",
+                statement="Celine's kids call her Mom.",
+                value_json={"value": "Mom"},
+            ),
+        ],
+    )
+    plan = plan_intent(intent, signals={0: _SURFACE, 1: _SURFACE})
+    await _run(maker, note_id, intent, plan, tmp_path=tmp_path)
+
+    async with scoped_session(maker, SYSTEM_CTX) as session:
+        facts = (
+            (await session.execute(select(Fact).where(Fact.note_id == uuid.UUID(note_id))))
+            .scalars()
+            .all()
+        )
+    by_qual = {f.qualifier: f for f in facts}
+    assert by_qual[""].value_json == {"value": "Sammy"} and by_qual[""].status == "active"
+    assert by_qual["kids"].value_json == {"value": "Mom"} and by_qual["kids"].status == "active"
+
+
 async def test_value_shape_mismatch_is_logged_not_dropped(maker, tmp_path):  # noqa: F811
     # Phase 1 typed value-shape validation is LOG-ONLY: a ref predicate (spouse)
     # handed a scalar value_json with no object violates its declared shape, so we

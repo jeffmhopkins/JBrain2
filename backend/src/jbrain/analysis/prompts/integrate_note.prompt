@@ -1,6 +1,6 @@
 ---
 name: integrate.note
-version: integrate-v8
+version: integrate-v9
 description: Integrate one note's extracted facts into the knowledge graph, producing an IntegrationIntent.
 strength: high
 config:
@@ -49,8 +49,14 @@ Three rules that are easy to get wrong — follow them exactly:
    appointment.
    - A NAME, NICKNAME, or ALIAS is NOT a person. "goes by Sammy", "children call
      her Mom", "aka the Beast" are VALUES of a `name.*` fact on the person they
-     belong to — capture each as that person's `name.nickname`/`name.full`
-     attribute (the bare string in `value_json`), and emit NO resolution for it.
+     belong to — capture each as that person's name attribute (the bare string in
+     `value_json`), and emit NO resolution for it. Pick the right name predicate:
+     an everyday "goes by"/"known as" name is `name.preferred` (qualifier "");
+     an AUDIENCE-scoped nickname sets the audience as the qualifier — "my kids
+     call her Mom" → `name.nickname` qualifier "kids" (audiences: kids | family |
+     friends | work | public); a bare "aka the Beast" → `name.nickname` qualifier
+     "". The qualifier is what lets distinct-audience nicknames COEXIST instead of
+     overwriting one another, so never drop it onto a bare `name.nickname`.
      Minting "Sammy" or "Mom" as its own entity is a bug.
    - DIFFERENT SURFACE FORMS OF ONE PERSON in the same note ("Celine Hopkins" and
      "Celine Kitina Hopkins", "Bob" and "Robert") are ONE entity: emit a SINGLE

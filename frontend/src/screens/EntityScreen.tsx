@@ -195,7 +195,7 @@ export function EntityScreen({
                         {edge.name}
                       </button>
                       <span className="inbound-edge">
-                        <span className="edge-path">—{edge.predicate}→</span> {edge.statement}
+                        <span className="edge-path">—{edge.predicate}→</span>
                       </span>
                     </div>
                   ))}
