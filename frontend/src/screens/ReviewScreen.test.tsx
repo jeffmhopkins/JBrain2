@@ -864,6 +864,39 @@ describe("ReviewScreen (split inbox)", () => {
     expect(screen.queryByText("what was decided")).not.toBeInTheDocument();
   });
 
+  it("groups pending items by entity by default, subjectless ones under Other", async () => {
+    render(<ReviewScreen />);
+    await screen.findByText("two values recorded for Sarah's birthDate");
+
+    // The ambiguous "Sam" mention names a subject; the collisions and the merge
+    // don't, so they collect under Other (which always sorts last).
+    expect(screen.getByRole("button", { name: /^Sam 1/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Other 3/ })).toBeInTheDocument();
+    // Groups start expanded, so every row is still reachable.
+    expect(screen.getByText("which Sam?")).toBeInTheDocument();
+    expect(screen.getByText("two values recorded for Sarah's birthDate")).toBeInTheDocument();
+  });
+
+  it("collapsing an entity group hides only its own rows", async () => {
+    render(<ReviewScreen />);
+    await screen.findByText("two values recorded for Sarah's birthDate");
+
+    fireEvent.click(screen.getByRole("button", { name: /^Other 3/ }));
+    expect(screen.queryByText("two values recorded for Sarah's birthDate")).toBeNull();
+    // Sam's group is independent — still open.
+    expect(screen.getByText("which Sam?")).toBeInTheDocument();
+  });
+
+  it("group-by time falls back to the flat chronological list", async () => {
+    render(<ReviewScreen />);
+    await screen.findByText("two values recorded for Sarah's birthDate");
+
+    fireEvent.click(screen.getByRole("button", { name: "time" }));
+    expect(screen.queryByRole("button", { name: /^Other 3/ })).toBeNull();
+    expect(screen.getByText("which Sam?")).toBeInTheDocument();
+    expect(screen.getByText("two values recorded for Sarah's birthDate")).toBeInTheDocument();
+  });
+
   it("shows per-lane empty states", async () => {
     serve([], [], []);
     render(<ReviewScreen />);

@@ -23,7 +23,9 @@ import { MarkedText } from "../analysis/bits";
 import { edgePath, valueLabel } from "../analysis/format";
 import type { ReviewItem } from "../api/client";
 import type { ReviewFilter } from "../api/client";
+import { EntityTypeIcon } from "../entities/kinds";
 import { DOMAIN_COLOR, DOMAIN_TITLE } from "../notes/modes";
+import { groupByEntity } from "../review/grouping";
 import { type ReviewQueueController, useReviewQueue } from "../review/useReviewQueue";
 
 const DISARM_MS = 3000;
@@ -1142,12 +1144,17 @@ interface ListViewProps {
 function ListView({ lane, items, queue, onOpen }: ListViewProps) {
   const [selecting, setSelecting] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  // Pending triage groups by subject entity by default; "time" is the flat,
+  // chronological list. Only pending groups — deferred/decided are logs.
+  const [groupMode, setGroupMode] = useState<"entity" | "time">("entity");
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
 
   // Reset selection when the lane changes out from under us.
   // biome-ignore lint/correctness/useExhaustiveDependencies: lane is the trigger.
   useEffect(() => {
     setSelecting(false);
     setSelected(new Set());
+    setCollapsed(new Set());
   }, [lane]);
 
   if (items === null) return <p className="analysis-quiet">loading…</p>;
@@ -1189,10 +1196,45 @@ function ListView({ lane, items, queue, onOpen }: ListViewProps) {
     setSelected(new Set());
   }
 
+  const toggleGroup = (key: string) =>
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      next.has(key) ? next.delete(key) : next.add(key);
+      return next;
+    });
+
+  const grouped = lane === "pending" && groupMode === "entity" && !selecting;
+  const row = (item: ReviewItem) => (
+    <ListRow
+      key={item.id}
+      item={item}
+      selectable={selecting}
+      selected={selected.has(item.id)}
+      onToggle={() => toggle(item.id)}
+      onOpen={() => onOpen(item.id)}
+    />
+  );
+
   return (
     <>
       {lane === "pending" && (
         <div className="rlist-tools">
+          <div className="rgroup-toggle">
+            <button
+              type="button"
+              aria-pressed={groupMode === "entity"}
+              onClick={() => setGroupMode("entity")}
+            >
+              entity
+            </button>
+            <button
+              type="button"
+              aria-pressed={groupMode === "time"}
+              onClick={() => setGroupMode("time")}
+            >
+              time
+            </button>
+          </div>
           <button type="button" className="rtool" onClick={() => setSelecting((s) => !s)}>
             {selecting ? "done" : "select"}
           </button>
@@ -1208,18 +1250,33 @@ function ListView({ lane, items, queue, onOpen }: ListViewProps) {
         </div>
       )}
 
-      <div className="rlist2">
-        {items.map((item) => (
-          <ListRow
-            key={item.id}
-            item={item}
-            selectable={selecting}
-            selected={selected.has(item.id)}
-            onToggle={() => toggle(item.id)}
-            onOpen={() => onOpen(item.id)}
-          />
-        ))}
-      </div>
+      {grouped ? (
+        <div className="rgroups">
+          {groupByEntity(items).map((g) => {
+            const open = !collapsed.has(g.key);
+            return (
+              <div key={g.key} className={`egroup${open ? " open" : ""}`}>
+                <button
+                  type="button"
+                  className="egroup-head"
+                  aria-expanded={open}
+                  onClick={() => toggleGroup(g.key)}
+                >
+                  <EntityTypeIcon kind={g.kind} size={32} />
+                  <span className="egroup-name">{g.label}</span>
+                  <span className="gcount">{g.items.length}</span>
+                  <span className="gchev" aria-hidden="true">
+                    ›
+                  </span>
+                </button>
+                {open && <div className="egroup-rows">{g.items.map(row)}</div>}
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        <div className="rlist2">{items.map(row)}</div>
+      )}
 
       {selecting && selected.size > 0 && (
         <div className="rbulk" role="toolbar" aria-label="bulk actions">

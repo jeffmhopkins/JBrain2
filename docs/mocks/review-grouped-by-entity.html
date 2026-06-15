@@ -1,0 +1,431 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Review — grouped by entity (interactive mock)</title>
+    <style>
+      /* Design tokens — copied from frontend/src/styles/tokens.css so the mock
+         reads exactly like the app. Entity-type accents mirror
+         frontend/src/entities/kinds.tsx. */
+      :root {
+        --steel: #7fa7c9;
+        --steel-tint: rgba(127, 167, 201, 0.13);
+        --green: #8fbc9a;
+        --green-tint: rgba(143, 188, 154, 0.13);
+        --amber: #c9a36a;
+        --amber-tint: rgba(201, 163, 106, 0.13);
+        --rose: #cf8a8f;
+        --rose-tint: rgba(207, 138, 143, 0.13);
+        --violet: #a493c9;
+        --periwinkle: #8f9fd4;
+        --sage: #9bbf8f;
+        --terracotta: #cf9b8a;
+        --teal: #76b6b0;
+        --orchid: #c98abd;
+        --slate: #9aa0aa;
+        --accent: var(--steel);
+        --font-scale: 1;
+        --fs-micro: calc(12px * var(--font-scale));
+        --fs-head: calc(13px * var(--font-scale));
+        --fs-secondary: calc(14px * var(--font-scale));
+        --fs-note: calc(15px * var(--font-scale));
+        --fs-body: calc(16px * var(--font-scale));
+        --fs-title: calc(18px * var(--font-scale));
+        --fs-screen: calc(22px * var(--font-scale));
+        --r-input: 12px;
+        --r-card: 16px;
+        --r-pill: 999px;
+        --font-mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+      }
+      [data-theme="light"] {
+        color-scheme: light;
+        --page: #ecece9;
+        --bg: #f7f7f5;
+        --surface: #ffffff;
+        --surface-2: #f0f0ee;
+        --border: #e2e2df;
+        --text: #1a1b1e;
+        --text-2: #5c5f66;
+        --text-3: #9a9da3;
+        --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.06);
+      }
+      [data-theme="dark"] {
+        color-scheme: dark;
+        --page: #060708;
+        --bg: #0e0f11;
+        --surface: #17181b;
+        --surface-2: #1e2024;
+        --border: #26282c;
+        --text: #e6e7e9;
+        --text-2: #9a9da3;
+        --text-3: #5c5f66;
+        --shadow-card: none;
+      }
+
+      * { box-sizing: border-box; }
+      body {
+        margin: 0; background: var(--page); color: var(--text);
+        font: 400 var(--fs-body) / 1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+        display: flex; flex-direction: column; align-items: center; gap: 16px;
+        padding: 22px 14px 48px; min-height: 100vh;
+      }
+
+      /* ---- Demo chrome (not part of the app) ---- */
+      .demo-bar { width: 100%; max-width: 440px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+      .demo-title { font-size: var(--fs-secondary); color: var(--text-2); margin-right: auto; }
+      .demo-title b { color: var(--text); font-weight: 600; }
+      .seg { display: inline-flex; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-pill); padding: 3px; }
+      .seg button {
+        appearance: none; border: none; background: none; color: var(--text-2);
+        font: inherit; font-size: var(--fs-secondary); padding: 5px 14px; border-radius: var(--r-pill); cursor: pointer;
+      }
+      .seg button[aria-pressed="true"] { background: var(--steel-tint); color: var(--steel); font-weight: 600; }
+      .demo-note { width: 100%; max-width: 440px; font-size: var(--fs-head); color: var(--text-3); line-height: 1.55; }
+      .demo-note code { font-family: var(--font-mono); color: var(--text-2); }
+      .demo-note b { color: var(--text-2); font-weight: 600; }
+
+      /* ---- Phone frame ---- */
+      .phone {
+        width: 100%; max-width: 440px; height: 900px; background: var(--bg);
+        border: 1px solid var(--border); border-radius: 30px; overflow: hidden;
+        position: relative; display: flex; flex-direction: column;
+        box-shadow: 0 20px 60px rgba(0, 0, 0, 0.25);
+      }
+      .statusbar {
+        display: flex; justify-content: space-between; align-items: center;
+        padding: 14px 24px 4px; font-size: var(--fs-secondary); font-weight: 600; color: var(--text);
+      }
+      .statusbar .right { display: flex; gap: 7px; align-items: center; color: var(--text-2); font-weight: 500; }
+      .batt { background: var(--green); color: #06250f; border-radius: 5px; padding: 1px 5px; font-size: 11px; font-weight: 700; }
+      .screenhead { display: flex; align-items: center; gap: 12px; padding: 8px 18px 4px; }
+      .screenhead h1 { margin: 0; font-size: var(--fs-screen); font-weight: 600; }
+      .screenhead .spacer { margin-left: auto; }
+      .live-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--green); }
+      .bolt { color: var(--text-2); font-size: var(--fs-title); }
+
+      /* ---- lane segmented filter (pending / deferred / decided) ---- */
+      .review-segs { display: flex; gap: 6px; padding: 6px 16px 2px; }
+      .review-seg {
+        flex: 1; appearance: none; border: 1px solid var(--border); background: var(--surface);
+        color: var(--text-2); font: inherit; font-size: var(--fs-secondary); padding: 7px 0;
+        border-radius: var(--r-pill); cursor: pointer; display: inline-flex; align-items: center;
+        justify-content: center; gap: 6px;
+      }
+      .review-seg.seg-active { background: var(--steel-tint); border-color: transparent; color: var(--steel); font-weight: 600; }
+      .seg-count { font-size: var(--fs-micro); background: var(--surface-2); color: var(--text-3); border-radius: var(--r-pill); padding: 0 7px; font-variant-numeric: tabular-nums; }
+      .review-seg.seg-active .seg-count { background: var(--steel); color: #fff; }
+
+      /* ---- tools row: group-by toggle + select ---- */
+      .rlist-tools { display: flex; align-items: center; gap: 10px; padding: 8px 16px 2px; }
+      .groupby { display: inline-flex; align-items: center; gap: 6px; margin-right: auto; font-size: var(--fs-secondary); color: var(--text-3); }
+      .groupby .seg { padding: 2px; }
+      .groupby .seg button { padding: 4px 11px; font-size: var(--fs-head); }
+      .rtool { appearance: none; border: 1px solid var(--border); background: var(--surface); color: var(--text-2); font: inherit; font-size: var(--fs-secondary); padding: 5px 13px; border-radius: var(--r-pill); cursor: pointer; }
+
+      .body { flex: 1; overflow-y: auto; padding: 8px 16px 130px; display: flex; flex-direction: column; gap: 12px; }
+
+      /* ---- Entity group ---- */
+      .egroup { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-card); box-shadow: var(--shadow-card); overflow: hidden; }
+      .egroup-head {
+        display: flex; align-items: center; gap: 11px; width: 100%; padding: 11px 13px;
+        background: none; border: none; font: inherit; color: var(--text); text-align: left; cursor: pointer;
+      }
+      .egroup-head:active { background: var(--surface-2); }
+
+      /* type-tinted disc (mirrors .etype-disc) */
+      .disc {
+        width: 38px; height: 38px; border-radius: 50%; flex: none; display: grid; place-items: center;
+        font-weight: 600; font-size: var(--fs-note); color: var(--etype, var(--slate));
+        background: color-mix(in srgb, var(--etype, var(--slate)) 16%, transparent);
+        position: relative;
+      }
+      .disc .src {
+        position: absolute; right: -2px; bottom: -2px; width: 16px; height: 16px; border-radius: 50%;
+        background: var(--surface-2); border: 1.5px solid var(--surface); display: grid; place-items: center; font-size: 9px;
+      }
+      .egroup-id { display: flex; flex-direction: column; gap: 1px; min-width: 0; flex: 1; }
+      .egroup-name { font-size: var(--fs-note); font-weight: 600; display: flex; align-items: center; gap: 7px; }
+      .egroup-sub { font-size: var(--fs-micro); color: var(--text-3); display: flex; align-items: center; gap: 6px; }
+      .egroup-etype { color: var(--etype, var(--slate)); }
+      .domain-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--green); flex: none; }
+
+      .gcount { font-size: var(--fs-micro); font-weight: 600; background: var(--steel-tint); color: var(--steel); border-radius: var(--r-pill); padding: 1px 9px; font-variant-numeric: tabular-nums; }
+      /* a group holding a flagged kind (merge / ambiguous / new predicate) leans amber */
+      .egroup.has-flag .gcount { background: var(--amber-tint); color: var(--amber); }
+      .gchev { color: var(--text-3); font-size: var(--fs-body); transition: transform 0.2s; flex: none; }
+      .egroup.open .gchev { transform: rotate(90deg); }
+
+      .egroup-rows { display: none; flex-direction: column; border-top: 1px solid var(--border); }
+      .egroup.open .egroup-rows { display: flex; }
+
+      /* ---- review row ---- */
+      .rrow { display: flex; align-items: stretch; }
+      .rrow + .rrow { border-top: 1px solid var(--border); }
+      .rrow-open { flex: 1; min-width: 0; appearance: none; border: none; background: none; font: inherit; color: var(--text); text-align: left; cursor: pointer; padding: 10px 12px 11px 16px; display: flex; flex-direction: column; gap: 4px; }
+      .rrow-open:active { background: var(--surface-2); }
+      .rrow-line { display: flex; align-items: center; gap: 8px; }
+      .kind-badge { font-size: var(--fs-micro); padding: 2px 9px; border-radius: var(--r-pill); background: var(--amber-tint); color: var(--amber); font-weight: 500; white-space: nowrap; }
+      .kind-inference { background: var(--steel-tint); color: var(--steel); }
+      .rrow-when { margin-left: auto; font-size: var(--fs-micro); color: var(--text-3); font-variant-numeric: tabular-nums; }
+      .rrow-sum { font-size: var(--fs-secondary); color: var(--text); line-height: 1.4; }
+      .rrow-fact { font-size: var(--fs-head); overflow-wrap: anywhere; }
+      .edge-path { font-family: var(--font-mono); font-size: var(--fs-head); color: var(--text-2); }
+      .edge-arrow { color: var(--text-3); padding: 0 2px; }
+      .edge-value { font-weight: 600; }
+      .rrow-meta { display: flex; }
+      .conf-badge { font-size: var(--fs-micro); padding: 1px 8px; border-radius: var(--r-pill); font-variant-numeric: tabular-nums; }
+      .conf-high { background: var(--green-tint); color: var(--green); }
+      .conf-med { background: var(--amber-tint); color: var(--amber); }
+      .conf-low { background: var(--rose-tint); color: var(--rose); }
+      .rrow-chev { display: grid; place-items: center; padding: 0 12px; color: var(--text-3); font-size: var(--fs-body); }
+
+      /* ---- per-group quick action ---- */
+      .gaction { display: flex; border-top: 1px dashed var(--border); }
+      .gaction button { flex: 1; appearance: none; border: none; background: none; font: inherit; font-size: var(--fs-head); color: var(--green); padding: 9px 0; cursor: pointer; font-weight: 600; }
+      .gaction button:active { background: var(--green-tint); }
+
+      /* ---- flat view rows (the comparison) ---- */
+      .rlist-flat { display: flex; flex-direction: column; gap: 8px; }
+      .rlist-flat .rrow { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-card); box-shadow: var(--shadow-card); }
+      .rlist-flat .rrow + .rrow { border-top: 1px solid var(--border); }
+      .rlist-flat .rrow-open { padding-left: 13px; }
+      .flat-who { font-size: var(--fs-micro); color: var(--violet); font-weight: 600; }
+
+      .hidden { display: none !important; }
+
+      /* ---- snackbar ---- */
+      .snack {
+        position: absolute; left: 16px; right: 16px; bottom: 26px; display: flex; align-items: center; gap: 12px;
+        padding: 11px 14px; background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--r-input);
+        font-size: var(--fs-secondary); opacity: 0; transform: translateY(8px); transition: opacity 0.2s, transform 0.2s;
+        pointer-events: none; z-index: 4; box-shadow: var(--shadow-card);
+      }
+      .snack.show { opacity: 1; transform: none; pointer-events: auto; }
+      .snack .msg { margin-right: auto; color: var(--text); }
+      .snack button { background: none; border: none; color: var(--steel); font: inherit; font-weight: 600; cursor: pointer; }
+    </style>
+  </head>
+  <body data-theme="light">
+    <div class="demo-bar">
+      <span class="demo-title"><b>Review</b> · grouped by entity</span>
+      <span class="seg" role="group" aria-label="theme">
+        <button id="t-light" aria-pressed="true">light</button>
+        <button id="t-dark" aria-pressed="false">dark</button>
+      </span>
+    </div>
+    <p class="demo-note">
+      The pending inbox today is a flat, chronological list — but every item is <b>about an entity</b>
+      (Celine, Marcus, a place, an org). This collapses the list into <b>entity groups</b>: one card per
+      subject, a count badge, the rows folded underneath, and a per-group
+      <b>approve high-confidence</b> shortcut. Tap a group header to fold/unfold, flip
+      <code>group&nbsp;by</code> to compare against the flat list, tap a row to "open" it.
+    </p>
+
+    <div class="phone" id="phone">
+      <div class="statusbar">
+        <span>9:41</span>
+        <span class="right">●●●● 🛜 <span class="batt">100</span></span>
+      </div>
+      <div class="screenhead">
+        <h1>Review</h1>
+        <span class="spacer"></span>
+        <span class="live-dot" title="live"></span>
+        <span class="bolt">⚡</span>
+      </div>
+
+      <div class="review-segs" role="tablist">
+        <button class="review-seg seg-active" role="tab" aria-selected="true">pending<span class="seg-count">8</span></button>
+        <button class="review-seg" role="tab" aria-selected="false">deferred<span class="seg-count">2</span></button>
+        <button class="review-seg" role="tab" aria-selected="false">decided<span class="seg-count">41</span></button>
+      </div>
+
+      <div class="rlist-tools">
+        <span class="groupby">
+          group by
+          <span class="seg" role="group" aria-label="grouping">
+            <button id="g-entity" aria-pressed="true">entity</button>
+            <button id="g-time" aria-pressed="false">time</button>
+          </span>
+        </span>
+        <button class="rtool">select</button>
+      </div>
+
+      <div class="body">
+        <div id="grouped"></div>
+        <div id="flat" class="rlist-flat hidden"></div>
+      </div>
+
+      <div class="snack" id="snack">
+        <span class="msg" id="snack-msg"></span>
+        <button id="snack-undo">undo</button>
+      </div>
+    </div>
+
+    <script>
+      const $ = (id) => document.getElementById(id);
+
+      // Entity-type accents, mirroring frontend/src/entities/kinds.tsx.
+      const ETYPE = {
+        Person: "var(--steel)", Organization: "var(--violet)", Place: "var(--green)",
+        Event: "var(--amber)", Thing: "var(--slate)",
+      };
+      const GLYPH = { Person: "👤", Organization: "🏢", Place: "📍", Event: "📅", Thing: "◆" };
+
+      // Eight pending items across five subject entities. Each row mirrors the
+      // app's ListRow: kind, domain, when, summary, optional fact edge, confidence.
+      const ENTITIES = [
+        {
+          name: "Celine", initials: "C", type: "Person", domain: "general", source: "💬",
+          items: [
+            { kind: "low_confidence_inference", when: "9:32a", sum: "Goes by Celine Dubois on the project.", edge: "name.full", value: "Celine Dubois", conf: 0.64 },
+            { kind: "low_confidence_inference", when: "9:32a", sum: "Inferred gender from context.", edge: "gender", value: "female", conf: 0.60 },
+            { kind: "low_confidence_inference", when: "Tue", sum: "Based in Lyon since last spring.", edge: "residence.city", value: "Lyon", conf: 0.55 },
+            { kind: "merge_proposal", when: "Tue", sum: "“Celine D.” may be the same person.", edge: null, value: null, conf: 0.71 },
+          ],
+        },
+        {
+          name: "Marcus", initials: "M", type: "Person", domain: "general", source: "💬",
+          items: [
+            { kind: "low_confidence_inference", when: "8:05a", sum: "Colleague, from the data team.", edge: "relationship.role", value: "colleague", conf: 0.62 },
+            { kind: "ambiguous_mention", when: "Mon", sum: "Two people named Marcus — which one?", edge: null, value: null, conf: null },
+          ],
+        },
+        {
+          name: "Acme Corp", initials: "A", type: "Organization", domain: "finance", source: "📄",
+          items: [
+            { kind: "new_predicate", when: "Mon", sum: "Unrecognized relation “underwrites”.", edge: "underwrites", value: "the Q3 round", conf: null },
+          ],
+        },
+        {
+          name: "Dr. Reyes", initials: "R", type: "Person", domain: "health", source: "💬",
+          items: [
+            { kind: "low_confidence_inference", when: "Sun", sum: "Primary care physician.", edge: "relationship.role", value: "physician", conf: 0.83 },
+          ],
+        },
+      ];
+
+      const phone = $("phone");
+      const collapsed = new Set(); // entity names that are folded
+
+      function kindLabel(k) { return k.replaceAll("_", " "); }
+      function confBadge(c) {
+        if (c === null) return "";
+        const pct = `${Math.round(c * 100)}%`;
+        const cls = c >= 0.75 ? "conf-high" : c >= 0.5 ? "conf-med" : "conf-low";
+        const band = c >= 0.75 ? "high" : c >= 0.5 ? "med" : "low";
+        return `<span class="conf-badge ${cls}">${band} · ${pct}</span>`;
+      }
+      function rowInner(it, opts = {}) {
+        const inference = it.kind === "low_confidence_inference";
+        const fact = it.edge
+          ? `<span class="rrow-fact"><span class="edge-path">${it.edge}</span><span class="edge-arrow">→</span><span class="edge-value">${it.value}</span></span>`
+          : "";
+        const who = opts.who ? `<span class="flat-who">${opts.who}</span>` : "";
+        return `
+          <button class="rrow-open" data-fact="${it.edge ? it.edge + " → " + it.value : it.sum}">
+            <span class="rrow-line">
+              ${who}
+              <span class="kind-badge ${inference ? "kind-inference" : ""}">${kindLabel(it.kind)}</span>
+              <span class="rrow-when">${it.when}</span>
+            </span>
+            <span class="rrow-sum">${it.sum}</span>
+            ${fact}
+            <span class="rrow-meta">${confBadge(it.conf)}</span>
+          </button>
+          <span class="rrow-chev" aria-hidden="true">›</span>`;
+      }
+
+      const FLAGGED = new Set(["merge_proposal", "ambiguous_mention", "new_predicate"]);
+
+      function renderGrouped() {
+        $("grouped").innerHTML = ENTITIES.map((e) => {
+          const open = !collapsed.has(e.name);
+          const hasFlag = e.items.some((it) => FLAGGED.has(it.kind));
+          const highConf = e.items.filter((it) => it.kind === "low_confidence_inference" && it.conf >= 0.75);
+          const accent = ETYPE[e.type] ?? ETYPE.Thing;
+          const rows = e.items.map((it) => `<div class="rrow">${rowInner(it)}</div>`).join("");
+          const action = highConf.length
+            ? `<div class="gaction"><button data-approve="${e.name}">approve ${highConf.length} high-confidence</button></div>`
+            : "";
+          return `
+            <div class="egroup ${open ? "open" : ""} ${hasFlag ? "has-flag" : ""}" style="--etype:${accent};margin-bottom:12px">
+              <button class="egroup-head" data-toggle="${e.name}">
+                <span class="disc">${e.initials}<span class="src">${e.source}</span></span>
+                <span class="egroup-id">
+                  <span class="egroup-name">${e.name}</span>
+                  <span class="egroup-sub"><span class="egroup-etype">${e.type}</span> · <span class="domain-dot" style="background:${domainColor(e.domain)}"></span> ${e.domain}</span>
+                </span>
+                <span class="gcount">${e.items.length}</span>
+                <span class="gchev">›</span>
+              </button>
+              <div class="egroup-rows">${rows}${action}</div>
+            </div>`;
+        }).join("");
+        wire();
+      }
+
+      function renderFlat() {
+        // chronological-ish flat list with a who? label, the status quo.
+        const flat = [];
+        ENTITIES.forEach((e) => e.items.forEach((it) => flat.push({ ...it, who: e.name })));
+        $("flat").innerHTML = flat
+          .map((it) => `<div class="rrow">${rowInner(it, { who: it.who })}</div>`)
+          .join("");
+        wire();
+      }
+
+      function domainColor(d) {
+        return d === "health" ? "var(--rose)" : d === "finance" ? "var(--amber)" : "var(--green)";
+      }
+
+      function wire() {
+        phone.querySelectorAll("[data-toggle]").forEach((b) => {
+          b.onclick = () => {
+            const n = b.dataset.toggle;
+            collapsed.has(n) ? collapsed.delete(n) : collapsed.add(n);
+            renderGrouped();
+          };
+        });
+        phone.querySelectorAll("[data-approve]").forEach((b) => {
+          b.onclick = (ev) => { ev.stopPropagation(); flash(`approved high-confidence for ${b.dataset.approve}`); };
+        });
+        phone.querySelectorAll(".rrow-open").forEach((b) => {
+          b.onclick = () => flash(`opened — ${b.dataset.fact}`);
+        });
+      }
+
+      // group-by toggle
+      $("g-entity").onclick = () => setGroup(true);
+      $("g-time").onclick = () => setGroup(false);
+      function setGroup(byEntity) {
+        $("g-entity").setAttribute("aria-pressed", String(byEntity));
+        $("g-time").setAttribute("aria-pressed", String(!byEntity));
+        $("grouped").classList.toggle("hidden", !byEntity);
+        $("flat").classList.toggle("hidden", byEntity);
+      }
+
+      // theme toggle
+      function setTheme(t) {
+        document.body.dataset.theme = t;
+        $("t-light").setAttribute("aria-pressed", String(t === "light"));
+        $("t-dark").setAttribute("aria-pressed", String(t === "dark"));
+      }
+      $("t-light").onclick = () => setTheme("light");
+      $("t-dark").onclick = () => setTheme("dark");
+
+      // snackbar
+      let snackTimer = null;
+      function flash(msg) {
+        $("snack-msg").textContent = msg;
+        $("snack").classList.add("show");
+        clearTimeout(snackTimer);
+        snackTimer = setTimeout(() => $("snack").classList.remove("show"), 2600);
+      }
+      $("snack-undo").onclick = () => $("snack").classList.remove("show");
+
+      renderGrouped();
+      renderFlat();
+    </script>
+  </body>
+</html>
