@@ -3231,6 +3231,10 @@ button.small {
   align-items: center;
   justify-content: center;
   gap: 6px;
+  /* Reset the global button chrome — the border lives on the .review-segs
+     track, not each segment, so inactive pills stay flush on --surface-2. */
+  background: transparent;
+  border: none;
   border-radius: calc(var(--r-seg) - 3px);
   font-size: var(--fs-note);
   color: var(--text-2);
