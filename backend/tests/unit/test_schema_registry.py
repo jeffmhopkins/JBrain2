@@ -85,6 +85,36 @@ def test_predicate_normalization_collapses_drift_spellings(registry: SchemaRegis
     assert registry.normalize_predicate("coffee_order") == "coffee_order"
 
 
+def test_decompose_recovers_a_qualifier_folded_into_the_predicate(
+    registry: SchemaRegistry,
+) -> None:
+    # The screenshot bug: a model folds the audience into the dotted path. The
+    # base (name.nickname) takes a qualifier_vocab, so the trailing segment splits
+    # back out into the qualifier instead of minting a spurious new predicate.
+    assert registry.decompose_predicate("name.nickname.kids", "") == ("name.nickname", "kids")
+    # Drift base + fold compose: nickname -> name.nickname, then .work splits off.
+    assert registry.decompose_predicate("nickname.work", "") == ("name.nickname", "work")
+    # identifier takes a scheme qualifier the same way.
+    assert registry.decompose_predicate("identifier.vin", "") == ("identifier", "vin")
+
+
+def test_decompose_leaves_well_formed_and_novel_predicates_untouched(
+    registry: SchemaRegistry,
+) -> None:
+    # Already correct (declared predicate + explicit qualifier): no split.
+    assert registry.decompose_predicate("name.nickname", "kids") == ("name.nickname", "kids")
+    # A dotted CANONICAL is declared, so it is never torn apart.
+    assert registry.decompose_predicate("name.full", "") == ("name.full", "")
+    # A genuine novel a.b whose base takes no qualifier stays whole (-> the
+    # canonicalizer's new_predicate path, unchanged).
+    assert registry.decompose_predicate("worksFor.contractor", "") == ("worksFor.contractor", "")
+    # Never overwrite an explicit qualifier, even on a folded-looking predicate.
+    assert registry.decompose_predicate("name.nickname.kids", "work") == (
+        "name.nickname.kids",
+        "work",
+    )
+
+
 def test_is_functional_reads_the_registry_flag(registry: SchemaRegistry) -> None:
     # Functional predicates the schema declares (any-type union), via canonical
     # and drift spellings — and a non-functional relationship stays accumulating.

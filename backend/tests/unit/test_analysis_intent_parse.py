@@ -69,6 +69,16 @@ def test_predicate_is_normalized_at_parse_time():
     assert intent.facts[0].predicate == expected
 
 
+def test_folded_audience_qualifier_is_split_at_parse_time():
+    # The integrator folded the audience into the predicate path; parse recovers
+    # it so the structural key matches the one-shot extractor's decomposition.
+    payload = _payload(
+        facts=[_fact(predicate="name.nickname.kids", qualifier="", kind="attribute")]
+    )
+    fact = parse_intent(payload, **_PROV).facts[0]
+    assert (fact.predicate, fact.qualifier) == ("name.nickname", "kids")
+
+
 def test_bad_kind_or_assertion_fact_is_dropped():
     payload = _payload(
         facts=[_fact(kind="nonsense"), _fact(assertion="maybe"), _fact()],

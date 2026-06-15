@@ -466,6 +466,10 @@ parentheses. 🔒 marks the firewall a category floors into.
    high-traffic predicates one *preferred* spelling; nightly consolidation
    normalizes `legalName`/`legal_name`/`alsoKnownAs` toward
    `name.full`/`name.aka`. No gate, no rejection — just an attractor with teeth.
+   The same parse step recovers a qualifier a model folds into the dotted path:
+   `name.nickname.kids` → predicate `name.nickname` + qualifier `kids` (only when
+   the base takes a `qualifier_vocab`), so an audience-scoped nickname never mints
+   a spurious new predicate.
 2. **Inconsistent canonical names** → `canonical_name` becomes the live
    `display_name` projection; "Sammy" is a `name.nickname.friends` edge, not the
    identity. (Implementation gap, now a requirement.)

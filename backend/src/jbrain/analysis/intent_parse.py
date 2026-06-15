@@ -158,9 +158,12 @@ def _parse_fact(raw: Any) -> IntentFact | None:
     entity_ref = str(raw.get("entity_ref", "")).strip()
     statement = str(raw.get("statement", "")).strip()
     kind, assertion = raw.get("kind"), raw.get("assertion")
-    # Normalize the predicate onto its canonical address BEFORE keying (I4).
-    predicate = get_registry().normalize_predicate(str(raw.get("predicate", "")).strip())
-    qualifier = str(raw.get("qualifier") or "").strip()
+    # Normalize the predicate onto its canonical address — and recover a qualifier
+    # folded into the dotted path (name.nickname.kids -> name.nickname + "kids") —
+    # BEFORE keying (I4).
+    predicate, qualifier = get_registry().decompose_predicate(
+        str(raw.get("predicate", "")).strip(), str(raw.get("qualifier") or "").strip()
+    )
     if (
         not (entity_ref and statement and predicate)
         or kind not in FACT_KINDS
@@ -205,7 +208,11 @@ def _parse_supersession(raw: Any) -> SupersessionProposal | None:
     if not isinstance(raw, dict):
         return None
     ref = str(raw.get("entity_ref", "")).strip()
-    predicate = get_registry().normalize_predicate(str(raw.get("predicate", "")).strip())
+    # Decompose like the fact parse so a proposal keyed on name.nickname.kids
+    # targets the SAME (name.nickname, "kids") key the fact decomposed to.
+    predicate, qualifier = get_registry().decompose_predicate(
+        str(raw.get("predicate", "")).strip(), str(raw.get("qualifier") or "").strip()
+    )
     action = raw.get("action")
     if not (ref and predicate) or action not in SUPERSESSION_ACTIONS:
         log.warning("integrate.supersession_dropped", reason="invalid fields")
@@ -213,7 +220,7 @@ def _parse_supersession(raw: Any) -> SupersessionProposal | None:
     return SupersessionProposal(
         entity_ref=ref,
         predicate=predicate,
-        qualifier=str(raw.get("qualifier") or "").strip(),
+        qualifier=qualifier,
         action=action,
         rationale=str(raw.get("rationale") or ""),
     )

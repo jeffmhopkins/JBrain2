@@ -66,6 +66,15 @@ def load_registry(defs_dir: Path | None = None) -> SchemaRegistry:
     known_predicates = frozenset(
         _norm_key(p.canonical_name) for t in types.values() for p in t.effective_predicates
     )
+    # Predicates that take a qualifier with a declared vocabulary (name.nickname's
+    # audience, status enums) — the signal that a folded `base.value` predicate
+    # (name.nickname.kids) can be split back into base + qualifier.
+    qualifier_predicates = frozenset(
+        _norm_key(p.canonical_name)
+        for t in types.values()
+        for p in t.effective_predicates
+        if p.qualifier_vocab is not None
+    )
     return SchemaRegistry(
         meta=meta,
         facets=facets,
@@ -74,6 +83,7 @@ def load_registry(defs_dir: Path | None = None) -> SchemaRegistry:
         by_kind=by_kind,
         functional_predicates=functional_predicates,
         known_predicates=known_predicates,
+        qualifier_predicates=qualifier_predicates,
     )
 
 

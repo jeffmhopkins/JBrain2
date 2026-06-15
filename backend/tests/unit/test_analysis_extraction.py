@@ -983,6 +983,35 @@ def test_drift_predicates_normalize_to_canonical() -> None:
     assert [f.predicate for f in parse_extraction(payload).facts] == ["name.full"]
 
 
+def test_folded_audience_qualifier_is_split_during_parse() -> None:
+    # The model folded the audience into the predicate path (name.nickname.kids)
+    # with no qualifier. Parse splits it back so the fact keys on name.nickname +
+    # "kids" instead of minting a spurious new predicate (the screenshot bug).
+    payload = {
+        "title": "Names",
+        "tags": [],
+        "mentions": [{"name": "Me", "kind": "Person", "surface_text": "I"}],
+        "facts": [
+            {
+                "predicate": "name.nickname.kids",
+                "qualifier": "",
+                "kind": "attribute",
+                "statement": "My kids call me Dad.",
+                "value_json": {"value": "Dad"},
+                "assertion": "asserted",
+                "entity_ref": "Me",
+                "object_entity_ref": None,
+                "temporal": None,
+                "domain": "general",
+                "confidence": 1.0,
+            }
+        ],
+        "temporal_tokens": [],
+    }
+    fact = parse_extraction(payload).facts[0]
+    assert (fact.predicate, fact.qualifier) == ("name.nickname", "kids")
+
+
 # ---- Deterministic relationship-object linking (link_relationship_objects) ----
 
 

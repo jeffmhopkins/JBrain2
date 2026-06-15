@@ -126,6 +126,7 @@ def _registry(types: list[EntityType]) -> SchemaRegistry:
         by_kind={},
         functional_predicates=frozenset(),
         known_predicates=frozenset(),
+        qualifier_predicates=frozenset(),
     )
 
 
