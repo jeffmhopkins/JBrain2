@@ -232,7 +232,8 @@ both implementing the existing `LlmClient` protocol (`llm/types.py`), swapped vi
    telemetry per inferred-predicate, N11) on real notes, and tune thresholds. The
    scripted fake remains the CI gate forever.
 
-**Cutover discipline (shadow mode):** before the trigger flips, run the new
+**Cutover discipline (shadow mode) [DONE — this is the approach taken]:** before
+the trigger flipped, run the new
 extract→integrate→arbiter path in **shadow** against the current deterministic
 `_apply` on the same notes, diff the resulting graph state, and gate on the
 existing 100+ harness scenarios (`backend/tests/harness/scenarios/`). The clean
