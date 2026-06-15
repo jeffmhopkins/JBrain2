@@ -58,5 +58,7 @@ def test_integration_backfill_order_is_inert_owner_ahead_hook() -> None:
     # sole effective key — i.e. no behavior change until Phase 7 swaps the
     # constant for a real untrusted-origin predicate.
     rank, tiebreak = (part.strip() for part in INTEGRATION_BACKFILL_ORDER_BY.split(","))
-    assert rank == "0"  # constant rank ⇒ inert hook
+    # An always-false EXPRESSION (not a bare constant, which Postgres rejects in
+    # ORDER BY) ⇒ every row sorts equal on it ⇒ inert hook.
+    assert rank == "(1 = 0)"
     assert tiebreak == "n.created_at"  # the only term that orders rows today
