@@ -3,9 +3,19 @@
 Buildable, wave-sequenced plan derived from `docs/research/legacy-links-handling.md`
 (the design dossier; read it first). Governed by `docs/PROCESS.md` (multi-wave
 execution), `docs/DEVELOPMENT.md` (standards), and the `CLAUDE.md`
-non-negotiables. **Status: Wave 1 SHIPPED (deterministic core; independent
-per-wave review folded in). Waves 2–3 pending. Plan + 3-way pre-build red-team in
-the § ledger.**
+non-negotiables. **Status: ALL THREE WAVES SHIPPED on the feature branch
+(deterministic core + prompt/eval + variant-C frontend). Plan + 3-way pre-build
+red-team and the Wave-1 independent review in the § ledger / below. Pending: one
+PR + CI (incl. integration & live eval, which don't run locally).**
+
+- **Wave 1** (deterministic core): supersession + `normalize_past_assertion` +
+  scoped read refinement + inverse gate + graph_context former rendering.
+- **Wave 2** (extraction teaching + eval): note-extract-v18 (past closure +
+  always-emit-current), digest re-pinned; eval DSL `ExpectFact.former` +
+  `legacy-past-employment` corpus case (advisory).
+- **Wave 3** (frontend, variant C): `FactTenure` interval track — a former
+  (closed) edge renders a faded "former" span and dims one step; current stays
+  calm. GUI gate cleared (variant C).
 
 **Wave 1 review (independent, reviewer ≠ builder) — resolved:** the one real gap
 was a missing test that a CLOSED edge mints no inverse through the full pipeline
