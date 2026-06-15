@@ -74,6 +74,10 @@ const SECTIONS: Section[] = [
 
 const SWIPE_DOWN_PX = 48;
 const EXIT_MS = 150;
+// The Review badge polls while the launcher is open so it reads live — new
+// holds tick up, resolved ones clear — without reopening the menu. Human/
+// analysis pace, so a light interval; the launcher is only mounted while open.
+const REVIEW_POLL_MS = 10_000;
 
 interface LauncherProps {
   open: boolean;
@@ -87,21 +91,32 @@ export function Launcher({ open, onClose, onNavigate }: LauncherProps) {
   const panelRef = useRef<HTMLElement>(null);
   const touchStartY = useRef<number | null>(null);
   const wasOpen = useRef(open);
-  // One cheap count fetch per open drives the Review tile badge; failures
-  // just mean no badge.
+  // A live count drives the Review tile badge: an immediate fetch on open, then
+  // a poll and a refresh whenever the tab regains focus, so it stays current
+  // while the launcher sits open (including beneath the Review card). Failures
+  // just leave the badge at its last value.
   const [reviewCount, setReviewCount] = useState<number | null>(null);
 
   useEffect(() => {
     if (!open) return;
     let stale = false;
-    api
-      .reviewQueue()
-      .then((queue) => {
-        if (!stale) setReviewCount(queue.items.length);
-      })
-      .catch(() => {});
+    const refresh = () =>
+      api
+        .reviewQueue()
+        .then((queue) => {
+          if (!stale) setReviewCount(queue.items.length);
+        })
+        .catch(() => {});
+    refresh();
+    const interval = setInterval(refresh, REVIEW_POLL_MS);
+    const onVisible = () => {
+      if (document.visibilityState === "visible") refresh();
+    };
+    document.addEventListener("visibilitychange", onVisible);
     return () => {
       stale = true;
+      clearInterval(interval);
+      document.removeEventListener("visibilitychange", onVisible);
     };
   }, [open]);
 
