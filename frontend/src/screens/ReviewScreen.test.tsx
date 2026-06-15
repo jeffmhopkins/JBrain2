@@ -318,6 +318,32 @@ describe("ReviewScreen (split inbox)", () => {
     expect(within(proposed).getByText("Jeff")).toBeInTheDocument();
   });
 
+  it("an inference list row shows the proposed fact without opening it", async () => {
+    const inference: ReviewItem = {
+      id: "inf2",
+      kind: "low_confidence_inference",
+      domain: "general",
+      created_at: "2026-06-15T20:33:00Z",
+      status: "open",
+      resolution: null,
+      resolved_at: null,
+      payload: {
+        predicate: "name.nickname",
+        qualifier: "",
+        statement: "People call me Jeff.",
+        value_json: { name: "Jeff" },
+        summary: "hold for review (below_threshold): People call me Jeff.",
+        outcomes: { accept: "recorded.", reject: "discarded." },
+      },
+    };
+    serve([inference], [], []);
+    render(<ReviewScreen />);
+    // In the list (not the detail), the row carries predicate → value too.
+    const row = await screen.findByRole("button", { name: /hold for review/ });
+    expect(within(row).getByText("name.nickname")).toBeInTheDocument();
+    expect(within(row).getByText("Jeff")).toBeInTheDocument();
+  });
+
   it("a new_predicate card lets you name the predicate yourself via suggest_better", async () => {
     const newPred: ReviewItem = {
       id: "np2",

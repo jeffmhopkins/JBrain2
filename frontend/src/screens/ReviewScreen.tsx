@@ -227,6 +227,13 @@ function ListRow({ item, selectable, selected, onToggle, onOpen }: ListRowProps)
           <span className="rrow-when">{fmtWhen(item)}</span>
         </span>
         <span className="rrow-sum">{p.summary ?? item.kind}</span>
+        {item.kind === "low_confidence_inference" && p.predicate !== null && (
+          <span className="rrow-fact fact-edge">
+            <span className="edge-path">{edgePath(p.predicate, p.qualifier)}</span>
+            <span className="edge-arrow"> → </span>
+            <span className="edge-value">{valueLabel(p.valueJson, p.statement ?? "")}</span>
+          </span>
+        )}
         <span className="rrow-meta">
           {decided ? (
             <span className={`rrow-outcome${dismissed ? " muted" : ""}`}>
