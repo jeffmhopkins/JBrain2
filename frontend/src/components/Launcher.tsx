@@ -2,7 +2,17 @@
 // launcher"). A navigation surface, not a modal: it owns the whole screen,
 // slides up 150ms ease-out, and dismisses on swipe-down or Escape.
 
-import { type ReactNode, type TouchEvent, useCallback, useEffect, useRef, useState } from "react";
+import {
+  type ReactNode,
+  type Ref,
+  type TouchEvent,
+  forwardRef,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useRef,
+  useState,
+} from "react";
 import { api } from "../api/client";
 import {
   BookIcon,
@@ -81,7 +91,16 @@ interface LauncherProps {
   onNavigate: (target: LauncherTarget) => void;
 }
 
-export function Launcher({ open, onClose, onNavigate }: LauncherProps) {
+/** Lets a parent run the launcher's own slide-down dismissal (so the platform
+ * back gesture retreats it exactly like swipe-down, not an abrupt unmount). */
+export interface LauncherHandle {
+  close: () => void;
+}
+
+export const Launcher = forwardRef(function Launcher(
+  { open, onClose, onNavigate }: LauncherProps,
+  ref: Ref<LauncherHandle>,
+) {
   // Stay mounted through the exit animation, then unmount.
   const [closing, setClosing] = useState(false);
   const panelRef = useRef<HTMLElement>(null);
@@ -115,6 +134,8 @@ export function Launcher({ open, onClose, onNavigate }: LauncherProps) {
       onClose();
     }, EXIT_MS);
   }, [onClose]);
+
+  useImperativeHandle(ref, () => ({ close }), [close]);
 
   useEffect(() => {
     if (!open) return;
@@ -195,4 +216,4 @@ export function Launcher({ open, onClose, onNavigate }: LauncherProps) {
       ))}
     </nav>
   );
-}
+});

@@ -1,7 +1,7 @@
 import { type TouchEvent, useCallback, useEffect, useRef, useState } from "react";
 import { type Principal, type SearchResult, api, setUnauthorizedHandler } from "./api/client";
 import { EditLayer } from "./components/EditLayer";
-import { Launcher, type LauncherTarget } from "./components/Launcher";
+import { Launcher, type LauncherHandle, type LauncherTarget } from "./components/Launcher";
 import { MoveDomainSheet } from "./components/MoveDomainSheet";
 import { TopBar } from "./components/TopBar";
 import { useNoteActions } from "./notes/useNoteActions";
@@ -76,6 +76,9 @@ export function App() {
   // the grid on close so its card previews/counts reflect any edits.
   const [listView, setListView] = useState<string | null>(null);
   const [listsKey, setListsKey] = useState(0);
+  // Lets the back gesture run the launcher's own slide-down close, the same
+  // retreat swipe-down/Escape trigger — not an abrupt unmount.
+  const launcherRef = useRef<LauncherHandle>(null);
 
   // Lives at the app level so the outbox keeps flushing while the user is
   // on Ops or Settings.
@@ -293,7 +296,11 @@ export function App() {
       return;
     }
     if (card !== null) return closeCardToLauncher();
-    if (launcherOpen) return setLauncherOpen(false);
+    if (launcherOpen) {
+      // Run the launcher's own slide-down retreat, then it settles closed.
+      if (launcherRef.current) launcherRef.current.close();
+      else setLauncherOpen(false);
+    }
   }
 
   useBackGesture(overlayDepth, closeTopLayer);
@@ -325,7 +332,12 @@ export function App() {
         />
       </div>
 
-      <Launcher open={launcherOpen} onClose={() => setLauncherOpen(false)} onNavigate={navigate} />
+      <Launcher
+        ref={launcherRef}
+        open={launcherOpen}
+        onClose={() => setLauncherOpen(false)}
+        onNavigate={navigate}
+      />
 
       {card !== null && (
         <div
