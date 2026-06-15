@@ -29,6 +29,7 @@ from jbrain.schema import get_registry
 from jbrain.settings_store import SqlSettingsStore
 from jbrain.storage import FsBlobStore
 from jbrain.usage import SqlUsageRecorder
+from jbrain.workflow.registry import build_registry
 
 log = structlog.get_logger()
 
@@ -161,7 +162,7 @@ async def run() -> None:
     # worker LOUDLY at startup — never mid-note, where the SchemaError would
     # otherwise re-bill the extraction call on every retry.
     get_registry()
-    handlers: dict[str, Handler] = {
+    impls: dict[str, Handler] = {
         "ingest_note": pipeline.ingest_note,
         "embed_note": embedder.embed_note,
         "integrate_note": analyzer.integrate_note,
@@ -172,6 +173,12 @@ async def run() -> None:
         # Keep the canonical_predicates index in step with the schema registry.
         "sync_predicates": predicate_embedder.sync_predicates,
     }
+    # Build the dispatch table from the action registry (W0.1): an action without
+    # a handler — or a handler with no registered action — fails the worker LOUDLY
+    # here at boot, like the schema registry above, rather than failing a job at run
+    # time (the old "no handler for kind" path). Behavior for known kinds is
+    # unchanged: the dispatch table is the same {kind: handler} map as before.
+    handlers = build_registry().dispatch_table(impls)
     try:
         await run_loop(maker, handlers)
     finally:

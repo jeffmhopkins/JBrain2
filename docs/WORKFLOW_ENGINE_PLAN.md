@@ -180,6 +180,14 @@ parallel work that also de-risks the schema:
   unpinned-tool gap, **not** a new CI step (the `.prompt` analogue is itself a pytest
   digest pin, not CI YAML). Each is an isolated PR with its own test.
 
+  > **Reflexion de-scoped to its own slice (owner decision, Wave 0).** Reflexion
+  > can't retry mid-stream (tokens are already on the wire), and the only
+  > production turn is `run_stream` (`/chat`). Verifying the live turn means
+  > buffer-then-verify-then-stream — a real stream-vs-verify UX tradeoff that
+  > deserves its own design slice. So Wave 0 ships only the `JobEnqueuedEvent`
+  > emission and the `.tool` digest pins; `reflexion.py` stays the pure, unused
+  > module it was, and "grounded-check the live turn" is a later slice.
+
 ---
 
 ## 5. The waves (parallel tracks; each ends with a review gate, §6)

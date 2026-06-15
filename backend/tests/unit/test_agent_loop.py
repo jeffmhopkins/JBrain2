@@ -8,6 +8,7 @@ from typing import Any
 from jbrain.agent.contracts import (
     ChatEvent,
     DoneEvent,
+    JobEnqueuedEvent,
     NoteSource,
     ProposalRef,
     TextDelta,
@@ -22,6 +23,7 @@ from jbrain.agent.loop import (
     SYSTEM_VERSION,
     AgentLoop,
     Guardrails,
+    JobRef,
     ToolContext,
     ToolOutput,
 )
@@ -69,6 +71,10 @@ async def view_tool(arguments: dict, ctx: ToolContext) -> ToolOutput:
         "the list",
         view=ViewPayload(view="list_card", data={"title": "Groceries"}),
     )
+
+
+async def job_tool(arguments: dict, ctx: ToolContext) -> ToolOutput:
+    return ToolOutput("queued the export", job=JobRef(job_id="j7", summary="exporting your notes"))
 
 
 def router_with(turns: list[LlmTurn]) -> tuple[LlmRouter, FakeLlmClient]:
@@ -273,6 +279,30 @@ async def test_run_stream_emits_a_tool_view_after_its_result() -> None:
     view = next(e for e in events if isinstance(e, ToolViewEvent))
     assert view.tool_call_id == "c1" and view.view.view == "list_card"
     assert view.view.data == {"title": "Groceries"}
+
+
+async def test_run_stream_emits_job_enqueued_when_a_tool_defers() -> None:
+    turns = [
+        LlmTurn("", (ToolCall("c1", "export", {}),), "tool_use", LlmUsage(1, 1)),
+        LlmTurn("on it", (), "end_turn", LlmUsage(1, 1)),
+    ]
+    router, _ = stream_router_with(turns)
+    events = await collect(AgentLoop(router, registry_with(make_tool("export", job_tool))))
+    # The deferred-job event rides right after the result of the tool that enqueued it.
+    types = [type(e).__name__ for e in events]
+    assert types.index("JobEnqueuedEvent") == types.index("ToolResultEvent") + 1
+    job = next(e for e in events if isinstance(e, JobEnqueuedEvent))
+    assert job.job_id == "j7" and job.summary == "exporting your notes"
+
+
+async def test_run_stream_no_job_event_when_tool_enqueues_nothing() -> None:
+    turns = [
+        LlmTurn("", (ToolCall("c1", "search", {}),), "tool_use", LlmUsage(1, 1)),
+        LlmTurn("done", (), "end_turn", LlmUsage(1, 1)),
+    ]
+    router, _ = stream_router_with(turns)
+    events = await collect(AgentLoop(router, registry_with(make_tool("search", search_sourced))))
+    assert not any(isinstance(e, JobEnqueuedEvent) for e in events)
 
 
 async def test_run_stream_no_view_when_tool_has_none() -> None:

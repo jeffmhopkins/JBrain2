@@ -222,6 +222,7 @@ def plan_to_extraction(
     title: str = "",
     tags: list[str] | None = None,
     commit_only: bool = False,
+    dropped_facts: int = 0,
 ) -> Extraction:
     """Bridge a (non-rejected) plan into the name-based `Extraction` the existing
     `_apply` consumes (plan §9, Option 1). Mentions and fact refs are keyed by
@@ -236,7 +237,13 @@ def plan_to_extraction(
     carry high weight `decide()` would otherwise commit, so they are excluded
     until A1b-ii-2 writes them as pending_review + a low_confidence_inference
     card. Mentions still cover every resolution (an entity may be mentioned
-    without a committed fact)."""
+    without a committed fact).
+
+    `dropped_facts` carries the per-note cap's tail-drop count from the upstream
+    extract step forward onto the rebuilt Extraction. The intent/plan only ever
+    see the already-capped fact list, so this count would otherwise reset to 0
+    here and the pipeline would never file the `extraction_truncated` card for a
+    clipped long note (W0)."""
     if plan.rejected:
         raise ValueError("cannot build an extraction from a rejected plan")
     source = plan.to_commit if commit_only else plan.facts
@@ -252,4 +259,11 @@ def plan_to_extraction(
         for r in intent.entity_resolutions
     ]
     facts = [_to_extracted(pf.fact, pf.weight) for pf in source]
-    return Extraction(title=title, tags=list(tags or []), mentions=mentions, facts=facts, tokens=[])
+    return Extraction(
+        title=title,
+        tags=list(tags or []),
+        mentions=mentions,
+        facts=facts,
+        tokens=[],
+        dropped_facts=dropped_facts,
+    )

@@ -85,7 +85,7 @@ def _intent(note_id: str, resolutions, facts) -> IntegrationIntent:
     )
 
 
-async def _run(maker, note_id, intent, plan, *, tmp_path) -> None:  # noqa: F811
+async def _run(maker, note_id, intent, plan, *, tmp_path, dropped_facts: int = 0) -> None:  # noqa: F811
     chunks = await _load_chunks(maker, note_id)
     async with scoped_session(maker, SYSTEM_CTX) as session:
         await _pipeline(maker).apply_intent(
@@ -99,6 +99,7 @@ async def _run(maker, note_id, intent, plan, *, tmp_path) -> None:  # noqa: F811
             title="t",
             tags=["work"],
             extractor="test:fake",
+            dropped_facts=dropped_facts,
         )
 
 
@@ -653,3 +654,66 @@ async def test_apply_intent_rejected_plan_is_a_noop(maker, tmp_path):  # noqa: F
             .all()
         )
     assert facts == []  # nothing written (N5: no partial commit)
+
+
+async def _truncation_cards(maker, note_id):  # noqa: F811
+    async with scoped_session(maker, SYSTEM_CTX) as session:
+        return (
+            (
+                await session.execute(
+                    select(ReviewItem).where(
+                        ReviewItem.kind == "extraction_truncated",
+                        ReviewItem.status == "open",
+                        # Scope to THIS note — the module shares a DB, so an
+                        # earlier over-cap test's open card must not leak in.
+                        ReviewItem.payload["note_id"].astext == note_id,
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+
+
+async def test_over_cap_note_files_extraction_truncated_card(maker, tmp_path):  # noqa: F811
+    # W0 regression: an upstream per-note cap that dropped facts must surface the
+    # extraction_truncated card. apply_intent gets the drop count threaded in
+    # (the real integrate_note source is extraction.dropped_facts); before the
+    # fix plan_to_extraction reset it to 0 and the card was never filed.
+    note_id = await make_note(maker, domain="general", body="Notes about Globex and its plans.")
+    await ingest(maker, note_id, tmp_path)
+    intent = _intent(
+        note_id,
+        [
+            EntityResolution(
+                mention_ref="m1", mode="new", new_kind="Organization", new_name="Globex"
+            )
+        ],
+        [_fact("m1")],
+    )
+    plan = plan_intent(intent, signals={0: _SURFACE})
+    await _run(maker, note_id, intent, plan, tmp_path=tmp_path, dropped_facts=3)
+
+    cards = await _truncation_cards(maker, note_id)
+    assert len(cards) == 1
+    assert cards[0].payload["note_id"] == note_id
+
+
+async def test_under_cap_note_files_no_truncation_card(maker, tmp_path):  # noqa: F811
+    # The mirror case: no upstream drop → no card. Guards against a card filed on
+    # every integrate regardless of truncation.
+    note_id = await make_note(maker, domain="general", body="Notes about Globex and its plans.")
+    await ingest(maker, note_id, tmp_path)
+    intent = _intent(
+        note_id,
+        [
+            EntityResolution(
+                mention_ref="m1", mode="new", new_kind="Organization", new_name="Globex"
+            )
+        ],
+        [_fact("m1")],
+    )
+    plan = plan_intent(intent, signals={0: _SURFACE})
+    await _run(maker, note_id, intent, plan, tmp_path=tmp_path, dropped_facts=0)
+
+    assert await _truncation_cards(maker, note_id) == []

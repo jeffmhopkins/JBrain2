@@ -350,6 +350,7 @@ class AnalysisPipeline:
                 title=extraction.title,
                 tags=extraction.tags,
                 extractor=f"{provider}:{model}",
+                dropped_facts=extraction.dropped_facts,
             )
             await session.execute(
                 update(Note)
@@ -376,6 +377,7 @@ class AnalysisPipeline:
         title: str,
         tags: list[str],
         extractor: str,
+        dropped_facts: int = 0,
     ) -> None:
         """Commit an arbiter-approved IntegrationIntent through the existing
         deterministic _apply (plan §9, Option 1). A rejected plan is a no-op: the
@@ -383,7 +385,13 @@ class AnalysisPipeline:
         commit). Active-eligible facts commit; review-held facts (cross-subject,
         ambiguous, low weight) are written as inert `pending_review` rows and each
         linked to its low_confidence_inference card — all in this one transaction
-        (N5), so a human can later accept (pin) or reject (retract) it."""
+        (N5), so a human can later accept (pin) or reject (retract) it.
+
+        `dropped_facts` is the upstream per-note cap's tail-drop count, carried so
+        the rebuilt extraction can file the `extraction_truncated` card (W0). The
+        DB-mode eval runner threads the real `extraction.dropped_facts` (it runs
+        the cap), matching production; pre-built-plan callers with no extraction
+        leave it 0 — no cap ran, so no truncation card is owed."""
         if plan.rejected:
             log.info(
                 "integration.rejected",
@@ -398,7 +406,9 @@ class AnalysisPipeline:
         # path by INDEX — extraction.facts[i] is 1:1 with plan.facts[i], so the key
         # is exact even when two facts share entity_ref.predicate.qualifier (e.g.
         # enumerated children edges).
-        extraction = plan_to_extraction(intent, plan, title=title, tags=tags)
+        extraction = plan_to_extraction(
+            intent, plan, title=title, tags=tags, dropped_facts=dropped_facts
+        )
         held_indices = frozenset(
             i for i, pf in enumerate(plan.facts) if pf.status == "pending_review"
         )
