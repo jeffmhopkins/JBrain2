@@ -176,19 +176,28 @@ mandatory). One PR. Local `ruff`+`pyright`+unit before merge; CI integration gre
 
 ## Wave 3 — Display legibility (frontend; GUI-GATED)
 
-### T3.1 — "Former / ended" affordance
-- **GUI GATE (PROCESS.md §GUI) — NOT yet executed; blocks all Wave-3 code:**
-  three interactive mock HTML artifacts for the Analysis-tab + entity-page
-  "former" treatment, **presented to the owner to pick before any code**. Chosen
-  mock lands in `docs/mocks/` as the binding spec. This is a blocking
-  critical-decision interruption; Wave 3 does not start until it clears.
-- **Files (after mock chosen):** `frontend/src/components/AnalysisTab.tsx`
-  (currently filters to `{active, pending_review}` — a closed-active fact would
-  vanish; must render it as *former*); `analysis/format.ts:136-137` (`factSpan`
-  already renders `from → to`); `bits.tsx` (a "former" chip vs the muted
-  `superseded` one); tests.
-- **Tests:** AnalysisTab renders an active+closed `worksFor` as former with its
-  end; active+open unchanged (calm, no chip).
+### T3.1 — "Former / ended" affordance — **variant C, interval timeline** [GUI gate CLEARED 2026-06-15]
+- **GUI GATE — DONE.** Three interactive mocks presented; owner chose **C, the
+  interval timeline** (`docs/mocks/legacy-links-c-interval-timeline.html`,
+  binding spec; decision recorded in `DESIGN.md` "Former / past relationships").
+  A (inline chip) and B (current/previously split) rejected.
+- **Bound pattern:** a current value (active + open) renders a `--green` open
+  span to **now**; a former value (closed `valid_to`) renders a faded/dashed
+  `--slate` span and **stays on the default view** (not hidden behind the
+  `N earlier →` rail). Undated "used to" reads `former`/`ended ≤ <capture>` at
+  era precision — no invented date. Tapping the row opens the property's
+  **revision rail** in the shared `Sheet` (source citations live there).
+- **Files:** `frontend/src/components/AnalysisTab.tsx` (its `VISIBLE_STATUSES`
+  excludes nothing new — closed facts are `active` — but the row must render the
+  validity track and route tap → rail; today the inline `FactCitation` is the tap
+  target, so the tap behavior changes); `analysis/format.ts:136-137` (`factSpan`
+  already yields `from → to` — reuse for the track + rail); `bits.tsx` (the track
+  component + reuse the rail); the shared `Sheet`; tests + mock fixtures (default,
+  former-undated, mixed current+former).
+- **Tests:** an active+open `worksFor` renders the open "now" span; an
+  active+closed one renders the former span and is NOT shown as current; tap
+  opens the rail with both co-equal former values cited; no inverse rendered for
+  a former edge.
 
 **Wave 3 gate:** GUI gate first; then per-task + wave review; one PR.
 
