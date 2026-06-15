@@ -31,7 +31,7 @@ from jbrain.schema import get_registry
 from jbrain.settings_store import SqlSettingsStore
 from jbrain.storage import FsBlobStore
 from jbrain.usage import SqlUsageRecorder
-from jbrain.workflow import scheduler
+from jbrain.workflow import dispatcher, scheduler
 from jbrain.workflow.registry import ACTION_SPECS, ActionRegistry, build_registry
 
 log = structlog.get_logger()
@@ -142,10 +142,12 @@ async def run_loop(
     maker: async_sessionmaker[AsyncSession],
     handlers: dict[str, Handler],
     registry: ActionRegistry | None = None,
+    settings: SqlSettingsStore | None = None,
 ) -> None:
     backfilled = False
     last_heartbeat = 0.0
     last_tick = 0.0
+    last_dispatch = 0.0
     while True:
         now = time.monotonic()
         if now - last_heartbeat >= HEARTBEAT_SECONDS:
@@ -158,6 +160,19 @@ async def run_loop(
         if registry is not None and now - last_tick >= scheduler.TICK_SECONDS:
             await scheduler.run_tick_safely(maker, registry)
             last_tick = now
+        # Run the SHADOW dispatcher tick alongside the scheduler tick: claim
+        # undispatched events, diff the engine's would-be enqueue against the
+        # hardcoded path, and mark them dispatched — never enqueuing this wave
+        # (workflow/dispatcher.py). Gated by the `workflow_dispatch` setting and
+        # fault-swallowed exactly like the scheduler tick, so the shadow engine can
+        # never disturb the live job loop.
+        if (
+            registry is not None
+            and settings is not None
+            and now - last_dispatch >= dispatcher.TICK_SECONDS
+        ):
+            await dispatcher.run_tick_safely(maker, registry, settings=settings)
+            last_dispatch = now
         try:
             if not backfilled:
                 ingests = await queue.backfill_pending_notes(maker, queue.SYSTEM_CTX)
@@ -249,7 +264,10 @@ async def run() -> None:
     registry = build_registry((*ACTION_SPECS, scheduler.PURGE_ACTION))
     handlers = registry.dispatch_table(impls)
     try:
-        await run_loop(maker, handlers, registry)
+        # The shadow dispatcher reads its `workflow_dispatch` gate through the same
+        # live settings store the LLM router uses, so the operator can silence it
+        # without a redeploy.
+        await run_loop(maker, handlers, registry, settings=worker_settings_store)
     finally:
         await engine.dispose()
 

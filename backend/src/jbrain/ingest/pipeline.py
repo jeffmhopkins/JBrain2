@@ -33,6 +33,7 @@ from jbrain.ingest.ocr import MAX_OCR_BYTES
 from jbrain.models.notes import AttachmentExtract, Chunk, Note
 from jbrain.queue import SYSTEM_CTX
 from jbrain.storage import BlobStore
+from jbrain.workflow import events as wf_events
 
 log = structlog.get_logger()
 
@@ -125,6 +126,19 @@ class IngestPipeline:
             self._maker, SYSTEM_CTX, note_id, statuses=("queued",)
         ):
             await queue.enqueue(self._maker, SYSTEM_CTX, "integrate_note", {"note_id": note_id})
+            # SHADOW (Wave 1): emit a note.ingested event ALONGSIDE the integrate
+            # enqueue (E7a) for the dispatcher to diff. domain is the note's
+            # fail-closed E2 stamp; the worker has no per-content principal, so the
+            # emit resolves the owner principal. Best-effort — a failed emit never
+            # disturbs ingestion (the integrate enqueue above owns the real path).
+            await wf_events.emit_event(
+                self._maker,
+                SYSTEM_CTX,
+                type=wf_events.NOTE_INGESTED,
+                domain_code=domain,
+                payload={"note_id": note_id},
+                enqueued=wf_events.shadow_enqueued("integrate_note", {"note_id": note_id}),
+            )
         log.info("ingest.indexed", note_id=note_id, chunks=len(chunks))
 
     async def _load_extracts(

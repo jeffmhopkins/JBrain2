@@ -344,7 +344,9 @@ async def test_run_registers_all_job_handlers(
 
     captured: dict[str, Any] = {}
 
-    async def capture(maker: Any, handlers: Any, registry: Any = None) -> None:
+    async def capture(
+        maker: Any, handlers: Any, registry: Any = None, settings: Any = None
+    ) -> None:
         captured.update(handlers)
         raise asyncio.CancelledError
 
@@ -375,7 +377,7 @@ async def test_run_disposes_engine(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(worker, "create_async_engine", lambda url: engine)
     monkeypatch.setattr(worker, "async_sessionmaker", lambda eng, **kw: object())
 
-    async def boom(maker: Any, handlers: Any, registry: Any = None) -> None:
+    async def boom(maker: Any, handlers: Any, registry: Any = None, settings: Any = None) -> None:
         raise asyncio.CancelledError
 
     monkeypatch.setattr(worker, "run_loop", boom)
