@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from jbrain.agent.memory import MemoryRepo, MemoryService
 from jbrain.agent.proposals import ProposalRepo
 from jbrain.agent.readtools import build_registry
-from jbrain.agent.runlog import AgentRunLog
+from jbrain.agent.runlog import AgentRunLog, RunLogReader
 from jbrain.agent.session import AgentSessionRepo
 from jbrain.agent.transcript_store import AgentTranscript
 from jbrain.analysis.repo import SqlAnalysisRepo
@@ -22,6 +22,7 @@ from jbrain.api import (
     notes,
     ops,
     proposals,
+    runs,
     search,
     sessions,
 )
@@ -117,6 +118,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
         app.state.agent_sessions = AgentSessionRepo(maker)
         app.state.agent_runlog = AgentRunLog(maker)
+        app.state.run_reader = RunLogReader(maker)
         app.state.agent_transcript = AgentTranscript(maker)
         app.state.supervisor_client = httpx.AsyncClient(base_url=settings.supervisor_url)
         yield
@@ -136,6 +138,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(notes.router, prefix="/api")
     app.include_router(ops.router, prefix="/api")
     app.include_router(proposals.router, prefix="/api")
+    app.include_router(runs.router, prefix="/api")
     app.include_router(search.router, prefix="/api")
     app.include_router(sessions.router, prefix="/api")
     app.include_router(settings_api.router, prefix="/api")

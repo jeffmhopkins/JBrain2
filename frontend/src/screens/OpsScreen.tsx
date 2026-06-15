@@ -10,6 +10,7 @@ import {
   api,
   exportFileUrl,
 } from "../api/client";
+import { RunsScreen } from "./RunsScreen";
 
 function fmtBytes(n: number): string {
   if (n >= 2 ** 30) return `${(n / 2 ** 30).toFixed(1)} GB`;
@@ -556,6 +557,9 @@ export function OpsScreen() {
   const [usage, setUsage] = useState<LlmUsage | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // The Runs surface (Direction C) is an Ops sub-screen: it slides over Ops and
+  // its back chevron returns here, matching the mock.
+  const [showRuns, setShowRuns] = useState(false);
 
   const refresh = useCallback(async () => {
     setBusy(true);
@@ -598,6 +602,9 @@ export function OpsScreen() {
       <header className="ops-header">
         <h2>Ops</h2>
         <div className="ops-actions">
+          <button type="button" onClick={() => setShowRuns(true)}>
+            Runs
+          </button>
           <button type="button" onClick={refresh} disabled={busy}>
             {busy ? "Refreshing…" : "Refresh"}
           </button>
@@ -652,6 +659,8 @@ export function OpsScreen() {
       <UsageCard usage={usage} />
       <DataCard />
       <UpdateCard />
+
+      {showRuns && <RunsScreen onClose={() => setShowRuns(false)} />}
     </section>
   );
 }

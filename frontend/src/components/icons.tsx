@@ -320,3 +320,32 @@ export const ThingIcon = (p: IconProps) => (
     <circle cx="16" cy="8" r="1.3" />
   </Icon>
 );
+
+// A refresh/cycle glyph — the running-spinner and the sweep "re-fire" affordance
+// in the Runs surface (docs/mocks/runs-ops-c-dashboard-split.html).
+export const RefreshIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M21 12a9 9 0 1 1-2.6-6.4" />
+    <path d="M21 4v4h-4" />
+  </Icon>
+);
+
+export const AlertTriangleIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h16.9a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z" />
+    <path d="M12 9v4M12 17h.01" />
+  </Icon>
+);
+
+export const CheckIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M5 12l4 4L19 7" />
+  </Icon>
+);
+
+export const CoinsIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <circle cx="12" cy="12" r="9" />
+    <path d="M12 7v10M9 9.5h4.5a1.5 1.5 0 0 1 0 3H9m0 0h5" />
+  </Icon>
+);
