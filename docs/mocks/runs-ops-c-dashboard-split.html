@@ -1,0 +1,329 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Runs · Ops — dashboard with status tiles + split-panel drill</title>
+<style>
+  :root{
+    --bg:#0E0F11; --surface:#17181B; --surface-2:#1E2024; --border:#26282C;
+    --text:#E6E7E9; --text-2:#9A9DA3; --text-3:#5C5F66;
+    --steel:#7FA7C9; --green:#8FBC9A; --amber:#C9A36A; --rose:#CF8A8F; --violet:#A493C9;
+    --steel-tint:rgba(127,167,201,.13); --green-tint:rgba(143,188,154,.13);
+    --amber-tint:rgba(201,163,106,.13); --rose-tint:rgba(207,138,143,.13); --violet-tint:rgba(164,147,201,.13);
+    --ok:var(--green); --warn:var(--amber); --danger:var(--rose); --info:var(--steel);
+    --font-mono:ui-monospace,"SF Mono","Cascadia Mono",Menlo,Consolas,monospace;
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  }
+  [data-theme="light"]{
+    color-scheme:light;
+    --bg:#F7F7F5; --surface:#FFFFFF; --surface-2:#F0F0EE; --border:#E2E2DF;
+    --text:#1A1B1E; --text-2:#5C5F66; --text-3:#9A9DA3;
+  }
+  [data-theme="dark"]{ color-scheme:dark; }
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+  body{background:#000;color:var(--text);display:flex;flex-direction:column;align-items:center;gap:14px;padding:18px 0 40px;min-height:100vh;}
+  svg{fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;}
+
+  .caption{max-width:392px;padding:0 18px;color:var(--text-2);font-size:13px;line-height:1.55;}
+  .caption b{color:var(--text);font-weight:500;}
+  .caption .tag{display:inline-block;background:var(--steel-tint);color:var(--steel);font-size:11px;padding:2px 8px;border-radius:999px;margin-bottom:6px;}
+  .toggle{display:inline-flex;background:var(--surface);border:1px solid var(--border);border-radius:999px;padding:3px;margin-left:8px;}
+  .toggle button{appearance:none;border:none;background:none;color:var(--text-2);font:inherit;font-size:11px;padding:4px 11px;border-radius:999px;cursor:pointer;}
+  .toggle button[aria-pressed="true"]{background:var(--steel-tint);color:var(--steel);font-weight:600;}
+
+  .phone{width:390px;height:800px;background:var(--bg);border:1px solid #2a2c30;border-radius:34px;overflow:hidden;position:relative;display:flex;flex-direction:column;}
+
+  .bar{height:56px;display:flex;align-items:center;gap:12px;padding:0 14px;border-bottom:1px solid var(--border);flex:none;}
+  .bar .back{color:var(--text-2);background:none;border:none;padding:4px;}
+  .bar .ttl{font-size:18px;font-weight:600;}
+  .bar .dot{margin-left:auto;width:8px;height:8px;border-radius:999px;background:var(--green);}
+  .bar .health{font-size:12px;color:var(--text-2);}
+
+  .body{flex:1;overflow-y:auto;padding:14px 14px 16px;}
+  .sect{font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--text-3);margin:16px 2px 9px;}
+  .sect:first-child{margin-top:2px;}
+
+  /* status tile grid (half-width, 2-col) */
+  .tiles{display:grid;grid-template-columns:1fr 1fr;gap:11px;}
+  .tile{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:13px;display:flex;flex-direction:column;gap:5px;}
+  .tile .tnum{font-size:26px;font-weight:600;font-variant-numeric:tabular-nums;line-height:1;}
+  .tile .tlabel{font-size:12px;color:var(--text-2);}
+  .tile .ttop{display:flex;align-items:center;gap:7px;}
+  .tile .ti{width:22px;height:22px;border-radius:7px;display:flex;align-items:center;justify-content:center;flex:none;}
+  .tile.running{border-color:rgba(143,188,154,.4);}
+  .tile.running .tnum{color:var(--green);}
+  .tile.running .ti{background:var(--green-tint);color:var(--green);}
+  .tile.failed{border-color:rgba(207,138,143,.4);}
+  .tile.failed .tnum{color:var(--rose);}
+  .tile.failed .ti{background:var(--rose-tint);color:var(--rose);}
+  .tile.cost .ti{background:var(--steel-tint);color:var(--steel);}
+  .tile.queue .ti{background:var(--violet-tint);color:var(--violet);}
+
+  /* sweep control row (prominent, top) */
+  .sweeprow{display:flex;gap:9px;overflow-x:auto;padding-bottom:2px;}
+  .sweepbtn{flex:none;display:flex;align-items:center;gap:8px;background:var(--amber-tint);color:var(--amber);border:none;border-radius:12px;padding:11px 14px;font:inherit;font-size:13.5px;font-weight:600;cursor:pointer;}
+  .sweepbtn svg{flex:none;}
+  .sweepbtn.ghost{background:var(--surface-2);color:var(--text-2);border:1px solid var(--border);font-weight:500;}
+
+  /* compact run rows in a card */
+  .runs-card{background:var(--surface);border:1px solid var(--border);border-radius:16px;overflow:hidden;}
+  .rowbtn{width:100%;text-align:left;background:none;border:none;border-bottom:1px solid var(--border);color:inherit;font:inherit;padding:11px 13px;display:flex;align-items:center;gap:11px;cursor:pointer;min-height:44px;}
+  .rowbtn:last-child{border-bottom:none;}
+  .rowbtn:hover{background:var(--surface-2);}
+  .sdot{width:9px;height:9px;border-radius:999px;flex:none;}
+  .sdot.running{background:var(--green);animation:pulse 1.4s ease-in-out infinite;}
+  @keyframes pulse{0%,100%{opacity:1;}50%{opacity:.3;}}
+  .sdot.done{background:var(--text-3);}
+  .sdot.failed{background:var(--rose);}
+  .rmain{flex:1;min-width:0;}
+  .rn{font-size:14px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:flex;align-items:center;gap:7px;}
+  .kdot{font-size:10px;font-weight:700;letter-spacing:.03em;text-transform:uppercase;padding:1px 6px;border-radius:5px;flex:none;}
+  .kdot.agent{background:var(--steel-tint);color:var(--steel);}
+  .kdot.integration{background:var(--green-tint);color:var(--green);}
+  .kdot.pipeline{background:var(--violet-tint);color:var(--violet);}
+  .rsub{font-size:11.5px;color:var(--text-3);margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-variant-numeric:tabular-nums;}
+  .rright{font-size:11px;color:var(--text-3);flex:none;text-align:right;font-variant-numeric:tabular-nums;}
+  .chev{width:15px;height:15px;color:var(--text-3);flex:none;}
+
+  /* split drill: half-height sheet over a dimmed list */
+  .scrim{position:absolute;inset:0;background:rgba(14,15,17,.6);opacity:0;pointer-events:none;transition:.2s;z-index:20;}
+  .scrim.show{opacity:1;pointer-events:auto;}
+  .split{position:absolute;left:0;right:0;bottom:0;height:62%;background:var(--surface);border-top:1px solid var(--border);border-radius:18px 18px 0 0;transform:translateY(100%);transition:transform .24s cubic-bezier(.2,.7,.3,1);z-index:21;display:flex;flex-direction:column;}
+  .split.show{transform:translateY(0);}
+  .grip{width:40px;height:4px;border-radius:999px;background:var(--border);margin:9px auto 6px;flex:none;}
+  .sp-head{padding:4px 16px 12px;border-bottom:1px solid var(--border);flex:none;}
+  .sp-name{font-size:16px;font-weight:600;line-height:1.3;display:flex;align-items:center;gap:8px;}
+  .sp-badge{font-size:11px;padding:2px 9px;border-radius:999px;display:inline-flex;align-items:center;gap:5px;flex:none;}
+  .sp-badge.running{background:var(--green-tint);color:var(--green);}
+  .sp-badge.done{background:var(--surface-2);color:var(--text-2);}
+  .sp-badge.failed{background:var(--rose-tint);color:var(--rose);}
+  .sp-badge .bd{width:6px;height:6px;border-radius:999px;background:currentColor;}
+  .sp-badge.running .bd{animation:pulse 1.4s ease-in-out infinite;}
+  .sp-meta{font-size:12px;color:var(--text-3);margin-top:6px;display:flex;flex-wrap:wrap;gap:4px 9px;font-variant-numeric:tabular-nums;}
+  .sp-meta .sep{color:var(--border);}
+  .sp-body{flex:1;overflow-y:auto;padding:12px 16px;}
+
+  .strow{display:flex;gap:11px;padding:9px 0;border-bottom:1px solid var(--border);}
+  .strow:last-child{border-bottom:none;}
+  .snode{width:20px;height:20px;border-radius:999px;border:1.5px solid var(--border);background:var(--surface);display:flex;align-items:center;justify-content:center;flex:none;color:var(--text-3);margin-top:1px;}
+  .snode.ok{border-color:var(--green);color:var(--green);}
+  .snode.err{border-color:var(--rose);color:var(--rose);background:var(--rose-tint);}
+  .snode.run{border-color:var(--green);color:var(--green);}
+  .snode.run svg{animation:spin 1.1s linear infinite;}
+  @keyframes spin{to{transform:rotate(360deg);}}
+  .smain{flex:1;min-width:0;}
+  .sline{display:flex;align-items:center;gap:8px;}
+  .skind{font-size:10px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;padding:2px 7px;border-radius:6px;flex:none;}
+  .skind.model{background:var(--steel-tint);color:var(--steel);}
+  .skind.tool{background:var(--surface-2);color:var(--text-2);}
+  .skind.job{background:var(--violet-tint);color:var(--violet);}
+  .sname{font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .scost{margin-left:auto;font-size:11px;color:var(--text-3);flex:none;font-variant-numeric:tabular-nums;}
+  .serr{margin-top:6px;font-size:12px;color:var(--rose);font-family:var(--font-mono);background:var(--bg);border:1px solid var(--border);border-radius:7px;padding:7px 9px;line-height:1.5;}
+
+  .sp-foot{flex:none;border-top:1px solid var(--border);padding:11px 16px calc(12px + env(safe-area-inset-bottom));display:flex;gap:9px;}
+  .sp-foot button{flex:1;border:1px solid var(--border);background:var(--surface-2);color:var(--text-2);font:inherit;font-size:13.5px;font-weight:500;border-radius:11px;padding:11px;display:flex;align-items:center;justify-content:center;gap:7px;cursor:pointer;}
+  .sp-foot button.rerun{background:var(--steel-tint);color:var(--steel);border-color:transparent;}
+
+  /* sweep sheet */
+  .sheet{position:absolute;left:0;right:0;bottom:0;background:var(--surface);border-top:1px solid var(--border);border-radius:18px 18px 0 0;transform:translateY(100%);transition:transform .24s cubic-bezier(.2,.7,.3,1);z-index:31;padding:8px 16px calc(18px + env(safe-area-inset-bottom));}
+  .sheet h3{font-size:17px;font-weight:600;margin-bottom:3px;}
+  .scrim2{position:absolute;inset:0;background:rgba(14,15,17,.6);opacity:0;pointer-events:none;transition:.2s;z-index:30;}
+  .scrim2.show{opacity:1;pointer-events:auto;}
+
+  .toast{position:absolute;left:16px;right:16px;bottom:24px;background:var(--surface-2);border:1px solid var(--border);border-radius:12px;padding:12px 14px;font-size:13px;color:var(--text-2);transform:translateY(160%);opacity:0;transition:.2s;z-index:40;display:flex;gap:9px;align-items:center;}
+  .toast.show{transform:translateY(0);opacity:1;}
+  .toast .ti{color:var(--steel);flex:none;}
+</style>
+</head>
+<body>
+  <div class="caption">
+    <span class="tag">Runs · C — ops dashboard</span>
+    <span class="toggle" role="group" aria-label="theme">
+      <button id="c-dark" aria-pressed="true" onclick="setTheme('dark')">dark</button>
+      <button id="c-light" aria-pressed="false" onclick="setTheme('light')">light</button>
+    </span><br/>
+    An <b>Ops dashboard</b>: glanceable status tiles up top (active / failed today / queue depth / tokens),
+    a prominent <b>sweep-control row</b> for emergency triggers, then a compact run log. Tapping a run raises a
+    <b>split-panel</b> step tree (half-height sheet over the still-visible list).
+  </div>
+
+  <div class="phone">
+    <div class="bar">
+      <button class="back"><svg width="22" height="22" viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg></button>
+      <span class="ttl">Runs</span>
+      <span class="dot"></span><span class="health">worker live · 1 worker</span>
+    </div>
+
+    <div class="body">
+      <div class="tiles">
+        <div class="tile running">
+          <div class="ttop"><span class="ti"><svg width="14" height="14" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-2.6-6.4"/></svg></span></div>
+          <div class="tnum">2</div><div class="tlabel">runs active now</div>
+        </div>
+        <div class="tile failed">
+          <div class="ttop"><span class="ti"><svg width="14" height="14" viewBox="0 0 24 24"><path d="M12 9v4M12 17h.01"/><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg></span></div>
+          <div class="tnum">1</div><div class="tlabel">failed today</div>
+        </div>
+        <div class="tile queue">
+          <div class="ttop"><span class="ti"><svg width="14" height="14" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></svg></span></div>
+          <div class="tnum">5</div><div class="tlabel">jobs queued</div>
+        </div>
+        <div class="tile cost">
+          <div class="ttop"><span class="ti"><svg width="14" height="14" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v10M9 9.5h4.5a1.5 1.5 0 0 1 0 3H9m0 0h5"/></svg></span></div>
+          <div class="tnum">41k</div><div class="tlabel">tokens today</div>
+        </div>
+      </div>
+
+      <div class="sect">Run a sweep now</div>
+      <div class="sweeprow">
+        <button class="sweepbtn" onclick="fireSweep('Consolidate predicates')"><svg width="16" height="16" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 4v4h-4"/></svg>Consolidate</button>
+        <button class="sweepbtn" onclick="fireSweep('Sync predicates')"><svg width="16" height="16" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 4v4h-4"/></svg>Sync predicates</button>
+        <button class="sweepbtn ghost" onclick="openSweep()"><svg width="16" height="16" viewBox="0 0 24 24"><path d="M5 12h14M12 5v14"/></svg>More…</button>
+      </div>
+
+      <div class="sect">Recent runs</div>
+      <div class="runs-card" id="runs"></div>
+    </div>
+
+    <!-- split drill -->
+    <div class="scrim" id="scrim" onclick="closeSplit()"></div>
+    <div class="split" id="split">
+      <div class="grip"></div>
+      <div class="sp-head">
+        <div class="sp-name"><span id="sp-name"></span><span class="sp-badge" id="sp-badge"></span></div>
+        <div class="sp-meta" id="sp-meta"></div>
+      </div>
+      <div class="sp-body" id="sp-body"></div>
+      <div class="sp-foot">
+        <button onclick="toast('Opened raw log tail for this run.')"><svg width="15" height="15" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"/></svg>View log</button>
+        <button class="rerun" id="rerunbtn"><svg width="15" height="15" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 4v4h-4"/></svg>Re-run</button>
+      </div>
+    </div>
+
+    <!-- sweep sheet -->
+    <div class="scrim2" id="scrim2" onclick="closeSweep()"></div>
+    <div class="sheet" id="sheet">
+      <div class="grip"></div>
+      <h3>Run a sweep now</h3>
+      <div style="font-size:13px;color:var(--text-2);margin-bottom:14px;line-height:1.45;">Fires the trigger's pipeline immediately — no service restart. Idempotent; safe to re-fire.</div>
+      <div id="sweeplist"></div>
+    </div>
+
+    <div class="toast" id="toast"></div>
+  </div>
+
+<script>
+function setTheme(t){
+  document.documentElement.dataset.theme=t;
+  document.getElementById('c-dark').setAttribute('aria-pressed',String(t==='dark'));
+  document.getElementById('c-light').setAttribute('aria-pressed',String(t==='light'));
+}
+
+const RUNS=[
+  {id:'r1',kind:'integration',name:'Integrate · roof-quote note',status:'running',trigger:'note created',time:'now',dur:'12s',steps:'3 of 5',cost:'4.1k',
+    step:[
+      {kind:'model',name:'classify domain',state:'ok',cost:'0.3k'},
+      {kind:'tool',name:'entity_resolve',state:'ok',cost:'1.2k'},
+      {kind:'model',name:'extract facts',state:'run',cost:'2.6k'},
+      {kind:'job',name:'enqueue embed_note',state:'pending',cost:'—'},
+      {kind:'job',name:'enqueue consolidate',state:'pending',cost:'—'},
+    ]},
+  {id:'r2',kind:'pipeline',name:'Nightly predicate sweep',status:'running',trigger:'schedule · 02:00',time:'2m ago',dur:'2m 04s',steps:'1 of 2',cost:'0.8k',
+    step:[
+      {kind:'job',name:'consolidate_predicates',state:'run',cost:'0.8k'},
+      {kind:'job',name:'sync_predicates',state:'pending',cost:'—'},
+    ]},
+  {id:'r3',kind:'integration',name:'Integrate · labs PDF note',status:'failed',trigger:'note created',time:'18m ago',dur:'31s',steps:'4 of 6',cost:'6.7k',
+    step:[
+      {kind:'model',name:'classify domain',state:'ok',cost:'0.3k'},
+      {kind:'job',name:'ocr_attachment · labs.pdf',state:'err',cost:'1.1k',serr:'TimeoutError: vision adapter timeout after 30s (attempt 3/3) — marked PermanentJobError. Downstream extract skipped.'},
+      {kind:'job',name:'extract facts',state:'skip',cost:'—'},
+    ]},
+  {id:'r4',kind:'agent',name:'Health wiki cleanup',status:'done',trigger:'session · Full Brain',time:'1h ago',dur:'48s',steps:'9',cost:'21.4k',
+    step:[
+      {kind:'model',name:'plan turn',state:'ok',cost:'3.1k'},
+      {kind:'tool',name:'search_notes',state:'ok',cost:'1.0k'},
+      {kind:'tool',name:'read_entity · me',state:'ok',cost:'0.9k'},
+      {kind:'model',name:'draft proposal',state:'ok',cost:'8.2k'},
+    ]},
+  {id:'r5',kind:'integration',name:'Integrate · grocery note',status:'done',trigger:'note created',time:'2h ago',dur:'9s',steps:'5',cost:'3.0k',
+    step:[
+      {kind:'model',name:'classify domain',state:'ok',cost:'0.3k'},
+      {kind:'model',name:'extract facts',state:'ok',cost:'2.4k'},
+      {kind:'job',name:'enqueue embed_note',state:'ok',cost:'0.3k'},
+    ]},
+];
+
+function runRow(r){
+  return `<button class="rowbtn" onclick="openSplit('${r.id}')">
+    <span class="sdot ${r.status}"></span>
+    <span class="rmain">
+      <span class="rn"><span class="kdot ${r.kind}">${r.kind}</span>${r.name}</span>
+      <span class="rsub">${r.trigger} · ${r.dur} · ${r.steps} steps · ${r.cost} tok</span>
+    </span>
+    <span class="rright">${r.time}<br/><span style="color:${r.status==='failed'?'var(--rose)':r.status==='running'?'var(--green)':'var(--text-3)'}">${r.status}</span></span>
+    <svg class="chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>
+  </button>`;
+}
+function renderRuns(){document.getElementById('runs').innerHTML=RUNS.map(runRow).join('');}
+
+function stepIco(st){
+  return st==='run'?'<svg width="11" height="11" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-2.6-6.4"/></svg>'
+    :st==='err'?'<svg width="11" height="11" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg>'
+    :st==='ok'?'<svg width="11" height="11" viewBox="0 0 24 24"><path d="M5 12l4 4L19 7"/></svg>'
+    :'<svg width="11" height="11" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/></svg>';
+}
+function nodeCls(st){return st==='run'?'run':st==='err'?'err':st==='ok'?'ok':'';}
+
+function openSplit(id){
+  const r=RUNS.find(x=>x.id===id);
+  document.getElementById('sp-name').textContent=r.name;
+  const b=document.getElementById('sp-badge');b.className=`sp-badge ${r.status}`;b.innerHTML=`${r.status==='running'?'<span class="bd"></span>':''}${r.status}`;
+  document.getElementById('sp-meta').innerHTML=`<span>${r.kind}</span><span class="sep">·</span><span>${r.trigger}</span><span class="sep">·</span><span>${r.time}</span><span class="sep">·</span><span>${r.dur}</span><span class="sep">·</span><span>${r.cost} tok</span>`;
+  document.getElementById('sp-body').innerHTML=r.step.map(s=>`
+    <div class="strow">
+      <div class="snode ${nodeCls(s.state)}">${stepIco(s.state)}</div>
+      <div class="smain">
+        <div class="sline"><span class="skind ${s.kind}">${s.kind}</span><span class="sname">${s.name}</span><span class="scost">${s.cost}</span></div>
+        ${s.serr?`<div class="serr">${s.serr}</div>`:''}
+      </div>
+    </div>`).join('');
+  document.getElementById('rerunbtn').onclick=()=>{closeSplit();toast(`Re-running “${r.name}” — new run queued.`);};
+  document.getElementById('scrim').classList.add('show');
+  document.getElementById('split').classList.add('show');
+}
+function closeSplit(){document.getElementById('scrim').classList.remove('show');document.getElementById('split').classList.remove('show');}
+
+const SWEEPS=[
+  {n:'Consolidate predicates',d:'merge near-duplicate predicates · schedule 02:00'},
+  {n:'Sync predicates',d:'re-embed the canonical registry'},
+  {n:'Backfill pending integration',d:'pick up notes that missed their trigger'},
+  {n:'Backfill unembedded notes',d:'embed anything that slipped through'},
+  {n:'Purge deleted-note artifacts',d:'reap orphaned chunks + blobs'},
+];
+function openSweep(){
+  document.getElementById('sweeplist').innerHTML=SWEEPS.map(s=>`
+    <button onclick="fireSweep('${s.n}')" style="width:100%;text-align:left;background:var(--surface-2);border:1px solid var(--border);border-radius:12px;padding:12px 13px;margin-bottom:8px;display:flex;align-items:center;gap:11px;color:inherit;font:inherit;cursor:pointer;">
+      <span style="width:30px;height:30px;border-radius:8px;background:var(--amber-tint);color:var(--amber);display:flex;align-items:center;justify-content:center;flex:none;">
+        <svg width="16" height="16" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 4v4h-4"/></svg></span>
+      <span style="flex:1;min-width:0;"><span style="display:block;font-size:14.5px;">${s.n}</span><span style="display:block;font-size:12px;color:var(--text-3);margin-top:2px;">${s.d}</span></span>
+      <svg width="15" height="15" viewBox="0 0 24 24" style="color:var(--text-3);flex:none;"><path d="M9 6l6 6-6 6"/></svg>
+    </button>`).join('');
+  document.getElementById('scrim2').classList.add('show');
+  document.getElementById('sheet').style.transform='translateY(0)';
+}
+function closeSweep(){document.getElementById('scrim2').classList.remove('show');document.getElementById('sheet').style.transform='translateY(100%)';}
+function fireSweep(n){closeSweep();toast(`Fired “${n}” now — run queued, watch Recent runs.`);}
+
+function toast(msg){
+  const t=document.getElementById('toast');
+  t.innerHTML=`<svg class="ti" width="16" height="16" viewBox="0 0 24 24"><path d="M5 12l4 4L19 7"/></svg>${msg}`;
+  t.classList.add('show');clearTimeout(toast._t);toast._t=setTimeout(()=>t.classList.remove('show'),3400);
+}
+
+renderRuns();
+</script>
+</body>
+</html>
