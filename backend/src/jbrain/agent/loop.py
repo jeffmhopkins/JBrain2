@@ -60,10 +60,13 @@ class Guardrails:
 
 @dataclass(frozen=True)
 class ToolContext:
-    """What a tool handler receives: the RLS scope its reads must run under."""
+    """What a tool handler receives: the RLS scope its reads must run under, and
+    the owner's IANA display timezone (None = UTC) so a tool can render times in
+    the owner's zone — its prose then agrees with the client-localized cards."""
 
     session: SessionContext
     scopes: tuple[str, ...]
+    timezone: str | None = None
 
 
 class ToolOutput(str):
@@ -151,11 +154,12 @@ class AgentLoop:
         session: SessionContext,
         scopes: Sequence[str],
         conversation: Sequence[LlmMessage],
+        timezone: str | None = None,
     ) -> AgentResult:
         scopes = tuple(scopes)
         tools = self._registry.schemas_for(scopes)
         messages: list[LlmMessage] = list(conversation)
-        tool_ctx = ToolContext(session=session, scopes=scopes)
+        tool_ctx = ToolContext(session=session, scopes=scopes, timezone=timezone)
         cost = 0
         consecutive_errors = 0
         idx = 0
@@ -208,6 +212,7 @@ class AgentLoop:
         session: SessionContext,
         scopes: Sequence[str],
         conversation: Sequence[LlmMessage],
+        timezone: str | None = None,
     ) -> AsyncIterator[ChatEvent]:
         """The streaming twin of `run`: the same turn loop and guardrails, but it
         yields ChatEvents as they happen — `text_delta` per streamed chunk,
@@ -219,7 +224,7 @@ class AgentLoop:
         scopes = tuple(scopes)
         tools = self._registry.schemas_for(scopes)
         messages: list[LlmMessage] = list(conversation)
-        tool_ctx = ToolContext(session=session, scopes=scopes)
+        tool_ctx = ToolContext(session=session, scopes=scopes, timezone=timezone)
         cost = 0
         consecutive_errors = 0
         idx = 0

@@ -9,6 +9,7 @@ the OcrPipeline reads it per job and the Settings screen round-trips it.
 
 import json
 from typing import Any, Literal, cast
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -54,6 +55,22 @@ VALUE_SHAPE_ENFORCE_DEFAULT = True
 # redeploy — see jbrain.llm.router._resolve_live. Absent = use static config.
 LLM_TASK_OVERRIDES_KEY = "llm_task_overrides"
 _VALID_REASONING_EFFORTS = ("none", "low", "medium", "high")
+
+# The owner's IANA display timezone (e.g. "America/New_York"). Absent = UTC.
+# Server-rendered times — the agent's appointment prose — localize to it so they
+# agree with the cards the client localizes to the browser zone; the frontend
+# syncs the browser's detected zone here. Stored as an IANA name, not an offset,
+# so a future instant reads correctly across a DST boundary.
+OWNER_TIMEZONE_KEY = "owner_timezone"
+
+
+def is_valid_timezone(tz: str) -> bool:
+    """Whether `tz` names a known IANA zone — the gate for storing/trusting one."""
+    try:
+        ZoneInfo(tz)
+    except (ZoneInfoNotFoundError, ValueError):
+        return False
+    return True
 
 
 class SqlSettingsStore:
@@ -103,6 +120,13 @@ class SqlSettingsStore:
         """Whether a shape-violating value_json is DROPPED (vs only logged).
         Defaults ON; an explicit `false` (or any non-true value) disables it."""
         return await self.get(ctx, VALUE_SHAPE_ENFORCE_KEY, VALUE_SHAPE_ENFORCE_DEFAULT) is True
+
+    async def owner_timezone(self, ctx: SessionContext) -> str | None:
+        """The owner's IANA display timezone, or None when unset or unrecognized
+        (callers fall back to UTC). An unknown stored value is treated as unset
+        rather than trusted — a bad zone must never crash a render."""
+        tz = await self.get(ctx, OWNER_TIMEZONE_KEY, None)
+        return tz if isinstance(tz, str) and is_valid_timezone(tz) else None
 
     async def llm_task_overrides(self, ctx: SessionContext) -> dict[str, dict[str, str]]:
         """The live per-task LLM routing/reasoning overrides, sanitized.

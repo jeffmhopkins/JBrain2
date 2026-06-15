@@ -97,6 +97,10 @@ export type ImageAnalysisMode = "full" | "ocr";
 /** Server-synced user settings (extensible object; image analysis first). */
 export interface AppSettings {
   image_analysis_mode: ImageAnalysisMode;
+  // The owner's IANA display timezone (e.g. "America/New_York"), or null when
+  // unset. Server-rendered times (the agent's appointment prose) localize to it
+  // so they match the cards the client localizes to the browser zone.
+  owner_timezone: string | null;
 }
 
 /** The read-only appointments ICS feed: enabled state + the URL token (owner-only). */

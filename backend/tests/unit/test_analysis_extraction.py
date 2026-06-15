@@ -246,6 +246,84 @@ def test_parse_datetime_handles_z_offsets_and_naive() -> None:
     assert parse_datetime(None) is None
 
 
+def test_parse_datetime_reads_naive_in_the_given_zone() -> None:
+    # A clock time the model emitted WITHOUT an offset is the note's local wall
+    # clock, not UTC: read in the note's offset it is that instant, not UTC.
+    eastern = timezone(timedelta(hours=-4))
+    naive = parse_datetime("2026-06-22T17:00:00", naive_tz=eastern)
+    assert naive == datetime(2026, 6, 22, 17, tzinfo=eastern)
+    # An explicit offset is always honored — naive_tz only fills a missing one.
+    assert parse_datetime("2026-06-22T17:00:00+00:00", naive_tz=eastern) == datetime(
+        2026, 6, 22, 17, tzinfo=UTC
+    )
+
+
+def test_naive_instant_fact_time_is_read_in_the_note_local_offset() -> None:
+    # The reported bug: a "5pm" appointment the model rendered offset-less, in an
+    # EDT note, must store the 5pm-local instant — not 17:00Z (= 1pm local).
+    anchor = local_anchor(datetime(2026, 6, 15, 12, tzinfo=UTC), -240)  # EDT, -4h
+    payload = valid_payload()
+    payload["facts"] = [
+        {
+            "predicate": "scheduledTime",
+            "qualifier": "",
+            "kind": "state",
+            "statement": "Appointment with Dr. Barochia at 5pm on 2026-06-22.",
+            "value_json": {"start": "2026-06-22T17:00:00"},
+            "assertion": "expected",
+            "entity_ref": "appointment",
+            "object_entity_ref": None,
+            "temporal": {
+                "phrase": "2026-06-22 at 5pm",
+                "resolved_start": "2026-06-22T17:00:00",
+                "resolved_end": None,
+                "precision": "instant",
+            },
+            "domain": "general",
+            "confidence": 0.9,
+        }
+    ]
+    payload["temporal_tokens"] = []
+    fact = parse_extraction(payload, anchor=anchor).facts[0]
+    # Both the temporal and the value_json `start` carry the note's offset, so
+    # the stored instant is 21:00Z (5pm EDT), not 17:00Z.
+    assert fact.temporal is not None
+    assert fact.temporal.resolved_start == datetime(2026, 6, 22, 21, tzinfo=UTC)
+    assert fact.value_json is not None
+    assert parse_datetime(fact.value_json["start"]) == datetime(2026, 6, 22, 21, tzinfo=UTC)
+
+
+def test_naive_date_precision_keeps_utc_pin_for_its_existing_repair() -> None:
+    # Only CLOCK times (instant) get the local-offset read; a bare calendar date
+    # stays UTC-pinned, so its drifted-midnight repair still fires and the date
+    # reads as written (June 22) in the note's zone — not pushed a day.
+    anchor = local_anchor(datetime(2026, 6, 15, 12, tzinfo=UTC), -240)
+    payload = valid_payload()
+    payload["facts"][0]["temporal"] = {
+        "phrase": "June 22",
+        "resolved_start": "2026-06-22T00:00:00",
+        "resolved_end": None,
+        "precision": "day",
+    }
+    fact = parse_extraction(payload, anchor=anchor).facts[0]
+    assert fact.temporal is not None and fact.temporal.resolved_start is not None
+    assert fact.temporal.resolved_start.astimezone(anchor.tzinfo).date() == date(2026, 6, 22)
+
+
+def test_naive_instant_without_anchor_stays_utc() -> None:
+    # No anchor (most unit-test callers): the legacy UTC pin still applies.
+    payload = valid_payload()
+    payload["facts"][0]["temporal"] = {
+        "phrase": "5pm",
+        "resolved_start": "2026-06-22T17:00:00",
+        "resolved_end": None,
+        "precision": "instant",
+    }
+    fact = parse_extraction(payload).facts[0]
+    assert fact.temporal is not None
+    assert fact.temporal.resolved_start == datetime(2026, 6, 22, 17, tzinfo=UTC)
+
+
 # --- domain ratchet ---------------------------------------------------------
 
 

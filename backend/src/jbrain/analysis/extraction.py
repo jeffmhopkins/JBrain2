@@ -9,7 +9,7 @@ sinking the whole note.
 import json
 import re
 from dataclasses import dataclass, replace
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta, tzinfo
 from typing import Any
 
 import structlog
@@ -105,17 +105,31 @@ class Extraction:
     dropped_facts: int = 0
 
 
-def parse_datetime(value: Any) -> datetime | None:
-    """ISO 8601 -> aware datetime; naive values are pinned to UTC (the anchor
-    in the prompt carries the real offset, so naive output is model slop, not
-    a different timezone). None/unparseable -> None."""
+def parse_datetime(value: Any, *, naive_tz: tzinfo = UTC) -> datetime | None:
+    """ISO 8601 -> aware datetime. A value the model emitted WITHOUT an offset is
+    read in `naive_tz` (UTC by default). For a CLOCK time the caller passes the
+    note's LOCAL offset: a bare wall clock the model wrote against a local capture
+    anchor means local time, not UTC — pinning it to UTC silently shifts the
+    instant by the owner's offset (a 5pm-local appointment stored at 17:00Z = 1pm
+    local). None/unparseable -> None."""
     if not isinstance(value, str) or not value.strip():
         return None
     try:
         parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
     except ValueError:
         return None
-    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
+    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=naive_tz)
+
+
+def _naive_tz(precision: str, anchor: datetime | None) -> tzinfo:
+    """The zone an offset-less model time is read in: the note's local offset for
+    a CLOCK time (instant precision), UTC otherwise. A bare instant resolved
+    against the local capture anchor is a local wall clock; a bare CALENDAR date
+    keeps the UTC pin its drifted-midnight repair already corrects against the
+    anchor (finalize_temporal), so date precisions stay on that path."""
+    if precision == "instant" and anchor is not None and anchor.tzinfo is not None:
+        return anchor.tzinfo
+    return UTC
 
 
 # Deterministic domain FLOOR by predicate (firewall hardening): a fact on a
@@ -378,18 +392,39 @@ def validate_backward_temporal(
     return replace(temporal, resolved_start=start, resolved_end=end), True
 
 
-def _parse_temporal(raw: Any) -> ExtractedTemporal | None:
+def _parse_temporal(raw: Any, anchor: datetime | None = None) -> ExtractedTemporal | None:
     if not isinstance(raw, dict):
         return None
     precision = raw.get("precision")
-    start = parse_datetime(raw.get("resolved_start"))
+    precision = precision if precision in PRECISIONS else "unknown"
+    naive_tz = _naive_tz(precision, anchor)
     phrase = raw.get("phrase")
     return ExtractedTemporal(
         phrase=str(phrase) if phrase else None,
-        resolved_start=start,
-        resolved_end=parse_datetime(raw.get("resolved_end")),
-        precision=precision if precision in PRECISIONS else "unknown",
+        resolved_start=parse_datetime(raw.get("resolved_start"), naive_tz=naive_tz),
+        resolved_end=parse_datetime(raw.get("resolved_end"), naive_tz=naive_tz),
+        precision=precision,
     )
+
+
+def _normalize_value_times(
+    value_json: dict[str, Any] | None, precision: str, anchor: datetime | None
+) -> dict[str, Any] | None:
+    """Rewrite a value_json's `start`/`end` ISO strings to carry the note's local
+    offset when the model emitted them bare. The appointment `{start, end}` the
+    projection reads is the source of `starts_at`, separate from the temporal
+    token, so it needs the same offset repair or a 5pm-local appointment lands at
+    17:00Z. A no-op unless the offset actually applies (instant + known anchor)."""
+    naive_tz = _naive_tz(precision, anchor)
+    if not isinstance(value_json, dict) or naive_tz is UTC:
+        return value_json
+    out = dict(value_json)
+    for key in ("start", "end"):
+        if isinstance(out.get(key), str):
+            dt = parse_datetime(out[key], naive_tz=naive_tz)
+            if dt is not None:
+                out[key] = dt.isoformat()
+    return out
 
 
 def _clamp_confidence(value: Any) -> float:
@@ -714,17 +749,25 @@ def parse_extraction(
             value_json = None
         object_ref = raw.get("object_entity_ref")
         domain = raw.get("domain")
+        temporal = _parse_temporal(raw.get("temporal"), anchor)
+        # A clock time in value_json (the appointment start) gets the same local
+        # offset its temporal got, so the projection reads the right instant.
+        value_json = _normalize_value_times(
+            value_json if isinstance(value_json, dict) else None,
+            temporal.precision if temporal else "unknown",
+            anchor,
+        )
         facts.append(
             ExtractedFact(
                 predicate=predicate,
                 qualifier=qualifier,
                 kind=kind,
                 statement=statement,
-                value_json=value_json if isinstance(value_json, dict) else None,
+                value_json=value_json,
                 assertion=assertion,
                 entity_ref=entity_ref,
                 object_entity_ref=str(object_ref).strip() if object_ref else None,
-                temporal=_parse_temporal(raw.get("temporal")),
+                temporal=temporal,
                 # Unknown domain strings fall back to "" -> the pipeline
                 # substitutes the note's domain (never trust invented codes).
                 domain=domain if domain in DOMAINS else "",
@@ -775,16 +818,17 @@ def parse_extraction(
     for raw in payload.get("temporal_tokens") or []:
         if not isinstance(raw, dict):
             continue
-        start = parse_datetime(raw.get("resolved_start"))
+        precision = raw.get("precision")
+        precision = precision if precision in PRECISIONS else "unknown"
+        naive_tz = _naive_tz(precision, anchor)
+        start = parse_datetime(raw.get("resolved_start"), naive_tz=naive_tz)
         phrase = str(raw.get("phrase") or "").strip()
         # Never store only-relative: an unresolved expression is not a token
         # (docs/ANALYSIS.md "Temporal model").
         if start is None or not phrase:
             log.warning("analysis.token_dropped", reason="unresolved", phrase=phrase)
             continue
-        end = parse_datetime(raw.get("resolved_end"))
-        precision = raw.get("precision")
-        precision = precision if precision in PRECISIONS else "unknown"
+        end = parse_datetime(raw.get("resolved_end"), naive_tz=naive_tz)
         if anchor is not None:
             shifted, end, changed = finalize_temporal(phrase, start, end, precision, anchor)
             if changed and shifted is not None:

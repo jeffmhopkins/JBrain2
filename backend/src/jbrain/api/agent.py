@@ -33,6 +33,7 @@ from jbrain.agent.toolregistry import ToolRegistry
 from jbrain.agent.transcript_store import AgentTranscript
 from jbrain.api.deps import owner_only
 from jbrain.api.notes import ctx_for
+from jbrain.api.settings import get_settings_store
 from jbrain.auth.service import PrincipalInfo
 from jbrain.db.session import SessionContext
 from jbrain.llm import AssistantMessage, LlmMessage, LlmRouter, UserMessage
@@ -224,6 +225,10 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
     loop = AgentLoop(get_llm_router(request), get_agent_registry(request), recorder=tally)
     read_ctx = read_context(principal.id, session.domain_scopes)
     conversation = _conversation(body)
+    # The owner's display zone so the agent's time prose matches the cards (which
+    # the client localizes); None = UTC. Read on the owner ctx, not the narrowed
+    # read ctx — a preference, not domain data.
+    owner_tz = await get_settings_store(request).owner_timezone(owner_ctx)
 
     async def events() -> AsyncIterator[bytes]:
         stop_reason = "error"
@@ -235,7 +240,10 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
         order: list[str] = []
         try:
             async for event in loop.run_stream(
-                session=read_ctx, scopes=session.domain_scopes, conversation=conversation
+                session=read_ctx,
+                scopes=session.domain_scopes,
+                conversation=conversation,
+                timezone=owner_tz,
             ):
                 if event.type == "text_delta":
                     answer.append(event.text)

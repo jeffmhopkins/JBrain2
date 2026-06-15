@@ -73,7 +73,7 @@ const analyzingAttachments = new Set<string>();
 const analyzingNotes = new Set<string>();
 
 // The first server-synced settings object (theme/text-size stay local).
-const SETTINGS: AppSettings = { image_analysis_mode: "full" };
+const SETTINGS: AppSettings = { image_analysis_mode: "full", owner_timezone: null };
 
 // Per-task LLM routing fixture (GET/PUT /api/settings/llm). Only grok carries
 // a reasoning level; reasoning_effort is null for any task off grok, mirroring
@@ -1475,9 +1475,15 @@ export const mockFetch: typeof fetch = async (input, init) => {
     const patch = JSON.parse(String(init?.body)) as Record<string, unknown>;
     // Mirror the backend's strict validation: unknown keys/values are 422s.
     for (const [key, value] of Object.entries(patch)) {
-      if (key !== "image_analysis_mode") return json({ detail: `unknown key ${key}` }, 422);
-      if (value !== "full" && value !== "ocr") return json({ detail: "unknown mode" }, 422);
-      SETTINGS.image_analysis_mode = value;
+      if (key === "image_analysis_mode") {
+        if (value !== "full" && value !== "ocr") return json({ detail: "unknown mode" }, 422);
+        SETTINGS.image_analysis_mode = value;
+      } else if (key === "owner_timezone") {
+        if (typeof value !== "string") return json({ detail: "bad timezone" }, 422);
+        SETTINGS.owner_timezone = value;
+      } else {
+        return json({ detail: `unknown key ${key}` }, 422);
+      }
     }
     return json(SETTINGS);
   }

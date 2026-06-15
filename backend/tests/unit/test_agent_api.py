@@ -22,7 +22,7 @@ from jbrain.auth import service
 from jbrain.config import Settings
 from jbrain.llm import FakeLlmClient, LlmClient, LlmRouter, LlmTurn, LlmUsage, ToolCall
 from jbrain.main import create_app
-from tests.unit.fakes import FakeAuthRepo
+from tests.unit.fakes import FakeAuthRepo, FakeSettingsStore
 
 NOW = datetime(2026, 6, 12, tzinfo=UTC)
 
@@ -183,6 +183,7 @@ def client(
         app.state.agent_runlog = runlog
         app.state.agent_transcript = transcript
         app.state.agent_registry = ToolRegistry([])  # no tools: the model answers directly
+        app.state.settings_store = FakeSettingsStore()  # /chat reads owner_timezone
         app.state.llm_router = stream_router(
             [LlmTurn("hi there", (), "end_turn", LlmUsage(7, 3))],
             stream_chunks=[["hi ", "there"]],

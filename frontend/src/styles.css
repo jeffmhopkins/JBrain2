@@ -820,6 +820,16 @@ h3 {
   margin: 0 0 12px;
 }
 
+/* A read-only settings value (e.g. the synced time zone). */
+.settings-value {
+  font-size: var(--fs-secondary);
+  color: var(--text-1);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-seg);
+  padding: 8px 10px;
+}
+
 /* The appointments ICS feed URL + its actions */
 .feed-url {
   width: 100%;
