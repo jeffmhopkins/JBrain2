@@ -278,8 +278,11 @@ function ListRow({ item, selectable, selected, onToggle, onOpen }: ListRowProps)
   const decided = item.status === "resolved" || item.status === "dismissed";
   const dismissed = item.status === "dismissed";
   const isDiscuss = item.resolution?.action === "discuss";
+  const isInference = item.kind === "low_confidence_inference";
   return (
-    <div className={`rrow2${dismissed ? " rrow-dismissed" : ""}`}>
+    <div
+      className={`rrow2${dismissed ? " rrow-dismissed" : ""}${isInference ? " rrow-inference" : ""}`}
+    >
       {selectable && (
         <label className="rrow-check">
           <input

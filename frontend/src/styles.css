@@ -3364,6 +3364,9 @@ button.small {
   font-size: var(--fs-micro);
 }
 
+/* Reset the global button chrome (surface-2 fill, border, radius) so the row
+   reads as one clean surface — not a gray pill with the chevron stranded on a
+   white strip to its right. */
 .rrow-open {
   flex: 1;
   min-width: 0;
@@ -3372,6 +3375,14 @@ button.small {
   gap: 4px;
   padding: 12px 14px;
   text-align: left;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+}
+
+/* Press feedback for the whole row (the chevron lives outside the button). */
+.rrow2:active {
+  background: var(--surface-2);
 }
 
 .rrow-line {
@@ -3419,8 +3430,19 @@ button.small {
   display: grid;
   place-items: center;
   width: 28px;
+  padding-right: 4px;
   color: var(--text-3);
-  font-size: var(--fs-body);
+  font-size: var(--fs-title);
+}
+
+/* A thin brand rail flags inference rows so the list carries intentional
+   colour instead of reading as flat grey. */
+.rrow-inference {
+  box-shadow: inset 3px 0 0 var(--steel);
+}
+
+.rrow-dismissed.rrow-inference {
+  box-shadow: inset 3px 0 0 var(--border);
 }
 
 .rrow-dismissed .rrow-sum {
