@@ -318,6 +318,40 @@ describe("FullBrainSurface", () => {
     );
   });
 
+  it("shows an appointment step as humanized text, ids tucked behind the raw rung", async () => {
+    async function* answer(): AsyncGenerator<ChatEvent> {
+      yield { type: "tool_call", id: "c1", name: "read_appointments", arguments: {} };
+      yield {
+        type: "tool_result",
+        tool_call_id: "c1",
+        ok: true,
+        summary: "- dentist — 2026-06-22 17:00 [health] id=ef15afd3-1ac4-4a5e-aacf-dda47e925a7e",
+      };
+      yield { type: "text_delta", text: "You see the dentist on the 22nd." };
+      yield { type: "done", stop_reason: "end_turn" };
+    }
+    render(<Harness d={deps({ chat: answer })} />);
+    await waitFor(() => screen.getByLabelText("Conversation"));
+    fireEvent.change(screen.getByLabelText("Composer"), { target: { value: "my appointments?" } });
+    fireEvent.click(screen.getByRole("button", { name: "send" }));
+
+    // The step carries the friendly label, not the raw tool name.
+    fireEvent.click(await screen.findByRole("button", { name: /Worked/ }));
+    fireEvent.click(screen.getByText("Checked your calendar"));
+
+    // The result reads as a plain line; the raw uuid is not on display.
+    expect(screen.getByText("dentist — 2026-06-22 17:00 (health)")).toBeInTheDocument();
+    expect(screen.queryByText(/id=ef15afd3/)).toBeNull();
+
+    // The verbatim text (with the id) is still reachable one rung down.
+    fireEvent.click(screen.getByRole("button", { name: "raw result" }));
+    expect(
+      screen.getByText(
+        "- dentist — 2026-06-22 17:00 [health] id=ef15afd3-1ac4-4a5e-aacf-dda47e925a7e",
+      ),
+    ).toBeInTheDocument();
+  });
+
   it("auto-opens a failed step and shows its error text in the danger tone", async () => {
     async function* answer(): AsyncGenerator<ChatEvent> {
       yield { type: "tool_call", id: "c1", name: "read_note", arguments: { note_id: "0c41" } };

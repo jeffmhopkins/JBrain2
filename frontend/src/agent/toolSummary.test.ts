@@ -72,6 +72,45 @@ describe("toolStep", () => {
     expect(toolStep(tool({ name: "search" })).entities).toEqual([]);
   });
 
+  it("humanizes a read_appointments list — drops ids, softens the bracket syntax", () => {
+    const summary =
+      "- dentist — 2026-06-22 17:00 [health] (recurring) id=ef15afd3-1ac4-4a5e-aacf-dda47e925a7e\n" +
+      "- standup — 2026-06-23 09:00–09:30 [general] id=aa11bb22-3344";
+    const step = toolStep(tool({ name: "read_appointments", summary }));
+    expect(step.label).toBe("Checked your calendar");
+    expect(step.display).toBe(
+      "dentist — 2026-06-22 17:00 (health) (recurring)\nstandup — 2026-06-23 09:00–09:30 (general)",
+    );
+    // The verbatim text (with ids) is kept for the raw rung; display ≠ summary.
+    expect(step.summary).toBe(summary);
+  });
+
+  it("humanizes an empty read_appointments result", () => {
+    const step = toolStep(
+      tool({ name: "read_appointments", summary: "No appointments in scope." }),
+    );
+    expect(step.display).toBe("No appointments found.");
+  });
+
+  it("humanizes a single read_appointment — paren domain and labelled detail", () => {
+    const summary =
+      "dentist [health]\nwhen: 2026-06-22 17:00\nstatus: confirmed\nlocation: Main St";
+    const step = toolStep(tool({ name: "read_appointment", summary }));
+    expect(step.label).toBe("Read an appointment");
+    expect(step.display).toBe(
+      "dentist (health)\nWhen: 2026-06-22 17:00\nStatus: confirmed\nLocation: Main St",
+    );
+  });
+
+  it("labels manage_appointment and leaves its (already human) text alone", () => {
+    const step = toolStep(
+      tool({ name: "manage_appointment", summary: "Staged a request to move…" }),
+    );
+    expect(step.label).toBe("Staged an appointment change");
+    // Not a read tool, so no humanized stand-in — the staged sentence is shown as is.
+    expect(step.display).toBeUndefined();
+  });
+
   it("carries the call's arguments and verbatim summary through for the detail rungs", () => {
     const step = toolStep(
       tool({ name: "search", args: { query: "born", limit: 8 }, summary: "raw text" }),

@@ -22,6 +22,10 @@ export interface ToolStep {
   args: Record<string, unknown> | undefined;
   /** The verbatim result text, for the expanded step's result/raw rung. */
   summary: string | undefined;
+  /** A humanized stand-in for `summary` when the verbatim text is machine-shaped
+   * (the appointment tools speak ids + bracket syntax so the model can chain).
+   * Shown as the step's result; the raw text stays behind the "raw result" rung. */
+  display: string | undefined;
 }
 
 const STEP_LABELS: Record<string, string> = {
@@ -35,6 +39,9 @@ const STEP_LABELS: Record<string, string> = {
   memory_edit: "Updated its scratchpad",
   remember: "Staged a memory change",
   propose_correction: "Staged a proposal",
+  read_appointments: "Checked your calendar",
+  read_appointment: "Read an appointment",
+  manage_appointment: "Staged an appointment change",
   queued: "Queued a job",
 };
 
@@ -68,6 +75,40 @@ function noteSource(summary: string): SourceRef[] {
   return [{ noteId: m[1], domain: m[2], text: stripMarks(body) || "(empty note)" }];
 }
 
+// The appointment read tools speak a compact machine line — title, when, domain
+// in brackets, and an id the model chains on (read_appointments → read_appointment).
+// None of that reads as human: strip the id, soften the bracket/label syntax, and
+// leave a plain summary. The verbatim text stays one tap down under "raw result".
+// "- <title> — <when> [<domain>]<tags> id=<uuid>"
+const APPT_LIST_LINE = /^- (.+?) — (.+?) \[(\w+)\](.*?) id=\S+$/;
+// "<title> [<domain>]" — the head of a single appointment read.
+const APPT_HEAD = /^(.+?) \[(\w+)\]$/;
+// "when:|status:|location:|repeats:|with: <value>" — its labelled detail lines.
+const APPT_FIELD = /^(when|status|location|repeats|with): (.*)$/;
+const APPT_FIELD_LABEL: Record<string, string> = {
+  when: "When",
+  status: "Status",
+  location: "Location",
+  repeats: "Repeats",
+  with: "With",
+};
+
+function humanizeAppointments(summary: string): string {
+  if (summary.trim() === "No appointments in scope.") return "No appointments found.";
+  return summary
+    .split("\n")
+    .map((line) => {
+      const list = APPT_LIST_LINE.exec(line);
+      if (list) return `${list[1]} — ${list[2]} (${list[3]})${list[4]}`;
+      const head = APPT_HEAD.exec(line);
+      if (head) return `${head[1]} (${head[2]})`;
+      const field = APPT_FIELD.exec(line);
+      if (field?.[1]) return `${APPT_FIELD_LABEL[field[1]]}: ${field[2]}`;
+      return line; // an error string or anything unrecognized passes through
+    })
+    .join("\n");
+}
+
 export function toolStep(t: ToolActivity): ToolStep {
   let sources: SourceRef[];
   if (t.sources && t.sources.length > 0) {
@@ -80,6 +121,7 @@ export function toolStep(t: ToolActivity): ToolStep {
   } else {
     sources = [];
   }
+  const isAppt = t.name === "read_appointments" || t.name === "read_appointment";
   return {
     id: t.id,
     name: t.name,
@@ -89,5 +131,6 @@ export function toolStep(t: ToolActivity): ToolStep {
     entities: t.entities ?? [],
     args: t.args,
     summary: t.summary,
+    display: isAppt && t.summary ? humanizeAppointments(t.summary) : undefined,
   };
 }

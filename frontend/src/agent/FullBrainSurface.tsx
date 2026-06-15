@@ -436,6 +436,12 @@ function StepRow({
               </div>
               {rawText && <RawBlock text={rawText} />}
             </>
+          ) : step.display ? (
+            <>
+              <div className="fb-res-lab">result</div>
+              <div className="fb-res-txt">{step.display}</div>
+              {step.display !== summary && summary && <RawBlock text={summary} />}
+            </>
           ) : summary ? (
             <>
               <div className="fb-res-lab">result</div>
@@ -582,6 +588,14 @@ function StepGlyph({ name }: { name: string }): ReactNode {
       <svg className="tw-ic" viewBox="0 0 24 24" aria-hidden="true">
         <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" />
         <path d="M14 3v5h5M9 13h6M9 17h6" />
+      </svg>
+    );
+  }
+  if (name.includes("appointment")) {
+    return (
+      <svg className="tw-ic" viewBox="0 0 24 24" aria-hidden="true">
+        <rect x="3" y="4" width="18" height="17" rx="2" />
+        <path d="M3 9h18M8 2v4M16 2v4" />
       </svg>
     );
   }
