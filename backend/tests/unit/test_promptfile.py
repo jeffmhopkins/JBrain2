@@ -128,6 +128,6 @@ def test_prompt_content_is_pinned_to_its_version() -> None:
     blob = SYSTEM_PROMPT + "\x00" + json.dumps(EXTRACTION_SCHEMA, sort_keys=True)
     digest = hashlib.sha256(blob.encode()).hexdigest()
     assert (PROMPT_VERSION, digest) == (
-        "note-extract-v16",
-        "159759ce0c529b97561c04f3775266c9b77e18936173f75efea8a0d83ddaf689",
+        "note-extract-v17",
+        "8fbed24798c74c51daf06b0b3ec6ccfee38c25ab7bb1f33c436192f3cfd06945",
     )

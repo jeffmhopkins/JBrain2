@@ -518,6 +518,21 @@ class AnalysisPipeline:
             if existing is not None:
                 continue
             held_id = held_ids.get(i)
+            # Render the card from the COMMITTED held fact (the row the note view
+            # reads), not the raw planned fact: _insert_held_fact shape-checked and
+            # coerced its value_json ("Female (inferred from 'wife')" -> "female"),
+            # so reading it back here keeps the card and the note in lockstep — one
+            # source of truth, no snapshot drift between the two surfaces.
+            card_value_json = fact.value_json
+            card_statement = fact.statement
+            if held_id is not None:
+                row = (
+                    await session.execute(
+                        select(Fact.value_json, Fact.statement).where(Fact.id == held_id)
+                    )
+                ).first()
+                if row is not None:
+                    card_value_json, card_statement = row.value_json, row.statement
             session.add(
                 ReviewItem(
                     kind="low_confidence_inference",
@@ -527,14 +542,14 @@ class AnalysisPipeline:
                         "predicate": fact.predicate,
                         "qualifier": fact.qualifier,
                         "fact_kind": fact.kind,
-                        "statement": fact.statement,
+                        "statement": card_statement,
                         # The structured value the card renders as `predicate →
                         # value`, so the owner sees the exact fact they're
                         # approving — not only the prose statement.
-                        "value_json": fact.value_json,
+                        "value_json": card_value_json,
                         "weight": pf.weight,
                         "reasons": list(pf.review_reasons),
-                        "title": fact.statement,
+                        "title": card_statement,
                         # fact_id links the card to the pending_review row it
                         # represents — accept pins it, reject retracts it. None
                         # only if the held fact couldn't be written (unresolved
@@ -556,7 +571,7 @@ class AnalysisPipeline:
                             integrator_version=intent.integrator_version,
                         ),
                         **inference_display(
-                            statement=fact.statement,
+                            statement=card_statement,
                             reasons=list(pf.review_reasons),
                             snippet=None,
                         ),
