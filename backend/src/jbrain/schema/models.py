@@ -181,6 +181,32 @@ class SchemaRegistry:
             return None
         return entity_type.predicate(self.normalize_predicate(predicate))
 
+    def coerce_value(self, pred: Predicate, value_json: dict | None) -> dict | None:
+        """Normalize an enum value the model wrote as prose down to its declared
+        member: ``{"value": "Female (inferred from 'wife')."}`` → ``{"value":
+        "female"}``, and a bare ``"Female"`` → ``"female"``. So the stored datum —
+        and the review card that renders it — reads as the member, not the agent's
+        rationale or casing.
+
+        CONSERVATIVE: only an enum predicate with a string value, and only when
+        EXACTLY ONE member appears as a whole word (so ``male`` inside ``female``
+        never mis-fires). Zero or 2+ matches pass through unchanged for
+        `validate_value` to gate — coercion never invents or guesses a value."""
+        if pred.value_shape != "enum" or not pred.enum_values:
+            return value_json
+        if not isinstance(value_json, dict):
+            return value_json
+        datum = value_json.get("value")
+        if not isinstance(datum, str):
+            return value_json
+        lowered = datum.casefold()
+        matched = [
+            v for v in pred.enum_values if re.search(rf"\b{re.escape(v.casefold())}\b", lowered)
+        ]
+        if len(matched) != 1 or matched[0] == datum:
+            return value_json
+        return {**value_json, "value": matched[0]}
+
     def validate_value(
         self, pred: Predicate, value_json: dict | None, *, object_present: bool
     ) -> bool:

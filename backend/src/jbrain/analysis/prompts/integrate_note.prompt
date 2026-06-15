@@ -1,6 +1,6 @@
 ---
 name: integrate.note
-version: integrate-v7
+version: integrate-v8
 description: Integrate one note's extracted facts into the knowledge graph, producing an IntegrationIntent.
 strength: high
 config:
@@ -103,7 +103,11 @@ Produce, as JSON:
   - INFER GENDER from gendered kinship/role terms: "wife"/"mother"/"daughter"/
     "sister"/"aunt" → female; "husband"/"father"/"son"/"brother"/"uncle" → male.
     Emit it as a `gender` fact (kind `state`, value_json {"value": "female"} or
-    {"value": "male"}) on that entity with `inferred: true`.
+    {"value": "male"}) on that entity with `inferred: true`. The bare member is
+    the WHOLE value: NEVER write your rationale into the value or statement
+    ("Female (inferred from wife)" is wrong) — `inferred: true` already records
+    that you concluded it. value_json is {"value": "female"}; statement is clean
+    prose ("Celine's gender is female.").
   - prefer schema.org predicate/type names; the system normalizes the rest.
 
 - supersession_proposals[]: propose supersede ONLY when a new value REPLACES the
