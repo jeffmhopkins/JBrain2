@@ -22,6 +22,7 @@ from jbrain.analysis.predicates import raw_descriptor
 from jbrain.analysis.supersession import is_functional
 from jbrain.db.session import SessionContext, scoped_session
 from jbrain.schema import get_registry
+from jbrain.workflow import events as wf_events
 
 # The list view exposes three lanes: "open" is the pending triage queue,
 # "deferred" is the parked lane (defer + discuss), and "resolved" folds in
@@ -48,6 +49,48 @@ async def _enqueue_consolidate_predicates(session: AsyncSession) -> None:
             "   WHERE kind = 'consolidate_predicates'"
             "     AND status IN ('queued', 'running'))"
         )
+    )
+
+
+def _consolidate_enqueued(effects: list[dict[str, Any]]) -> bool:
+    """Whether this resolution's effects enqueued a consolidate sweep — true exactly
+    when the effects carry a `predicate_remapped` action (the only paths that call
+    `_enqueue_consolidate_predicates`). The signal the resolution.changed shadow
+    event keys on, so the emitted event mirrors the hardcoded enqueue 1:1 (E7a)."""
+    return any(e.get("action") == "predicate_remapped" for e in effects)
+
+
+async def _emit_resolution_event(
+    maker: async_sessionmaker[AsyncSession],
+    ctx: SessionContext,
+    *,
+    domain_code: str,
+    item_id: str,
+    effects: list[dict[str, Any]],
+) -> None:
+    """SHADOW (Wave 1): emit a resolution.changed event for the dispatcher to diff
+    (E7a), only when this resolution actually enqueued a consolidate sweep (so the
+    event and the hardcoded job are 1:1). domain is the review item's fail-closed
+    E2 stamp; the principal is the resolving owner.
+
+    Emitted AFTER the resolution transaction commits, in its OWN best-effort session
+    (wf_events.emit_event swallows every error): a shadow event that fails — e.g. a
+    test whose owner principal is not a real row — must never abort the resolution,
+    which is why this is a separate transaction, not the resolution's. The (tiny)
+    cost is that the event is not atomic with the consolidate enqueue; for an inert
+    shadow observation a dropped event on a crash between the two is harmless."""
+    if not _consolidate_enqueued(effects):
+        return
+    if not ctx.principal_id:
+        return
+    await wf_events.emit_event(
+        maker,
+        ctx,
+        type=wf_events.RESOLUTION_CHANGED,
+        domain_code=domain_code,
+        payload={"item_id": item_id},
+        enqueued=wf_events.shadow_enqueued("consolidate_predicates", {}),
+        principal_id=ctx.principal_id,
     )
 
 
@@ -832,6 +875,12 @@ class SqlAnalysisRepo:
                     {"id": str(iid)},
                 )
             ).one()
+            item_domain = item.domain_code
+        # SHADOW emit AFTER the resolution committed, in its own best-effort session,
+        # so a failed event can never abort the resolution (W1·A2, E7a).
+        await _emit_resolution_event(
+            self._maker, ctx, domain_code=item_domain, item_id=str(iid), effects=effects
+        )
         return _item_dict(updated)
 
     async def resolve_review_batch(
@@ -848,6 +897,11 @@ class SqlAnalysisRepo:
         """
         items: list[dict[str, Any]] = []
         errors: list[dict[str, Any]] = []
+        # (item_id, domain_code, effects) for each committed resolution that
+        # enqueued a consolidate — emitted as shadow events AFTER the batch
+        # transaction commits, never inside it (a failed emit must not roll back
+        # the batch, W1·A2).
+        to_emit: list[tuple[str, str, list[dict[str, Any]]]] = []
         async with scoped_session(self._maker, ctx) as session:
             for decision in decisions:
                 item_id = str(decision.get("id", ""))
@@ -860,7 +914,7 @@ class SqlAnalysisRepo:
                 row = (
                     await session.execute(
                         text(
-                            "SELECT kind, payload, status FROM app.review_items"
+                            "SELECT kind, payload, status, domain_code FROM app.review_items"
                             " WHERE id = :id FOR UPDATE"
                         ),
                         {"id": str(iid)},
@@ -879,6 +933,7 @@ class SqlAnalysisRepo:
                 except UnknownAction as exc:
                     errors.append({"id": item_id, "detail": str(exc)})
                     continue
+                to_emit.append((str(iid), row.domain_code, effects))
                 await session.execute(
                     text(
                         "UPDATE app.review_items"
@@ -903,6 +958,16 @@ class SqlAnalysisRepo:
                     )
                 ).one()
                 items.append(_item_dict(updated))
+        # SHADOW emits, after the batch committed, each in its own best-effort
+        # session (E7a) — a failed event can never roll back the resolutions.
+        for emit_item_id, emit_domain, emit_effects in to_emit:
+            await _emit_resolution_event(
+                self._maker,
+                ctx,
+                domain_code=emit_domain,
+                item_id=emit_item_id,
+                effects=emit_effects,
+            )
         return {"items": items, "errors": errors}
 
     async def reopen_review(self, ctx: SessionContext, item_id: str) -> dict[str, Any] | None:

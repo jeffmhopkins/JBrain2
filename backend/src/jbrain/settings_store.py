@@ -73,6 +73,22 @@ def is_valid_timezone(tz: str) -> bool:
     return True
 
 
+# Self-improvement spend governor (docs/WORKFLOW_ENGINE_PLAN.md E5, I-10): a
+# SEPARATE daily token budget for self-improvement work (eval runs, future
+# distillation) so a runaway loop can never starve interactive spend, plus a global
+# kill-switch that fail-closes every self-improvement action at once. Both DB-backed
+# and read live: the operator flips the kill-switch or tightens the budget via a
+# settings upsert with no redeploy. Seeded conservatively (§7 open decision: tune
+# like the integration budget). The daily spend tally is itself a settings row keyed
+# by UTC date (SELF_IMPROVEMENT_SPEND_PREFIX) so no new table/migration is needed —
+# absent = nothing spent today, the constant-not-a-migration store invariant.
+SELF_IMPROVEMENT_BUDGET_KEY = "self_improvement_daily_tokens"
+SELF_IMPROVEMENT_BUDGET_DEFAULT = 200_000
+SELF_IMPROVEMENT_KILL_SWITCH_KEY = "self_improvement_kill_switch"
+SELF_IMPROVEMENT_KILL_SWITCH_DEFAULT = False
+SELF_IMPROVEMENT_SPEND_PREFIX = "self_improvement_spend:"
+
+
 # Provisional -> confirmed entity promotion (docs/entity.md "Entity lifecycle"):
 # when on, an entity corroborated by >= CORROBORATION_THRESHOLD distinct
 # same-domain notes is auto-confirmed; if its identity is contested (a live
@@ -81,6 +97,18 @@ def is_valid_timezone(tz: str) -> bool:
 # confirmation (the rule deliberately changes entity status across notes).
 ENTITY_PROMOTION_KEY = "entity_promotion"
 ENTITY_PROMOTION_DEFAULT = False
+
+# Integration run + resolution-pin persistence (docs/WORKFLOW_ENGINE_PLAN.md §E7b,
+# Wave 1 Track A): when on, integrate_note writes an `app.runs` row
+# (kind='integration') and UPSERTs the Integrator's committed identity/predicate-key
+# decisions into `app.resolution_pin` (the pure analysis.pins). Net-new (the loop
+# logged to structlog only before), so it ships behind this flag and is validated by
+# convergence, not diff-against-old. DB-backed; flip off live (a settings upsert) to
+# disable the writes without a redeploy. Default ON: the writes are purely additive
+# (a separate run row + pins, no change to the committed graph) and idempotent, so
+# enabling them cannot corrupt existing data — only the persisted audit/pin trail.
+INTEGRATION_PERSIST_KEY = "integration_persist"
+INTEGRATION_PERSIST_DEFAULT = True
 
 
 class SqlSettingsStore:
@@ -142,6 +170,50 @@ class SqlSettingsStore:
         """Whether provisional->confirmed entity promotion is on (docs/entity.md).
         Defaults OFF; an explicit `true` enables it."""
         return await self.get(ctx, ENTITY_PROMOTION_KEY, ENTITY_PROMOTION_DEFAULT) is True
+
+    async def self_improvement_kill_switch(self, ctx: SessionContext) -> bool:
+        """Whether the global self-improvement kill-switch is engaged (E5). When
+        on, every self-improvement action is refused. Defaults OFF; any non-true
+        stored value reads as off (only an explicit `true` engages it)."""
+        return (
+            await self.get(
+                ctx, SELF_IMPROVEMENT_KILL_SWITCH_KEY, SELF_IMPROVEMENT_KILL_SWITCH_DEFAULT
+            )
+            is True
+        )
+
+    async def self_improvement_daily_budget(self, ctx: SessionContext) -> int:
+        """The per-day self-improvement TOKEN budget (E5), separate from interactive
+        budgets. A malformed or non-positive stored value falls back to the
+        conservative default rather than disabling the cap — fail-closed: a junk
+        value must never read as "unlimited"."""
+        raw = await self.get(ctx, SELF_IMPROVEMENT_BUDGET_KEY, SELF_IMPROVEMENT_BUDGET_DEFAULT)
+        return (
+            raw
+            if isinstance(raw, int) and not isinstance(raw, bool) and raw > 0
+            else (SELF_IMPROVEMENT_BUDGET_DEFAULT)
+        )
+
+    async def self_improvement_spent_today(self, ctx: SessionContext, *, day: str) -> int:
+        """Tokens already spent on self-improvement on UTC date `day` (the spend
+        tally lives in a per-day settings row, no new table). Absent/malformed = 0
+        spent."""
+        raw = await self.get(ctx, SELF_IMPROVEMENT_SPEND_PREFIX + day, 0)
+        return raw if isinstance(raw, int) and not isinstance(raw, bool) and raw >= 0 else 0
+
+    async def record_self_improvement_spend(
+        self, ctx: SessionContext, *, day: str, tokens: int
+    ) -> None:
+        """Add `tokens` to UTC date `day`'s self-improvement tally (read-modify-write
+        on its settings row). Owner-scoped like every settings write; a negative
+        delta is clamped to 0 so a bad caller can never refund the budget."""
+        current = await self.self_improvement_spent_today(ctx, day=day)
+        await self.upsert(ctx, SELF_IMPROVEMENT_SPEND_PREFIX + day, current + max(tokens, 0))
+
+    async def integration_persist(self, ctx: SessionContext) -> bool:
+        """Whether the Integrator persists its run + resolution pins (§E7b).
+        Defaults ON; an explicit `false` (or any non-true value) disables it."""
+        return await self.get(ctx, INTEGRATION_PERSIST_KEY, INTEGRATION_PERSIST_DEFAULT) is True
 
     async def llm_task_overrides(self, ctx: SessionContext) -> dict[str, dict[str, str]]:
         """The live per-task LLM routing/reasoning overrides, sanitized.

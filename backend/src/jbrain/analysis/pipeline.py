@@ -80,6 +80,7 @@ from jbrain.analysis.graph_context import build_graph_context
 from jbrain.analysis.integrate import Integrator
 from jbrain.analysis.integrate_prompt import INTEGRATE_STRENGTH
 from jbrain.analysis.intent import EntityResolution, IntegrationIntent
+from jbrain.analysis.persist import IntegrationRunLog
 from jbrain.analysis.predicates import decide_predicates
 from jbrain.analysis.prompt import (
     EXTRACT_MAX_TOKENS,
@@ -259,6 +260,9 @@ class AnalysisPipeline:
         self._router = router
         # The note→graph judgment agent (docs/archive/INTEGRATOR_PLAN.md Track B).
         self._integrator = Integrator(router)
+        # Net-new integration run + resolution-pin persistence (§E7b), gated by the
+        # integration_persist setting below — inert without a settings store.
+        self._runlog = IntegrationRunLog(maker)
         # Optional on purpose: without an embed client, resolution layer 2 is
         # skipped entirely (no degraded guessing) — the harness and older
         # call sites keep their exact behavior.
@@ -339,7 +343,7 @@ class AnalysisPipeline:
 
         provider, model = self._router.spec("integrate.note", INTEGRATE_STRENGTH)
         async with scoped_session(self._maker, SYSTEM_CTX) as session:
-            await self.apply_intent(
+            resolved = await self.apply_intent(
                 session,
                 note_id=uuid.UUID(note_id),
                 note_domain=domain,
@@ -357,6 +361,33 @@ class AnalysisPipeline:
                 .where(Note.id == uuid.UUID(note_id))
                 .values(integration_state="integrated")
             )
+        # Net-new run + pin persistence (§E7b), gated. Skipped on a rejected plan:
+        # apply_intent committed NOTHING (returns {}), so there is no new decision
+        # to record and — critically — re-touching the pin table here would wipe a
+        # previously-converged note's pins on a transient rejection (a silent flip,
+        # N10). A persistence fault is swallowed: the graph + integration_state are
+        # already durable above, so a run-log/pin write must never fail the job (and
+        # never roll back the commit — persist runs in its own transaction).
+        # SYSTEM_CTX with ran_as='system' recorded on the run: the integration
+        # pipeline legitimately crosses every firewall (E1), and the audit says so.
+        if (
+            not plan.rejected
+            and self._settings is not None
+            and await self._settings.integration_persist(SYSTEM_CTX)
+        ):
+            try:
+                run_id = await self._runlog.persist(
+                    SYSTEM_CTX,
+                    note_id=note_id,
+                    note_domain=domain,
+                    intent=intent,
+                    plan=plan,
+                    chunks=chunks,
+                    resolved=resolved,
+                )
+                log.info("integration.run_persisted", note_id=note_id, run_id=run_id)
+            except Exception as exc:  # noqa: BLE001 — persistence is best-effort audit
+                log.warning("integration.persist_failed", note_id=note_id, error=repr(exc))
         log.info(
             "integration.done",
             note_id=note_id,
@@ -378,7 +409,7 @@ class AnalysisPipeline:
         tags: list[str],
         extractor: str,
         dropped_facts: int = 0,
-    ) -> None:
+    ) -> dict[str, ResolvedEntity | None]:
         """Commit an arbiter-approved IntegrationIntent through the existing
         deterministic _apply (plan §9, Option 1). A rejected plan is a no-op: the
         note stays pending_integration, nothing is written (N5: no partial
@@ -386,6 +417,11 @@ class AnalysisPipeline:
         ambiguous, low weight) are written as inert `pending_review` rows and each
         linked to its low_confidence_inference card — all in this one transaction
         (N5), so a human can later accept (pin) or reject (retract) it.
+
+        Returns the committed mention_ref -> entity map (`{}` for a rejected plan)
+        so the caller can persist the Integrator's resolution pins from the SAME
+        entities the commit used, without re-resolving (which would double-mint
+        provisionals).
 
         `dropped_facts` is the upstream per-note cap's tail-drop count, carried so
         the rebuilt extraction can file the `extraction_truncated` card (W0). The
@@ -398,7 +434,7 @@ class AnalysisPipeline:
                 note_id=str(note_id),
                 violations=[v.code for v in plan.fatal_violations],
             )
-            return
+            return {}
         override = await self._resolve_from_intent(
             session, list(intent.entity_resolutions), note_domain=note_domain
         )
@@ -437,6 +473,7 @@ class AnalysisPipeline:
             signals=signals,
             held_ids=held_ids,
         )
+        return override
 
     async def _resolve_from_intent(
         self,

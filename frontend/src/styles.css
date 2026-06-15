@@ -7423,3 +7423,470 @@ input.ld-title {
     transition: none;
   }
 }
+
+/* ===== Runs · Ops surface — Direction C (docs/mocks/runs-ops-c-dashboard-split.html) =====
+   A full-cover sub-screen over Ops: status tiles, the sweep-control row, the
+   compact run log, and the run-detail step tree (hosted by the shared Sheet). */
+
+.runs-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+  max-width: 430px;
+  margin: 0 auto;
+  animation: launcher-in 150ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .runs-screen {
+    animation: none;
+  }
+}
+
+.runs-bar {
+  flex: none;
+  height: 56px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.runs-bar-title {
+  font-size: var(--fs-title);
+  font-weight: 600;
+  margin: 0;
+}
+
+.runs-refresh {
+  margin-left: auto;
+}
+
+.runs-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 14px;
+}
+
+.runs-sect {
+  font-size: var(--fs-micro);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  font-weight: 600;
+  margin: 18px 2px 9px;
+}
+
+/* Status-tile grid (half-width, 2-col) */
+.runs-tiles {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 11px;
+}
+
+.runs-tile {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 13px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.runs-tile-icon {
+  width: 22px;
+  height: 22px;
+  border-radius: 7px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.runs-tile-num {
+  font-size: var(--fs-hero);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+.runs-tile-label {
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+}
+
+.runs-tile-running {
+  border-color: color-mix(in srgb, var(--green) 40%, transparent);
+}
+.runs-tile-running .runs-tile-num {
+  color: var(--green);
+}
+.runs-tile-running .runs-tile-icon {
+  background: var(--green-tint);
+  color: var(--green);
+}
+.runs-tile-failed {
+  border-color: color-mix(in srgb, var(--rose) 40%, transparent);
+}
+.runs-tile-failed .runs-tile-num {
+  color: var(--rose);
+}
+.runs-tile-failed .runs-tile-icon {
+  background: var(--rose-tint);
+  color: var(--rose);
+}
+.runs-tile-queue .runs-tile-icon {
+  background: var(--violet-tint);
+  color: var(--violet);
+}
+.runs-tile-cost .runs-tile-icon {
+  background: var(--steel-tint);
+  color: var(--steel);
+}
+
+/* Sweep-control row (prominent, top) */
+.runs-sweeprow {
+  display: flex;
+  gap: 9px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+
+.runs-sweepbtn {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--amber-tint);
+  color: var(--amber);
+  border: none;
+  border-radius: 12px;
+  padding: 11px 14px;
+  font: inherit;
+  font-size: var(--fs-secondary);
+  font-weight: 600;
+  min-height: 44px;
+  cursor: pointer;
+}
+
+/* Compact run rows in a card */
+.runs-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  overflow: hidden;
+}
+
+.runs-row {
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  color: inherit;
+  font: inherit;
+  padding: 11px 13px;
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  cursor: pointer;
+  min-height: 44px;
+}
+.runs-row:last-child {
+  border-bottom: none;
+}
+
+.runs-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: var(--r-pill);
+  flex: none;
+}
+.runs-dot-running {
+  background: var(--green);
+  animation: runs-pulse 1.4s ease-in-out infinite;
+}
+.runs-dot-done {
+  background: var(--text-3);
+}
+.runs-dot-error {
+  background: var(--rose);
+}
+
+@keyframes runs-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.3;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .runs-dot-running {
+    animation: none;
+  }
+}
+
+.runs-row-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.runs-row-name {
+  font-size: var(--fs-secondary);
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.runs-kind {
+  font-size: var(--fs-micro);
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  padding: 1px 6px;
+  border-radius: 5px;
+  flex: none;
+}
+.runs-kind-agent {
+  background: var(--steel-tint);
+  color: var(--steel);
+}
+.runs-kind-integration {
+  background: var(--green-tint);
+  color: var(--green);
+}
+.runs-kind-pipeline {
+  background: var(--violet-tint);
+  color: var(--violet);
+}
+
+.runs-row-sub {
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+  margin-top: 3px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.runs-row-right {
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+  flex: none;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.runs-status-error {
+  color: var(--rose);
+}
+.runs-status-running {
+  color: var(--green);
+}
+
+.runs-empty {
+  padding: 10px 2px;
+}
+
+/* The split panel's contents inside the shared Sheet */
+.runs-sp-head {
+  margin: -6px 0 8px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.runs-badge {
+  font-size: var(--fs-micro);
+  padding: 2px 9px;
+  border-radius: var(--r-pill);
+  flex: none;
+}
+.runs-badge-running {
+  background: var(--green-tint);
+  color: var(--green);
+}
+.runs-badge-done {
+  background: var(--surface-2);
+  color: var(--text-2);
+}
+.runs-badge-error {
+  background: var(--rose-tint);
+  color: var(--rose);
+}
+
+.runs-sp-meta {
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.runs-sp-body {
+  max-height: 46vh;
+  overflow-y: auto;
+}
+
+.runs-strow {
+  display: flex;
+  gap: 11px;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--border);
+}
+.runs-strow:last-child {
+  border-bottom: none;
+}
+
+.runs-snode {
+  width: 20px;
+  height: 20px;
+  border-radius: var(--r-pill);
+  border: 1.5px solid var(--border);
+  background: var(--surface);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  margin-top: 1px;
+}
+.runs-snode-ok {
+  border-color: var(--green);
+  color: var(--green);
+}
+.runs-snode-err {
+  border-color: var(--rose);
+  color: var(--rose);
+  background: var(--rose-tint);
+}
+
+.runs-smain {
+  flex: 1;
+  min-width: 0;
+}
+
+.runs-sline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.runs-skind {
+  font-size: var(--fs-micro);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 2px 7px;
+  border-radius: 6px;
+  flex: none;
+}
+.runs-skind-agent {
+  background: var(--steel-tint);
+  color: var(--steel);
+}
+.runs-skind-integration {
+  background: var(--green-tint);
+  color: var(--green);
+}
+.runs-skind-pipeline {
+  background: var(--violet-tint);
+  color: var(--violet);
+}
+
+.runs-sname {
+  font-size: var(--fs-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.runs-scost {
+  margin-left: auto;
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+  flex: none;
+  font-variant-numeric: tabular-nums;
+}
+
+.runs-serr {
+  margin-top: 6px;
+  font-size: var(--fs-micro);
+  color: var(--rose);
+  font-family: var(--font-mono);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 7px 9px;
+  line-height: 1.5;
+}
+
+.runs-sp-foot {
+  margin-top: 12px;
+  display: flex;
+  gap: 9px;
+}
+
+.runs-rerun {
+  flex: 1;
+  border: 1px solid transparent;
+  background: var(--steel-tint);
+  color: var(--steel);
+  font: inherit;
+  font-size: var(--fs-secondary);
+  font-weight: 500;
+  border-radius: 11px;
+  padding: 11px;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  cursor: pointer;
+}
+
+.runs-toast {
+  position: fixed;
+  left: 16px;
+  right: 16px;
+  bottom: calc(24px + env(safe-area-inset-bottom));
+  max-width: 398px;
+  margin: 0 auto;
+  z-index: 90;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px 14px;
+  font-size: var(--fs-secondary);
+  color: var(--text-2);
+  display: flex;
+  gap: 9px;
+  align-items: center;
+}
+
+.runs-toast > svg {
+  color: var(--steel);
+  flex: none;
+}
+
+.runs-toast-x {
+  margin-left: auto;
+  background: none;
+  border: none;
+  color: var(--text-3);
+  flex: none;
+  cursor: pointer;
+  padding: 2px;
+}

@@ -20,8 +20,11 @@ import type {
   Principal,
   ReasoningEffort,
   ReviewItem,
+  RunDetail,
+  RunSummary,
   SearchMatch,
   SearchResult,
+  SweepTrigger,
 } from "./client";
 
 const PRINCIPAL: Principal = {
@@ -57,6 +60,165 @@ const CONTAINERS: ContainerStatus[] = [
     started_at: null,
     image: "jbrain/worker:edge",
   },
+];
+
+// The Ops "Runs" surface (Direction C) fixtures: a running integration run, a
+// running pipeline sweep, a failed run with a step error, and finished runs.
+const ago = (ms: number) => new Date(Date.now() - ms).toISOString();
+const MOCK_RUN_DETAILS: RunDetail[] = [
+  {
+    id: "run-r1",
+    kind: "integration",
+    status: "running",
+    name: "integrate_note",
+    started_at: ago(12_000),
+    duration_ms: null,
+    step_count: 5,
+    cost_tokens: 4100,
+    stop_reason: null,
+    steps: [
+      {
+        idx: 0,
+        kind: "model",
+        name: "classify domain",
+        ok: true,
+        cost_tokens: 300,
+        job_id: null,
+        error: null,
+      },
+      {
+        idx: 1,
+        kind: "tool",
+        name: "entity_resolve",
+        ok: true,
+        cost_tokens: 1200,
+        job_id: null,
+        error: null,
+      },
+      {
+        idx: 2,
+        kind: "model",
+        name: "extract facts",
+        ok: true,
+        cost_tokens: 2600,
+        job_id: null,
+        error: null,
+      },
+    ],
+  },
+  {
+    id: "run-r2",
+    kind: "pipeline",
+    status: "running",
+    name: "consolidate_predicates",
+    started_at: ago(124_000),
+    duration_ms: null,
+    step_count: 2,
+    cost_tokens: 800,
+    stop_reason: null,
+    steps: [
+      {
+        idx: 0,
+        kind: "job",
+        name: "consolidate_predicates",
+        ok: true,
+        cost_tokens: 800,
+        job_id: "job-1",
+        error: null,
+      },
+    ],
+  },
+  {
+    id: "run-r3",
+    kind: "integration",
+    status: "error",
+    name: "integrate_note",
+    started_at: ago(1_080_000),
+    duration_ms: 31_000,
+    step_count: 3,
+    cost_tokens: 6700,
+    stop_reason: "step_error",
+    steps: [
+      {
+        idx: 0,
+        kind: "model",
+        name: "classify domain",
+        ok: true,
+        cost_tokens: 300,
+        job_id: null,
+        error: null,
+      },
+      {
+        idx: 1,
+        kind: "job",
+        name: "ocr_attachment · labs.pdf",
+        ok: false,
+        cost_tokens: 1100,
+        job_id: "job-7",
+        error:
+          "TimeoutError: vision adapter timeout after 30s (attempt 3/3) — marked PermanentJobError. Downstream extract skipped.",
+      },
+    ],
+  },
+  {
+    id: "run-r4",
+    kind: "agent",
+    status: "done",
+    name: "agent",
+    started_at: ago(3_600_000),
+    duration_ms: 48_000,
+    step_count: 4,
+    cost_tokens: 21_400,
+    stop_reason: "end_turn",
+    steps: [
+      {
+        idx: 0,
+        kind: "model",
+        name: "plan turn",
+        ok: true,
+        cost_tokens: 3100,
+        job_id: null,
+        error: null,
+      },
+      {
+        idx: 1,
+        kind: "tool",
+        name: "search_notes",
+        ok: true,
+        cost_tokens: 1000,
+        job_id: null,
+        error: null,
+      },
+      {
+        idx: 2,
+        kind: "model",
+        name: "draft proposal",
+        ok: true,
+        cost_tokens: 8200,
+        job_id: null,
+        error: null,
+      },
+    ],
+  },
+];
+
+const MOCK_RUNS: RunSummary[] = MOCK_RUN_DETAILS.map(
+  ({ id, kind, status, name, started_at, duration_ms, step_count, cost_tokens, steps }) => ({
+    id,
+    kind,
+    status,
+    name,
+    started_at,
+    duration_ms,
+    step_count,
+    cost_tokens,
+    last_error: status === "error" ? (steps.find((s) => !s.ok)?.name ?? null) : null,
+  }),
+);
+
+const MOCK_SWEEPS: SweepTrigger[] = [
+  { id: "sweep-1", pipeline: "consolidate_predicates", label: "Consolidate" },
+  { id: "sweep-2", pipeline: "sync_predicates", label: "Sync predicates" },
 ];
 
 let nextId = 1;
@@ -1757,6 +1919,18 @@ export const mockFetch: typeof fetch = async (input, init) => {
   }
   if (path === "/api/ops/status") return json({ containers: CONTAINERS });
   if (path === "/api/ops/restart") return new Response(null, { status: 204 });
+
+  // The Runs surface (owner-only run log) + the sweep-trigger controls.
+  if (path === "/api/runs") return json(MOCK_RUNS);
+  const runMatch = path.match(/^\/api\/runs\/([^/]+)$/);
+  if (runMatch) {
+    const detail = MOCK_RUN_DETAILS.find((r) => r.id === decodeURIComponent(runMatch[1] ?? ""));
+    return detail ? json(detail) : json({ detail: "no run with that id in scope" }, 404);
+  }
+  if (path === "/api/ops/triggers") return json(MOCK_SWEEPS);
+  if (/^\/api\/ops\/triggers\/[^/]+\/run$/.test(path) && method === "POST") {
+    return new Response(null, { status: 202 });
+  }
   if (path.startsWith("/api/ops/logs/")) {
     const lines = Array.from(
       { length: 40 },

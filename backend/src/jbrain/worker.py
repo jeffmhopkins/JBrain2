@@ -8,9 +8,10 @@ line keeps the service honest in `docker compose ps` and the Ops screen.
 """
 
 import asyncio
+import inspect
 import time
 from collections.abc import Awaitable, Callable
-from typing import Any
+from typing import Any, cast
 
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -20,6 +21,7 @@ from jbrain.analysis import purge
 from jbrain.analysis.consolidation import Consolidator
 from jbrain.analysis.pipeline import AnalysisPipeline
 from jbrain.config import get_settings
+from jbrain.db.session import ScopeStampError, SessionContext, narrowed_context
 from jbrain.embed import NoteEmbedder, PredicateEmbedder, TeiEmbedClient
 from jbrain.ingest import ocr
 from jbrain.ingest.ocr import OcrPipeline
@@ -29,14 +31,50 @@ from jbrain.schema import get_registry
 from jbrain.settings_store import SqlSettingsStore
 from jbrain.storage import FsBlobStore
 from jbrain.usage import SqlUsageRecorder
-from jbrain.workflow.registry import build_registry
+from jbrain.workflow import dispatcher, scheduler
+from jbrain.workflow.registry import ACTION_SPECS, ActionRegistry, build_registry
 
 log = structlog.get_logger()
 
 POLL_SECONDS = 2.0
 HEARTBEAT_SECONDS = 60
 
+# A handler runs one job. The six shipped kinds take only the payload (they manage
+# their own SYSTEM_CTX internally — system pipelines that legitimately cross every
+# domain), which is the type the action registry's dispatch table produces. An
+# owner/agent-triggered handler may instead accept the resolved execution
+# `SessionContext` as a second argument and run its queries under that *narrowed*
+# scope (E1); the worker inspects arity (`_invoke`) and passes the context only when
+# the handler asks for it, so the existing handlers are untouched.
 Handler = Callable[[dict[str, Any]], Awaitable[None]]
+
+# A handler that opts into the narrowed execution scope by accepting it explicitly.
+ScopedHandler = Callable[[dict[str, Any], SessionContext], Awaitable[None]]
+
+
+def resolve_exec_context(job: queue.Job) -> SessionContext:
+    """The `SessionContext` a claimed job's handler runs under (E1, no confused
+    deputy). An UNSTAMPED job (both stamp halves NULL — every job today and the six
+    shipped kinds) runs under the all-domains `SYSTEM_CTX`, exactly as before. A
+    STAMPED job narrows to its (principal_id, domain_code) scope. A *partial* stamp
+    raises ScopeStampError in `narrowed_context` — fail-closed, never a silent
+    widening to system (the caller fails the job)."""
+    if not job.is_stamped:
+        return queue.SYSTEM_CTX
+    return narrowed_context(job.principal_id, job.domain_code)
+
+
+async def _invoke(
+    handler: Handler | ScopedHandler, payload: dict[str, Any], ctx: SessionContext
+) -> None:
+    """Call a handler, passing the resolved execution context only to a handler that
+    declares a second parameter for it (the narrowed-scope handlers). The existing
+    payload-only handlers are called exactly as before."""
+    takes_ctx = len(inspect.signature(handler).parameters) >= 2
+    if takes_ctx:
+        await cast("ScopedHandler", handler)(payload, ctx)
+    else:
+        await cast("Handler", handler)(payload)
 
 
 async def process_one(
@@ -54,7 +92,18 @@ async def process_one(
         log.error("worker.job_unhandled", job_id=job.id, kind=job.kind)
         return True
     try:
-        await handler(job.payload)
+        # Resolve the execution scope BEFORE running the handler: a malformed
+        # (partial) stamp must fail the job, never silently widen to SYSTEM_CTX.
+        exec_ctx = resolve_exec_context(job)
+    except ScopeStampError as exc:
+        # Fail-closed: a half-stamped job is config drift / a smuggled escalation
+        # attempt — fail it permanently rather than run it under any scope.
+        await queue.fail(maker, queue.SYSTEM_CTX, job.id, repr(exc), permanent=True)
+        log.error("worker.job_bad_scope_stamp", job_id=job.id, kind=job.kind, error=repr(exc))
+        return True
+    ran_as = "system" if exec_ctx is queue.SYSTEM_CTX else "scoped"
+    try:
+        await _invoke(handler, job.payload, exec_ctx)
     except queue.PermanentJobError as exc:
         # Retrying cannot help (e.g. malformed extraction after the re-ask):
         # fail now instead of burning the retry budget.
@@ -67,7 +116,9 @@ async def process_one(
         await _after_exhaustion(maker, job, exhausted)
     else:
         await queue.complete(maker, queue.SYSTEM_CTX, job.id)
-        log.info("worker.job_done", job_id=job.id, kind=job.kind)
+        # ran_as records E1's scope choice (system vs scoped) on the audit line:
+        # an owner-system run is visible as such, not a smuggled escalation.
+        log.info("worker.job_done", job_id=job.id, kind=job.kind, ran_as=ran_as)
     return True
 
 
@@ -87,14 +138,41 @@ async def _after_exhaustion(
         await ocr.enqueue_analysis_fallback(maker, str(attachment_id))
 
 
-async def run_loop(maker: async_sessionmaker[AsyncSession], handlers: dict[str, Handler]) -> None:
+async def run_loop(
+    maker: async_sessionmaker[AsyncSession],
+    handlers: dict[str, Handler],
+    registry: ActionRegistry | None = None,
+    settings: SqlSettingsStore | None = None,
+) -> None:
     backfilled = False
     last_heartbeat = 0.0
+    last_tick = 0.0
+    last_dispatch = 0.0
     while True:
         now = time.monotonic()
         if now - last_heartbeat >= HEARTBEAT_SECONDS:
             log.info("worker.heartbeat")
             last_heartbeat = now
+        # Run the scheduler tick on its own cadence: claim due schedules and
+        # enqueue their bound pipelines (workflow/scheduler.py). Cheap when idle
+        # (a single indexed due-query) and rides the same loop as the job claim,
+        # so a nightly sweep needs no separate timer process.
+        if registry is not None and now - last_tick >= scheduler.TICK_SECONDS:
+            await scheduler.run_tick_safely(maker, registry)
+            last_tick = now
+        # Run the SHADOW dispatcher tick alongside the scheduler tick: claim
+        # undispatched events, diff the engine's would-be enqueue against the
+        # hardcoded path, and mark them dispatched — never enqueuing this wave
+        # (workflow/dispatcher.py). Gated by the `workflow_dispatch` setting and
+        # fault-swallowed exactly like the scheduler tick, so the shadow engine can
+        # never disturb the live job loop.
+        if (
+            registry is not None
+            and settings is not None
+            and now - last_dispatch >= dispatcher.TICK_SECONDS
+        ):
+            await dispatcher.run_tick_safely(maker, registry, settings=settings)
+            last_dispatch = now
         try:
             if not backfilled:
                 ingests = await queue.backfill_pending_notes(maker, queue.SYSTEM_CTX)
@@ -172,15 +250,24 @@ async def run() -> None:
         "consolidate_predicates": Consolidator(maker).run,
         # Keep the canonical_predicates index in step with the schema registry.
         "sync_predicates": predicate_embedder.sync_predicates,
+        # The deleted-note-artifact purge as a fireable action (Phase-5 Track B):
+        # the same boot sweep, now also runnable on a nightly schedule / on demand.
+        "purge_deleted_artifacts": scheduler.purge_handler(maker),
     }
     # Build the dispatch table from the action registry (W0.1): an action without
     # a handler — or a handler with no registered action — fails the worker LOUDLY
     # here at boot, like the schema registry above, rather than failing a job at run
     # time (the old "no handler for kind" path). Behavior for known kinds is
-    # unchanged: the dispatch table is the same {kind: handler} map as before.
-    handlers = build_registry().dispatch_table(impls)
+    # unchanged: the dispatch table is the same {kind: handler} map as before. The
+    # registry adds the purge action to the shipped six (it lives in-code only, not
+    # in the app.actions seed — see scheduler.PURGE_ACTION).
+    registry = build_registry((*ACTION_SPECS, scheduler.PURGE_ACTION))
+    handlers = registry.dispatch_table(impls)
     try:
-        await run_loop(maker, handlers)
+        # The shadow dispatcher reads its `workflow_dispatch` gate through the same
+        # live settings store the LLM router uses, so the operator can silence it
+        # without a redeploy.
+        await run_loop(maker, handlers, registry, settings=worker_settings_store)
     finally:
         await engine.dispose()
 

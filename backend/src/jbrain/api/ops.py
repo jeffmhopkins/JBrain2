@@ -22,8 +22,34 @@ from jbrain.db.session import SessionContext
 from jbrain.db.stats import database_stats
 from jbrain.storage import BackupShelf, BlobStore
 from jbrain.usage import usage_summary
+from jbrain.workflow import scheduler
+from jbrain.workflow.registry import ActionRegistry
 
 router = APIRouter(prefix="/ops", dependencies=[Depends(owner_only)])
+
+
+@router.post("/triggers/{trigger_id}/run", status_code=202)
+async def run_trigger(trigger_id: str, request: Request) -> dict[str, object]:
+    """Fire a manual trigger now: enqueue its pipeline's action(s) immediately so a
+    sweep is runnable from Ops without a service restart (Phase-5 Track B, E4).
+
+    Owner-only (the router dependency). Returns the enqueued job ids — the audit
+    handle for the run-log surface. A re-fire is safe: the enqueued handlers keep
+    their own dedup and write-once semantics, so a second click never double-writes.
+    """
+    maker = cast("async_sessionmaker[AsyncSession]", request.app.state.session_maker)
+    registry = cast(ActionRegistry, request.app.state.action_registry)
+    try:
+        fired = await scheduler.fire_trigger(maker, registry, trigger_id, require_manual=True)
+    except scheduler.ScheduleResolutionError as exc:
+        # An unknown/disabled trigger or an unresolvable pipeline is a 404, not a
+        # server error: the operator named a trigger that can't be fired.
+        raise HTTPException(status_code=404, detail=str(exc)) from None
+    return {
+        "trigger_id": fired.trigger_id,
+        "pipeline": fired.pipeline,
+        "job_ids": fired.job_ids,
+    }
 
 
 def _client(request: Request) -> httpx.AsyncClient:

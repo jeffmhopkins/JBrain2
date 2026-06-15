@@ -471,6 +471,68 @@ export interface LlmUsage {
   days: DayUsage[];
 }
 
+// ===== Phase 5: the workflow run log (the Ops "Runs" surface; /api/runs) =====
+// Mirrors backend/src/jbrain/api/runs.py 1:1 — the run log is owner-only.
+
+/** A run's lifecycle state as stored (migration 0016 CHECK). 'error' is the
+ * failed state; the Runs surface renders it as the red "failed" tile/dot. */
+export type RunStatus = "running" | "done" | "error";
+
+/** A manual/sweep trigger the owner can fire on demand. The list endpoint is
+ * sibling Track B's (`GET /api/ops/triggers`); the Runs surface reads it
+ * best-effort so the sweep row lights up once B ships, and stays hidden until
+ * then rather than breaking. */
+export interface SweepTrigger {
+  id: string;
+  pipeline: string;
+  /** Optional human label/description; falls back to the pipeline name. */
+  label?: string | null;
+}
+
+/** A row in the run log list (GET /api/runs). */
+export interface RunSummary {
+  id: string;
+  /** agent | integration | pipeline — drives the kind chip. */
+  kind: string;
+  status: RunStatus;
+  /** The pipeline (or its trigger's pipeline) names the run; agent runs read "agent". */
+  name: string;
+  started_at: string;
+  /** null while still running — no honest end yet. */
+  duration_ms: number | null;
+  step_count: number;
+  cost_tokens: number;
+  /** The first failing step's name; null unless status is "error". */
+  last_error: string | null;
+}
+
+/** One node in a run's step tree (the split-panel; GET /api/runs/{id}). */
+export interface RunStepView {
+  idx: number;
+  /** model | tool | job — drives the step-kind chip. */
+  kind: string;
+  name: string;
+  ok: boolean;
+  cost_tokens: number;
+  /** The executor job this step enqueued, when any. */
+  job_id: string | null;
+  /** A failing step's error text; null on a successful step. */
+  error: string | null;
+}
+
+export interface RunDetail {
+  id: string;
+  kind: string;
+  status: RunStatus;
+  name: string;
+  started_at: string;
+  duration_ms: number | null;
+  step_count: number;
+  cost_tokens: number;
+  stop_reason: string | null;
+  steps: RunStepView[];
+}
+
 export type SearchMatch = "semantic" | "keyword" | "both";
 
 export interface SearchResult {
@@ -904,6 +966,32 @@ export const api = {
   // the stream simply errors — log-following is out of mock scope.
   opsLogStream(service: string): EventSource {
     return new EventSource(`/api/ops/logs/${encodeURIComponent(service)}/stream`);
+  },
+
+  // ===== The workflow run log — the Ops "Runs" surface (owner-only) =====
+
+  async runs(): Promise<RunSummary[]> {
+    const response = await request("/api/runs");
+    return (await response.json()) as RunSummary[];
+  },
+
+  async run(id: string): Promise<RunDetail> {
+    const response = await request(`/api/runs/${encodeURIComponent(id)}`);
+    return (await response.json()) as RunDetail;
+  },
+
+  // The manual/sweep triggers for the dashboard's sweep-control row (sibling
+  // Track B). Best-effort: the surface treats a missing endpoint as "no sweeps"
+  // and simply hides the row, so it never blocks the run log.
+  async sweepTriggers(): Promise<SweepTrigger[]> {
+    const response = await request("/api/ops/triggers");
+    return (await response.json()) as SweepTrigger[];
+  },
+
+  // Fire a manual/sweep trigger's pipeline immediately (sibling Track B's
+  // endpoint). Idempotent on the server; the new run shows up in `runs()`.
+  async runTrigger(triggerId: string): Promise<void> {
+    await request(`/api/ops/triggers/${encodeURIComponent(triggerId)}/run`, { method: "POST" });
   },
 
   // ===== Phase 4: the agent — sessions + Full Brain chat (docs/ASSISTANT.md) =====

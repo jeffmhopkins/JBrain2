@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from jbrain.agent.memory import MemoryRepo, MemoryService
 from jbrain.agent.proposals import ProposalRepo
 from jbrain.agent.readtools import build_registry
-from jbrain.agent.runlog import AgentRunLog
+from jbrain.agent.runlog import AgentRunLog, RunLogReader
 from jbrain.agent.session import AgentSessionRepo
 from jbrain.agent.transcript_store import AgentTranscript
 from jbrain.analysis.repo import SqlAnalysisRepo
@@ -22,6 +22,7 @@ from jbrain.api import (
     notes,
     ops,
     proposals,
+    runs,
     search,
     sessions,
 )
@@ -48,6 +49,9 @@ from jbrain.search.service import SearchService
 from jbrain.settings_store import SqlSettingsStore
 from jbrain.storage import FsBackupShelf, FsBlobStore
 from jbrain.usage import SqlUsageRecorder
+from jbrain.workflow.registry import ACTION_SPECS
+from jbrain.workflow.registry import build_registry as build_action_registry
+from jbrain.workflow.scheduler import PURGE_ACTION
 
 structlog.configure(
     processors=[structlog.processors.TimeStamper(fmt="iso"), structlog.processors.JSONRenderer()]
@@ -70,6 +74,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.blob_store = FsBlobStore(settings.blob_dir)
         app.state.backup_shelf = FsBackupShelf(settings.backups_dir)
         app.state.job_queue = PgJobQueue(maker)
+        # The action registry the emergency-trigger control resolves a sweep's
+        # pipeline through (workflow/scheduler.fire_trigger). Mirrors the worker's
+        # composed registry — the shipped six plus the in-code purge action — so a
+        # trigger fired from Ops enqueues exactly what the scheduler would.
+        app.state.action_registry = build_action_registry((*ACTION_SPECS, PURGE_ACTION))
         app.state.search_service = SearchService(
             SqlSearchRepo(maker), TeiEmbedClient(settings.embed_url)
         )
@@ -109,6 +118,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
         app.state.agent_sessions = AgentSessionRepo(maker)
         app.state.agent_runlog = AgentRunLog(maker)
+        app.state.run_reader = RunLogReader(maker)
         app.state.agent_transcript = AgentTranscript(maker)
         app.state.supervisor_client = httpx.AsyncClient(base_url=settings.supervisor_url)
         yield
@@ -128,6 +138,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(notes.router, prefix="/api")
     app.include_router(ops.router, prefix="/api")
     app.include_router(proposals.router, prefix="/api")
+    app.include_router(runs.router, prefix="/api")
     app.include_router(search.router, prefix="/api")
     app.include_router(sessions.router, prefix="/api")
     app.include_router(settings_api.router, prefix="/api")
