@@ -37,7 +37,7 @@ from jbrain.embed import EmbedClient
 # that actually settle "who is this / has this changed" survive the per-entity
 # fact cap even for a fact-heavy entity. Order here is the surfacing order.
 _IDENTITY_PREDICATES: tuple[str, ...] = (
-    "name.legal",
+    "name.full",
     "name.preferred",
     "name.nickname",
     "gender",

@@ -125,7 +125,7 @@ LLM_LINK_CONFIDENCE = 0.8
 # is short and low-signal — proposing merges on those resurrects the
 # bare-first-name fan-out ANALYSIS rejected (docs/ANALYSIS.md "Same-name
 # coexistence"). Canonical spellings only; parse-time normalization already ran.
-_NEAR_DUP_PREDICATES = frozenset({"name.legal", "name.maiden", "name.aka"})
+_NEAR_DUP_PREDICATES = frozenset({"name.full", "name.maiden", "name.aka"})
 
 
 def local_anchor(captured_at: datetime, tz_offset_minutes: int | None) -> datetime:

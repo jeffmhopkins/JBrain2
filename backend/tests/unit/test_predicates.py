@@ -96,7 +96,7 @@ def test_predicate_descriptor_humanizes_name_and_adds_shape_hint() -> None:
 
     # A registry-provided description is woven in alongside the synthesized hint.
     described = Predicate(
-        canonical_name="name.legal", value_shape="text", kind="state", description="legal full name"
+        canonical_name="name.full", value_shape="text", kind="state", description="legal full name"
     )
     assert "legal full name" in predicate_descriptor(described)
 

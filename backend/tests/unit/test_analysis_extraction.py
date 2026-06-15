@@ -348,7 +348,7 @@ def test_system_prompt_teaches_declared_names_and_aliases() -> None:
     never folded into a statement or the ownership edge. Possessive
     introductions decompose into owns edge + name attribute."""
     assert "A name or alias the note DECLARES" in SYSTEM_PROMPT
-    for predicate in ("name.legal", "name.preferred", "name.nickname"):
+    for predicate in ("name.full", "name.preferred", "name.nickname"):
         assert predicate in SYSTEM_PROMPT, predicate
     assert 'value_json {"value": "..."}' in SYSTEM_PROMPT
     assert "BOTH the owns edge AND the name attribute" in SYSTEM_PROMPT
@@ -381,7 +381,7 @@ def test_user_prompt_carries_the_per_note_fact_budget() -> None:
 
 
 def test_prompt_version_is_v14() -> None:
-    assert PROMPT_VERSION == "note-extract-v15"
+    assert PROMPT_VERSION == "note-extract-v16"
 
 
 def test_user_prompt_carries_anchor_with_timezone_domain_and_content() -> None:
@@ -957,7 +957,7 @@ def test_relative_phrase_rendered_midnight_utc_is_not_pushed_a_day() -> None:
 
 def test_drift_predicates_normalize_to_canonical() -> None:
     # The registry's renamed_from attractor is applied during parse, so a note
-    # that says "legalName" lands on the canonical name.legal address — the same
+    # that says "legalName" lands on the canonical name.full address — the same
     # identity key a later "legal_name" note would, keeping one history.
     payload = {
         "title": "Names",
@@ -980,7 +980,7 @@ def test_drift_predicates_normalize_to_canonical() -> None:
         ],
         "temporal_tokens": [],
     }
-    assert [f.predicate for f in parse_extraction(payload).facts] == ["name.legal"]
+    assert [f.predicate for f in parse_extraction(payload).facts] == ["name.full"]
 
 
 # ---- Deterministic relationship-object linking (link_relationship_objects) ----

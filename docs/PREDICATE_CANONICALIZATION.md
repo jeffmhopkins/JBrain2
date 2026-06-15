@@ -168,7 +168,7 @@ at runtime:
 
 | column | notes |
 |---|---|
-| `canonical_name` | PK; the registry canonical (e.g. `name.legal`) |
+| `canonical_name` | PK; the registry canonical (e.g. `name.full`) |
 | `descriptor` | the text we embed (definition + example) |
 | `embedding` | `vector(384)`, HNSW `vector_cosine_ops` |
 | `embedding_model` | provenance, like chunks/entities |

@@ -156,7 +156,7 @@ async def test_reproject_replaces_frozen_nickname_with_legal_name(
         maker,
         entity_id=entity,
         note_id=note,
-        predicate="name.legal",
+        predicate="name.full",
         value_json={"value": "Celine Kitina Hopkins"},
     )
     async with scoped_session(maker, SYSTEM_CTX) as s:
@@ -169,7 +169,7 @@ async def test_reproject_prefers_preferred_name(
 ) -> None:
     note = await seed_note(maker)
     entity = await seed_entity(maker, name="Sammy")
-    await seed_fact(maker, entity_id=entity, note_id=note, predicate="name.legal",
+    await seed_fact(maker, entity_id=entity, note_id=note, predicate="name.full",
                     value_json={"value": "Celine Kitina Hopkins"})  # fmt: skip
     await seed_fact(maker, entity_id=entity, note_id=note, predicate="name.preferred",
                     value_json={"value": "Sam"})  # fmt: skip
@@ -196,7 +196,7 @@ async def test_owner_me_keeps_its_override(
 ) -> None:
     note = await seed_note(maker)
     me = await seed_entity(maker, name="Me", status="confirmed", with_subject=True)
-    await seed_fact(maker, entity_id=me, note_id=note, predicate="name.legal",
+    await seed_fact(maker, entity_id=me, note_id=note, predicate="name.full",
                     value_json={"value": "Jeffrey Mark Hopkins"})  # fmt: skip
     async with scoped_session(maker, SYSTEM_CTX) as s:
         assert await reproject_canonical_name(s, me) is None
@@ -208,7 +208,7 @@ async def test_unknown_kind_is_left_alone(
 ) -> None:
     note = await seed_note(maker)
     entity = await seed_entity(maker, name="aspirin", kind="Drug")
-    await seed_fact(maker, entity_id=entity, note_id=note, predicate="name.legal",
+    await seed_fact(maker, entity_id=entity, note_id=note, predicate="name.full",
                     value_json={"value": "acetylsalicylic acid"})  # fmt: skip
     async with scoped_session(maker, SYSTEM_CTX) as s:
         assert await reproject_canonical_name(s, entity) is None
@@ -222,7 +222,7 @@ async def test_no_usable_value_keeps_existing_name(
     # a null value_json -> nothing to project, so the name is left untouched.
     note = await seed_note(maker)
     entity = await seed_entity(maker, name="Sammy")
-    await seed_fact(maker, entity_id=entity, note_id=note, predicate="name.legal", value_json=None)
+    await seed_fact(maker, entity_id=entity, note_id=note, predicate="name.full", value_json=None)
     async with scoped_session(maker, SYSTEM_CTX) as s:
         assert await reproject_canonical_name(s, entity) is None
     assert await _canonical(maker, entity) == "Sammy"
@@ -261,7 +261,7 @@ async def test_does_not_reproject_onto_a_name_another_entity_owns(
         maker,
         entity_id=declarer,
         note_id=note,
-        predicate="name.legal",
+        predicate="name.full",
         value_json={"value": "Anselm Beauregard Fitzwilliam"},
     )
     async with scoped_session(maker, SYSTEM_CTX) as s:

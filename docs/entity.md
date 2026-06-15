@@ -199,7 +199,7 @@ those standards and the LLM already knows the spellings.
 
 | Facet | Canonical predicates | Standard | Notes |
 |---|---|---|---|
-| **Named** | `name` (display), `name.legal`, `name.given`, `name.family`, `name.additional`, `name.prefix`, `name.suffix`, `name.preferred`, `name.nickname.<audience>`, `name.maiden`, `name.former`, `name.aka` | schema.org name props, vCard `N`/`FN` | every variant is its **own edge** (§Names); `name` is the projected display string |
+| **Named** | `name` (display), `name.full`, `name.given`, `name.family`, `name.additional`, `name.prefix`, `name.suffix`, `name.preferred`, `name.nickname.<audience>`, `name.maiden`, `name.former`, `name.aka` | schema.org name props, vCard `N`/`FN` | every variant is its **own edge** (§Names); `name` is the projected display string |
 | **Temporal** | `startDate`, `endDate`, `effectiveDate`, `validInterval` (→ temporal token) | ISO 8601, FHIR `effective[x]` | absent `endDate` ⇒ ongoing; values reference temporal tokens **[decided: ANALYSIS]** |
 | **Recurrence** | `recurrence` (→ `recurrence`-kind temporal token: RRULE/RDATE/EXDATE) | iCalendar RFC 5545 | a token, **never** materialized instance rows (§Recurrence) |
 | **Located** | `address` (`structured(postal_address)`), `geo` (`structured(geo)`) | schema.org `PostalAddress`/`GeoCoordinates`, ISO 3166 | 🔒 `location` domain |
@@ -229,7 +229,7 @@ The `name.*` family, with `name.nickname` taking `qualifier_vocab: name_audience
 | Edge | Meaning | Kind | Functional |
 |---|---|---|---|
 | `name` | the projected display string (see below) | attribute | derived, not stored directly |
-| `name.legal` | registered legal name | state | yes — a legal change supersedes, with history |
+| `name.full` | full name as written (a stated full **or** legal name folds here — not a claim it is the *registered* legal name) | state | yes — a name change supersedes, with history |
 | `name.given` / `name.family` / `name.additional` | structured components (vCard `N`) | attribute | per-component |
 | `name.prefix` / `name.suffix` | honorific prefix/suffix | attribute | accumulate |
 | `name.preferred` | what they go by | preference | yes |
@@ -240,7 +240,7 @@ The `name.*` family, with `name.nickname` taking `qualifier_vocab: name_audience
 **Display name is a projection, not a stored override** **[decided: ANALYSIS;
 currently unimplemented].** `canonical_name` is recomputed on every name-fact
 write by the type's `display_name` precedence — for Person:
-`[name.preferred, name.given+name.family, name.legal, first surface form]`.
+`[name.preferred, name.given+name.family, name.full, first surface form]`.
 This fixes the frozen-`Sammy` bug directly: "Sammy" becomes a
 `name.nickname.friends` edge; the display projects to her given+family or
 preferred name; "Me" remains an explicit owner override because the owner entity
@@ -305,7 +305,7 @@ seeding, merge proposals, no second key system — is unchanged.)
 The registry contributes exactly one resolution input: **`alias_seeding_predicates`**
 — the predicates whose *asserted* values register as exact aliases on their
 entity, feeding the existing declared-name→alias machinery. For Person that is
-`[name.legal, name.preferred, name.aka, name.maiden]`. A seeded alias that
+`[name.full, name.preferred, name.aka, name.maiden]`. A seeded alias that
 collides with a different live entity files a `merge_proposal` (the more-anchored
 side wins) — unchanged from ANALYSIS. The structured `name.given`/`name.family`
 edges give the resolver token-level overlap signals so `Celine Hopkins` /
@@ -370,14 +370,14 @@ parentheses. 🔒 marks the firewall a category floors into.
 - **Person** *(graph; schema.org Person, vCard)* — facets: Named, Contactable,
   Located, Temporal, Related. Core: `name.*` (§Names), `birthDate`/`deathDate`
   (event, functional), `gender`/`pronouns` (state 🔒). Display:
-  `[name.preferred, name.given+family, name.legal]`. Alias-seed:
-  `[name.legal, name.preferred, name.aka, name.maiden]`. May be a security
+  `[name.preferred, name.given+family, name.full]`. Alias-seed:
+  `[name.full, name.preferred, name.aka, name.maiden]`. May be a security
   subject (set per-entity, not per-type). Domain: general.
 
 - **Organization** *(graph; schema.org Organization)* — facets: Named,
-  Contactable, ExternalIdentified, Related. Core: `name`, `name.legal`
+  Contactable, ExternalIdentified, Related. Core: `name`, `name.full`
   (functional), `identifier.ein`/`.duns`/`.lei` 🔒, `parentOrganization`
-  (ref). Display: `[name, name.legal]`. Locations live on `Place` refs, not
+  (ref). Display: `[name, name.full]`. Locations live on `Place` refs, not
   inlined. Domain: general (tax id finance-adjacent).
 
 - **Place** *(graph; schema.org Place/PostalAddress)* — facets: Named, Located,
@@ -465,7 +465,7 @@ parentheses. 🔒 marks the firewall a category floors into.
 1. **Predicate drift** → the `Named` facet and the cross-cutting facets give the
    high-traffic predicates one *preferred* spelling; nightly consolidation
    normalizes `legalName`/`legal_name`/`alsoKnownAs` toward
-   `name.legal`/`name.aka`. No gate, no rejection — just an attractor with teeth.
+   `name.full`/`name.aka`. No gate, no rejection — just an attractor with teeth.
 2. **Inconsistent canonical names** → `canonical_name` becomes the live
    `display_name` projection; "Sammy" is a `name.nickname.friends` edge, not the
    identity. (Implementation gap, now a requirement.)

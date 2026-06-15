@@ -1,6 +1,6 @@
 {
   "name": "canonical_name projects from name facts, not the first surface form",
-  "description": "The Sammy bug: an entity first mentioned by a nickname must not stay displayed as that nickname. After the note's facts land, reproject_canonical_name (wired into the pipeline) recomputes canonical_name from the entity's name.* facts by the Person display_name precedence (preferred > given+family > legal > name). name.nickname is NOT in that precedence, so the legal name wins and the entity displays as 'Celine Kitina Hopkins', not 'Sammy'. Exercises slice 2 (projection) + slice 3 (the model puts the bare name in value_json).",
+  "description": "The Sammy bug: an entity first mentioned by a nickname must not stay displayed as that nickname. After the note's facts land, reproject_canonical_name (wired into the pipeline) recomputes canonical_name from the entity's name.* facts by the Person display_name precedence (preferred > given+family > full > name). name.nickname is NOT in that precedence, so the full name wins and the entity displays as 'Celine Kitina Hopkins', not 'Sammy'. The extractor's name.legal folds onto name.full via the registry attractor. Exercises slice 2 (projection) + slice 3 (the model puts the bare name in value_json).",
   "steps": [
     {
       "domain": "general",
@@ -22,7 +22,7 @@
   ],
   "expect": {
     "facts": [
-      {"entity": "Celine Kitina Hopkins", "predicate": "name.legal", "kind": "attribute", "value_contains": "Celine Kitina Hopkins"},
+      {"entity": "Celine Kitina Hopkins", "predicate": "name.full", "kind": "attribute", "value_contains": "Celine Kitina Hopkins"},
       {"entity": "Celine Kitina Hopkins", "predicate": "name.nickname", "qualifier": "friends", "value_contains": "Sammy"}
     ],
     "entities": [

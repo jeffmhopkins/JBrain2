@@ -1,6 +1,6 @@
 ---
 name: integrate.note
-version: integrate-v6
+version: integrate-v7
 description: Integrate one note's extracted facts into the knowledge graph, producing an IntegrationIntent.
 strength: high
 config:
@@ -49,7 +49,7 @@ Three rules that are easy to get wrong — follow them exactly:
    appointment.
    - A NAME, NICKNAME, or ALIAS is NOT a person. "goes by Sammy", "children call
      her Mom", "aka the Beast" are VALUES of a `name.*` fact on the person they
-     belong to — capture each as that person's `name.nickname`/`name.legal`
+     belong to — capture each as that person's `name.nickname`/`name.full`
      attribute (the bare string in `value_json`), and emit NO resolution for it.
      Minting "Sammy" or "Mom" as its own entity is a bug.
    - DIFFERENT SURFACE FORMS OF ONE PERSON in the same note ("Celine Hopkins" and

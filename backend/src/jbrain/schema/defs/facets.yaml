@@ -18,14 +18,15 @@ facets:
         kind: attribute
         schema_org_ref: schema:name
         description: Display name; projected from the variants below, not set directly.
-      - canonical_name: name.legal
+      - canonical_name: name.full
         value_shape: text
         kind: state
-        functional: true                # a legal-name change supersedes, with history
-        # fullName/full_name fold here (a stated full name is the formal name)
-        # so they normalize AND drive the display projection, not just alias.
-        renamed_from: [legal_name, legalName, full_legal_name, fullName, full_name]
-        schema_org_ref: schema:legalName
+        functional: true                # a full-name change supersedes, with history
+        # A stated full OR legal name folds here: the formal name as written, not
+        # a claim it is the registered legal name (the note rarely says "legal").
+        # Folds AND drives the display projection, not just alias. The old
+        # name.legal address normalizes here so existing facts keep one history.
+        renamed_from: [name.legal, legal_name, legalName, full_legal_name, fullName, full_name]
       - canonical_name: name.given
         value_shape: text
         kind: attribute
