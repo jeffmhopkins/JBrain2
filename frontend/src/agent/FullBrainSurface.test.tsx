@@ -1,8 +1,9 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { api } from "../api/client";
-import { FullBrainSurface } from "./FullBrainSurface";
+import { AgentStatusLine, FullBrainSurface } from "./FullBrainSurface";
+import type { AgentStatus } from "./status";
 import type { AgentSession, ChatEvent, ChatRequest, TranscriptTurn } from "./types";
 import { type FullBrainDeps, useFullBrain } from "./useFullBrain";
 
@@ -371,9 +372,45 @@ describe("FullBrainSurface", () => {
     );
 
     releaseTool();
-    await waitFor(() =>
-      expect(screen.getByRole("status").textContent).toContain("Answered · 1 tool used"),
+    // The tool label is pinned for a beat (TOOL_HOLD_MS); give the finish room to
+    // land once the hold elapses.
+    await waitFor(
+      () => expect(screen.getByRole("status").textContent).toContain("Answered · 1 tool used"),
+      { timeout: 2000 },
     );
+  });
+
+  it("pins a tool label for a beat so a fast call is readable, swapping on a new tool", () => {
+    vi.useFakeTimers();
+    try {
+      const tool = (label: string, emphasis: string): AgentStatus => ({
+        kind: "tool",
+        label,
+        emphasis,
+      });
+      const done: AgentStatus = { kind: "done", label: "Answered · 1 tool used" };
+
+      const { rerender } = render(<AgentStatusLine status={tool("Searching", "your notes")} />);
+      expect(screen.getByRole("status").textContent).toContain("Searching your notes");
+
+      // The tool finishes almost at once; its label must stay up, not flash away.
+      rerender(<AgentStatusLine status={done} />);
+      act(() => vi.advanceTimersByTime(300));
+      expect(screen.getByRole("status").textContent).toContain("Searching your notes");
+
+      // A second tool inside the window swaps the label and re-arms the hold.
+      rerender(<AgentStatusLine status={tool("Reading", "a note")} />);
+      expect(screen.getByRole("status").textContent).toContain("Reading a note");
+      rerender(<AgentStatusLine status={done} />);
+      act(() => vi.advanceTimersByTime(900));
+      expect(screen.getByRole("status").textContent).toContain("Reading a note");
+
+      // Once the full hold elapses it settles on the current status.
+      act(() => vi.advanceTimersByTime(200));
+      expect(screen.getByRole("status").textContent).toContain("Answered · 1 tool used");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("surfaces a staged proposal as a Review chip routed to the Proposals panel", async () => {
