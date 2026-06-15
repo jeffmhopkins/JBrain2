@@ -593,6 +593,12 @@ class AnalysisPipeline:
             return
         note_id = uuid.UUID(intent.note_id)
         carded: set[str] = set()  # one new_predicate card per raw predicate per run
+        # A mention_ref is opaque in the agentic flow, so resolve it to the name the
+        # agent gave a NEW entity for the card's edge preview; an unresolved ref
+        # (an existing entity, looked up only at apply time) falls back to itself.
+        names = {
+            r.mention_ref: r.new_name for r in intent.entity_resolutions if r.new_name is not None
+        }
         async with scoped_session(self._maker, SYSTEM_CTX) as session:
             # One embed call for every unknown predicate, not one per fact.
             decisions = await decide_predicates(
@@ -617,6 +623,16 @@ class AnalysisPipeline:
                         statement=fact.statement,
                         kind=fact.kind,
                         suggestions=decision.suggestions,
+                        # The triggering edge, so the card can preview what each
+                        # mapping would write (subject.<canonical> -> value). A
+                        # relationship's value is the other mention's name; an
+                        # attribute's is its bare datum.
+                        subject=names.get(fact.entity_ref, fact.entity_ref),
+                        value=(
+                            names.get(fact.object_entity_ref, fact.object_entity_ref)
+                            if fact.object_entity_ref is not None
+                            else value_label(fact.value_json, fact.statement)
+                        ),
                     )
 
     @staticmethod
@@ -639,6 +655,8 @@ class AnalysisPipeline:
         statement: str,
         kind: str,
         suggestions: tuple[tuple[str, float], ...],
+        subject: str,
+        value: str,
     ) -> None:
         """File an idempotent new_predicate card for an unknown predicate the
         canonicalizer could not confidently merge (Phase 3 §3.1a). The fact has
@@ -666,6 +684,9 @@ class AnalysisPipeline:
                     "statement": statement,
                     "fact_kind": kind,
                     "note_id": str(note_id),
+                    # subject/value drive the card's per-candidate edge preview.
+                    "subject": subject,
+                    "value": value,
                     "suggestions": [{"name": n, "score": s} for n, s in suggestions],
                     **new_predicate_display(predicate=predicate, suggestions=suggestions),
                 },
