@@ -198,12 +198,14 @@
         border-radius: var(--r-pill); padding: 6px 14px; font: inherit; font-family: var(--font-mono);
         font-size: var(--fs-micro); font-weight: 600; cursor: pointer;
       }
-      /* Inline console panel — the same dense log as Direction C, embedded in the page. */
+      /* Inline console panel — the same dense log as Direction C, embedded in the
+         page. Console mode REPLACES the timeline nodes rather than stacking below. */
       .tl-console {
         display: none; margin-top: 10px; background: var(--bg);
         border: 1px solid var(--border); border-radius: var(--r-input); overflow: hidden;
       }
-      .tl-console.open { display: block; }
+      .timeline.show-console .tl-node { display: none; }
+      .timeline.show-console .tl-console { display: block; }
       .tl-console-head {
         display: flex; align-items: center; gap: 8px; padding: 9px 12px;
         border-bottom: 1px solid var(--border); font-size: var(--fs-micro);
@@ -517,7 +519,7 @@
       ];
 
       const BLURBS = {
-        a: "<b>A · Timeline + console (chosen).</b> A vertical stepper — tap any stage to expand its detail. <b>‹/› show console</b> reveals the dense raw log right inline (no drawer, same page), and its <b>copy</b> button puts the full trace — header, all three stages, and the ceiling arithmetic — on the clipboard. Glanceable by default; full troubleshooting log one tap away.",
+        a: "<b>A · Timeline + console (chosen).</b> A vertical stepper — tap any stage to expand its detail. <b>‹/› show console</b> swaps the timeline out for the dense raw log in the same spot (one view at a time, no drawer), and its <b>copy</b> button puts the full trace — header, all three stages, and the ceiling arithmetic — on the clipboard. <b>▤ show timeline</b> swaps back. Glanceable by default; full troubleshooting log one tap away.",
         b: "<b>B · Tabs.</b> One compact disclosure with a segmented <i>extraction / integration / arbiter</i> switch — see one stage's full detail at a time, step forward/back. Most space-efficient; keeps the card short.",
         c: "<b>C · Console.</b> A dev-style bottom drawer with the dense, copyable provenance log, including the literal ceiling arithmetic. Built for <i>troubleshooting</i> future issues — least pretty, most information.",
       };
@@ -582,8 +584,8 @@
           };
         });
         $("a-console-btn").onclick = () => {
-          const open = $("a-console-wrap").classList.toggle("open");
-          $("a-console-btn").textContent = open ? "‹/› hide console" : "‹/› show console";
+          const show = tl.classList.toggle("show-console");
+          $("a-console-btn").textContent = show ? "▤ show timeline" : "‹/› show console";
         };
         $("a-ccopy").onclick = (e) => flashCopy(e.currentTarget, "copied ✓");
       }
