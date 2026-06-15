@@ -1670,7 +1670,11 @@ async def test_used_to_relationship_is_closed_and_mints_no_inverse(
     a closed `worksFor` must not mint `Oregon Lithoprint employs Me`, or that
     derived edge would answer "who works there?" with the owner — re-presenting a
     past job as current (legacy-links plan §ledger F1)."""
-    note_id = await make_note(maker, domain="general", body="I used to work for Oregon Lithoprint.")
+    # Body names the org so the edge is surface-attested (weight clears commit) —
+    # the same recipe as the cross-subject test that lands a relationship active.
+    note_id = await make_note(
+        maker, domain="general", body="I worked for Oregon Lithoprint from 2019 to 2021."
+    )
 
     # Seed the org as a confirmed, null-subject (Thing) entity resolvable by exact
     # alias, so the edge resolves to a known object whose inverse WOULD normally be
@@ -1693,33 +1697,16 @@ async def test_used_to_relationship_is_closed_and_mints_no_inverse(
             {"eid": org_entity},
         )
 
-    payload = {
-        "title": "Employment",
-        "tags": ["work"],
-        "mentions": [
-            {"name": "Me", "kind": "Person", "surface_text": "I"},
-            {"name": "Oregon Lithoprint", "kind": "Organization", "surface_text": "Oregon"},
-        ],
-        "facts": [
-            {
-                "predicate": "worksFor", "qualifier": "", "kind": "relationship",
-                "statement": "Me worked for Oregon Lithoprint 2019-2021.", "value_json": None,
-                "assertion": "asserted", "entity_ref": "Me",
-                "object_entity_ref": "Oregon Lithoprint",
-                # A model-DATED closed interval (resolved_end set): exercises the
-                # closed-edge inverse gate directly, independent of the past-marker
-                # guard (unit-tested separately) and of how undated edges are weighed.
-                "temporal": {
-                    "phrase": "from 2019 to 2021",
-                    "resolved_start": "2019-01-01T00:00:00+00:00",
-                    "resolved_end": "2021-12-31T00:00:00+00:00",
-                    "precision": "year",
-                },
-                "domain": "general", "confidence": 0.9,
-            }
-        ],
-        "temporal_tokens": [],
-    }  # fmt: skip
+    # The proven active-landing relationship recipe, with a model-DATED CLOSED
+    # interval — so the edge commits active and exercises the closed-edge inverse
+    # gate directly (the past-marker guard is unit-tested separately).
+    payload = _relationship_payload("worksFor", "Oregon Lithoprint", obj_kind="Organization")
+    payload["facts"][0]["temporal"] = {
+        "phrase": "from 2019 to 2021",
+        "resolved_start": "2019-01-01T00:00:00+00:00",
+        "resolved_end": "2021-12-31T00:00:00+00:00",
+        "precision": "year",
+    }
     await analyzer(maker, [json.dumps(payload)]).analyze_note({"note_id": note_id})
 
     # The directed edge exists, active but CLOSED (valid_to set), so
