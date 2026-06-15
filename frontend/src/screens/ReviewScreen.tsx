@@ -8,7 +8,7 @@
 // ever a reject-only dead end. Every decision raises an undo snackbar (undo is
 // the server's own unwind). Decided rows reopen; deferred rows resume.
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { type TouchEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { MarkedText } from "../analysis/bits";
 import { edgePath, valueLabel } from "../analysis/format";
 import type { ReviewItem } from "../api/client";
@@ -297,6 +297,27 @@ function Detail({ item, lane, queue, position, onClose, onNav }: DetailProps) {
   const proposals = proposalsFor(p);
   const showDiff = p.beforeLabel !== null && p.afterLabel !== null;
 
+  // Carousel: swipe left/right pages to the next/prev item, the horizontal twin
+  // of the ‹ › chevrons. Armed under the same condition they show, and only on a
+  // horizontal-dominant drag so it never steals the vertical scroll.
+  const canCarousel = lane === "pending" && position !== null && position.total > 1;
+  const swipeStart = useRef<{ x: number; y: number } | null>(null);
+  function onSwipeStart(event: TouchEvent) {
+    const t = event.touches[0];
+    swipeStart.current = t ? { x: t.clientX, y: t.clientY } : null;
+  }
+  function onSwipeMove(event: TouchEvent) {
+    const start = swipeStart.current;
+    const t = event.touches[0];
+    if (!start || !t) return;
+    const dx = t.clientX - start.x;
+    const dy = t.clientY - start.y;
+    if (Math.abs(dx) > 64 && Math.abs(dx) > Math.abs(dy) * 1.5) {
+      swipeStart.current = null;
+      onNav(dx < 0 ? 1 : -1); // swipe left → next, swipe right → previous
+    }
+  }
+
   function choose(proposal: Proposal) {
     const key = `prop-${proposal.action}`;
     if (proposal.destructive && !tap(key)) return;
@@ -329,7 +350,11 @@ function Detail({ item, lane, queue, position, onClose, onNav }: DetailProps) {
   }
 
   return (
-    <section className="rdetail">
+    <section
+      className="rdetail"
+      onTouchStart={canCarousel ? onSwipeStart : undefined}
+      onTouchMove={canCarousel ? onSwipeMove : undefined}
+    >
       <header className="rdetail-bar">
         <button type="button" className="rdetail-back" onClick={onClose}>
           ‹ inbox
