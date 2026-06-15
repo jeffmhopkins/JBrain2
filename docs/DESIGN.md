@@ -374,7 +374,14 @@ list). The detail leads with the proposal: a **before→after value diff**
 for collisions/conflicts (struck `current` over green `from this note`),
 a **proposed-fact panel** (the `predicate → value` edge it would write,
 rendered exactly as the entity page) for low-confidence inference holds so
-it's clear what *approve* records, or a what-happens panel for the rest;
+it's clear what *approve* records — and that value is **editable in place**
+(*correct in place*, docs/mocks/review-inference-c-correct-in-place.html): a
+free-text chip→input, or a member picker for a **typed (closed-enum)
+predicate** like `gender → {male, female, unknown}`, whose members ride on the
+card payload. *Approve* unchanged records the inference; an edit flips it to
+*approve correction*, which files a correction note (the #7 channel — the
+wiki stays machine-written) instead of the footer's *correct it* detour
+(dropped for this kind). Or a what-happens panel for the rest;
 then a one-line rationale, a
 confidence badge, the **cited evidence** snippet (provenance), and the
 **proposals to choose among** as stacked buttons (destructive ones —

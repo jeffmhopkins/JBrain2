@@ -3597,6 +3597,142 @@ button.small {
   padding: 10px 12px;
 }
 
+/* Correct-in-place (docs/mocks/review-inference-c-correct-in-place.html): the
+   held value is editable on the card — a free-text chip→input, or a member
+   picker for a typed (closed-enum) predicate. An edit files a correction note. */
+.rinf-typed {
+  margin-left: 8px;
+  font-size: 10px;
+  letter-spacing: 0.02em;
+  text-transform: none;
+  color: var(--steel);
+  border: 1px solid var(--steel);
+  border-radius: var(--r-pill);
+  padding: 0 7px;
+}
+
+.rinf-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font: inherit;
+  font-weight: 500;
+  color: var(--text);
+  background: var(--surface-2);
+  border: 1px dashed var(--border);
+  border-radius: var(--r-input);
+  padding: 2px 10px;
+  cursor: pointer;
+}
+
+.rinf-chip.edited {
+  border-style: solid;
+  border-color: var(--steel);
+  background: var(--steel-tint);
+  color: var(--steel);
+}
+
+.rinf-pen {
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+}
+
+.rinf-input {
+  font: inherit;
+  font-weight: 500;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--steel);
+  border-radius: var(--r-input);
+  padding: 3px 10px;
+  max-width: 240px;
+}
+
+.edge-value.rinf-edited {
+  color: var(--steel);
+}
+
+.rinf-enum {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.rinf-enum-chip {
+  font: inherit;
+  font-size: var(--fs-secondary);
+  padding: 5px 13px;
+  border-radius: var(--r-pill);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-2);
+  cursor: pointer;
+}
+
+.rinf-enum-chip.on {
+  background: var(--steel-tint);
+  border-color: transparent;
+  color: var(--steel);
+  font-weight: 600;
+}
+
+.rinf-status {
+  margin: 4px 0 0;
+  font-size: var(--fs-secondary);
+  line-height: 1.5;
+  color: var(--text-2);
+}
+
+.rinf-status.edit {
+  color: var(--steel);
+}
+
+.rinf-status s {
+  opacity: 0.7;
+}
+
+.rinf-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.rinf-approve {
+  width: 100%;
+  min-height: 48px;
+  font: inherit;
+  font-size: var(--fs-body);
+  font-weight: 600;
+  color: #06250f;
+  background: var(--green);
+  border: none;
+  border-radius: var(--r-input);
+  cursor: pointer;
+}
+
+.rinf-approve.correction {
+  color: var(--bg);
+  background: var(--steel);
+}
+
+.rinf-reject {
+  width: 100%;
+  min-height: 44px;
+  font: inherit;
+  font-weight: 500;
+  color: var(--rose);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-input);
+  cursor: pointer;
+}
+
+.rinf-reject.armed {
+  background: var(--rose-tint);
+  border-color: transparent;
+}
+
 /* Process trace — the optional extraction -> integration -> arbiter dropdown on
    an inference card (docs/mocks/review-process-trace-mockups.html, Direction A).
    Per-stage accent; the timeline and console share it. */

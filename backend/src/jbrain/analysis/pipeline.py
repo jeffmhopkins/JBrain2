@@ -493,6 +493,7 @@ class AnalysisPipeline:
             (s.entity_ref, s.predicate, s.qualifier): s.action
             for s in intent.supersession_proposals
         }
+        registry = get_registry()
         for i, pf in enumerate(plan.facts):
             if pf.status != "pending_review":
                 continue
@@ -538,6 +539,10 @@ class AnalysisPipeline:
                 ).first()
                 if row is not None:
                     card_value_json, card_statement = row.value_json, row.statement
+            # A typed (closed-enum) predicate carries its members so the card can
+            # offer a pick-a-member correction instead of free text — gender →
+            # {male, female, unknown}. Empty (and so omitted) for free-text edges.
+            enum_members = registry.enum_values_for(fact.predicate)
             session.add(
                 ReviewItem(
                     kind="low_confidence_inference",
@@ -552,6 +557,7 @@ class AnalysisPipeline:
                         # value`, so the owner sees the exact fact they're
                         # approving — not only the prose statement.
                         "value_json": card_value_json,
+                        **({"enum_values": list(enum_members)} if enum_members else {}),
                         "weight": pf.weight,
                         "reasons": list(pf.review_reasons),
                         "title": card_statement,

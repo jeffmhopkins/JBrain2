@@ -68,6 +68,15 @@ def test_person_gender_is_a_closed_enum(registry: SchemaRegistry) -> None:
     assert not registry.validate_value(gender, {"value": "wife"}, object_present=False)
 
 
+def test_enum_values_for_returns_members_kind_agnostically(registry: SchemaRegistry) -> None:
+    # The review card's correct-in-place picker reads members without an entity
+    # kind: gender → its closed set, a drift spelling normalizes first, and a
+    # free-text or unknown predicate yields () (no picker, free-text edit).
+    assert set(registry.enum_values_for("gender")) == {"male", "female", "unknown"}
+    assert registry.enum_values_for("name.full") == ()
+    assert registry.enum_values_for("totallyMadeUpPredicate") == ()
+
+
 def test_coerce_value_normalizes_enum_prose(registry: SchemaRegistry) -> None:
     # The screenshot bug: the model wrote its rationale into the value. Coercion
     # pulls the bare member out so the card reads "female", not the prose — and

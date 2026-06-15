@@ -493,6 +493,9 @@ async def test_inference_card_renders_the_committed_coerced_value(maker, tmp_pat
     # The card mirrors the committed row, not the raw planned value.
     assert card.payload["value_json"] == {"value": "female"}
     assert card.payload["fact_id"] == str(fact.id)
+    # gender is a closed enum, so the card carries its members for the correct-in-
+    # place picker — approve as-is, or pick another member to file a correction.
+    assert card.payload["enum_values"] == ["male", "female", "unknown"]
 
 
 async def test_nicknames_for_different_audiences_coexist(maker, tmp_path):  # noqa: F811
