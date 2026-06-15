@@ -48,6 +48,9 @@ from jbrain.search.service import SearchService
 from jbrain.settings_store import SqlSettingsStore
 from jbrain.storage import FsBackupShelf, FsBlobStore
 from jbrain.usage import SqlUsageRecorder
+from jbrain.workflow.registry import ACTION_SPECS
+from jbrain.workflow.registry import build_registry as build_action_registry
+from jbrain.workflow.scheduler import PURGE_ACTION
 
 structlog.configure(
     processors=[structlog.processors.TimeStamper(fmt="iso"), structlog.processors.JSONRenderer()]
@@ -70,6 +73,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.blob_store = FsBlobStore(settings.blob_dir)
         app.state.backup_shelf = FsBackupShelf(settings.backups_dir)
         app.state.job_queue = PgJobQueue(maker)
+        # The action registry the emergency-trigger control resolves a sweep's
+        # pipeline through (workflow/scheduler.fire_trigger). Mirrors the worker's
+        # composed registry — the shipped six plus the in-code purge action — so a
+        # trigger fired from Ops enqueues exactly what the scheduler would.
+        app.state.action_registry = build_action_registry((*ACTION_SPECS, PURGE_ACTION))
         app.state.search_service = SearchService(
             SqlSearchRepo(maker), TeiEmbedClient(settings.embed_url)
         )

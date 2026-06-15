@@ -270,7 +270,7 @@ async def test_run_registers_all_job_handlers(
 
     captured: dict[str, Any] = {}
 
-    async def capture(maker: Any, handlers: Any) -> None:
+    async def capture(maker: Any, handlers: Any, registry: Any = None) -> None:
         captured.update(handlers)
         raise asyncio.CancelledError
 
@@ -285,6 +285,8 @@ async def test_run_registers_all_job_handlers(
         "ocr_attachment",
         "consolidate_predicates",
         "sync_predicates",
+        # The purge sweep is now a fireable action (Phase-5 Track B).
+        "purge_deleted_artifacts",
     }
 
 
@@ -299,7 +301,7 @@ async def test_run_disposes_engine(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(worker, "create_async_engine", lambda url: engine)
     monkeypatch.setattr(worker, "async_sessionmaker", lambda eng, **kw: object())
 
-    async def boom(maker: Any, handlers: Any) -> None:
+    async def boom(maker: Any, handlers: Any, registry: Any = None) -> None:
         raise asyncio.CancelledError
 
     monkeypatch.setattr(worker, "run_loop", boom)
