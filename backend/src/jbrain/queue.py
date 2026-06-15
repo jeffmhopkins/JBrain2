@@ -364,6 +364,16 @@ async def backfill_pending_notes(
 
 INTEGRATION_BACKFILL_LIMIT = 100
 
+# Owner-ahead ordering hook (N14). The backfill drains oldest-first, but the
+# leading rank term is the Phase-7 seam: once an untrusted-origin producer
+# exists (guided-intake / OwnTracks), trusted owner notes must drain ahead of
+# it. INERT in Phase 5 — `notes.provenance` is only 'human' vs 'agent', both
+# owner-trusted, so there is nothing untrusted to rank behind: the rank is a
+# constant 0 for every row, leaving the ORDER BY equal to the existing
+# created_at ordering (no behavior change). Phase 7 swaps the literal `0` for
+# the real untrusted-origin predicate; nothing else here moves.
+INTEGRATION_BACKFILL_ORDER_BY = "0, n.created_at"
+
 
 async def backfill_pending_integration(
     maker: async_sessionmaker[AsyncSession],
@@ -377,13 +387,15 @@ async def backfill_pending_integration(
     whole corpus through the costlier Integrator at once. Oldest-first
     (created_at); each integrated note drops out of `integration_state <>
     'integrated'`, so repeated boots drain the backlog within budget. Skips a note
-    with an active integrate_note job or outstanding OCR. (Owner-ahead ordering,
-    N14, is moot today — all notes are owner-authored — and lands with the
-    provenance column.)"""
+    with an active integrate_note job or outstanding OCR. Ordered by
+    INTEGRATION_BACKFILL_ORDER_BY — the owner-ahead (N14) seam, inert today (see
+    that constant)."""
     async with scoped_session(maker, ctx) as session:
         result = await session.execute(
             text(
-                """
+                # INTEGRATION_BACKFILL_ORDER_BY is a module constant, never
+                # caller input — interpolation is safe.
+                f"""
                 INSERT INTO app.jobs (id, kind, payload)
                 SELECT gen_random_uuid(), 'integrate_note',
                        jsonb_build_object('note_id', n.id)
@@ -405,7 +417,7 @@ async def backfill_pending_integration(
                         AND j.status IN ('queued', 'running')
                         AND att.note_id = n.id
                   )
-                ORDER BY n.created_at
+                ORDER BY {INTEGRATION_BACKFILL_ORDER_BY}
                 LIMIT :lim
                 """
             ),
