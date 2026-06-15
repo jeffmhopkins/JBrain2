@@ -351,6 +351,71 @@ describe("ReviewScreen (split inbox)", () => {
     expect(within(proposed).getByText("Jeff")).toBeInTheDocument();
   });
 
+  it("an inference card plays back the three-stage trace, with a copyable console", async () => {
+    const writeText = vi.fn();
+    vi.stubGlobal("navigator", { clipboard: { writeText } });
+    const inference: ReviewItem = {
+      id: "inf3",
+      kind: "low_confidence_inference",
+      domain: "general",
+      created_at: "2026-06-15T20:33:00Z",
+      status: "open",
+      resolution: null,
+      resolved_at: null,
+      payload: {
+        predicate: "name.full",
+        qualifier: "",
+        statement: "My full name is Jeffrey Mark Hopkins.",
+        value_json: { value: "Jeffrey Mark Hopkins" },
+        reasons: ["below_threshold"],
+        summary: "hold for review (below_threshold): My full name is Jeffrey Mark Hopkins.",
+        outcomes: { accept: "recorded.", reject: "discarded." },
+        trace: {
+          stages: [
+            {
+              key: "extraction",
+              name: "Extraction",
+              version: "note-extract-v16",
+              summary: 'candidate state · "Jeffrey Mark Hopkins"',
+              rows: [["value", "Jeffrey Mark Hopkins"]],
+            },
+            {
+              key: "integration",
+              name: "Integration",
+              version: "integrator-v2 · integrate-v7",
+              summary: "resolved Me (existing) · inferred true · self 0.85",
+              rows: [["inferred", "true"]],
+            },
+            {
+              key: "arbiter",
+              name: "Arbiter",
+              version: "weight model · deterministic",
+              summary: "ceiling 0.60 · weight 0.60 < 0.80 → pending_review",
+              rows: [["weight", "min(self 0.85, ceiling 0.60) = 0.60"]],
+            },
+          ],
+        },
+      },
+    };
+    serve([inference], [], []);
+    render(<ReviewScreen />);
+    await screen.findByText(/hold for review/);
+    fireEvent.click(screen.getByRole("button", { name: /hold for review/ }));
+
+    // The trace is collapsed by default; open it, then expand the arbiter stage.
+    fireEvent.click(screen.getByRole("button", { name: /how this was decided/ }));
+    expect(screen.getByText(/ceiling 0.60 · weight 0.60/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Arbiter/ }));
+    expect(screen.getByText("min(self 0.85, ceiling 0.60) = 0.60")).toBeInTheDocument();
+
+    // Show console swaps in the raw log; copy puts the full trace on the clipboard.
+    fireEvent.click(screen.getByRole("button", { name: "‹/› show console" }));
+    fireEvent.click(screen.getByRole("button", { name: "copy" }));
+    expect(writeText).toHaveBeenCalledTimes(1);
+    expect(writeText.mock.calls[0]?.[0]).toContain("ARBITER");
+    expect(writeText.mock.calls[0]?.[0]).toContain("name.full → Jeffrey Mark Hopkins");
+  });
+
   it("an inference list row shows the proposed fact without opening it", async () => {
     const inference: ReviewItem = {
       id: "inf2",

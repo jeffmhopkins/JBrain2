@@ -8,7 +8,15 @@
 // ever a reject-only dead end. Every decision raises an undo snackbar (undo is
 // the server's own unwind). Decided rows reopen; deferred rows resume.
 
-import { type TouchEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  Fragment,
+  type TouchEvent,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { MarkedText } from "../analysis/bits";
 import { edgePath, valueLabel } from "../analysis/format";
 import type { ReviewItem } from "../api/client";
@@ -26,6 +34,43 @@ interface Proposal {
   // Extra fields a choice carries into the resolve payload (e.g. the
   // canonical_name a new_predicate map_to_existing choice must echo back).
   payload?: Record<string, unknown>;
+}
+
+// One pipeline stage of an inference card's process trace (backend
+// analysis.trace.build_trace): extraction -> integration -> arbiter, each a
+// summary plus [label, value] rows. String-only and display-shaped.
+interface TraceStage {
+  key: string;
+  name: string;
+  version: string;
+  summary: string;
+  rows: [string, string][];
+}
+
+function parseTrace(raw: unknown): TraceStage[] | null {
+  if (raw === null || typeof raw !== "object") return null;
+  const stages = (raw as Record<string, unknown>).stages;
+  if (!Array.isArray(stages)) return null;
+  const out = stages.flatMap((s: unknown): TraceStage[] => {
+    if (s === null || typeof s !== "object") return [];
+    const o = s as Record<string, unknown>;
+    if (typeof o.key !== "string" || typeof o.name !== "string") return [];
+    const rows = Array.isArray(o.rows)
+      ? o.rows.flatMap((r: unknown): [string, string][] =>
+          Array.isArray(r) && r.length === 2 ? [[String(r[0]), String(r[1])]] : [],
+        )
+      : [];
+    return [
+      {
+        key: o.key,
+        name: o.name,
+        version: typeof o.version === "string" ? o.version : "",
+        summary: typeof o.summary === "string" ? o.summary : "",
+        rows,
+      },
+    ];
+  });
+  return out.length > 0 ? out : null;
 }
 
 interface Parsed {
@@ -47,6 +92,8 @@ interface Parsed {
   qualifier: string | null;
   statement: string | null;
   valueJson: unknown;
+  // The optional verbose extraction -> integration -> arbiter trace.
+  trace: TraceStage[] | null;
 }
 
 function parsePayload(payload: Record<string, unknown>): Parsed {
@@ -94,6 +141,7 @@ function parsePayload(payload: Record<string, unknown>): Parsed {
     qualifier: str(payload.qualifier),
     statement: str(payload.statement),
     valueJson: payload.value_json,
+    trace: parseTrace(payload.trace),
   };
 }
 
@@ -287,6 +335,149 @@ function correctionDraft(item: ReviewItem, p: Parsed): string {
   return `Correction — ${p.summary ?? kindLabel(item.kind)}.\n\n${lead}`;
 }
 
+/** The copy-all log: a self-contained, paste-anywhere rendering of the trace —
+ * the same content the console view shows, for pasting into an issue or a note. */
+function traceLog(stages: TraceStage[], factLine: string, verdictLine: string): string {
+  const header = [
+    "JBrain · process trace",
+    `fact: ${factLine}`,
+    `verdict: ${verdictLine}`,
+    "──────────────────────────────",
+  ].join("\n");
+  const body = stages
+    .map(
+      (s) =>
+        `${s.name.toUpperCase()}  (${s.version})\n${s.rows
+          .map(([k, v]) => `  ${k} = ${v}`)
+          .join("\n")}`,
+    )
+    .join("\n\n");
+  return `${header}\n\n${body}\n`;
+}
+
+/** The optional process-trace dropdown (docs/mocks/review-process-trace-mockups
+ * "Direction A"): a timeline of the three pipeline stages — tap a stage to
+ * expand it — with a "show console" toggle that swaps the timeline for the dense
+ * raw log in the same spot, copyable in one tap for troubleshooting. */
+function ProcessTrace({
+  stages,
+  factLine,
+  verdictLine,
+}: {
+  stages: TraceStage[];
+  factLine: string;
+  verdictLine: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [showConsole, setShowConsole] = useState(false);
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [copied, setCopied] = useState(false);
+
+  function copy() {
+    void navigator.clipboard?.writeText(traceLog(stages, factLine, verdictLine));
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  }
+  function toggleStage(key: string) {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      next.has(key) ? next.delete(key) : next.add(key);
+      return next;
+    });
+  }
+
+  return (
+    <div className="rtrace">
+      <button
+        type="button"
+        className="rtrace-toggle"
+        aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}
+      >
+        <span className="rtrace-lead">
+          how this was decided — <b>{stages.length} stages</b>
+        </span>
+        <span className="rtrace-chev" aria-hidden="true">
+          ›
+        </span>
+      </button>
+
+      {open && (
+        <div className="rtrace-panel">
+          <div className="rtrace-actions">
+            <button type="button" className="rtrace-mode" onClick={() => setShowConsole((c) => !c)}>
+              {showConsole ? "▤ show timeline" : "‹/› show console"}
+            </button>
+          </div>
+
+          {showConsole ? (
+            <div className="rtrace-console">
+              <div className="rtrace-console-head">
+                <span>raw trace · paste anywhere</span>
+                <button
+                  type="button"
+                  className={`rtrace-copy${copied ? " done" : ""}`}
+                  onClick={copy}
+                >
+                  {copied ? "copied ✓" : "copy"}
+                </button>
+              </div>
+              <div className="rtrace-log">
+                {stages.map((s) => (
+                  <div key={s.key} className={`rtrace-block stage-${s.key}`}>
+                    <div className="rtrace-cstage">
+                      <span className="rtrace-dot" />
+                      {s.name.toUpperCase()}
+                      <span className="rtrace-cver">{s.version}</span>
+                    </div>
+                    {s.rows.map(([k, v]) => (
+                      <div key={k} className="rtrace-cline">
+                        <span className="rtrace-k">{k}</span> ={" "}
+                        <span className="rtrace-v">{v}</span>
+                      </div>
+                    ))}
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <ol className="rtrace-timeline">
+              {stages.map((s) => {
+                const isOpen = expanded.has(s.key);
+                return (
+                  <li key={s.key} className={`rtrace-node stage-${s.key}${isOpen ? " open" : ""}`}>
+                    <span className="rtrace-bullet" aria-hidden="true" />
+                    <button
+                      type="button"
+                      className="rtrace-head"
+                      aria-expanded={isOpen}
+                      onClick={() => toggleStage(s.key)}
+                    >
+                      <span className="rtrace-stage">{s.name}</span>
+                      <span className="rtrace-ver">{s.version}</span>
+                    </button>
+                    <p className="rtrace-summary">{s.summary}</p>
+                    {isOpen && (
+                      <dl className="rtrace-kv">
+                        {s.rows.map(([k, v]) => (
+                          <Fragment key={k}>
+                            <dt>{k}</dt>
+                            <dd>{v}</dd>
+                          </Fragment>
+                        ))}
+                      </dl>
+                    )}
+                  </li>
+                );
+              })}
+            </ol>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function Detail({ item, lane, queue, position, onClose, onNav }: DetailProps) {
   const p = parsePayload(item.payload);
   const [armed, tap] = useArmed();
@@ -404,6 +595,17 @@ function Detail({ item, lane, queue, position, onClose, onNav }: DetailProps) {
               <span className="edge-value">{valueLabel(p.valueJson, p.statement ?? "")}</span>
             </span>
           </div>
+        )}
+
+        {p.trace !== null && (
+          <ProcessTrace
+            stages={p.trace}
+            factLine={`${edgePath(p.predicate ?? "", p.qualifier)} → ${valueLabel(
+              p.valueJson,
+              p.statement ?? "",
+            )}`}
+            verdictLine={conf?.text ?? "held for review"}
+          />
         )}
 
         {showDiff && (

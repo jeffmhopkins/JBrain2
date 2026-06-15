@@ -95,6 +95,8 @@ from jbrain.analysis.supersession import (
     inverse_predicate,
     is_functional,
 )
+from jbrain.analysis.trace import build_trace
+from jbrain.analysis.weight import ConfidenceSignals
 from jbrain.db.session import scoped_session
 from jbrain.embed import EmbedClient
 from jbrain.ingest.chunker import PARAGRAPH
@@ -126,6 +128,12 @@ LLM_LINK_CONFIDENCE = 0.8
 # bare-first-name fan-out ANALYSIS rejected (docs/ANALYSIS.md "Same-name
 # coexistence"). Canonical spellings only; parse-time normalization already ran.
 _NEAR_DUP_PREDICATES = frozenset({"name.full", "name.maiden", "name.aka"})
+
+# Trace fallback when a fact has no computed signal (compute_signals keys every
+# fact, so this only guards a future caller): the most cautious reading.
+_CONSERVATIVE_SIGNALS = ConfidenceSignals(
+    surface_attested=False, predicate_known=False, is_supersede=True
+)
 
 
 def local_anchor(captured_at: datetime, tz_offset_minutes: int | None) -> datetime:
@@ -400,8 +408,19 @@ class AnalysisPipeline:
             resolution_override=override,
             held_indices=held_indices,
         )
+        # Recompute the deterministic signals (pure, cheap) so each held card can
+        # carry the same ceiling arithmetic the arbiter used — apply_intent is also
+        # called standalone (eval harness) with a pre-built plan, so the signals
+        # aren't threaded in.
+        signals = compute_signals(intent, [c.text for c in chunks])
         await self._file_inference_reviews(
-            session, note_id=note_id, note_domain=note_domain, plan=plan, held_ids=held_ids
+            session,
+            note_id=note_id,
+            note_domain=note_domain,
+            intent=intent,
+            plan=plan,
+            signals=signals,
+            held_ids=held_ids,
         )
 
     async def _resolve_from_intent(
@@ -448,7 +467,9 @@ class AnalysisPipeline:
         *,
         note_id: uuid.UUID,
         note_domain: str,
+        intent: IntegrationIntent,
         plan: ArbiterPlan,
+        signals: dict[int, ConfidenceSignals],
         held_ids: dict[int, uuid.UUID],
     ) -> None:
         """Surface every review-held fact (cross-subject, ambiguous, or
@@ -460,6 +481,13 @@ class AnalysisPipeline:
         retracts it. The card's domain rides the same floor/ratchet the fact does,
         so a sensitive inference never lands in a less-restricted scope than its
         predicate."""
+        # Per-fact provenance the process trace reads: how each mention resolved,
+        # and what supersession the agent proposed for this exact key.
+        resolutions = {r.mention_ref: r for r in intent.entity_resolutions}
+        supersessions = {
+            (s.entity_ref, s.predicate, s.qualifier): s.action
+            for s in intent.supersession_proposals
+        }
         for i, pf in enumerate(plan.facts):
             if pf.status != "pending_review":
                 continue
@@ -512,6 +540,21 @@ class AnalysisPipeline:
                         # only if the held fact couldn't be written (unresolved
                         # entity); the card still surfaces it.
                         "fact_id": str(held_id) if held_id is not None else None,
+                        # The verbose extraction -> integration -> arbiter trace the
+                        # review UI plays back (optional dropdown), so a held fact is
+                        # debuggable from the card without re-reading logs.
+                        "trace": build_trace(
+                            fact,
+                            pf,
+                            signals.get(i, _CONSERVATIVE_SIGNALS),
+                            resolution=resolutions.get(fact.entity_ref),
+                            supersession_action=supersessions.get(
+                                (fact.entity_ref, fact.predicate, fact.qualifier)
+                            ),
+                            extract_version=PROMPT_VERSION,
+                            integrate_version=intent.prompt_version,
+                            integrator_version=intent.integrator_version,
+                        ),
                         **inference_display(
                             statement=fact.statement,
                             reasons=list(pf.review_reasons),

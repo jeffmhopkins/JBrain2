@@ -3580,6 +3580,272 @@ button.small {
   padding: 10px 12px;
 }
 
+/* Process trace — the optional extraction -> integration -> arbiter dropdown on
+   an inference card (docs/mocks/review-process-trace-mockups.html, Direction A).
+   Per-stage accent; the timeline and console share it. */
+.rtrace {
+  display: flex;
+  flex-direction: column;
+}
+
+.stage-extraction {
+  --stage: var(--steel);
+}
+
+.stage-integration {
+  --stage: var(--green);
+}
+
+.stage-arbiter {
+  --stage: var(--amber);
+}
+
+.rtrace-toggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-input);
+  padding: 11px 13px;
+  cursor: pointer;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-secondary);
+  text-align: left;
+}
+
+.rtrace-lead {
+  color: var(--text-2);
+}
+
+.rtrace-lead b {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.rtrace-chev {
+  margin-left: auto;
+  color: var(--text-3);
+  transition: transform 0.2s;
+}
+
+.rtrace-toggle[aria-expanded="true"] .rtrace-chev {
+  transform: rotate(90deg);
+}
+
+.rtrace-actions {
+  display: flex;
+  gap: 8px;
+  margin: 10px 0;
+}
+
+.rtrace-mode {
+  background: var(--surface-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill);
+  padding: 6px 14px;
+  font: inherit;
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+/* Timeline view — stacked stages with a connecting rail. */
+.rtrace-timeline {
+  list-style: none;
+  margin: 0;
+  padding: 0 0 0 4px;
+}
+
+.rtrace-node {
+  position: relative;
+  padding: 0 0 4px 26px;
+}
+
+.rtrace-node::before {
+  content: "";
+  position: absolute;
+  left: 4px;
+  top: 22px;
+  bottom: -4px;
+  width: 2px;
+  background: var(--border);
+}
+
+.rtrace-node:last-child::before {
+  display: none;
+}
+
+.rtrace-bullet {
+  position: absolute;
+  left: 0;
+  top: 6px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--bg);
+  border: 2px solid var(--stage);
+}
+
+.rtrace-node.open .rtrace-bullet {
+  background: var(--stage);
+}
+
+.rtrace-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  background: none;
+  border: none;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  padding: 2px 0;
+}
+
+.rtrace-stage {
+  font-size: var(--fs-note);
+  font-weight: 600;
+}
+
+.rtrace-ver {
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+  margin-left: auto;
+}
+
+.rtrace-summary {
+  margin: 1px 0 0;
+  font-size: var(--fs-secondary);
+  color: var(--text-2);
+  line-height: 1.45;
+}
+
+.rtrace-kv {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 3px 12px;
+  margin: 8px 0 12px;
+  padding: 10px 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left: 2px solid var(--stage);
+  border-radius: var(--r-input);
+  font-size: var(--fs-secondary);
+}
+
+.rtrace-kv dt {
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  white-space: nowrap;
+  padding-top: 2px;
+}
+
+.rtrace-kv dd {
+  margin: 0;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+/* Console view — the dense raw log, swapped in place of the timeline. */
+.rtrace-console {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r-input);
+  overflow: hidden;
+}
+
+.rtrace-console-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--border);
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+  font-family: var(--font-mono);
+}
+
+.rtrace-copy {
+  margin-left: auto;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text-2);
+  font: inherit;
+  font-size: var(--fs-micro);
+  padding: 4px 10px;
+  cursor: pointer;
+}
+
+.rtrace-copy.done {
+  color: var(--green);
+  border-color: transparent;
+  background: var(--green-tint);
+}
+
+.rtrace-log {
+  max-height: 300px;
+  overflow-y: auto;
+  padding: 12px 14px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  line-height: 1.65;
+}
+
+.rtrace-block {
+  margin-bottom: 14px;
+}
+
+.rtrace-block:last-child {
+  margin-bottom: 0;
+}
+
+.rtrace-cstage {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--stage);
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.rtrace-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--stage);
+  flex: none;
+}
+
+.rtrace-cver {
+  margin-left: auto;
+  color: var(--text-3);
+  font-weight: 400;
+}
+
+.rtrace-cline {
+  color: var(--text-2);
+  white-space: pre-wrap;
+  padding-left: 16px;
+}
+
+.rtrace-k {
+  color: var(--text-3);
+}
+
+.rtrace-v {
+  color: var(--text);
+}
+
 /* Before -> after value diff (collisions / fact conflicts). */
 .rdiff {
   border: 1px solid var(--border);

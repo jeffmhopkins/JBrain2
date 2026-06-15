@@ -190,6 +190,12 @@ async def test_apply_intent_holds_cross_subject_review_fact(maker, tmp_path):  #
     # owner sees the fact, not only the prose statement.
     assert cards[0].payload["predicate"] == "industry"
     assert "value_json" in cards[0].payload
+    # The verbose process trace travels in the payload: the three pipeline stages
+    # the review UI plays back, with the arbiter stage naming the held reason.
+    trace = cards[0].payload["trace"]
+    assert [s["key"] for s in trace["stages"]] == ["extraction", "integration", "arbiter"]
+    arbiter_rows = dict(r for r in trace["stages"][2]["rows"])
+    assert "cross_subject_link" in arbiter_rows["status"]
 
 
 async def test_apply_intent_holds_below_threshold_fact_decide_would_commit(maker, tmp_path):  # noqa: F811
