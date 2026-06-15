@@ -3,7 +3,14 @@ accounting."""
 
 from datetime import timedelta
 
-from jbrain.queue import BACKOFF_CAP, STALE_LOCK, SYSTEM_CTX, backoff, reclaim_attempts
+from jbrain.queue import (
+    BACKOFF_CAP,
+    INTEGRATION_BACKFILL_ORDER_BY,
+    STALE_LOCK,
+    SYSTEM_CTX,
+    backoff,
+    reclaim_attempts,
+)
 
 
 def test_backoff_doubles_per_attempt() -> None:
@@ -43,3 +50,13 @@ def test_system_context_is_owner_kind() -> None:
     # The jobs RLS policy admits only app.is_owner(); the worker's context
     # must satisfy it or the whole pipeline silently sees nothing.
     assert SYSTEM_CTX.principal_kind == "owner"
+
+
+def test_integration_backfill_order_is_inert_owner_ahead_hook() -> None:
+    # N14 is a no-op this phase: the leading rank term must be a constant so
+    # every row sorts equal on it, leaving created_at (oldest-first) as the
+    # sole effective key — i.e. no behavior change until Phase 7 swaps the
+    # constant for a real untrusted-origin predicate.
+    rank, tiebreak = (part.strip() for part in INTEGRATION_BACKFILL_ORDER_BY.split(","))
+    assert rank == "0"  # constant rank ⇒ inert hook
+    assert tiebreak == "n.created_at"  # the only term that orders rows today
