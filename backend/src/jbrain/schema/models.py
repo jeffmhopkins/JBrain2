@@ -181,6 +181,22 @@ class SchemaRegistry:
             return None
         return entity_type.predicate(self.normalize_predicate(predicate))
 
+    def enum_values_for(self, predicate: str) -> tuple[str, ...]:
+        """The closed enum members of a (canonical or drift) predicate — kind-
+        agnostic, for the review card's typed-value picker. Returns the members
+        only when every type declaring this predicate as an enum agrees on them;
+        `()` when they disagree (conservative — never guess a member set) or for
+        a non-enum/unknown predicate. Union semantics mirror `is_functional`."""
+        canonical = self.normalize_predicate(predicate)
+        sets = {
+            p.enum_values
+            for t in self.types.values()
+            if (p := t.predicate(canonical)) is not None
+            and p.value_shape == "enum"
+            and p.enum_values
+        }
+        return next(iter(sets)) if len(sets) == 1 else ()
+
     def coerce_value(self, pred: Predicate, value_json: dict | None) -> dict | None:
         """Normalize an enum value the model wrote as prose down to its declared
         member: ``{"value": "Female (inferred from 'wife')."}`` → ``{"value":

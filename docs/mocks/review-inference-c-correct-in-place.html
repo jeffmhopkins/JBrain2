@@ -1,0 +1,445 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Review — inference card · C · correct in place (interactive mock)</title>
+    <style>
+      /* Design tokens — copied from frontend/src/styles/tokens.css. Light default
+         (matches the screenshot); the demo toggle flips to dark. */
+      :root {
+        --steel: #7fa7c9;
+        --steel-tint: rgba(127, 167, 201, 0.13);
+        --green: #8fbc9a;
+        --green-tint: rgba(143, 188, 154, 0.13);
+        --amber: #c9a36a;
+        --amber-tint: rgba(201, 163, 106, 0.13);
+        --rose: #cf8a8f;
+        --rose-tint: rgba(207, 138, 143, 0.13);
+        --violet: #a493c9;
+        --accent: var(--steel);
+        --font-scale: 1;
+        --fs-micro: calc(12px * var(--font-scale));
+        --fs-head: calc(13px * var(--font-scale));
+        --fs-secondary: calc(14px * var(--font-scale));
+        --fs-note: calc(15px * var(--font-scale));
+        --fs-body: calc(16px * var(--font-scale));
+        --fs-title: calc(18px * var(--font-scale));
+        --fs-screen: calc(22px * var(--font-scale));
+        --fs-editor: calc(20px * var(--font-scale));
+        --r-input: 12px;
+        --r-card: 16px;
+        --r-pill: 999px;
+        --font-mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+      }
+      [data-theme="light"] {
+        color-scheme: light;
+        --page: #ecece9; --bg: #f7f7f5; --surface: #ffffff; --surface-2: #f0f0ee;
+        --border: #e2e2df; --text: #1a1b1e; --text-2: #5c5f66; --text-3: #9a9da3;
+        --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.06);
+      }
+      [data-theme="dark"] {
+        color-scheme: dark;
+        --page: #060708; --bg: #0e0f11; --surface: #17181b; --surface-2: #1e2024;
+        --border: #26282c; --text: #e6e7e9; --text-2: #9a9da3; --text-3: #5c5f66;
+        --shadow-card: none;
+      }
+
+      * { box-sizing: border-box; }
+      body {
+        margin: 0; background: var(--page); color: var(--text);
+        font: 400 var(--fs-body) / 1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+        display: flex; flex-direction: column; align-items: center; gap: 16px;
+        padding: 22px 14px 48px; min-height: 100vh;
+      }
+      .demo-bar { width: 100%; max-width: 440px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+      .demo-title { font-size: var(--fs-secondary); color: var(--text-2); margin-right: auto; }
+      .demo-title b { color: var(--text); font-weight: 600; }
+      .seg { display: inline-flex; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-pill); padding: 3px; }
+      .seg button { appearance: none; border: none; background: none; color: var(--text-2); font: inherit; font-size: var(--fs-secondary); padding: 5px 14px; border-radius: var(--r-pill); cursor: pointer; }
+      .seg button[aria-pressed="true"] { background: var(--steel-tint); color: var(--steel); font-weight: 600; }
+      .demo-note { width: 100%; max-width: 440px; font-size: var(--fs-head); color: var(--text-3); line-height: 1.55; }
+      .demo-note code { font-family: var(--font-mono); color: var(--text-2); }
+      .demo-note b { color: var(--text-2); font-weight: 600; }
+
+      .phone { width: 100%; max-width: 440px; height: 900px; background: var(--bg); border: 1px solid var(--border); border-radius: 30px; overflow: hidden; position: relative; display: flex; flex-direction: column; box-shadow: 0 20px 60px rgba(0, 0, 0, 0.25); }
+      .statusbar { display: flex; justify-content: space-between; align-items: center; padding: 14px 24px 4px; font-size: var(--fs-secondary); font-weight: 600; color: var(--text); }
+      .statusbar .right { display: flex; gap: 7px; align-items: center; color: var(--text-2); font-weight: 500; }
+      .batt { background: var(--green); color: #06250f; border-radius: 5px; padding: 1px 5px; font-size: 11px; font-weight: 700; }
+      .screenhead { display: flex; align-items: center; gap: 12px; padding: 8px 18px 4px; }
+      .screenhead .back { font-size: var(--fs-screen); color: var(--text); background: none; border: none; }
+      .screenhead h1 { margin: 0; font-size: var(--fs-screen); font-weight: 600; }
+      .screenhead .spacer { margin-left: auto; }
+      .live-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--green); }
+      .bolt { color: var(--text-2); font-size: var(--fs-title); }
+
+      .body { flex: 1; overflow-y: auto; padding: 10px 16px 150px; display: flex; flex-direction: column; gap: 12px; }
+      .rdetail-bar { display: flex; align-items: center; gap: 10px; }
+      .rdetail-back { background: none; border: none; padding: 6px 2px; font-size: var(--fs-note); color: var(--accent); cursor: pointer; }
+      .rdetail-pos { margin-left: auto; font-size: var(--fs-secondary); color: var(--text-2); font-variant-numeric: tabular-nums; }
+      .rdetail-nav { display: flex; gap: 6px; }
+      .rdetail-nav button { width: 34px; height: 34px; border-radius: var(--r-pill); border: 1px solid var(--border); background: var(--surface); color: var(--text); font-size: var(--fs-body); cursor: pointer; }
+      .rdetail-nav button:disabled { opacity: 0.35; }
+
+      .subject { display: flex; align-items: center; gap: 11px; }
+      .avatar { width: 40px; height: 40px; border-radius: 50%; flex: none; position: relative; display: grid; place-items: center; font-weight: 600; font-size: var(--fs-note); background: var(--violet); color: #fff; }
+      .avatar .src { position: absolute; right: -3px; bottom: -3px; width: 17px; height: 17px; border-radius: 50%; background: #0a7cff; border: 2px solid var(--bg); display: grid; place-items: center; font-size: 9px; }
+      .subject-main { display: flex; flex-direction: column; gap: 1px; }
+      .subject-name { font-size: var(--fs-title); font-weight: 600; }
+      .subject-sub { font-size: var(--fs-micro); color: var(--text-3); display: flex; align-items: center; gap: 7px; }
+      .etype { color: var(--violet); }
+      .domain-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--green); flex: none; }
+
+      .kind-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+      .kind-badge { font-size: var(--fs-micro); padding: 2px 9px; border-radius: var(--r-pill); background: var(--amber-tint); color: var(--amber); font-weight: 500; }
+      .conf-badge { font-size: var(--fs-micro); padding: 2px 9px; border-radius: var(--r-pill); border: 1px solid var(--border); color: var(--text-2); }
+
+      .rdetail-hero { margin: 2px 0 0; font-size: var(--fs-editor); line-height: 1.36; font-weight: 500; }
+
+      /* THE editable fact card */
+      .editcard { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-card); box-shadow: var(--shadow-card); padding: 14px 15px; display: flex; flex-direction: column; gap: 11px; }
+      .ec-lbl { font-size: var(--fs-micro); text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-3); display: flex; align-items: center; gap: 8px; }
+      .ec-lbl .typed { color: var(--steel); border: 1px solid var(--steel); border-radius: var(--r-pill); padding: 0 7px; letter-spacing: 0.02em; font-size: 10px; }
+      .ec-edge { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: var(--fs-title); }
+      .edge-path { font-family: var(--font-mono); font-size: var(--fs-note); color: var(--text-2); }
+      .edge-arrow { color: var(--text-3); }
+
+      /* the value: a tappable chip that becomes editable */
+      .val-chip {
+        display: inline-flex; align-items: center; gap: 7px; font-weight: 600; font-size: var(--fs-title);
+        background: var(--surface-2); border: 1px dashed var(--border); border-radius: var(--r-input);
+        padding: 4px 11px; cursor: pointer; color: var(--text); font-family: inherit;
+      }
+      .val-chip .pen { font-size: var(--fs-micro); color: var(--text-3); }
+      .val-chip.edited { border-style: solid; border-color: var(--steel); background: var(--steel-tint); color: var(--steel); }
+
+      .val-input { font: inherit; font-size: var(--fs-title); font-weight: 600; background: var(--bg); border: 1px solid var(--steel); border-radius: var(--r-input); padding: 5px 11px; color: var(--text); width: 100%; max-width: 240px; }
+
+      /* enum picker (gender is a closed set) */
+      .enum-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 2px; }
+      .enum-chip { font: inherit; font-size: var(--fs-secondary); padding: 6px 14px; border-radius: var(--r-pill); border: 1px solid var(--border); background: var(--surface); color: var(--text-2); cursor: pointer; }
+      .enum-chip.on { background: var(--steel-tint); border-color: transparent; color: var(--steel); font-weight: 600; }
+      .enum-hint { font-size: var(--fs-micro); color: var(--text-3); }
+
+      .ec-status { font-size: var(--fs-secondary); line-height: 1.5; margin: 2px 0 0; padding: 9px 11px; border-radius: var(--r-input); }
+      .ec-status.keep { background: var(--surface-2); color: var(--text-2); }
+      .ec-status.edit { background: var(--steel-tint); color: var(--steel); }
+      .ec-status b { font-weight: 600; }
+      .ec-status .from { text-decoration: line-through; opacity: 0.7; }
+
+      .why { font-size: var(--fs-secondary); color: var(--text-2); line-height: 1.5; margin: 0 2px; }
+
+      /* trace toggle (same as A) */
+      .rtrace-toggle { display: flex; align-items: center; gap: 10px; width: 100%; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-input); padding: 12px 14px; cursor: pointer; color: var(--text); font: inherit; font-size: var(--fs-secondary); text-align: left; box-shadow: var(--shadow-card); }
+      .rtrace-lead { color: var(--text-2); } .rtrace-lead b { color: var(--text); font-weight: 600; }
+      .rtrace-chev { margin-left: auto; color: var(--text-3); transition: transform 0.2s; }
+      .rtrace-toggle[aria-expanded="true"] .rtrace-chev { transform: rotate(90deg); }
+      .timeline { display: none; flex-direction: column; margin-top: 8px; padding-left: 4px; }
+      .timeline.open { display: flex; }
+      .s-extract { --stage: var(--steel); } .s-integrate { --stage: var(--green); } .s-arbiter { --stage: var(--amber); }
+      .tl-node { position: relative; padding: 0 0 8px 24px; }
+      .tl-node::before { content: ""; position: absolute; left: 4px; top: 18px; bottom: 0; width: 2px; background: var(--border); }
+      .tl-node:last-child::before { display: none; }
+      .tl-bullet { position: absolute; left: 0; top: 4px; width: 10px; height: 10px; border-radius: 50%; background: var(--stage); }
+      .tl-stage { font-size: var(--fs-note); font-weight: 600; }
+      .tl-ver { font-size: var(--fs-micro); color: var(--text-3); font-family: var(--font-mono); margin-left: 8px; }
+      .tl-summary { font-size: var(--fs-secondary); color: var(--text-2); margin: 2px 0 0; line-height: 1.45; }
+
+      .section-header { font-size: var(--fs-micro); letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-3); font-weight: 400; margin: 6px 2px 0; }
+      .evidence { margin: 0; font-size: var(--fs-note); line-height: 1.6; color: var(--text); background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--r-input); padding: 11px 13px; }
+      .evidence mark { background: var(--steel-tint); color: var(--steel); border-radius: 4px; padding: 0 3px; }
+
+      .rdetail-foot { position: absolute; inset-inline: 0; bottom: 0; padding: 12px 16px 20px; background: var(--bg); border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: 9px; z-index: 3; }
+      .btn-approve { width: 100%; min-height: 50px; border: none; border-radius: var(--r-input); cursor: pointer; background: var(--green); color: #06250f; font: inherit; font-size: var(--fs-body); font-weight: 700; transition: background 0.2s; }
+      .btn-approve.correction { background: var(--steel); color: #04161f; }
+      .decide-minor { display: flex; gap: 9px; }
+      .btn-reject { flex: 1; min-height: 42px; border-radius: var(--r-input); cursor: pointer; font: inherit; font-weight: 500; background: var(--surface); border: 1px solid var(--border); color: var(--rose); }
+      .btn-reject.armed { background: var(--rose-tint); border-color: transparent; }
+      .escape-row { display: flex; align-items: center; justify-content: center; gap: 4px; font-size: var(--fs-secondary); }
+      .escape-row button { background: none; border: none; font: inherit; cursor: pointer; padding: 6px 10px; border-radius: var(--r-pill); }
+      .escape-row .e-defer { color: var(--amber); }
+      .escape-row .e-discuss { color: var(--steel); }
+      .escape-row .dot { color: var(--text-3); }
+
+      .snack { position: absolute; left: 16px; right: 16px; bottom: 150px; display: flex; align-items: center; gap: 12px; padding: 11px 14px; background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--r-input); font-size: var(--fs-secondary); opacity: 0; transform: translateY(8px); transition: opacity 0.2s, transform 0.2s; pointer-events: none; z-index: 4; box-shadow: var(--shadow-card); }
+      .snack.show { opacity: 1; transform: none; pointer-events: auto; }
+      .snack .msg { margin-right: auto; color: var(--text); }
+      .snack button { background: none; border: none; color: var(--steel); font: inherit; font-weight: 600; cursor: pointer; }
+    </style>
+  </head>
+  <body data-theme="light">
+    <div class="demo-bar">
+      <span class="demo-title"><b>Review</b> · C — correct in place</span>
+      <span class="seg" role="group" aria-label="theme">
+        <button id="t-light" aria-pressed="true">light</button>
+        <button id="t-dark" aria-pressed="false">dark</button>
+      </span>
+    </div>
+    <p class="demo-note">
+      <b>Direction C.</b> The held value is <b>editable right here</b> — no separate “correct it” detour.
+      Tap the value to fix it; for a <b>typed predicate</b> like <code>gender</code> (a closed enum) you pick from its
+      members instead of typing. Approve unchanged to <b>record the inference</b>, or edit and the button becomes
+      <b>approve correction</b> — which files your fix so the wiki stays machine-written. Tap the value, the enum chips, or the chevrons.
+    </p>
+
+    <div class="phone" id="phone">
+      <div class="statusbar">
+        <span>13:00</span>
+        <span class="right">●●●● 🛜 <span class="batt">100</span></span>
+      </div>
+      <div class="screenhead">
+        <button class="back" aria-label="back">‹</button>
+        <h1>Review</h1>
+        <span class="spacer"></span>
+        <span class="live-dot" title="live"></span>
+        <span class="bolt">⚡</span>
+      </div>
+
+      <div class="body">
+        <div class="rdetail-bar">
+          <button class="rdetail-back">‹ inbox</button>
+          <span class="rdetail-pos" id="pos">5 of 5</span>
+          <span class="rdetail-nav">
+            <button id="prev" aria-label="previous">‹</button>
+            <button id="next" aria-label="next">›</button>
+          </span>
+        </div>
+
+        <div class="subject">
+          <span class="avatar" id="ava"><span id="ava-i">C</span><span class="src">💬</span></span>
+          <span class="subject-main">
+            <span class="subject-name" id="subj">Celine</span>
+            <span class="subject-sub"><span class="etype">Person</span> · <span class="domain-dot"></span> general</span>
+          </span>
+        </div>
+
+        <div class="kind-row">
+          <span class="kind-badge">low confidence inference</span>
+          <span class="conf-badge" id="conf">low · 60%</span>
+        </div>
+
+        <h2 class="rdetail-hero" id="hero"></h2>
+
+        <div class="editcard">
+          <span class="ec-lbl">proposed fact <span class="typed" id="typed-tag">enum</span></span>
+          <div class="ec-edge">
+            <span class="edge-path" id="edge"></span>
+            <span class="edge-arrow">→</span>
+            <span id="value-slot"></span>
+          </div>
+          <div class="enum-row" id="enum-row"></div>
+          <span class="enum-hint" id="enum-hint"></span>
+          <p class="ec-status keep" id="status"></p>
+        </div>
+
+        <p class="why" id="why"></p>
+
+        <div>
+          <button class="rtrace-toggle" id="trace-toggle" aria-expanded="false">
+            <span class="rtrace-lead">how this was decided — <b>3 stages</b></span>
+            <span class="rtrace-chev">›</span>
+          </button>
+          <div class="timeline" id="timeline"></div>
+        </div>
+
+        <h3 class="section-header">cited evidence</h3>
+        <blockquote class="evidence" id="evidence"></blockquote>
+      </div>
+
+      <div class="snack" id="snack">
+        <span class="msg" id="snack-msg"></span>
+        <button id="snack-undo">undo</button>
+      </div>
+
+      <div class="rdetail-foot">
+        <button class="btn-approve" id="approve">Approve</button>
+        <div class="decide-minor">
+          <button class="btn-reject" id="reject">Reject — discard</button>
+        </div>
+        <div class="escape-row">
+          <button class="e-defer">defer</button><span class="dot">·</span>
+          <button class="e-discuss">talk it over</button>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      const $ = (id) => document.getElementById(id);
+      const ITEMS = [
+        { subj: "Celine", initials: "C", color: "#a493c9", statement: "Celine goes by Celine Dubois on the project.",
+          edge: "name.full", value: "Celine Dubois", conf: 0.64, enumValues: null,
+          why: "inferred from a project mention — not stated as her name.",
+          evidence: "Added <mark>Celine Dubois</mark> to the migration project today.",
+          trace: [["s-extract","Extraction","note-extract-v16","full-name shape, self-conf 0.95"],
+                  ["s-integrate","Integration","integrate-v7","resolved → person-44 · name.full · inferred"],
+                  ["s-arbiter","Arbiter","weight model","weight 0.64 < 0.80 → hold"]] },
+        { subj: "Celine", initials: "C", color: "#a493c9", statement: "People here call Celine “Cel.”",
+          edge: "name.nickname", value: "Cel", conf: 0.58, enumValues: null,
+          why: "a nickname inferred from chat — not a stated alias.",
+          evidence: "everyone on the team just calls her <mark>Cel</mark>.",
+          trace: [["s-extract","Extraction","note-extract-v16","nickname token “Cel”, self-conf 0.90"],
+                  ["s-integrate","Integration","integrate-v7","attached to person-44 · audience team · inferred"],
+                  ["s-arbiter","Arbiter","weight model","weight 0.58 < 0.80 → hold"]] },
+        { subj: "Marcus", initials: "M", color: "#7fa7c9", statement: "Marcus is a colleague.",
+          edge: "relationship.role", value: "colleague", conf: 0.62,
+          enumValues: ["colleague", "friend", "manager", "report", "acquaintance"],
+          why: "relationship inferred from “from the data team” — not stated.",
+          evidence: "<mark>Marcus</mark> from the data team is helping with the rollout.",
+          trace: [["s-extract","Extraction","note-extract-v16","co-worker cue “from the data team”"],
+                  ["s-integrate","Integration","integrate-v7","resolved → person-91 (new) · relationship.role · inferred"],
+                  ["s-arbiter","Arbiter","weight model","weight 0.62 < 0.80 → hold"]] },
+        { subj: "Celine", initials: "C", color: "#a493c9", statement: "Celine is based in Lyon.",
+          edge: "residence.city", value: "Lyon", conf: 0.55, enumValues: null,
+          why: "location inferred from “moved back” — not stated as current.",
+          evidence: "Celine <mark>moved back</mark> to <mark>Lyon</mark> last spring.",
+          trace: [["s-extract","Extraction","note-extract-v16","place token “Lyon” with a move cue"],
+                  ["s-integrate","Integration","integrate-v7","attached to person-44 · residence.city · inferred"],
+                  ["s-arbiter","Arbiter","weight model","weight 0.55 < 0.80 → hold"]] },
+        { subj: "Celine", initials: "C", color: "#a493c9", statement: "Celine's gender is female.",
+          edge: "gender", value: "female", conf: 0.6, enumValues: ["female", "male", "unknown"],
+          why: "inferred from context — not stated outright.",
+          evidence: "Celine's <mark>gender</mark> is <mark>female</mark>.",
+          trace: [["s-extract","Extraction","note-extract-v16","gender → “Female (inferred from 'wife')”, self-conf 1.00"],
+                  ["s-integrate","Integration","integrate-v7","coerced to enum member female · resolved → person-44 · inferred"],
+                  ["s-arbiter","Arbiter","weight model","min(0.85,0.60)=0.60 < 0.80 → hold"]] },
+      ];
+
+      let i = 4; // gender card from the screenshot
+      let current = null;     // edited value (null = unchanged)
+      let editing = false;
+      const phone = $("phone");
+
+      function render() {
+        const it = ITEMS[i];
+        current = null; editing = false;
+        $("pos").textContent = `${i + 1} of ${ITEMS.length}`;
+        $("subj").textContent = it.subj;
+        $("ava-i").textContent = it.initials;
+        $("ava").style.background = it.color;
+        $("hero").textContent = it.statement;
+        $("edge").textContent = it.edge;
+        $("conf").textContent = `${it.conf >= 0.75 ? "high" : "low"} · ${Math.round(it.conf * 100)}%`;
+        $("why").textContent = it.why;
+        $("evidence").innerHTML = it.evidence;
+        $("prev").disabled = i === 0;
+        $("next").disabled = i === ITEMS.length - 1;
+
+        const typed = Array.isArray(it.enumValues);
+        $("typed-tag").style.display = typed ? "" : "none";
+        $("enum-row").style.display = typed ? "" : "none";
+        $("enum-hint").style.display = typed ? "" : "none";
+        if (typed) {
+          $("enum-hint").textContent = `${it.edge} is a closed set — pick a member`;
+          renderEnum(it);
+        }
+        renderValue(it);
+        renderStatus(it);
+        buildTimeline(it);
+      }
+
+      function effectiveValue(it) { return current ?? it.value; }
+
+      function renderValue(it) {
+        const slot = $("value-slot");
+        const typed = Array.isArray(it.enumValues);
+        if (editing && !typed) {
+          slot.innerHTML = `<input class="val-input" id="val-input" value="${effectiveValue(it)}" />`;
+          const inp = $("val-input");
+          inp.focus(); inp.select();
+          inp.oninput = () => { current = inp.value.trim() === it.value ? null : inp.value.trim(); renderStatus(it); refreshApprove(it); };
+          inp.onblur = () => { editing = false; renderValue(it); };
+          inp.onkeydown = (e) => { if (e.key === "Enter") inp.blur(); };
+          return;
+        }
+        const edited = current !== null && current !== it.value;
+        slot.innerHTML = `<button class="val-chip${edited ? " edited" : ""}" id="val-chip">${effectiveValue(it)}${typed ? "" : ' <span class="pen">✎ edit</span>'}</button>`;
+        $("val-chip").onclick = () => {
+          if (typed) return; // enum is edited via chips below
+          editing = true; renderValue(it);
+        };
+      }
+
+      function renderEnum(it) {
+        const row = $("enum-row");
+        row.innerHTML = it.enumValues
+          .map((v) => `<button class="enum-chip${effectiveValue(it) === v ? " on" : ""}" data-v="${v}">${v}</button>`)
+          .join("");
+        row.querySelectorAll(".enum-chip").forEach((b) => {
+          b.onclick = () => {
+            current = b.dataset.v === it.value ? null : b.dataset.v;
+            renderValue(it); renderEnum(it); renderStatus(it); refreshApprove(it);
+          };
+        });
+      }
+
+      function renderStatus(it) {
+        const el = $("status");
+        const edited = current !== null && current !== it.value;
+        if (edited) {
+          el.className = "ec-status edit";
+          el.innerHTML = `<b>correction:</b> <span class="from">${it.value}</span> → <b>${current}</b> — filed as a note in ${it.subj}'s domain; the pipeline applies it.`;
+        } else {
+          el.className = "ec-status keep";
+          el.innerHTML = `recorded as an <b>inferred</b> fact and pinned — reprocessing won't drop it.`;
+        }
+      }
+
+      function refreshApprove(it) {
+        const edited = current !== null && current !== it.value;
+        $("approve").classList.toggle("correction", edited);
+        $("approve").textContent = edited ? "Approve correction" : "Approve";
+      }
+
+      function buildTimeline(it) {
+        $("timeline").innerHTML = it.trace
+          .map(([cls, name, ver, summary]) =>
+            `<div class="tl-node ${cls}"><span class="tl-bullet"></span>
+              <span class="tl-stage">${name}</span><span class="tl-ver">${ver}</span>
+              <p class="tl-summary">${summary}</p></div>`).join("");
+      }
+
+      $("trace-toggle").onclick = () => {
+        const open = $("timeline").classList.toggle("open");
+        $("trace-toggle").setAttribute("aria-expanded", String(open));
+      };
+      $("prev").onclick = () => { if (i > 0) { i--; render(); refreshApprove(ITEMS[i]); } };
+      $("next").onclick = () => { if (i < ITEMS.length - 1) { i++; render(); refreshApprove(ITEMS[i]); } };
+
+      // theme
+      function setTheme(t) { document.body.dataset.theme = t; $("t-light").setAttribute("aria-pressed", String(t === "light")); $("t-dark").setAttribute("aria-pressed", String(t === "dark")); }
+      $("t-light").onclick = () => setTheme("light");
+      $("t-dark").onclick = () => setTheme("dark");
+
+      // decisions
+      let snackTimer = null, rejectArmed = false, armTimer = null;
+      function flash(msg) {
+        $("snack-msg").textContent = msg;
+        $("snack").classList.add("show");
+        clearTimeout(snackTimer);
+        snackTimer = setTimeout(() => $("snack").classList.remove("show"), 3000);
+      }
+      $("approve").onclick = () => {
+        const it = ITEMS[i];
+        const edited = current !== null && current !== it.value;
+        flash(edited ? `correction filed — ${it.edge}: ${it.value} → ${current}` : `approved — ${it.edge} → ${it.value}`);
+      };
+      $("reject").onclick = () => {
+        const it = ITEMS[i];
+        if (!rejectArmed) {
+          rejectArmed = true;
+          $("reject").classList.add("armed");
+          $("reject").textContent = "tap again — discard";
+          clearTimeout(armTimer);
+          armTimer = setTimeout(() => { rejectArmed = false; $("reject").classList.remove("armed"); $("reject").textContent = "Reject — discard"; }, 3000);
+          return;
+        }
+        rejectArmed = false; $("reject").classList.remove("armed"); $("reject").textContent = "Reject — discard";
+        flash(`rejected — ${it.edge} → ${it.value}`);
+      };
+      $("snack-undo").onclick = () => $("snack").classList.remove("show");
+
+      render();
+      refreshApprove(ITEMS[i]);
+    </script>
+  </body>
+</html>

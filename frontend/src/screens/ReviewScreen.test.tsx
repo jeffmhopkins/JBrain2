@@ -364,6 +364,123 @@ describe("ReviewScreen (split inbox)", () => {
     expect(within(proposed).getByText("Jeff")).toBeInTheDocument();
   });
 
+  // Direction C — correct in place. A typed (closed-enum) inference offers its
+  // members as chips; approving unchanged records the inference, picking another
+  // member files a correction note.
+  const genderInference: ReviewItem = {
+    id: "inf-g",
+    kind: "low_confidence_inference",
+    domain: "general",
+    created_at: "2026-06-15T13:00:00Z",
+    status: "open",
+    resolution: null,
+    resolved_at: null,
+    payload: {
+      entity_ref: "celine",
+      predicate: "gender",
+      qualifier: "",
+      statement: "Celine's gender is female.",
+      value_json: { value: "female" },
+      enum_values: ["male", "female", "unknown"],
+      reasons: ["below_threshold"],
+      summary: "hold for review (below_threshold): Celine's gender is female.",
+      outcomes: { accept: "recorded and pinned.", reject: "the fact is discarded." },
+    },
+  };
+
+  it("approves a typed inference unchanged, recording it as accept", async () => {
+    serve([genderInference], [], []);
+    render(<ReviewScreen />);
+    await screen.findByText(/hold for review/);
+    fireEvent.click(screen.getByRole("button", { name: /hold for review/ }));
+
+    // The enum members render as chips, the proposed one selected; no edit yet.
+    expect(screen.getByRole("button", { name: "female", pressed: true })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "approve" }));
+
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/review/inf-g/resolve",
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify({ action: "accept", payload: { choice: "approve" } }),
+        }),
+      ),
+    );
+  });
+
+  it("picking a different enum member files a correction note instead of accepting", async () => {
+    serve([genderInference], [], []);
+    render(<ReviewScreen />);
+    await screen.findByText(/hold for review/);
+    fireEvent.click(screen.getByRole("button", { name: /hold for review/ }));
+
+    // Correct the held value to another member; the primary becomes a correction.
+    fireEvent.click(screen.getByRole("button", { name: "male" }));
+    fireEvent.click(screen.getByRole("button", { name: "approve correction" }));
+
+    // The fix is a real note in the item's domain (the #7 channel), then the item
+    // resolves as corrected linked to it — never a direct value write.
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/notes",
+        expect.objectContaining({ method: "POST" }),
+      ),
+    );
+    const noteCall = fetchMock.mock.calls.find(([u]) => String(u) === "/api/notes");
+    const body = JSON.parse(String((noteCall?.[1] as RequestInit).body)) as {
+      domain: string;
+      body: string;
+    };
+    expect(body.domain).toBe("general");
+    expect(body.body).toContain("should be male, not female");
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/review/inf-g/resolve",
+        expect.objectContaining({
+          method: "POST",
+          body: expect.stringContaining('"action":"correct"'),
+        }),
+      ),
+    );
+  });
+
+  it("a free-text inference value is editable in place before approving", async () => {
+    const nick: ReviewItem = {
+      ...genderInference,
+      id: "inf-n",
+      payload: {
+        entity_ref: "celine",
+        predicate: "name.nickname",
+        qualifier: "",
+        statement: "People call her Cel.",
+        value_json: { name: "Cel" },
+        reasons: ["below_threshold"],
+        summary: "hold for review (below_threshold): People call her Cel.",
+        outcomes: { accept: "recorded and pinned.", reject: "the fact is discarded." },
+      },
+    };
+    serve([nick], [], []);
+    render(<ReviewScreen />);
+    await screen.findByText(/hold for review/);
+    fireEvent.click(screen.getByRole("button", { name: /hold for review/ }));
+
+    // No enum: the value is a tap-to-edit chip. Editing flips approve to a
+    // correction without any separate "correct it" detour.
+    expect(screen.queryByRole("button", { name: "correct it" })).not.toBeInTheDocument();
+    fireEvent.click(within(screen.getByLabelText("proposed fact")).getByText("Cel"));
+    fireEvent.change(screen.getByLabelText("corrected value"), { target: { value: "Celery" } });
+    fireEvent.click(screen.getByRole("button", { name: "approve correction" }));
+
+    const noteCall = await waitFor(() => {
+      const call = fetchMock.mock.calls.find(([u]) => String(u) === "/api/notes");
+      if (!call) throw new Error("no note filed yet");
+      return call;
+    });
+    const body = JSON.parse(String((noteCall[1] as RequestInit).body)) as { body: string };
+    expect(body.body).toContain("should be Celery, not Cel");
+  });
+
   it("a confirm_entity card renders its question with approve/reject", async () => {
     const confirm: ReviewItem = {
       id: "ce1",

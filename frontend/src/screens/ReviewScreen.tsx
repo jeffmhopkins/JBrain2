@@ -3,7 +3,9 @@
 // browsable with a selection mode for bulk actions; tapping a row pushes a
 // detail view with prev/next so you move between items without returning to
 // the list. The detail shows the proposal as a before→after (collisions) or a
-// what-happens panel, the cited evidence, and the proposals to choose among —
+// what-happens panel; a low-confidence inference's value is editable in place
+// (typed predicates pick a member) — approve unchanged records it, an edit files
+// a correction note. It shows the cited evidence and the proposals to choose among —
 // plus two universal escape hatches, defer and "talk it over", so no item is
 // ever a reject-only dead end. Every decision raises an undo snackbar (undo is
 // the server's own unwind). Decided rows reopen; deferred rows resume.
@@ -92,6 +94,9 @@ interface Parsed {
   qualifier: string | null;
   statement: string | null;
   valueJson: unknown;
+  // A typed (closed-enum) predicate's members — gender → [male, female,
+  // unknown]. Empty for free-text edges; drives the correct-in-place picker.
+  enumValues: string[];
   // The optional verbose extraction -> integration -> arbiter trace.
   trace: TraceStage[] | null;
   // new_predicate cards: the candidate canonicals (strongest first) and the
@@ -146,6 +151,9 @@ function parsePayload(payload: Record<string, unknown>): Parsed {
     qualifier: str(payload.qualifier),
     statement: str(payload.statement),
     valueJson: payload.value_json,
+    enumValues: Array.isArray(payload.enum_values)
+      ? payload.enum_values.flatMap((v: unknown): string[] => (typeof v === "string" ? [v] : []))
+      : [],
     trace: parseTrace(payload.trace),
     suggestions: Array.isArray(payload.suggestions)
       ? payload.suggestions.flatMap((s: unknown): { name: string; score: number }[] => {
@@ -617,6 +625,17 @@ function Detail({ item, lane, queue, position, onClose, onNav }: DetailProps) {
   const proposals = proposalsFor(p);
   const showDiff = p.beforeLabel !== null && p.afterLabel !== null;
 
+  // Direction C — correct in place: a low-confidence inference's value is
+  // editable on the card. Approve unchanged records the inference; an edit files
+  // a correction note (the #7 channel) so the wiki stays machine-written. A typed
+  // predicate (p.enumValues) offers its members as chips instead of free text.
+  const isInference = item.kind === "low_confidence_inference" && p.predicate !== null;
+  const originalValue = isInference ? valueLabel(p.valueJson, p.statement ?? "") : "";
+  const [editValue, setEditValue] = useState(originalValue);
+  const [editingValue, setEditingValue] = useState(false);
+  const valueEdited =
+    isInference && editValue.trim().length > 0 && editValue.trim() !== originalValue;
+
   // Carousel: swipe left/right pages to the next/prev item, the horizontal twin
   // of the ‹ › chevrons. Armed under the same condition they show, and only on a
   // horizontal-dominant drag so it never steals the vertical scroll.
@@ -656,6 +675,22 @@ function Detail({ item, lane, queue, position, onClose, onNav }: DetailProps) {
   function fileCorrection() {
     if (draft.trim().length === 0) return;
     queue.correct(item.id, draft.trim());
+    onClose();
+  }
+
+  function approveInference() {
+    if (valueEdited) {
+      const path = edgePath(p.predicate ?? "", p.qualifier);
+      const body = `Correction — ${p.statement ?? p.summary ?? kindLabel(item.kind)}\n\nThe value for ${path} should be ${editValue.trim()}, not ${originalValue}.`;
+      queue.correct(item.id, body);
+    } else {
+      queue.resolve(item.id, "accept", { choice: "approve" });
+    }
+    onClose();
+  }
+  function rejectInference() {
+    if (p.rejectDestructive && !tap("inf-reject")) return;
+    queue.resolve(item.id, "reject", { choice: "reject" });
     onClose();
   }
 
@@ -705,14 +740,71 @@ function Detail({ item, lane, queue, position, onClose, onNav }: DetailProps) {
         {p.summary !== null && <h2 className="rdetail-hero">{p.summary}</h2>}
         {p.rationale !== null && <p className="rdetail-why">{p.rationale}</p>}
 
-        {item.kind === "low_confidence_inference" && p.predicate !== null && (
+        {isInference && (
           <div className="rproposed" aria-label="proposed fact">
-            <span className="rdiff-lbl">proposed fact</span>
-            <span className="fact-edge">
-              <span className="edge-path">{edgePath(p.predicate, p.qualifier)}</span>
-              <span className="edge-arrow"> → </span>
-              <span className="edge-value">{valueLabel(p.valueJson, p.statement ?? "")}</span>
+            <span className="rdiff-lbl">
+              proposed fact
+              {p.enumValues.length > 0 && <span className="rinf-typed">closed set</span>}
             </span>
+            <span className="fact-edge">
+              <span className="edge-path">{edgePath(p.predicate ?? "", p.qualifier)}</span>
+              <span className="edge-arrow"> → </span>
+              {lane !== "pending" || p.enumValues.length > 0 ? (
+                <span className={`edge-value${valueEdited ? " rinf-edited" : ""}`}>
+                  {lane === "pending" ? editValue : originalValue}
+                </span>
+              ) : editingValue ? (
+                <input
+                  className="rinf-input"
+                  ref={(el) => el?.focus()}
+                  value={editValue}
+                  aria-label="corrected value"
+                  onChange={(e) => setEditValue(e.target.value)}
+                  onBlur={() => setEditingValue(false)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") setEditingValue(false);
+                  }}
+                />
+              ) : (
+                <button
+                  type="button"
+                  className={`rinf-chip${valueEdited ? " edited" : ""}`}
+                  onClick={() => setEditingValue(true)}
+                >
+                  <span className="rinf-val">{editValue}</span>
+                  <span className="rinf-pen" aria-hidden="true">
+                    ✎ edit
+                  </span>
+                </button>
+              )}
+            </span>
+            {lane === "pending" && p.enumValues.length > 0 && (
+              <div className="rinf-enum">
+                {p.enumValues.map((v) => (
+                  <button
+                    key={v}
+                    type="button"
+                    className={`rinf-enum-chip${editValue === v ? " on" : ""}`}
+                    aria-pressed={editValue === v}
+                    onClick={() => setEditValue(v)}
+                  >
+                    {v}
+                  </button>
+                ))}
+              </div>
+            )}
+            {lane === "pending" && (
+              <p className={`rinf-status${valueEdited ? " edit" : ""}`}>
+                {valueEdited ? (
+                  <>
+                    correcting <s>{originalValue}</s> → <b>{editValue.trim()}</b> — filed as a
+                    correction note; the pipeline applies it, so the wiki stays machine-written.
+                  </>
+                ) : (
+                  (p.accept ?? "recorded and pinned — reprocessing won't drop it.")
+                )}
+              </p>
+            )}
           </div>
         )}
 
@@ -805,6 +897,23 @@ function Detail({ item, lane, queue, position, onClose, onNav }: DetailProps) {
                   onClose();
                 }}
               />
+            ) : isInference ? (
+              <div className="rinf-actions">
+                <button
+                  type="button"
+                  className={`rinf-approve${valueEdited ? " correction" : ""}`}
+                  onClick={approveInference}
+                >
+                  {valueEdited ? "approve correction" : "approve"}
+                </button>
+                <button
+                  type="button"
+                  className={`rinf-reject${armed === "inf-reject" ? " armed" : ""}`}
+                  onClick={rejectInference}
+                >
+                  {armed === "inf-reject" ? "tap again — discard" : "reject — discard"}
+                </button>
+              </div>
             ) : (
               <>
                 <h3 className="section-header">choose among proposals</h3>
@@ -862,13 +971,15 @@ function Detail({ item, lane, queue, position, onClose, onNav }: DetailProps) {
             >
               defer
             </button>
-            <button
-              type="button"
-              className={`rfoot-correct${composing ? " active" : ""}`}
-              onClick={() => (composing ? setComposing(false) : openComposer())}
-            >
-              correct it
-            </button>
+            {!isInference && (
+              <button
+                type="button"
+                className={`rfoot-correct${composing ? " active" : ""}`}
+                onClick={() => (composing ? setComposing(false) : openComposer())}
+              >
+                correct it
+              </button>
+            )}
             <button
               type="button"
               className="rfoot-discuss"
@@ -1210,6 +1321,7 @@ export function ReviewScreen() {
         </>
       ) : (
         <Detail
+          key={detailItem.id}
           item={detailItem}
           lane={filter}
           queue={queue}
