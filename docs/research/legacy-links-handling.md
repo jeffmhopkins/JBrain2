@@ -160,6 +160,18 @@ This reframes the fix: the job is **not** to keep past facts off the head; it is
 to (1) ensure past facts carry `valid_to`, and (2) make every consumer treat a
 closed interval as *former* regardless of chain position.
 
+### 3.2 The functional invariant is "≤1 *open* value," not "≤1 value" [owner-decided]
+
+`worksFor` being functional means *at most one **open** (ongoing) value* — you
+can't hold two jobs **now**, but you certainly **had** two in the past. So
+**supersession fires only between OPEN values**: a new open value closes the
+prior open one and links `superseded_by` (sequential replacement — the revision
+chain in `docs/ANALYSIS.md`). A fact that is **closed on arrival** ("used to")
+**never enters the supersession contest** — it lands straight into history as an
+`active`-but-closed fact. Two co-stated past values with no order are therefore
+**both closed, both `active`, neither superseding the other** (§6.3) — equal
+parallel history, no current value.
+
 ---
 
 ## 4. Options
@@ -251,15 +263,17 @@ defense-in-depth behind it.
 
 ### Phase 1 — Supersession correctness (CI-testable, no prompt bump) — ship first
 
-1. **Preserve `valid_to` on a closed first-and-only fact (§2.5.2 + §3.1).** A
-   candidate carrying a `valid_to` must keep it when there is **no active head**,
-   instead of being flattened into `active` + *open* by the "no actives → active"
-   branch (`supersession.py:446-447`). It stays the `active` head (nothing
-   replaced it — marking it `superseded` would be false) **but closed**, so
-   `current = active AND valid_to IS NULL` reports no current value. Unit tests:
-   first-and-only past job (head, closed, current=none), two concurrent past
-   jobs + no current (both closed; one head-closed or both superseded per §6.2),
-   two past + one current.
+1. **A closed-on-arrival fact skips the supersession contest (§2.5.2 + §3.1 +
+   §3.2).** A candidate carrying a `valid_to` must keep it — never flattened into
+   `active` + *open* by the "no actives → active" branch
+   (`supersession.py:446-447`) — and must **not** supersede or be superseded by
+   another *closed* value (supersession is between OPEN values only). It stays
+   `active` but closed, so `current = active AND valid_to IS NULL` reports no
+   current value. Unit tests: first-and-only past job (active, closed,
+   current=none); **two co-stated past jobs + no current (both active, both
+   closed, neither `superseded_by` the other, current=none)**; two past + one
+   current (current open+active, past ones closed); sequential replacement still
+   builds the `superseded_by` chain (open→open).
 2. **`normalize_past_assertion` deterministic guard (Option B).** Closed past
    marker set + closed-interval stamping (`valid_to = anchor`, era/unknown);
    unit-tested over the phrase matrix and anchor cases. Wired at the same
@@ -300,10 +314,13 @@ migration, no re-extraction.*
 
 ### Phase 5 — Eval
 
-7. Add a corpus case = **this exact note**. Assert: SpaceX active `worksFor`
-   edge; US army + Oregon Lithoprint as **closed past** history (not active, not
-   superseding each other); **no** derived inverse on the past edges; the tab
-   shows them as former.
+7. Add a corpus case = **this exact note**. Assert: SpaceX active + **open**
+   `worksFor` edge (current); US army + Oregon Lithoprint **active but closed**
+   (`valid_to` set), **neither `superseded_by` the other**; **no** derived
+   inverse on the past edges; `current = active AND valid_to IS NULL` resolves to
+   SpaceX only; the tab shows the two past ones as former. Add a no-current
+   variant ("I used to work for US army and Oregon Lithoprint" alone) → both
+   closed, current employer = none.
 
 ---
 
@@ -314,17 +331,20 @@ migration, no re-extraction.*
    precision — we *know* it ended at or before capture, and a concrete end keeps
    ordering/queries simple. `valid_from` stays null/unknown.
 2. **[DECIDED — owner, 2026-06-15] "Used to do X" must read as not-current even
-   with no current value.** Resolved via the §3.1 axis split: the latest past
-   value stays the **`active` head but closed** (`valid_to` set); `current =
-   active AND valid_to IS NULL` then reports no current employer. Not marked
-   `superseded` (nothing replaced it). *Remaining sub-question:* with two past
-   jobs and no current, is the most-recent one the closed head and the older
-   `superseded`, or are both `superseded` with no head? Recommend **head-closed
-   for the most recent, superseded for older** (consistent single-head model);
-   confirm during Phase 1.
-3. **A2 registry gate now or later?** Recommend **later** (defer until logs
+   with no current value.** Resolved via the §3.1 axis split: a past value is
+   `active` (non-superseded, non-retracted — it's still TRUE about its interval)
+   but **closed** (`valid_to` set); `current = active AND valid_to IS NULL` then
+   reports no current employer. Not marked `superseded` (nothing replaced it).
+3. **[DECIDED — owner, 2026-06-15] Co-stated past values with no stated order
+   are EQUALLY past.** "I used to work for US army and Oregon Lithoprint" → both
+   closed, **neither `superseded_by` the other**, no current/open value. The
+   `superseded_by` chain is built **only for sequential replacement** (a newer
+   *open* value pushing out a prior *open* one, "worked at Acme, now Globex");
+   absent stated order, they coexist as parallel history. Order is asserted only
+   when the note gives it (dates, "then", "before that") — never invented.
+4. **A2 registry gate now or later?** Recommend **later** (defer until logs
    justify it).
-4. **Should past relationships ever be visible to the integrator?**
+5. **Should past relationships ever be visible to the integrator?**
    `graph_context` is active-only today. Role-reference resolution ("my *old*
    boss") would need history — out of scope here, but flag it so Phase 1 doesn't
    foreclose it.
