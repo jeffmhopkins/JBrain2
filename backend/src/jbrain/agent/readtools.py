@@ -4,7 +4,7 @@ the existing search and notes services.
 Each handler runs under the session's RLS scope (`ToolContext.session`), so a
 narrowed session only ever sees in-scope data — the firewall is the services',
 not the handler's. `build_registry` binds these handlers to their `.tool`
-sidecars (docs/ASSISTANT_PLAN.md P4.4c).
+sidecars (docs/archive/ASSISTANT_PLAN.md P4.4c).
 """
 
 from pathlib import Path
@@ -170,7 +170,7 @@ def format_entity(view: dict[str, Any]) -> str:
     """The structured/graph view: schema.org kind, names, facts-as-edges (with the
     target entity's id on relationship edges, so they can be chained through),
     inbound edges, and a mention count. Text-only now; an entity_card view comes
-    with the component registry (the text-first tool path, ASSISTANT_PLAN.md)."""
+    with the component registry (the text-first tool path, docs/archive/ASSISTANT_PLAN.md)."""
     lines = [f"{view['canonical_name']} [{view['kind']}] ({view['domain']})"]
     if aliases := view.get("aliases"):
         lines.append("also known as: " + ", ".join(aliases))

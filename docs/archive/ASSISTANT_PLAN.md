@@ -1,5 +1,15 @@
 # JBrain2 — Assistant Implementation Plan
 
+> **Status: COMPLETED & ARCHIVED (2026-06).** Phase 4 (the personal agent)
+> shipped in full — the `agent/` package (loop, tools, memory, classifier,
+> reflexion, proposals, connectors), the `/chat` SSE streaming endpoint, and the
+> Full Brain PWA surface are all live; migrations run through 0034. Every
+> P4.1–P4.9 slice below was built. This document is kept as the **build record**;
+> the body's "Phases 0–3 are implemented / Phase 4 is the next buildable work"
+> framing is historical. Live phase status and what's next are in
+> `docs/ROADMAP.md`; the deferred self-improvement loops (2–4), skill learning,
+> and prompt self-edit are Phase 5–7 there.
+
 The buildable plan for `docs/ASSISTANT.md`, grounded in the current codebase
 (Phases 0–3 are implemented: auth, notes, ingest, search, analysis, RLS, the
 Postgres job queue, `.prompt` loading, and an eval harness all exist). This plan

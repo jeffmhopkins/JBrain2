@@ -585,7 +585,7 @@ def link_relationship_objects(
     recovered only for `relationship` facts (a state fact renders its value_json
     instead, so it has no display gap to justify the inference risk).
 
-    The model is the weak link (docs/research/fix-options/1): grok sets
+    The model is the weak link (docs/archive/research/fix-options/1): grok sets
     object_entity_ref inconsistently — sometimes naming the object, sometimes
     folding it into the statement, sometimes near-missing the mention's name.
     That run-to-run flip swings a relationship edge between linked and unlinked,

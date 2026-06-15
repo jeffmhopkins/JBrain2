@@ -18,7 +18,7 @@ from sqlalchemy.orm import Mapped, column_property, mapped_column, relationship
 from jbrain.models.analysis import NoteAnalysis
 from jbrain.models.core import Base
 
-# The note→graph Integrator lifecycle (docs/INTEGRATOR_PLAN.md §4). Mirrored in
+# The note→graph Integrator lifecycle (docs/archive/INTEGRATOR_PLAN.md §4). Mirrored in
 # migration 0029's CHECK constraint — keep the two in sync.
 INTEGRATION_STATES = frozenset(
     {"pending_integration", "integrating", "integrated", "stale", "skipped"}

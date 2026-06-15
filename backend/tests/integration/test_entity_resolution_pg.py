@@ -52,10 +52,10 @@ pytestmark = [
 # mention, so that resolver path is bypassed; the resolver layers stay covered
 # by the direct resolve_entity unit tests in this file, and declared-name /
 # collision by the harness scenarios (name_legal_reprojects_canonical,
-# adv_same_first_name_collapses). Tracked in docs/CUTOVER_V1_REMOVAL.md.
+# adv_same_first_name_collapses). Tracked in docs/archive/CUTOVER_V1_REMOVAL.md.
 _CUTOVER_SKIP = (
     "deterministic resolver via pipeline is bypassed under integrate;"
-    " see docs/CUTOVER_V1_REMOVAL.md"
+    " see docs/archive/CUTOVER_V1_REMOVAL.md"
 )
 
 NOTE_TIME = datetime(2026, 6, 2, 16, 0, tzinfo=UTC)

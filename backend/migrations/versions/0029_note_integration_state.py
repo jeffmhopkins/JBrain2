@@ -1,7 +1,7 @@
 """Add notes.integration_state — the note→graph Integrator lifecycle.
 
 Tracks whether a note has been through the new Integrator agent
-(docs/INTEGRATOR_PLAN.md §4): an indexed note is `pending_integration` until
+(docs/archive/INTEGRATOR_PLAN.md §4): an indexed note is `pending_integration` until
 the agent produces its IntegrationIntent and the arbiter commits, then
 `integrated`. ADDITIVE for now — the existing analyze_note path still runs and
 nothing yet consumes this column; the trigger cutover (W3.3) is deferred so the

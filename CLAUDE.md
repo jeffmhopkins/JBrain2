@@ -5,10 +5,11 @@ notes as the sole sources of truth. See `docs/ARCHITECTURE.md` for the full
 design, `docs/ROADMAP.md` for phases, `docs/DEVELOPMENT.md` for binding
 standards, `docs/DESIGN.md` for the binding GUI design system,
 `docs/ANALYSIS.md` for the note-analysis pipeline (Phases 2-3),
-`docs/ASSISTANT.md` (+ `docs/ASSISTANT_PLAN.md`) for the self-improving agent
-design and its implementation plan, and
+`docs/ASSISTANT.md` for the self-improving agent design, and
 `docs/PREDICATE_CANONICALIZATION.md` for the embedding-assisted predicate
 registry + typed value shapes (core shipped; self-improvement loop deferred).
+Phases 0–4 are shipped; completed build plans and design research live under
+`docs/archive/` (see `docs/README.md` for the full map).
 
 ## Non-negotiables for all code in this repo
 

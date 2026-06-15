@@ -193,9 +193,9 @@ infinite timeline — it shows the **last 2 days** of notes with an
 **mode-scoped**: Entry shows the note stream; Research / Full Brain show
 that mode's **conversation cards** (title, last-message preview, time,
 mode dot) — tapping one descends the tree into the conversation layer;
-typing in those modes always starts a NEW conversation. Until Phase 4
-ships conversations, those modes show an empty state ("conversations
-arrive in Phase 4"). **Swiping a note bubble left** slides it to reveal an
+typing in those modes always starts a NEW conversation. With no
+conversations yet, the mode shows a one-line empty state.
+**Swiping a note bubble left** slides it to reveal an
 **icon action rail — Delete · Edit · Hide** (settled in the entry-mode swipe
 review; **Move domain** was dropped from the rail to the note-view ⋯ menu and
 **Hide** added — three 64px buttons, RAIL_WIDTH 192, each an outline icon over
@@ -437,8 +437,9 @@ transparency is a feature, not debug chrome. Domain filter chips under the
 search bar. Degraded mode shows the amber "keyword-only results — semantic
 search recovering…" banner (never an error page). Tapping a result opens
 the **note sheet** — a minimal full-note view (body, attachments, metadata)
-as a slide-up layer; swipe down returns to results. The omnibox Research
-segment remains a Phase 4 surface; search lives behind the Search tile.
+as a slide-up layer; swipe down returns to results. The omnibox Research /
+Full Brain modes drive agent conversations; passage search lives behind the
+Search tile.
 
 **Empty states** — one `--text-2` sentence with the action inline: *"Nothing
 scheduled — tap to add."* No illustrations.
@@ -591,8 +592,7 @@ Rules:
   exit). The panel tracks the finger and snaps in past threshold; disabled under
   reduced motion.
 - **Full-Brain-only:** Entry/Research composers do not carry these shortcuts (Entry
-  keeps its transcript-item action rail). Phase 4 surface — disabled with a phase
-  label until then.
+  keeps its transcript-item action rail).
 
 Reference mocks: `docs/mocks/assistant-lateral-swipe.html` (the gesture, no edge
 chrome), `docs/mocks/assistant-sessions-view.html` (the Sessions page + start-
@@ -657,7 +657,7 @@ model output drive the render). The contract:
   `kind` enums, never colors or hex** — the model conveys meaning, the component owns
   the token mapping.
 
-**The registry** (starter set; spec in `docs/research/self-improving-agent/G-tool-
+**The registry** (starter set; spec in `docs/archive/research/self-improving-agent/G-tool-
 view-components.md`). Three composable primitives hold the count down —
 `data_table`, `stat_block`, `citation_card` (the shared pointer-not-copy citation
 surface every view reuses). **MVP:** those three + `lab_plot` + the interactives

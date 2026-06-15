@@ -1,5 +1,13 @@
 # JBrain2 — Note→Graph Integrator (v3) Implementation Plan
 
+> **Status: COMPLETED & ARCHIVED (2026-06).** The extract → Integrator →
+> `plan_intent` → `apply_intent` pipeline shipped and is the only note→graph
+> path; the v1 `analyze_note` step is removed. Kept as the **build record**. The
+> few items still deferred (the `integration_run`/`resolution_pin` tables, N14
+> owner-ahead ordering, the `extraction_truncated` review card, §9 Option 2) are
+> carried forward in `docs/ROADMAP.md` — see also the per-section status note
+> just below. Current pipeline reference is `docs/ANALYSIS.md`.
+
 The buildable plan for redesigning how notes become graph truth: replacing the
 blind, per-note deterministic integration step with a **graph-aware Integrator
 agent that owns judgment**, while the **deterministic arbiter keeps owning

@@ -1,5 +1,5 @@
 """Handlers for the Tier-A memory tools, thin wrappers over MemoryService bound to
-their `.tool` sidecars (docs/ASSISTANT_PLAN.md P4.6).
+their `.tool` sidecars (docs/archive/ASSISTANT_PLAN.md P4.6).
 
 Two firewalls show up here. Recalled/read memory is framed as DATA, never
 instruction (invariants #1/#3): the system prompt holds the master boundary; each

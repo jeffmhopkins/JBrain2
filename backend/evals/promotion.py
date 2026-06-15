@@ -1,5 +1,5 @@
 """The promotion gate — the single offline bar every self-improvement change must
-beat (docs/ASSISTANT.md "Self-improvement loops", docs/ASSISTANT_PLAN.md Phase 5).
+beat (docs/ASSISTANT.md "Self-improvement loops", docs/archive/ASSISTANT_PLAN.md Phase 5).
 
 Loops 2 (skill learning) and 4 (prompt/tool self-edit) may only promote a
 candidate (a new skill or prompt version) when it **beats a safety-inclusive

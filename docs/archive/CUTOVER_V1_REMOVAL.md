@@ -1,5 +1,10 @@
 # V1 (`analyze_note`) removal — DONE
 
+> **Archived (2026-06).** Completed migration record. `integrate_note` is the
+> sole note→graph path; all v1 code listed below is gone. The one open follow-up
+> (the `extraction_truncated` review card never being filed under integrate) is
+> carried forward in `docs/ROADMAP.md`.
+
 ## Status
 
 **Complete.** `integrate_note` is the only note→graph path. The cutover toggle

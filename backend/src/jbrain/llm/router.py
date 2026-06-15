@@ -50,7 +50,7 @@ TASK_DEFAULTS: dict[str, str] = {
     # default — agent reasoning over tools is the high-stakes path.
     "agent.turn": "xai:grok-4.3",
     # The note→graph Integrator: graph-aware coreference/relationship/gender
-    # judgment that produces an IntegrationIntent (docs/INTEGRATOR_PLAN.md). Strong
+    # judgment that produces an IntegrationIntent (docs/archive/INTEGRATOR_PLAN.md). Strong
     # tier — it owns the hard decisions the deterministic core then validates.
     "integrate.note": "xai:grok-4.3",
     # Auto-titling a chat from its first exchange — a cheap one-shot summary; the

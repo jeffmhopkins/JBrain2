@@ -50,8 +50,8 @@ GENERAL_ONLY = SessionContext(principal_kind="capability_token", domain_scopes=(
 # resolver + _apply behaviour. Under integrate they need an explicit intent
 # (cross_subject / ambiguous flags) + assertion revision; the core cross-subject
 # firewall stays covered by test_apply_intent_pg. Tracked in
-# docs/CUTOVER_V1_REMOVAL.md.
-_CUTOVER_SKIP = "needs integrate-era intent + assertion rework; see docs/CUTOVER_V1_REMOVAL.md"
+# docs/archive/CUTOVER_V1_REMOVAL.md.
+_CUTOVER_SKIP = "needs integrate-era intent + assertion rework; see docs/archive/CUTOVER_V1_REMOVAL.md"
 
 
 @pytest.fixture
