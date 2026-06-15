@@ -164,6 +164,11 @@ async def test_cold_match_keeps_raw_and_files_a_card(maker, tmp_path):  # noqa: 
             )
         ).one()
     assert row.payload["predicate"] == pred and row.payload["note_id"] == note_id
+    # The card carries the triggering edge (mention_refs resolved to the agent's
+    # names) so the UI can preview subject.<canonical> -> value, plus the ranked
+    # candidate list it renders instead of raw cosine numbers.
+    assert row.payload["subject"] == "Pat" and row.payload["value"] == "Dana"
+    assert isinstance(row.payload["suggestions"], list)
     # The card is dismissable in 3a (accept/map land in 3b): reject must NOT
     # raise UnknownAction — it leaves the fact under its raw name.
     resolved = await SqlAnalysisRepo(maker).resolve_review(OWNER, str(row.id), "reject", {})

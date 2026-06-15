@@ -281,7 +281,7 @@ describe("ReviewScreen (split inbox)", () => {
     expect(screen.getByRole("button", { name: "undo" })).toBeInTheDocument();
   });
 
-  it("a new_predicate map-to-existing choice echoes its canonical_name into the resolve", async () => {
+  it("a new_predicate card ranks candidates, previews the edge, and maps on tap", async () => {
     const newPred: ReviewItem = {
       id: "np1",
       kind: "new_predicate",
@@ -292,10 +292,16 @@ describe("ReviewScreen (split inbox)", () => {
       resolved_at: null,
       payload: {
         summary: "unknown predicate “marriedTo” — map it or mint it?",
+        predicate: "marriedTo",
+        subject: "Jeff",
+        value: "Celine",
+        suggestions: [
+          { name: "spouse", score: 0.78 },
+          { name: "partner", score: 0.66 },
+        ],
         choices: [
-          { action: "map_to_existing", label: "use spouse", canonical_name: "spouse" },
+          { action: "map_to_existing", label: "spouse", canonical_name: "spouse" },
           { action: "accept_as_new", label: "keep marriedTo as new" },
-          { action: "reject", label: "drop it", destructive: true },
         ],
       },
     };
@@ -303,8 +309,15 @@ describe("ReviewScreen (split inbox)", () => {
     render(<ReviewScreen />);
     await screen.findByText(/unknown predicate/);
     fireEvent.click(screen.getByRole("button", { name: /unknown predicate/ }));
-    fireEvent.click(screen.getByRole("button", { name: /use spouse/ }));
 
+    // Match strength is shown as a band, never the raw cosine number.
+    expect(screen.getByText("strong match")).toBeInTheDocument();
+    expect(screen.queryByText(/0\.78/)).not.toBeInTheDocument();
+    // The top candidate is the best match and previews the edge it would write.
+    const best = screen.getByRole("button", { name: /spouse.*best match/i });
+    expect(within(best).getByText("Jeff.spouse → Celine")).toBeInTheDocument();
+
+    fireEvent.click(best);
     await waitFor(() =>
       expect(fetchMock).toHaveBeenCalledWith(
         "/api/review/np1/resolve",
@@ -312,7 +325,7 @@ describe("ReviewScreen (split inbox)", () => {
           method: "POST",
           body: JSON.stringify({
             action: "map_to_existing",
-            payload: { choice: "use spouse", canonical_name: "spouse" },
+            payload: { choice: "spouse", canonical_name: "spouse" },
           }),
         }),
       ),
@@ -442,7 +455,7 @@ describe("ReviewScreen (split inbox)", () => {
     expect(within(row).getByText("Jeff")).toBeInTheDocument();
   });
 
-  it("a new_predicate card lets you name the predicate yourself via suggest_better", async () => {
+  it("a new_predicate card lets you rename the relation yourself via suggest_better", async () => {
     const newPred: ReviewItem = {
       id: "np2",
       kind: "new_predicate",
@@ -453,6 +466,10 @@ describe("ReviewScreen (split inbox)", () => {
       resolved_at: null,
       payload: {
         summary: "unknown predicate “marriedTo” — map it or mint it?",
+        predicate: "marriedTo",
+        subject: "Jeff",
+        value: "Celine",
+        suggestions: [{ name: "spouse", score: 0.66 }],
         choices: [{ action: "accept_as_new", label: "keep marriedTo as new" }],
       },
     };
@@ -461,18 +478,18 @@ describe("ReviewScreen (split inbox)", () => {
     await screen.findByText(/unknown predicate/);
     fireEvent.click(screen.getByRole("button", { name: /unknown predicate/ }));
 
-    // The free-text control is gated behind a non-empty name.
-    const box = screen.getByLabelText("better predicate name");
-    expect(screen.getByRole("button", { name: "use this name" })).toBeDisabled();
-    fireEvent.change(box, { target: { value: "  spouse  " } });
-    fireEvent.click(screen.getByRole("button", { name: "use this name" }));
+    // The rename control is gated behind a non-empty name.
+    const box = screen.getByLabelText("rename the relation");
+    expect(screen.getByRole("button", { name: "use" })).toBeDisabled();
+    fireEvent.change(box, { target: { value: "  partner  " } });
+    fireEvent.click(screen.getByRole("button", { name: "use" }));
 
     await waitFor(() =>
       expect(fetchMock).toHaveBeenCalledWith(
         "/api/review/np2/resolve",
         expect.objectContaining({
           method: "POST",
-          body: JSON.stringify({ action: "suggest_better", payload: { canonical_name: "spouse" } }),
+          body: JSON.stringify({ action: "suggest_better", payload: { canonical_name: "partner" } }),
         }),
       ),
     );
