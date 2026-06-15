@@ -77,13 +77,6 @@ async def job_tool(arguments: dict, ctx: ToolContext) -> ToolOutput:
     return ToolOutput("queued the export", job=JobRef(job_id="j7", summary="exporting your notes"))
 
 
-async def cholesterol_source(arguments: dict, ctx: ToolContext) -> ToolOutput:
-    # A source the grounding verifier can score an answer against (Reflexion).
-    return ToolOutput(
-        "lab", (NoteSource(note_id="n1", domain="health", snippet="cholesterol reading elevated"),)
-    )
-
-
 def router_with(turns: list[LlmTurn]) -> tuple[LlmRouter, FakeLlmClient]:
     fake = FakeLlmClient(turns=turns)
     return LlmRouter({"xai": fake}, {"agent.turn": ("xai", "grok-4.3")}), fake
@@ -396,56 +389,3 @@ async def test_recorder_logs_model_and_tool_steps() -> None:
         ("tool", "search", True),
         ("model", "converse", True),
     ]
-
-
-# --- reflexion (gated verify/retry on the non-streaming path) ----------------
-
-
-def reflexion_loop(turns: list[LlmTurn], tool: RegisteredTool) -> tuple[AgentLoop, FakeLlmClient]:
-    router, fake = router_with(turns)
-    return AgentLoop(router, registry_with(tool), reflexion=True), fake
-
-
-async def test_reflexion_off_by_default_runs_the_turn_once() -> None:
-    # An ungrounded answer would be retried *if* reflexion were on; off, it stands.
-    turns = [
-        LlmTurn("", (ToolCall("c1", "lab", {}),), "tool_use", LlmUsage(1, 1)),
-        LlmTurn("the roof needs replacing", (), "end_turn", LlmUsage(1, 1)),
-    ]
-    router, fake = router_with(turns)
-    loop = AgentLoop(router, registry_with(make_tool("lab", cholesterol_source)))
-    result = await loop.run(
-        session=OWNER, scopes=("general",), conversation=[UserMessage(text="?")]
-    )
-    assert result.text == "the roof needs replacing"
-    assert len(fake.converse_calls) == 2  # one attempt, no retry
-
-
-async def test_reflexion_keeps_a_grounded_first_answer_without_retrying() -> None:
-    turns = [
-        LlmTurn("", (ToolCall("c1", "lab", {}),), "tool_use", LlmUsage(1, 1)),
-        LlmTurn("cholesterol reading elevated", (), "end_turn", LlmUsage(1, 1)),
-    ]
-    loop, fake = reflexion_loop(turns, make_tool("lab", cholesterol_source))
-    result = await loop.run(
-        session=OWNER, scopes=("general",), conversation=[UserMessage(text="?")]
-    )
-    assert result.text == "cholesterol reading elevated"
-    assert len(fake.converse_calls) == 2  # first answer passed → no retry
-
-
-async def test_reflexion_retries_and_adopts_a_strictly_better_answer() -> None:
-    # Attempt 1's answer is ungrounded (verifier 0.0); the retry's grounds (1.0),
-    # a strict improvement, so it is adopted. Each attempt is tool_call → answer.
-    turns = [
-        LlmTurn("", (ToolCall("c1", "lab", {}),), "tool_use", LlmUsage(1, 1)),
-        LlmTurn("the roof needs replacing", (), "end_turn", LlmUsage(1, 1)),
-        LlmTurn("", (ToolCall("c2", "lab", {}),), "tool_use", LlmUsage(1, 1)),
-        LlmTurn("cholesterol reading elevated", (), "end_turn", LlmUsage(1, 1)),
-    ]
-    loop, fake = reflexion_loop(turns, make_tool("lab", cholesterol_source))
-    result = await loop.run(
-        session=OWNER, scopes=("general",), conversation=[UserMessage(text="?")]
-    )
-    assert result.text == "cholesterol reading elevated"  # the strictly-better retry
-    assert len(fake.converse_calls) == 4  # two full attempts

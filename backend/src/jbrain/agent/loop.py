@@ -27,7 +27,6 @@ from jbrain.agent.contracts import (
     ToolViewEvent,
     ViewPayload,
 )
-from jbrain.agent.reflexion import VerificationResult, reflect, verify_grounding
 from jbrain.agent.toolregistry import ToolRegistry
 from jbrain.db.session import SessionContext
 from jbrain.llm import (
@@ -157,17 +156,12 @@ class AgentLoop:
         recorder: RunRecorder | None = None,
         guardrails: Guardrails | None = None,
         task: str = "agent.turn",
-        reflexion: bool = False,
     ):
         self._router = router
         self._registry = registry
         self._recorder = recorder
         self._g = guardrails or Guardrails()
         self._task = task
-        # Reflexion (docs/ASSISTANT.md Loop 1) is OFF by default and injected by the
-        # caller from the settings store (the gate), so the loop itself takes no
-        # settings dependency — same pattern as `recorder`/`guardrails`.
-        self._reflexion = reflexion
 
     async def run(
         self,
@@ -177,38 +171,6 @@ class AgentLoop:
         conversation: Sequence[LlmMessage],
         timezone: str | None = None,
     ) -> AgentResult:
-        """Run one full turn, optionally under a Reflexion verify/retry pass.
-
-        Reflexion (when enabled) re-runs the *whole* turn at most N=2 times and keeps
-        a re-run only when the deterministic grounding verifier strictly improves —
-        a worse re-run can never replace a better answer, and nothing here persists
-        (docs/ASSISTANT.md "Self-improvement loops"). The streamed twin `run_stream`
-        cannot retry — its deltas are already on the wire — so Reflexion is the
-        non-streaming path's alone; that seam is deliberate."""
-        if not self._reflexion:
-            result, _ = await self._run_once(session, scopes, conversation, timezone)
-            return result
-
-        async def produce() -> tuple[AgentResult, VerificationResult]:
-            result, sources = await self._run_once(session, scopes, conversation, timezone)
-            # Verify the answer grounds in what the tools surfaced this turn. No
-            # sources (a greeting, a pure-reasoning turn) is a clean pass — there is
-            # nothing to ground against and nothing to second-guess.
-            verdict = verify_grounding([result.text] if result.text else [], sources)
-            return result, verdict
-
-        reflection = await reflect(produce, max_retries=2)
-        return reflection.answer
-
-    async def _run_once(
-        self,
-        session: SessionContext,
-        scopes: Sequence[str],
-        conversation: Sequence[LlmMessage],
-        timezone: str | None,
-    ) -> tuple[AgentResult, tuple[str, ...]]:
-        """One turn of the ReAct loop. Returns the result plus the source snippets
-        the tools surfaced (the grounding-verifier corpus for Reflexion)."""
         scopes = tuple(scopes)
         tools = self._registry.schemas_for(scopes)
         messages: list[LlmMessage] = list(conversation)
@@ -216,7 +178,6 @@ class AgentLoop:
         cost = 0
         consecutive_errors = 0
         idx = 0
-        sources: list[str] = []
 
         for step in range(self._g.max_steps):
             turn = await self._router.converse(
@@ -237,9 +198,9 @@ class AgentLoop:
             idx += 1
 
             if turn.stop_reason != "tool_use" or not turn.tool_calls:
-                return AgentResult(turn.text, "end_turn", step + 1, cost), tuple(sources)
+                return AgentResult(turn.text, "end_turn", step + 1, cost)
             if cost >= self._g.max_cost_tokens:
-                return AgentResult(turn.text, "budget", step + 1, cost), tuple(sources)
+                return AgentResult(turn.text, "budget", step + 1, cost)
 
             messages.append(AssistantMessage(text=turn.text, tool_calls=turn.tool_calls))
             results: list[ToolResult] = []
@@ -247,7 +208,6 @@ class AgentLoop:
             for call in turn.tool_calls:
                 dispatched = await self._dispatch(call, tool_ctx)
                 results.append(dispatched.result)
-                sources.extend(s.snippet for s in dispatched.sources)
                 any_error = any_error or dispatched.result.is_error
                 await self._record(
                     idx, "tool", call.name, ok=not dispatched.result.is_error, cost_tokens=0
@@ -257,9 +217,9 @@ class AgentLoop:
 
             consecutive_errors = consecutive_errors + 1 if any_error else 0
             if consecutive_errors >= self._g.max_consecutive_tool_errors:
-                return AgentResult(turn.text, "too_many_errors", step + 1, cost), tuple(sources)
+                return AgentResult(turn.text, "too_many_errors", step + 1, cost)
 
-        return AgentResult("", "max_steps", self._g.max_steps, cost), tuple(sources)
+        return AgentResult("", "max_steps", self._g.max_steps, cost)
 
     async def run_stream(
         self,
