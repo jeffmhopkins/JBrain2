@@ -64,14 +64,16 @@ def upgrade() -> None:
     # the registry's boot validation keeps the two in lockstep).
     op.execute(
         """
-        INSERT INTO app.actions (name, version, handler, mutating, cost_class, dedup_key_expr)
+        INSERT INTO app.actions
+            (name, version, handler, mutating, cost_class, dedup_key_expr,
+             params_schema, domain_optional)
         VALUES
-            ('ingest_note', 1, 'ingest_note', true, 'standard', 'note_id'),
-            ('embed_note', 1, 'embed_note', true, 'standard', 'note_id'),
-            ('integrate_note', 1, 'integrate_note', true, 'expensive', 'note_id'),
-            ('ocr_attachment', 1, 'ocr_attachment', true, 'expensive', 'attachment_id'),
-            ('consolidate_predicates', 1, 'consolidate_predicates', true, 'standard', NULL),
-            ('sync_predicates', 1, 'sync_predicates', true, 'standard', NULL)
+            ('ingest_note', 1, 'ingest_note', true, 'standard', 'note_id', '{}'::jsonb, true),
+            ('embed_note', 1, 'embed_note', true, 'standard', 'note_id', '{}'::jsonb, true),
+            ('integrate_note', 1, 'integrate_note', true, 'expensive', 'note_id', '{}'::jsonb, true),
+            ('ocr_attachment', 1, 'ocr_attachment', true, 'expensive', 'attachment_id', '{}'::jsonb, true),
+            ('consolidate_predicates', 1, 'consolidate_predicates', true, 'standard', NULL, '{}'::jsonb, true),
+            ('sync_predicates', 1, 'sync_predicates', true, 'standard', NULL, '{}'::jsonb, true)
         """
     )
 

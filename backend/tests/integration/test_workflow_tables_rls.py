@@ -106,9 +106,9 @@ async def seed_health_workflow(maker: async_sessionmaker) -> dict[str, str]:
         await s.execute(
             text(
                 "INSERT INTO app.skills (id, name, version, domain_code)"
-                " VALUES (:id, 'log_bp', 1, 'health')"
+                " VALUES (:id, :name, 1, 'health')"
             ),
-            {"id": ids["skill"]},
+            {"id": ids["skill"], "name": f"log_bp_{ids['skill'][:8]}"},
         )
     return ids
 
@@ -149,15 +149,33 @@ async def test_workflow_domain_tables_enforce_firewall(
 async def test_scoped_writer_cannot_smuggle_workflow_rows_across_domains(
     maker: async_sessionmaker,
 ) -> None:
-    """A general-only writer cannot stamp a health domain on a firewalled row."""
-    with pytest.raises(ProgrammingError):
-        async with scoped_session(maker, GENERAL_ONLY) as s:
-            await s.execute(
-                text(
-                    "INSERT INTO app.skills (id, name, version, domain_code)"
-                    " VALUES (gen_random_uuid(), 'sneaky', 1, 'health')"
-                )
-            )
+    """A general-only writer cannot stamp a health domain on ANY firewalled row —
+    events and resolution_pin (the content-bearing tables) and skills all carry the
+    same WITH CHECK (has_domain_scope(domain_code)), so the write firewall is
+    exercised on each, not just one."""
+    ids = await seed_health_workflow(maker)
+    smuggles = [
+        (
+            "INSERT INTO app.events (id, type, domain_code)"
+            " VALUES (gen_random_uuid(), 'sneak', 'health')",
+            {},
+        ),
+        (
+            "INSERT INTO app.resolution_pin (note_id, chunk_id, occurrence_index,"
+            " decision_kind, normalized_predicate, domain_code)"
+            " VALUES (:nid, :cid, 0, 'predicate_key', 'spouse', 'health')",
+            {"nid": ids["note"], "cid": ids["chunk"]},
+        ),
+        (
+            "INSERT INTO app.skills (id, name, version, domain_code)"
+            " VALUES (gen_random_uuid(), 'sneaky', 1, 'health')",
+            {},
+        ),
+    ]
+    for stmt, params in smuggles:
+        with pytest.raises(ProgrammingError):
+            async with scoped_session(maker, GENERAL_ONLY) as s:
+                await s.execute(text(stmt), params)
 
 
 async def seed_owner_definitions(maker: async_sessionmaker) -> dict[str, str]:
@@ -199,13 +217,16 @@ OWNER_TABLES = [
 async def test_workflow_owner_tables_are_owner_only(
     maker: async_sessionmaker, table: str, id_key: str
 ) -> None:
-    """Definition/audit metadata is visible to the owner, hidden from any narrowed
-    (owner_scoped) or token session (agent_runs precedent)."""
+    """Definition/audit metadata carries no domain_code: visible to ANY owner
+    session (narrowed or not — `is_owner()` is true for a domain-scoped owner, the
+    bare-`is_owner()` agent_runs precedent), hidden from non-owner token sessions."""
     ids = await seed_owner_definitions(maker)
     query = f"SELECT count(*) FROM app.{table} WHERE id = :id"
     params = {"id": ids[id_key]}
     assert await count_visible(maker, OWNER, query, params) == 1
-    assert await count_visible(maker, OWNER_HEALTH, query, params) == 0
+    # A domain-narrowed owner is still an owner (is_owner() ignores owner_scoped),
+    # exactly like app.agent_runs — these config/audit rows aren't domain data.
+    assert await count_visible(maker, OWNER_HEALTH, query, params) == 1
     assert await count_visible(maker, HEALTH_ONLY, query, params) == 0
     assert await count_visible(maker, UNSCOPED, query, params) == 0
 

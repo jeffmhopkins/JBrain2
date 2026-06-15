@@ -53,13 +53,14 @@ async def test_seeded_actions_are_globally_readable(maker: async_sessionmaker) -
 
 async def test_seed_matches_the_in_code_registry(maker: async_sessionmaker) -> None:
     """The table is the reference projection of jbrain.workflow.registry; the seed
-    must mirror the in-code specs exactly (handler, mutating, cost_class, dedup)."""
+    must mirror the in-code specs exactly — every field, so a future spec that sets
+    a non-default params_schema/domain_optional can't silently diverge from the seed."""
     async with scoped_session(maker, OWNER) as s:
         rows = (
             await s.execute(
                 text(
-                    "SELECT name, version, handler, mutating, cost_class, dedup_key_expr"
-                    " FROM app.actions"
+                    "SELECT name, version, handler, mutating, cost_class,"
+                    " dedup_key_expr, params_schema, domain_optional FROM app.actions"
                 )
             )
         ).all()
@@ -71,6 +72,8 @@ async def test_seed_matches_the_in_code_registry(maker: async_sessionmaker) -> N
         assert row.mutating == spec.mutating
         assert row.cost_class == spec.cost_class
         assert row.dedup_key_expr == spec.dedup_key_expr
+        assert row.params_schema == spec.params_schema
+        assert row.domain_optional == spec.domain_optional
 
 
 async def test_owner_can_register_a_new_action(maker: async_sessionmaker) -> None:

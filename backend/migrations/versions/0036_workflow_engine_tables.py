@@ -77,7 +77,9 @@ def upgrade() -> None:
     # --- triggers: bind an event type OR a schedule to a pipeline; owner config -
     # Exactly one source: on_event (an event type) or on_schedule_id. manual=true
     # marks an emergency-fireable sweep (a "run now" Ops control). filter is the
-    # conjunctive TriggerFilter (workflow/contracts.py).
+    # conjunctive TriggerFilter (workflow/contracts.py). on_event and pipeline are
+    # free text by design (no FK): event "types" have no table, and pipeline binds a
+    # name across versions (pipelines PK is composite (name, version)).
     op.execute(
         """
         CREATE TABLE app.triggers (
