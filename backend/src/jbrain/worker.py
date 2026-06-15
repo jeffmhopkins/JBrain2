@@ -29,7 +29,8 @@ from jbrain.schema import get_registry
 from jbrain.settings_store import SqlSettingsStore
 from jbrain.storage import FsBlobStore
 from jbrain.usage import SqlUsageRecorder
-from jbrain.workflow.registry import build_registry
+from jbrain.workflow import scheduler
+from jbrain.workflow.registry import ACTION_SPECS, ActionRegistry, build_registry
 
 log = structlog.get_logger()
 
@@ -87,14 +88,26 @@ async def _after_exhaustion(
         await ocr.enqueue_analysis_fallback(maker, str(attachment_id))
 
 
-async def run_loop(maker: async_sessionmaker[AsyncSession], handlers: dict[str, Handler]) -> None:
+async def run_loop(
+    maker: async_sessionmaker[AsyncSession],
+    handlers: dict[str, Handler],
+    registry: ActionRegistry | None = None,
+) -> None:
     backfilled = False
     last_heartbeat = 0.0
+    last_tick = 0.0
     while True:
         now = time.monotonic()
         if now - last_heartbeat >= HEARTBEAT_SECONDS:
             log.info("worker.heartbeat")
             last_heartbeat = now
+        # Run the scheduler tick on its own cadence: claim due schedules and
+        # enqueue their bound pipelines (workflow/scheduler.py). Cheap when idle
+        # (a single indexed due-query) and rides the same loop as the job claim,
+        # so a nightly sweep needs no separate timer process.
+        if registry is not None and now - last_tick >= scheduler.TICK_SECONDS:
+            await scheduler.run_tick_safely(maker, registry)
+            last_tick = now
         try:
             if not backfilled:
                 ingests = await queue.backfill_pending_notes(maker, queue.SYSTEM_CTX)
@@ -172,15 +185,21 @@ async def run() -> None:
         "consolidate_predicates": Consolidator(maker).run,
         # Keep the canonical_predicates index in step with the schema registry.
         "sync_predicates": predicate_embedder.sync_predicates,
+        # The deleted-note-artifact purge as a fireable action (Phase-5 Track B):
+        # the same boot sweep, now also runnable on a nightly schedule / on demand.
+        "purge_deleted_artifacts": scheduler.purge_handler(maker),
     }
     # Build the dispatch table from the action registry (W0.1): an action without
     # a handler — or a handler with no registered action — fails the worker LOUDLY
     # here at boot, like the schema registry above, rather than failing a job at run
     # time (the old "no handler for kind" path). Behavior for known kinds is
-    # unchanged: the dispatch table is the same {kind: handler} map as before.
-    handlers = build_registry().dispatch_table(impls)
+    # unchanged: the dispatch table is the same {kind: handler} map as before. The
+    # registry adds the purge action to the shipped six (it lives in-code only, not
+    # in the app.actions seed — see scheduler.PURGE_ACTION).
+    registry = build_registry((*ACTION_SPECS, scheduler.PURGE_ACTION))
+    handlers = registry.dispatch_table(impls)
     try:
-        await run_loop(maker, handlers)
+        await run_loop(maker, handlers, registry)
     finally:
         await engine.dispose()
 
