@@ -1,11 +1,12 @@
 import { act, render, screen } from "@testing-library/react";
-import { createRef } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { Launcher, type LauncherHandle } from "./Launcher";
+import { Launcher } from "./Launcher";
 
-// The back gesture closes the launcher through this imperative handle so it
-// plays the same slide-down retreat as swipe-down/Escape, not an abrupt unmount.
-describe("Launcher imperative close", () => {
+// Any close — X/grab, swipe-down, Escape, or the platform back gesture — clears
+// `open` in the parent; the launcher then plays its slide-down retreat and
+// unmounts. Closing this controlled way drops the nav depth immediately, so the
+// back gesture can't fall through and exit the app mid-animation.
+describe("Launcher controlled retreat", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.stubGlobal("matchMedia", () => ({ matches: false }));
@@ -21,30 +22,26 @@ describe("Launcher imperative close", () => {
     vi.unstubAllGlobals();
   });
 
-  it("ref.close() plays the retreat, then settles via onClose", () => {
-    const onClose = vi.fn();
-    const ref = createRef<LauncherHandle>();
-    render(<Launcher ref={ref} open onClose={onClose} onNavigate={() => {}} />);
+  const noop = () => {};
 
-    const nav = screen.getByRole("navigation", { name: "Launcher" });
-    expect(nav).not.toHaveClass("launcher-closing");
+  it("plays the retreat when open goes false, then unmounts", () => {
+    const { rerender } = render(<Launcher open onClose={noop} onNavigate={noop} />);
+    expect(screen.getByRole("navigation", { name: "Launcher" })).not.toHaveClass(
+      "launcher-closing",
+    );
 
-    act(() => ref.current?.close());
-    // Mid-animation: the slide-down is running and the parent isn't told yet.
-    expect(nav).toHaveClass("launcher-closing");
-    expect(onClose).not.toHaveBeenCalled();
+    rerender(<Launcher open={false} onClose={noop} onNavigate={noop} />);
+    // Still mounted, mid slide-down.
+    expect(screen.getByRole("navigation", { name: "Launcher" })).toHaveClass("launcher-closing");
 
     act(() => vi.advanceTimersByTime(150));
-    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("navigation", { name: "Launcher" })).toBeNull();
   });
 
-  it("closes immediately when reduced motion is preferred", () => {
+  it("unmounts immediately when reduced motion is preferred", () => {
     vi.stubGlobal("matchMedia", () => ({ matches: true }));
-    const onClose = vi.fn();
-    const ref = createRef<LauncherHandle>();
-    render(<Launcher ref={ref} open onClose={onClose} onNavigate={() => {}} />);
-
-    act(() => ref.current?.close());
-    expect(onClose).toHaveBeenCalledTimes(1); // no animation frame to wait on
+    const { rerender } = render(<Launcher open onClose={noop} onNavigate={noop} />);
+    rerender(<Launcher open={false} onClose={noop} onNavigate={noop} />);
+    expect(screen.queryByRole("navigation", { name: "Launcher" })).toBeNull();
   });
 });

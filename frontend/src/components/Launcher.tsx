@@ -2,17 +2,7 @@
 // launcher"). A navigation surface, not a modal: it owns the whole screen,
 // slides up 150ms ease-out, and dismisses on swipe-down or Escape.
 
-import {
-  type ReactNode,
-  type Ref,
-  type TouchEvent,
-  forwardRef,
-  useCallback,
-  useEffect,
-  useImperativeHandle,
-  useRef,
-  useState,
-} from "react";
+import { type ReactNode, type TouchEvent, useEffect, useRef, useState } from "react";
 import { api } from "../api/client";
 import {
   BookIcon,
@@ -91,20 +81,12 @@ interface LauncherProps {
   onNavigate: (target: LauncherTarget) => void;
 }
 
-/** Lets a parent run the launcher's own slide-down dismissal (so the platform
- * back gesture retreats it exactly like swipe-down, not an abrupt unmount). */
-export interface LauncherHandle {
-  close: () => void;
-}
-
-export const Launcher = forwardRef(function Launcher(
-  { open, onClose, onNavigate }: LauncherProps,
-  ref: Ref<LauncherHandle>,
-) {
+export function Launcher({ open, onClose, onNavigate }: LauncherProps) {
   // Stay mounted through the exit animation, then unmount.
   const [closing, setClosing] = useState(false);
   const panelRef = useRef<HTMLElement>(null);
   const touchStartY = useRef<number | null>(null);
+  const wasOpen = useRef(open);
   // One cheap count fetch per open drives the Review tile badge; failures
   // just mean no badge.
   const [reviewCount, setReviewCount] = useState<number | null>(null);
@@ -123,29 +105,30 @@ export const Launcher = forwardRef(function Launcher(
     };
   }, [open]);
 
-  const close = useCallback(() => {
-    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
-      onClose();
-      return;
-    }
+  // The retreat is driven by `open` going false — from the X/grab, swipe-down,
+  // Escape, OR the platform back gesture (App clears launcherOpen). Closing this
+  // controlled way drops the navigation depth immediately, so it stays in
+  // lockstep with history and back never falls through to exit the app
+  // mid-animation.
+  useEffect(() => {
+    const justClosed = wasOpen.current && !open;
+    wasOpen.current = open;
+    if (!justClosed) return;
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
     setClosing(true);
-    setTimeout(() => {
-      setClosing(false);
-      onClose();
-    }, EXIT_MS);
-  }, [onClose]);
-
-  useImperativeHandle(ref, () => ({ close }), [close]);
+    const t = setTimeout(() => setClosing(false), EXIT_MS);
+    return () => clearTimeout(t);
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
     panelRef.current?.focus();
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") close();
+      if (event.key === "Escape") onClose();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [open, close]);
+  }, [open, onClose]);
 
   if (!open && !closing) return null;
 
@@ -161,7 +144,7 @@ export const Launcher = forwardRef(function Launcher(
     const y = event.touches[0]?.clientY;
     if (startY !== null && y !== undefined && y - startY > SWIPE_DOWN_PX) {
       touchStartY.current = null;
-      close();
+      onClose();
     }
   }
 
@@ -178,10 +161,15 @@ export const Launcher = forwardRef(function Launcher(
       {/* Gestures proved unreliable on real devices — the visible close
           affordances are the primary path; swipes are an enhancement. */}
       <div className="launcher-head">
-        <button type="button" className="launcher-grab" onClick={close} aria-label="Close launcher">
+        <button
+          type="button"
+          className="launcher-grab"
+          onClick={onClose}
+          aria-label="Close launcher"
+        >
           <span className="launcher-handle" aria-hidden="true" />
         </button>
-        <button type="button" className="icon-btn" onClick={close} aria-label="Close launcher">
+        <button type="button" className="icon-btn" onClick={onClose} aria-label="Close launcher">
           <XIcon size={22} />
         </button>
       </div>
@@ -216,4 +204,4 @@ export const Launcher = forwardRef(function Launcher(
       ))}
     </nav>
   );
-});
+}
