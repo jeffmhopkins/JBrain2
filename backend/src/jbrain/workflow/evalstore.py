@@ -36,22 +36,36 @@ def _scores_to_json(run: EvalRun) -> str:
     )
 
 
+class MalformedEvalRunError(ValueError):
+    """A stored `eval_runs.scores` value is structurally invalid. RAISED rather than
+    silently dropping the bad fixture(s): dropping is fail-closed for a *candidate*
+    (it can't win a fixture it lost) but fail-OPEN for a *baseline* — a dropped
+    baseline fixture means a real regression on it is never compared. So a corrupt
+    row must block promotion in BOTH directions, not reconstruct a partial run."""
+
+
 def _run_from_scores(version: str, raw: object) -> EvalRun:
-    """Rebuild an `EvalRun` from a stored `scores` jsonb value. Fail-closed on a
-    malformed row: a fixture missing a dimension is dropped rather than scored as a
-    silent pass (the gate must never read a regression as a non-regression)."""
+    """Rebuild an `EvalRun` from a stored `scores` jsonb value, fail-closed: a
+    structurally malformed value (not a list, or any fixture missing/with a
+    non-numeric — incl. bool — dimension) raises `MalformedEvalRunError` rather than
+    reconstructing a partial run, so neither side can silently lose a fixture."""
+    if not isinstance(raw, list):
+        raise MalformedEvalRunError(f"scores is not a list: {type(raw).__name__}")
     scores: list[FixtureScore] = []
-    if isinstance(raw, list):
-        for item in raw:
-            if (
-                isinstance(item, dict)
-                and isinstance(item.get("fixture"), str)
-                and isinstance(item.get("task"), (int, float))
-                and isinstance(item.get("safety"), (int, float))
-            ):
-                scores.append(
-                    FixtureScore(item["fixture"], float(item["task"]), float(item["safety"]))
-                )
+    for item in raw:
+        # bool is an int subclass in Python, so exclude it explicitly — a bool is
+        # not a valid 0..1 score.
+        if (
+            isinstance(item, dict)
+            and isinstance(item.get("fixture"), str)
+            and isinstance(item.get("task"), (int, float))
+            and not isinstance(item.get("task"), bool)
+            and isinstance(item.get("safety"), (int, float))
+            and not isinstance(item.get("safety"), bool)
+        ):
+            scores.append(FixtureScore(item["fixture"], float(item["task"]), float(item["safety"])))
+        else:
+            raise MalformedEvalRunError(f"malformed fixture score: {item!r}")
     return EvalRun(version, tuple(scores))
 
 

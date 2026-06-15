@@ -59,6 +59,9 @@ class SelfImprovementGate:
         `estimated_tokens` would overrun the remaining headroom."""
         if await self._settings.self_improvement_kill_switch(ctx):
             return BudgetDecision(False, 0, "self-improvement kill-switch is engaged")
+        # A negative estimate can't overrun; clamp it so a bad caller can't use one to
+        # skip the headroom check (defensive, matching record_spend's clamp).
+        estimated_tokens = max(estimated_tokens, 0)
         day = _utc_day(now)
         budget = await self._settings.self_improvement_daily_budget(ctx)
         spent = await self._settings.self_improvement_spent_today(ctx, day=day)

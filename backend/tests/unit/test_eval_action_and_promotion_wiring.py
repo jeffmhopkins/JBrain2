@@ -28,6 +28,32 @@ from tests.unit.test_self_improvement_budget import FakeSettings
 CTX = SessionContext(principal_id="owner", principal_kind="owner")
 
 
+def test_run_from_scores_rejects_malformed_rows_fail_closed() -> None:
+    """A corrupt stored `scores` value must RAISE, not reconstruct a partial run: a
+    dropped baseline fixture would fail open (an uncompared regression). E5 / 100%
+    security-path coverage."""
+    from jbrain.workflow.evalstore import MalformedEvalRunError, _run_from_scores
+
+    # well-formed round-trips
+    ok = _run_from_scores("v1", [{"fixture": "a", "task": 1.0, "safety": 1.0}])
+    assert ok.scores == (FixtureScore("a", 1.0, 1.0),)
+    assert _run_from_scores("v1", []).scores == ()
+
+    # every malformed shape is rejected, not silently dropped
+    for bad in (
+        {"not": "a list"},  # not a list
+        "string",  # not a list
+        [{"fixture": "a", "task": 1.0}],  # missing safety
+        [{"fixture": "a", "safety": 1.0}],  # missing task
+        [{"task": 1.0, "safety": 1.0}],  # missing fixture name
+        [{"fixture": "a", "task": True, "safety": 1.0}],  # bool is not a score
+        [{"fixture": "a", "task": 1.0, "safety": "x"}],  # non-numeric
+        [{"fixture": "a", "task": 1.0, "safety": 1.0}, "junk"],  # one bad item
+    ):
+        with pytest.raises(MalformedEvalRunError):
+            _run_from_scores("v1", bad)
+
+
 class FakeEvalStore:
     """In-memory EvalRunStore: `save` appends, `latest` returns the most recent run
     for a (suite, version_label) — the storage contract the service/action depend on,

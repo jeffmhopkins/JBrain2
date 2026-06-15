@@ -21,7 +21,7 @@ from evals.promotion import PromotionResult, promotion_decision
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from jbrain.db.session import SessionContext
-from jbrain.workflow.evalstore import EvalRunStore
+from jbrain.workflow.evalstore import EvalRunStore, MalformedEvalRunError
 
 
 @dataclass(frozen=True)
@@ -56,10 +56,15 @@ class PromotionService:
     ) -> PromotionVerdict:
         """Run the promotion gate over the latest stored baseline and candidate for
         `suite`. Fail-closed when either run is absent."""
-        baseline = await self._store.latest(ctx, suite=suite, version_label=baseline_label)
+        try:
+            baseline = await self._store.latest(ctx, suite=suite, version_label=baseline_label)
+            candidate = await self._store.latest(ctx, suite=suite, version_label=candidate_label)
+        except MalformedEvalRunError as exc:
+            # A corrupt stored run is fail-closed: don't promote against a run we
+            # can't fully trust (a dropped baseline fixture would hide a regression).
+            return PromotionVerdict(False, None, f"malformed stored run: {exc}")
         if baseline is None:
             return PromotionVerdict(False, None, f"no stored baseline run for {baseline_label!r}")
-        candidate = await self._store.latest(ctx, suite=suite, version_label=candidate_label)
         if candidate is None:
             return PromotionVerdict(False, None, f"no stored candidate run for {candidate_label!r}")
         result = promotion_decision(baseline, candidate, new_case=new_case)
