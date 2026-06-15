@@ -71,7 +71,14 @@ const ME_DETAIL: EntityOut = {
   aliases: [],
   domain: "general",
   predicates: [
-    { predicate: "occupation", qualifier: null, current: fact(), history: [fact()] },
+    {
+      predicate: "occupation",
+      qualifier: null,
+      // value_json differs from the prose statement so the peek must render the
+      // value ("Engineer"), never the sentence ("Occupation is Engineer.").
+      current: fact({ value_json: { value: "Engineer" }, statement: "Occupation is Engineer." }),
+      history: [fact({ value_json: { value: "Engineer" }, statement: "Occupation is Engineer." })],
+    },
     {
       predicate: "owns",
       qualifier: null,
@@ -189,7 +196,9 @@ describe("GraphScreen", () => {
     await screen.findByRole("button", { name: "Overview" });
     fireEvent.click(meNode()); // focal tap -> peek sheet
     expect(await screen.findByRole("button", { name: "Open entity →" })).toBeInTheDocument();
-    await waitFor(() => expect(screen.getByText("Software engineer")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("Engineer")).toBeInTheDocument());
+    // The peek attr renders the value, not the prose statement.
+    expect(screen.queryByText("Occupation is Engineer.")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Open entity →" }));
     expect(onOpenEntity).toHaveBeenCalledWith("me");
     getEntity.mockRestore();

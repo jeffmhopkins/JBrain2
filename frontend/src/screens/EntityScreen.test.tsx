@@ -193,7 +193,10 @@ describe("EntityScreen", () => {
     setup();
     await screen.findByRole("heading", { name: "Sarah Hopkins" });
 
-    expect(screen.getByText("Sarah is Jeff's sister.")).toBeInTheDocument();
+    // The inbound row shows the source entity + predicate path, not the prose
+    // statement (the source name IS the value for an inbound edge).
+    expect(screen.getByText(/sibling/)).toBeInTheDocument();
+    expect(screen.queryByText("Sarah is Jeff's sister.")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Me" }));
     expect(handlers.onOpenEntity).toHaveBeenCalledWith("ent-me");
 
