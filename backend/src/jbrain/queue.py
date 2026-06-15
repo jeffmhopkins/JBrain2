@@ -43,6 +43,22 @@ class Job:
     payload: dict[str, Any]
     attempts: int
     max_attempts: int
+    # The E1 scope carrier (migration 0039): the triggering principal + the
+    # most-restrictive domain its trigger touched. BOTH NULL = a system job (every
+    # job today, and the six shipped kinds) — the worker runs it under SYSTEM_CTX
+    # unchanged. When both are present, the worker narrows the execution context to
+    # this scope (no confused deputy, ASSISTANT.md I-8). A partial stamp is a
+    # fail-closed error in db.session.narrowed_context — never a silent widening.
+    principal_id: str | None = None
+    domain_code: str | None = None
+
+    @property
+    def is_stamped(self) -> bool:
+        """Whether this job carries a triggering scope (owner/agent-triggered) vs
+        being a system job. A partial stamp still reports stamped so the worker
+        routes it through the fail-closed narrowing rather than treating it as
+        system — a half-stamp must never earn the all-domains scope."""
+        return self.principal_id is not None or self.domain_code is not None
 
 
 ACTIVE_STATUSES = ("queued", "running")
@@ -51,7 +67,15 @@ ACTIVE_STATUSES = ("queued", "running")
 class JobEnqueuer(Protocol):
     """The slice of the queue the API needs (full claim/complete is worker-side)."""
 
-    async def enqueue(self, ctx: SessionContext, kind: str, payload: dict[str, Any]) -> str: ...
+    async def enqueue(
+        self,
+        ctx: SessionContext,
+        kind: str,
+        payload: dict[str, Any],
+        *,
+        principal_id: str | None = None,
+        domain_code: str | None = None,
+    ) -> str: ...
 
     async def has_active(
         self,
@@ -74,8 +98,18 @@ class PgJobQueue:
     def __init__(self, maker: async_sessionmaker[AsyncSession]):
         self._maker = maker
 
-    async def enqueue(self, ctx: SessionContext, kind: str, payload: dict[str, Any]) -> str:
-        return await enqueue(self._maker, ctx, kind, payload)
+    async def enqueue(
+        self,
+        ctx: SessionContext,
+        kind: str,
+        payload: dict[str, Any],
+        *,
+        principal_id: str | None = None,
+        domain_code: str | None = None,
+    ) -> str:
+        return await enqueue(
+            self._maker, ctx, kind, payload, principal_id=principal_id, domain_code=domain_code
+        )
 
     async def has_active(
         self,
@@ -117,16 +151,33 @@ async def enqueue(
     ctx: SessionContext,
     kind: str,
     payload: dict[str, Any],
+    *,
+    principal_id: str | None = None,
+    domain_code: str | None = None,
 ) -> str:
-    """Insert a queued job and return its id."""
+    """Insert a queued job and return its id.
+
+    `principal_id`/`domain_code` are the E1 scope stamp (migration 0039): pass BOTH
+    to record the triggering principal + domain so the worker narrows the job's
+    execution context to that scope (no confused deputy, I-8). Default NULL/NULL = a
+    system job (every caller today), which the worker runs under SYSTEM_CTX exactly
+    as before — the six shipped kinds are unchanged. The stamp is fail-closed at
+    *use*: a partial stamp narrows to nothing and raises in the worker, never a
+    silent widening (db.session.narrowed_context)."""
     job_id = str(uuid.uuid4())
     async with scoped_session(maker, ctx) as session:
         await session.execute(
             text(
-                "INSERT INTO app.jobs (id, kind, payload)"
-                " VALUES (:id, :kind, cast(:payload AS jsonb))"
+                "INSERT INTO app.jobs (id, kind, payload, principal_id, domain_code)"
+                " VALUES (:id, :kind, cast(:payload AS jsonb), :principal_id, :domain_code)"
             ),
-            {"id": job_id, "kind": kind, "payload": json.dumps(payload)},
+            {
+                "id": job_id,
+                "kind": kind,
+                "payload": json.dumps(payload),
+                "principal_id": principal_id,
+                "domain_code": domain_code,
+            },
         )
     return job_id
 
@@ -222,6 +273,7 @@ async def claim(maker: async_sessionmaker[AsyncSession], ctx: SessionContext) ->
                 text(
                     """
                     SELECT id, kind, payload::text AS payload, attempts, max_attempts,
+                           principal_id, domain_code,
                            status = 'running' AS stale
                     FROM app.jobs
                     WHERE (status = 'queued' AND run_after <= now())
@@ -263,6 +315,11 @@ async def claim(maker: async_sessionmaker[AsyncSession], ctx: SessionContext) ->
             payload=json.loads(row.payload),
             attempts=attempts,
             max_attempts=row.max_attempts,
+            # The E1 scope stamp travels with the claimed job; the worker decides
+            # narrowed vs SYSTEM_CTX from it. uuid columns come back as UUID, so
+            # stringify for the GUC (None stays None — an unstamped/system job).
+            principal_id=str(row.principal_id) if row.principal_id is not None else None,
+            domain_code=row.domain_code,
         )
 
 
