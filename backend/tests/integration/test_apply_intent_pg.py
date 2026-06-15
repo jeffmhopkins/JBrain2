@@ -664,6 +664,9 @@ async def _truncation_cards(maker, note_id):  # noqa: F811
                     select(ReviewItem).where(
                         ReviewItem.kind == "extraction_truncated",
                         ReviewItem.status == "open",
+                        # Scope to THIS note — the module shares a DB, so an
+                        # earlier over-cap test's open card must not leak in.
+                        ReviewItem.payload["note_id"].astext == note_id,
                     )
                 )
             )
