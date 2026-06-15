@@ -121,14 +121,44 @@ at extraction and the *legibility* at display — not the data model.
 
 ## 3. The design question, precisely stated
 
-How should "used to / former" be represented so that it (a) is **not** the
-active head, (b) is **legible** as past, (c) coexists with other past values,
-and (d) does **not** require inventing fake dates the note never gave?
+How should "used to / former" be represented so that it (a) reads as **not
+current** — *even when nothing replaced it* (the owner's hard requirement: "I
+want to say I used to do X and not have it current, even if there is no
+current"), (b) is **legible** as past, (c) coexists with other past values, and
+(d) does **not** require inventing fake dates the note never gave?
 
 The owner's "in the past from now" is exactly: **a closed interval whose end is
 "at or before capture" and whose bounds are otherwise unknown** — i.e.
 `valid_to = anchor`, `valid_from = null`, `precision = era|unknown`. The
 question is *where that intent is expressed* and *what enforces it*.
+
+### 3.1 Core principle: "current" ≠ "active" — separate the two axes [owner-decided]
+
+Every fact carries **two independent axes**, and the screenshot bug is that the
+consumers conflate them:
+
+| Axis | Field | Meaning |
+|---|---|---|
+| Chain position | `status` (`active` / `superseded`) | Is this the **latest thing said** on this address? |
+| Interval | `valid_to` (`null` vs set) | Is the relationship **open** (ongoing) or **closed** (ended)? |
+
+"Current employer" is read today as `status = active`. It **must** be read as
+`status = active` **AND** `valid_to IS NULL`. Once split, the owner's
+requirement falls out: **"I used to work for US army" with no current job stays
+the `active` head (nothing replaced it) but with `valid_to` set (closed) — so
+current employer = none, US army = former.** It is *not* marked `superseded`
+(superseded by what? nothing — that would be a lie). The head may legitimately
+be a **closed** interval.
+
+| Note | status | valid_to | "Current?" |
+|---|---|---|---|
+| "I work for SpaceX" | active | null (open) | SpaceX |
+| "I used to work for US army" (no current) | active *(head)* | set (closed) | **none** — US army former |
+| "Used to work US army, now SpaceX" | US army → superseded+closed; SpaceX → active+open | — | SpaceX; US army former |
+
+This reframes the fix: the job is **not** to keep past facts off the head; it is
+to (1) ensure past facts carry `valid_to`, and (2) make every consumer treat a
+closed interval as *former* regardless of chain position.
 
 ---
 
@@ -221,19 +251,25 @@ defense-in-depth behind it.
 
 ### Phase 1 — Supersession correctness (CI-testable, no prompt bump) — ship first
 
-1. **Close the no-active-head gap (§2.5.2).** A candidate carrying a `valid_to`
-   (a closed interval) must insert as **closed history** — `status="superseded"`
-   (or active-but-closed if it is genuinely the most recent past value) — even
-   when **no active head exists**, instead of becoming the active head. This is
-   a targeted change in `supersession.decide()` with unit tests for:
-   first-and-only past job, two concurrent past jobs + no current, two past +
-   one current.
+1. **Preserve `valid_to` on a closed first-and-only fact (§2.5.2 + §3.1).** A
+   candidate carrying a `valid_to` must keep it when there is **no active head**,
+   instead of being flattened into `active` + *open* by the "no actives → active"
+   branch (`supersession.py:446-447`). It stays the `active` head (nothing
+   replaced it — marking it `superseded` would be false) **but closed**, so
+   `current = active AND valid_to IS NULL` reports no current value. Unit tests:
+   first-and-only past job (head, closed, current=none), two concurrent past
+   jobs + no current (both closed; one head-closed or both superseded per §6.2),
+   two past + one current.
 2. **`normalize_past_assertion` deterministic guard (Option B).** Closed past
-   marker set + closed-interval stamping; unit-tested over the phrase matrix and
-   anchor cases. Wired at the same per-fact sites as `normalize_future_assertion`.
+   marker set + closed-interval stamping (`valid_to = anchor`, era/unknown);
+   unit-tested over the phrase matrix and anchor cases. Wired at the same
+   per-fact sites as `normalize_future_assertion`.
+3. **Define "current" as `active AND valid_to IS NULL` in the read paths**, not
+   `active` alone — the single change that makes a closed head stop reading as
+   current (the consumer half of §3.1; display lands in Phase 4).
 
-*Both are pure functions / pure decision logic — full CI, no migration, no
-re-extraction.*
+*All three are pure functions / pure decision/query logic — full CI, no
+migration, no re-extraction.*
 
 ### Phase 2 — Represent "past-from-now" as a convention, not a new column (the owner's idea, refined)
 
@@ -277,12 +313,15 @@ re-extraction.*
    but unknown end".** Recommend `valid_to = anchor` at `era`/`unknown`
    precision — we *know* it ended at or before capture, and a concrete end keeps
    ordering/queries simple. `valid_from` stays null/unknown.
-2. **Most-recent past with no current job: superseded, or active-but-closed?**
-   If the owner has *no* current employer, should the latest past job be the
-   "active" (but closed) head, or all-superseded with no head? Recommend
-   **active-but-closed** for the single most-recent past value so "current
-   employer = none, last = X (ended 2018)" reads correctly; older ones
-   superseded. (Decides the exact shape of the Phase-1.1 fix.)
+2. **[DECIDED — owner, 2026-06-15] "Used to do X" must read as not-current even
+   with no current value.** Resolved via the §3.1 axis split: the latest past
+   value stays the **`active` head but closed** (`valid_to` set); `current =
+   active AND valid_to IS NULL` then reports no current employer. Not marked
+   `superseded` (nothing replaced it). *Remaining sub-question:* with two past
+   jobs and no current, is the most-recent one the closed head and the older
+   `superseded`, or are both `superseded` with no head? Recommend **head-closed
+   for the most recent, superseded for older** (consistent single-head model);
+   confirm during Phase 1.
 3. **A2 registry gate now or later?** Recommend **later** (defer until logs
    justify it).
 4. **Should past relationships ever be visible to the integrator?**
