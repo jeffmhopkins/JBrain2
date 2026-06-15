@@ -372,7 +372,10 @@ undo. Tapping a row **pushes a detail** view (back to inbox + **N of M** +
 **prev/next** chevrons, so you move between items without returning to the
 list). The detail leads with the proposal: a **before→after value diff**
 for collisions/conflicts (struck `current` over green `from this note`),
-or a what-happens panel for the rest; then a one-line rationale, a
+a **proposed-fact panel** (the `predicate → value` edge it would write,
+rendered exactly as the entity page) for low-confidence inference holds so
+it's clear what *approve* records, or a what-happens panel for the rest;
+then a one-line rationale, a
 confidence badge, the **cited evidence** snippet (provenance), and the
 **proposals to choose among** as stacked buttons (destructive ones —
 splits, `distinct_from` — keep the armed tap-again). Two universal escape

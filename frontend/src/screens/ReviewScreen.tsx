@@ -10,6 +10,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { MarkedText } from "../analysis/bits";
+import { edgePath, valueLabel } from "../analysis/format";
 import type { ReviewItem } from "../api/client";
 import type { ReviewFilter } from "../api/client";
 import { DOMAIN_COLOR, DOMAIN_TITLE } from "../notes/modes";
@@ -40,6 +41,12 @@ interface Parsed {
   beforeLabel: string | null;
   afterLabel: string | null;
   candidateName: string | null;
+  // The structured proposal an inference card holds: the edge it would write and
+  // the value it carries, so the owner sees the fact, not only the prose summary.
+  predicate: string | null;
+  qualifier: string | null;
+  statement: string | null;
+  valueJson: unknown;
 }
 
 function parsePayload(payload: Record<string, unknown>): Parsed {
@@ -83,6 +90,10 @@ function parsePayload(payload: Record<string, unknown>): Parsed {
     beforeLabel: before?.label ?? null,
     afterLabel: after?.label ?? null,
     candidateName: str(payload.name),
+    predicate: str(payload.predicate),
+    qualifier: str(payload.qualifier),
+    statement: str(payload.statement),
+    valueJson: payload.value_json,
   };
 }
 
@@ -351,6 +362,17 @@ function Detail({ item, lane, queue, position, onClose, onNav }: DetailProps) {
         </div>
         {p.summary !== null && <h2 className="rdetail-hero">{p.summary}</h2>}
         {p.rationale !== null && <p className="rdetail-why">{p.rationale}</p>}
+
+        {item.kind === "low_confidence_inference" && p.predicate !== null && (
+          <div className="rproposed" aria-label="proposed fact">
+            <span className="rdiff-lbl">proposed fact</span>
+            <span className="fact-edge">
+              <span className="edge-path">{edgePath(p.predicate, p.qualifier)}</span>
+              <span className="edge-arrow"> → </span>
+              <span className="edge-value">{valueLabel(p.valueJson, p.statement ?? "")}</span>
+            </span>
+          </div>
+        )}
 
         {showDiff && (
           <div className="rdiff" aria-label="before and after">

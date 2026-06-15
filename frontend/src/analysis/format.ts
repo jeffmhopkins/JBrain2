@@ -22,19 +22,16 @@ export function fmtQuantity(value: number, unit: string): string {
   return `${value} ${unit}`;
 }
 
-/** Render value_json into the edge's value; falls back to the statement. */
-export function factValue(fact: FactOut): string {
-  // A relationship/object edge's value IS its object node, so render that
-  // entity's name — never the statement sentence it's buried in ("I have a
-  // wife Celine Hopkins." → "Celine Hopkins"). EdgeValue links it to the node;
-  // this keeps every other factValue caller on the same concise value, and is
-  // the floor when the object resolved but EdgeValue isn't the renderer.
-  if (fact.object_entity_name) return fact.object_entity_name;
-  const v = fact.value_json;
-  if (typeof v === "string") return v;
-  if (typeof v === "number") return String(v);
-  if (v !== null && typeof v === "object") {
-    const o = v as Record<string, unknown>;
+/** Render a structured `value_json` into a concise display value, falling back
+ * to `statement` for shapes with no scalar datum. This is the part of factValue
+ * past the object-node short-circuit, factored out so other surfaces (the review
+ * card's proposed-fact panel) describe a fact's value identically to the entity
+ * page. `fallbackPrecision` dates a {start} value when it carries no own precision. */
+export function valueLabel(value: unknown, statement: string, fallbackPrecision?: string): string {
+  if (typeof value === "string") return value;
+  if (typeof value === "number") return String(value);
+  if (value !== null && typeof value === "object") {
+    const o = value as Record<string, unknown>;
     if (typeof o.systolic === "number" && typeof o.diastolic === "number") {
       return `${o.systolic}/${o.diastolic}${typeof o.unit === "string" ? ` ${o.unit}` : ""}`;
     }
@@ -53,11 +50,22 @@ export function factValue(fact: FactOut): string {
     // A date-valued state fact (scheduledTime, startDate, …) stores its datum as
     // {start: ISO}; render the concise date/time, not the prose statement.
     if (typeof o.start === "string") {
-      const precision = typeof o.precision === "string" ? o.precision : fact.temporal_precision;
-      return fmtTemporal(o.start, precision);
+      const precision = typeof o.precision === "string" ? o.precision : fallbackPrecision;
+      return fmtTemporal(o.start, precision ?? "");
     }
   }
-  return fact.statement;
+  return statement;
+}
+
+/** Render value_json into the edge's value; falls back to the statement. */
+export function factValue(fact: FactOut): string {
+  // A relationship/object edge's value IS its object node, so render that
+  // entity's name — never the statement sentence it's buried in ("I have a
+  // wife Celine Hopkins." → "Celine Hopkins"). EdgeValue links it to the node;
+  // this keeps every other factValue caller on the same concise value, and is
+  // the floor when the object resolved but EdgeValue isn't the renderer.
+  if (fact.object_entity_name) return fact.object_entity_name;
+  return valueLabel(fact.value_json, fact.statement, fact.temporal_precision);
 }
 
 export function fmtConfidence(confidence: number): string {
