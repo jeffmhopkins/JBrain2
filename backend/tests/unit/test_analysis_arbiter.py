@@ -309,6 +309,25 @@ def test_plan_to_extraction_existing_resolution_kind_is_thing():
     assert plan_to_extraction(intent, plan).mentions[0].kind == "Thing"
 
 
+def test_plan_to_extraction_threads_dropped_facts_for_truncation_card():
+    # W0: the per-note cap fires upstream on the (uncapped) extract, but the
+    # intent/plan only ever see the already-capped list. The rebuilt Extraction
+    # must carry the upstream drop count forward so the pipeline still files the
+    # extraction_truncated card — before the fix this defaulted to 0 and the
+    # card was silently never filed for a clipped long note.
+    intent = _intent(entity_resolutions=[_res("m1")], facts=[_fact()])
+    plan = plan_intent(intent, signals={0: _surface_sig()})
+    assert plan_to_extraction(intent, plan, dropped_facts=7).dropped_facts == 7
+
+
+def test_plan_to_extraction_dropped_facts_defaults_to_zero():
+    # An under-cap note (no upstream drop) carries 0, so _sync_truncation_review
+    # files no card — the standalone/eval call path stays card-free.
+    intent = _intent(entity_resolutions=[_res("m1")], facts=[_fact()])
+    plan = plan_intent(intent, signals={0: _surface_sig()})
+    assert plan_to_extraction(intent, plan).dropped_facts == 0
+
+
 def test_plan_to_extraction_commit_only_excludes_review_facts():
     # commit_only drops review-held facts (cross-subject here) but keeps every
     # mention — the A1b-ii-1 safety so a high-weight review fact can't commit.
