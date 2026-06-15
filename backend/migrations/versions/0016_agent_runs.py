@@ -1,6 +1,6 @@
 """Agent run log: one row per turn-loop execution, plus its steps.
 
-The audit and (later) training trace for the agent loop (docs/ASSISTANT_PLAN.md
+The audit and (later) training trace for the agent loop (docs/archive/ASSISTANT_PLAN.md
 P4.4). Owner-only metadata — a run records which session it served and what it
 spent, never note content — so RLS is the is_owner() pattern, like app.jobs. In
 Phase 5 these become the workflow engine's `runs`; the shape is forward-compatible.

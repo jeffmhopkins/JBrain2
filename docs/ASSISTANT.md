@@ -4,9 +4,13 @@ The self-improving personal agent. This is the **binding design** for evolving
 the Phase-4 tool-calling agent (ROADMAP.md) into a smart, tool-using assistant
 with durable memory and bounded self-improvement — built natively on JBrain2's
 existing substrate (LLM adapter, storage abstraction, RLS-scoped Postgres, job
-queue, review inbox), not bolted on. Synthesized from the research dossiers in
-`docs/research/self-improving-agent/` (A landscape, B memory, C loops, D runtime,
-E fit-review, F red-team).
+queue, review inbox), not bolted on. **The Phase-4 core is shipped** — the
+agent loop, the small tool set, Tier-A memory, Reflexion (Loop 1), the Proposal
+primitive, and external connectors are all live (see `docs/archive/ASSISTANT_PLAN.md`
+for the build record). The remaining self-improvement loops (2–4) below are
+staged into Phases 5–7 (see Phasing). Synthesized from the research dossiers in
+`docs/archive/research/self-improving-agent/` (A landscape, B memory, C loops,
+D runtime, E fit-review, F red-team).
 
 ## The paradigm in one paragraph
 
@@ -572,12 +576,12 @@ new dep, tool, or setup step (non-negotiable #8).
 
 ## Phasing
 
-The agent ships in Phase 4, but the loops as written lean on later machinery
-(`runs`/scheduler = Phase 5, wiki/correction-note loop = Phase 6). Stage
-accordingly — **do not describe a Phase-6 world as Phase 4**.
+The agent **shipped in Phase 4** (✅); the loops as written lean on later
+machinery (`runs`/scheduler = Phase 5, wiki/correction-note loop = Phase 6).
+Stage accordingly — **do not describe a Phase-6 world as Phase 4**.
 
-- **Phase 4 (buildable on Phase 1–3 substrate — review inbox + facts/supersession
-  exist):** the thin agent loop + `.tool` registry + the small tool set + phone
+- **Phase 4 ✅ (shipped, on the Phase 1–3 substrate — review inbox +
+  facts/supersession exist):** the thin agent loop + `.tool` registry + the small tool set + phone
   chat streaming; **Reflexion (Loop 1)** (ephemeral, needs nothing durable);
   **Tier-A memory** — `agent_memory`/`agent_episodes` with owner-confirmed
   behavioral writes, auto fail-closed episodic writes, the domain classifier, and
@@ -600,7 +604,7 @@ accordingly — **do not describe a Phase-6 world as Phase 4**.
 ## Open questions for the implementation plan
 
 The sequenced, codebase-grounded build-out — PRs, the new-table data model, and
-resolutions to the questions below — lives in `docs/ASSISTANT_PLAN.md`.
+resolutions to the questions below — lives in `docs/archive/ASSISTANT_PLAN.md`.
 
 - The eval/benchmark harness specifics: fixtures, baseline, and who curates "the
   originating task class" for skill replay and prompt-edit gating.

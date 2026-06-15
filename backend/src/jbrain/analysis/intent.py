@@ -1,5 +1,5 @@
 """The `IntegrationIntent` — the one seam between the Integrator agent and the
-deterministic arbiter (docs/INTEGRATOR_PLAN.md §3).
+deterministic arbiter (docs/archive/INTEGRATOR_PLAN.md §3).
 
 The agent reads a note's stored `Extraction` plus the live graph and emits an
 `IntegrationIntent`: its *judgment* about who is who, what is true, and what

@@ -2,7 +2,7 @@
 
 A directed relationship edge (Jeff.spouse -> Celine) needs its reciprocal
 (Celine.spouse -> Jeff) to exist on the object's stream, kept consistent by
-construction (docs/research/fix-options/2-mutual-inverse-edges.md, Option 2).
+construction (docs/archive/research/fix-options/2-mutual-inverse-edges.md, Option 2).
 derived_from_fact_id is NULL for a primary, note-sourced fact and points at
 the source fact for a derived inverse. The derived row copies the source's
 note_id so purge's `DELETE WHERE note_id` deletes it for free; ON DELETE

@@ -257,7 +257,7 @@ class AnalysisPipeline:
     ):
         self._maker = maker
         self._router = router
-        # The note→graph judgment agent (docs/INTEGRATOR_PLAN.md Track B).
+        # The note→graph judgment agent (docs/archive/INTEGRATOR_PLAN.md Track B).
         self._integrator = Integrator(router)
         # Optional on purpose: without an embed client, resolution layer 2 is
         # skipped entirely (no degraded guessing) — the harness and older
@@ -269,7 +269,7 @@ class AnalysisPipeline:
         self._settings = settings
 
     async def integrate_note(self, payload: dict[str, Any]) -> None:
-        """The note→graph path (docs/INTEGRATOR_PLAN.md): extract → Integrator
+        """The note→graph path (docs/archive/INTEGRATOR_PLAN.md): extract → Integrator
         (graph-aware agent judgment) → plan_intent (deterministic disposition) →
         apply_intent (deterministic commit + review cards). Missing/deleted note
         is a no-op."""
@@ -2131,7 +2131,7 @@ class AnalysisPipeline:
         snippet: str | None,
     ) -> uuid.UUID | None:
         """Write the reciprocal of a directed relationship edge on the object's
-        stream, marked derived (docs/research/fix-options/2). Returns the new
+        stream, marked derived (docs/archive/research/fix-options/2). Returns the new
         inverse fact id, or None when nothing was written (unknown predicate or
         the cross-subject gate fired)."""
         inverse_pred = inverse_predicate(fact.predicate)
@@ -2141,7 +2141,7 @@ class AnalysisPipeline:
         # Cross-subject firewall gate: an inverse lands a fact on the OBJECT's
         # stream. If that object is a DISTINCT security subject, auto-writing it
         # would attribute knowledge across a subject boundary — a leak. Propose
-        # it to the review inbox and write nothing (docs/research/fix-options/2,
+        # it to the review inbox and write nothing (docs/archive/research/fix-options/2,
         # "the single most important rule"). Same-subject / null-subject is safe.
         if object_entity.subject_id is not None and object_entity.subject_id != entity.subject_id:
             session.add(

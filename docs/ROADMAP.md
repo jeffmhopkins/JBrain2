@@ -3,7 +3,20 @@
 Each phase ends with something used daily. Phases 1–4 make it a daily phone
 companion; 5–6 add the self-organizing wiki; 7 extends to family and devices.
 
-## Phase 0 — Foundation
+## Status (2026-06)
+
+**Phases 0–4 are shipped.** Notes, ingestion/search, the v3 note→graph analysis
+pipeline (extract → Integrator → arbiter), and the personal agent (tool-calling
+loop, Tier-A memory, Proposals/review inbox, external connectors, the Full Brain
+chat surface) are all live; lists and appointments ship with it; migrations run
+through 0034. The build records for the agent and the v3 pipeline are archived
+under `docs/archive/` (`ASSISTANT_PLAN.md`, `INTEGRATOR_PLAN.md`,
+`CUTOVER_V1_REMOVAL.md`).
+
+**Next: Phase 5 — the workflow engine + eval harness** (not started). The few
+items deferred out of Phases 3–4 are carried into Phase 5 below.
+
+## Phase 0 — Foundation ✅ Shipped
 
 Compose stack boots end to end. Caddy with TLS on the public domain. Postgres
 (TimescaleDB-HA image) with Alembic migrations. FastAPI healthcheck. PWA shell
@@ -22,7 +35,7 @@ any real data exists.
 can be restarted and logs tailed from the PWA; a restore from backup has been
 performed successfully; RLS tests prove domain isolation.
 
-## Phase 1 — Notes
+## Phase 1 — Notes ✅ Shipped
 
 Note capture via the approved omnibox home (morphing Entry/Medical/
 Financial segments, message-send model, day-grouped transcript stream);
@@ -37,7 +50,7 @@ through a supervisor-spawned detached updater container.
 offline; `jbrain update` carries a running install forward across a
 schema migration.
 
-## Phase 2 — Ingestion & search
+## Phase 2 — Ingestion & search ✅ Shipped
 
 Postgres job queue (SKIP LOCKED, backoff, stale-job reaper) + worker loop
 with automatic backfill; the attachment analysis dispatcher (text/PDF
@@ -53,7 +66,7 @@ setting.
 **Exit:** search reliably beats manual scanning; retrieval quality validated
 by hand before any LLM consumes it.
 
-## Phase 3 — Analysis
+## Phase 3 — Analysis ✅ Shipped
 
 LLM adapter (Anthropic + OpenAI-compatible). Fact and entity extraction on
 ingest, with citations to chunks. Supersession chains, newest-wins with
@@ -78,7 +91,7 @@ conservative exact-collision → review card is the correct, safer answer for a
 single user, so the human-initiated split above is the only entity-correction
 worth building.
 
-## Phase 4 — Personal agent & structured records
+## Phase 4 — Personal agent & structured records ✅ Shipped
 
 Tool-calling agent (search, read notes/entities/facts, lists, appointments)
 with phone chat UI. `lists` / `list_items`. `appointments` with
@@ -87,10 +100,30 @@ note-extraction proposals and a read-only ICS feed.
 **Exit:** the agent is the default way to ask "what do I know about X" and
 manage lists/appointments from the phone.
 
-## Phase 5 — Workflow engine
+## Phase 5 — Workflow engine ◀ Next
 
 Generalize the hardcoded ingest pipeline into `events` / `triggers` /
 `pipelines` / `actions` / `runs`, with a scheduler and run-log UI.
+
+**Carried forward from Phases 3–4** (deferred deliberately, picked up here):
+
+- **`extraction_truncated` review card** — the per-note fact cap still fires
+  under `integrate_note`, but `plan_to_extraction` rebuilds the `Extraction`
+  with `dropped_facts=0`, so no card is surfaced. Restore the user-facing card.
+  (`docs/archive/CUTOVER_V1_REMOVAL.md`, `docs/archive/INTEGRATOR_PLAN.md`.)
+- **`integration_run` + `resolution_pin` tables** — the Integrator turn-loop
+  logs to structlog only and re-run convergence rides the arbiter's
+  deterministic signals; persist the run + memoize identity/predicate decisions
+  for auditability and convergence (becomes a workflow `run`). (N9/N10.)
+- **N14 owner-ahead ordering** — `backfill_pending_integration` is oldest-first
+  by `created_at`; the `provenance` column exists but isn't wired into the sort,
+  so untrusted-origin notes aren't yet processed behind owner notes.
+- **Agent-loop maturation** — auto-wire reflexion into the default turn,
+  surface `job_enqueued` for deferred/long tools, and add the `.tool`
+  version-bump CI guard (mirroring the `.prompt` guard).
+- **Self-improvement loops (2–4)** — skill learning and prompt/tool self-edit
+  from `docs/ASSISTANT.md`; gated on the eval/benchmark harness this phase
+  stands up.
 
 **Scheduled-task migration [note]:** by this phase, find every periodic or
 swept task that today runs as an ad-hoc boot self-heal or hardcoded handler —
@@ -106,7 +139,7 @@ gives them their scheduled and manual triggers.
 **Exit:** ingest and a scheduled job run as user-defined pipeline
 definitions; failures are diagnosable from run logs alone.
 
-## Phase 6 — Wiki
+## Phase 6 — Wiki — Planned
 
 Wiki index (article summaries + embeddings). Incremental nightly builder:
 delta facts → index match → triage (update/create/split/merge) → targeted
@@ -119,7 +152,7 @@ article" correction-note loop.
 claim cites a note, and corrections happen by out-arguing the wiki with a
 correction note.
 
-## Phase 7 — Outer ring
+## Phase 7 — Outer ring — Planned
 
 Scoped capability tokens; guided-intake share links (interview agent gathers
 e.g. medical history or recipes, sessions become notes attributed to the

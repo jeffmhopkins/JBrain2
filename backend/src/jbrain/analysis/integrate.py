@@ -1,5 +1,5 @@
 """The Integrator: turns a note's extraction + graph context into an
-IntegrationIntent via one graph-aware structured model call (docs/INTEGRATOR_PLAN.md
+IntegrationIntent via one graph-aware structured model call (docs/archive/INTEGRATOR_PLAN.md
 Track B).
 
 This first cut is deterministic CONTEXT INJECTION, not a tool-traversal loop: the

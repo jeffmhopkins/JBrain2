@@ -1,6 +1,6 @@
 """Shared agent contracts — the wire/sidecar shapes the tracks build against.
 
-Defined once (docs/ASSISTANT_PLAN.md, Wave 0) so the agent loop, the `.tool`
+Defined once (docs/archive/ASSISTANT_PLAN.md, Wave 0) so the agent loop, the `.tool`
 registry, the chat stream, and the PWA agree on a fixed surface: tool permission
 classes and the session policy, the `.tool` sidecar frontmatter, citation refs and
 tool-result views, and the streaming chat events. Serializable Pydantic models —

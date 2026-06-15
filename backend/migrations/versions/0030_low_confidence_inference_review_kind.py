@@ -3,7 +3,7 @@
 The note→graph Integrator surfaces a fact it held for review (an inferred or
 low-weight proposal the arbiter would not auto-commit, or a cross-subject /
 ambiguous link) as a `low_confidence_inference` card rather than dropping it
-(docs/INTEGRATOR_PLAN.md N11, A1b-ii-2). The review_items kind CHECK is an
+(docs/archive/INTEGRATOR_PLAN.md N11, A1b-ii-2). The review_items kind CHECK is an
 explicit allowlist (migration 0023), so the new kind needs admitting here.
 
 Rides the existing app.review_items RLS policy (no new table).

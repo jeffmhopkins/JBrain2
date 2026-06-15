@@ -1,5 +1,5 @@
 """The promotion gate: a candidate is promoted only with a win on the new case and
-no task OR safety regression on the existing set (docs/ASSISTANT_PLAN.md Phase 5)."""
+no task OR safety regression on the existing set (docs/archive/ASSISTANT_PLAN.md Phase 5)."""
 
 from evals.promotion import (
     EvalRun,

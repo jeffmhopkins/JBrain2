@@ -36,7 +36,7 @@ def is_functional(predicate: str) -> bool:
     return predicate.lower() in FUNCTIONAL_PREDICATES or get_registry().is_functional(predicate)
 
 
-# Reciprocity registry (docs/research/fix-options/2-mutual-inverse-edges.md,
+# Reciprocity registry (docs/archive/research/fix-options/2-mutual-inverse-edges.md,
 # Option 4a): which directed relationship edges the pipeline knows how to
 # materialize on the OTHER party. Cardinality (FUNCTIONAL_PREDICATES) and
 # reciprocity are orthogonal — spouse is both functional and symmetric — so
