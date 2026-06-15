@@ -280,7 +280,8 @@ def test_two_co_stated_past_jobs_neither_supersedes() -> None:
 
 def test_used_to_does_not_supersede_a_current_open_job() -> None:
     """A closed past job must not displace the open current one (the screenshot
-    bug: US army would otherwise supersede SpaceX)."""
+    bug: US army would otherwise supersede SpaceX). With an open current it lands
+    behind it as closed retrospective history — chained, never superseding."""
     spacex = view(
         kind="relationship", object_entity_id="spacex", valid_from=None, valid_to=None,
         statement="works for SpaceX",
@@ -296,8 +297,9 @@ def test_used_to_does_not_supersede_a_current_open_job() -> None:
         [spacex],
         predicate="worksFor",
     )
-    assert d.insert and d.insert_status == "active" and d.insert_valid_to == T2
-    assert d.supersede_ids == []  # the open SpaceX edge is untouched
+    assert d.insert and d.insert_status == "superseded"
+    assert d.insert_superseded_by == "old-1" and d.insert_valid_to == T2
+    assert d.supersede_ids == []  # the open SpaceX edge is untouched (not displaced)
 
 
 def test_used_to_reextraction_refreshes_in_place() -> None:

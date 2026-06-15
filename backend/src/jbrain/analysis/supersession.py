@@ -450,26 +450,7 @@ def decide(candidate: Candidate, existing: list[FactView], *, predicate: str = "
     # state / preference / functional relationship: at most one CURRENT (OPEN)
     # value; closed intervals are history that never contend for it.
     actives = [e for e in live if e.status == "active"]
-
-    # Closed-on-arrival ("used to work for X"): pure history — it never
-    # supersedes and is never superseded, so it lands active-but-closed and
-    # `current = active AND valid_to IS NULL` reports no current value when
-    # nothing open remains (docs/research/legacy-links-handling.md §3.2). Gated to
-    # ASSERTED state/relationship: a NEGATED closed candidate is a disposal that
-    # supersedes (falls through), and an open-vs-open close was already taken by
-    # _interval_close. It coexists with any open current (no open_actives check
-    # needed) rather than displacing or chaining to it; supersession compares only
-    # OPEN values below.
-    if (
-        candidate.valid_to is not None
-        and candidate.assertion == "asserted"
-        and candidate.kind in ("state", "relationship")
-    ):
-        return Decision(insert=True, insert_valid_to=candidate.valid_to)
-
     open_actives = [e for e in actives if e.valid_to is None]
-    if not open_actives:
-        return Decision(insert=True)
 
     def key(valid_from: datetime | None, reported_at: datetime) -> tuple[datetime, datetime]:
         # Preferences are valid from when reported — newest report wins.
@@ -478,6 +459,33 @@ def decide(candidate: Candidate, existing: list[FactView], *, predicate: str = "
         if candidate.kind == "preference" or is_schedule_binding(predicate):
             return (reported_at, reported_at)
         return _validity(valid_from, reported_at)
+
+    # Closed-on-arrival ("used to work for X"): history, never the CURRENT head,
+    # and it never SUPERSEDES anything (docs/research/legacy-links-handling.md
+    # §3.2). With no open current it IS the (closed) head — active-but-closed, so
+    # `current = active AND valid_to IS NULL` reports none, and two co-stated past
+    # values coexist co-equal. With an open current it lands behind it as closed
+    # retrospective history (chained, like the branch below) — never displacing
+    # the open value the way a same-note reported_at tie would. Gated to ASSERTED
+    # state/relationship: a NEGATED disposal supersedes (falls through), and an
+    # open-vs-open close was already taken by _interval_close.
+    if (
+        candidate.valid_to is not None
+        and candidate.assertion == "asserted"
+        and candidate.kind in ("state", "relationship")
+    ):
+        if not open_actives:
+            return Decision(insert=True, insert_valid_to=candidate.valid_to)
+        current_open = max(open_actives, key=lambda e: key(e.valid_from, e.reported_at))
+        return Decision(
+            insert=True,
+            insert_status="superseded",
+            insert_superseded_by=current_open.id,
+            insert_valid_to=candidate.valid_to,
+        )
+
+    if not open_actives:
+        return Decision(insert=True)
 
     current = max(open_actives, key=lambda e: key(e.valid_from, e.reported_at))
     if key(candidate.valid_from, candidate.reported_at) >= key(

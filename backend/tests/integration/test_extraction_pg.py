@@ -1671,6 +1671,28 @@ async def test_used_to_relationship_is_closed_and_mints_no_inverse(
     derived edge would answer "who works there?" with the owner — re-presenting a
     past job as current (legacy-links plan §ledger F1)."""
     note_id = await make_note(maker, domain="general", body="I used to work for Oregon Lithoprint.")
+
+    # Seed the org as a confirmed, null-subject (Thing) entity resolvable by exact
+    # alias, so the edge resolves to a known object whose inverse WOULD normally be
+    # written — isolating the closed-edge gate from the held-provisional-object path.
+    org_entity = str(uuid.uuid4())
+    async with scoped_session(maker, OWNER) as s:
+        await s.execute(
+            text(
+                "INSERT INTO app.entities (id, kind, canonical_name, status, domain_code)"
+                " VALUES (:id, 'Organization', 'Oregon Lithoprint', 'confirmed', 'general')"
+            ),
+            {"id": org_entity},
+        )
+        await s.execute(
+            text(
+                "INSERT INTO app.entity_aliases (id, entity_id, alias, alias_norm, domain_code)"
+                " VALUES (gen_random_uuid(), :eid, 'Oregon Lithoprint', 'oregon lithoprint',"
+                " 'general')"
+            ),
+            {"eid": org_entity},
+        )
+
     payload = {
         "title": "Employment",
         "tags": ["work"],
