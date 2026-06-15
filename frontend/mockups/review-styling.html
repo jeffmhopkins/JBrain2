@@ -1,0 +1,256 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Review — new styling mockup</title>
+    <style>
+      /* ---- Design tokens (mirrored from frontend/src/styles/tokens.css) ---- */
+      :root {
+        --bg: #0e0f11;
+        --surface: #17181b;
+        --surface-2: #1e2024;
+        --border: #26282c;
+        --text: #e6e7e9;
+        --text-2: #9a9da3;
+        --text-3: #5c5f66;
+        --steel: #7fa7c9;
+        --steel-tint: rgba(127, 167, 201, 0.13);
+        --green: #8fbc9a;
+        --green-tint: rgba(143, 188, 154, 0.13);
+        --amber: #c9a36a;
+        --amber-tint: rgba(201, 163, 106, 0.13);
+        --rose: #cf8a8f;
+        --rose-tint: rgba(207, 138, 143, 0.13);
+        --accent: var(--steel);
+        --accent-tint: var(--steel-tint);
+        --fs-micro: 12px;
+        --fs-secondary: 14px;
+        --fs-note: 15px;
+        --fs-body: 16px;
+        --fs-title: 18px;
+        --fs-screen: 22px;
+        --r-input: 12px;
+        --r-seg: 14px;
+        --r-card: 16px;
+        --r-pill: 999px;
+        --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      }
+      [data-theme="light"] {
+        --bg: #f7f7f5;
+        --surface: #ffffff;
+        --surface-2: #f0f0ee;
+        --border: #e2e2df;
+        --text: #1a1b1e;
+        --text-2: #5c5f66;
+        --text-3: #9a9da3;
+      }
+
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        -webkit-font-smoothing: antialiased;
+      }
+      button { font: inherit; cursor: pointer; }
+
+      /* phone frame just for the mockup */
+      .phone {
+        max-width: 420px;
+        margin: 24px auto;
+        background: var(--bg);
+        min-height: 760px;
+        border: 1px solid var(--border);
+        border-radius: 28px;
+        padding: 20px 16px;
+        box-shadow: 0 12px 40px rgba(0, 0, 0, 0.18);
+      }
+
+      .head {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin: 4px 4px 18px;
+      }
+      .head .back { font-size: 26px; color: var(--text-2); line-height: 1; }
+      .head h1 { font-size: var(--fs-screen); margin: 0; font-weight: 600; flex: 1; }
+      .head .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--green); }
+      .head .bolt { color: var(--text-2); font-size: 20px; }
+
+      /* ---- Segmented filter (unchanged) ---- */
+      .review-segs {
+        display: flex; gap: 3px; padding: 3px;
+        background: var(--surface-2); border: 1px solid var(--border);
+        border-radius: var(--r-seg); margin: 0 0 16px;
+      }
+      .review-seg {
+        flex: 1; min-height: 38px; display: flex; align-items: center; justify-content: center;
+        gap: 6px; border: none; background: transparent;
+        border-radius: calc(var(--r-seg) - 3px); font-size: var(--fs-note); color: var(--text-2);
+        transition: background-color 150ms ease-out, color 150ms ease-out;
+      }
+      .review-seg.seg-active { background: var(--accent-tint); color: var(--text); font-weight: 500; }
+      .seg-count {
+        font-size: var(--fs-micro); color: var(--text-3); background: var(--surface);
+        border: 1px solid var(--border); border-radius: var(--r-pill);
+        min-width: 18px; padding: 0 5px; line-height: 16px;
+      }
+      .review-seg.seg-active .seg-count { color: var(--accent); border-color: transparent; }
+
+      .rlist-tools { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; }
+      .rtool {
+        min-height: 34px; padding: 0 12px; font-size: var(--fs-secondary);
+        color: var(--text-2); background: var(--surface); border: 1px solid var(--border);
+        border-radius: var(--r-input);
+      }
+      .rtool.is-on { color: var(--accent); background: var(--accent-tint); border-color: transparent; }
+
+      /* ---- List ---- */
+      .rlist2 {
+        display: flex; flex-direction: column; background: var(--surface);
+        border: 1px solid var(--border); border-radius: var(--r-card); overflow: hidden;
+      }
+      .rrow2 { display: flex; align-items: stretch; border-bottom: 1px solid var(--border); }
+      .rrow2:last-child { border-bottom: none; }
+      .rrow2:active { background: var(--surface-2); }
+
+      /* (3) thin brand rail flags inference rows */
+      .rrow-inference { box-shadow: inset 3px 0 0 var(--steel); }
+      .rrow-dismissed.rrow-inference { box-shadow: inset 3px 0 0 var(--border); }
+
+      .rrow-check {
+        flex: none; width: 44px; display: grid; place-items: center;
+        border-right: 1px solid var(--border); cursor: pointer;
+      }
+      .rrow-cbox {
+        appearance: none; width: 20px; height: 20px; border: 1px solid var(--border);
+        border-radius: 6px; background: var(--surface); display: grid; place-items: center; cursor: pointer;
+      }
+      .rrow-cbox:checked { background: var(--steel); border-color: var(--steel); }
+      .rrow-cbox:checked::after { content: "✓"; color: #fff; font-size: var(--fs-micro); }
+
+      /* (1) reset the inherited button chrome -> one clean surface */
+      .rrow-open {
+        flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px;
+        padding: 12px 14px; text-align: left;
+        background: transparent; border: none; border-radius: 0;
+      }
+      .rrow-line { display: flex; align-items: center; gap: 8px; }
+      .rrow-when { margin-left: auto; font-size: var(--fs-micro); color: var(--text-3); }
+      .rrow-sum { font-size: var(--fs-note); color: var(--text); line-height: 1.4; }
+      .rrow-fact { line-height: 1.3; }
+
+      .kind-badge {
+        font-size: var(--fs-micro); padding: 1px 8px; border-radius: var(--r-pill);
+        background: var(--steel-tint); color: var(--steel);
+      }
+      .domain-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); flex: none; }
+
+      .edge-path { font-family: var(--font-mono); font-size: var(--fs-secondary); color: var(--text-2); }
+      .edge-arrow { color: var(--text-3); }
+      .edge-value { font-weight: 600; }
+
+      /* (2) chevron lives on the same surface, larger + padded */
+      .rrow-chev {
+        flex: none; display: grid; place-items: center; width: 28px; padding-right: 4px;
+        color: var(--text-3); font-size: var(--fs-title);
+      }
+
+      .rrow-dismissed .rrow-sum { color: var(--text-3); }
+      .rrow-dismissed .kind-badge { background: var(--surface-2); color: var(--text-3); }
+
+      /* mockup-only toolbar */
+      .demobar {
+        max-width: 420px; margin: 0 auto 0; display: flex; gap: 10px; justify-content: center;
+        padding: 12px;
+      }
+      .demobar button {
+        background: var(--surface); color: var(--text-2); border: 1px solid var(--border);
+        border-radius: var(--r-input); padding: 8px 14px; font-size: 13px;
+      }
+      .note { max-width: 420px; margin: 0 auto 16px; color: var(--text-3); font-size: 12px; text-align: center; }
+    </style>
+  </head>
+  <body>
+    <div class="demobar">
+      <button id="themeBtn" type="button">toggle dark / light</button>
+      <button id="selBtn" type="button">toggle select mode</button>
+    </div>
+    <p class="note">Tap a row to see the press state · toggle select to reveal checkboxes</p>
+
+    <div class="phone">
+      <div class="head">
+        <span class="back">‹</span>
+        <h1>Review</h1>
+        <span class="dot"></span>
+        <span class="bolt">⚡</span>
+      </div>
+
+      <div class="review-segs">
+        <button class="review-seg seg-active" type="button">pending <span class="seg-count">4</span></button>
+        <button class="review-seg" type="button">deferred <span class="seg-count">0</span></button>
+        <button class="review-seg" type="button">decided <span class="seg-count">1</span></button>
+      </div>
+
+      <div class="rlist-tools">
+        <button class="rtool" id="rtool" type="button">select</button>
+      </div>
+
+      <div class="rlist2" id="rlist">
+        <!-- rows injected by script -->
+      </div>
+    </div>
+
+    <script>
+      const rows = [
+        { path: "name.nickname", val: "Dad", sum: "hold for review (below_threshold): My kids call me Dad.", when: "12:58 PM" },
+        { path: "name", val: "Jeff Hopkins", sum: "hold for review (below_threshold): My name is Jeff Hopkins.", when: "12:58 PM" },
+        { path: "name.preferred", val: "Jeff", sum: "hold for review (below_threshold): I commonly go by Jeff.", when: "12:58 PM" },
+        { path: "gender", val: "female", sum: "hold for review (below_threshold): Celine's gender is female.", when: "12:59 PM" },
+      ];
+
+      let selecting = false;
+      const list = document.getElementById("rlist");
+
+      function render() {
+        list.innerHTML = rows
+          .map(
+            (r) => `
+          <div class="rrow2 rrow-inference">
+            ${selecting ? `<label class="rrow-check"><input type="checkbox" class="rrow-cbox" /></label>` : ""}
+            <button type="button" class="rrow-open">
+              <span class="rrow-line">
+                <span class="kind-badge">low confidence inference</span>
+                <span class="domain-dot"></span>
+                <span class="rrow-when">${r.when}</span>
+              </span>
+              <span class="rrow-sum">${r.sum}</span>
+              <span class="rrow-fact">
+                <span class="edge-path">${r.path}</span><span class="edge-arrow"> → </span><span class="edge-value">${r.val}</span>
+              </span>
+            </button>
+            ${selecting ? "" : `<span class="rrow-chev" aria-hidden="true">›</span>`}
+          </div>`
+          )
+          .join("");
+      }
+      render();
+
+      document.getElementById("themeBtn").onclick = () => {
+        const html = document.documentElement;
+        html.dataset.theme = html.dataset.theme === "light" ? "dark" : "light";
+      };
+      function toggleSelect() {
+        selecting = !selecting;
+        const t = document.getElementById("rtool");
+        t.textContent = selecting ? "done" : "select";
+        t.classList.toggle("is-on", selecting);
+        render();
+      }
+      document.getElementById("rtool").onclick = toggleSelect;
+      document.getElementById("selBtn").onclick = toggleSelect;
+    </script>
+  </body>
+</html>
