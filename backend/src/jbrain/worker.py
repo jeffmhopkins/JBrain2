@@ -33,6 +33,7 @@ from jbrain.storage import FsBlobStore
 from jbrain.usage import SqlUsageRecorder
 from jbrain.workflow import dispatcher, scheduler
 from jbrain.workflow.registry import ACTION_SPECS, ActionRegistry, build_registry
+from jbrain.workflow.runlog import PipelineRunLog
 
 log = structlog.get_logger()
 
@@ -148,6 +149,9 @@ async def run_loop(
     last_heartbeat = 0.0
     last_tick = 0.0
     last_dispatch = 0.0
+    # The run-log writer the dispatcher uses when LIVE: one pipeline run per
+    # dispatched event (§8). Built once off the same maker (owner-scoped writes).
+    run_log = PipelineRunLog(maker)
     while True:
         now = time.monotonic()
         if now - last_heartbeat >= HEARTBEAT_SECONDS:
@@ -160,18 +164,19 @@ async def run_loop(
         if registry is not None and now - last_tick >= scheduler.TICK_SECONDS:
             await scheduler.run_tick_safely(maker, registry)
             last_tick = now
-        # Run the SHADOW dispatcher tick alongside the scheduler tick: claim
-        # undispatched events, diff the engine's would-be enqueue against the
-        # hardcoded path, and mark them dispatched — never enqueuing this wave
-        # (workflow/dispatcher.py). Gated by the `workflow_dispatch` setting and
-        # fault-swallowed exactly like the scheduler tick, so the shadow engine can
-        # never disturb the live job loop.
+        # Run the dispatcher tick alongside the scheduler tick: claim undispatched
+        # events, diff the engine's would-be enqueue against the hardcoded path, and
+        # mark them dispatched (workflow/dispatcher.py). In SHADOW (the prod default)
+        # it never enqueues; in LIVE (the Wave-2 cutover, an operator settings flip)
+        # it also enqueues + run-logs. Gated by `workflow_dispatch` +
+        # `workflow_dispatch_mode` and fault-swallowed exactly like the scheduler
+        # tick, so it can never disturb the live job loop.
         if (
             registry is not None
             and settings is not None
             and now - last_dispatch >= dispatcher.TICK_SECONDS
         ):
-            await dispatcher.run_tick_safely(maker, registry, settings=settings)
+            await dispatcher.run_tick_safely(maker, registry, settings=settings, run_log=run_log)
             last_dispatch = now
         try:
             if not backfilled:
