@@ -123,18 +123,18 @@ def test_empty_value_renders_as_dash():
 
 
 def test_dotted_identity_predicate_survives_the_cap():
-    # name.legal is a canonical DOTTED predicate (stored predicate="name.legal",
+    # name.full is a canonical DOTTED predicate (stored predicate="name.full",
     # qualifier=""), the dispositive identity signal. It must outrank filler and
-    # survive a tight per-entity fact cap, and render as name.legal.
+    # survive a tight per-entity fact cap, and render as name.full.
     facts = (
         _fact("favoriteColor", "blue", kind="attribute"),
-        _fact("name.legal", "Patricia Vance", kind="attribute"),
+        _fact("name.full", "Patricia Vance", kind="attribute"),
     )
     ent = CandidateEntity(entity_id="ent-1", name="Pat", kind="Person", facts=facts)
     kept = rank_and_bound(_owner(), [ent], facts_per_entity=1)[1].facts
-    assert len(kept) == 1 and kept[0].predicate == "name.legal"
+    assert len(kept) == 1 and kept[0].predicate == "name.full"
     out = render_graph_context(rank_and_bound(_owner(), [ent], facts_per_entity=1))
-    assert "fact Pat.name.legal -> Patricia Vance [attribute/asserted]" in out
+    assert "fact Pat.name.full -> Patricia Vance [attribute/asserted]" in out
 
 
 def test_qualifier_bearing_name_predicate_is_identity_and_renders_dotted():

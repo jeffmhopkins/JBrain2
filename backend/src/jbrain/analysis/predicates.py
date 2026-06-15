@@ -41,7 +41,7 @@ _PRED_TOPK = 5
 
 
 def _humanize(canonical_name: str) -> str:
-    """`name.legal` -> "name legal", `bloodGlucose` -> "blood glucose"."""
+    """`name.full` -> "name full", `bloodGlucose` -> "blood glucose"."""
     spaced = _CAMEL.sub(" ", canonical_name.replace(".", " "))
     return " ".join(spaced.split()).lower()
 

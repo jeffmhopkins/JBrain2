@@ -128,7 +128,7 @@ def test_build_integrate_prompt_surfaces_value_json():
         mentions=[ExtractedMention(name="Celine", kind="Person", surface_text="Celine")],
         facts=[
             ExtractedFact(
-                predicate="name.legal",
+                predicate="name.full",
                 qualifier="",
                 kind="attribute",
                 statement="Celine's full name is Celine Kitina Hopkins.",

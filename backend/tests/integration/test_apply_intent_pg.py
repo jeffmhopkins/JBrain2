@@ -385,7 +385,7 @@ async def test_apply_intent_commits_fact_value_json(maker, tmp_path):  # noqa: F
         [
             _fact(
                 "m1",
-                predicate="name.legal",
+                predicate="name.full",
                 kind="attribute",
                 statement="Celine's full name is Celine Kitina Hopkins.",
                 value_json={"value": "Celine Kitina Hopkins"},

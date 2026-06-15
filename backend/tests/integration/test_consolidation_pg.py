@@ -127,20 +127,20 @@ async def test_drift_predicate_moves_to_canonical(
     async with scoped_session(maker, SYSTEM_CTX) as s:
         counts = await consolidate_predicates(s)
     assert counts == {"renamed": 1, "collisions": 0}
-    assert await _predicates(maker, entity) == {"name.legal"}
+    assert await _predicates(maker, entity) == {"name.full"}
 
 
 async def test_collision_with_existing_canonical_is_left_alone(
     maker: async_sessionmaker[AsyncSession],
 ) -> None:
     note, entity = await _seed(maker)
-    await _seed_fact(maker, entity_id=entity, note_id=note, predicate="name.legal")
+    await _seed_fact(maker, entity_id=entity, note_id=note, predicate="name.full")
     await _seed_fact(maker, entity_id=entity, note_id=note, predicate="legalName")
     async with scoped_session(maker, SYSTEM_CTX) as s:
         counts = await consolidate_predicates(s)
     # The drift fact cannot merge onto the occupied key: both spellings remain.
     assert counts == {"renamed": 0, "collisions": 1}
-    assert await _predicates(maker, entity) == {"name.legal", "legalName"}
+    assert await _predicates(maker, entity) == {"name.full", "legalName"}
 
 
 async def test_sweep_is_idempotent(maker: async_sessionmaker[AsyncSession]) -> None:
@@ -161,13 +161,13 @@ async def test_distinct_entities_are_independent(
     note, e1 = await _seed(maker)
     _, e2 = await _seed(maker)
     await _seed_fact(maker, entity_id=e1, note_id=note, predicate="legalName")  # no canonical yet
-    await _seed_fact(maker, entity_id=e2, note_id=note, predicate="name.legal")
+    await _seed_fact(maker, entity_id=e2, note_id=note, predicate="name.full")
     await _seed_fact(maker, entity_id=e2, note_id=note, predicate="legalName")  # blocked by e2's
     async with scoped_session(maker, SYSTEM_CTX) as s:
         counts = await consolidate_predicates(s)
     assert counts == {"renamed": 1, "collisions": 1}
-    assert await _predicates(maker, e1) == {"name.legal"}
-    assert await _predicates(maker, e2) == {"name.legal", "legalName"}
+    assert await _predicates(maker, e1) == {"name.full"}
+    assert await _predicates(maker, e2) == {"name.full", "legalName"}
 
 
 async def test_pinned_drift_is_never_rewritten(
@@ -189,12 +189,12 @@ async def test_superseded_twin_does_not_strand_the_active_drift_chain(
     """A dead/superseded fact on the canonical address must NOT block the move —
     otherwise the active drift chain is stranded and the history forks."""
     note, entity = await _seed(maker)
-    await _seed_fact(maker, entity_id=entity, note_id=note, predicate="name.legal",
+    await _seed_fact(maker, entity_id=entity, note_id=note, predicate="name.full",
                      status="superseded")  # fmt: skip
     await _seed_fact(maker, entity_id=entity, note_id=note, predicate="legalName")
     async with scoped_session(maker, SYSTEM_CTX) as s:
         counts = await consolidate_predicates(s)
-    # The active drift fact moves onto name.legal; the superseded tombstone did
+    # The active drift fact moves onto name.full; the superseded tombstone did
     # not count as a live collision.
     assert counts == {"renamed": 1, "collisions": 0}
-    assert await _predicates(maker, entity) == {"name.legal"}
+    assert await _predicates(maker, entity) == {"name.full"}

@@ -680,7 +680,7 @@ def parse_extraction(
         kind, assertion = raw.get("kind"), raw.get("assertion")
         entity_ref = str(raw.get("entity_ref", "")).strip()
         statement = str(raw.get("statement", "")).strip()
-        # Normalize drift spellings (legalName/legal_name -> name.legal) onto the
+        # Normalize drift spellings (legalName/legal_name -> name.full) onto the
         # registry's canonical predicate BEFORE the identity key is read, so the
         # supersession chain and dedup see one stable address (docs/entity.md).
         predicate = get_registry().normalize_predicate(str(raw.get("predicate", "")).strip())

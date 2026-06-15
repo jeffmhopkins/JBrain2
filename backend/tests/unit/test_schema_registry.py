@@ -44,7 +44,7 @@ def test_facets_roll_down_into_types(registry: SchemaRegistry) -> None:
     person = registry.type("person")
     names = {p.canonical_name for p in person.effective_predicates}
     # From the Named facet…
-    assert {"name", "name.legal", "name.nickname", "name.given"} <= names
+    assert {"name", "name.full", "name.nickname", "name.given"} <= names
     # …alongside the type's own predicates.
     assert "birthDate" in names and "spouse" in names
 
@@ -62,7 +62,7 @@ def test_person_carries_display_precedence_and_alias_seeding(registry: SchemaReg
     # precedence and the alias-seeding predicates roll down onto the type.
     person = registry.type("person")
     assert person.display_name[0] == "name.preferred"
-    assert "name.legal" in person.alias_seeding_predicates
+    assert "name.full" in person.alias_seeding_predicates
 
 
 def test_default_defs_dir_points_at_packaged_defs() -> None:
@@ -71,14 +71,17 @@ def test_default_defs_dir_points_at_packaged_defs() -> None:
 
 
 def test_predicate_normalization_collapses_drift_spellings(registry: SchemaRegistry) -> None:
-    # The screenshot drift: legalName / legal_name / "Legal Name" all converge.
-    assert registry.normalize_predicate("legalName") == "name.legal"
-    assert registry.normalize_predicate("legal_name") == "name.legal"
-    assert registry.normalize_predicate("Legal Name") == "name.legal"
+    # The screenshot drift: legalName / legal_name / "Legal Name" all converge —
+    # onto name.full now (a stated full/legal name is the formal name, not a
+    # claim it is the registered legal one). The old name.legal address folds too.
+    assert registry.normalize_predicate("legalName") == "name.full"
+    assert registry.normalize_predicate("legal_name") == "name.full"
+    assert registry.normalize_predicate("Legal Name") == "name.full"
+    assert registry.normalize_predicate("name.legal") == "name.full"
     assert registry.normalize_predicate("alsoKnownAs") == "name.nickname"
     assert registry.normalize_predicate("scheduled_time") == "scheduledTime"
     # An already-canonical or long-tail predicate passes through untouched.
-    assert registry.normalize_predicate("name.legal") == "name.legal"
+    assert registry.normalize_predicate("name.full") == "name.full"
     assert registry.normalize_predicate("coffee_order") == "coffee_order"
 
 
@@ -107,21 +110,21 @@ def test_predicate_for_kind_resolves_by_id_and_schema_org_name(registry: SchemaR
 def test_declares_predicate_is_kind_agnostic(registry: SchemaRegistry) -> None:
     # Cheap membership across all types (canonical + drift), no kind needed.
     assert registry.declares_predicate("spouse")
-    assert registry.declares_predicate("legalName")  # drift -> name.legal
+    assert registry.declares_predicate("legalName")  # drift -> name.full
     assert not registry.declares_predicate("coffee_order")
 
 
 def test_validate_value_is_conservative(registry: SchemaRegistry) -> None:
     spouse = registry.predicate_for_kind("Person", "spouse")  # value_shape: ref
-    legal = registry.predicate_for_kind("Person", "name.legal")  # value_shape: text
-    assert spouse is not None and legal is not None
+    full = registry.predicate_for_kind("Person", "name.full")  # value_shape: text
+    assert spouse is not None and full is not None
     # None always passes (the datum lives in the statement / temporal token).
     assert registry.validate_value(spouse, None, object_present=True)
     # ref: an edge needs an object, a scalar payload with no object is the violation.
     assert registry.validate_value(spouse, {"value": "Jane"}, object_present=True)
     assert not registry.validate_value(spouse, {"value": "Jane"}, object_present=False)
     # text/scalar never reject (value_fidelity lives in the statement).
-    assert registry.validate_value(legal, {"value": "Celine Kitina Hopkins"}, object_present=False)
+    assert registry.validate_value(full, {"value": "Celine Kitina Hopkins"}, object_present=False)
 
 
 def test_validate_value_enum_and_structured(registry: SchemaRegistry) -> None:

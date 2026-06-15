@@ -671,13 +671,13 @@ _NAMING_PREDICATES = frozenset(
 
 # The canonical name.* predicates the registry normalizer now emits (docs/
 # entity.md). Kept in lockstep with the legacy spellings above so that
-# normalizing legalName -> name.legal does NOT silently stop declared-name
+# normalizing legalName/fullName -> name.full does NOT silently stop declared-name
 # aliasing. name.family is deliberately absent — a bare surname is not an
 # identity an entity declares for itself (parity with the legacy set, which
 # never carried "familyname").
 _CANONICAL_NAMING = frozenset(
     {
-        "name", "name.given", "name.legal", "name.preferred",
+        "name", "name.given", "name.full", "name.preferred",
         "name.nickname", "name.maiden", "name.aka",
     }
 )  # fmt: skip
@@ -687,7 +687,7 @@ _NAME_VALUE_KEYS = ("name", "value", "fullname", "alias", "text")
 
 
 def _is_naming_predicate(predicate: str) -> bool:
-    # casefold + drop separators but KEEP dots: legal_name -> legalname, name.legal stays.
+    # casefold + drop separators but KEEP dots: legal_name -> legalname, name.full stays.
     collapsed = re.sub(r"[\s_]+", "", predicate).casefold()
     return collapsed in _NAMING_PREDICATES or collapsed in _CANONICAL_NAMING
 

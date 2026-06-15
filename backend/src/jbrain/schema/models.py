@@ -130,7 +130,7 @@ class SchemaRegistry:
 
     def normalize_predicate(self, predicate: str) -> str:
         """Rewrite a known drift spelling to its canonical predicate
-        (`legalName` -> `name.legal`). An unknown predicate passes through
+        (`legalName` -> `name.full`). An unknown predicate passes through
         unchanged: this is normalization toward a preferred name, NEVER a
         rejection (docs/entity.md invariant)."""
         return self.normalization.get(_norm_key(predicate), predicate)

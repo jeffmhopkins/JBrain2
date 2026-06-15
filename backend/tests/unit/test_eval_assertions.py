@@ -71,7 +71,7 @@ def _clean_case() -> Any:
                 "facts": [
                     {
                         "entity": "Celine",
-                        "predicate": "name.legal",
+                        "predicate": "name.full",
                         "kind": "attribute",
                         "value": "Celine Kitina Hopkins",
                         "disposition": "commit",
@@ -83,7 +83,7 @@ def _clean_case() -> Any:
 
 
 def _clean_intent_plan():
-    facts = [_fact("Celine", "name.legal", value_json={"value": "Celine Kitina Hopkins"})]
+    facts = [_fact("Celine", "name.full", value_json={"value": "Celine Kitina Hopkins"})]
     intent = _intent(
         [
             EntityResolution(mention_ref="Me", mode="existing", proposed_entity_id="owner-1"),
@@ -102,14 +102,14 @@ def test_clean_intent_passes():
 def test_value_json_none_is_caught_as_sentence_regression():
     # The exact production bug: value_json dropped -> the value lives in the
     # statement sentence. The gate must FAIL this.
-    facts = [_fact("Celine", "name.legal", value_json=None, statement="Celine's name is ...")]
+    facts = [_fact("Celine", "name.full", value_json=None, statement="Celine's name is ...")]
     intent = _intent([EntityResolution("Celine", "new", new_name="Celine")], facts)
     fails = check_case(_clean_case(), intent, _plan(facts, ["active"]))
     assert any("value_json is None" in f for f in fails)
 
 
 def test_wrong_value_is_caught():
-    facts = [_fact("Celine", "name.legal", value_json={"value": "Celine Hopkins"})]  # short, wrong
+    facts = [_fact("Celine", "name.full", value_json={"value": "Celine Hopkins"})]  # short, wrong
     intent = _intent([EntityResolution("Celine", "new", new_name="Celine")], facts)
     fails = check_case(_clean_case(), intent, _plan(facts, ["active"]))
     assert any("value" in f and "!=" in f for f in fails)
@@ -117,7 +117,7 @@ def test_wrong_value_is_caught():
 
 def test_minted_forbidden_name_is_caught():
     # "Sammy" minted as its own entity — the other production bug.
-    facts = [_fact("Celine", "name.legal", value_json={"value": "Celine Kitina Hopkins"})]
+    facts = [_fact("Celine", "name.full", value_json={"value": "Celine Kitina Hopkins"})]
     intent = _intent(
         [
             EntityResolution("Celine", "new", new_name="Celine"),
@@ -136,7 +136,7 @@ def test_missing_required_fact_is_caught():
 
 def test_resolution_mode_mismatch_is_caught():
     # Celine expected new, but resolved existing.
-    facts = [_fact("Celine", "name.legal", value_json={"value": "Celine Kitina Hopkins"})]
+    facts = [_fact("Celine", "name.full", value_json={"value": "Celine Kitina Hopkins"})]
     intent = _intent(
         [
             EntityResolution("Me", "existing", proposed_entity_id="owner-1"),
@@ -150,7 +150,7 @@ def test_resolution_mode_mismatch_is_caught():
 
 def test_disposition_mismatch_is_caught():
     # Expected commit (active) but the plan held it for review.
-    facts = [_fact("Celine", "name.legal", value_json={"value": "Celine Kitina Hopkins"})]
+    facts = [_fact("Celine", "name.full", value_json={"value": "Celine Kitina Hopkins"})]
     intent = _intent([EntityResolution("Celine", "new", new_name="Celine")], facts)
     fails = check_case(_clean_case(), intent, _plan(facts, ["pending_review"]))
     assert any("disposition" in f for f in fails)

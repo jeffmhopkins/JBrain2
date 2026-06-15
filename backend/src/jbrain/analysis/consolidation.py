@@ -4,7 +4,7 @@ to the registry's canonical predicate (the `renamed_from` attractor).
 This is the nightly counterpart to the parse-time normalization slice 1 applies
 to NEW facts (docs/entity.md "The vocabulary invariant"): facts written under an
 older prompt/model keep their drift spelling (`legalName`) until this sweep
-moves them onto the canonical address (`name.legal`), so the supersession chain
+moves them onto the canonical address (`name.full`), so the supersession chain
 for a property is not forked across spellings.
 
 Conservative by construction. A drift fact is renamed IN PLACE — same row, same
@@ -86,7 +86,7 @@ async def consolidate_predicates(session: AsyncSession) -> dict[str, int]:
 
     renamed = 0
     # Sorted for determinism: when two drift spellings map to the SAME canonical
-    # (legalName + legal_name -> name.legal), the first claims the key and the
+    # (legalName + legal_name -> name.full), the first claims the key and the
     # second is left as a collision rather than merging two chains silently.
     for old, canonical in sorted(plan.items()):
         renamed += len(await rewrite_predicate(session, old, canonical))

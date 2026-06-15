@@ -6,7 +6,7 @@ already spent its re-ask), lenient on individual items (a single bad
 resolution/fact is dropped and logged, never sinks the whole note).
 
 Load-bearing: like `parse_extraction`, this is where the agent's predicate is
-run through the registry normalizer (legalName/legal_name -> name.legal) BEFORE
+run through the registry normalizer (legalName/legal_name -> name.full) BEFORE
 it ever reaches the structural identity key — so I4 (key normalization) holds
 for the agentic flow exactly as it does for the one-shot extractor. The agent's
 self-reported confidence is preserved here but only ever *lowers* a deterministic

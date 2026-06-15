@@ -21,5 +21,5 @@ predicates:
     schema_org_ref: schema:location
 
 # identifier.ein / identifier.duns / identifier.lei come from ExternalIdentified.
-alias_seeding_predicates: [name.legal, name.aka]
-display_name: [name, name.legal]
+alias_seeding_predicates: [name.full, name.aka]
+display_name: [name, name.full]

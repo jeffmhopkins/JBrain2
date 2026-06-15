@@ -34,10 +34,10 @@ predicates:
     schema_org_ref: schema:spouse
 
 # Fed to the existing declared-name -> exact-alias machinery (NOT an identity key).
-alias_seeding_predicates: [name.legal, name.preferred, name.aka, name.maiden]
+alias_seeding_predicates: [name.full, name.preferred, name.aka, name.maiden]
 
 # canonical_name projection, in precedence order (first present wins).
-display_name: [name.preferred, name.given+name.family, name.legal, name]
+display_name: [name.preferred, name.given+name.family, name.full, name]
 
 # NOTE: subjecthood (subject_id) is set per-entity when hard-linked to a subject
 # row (ANALYSIS), never by this type. The owner "Me" keeps an explicit display
