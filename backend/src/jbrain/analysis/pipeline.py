@@ -388,9 +388,10 @@ class AnalysisPipeline:
         (N5), so a human can later accept (pin) or reject (retract) it.
 
         `dropped_facts` is the upstream per-note cap's tail-drop count, carried so
-        the rebuilt extraction can file the `extraction_truncated` card (W0).
-        Standalone callers (eval harness, pre-built plan) leave it 0 — no cap ran,
-        so no truncation card is owed."""
+        the rebuilt extraction can file the `extraction_truncated` card (W0). The
+        DB-mode eval runner threads the real `extraction.dropped_facts` (it runs
+        the cap), matching production; pre-built-plan callers with no extraction
+        leave it 0 — no cap ran, so no truncation card is owed."""
         if plan.rejected:
             log.info(
                 "integration.rejected",

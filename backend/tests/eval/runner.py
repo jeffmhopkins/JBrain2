@@ -236,6 +236,7 @@ async def run_case_db(
             title=extraction.title,
             tags=extraction.tags,
             extractor="eval:db",
+            dropped_facts=extraction.dropped_facts,
         )
 
     return await _read_commit(maker, note_id, owner_id, seeded_ids, watched)
