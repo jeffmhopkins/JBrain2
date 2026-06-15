@@ -98,6 +98,18 @@ SELF_IMPROVEMENT_SPEND_PREFIX = "self_improvement_spend:"
 ENTITY_PROMOTION_KEY = "entity_promotion"
 ENTITY_PROMOTION_DEFAULT = False
 
+# Integration run + resolution-pin persistence (docs/WORKFLOW_ENGINE_PLAN.md §E7b,
+# Wave 1 Track A): when on, integrate_note writes an `app.runs` row
+# (kind='integration') and UPSERTs the Integrator's committed identity/predicate-key
+# decisions into `app.resolution_pin` (the pure analysis.pins). Net-new (the loop
+# logged to structlog only before), so it ships behind this flag and is validated by
+# convergence, not diff-against-old. DB-backed; flip off live (a settings upsert) to
+# disable the writes without a redeploy. Default ON: the writes are purely additive
+# (a separate run row + pins, no change to the committed graph) and idempotent, so
+# enabling them cannot corrupt existing data — only the persisted audit/pin trail.
+INTEGRATION_PERSIST_KEY = "integration_persist"
+INTEGRATION_PERSIST_DEFAULT = True
+
 
 class SqlSettingsStore:
     def __init__(self, maker: async_sessionmaker[AsyncSession]):
@@ -197,6 +209,11 @@ class SqlSettingsStore:
         delta is clamped to 0 so a bad caller can never refund the budget."""
         current = await self.self_improvement_spent_today(ctx, day=day)
         await self.upsert(ctx, SELF_IMPROVEMENT_SPEND_PREFIX + day, current + max(tokens, 0))
+
+    async def integration_persist(self, ctx: SessionContext) -> bool:
+        """Whether the Integrator persists its run + resolution pins (§E7b).
+        Defaults ON; an explicit `false` (or any non-true value) disables it."""
+        return await self.get(ctx, INTEGRATION_PERSIST_KEY, INTEGRATION_PERSIST_DEFAULT) is True
 
     async def llm_task_overrides(self, ctx: SessionContext) -> dict[str, dict[str, str]]:
         """The live per-task LLM routing/reasoning overrides, sanitized.
