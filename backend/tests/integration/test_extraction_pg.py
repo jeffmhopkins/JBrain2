@@ -1709,16 +1709,19 @@ async def test_used_to_relationship_is_closed_and_mints_no_inverse(
     }
     await analyzer(maker, [json.dumps(payload)]).analyze_note({"note_id": note_id})
 
-    # The directed edge exists, active but CLOSED (valid_to set), so
-    # `current = active AND valid_to IS NULL` reports no current employer.
+    # The directed edge exists and is CLOSED (valid_to set) — a FORMER value, so
+    # `current = active AND valid_to IS NULL` never reports it as the employer.
+    # (Whether it commits active or the weight model holds it for review is an
+    # orthogonal disposition; the closure + no-inverse guarantees hold either way.)
     src = await rows(
         maker,
         OWNER,
         "SELECT status, valid_to FROM app.facts WHERE predicate = 'worksFor' AND note_id = :nid",
         nid=note_id,
     )
-    assert len(src) == 1 and src[0].status == "active" and src[0].valid_to is not None
-    # ...and NO reciprocal edge was minted on the organization's stream.
+    assert len(src) == 1 and src[0].valid_to is not None
+    # ...and NO reciprocal edge was minted on the organization's stream: a former
+    # relationship has no inverse (legacy-links F1).
     inverse = await rows(
         maker,
         OWNER,
