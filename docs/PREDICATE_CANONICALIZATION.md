@@ -1,7 +1,11 @@
 # Predicate canonicalization (embedding-assisted) + typed value shapes
 
-Status: **proposal** (design + plan; not yet built). Owner-facing problem,
-machine-facing fix. Read alongside `docs/ANALYSIS.md` (Facts, the open
+Status: **core shipped** (Phases 1–4); the self-improvement loop (Phase 5) is
+deferred. Typed value-shape enforcement (`value_shape_enforce`) and
+embedding-assisted predicate canonicalization (`predicate_canonicalization`,
+via `AnalysisPipeline.canonicalize_intent` inside `integrate_note`, before the
+arbiter keys facts) both ship and **default ON** (`settings_store.py`). Owner-facing
+problem, machine-facing fix. Read alongside `docs/ANALYSIS.md` (Facts, the open
 vocabulary), `docs/entity.md` (the soft schema registry and its *deferred*
 consumers), and `tests/eval/README.md` (the gate that surfaced this).
 

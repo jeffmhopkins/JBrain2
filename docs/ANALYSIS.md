@@ -11,13 +11,20 @@ capture (Phase 1)
   → chunk + embed + FTS            (local, no LLM — searchable within seconds)
   → extraction call                (one strong-model structured call:
                                     title, tags, facts[], entity mentions,
-                                    per-fact domain + temporal resolution)
-  → domain split                   (mixed notes → per-domain derived chunks)
-  → entity linking                 (alias/embedding match; one cheap LLM call
-                                    only for the uncertain middle)
-  → conflict detection             (candidate retrieval in SQL/pgvector; one
-                                    cheap batched adjudication call if needed)
-  → per-kind supersession          (+ review-inbox items)
+                                    temporal resolution)
+  → integration call               (the Integrator agent reads the extraction +
+                                    retrieved graph context, emitting an
+                                    IntegrationIntent: entity resolutions, fact
+                                    judgments, supersession/merge proposals —
+                                    the agent decides MEANING)
+  → arbiter (plan_intent)          (deterministic: validate the intent, weigh
+                                    each fact, partition commit / review / reject;
+                                    cross-subject + ambiguous force review)
+  → apply (apply_intent)           (deterministic write through _apply: domain
+                                    floor/ratchet + per-domain derived chunks,
+                                    entity linking [agent resolution, deterministic
+                                    resolver as fallback], per-kind supersession,
+                                    + review-inbox items)
 nightly: entity hygiene, merge proposals, summary re-embedding,
          tag consolidation; (Phase 6) wiki triage
 ```
@@ -301,7 +308,7 @@ config must never break an LLM call. Exposed via `GET`/`PUT /api/settings/llm`.
   insert. `prompt_version` makes corpus re-runs a planned, budgeted
   migration.
 - **Re-run = the same incremental pass [decided]**, on demand via
-  `POST /api/notes/{id}/analyze` (202 + job id, a plain `analyze_note` job;
+  `POST /api/notes/{id}/analyze` (202 + job id, a plain `integrate_note` job;
   409 while an analysis is already queued/running, or while ingest/OCR will
   run one anyway — the gate owns that sequencing). The retraction sweep
   carries two repairs so a re-run leaves a coherent graph: a retracted fact
@@ -375,7 +382,7 @@ and re-runs OCR only if its cache row is missing, then re-ingests).
 Confidence caps are unchanged: OCR 0.7, description 0.6.
 
 **Analysis gating [decided: keyed on outstanding vision work]**: ingest
-enqueues `analyze_note` only when no `ocr_attachment` job is queued or
+enqueues `integrate_note` only when no `ocr_attachment` job is queued or
 running for ANY of the note's attachments and the run enqueued none — so an
 image note is extracted once, *with* its OCR text (the OCR handler's
 re-ingest enqueues the analysis), never a blind body-only pass plus a
@@ -395,8 +402,14 @@ never gated: capture-to-searchable still waits on nothing.
 Guards on what extraction feeds the fact pipeline: structured
 medical/financial documents are *detected and routed* (deferred to the
 Phase 7 typed parsers) rather than free-extracted into hundreds of facts;
-facts derived from OCR carry reduced confidence, and low-confidence numeric
-health facts never auto-supersede anything.
+facts derived from OCR carry reduced confidence, and a low-confidence fact
+never auto-supersedes a more-confident prior — `supersession.decide()` parks it
+in `pending_review` behind a `low_confidence` card instead. That guard keys on
+the model's **self-confidence** (threaded as `ExtractedFact.self_confidence` →
+`Candidate.self_confidence`), not the deterministic plan weight: the weight
+model grants a surface-attested fact its full ceiling regardless of how unsure
+the model was about the *read*, so the self-report is what protects a confident
+prior from a blurry OCR value.
 
 ## Model routing & cost
 

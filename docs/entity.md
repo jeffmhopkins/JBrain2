@@ -295,7 +295,12 @@ Identity stays **mention-anchored and resolver-owned** **[decided: ANALYSIS]**.
 This doc adds **no** `identity_keys` / uniqueness-constraint concept — that would
 be a second, weaker source of truth that disagrees with the resolver (two people
 legally named "James Smith" must route to a `merge_proposal`, not silently
-collide).
+collide). (Under the shipped `integrate_note` path the Integrator *agent* now
+proposes each mention's coreference as `IntegrationIntent.entity_resolutions`,
+which the arbiter validates — existing must be in scope, new mints a provisional,
+ambiguous routes to review — with the deterministic resolver as the fallback for
+any ref the agent left unresolved. The structural machinery below — alias
+seeding, merge proposals, no second key system — is unchanged.)
 
 The registry contributes exactly one resolution input: **`alias_seeding_predicates`**
 — the predicates whose *asserted* values register as exact aliases on their
