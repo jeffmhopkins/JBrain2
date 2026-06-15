@@ -18,6 +18,7 @@ from jbrain.agent.contracts import (
     ChatEvent,
     DoneEvent,
     EntityRef,
+    JobEnqueuedEvent,
     NoteSource,
     ProposalRef,
     TextDelta,
@@ -69,18 +70,28 @@ class ToolContext:
     timezone: str | None = None
 
 
+@dataclass(frozen=True)
+class JobRef:
+    """A job a long/deferred tool enqueued instead of blocking the turn — the id to
+    poll and a one-line summary. The loop surfaces it as a `JobEnqueuedEvent`."""
+
+    job_id: str
+    summary: str
+
+
 class ToolOutput(str):
     """A tool observation that also carries what the tool surfaced for the UI —
     note sources (source cards), a staged proposal (a "Review proposal" chip),
-    resolved entities, and/or a rich `view` (a registered component the PWA
-    renders, e.g. a checklist). It *is* the model-facing text (a str subclass), so
-    handlers keep their `-> str` contract and existing call sites are untouched;
-    `_dispatch` pulls the extras off when present."""
+    resolved entities, a rich `view` (a registered component the PWA renders, e.g.
+    a checklist), and/or a `job` it deferred to the queue. It *is* the model-facing
+    text (a str subclass), so handlers keep their `-> str` contract and existing
+    call sites are untouched; `_dispatch` pulls the extras off when present."""
 
     sources: tuple[NoteSource, ...]
     proposal: ProposalRef | None
     entities: tuple[EntityRef, ...]
     view: ViewPayload | None
+    job: JobRef | None
 
     def __new__(
         cls,
@@ -89,12 +100,14 @@ class ToolOutput(str):
         proposal: ProposalRef | None = None,
         entities: tuple[EntityRef, ...] = (),
         view: ViewPayload | None = None,
+        job: JobRef | None = None,
     ) -> "ToolOutput":
         out = super().__new__(cls, content)
         out.sources = sources
         out.proposal = proposal
         out.entities = entities
         out.view = view
+        out.job = job
         return out
 
 
@@ -123,13 +136,15 @@ class AgentResult:
 @dataclass(frozen=True)
 class _Dispatched:
     """One tool call's outcome: the result fed back to the model, plus what it
-    surfaced for the UI (sources, a staged proposal, entities, a rich view)."""
+    surfaced for the UI (sources, a staged proposal, entities, a rich view, an
+    enqueued job)."""
 
     result: ToolResult
     sources: tuple[NoteSource, ...]
     proposal: ProposalRef | None
     entities: tuple[EntityRef, ...]
     view: ViewPayload | None
+    job: JobRef | None
 
 
 class AgentLoop:
@@ -283,6 +298,12 @@ class AgentLoop:
                 )
                 if dispatched.view is not None:
                     yield ToolViewEvent(tool_call_id=call.id, view=dispatched.view)
+                if dispatched.job is not None:
+                    # A long/deferred tool handed the work to the queue rather than
+                    # blocking the turn; tell the client what is now running.
+                    yield JobEnqueuedEvent(
+                        job_id=dispatched.job.job_id, summary=dispatched.job.summary
+                    )
                 await self._record(
                     idx, "tool", call.name, ok=not dispatched.result.is_error, cost_tokens=0
                 )
@@ -303,14 +324,14 @@ class AgentLoop:
             err = ToolResult(
                 tool_call_id=call.id, content=f"unknown tool: {call.name}", is_error=True
             )
-            return _Dispatched(err, (), None, (), None)
+            return _Dispatched(err, (), None, (), None, None)
         tool = self._registry.get(call.name)
         try:
             observation = await tool.handler(call.arguments, tool_ctx)
         except Exception as exc:  # noqa: BLE001 — a tool error is an observation
             log.warning("agent.tool_error", tool=call.name, error=repr(exc))
             err = ToolResult(tool_call_id=call.id, content=f"error: {exc}", is_error=True)
-            return _Dispatched(err, (), None, (), None)
+            return _Dispatched(err, (), None, (), None, None)
         out = observation if isinstance(observation, ToolOutput) else None
         result = ToolResult(tool_call_id=call.id, content=str(observation), is_error=False)
         return _Dispatched(
@@ -319,6 +340,7 @@ class AgentLoop:
             out.proposal if out else None,
             out.entities if out else (),
             out.view if out else None,
+            out.job if out else None,
         )
 
     async def _record(self, idx: int, kind: str, name: str, *, ok: bool, cost_tokens: int) -> None:

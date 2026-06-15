@@ -550,6 +550,11 @@ def test_sidecars_pinned_to_their_versions() -> None:
             1,
             "d0e2fe9b1a1af0922a84fde2c5c299184ec2ac4e8d88ef28a9e2cd64bea9eaa6",
         ),
+        "propose_merge.tool": (
+            "propose_merge",
+            1,
+            "2dc2c76d99bfcb2ffcc9f91747b506b595b08588714b5a4cd97cac9823e91fc1",
+        ),
         "lookup_medication.tool": (
             "lookup_medication",
             1,
@@ -576,6 +581,10 @@ def test_sidecars_pinned_to_their_versions() -> None:
             "7fcd25cf5705ae0de9199a7a7c926b0551eb91e0fa3db62a8d03dd32c108fc7e",
         ),
     }
+    # Every shipped sidecar must appear above — a new `.tool` cannot slip in
+    # unpinned (the gap this closes: propose_merge was registered but never pinned).
+    on_disk = {p.name for p in TOOLS_DIR.glob("*.tool")}
+    assert on_disk == set(pins), f"unpinned sidecars: {sorted(on_disk - set(pins))}"
     for filename, expected in pins.items():
         tf = load_tool(TOOLS_DIR / filename)
         assert (tf.spec.name, tf.spec.version, tf.digest) == expected
