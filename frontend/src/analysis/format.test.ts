@@ -98,6 +98,14 @@ describe("fmtQuantity / factValue imperial display", () => {
     expect(factValue(fact({ place: "Denver" }))).toBe("Denver");
   });
 
+  it("name.* facts stored under the backend's other name keys render the bare name", () => {
+    // entities._NAME_VALUE_KEYS also accepts fullname/alias/text; a name fact
+    // under those shapes must not fall through to "Full name Celine Kitina Hopkins.".
+    expect(factValue(fact({ fullname: "Celine Kitina Hopkins" }))).toBe("Celine Kitina Hopkins");
+    expect(factValue(fact({ alias: "Sammy" }))).toBe("Sammy");
+    expect(factValue(fact({ text: "Sammy" }))).toBe("Sammy");
+  });
+
   it("a relationship edge renders its object entity name, never the statement", () => {
     // The 'spouse → "I have a wife Celine Hopkins."' report: the value IS the
     // linked object node, so a resolved object name wins over the prose.

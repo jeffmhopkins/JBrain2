@@ -44,7 +44,10 @@ export function valueLabel(value: unknown, statement: string, fallbackPrecision?
     // Common single-datum shapes the extractor emits: a name ({"name": "Bella"},
     // {"name": "Jeff Hopkins"}) or a place ({"place": "Denver"}). Without this a
     // populated value_json still fell through to the whole statement sentence.
-    for (const key of ["name", "place"] as const) {
+    // The name keys mirror the backend's entities._NAME_VALUE_KEYS so a name.*
+    // fact stored under fullname/alias/text renders its bare name here too,
+    // instead of falling through to "Full name Celine Kitina Hopkins.".
+    for (const key of ["name", "place", "fullname", "alias", "text"] as const) {
       if (typeof o[key] === "string") return o[key] as string;
     }
     // A date-valued state fact (scheduledTime, startDate, …) stores its datum as
