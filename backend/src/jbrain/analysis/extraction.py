@@ -210,7 +210,11 @@ def normalize_future_assertion(fact: ExtractedFact, anchor: datetime) -> Extract
 # primary signal (it can set resolved_end directly); this is the deterministic
 # net for the common phrasings, the exact mirror of the future guard's role.
 _PAST_MARKERS = re.compile(
-    r"\b(?:used to|use to|formerly|former|previously|no longer|back when|left)\b|\bex-",
+    r"\b(?:used to|use to|formerly|former|previously|no longer|back when)\b"
+    r"|\bex-"
+    # "left" only in the "left <a job/org>" shape — followed by a determiner or
+    # possessive — so spatial "on the left" and "left-justified" never match.
+    r"|\bleft (?:the|a|an|his|her|their|my|our)\b",
     re.IGNORECASE,
 )
 

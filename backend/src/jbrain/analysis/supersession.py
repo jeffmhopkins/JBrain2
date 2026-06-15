@@ -457,7 +457,9 @@ def decide(candidate: Candidate, existing: list[FactView], *, predicate: str = "
     # nothing open remains (docs/research/legacy-links-handling.md §3.2). Gated to
     # ASSERTED state/relationship: a NEGATED closed candidate is a disposal that
     # supersedes (falls through), and an open-vs-open close was already taken by
-    # _interval_close. supersession compares only OPEN values below.
+    # _interval_close. It coexists with any open current (no open_actives check
+    # needed) rather than displacing or chaining to it; supersession compares only
+    # OPEN values below.
     if (
         candidate.valid_to is not None
         and candidate.assertion == "asserted"

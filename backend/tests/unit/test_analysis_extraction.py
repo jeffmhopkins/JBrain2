@@ -619,6 +619,18 @@ def test_current_relationship_is_left_open() -> None:
     assert out.temporal is None  # no marker -> stays a current (open) edge
 
 
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "The office on the left side is Me's workspace.",  # spatial, not "left a job"
+        "Me prefers left-justified columns.",  # hyphenated, not a past action
+        "Me works for SpaceX.",  # no marker at all
+    ],
+)
+def test_spatial_or_unmarked_statements_stay_open(statement: str) -> None:
+    assert normalize_past_assertion(_past_rel(statement), _PAST_ANCHOR).temporal is None
+
+
 def test_negated_disposal_is_not_auto_closed() -> None:
     # "no longer" as a NEGATED fact is a disposal the supersession path handles;
     # the guard only closes ASSERTED history, never a negation.

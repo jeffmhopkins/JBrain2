@@ -272,6 +272,9 @@ async def _load_entity(
         await session.execute(
             text(
                 """
+                -- valid_to is carried so the FactLine can render a CLOSED
+                -- interval as "former"; closed facts are NOT filtered out here
+                -- (the integrator must still see past edges to resolve them).
                 SELECT f.predicate, f.qualifier, f.kind, f.assertion, f.valid_from, f.valid_to,
                        f.value_json::text AS value_json_text,
                        oe.canonical_name AS object_name

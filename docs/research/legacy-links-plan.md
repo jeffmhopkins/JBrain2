@@ -3,8 +3,16 @@
 Buildable, wave-sequenced plan derived from `docs/research/legacy-links-handling.md`
 (the design dossier; read it first). Governed by `docs/PROCESS.md` (multi-wave
 execution), `docs/DEVELOPMENT.md` (standards), and the `CLAUDE.md`
-non-negotiables. **Status: plan + 3-way independent red-team complete and folded
-in (§ ledger); awaiting owner go.**
+non-negotiables. **Status: Wave 1 SHIPPED (deterministic core; independent
+per-wave review folded in). Waves 2–3 pending. Plan + 3-way pre-build red-team in
+the § ledger.**
+
+**Wave 1 review (independent, reviewer ≠ builder) — resolved:** the one real gap
+was a missing test that a CLOSED edge mints no inverse through the full pipeline
+(added `test_used_to_relationship_is_closed_and_mints_no_inverse`,
+test_extraction_pg.py); the `left` marker was tightened to the "left <a job/org>"
+shape so "left-justified"/"on the left" never match (+ negative tests). Remaining
+review items were comment nits (added) or non-issues the reviewer downgraded.
 
 ## Goal
 

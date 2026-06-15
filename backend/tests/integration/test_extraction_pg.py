@@ -1663,6 +1663,53 @@ async def test_cross_subject_inverse_is_proposed_not_written(
     assert len(proposals) == 1 and proposals[0].subject == "Patient X"
 
 
+async def test_used_to_relationship_is_closed_and_mints_no_inverse(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """A former relationship lands active-but-CLOSED and materializes NO inverse:
+    a closed `worksFor` must not mint `Oregon Lithoprint employs Me`, or that
+    derived edge would answer "who works there?" with the owner — re-presenting a
+    past job as current (legacy-links plan §ledger F1)."""
+    note_id = await make_note(maker, domain="general", body="I used to work for Oregon Lithoprint.")
+    payload = {
+        "title": "Employment",
+        "tags": ["work"],
+        "mentions": [
+            {"name": "Me", "kind": "Person", "surface_text": "I"},
+            {"name": "Oregon Lithoprint", "kind": "Organization", "surface_text": "Oregon"},
+        ],
+        "facts": [
+            {
+                "predicate": "worksFor", "qualifier": "", "kind": "relationship",
+                "statement": "Me used to work for Oregon Lithoprint.", "value_json": None,
+                "assertion": "asserted", "entity_ref": "Me",
+                "object_entity_ref": "Oregon Lithoprint",
+                "temporal": None, "domain": "general", "confidence": 0.9,
+            }
+        ],
+        "temporal_tokens": [],
+    }  # fmt: skip
+    await analyzer(maker, [json.dumps(payload)]).analyze_note({"note_id": note_id})
+
+    # The directed edge exists, active but CLOSED — the guard set valid_to, so
+    # `current = active AND valid_to IS NULL` reports no current employer.
+    src = await rows(
+        maker,
+        OWNER,
+        "SELECT status, valid_to FROM app.facts WHERE predicate = 'worksFor' AND note_id = :nid",
+        nid=note_id,
+    )
+    assert len(src) == 1 and src[0].status == "active" and src[0].valid_to is not None
+    # ...and NO reciprocal edge was minted on the organization's stream.
+    inverse = await rows(
+        maker,
+        OWNER,
+        "SELECT 1 FROM app.facts f JOIN app.entities e ON e.id = f.entity_id"
+        " WHERE e.canonical_name = 'Oregon Lithoprint' AND f.derived_from_fact_id IS NOT NULL",
+    )
+    assert inverse == []
+
+
 def _person_edge(subj: str, obj: str, predicate: str = "spouse") -> dict[str, Any]:
     return {
         "title": f"{subj} and {obj}",
