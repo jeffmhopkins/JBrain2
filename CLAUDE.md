@@ -3,7 +3,8 @@
 Personal knowledge system: notes in → RAG indexing → LLM-maintained wiki with
 notes as the sole sources of truth. See `docs/ARCHITECTURE.md` for the full
 design, `docs/ROADMAP.md` for phases, `docs/DEVELOPMENT.md` for binding
-standards, `docs/DESIGN.md` for the binding GUI design system,
+standards, `docs/PROCESS.md` for the binding multi-wave execution process,
+`docs/DESIGN.md` for the binding GUI design system,
 `docs/ANALYSIS.md` for the note-analysis pipeline (Phases 2-3),
 `docs/ASSISTANT.md` for the self-improving agent design, and
 `docs/PREDICATE_CANONICALIZATION.md` for the embedding-assisted predicate
