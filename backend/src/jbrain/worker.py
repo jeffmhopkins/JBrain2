@@ -253,15 +253,29 @@ async def run() -> None:
         # The deleted-note-artifact purge as a fireable action (Phase-5 Track B):
         # the same boot sweep, now also runnable on a nightly schedule / on demand.
         "purge_deleted_artifacts": scheduler.purge_handler(maker),
+        # The two boot self-heal backfills as fireable actions (Phase-5 Wave 2 —
+        # the dropped-event safety net). They still run at boot below, AND now on a
+        # recurring schedule + on-demand from Ops, so a dropped best-effort event
+        # self-heals within minutes rather than at the next restart.
+        "reconcile_pending_notes": scheduler.reconcile_pending_notes_handler(maker),
+        "reconcile_pending_integration": scheduler.reconcile_pending_integration_handler(maker),
     }
     # Build the dispatch table from the action registry (W0.1): an action without
     # a handler — or a handler with no registered action — fails the worker LOUDLY
     # here at boot, like the schema registry above, rather than failing a job at run
     # time (the old "no handler for kind" path). Behavior for known kinds is
     # unchanged: the dispatch table is the same {kind: handler} map as before. The
-    # registry adds the purge action to the shipped six (it lives in-code only, not
-    # in the app.actions seed — see scheduler.PURGE_ACTION).
-    registry = build_registry((*ACTION_SPECS, scheduler.PURGE_ACTION))
+    # registry adds the purge action and the two reconcilers to the shipped six
+    # (all three live in-code only, not in the app.actions seed — see
+    # scheduler.PURGE_ACTION / RECONCILE_PENDING_*_ACTION).
+    registry = build_registry(
+        (
+            *ACTION_SPECS,
+            scheduler.PURGE_ACTION,
+            scheduler.RECONCILE_PENDING_NOTES_ACTION,
+            scheduler.RECONCILE_PENDING_INTEGRATION_ACTION,
+        )
+    )
     handlers = registry.dispatch_table(impls)
     try:
         # The shadow dispatcher reads its `workflow_dispatch` gate through the same
