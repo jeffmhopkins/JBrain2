@@ -48,21 +48,40 @@ def test_get_settings_defaults_to_full_analysis(
     client: tuple[TestClient, FakeSettingsStore],
 ) -> None:
     c, _ = client
-    # No row yet: the default is full analysis [decided].
-    assert c.get("/api/settings").json() == {"image_analysis_mode": "full"}
+    # No row yet: the default is full analysis [decided]; timezone is unset (UTC).
+    assert c.get("/api/settings").json() == {"image_analysis_mode": "full", "owner_timezone": None}
 
 
 def test_put_settings_round_trips_the_mode(client: tuple[TestClient, FakeSettingsStore]) -> None:
     c, store = client
     resp = c.put("/api/settings", json={"image_analysis_mode": "ocr"})
     assert resp.status_code == 200
-    assert resp.json() == {"image_analysis_mode": "ocr"}
+    assert resp.json() == {"image_analysis_mode": "ocr", "owner_timezone": None}
     assert store.values["image_analysis_mode"] == "ocr"
-    assert c.get("/api/settings").json() == {"image_analysis_mode": "ocr"}
+    assert c.get("/api/settings").json() == {"image_analysis_mode": "ocr", "owner_timezone": None}
 
     assert c.put("/api/settings", json={"image_analysis_mode": "full"}).json() == {
-        "image_analysis_mode": "full"
+        "image_analysis_mode": "full",
+        "owner_timezone": None,
     }
+
+
+def test_put_settings_round_trips_the_timezone(
+    client: tuple[TestClient, FakeSettingsStore],
+) -> None:
+    c, store = client
+    resp = c.put("/api/settings", json={"owner_timezone": "America/New_York"})
+    assert resp.status_code == 200
+    assert resp.json() == {"image_analysis_mode": "full", "owner_timezone": "America/New_York"}
+    assert store.values["owner_timezone"] == "America/New_York"
+
+
+def test_put_settings_rejects_an_unknown_timezone(
+    client: tuple[TestClient, FakeSettingsStore],
+) -> None:
+    c, store = client
+    assert c.put("/api/settings", json={"owner_timezone": "Mars/Olympus"}).status_code == 422
+    assert "owner_timezone" not in store.values  # a bad zone never lands
 
 
 def test_put_settings_rejects_unknown_keys_and_values(
@@ -79,4 +98,7 @@ def test_put_settings_with_empty_patch_changes_nothing(
 ) -> None:
     c, store = client
     store.values["image_analysis_mode"] = "ocr"
-    assert c.put("/api/settings", json={}).json() == {"image_analysis_mode": "ocr"}
+    assert c.put("/api/settings", json={}).json() == {
+        "image_analysis_mode": "ocr",
+        "owner_timezone": None,
+    }

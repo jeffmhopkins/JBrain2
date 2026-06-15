@@ -95,6 +95,28 @@ export function App() {
       .catch(() => setSession({ status: "anonymous" }));
   }, []);
 
+  // Keep the owner's display timezone in sync with this device's zone, so the
+  // agent's server-rendered time prose matches the client-localized cards. Only
+  // PUTs on a change, and a best-effort failure is harmless (server falls back
+  // to UTC). Re-detect zone could change if the device travels.
+  useEffect(() => {
+    if (session.status !== "in") return;
+    const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    if (!zone) return;
+    let stale = false;
+    api
+      .getSettings()
+      .then((s) => {
+        if (!stale && s.owner_timezone !== zone) {
+          return api.updateSettings({ owner_timezone: zone });
+        }
+      })
+      .catch(() => {});
+    return () => {
+      stale = true;
+    };
+  }, [session.status]);
+
   async function logout() {
     try {
       await api.logout();

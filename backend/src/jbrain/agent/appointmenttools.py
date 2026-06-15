@@ -11,6 +11,7 @@ shouldn't paste them — the app renders the card.
 
 import uuid
 from datetime import UTC, datetime
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from jbrain.agent.contracts import ProposalRef, ViewPayload
 from jbrain.agent.loop import ToolContext, ToolHandler, ToolOutput
@@ -22,12 +23,26 @@ _ACTIONS = ("create", "reschedule", "cancel")
 _TITLE_LEN = 80
 
 
-def _when(appt: AppointmentInfo) -> str:
-    """The appointment's time as stored (UTC); the card localizes for the owner."""
+def _localize(dt: datetime, tz: str | None) -> datetime:
+    """`dt` in the owner's zone when known, else unchanged. An unknown zone name
+    falls back to the stored value rather than raising mid-render."""
+    if tz is None:
+        return dt
+    try:
+        return dt.astimezone(ZoneInfo(tz))
+    except (ZoneInfoNotFoundError, ValueError):
+        return dt
+
+
+def _when(appt: AppointmentInfo, tz: str | None = None) -> str:
+    """The appointment's time rendered in the owner's display zone, so the prose
+    the model relays agrees with the card (which the client localizes the same
+    way). Without a zone it stays UTC, the stored value."""
     if appt.all_day:
-        return appt.starts_at.strftime("%Y-%m-%d") + " (all day)"
-    start = appt.starts_at.strftime(_WHEN_FMT)
-    return start + (f"–{appt.ends_at.strftime('%H:%M')}" if appt.ends_at else "")
+        return _localize(appt.starts_at, tz).strftime("%Y-%m-%d") + " (all day)"
+    start = _localize(appt.starts_at, tz).strftime(_WHEN_FMT)
+    end = f"–{_localize(appt.ends_at, tz).strftime('%H:%M')}" if appt.ends_at else ""
+    return start + end
 
 
 def _tags(appt: AppointmentInfo) -> str:
@@ -39,16 +54,18 @@ def _tags(appt: AppointmentInfo) -> str:
     return f" ({', '.join(tags)})" if tags else ""
 
 
-def format_appointments(appts: list[AppointmentInfo]) -> str:
+def format_appointments(appts: list[AppointmentInfo], tz: str | None = None) -> str:
     """The model-facing index — title, when, domain, status/recurrence, and id."""
     if not appts:
         return "No appointments in scope."
-    return "\n".join(f"- {a.title} — {_when(a)} [{a.domain}]{_tags(a)} id={a.id}" for a in appts)
+    return "\n".join(
+        f"- {a.title} — {_when(a, tz)} [{a.domain}]{_tags(a)} id={a.id}" for a in appts
+    )
 
 
-def format_appointment(appt: AppointmentInfo) -> str:
+def format_appointment(appt: AppointmentInfo, tz: str | None = None) -> str:
     """One appointment in full — for the model to read before answering or acting."""
-    lines = [f"{appt.title} [{appt.domain}]", f"when: {_when(appt)}", f"status: {appt.status}"]
+    lines = [f"{appt.title} [{appt.domain}]", f"when: {_when(appt, tz)}", f"status: {appt.status}"]
     if appt.location:
         lines.append(f"location: {appt.location}")
     if appt.rrule:
@@ -98,7 +115,7 @@ def build_appointment_handlers(appointments: AppointmentsRepo) -> dict[str, Tool
         rows = await appointments.list_appointments(
             ctx.session, since=since, include_cancelled=include_cancelled
         )
-        return ToolOutput(format_appointments(rows))
+        return ToolOutput(format_appointments(rows, ctx.timezone))
 
     async def read_appointment_tool(arguments: dict, ctx: ToolContext) -> ToolOutput:
         appt_id = str(arguments.get("appointment_id", "")).strip()
@@ -108,7 +125,7 @@ def build_appointment_handlers(appointments: AppointmentsRepo) -> dict[str, Tool
         if appt is None:
             return ToolOutput("No appointment with that id is in scope.")
         # The text is the model's; the card is the owner's tappable appointment.
-        return ToolOutput(format_appointment(appt), view=appointment_card(appt))
+        return ToolOutput(format_appointment(appt, ctx.timezone), view=appointment_card(appt))
 
     return {
         "read_appointments": read_appointments_tool,

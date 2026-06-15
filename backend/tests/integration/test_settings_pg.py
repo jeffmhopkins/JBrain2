@@ -83,6 +83,24 @@ async def test_store_defaults_and_upsert_round_trip(
     assert await store.image_analysis_mode(OWNER) == "full"
 
 
+async def test_owner_timezone_round_trip_and_rejects_unknown_zones(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    from jbrain.settings_store import OWNER_TIMEZONE_KEY
+
+    store = SqlSettingsStore(maker)
+    # Absent → None (callers fall back to UTC).
+    assert await store.owner_timezone(OWNER) is None
+
+    await store.upsert(OWNER, OWNER_TIMEZONE_KEY, "America/New_York")
+    assert await store.owner_timezone(OWNER) == "America/New_York"
+
+    # A stored value that isn't a known IANA zone reads as unset, never trusted.
+    await store.upsert(OWNER, OWNER_TIMEZONE_KEY, "Mars/Olympus")
+    assert await store.get(OWNER, OWNER_TIMEZONE_KEY) == "Mars/Olympus"
+    assert await store.owner_timezone(OWNER) is None
+
+
 async def test_llm_task_overrides_round_trip_and_sanitizes(
     maker: async_sessionmaker[AsyncSession],
 ) -> None:

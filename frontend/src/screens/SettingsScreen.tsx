@@ -31,12 +31,19 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
   // over app.settings): the worker reads it, so it must follow the account.
   // Theme and text size deliberately stay device-local for now.
   const [imageMode, setImageMode] = useState<ImageAnalysisMode | null>(null);
+  // The owner's display timezone — synced from this device's zone on app load
+  // (App.tsx); shown read-only so the owner knows which zone their times render
+  // in. Falls back to the browser's detected zone before the server answers.
+  const browserZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  const [timezone, setTimezone] = useState<string>(browserZone);
   useEffect(() => {
     let stale = false;
     api
       .getSettings()
       .then((s) => {
-        if (!stale) setImageMode(s.image_analysis_mode);
+        if (stale) return;
+        setImageMode(s.image_analysis_mode);
+        if (s.owner_timezone) setTimezone(s.owner_timezone);
       })
       .catch(() => {
         // Unreachable backend: show the default; a tap still tries to save.
@@ -162,6 +169,17 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
               {opt.label}
             </button>
           ))}
+        </div>
+      </section>
+
+      <section className="settings-card">
+        <h2 className="settings-label">Time zone</h2>
+        <p className="settings-meta">
+          appointment times and other dates render in this zone — synced automatically from this
+          device, so the assistant's answers match the cards.
+        </p>
+        <div className="settings-value" aria-label="Time zone">
+          {timezone}
         </div>
       </section>
 

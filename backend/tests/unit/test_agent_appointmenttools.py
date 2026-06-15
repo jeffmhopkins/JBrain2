@@ -122,6 +122,41 @@ def test_format_appointment_includes_end_location_and_repeat() -> None:
     assert "with: Dr. Nguyen" in out
 
 
+def test_format_localizes_to_the_owner_zone_so_prose_matches_the_card() -> None:
+    # The bug: a 17:00Z appointment read "17:00" in the prose but "1:00 PM" on the
+    # card (localized). With the owner's zone the prose localizes the same way.
+    five_pm_utc = appt(start=datetime(2026, 6, 22, 17, 0, tzinfo=UTC))
+    assert "when: 2026-06-22 13:00" in format_appointment(five_pm_utc, "America/New_York")
+    assert "2026-06-22 13:00 [general]" in format_appointments([five_pm_utc], "America/New_York")
+
+
+def test_format_without_a_zone_stays_utc() -> None:
+    assert "when: 2026-06-22 17:00" in format_appointment(
+        appt(start=datetime(2026, 6, 22, 17, 0, tzinfo=UTC))
+    )
+
+
+def test_format_tolerates_an_unknown_zone() -> None:
+    # A bad stored zone must fall back to the stored value, never raise.
+    out = format_appointment(appt(start=datetime(2026, 6, 22, 17, 0, tzinfo=UTC)), "Mars/Olympus")
+    assert "when: 2026-06-22 17:00" in out
+
+
+async def test_read_appointment_localizes_text_to_ctx_timezone() -> None:
+    one = appt(start=datetime(2026, 6, 22, 17, 0, tzinfo=UTC))
+    fake = FakeAppointments(one=one)
+    ctx = ToolContext(
+        session=SessionContext(principal_kind="owner"),
+        scopes=("general",),
+        timezone="America/New_York",
+    )
+    out = await handlers(fake)["read_appointment"]({"appointment_id": "A1"}, ctx)
+    assert "when: 2026-06-22 13:00" in out
+    # The card still ships ISO; the client localizes it the same way.
+    assert isinstance(out, ToolOutput) and out.view is not None
+    assert out.view.data["start"] == "2026-06-22T17:00:00+00:00"
+
+
 # --- handlers ------------------------------------------------------------
 
 

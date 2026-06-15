@@ -145,3 +145,21 @@ describe("SettingsScreen calendar feed", () => {
     expect(url.value).toContain("/api/feed/appointments.ics?token=secret-tok");
   });
 });
+
+describe("SettingsScreen time zone", () => {
+  it("shows the stored owner timezone when the server has one", async () => {
+    const fetchMock = vi.fn<typeof fetch>(async (input) => {
+      const path = String(input);
+      if (path.startsWith("/api/feed/appointments")) {
+        return new Response(JSON.stringify({ enabled: false, token: null }), { status: 200 });
+      }
+      return new Response(
+        JSON.stringify({ image_analysis_mode: "full", owner_timezone: "America/New_York" }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    setup();
+    expect(await screen.findByLabelText("Time zone")).toHaveTextContent("America/New_York");
+  });
+});

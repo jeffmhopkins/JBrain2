@@ -75,6 +75,12 @@ class FakeSettingsStore:
         mode = self.values.get("image_analysis_mode", "full")
         return mode if mode in ("full", "ocr") else "full"
 
+    async def owner_timezone(self, ctx: object) -> str | None:
+        from jbrain.settings_store import is_valid_timezone
+
+        tz = self.values.get("owner_timezone")
+        return tz if isinstance(tz, str) and is_valid_timezone(tz) else None
+
     async def llm_task_overrides(self, ctx: object) -> dict[str, dict[str, str]]:
         # Mirrors the SQL store's sanitizing read (drops malformed entries).
         raw = self.values.get("llm_task_overrides", {})
