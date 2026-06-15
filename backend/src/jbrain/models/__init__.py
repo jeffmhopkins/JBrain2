@@ -11,6 +11,15 @@ from jbrain.models.analysis import (
 )
 from jbrain.models.core import Base, DeviceSession, Domain, Principal, Subject
 from jbrain.models.telemetry import LlmUsage
+from jbrain.models.workflow import (
+    EvalRun,
+    Event,
+    Pipeline,
+    ResolutionPin,
+    Schedule,
+    Skill,
+    Trigger,
+)
 
 __all__ = [
     "AgentRun",
@@ -23,11 +32,18 @@ __all__ = [
     "EntityAlias",
     "EntityDistinction",
     "EntityMention",
+    "EvalRun",
+    "Event",
     "Fact",
     "LlmUsage",
     "NoteAnalysis",
+    "Pipeline",
     "Principal",
+    "ResolutionPin",
     "ReviewItem",
+    "Schedule",
+    "Skill",
     "Subject",
     "TemporalToken",
+    "Trigger",
 ]
