@@ -40,7 +40,7 @@ async def run_trigger(trigger_id: str, request: Request) -> dict[str, object]:
     maker = cast("async_sessionmaker[AsyncSession]", request.app.state.session_maker)
     registry = cast(ActionRegistry, request.app.state.action_registry)
     try:
-        fired = await scheduler.fire_trigger(maker, registry, trigger_id)
+        fired = await scheduler.fire_trigger(maker, registry, trigger_id, require_manual=True)
     except scheduler.ScheduleResolutionError as exc:
         # An unknown/disabled trigger or an unresolvable pipeline is a 404, not a
         # server error: the operator named a trigger that can't be fired.

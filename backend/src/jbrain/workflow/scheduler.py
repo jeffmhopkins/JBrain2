@@ -151,16 +151,19 @@ async def fire_trigger(
     maker: async_sessionmaker[AsyncSession],
     registry: ActionRegistry,
     trigger_id: str,
+    *,
+    require_manual: bool = False,
 ) -> FiredTrigger:
     """Enqueue the pipeline bound to a single trigger, now. The shared resolution
     path for a schedule firing and the emergency Ops control; idempotent to re-run
     (E4) — the enqueued handlers keep their own dedup. Raises
     ScheduleResolutionError if the trigger is unknown/disabled or its pipeline
-    can't resolve."""
+    can't resolve. `require_manual` gates the Ops emergency path to `manual` triggers
+    only (the scheduler tick fires schedule-bound triggers regardless)."""
     async with scoped_session(maker, queue.SYSTEM_CTX) as session:
         row = (
             await session.execute(
-                text("SELECT pipeline, enabled FROM app.triggers WHERE id = :id"),
+                text("SELECT pipeline, enabled, manual FROM app.triggers WHERE id = :id"),
                 {"id": trigger_id},
             )
         ).first()
@@ -168,6 +171,8 @@ async def fire_trigger(
         raise ScheduleResolutionError(f"no trigger {trigger_id!r}")
     if not row.enabled:
         raise ScheduleResolutionError(f"trigger {trigger_id!r} is disabled")
+    if require_manual and not row.manual:
+        raise ScheduleResolutionError(f"trigger {trigger_id!r} is not manually fireable")
     async with scoped_session(maker, queue.SYSTEM_CTX) as session:
         pipeline = await _load_pipeline(session, row.pipeline)
     job_ids = await _enqueue_pipeline(maker, registry, pipeline)

@@ -66,7 +66,9 @@ def test_run_trigger_fires_and_returns_job_ids(
 ) -> None:
     captured: dict[str, object] = {}
 
-    async def fake_fire(maker: object, registry: object, trigger_id: str) -> FiredTrigger:
+    async def fake_fire(
+        maker: object, registry: object, trigger_id: str, *, require_manual: bool = False
+    ) -> FiredTrigger:
         captured["trigger_id"] = trigger_id
         return FiredTrigger(
             trigger_id=trigger_id, pipeline="nightly_sync", job_ids=["job-1", "job-2"]
@@ -88,7 +90,9 @@ def test_run_trigger_fires_and_returns_job_ids(
 def test_run_trigger_404s_on_unfireable_trigger(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    async def fake_fire(maker: object, registry: object, trigger_id: str) -> FiredTrigger:
+    async def fake_fire(
+        maker: object, registry: object, trigger_id: str, *, require_manual: bool = False
+    ) -> FiredTrigger:
         raise scheduler.ScheduleResolutionError(f"no trigger {trigger_id!r}")
 
     monkeypatch.setattr(scheduler, "fire_trigger", fake_fire)

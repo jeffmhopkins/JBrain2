@@ -19,7 +19,12 @@ from sqlalchemy.pool import NullPool
 from jbrain import queue
 from jbrain.db.session import scoped_session
 from jbrain.workflow.registry import ACTION_SPECS, build_registry
-from jbrain.workflow.scheduler import PURGE_ACTION, fire_trigger, scheduler_tick
+from jbrain.workflow.scheduler import (
+    PURGE_ACTION,
+    ScheduleResolutionError,
+    fire_trigger,
+    scheduler_tick,
+)
 from tests.conftest import docker_available
 from tests.integration.test_rls import database_url  # noqa: F401
 
@@ -149,6 +154,24 @@ async def test_fire_trigger_enqueues_immediately(maker: async_sessionmaker) -> N
     fired = await fire_trigger(maker, _registry(), ids["trigger"])
     assert fired.pipeline == ids["pipeline"]
     assert await _jobs_of_kind(maker, "consolidate_predicates") == before + 1
+
+
+async def test_fire_trigger_require_manual_rejects_a_non_manual_trigger(
+    maker: async_sessionmaker,
+) -> None:
+    # The Ops emergency endpoint passes require_manual=True; a schedule-bound but
+    # non-manual trigger must NOT be hand-fireable (the scheduler tick still fires it).
+    ids = await _seed_schedule(
+        maker,
+        action="consolidate_predicates",
+        next_run_at=NOW + timedelta(days=1),
+        manual=False,
+    )
+    with pytest.raises(ScheduleResolutionError):
+        await fire_trigger(maker, _registry(), ids["trigger"], require_manual=True)
+    # ...but the tick path (no require_manual) fires it fine.
+    fired = await fire_trigger(maker, _registry(), ids["trigger"])
+    assert fired.pipeline == ids["pipeline"]
 
 
 async def test_seeded_nightly_sweeps_exist_and_are_fireable(maker: async_sessionmaker) -> None:
