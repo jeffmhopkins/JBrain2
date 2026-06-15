@@ -228,6 +228,39 @@ describe("ReviewScreen (split inbox)", () => {
     expect(screen.getByText("2 of 4")).toBeInTheDocument();
   });
 
+  it("swipes left/right to carousel between pending items", async () => {
+    render(<ReviewScreen />);
+    await screen.findByText("two values recorded for Sarah's birthDate");
+    fireEvent.click(screen.getByRole("button", { name: /two values recorded for Sarah/ }));
+
+    const detail = screen.getByText(/two values recorded for Sarah/).closest("section");
+    expect(detail).not.toBeNull();
+    // Swipe left → next item.
+    fireEvent.touchStart(detail as Element, { touches: [{ clientX: 240, clientY: 200 }] });
+    fireEvent.touchMove(detail as Element, { touches: [{ clientX: 120, clientY: 210 }] });
+    expect(screen.getByText("two blood_pressure values disagree for Me")).toBeInTheDocument();
+    expect(screen.getByText("2 of 4")).toBeInTheDocument();
+
+    // Swipe right → back to the previous item.
+    const detail2 = screen.getByText(/two blood_pressure values/).closest("section");
+    fireEvent.touchStart(detail2 as Element, { touches: [{ clientX: 120, clientY: 200 }] });
+    fireEvent.touchMove(detail2 as Element, { touches: [{ clientX: 250, clientY: 205 }] });
+    expect(screen.getByText("two values recorded for Sarah's birthDate")).toBeInTheDocument();
+    expect(screen.getByText("1 of 4")).toBeInTheDocument();
+  });
+
+  it("a vertical drag does not carousel (scroll is preserved)", async () => {
+    render(<ReviewScreen />);
+    await screen.findByText("two values recorded for Sarah's birthDate");
+    fireEvent.click(screen.getByRole("button", { name: /two values recorded for Sarah/ }));
+
+    const detail = screen.getByText(/two values recorded for Sarah/).closest("section");
+    fireEvent.touchStart(detail as Element, { touches: [{ clientX: 200, clientY: 100 }] });
+    fireEvent.touchMove(detail as Element, { touches: [{ clientX: 205, clientY: 300 }] });
+    // Still on the first item — a downward drag is for scrolling, not paging.
+    expect(screen.getByText("1 of 4")).toBeInTheDocument();
+  });
+
   it("choosing a proposal resolves with its action and raises an undo snackbar", async () => {
     render(<ReviewScreen />);
     await screen.findByText("two values recorded for Sarah's birthDate");
