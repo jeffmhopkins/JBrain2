@@ -67,9 +67,7 @@ def test_former_assertion_passes_for_a_closed_edge() -> None:
             "id": "c",
             "note_text": "used to work for X",
             "expect": {
-                "facts": [
-                    {"entity": "Me", "predicate": "worksFor", "object": "X", "former": True}
-                ]
+                "facts": [{"entity": "Me", "predicate": "worksFor", "object": "X", "former": True}]
             },
         }
     )
@@ -85,9 +83,7 @@ def test_former_assertion_catches_an_open_edge_expected_closed() -> None:
             "id": "c",
             "note_text": "used to work for X",
             "expect": {
-                "facts": [
-                    {"entity": "Me", "predicate": "worksFor", "object": "X", "former": True}
-                ]
+                "facts": [{"entity": "Me", "predicate": "worksFor", "object": "X", "former": True}]
             },
         }
     )
@@ -104,9 +100,7 @@ def test_former_false_requires_an_open_current_edge() -> None:
             "id": "c",
             "note_text": "works for X",
             "expect": {
-                "facts": [
-                    {"entity": "Me", "predicate": "worksFor", "object": "X", "former": False}
-                ]
+                "facts": [{"entity": "Me", "predicate": "worksFor", "object": "X", "former": False}]
             },
         }
     )

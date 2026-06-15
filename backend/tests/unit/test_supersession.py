@@ -257,7 +257,7 @@ def test_used_to_with_no_existing_lands_active_and_closed() -> None:
 
 
 def test_two_co_stated_past_jobs_neither_supersedes() -> None:
-    """"used to work for US army AND Oregon" — equally past: the second closed
+    """ "used to work for US army AND Oregon" — equally past: the second closed
     candidate must not supersede the first closed one."""
     us_army = view(
         kind="relationship", object_entity_id="usarmy", valid_from=None, valid_to=T2,
@@ -265,7 +265,10 @@ def test_two_co_stated_past_jobs_neither_supersedes() -> None:
     )  # fmt: skip
     d = decide(
         cand(
-            kind="relationship", object_entity_id="oregon", valid_from=None, valid_to=T2,
+            kind="relationship",
+            object_entity_id="oregon",
+            valid_from=None,
+            valid_to=T2,
             statement="used to work for Oregon Lithoprint",
         ),  # fmt: skip
         [us_army],
@@ -284,7 +287,10 @@ def test_used_to_does_not_supersede_a_current_open_job() -> None:
     )  # fmt: skip
     d = decide(
         cand(
-            kind="relationship", object_entity_id="usarmy", valid_from=None, valid_to=T2,
+            kind="relationship",
+            object_entity_id="usarmy",
+            valid_from=None,
+            valid_to=T2,
             statement="used to work for the US army",
         ),  # fmt: skip
         [spacex],
@@ -302,8 +308,12 @@ def test_used_to_reextraction_refreshes_in_place() -> None:
     )  # fmt: skip
     d = decide(
         cand(
-            kind="relationship", object_entity_id="usarmy", valid_from=None, valid_to=T2,
-            reported_at=T0, statement="used to work for the US army",
+            kind="relationship",
+            object_entity_id="usarmy",
+            valid_from=None,
+            valid_to=T2,
+            reported_at=T0,
+            statement="used to work for the US army",
         ),  # fmt: skip
         [existing],
         predicate="worksFor",
@@ -320,8 +330,12 @@ def test_rejoining_a_former_employer_opens_a_new_interval() -> None:
     )  # fmt: skip
     d = decide(
         cand(
-            kind="relationship", object_entity_id="acme", valid_from=T2, valid_to=None,
-            reported_at=T2, statement="works at Acme",
+            kind="relationship",
+            object_entity_id="acme",
+            valid_from=T2,
+            valid_to=None,
+            reported_at=T2,
+            statement="works at Acme",
         ),  # fmt: skip
         [former],
         predicate="worksFor",
