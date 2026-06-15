@@ -346,6 +346,10 @@ interface DetailProps {
   queue: ReviewQueueController;
   position: { index: number; total: number } | null;
   onClose: () => void;
+  // Advance to the next unresolved item in the lane, falling back to the
+  // previous one, then to the list when none remain. Used after a decision so
+  // triage flows item→item instead of bouncing back to the inbox.
+  onAdvance: () => void;
   onNav: (delta: number) => void;
 }
 
@@ -616,7 +620,7 @@ function NewPredicateCard({
   );
 }
 
-function Detail({ item, lane, queue, position, onClose, onNav }: DetailProps) {
+function Detail({ item, lane, queue, position, onClose, onAdvance, onNav }: DetailProps) {
   const p = parsePayload(item.payload);
   const [armed, tap] = useArmed();
   const [composing, setComposing] = useState(false);
@@ -686,12 +690,12 @@ function Detail({ item, lane, queue, position, onClose, onNav }: DetailProps) {
     } else {
       queue.resolve(item.id, "accept", { choice: "approve" });
     }
-    onClose();
+    onAdvance();
   }
   function rejectInference() {
     if (p.rejectDestructive && !tap("inf-reject")) return;
     queue.resolve(item.id, "reject", { choice: "reject" });
-    onClose();
+    onAdvance();
   }
 
   return (
@@ -1288,6 +1292,19 @@ export function ReviewScreen() {
     if (next) setDetailId(next.id);
   }
 
+  // After a decision the current item leaves the lane, so step to its neighbor —
+  // the next item, or the previous when it was last — keeping the detail open
+  // while any remain; only an emptied lane falls back to the list. Computed from
+  // the pre-decision list (the optimistic removal lands in the same batch).
+  function advance() {
+    if (items === null || position === null) {
+      setDetailId(null);
+      return;
+    }
+    const next = items[position.index + 1] ?? items[position.index - 1] ?? null;
+    setDetailId(next?.id ?? null);
+  }
+
   const counts: Record<ReviewFilter, number | undefined> = {
     pending: queue.pending?.length,
     deferred: queue.deferred?.length,
@@ -1327,6 +1344,7 @@ export function ReviewScreen() {
           queue={queue}
           position={position}
           onClose={() => setDetailId(null)}
+          onAdvance={advance}
           onNav={nav}
         />
       )}

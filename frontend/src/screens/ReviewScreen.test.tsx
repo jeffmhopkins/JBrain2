@@ -481,6 +481,66 @@ describe("ReviewScreen (split inbox)", () => {
     expect(body.body).toContain("should be Celery, not Cel");
   });
 
+  // After a decision, triage flows item→item: approve/reject opens the next
+  // unresolved card rather than dropping back to the inbox list.
+  const nickInference: ReviewItem = {
+    id: "inf-a",
+    kind: "low_confidence_inference",
+    domain: "general",
+    created_at: "2026-06-15T13:00:00Z",
+    status: "open",
+    resolution: null,
+    resolved_at: null,
+    payload: {
+      predicate: "name.nickname",
+      qualifier: "",
+      statement: "People call me Jeff.",
+      value_json: { name: "Jeff" },
+      reasons: ["below_threshold"],
+      summary: "hold for review (below_threshold): People call me Jeff.",
+      outcomes: { accept: "recorded.", reject: "discarded." },
+    },
+  };
+
+  it("advances to the next pending item after approving, not back to the list", async () => {
+    serve([nickInference, genderInference], [], []);
+    render(<ReviewScreen />);
+    await screen.findByText(/People call me Jeff/);
+    fireEvent.click(screen.getByRole("button", { name: /People call me Jeff/ }));
+    fireEvent.click(screen.getByRole("button", { name: "approve" }));
+
+    // Lands on the next card's detail (its enum chips), still in the detail view
+    // — the lane tabs only render in the list, so their absence proves it.
+    expect(
+      await screen.findByRole("button", { name: "female", pressed: true }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: /pending/ })).toBeNull();
+  });
+
+  it("advances to the next pending item after rejecting", async () => {
+    serve([nickInference, genderInference], [], []);
+    render(<ReviewScreen />);
+    await screen.findByText(/People call me Jeff/);
+    fireEvent.click(screen.getByRole("button", { name: /People call me Jeff/ }));
+    fireEvent.click(screen.getByRole("button", { name: /reject/ }));
+
+    expect(
+      await screen.findByRole("button", { name: "female", pressed: true }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: /pending/ })).toBeNull();
+  });
+
+  it("returns to the list when the last pending item is decided", async () => {
+    serve([nickInference], [], []);
+    render(<ReviewScreen />);
+    await screen.findByText(/People call me Jeff/);
+    fireEvent.click(screen.getByRole("button", { name: /People call me Jeff/ }));
+    fireEvent.click(screen.getByRole("button", { name: "approve" }));
+
+    // Nothing left to advance to: the inbox list (lane tabs) comes back.
+    expect(await screen.findByRole("tab", { name: "pending 0" })).toBeInTheDocument();
+  });
+
   it("a confirm_entity card renders its question with approve/reject", async () => {
     const confirm: ReviewItem = {
       id: "ce1",
