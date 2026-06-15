@@ -2124,6 +2124,10 @@ button.small {
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
+  /* The scroller is itself the flex column (.screen-body.note-view), so the
+     head and tab bar must not shrink — a tall Analysis tab would otherwise
+     squeeze their height instead of scrolling. */
+  flex-shrink: 0;
 }
 
 .domain-pill {
@@ -2160,6 +2164,9 @@ button.small {
   border: 1px solid var(--border);
   border-radius: var(--r-seg);
   overflow: hidden;
+  /* Keep its height regardless of how tall the tab body grows (see
+     .note-view-head); the sibling .seg-row guards the same way. */
+  flex: none;
 }
 
 .note-tabs .seg-on {
