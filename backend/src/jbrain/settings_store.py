@@ -82,6 +82,16 @@ def is_valid_timezone(tz: str) -> bool:
 ENTITY_PROMOTION_KEY = "entity_promotion"
 ENTITY_PROMOTION_DEFAULT = False
 
+# Reflexion (agent self-improvement Loop 1, docs/ASSISTANT.md): when on, the
+# non-streaming agent turn verifies its answer with the deterministic grounding
+# verifier and may re-run (hard-capped at N=2, adopted only on a strict score
+# improvement, fully ephemeral). DB-backed; flip live. Default OFF — conservative
+# until the verifier is calibrated on the eval corpus, and it spends extra model
+# turns. Inert on the streamed /chat path (deltas can't be un-sent); see
+# AgentLoop.run.
+REFLEXION_KEY = "agent_reflexion"
+REFLEXION_DEFAULT = False
+
 
 class SqlSettingsStore:
     def __init__(self, maker: async_sessionmaker[AsyncSession]):
@@ -142,6 +152,11 @@ class SqlSettingsStore:
         """Whether provisional->confirmed entity promotion is on (docs/entity.md).
         Defaults OFF; an explicit `true` enables it."""
         return await self.get(ctx, ENTITY_PROMOTION_KEY, ENTITY_PROMOTION_DEFAULT) is True
+
+    async def agent_reflexion(self, ctx: SessionContext) -> bool:
+        """Whether the non-streaming agent turn runs the Reflexion verify/retry pass
+        (docs/ASSISTANT.md Loop 1). Defaults OFF; an explicit `true` enables it."""
+        return await self.get(ctx, REFLEXION_KEY, REFLEXION_DEFAULT) is True
 
     async def llm_task_overrides(self, ctx: SessionContext) -> dict[str, dict[str, str]]:
         """The live per-task LLM routing/reasoning overrides, sanitized.
