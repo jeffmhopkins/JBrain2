@@ -1,0 +1,630 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Review — process-trace directions (interactive mock)</title>
+    <style>
+      /* Design tokens — copied verbatim from frontend/src/styles/tokens.css so the
+         mock reads exactly like the app. Dark only. */
+      :root {
+        color-scheme: dark;
+        --bg: #0e0f11;
+        --surface: #17181b;
+        --surface-2: #1e2024;
+        --border: #26282c;
+        --text: #e6e7e9;
+        --text-2: #9a9da3;
+        --text-3: #5c5f66;
+        --steel: #7fa7c9;
+        --steel-tint: rgba(127, 167, 201, 0.13);
+        --green: #8fbc9a;
+        --green-tint: rgba(143, 188, 154, 0.13);
+        --amber: #c9a36a;
+        --amber-tint: rgba(201, 163, 106, 0.13);
+        --rose: #cf8a8f;
+        --rose-tint: rgba(207, 138, 143, 0.13);
+        --accent: var(--steel);
+        --font-scale: 1;
+        --fs-micro: calc(12px * var(--font-scale));
+        --fs-head: calc(13px * var(--font-scale));
+        --fs-secondary: calc(14px * var(--font-scale));
+        --fs-note: calc(15px * var(--font-scale));
+        --fs-body: calc(16px * var(--font-scale));
+        --fs-title: calc(18px * var(--font-scale));
+        --fs-screen: calc(22px * var(--font-scale));
+        --r-input: 12px;
+        --r-card: 16px;
+        --r-pill: 999px;
+        --font-mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+      }
+
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        background: #060708;
+        color: var(--text);
+        font: 400 var(--fs-body) / 1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 16px;
+        padding: 22px 14px 48px;
+        min-height: 100vh;
+      }
+
+      /* ---- Demo chrome (not part of the app) ---- */
+      .demo-bar {
+        width: 100%;
+        max-width: 460px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        flex-wrap: wrap;
+      }
+      .demo-title { font-size: var(--fs-secondary); color: var(--text-2); margin-right: auto; }
+      .demo-title b { color: var(--text); font-weight: 600; }
+      .seg {
+        display: inline-flex;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: var(--r-pill);
+        padding: 3px;
+      }
+      .seg button {
+        appearance: none; border: none; background: none; color: var(--text-2);
+        font: inherit; font-size: var(--fs-secondary); padding: 6px 14px;
+        border-radius: var(--r-pill); cursor: pointer;
+      }
+      .seg button[aria-pressed="true"] {
+        background: var(--steel-tint); color: var(--steel); font-weight: 600;
+      }
+      .demo-note {
+        width: 100%; max-width: 460px; font-size: var(--fs-head);
+        color: var(--text-3); line-height: 1.55;
+      }
+      .demo-note code { font-family: var(--font-mono); color: var(--text-2); }
+      .dir-blurb {
+        width: 100%; max-width: 460px; font-size: var(--fs-secondary);
+        color: var(--text-2); line-height: 1.5; min-height: 2.6em;
+        border-left: 2px solid var(--steel); padding: 2px 0 2px 12px;
+      }
+      .dir-blurb b { color: var(--text); font-weight: 600; }
+
+      /* ---- Phone frame ---- */
+      .phone {
+        width: 100%; max-width: 460px; height: 900px;
+        background: var(--bg); border: 1px solid var(--border);
+        border-radius: 30px; overflow: hidden; position: relative;
+        display: flex; flex-direction: column;
+      }
+      .statusbar {
+        display: flex; justify-content: space-between; align-items: center;
+        padding: 14px 22px 4px; font-size: var(--fs-secondary);
+        font-weight: 600; color: var(--text);
+      }
+      .statusbar .right { display: flex; gap: 7px; align-items: center; color: var(--text-2); font-weight: 500; }
+      .batt { border: 1px solid var(--text-2); border-radius: 4px; padding: 1px 4px; font-size: 11px; }
+      .screenhead { display: flex; align-items: center; gap: 12px; padding: 8px 16px 4px; }
+      .screenhead .back { font-size: var(--fs-screen); color: var(--text); background: none; border: none; }
+      .screenhead h1 { margin: 0; font-size: var(--fs-screen); font-weight: 600; }
+      .screenhead .spacer { margin-left: auto; }
+      .live-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--green); }
+      .bolt { color: var(--text-2); font-size: var(--fs-title); }
+
+      .body {
+        flex: 1; overflow-y: auto; padding: 12px 16px 96px;
+        display: flex; flex-direction: column; gap: 12px;
+      }
+
+      /* ---- App classes (mirrored from styles.css) ---- */
+      .rdetail-bar { display: flex; align-items: center; gap: 10px; }
+      .rdetail-back { background: none; border: none; padding: 6px 2px; font-size: var(--fs-note); color: var(--accent); }
+      .rdetail-pos { margin-left: auto; font-size: var(--fs-secondary); color: var(--text-2); font-variant-numeric: tabular-nums; }
+      .rdetail-meta { display: flex; align-items: center; gap: 10px; }
+      .kind-badge {
+        font-size: var(--fs-micro); padding: 1px 8px; border-radius: var(--r-pill);
+        background: var(--amber-tint); color: var(--amber);
+      }
+      .domain-dot { width: 7px; height: 7px; border-radius: var(--r-pill); background: var(--green); flex: none; }
+      .conf-badge {
+        font-size: var(--fs-micro); padding: 1px 8px; border-radius: var(--r-pill);
+        border: 1px solid var(--border); color: var(--text-2); margin-left: auto;
+      }
+      .rdetail-hero { margin: 0; font-size: var(--fs-title); line-height: 1.4; font-weight: 500; }
+
+      .rproposed {
+        display: flex; flex-direction: column; gap: 5px; background: var(--surface);
+        border: 1px solid var(--border); border-radius: var(--r-input); padding: 10px 12px;
+      }
+      .rdiff-lbl { font-size: var(--fs-micro); text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-3); }
+      .fact-edge { font-size: var(--fs-note); overflow-wrap: anywhere; }
+      .edge-path { font-family: var(--font-mono); font-size: var(--fs-secondary); color: var(--text-2); }
+      .edge-arrow { color: var(--text-3); }
+      .edge-value { font-weight: 500; }
+
+      .section-header {
+        font-size: var(--fs-micro); letter-spacing: 0.08em; text-transform: uppercase;
+        color: var(--text-3); font-weight: 400; margin: 4px 2px 0;
+      }
+      .evidence {
+        margin: 0; font-size: var(--fs-note); line-height: 1.6; color: var(--text);
+        background: var(--surface-2); border: 1px solid var(--border);
+        border-radius: var(--r-input); padding: 10px 12px;
+      }
+      .evidence mark { background: var(--steel-tint); color: var(--steel); border-radius: 4px; padding: 0 3px; }
+
+      /* Stage accent colors, shared across directions. */
+      .s-extract { --stage: var(--steel); --stage-tint: var(--steel-tint); }
+      .s-integrate { --stage: var(--green); --stage-tint: var(--green-tint); }
+      .s-arbiter { --stage: var(--amber); --stage-tint: var(--amber-tint); }
+      .stage-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--stage); flex: none; }
+
+      /* Key/value detail grid reused by every direction. */
+      .kv { display: grid; grid-template-columns: auto 1fr; gap: 3px 12px; font-size: var(--fs-secondary); }
+      .kv dt { color: var(--text-3); font-family: var(--font-mono); font-size: var(--fs-micro); white-space: nowrap; padding-top: 2px; }
+      .kv dd { margin: 0; color: var(--text); overflow-wrap: anywhere; }
+      .kv .mono { font-family: var(--font-mono); font-size: var(--fs-secondary); }
+      .pill { display: inline-block; font-size: var(--fs-micro); padding: 0 7px; border-radius: var(--r-pill); border: 1px solid var(--border); color: var(--text-2); }
+      .pill.ok { background: var(--green-tint); color: var(--green); border-color: transparent; }
+      .pill.no { background: var(--rose-tint); color: var(--rose); border-color: transparent; }
+      .stagever { font-family: var(--font-mono); font-size: var(--fs-micro); color: var(--text-3); }
+
+      /* ============ shared "reveal" affordance ============ */
+      .trace-toggle {
+        display: flex; align-items: center; gap: 10px; width: 100%;
+        background: var(--surface); border: 1px solid var(--border);
+        border-radius: var(--r-input); padding: 11px 13px; cursor: pointer;
+        color: var(--text); font: inherit; font-size: var(--fs-secondary); text-align: left;
+      }
+      .trace-toggle .chev { margin-left: auto; color: var(--text-3); transition: transform 0.2s; }
+      .trace-toggle[aria-expanded="true"] .chev { transform: rotate(90deg); }
+      .trace-toggle .lead { color: var(--text-2); }
+      .trace-toggle .lead b { color: var(--text); font-weight: 600; }
+
+      /* hide all direction blocks; the active one is shown by body[data-dir]. */
+      .dir { display: none; }
+      body[data-dir="a"] .dir-a { display: block; }
+      body[data-dir="b"] .dir-b { display: block; }
+      body[data-dir="c"] .dir-c { display: block; }
+      .seg.dirpick button[aria-pressed="true"] { background: var(--steel-tint); color: var(--steel); }
+
+      /* ============ DIRECTION A — timeline / stepper ============ */
+      .timeline { display: none; flex-direction: column; margin-top: 10px; padding-left: 4px; }
+      .dir-a .timeline.open { display: flex; }
+      .tl-play {
+        align-self: flex-start; margin: 2px 0 10px; background: var(--steel-tint);
+        color: var(--steel); border: none; border-radius: var(--r-pill);
+        padding: 5px 13px; font: inherit; font-size: var(--fs-micro); font-weight: 600; cursor: pointer;
+      }
+      .tl-node { position: relative; padding: 0 0 4px 26px; }
+      .tl-node::before {
+        content: ""; position: absolute; left: 4px; top: 22px; bottom: -4px;
+        width: 2px; background: var(--border);
+      }
+      .tl-node:last-child::before { display: none; }
+      .tl-bullet {
+        position: absolute; left: 0; top: 6px; width: 10px; height: 10px;
+        border-radius: 50%; background: var(--bg); border: 2px solid var(--stage);
+        transition: background 0.25s;
+      }
+      .tl-node.lit .tl-bullet { background: var(--stage); box-shadow: 0 0 0 4px var(--stage-tint); }
+      .tl-head {
+        display: flex; align-items: baseline; gap: 8px; width: 100%; background: none;
+        border: none; color: var(--text); font: inherit; text-align: left; cursor: pointer; padding: 2px 0;
+      }
+      .tl-stage { font-size: var(--fs-note); font-weight: 600; }
+      .tl-sub { font-size: var(--fs-micro); color: var(--text-3); margin-left: auto; }
+      .tl-summary { font-size: var(--fs-secondary); color: var(--text-2); margin: 1px 0 0; line-height: 1.45; }
+      .tl-detail {
+        max-height: 0; overflow: hidden; transition: max-height 0.28s ease;
+        margin-top: 0;
+      }
+      .tl-node.open .tl-detail { max-height: 320px; }
+      .tl-detail .inner {
+        margin: 8px 0 12px; padding: 10px 12px; background: var(--surface);
+        border: 1px solid var(--border); border-left: 2px solid var(--stage);
+        border-radius: var(--r-input);
+      }
+
+      /* ============ DIRECTION B — tabbed panel ============ */
+      .trace-panel { display: none; margin-top: 10px; }
+      .dir-b .trace-panel.open { display: block; }
+      .tabs { display: flex; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-pill); padding: 3px; gap: 2px; }
+      .tabs button {
+        flex: 1; display: flex; align-items: center; justify-content: center; gap: 6px;
+        background: none; border: none; color: var(--text-2); font: inherit;
+        font-size: var(--fs-micro); padding: 7px 4px; border-radius: var(--r-pill); cursor: pointer;
+      }
+      .tabs button .stage-dot { width: 7px; height: 7px; }
+      .tabs button[aria-selected="true"] { background: var(--stage-tint); color: var(--stage); font-weight: 600; }
+      .tab-body {
+        margin-top: 10px; padding: 12px; background: var(--surface);
+        border: 1px solid var(--border); border-radius: var(--r-input);
+        border-top: 2px solid var(--stage);
+      }
+      .tab-body .tb-head { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+      .tab-body .tb-head .name { font-size: var(--fs-note); font-weight: 600; }
+      .tab-body .tb-head .stagever { margin-left: auto; }
+      .tabflow { display: flex; justify-content: space-between; align-items: center; margin-top: 11px; }
+      .tabflow button {
+        background: none; border: 1px solid var(--border); border-radius: var(--r-pill);
+        color: var(--text-2); font: inherit; font-size: var(--fs-micro); padding: 4px 12px; cursor: pointer;
+      }
+      .tabflow button:disabled { opacity: 0.3; }
+      .tabflow .dots { display: flex; gap: 5px; }
+      .tabflow .dots i { width: 6px; height: 6px; border-radius: 50%; background: var(--border); }
+      .tabflow .dots i.on { background: var(--text-2); }
+
+      /* ============ DIRECTION C — dev console drawer ============ */
+      .console-btn {
+        display: inline-flex; align-items: center; gap: 7px; align-self: flex-start;
+        background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--r-input);
+        color: var(--text-2); font: inherit; font-size: var(--fs-micro); font-family: var(--font-mono);
+        padding: 7px 12px; cursor: pointer;
+      }
+      .console-btn b { color: var(--steel); font-weight: 600; }
+      .scrim {
+        position: absolute; inset: 0; background: rgba(0, 0, 0, 0.5);
+        opacity: 0; pointer-events: none; transition: opacity 0.25s; z-index: 5;
+      }
+      .scrim.show { opacity: 1; pointer-events: auto; }
+      .drawer {
+        position: absolute; left: 0; right: 0; bottom: 0; z-index: 6;
+        max-height: 78%; background: var(--bg); border-top: 1px solid var(--border);
+        border-radius: 18px 18px 0 0; transform: translateY(101%);
+        transition: transform 0.28s ease; display: flex; flex-direction: column;
+      }
+      .drawer.show { transform: none; }
+      .drawer-grip { width: 38px; height: 4px; border-radius: 2px; background: var(--border); margin: 9px auto 4px; }
+      .drawer-head { display: flex; align-items: center; gap: 10px; padding: 4px 16px 10px; border-bottom: 1px solid var(--border); }
+      .drawer-head .t { font-size: var(--fs-note); font-weight: 600; }
+      .drawer-head .t small { color: var(--text-3); font-weight: 400; font-family: var(--font-mono); font-size: var(--fs-micro); }
+      .drawer-head .copy, .drawer-head .x {
+        background: none; border: 1px solid var(--border); border-radius: 8px;
+        color: var(--text-2); font: inherit; font-size: var(--fs-micro); padding: 4px 9px; cursor: pointer;
+      }
+      .drawer-head .copy { margin-left: auto; }
+      .console {
+        overflow-y: auto; padding: 12px 14px 22px; font-family: var(--font-mono);
+        font-size: var(--fs-micro); line-height: 1.65;
+      }
+      .c-block { margin-bottom: 14px; }
+      .c-stage { display: flex; align-items: center; gap: 8px; color: var(--stage); font-weight: 600; margin-bottom: 4px; }
+      .c-stage .ver { margin-left: auto; color: var(--text-3); font-weight: 400; }
+      .c-line { color: var(--text-2); white-space: pre-wrap; padding-left: 17px; }
+      .c-line .k { color: var(--text-3); }
+      .c-line .v { color: var(--text); }
+      .c-line .ok { color: var(--green); }
+      .c-line .no { color: var(--rose); }
+      .c-line .hl { color: var(--amber); }
+      .c-rule { padding-left: 17px; color: var(--text-3); }
+
+      .rdetail-foot {
+        position: absolute; inset-inline: 0; bottom: 0; display: flex; gap: 8px;
+        padding: 10px 16px 18px; background: var(--bg); border-top: 1px solid var(--border); z-index: 2;
+      }
+      .rdetail-foot button {
+        flex: 1; min-height: 44px; font: inherit; font-weight: 500;
+        border-radius: var(--r-input); border: 1px solid var(--border); cursor: pointer;
+      }
+      .rfoot-defer { color: var(--amber); background: var(--amber-tint); border-color: transparent; }
+      .rfoot-correct { color: var(--text); background: var(--surface-2); }
+      .rfoot-discuss { color: var(--steel); background: var(--steel-tint); border-color: transparent; }
+    </style>
+  </head>
+  <body data-dir="a">
+    <div class="demo-bar">
+      <span class="demo-title"><b>Review</b> · verbose process trace — pick a direction</span>
+      <span class="seg dirpick" role="group" aria-label="direction">
+        <button id="d-a" aria-pressed="true">A · timeline</button>
+        <button id="d-b" aria-pressed="false">B · tabs</button>
+        <button id="d-c" aria-pressed="false">C · console</button>
+      </span>
+    </div>
+    <p class="dir-blurb" id="blurb"></p>
+    <p class="demo-note">
+      Same held fact in all three — the <code>name.full → Jeffrey&nbsp;Mark&nbsp;Hopkins</code> @ 60%
+      inference from your screenshot. Each direction adds an <b>optional</b> trace of the three pipeline
+      stages — <code>extraction → integration → arbiter</code> — so you can watch how the decision was
+      reached. The card is unchanged until you open the trace.
+    </p>
+
+    <div class="phone" id="phone">
+      <div class="statusbar">
+        <span>06:38</span>
+        <span class="right">●●●●&nbsp; 🛜 <span class="batt">90</span></span>
+      </div>
+      <div class="screenhead">
+        <button class="back" aria-label="back">‹</button>
+        <h1>Review</h1>
+        <span class="spacer"></span>
+        <span class="live-dot" title="live"></span>
+        <span class="bolt">⚡</span>
+      </div>
+
+      <div class="body">
+        <div class="rdetail-bar">
+          <button class="rdetail-back">‹ inbox</button>
+          <span class="rdetail-pos">2 of 4</span>
+        </div>
+
+        <div class="rdetail-meta">
+          <span class="kind-badge">low confidence inference</span>
+          <span class="domain-dot"></span>
+          <span class="conf-badge">low · 60%</span>
+        </div>
+
+        <h2 class="rdetail-hero">hold for review: my full name is Jeffrey Mark Hopkins.</h2>
+
+        <div class="rproposed" aria-label="proposed fact">
+          <span class="rdiff-lbl">proposed fact</span>
+          <span class="fact-edge">
+            <span class="edge-path">name.full</span>
+            <span class="edge-arrow"> → </span>
+            <span class="edge-value">Jeffrey Mark Hopkins</span>
+          </span>
+        </div>
+
+        <!-- ============ DIRECTION A — timeline ============ -->
+        <div class="dir dir-a">
+          <button class="trace-toggle" id="a-toggle" aria-expanded="false">
+            <span class="lead">how this was decided — <b>3 stages</b></span>
+            <span class="chev">›</span>
+          </button>
+          <div class="timeline" id="a-timeline"></div>
+        </div>
+
+        <!-- ============ DIRECTION B — tabs ============ -->
+        <div class="dir dir-b">
+          <button class="trace-toggle" id="b-toggle" aria-expanded="false">
+            <span class="lead">process trace — <b>extraction · integration · arbiter</b></span>
+            <span class="chev">›</span>
+          </button>
+          <div class="trace-panel" id="b-panel">
+            <div class="tabs" id="b-tabs" role="tablist"></div>
+            <div class="tab-body" id="b-tabbody"></div>
+            <div class="tabflow">
+              <button id="b-prev">‹ prev stage</button>
+              <span class="dots" id="b-dots"></span>
+              <button id="b-next">next stage ›</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- ============ DIRECTION C — console ============ -->
+        <div class="dir dir-c">
+          <button class="console-btn" id="c-open">‹/› <b>show trace</b> · 3 stages · grok-4.3</button>
+        </div>
+
+        <h3 class="section-header">cited evidence</h3>
+        <blockquote class="evidence">
+          My <mark>full name</mark> is <mark>Jeffrey Mark Hopkins</mark>.
+        </blockquote>
+      </div>
+
+      <!-- Direction C drawer lives at phone scope so it overlays the card. -->
+      <div class="scrim" id="c-scrim"></div>
+      <div class="drawer s-extract" id="c-drawer">
+        <div class="drawer-grip"></div>
+        <div class="drawer-head">
+          <span class="t">process trace <small>note 8f3c · grok-4.3</small></span>
+          <button class="copy" id="c-copy">copy</button>
+          <button class="x" id="c-close">close</button>
+        </div>
+        <div class="console" id="c-console"></div>
+      </div>
+
+      <div class="rdetail-foot">
+        <button class="rfoot-defer">defer</button>
+        <button class="rfoot-correct">correct it</button>
+        <button class="rfoot-discuss">talk it over</button>
+      </div>
+    </div>
+
+    <script>
+      const $ = (id) => document.getElementById(id);
+
+      // ---- The single source of truth: the three pipeline stages for THIS fact.
+      // Mirrors Extraction (note-extract-v16) -> Integration (integrator-v2 /
+      // integrate-v7) -> Arbiter (deterministic weight model). Values match the
+      // 60% inferred-ceiling case from the screenshot.
+      const STAGES = [
+        {
+          key: "extract", cls: "s-extract", name: "Extraction",
+          ver: "note-extract-v16", sub: "grok-4.3",
+          summary: "found name.legal → “Jeffrey Mark Hopkins”, self-confidence 1.00",
+          kv: [
+            ["predicate", '<span class="mono">name.legal</span> <span class="pill">drift spelling</span>'],
+            ["value", "Jeffrey Mark Hopkins"],
+            ["kind", '<span class="mono">state</span>'],
+            ["assertion", '<span class="mono">asserted</span>'],
+            ["self_conf", '<span class="mono">1.00</span>'],
+            ["span", '“full name Jeffrey Mark Hopkins”'],
+          ],
+          console: [
+            ['predicate', 'name.legal', 'k'],
+            ['value', '"Jeffrey Mark Hopkins"', 'v'],
+            ['kind', 'state', 'v'],
+            ['assertion', 'asserted', 'v'],
+            ['self_confidence', '1.00', 'v'],
+            ['attested_span', '"full name Jeffrey Mark Hopkins"', 'v'],
+          ],
+        },
+        {
+          key: "integrate", cls: "s-integrate", name: "Integration",
+          ver: "integrator-v2 · integrate-v7", sub: "grok-4.3",
+          summary: "resolved “Me” → owner · normalized to name.full · marked inferred · self 0.85",
+          kv: [
+            ["entity", '“Me” → owner <span class="pill ok">existing</span>'],
+            ["normalized", '<span class="mono">name.legal → name.full</span>'],
+            ["inferred", '<span class="pill no">true</span> — classified “full name” as the formal name'],
+            ["supersede", '<span class="mono">accumulate</span> (no current head)'],
+            ["self_conf", '<span class="mono">0.85</span>'],
+          ],
+          console: [
+            ['resolution', 'Me → owner-1  [mode=existing]', 'v'],
+            ['predicate', 'name.legal → name.full', 'hl'],
+            ['inferred', 'true', 'no'],
+            ['supersession', 'accumulate', 'v'],
+            ['self_confidence', '0.85', 'v'],
+            ['rationale', '"full name" is the formal name, not a stated legal name', 'k'],
+          ],
+        },
+        {
+          key: "arbiter", cls: "s-arbiter", name: "Arbiter",
+          ver: "weight model · deterministic", sub: "no LLM",
+          summary: "ceiling 0.60 · weight min(0.85, 0.60) = 0.60 < 0.80 → hold for review",
+          kv: [
+            ["surface_attested", '<span class="pill no">false</span> (flagged inferred)'],
+            ["predicate_known", '<span class="pill ok">true</span> (no penalty)'],
+            ["is_supersede", '<span class="pill">false</span>'],
+            ["ceiling", '<span class="mono">INFERRED_CEILING = 0.60</span>'],
+            ["weight", '<span class="mono">min(0.85, 0.60) = 0.60</span>'],
+            ["threshold", '<span class="mono">attribute → 0.80</span>'],
+            ["status", '<span class="pill no">pending_review</span> · below_threshold'],
+          ],
+          console: [
+            ['signals.surface_attested', 'false', 'no'],
+            ['signals.predicate_known', 'true', 'ok'],
+            ['signals.is_supersede', 'false', 'v'],
+            ['__rule__', 'ceiling = surface_attested ? 1.0 : INFERRED_CEILING(0.60)', 'rule'],
+            ['ceiling', '0.60', 'hl'],
+            ['__rule__', 'weight = min(self_confidence, ceiling) = min(0.85, 0.60)', 'rule'],
+            ['weight', '0.60', 'hl'],
+            ['__rule__', 'commit if weight >= threshold[attribute]=0.80  →  0.60 < 0.80', 'rule'],
+            ['status', 'pending_review  [below_threshold]', 'no'],
+          ],
+        },
+      ];
+
+      const BLURBS = {
+        a: "<b>A · Timeline.</b> A progressive vertical stepper that plays the pipeline out top-to-bottom. Tap a stage to expand it, or hit <b>play</b> to watch the dots light in sequence. Best for telling the <i>story</i> of a decision at a glance.",
+        b: "<b>B · Tabs.</b> One compact disclosure with a segmented <i>extraction / integration / arbiter</i> switch — see one stage's full detail at a time, step forward/back. Most space-efficient; keeps the card short.",
+        c: "<b>C · Console.</b> A dev-style bottom drawer with the dense, copyable provenance log, including the literal ceiling arithmetic. Built for <i>troubleshooting</i> future issues — least pretty, most information.",
+      };
+
+      function kvHtml(kv) {
+        return '<dl class="kv">' + kv.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join("") + "</dl>";
+      }
+
+      /* ---------- Direction A: timeline ---------- */
+      function buildTimeline() {
+        const tl = $("a-timeline");
+        tl.innerHTML =
+          '<button class="tl-play" id="a-play">▶ play it out</button>' +
+          STAGES.map(
+            (s, idx) => `
+            <div class="tl-node ${s.cls}" data-idx="${idx}">
+              <span class="tl-bullet"></span>
+              <button class="tl-head" aria-expanded="false">
+                <span class="tl-stage">${s.name}</span>
+                <span class="tl-sub">${s.ver}</span>
+              </button>
+              <p class="tl-summary">${s.summary}</p>
+              <div class="tl-detail"><div class="inner">${kvHtml(s.kv)}</div></div>
+            </div>`
+          ).join("");
+        tl.querySelectorAll(".tl-node").forEach((node) => {
+          node.querySelector(".tl-head").onclick = () => {
+            const open = node.classList.toggle("open");
+            node.classList.toggle("lit", open);
+            node.querySelector(".tl-head").setAttribute("aria-expanded", String(open));
+          };
+        });
+        $("a-play").onclick = () => {
+          const nodes = [...tl.querySelectorAll(".tl-node")];
+          nodes.forEach((n) => { n.classList.remove("open", "lit"); n.querySelector(".tl-head").setAttribute("aria-expanded", "false"); });
+          nodes.forEach((n, k) =>
+            setTimeout(() => {
+              n.classList.add("lit", "open");
+              n.querySelector(".tl-head").setAttribute("aria-expanded", "true");
+              n.scrollIntoView({ behavior: "smooth", block: "nearest" });
+            }, 480 * k)
+          );
+        };
+      }
+      $("a-toggle").onclick = () => {
+        const open = $("a-timeline").classList.toggle("open");
+        $("a-toggle").setAttribute("aria-expanded", String(open));
+      };
+
+      /* ---------- Direction B: tabs ---------- */
+      let bTab = 0;
+      function buildTabs() {
+        $("b-tabs").innerHTML = STAGES.map(
+          (s, idx) => `<button role="tab" class="${s.cls}" data-idx="${idx}" aria-selected="${idx === 0}">
+            <span class="stage-dot"></span>${s.name.toLowerCase()}</button>`
+        ).join("");
+        $("b-dots").innerHTML = STAGES.map((_, idx) => `<i class="${idx === 0 ? "on" : ""}"></i>`).join("");
+        $("b-tabs").querySelectorAll("button").forEach((b) => (b.onclick = () => selectTab(+b.dataset.idx)));
+        selectTab(0);
+      }
+      function selectTab(idx) {
+        bTab = idx;
+        const s = STAGES[idx];
+        $("b-tabbody").className = "tab-body " + s.cls;
+        $("b-tabbody").innerHTML =
+          `<div class="tb-head"><span class="stage-dot"></span><span class="name">${s.name}</span>
+             <span class="stagever">${s.ver}</span></div>` + kvHtml(s.kv);
+        $("b-tabs").querySelectorAll("button").forEach((b) => b.setAttribute("aria-selected", String(+b.dataset.idx === idx)));
+        $("b-dots").querySelectorAll("i").forEach((d, k) => d.classList.toggle("on", k === idx));
+        $("b-prev").disabled = idx === 0;
+        $("b-next").disabled = idx === STAGES.length - 1;
+      }
+      $("b-toggle").onclick = () => {
+        const open = $("b-panel").classList.toggle("open");
+        $("b-toggle").setAttribute("aria-expanded", String(open));
+      };
+      $("b-prev").onclick = () => bTab > 0 && selectTab(bTab - 1);
+      $("b-next").onclick = () => bTab < STAGES.length - 1 && selectTab(bTab + 1);
+
+      /* ---------- Direction C: console drawer ---------- */
+      function buildConsole() {
+        $("c-console").innerHTML = STAGES.map((s) => {
+          const lines = s.console
+            .map(([k, v, cls]) =>
+              cls === "rule"
+                ? `<div class="c-rule">// ${v}</div>`
+                : `<div class="c-line"><span class="k">${k}</span> = <span class="${cls}">${v}</span></div>`
+            )
+            .join("");
+          return `<div class="c-block ${s.cls}">
+              <div class="c-stage"><span class="stage-dot"></span>${s.name.toUpperCase()}
+                <span class="ver">${s.ver}</span></div>${lines}</div>`;
+        }).join("");
+      }
+      function setDrawerStage() {
+        // Drawer border tints to the terminal stage (arbiter) — where the verdict lands.
+        $("c-drawer").className = "drawer s-arbiter" + ($("c-drawer").classList.contains("show") ? " show" : "");
+      }
+      $("c-open").onclick = () => { $("c-scrim").classList.add("show"); $("c-drawer").classList.add("show"); setDrawerStage(); };
+      const closeDrawer = () => { $("c-scrim").classList.remove("show"); $("c-drawer").classList.remove("show"); };
+      $("c-close").onclick = closeDrawer;
+      $("c-scrim").onclick = closeDrawer;
+      $("c-copy").onclick = () => {
+        const txt = STAGES.map((s) => s.name.toUpperCase() + " (" + s.ver + ")\n" +
+          s.console.map(([k, v, cls]) => (cls === "rule" ? "  // " + v : "  " + k + " = " + v)).join("\n")).join("\n\n");
+        navigator.clipboard?.writeText(txt);
+        $("c-copy").textContent = "copied ✓";
+        setTimeout(() => ($("c-copy").textContent = "copy"), 1400);
+      };
+
+      /* ---------- direction switcher ---------- */
+      function pick(dir) {
+        document.body.dataset.dir = dir;
+        $("blurb").innerHTML = BLURBS[dir];
+        ["a", "b", "c"].forEach((d) => $("d-" + d).setAttribute("aria-pressed", String(d === dir)));
+        closeDrawer();
+      }
+      $("d-a").onclick = () => pick("a");
+      $("d-b").onclick = () => pick("b");
+      $("d-c").onclick = () => pick("c");
+
+      buildTimeline();
+      buildTabs();
+      buildConsole();
+      pick("a");
+    </script>
+  </body>
+</html>
