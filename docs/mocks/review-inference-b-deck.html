@@ -1,0 +1,426 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Review — inference card · B · triage deck (interactive mock)</title>
+    <style>
+      /* Design tokens — copied from frontend/src/styles/tokens.css. Light default
+         (matches the screenshot); the demo toggle flips to dark. */
+      :root {
+        --steel: #7fa7c9;
+        --steel-tint: rgba(127, 167, 201, 0.13);
+        --green: #8fbc9a;
+        --green-tint: rgba(143, 188, 154, 0.13);
+        --amber: #c9a36a;
+        --amber-tint: rgba(201, 163, 106, 0.13);
+        --rose: #cf8a8f;
+        --rose-tint: rgba(207, 138, 143, 0.13);
+        --violet: #a493c9;
+        --accent: var(--steel);
+        --font-scale: 1;
+        --fs-micro: calc(12px * var(--font-scale));
+        --fs-head: calc(13px * var(--font-scale));
+        --fs-secondary: calc(14px * var(--font-scale));
+        --fs-note: calc(15px * var(--font-scale));
+        --fs-body: calc(16px * var(--font-scale));
+        --fs-title: calc(18px * var(--font-scale));
+        --fs-screen: calc(22px * var(--font-scale));
+        --fs-hero: calc(26px * var(--font-scale));
+        --r-input: 12px;
+        --r-card: 16px;
+        --r-box: 24px;
+        --r-pill: 999px;
+        --font-mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+      }
+      [data-theme="light"] {
+        color-scheme: light;
+        --page: #ecece9; --bg: #f7f7f5; --surface: #ffffff; --surface-2: #f0f0ee;
+        --border: #e2e2df; --text: #1a1b1e; --text-2: #5c5f66; --text-3: #9a9da3;
+        --shadow-card: 0 2px 10px rgba(0, 0, 0, 0.07);
+      }
+      [data-theme="dark"] {
+        color-scheme: dark;
+        --page: #060708; --bg: #0e0f11; --surface: #17181b; --surface-2: #1e2024;
+        --border: #26282c; --text: #e6e7e9; --text-2: #9a9da3; --text-3: #5c5f66;
+        --shadow-card: 0 2px 14px rgba(0, 0, 0, 0.5);
+      }
+
+      * { box-sizing: border-box; }
+      body {
+        margin: 0; background: var(--page); color: var(--text);
+        font: 400 var(--fs-body) / 1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+        display: flex; flex-direction: column; align-items: center; gap: 16px;
+        padding: 22px 14px 48px; min-height: 100vh;
+      }
+      .demo-bar { width: 100%; max-width: 440px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+      .demo-title { font-size: var(--fs-secondary); color: var(--text-2); margin-right: auto; }
+      .demo-title b { color: var(--text); font-weight: 600; }
+      .seg { display: inline-flex; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-pill); padding: 3px; }
+      .seg button { appearance: none; border: none; background: none; color: var(--text-2); font: inherit; font-size: var(--fs-secondary); padding: 5px 14px; border-radius: var(--r-pill); cursor: pointer; }
+      .seg button[aria-pressed="true"] { background: var(--steel-tint); color: var(--steel); font-weight: 600; }
+      .demo-note { width: 100%; max-width: 440px; font-size: var(--fs-head); color: var(--text-3); line-height: 1.55; }
+      .demo-note code { font-family: var(--font-mono); color: var(--text-2); }
+      .demo-note b { color: var(--text-2); font-weight: 600; }
+
+      .phone {
+        width: 100%; max-width: 440px; height: 900px; background: var(--bg);
+        border: 1px solid var(--border); border-radius: 30px; overflow: hidden;
+        position: relative; display: flex; flex-direction: column;
+        box-shadow: 0 20px 60px rgba(0, 0, 0, 0.25);
+      }
+      .statusbar { display: flex; justify-content: space-between; align-items: center; padding: 14px 24px 4px; font-size: var(--fs-secondary); font-weight: 600; color: var(--text); }
+      .statusbar .right { display: flex; gap: 7px; align-items: center; color: var(--text-2); font-weight: 500; }
+      .batt { background: var(--green); color: #06250f; border-radius: 5px; padding: 1px 5px; font-size: 11px; font-weight: 700; }
+      .screenhead { display: flex; align-items: center; gap: 12px; padding: 8px 18px 4px; }
+      .screenhead .back { font-size: var(--fs-screen); color: var(--text); background: none; border: none; }
+      .screenhead h1 { margin: 0; font-size: var(--fs-screen); font-weight: 600; }
+      .screenhead .spacer { margin-left: auto; }
+      .live-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--green); }
+      .bolt { color: var(--text-2); font-size: var(--fs-title); }
+
+      /* progress */
+      .progress { display: flex; align-items: center; gap: 10px; padding: 8px 20px 2px; }
+      .progress .dots { display: flex; gap: 6px; }
+      .progress .dots i { width: 7px; height: 7px; border-radius: 50%; background: var(--border); transition: background 0.2s; }
+      .progress .dots i.done { background: var(--green); }
+      .progress .dots i.now { background: var(--text-2); transform: scale(1.25); }
+      .progress .count { margin-left: auto; font-size: var(--fs-secondary); color: var(--text-2); font-variant-numeric: tabular-nums; }
+
+      /* deck */
+      .deck { position: relative; flex: 1; margin: 8px 18px 0; }
+      .card {
+        position: absolute; inset: 0; background: var(--surface); border: 1px solid var(--border);
+        border-radius: var(--r-box); box-shadow: var(--shadow-card); padding: 20px 20px 16px;
+        display: flex; flex-direction: column; gap: 14px; transform-origin: center bottom;
+        transition: transform 0.32s cubic-bezier(.2,.7,.3,1), opacity 0.32s; will-change: transform;
+        touch-action: pan-y;
+      }
+      .card.behind-1 { transform: scale(0.94) translateY(16px); filter: brightness(0.99); }
+      .card.behind-2 { transform: scale(0.88) translateY(32px); }
+      .card.gone-right { transform: translateX(140%) rotate(12deg); opacity: 0; }
+      .card.gone-left { transform: translateX(-140%) rotate(-12deg); opacity: 0; }
+      .card.gone-down { transform: translateY(120%); opacity: 0; }
+      .card.dragging { transition: none; }
+
+      .card-top { display: flex; align-items: center; gap: 11px; }
+      .avatar { width: 38px; height: 38px; border-radius: 50%; flex: none; position: relative; display: grid; place-items: center; font-weight: 600; font-size: var(--fs-note); background: var(--violet); color: #fff; }
+      .avatar .src { position: absolute; right: -3px; bottom: -3px; width: 16px; height: 16px; border-radius: 50%; background: #0a7cff; border: 2px solid var(--surface); display: grid; place-items: center; font-size: 8px; }
+      .card-who { display: flex; flex-direction: column; gap: 1px; }
+      .card-name { font-size: var(--fs-note); font-weight: 600; }
+      .card-etype { font-size: var(--fs-micro); color: var(--text-3); }
+      .kind-badge { margin-left: auto; font-size: var(--fs-micro); padding: 2px 9px; border-radius: var(--r-pill); background: var(--amber-tint); color: var(--amber); font-weight: 500; align-self: flex-start; }
+
+      .card-fact { display: flex; flex-direction: column; gap: 6px; }
+      .fc-lbl { font-size: var(--fs-micro); text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-3); }
+      .fc-edge { font-size: var(--fs-hero); line-height: 1.2; overflow-wrap: anywhere; font-weight: 600; }
+      .fc-edge .path { display: block; font-family: var(--font-mono); font-size: var(--fs-note); color: var(--text-2); font-weight: 400; margin-bottom: 2px; }
+
+      /* confidence ring */
+      .ringwrap { display: flex; align-items: center; gap: 12px; }
+      .ring { width: 56px; height: 56px; flex: none; }
+      .ring circle { fill: none; stroke-width: 6; }
+      .ring .track { stroke: var(--surface-2); }
+      .ring .val { stroke: var(--amber); stroke-linecap: round; transform: rotate(-90deg); transform-origin: center; transition: stroke-dashoffset 0.4s; }
+      .ring text { fill: var(--text); font-size: 15px; font-weight: 700; font-family: var(--font-mono); }
+      .ringside { font-size: var(--fs-secondary); color: var(--text-2); line-height: 1.45; }
+      .ringside b { color: var(--amber); font-weight: 600; }
+
+      .card-why { font-size: var(--fs-secondary); color: var(--text-2); line-height: 1.5; margin: 0; }
+      .card-evidence {
+        margin: 0; font-size: var(--fs-note); line-height: 1.55; color: var(--text); background: var(--surface-2);
+        border: 1px solid var(--border); border-radius: var(--r-input); padding: 11px 13px;
+      }
+      .card-evidence mark { background: var(--steel-tint); color: var(--steel); border-radius: 4px; padding: 0 3px; }
+      .card-evidence .ev-lbl { display: block; font-size: var(--fs-micro); text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-3); margin-bottom: 5px; }
+      .card-details { margin-top: auto; background: none; border: none; color: var(--steel); font: inherit; font-size: var(--fs-secondary); text-align: left; padding: 4px 0 0; cursor: pointer; }
+
+      /* swipe overlays on the front card */
+      .stamp {
+        position: absolute; top: 22px; padding: 4px 14px; border: 3px solid; border-radius: 10px;
+        font-weight: 800; font-size: var(--fs-title); text-transform: uppercase; letter-spacing: 0.06em;
+        opacity: 0; transition: opacity 0.1s;
+      }
+      .stamp.approve { right: 20px; color: var(--green); border-color: var(--green); transform: rotate(10deg); }
+      .stamp.reject { left: 20px; color: var(--rose); border-color: var(--rose); transform: rotate(-10deg); }
+      .stamp.defer { left: 50%; bottom: 24px; top: auto; transform: translateX(-50%); color: var(--amber); border-color: var(--amber); }
+
+      /* empty state */
+      .empty { position: absolute; inset: 0; display: none; flex-direction: column; align-items: center; justify-content: center; gap: 10px; text-align: center; padding: 30px; }
+      .deck.clear .empty { display: flex; }
+      .empty .big { font-size: 40px; }
+      .empty .t { font-size: var(--fs-title); font-weight: 600; }
+      .empty .s { font-size: var(--fs-secondary); color: var(--text-2); }
+      .empty button { margin-top: 8px; background: var(--surface); border: 1px solid var(--border); color: var(--text); font: inherit; padding: 8px 16px; border-radius: var(--r-pill); cursor: pointer; }
+
+      /* action bar */
+      .actions { display: flex; align-items: center; justify-content: center; gap: 14px; padding: 16px 16px 22px; }
+      .act { width: 56px; height: 56px; border-radius: 50%; border: 1px solid var(--border); background: var(--surface); cursor: pointer; font-size: 22px; display: grid; place-items: center; box-shadow: var(--shadow-card); transition: transform 0.12s; }
+      .act:active { transform: scale(0.9); }
+      .act.reject { color: var(--rose); }
+      .act.defer { color: var(--amber); width: 48px; height: 48px; font-size: 18px; }
+      .act.discuss { color: var(--steel); width: 48px; height: 48px; font-size: 18px; }
+      .act.approve { color: #06250f; background: var(--green); border-color: transparent; width: 64px; height: 64px; font-size: 26px; }
+      .act-hint { text-align: center; font-size: var(--fs-micro); color: var(--text-3); padding-bottom: 8px; }
+
+      /* details sheet */
+      .scrim { position: absolute; inset: 0; background: rgba(0,0,0,0.45); opacity: 0; pointer-events: none; transition: opacity 0.25s; z-index: 5; }
+      .scrim.show { opacity: 1; pointer-events: auto; }
+      .sheet { position: absolute; left: 0; right: 0; bottom: 0; z-index: 6; max-height: 70%; background: var(--bg); border-top: 1px solid var(--border); border-radius: 20px 20px 0 0; transform: translateY(101%); transition: transform 0.3s ease; display: flex; flex-direction: column; }
+      .sheet.show { transform: none; }
+      .sheet-grip { width: 38px; height: 4px; border-radius: 2px; background: var(--border); margin: 9px auto 4px; }
+      .sheet-head { display: flex; align-items: center; padding: 4px 18px 10px; border-bottom: 1px solid var(--border); }
+      .sheet-head .t { font-size: var(--fs-note); font-weight: 600; }
+      .sheet-head .x { margin-left: auto; background: none; border: 1px solid var(--border); border-radius: 8px; color: var(--text-2); font: inherit; font-size: var(--fs-micro); padding: 4px 10px; cursor: pointer; }
+      .sheet-body { overflow-y: auto; padding: 14px 18px 26px; display: flex; flex-direction: column; gap: 10px; }
+      .s-extract { --stage: var(--steel); } .s-integrate { --stage: var(--green); } .s-arbiter { --stage: var(--amber); }
+      .tl-node { position: relative; padding: 0 0 8px 24px; }
+      .tl-node::before { content: ""; position: absolute; left: 4px; top: 18px; bottom: 0; width: 2px; background: var(--border); }
+      .tl-node:last-child::before { display: none; }
+      .tl-bullet { position: absolute; left: 0; top: 4px; width: 10px; height: 10px; border-radius: 50%; background: var(--stage); }
+      .tl-stage { font-size: var(--fs-note); font-weight: 600; }
+      .tl-ver { font-size: var(--fs-micro); color: var(--text-3); font-family: var(--font-mono); margin-left: 8px; }
+      .tl-summary { font-size: var(--fs-secondary); color: var(--text-2); margin: 2px 0 0; line-height: 1.45; }
+    </style>
+  </head>
+  <body data-theme="light">
+    <div class="demo-bar">
+      <span class="demo-title"><b>Review</b> · B — triage deck</span>
+      <span class="seg" role="group" aria-label="theme">
+        <button id="t-light" aria-pressed="true">light</button>
+        <button id="t-dark" aria-pressed="false">dark</button>
+      </span>
+    </div>
+    <p class="demo-note">
+      <b>Direction B.</b> The pending lane becomes a <b>deck you swipe through</b>: one big fact at a time,
+      a confidence <b>ring</b>, the evidence right there. <b>Drag right → approve</b>, <b>left → reject</b>,
+      <b>down → defer</b> — or use the buttons. <code>details</code> opens the
+      <code>how this was decided</code> trace without leaving the card. Best for clearing volume fast. Drag the card.
+    </p>
+
+    <div class="phone" id="phone">
+      <div class="statusbar">
+        <span>13:00</span>
+        <span class="right">●●●● 🛜 <span class="batt">100</span></span>
+      </div>
+      <div class="screenhead">
+        <button class="back" aria-label="back">‹</button>
+        <h1>Review</h1>
+        <span class="spacer"></span>
+        <span class="live-dot" title="live"></span>
+        <span class="bolt">⚡</span>
+      </div>
+
+      <div class="progress">
+        <span class="dots" id="dots"></span>
+        <span class="count" id="count">1 of 5</span>
+      </div>
+
+      <div class="deck" id="deck">
+        <div class="empty">
+          <span class="big">✓</span>
+          <span class="t">inbox clear</span>
+          <span class="s">new items arrive as notes are analyzed.</span>
+          <button id="reset">replay the 5 demo items</button>
+        </div>
+      </div>
+
+      <div class="act-hint" id="hint">swipe → approve · ← reject · ↓ defer</div>
+      <div class="actions">
+        <button class="act reject" data-act="reject" aria-label="reject">✕</button>
+        <button class="act defer" data-act="defer" aria-label="defer">↧</button>
+        <button class="act approve" data-act="approve" aria-label="approve">✓</button>
+        <button class="act discuss" data-act="discuss" aria-label="talk it over">💬</button>
+      </div>
+
+      <div class="scrim" id="scrim"></div>
+      <div class="sheet" id="sheet">
+        <div class="sheet-grip"></div>
+        <div class="sheet-head"><span class="t">how this was decided — 3 stages</span><button class="x" id="sheet-x">close</button></div>
+        <div class="sheet-body" id="sheet-body"></div>
+      </div>
+    </div>
+
+    <script>
+      const $ = (id) => document.getElementById(id);
+      const ITEMS = [
+        { subj: "Celine", initials: "C", color: "#a493c9", etype: "Person",
+          edge: "name.full", value: "Celine Dubois", conf: 0.64,
+          why: "inferred from a project mention, not stated — held under the 0.80 auto-save bar.",
+          evidence: "Added <mark>Celine Dubois</mark> to the migration project today.",
+          trace: [["s-extract","Extraction","note-extract-v16","full-name shape “Celine Dubois”, self-conf 0.95"],
+                  ["s-integrate","Integration","integrate-v7","resolved → person-44 · normalized name.full · inferred"],
+                  ["s-arbiter","Arbiter","weight model","ceiling 0.60 → weight 0.64 < 0.80 → hold"]] },
+        { subj: "Celine", initials: "C", color: "#a493c9", etype: "Person",
+          edge: "name.nickname", value: "Cel", conf: 0.58,
+          why: "a nickname inferred from chat, not a stated alias — held under the bar.",
+          evidence: "everyone on the team just calls her <mark>Cel</mark>.",
+          trace: [["s-extract","Extraction","note-extract-v16","nickname token “Cel”, self-conf 0.90"],
+                  ["s-integrate","Integration","integrate-v7","attached to person-44 · audience team · inferred"],
+                  ["s-arbiter","Arbiter","weight model","ceiling 0.60 → weight 0.58 < 0.80 → hold"]] },
+        { subj: "Marcus", initials: "M", color: "#7fa7c9", etype: "Person",
+          edge: "relationship.role", value: "colleague", conf: 0.62,
+          why: "relationship inferred from “from the data team”, not stated — held under the bar.",
+          evidence: "<mark>Marcus</mark> from the data team is helping with the rollout.",
+          trace: [["s-extract","Extraction","note-extract-v16","co-worker cue “from the data team”"],
+                  ["s-integrate","Integration","integrate-v7","resolved → person-91 (new) · role colleague · inferred"],
+                  ["s-arbiter","Arbiter","weight model","ceiling 0.60 → weight 0.62 < 0.80 → hold"]] },
+        { subj: "Celine", initials: "C", color: "#a493c9", etype: "Person",
+          edge: "residence.city", value: "Lyon", conf: 0.55,
+          why: "location inferred from “moved back”, not stated as current — held under the bar.",
+          evidence: "Celine <mark>moved back</mark> to <mark>Lyon</mark> last spring.",
+          trace: [["s-extract","Extraction","note-extract-v16","place token “Lyon” with a move cue"],
+                  ["s-integrate","Integration","integrate-v7","attached to person-44 · residence.city · inferred"],
+                  ["s-arbiter","Arbiter","weight model","ceiling 0.60 → weight 0.55 < 0.80 → hold"]] },
+        { subj: "Celine", initials: "C", color: "#a493c9", etype: "Person",
+          edge: "gender", value: "female", conf: 0.6,
+          why: "inferred from context, not stated — gender is a closed set {female · male · unknown}; held under the bar.",
+          evidence: "Celine's <mark>gender</mark> is <mark>female</mark>.",
+          trace: [["s-extract","Extraction","note-extract-v16","gender → “Female (inferred from 'wife')”, self-conf 1.00"],
+                  ["s-integrate","Integration","integrate-v7","coerced to enum member female · resolved → person-44 · inferred"],
+                  ["s-arbiter","Arbiter","weight model","ceiling 0.60 · min(0.85,0.60)=0.60 < 0.80 → hold"]] },
+      ];
+
+      let queue = [];
+      const R = 24, CIRC = 2 * Math.PI * R;
+
+      function ringSvg(conf) {
+        const off = CIRC * (1 - conf);
+        const color = conf >= 0.75 ? "var(--green)" : conf >= 0.5 ? "var(--amber)" : "var(--rose)";
+        return `<svg class="ring" viewBox="0 0 60 60">
+            <circle class="track" cx="30" cy="30" r="${R}"></circle>
+            <circle class="val" cx="30" cy="30" r="${R}" stroke="${color}"
+              stroke-dasharray="${CIRC}" stroke-dashoffset="${off}"></circle>
+            <text x="30" y="35" text-anchor="middle">${Math.round(conf * 100)}</text>
+          </svg>`;
+      }
+
+      function cardHtml(it) {
+        const band = it.conf >= 0.75 ? "good" : "low";
+        return `
+          <div class="card-top">
+            <span class="avatar" style="background:${it.color}">${it.initials}<span class="src">💬</span></span>
+            <span class="card-who"><span class="card-name">${it.subj}</span><span class="card-etype">${it.etype} · general</span></span>
+            <span class="kind-badge">low confidence inference</span>
+          </div>
+          <div class="card-fact">
+            <span class="fc-lbl">proposed fact</span>
+            <span class="fc-edge"><span class="path">${it.edge}</span>${it.value}</span>
+          </div>
+          <div class="ringwrap">
+            ${ringSvg(it.conf)}
+            <span class="ringside"><b>${band === "good" ? "high confidence" : "low confidence"}</b><br>under the 0.80 bar to auto-save</span>
+          </div>
+          <p class="card-why">${it.why}</p>
+          <blockquote class="card-evidence"><span class="ev-lbl">cited evidence</span>${it.evidence}</blockquote>
+          <button class="card-details">how this was decided ›</button>
+          <span class="stamp approve">approve</span>
+          <span class="stamp reject">reject</span>
+          <span class="stamp defer">defer</span>`;
+      }
+
+      function renderProgress() {
+        const total = ITEMS.length, done = total - queue.length;
+        $("count").textContent = queue.length ? `${done + 1} of ${total}` : `${total} of ${total}`;
+        $("dots").innerHTML = ITEMS.map((_, k) =>
+          `<i class="${k < done ? "done" : k === done ? "now" : ""}"></i>`).join("");
+      }
+
+      function buildDeck() {
+        const deck = $("deck");
+        deck.querySelectorAll(".card").forEach((c) => c.remove());
+        deck.classList.toggle("clear", queue.length === 0);
+        // render up to 3 cards, topmost last so it's on top
+        const top3 = queue.slice(0, 3);
+        top3.reverse().forEach((it, idx) => {
+          const depthFromTop = top3.length - 1 - idx; // 0 = front
+          const card = document.createElement("div");
+          card.className = "card" + (depthFromTop === 1 ? " behind-1" : depthFromTop === 2 ? " behind-2" : "");
+          card.innerHTML = cardHtml(it);
+          if (depthFromTop === 0) wireFront(card, it);
+          deck.appendChild(card);
+        });
+        renderProgress();
+      }
+
+      function commit(dir) {
+        const deck = $("deck");
+        const front = deck.querySelector(".card:last-child");
+        if (!front) return;
+        const cls = dir === "approve" ? "gone-right" : dir === "reject" ? "gone-left" : "gone-down";
+        front.classList.remove("dragging");
+        front.style.transform = "";
+        front.classList.add(cls);
+        queue.shift();
+        setTimeout(buildDeck, 300);
+      }
+
+      function wireFront(card, it) {
+        card.querySelector(".card-details").onclick = () => openSheet(it);
+        let startX = 0, startY = 0, dx = 0, dy = 0, dragging = false;
+        const sa = card.querySelector(".stamp.approve");
+        const sr = card.querySelector(".stamp.reject");
+        const sd = card.querySelector(".stamp.defer");
+
+        const down = (x, y) => { startX = x; startY = y; dragging = true; card.classList.add("dragging"); };
+        const move = (x, y) => {
+          if (!dragging) return;
+          dx = x - startX; dy = y - startY;
+          const horiz = Math.abs(dx) > Math.abs(dy);
+          if (horiz) { dy *= 0.3; } else { dx *= 0.3; }
+          card.style.transform = `translate(${dx}px, ${dy}px) rotate(${dx * 0.04}deg)`;
+          sa.style.opacity = horiz && dx > 30 ? Math.min(1, dx / 110) : 0;
+          sr.style.opacity = horiz && dx < -30 ? Math.min(1, -dx / 110) : 0;
+          sd.style.opacity = !horiz && dy > 30 ? Math.min(1, dy / 110) : 0;
+        };
+        const up = () => {
+          if (!dragging) return;
+          dragging = false; card.classList.remove("dragging");
+          const horiz = Math.abs(dx) > Math.abs(dy);
+          if (horiz && dx > 90) return commit("approve");
+          if (horiz && dx < -90) return commit("reject");
+          if (!horiz && dy > 90) return commit("defer");
+          card.style.transform = "";
+          sa.style.opacity = sr.style.opacity = sd.style.opacity = 0;
+        };
+
+        card.addEventListener("pointerdown", (e) => { card.setPointerCapture(e.pointerId); down(e.clientX, e.clientY); });
+        card.addEventListener("pointermove", (e) => move(e.clientX, e.clientY));
+        card.addEventListener("pointerup", up);
+        card.addEventListener("pointercancel", up);
+      }
+
+      // action buttons
+      document.querySelectorAll(".act").forEach((b) => {
+        b.onclick = () => {
+          const a = b.dataset.act;
+          if (a === "discuss") return commit("defer"); // talk-it-over also parks the card
+          commit(a);
+        };
+      });
+
+      // details sheet
+      function openSheet(it) {
+        $("sheet-body").innerHTML = it.trace
+          .map(([cls, name, ver, summary]) =>
+            `<div class="tl-node ${cls}"><span class="tl-bullet"></span>
+              <span class="tl-stage">${name}</span><span class="tl-ver">${ver}</span>
+              <p class="tl-summary">${summary}</p></div>`).join("");
+        $("scrim").classList.add("show");
+        $("sheet").classList.add("show");
+      }
+      const closeSheet = () => { $("scrim").classList.remove("show"); $("sheet").classList.remove("show"); };
+      $("sheet-x").onclick = closeSheet;
+      $("scrim").onclick = closeSheet;
+      $("reset").onclick = () => { queue = [...ITEMS]; buildDeck(); };
+
+      // theme
+      function setTheme(t) { document.body.dataset.theme = t; $("t-light").setAttribute("aria-pressed", String(t === "light")); $("t-dark").setAttribute("aria-pressed", String(t === "dark")); }
+      $("t-light").onclick = () => setTheme("light");
+      $("t-dark").onclick = () => setTheme("dark");
+
+      queue = [...ITEMS];
+      buildDeck();
+    </script>
+  </body>
+</html>

@@ -1,0 +1,535 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Review — inference card · A · verdict (interactive mock)</title>
+    <style>
+      /* Design tokens — copied from frontend/src/styles/tokens.css so the mock
+         reads exactly like the app. Light is the default (matches the supplied
+         screenshot); the demo toggle flips to dark. */
+      :root {
+        --steel: #7fa7c9;
+        --steel-tint: rgba(127, 167, 201, 0.13);
+        --green: #8fbc9a;
+        --green-tint: rgba(143, 188, 154, 0.13);
+        --amber: #c9a36a;
+        --amber-tint: rgba(201, 163, 106, 0.13);
+        --rose: #cf8a8f;
+        --rose-tint: rgba(207, 138, 143, 0.13);
+        --violet: #a493c9;
+        --accent: var(--steel);
+        --font-scale: 1;
+        --fs-micro: calc(12px * var(--font-scale));
+        --fs-head: calc(13px * var(--font-scale));
+        --fs-secondary: calc(14px * var(--font-scale));
+        --fs-note: calc(15px * var(--font-scale));
+        --fs-body: calc(16px * var(--font-scale));
+        --fs-title: calc(18px * var(--font-scale));
+        --fs-screen: calc(22px * var(--font-scale));
+        --fs-editor: calc(20px * var(--font-scale));
+        --r-input: 12px;
+        --r-card: 16px;
+        --r-pill: 999px;
+        --font-mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+      }
+      [data-theme="light"] {
+        color-scheme: light;
+        --page: #ecece9;
+        --bg: #f7f7f5;
+        --surface: #ffffff;
+        --surface-2: #f0f0ee;
+        --border: #e2e2df;
+        --text: #1a1b1e;
+        --text-2: #5c5f66;
+        --text-3: #9a9da3;
+        --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.06);
+      }
+      [data-theme="dark"] {
+        color-scheme: dark;
+        --page: #060708;
+        --bg: #0e0f11;
+        --surface: #17181b;
+        --surface-2: #1e2024;
+        --border: #26282c;
+        --text: #e6e7e9;
+        --text-2: #9a9da3;
+        --text-3: #5c5f66;
+        --shadow-card: none;
+      }
+
+      * { box-sizing: border-box; }
+      body {
+        margin: 0; background: var(--page); color: var(--text);
+        font: 400 var(--fs-body) / 1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+        display: flex; flex-direction: column; align-items: center; gap: 16px;
+        padding: 22px 14px 48px; min-height: 100vh;
+      }
+
+      /* ---- Demo chrome (not part of the app) ---- */
+      .demo-bar { width: 100%; max-width: 440px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+      .demo-title { font-size: var(--fs-secondary); color: var(--text-2); margin-right: auto; }
+      .demo-title b { color: var(--text); font-weight: 600; }
+      .seg { display: inline-flex; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-pill); padding: 3px; }
+      .seg button {
+        appearance: none; border: none; background: none; color: var(--text-2);
+        font: inherit; font-size: var(--fs-secondary); padding: 5px 14px; border-radius: var(--r-pill); cursor: pointer;
+      }
+      .seg button[aria-pressed="true"] { background: var(--steel-tint); color: var(--steel); font-weight: 600; }
+      .demo-note { width: 100%; max-width: 440px; font-size: var(--fs-head); color: var(--text-3); line-height: 1.55; }
+      .demo-note code { font-family: var(--font-mono); color: var(--text-2); }
+      .demo-note b { color: var(--text-2); font-weight: 600; }
+
+      /* ---- Phone frame ---- */
+      .phone {
+        width: 100%; max-width: 440px; height: 900px; background: var(--bg);
+        border: 1px solid var(--border); border-radius: 30px; overflow: hidden;
+        position: relative; display: flex; flex-direction: column;
+        box-shadow: 0 20px 60px rgba(0, 0, 0, 0.25);
+      }
+      .statusbar {
+        display: flex; justify-content: space-between; align-items: center;
+        padding: 14px 24px 4px; font-size: var(--fs-secondary); font-weight: 600; color: var(--text);
+      }
+      .statusbar .right { display: flex; gap: 7px; align-items: center; color: var(--text-2); font-weight: 500; }
+      .batt { background: var(--green); color: #06250f; border-radius: 5px; padding: 1px 5px; font-size: 11px; font-weight: 700; }
+      .screenhead { display: flex; align-items: center; gap: 12px; padding: 8px 18px 4px; }
+      .screenhead .back { font-size: var(--fs-screen); color: var(--text); background: none; border: none; }
+      .screenhead h1 { margin: 0; font-size: var(--fs-screen); font-weight: 600; }
+      .screenhead .spacer { margin-left: auto; }
+      .live-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--green); }
+      .bolt { color: var(--text-2); font-size: var(--fs-title); }
+
+      .body { flex: 1; overflow-y: auto; padding: 10px 16px 150px; display: flex; flex-direction: column; gap: 12px; }
+
+      /* ---- detail bar + nav ---- */
+      .rdetail-bar { display: flex; align-items: center; gap: 10px; }
+      .rdetail-back { background: none; border: none; padding: 6px 2px; font-size: var(--fs-note); color: var(--accent); cursor: pointer; }
+      .rdetail-pos { margin-left: auto; font-size: var(--fs-secondary); color: var(--text-2); font-variant-numeric: tabular-nums; }
+      .rdetail-nav { display: flex; gap: 6px; }
+      .rdetail-nav button {
+        width: 34px; height: 34px; border-radius: var(--r-pill); border: 1px solid var(--border);
+        background: var(--surface); color: var(--text); font-size: var(--fs-body); cursor: pointer;
+      }
+      .rdetail-nav button:disabled { opacity: 0.35; }
+
+      /* ---- subject identity row (NEW) ---- */
+      .subject {
+        display: flex; align-items: center; gap: 11px; padding: 2px;
+      }
+      .avatar {
+        width: 40px; height: 40px; border-radius: 50%; flex: none; position: relative;
+        display: grid; place-items: center; font-weight: 600; font-size: var(--fs-note);
+        background: var(--violet); color: #fff;
+      }
+      .avatar .src {
+        position: absolute; right: -3px; bottom: -3px; width: 17px; height: 17px;
+        border-radius: 50%; background: #0a7cff; border: 2px solid var(--bg);
+        display: grid; place-items: center; font-size: 9px;
+      }
+      .subject-main { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+      .subject-name { font-size: var(--fs-title); font-weight: 600; }
+      .subject-sub { font-size: var(--fs-micro); color: var(--text-3); display: flex; align-items: center; gap: 7px; }
+      .etype { color: var(--violet); }
+      .domain-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--green); flex: none; }
+
+      .kind-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+      .kind-badge { font-size: var(--fs-micro); padding: 2px 9px; border-radius: var(--r-pill); background: var(--amber-tint); color: var(--amber); font-weight: 500; }
+      .held-chip { font-size: var(--fs-micro); padding: 2px 9px; border-radius: var(--r-pill); border: 1px solid var(--border); color: var(--text-3); font-family: var(--font-mono); }
+
+      .rdetail-hero { margin: 2px 0 0; font-size: var(--fs-editor); line-height: 1.36; font-weight: 500; }
+
+      /* ---- THE fact card: proposed fact + confidence gauge (NEW combined) ---- */
+      .factcard {
+        background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-card);
+        box-shadow: var(--shadow-card); padding: 14px 15px; display: flex; flex-direction: column; gap: 12px;
+      }
+      .fc-lbl { font-size: var(--fs-micro); text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-3); }
+      .fc-edge { font-size: var(--fs-title); overflow-wrap: anywhere; }
+      .edge-path { font-family: var(--font-mono); font-size: var(--fs-note); color: var(--text-2); }
+      .edge-arrow { color: var(--text-3); padding: 0 2px; }
+      .edge-value { font-weight: 600; }
+      .fc-gauge { display: flex; flex-direction: column; gap: 6px; }
+      .fc-gauge-top { display: flex; align-items: baseline; justify-content: space-between; font-size: var(--fs-secondary); }
+      .fc-gauge-lbl { color: var(--text-2); }
+      .fc-gauge-lbl b { color: var(--amber); font-weight: 600; }
+      .fc-gauge-pct { font-variant-numeric: tabular-nums; color: var(--text-3); font-size: var(--fs-micro); font-family: var(--font-mono); }
+      .meter { height: 6px; border-radius: 999px; background: var(--surface-2); overflow: hidden; position: relative; }
+      .meter i { position: absolute; inset: 0 auto 0 0; border-radius: 999px; background: var(--amber); }
+      .meter .bar-line { position: absolute; top: -3px; bottom: -3px; width: 2px; background: var(--text-3); opacity: 0.55; }
+      .fc-why { font-size: var(--fs-secondary); color: var(--text-2); line-height: 1.5; margin: 0; }
+
+      /* ---- how this was decided — timeline (mirrors ProcessTrace) ---- */
+      .rtrace { display: flex; flex-direction: column; }
+      .rtrace-toggle {
+        display: flex; align-items: center; gap: 10px; width: 100%; background: var(--surface);
+        border: 1px solid var(--border); border-radius: var(--r-input); padding: 12px 14px; cursor: pointer;
+        color: var(--text); font: inherit; font-size: var(--fs-secondary); text-align: left; box-shadow: var(--shadow-card);
+      }
+      .rtrace-lead { color: var(--text-2); }
+      .rtrace-lead b { color: var(--text); font-weight: 600; }
+      .rtrace-chev { margin-left: auto; color: var(--text-3); transition: transform 0.2s; }
+      .rtrace-toggle[aria-expanded="true"] .rtrace-chev { transform: rotate(90deg); }
+      .timeline { display: none; flex-direction: column; margin-top: 8px; padding-left: 4px; }
+      .timeline.open { display: flex; }
+      .s-extract { --stage: var(--steel); --stage-tint: var(--steel-tint); }
+      .s-integrate { --stage: var(--green); --stage-tint: var(--green-tint); }
+      .s-arbiter { --stage: var(--amber); --stage-tint: var(--amber-tint); }
+      .tl-node { position: relative; padding: 0 0 6px 26px; }
+      .tl-node::before { content: ""; position: absolute; left: 4px; top: 22px; bottom: -4px; width: 2px; background: var(--border); }
+      .tl-node:last-child::before { display: none; }
+      .tl-bullet { position: absolute; left: 0; top: 6px; width: 10px; height: 10px; border-radius: 50%; background: var(--bg); border: 2px solid var(--stage); transition: background 0.25s; }
+      .tl-node.open .tl-bullet { background: var(--stage); box-shadow: 0 0 0 4px var(--stage-tint); }
+      .tl-head { display: flex; align-items: baseline; gap: 8px; width: 100%; background: none; border: none; color: var(--text); font: inherit; text-align: left; cursor: pointer; padding: 2px 0; }
+      .tl-stage { font-size: var(--fs-note); font-weight: 600; }
+      .tl-ver { font-size: var(--fs-micro); color: var(--text-3); margin-left: auto; font-family: var(--font-mono); }
+      .tl-summary { font-size: var(--fs-secondary); color: var(--text-2); margin: 1px 0 0; line-height: 1.45; }
+      .tl-detail { max-height: 0; overflow: hidden; transition: max-height 0.28s ease; }
+      .tl-node.open .tl-detail { max-height: 280px; }
+      .tl-detail .inner { margin: 8px 0 4px; padding: 10px 12px; background: var(--surface); border: 1px solid var(--border); border-left: 2px solid var(--stage); border-radius: var(--r-input); }
+      .kv { display: grid; grid-template-columns: auto 1fr; gap: 3px 12px; font-size: var(--fs-secondary); }
+      .kv dt { color: var(--text-3); font-family: var(--font-mono); font-size: var(--fs-micro); white-space: nowrap; padding-top: 2px; }
+      .kv dd { margin: 0; color: var(--text); overflow-wrap: anywhere; }
+
+      .section-header { font-size: var(--fs-micro); letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-3); font-weight: 400; margin: 6px 2px 0; }
+      .evidence {
+        margin: 0; font-size: var(--fs-note); line-height: 1.6; color: var(--text); background: var(--surface-2);
+        border: 1px solid var(--border); border-radius: var(--r-input); padding: 11px 13px;
+      }
+      .evidence mark { background: var(--steel-tint); color: var(--steel); border-radius: 4px; padding: 0 3px; }
+
+      /* ---- decision footer: a clear primary + quiet secondary (THE CHANGE) ---- */
+      .rdetail-foot {
+        position: absolute; inset-inline: 0; bottom: 0; padding: 12px 16px 20px; background: var(--bg);
+        border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: 9px; z-index: 3;
+      }
+      .btn-approve {
+        width: 100%; min-height: 50px; border: none; border-radius: var(--r-input); cursor: pointer;
+        background: var(--green); color: #06250f; font: inherit; display: flex; flex-direction: column;
+        align-items: center; justify-content: center; gap: 1px;
+      }
+      .btn-approve .t { font-size: var(--fs-body); font-weight: 700; }
+      .btn-approve .d { font-size: var(--fs-micro); opacity: 0.78; font-weight: 500; }
+      .decide-minor { display: flex; gap: 9px; }
+      .btn-reject {
+        flex: 1; min-height: 42px; border-radius: var(--r-input); cursor: pointer; font: inherit;
+        font-weight: 500; background: var(--surface); border: 1px solid var(--border); color: var(--rose);
+      }
+      .btn-reject.armed { background: var(--rose-tint); border-color: transparent; }
+      .escape-row { display: flex; align-items: center; justify-content: center; gap: 4px; font-size: var(--fs-secondary); }
+      .escape-row button { background: none; border: none; font: inherit; cursor: pointer; padding: 6px 10px; border-radius: var(--r-pill); }
+      .escape-row .e-defer { color: var(--amber); }
+      .escape-row .e-correct { color: var(--text-2); }
+      .escape-row .e-discuss { color: var(--steel); }
+      .escape-row .dot { color: var(--text-3); }
+
+      /* ---- snackbar ---- */
+      .snack {
+        position: absolute; left: 16px; right: 16px; bottom: 150px; display: flex; align-items: center; gap: 12px;
+        padding: 11px 14px; background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--r-input);
+        font-size: var(--fs-secondary); opacity: 0; transform: translateY(8px); transition: opacity 0.2s, transform 0.2s;
+        pointer-events: none; z-index: 4; box-shadow: var(--shadow-card);
+      }
+      .snack.show { opacity: 1; transform: none; pointer-events: auto; }
+      .snack .msg { margin-right: auto; color: var(--text); }
+      .snack button { background: none; border: none; color: var(--steel); font: inherit; font-weight: 600; cursor: pointer; }
+    </style>
+  </head>
+  <body data-theme="light">
+    <div class="demo-bar">
+      <span class="demo-title"><b>Review</b> · A — verdict card</span>
+      <span class="seg" role="group" aria-label="theme">
+        <button id="t-light" aria-pressed="true">light</button>
+        <button id="t-dark" aria-pressed="false">dark</button>
+      </span>
+    </div>
+    <p class="demo-note">
+      <b>Direction A.</b> The decision gets a spine: a <b>subject identity</b> row (who this is about),
+      the proposed fact and a <b>confidence gauge</b> fused into one card, the optional
+      <code>how this was decided</code> trace, and a footer that finally has hierarchy —
+      <b>approve</b> is the filled primary, <b>reject</b> is a quiet secondary, and defer / correct / talk-it-over
+      drop to a text row. Tap the gauge card's chevron, the trace, the chevrons to move across the 5 held facts, or approve/reject.
+    </p>
+
+    <div class="phone" id="phone">
+      <div class="statusbar">
+        <span>13:00</span>
+        <span class="right">●●●● 🛜 <span class="batt">100</span></span>
+      </div>
+      <div class="screenhead">
+        <button class="back" aria-label="back">‹</button>
+        <h1>Review</h1>
+        <span class="spacer"></span>
+        <span class="live-dot" title="live"></span>
+        <span class="bolt">⚡</span>
+      </div>
+
+      <div class="body">
+        <div class="rdetail-bar">
+          <button class="rdetail-back">‹ inbox</button>
+          <span class="rdetail-pos" id="pos">5 of 5</span>
+          <span class="rdetail-nav">
+            <button id="prev" aria-label="previous">‹</button>
+            <button id="next" aria-label="next">›</button>
+          </span>
+        </div>
+
+        <div class="subject">
+          <span class="avatar" id="ava"><span id="ava-i">C</span><span class="src">💬</span></span>
+          <span class="subject-main">
+            <span class="subject-name" id="subj">Celine</span>
+            <span class="subject-sub"><span class="etype">Person</span> · <span class="domain-dot"></span> general</span>
+          </span>
+        </div>
+
+        <div class="kind-row">
+          <span class="kind-badge">low confidence inference</span>
+          <span class="held-chip">held · below_threshold</span>
+        </div>
+
+        <h2 class="rdetail-hero" id="hero"></h2>
+
+        <div class="factcard">
+          <div>
+            <span class="fc-lbl">proposed fact</span>
+            <div class="fc-edge">
+              <span class="edge-path" id="edge"></span>
+              <span class="edge-arrow">→</span>
+              <span class="edge-value" id="value"></span>
+            </div>
+          </div>
+          <div class="fc-gauge">
+            <div class="fc-gauge-top">
+              <span class="fc-gauge-lbl"><b id="conf-band">low confidence</b></span>
+              <span class="fc-gauge-pct" id="conf-pct">60% · bar 80%</span>
+            </div>
+            <div class="meter"><i id="meter-fill"></i><span class="bar-line" style="left:80%"></span></div>
+          </div>
+          <p class="fc-why" id="why"></p>
+        </div>
+
+        <div class="rtrace">
+          <button class="rtrace-toggle" id="trace-toggle" aria-expanded="false">
+            <span class="rtrace-lead">how this was decided — <b>3 stages</b></span>
+            <span class="rtrace-chev">›</span>
+          </button>
+          <div class="timeline" id="timeline"></div>
+        </div>
+
+        <h3 class="section-header">cited evidence</h3>
+        <blockquote class="evidence" id="evidence"></blockquote>
+      </div>
+
+      <div class="snack" id="snack">
+        <span class="msg" id="snack-msg"></span>
+        <button id="snack-undo">undo</button>
+      </div>
+
+      <div class="rdetail-foot">
+        <button class="btn-approve" id="approve">
+          <span class="t">Approve</span>
+          <span class="d">record &amp; pin — survives reprocessing</span>
+        </button>
+        <div class="decide-minor">
+          <button class="btn-reject" id="reject">Reject — discard</button>
+        </div>
+        <div class="escape-row">
+          <button class="e-defer">defer</button><span class="dot">·</span>
+          <button class="e-correct">correct it</button><span class="dot">·</span>
+          <button class="e-discuss">talk it over</button>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      const $ = (id) => document.getElementById(id);
+
+      // Five held facts, matching the "5 of 5" in the screenshot; #5 is the gender
+      // inference shown there. Each carries the structured edge + a 3-stage trace.
+      const ITEMS = [
+        {
+          subj: "Celine", initials: "C", color: "#a493c9",
+          statement: "Celine goes by Celine Dubois on the project.",
+          edge: "name.full", value: "Celine Dubois", conf: 0.64,
+          why: "inferred from a project mention, not stated as her name — held under the 0.80 bar to auto-save.",
+          evidence: "Added <mark>Celine Dubois</mark> to the migration project today.",
+          trace: [
+            ["extract", "Extraction", "note-extract-v16", "found a full-name shape “Celine Dubois”, self-confidence 0.95",
+              [["value", "Celine Dubois"], ["kind", "state"], ["self_conf", "0.95"]]],
+            ["integrate", "Integration", "integrate-v7", "resolved “Celine” → existing person · normalized to name.full · inferred",
+              [["entity", "Celine → person-44"], ["predicate", "name → name.full"], ["self_conf", "0.80"]]],
+            ["arbiter", "Arbiter", "weight model", "ceiling 0.60 raised by corroboration → 0.64 < 0.80 → hold",
+              [["weight", "0.64"], ["threshold", "0.80"], ["status", "pending_review"]]],
+          ],
+        },
+        {
+          subj: "Celine", initials: "C", color: "#a493c9",
+          statement: "People here call Celine “Cel.”",
+          edge: "name.nickname", value: "Cel", conf: 0.58,
+          why: "a nickname inferred from chat, not a stated alias — held under the 0.80 bar.",
+          evidence: "everyone on the team just calls her <mark>Cel</mark>.",
+          trace: [
+            ["extract", "Extraction", "note-extract-v16", "found nickname token “Cel”, self-confidence 0.90",
+              [["value", "Cel"], ["kind", "state"], ["self_conf", "0.90"]]],
+            ["integrate", "Integration", "integrate-v7", "attached to person-44 · audience = team · inferred",
+              [["entity", "Celine → person-44"], ["audience", "team"], ["self_conf", "0.72"]]],
+            ["arbiter", "Arbiter", "weight model", "ceiling 0.60 → weight 0.58 < 0.80 → hold",
+              [["weight", "0.58"], ["threshold", "0.80"], ["status", "pending_review"]]],
+          ],
+        },
+        {
+          subj: "Marcus", initials: "M", color: "#7fa7c9",
+          statement: "Marcus is a colleague.",
+          edge: "relationship.role", value: "colleague", conf: 0.62,
+          why: "relationship inferred from “from the data team”, not stated — held under the 0.80 bar.",
+          evidence: "<mark>Marcus</mark> from the data team is helping with the rollout.",
+          trace: [
+            ["extract", "Extraction", "note-extract-v16", "found a co-worker cue “from the data team”",
+              [["cue", "from the data team"], ["kind", "state"], ["self_conf", "0.82"]]],
+            ["integrate", "Integration", "integrate-v7", "resolved “Marcus” → new person · role = colleague · inferred",
+              [["entity", "Marcus → person-91 (new)"], ["predicate", "relationship.role"], ["self_conf", "0.74"]]],
+            ["arbiter", "Arbiter", "weight model", "ceiling 0.60 → weight 0.62 < 0.80 → hold",
+              [["weight", "0.62"], ["threshold", "0.80"], ["status", "pending_review"]]],
+          ],
+        },
+        {
+          subj: "Celine", initials: "C", color: "#a493c9",
+          statement: "Celine is based in Lyon.",
+          edge: "residence.city", value: "Lyon", conf: 0.55,
+          why: "location inferred from “moved back”, not stated as current — held under the 0.80 bar.",
+          evidence: "Celine <mark>moved back</mark> to <mark>Lyon</mark> last spring.",
+          trace: [
+            ["extract", "Extraction", "note-extract-v16", "found a place token “Lyon” with a move cue",
+              [["value", "Lyon"], ["kind", "state"], ["self_conf", "0.88"]]],
+            ["integrate", "Integration", "integrate-v7", "attached to person-44 · residence.city · inferred",
+              [["entity", "Celine → person-44"], ["predicate", "residence.city"], ["self_conf", "0.70"]]],
+            ["arbiter", "Arbiter", "weight model", "ceiling 0.60 → weight 0.55 < 0.80 → hold",
+              [["weight", "0.55"], ["threshold", "0.80"], ["status", "pending_review"]]],
+          ],
+        },
+        {
+          subj: "Celine", initials: "C", color: "#a493c9",
+          statement: "Celine's gender is female.",
+          edge: "gender", value: "female", conf: 0.6,
+          why: "inferred from context, not stated outright — gender is a closed set, and the value sits under the 0.80 bar to auto-save.",
+          evidence: "Celine's <mark>gender</mark> is <mark>female</mark>.",
+          trace: [
+            ["extract", "Extraction", "note-extract-v16", "found gender → “Female (inferred from 'wife')”, self-confidence 1.00",
+              [["predicate", "gender"], ["value", "female"], ["kind", "state"], ["self_conf", "1.00"]]],
+            ["integrate", "Integration", "integrate-v7", "coerced to enum member · resolved → person-44 · inferred",
+              [["enum", "{female · male · unknown}"], ["coerced", "female"], ["self_conf", "0.85"]]],
+            ["arbiter", "Arbiter", "weight model · deterministic", "ceiling 0.60 · min(0.85, 0.60)=0.60 < 0.80 → hold",
+              [["ceiling", "0.60"], ["weight", "0.60"], ["threshold", "0.80"], ["status", "pending_review"]]],
+          ],
+        },
+      ];
+
+      let i = 4; // open on the gender card from the screenshot
+      const phone = $("phone");
+
+      function band(c) {
+        if (c >= 0.75) return { label: "high confidence", color: "var(--green)" };
+        if (c >= 0.5) return { label: "low confidence", color: "var(--amber)" };
+        return { label: "low confidence", color: "var(--rose)" };
+      }
+
+      function render() {
+        const it = ITEMS[i];
+        $("pos").textContent = `${i + 1} of ${ITEMS.length}`;
+        $("subj").textContent = it.subj;
+        $("ava-i").textContent = it.initials;
+        $("ava").style.background = it.color;
+        $("hero").textContent = it.statement;
+        $("edge").textContent = it.edge;
+        $("value").textContent = it.value;
+        const b = band(it.conf);
+        $("conf-band").textContent = b.label;
+        $("conf-band").style.color = b.color;
+        $("conf-pct").textContent = `${Math.round(it.conf * 100)}% · bar 80%`;
+        $("meter-fill").style.width = `${Math.round(it.conf * 100)}%`;
+        $("meter-fill").style.background = b.color;
+        $("why").textContent = it.why;
+        $("evidence").innerHTML = it.evidence;
+        $("prev").disabled = i === 0;
+        $("next").disabled = i === ITEMS.length - 1;
+        buildTimeline(it);
+      }
+
+      function buildTimeline(it) {
+        const tl = $("timeline");
+        const wasOpen = tl.classList.contains("open");
+        tl.innerHTML = it.trace
+          .map(
+            ([cls, name, ver, summary, kv]) => `
+            <div class="tl-node s-${cls}">
+              <span class="tl-bullet"></span>
+              <button class="tl-head" aria-expanded="false">
+                <span class="tl-stage">${name}</span>
+                <span class="tl-ver">${ver}</span>
+              </button>
+              <p class="tl-summary">${summary}</p>
+              <div class="tl-detail"><div class="inner"><dl class="kv">${kv
+                .map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`)
+                .join("")}</dl></div></div>
+            </div>`,
+          )
+          .join("");
+        tl.querySelectorAll(".tl-node").forEach((node) => {
+          node.querySelector(".tl-head").onclick = () => {
+            const open = node.classList.toggle("open");
+            node.querySelector(".tl-head").setAttribute("aria-expanded", String(open));
+          };
+        });
+        tl.classList.toggle("open", wasOpen);
+      }
+
+      $("trace-toggle").onclick = () => {
+        const open = $("timeline").classList.toggle("open");
+        $("trace-toggle").setAttribute("aria-expanded", String(open));
+      };
+      $("prev").onclick = () => { if (i > 0) { i--; render(); } };
+      $("next").onclick = () => { if (i < ITEMS.length - 1) { i++; render(); } };
+
+      // theme toggle
+      function setTheme(t) {
+        document.body.dataset.theme = t;
+        $("t-light").setAttribute("aria-pressed", String(t === "light"));
+        $("t-dark").setAttribute("aria-pressed", String(t === "dark"));
+      }
+      $("t-light").onclick = () => setTheme("light");
+      $("t-dark").onclick = () => setTheme("dark");
+
+      // decisions → snackbar (armed reject is destructive)
+      let snackTimer = null, rejectArmed = false, armTimer = null;
+      function flash(verb) {
+        const it = ITEMS[i];
+        $("snack-msg").textContent = `${verb} — ${it.edge} → ${it.value}`;
+        $("snack").classList.add("show");
+        clearTimeout(snackTimer);
+        snackTimer = setTimeout(() => $("snack").classList.remove("show"), 2800);
+      }
+      $("approve").onclick = () => flash("approved");
+      $("reject").onclick = () => {
+        if (!rejectArmed) {
+          rejectArmed = true;
+          $("reject").classList.add("armed");
+          $("reject").textContent = "tap again — discard";
+          clearTimeout(armTimer);
+          armTimer = setTimeout(() => {
+            rejectArmed = false;
+            $("reject").classList.remove("armed");
+            $("reject").textContent = "Reject — discard";
+          }, 3000);
+          return;
+        }
+        rejectArmed = false;
+        $("reject").classList.remove("armed");
+        $("reject").textContent = "Reject — discard";
+        flash("rejected");
+      };
+      $("snack-undo").onclick = () => $("snack").classList.remove("show");
+
+      render();
+    </script>
+  </body>
+</html>
