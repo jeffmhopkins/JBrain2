@@ -240,6 +240,97 @@ def test_close_never_edits_pinned_row() -> None:
     assert d.refresh_id == "old-1"
 
 
+# --- closed-on-arrival ("used to"): history, never the current head ---------
+
+
+def test_used_to_with_no_existing_lands_active_and_closed() -> None:
+    """First-and-only past job: active (nothing replaced it) but CLOSED, so
+    `current = active AND valid_to IS NULL` reports no current value."""
+    d = decide(
+        cand(kind="relationship", object_entity_id="usarmy", valid_from=None, valid_to=T2),
+        [],
+        predicate="worksFor",
+    )
+    assert d.insert and d.insert_status == "active"
+    assert d.insert_valid_to == T2
+    assert d.supersede_ids == [] and d.insert_superseded_by is None
+
+
+def test_two_co_stated_past_jobs_neither_supersedes() -> None:
+    """"used to work for US army AND Oregon" — equally past: the second closed
+    candidate must not supersede the first closed one."""
+    us_army = view(
+        kind="relationship", object_entity_id="usarmy", valid_from=None, valid_to=T2,
+        statement="used to work for the US army",
+    )  # fmt: skip
+    d = decide(
+        cand(
+            kind="relationship", object_entity_id="oregon", valid_from=None, valid_to=T2,
+            statement="used to work for Oregon Lithoprint",
+        ),  # fmt: skip
+        [us_army],
+        predicate="worksFor",
+    )
+    assert d.insert and d.insert_status == "active" and d.insert_valid_to == T2
+    assert d.supersede_ids == [] and d.insert_superseded_by is None
+
+
+def test_used_to_does_not_supersede_a_current_open_job() -> None:
+    """A closed past job must not displace the open current one (the screenshot
+    bug: US army would otherwise supersede SpaceX)."""
+    spacex = view(
+        kind="relationship", object_entity_id="spacex", valid_from=None, valid_to=None,
+        statement="works for SpaceX",
+    )  # fmt: skip
+    d = decide(
+        cand(
+            kind="relationship", object_entity_id="usarmy", valid_from=None, valid_to=T2,
+            statement="used to work for the US army",
+        ),  # fmt: skip
+        [spacex],
+        predicate="worksFor",
+    )
+    assert d.insert and d.insert_status == "active" and d.insert_valid_to == T2
+    assert d.supersede_ids == []  # the open SpaceX edge is untouched
+
+
+def test_used_to_reextraction_refreshes_in_place() -> None:
+    """Re-analysis of the same closed edge refreshes — no duplicate history."""
+    existing = view(
+        kind="relationship", object_entity_id="usarmy", valid_from=None, valid_to=T2,
+        statement="used to work for the US army",
+    )  # fmt: skip
+    d = decide(
+        cand(
+            kind="relationship", object_entity_id="usarmy", valid_from=None, valid_to=T2,
+            reported_at=T0, statement="used to work for the US army",
+        ),  # fmt: skip
+        [existing],
+        predicate="worksFor",
+    )
+    assert d.refresh_id == "old-1" and not d.insert
+
+
+def test_rejoining_a_former_employer_opens_a_new_interval() -> None:
+    """An OPEN restatement of a CLOSED edge is a re-open, not a refresh: insert a
+    fresh open interval, leaving the closed history in place."""
+    former = view(
+        kind="relationship", object_entity_id="acme", valid_from=None, valid_to=T1,
+        statement="works at Acme",
+    )  # fmt: skip
+    d = decide(
+        cand(
+            kind="relationship", object_entity_id="acme", valid_from=T2, valid_to=None,
+            reported_at=T2, statement="works at Acme",
+        ),  # fmt: skip
+        [former],
+        predicate="worksFor",
+    )
+    assert d.refresh_id is None  # not an idempotent refresh
+    assert d.insert and d.insert_status == "active" and d.insert_valid_to is None
+    assert d.supersede_ids == []  # closed history kept; new open interval beside it
+
+
 # --- attribute: hold both, never auto-supersede ----------------------------
 
 

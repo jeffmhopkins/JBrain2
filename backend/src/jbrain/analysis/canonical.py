@@ -112,7 +112,9 @@ async def reproject_canonical_name(session: AsyncSession, entity_id: uuid.UUID) 
         await session.execute(
             text(
                 "SELECT predicate, value_json FROM app.facts"
-                " WHERE entity_id = :id AND status = 'active'"
+                # current value only: a closed (former) name must not re-project
+                # the display name (current = active AND valid_to IS NULL).
+                " WHERE entity_id = :id AND status = 'active' AND valid_to IS NULL"
             ),
             {"id": str(entity_id)},
         )
@@ -189,7 +191,9 @@ async def corroboration_count(session: AsyncSession, entity_id: uuid.UUID, domai
             "  SELECT note_id FROM app.facts"
             "    WHERE (entity_id = :id OR object_entity_id = :id)"
             "      AND derived_from_fact_id IS NULL AND status = 'active'"
-            "      AND domain_code = :dom"
+            # current corroboration only: a former edge must not inflate the
+            # auto-confirm count (current = active AND valid_to IS NULL).
+            "      AND valid_to IS NULL AND domain_code = :dom"
             "  UNION"
             "  SELECT note_id FROM app.entity_mentions"
             "    WHERE entity_id = :id AND domain_code = :dom"

@@ -33,6 +33,28 @@ def _fact(
     )
 
 
+def test_former_relationship_is_rendered_as_former():
+    """A closed (valid_to) edge tells the integrator it is FORMER, so a past job
+    is not mistaken for the current employer during resolution."""
+    owner = CandidateEntity(
+        entity_id="owner-1",
+        name="Me",
+        kind="Person",
+        facts=(
+            FactLine(
+                predicate="worksFor",
+                qualifier="",
+                kind="relationship",
+                assertion="asserted",
+                value="US army",
+                valid_to=datetime(2026, 6, 15, tzinfo=UTC),
+            ),
+        ),
+    )
+    out = render_graph_context([owner])
+    assert "fact Me.worksFor -> US army [relationship/asserted], former (ended 2026-06-15)" in out
+
+
 def test_empty_renders_empty_string():
     assert render_graph_context([]) == ""
 

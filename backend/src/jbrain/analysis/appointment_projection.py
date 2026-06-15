@@ -291,6 +291,7 @@ async def _load_facets(session: AsyncSession, eid: uuid.UUID) -> dict[str, list[
             .where(
                 Fact.entity_id == eid,
                 Fact.status == "active",
+                Fact.valid_to.is_(None),  # current facet only; a closed one is history
                 Fact.predicate.in_(_FACET_PREDICATES),
             )
             .order_by(Fact.valid_from.desc().nullslast())
@@ -445,7 +446,12 @@ async def _current_status(session: AsyncSession, eid: uuid.UUID) -> str:
     row = (
         await session.execute(
             select(Fact.value_json)
-            .where(Fact.entity_id == eid, Fact.predicate == _STATUS, Fact.status == "active")
+            .where(
+                Fact.entity_id == eid,
+                Fact.predicate == _STATUS,
+                Fact.status == "active",
+                Fact.valid_to.is_(None),  # current lifecycle status only
+            )
             .order_by(Fact.valid_from.desc())
             .limit(1)
         )

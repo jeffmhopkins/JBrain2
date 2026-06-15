@@ -16,6 +16,7 @@ from jbrain.analysis.extraction import (
     link_relationship_objects,
     merge_extractions,
     normalize_future_assertion,
+    normalize_past_assertion,
     parse_datetime,
     parse_extraction,
     ratchet_domain,
@@ -563,6 +564,86 @@ def test_future_non_asserted_assertion_is_left_alone() -> None:
     assert normalize_future_assertion(_fact("hypothetical", future), anchor).assertion == (
         "hypothetical"
     )
+
+
+# --- past-tense closure (legacy links) --------------------------------------
+
+_PAST_ANCHOR = datetime(2026, 6, 15, 17, 5, tzinfo=UTC)
+
+
+def _past_rel(
+    statement: str,
+    *,
+    kind: str = "relationship",
+    assertion: str = "asserted",
+    temporal: ExtractedTemporal | None = None,
+) -> ExtractedFact:
+    return ExtractedFact(
+        predicate="worksFor",
+        qualifier="",
+        kind=kind,
+        statement=statement,
+        value_json=None,
+        assertion=assertion,
+        entity_ref="Me",
+        object_entity_ref="US army",
+        temporal=temporal,
+        domain="general",
+        confidence=0.9,
+    )
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "Me used to work for the US army.",
+        "Me formerly worked for the US army.",
+        "The US army is a former employer of Me.",
+        "Me previously worked for the US army.",
+        "Me no longer works for the US army.",
+        "Me left the US army.",
+        "The US army was Me's ex-employer.",
+        "Back when Me worked for the US army.",
+    ],
+)
+def test_past_marker_closes_relationship_at_era(statement: str) -> None:
+    out = normalize_past_assertion(_past_rel(statement), _PAST_ANCHOR)
+    assert out.temporal is not None
+    assert out.temporal.resolved_start is None  # the note gave no start
+    assert out.temporal.resolved_end == _PAST_ANCHOR  # closed at capture
+    assert out.temporal.precision == "era"
+
+
+def test_current_relationship_is_left_open() -> None:
+    out = normalize_past_assertion(_past_rel("Me works for SpaceX."), _PAST_ANCHOR)
+    assert out.temporal is None  # no marker -> stays a current (open) edge
+
+
+def test_negated_disposal_is_not_auto_closed() -> None:
+    # "no longer" as a NEGATED fact is a disposal the supersession path handles;
+    # the guard only closes ASSERTED history, never a negation.
+    out = normalize_past_assertion(
+        _past_rel("Me no longer works for the US army.", assertion="negated"), _PAST_ANCHOR
+    )
+    assert out.temporal is None
+
+
+def test_non_interval_kinds_are_never_closed() -> None:
+    # An attribute/event with a past word is not an interval to close.
+    fact = _past_rel("Formerly known as Sammy.", kind="attribute")
+    assert normalize_past_assertion(fact, _PAST_ANCHOR).temporal is None
+
+
+def test_already_dated_fact_is_left_alone() -> None:
+    dated = ExtractedTemporal(
+        phrase="2020",
+        resolved_start=datetime(2020, 1, 1, tzinfo=UTC),
+        resolved_end=None,
+        precision="year",
+    )
+    fact = _past_rel("Me used to work for the US army.", temporal=dated)
+    out = normalize_past_assertion(fact, _PAST_ANCHOR)
+    assert out.temporal is dated  # a model-supplied date wins; the guard defers
 
 
 def test_schema_and_version_are_stable_contract_surface() -> None:

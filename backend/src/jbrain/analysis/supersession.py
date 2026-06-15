@@ -389,6 +389,12 @@ def decide(candidate: Candidate, existing: list[FactView], *, predicate: str = "
     for e in live:
         if not values_equal(candidate, e):
             continue
+        # A now-OPEN restatement of a CLOSED interval is a RE-OPEN (rejoined a
+        # former employer), not an idempotent refresh — refresh writes only
+        # rendering and would strand the row closed. Fall through to insert a
+        # fresh open interval beside the closed history.
+        if candidate.valid_to is None and e.valid_to is not None:
+            continue
         same_validity = e.valid_from == candidate.valid_from
         if accumulating and same_validity:
             return Decision(refresh_id=e.id)
@@ -441,9 +447,26 @@ def decide(candidate: Candidate, existing: list[FactView], *, predicate: str = "
     if candidate.kind == "relationship" and not is_functional(predicate):
         return Decision(insert=True)  # non-functional edges accumulate
 
-    # state / preference / functional relationship: single current value.
+    # state / preference / functional relationship: at most one CURRENT (OPEN)
+    # value; closed intervals are history that never contend for it.
     actives = [e for e in live if e.status == "active"]
-    if not actives:
+
+    # Closed-on-arrival ("used to work for X"): pure history — it never
+    # supersedes and is never superseded, so it lands active-but-closed and
+    # `current = active AND valid_to IS NULL` reports no current value when
+    # nothing open remains (docs/research/legacy-links-handling.md §3.2). Gated to
+    # ASSERTED state/relationship: a NEGATED closed candidate is a disposal that
+    # supersedes (falls through), and an open-vs-open close was already taken by
+    # _interval_close. supersession compares only OPEN values below.
+    if (
+        candidate.valid_to is not None
+        and candidate.assertion == "asserted"
+        and candidate.kind in ("state", "relationship")
+    ):
+        return Decision(insert=True, insert_valid_to=candidate.valid_to)
+
+    open_actives = [e for e in actives if e.valid_to is None]
+    if not open_actives:
         return Decision(insert=True)
 
     def key(valid_from: datetime | None, reported_at: datetime) -> tuple[datetime, datetime]:
@@ -454,7 +477,7 @@ def decide(candidate: Candidate, existing: list[FactView], *, predicate: str = "
             return (reported_at, reported_at)
         return _validity(valid_from, reported_at)
 
-    current = max(actives, key=lambda e: key(e.valid_from, e.reported_at))
+    current = max(open_actives, key=lambda e: key(e.valid_from, e.reported_at))
     if key(candidate.valid_from, candidate.reported_at) >= key(
         current.valid_from, current.reported_at
     ):

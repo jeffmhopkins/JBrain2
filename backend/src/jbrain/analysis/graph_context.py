@@ -70,6 +70,10 @@ class FactLine:
     # attribute/measurement value. Empty renders as "-".
     value: str
     valid_from: datetime | None = None
+    # When set the interval is CLOSED — a FORMER relationship/state, not the
+    # current value. Kept active (live history) but rendered as former so the
+    # integrator resolves a past edge without mistaking it for current truth.
+    valid_to: datetime | None = None
 
 
 @dataclass(frozen=True)
@@ -135,6 +139,8 @@ def rank_and_bound(
 def _render_fact(subject: str, fact: FactLine) -> str:
     predicate = f"{fact.predicate}.{fact.qualifier}" if fact.qualifier else fact.predicate
     when = f", valid_from {fact.valid_from.date().isoformat()}" if fact.valid_from else ""
+    if fact.valid_to is not None:
+        when += f", former (ended {fact.valid_to.date().isoformat()})"
     value = _clean(fact.value) or "-"
     return f"  fact {_clean(subject)}.{predicate} -> {value} [{fact.kind}/{fact.assertion}]{when}"
 
@@ -266,7 +272,7 @@ async def _load_entity(
         await session.execute(
             text(
                 """
-                SELECT f.predicate, f.qualifier, f.kind, f.assertion, f.valid_from,
+                SELECT f.predicate, f.qualifier, f.kind, f.assertion, f.valid_from, f.valid_to,
                        f.value_json::text AS value_json_text,
                        oe.canonical_name AS object_name
                 FROM app.facts f
@@ -288,6 +294,7 @@ async def _load_entity(
             assertion=r.assertion,
             value=_fact_value(r.object_name, r.value_json_text),
             valid_from=r.valid_from,
+            valid_to=r.valid_to,
         )
         for r in rows
     )
