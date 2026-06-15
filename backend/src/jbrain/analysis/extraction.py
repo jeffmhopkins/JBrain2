@@ -84,6 +84,12 @@ class ExtractedFact:
     temporal: ExtractedTemporal | None
     domain: str
     confidence: float
+    # The model's untrusted self-report, carried separately from `confidence`
+    # (which integrate sets to the deterministic plan weight). Used ONLY by the
+    # supersession low-confidence guard, so a surface-attested-but-uncertain read
+    # — full plan weight — still can't silently overwrite a confident prior.
+    # Defaults to 1.0 so non-integrate constructions are treated as confident.
+    self_confidence: float = 1.0
 
 
 @dataclass(frozen=True)

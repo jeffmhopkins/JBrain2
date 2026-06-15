@@ -143,10 +143,15 @@ def test_state_first_value_inserts_active_silently() -> None:
 
 
 def test_low_confidence_candidate_never_auto_supersedes() -> None:
-    """The H2 guard: a blurry OCR read (0.25) parks in pending_review behind
-    a low_confidence card; the confident prior stays active."""
+    """The H2 guard: a blurry OCR read (self-confidence 0.25) parks in
+    pending_review behind a low_confidence card; the confident prior stays
+    active. Keyed on the model's SELF-confidence, not the plan weight a
+    surface-attested fact carries (so the guard survives the integrate weight
+    model, which would otherwise grant the read full weight)."""
     confident = view(value_json={"drug": "lisinopril"}, confidence=0.95)
-    ocr = cand(value_json={"drug": "losartan"}, confidence=0.25)
+    # confidence=1.0 (full plan weight, as a surface-attested fact carries), yet
+    # the read itself is uncertain — the guard must key on self_confidence.
+    ocr = cand(value_json={"drug": "losartan"}, confidence=1.0, self_confidence=0.25)
     d = decide(ocr, [confident])
     assert d.insert and d.insert_status == "pending_review"
     assert d.review_kind == "low_confidence" and d.conflicting_id == "old-1"
@@ -154,15 +159,15 @@ def test_low_confidence_candidate_never_auto_supersedes() -> None:
 
 
 def test_confidence_at_threshold_supersedes_normally() -> None:
-    """LOW_CONFIDENCE is exclusive: exactly 0.5 is not 'low'."""
-    d = decide(cand(confidence=0.5), [view(confidence=0.95)])
+    """LOW_CONFIDENCE is exclusive: exactly 0.5 self-confidence is not 'low'."""
+    d = decide(cand(self_confidence=0.5), [view(confidence=0.95)])
     assert d.supersede_ids == ["old-1"] and d.review_kind == "fact_conflict"
 
 
 def test_low_confidence_may_replace_an_even_shakier_fact() -> None:
     """The guard protects HIGHER-confidence knowledge only; between two weak
     facts, newest still wins (with the usual conflict flag)."""
-    d = decide(cand(confidence=0.4), [view(confidence=0.2)])
+    d = decide(cand(self_confidence=0.4), [view(confidence=0.2)])
     assert d.supersede_ids == ["old-1"] and d.review_kind == "fact_conflict"
 
 

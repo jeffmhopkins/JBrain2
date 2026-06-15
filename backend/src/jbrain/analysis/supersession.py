@@ -219,7 +219,13 @@ class Candidate:
     valid_from: datetime | None
     valid_to: datetime | None
     reported_at: datetime
+    # `confidence` is the deterministic effective/plan weight (what the row
+    # stores). `self_confidence` is the model's untrusted self-report, used only
+    # by the low-confidence supersession guard — a surface-attested fact gets full
+    # weight, but an uncertain READ of it must still not overwrite a confident
+    # prior. Defaults to 1.0 (confident) for callers that don't carry a self-report.
     confidence: float = 1.0
+    self_confidence: float = 1.0
 
 
 @dataclass
@@ -460,10 +466,15 @@ def decide(candidate: Candidate, existing: list[FactView], *, predicate: str = "
                 review_kind="fact_conflict",
                 conflicting_id=current.id,
             )
-        if candidate.confidence < LOW_CONFIDENCE and candidate.confidence < current.confidence:
+        if (
+            candidate.self_confidence < LOW_CONFIDENCE
+            and candidate.self_confidence < current.confidence
+        ):
             # A blurry OCR read must not silently overwrite confident
             # knowledge: park the candidate, keep the current fact active,
-            # and let a human adjudicate via the low_confidence card.
+            # and let a human adjudicate via the low_confidence card. Keyed on
+            # the model's self-report (not the plan weight a surface-attested
+            # fact carries), so the guard survives the integrate weight model.
             return Decision(
                 insert=True,
                 insert_status="pending_review",
