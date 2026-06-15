@@ -86,9 +86,21 @@ def install(monkeypatch: pytest.MonkeyPatch, fake: FakeQueue) -> None:
     monkeypatch.setattr(worker.purge, "backfill_deleted_note_artifacts", fake_purge_backfill)
 
 
-def job(kind: str = "ingest_note", payload: dict[str, Any] | None = None) -> Job:
+def job(
+    kind: str = "ingest_note",
+    payload: dict[str, Any] | None = None,
+    *,
+    principal_id: str | None = None,
+    domain_code: str | None = None,
+) -> Job:
     return Job(
-        id="job-1", kind=kind, payload=payload or {"note_id": "n1"}, attempts=0, max_attempts=5
+        id="job-1",
+        kind=kind,
+        payload=payload or {"note_id": "n1"},
+        attempts=0,
+        max_attempts=5,
+        principal_id=principal_id,
+        domain_code=domain_code,
     )
 
 
@@ -104,6 +116,68 @@ async def test_process_one_runs_handler_and_completes(monkeypatch: pytest.Monkey
     assert seen == [{"note_id": "n1"}]
     assert fake.completed == ["job-1"]
     assert fake.failed == []
+
+
+async def test_unstamped_job_runs_under_system_ctx(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The six shipped kinds carry no stamp: the worker runs them under SYSTEM_CTX
+    exactly as before — the regression guard for E1 not touching system jobs."""
+    fake = FakeQueue([job()])
+    install(monkeypatch, fake)
+    seen_ctx: list[Any] = []
+
+    async def handler(payload: dict[str, Any], ctx: Any) -> None:  # opts into the ctx
+        seen_ctx.append(ctx)
+
+    assert await worker.process_one(None, {"ingest_note": handler}) is True  # type: ignore[arg-type]
+    assert seen_ctx == [queue.SYSTEM_CTX]
+    assert fake.completed == ["job-1"]
+
+
+async def test_stamped_job_runs_under_narrowed_scope(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A stamped job's handler runs under the narrowed (owner_scoped + single-domain)
+    context built from the stamp, not the all-domains SYSTEM_CTX (E1)."""
+    fake = FakeQueue([job(principal_id="prince-1", domain_code="health")])
+    install(monkeypatch, fake)
+    seen_ctx: list[Any] = []
+
+    async def handler(payload: dict[str, Any], ctx: Any) -> None:
+        seen_ctx.append(ctx)
+
+    assert await worker.process_one(None, {"ingest_note": handler}) is True  # type: ignore[arg-type]
+    assert len(seen_ctx) == 1
+    ctx = seen_ctx[0]
+    assert ctx is not queue.SYSTEM_CTX
+    assert ctx.owner_scoped is True
+    assert ctx.principal_id == "prince-1"
+    assert tuple(ctx.domain_scopes) == ("health",)
+    assert fake.completed == ["job-1"]
+
+
+async def test_partial_stamp_fails_closed_without_running_handler(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A half-stamped job (principal set, domain dropped) is failed PERMANENTLY and
+    the handler never runs — no silent widening to SYSTEM_CTX (fail-closed E1)."""
+    fake = FakeQueue([job(principal_id="prince-1", domain_code=None)])
+    install(monkeypatch, fake)
+    ran = False
+
+    async def handler(payload: dict[str, Any]) -> None:
+        nonlocal ran
+        ran = True
+
+    assert await worker.process_one(None, {"ingest_note": handler}) is True  # type: ignore[arg-type]
+    assert ran is False  # the handler was never invoked
+    assert fake.completed == []
+    assert fake.permanent == ["job-1"]  # failed permanently, not retried
+
+
+async def test_resolve_exec_context_maps_stamp_to_scope() -> None:
+    """The pure mapping the worker uses: unstamped → SYSTEM_CTX, stamped → narrowed."""
+    assert worker.resolve_exec_context(job()) is queue.SYSTEM_CTX
+    scoped = worker.resolve_exec_context(job(principal_id="p", domain_code="finance"))
+    assert scoped is not queue.SYSTEM_CTX
+    assert scoped.owner_scoped is True and tuple(scoped.domain_scopes) == ("finance",)
 
 
 async def test_process_one_fails_job_when_handler_raises(

@@ -8,9 +8,10 @@ line keeps the service honest in `docker compose ps` and the Ops screen.
 """
 
 import asyncio
+import inspect
 import time
 from collections.abc import Awaitable, Callable
-from typing import Any
+from typing import Any, cast
 
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -20,6 +21,7 @@ from jbrain.analysis import purge
 from jbrain.analysis.consolidation import Consolidator
 from jbrain.analysis.pipeline import AnalysisPipeline
 from jbrain.config import get_settings
+from jbrain.db.session import ScopeStampError, SessionContext, narrowed_context
 from jbrain.embed import NoteEmbedder, PredicateEmbedder, TeiEmbedClient
 from jbrain.ingest import ocr
 from jbrain.ingest.ocr import OcrPipeline
@@ -37,7 +39,42 @@ log = structlog.get_logger()
 POLL_SECONDS = 2.0
 HEARTBEAT_SECONDS = 60
 
+# A handler runs one job. The six shipped kinds take only the payload (they manage
+# their own SYSTEM_CTX internally — system pipelines that legitimately cross every
+# domain), which is the type the action registry's dispatch table produces. An
+# owner/agent-triggered handler may instead accept the resolved execution
+# `SessionContext` as a second argument and run its queries under that *narrowed*
+# scope (E1); the worker inspects arity (`_invoke`) and passes the context only when
+# the handler asks for it, so the existing handlers are untouched.
 Handler = Callable[[dict[str, Any]], Awaitable[None]]
+
+# A handler that opts into the narrowed execution scope by accepting it explicitly.
+ScopedHandler = Callable[[dict[str, Any], SessionContext], Awaitable[None]]
+
+
+def resolve_exec_context(job: queue.Job) -> SessionContext:
+    """The `SessionContext` a claimed job's handler runs under (E1, no confused
+    deputy). An UNSTAMPED job (both stamp halves NULL — every job today and the six
+    shipped kinds) runs under the all-domains `SYSTEM_CTX`, exactly as before. A
+    STAMPED job narrows to its (principal_id, domain_code) scope. A *partial* stamp
+    raises ScopeStampError in `narrowed_context` — fail-closed, never a silent
+    widening to system (the caller fails the job)."""
+    if not job.is_stamped:
+        return queue.SYSTEM_CTX
+    return narrowed_context(job.principal_id, job.domain_code)
+
+
+async def _invoke(
+    handler: Handler | ScopedHandler, payload: dict[str, Any], ctx: SessionContext
+) -> None:
+    """Call a handler, passing the resolved execution context only to a handler that
+    declares a second parameter for it (the narrowed-scope handlers). The existing
+    payload-only handlers are called exactly as before."""
+    takes_ctx = len(inspect.signature(handler).parameters) >= 2
+    if takes_ctx:
+        await cast("ScopedHandler", handler)(payload, ctx)
+    else:
+        await cast("Handler", handler)(payload)
 
 
 async def process_one(
@@ -55,7 +92,18 @@ async def process_one(
         log.error("worker.job_unhandled", job_id=job.id, kind=job.kind)
         return True
     try:
-        await handler(job.payload)
+        # Resolve the execution scope BEFORE running the handler: a malformed
+        # (partial) stamp must fail the job, never silently widen to SYSTEM_CTX.
+        exec_ctx = resolve_exec_context(job)
+    except ScopeStampError as exc:
+        # Fail-closed: a half-stamped job is config drift / a smuggled escalation
+        # attempt — fail it permanently rather than run it under any scope.
+        await queue.fail(maker, queue.SYSTEM_CTX, job.id, repr(exc), permanent=True)
+        log.error("worker.job_bad_scope_stamp", job_id=job.id, kind=job.kind, error=repr(exc))
+        return True
+    ran_as = "system" if exec_ctx is queue.SYSTEM_CTX else "scoped"
+    try:
+        await _invoke(handler, job.payload, exec_ctx)
     except queue.PermanentJobError as exc:
         # Retrying cannot help (e.g. malformed extraction after the re-ask):
         # fail now instead of burning the retry budget.
@@ -68,7 +116,9 @@ async def process_one(
         await _after_exhaustion(maker, job, exhausted)
     else:
         await queue.complete(maker, queue.SYSTEM_CTX, job.id)
-        log.info("worker.job_done", job_id=job.id, kind=job.kind)
+        # ran_as records E1's scope choice (system vs scoped) on the audit line:
+        # an owner-system run is visible as such, not a smuggled escalation.
+        log.info("worker.job_done", job_id=job.id, kind=job.kind, ran_as=ran_as)
     return True
 
 
