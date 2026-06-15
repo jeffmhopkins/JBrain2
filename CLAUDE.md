@@ -7,8 +7,8 @@ standards, `docs/DESIGN.md` for the binding GUI design system,
 `docs/ANALYSIS.md` for the note-analysis pipeline (Phases 2-3),
 `docs/ASSISTANT.md` (+ `docs/ASSISTANT_PLAN.md`) for the self-improving agent
 design and its implementation plan, and
-`docs/PREDICATE_CANONICALIZATION.md` for the proposed embedding-assisted
-predicate registry + typed value shapes.
+`docs/PREDICATE_CANONICALIZATION.md` for the embedding-assisted predicate
+registry + typed value shapes (core shipped; self-improvement loop deferred).
 
 ## Non-negotiables for all code in this repo
 

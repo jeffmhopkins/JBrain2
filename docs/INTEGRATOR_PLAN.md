@@ -9,6 +9,24 @@ pipeline, RLS, the Postgres job queue, the agent loop + `.tool` registry +
 Proposals, `.prompt`/`.tool` version guards, the schema registry, an eval
 harness).
 
+> **Status (2026-06): the core is SHIPPED and is the only path.** `integrate_note`
+> (extract → Integrator → `plan_intent` → `apply_intent`) runs unconditionally;
+> the v1 `analyze_note` step and the W3.3 cutover toggle/shadow-mode gate have been
+> **removed** (see `docs/CUTOVER_V1_REMOVAL.md`). So the "deferred", "first cut",
+> "before the trigger flips", and "additive alongside analyze_note" framing below
+> describes pre-cutover history — Track A (arbiter) and Track B (Integrator),
+> §9's Option 1 `apply_intent`, and the harness-scenario gate are live.
+>
+> **Still deferred / not yet built** (don't read as shipped): the `integration_run`
+> and `resolution_pin` tables (runs log to structlog only; re-run convergence is
+> currently carried by the arbiter's deterministic signals); **N14** owner-ahead
+> ordering (`backfill_pending_integration` is oldest-first by `created_at` — the
+> `provenance` column exists but isn't wired into the sort yet); §9's **Option 2**
+> native id-based `apply_intent`; the read-tool traversal loop; and the Phase-5
+> self-improvement loop. **Known gap:** the `extraction_truncated` review is no
+> longer filed under integrate — `plan_to_extraction` rebuilds the `Extraction`
+> with `dropped_facts=0`, so the cap still fires but no card is surfaced.
+
 This plan is the product of two research rounds (5 option dossiers + a code
 map; then 5 design-pillar dossiers + 2 adversarial red teams). Both red teams
 **rejected** the "agent owns the writes" full-replace and **concurred** on the

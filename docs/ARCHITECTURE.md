@@ -80,7 +80,10 @@ proving a scoped session cannot see other domains' rows.
 
 ```
 note saved → event → extraction (attachments) → multi-granularity chunking
-  → embeddings + tsvector → facts & entities (LLM, with citations to chunks)
+  → embeddings + tsvector → pending_integration
+  → integrate_note: extract → Integrator agent (graph-aware judgment,
+    emits an IntegrationIntent) → arbiter (plan_intent validates + weighs;
+    apply_intent commits deterministically) → facts & entities (cited, firewalled)
 ```
 
 - **Chunks** are multi-granularity (paragraph-level for precision,
@@ -90,7 +93,10 @@ note saved → event → extraction (attachments) → multi-granularity chunking
   if quality demands.
 - **Facts** carry `superseded_by` chains. Conflicts resolve newest-wins
   automatically and the pair lands in the review inbox with both citations.
-  Superseded facts stay queryable for citation integrity.
+  Superseded facts stay queryable for citation integrity. The Integrator agent
+  *proposes* resolutions/facts/supersessions; the deterministic arbiter
+  *commits* them, enforcing the domain/subject firewalls and validating identity
+  links before any write.
 
 ## Wiki
 
@@ -122,9 +128,10 @@ Not everything is free text, but everything traces to a note:
 - **Lab results**: typed rows (test, value, unit, reference range, date)
   extracted from lab-report attachments, each citing its source note.
   `health` domain.
-- **Appointments**: proposed from notes by the analysis pipeline (via review
-  inbox), managed by agent tools, published as a read-only **ICS feed** the
-  phone's native calendar subscribes to.
+- **Appointments**: proposed from notes during integration (the Integrator
+  agent + arbiter, surfaced via the review inbox), managed by agent tools,
+  published as a read-only **ICS feed** the phone's native calendar subscribes
+  to.
 - **Location fixes**: Timescale hypertable, per-subject, written by OwnTracks
   device keys; PostGIS geofence transitions emit workflow events.
 
