@@ -285,20 +285,23 @@ _NOTE_DEDUP_KINDS: frozenset[str] = frozenset(("ingest_note", "integrate_note"))
 
 
 async def _already_active(maker: async_sessionmaker[AsyncSession], w: WouldEnqueue) -> bool:
-    """Whether a job equivalent to this would-be enqueue is already queued, so a
-    live enqueue would double-process its target (E4). Applies the SAME guard the
-    hardcoded path applies: `integrate_note` uses the note-keyed active-analysis
-    check; `ingest_note` mirrors the queued-only note_id guard. A kind with no
-    note_id payload (or not in _NOTE_DEDUP_KINDS) is never suppressed here — its own
-    action owns any dedup. Read under SYSTEM_CTX: the dedup query reads the
-    owner-only jobs table, exactly as the claim loop does."""
+    """Whether this would-be enqueue already has a QUEUED job for its target, so a
+    live enqueue would double-process it (E4). `integrate_note` uses the note-keyed
+    active-analysis check; `ingest_note` the queued-only note_id guard. This is
+    queued-only and matches the reconcilers' active-job check; it does NOT yet skip
+    a note already past the reconciler-eligible STATE (`ingest_state != 'pending'`,
+    or already `integrated`). That gap is safe while the dispatcher is shadow-default
+    and each `note.created`/`note.ingested` event is claimed exactly once; the
+    state-based hardening (skip exactly what the pending/integration reconcilers
+    would not re-enqueue) lands with the LIVE cutover (Sub-task C), where it becomes
+    load-bearing. A kind with no note_id (or not in _NOTE_DEDUP_KINDS) is never
+    suppressed here. Read under SYSTEM_CTX (owner-only jobs), like the claim loop."""
     note_id = w.payload.get("note_id")
     if w.kind not in _NOTE_DEDUP_KINDS or not isinstance(note_id, str):
         return False
     if w.kind == "integrate_note":
         return await queue.has_active_analysis(maker, SYSTEM_CTX, note_id, statuses=("queued",))
-    # ingest_note: the queued-only note_id guard the API's create path relies on (an
-    # idempotent retry already has a queued/finished job, api/notes.py).
+    # ingest_note: queued-only note_id guard (the state-based skip lands in C).
     return await queue.has_active(
         maker, SYSTEM_CTX, w.kind, payload_field="note_id", value=note_id, statuses=("queued",)
     )
