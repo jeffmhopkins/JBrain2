@@ -1703,17 +1703,26 @@ async def test_used_to_relationship_is_closed_and_mints_no_inverse(
         "facts": [
             {
                 "predicate": "worksFor", "qualifier": "", "kind": "relationship",
-                "statement": "Me used to work for Oregon Lithoprint.", "value_json": None,
+                "statement": "Me worked for Oregon Lithoprint 2019-2021.", "value_json": None,
                 "assertion": "asserted", "entity_ref": "Me",
                 "object_entity_ref": "Oregon Lithoprint",
-                "temporal": None, "domain": "general", "confidence": 0.9,
+                # A model-DATED closed interval (resolved_end set): exercises the
+                # closed-edge inverse gate directly, independent of the past-marker
+                # guard (unit-tested separately) and of how undated edges are weighed.
+                "temporal": {
+                    "phrase": "from 2019 to 2021",
+                    "resolved_start": "2019-01-01T00:00:00+00:00",
+                    "resolved_end": "2021-12-31T00:00:00+00:00",
+                    "precision": "year",
+                },
+                "domain": "general", "confidence": 0.9,
             }
         ],
         "temporal_tokens": [],
     }  # fmt: skip
     await analyzer(maker, [json.dumps(payload)]).analyze_note({"note_id": note_id})
 
-    # The directed edge exists, active but CLOSED — the guard set valid_to, so
+    # The directed edge exists, active but CLOSED (valid_to set), so
     # `current = active AND valid_to IS NULL` reports no current employer.
     src = await rows(
         maker,

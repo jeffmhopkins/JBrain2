@@ -278,6 +278,23 @@ def test_two_co_stated_past_jobs_neither_supersedes() -> None:
     assert d.supersede_ids == [] and d.insert_superseded_by is None
 
 
+def test_backdated_correction_of_same_interval_supersedes_with_conflict() -> None:
+    """Two CLOSED values for the SAME interval + object but a DIFFERENT value is a
+    CORRECTION, not parallel history: newest-report supersedes the prior, with a
+    fact_conflict for the human to confirm ("in 2019 it was Columbus, not
+    Cleveland"). Distinct from co-stated past values (different object/interval)."""
+    cleveland = view(
+        kind="state", value_json={"city": "Cleveland"}, valid_from=T0, valid_to=T1, reported_at=T0
+    )
+    columbus = cand(
+        kind="state", value_json={"city": "Columbus"}, valid_from=T0, valid_to=T1, reported_at=T2
+    )
+    d = decide(columbus, [cleveland])
+    assert d.insert and d.insert_status == "active" and d.insert_valid_to == T1
+    assert d.supersede_ids == ["old-1"]
+    assert d.review_kind == "fact_conflict" and d.conflicting_id == "old-1"
+
+
 def test_used_to_does_not_supersede_a_current_open_job() -> None:
     """A closed past job must not displace the open current one (the screenshot
     bug: US army would otherwise supersede SpaceX). With an open current it lands
