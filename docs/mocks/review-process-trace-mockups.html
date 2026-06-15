@@ -193,13 +193,28 @@
       .timeline { display: none; flex-direction: column; margin-top: 10px; padding-left: 4px; }
       .dir-a .timeline.open { display: flex; }
       .tl-actions { display: flex; gap: 8px; margin: 2px 0 10px; }
-      .tl-play, .tl-copy {
-        background: var(--steel-tint); color: var(--steel); border: none;
-        border-radius: var(--r-pill); padding: 5px 13px; font: inherit;
+      .tl-console-btn {
+        background: var(--surface-2); color: var(--text); border: 1px solid var(--border);
+        border-radius: var(--r-pill); padding: 6px 14px; font: inherit; font-family: var(--font-mono);
         font-size: var(--fs-micro); font-weight: 600; cursor: pointer;
       }
-      .tl-copy { background: var(--surface-2); color: var(--text); border: 1px solid var(--border); }
-      .tl-copy.done { color: var(--green); border-color: transparent; background: var(--green-tint); }
+      /* Inline console panel — the same dense log as Direction C, embedded in the page. */
+      .tl-console {
+        display: none; margin-top: 10px; background: var(--bg);
+        border: 1px solid var(--border); border-radius: var(--r-input); overflow: hidden;
+      }
+      .tl-console.open { display: block; }
+      .tl-console-head {
+        display: flex; align-items: center; gap: 8px; padding: 9px 12px;
+        border-bottom: 1px solid var(--border); font-size: var(--fs-micro);
+        color: var(--text-3); font-family: var(--font-mono);
+      }
+      .tl-console-head .ccopy {
+        margin-left: auto; background: none; border: 1px solid var(--border); border-radius: 8px;
+        color: var(--text-2); font: inherit; font-size: var(--fs-micro); padding: 4px 10px; cursor: pointer;
+      }
+      .tl-console-head .ccopy.done { color: var(--green); border-color: transparent; background: var(--green-tint); }
+      .tl-console .console { max-height: 300px; }
       .tl-node { position: relative; padding: 0 0 4px 26px; }
       .tl-node::before {
         content: ""; position: absolute; left: 4px; top: 22px; bottom: -4px;
@@ -320,7 +335,7 @@
     <div class="demo-bar">
       <span class="demo-title"><b>Review</b> · verbose process trace — pick a direction</span>
       <span class="seg dirpick" role="group" aria-label="direction">
-        <button id="d-a" aria-pressed="true">A · timeline + copy ★</button>
+        <button id="d-a" aria-pressed="true">A · timeline + console ★</button>
         <button id="d-b" aria-pressed="false">B · tabs</button>
         <button id="d-c" aria-pressed="false">C · console</button>
       </span>
@@ -502,7 +517,7 @@
       ];
 
       const BLURBS = {
-        a: "<b>A · Timeline + copy-all (chosen).</b> A progressive vertical stepper played top-to-bottom — tap a stage to expand, or hit <b>play</b>. The <b>⧉ copy all</b> button drops the full <i>C-style</i> log (header + all three stages + the ceiling arithmetic) onto the clipboard, so the in-app view stays glanceable but you get the raw trace for troubleshooting in one tap. Try copy-all, then paste into any editor.",
+        a: "<b>A · Timeline + console (chosen).</b> A vertical stepper — tap any stage to expand its detail. <b>‹/› show console</b> reveals the dense raw log right inline (no drawer, same page), and its <b>copy</b> button puts the full trace — header, all three stages, and the ceiling arithmetic — on the clipboard. Glanceable by default; full troubleshooting log one tap away.",
         b: "<b>B · Tabs.</b> One compact disclosure with a segmented <i>extraction / integration / arbiter</i> switch — see one stage's full detail at a time, step forward/back. Most space-efficient; keeps the card short.",
         c: "<b>C · Console.</b> A dev-style bottom drawer with the dense, copyable provenance log, including the literal ceiling arithmetic. Built for <i>troubleshooting</i> future issues — least pretty, most information.",
       };
@@ -540,8 +555,7 @@
         const tl = $("a-timeline");
         tl.innerHTML =
           '<div class="tl-actions">' +
-          '<button class="tl-play" id="a-play">▶ play it out</button>' +
-          '<button class="tl-copy" id="a-copy">⧉ copy all</button>' +
+          '<button class="tl-console-btn" id="a-console-btn">‹/› show console</button>' +
           "</div>" +
           STAGES.map(
             (s, idx) => `
@@ -554,7 +568,12 @@
               <p class="tl-summary">${s.summary}</p>
               <div class="tl-detail"><div class="inner">${kvHtml(s.kv)}</div></div>
             </div>`
-          ).join("");
+          ).join("") +
+          '<div class="tl-console" id="a-console-wrap">' +
+            '<div class="tl-console-head"><span>raw trace · paste anywhere</span>' +
+            '<button class="ccopy" id="a-ccopy">copy</button></div>' +
+            `<div class="console">${consoleHtml()}</div>` +
+          "</div>";
         tl.querySelectorAll(".tl-node").forEach((node) => {
           node.querySelector(".tl-head").onclick = () => {
             const open = node.classList.toggle("open");
@@ -562,18 +581,11 @@
             node.querySelector(".tl-head").setAttribute("aria-expanded", String(open));
           };
         });
-        $("a-play").onclick = () => {
-          const nodes = [...tl.querySelectorAll(".tl-node")];
-          nodes.forEach((n) => { n.classList.remove("open", "lit"); n.querySelector(".tl-head").setAttribute("aria-expanded", "false"); });
-          nodes.forEach((n, k) =>
-            setTimeout(() => {
-              n.classList.add("lit", "open");
-              n.querySelector(".tl-head").setAttribute("aria-expanded", "true");
-              n.scrollIntoView({ behavior: "smooth", block: "nearest" });
-            }, 480 * k)
-          );
+        $("a-console-btn").onclick = () => {
+          const open = $("a-console-wrap").classList.toggle("open");
+          $("a-console-btn").textContent = open ? "‹/› hide console" : "‹/› show console";
         };
-        $("a-copy").onclick = (e) => flashCopy(e.currentTarget, "⧉ copied ✓");
+        $("a-ccopy").onclick = (e) => flashCopy(e.currentTarget, "copied ✓");
       }
       $("a-toggle").onclick = () => {
         const open = $("a-timeline").classList.toggle("open");
@@ -611,8 +623,8 @@
       $("b-next").onclick = () => bTab < STAGES.length - 1 && selectTab(bTab + 1);
 
       /* ---------- Direction C: console drawer ---------- */
-      function buildConsole() {
-        $("c-console").innerHTML = STAGES.map((s) => {
+      function consoleHtml() {
+        return STAGES.map((s) => {
           const lines = s.console
             .map(([k, v, cls]) =>
               cls === "rule"
@@ -624,6 +636,9 @@
               <div class="c-stage"><span class="stage-dot"></span>${s.name.toUpperCase()}
                 <span class="ver">${s.ver}</span></div>${lines}</div>`;
         }).join("");
+      }
+      function buildConsole() {
+        $("c-console").innerHTML = consoleHtml();
       }
       function setDrawerStage() {
         // Drawer border tints to the terminal stage (arbiter) — where the verdict lands.
