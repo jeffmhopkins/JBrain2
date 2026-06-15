@@ -22,6 +22,7 @@ phase status and the items carried forward out of Phases 3–4.
 | `ARCHITECTURE.md` | System shape: containers, the one-database design, the knowledge pipeline, security model, operations. |
 | `ROADMAP.md` | Phase plan and current status. The source of truth for "what's next." |
 | `DEVELOPMENT.md` | Binding standards: the architectural constitution, comments, testing, git, releases, `dev-setup.sh`. |
+| `PROCESS.md` | Binding multi-wave execution process for plan work: parallel tasks, per-task + per-wave adversarial review, one PR per wave, the GUI mock gate. |
 | `DESIGN.md` | Binding GUI design system: theming, components, navigation, the agent tool-view contract, settled UI decisions. |
 | `ANALYSIS.md` | The note→fact→entity pipeline (extract → Integrator → arbiter), supersession, the review inbox. |
 | `entity.md` | The entity & soft-schema model: predicates, facets, names, relationships, resolution. |
