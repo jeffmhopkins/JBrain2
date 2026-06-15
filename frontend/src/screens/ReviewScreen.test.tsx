@@ -18,6 +18,7 @@ const PENDING: ReviewItem[] = [
     payload: {
       fact_a: "fact-old",
       fact_b: "fact-new",
+      predicate: "birthDate",
       summary: "two values recorded for Sarah's birthDate",
       rationale: "a card dates Sarah's birthday differently than the wiki.",
       confidence: 0.86,
@@ -209,6 +210,9 @@ describe("ReviewScreen (split inbox)", () => {
     // The proposals to choose among.
     expect(screen.getByRole("button", { name: /March 14, 1988/ })).toBeInTheDocument();
     expect(screen.getByText("1 of 4")).toBeInTheDocument();
+    // A collision shows its diff, not the inference card's proposed-fact panel —
+    // even though its payload carries a `predicate`.
+    expect(screen.queryByLabelText("proposed fact")).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: "‹ inbox" }));
     expect(screen.getByRole("tab", { name: "pending 4" })).toBeInTheDocument();
@@ -280,6 +284,38 @@ describe("ReviewScreen (split inbox)", () => {
         }),
       ),
     );
+  });
+
+  it("an inference card shows the proposed fact as predicate → value", async () => {
+    const inference: ReviewItem = {
+      id: "inf1",
+      kind: "low_confidence_inference",
+      domain: "general",
+      created_at: "2026-06-15T20:33:00Z",
+      status: "open",
+      resolution: null,
+      resolved_at: null,
+      payload: {
+        entity_ref: "me",
+        predicate: "name.nickname",
+        qualifier: "",
+        statement: "People call me Jeff.",
+        value_json: { name: "Jeff" },
+        reasons: ["below_threshold"],
+        summary: "hold for review (below_threshold): People call me Jeff.",
+        outcomes: { accept: "the fact is recorded and pinned.", reject: "the fact is discarded." },
+      },
+    };
+    serve([inference], [], []);
+    render(<ReviewScreen />);
+    await screen.findByText(/hold for review/);
+    fireEvent.click(screen.getByRole("button", { name: /hold for review/ }));
+
+    // The structured proposal — not only the prose summary — so it's clear what
+    // approve records: the concise value (from value_json), not the sentence.
+    const proposed = screen.getByLabelText("proposed fact");
+    expect(within(proposed).getByText("name.nickname")).toBeInTheDocument();
+    expect(within(proposed).getByText("Jeff")).toBeInTheDocument();
   });
 
   it("a new_predicate card lets you name the predicate yourself via suggest_better", async () => {

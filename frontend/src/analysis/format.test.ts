@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { FactOut } from "../api/client";
-import { dedupeTokens, factValue, fmtQuantity, fmtTemporal } from "./format";
+import { dedupeTokens, factValue, fmtQuantity, fmtTemporal, valueLabel } from "./format";
 
 // The field bug only reproduces in a negative-offset zone: UTC-midnight
 // calendar dates rendered locally slip to the previous evening. Node re-reads
@@ -125,6 +125,25 @@ describe("fmtQuantity / factValue imperial display", () => {
     expect(factValue({ ...sched, value_json: { start: "2026-06-16T20:00:00Z" } })).toBe(
       "Jun 16, 2026, 2:00 PM",
     );
+  });
+});
+
+describe("valueLabel (shared by factValue and the review card)", () => {
+  it("renders scalar shapes the same as the entity page", () => {
+    expect(valueLabel({ name: "Jeff" }, "People call me Jeff.")).toBe("Jeff");
+    expect(valueLabel({ value: 95, unit: "mg/dL" }, "s")).toBe("95 mg/dL");
+    expect(valueLabel("Jeff Hopkins", "s")).toBe("Jeff Hopkins");
+  });
+
+  it("falls back to the statement for shapes with no scalar datum", () => {
+    expect(valueLabel({ street: "99 Pine Ave" }, "Lives at 99 Pine Ave.")).toBe(
+      "Lives at 99 Pine Ave.",
+    );
+    expect(valueLabel(null, "Sarah works for Ridgeline.")).toBe("Sarah works for Ridgeline.");
+  });
+
+  it("dates a bare {start} value with the fallback precision", () => {
+    expect(valueLabel({ start: "1986-03-19T00:00:00Z" }, "s", "day")).toBe("Mar 19, 1986");
   });
 });
 

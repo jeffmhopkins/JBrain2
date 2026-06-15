@@ -186,6 +186,10 @@ async def test_apply_intent_holds_cross_subject_review_fact(maker, tmp_path):  #
     assert cards[0].payload["reasons"] == ["cross_subject_link"]
     assert cards[0].payload["statement"] == "Initech is in tech"
     assert cards[0].payload["fact_id"] == str(held.id)  # card → row linkage
+    # The structured proposal the card renders as `predicate → value`, so the
+    # owner sees the fact, not only the prose statement.
+    assert cards[0].payload["predicate"] == "industry"
+    assert "value_json" in cards[0].payload
 
 
 async def test_apply_intent_holds_below_threshold_fact_decide_would_commit(maker, tmp_path):  # noqa: F811

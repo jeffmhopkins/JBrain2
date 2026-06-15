@@ -3563,6 +3563,18 @@ button.small {
   padding: 10px 12px;
 }
 
+/* Proposed-fact panel: the structured edge an inference card would write, so
+   the owner sees the fact (predicate -> value) and not only the prose summary. */
+.rproposed {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-input);
+  padding: 10px 12px;
+}
+
 /* Before -> after value diff (collisions / fact conflicts). */
 .rdiff {
   border: 1px solid var(--border);

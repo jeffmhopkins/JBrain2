@@ -386,6 +386,7 @@ export type ReviewKind =
   | "ambiguous_mention"
   | "domain_promotion"
   | "low_confidence"
+  | "low_confidence_inference"
   | "split_proposal"
   | "extraction_truncated"
   | "new_predicate";

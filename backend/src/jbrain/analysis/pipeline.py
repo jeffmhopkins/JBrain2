@@ -500,6 +500,10 @@ class AnalysisPipeline:
                         "qualifier": fact.qualifier,
                         "fact_kind": fact.kind,
                         "statement": fact.statement,
+                        # The structured value the card renders as `predicate →
+                        # value`, so the owner sees the exact fact they're
+                        # approving — not only the prose statement.
+                        "value_json": fact.value_json,
                         "weight": pf.weight,
                         "reasons": list(pf.review_reasons),
                         "title": fact.statement,
