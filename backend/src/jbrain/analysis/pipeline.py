@@ -597,9 +597,7 @@ class AnalysisPipeline:
         # agent gave a NEW entity for the card's edge preview; an unresolved ref
         # (an existing entity, looked up only at apply time) falls back to itself.
         names = {
-            r.mention_ref: r.new_name
-            for r in intent.entity_resolutions
-            if r.new_name is not None
+            r.mention_ref: r.new_name for r in intent.entity_resolutions if r.new_name is not None
         }
         async with scoped_session(self._maker, SYSTEM_CTX) as session:
             # One embed call for every unknown predicate, not one per fact.

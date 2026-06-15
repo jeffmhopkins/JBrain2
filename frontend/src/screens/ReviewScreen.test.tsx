@@ -489,7 +489,10 @@ describe("ReviewScreen (split inbox)", () => {
         "/api/review/np2/resolve",
         expect.objectContaining({
           method: "POST",
-          body: JSON.stringify({ action: "suggest_better", payload: { canonical_name: "partner" } }),
+          body: JSON.stringify({
+            action: "suggest_better",
+            payload: { canonical_name: "partner" },
+          }),
         }),
       ),
     );
