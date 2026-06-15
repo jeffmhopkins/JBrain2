@@ -29,6 +29,13 @@ phase status and the items carried forward out of Phases 3–4.
 | `ASSISTANT.md` | The self-improving agent design — the Phase-4 core (shipped) plus the deferred loops 2–4 (Phases 5–7). |
 | `mocks/` | Interactive HTML UI mockups. `DESIGN.md` cites these as the **binding spec** for reviewed surfaces — a living reference, not throwaway prototypes. |
 
+## Active plan
+
+- `WORKFLOW_ENGINE_PLAN.md` — the buildable plan for **Phase 5** (the workflow
+  engine + eval harness), the current frontier. Wave-sequenced, grounded in the
+  shipped queue/worker/eval substrate. Archived once Phase 5 ships, like the
+  completed plans below.
+
 ## Archive (history, not active)
 
 `archive/` holds completed build plans and the design research that fed them.
