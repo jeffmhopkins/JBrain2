@@ -401,27 +401,6 @@ async def test_provisional_entity_cleanup(
     assert await count(maker, "SELECT count(*) FROM app.entities WHERE id = :id", id=me) == 1
 
 
-async def test_confirmed_husk_is_collected_on_last_note_delete(
-    maker: async_sessionmaker[AsyncSession], repo: SqlNotesRepo
-) -> None:
-    """A confirmed entity is durable while any note references it, but once its
-    LAST note is deleted it has no source left (notes are the sole source of
-    truth), so the husk is collected — confirmed no longer means immortal-orphan.
-    A confirmed entity a surviving note still references stays."""
-    note, other_note = await seed_note(maker), await seed_note(maker)
-    husk = await seed_entity(maker, "Confirmed Husk", status="confirmed")
-    shared = await seed_entity(maker, "Confirmed Shared", status="confirmed")
-    await seed_fact(maker, note, husk)
-    await seed_fact(maker, note, shared)
-    await seed_fact(maker, other_note, shared, predicate="worksFor")
-
-    assert await repo.delete_note(OWNER, note)
-
-    assert await count(maker, "SELECT count(*) FROM app.entities WHERE id = :id", id=husk) == 0
-    # Still cited by other_note → retained.
-    assert await count(maker, "SELECT count(*) FROM app.entities WHERE id = :id", id=shared) == 1
-
-
 async def test_review_item_bridging_doomed_and_surviving_fact_is_deleted(
     maker: async_sessionmaker[AsyncSession], repo: SqlNotesRepo
 ) -> None:

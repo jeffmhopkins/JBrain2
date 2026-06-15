@@ -234,22 +234,19 @@ async def delete_review_items(
 
 
 async def _delete_orphaned_entities(session: AsyncSession, candidates: set[uuid.UUID]) -> None:
-    """Entities that existed only because of this note vanish; their aliases
-    cascade. This collects PROVISIONAL orphans and CONFIRMED "husks" alike: once
-    a note deletion strips an entity of every surviving fact, mention, and edge,
-    even a confirmed one has no source left (notes are the sole source of truth),
-    so it goes too. Never deleted: subject-linked entities (the "Me" entity is
-    sacrosanct), merge tombstones (status 'merged' — un-merge needs them),
-    anything still mentioned or cited by a surviving fact, and anything held by a
-    distinct_from edge or pointed at by a tombstone — that knowledge outlives the
-    note."""
+    """Provisional entities that existed only because of this note vanish;
+    their aliases cascade. Never deleted: confirmed or subject-linked
+    entities (the "Me" entity is sacrosanct), merge tombstones (status
+    'merged' — un-merge needs them), anything still mentioned or cited by a
+    surviving fact, and anything held by a distinct_from edge or pointed at
+    by a tombstone — that knowledge outlives the note."""
     if not candidates:
         return
     tombstone = aliased(Entity)
     await session.execute(
         delete(Entity).where(
             Entity.id.in_(candidates),
-            Entity.status != "merged",
+            Entity.status == "provisional",
             Entity.subject_id.is_(None),
             ~select(EntityMention.id).where(EntityMention.entity_id == Entity.id).exists(),
             ~select(Fact.id).where(Fact.entity_id == Entity.id).exists(),

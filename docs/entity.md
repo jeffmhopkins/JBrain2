@@ -339,13 +339,12 @@ review inbox, never an auto-link.
   because an entity only crosses the bar on a note that references it). The owner
   "Me" (subject-linked) is never promoted. "confirmed" is meaningful: it survives
   the deletion of any one source note (purge keeps it) and outranks a one-note
-  entity in a merge — but a confirmed entity stripped of *every* source by note
-  deletion is collected as a husk (purge `_delete_orphaned_entities`), since notes
-  remain the sole source of truth. Promotion is one-way during normal operation
-  (no recount-based revert, to avoid re-analysis flicker); the only demotion is
-  that terminal husk-GC. Default OFF so the golden harness (which asserts
-  multi-note entities stay `provisional`) is unaffected until the goldens are
-  migrated to expect confirmation.
+  entity in a merge. Promotion is one-way — no recount-based revert, to avoid
+  re-analysis flicker; confirmed entities persist even when their last note is
+  deleted (the established purge invariant — "knowledge outlives the note"), so
+  husk-GC of zero-reference confirmed entities is left as future work. Default OFF
+  so the golden harness (which asserts multi-note entities stay `provisional`) is
+  unaffected until the goldens are migrated to expect confirmation.
 
 ## Entity vehicles: graph vs. typed record **[proposed]**
 
