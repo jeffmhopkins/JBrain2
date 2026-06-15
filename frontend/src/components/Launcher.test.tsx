@@ -45,3 +45,67 @@ describe("Launcher controlled retreat", () => {
     expect(screen.queryByRole("navigation", { name: "Launcher" })).toBeNull();
   });
 });
+
+// The Review badge is a live indicator: it fetches on open and keeps polling
+// while the launcher stays mounted, so a hold that lands (or clears) shows up
+// without reopening the menu.
+describe("Launcher review badge (live count)", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.stubGlobal("matchMedia", () => ({ matches: false }));
+  });
+  afterEach(() => {
+    vi.runOnlyPendingTimers();
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  const noop = () => {};
+  const queueOf = (n: number) =>
+    Promise.resolve({
+      ok: true,
+      status: 200,
+      json: () =>
+        Promise.resolve({ items: Array.from({ length: n }, (_, i) => ({ id: `r${i}` })) }),
+    } as Response);
+  // Flush the pending fetch microtasks (fake timers, so no findBy/waitFor).
+  const flush = () => act(async () => void (await vi.advanceTimersByTimeAsync(0)));
+  const tick = (ms: number) => act(async () => void (await vi.advanceTimersByTimeAsync(ms)));
+
+  it("polls the review count while open and updates the badge", async () => {
+    let count = 2;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => queueOf(count)),
+    );
+    render(<Launcher open onClose={noop} onNavigate={noop} />);
+
+    // Immediate fetch on open paints the current count.
+    await flush();
+    expect(screen.getByText("2")).toBeInTheDocument();
+
+    // A new hold lands; the next poll tick reflects it — no reopen needed.
+    count = 3;
+    await tick(10_000);
+    expect(screen.getByText("3")).toBeInTheDocument();
+
+    // All cleared: the badge drops away once the count hits zero.
+    count = 0;
+    await tick(10_000);
+    expect(screen.queryByText(/^\d+$/)).toBeNull();
+  });
+
+  it("stops polling once closed", async () => {
+    const fetchMock = vi.fn(() => queueOf(1));
+    vi.stubGlobal("fetch", fetchMock);
+    const { rerender } = render(<Launcher open onClose={noop} onNavigate={noop} />);
+    await flush();
+    expect(screen.getByText("1")).toBeInTheDocument();
+    const callsWhileOpen = fetchMock.mock.calls.length;
+
+    rerender(<Launcher open={false} onClose={noop} onNavigate={noop} />);
+    await tick(150); // play out the retreat + unmount
+    await tick(30_000);
+    expect(fetchMock.mock.calls.length).toBe(callsWhileOpen);
+  });
+});
