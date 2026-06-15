@@ -2,9 +2,9 @@
 
 The data-defined engine substrate created by migration 0036: the event log, the
 trigger/pipeline/schedule definitions, the persisted resolution pins, stored eval
-runs, and reversible `skills` groundwork. `runs`/`run_steps` are deliberately
-absent — they arrive via the in-place `agent_runs` rename in Wave-1 Track A — and
-`actions` is the sibling W0.1 registry task.
+runs, and reversible `skills` groundwork. `runs`/`run_steps` live in
+`models.agent` (`Run`/`RunStep`) — they are the in-place `agent_runs` rename from
+migration 0037 — and `actions` is the sibling W0.1 registry task.
 
 The pgvector `skills.embedding` column is intentionally unmapped: it is written
 and cosine-queried via raw SQL exactly like `Entity.summary_embedding`, the

@@ -1,5 +1,6 @@
-"""Migration 0016 against real Postgres: the agent run log persists a run and its
-steps, and both tables are owner-only (CLAUDE.md rule 3)."""
+"""Migrations 0016+0037 against real Postgres: the agent run log persists a run
+and its steps into the unified `runs`/`run_steps` tables, stamps `kind='agent'`,
+and both tables stay owner-only after the rename (CLAUDE.md rule 3)."""
 
 from collections.abc import AsyncIterator
 
@@ -55,22 +56,23 @@ async def test_run_log_persists_and_is_owner_only(maker: async_sessionmaker) -> 
         row = (
             await session.execute(
                 text(
-                    "SELECT status, step_count, cost_tokens, prompt_version"
-                    " FROM app.agent_runs WHERE id = :id"
+                    "SELECT status, step_count, cost_tokens, prompt_version, kind, ran_as"
+                    " FROM app.runs WHERE id = :id"
                 ),
                 {"id": run_id},
             )
         ).one()
-        assert row == ("done", 2, 15, "agent-system-v1")
+        # The run lands stamped as an agent run, scoped (not owner-system).
+        assert row == ("done", 2, 15, "agent-system-v1", "agent", "scoped")
         steps = (
             await session.execute(
-                text("SELECT count(*) FROM app.agent_steps WHERE run_id = :id"), {"id": run_id}
+                text("SELECT count(*) FROM app.run_steps WHERE run_id = :id"), {"id": run_id}
             )
         ).scalar()
         assert steps == 2
 
-    # Owner-only: a non-owner principal sees no runs or steps.
+    # Owner-only: a non-owner principal sees no runs or steps after the rename.
     token = SessionContext(principal_kind="capability_token", domain_scopes=("general",))
     async with scoped_session(maker, token) as session:
-        assert (await session.execute(text("SELECT count(*) FROM app.agent_runs"))).scalar() == 0
-        assert (await session.execute(text("SELECT count(*) FROM app.agent_steps"))).scalar() == 0
+        assert (await session.execute(text("SELECT count(*) FROM app.runs"))).scalar() == 0
+        assert (await session.execute(text("SELECT count(*) FROM app.run_steps"))).scalar() == 0

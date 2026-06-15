@@ -8,6 +8,7 @@ from typing import Any
 from sqlalchemy import (
     BigInteger,
     Boolean,
+    CheckConstraint,
     DateTime,
     Float,
     ForeignKey,
@@ -43,37 +44,74 @@ class AgentSession(Base):
     )
 
 
-class AgentRun(Base):
-    """One turn-loop execution — the audit/training trace (owner-only)."""
+class Run(Base):
+    """One workflow run — the audit/training trace (owner-only). Generalizes the
+    former `agent_runs` (migration 0037): `kind` discriminates agent vs
+    integration/pipeline runs. `session_id`/`prompt_version` are nullable for
+    session-less engine runs but required for `kind='agent'` (DB CHECK), so the
+    agent invariant survives the relaxation. `ran_as` records E1's scope choice
+    (scoped vs owner-system) for the audit; `domain_code`/`principal_id` carry the
+    triggering stamp + identity the dispatcher narrows from (filled by sibling
+    task A3)."""
 
-    __tablename__ = "agent_runs"
-    __table_args__ = {"schema": "app"}
+    __tablename__ = "runs"
+    __table_args__ = (
+        # The agent invariant the nullable relaxation must not erode: an agent run
+        # still carries both its session and prompt version.
+        CheckConstraint(
+            "kind <> 'agent' OR (session_id IS NOT NULL AND prompt_version IS NOT NULL)",
+            name="runs_agent_requires_session",
+        ),
+        {"schema": "app"},
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    session_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("app.agent_sessions.id")
+    kind: Mapped[str] = mapped_column(Text, default="agent", server_default="agent")
+    session_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("app.agent_sessions.id", ondelete="CASCADE"), nullable=True
+    )
+    pipeline: Mapped[str | None] = mapped_column(Text, nullable=True)
+    trigger_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("app.triggers.id", ondelete="SET NULL"), nullable=True
+    )
+    ran_as: Mapped[str] = mapped_column(Text, default="scoped", server_default="scoped")
+    domain_code: Mapped[str | None] = mapped_column(
+        Text, ForeignKey("app.domains.code"), nullable=True
+    )
+    principal_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("app.principals.id"), nullable=True
     )
     status: Mapped[str] = mapped_column(Text, default="running", server_default="running")
     stop_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     step_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     cost_tokens: Mapped[int] = mapped_column(BigInteger, default=0, server_default="0")
-    prompt_version: Mapped[str] = mapped_column(Text)
+    prompt_version: Mapped[str | None] = mapped_column(Text, nullable=True)
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
-class AgentStep(Base):
-    """One step within a run: a model turn or a tool call."""
+class RunStep(Base):
+    """One step within a run: a model turn, a tool call, or an enqueued action.
+    Generalizes the former `agent_steps` (migration 0037). `job_id` is a nullable
+    FK to the executor job the step enqueued, SET NULL on job age-out so a run-log
+    read never breaks (N2)."""
 
-    __tablename__ = "agent_steps"
+    __tablename__ = "run_steps"
     __table_args__ = {"schema": "app"}
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    run_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("app.agent_runs.id"))
+    run_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("app.runs.id", ondelete="CASCADE")
+    )
     idx: Mapped[int] = mapped_column(Integer)
     kind: Mapped[str] = mapped_column(Text)
     name: Mapped[str] = mapped_column(Text)
     tool_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # The executor job this step enqueued. Plain uuid (no ORM FK): app.jobs is not
+    # a mapped table (it's the queue.py raw-SQL substrate), so an ORM FK would fail
+    # mapper resolution; the DB-level FK (ON DELETE SET NULL, N2) lives in the
+    # migration instead.
+    job_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     ok: Mapped[bool] = mapped_column(Boolean)
     cost_tokens: Mapped[int] = mapped_column(BigInteger, default=0, server_default="0")
     at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -94,7 +132,7 @@ class AgentTurn(Base):
         UUID(as_uuid=True), ForeignKey("app.agent_sessions.id", ondelete="CASCADE")
     )
     run_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("app.agent_runs.id", ondelete="SET NULL"), nullable=True
+        UUID(as_uuid=True), ForeignKey("app.runs.id", ondelete="SET NULL"), nullable=True
     )
     role: Mapped[str] = mapped_column(Text)  # user | assistant
     content: Mapped[str] = mapped_column(Text)
@@ -146,7 +184,7 @@ class AgentEpisode(Base):
         UUID(as_uuid=True), ForeignKey("app.agent_sessions.id", ondelete="SET NULL"), nullable=True
     )
     run_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("app.agent_runs.id", ondelete="SET NULL"), nullable=True
+        UUID(as_uuid=True), ForeignKey("app.runs.id", ondelete="SET NULL"), nullable=True
     )
     domain_scopes: Mapped[list[str]] = mapped_column(ARRAY(Text))
     body: Mapped[str] = mapped_column(Text)

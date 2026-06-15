@@ -1,4 +1,4 @@
-from jbrain.models.agent import AgentRun, AgentSession, AgentStep
+from jbrain.models.agent import AgentSession, Run, RunStep
 from jbrain.models.analysis import (
     Entity,
     EntityAlias,
@@ -22,9 +22,7 @@ from jbrain.models.workflow import (
 )
 
 __all__ = [
-    "AgentRun",
     "AgentSession",
-    "AgentStep",
     "Base",
     "DeviceSession",
     "Domain",
@@ -41,6 +39,8 @@ __all__ = [
     "Principal",
     "ResolutionPin",
     "ReviewItem",
+    "Run",
+    "RunStep",
     "Schedule",
     "Skill",
     "Subject",

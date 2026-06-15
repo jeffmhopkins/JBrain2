@@ -220,7 +220,7 @@ async def test_delete_cascades_runs_and_transcript_and_is_owner_only(
     async with scoped_session(maker, owner) as session:
         runs = (
             await session.execute(
-                text("SELECT count(*) FROM app.agent_runs WHERE id = :id"), {"id": run_id}
+                text("SELECT count(*) FROM app.runs WHERE id = :id"), {"id": run_id}
             )
         ).scalar()
         turns = (
