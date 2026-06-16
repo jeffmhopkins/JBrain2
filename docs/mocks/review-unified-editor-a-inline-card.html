@@ -1,0 +1,422 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Review — unified editable-fact card · A · inline structured card</title>
+    <style>
+      /* Design tokens — copied from frontend/src/styles/tokens.css. */
+      :root {
+        --steel: #7fa7c9; --steel-tint: rgba(127, 167, 201, 0.13);
+        --green: #8fbc9a; --green-tint: rgba(143, 188, 154, 0.13);
+        --amber: #c9a36a; --amber-tint: rgba(201, 163, 106, 0.13);
+        --rose: #cf8a8f; --rose-tint: rgba(207, 138, 143, 0.13);
+        --violet: #a493c9; --violet-tint: rgba(164, 147, 201, 0.14);
+        --slate: #9aa0a8;
+        --accent: var(--steel);
+        --font-scale: 1;
+        --fs-micro: calc(12px * var(--font-scale));
+        --fs-secondary: calc(14px * var(--font-scale));
+        --fs-note: calc(15px * var(--font-scale));
+        --fs-body: calc(16px * var(--font-scale));
+        --fs-title: calc(18px * var(--font-scale));
+        --fs-screen: calc(22px * var(--font-scale));
+        --r-input: 12px; --r-card: 16px; --r-pill: 999px;
+        --font-mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+      }
+      [data-theme="light"] {
+        color-scheme: light;
+        --page: #ecece9; --bg: #f7f7f5; --surface: #ffffff; --surface-2: #f0f0ee;
+        --border: #e2e2df; --text: #1a1b1e; --text-2: #5c5f66; --text-3: #9a9da3;
+        --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.06);
+      }
+      [data-theme="dark"] {
+        color-scheme: dark;
+        --page: #060708; --bg: #0e0f11; --surface: #17181b; --surface-2: #1e2024;
+        --border: #26282c; --text: #e6e7e9; --text-2: #9a9da3; --text-3: #5c5f66;
+        --shadow-card: none;
+      }
+
+      * { box-sizing: border-box; }
+      body {
+        margin: 0; background: var(--page); color: var(--text); padding: 28px 16px 60px;
+        font: 400 var(--fs-body) / 1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+        display: flex; flex-direction: column; align-items: center; gap: 16px;
+      }
+      .demo-bar { width: 100%; max-width: 460px; display: flex; align-items: center; gap: 12px; }
+      .demo-title { font-size: var(--fs-secondary); color: var(--text-2); }
+      .demo-title b { color: var(--text); }
+      .seg { margin-left: auto; display: flex; border: 1px solid var(--border); border-radius: var(--r-pill); overflow: hidden; }
+      .seg button { appearance: none; border: none; background: var(--surface); color: var(--text-2); font: inherit; font-size: var(--fs-micro); padding: 6px 13px; cursor: pointer; }
+      .seg button[aria-pressed="true"] { background: var(--steel-tint); color: var(--steel); }
+      .caption { width: 100%; max-width: 460px; font-size: var(--fs-secondary); color: var(--text-2); line-height: 1.5; }
+      .caption b { color: var(--text); }
+
+      .phone { width: 100%; max-width: 460px; min-height: 880px; background: var(--bg); border: 1px solid var(--border); border-radius: 30px; overflow: hidden; position: relative; display: flex; flex-direction: column; box-shadow: 0 20px 60px rgba(0, 0, 0, 0.25); }
+      .statusbar { display: flex; justify-content: space-between; align-items: center; padding: 14px 24px 4px; font-size: var(--fs-secondary); font-weight: 600; }
+      .screenhead { display: flex; align-items: center; gap: 12px; padding: 8px 18px 2px; }
+      .screenhead h1 { margin: 0; font-size: var(--fs-screen); font-weight: 600; }
+      .screenhead .pos { margin-left: auto; font-size: var(--fs-secondary); color: var(--text-2); font-variant-numeric: tabular-nums; }
+      .body { flex: 1; overflow-y: auto; padding: 10px 16px 40px; display: flex; flex-direction: column; gap: 12px; }
+
+      .subject { display: flex; align-items: center; gap: 11px; }
+      .avatar { width: 40px; height: 40px; border-radius: 50%; flex: none; display: grid; place-items: center; font-weight: 600; font-size: var(--fs-note); }
+      .subject-name { font-size: var(--fs-title); font-weight: 600; }
+      .subject-sub { font-size: var(--fs-micro); color: var(--text-3); display: flex; align-items: center; gap: 7px; }
+      .domain-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+
+      .kind-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+      .kind-badge { font-size: var(--fs-micro); padding: 2px 9px; border-radius: var(--r-pill); background: var(--amber-tint); color: var(--amber); font-weight: 500; }
+      .conf-badge { font-size: var(--fs-micro); padding: 2px 9px; border-radius: var(--r-pill); border: 1px solid var(--border); color: var(--text-2); }
+
+      .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-card); box-shadow: var(--shadow-card); padding: 14px; display: flex; flex-direction: column; gap: 13px; }
+      .card-lbl { font-size: var(--fs-micro); text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-3); display: flex; align-items: center; gap: 8px; }
+      .card-lbl .edited-tag { margin-left: auto; color: var(--steel); text-transform: none; letter-spacing: 0; font-weight: 600; }
+
+      /* a field is one labelled row whose control is the editable surface */
+      .field { display: flex; flex-direction: column; gap: 6px; }
+      .field-lbl { font-size: var(--fs-micro); color: var(--text-3); display: flex; align-items: center; gap: 6px; }
+      .field-lbl .req { color: var(--text-3); }
+      .chip { display: inline-flex; align-items: center; gap: 8px; font-weight: 600; background: var(--surface-2); border: 1px dashed var(--border); border-radius: var(--r-input); padding: 7px 12px; cursor: pointer; color: var(--text); font-size: var(--fs-note); text-align: left; }
+      .chip .pen { margin-left: auto; color: var(--text-3); font-size: var(--fs-micro); }
+      .chip.mono { font-family: var(--font-mono); font-weight: 500; }
+      .chip.edited { border-style: solid; border-color: var(--steel); background: var(--steel-tint); color: var(--steel); }
+      .chip.edited .pen { color: var(--steel); }
+      .obj { display: inline-flex; align-items: center; gap: 7px; }
+      .obj .dot { width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; font-size: 11px; font-weight: 600; background: var(--violet-tint); color: var(--violet); }
+
+      .edge { display: flex; align-items: center; gap: 9px; }
+      .edge .arrow { color: var(--text-3); }
+      .edge .chip { flex: 1; }
+
+      /* inline editor that expands under a tapped field */
+      .editor { border: 1px solid var(--steel); border-radius: var(--r-input); background: var(--bg); padding: 11px; display: none; flex-direction: column; gap: 9px; }
+      .editor.open { display: flex; }
+      .editor-lbl { font-size: var(--fs-micro); color: var(--text-2); display: flex; align-items: center; gap: 8px; }
+      .editor-lbl .x { margin-left: auto; color: var(--accent); cursor: pointer; font-weight: 600; }
+      .editor input { font: inherit; font-size: var(--fs-note); background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-input); padding: 9px 11px; color: var(--text); width: 100%; }
+      .opt-list { display: flex; flex-direction: column; gap: 4px; max-height: 184px; overflow-y: auto; }
+      .opt { appearance: none; text-align: left; font: inherit; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-input); padding: 8px 11px; color: var(--text); cursor: pointer; display: flex; align-items: center; gap: 9px; font-size: var(--fs-secondary); }
+      .opt:hover, .opt.on { border-color: var(--steel); background: var(--steel-tint); }
+      .opt .shape { margin-left: auto; font-size: var(--fs-micro); color: var(--text-3); font-family: var(--font-mono); }
+      .opt .match { font-size: var(--fs-micro); color: var(--steel); }
+      .seg-pick { display: flex; flex-wrap: wrap; gap: 6px; }
+      .seg-pick button { appearance: none; font: inherit; font-size: var(--fs-micro); padding: 6px 11px; border-radius: var(--r-pill); border: 1px solid var(--border); background: var(--surface); color: var(--text-2); cursor: pointer; }
+      .seg-pick button[aria-pressed="true"] { border-color: transparent; background: var(--steel-tint); color: var(--steel); font-weight: 600; }
+      .seg-pick.domains button[data-v="health"][aria-pressed="true"] { background: var(--rose-tint); color: var(--rose); }
+      .seg-pick.domains button[data-v="finance"][aria-pressed="true"] { background: var(--violet-tint); color: var(--violet); }
+
+      /* the set-valued affordance: existing members + add/replace/remove */
+      .setbox { border: 1px solid var(--border); border-radius: var(--r-input); background: var(--surface-2); padding: 10px; display: flex; flex-direction: column; gap: 8px; }
+      .setbox .set-lbl { font-size: var(--fs-micro); color: var(--text-3); display: flex; align-items: center; gap: 7px; }
+      .setbox .set-lbl .badge { margin-left: auto; font-size: var(--fs-micro); color: var(--text-3); }
+      .member { display: flex; align-items: center; gap: 9px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-input); padding: 8px 10px; font-size: var(--fs-secondary); }
+      .member .dot { width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center; font-size: 10px; font-weight: 600; }
+      .member .nm { flex: 1; }
+      .member .act { appearance: none; border: 1px solid var(--border); background: var(--surface); color: var(--text-2); font: inherit; font-size: var(--fs-micro); padding: 4px 9px; border-radius: var(--r-pill); cursor: pointer; }
+      .member .act.replace[aria-pressed="true"] { border-color: transparent; background: var(--amber-tint); color: var(--amber); }
+      .member .act.remove[aria-pressed="true"] { border-color: transparent; background: var(--rose-tint); color: var(--rose); }
+      .member.new { border-style: dashed; }
+      .member.new .nm { color: var(--steel); font-weight: 600; }
+      .set-mode { font-size: var(--fs-micro); color: var(--text-2); }
+      .set-mode b { color: var(--steel); }
+
+      .status { font-size: var(--fs-secondary); color: var(--text-2); line-height: 1.5; margin: 0; }
+      .status.edit { color: var(--steel); }
+
+      .actions { display: flex; flex-direction: column; gap: 9px; }
+      .btn { appearance: none; font: inherit; border: 1px solid var(--border); border-radius: var(--r-card); cursor: pointer; padding: 15px; font-size: var(--fs-note); font-weight: 600; background: var(--surface); color: var(--text); }
+      .btn.primary { background: var(--green); color: #06250f; border-color: transparent; }
+      .btn.primary.correction { background: var(--steel); color: #07223a; }
+      .btn.ghost { color: var(--rose); }
+      .escape { display: flex; gap: 16px; justify-content: center; }
+      .escape button { appearance: none; background: none; border: none; color: var(--text-3); font: inherit; font-size: var(--fs-secondary); cursor: pointer; }
+
+      mark { background: var(--amber-tint); color: var(--amber); border-radius: 4px; padding: 0 3px; }
+      .evi { background: var(--bg); border: 1px solid var(--border); border-radius: var(--r-input); padding: 10px 12px; font-size: var(--fs-secondary); color: var(--text-2); line-height: 1.5; }
+      .evi-src { font-size: var(--fs-micro); color: var(--text-3); margin-top: 6px; }
+    </style>
+  </head>
+  <body>
+    <div class="demo-bar">
+      <div class="demo-title"><b>Review — unified editable-fact card.</b> A · inline structured card</div>
+      <div class="seg" role="group" aria-label="theme">
+        <button id="t-dark" aria-pressed="true">dark</button>
+        <button id="t-light" aria-pressed="false">light</button>
+      </div>
+    </div>
+    <div class="caption">
+      The card <b>is</b> the editor — every field is a labelled inline control, calm by default and
+      expanding in place on tap. The same single scaffold carries any fact kind. A non-functional
+      (set-valued) predicate exposes per-member <b>add / replace / remove</b>; flip the
+      <b>functional</b> toggle to watch the registry collapse that to a single "replace current".
+      Any edit re-frames the verdict as <b>approve correction</b> — facts stay machine-written.
+    </div>
+
+    <div class="phone">
+      <div class="statusbar"><span>9:41</span><span>JBrain&nbsp;· 87</span></div>
+      <div class="screenhead"><h1>Review</h1><span class="pos">3 of 11</span></div>
+      <div class="body">
+        <div class="subject">
+          <div class="avatar" style="background: var(--steel-tint); color: var(--steel)">M</div>
+          <div>
+            <div class="subject-name">Me</div>
+            <div class="subject-sub">
+              <span style="color: var(--steel)">Person</span>
+              <span class="domain-dot" style="background: var(--steel)"></span>
+              <span id="domLabel">general</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="kind-row">
+          <span class="kind-badge">new relation</span>
+          <span class="conf-badge">held · 0.71</span>
+          <label class="conf-badge" style="cursor: pointer; display: inline-flex; gap: 6px; align-items: center;">
+            <input type="checkbox" id="fnToggle" style="margin: 0" /> functional predicate
+          </label>
+        </div>
+
+        <div class="card">
+          <div class="card-lbl">proposed fact <span class="edited-tag" id="editedTag" hidden>· edited</span></div>
+
+          <!-- KIND (sub-editor selector) -->
+          <div class="field">
+            <div class="field-lbl">kind</div>
+            <button class="chip" data-open="ed-kind"><span id="kindVal">relationship</span><span class="pen">change ✎</span></button>
+            <div class="editor" id="ed-kind">
+              <div class="editor-lbl">what shape of fact is this?<span class="x" data-close>done</span></div>
+              <div class="seg-pick" data-set="kind" data-target="kindVal">
+                <button data-v="relationship" aria-pressed="true">relationship</button>
+                <button data-v="state">state</button>
+                <button data-v="attribute">attribute</button>
+                <button data-v="measurement">measurement</button>
+                <button data-v="event">event</button>
+                <button data-v="preference">preference</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- EDGE: predicate → object -->
+          <div class="field">
+            <div class="field-lbl">relation → who/what</div>
+            <div class="edge">
+              <button class="chip mono" data-open="ed-pred" style="flex: 0 0 auto"><span id="predVal">friend</span><span class="pen">✎</span></button>
+              <span class="arrow">→</span>
+              <button class="chip" data-open="ed-obj"><span class="obj"><span class="dot" id="objDot">J</span><span id="objVal">Jordan Avery</span></span><span class="pen">✎</span></button>
+            </div>
+            <div class="editor" id="ed-pred">
+              <div class="editor-lbl">matching relations — pick one or coin a new name<span class="x" data-close>done</span></div>
+              <input placeholder="search or type a new relation…" />
+              <div class="opt-list">
+                <button class="opt on" data-set="pred" data-target="predVal" data-v="friend"><span>friend</span><span class="shape">ref · set</span><span class="match">exact</span></button>
+                <button class="opt" data-set="pred" data-target="predVal" data-v="knows"><span>knows</span><span class="shape">ref · set</span><span class="match">0.78</span></button>
+                <button class="opt" data-set="pred" data-target="predVal" data-v="colleague"><span>colleague</span><span class="shape">ref · set</span><span class="match">0.64</span></button>
+              </div>
+            </div>
+            <div class="editor" id="ed-obj">
+              <div class="editor-lbl">link to which entity?<span class="x" data-close>done</span></div>
+              <input placeholder="search people, places, things…" />
+              <div class="opt-list">
+                <button class="opt on" data-set="obj" data-target="objVal" data-v="Jordan Avery"><span>Jordan Avery</span><span class="shape">Person</span></button>
+                <button class="opt" data-set="obj" data-target="objVal" data-v="Jordan Avery-Cole"><span>Jordan Avery-Cole</span><span class="shape">Person · maybe same?</span></button>
+                <button class="opt" data-set="obj" data-target="objVal" data-v="＋ new person “Jordan”"><span>＋ new person “Jordan”</span></button>
+              </div>
+            </div>
+          </div>
+
+          <!-- SET affordance (non-functional) -->
+          <div class="field" id="setField">
+            <div class="field-lbl">this is a set — choose how it lands</div>
+            <div class="setbox">
+              <div class="set-lbl">Me's current <b style="color: var(--text-2)">friend</b> set<span class="badge" id="setCount">3 live</span></div>
+              <div class="member"><span class="dot" style="background: var(--steel-tint); color: var(--steel)">R</span><span class="nm">Riley Chen</span></div>
+              <div class="member"><span class="dot" style="background: var(--steel-tint); color: var(--steel)">S</span><span class="nm">Sam Ortiz</span><button class="act replace" data-member>replace</button><button class="act remove" data-member>remove</button></div>
+              <div class="member"><span class="dot" style="background: var(--steel-tint); color: var(--steel)">D</span><span class="nm">Devon Park</span></div>
+              <div class="member new"><span class="dot" style="background: var(--violet-tint); color: var(--violet)">J</span><span class="nm">＋ add Jordan Avery</span></div>
+              <div class="set-mode" id="setMode">lands as <b>add</b> — a new co-equal edge, nothing superseded.</div>
+            </div>
+          </div>
+
+          <!-- MODALITY + DOMAIN + TEMPORAL row -->
+          <div class="field">
+            <div class="field-lbl">modality · domain · since</div>
+            <div class="edge" style="gap: 8px; flex-wrap: wrap">
+              <button class="chip" data-open="ed-mod" style="flex: 1 1 30%"><span id="modVal">asserted</span><span class="pen">✎</span></button>
+              <button class="chip" data-open="ed-dom" style="flex: 1 1 30%"><span id="domVal">general</span><span class="pen">✎</span></button>
+              <button class="chip" data-open="ed-time" style="flex: 1 1 30%"><span id="timeVal">2026 · year</span><span class="pen">✎</span></button>
+            </div>
+            <div class="editor" id="ed-mod">
+              <div class="editor-lbl">is this a claim about the present?<span class="x" data-close>done</span></div>
+              <div class="seg-pick" data-set="mod" data-target="modVal">
+                <button data-v="asserted" aria-pressed="true">asserted</button>
+                <button data-v="negated">negated</button>
+                <button data-v="hypothetical">hypothetical</button>
+                <button data-v="reported">reported</button>
+                <button data-v="question">question</button>
+                <button data-v="expected">expected</button>
+              </div>
+            </div>
+            <div class="editor" id="ed-dom">
+              <div class="editor-lbl">which firewall does this live behind?<span class="x" data-close>done</span></div>
+              <div class="seg-pick domains" data-set="dom" data-target="domVal">
+                <button data-v="general" aria-pressed="true">general</button>
+                <button data-v="health">health</button>
+                <button data-v="finance">finance</button>
+                <button data-v="location">location</button>
+              </div>
+            </div>
+            <div class="editor" id="ed-time">
+              <div class="editor-lbl">when did this become true? (blank = unknown)<span class="x" data-close>done</span></div>
+              <input data-set="time" data-target="timeVal" value="2026" placeholder="e.g. 2026, Jun 2026, 2026-06-10" />
+            </div>
+          </div>
+
+          <div class="evi">
+            “…grabbed coffee with my friend <mark>Jordan</mark> — we go way back.”
+            <div class="evi-src">from note · captured Jun 10 · general</div>
+          </div>
+
+          <p class="status" id="statusLine">Holds as a new <b style="color: var(--text-2)">friend</b> edge for Me. Approving commits it through the pipeline.</p>
+
+          <div class="actions">
+            <button class="btn primary" id="approveBtn">approve — add this friend</button>
+            <button class="btn ghost">reject — discard</button>
+          </div>
+          <div class="escape">
+            <button>defer</button>
+            <button>talk it over</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      const root = document.documentElement;
+      document.getElementById("t-dark").onclick = () => setTheme("dark");
+      document.getElementById("t-light").onclick = () => setTheme("light");
+      function setTheme(t) {
+        root.dataset.theme = t;
+        document.getElementById("t-dark").setAttribute("aria-pressed", t === "dark");
+        document.getElementById("t-light").setAttribute("aria-pressed", t === "light");
+      }
+
+      const dirty = new Set();
+      // open/close inline editors (only one at a time)
+      document.querySelectorAll("[data-open]").forEach((btn) => {
+        btn.onclick = () => {
+          const id = btn.dataset.open;
+          const ed = document.getElementById(id);
+          const wasOpen = ed.classList.contains("open");
+          document.querySelectorAll(".editor.open").forEach((e) => e.classList.remove("open"));
+          if (!wasOpen) ed.classList.add("open");
+        };
+      });
+      document.querySelectorAll("[data-close]").forEach((x) => {
+        x.onclick = () => x.closest(".editor").classList.remove("open");
+      });
+
+      // option lists + segmented pickers write back to their chip and mark dirty
+      function commit(field, value, targetId) {
+        const target = document.getElementById(targetId);
+        const prev = target.dataset.orig ?? (target.dataset.orig = target.textContent);
+        target.textContent = value;
+        const chip = target.closest(".chip");
+        const changed = value !== prev;
+        if (chip) chip.classList.toggle("edited", changed);
+        changed ? dirty.add(field) : dirty.delete(field);
+        if (field === "dom") {
+          document.getElementById("domLabel").textContent = value;
+          const c = { general: "var(--steel)", health: "var(--rose)", finance: "var(--violet)", location: "var(--amber)" }[value];
+          document.querySelector(".domain-dot").style.background = c;
+        }
+        if (field === "obj") {
+          document.getElementById("objDot").textContent = value.replace(/[^A-Za-z]/g, "").charAt(0).toUpperCase() || "?";
+        }
+        reflectVerdict();
+      }
+      document.querySelectorAll(".opt").forEach((o) => {
+        o.onclick = () => {
+          o.parentElement.querySelectorAll(".opt").forEach((x) => x.classList.remove("on"));
+          o.classList.add("on");
+          commit(o.dataset.set, o.dataset.v, o.dataset.target);
+          o.closest(".editor").classList.remove("open");
+        };
+      });
+      document.querySelectorAll(".seg-pick button").forEach((b) => {
+        b.onclick = () => {
+          const wrap = b.closest(".seg-pick");
+          wrap.querySelectorAll("button").forEach((x) => x.setAttribute("aria-pressed", "false"));
+          b.setAttribute("aria-pressed", "true");
+          commit(wrap.dataset.set, b.dataset.v, wrap.dataset.target);
+        };
+      });
+      document.querySelectorAll(".editor input[data-set]").forEach((inp) => {
+        inp.dataset.orig = inp.value;
+        inp.oninput = () => commit(inp.dataset.set, inp.value || "unknown", inp.dataset.target);
+      });
+
+      // set-member add/replace/remove (mutually exclusive landing mode)
+      let landing = "add";
+      document.querySelectorAll(".member .act").forEach((a) => {
+        a.onclick = () => {
+          const on = a.getAttribute("aria-pressed") === "true";
+          document.querySelectorAll(".member .act").forEach((x) => x.setAttribute("aria-pressed", "false"));
+          if (!on) {
+            a.setAttribute("aria-pressed", "true");
+            landing = a.classList.contains("replace") ? "replace" : "remove";
+          } else {
+            landing = "add";
+          }
+          setLanding();
+        };
+      });
+      const newMember = document.querySelector(".member.new");
+      newMember.onclick = () => {
+        document.querySelectorAll(".member .act").forEach((x) => x.setAttribute("aria-pressed", "false"));
+        landing = "add";
+        setLanding();
+      };
+      function setLanding() {
+        const el = document.getElementById("setMode");
+        const txt = {
+          add: "lands as <b>add</b> — a new co-equal edge, nothing superseded.",
+          replace: "lands as <b>replace</b> — supersedes Sam Ortiz, chains the history.",
+          remove: "lands as <b>remove</b> — closes Sam Ortiz's edge (a retraction).",
+        }[landing];
+        el.innerHTML = txt;
+        landing === "add" ? dirty.delete("set") : dirty.add("set");
+        reflectVerdict();
+      }
+
+      // functional toggle collapses the set affordance to a single replace
+      document.getElementById("fnToggle").onchange = (e) => {
+        const fn = e.target.checked;
+        document.getElementById("setField").style.display = fn ? "none" : "";
+        document.querySelector(".kind-row .kind-badge").textContent = fn ? "single value" : "new relation";
+        reflectVerdict(fn);
+      };
+
+      function reflectVerdict(forceFn) {
+        const fn = forceFn ?? document.getElementById("fnToggle").checked;
+        const edited = dirty.size > 0;
+        const btn = document.getElementById("approveBtn");
+        const status = document.getElementById("statusLine");
+        document.getElementById("editedTag").hidden = !edited;
+        btn.classList.toggle("correction", edited);
+        if (edited) {
+          btn.textContent = "approve correction";
+          status.classList.add("edit");
+          status.innerHTML = "Your edits are filed as a correction note; the pipeline re-applies them, so the wiki stays machine-written.";
+        } else {
+          btn.classList.remove("correction");
+          btn.textContent = fn ? "approve — set this value" : "approve — add this friend";
+          status.classList.remove("edit");
+          status.innerHTML = fn
+            ? "Holds as a single-valued edge for Me — approving supersedes any current value."
+            : "Holds as a new <b style='color:var(--text-2)'>friend</b> edge for Me. Approving commits it through the pipeline.";
+        }
+      }
+    </script>
+  </body>
+</html>
