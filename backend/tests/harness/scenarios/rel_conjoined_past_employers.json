@@ -1,0 +1,59 @@
+{
+  "name": "conjoined past employers each close as former, none held in review",
+  "description": "The owner's report (the screenshots): 'I work for SpaceX, I used to work for the US army and Oregon Lithoprint.' The CURRENT worksFor (SpaceX, open) and BOTH closed past ones must land — SpaceX active/open, the two former jobs superseded behind it — with NONE held in review. The failure the owner hit: the integrator fumbles the SECOND conjoined object's own attestation quote (it reconstructs 'worked at Oregon Lithoprint', which is not verbatim in the note), so the edge falls below the commit threshold and parks as a low_confidence_inference instead of committing as former. The arbiter's object-named backstop rescues it: the edge's OBJECT org is literally named in the note, which attests the stated (not inferred) edge. worksFor is kind `state`, the spelling the live note.extract prompt steers toward, and a declared Person predicate (no new_predicate card, no unknown-predicate penalty). The two former jobs are co-equal closed history, so no fact_conflict. Explicit intent: the default harness agent surface-attests every fact, which can't reproduce a fumbled quote.",
+  "steps": [
+    {
+      "domain": "general",
+      "created_at": "2026-06-15T17:05:00-06:00",
+      "body": "I work for SpaceX, I used to work for the US army and Oregon Lithoprint.",
+      "extraction": {
+        "title": "Employment at SpaceX and prior roles",
+        "tags": ["employment", "career", "work"],
+        "mentions": [
+          {"name": "Me", "kind": "Person", "surface_text": "I"},
+          {"name": "SpaceX", "kind": "Organization", "surface_text": "SpaceX"},
+          {"name": "US army", "kind": "Organization", "surface_text": "US army"},
+          {"name": "Oregon Lithoprint", "kind": "Organization", "surface_text": "Oregon Lithoprint"}
+        ],
+        "facts": [
+          {"predicate": "worksFor", "qualifier": "", "kind": "state", "statement": "I work for SpaceX.", "value_json": null, "assertion": "asserted", "entity_ref": "Me", "object_entity_ref": "SpaceX", "temporal": null, "domain": "general", "confidence": 0.9}
+        ],
+        "temporal_tokens": []
+      },
+      "intent": {
+        "resolutions": [
+          {"mention_ref": "Me", "mode": "existing", "name": "Me", "surface": "I"},
+          {"mention_ref": "SpaceX", "mode": "new", "new_kind": "Organization", "new_name": "SpaceX", "surface": "SpaceX"},
+          {"mention_ref": "US army", "mode": "new", "new_kind": "Organization", "new_name": "US army", "surface": "US army"},
+          {"mention_ref": "Oregon Lithoprint", "mode": "new", "new_kind": "Organization", "new_name": "Oregon Lithoprint", "surface": "Oregon Lithoprint"}
+        ],
+        "facts": [
+          {"entity_ref": "Me", "predicate": "worksFor", "qualifier": "", "kind": "state", "statement": "I work for SpaceX.", "value_json": null, "assertion": "asserted", "object_entity_ref": "SpaceX", "self_confidence": 0.9, "inferred": false, "surface": "work for SpaceX", "temporal": null},
+          {"entity_ref": "Me", "predicate": "worksFor", "qualifier": "", "kind": "state", "statement": "I used to work for the US army.", "value_json": null, "assertion": "asserted", "object_entity_ref": "US army", "self_confidence": 0.9, "inferred": false, "surface": "used to work for the US army", "temporal": {"phrase": "used to", "resolved_start": null, "resolved_end": "2026-06-15T17:05:00-06:00", "precision": "era"}},
+          {"entity_ref": "Me", "predicate": "worksFor", "qualifier": "", "kind": "state", "statement": "I used to work for Oregon Lithoprint.", "value_json": null, "assertion": "asserted", "object_entity_ref": "Oregon Lithoprint", "self_confidence": 0.9, "inferred": false, "surface": "worked at Oregon Lithoprint", "temporal": {"phrase": "used to", "resolved_start": null, "resolved_end": "2026-06-15T17:05:00-06:00", "precision": "era"}}
+        ]
+      }
+    }
+  ],
+  "expect": {
+    "facts": [
+      {"entity": "Me", "predicate": "worksFor", "kind": "state", "value_contains": "SpaceX", "status": "active", "chained": false},
+      {"entity": "Me", "predicate": "worksFor", "kind": "state", "value_contains": "US army", "status": "superseded", "chained": true},
+      {"entity": "Me", "predicate": "worksFor", "kind": "state", "value_contains": "Oregon Lithoprint", "status": "superseded", "chained": true}
+    ],
+    "absent_facts": [
+      {"entity": "Me", "predicate": "worksFor", "status": "pending_review"},
+      {"entity": "Me", "predicate": "worksFor", "value_contains": "SpaceX", "status": "superseded"}
+    ],
+    "review_items": [
+      {"kind": "new_predicate", "count": 0},
+      {"kind": "low_confidence_inference", "count": 0},
+      {"kind": "fact_conflict", "count": 0}
+    ],
+    "entities": [
+      {"name": "SpaceX", "kind": "Organization", "status": "provisional"},
+      {"name": "US army", "kind": "Organization", "status": "provisional"},
+      {"name": "Oregon Lithoprint", "kind": "Organization", "status": "provisional"}
+    ]
+  }
+}

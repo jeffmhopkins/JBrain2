@@ -667,10 +667,15 @@ def link_relationship_objects(
                         mention=snapped,
                     )
                     fact = replace(fact, object_entity_ref=snapped)
-        elif fact.kind == "relationship":
-            # Recovery (inferring a DROPPED object) is bounded to relationship
-            # facts: a state fact already renders its value_json place/value, so
-            # there is no display gap to justify the inference's risk.
+        elif fact.kind == "relationship" or (fact.kind == "state" and not fact.value_json):
+            # Recovery (inferring a DROPPED object) covers relationship facts and
+            # entity-valued STATE edges that carry NO value_json — worksFor,
+            # homeLocation, memberOf — whose value IS the object entity, so a
+            # dropped ref leaves the property rendering its whole statement
+            # sentence ("worksFor -> I used to work for Oregon Lithoprint."). A
+            # state fact WITH value_json keeps the exemption: that datum renders,
+            # so there is no display gap to justify the inference's risk. Recovery
+            # still only binds an ALREADY-EMITTED mention, never a minted entity.
             recovered = _recover_object_ref(fact, mentions, by_norm)
             if recovered is not None:
                 log.info(

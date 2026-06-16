@@ -365,6 +365,93 @@ def test_compute_signals_surface_not_in_text_is_not_attested():
     assert compute_signals(intent, ["I work at Globex now."])[0].surface_attested is False
 
 
+def test_compute_signals_named_object_attests_a_fumbled_quote():
+    # The user's case: an edge the model marked stated (not inferred) whose own
+    # attested_span quote isn't verbatim, but whose OBJECT org is literally named.
+    # The object's presence attests the edge so it commits as `former` instead of
+    # being held below threshold.
+    intent = _intent(
+        entity_resolutions=[
+            _res("m1"),
+            _res(
+                "m2",
+                mode="new",
+                new_kind="Organization",
+                new_name="Oregon Lithoprint",
+                attested_span=AttestedSpan("c1", "Oregon Lithoprint"),
+            ),
+        ],
+        facts=[
+            _fact(
+                entity_ref="m1",
+                predicate="worksFor",
+                kind="state",
+                object_entity_ref="m2",
+                attested_span=AttestedSpan("c1", "worked for Oregon Lithoprint"),  # not verbatim
+                inferred=False,
+            )
+        ],
+    )
+    sig = compute_signals(intent, ["I used to work for the US army and Oregon Lithoprint."])
+    assert sig[0].surface_attested is True
+
+
+def test_compute_signals_named_object_does_not_rescue_an_inferred_edge():
+    # The `not inferred` gate still holds: a genuinely inferred edge to a named
+    # object is NOT promoted — the model made no honest claim the note states it.
+    intent = _intent(
+        entity_resolutions=[
+            _res("m1"),
+            _res(
+                "m2",
+                mode="new",
+                new_kind="Organization",
+                new_name="Globex",
+                attested_span=AttestedSpan("c1", "Globex"),
+            ),
+        ],
+        facts=[
+            _fact(
+                entity_ref="m1",
+                predicate="worksFor",
+                kind="state",
+                object_entity_ref="m2",
+                attested_span=None,
+                inferred=True,
+            )
+        ],
+    )
+    assert compute_signals(intent, ["I met someone from Globex."])[0].surface_attested is False
+
+
+def test_compute_signals_named_object_absent_from_text_is_not_attested():
+    # The object must be LITERALLY named: an edge to an object whose surface is
+    # not in the note stays unattested (no fabricated attestation).
+    intent = _intent(
+        entity_resolutions=[
+            _res("m1"),
+            _res(
+                "m2",
+                mode="new",
+                new_kind="Organization",
+                new_name="Initech",
+                attested_span=AttestedSpan("c1", "Initech"),
+            ),
+        ],
+        facts=[
+            _fact(
+                entity_ref="m1",
+                predicate="worksFor",
+                kind="state",
+                object_entity_ref="m2",
+                attested_span=None,
+                inferred=False,
+            )
+        ],
+    )
+    assert compute_signals(intent, ["I work at Globex now."])[0].surface_attested is False
+
+
 def test_compute_signals_predicate_known_matches_registry():
     reg = get_registry()
 
