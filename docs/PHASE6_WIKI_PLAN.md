@@ -1,12 +1,14 @@
 # JBrain2 — Phase 6 (Wiki) Build Plan
 
 > **Status (in progress):** research + two red-team passes done. Owner decisions
-> settled: #1 article scope (cross-domain, domain-tagged sections, section existence
-> hidden from out-of-scope viewers) and #2 revision storage (inline `text`). Remaining
-> before build: the **UI mock gate** (#3) and the cross-stream **citation/delta-feed
-> contract** with the entity-graph rebuild (#4/#5). Most of Phase 6 is graph-coupled and
-> gated on that rebuild; the parallel-safe slice now is the article/revision/index shell,
-> editorial config, and the read-only UI behind its mock gate.
+> settled: #1 article scope (cross-domain article; type-guided single-domain sections;
+> section existence hidden from out-of-scope viewers), #2 revision storage (inline
+> `text`), and #3 UI direction (Wikipedia-style prose reader with type-guided sections +
+> numbered references — chosen mock `docs/mocks/wiki-reader-chosen-wikipedia.html`).
+> Remaining before build: the cross-stream **citation/delta-feed contract** with the
+> entity-graph rebuild (#4/#5). Most of Phase 6 is graph-coupled and gated on that
+> rebuild; the parallel-safe slice now is the article/revision/index shell, editorial
+> config (incl. per-type section templates), and the read-only UI.
 
 The LLM-maintained wiki: notes → facts → entities → **machine-written articles**,
 every claim citing a note, corrected only by out-arguing it with a correction note.
@@ -61,17 +63,23 @@ contract. This is narrower than v1 claimed, and that's the honest read.
   read-only full-screen paradigm, the `Sheet` composer. The **Wiki launcher tile is
   stubbed** (`Launcher.tsx:53`, `phase:"P6"`, disabled).
 
-## 2. Storage (new tables) — cross-domain articles, domain-scoped sections
+## 2. Storage (new tables) — cross-domain articles, type-guided single-domain sections
 
 ARCHITECTURE.md §Wiki is binding: *"citations are **foreign keys** to facts/chunks —
 enforced data, not markdown convention."* v1's soft-ref design inverted this and is
 **dropped** (hard FKs). All RLS-scoped, isolation-tested.
 
-**Article model (owner decision): one CROSS-DOMAIN article per subject/entity, its body
-split into domain-tagged SECTIONS. The *section* — not the article — is the firewall,
-RLS, revision, and index unit. A scoped principal cannot see an out-of-scope section's
-content OR its existence (the row simply doesn't return); only the owner (all domains)
-sees every section.**
+**Article model (owner decisions): one CROSS-DOMAIN article per subject/entity that
+reads like a Wikipedia article — an infobox of key facts, a prose lead, and
+TYPE-GUIDED SECTIONS whose taxonomy comes from the article *type* (a Person → Career /
+Personal life / Health / Finances; an Organization → History / Products / Leadership /
+Finances; …) defined in editorial config, not code. Each section is SINGLE-DOMAIN — the
+firewall, RLS, revision, and index unit. Sensitive domains naturally surface as their
+own sections (Health, Finances); the builder routes a finance fact to Finances, never
+into general "Career" prose. A scoped principal cannot see an out-of-scope section's
+content OR its existence (the row simply doesn't return); only the owner sees every
+section. Citations render Wikipedia-style: inline `[n]` → a References section listing
+the source note per `[n]`. (Chosen reader mock: `docs/mocks/wiki-reader-chosen-wikipedia.html`.)**
 
 **Buildable now (graph-independent table *shape* — no FK into facts):**
 - **`app.wiki_articles`** (cross-domain): `id`, subject/entity anchor (see note),
@@ -92,7 +100,9 @@ sees every section.**
   `summary`, `summary_embedding vector(384)`, `embedding_model`, HNSW index. The
   domain-scoped match target.
 - **Editorial config as data** (grounded — ARCHITECTURE.md:105-107): style guide,
-  citation-density floor, split/merge thresholds — a settings row / small table.
+  citation-density floor, split/merge thresholds, **and per-article-type section
+  templates** (the type-guided section taxonomy — Person/Org/Place/Event/… → their
+  ordered sections, each with a default domain) — a settings row / small table, not code.
 
 **Gated on the rebuild (FKs into the frozen fact shape):**
 - **`app.wiki_citations`**: `id`, `revision_id` (FK ON DELETE CASCADE), `fact_id`
@@ -146,29 +156,33 @@ note at **NORMAL** weight — the *wrong* path. So this is **new machinery**, no
 The note-creation + anchoring is graph-independent (it writes a note); its *effect* on
 articles is downstream of the gated builder.
 
-## 5. Read-only wiki UI — blocking mock gate, then graph-independent (on fixtures)
+## 5. Read-only wiki UI — mock gate ✅ done; build against fixtures
 
-**PROCESS.md gate (binding, blocking): three interactive HTML mocks → owner picks one →
-the chosen mock lands in `docs/mocks/` as the binding spec. A critical-decision
-interruption.** This is its **own pre-wave step**, gating the UI wave — not a sub-bullet
-of the schema wave (the two have nothing to do with each other and can't share one PR).
-**No reuse waiver** (DESIGN.md: "every NEW surface gets the round, 'it's just a list' is
-not a waiver") — even though it reuses `FactCitation`/`EntityScreen`/`Sheet`.
+**PROCESS.md gate (binding): three interactive HTML mocks → owner picks one → the chosen
+mock is the binding spec.** ✅ **DONE** — three directions (`wiki-reader-a/b/c-*.html`)
+were presented; the owner chose **A (prose), refined to read like Wikipedia**:
+`docs/mocks/wiki-reader-chosen-wikipedia.html` — infobox, prose lead, **type-guided
+sections**, and **Wikipedia-style numbered `[n]` citations → a References section**. Its
+rationale is recorded in `docs/mocks/wiki-reader-README.md` and lands in `DESIGN.md` when
+Wave B starts.
 
 Full-screen read-only surface, amber/read-only tint, the stubbed Wiki tile. Renders
-stored articles/revisions; entity chips → `EntityScreen`; citation hover-cards
-(pointer-not-copy). Graph-independent — built against **fixture data**. **DoD includes
-mock fixtures for default / empty / long-article / error / offline states.**
+stored articles/sections/revisions; entity chips → `EntityScreen`; `[n]` jumps to the
+References list; "discuss this article" → the owner-correction path (§4). Graph-independent
+— built against **fixture data**. **DoD includes fixtures for default / empty /
+long-article / error / offline states.**
 
 ## 6. Open decisions — triaged by what they block
 
 **Must settle BEFORE the now-safe work (Wave A schema/UI):**
 1. **Article scope:** ✅ RESOLVED — **cross-domain article per subject/entity, body in
-   domain-tagged sections; the section is the firewall/RLS/revision/index unit; section
-   existence (not just content) is hidden from out-of-scope principals.** (§2.)
+   type-guided SINGLE-DOMAIN sections (taxonomy from the article type, via editorial
+   config); the section is the firewall/RLS/revision/index unit; section existence (not
+   just content) is hidden from out-of-scope principals.** (§2.)
 2. **Revision body storage:** ✅ RESOLVED — **inline `text` (markdown)**; blob storage
    is reserved for large content-addressed attachments, not short section text. (§2.)
-3. **UI direction:** the mock-gate outcome (its own decision interrupt). ← *next.*
+3. **UI direction:** ✅ RESOLVED — Wikipedia-style prose reader with type-guided
+   sections + numbered references (`wiki-reader-chosen-wikipedia.html`). (§5.)
 
 **Must settle WITH the rebuild stream BEFORE the gated work (builder/citations):**
 4. **Citation contract:** the citable unit's frozen shape + the `fact_id` FK ondelete

@@ -32,7 +32,21 @@ discuss to correct" rule (machine-written wiki, non-negotiable #7).
 
 ## Decision
 
-Owner picks one (or a hybrid, e.g. "A's prose with C's always-on citation for health").
-The choice + reasoning land in `DESIGN.md`; the other two stay here as the record, per
-the mock-first discipline. Mock fixtures for default / empty / long-article / error /
-offline states are part of Wave B's definition of done.
+**Chosen: A (prose), refined → `wiki-reader-chosen-wikipedia.html`.** Per owner
+direction, the reader should "read like a real Wikipedia article": an **infobox** of key
+facts, a prose **lead**, **type-guided sections** (the section taxonomy comes from the
+article *type* — a Person gets Career / Personal life / Health / Finances; an Org would
+get History / Products / Leadership / Finances — defined in editorial config, not code),
+and **Wikipedia-style citations**: inline superscript `[n]` that jump to a numbered
+**References** section listing each source note (tap a `[n]` to scroll/highlight; each
+reference has a "discuss" affordance).
+
+Firewall reconciliation: each type-guided section stays **single-domain** (the firewall
+unit). Sensitive domains naturally surface as their own sections (Health, Finances) with
+a subtle domain dot; general facts spread across the general topical sections. A scoped
+viewer simply doesn't see the Health/Finances sections (existence hidden). The builder
+routes a finance fact (e.g. salary) to **Finances**, not into general "Career" prose.
+
+`wiki-reader-a/b/c-*.html` are retained as the decision record. Mock fixtures for
+default / empty / long-article / error / offline states are part of Wave B's
+definition of done.

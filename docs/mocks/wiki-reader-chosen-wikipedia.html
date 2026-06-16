@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Wiki reader — chosen — Wikipedia-style, type-guided sections</title>
+<style>
+  :root {
+    --bg: #0e1116; --surface: #161b22; --surface-2: #1b2230; --border: #2a313c;
+    --text: #e6edf3; --text-2: #9aa7b4; --text-3: #6b7785; --link: #6ea8fe;
+    --steel: #6ea8fe; --violet: #b08cff; --amber: #e0a85b;
+    --general: #6ea8fe; --health: #f17d8a; --finance: #5bc2a0; --location: #b08cff;
+    --mark: #3a2f17; --shadow: rgba(0,0,0,.45);
+  }
+  [data-theme="light"] {
+    --bg: #f7f6f2; --surface: #ffffff; --surface-2: #f0f0ec; --border: #d8d8d0;
+    --text: #202122; --text-2: #54595d; --text-3: #8b9096; --link: #3366cc;
+    --steel: #2f6fe0; --violet: #7a4fd0; --amber: #9a6b1e;
+    --general: #2f6fe0; --health: #c0455a; --finance: #1f8f6e; --location: #7a4fd0;
+    --mark: #fbe7c6; --shadow: rgba(20,30,50,.12);
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body { margin: 0; background: #05070a; font: 15px/1.6 -apple-system, system-ui, "Segoe UI", sans-serif;
+    display: grid; place-items: center; min-height: 100vh; color: var(--text); }
+  .phone { width: 390px; height: 800px; background: var(--bg); border-radius: 30px; overflow: hidden;
+    position: relative; box-shadow: 0 20px 60px var(--shadow); display: flex; flex-direction: column; }
+  .topbar { height: 56px; flex: 0 0 56px; display: flex; align-items: center; gap: 10px; padding: 0 14px;
+    border-bottom: 1px solid var(--border); background: var(--surface); }
+  .topbar .ttl { font-weight: 600; font-size: 16px; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .icon-btn { width: 36px; height: 36px; display: grid; place-items: center; border-radius: 9px; color: var(--text-2); background: transparent; border: 0; cursor: pointer; }
+  .icon-btn:hover { background: var(--surface-2); color: var(--text); }
+  svg { width: 20px; height: 20px; stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+  .scroll { overflow-y: auto; padding: 14px 16px 90px; flex: 1; }
+  h1.title { font-size: 26px; font-weight: 400; font-family: Georgia, "Times New Roman", serif; margin: 4px 0 2px; line-height: 1.15; }
+  .subtitle { font-size: 13px; color: var(--text-3); border-bottom: 1px solid var(--border); padding-bottom: 10px; margin-bottom: 12px; }
+  .ro { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; color: var(--amber);
+    background: color-mix(in srgb, var(--amber) 12%, transparent); border-radius: 8px; padding: 5px 9px; margin-bottom: 14px; }
+  .ro svg { width: 13px; height: 13px; }
+  /* infobox */
+  .infobox { float: right; width: 168px; margin: 0 0 10px 12px; background: var(--surface); border: 1px solid var(--border);
+    border-radius: 10px; padding: 10px; font-size: 12px; }
+  .infobox .ib-title { text-align: center; font-weight: 700; font-size: 12.5px; padding-bottom: 7px; border-bottom: 1px solid var(--border); margin-bottom: 7px; }
+  .infobox .ib-disc { width: 70px; height: 70px; border-radius: 50%; margin: 0 auto 8px; display: grid; place-items: center;
+    background: color-mix(in srgb, var(--steel) 16%, transparent); color: var(--steel); }
+  .infobox .ib-disc svg { width: 36px; height: 36px; }
+  .infobox dl { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 4px 8px; }
+  .infobox dt { color: var(--text-3); font-weight: 600; }
+  .infobox dd { margin: 0; }
+  p { margin: 0 0 12px; }
+  a.link { color: var(--link); text-decoration: none; cursor: pointer; }
+  a.link:hover { text-decoration: underline; }
+  sup.ref { font-size: 10px; line-height: 0; }
+  sup.ref a { color: var(--link); text-decoration: none; cursor: pointer; }
+  h2.sec { font-family: Georgia, serif; font-weight: 400; font-size: 19px; margin: 20px 0 8px;
+    padding-bottom: 4px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 8px; }
+  h2.sec .dom { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 8px; }
+  h2.sec .dom-lbl { font-size: 10px; font-family: system-ui; color: var(--text-3); border: 1px solid var(--border);
+    border-radius: 20px; padding: 0 7px; margin-left: auto; text-transform: uppercase; letter-spacing: .04em; }
+  /* references */
+  h2.refs { font-family: Georgia, serif; font-weight: 400; font-size: 18px; margin: 24px 0 8px; padding-bottom: 4px; border-bottom: 1px solid var(--border); }
+  ol.reflist { margin: 0; padding-left: 22px; font-size: 12.5px; color: var(--text-2); }
+  ol.reflist li { margin-bottom: 8px; }
+  ol.reflist li.hl { background: color-mix(in srgb, var(--amber) 14%, transparent); border-radius: 6px; padding: 2px 4px; margin-left: -4px; }
+  ol.reflist .meta { color: var(--text-3); }
+  ol.reflist mark { background: var(--mark); color: var(--text); border-radius: 3px; padding: 0 2px; }
+  ol.reflist .disc { color: var(--link); cursor: pointer; font-size: 11.5px; }
+  .discuss { position: absolute; left: 0; right: 0; bottom: 0; padding: 12px 16px calc(12px + env(safe-area-inset-bottom));
+    background: linear-gradient(to top, var(--bg) 72%, transparent); }
+  .discuss button { width: 100%; height: 44px; border-radius: 12px; border: 1px solid var(--border); background: var(--surface);
+    color: var(--text); font-size: 14px; font-weight: 600; display: inline-flex; align-items: center; justify-content: center; gap: 8px; cursor: pointer; }
+  .scrim { position: absolute; inset: 0; background: rgba(0,0,0,.45); opacity: 0; pointer-events: none; transition: opacity .15s; }
+  .scrim.on { opacity: 1; pointer-events: auto; }
+  .sheet { position: absolute; left: 12px; right: 12px; bottom: 12px; background: var(--surface); border: 1px solid var(--border);
+    border-radius: 16px; padding: 14px; transform: translateY(150%); transition: transform .2s cubic-bezier(.2,.8,.2,1); box-shadow: 0 -8px 30px var(--shadow); }
+  .sheet.on { transform: translateY(0); }
+  .sheet h4 { margin: 0 0 6px; font-size: 14px; }
+  .sheet .ta { background: var(--surface-2); border-radius: 10px; padding: 11px; font-size: 13px; color: var(--text-3); min-height: 60px; }
+  .sheet .note { font-size: 11.5px; color: var(--text-3); margin-top: 10px; }
+</style>
+</head>
+<body>
+<div class="phone">
+  <div class="topbar">
+    <button class="icon-btn"><svg viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg></button>
+    <div class="ttl">Celine Hopkins</div>
+    <button class="icon-btn" id="theme"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4.5"/><path d="M12 2v2M12 20v2M4 12H2M22 12h-2M5 5l1.5 1.5M17.5 17.5L19 19M19 5l-1.5 1.5M6.5 17.5L5 19"/></svg></button>
+  </div>
+
+  <div class="scroll">
+    <h1 class="title">Celine Hopkins</h1>
+    <div class="subtitle">Person · software engineer · machine-written from your notes</div>
+    <div class="ro"><svg viewBox="0 0 24 24"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>Read-only — correct it by discussing</div>
+
+    <div class="infobox">
+      <div class="ib-disc"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-7 8-7s8 3 8 7"/></svg></div>
+      <div class="ib-title">Celine Hopkins</div>
+      <dl>
+        <dt>Spouse</dt><dd><a class="link">Jeff</a><sup class="ref"><a onclick="jump(1)">[1]</a></sup></dd>
+        <dt>Employer</dt><dd><a class="link">Globex</a><sup class="ref"><a onclick="jump(2)">[2]</a></sup></dd>
+        <dt>Lives in</dt><dd><a class="link">Denver</a><sup class="ref"><a onclick="jump(3)">[3]</a></sup></dd>
+      </dl>
+    </div>
+
+    <p><strong>Celine Hopkins</strong> is a software engineer based in
+      <a class="link">Denver, Colorado</a>.<sup class="ref"><a onclick="jump(3)">[3]</a></sup>
+      She is married to <a class="link">Jeff</a><sup class="ref"><a onclick="jump(1)">[1]</a></sup> and has worked at
+      <a class="link">Globex Corporation</a> since 2019.<sup class="ref"><a onclick="jump(2)">[2]</a></sup></p>
+
+    <h2 class="sec"><span class="dom" style="background:var(--general)"></span>Career</h2>
+    <p>Hopkins joined <a class="link">Globex Corporation</a> in 2019 and was promoted to senior
+      engineer in early 2026.<sup class="ref"><a onclick="jump(2)">[2]</a></sup> She previously worked at
+      <a class="link">Initech</a> from 2016 to 2019.<sup class="ref"><a onclick="jump(4)">[4]</a></sup></p>
+
+    <h2 class="sec"><span class="dom" style="background:var(--general)"></span>Personal life</h2>
+    <p>She married <a class="link">Jeff</a> in 2016; the couple celebrated their tenth anniversary in
+      2026.<sup class="ref"><a onclick="jump(1)">[1]</a></sup> They moved into a house in
+      <a class="link">Denver</a> in late 2025.<sup class="ref"><a onclick="jump(3)">[3]</a></sup></p>
+
+    <h2 class="sec"><span class="dom" style="background:var(--health)"></span>Health<span class="dom-lbl">health</span></h2>
+    <p>Hopkins has a recorded <a class="link">penicillin allergy</a><sup class="ref"><a onclick="jump(5)">[5]</a></sup>
+      and takes levothyroxine 75 mcg each morning.<sup class="ref"><a onclick="jump(5)">[5]</a></sup></p>
+
+    <h2 class="sec"><span class="dom" style="background:var(--finance)"></span>Finances<span class="dom-lbl">finance</span></h2>
+    <p>She holds a joint account with <a class="link">Chase</a>, into which her payroll is
+      deposited.<sup class="ref"><a onclick="jump(6)">[6]</a></sup></p>
+
+    <h2 class="refs">References</h2>
+    <ol class="reflist">
+      <li id="r1"><span class="meta">Note · Mar 2, 2026 · general —</span> "…celebrated our <mark>tenth anniversary</mark> today." · <span class="disc" onclick="discuss()">discuss</span></li>
+      <li id="r2"><span class="meta">Note · Jan 19, 2026 · general —</span> "…<mark>promoted to senior engineer at Globex</mark>…" · <span class="disc" onclick="discuss()">discuss</span></li>
+      <li id="r3"><span class="meta">Note · Nov 4, 2025 · general —</span> "…<mark>moved into the Denver house</mark>." · <span class="disc" onclick="discuss()">discuss</span></li>
+      <li id="r4"><span class="meta">Note · Jun 1, 2016 · general —</span> "Celine started at <mark>Initech</mark> today." · <span class="disc" onclick="discuss()">discuss</span></li>
+      <li id="r5"><span class="meta">Note · Feb 11, 2026 · health —</span> "…<mark>penicillin allergy</mark>… <mark>levothyroxine 75mcg</mark>…" · <span class="disc" onclick="discuss()">discuss</span></li>
+      <li id="r6"><span class="meta">Note · Dec 20, 2025 · finance —</span> "…<mark>joint Chase account</mark>." · <span class="disc" onclick="discuss()">discuss</span></li>
+    </ol>
+  </div>
+
+  <div class="discuss"><button onclick="discuss()"><svg viewBox="0 0 24 24" style="width:18px;height:18px"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>Discuss this article</button></div>
+
+  <div class="scrim" id="scrim" onclick="close_()"></div>
+  <div class="sheet" id="sheet">
+    <h4>Discuss this article</h4>
+    <div class="ta"><em>Describe what's wrong and what it should say…</em></div>
+    <div class="note">Filed as a note (in the relevant domain) — the pipeline applies it on the next build, so the wiki stays machine-written. Facts are never edited directly.</div>
+  </div>
+</div>
+
+<script>
+  document.getElementById('theme').onclick = () => { const h = document.documentElement; h.dataset.theme = h.dataset.theme === 'dark' ? 'light' : 'dark'; };
+  const scroll = document.querySelector('.scroll');
+  function jump(n) {
+    document.querySelectorAll('.reflist li').forEach(li => li.classList.remove('hl'));
+    const li = document.getElementById('r' + n);
+    li.classList.add('hl'); li.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    setTimeout(() => li.classList.remove('hl'), 2200);
+  }
+  function discuss() { document.getElementById('scrim').classList.add('on'); document.getElementById('sheet').classList.add('on'); }
+  function close_() { document.getElementById('scrim').classList.remove('on'); document.getElementById('sheet').classList.remove('on'); }
+</script>
+</body>
+</html>
