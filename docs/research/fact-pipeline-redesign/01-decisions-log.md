@@ -72,3 +72,20 @@ Sequence + PR slices: see `60-incremental-plan.md`. The greenfield spec (`40-fin
 remains the design reference for the adopted mechanisms; its §3.5/§6 projection model and §5
 two-stage extraction are shelved per this decision.
 
+## D4 — Per-wave execution loop (binding for every implementation wave)
+
+Each wave in `60-incremental-plan.md` runs this loop, in order:
+1. **Independent design red-team** — adversarially review the wave's *approach* against the actual
+   code BEFORE writing it (edge cases, interaction with supersession/pinned/derived/RLS, migration
+   safety). Surface Sev-1/2; revise the wave's approach until clean.
+2. **Implement** — the revised approach, on a wave branch.
+3. **Red-team the implementation** — adversarially review the *diff* (correctness, firewall,
+   regressions, the things the design red-team flagged); fix findings.
+4. **Test** — tests in the same change (80% backend gate, security paths 100%, real Postgres via
+   testcontainers, LLM faked); CI green.
+5. **PR** — open it; merge on green per the usual flow.
+
+Red-team passes prefer an independent agent for genuine independence; given background-agent
+unreliability in this environment, a stalled agent is stopped and the pass is done inline rather
+than blocking. GUI waves additionally honor D2 (3 mockups before any GUI implementation).
+
