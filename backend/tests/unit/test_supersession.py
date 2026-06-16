@@ -139,6 +139,34 @@ def test_state_first_value_inserts_active_silently() -> None:
     assert d.insert and d.insert_status == "active" and d.review_kind is None
 
 
+# --- irrealis guard: hypothetical/question never overwrite an asserted head ---
+
+
+def test_irrealis_candidate_does_not_displace_asserted_head() -> None:
+    """A hypothetical/question value is not a claim about the present, so it
+    parks behind a conflict card and the asserted current value stays active —
+    "maybe I'll switch to Acme" must not overwrite the real employer."""
+    for modal in ("hypothetical", "question"):
+        d = decide(cand(assertion=modal), [view()])
+        assert d.insert and d.insert_status == "pending_review", modal
+        assert d.supersede_ids == [] and d.hold_ids == [], modal
+        assert d.review_kind == "fact_conflict" and d.conflicting_id == "old-1", modal
+
+
+def test_reported_candidate_still_supersedes_an_asserted_head() -> None:
+    """Only genuinely irrealis assertions are gated; REPORTED (a third-party
+    claim) keeps its shipped supersede semantics."""
+    d = decide(cand(assertion="reported"), [view()])
+    assert d.insert and d.insert_status == "active" and d.supersede_ids == ["old-1"]
+
+
+def test_irrealis_does_not_gate_a_non_asserted_head() -> None:
+    """The guard protects an ASSERTED truth specifically; a hypothetical
+    superseding a prior hypothetical head is unaffected."""
+    d = decide(cand(assertion="hypothetical"), [view(assertion="hypothetical")])
+    assert d.insert and d.insert_status == "active" and d.supersede_ids == ["old-1"]
+
+
 # --- confidence guard: low-confidence never auto-supersedes ------------------
 
 
