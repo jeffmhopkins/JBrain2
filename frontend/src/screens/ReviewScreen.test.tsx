@@ -187,13 +187,14 @@ describe("ReviewScreen (split inbox)", () => {
     vi.restoreAllMocks();
   });
 
-  it("shows three filter lanes with counts and a browsable list of all pending items", async () => {
+  it("shows the two filter lanes with counts and a browsable list of all pending items", async () => {
     render(<ReviewScreen />);
     await screen.findByText("two values recorded for Sarah's birthDate");
 
     expect(screen.getByRole("tab", { name: "pending 4" })).toHaveAttribute("aria-selected", "true");
-    expect(screen.getByRole("tab", { name: "deferred 1" })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "decided 2" })).toBeInTheDocument();
+    // Defer is retired — there is no deferred lane.
+    expect(screen.queryByRole("tab", { name: /deferred/ })).not.toBeInTheDocument();
     // Browsable: every pending item is listed, not one-at-a-time.
     expect(screen.getByText("are “Bob” and “Robert Chen” the same person?")).toBeInTheDocument();
     expect(screen.getByText("which Sam?")).toBeInTheDocument();
@@ -704,33 +705,64 @@ describe("ReviewScreen (split inbox)", () => {
     );
   });
 
-  it("an ambiguous mention is never reject-only: defer and talk-it-over are offered", async () => {
+  it("an ambiguous mention is never reject-only: correct-it is the way out", async () => {
     render(<ReviewScreen />);
     await screen.findByText("two values recorded for Sarah's birthDate");
     fireEvent.click(screen.getByRole("button", { name: /which Sam\?/ }));
 
+    // correct it is the non-reject escape; defer / talk it over are retired.
     expect(screen.getByRole("button", { name: /leave unlinked/ })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "defer" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "talk it over" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "correct it" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "defer" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "talk it over" })).not.toBeInTheDocument();
   });
 
-  it("talk-it-over parks the item with the discuss action", async () => {
+  it("editing the relation via the weighted picker files a predicate correction", async () => {
+    const inf: ReviewItem = {
+      id: "inf-p",
+      kind: "low_confidence_inference",
+      domain: "general",
+      created_at: "2026-06-15T13:00:00Z",
+      status: "open",
+      resolution: null,
+      resolved_at: null,
+      payload: {
+        entity_ref: "me",
+        predicate: "name.nickname",
+        qualifier: "",
+        statement: "People call me Jeff.",
+        value_json: { name: "Jeff" },
+        reasons: ["below_threshold"],
+        summary: "hold for review (below_threshold): People call me Jeff.",
+        // The ranked candidates the picker offers — weighted by similarity.
+        predicate_suggestions: [
+          { name: "name.given", score: 0.82 },
+          { name: "name.full", score: 0.6 },
+        ],
+        outcomes: { accept: "recorded and pinned.", reject: "the fact is discarded." },
+      },
+    };
+    serve([inf], [], []);
     render(<ReviewScreen />);
-    await screen.findByText("two values recorded for Sarah's birthDate");
-    fireEvent.click(screen.getByRole("button", { name: /which Sam\?/ }));
-    fireEvent.click(screen.getByRole("button", { name: "talk it over" }));
+    await screen.findByText(/hold for review/);
+    fireEvent.click(screen.getByRole("button", { name: /hold for review/ }));
 
-    await waitFor(() =>
-      expect(fetchMock).toHaveBeenCalledWith(
-        "/api/review/a1/resolve",
-        expect.objectContaining({ body: JSON.stringify({ action: "discuss", payload: {} }) }),
-      ),
-    );
-    expect(screen.getByRole("tab", { name: "pending 3" })).toBeInTheDocument();
-    // The parked item now rides in the deferred lane, tagged for the assistant.
-    fireEvent.click(screen.getByRole("tab", { name: "deferred 2" }));
-    expect(screen.getByText("which Sam?")).toBeInTheDocument();
-    expect(screen.getAllByText("with assistant").length).toBeGreaterThanOrEqual(1);
+    // Open the relation picker from the predicate chip: it marks the current
+    // relation and ranks the candidates to swap onto.
+    fireEvent.click(screen.getByRole("button", { name: /name\.nickname/ }));
+    expect(screen.getByText("current")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /name\.given/ }));
+
+    // Editing the relation flips approve to a correction; the note spells out the
+    // relation change (the #7 channel — never a direct predicate write).
+    fireEvent.click(screen.getByRole("button", { name: "approve correction" }));
+    const noteCall = await waitFor(() => {
+      const call = fetchMock.mock.calls.find(([u]) => String(u) === "/api/notes");
+      if (!call) throw new Error("no note filed yet");
+      return call;
+    });
+    const body = JSON.parse(String((noteCall[1] as RequestInit).body)) as { body: string };
+    expect(body.body).toContain("relation should be name.given, not name.nickname");
   });
 
   it("correct it files a correction note, then resolves the item as corrected", async () => {
@@ -790,22 +822,17 @@ describe("ReviewScreen (split inbox)", () => {
     expect(screen.getByRole("tab", { name: "pending 2" })).toBeInTheDocument();
   });
 
-  it("select mode lets you defer several at once", async () => {
+  it("select mode offers bulk approve but no defer", async () => {
     render(<ReviewScreen />);
     await screen.findByText("two values recorded for Sarah's birthDate");
 
     fireEvent.click(screen.getByRole("button", { name: "select" }));
     fireEvent.click(screen.getByRole("checkbox", { name: /which Sam/ }));
     fireEvent.click(screen.getByRole("checkbox", { name: /Bob.*Robert Chen/ }));
-    fireEvent.click(screen.getByRole("button", { name: "defer all" }));
 
-    await waitFor(() =>
-      expect(fetchMock).toHaveBeenCalledWith(
-        "/api/review/resolve-batch",
-        expect.objectContaining({ method: "POST" }),
-      ),
-    );
-    expect(screen.getByRole("tab", { name: "pending 2" })).toBeInTheDocument();
+    // Defer is retired; bulk approve remains the only batch action.
+    expect(screen.queryByRole("button", { name: "defer all" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "approve all" })).toBeInTheDocument();
   });
 
   it("the decided lane lists decisions and reopen unwinds one", async () => {
@@ -903,9 +930,7 @@ describe("ReviewScreen (split inbox)", () => {
     expect(
       await screen.findByText("pending is clear — new items arrive as notes are analyzed."),
     ).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("tab", { name: "deferred 0" }));
-    expect(
-      screen.getByText("nothing parked — items you defer or talk over collect here."),
-    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: "decided 0" }));
+    expect(screen.getByText("no decisions yet — resolved items collect here.")).toBeInTheDocument();
   });
 });

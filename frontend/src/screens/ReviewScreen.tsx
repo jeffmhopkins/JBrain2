@@ -1,5 +1,5 @@
-// Review inbox — split-inbox redesign (docs/DESIGN.md "Review inbox"). Three
-// lanes (pending · deferred · decided) behind a segmented filter. The list is
+// Review inbox — split-inbox redesign (docs/DESIGN.md "Review inbox"). Two
+// lanes (pending · decided) behind a segmented filter. The list is
 // browsable with a selection mode for bulk actions; tapping a row pushes a
 // detail view with prev/next so you move between items without returning to
 // the list. The detail is composed from a registry of typed blocks
@@ -7,7 +7,7 @@
 // review/blocks/registry — header, claim:{inference,diff,notice}, trace,
 // action, evidence, plus a lane-driven footer — so a new kind is a sequence,
 // not a screen branch. Every decision raises an undo snackbar (undo is the
-// server's own unwind). Decided rows reopen; deferred rows resume.
+// server's own unwind). Decided rows reopen.
 
 import { type TouchEvent, useEffect, useMemo, useRef, useState } from "react";
 import { edgePath, valueLabel } from "../analysis/format";
@@ -44,7 +44,6 @@ function ListRow({ item, selectable, selected, onToggle, onOpen }: ListRowProps)
   const conf = confidenceBadge(p.confidence);
   const decided = item.status === "resolved" || item.status === "dismissed";
   const dismissed = item.status === "dismissed";
-  const isDiscuss = item.resolution?.action === "discuss";
   const isInference = item.kind === "low_confidence_inference";
   return (
     <div
@@ -65,7 +64,6 @@ function ListRow({ item, selectable, selected, onToggle, onOpen }: ListRowProps)
         <span className="rrow-line">
           <span className="kind-badge">{kindLabel(item.kind)}</span>
           <DomainDot domain={item.domain} />
-          {isDiscuss && <span className="state-chip chip-discuss">with assistant</span>}
           <span className="rrow-when">{fmtWhen(item)}</span>
         </span>
         <span className="rrow-sum">{p.summary ?? item.kind}</span>
@@ -116,17 +114,24 @@ function Detail({ item, lane, queue, position, onClose, onAdvance, onNav }: Deta
   const [composing, setComposing] = useState(false);
   const [draft, setDraft] = useState("");
 
-  // Direction C — correct in place: a low-confidence inference's value is
-  // editable on the card. The proposed-fact panel (claim:inference) and the
-  // approve button (action) share this edit state, so an edit flips approve to
-  // approve correction. A typed predicate offers its members as chips instead
-  // of free text.
+  // Direction C — correct in place: a low-confidence inference's predicate AND
+  // value are editable on the card. The proposed-fact panel (claim:inference)
+  // and the approve button (action) share this edit state, so editing either
+  // side flips approve to approve correction. The predicate side is a weighted
+  // picker (the canonicals nearest the proposed relation) plus free entry; the
+  // value is free text, or a typed predicate's members as chips.
   const isInference = item.kind === "low_confidence_inference" && parsed.predicate !== null;
   const originalValue = isInference ? valueLabel(parsed.valueJson, parsed.statement ?? "") : "";
   const [editValue, setEditValue] = useState(originalValue);
   const [editingValue, setEditingValue] = useState(false);
   const valueEdited =
     isInference && editValue.trim().length > 0 && editValue.trim() !== originalValue;
+
+  const originalPredicate = isInference ? (parsed.predicate ?? "") : "";
+  const [editPredicate, setEditPredicate] = useState(originalPredicate);
+  const [editingPredicate, setEditingPredicate] = useState(false);
+  const predicateEdited =
+    isInference && editPredicate.trim().length > 0 && editPredicate.trim() !== originalPredicate;
 
   // Carousel: swipe left/right pages to the next/prev item, the horizontal twin
   // of the ‹ › chevrons. Armed under the same condition they show, and only on a
@@ -166,6 +171,14 @@ function Detail({ item, lane, queue, position, onClose, onAdvance, onNav }: Deta
       editingValue,
       setEditingValue,
       valueEdited,
+      originalPredicate,
+      editPredicate,
+      setEditPredicate,
+      editingPredicate,
+      setEditingPredicate,
+      predicateEdited,
+      predicateSuggestions: parsed.predicateSuggestions,
+      edited: valueEdited || predicateEdited,
     },
     composing,
     setComposing,
@@ -236,7 +249,7 @@ function ListView({ lane, items, queue, onOpen }: ListViewProps) {
   const [selecting, setSelecting] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   // Pending triage groups by subject entity by default; "time" is the flat,
-  // chronological list. Only pending groups — deferred/decided are logs.
+  // chronological list. Only pending groups — decided is a log.
   const [groupMode, setGroupMode] = useState<"entity" | "time">("entity");
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
 
@@ -275,14 +288,6 @@ function ListView({ lane, items, queue, onOpen }: ListViewProps) {
         (d): d is { id: string; action: string; payload: Record<string, unknown> } => d !== null,
       );
     if (decisions.length > 0) queue.batch(decisions, `approved ${decisions.length}`);
-    setSelecting(false);
-    setSelected(new Set());
-  }
-  function bulkDefer(ids: string[]) {
-    queue.batch(
-      ids.map((id) => ({ id, action: "defer", payload: {} })),
-      `parked ${ids.length}`,
-    );
     setSelecting(false);
     setSelected(new Set());
   }
@@ -372,9 +377,6 @@ function ListView({ lane, items, queue, onOpen }: ListViewProps) {
       {selecting && selected.size > 0 && (
         <div className="rbulk" role="toolbar" aria-label="bulk actions">
           <span className="rbulk-n">{selected.size} selected</span>
-          <button type="button" className="rbulk-defer" onClick={() => bulkDefer([...selected])}>
-            defer all
-          </button>
           <button
             type="button"
             className="rbulk-approve"
@@ -395,7 +397,6 @@ function ListView({ lane, items, queue, onOpen }: ListViewProps) {
 function EmptyLane({ lane }: { lane: ReviewFilter }) {
   const copy: Record<ReviewFilter, string> = {
     pending: "pending is clear — new items arrive as notes are analyzed.",
-    deferred: "nothing parked — items you defer or talk over collect here.",
     decided: "no decisions yet — resolved items collect here.",
   };
   return <p className="analysis-quiet rlane-empty">{copy[lane]}</p>;
@@ -410,7 +411,6 @@ export function ReviewScreen() {
 
   const lanes: Record<ReviewFilter, ReviewItem[] | null> = {
     pending: queue.pending,
-    deferred: queue.deferred,
     decided: queue.decided,
   };
   const items = lanes[filter];
@@ -423,13 +423,13 @@ export function ReviewScreen() {
 
   const detailItem = detailId !== null ? (items?.find((i) => i.id === detailId) ?? null) : null;
 
-  // If the open item leaves the lane (decided/deferred from the detail), close.
+  // If the open item leaves the lane (decided from the detail), close.
   useEffect(() => {
     if (detailId !== null && detailItem === null) setDetailId(null);
   }, [detailId, detailItem]);
 
   // The undo snackbar lingers, then fades — undo stays reachable from the
-  // decided/deferred lanes after it goes.
+  // decided lane after it goes.
   const { undoable, dismissUndo } = queue;
   useEffect(() => {
     if (undoable === null) return;
@@ -458,7 +458,6 @@ export function ReviewScreen() {
 
   const counts: Record<ReviewFilter, number | undefined> = {
     pending: queue.pending?.length,
-    deferred: queue.deferred?.length,
     decided: queue.decided?.length,
   };
 
@@ -467,7 +466,7 @@ export function ReviewScreen() {
       {detailItem === null ? (
         <>
           <div className="review-segs" role="tablist">
-            {(["pending", "deferred", "decided"] as ReviewFilter[]).map((f) => (
+            {(["pending", "decided"] as ReviewFilter[]).map((f) => (
               <button
                 key={f}
                 type="button"

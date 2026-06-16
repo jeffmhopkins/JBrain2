@@ -80,8 +80,28 @@ export interface Parsed {
   // new_predicate cards: the candidate canonicals (strongest first) and the
   // triggering edge (subject + value) the card previews each mapping against.
   suggestions: { name: string; score: number }[];
+  // low_confidence_inference cards: the canonicals nearest the proposed
+  // predicate, weighted by similarity — the ranked options the correct-in-place
+  // predicate picker offers when you swap the relation. Empty without an
+  // embedder; the picker then falls back to manual entry only.
+  predicateSuggestions: { name: string; score: number }[];
   subject: string | null;
   value: string | null;
+}
+
+/** Parse a weighted-suggestion list ([{name, score}]) read defensively off the
+ * wire — shared by new_predicate (`suggestions`) and the inference predicate
+ * picker (`predicate_suggestions`). */
+function parseSuggestions(raw: unknown): { name: string; score: number }[] {
+  return Array.isArray(raw)
+    ? raw.flatMap((s: unknown): { name: string; score: number }[] => {
+        if (s === null || typeof s !== "object") return [];
+        const o = s as Record<string, unknown>;
+        return typeof o.name === "string" && typeof o.score === "number"
+          ? [{ name: o.name, score: o.score }]
+          : [];
+      })
+    : [];
 }
 
 export function parsePayload(payload: Record<string, unknown>): Parsed {
@@ -133,15 +153,8 @@ export function parsePayload(payload: Record<string, unknown>): Parsed {
       ? payload.enum_values.flatMap((v: unknown): string[] => (typeof v === "string" ? [v] : []))
       : [],
     trace: parseTrace(payload.trace),
-    suggestions: Array.isArray(payload.suggestions)
-      ? payload.suggestions.flatMap((s: unknown): { name: string; score: number }[] => {
-          if (s === null || typeof s !== "object") return [];
-          const o = s as Record<string, unknown>;
-          return typeof o.name === "string" && typeof o.score === "number"
-            ? [{ name: o.name, score: o.score }]
-            : [];
-        })
-      : [],
+    suggestions: parseSuggestions(payload.suggestions),
+    predicateSuggestions: parseSuggestions(payload.predicate_suggestions),
     subject: str(payload.subject),
     value: str(payload.value),
   };
@@ -149,7 +162,7 @@ export function parsePayload(payload: Record<string, unknown>): Parsed {
 
 /** The proposals to choose among, per kind. Choices carry their own; the
  * outcome kinds synthesize accept/reject buttons from their what-happens copy.
- * There is always at least one — and defer/discuss sit beside them — so reject
+ * There is always at least one — and "correct it" sits beside them — so reject
  * is never the only way out. */
 export function proposalsFor(p: Parsed): Proposal[] {
   if (p.choices.length > 0) return p.choices;

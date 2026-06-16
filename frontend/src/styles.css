@@ -3610,11 +3610,6 @@ button.small {
   color: var(--amber);
 }
 
-.chip-discuss {
-  background: var(--steel-tint);
-  color: var(--steel);
-}
-
 /* ----- Bulk action bar (fixed, like the detail footer) ----- */
 
 .rbulk {
@@ -3635,16 +3630,6 @@ button.small {
 .rbulk-n {
   font-size: var(--fs-secondary);
   color: var(--text-2);
-}
-
-.rbulk-defer {
-  min-height: 44px;
-  padding: 0 14px;
-  font-weight: 500;
-  color: var(--amber);
-  background: var(--amber-tint);
-  border: 1px solid transparent;
-  border-radius: var(--r-input);
 }
 
 .rbulk-approve {
@@ -3811,6 +3796,86 @@ button.small {
 }
 
 .edge-value.rinf-edited {
+  color: var(--steel);
+}
+
+/* The relation chip and its weighted picker (docs/mocks/
+   review-edit-predicate-and-value.html): tap the predicate to swap it for one of
+   the canonicals nearest the proposed relation — ranked by similarity (the
+   rnp-match bar) — or type to coin a new one. */
+.rinf-chip.pred {
+  font-family: var(--font-mono);
+  font-size: var(--fs-secondary);
+}
+
+.rinf-pred-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 4px;
+  padding: 10px;
+  background: var(--bg);
+  border: 1px solid var(--steel);
+  border-radius: var(--r-input);
+}
+
+.rinf-pred-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+}
+
+.rinf-pred-done {
+  margin-left: auto;
+  font: inherit;
+  font-size: var(--fs-secondary);
+  color: var(--steel);
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+
+.rinf-pred-search {
+  width: 100%;
+  max-width: none;
+}
+
+.rinf-pred-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.rinf-pred-opt {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font: inherit;
+  text-align: left;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-input);
+  padding: 8px 11px;
+  cursor: pointer;
+}
+
+.rinf-pred-opt.current {
+  border-color: var(--steel);
+}
+
+.rinf-pred-name {
+  font-family: var(--font-mono);
+  font-size: var(--fs-secondary);
+}
+
+.rinf-pred-cur {
+  margin-left: auto;
+  font-size: var(--fs-micro);
   color: var(--steel);
 }
 
@@ -4768,30 +4833,12 @@ button.small {
   border: 1px solid var(--border);
 }
 
-.rfoot-defer {
-  color: var(--amber);
-  background: var(--amber-tint);
-  border-color: transparent;
-}
-
-.rfoot-discuss {
-  color: var(--steel);
-  background: var(--steel-tint);
-  border-color: transparent;
-}
-
 .rfoot-correct {
   color: var(--text);
   background: var(--surface-2);
 }
 
 .rfoot-correct.active {
-  color: var(--steel);
-  background: var(--steel-tint);
-  border-color: transparent;
-}
-
-.rfoot-resume {
   color: var(--steel);
   background: var(--steel-tint);
   border-color: transparent;
