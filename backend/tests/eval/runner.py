@@ -312,6 +312,7 @@ async def _read_commit(
             domain_code=f.domain_code,
             object_entity_id=(str(f.object_entity_id) if f.object_entity_id else None),
             object_name=(names.get(str(f.object_entity_id)) if f.object_entity_id else None),
+            valid_to=(f.valid_to.isoformat() if f.valid_to else None),
         )
         for f in fact_rows
     )

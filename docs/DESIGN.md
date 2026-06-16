@@ -358,6 +358,26 @@ input plus kind chips over standard list rows in a card, each row opening
 the entity page — pure reuse of settled paradigms, so it shipped without a
 variant review.
 
+**Former / past relationships — the interval timeline** (settled in a three-way
+review — **variant C** won over an inline "former" chip [A] and a current/
+previously section split [B]; reference mock:
+`docs/mocks/legacy-links-c-interval-timeline.html`). A relationship/state is
+**current** only when it is `active` **and** open (`valid_to IS NULL`); a closed
+interval (`valid_to` set) is **former**, even when nothing replaced it (the
+two-axis model — `docs/research/legacy-links-handling.md` §3.1). A former edge
+stays **visible on the default view** (it is not superseded history to hide
+behind the `N earlier →` rail), rendered with a compact **validity track** under
+the edge: a `--green` open span to **now** for the current value, a faded/dashed
+`--slate` span for a former one — and **bounds the note never gave stay vague**
+(an undated "used to" reads `former`/`ended ≤ <capture>` at era precision, never
+an invented date). Tapping the row opens that property's **revision rail** in the
+shared `Sheet` — the same settled history paradigm — where each dot cites its
+note (so source citation lives in the rail, not a separate inline expansion).
+Concurrent former values with no stated order are **co-equal** (neither
+supersedes the other); the rail lists them without implying a sequence. A closed
+relationship has **no derived inverse** (so a former `worksFor → X` never shows
+`X employs Me`).
+
 **Review inbox** (resettled in review — the **split inbox** won over the
 original one-at-a-time triage: you couldn't move between items, and a
 proposal that was only *reject*-able was a dead end): a segmented filter

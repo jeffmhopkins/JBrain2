@@ -659,7 +659,10 @@ class SqlAnalysisRepo:
             )
             shaped = _fact_dict(row)
             group["history"].append(shaped)
-            if group["current"] is None and row.status == "active":
+            # "Current" means active AND OPEN (valid_to IS NULL); a closed
+            # interval is a FORMER value, history not the live head, even when
+            # nothing replaced it (docs/research/legacy-links-handling.md §3.1).
+            if group["current"] is None and row.status == "active" and row.valid_to is None:
                 group["current"] = shaped
 
         return {
@@ -762,7 +765,7 @@ class SqlAnalysisRepo:
                             WHERE a.entity_id = f.entity_id
                               AND a.predicate = f.predicate
                               AND a.qualifier = f.qualifier
-                              AND a.status = 'active'
+                              AND a.status = 'active' AND a.valid_to IS NULL
                             ORDER BY coalesce(a.valid_from, a.reported_at) DESC,
                                      a.reported_at DESC, a.created_at DESC
                             LIMIT 1

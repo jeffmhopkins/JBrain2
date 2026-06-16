@@ -7,7 +7,7 @@
 // provenance footer owning the note-level re-run.
 
 import { type KeyboardEvent, useCallback, useEffect, useRef, useState } from "react";
-import { EdgeValue, FactCitation, KindBadge, StatusChip } from "../analysis/bits";
+import { EdgeValue, FactCitation, FactTenure, KindBadge, StatusChip } from "../analysis/bits";
 import { dedupeTokens, edgePath, fmtConfidence, fmtTemporal } from "../analysis/format";
 import { type AnalysisEntity, type FactOut, type NoteAnalysis, api } from "../api/client";
 import { awaitingImageCount } from "../notes/lifecycle";
@@ -69,10 +69,11 @@ interface FactRowProps {
 function FactRow({ fact, extractor, onOpenEntity }: FactRowProps) {
   const [open, setOpen] = useState(false);
   const toggle = () => setOpen((o) => !o);
+  const former = fact.valid_to !== null; // closed interval = FORMER (not current)
   return (
     <div className="fact-row-wrap">
       <div
-        className="fact-row"
+        className={former ? "fact-row is-former" : "fact-row"}
         // biome-ignore lint/a11y/useSemanticElements: the row hosts a nested object-entity link, which a real <button> cannot wrap.
         role="button"
         tabIndex={0}
@@ -92,6 +93,7 @@ function FactRow({ fact, extractor, onOpenEntity }: FactRowProps) {
             <EdgeValue fact={fact} onOpenEntity={onOpenEntity} />
           </span>
         </span>
+        <FactTenure fact={fact} />
         <span className="fact-meta">
           <KindBadge kind={fact.kind} />
           <StatusChip status={fact.status} pinned={fact.pinned} />

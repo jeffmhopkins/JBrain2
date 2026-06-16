@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Legacy links — Variant C · interval timeline</title>
+<style>
+  :root{
+    color-scheme: light;
+    --bg:#f7f7f5; --surface:#fff; --surface-2:#f0f0ee; --border:#e2e2df;
+    --text:#1a1b1e; --text-2:#5c5f66; --text-3:#9aa0a8;
+    --steel:#7fa7c9; --steel-tint:rgba(127,167,201,.13);
+    --green:#8fbc9a; --green-tint:rgba(143,188,154,.13); --amber:#c9a36a; --amber-tint:rgba(201,163,106,.13);
+    --slate:#9aa0a8; --slate-tint:rgba(154,160,168,.16);
+    --accent:var(--steel); --scrim:rgba(14,15,17,.55);
+    --r-input:12px; --r-card:16px; --r-pill:999px;
+    --font-mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+    --fs-micro:12px; --fs-secondary:14px; --fs-note:15px; --fs-title:18px;
+  }
+  [data-theme="dark"]{color-scheme:dark;--bg:#0e0f11;--surface:#17181b;--surface-2:#1e2024;--border:#26282c;
+    --text:#e6e7e9;--text-2:#9a9da3;--text-3:#5c5f66;--slate-tint:rgba(154,160,168,.13)}
+  *{box-sizing:border-box}
+  body{margin:0;background:#3a3b3e;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    display:flex;flex-direction:column;align-items:center;gap:14px;padding:20px 12px 48px;color:var(--text)}
+  .caption{max-width:420px;color:#e6e7e9;font-size:13px;line-height:1.5;text-align:center}
+  .caption b{color:#fff}
+  .toolbar button{font:inherit;font-size:13px;padding:7px 12px;border-radius:10px;border:1px solid #555;background:#26272b;color:#e6e7e9;cursor:pointer}
+  .phone{position:relative;width:390px;max-width:96vw;height:760px;background:var(--bg);border-radius:30px;overflow:hidden;border:1px solid #000;box-shadow:0 8px 40px rgba(0,0,0,.5);display:flex;flex-direction:column}
+  .statusbar{display:flex;justify-content:space-between;align-items:center;padding:10px 22px 4px;font-size:13px;font-weight:600}
+  .statusbar .right{font-size:11px;color:var(--text-2)}
+  .scroll{flex:1;overflow-y:auto}
+  .topbar{display:flex;align-items:center;justify-content:space-between;padding:8px 16px 6px}
+  .topbar .l{display:flex;align-items:center;gap:10px}.chev{font-size:22px;color:var(--text-2)}
+  .topbar h1{margin:0;font-size:var(--fs-title);font-weight:500}
+  .topbar .r{display:flex;align-items:center;gap:14px;color:var(--text-2)}
+  .dot{width:9px;height:9px;border-radius:50%;background:var(--green)}
+  .metarow{display:flex;align-items:center;gap:12px;padding:6px 16px 10px;color:var(--text-2);font-size:var(--fs-secondary)}
+  .cat{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--border);border-radius:var(--r-pill);padding:5px 12px;color:var(--green)}
+  .cat .d{width:7px;height:7px;border-radius:50%;background:var(--green)}
+  .more{margin-left:auto;color:var(--text-3);letter-spacing:2px}
+  .tabs{display:flex;margin:0 16px 14px;background:var(--surface-2);border-radius:14px;padding:4px}
+  .tabs button{flex:1;font:inherit;font-size:var(--fs-secondary);padding:9px 0;border:none;background:transparent;color:var(--text-2);border-radius:11px;cursor:pointer}
+  .tabs button.active{background:var(--surface);color:var(--text);font-weight:500}
+  .body{padding:0 16px 28px;display:flex;flex-direction:column;gap:18px}
+  .analysis-title{margin:0;font-size:var(--fs-title);font-weight:500}
+  .tag-row{display:flex;flex-wrap:wrap;gap:6px}
+  .tag-pill{font-size:var(--fs-micro);padding:3px 10px;border-radius:var(--r-pill);background:var(--surface-2);color:var(--text-2)}
+  .subject-group{display:flex;flex-direction:column;gap:8px}
+  .entity-chip{display:inline-flex;align-items:center;gap:8px;align-self:flex-start;min-height:40px;padding:4px 14px;border:1px solid var(--border);border-radius:var(--r-pill);background:var(--surface);color:var(--text)}
+  .entity-chip-name{font-weight:500}.entity-chip-kind{font-size:var(--fs-micro);color:var(--text-3)}
+  .fact-card{display:flex;flex-direction:column;background:var(--surface);border:1px solid var(--border);border-radius:var(--r-card);overflow:hidden}
+  .fact-row-wrap + .fact-row-wrap{border-top:1px solid var(--border)}
+  .fact-row{display:flex;flex-direction:column;gap:7px;width:100%;min-height:44px;padding:12px 14px;cursor:pointer}
+  .fact-edge{font-size:var(--fs-note);overflow-wrap:anywhere;display:flex;align-items:center}
+  .edge-path{font-family:var(--font-mono);font-size:var(--fs-secondary);color:var(--text-2)}
+  .edge-arrow{color:var(--text-3)}.edge-object{font-weight:500;color:var(--accent)}
+  .kind-badge{font-size:var(--fs-micro);padding:1px 8px;border-radius:var(--r-pill);background:var(--steel-tint);color:var(--steel);margin-left:auto}
+  /* the interval track */
+  .track{display:flex;align-items:center;gap:8px;font-size:var(--fs-micro);color:var(--text-3)}
+  .bar{position:relative;flex:1;height:6px;border-radius:var(--r-pill);background:var(--surface-2);overflow:hidden}
+  .bar .fill{position:absolute;top:0;bottom:0;border-radius:var(--r-pill)}
+  /* current: open span to "now" in green */
+  .bar.current .fill{left:38%;right:0;background:var(--green)}
+  /* former: a faded past span ending before now (bounds unknown -> dashed) */
+  .bar.former .fill{left:8%;width:46%;background:repeating-linear-gradient(90deg,var(--slate) 0 6px,transparent 6px 10px);opacity:.8}
+  .span-label{white-space:nowrap}
+  .span-now{color:var(--green)}.span-former{color:var(--text-2)}
+  .fact-row.is-former .edge-object{color:var(--text-2)}
+  /* sheet (revision rail) */
+  .scrim{position:absolute;inset:0;background:var(--scrim);display:none}
+  .scrim.open{display:block}
+  .sheet{position:absolute;left:0;right:0;bottom:0;background:var(--surface);border-radius:16px 16px 0 0;border-top:1px solid var(--border);
+    padding:14px 16px 22px;transform:translateY(100%);transition:transform .16s ease}
+  .scrim.open .sheet{transform:translateY(0)}
+  .handle{width:32px;height:4px;border-radius:2px;background:var(--border);margin:0 auto 12px}
+  .sheet h4{margin:0 0 14px;font-size:var(--fs-title);font-weight:500}
+  .rail{display:flex;flex-direction:column;gap:0;border-left:2px solid var(--border);margin-left:6px;padding-left:16px}
+  .railitem{position:relative;padding:0 0 16px}
+  .railitem::before{content:"";position:absolute;left:-23px;top:3px;width:9px;height:9px;border-radius:50%;background:var(--slate);border:2px solid var(--surface)}
+  .railitem.now::before{background:var(--green)}
+  .railitem .when{font-size:var(--fs-micro);color:var(--text-3)}
+  .railitem .what{font-size:var(--fs-secondary);font-weight:500}
+  .railitem .cite{font-size:var(--fs-micro);color:var(--text-3)}
+  .section-header{margin:6px 0 0;font-size:var(--fs-micro);text-transform:uppercase;letter-spacing:.08em;color:var(--text-3)}
+  .sources{display:flex;flex-direction:column;background:var(--surface);border:1px solid var(--border);border-radius:var(--r-card);overflow:hidden;margin-top:8px}
+  .srow{display:flex;align-items:center;gap:12px;padding:13px 14px}
+  .sicon{width:28px;height:28px;border-radius:8px;background:var(--surface-2);display:flex;align-items:center;justify-content:center;color:var(--text-2)}
+  .sname{font-weight:500;font-size:var(--fs-secondary)}.smeta{font-size:var(--fs-micro);color:var(--text-3)}.scheck{margin-left:auto;color:var(--green)}
+  .sfoot{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:13px 14px;border-top:1px solid var(--border)}
+  .sprov{margin:0;font-size:var(--fs-micro);color:var(--text-3)}
+  .rerun{font:inherit;font-size:var(--fs-secondary);padding:8px 14px;border-radius:10px;border:none;background:var(--steel-tint);color:var(--steel);cursor:pointer}
+</style>
+</head>
+<body>
+  <div class="caption">
+    <b>Variant C — interval timeline.</b> Each employment edge carries a compact validity track:
+    a green open span to <b>now</b> for the current job, a faded/dashed past span (bounds unknown)
+    for a former one. Leans into the bi-temporal model; tap a row to open the full
+    <b>revision rail</b> in a sheet (the settled history paradigm).
+  </div>
+  <div class="toolbar">
+    <button onclick="document.documentElement.dataset.theme = document.documentElement.dataset.theme==='light'?'dark':'light'">toggle theme</button>
+  </div>
+
+  <div class="phone">
+    <div class="statusbar"><span>17:06</span><span class="right">●●●●  ⌃  100% ⚡</span></div>
+    <div class="scroll">
+      <div class="topbar"><div class="l"><span class="chev">‹</span><h1>Note</h1></div><div class="r"><span class="dot"></span><span>⚡</span></div></div>
+      <div class="metarow"><span class="cat"><span class="d"></span>General</span><span>Mon, Jun 15, 2026 · 5:05 PM</span><span class="more">•••</span></div>
+      <div class="tabs"><button>Note</button><button>Attachments</button><button class="active">Analysis</button></div>
+
+      <div class="body">
+        <h2 class="analysis-title">Employment history</h2>
+        <div class="tag-row"><span class="tag-pill">employment</span><span class="tag-pill">career</span><span class="tag-pill">work</span><span class="tag-pill">spacex</span></div>
+
+        <div class="subject-group">
+          <div class="entity-chip"><span class="entity-chip-name">Me</span><span class="entity-chip-kind">person</span></div>
+          <div class="fact-card">
+            <!-- current -->
+            <div class="fact-row-wrap">
+              <div class="fact-row" onclick="openRail('SpaceX')">
+                <span class="fact-edge"><span class="edge-path">worksFor</span><span class="edge-arrow"> → </span><span class="edge-object">SpaceX</span><span class="kind-badge">relationship</span></span>
+                <span class="track"><span class="bar current"><span class="fill"></span></span><span class="span-label span-now">now ▸</span></span>
+              </div>
+            </div>
+            <!-- former -->
+            <div class="fact-row-wrap">
+              <div class="fact-row is-former" onclick="openRail('US army')">
+                <span class="fact-edge"><span class="edge-path">worksFor</span><span class="edge-arrow"> → </span><span class="edge-object">US army</span><span class="kind-badge">relationship</span></span>
+                <span class="track"><span class="bar former"><span class="fill"></span></span><span class="span-label span-former">former</span></span>
+              </div>
+            </div>
+            <div class="fact-row-wrap">
+              <div class="fact-row is-former" onclick="openRail('Oregon Lithoprint')">
+                <span class="fact-edge"><span class="edge-path">worksFor</span><span class="edge-arrow"> → </span><span class="edge-object">Oregon Lithoprint</span><span class="kind-badge">relationship</span></span>
+                <span class="track"><span class="bar former"><span class="fill"></span></span><span class="span-label span-former">former</span></span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <section>
+          <h3 class="section-header">Sources</h3>
+          <div class="sources">
+            <div class="srow"><span class="sicon">▤</span><span><span class="sname">note text</span><br><span class="smeta">71 chars · the note body itself</span></span><span class="scheck">✓</span></div>
+            <div class="sfoot"><p class="sprov">analyzed Jun 15, 2026, 5:05 PM · xai:grok-4.3</p><button class="rerun">re-run analysis</button></div>
+          </div>
+        </section>
+      </div>
+    </div>
+
+    <!-- revision rail sheet -->
+    <div class="scrim" id="scrim" onclick="if(event.target.id==='scrim')close_()">
+      <div class="sheet">
+        <div class="handle"></div>
+        <h4>worksFor — history</h4>
+        <div class="rail">
+          <div class="railitem now"><div class="when">2026 — now</div><div class="what">SpaceX</div><div class="cite">cites: "I work for SpaceX" · Jun 15, 2026</div></div>
+          <div class="railitem"><div class="when">past · ended ≤ Jun 2026</div><div class="what" id="r1">US army</div><div class="cite">cites: "used to work for the US army" · Jun 15, 2026</div></div>
+          <div class="railitem"><div class="when">past · ended ≤ Jun 2026</div><div class="what" id="r2">Oregon Lithoprint</div><div class="cite">cites: "Oregon Lithoprint" · Jun 15, 2026</div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+<script>
+  function openRail(){document.getElementById('scrim').classList.add('open')}
+  function close_(){document.getElementById('scrim').classList.remove('open')}
+</script>
+</body>
+</html>

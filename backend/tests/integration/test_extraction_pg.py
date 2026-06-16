@@ -1663,6 +1663,74 @@ async def test_cross_subject_inverse_is_proposed_not_written(
     assert len(proposals) == 1 and proposals[0].subject == "Patient X"
 
 
+async def test_used_to_relationship_is_closed_and_mints_no_inverse(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """A former relationship lands active-but-CLOSED and materializes NO inverse:
+    a closed `worksFor` must not mint `Oregon Lithoprint employs Me`, or that
+    derived edge would answer "who works there?" with the owner — re-presenting a
+    past job as current (legacy-links plan §ledger F1)."""
+    # Body names the org so the edge is surface-attested (weight clears commit) —
+    # the same recipe as the cross-subject test that lands a relationship active.
+    note_id = await make_note(
+        maker, domain="general", body="I worked for Oregon Lithoprint from 2019 to 2021."
+    )
+
+    # Seed the org as a confirmed, null-subject (Thing) entity resolvable by exact
+    # alias, so the edge resolves to a known object whose inverse WOULD normally be
+    # written — isolating the closed-edge gate from the held-provisional-object path.
+    org_entity = str(uuid.uuid4())
+    async with scoped_session(maker, OWNER) as s:
+        await s.execute(
+            text(
+                "INSERT INTO app.entities (id, kind, canonical_name, status, domain_code)"
+                " VALUES (:id, 'Organization', 'Oregon Lithoprint', 'confirmed', 'general')"
+            ),
+            {"id": org_entity},
+        )
+        await s.execute(
+            text(
+                "INSERT INTO app.entity_aliases (id, entity_id, alias, alias_norm, domain_code)"
+                " VALUES (gen_random_uuid(), :eid, 'Oregon Lithoprint', 'oregon lithoprint',"
+                " 'general')"
+            ),
+            {"eid": org_entity},
+        )
+
+    # The proven active-landing relationship recipe, with a model-DATED CLOSED
+    # interval — so the edge commits active and exercises the closed-edge inverse
+    # gate directly (the past-marker guard is unit-tested separately).
+    payload = _relationship_payload("worksFor", "Oregon Lithoprint", obj_kind="Organization")
+    payload["facts"][0]["temporal"] = {
+        "phrase": "from 2019 to 2021",
+        "resolved_start": "2019-01-01T00:00:00+00:00",
+        "resolved_end": "2021-12-31T00:00:00+00:00",
+        "precision": "year",
+    }
+    await analyzer(maker, [json.dumps(payload)]).analyze_note({"note_id": note_id})
+
+    # The directed edge exists and is CLOSED (valid_to set) — a FORMER value, so
+    # `current = active AND valid_to IS NULL` never reports it as the employer.
+    # (Whether it commits active or the weight model holds it for review is an
+    # orthogonal disposition; the closure + no-inverse guarantees hold either way.)
+    src = await rows(
+        maker,
+        OWNER,
+        "SELECT status, valid_to FROM app.facts WHERE predicate = 'worksFor' AND note_id = :nid",
+        nid=note_id,
+    )
+    assert len(src) == 1 and src[0].valid_to is not None
+    # ...and NO reciprocal edge was minted on the organization's stream: a former
+    # relationship has no inverse (legacy-links F1).
+    inverse = await rows(
+        maker,
+        OWNER,
+        "SELECT 1 FROM app.facts f JOIN app.entities e ON e.id = f.entity_id"
+        " WHERE e.canonical_name = 'Oregon Lithoprint' AND f.derived_from_fact_id IS NOT NULL",
+    )
+    assert inverse == []
+
+
 def _person_edge(subj: str, obj: str, predicate: str = "spouse") -> dict[str, Any]:
     return {
         "title": f"{subj} and {obj}",

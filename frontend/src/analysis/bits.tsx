@@ -45,6 +45,26 @@ export function EdgeValue({
   return <>{factValue(fact)}</>;
 }
 
+/** The validity track (DESIGN.md "Former / past relationships — interval
+ * timeline", variant C). A CLOSED interval (valid_to set) renders a faded
+ * "former" span; an OPEN one renders nothing — calm is the current state. Bounds
+ * the note never gave stay vague ("former"), never an invented date. */
+export function FactTenure({ fact }: { fact: FactOut }) {
+  if (fact.valid_to === null) return null; // current/open — no track, stays calm
+  const from = fact.valid_from ? fmtTemporal(fact.valid_from, fact.temporal_precision) : null;
+  const label = from
+    ? `${from} → ${fmtTemporal(fact.valid_to, fact.temporal_precision)}`
+    : "former";
+  return (
+    <span className="fact-tenure" title="former — this relationship has ended">
+      <span className="tenure-bar" aria-hidden="true">
+        <span className="tenure-fill" />
+      </span>
+      <span className="tenure-label">{label}</span>
+    </span>
+  );
+}
+
 /** active facts carry no chip — absence of state chrome IS the calm state. */
 export function StatusChip({ status, pinned }: { status: FactStatus; pinned: boolean }) {
   if (pinned) {

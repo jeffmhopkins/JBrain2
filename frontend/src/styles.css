@@ -2686,6 +2686,44 @@ button.small {
   font-variant-numeric: tabular-nums;
 }
 
+/* Former / past relationships — the interval timeline (DESIGN.md, variant C).
+   A closed interval renders a faded "former" track; an open one renders nothing
+   (calm = current). The former value itself dims one step so the live ones lead. */
+.fact-tenure {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+}
+
+.tenure-bar {
+  flex: 1;
+  height: 5px;
+  max-width: 120px;
+  border-radius: var(--r-pill);
+  background: var(--surface-2);
+  overflow: hidden;
+}
+
+.tenure-fill {
+  display: block;
+  width: 54%;
+  height: 100%;
+  border-radius: var(--r-pill);
+  /* a finished, dashed past span — bounds are vague, the edge has ended */
+  background: repeating-linear-gradient(90deg, var(--slate) 0 6px, transparent 6px 10px);
+}
+
+.tenure-label {
+  white-space: nowrap;
+}
+
+.fact-row.is-former .edge-object,
+.fact-row.is-former .edge-value {
+  color: var(--text-2);
+}
+
 /* Expanded citation: source words back-lit, provenance beneath. */
 .fact-citation {
   display: flex;

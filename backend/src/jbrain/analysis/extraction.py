@@ -203,6 +203,52 @@ def normalize_future_assertion(fact: ExtractedFact, anchor: datetime) -> Extract
     return fact
 
 
+# Past-tense markers that end an undated relationship/state the model left OPEN.
+# Forward companion above relaxes a still-future fact; this one CLOSES a fact the
+# note states as over ("I used to work for Acme"). Without a close it reads as a
+# current job (docs/research/legacy-links-handling.md). The Wave-2 prompt is the
+# primary signal (it can set resolved_end directly); this is the deterministic
+# net for the common phrasings, the exact mirror of the future guard's role.
+_PAST_MARKERS = re.compile(
+    r"\b(?:used to|use to|formerly|former|previously|no longer|back when)\b"
+    r"|\bex-"
+    # "left" only in the "left <a job/org>" shape — followed by a determiner or
+    # possessive — so spatial "on the left" and "left-justified" never match.
+    r"|\bleft (?:the|a|an|his|her|their|my|our)\b",
+    re.IGNORECASE,
+)
+
+
+def normalize_past_assertion(fact: ExtractedFact, anchor: datetime) -> ExtractedFact:
+    """Close an undated state/relationship the note states as ENDED.
+
+    Fires ONLY when every condition holds, to stay a safe net (not a guess): the
+    fact is a `state`/`relationship`, `asserted` (a `negated` "no longer own X"
+    is a disposal the supersession path supersedes, not history; never
+    `hypothetical`/`question`), carries NO temporal at all (one
+    `temporal_precision` cannot describe both a real valid_from and a vague era
+    end), and its statement names a past marker. Effect: stamp valid_to = anchor
+    at `era` precision (start stays null — the note gave none), so supersession
+    lands it as closed history, not a current head (the two-axis model:
+    current = active AND valid_to IS NULL).
+    """
+    if fact.kind not in ("state", "relationship") or fact.assertion != "asserted":
+        return fact
+    if fact.temporal is not None and (
+        fact.temporal.resolved_start is not None or fact.temporal.resolved_end is not None
+    ):
+        return fact
+    marker = _PAST_MARKERS.search(fact.statement)
+    if marker is None:
+        return fact
+    return replace(
+        fact,
+        temporal=ExtractedTemporal(
+            phrase=marker.group(0), resolved_start=None, resolved_end=anchor, precision="era"
+        ),
+    )
+
+
 # Backward-looking companion to normalize_future_assertion. The model resolves
 # every relative phrase against the capture anchor (prompt.py temporal rule),
 # but a common lapse is an off-by-one on BACKWARD phrases: "last night" captured

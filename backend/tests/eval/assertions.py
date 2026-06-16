@@ -287,6 +287,13 @@ def check_case_db(case: Case, commit: DbCommit) -> list[str]:
             )
         if ef.domain and f.domain_code != ef.domain:
             fails.append(f"{ef.entity}.{ef.predicate}: domain {f.domain_code!r} != {ef.domain!r}")
+        if ef.former is not None:
+            is_former = f.valid_to is not None  # closed interval = FORMER
+            if is_former != ef.former:
+                fails.append(
+                    f"{ef.entity}.{ef.predicate}: former={is_former} (valid_to={f.valid_to!r}),"
+                    f" expected former={ef.former}"
+                )
         if ef.disposition:
             has_card = f.id in commit.review_fact_ids
             if ef.disposition == "commit" and (f.status != "active" or has_card):

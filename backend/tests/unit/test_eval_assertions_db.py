@@ -58,6 +58,58 @@ def _commit(
     )
 
 
+# --- former (closed interval) assertion -------------------------------------
+
+
+def test_former_assertion_passes_for_a_closed_edge() -> None:
+    case = case_from_dict(
+        {
+            "id": "c",
+            "note_text": "used to work for X",
+            "expect": {
+                "facts": [{"entity": "Me", "predicate": "worksFor", "object": "X", "former": True}]
+            },
+        }
+    )
+    commit = _commit(
+        (_cf(OWNER, "Me", "worksFor", kind="relationship", object_name="X", valid_to="2026-06-15"),)
+    )
+    assert check_case_db(case, commit) == []
+
+
+def test_former_assertion_catches_an_open_edge_expected_closed() -> None:
+    case = case_from_dict(
+        {
+            "id": "c",
+            "note_text": "used to work for X",
+            "expect": {
+                "facts": [{"entity": "Me", "predicate": "worksFor", "object": "X", "former": True}]
+            },
+        }
+    )
+    commit = _commit(  # valid_to None → reads as current, but the case wanted former
+        (_cf(OWNER, "Me", "worksFor", kind="relationship", object_name="X", valid_to=None),)
+    )
+    fails = check_case_db(case, commit)
+    assert any("former" in f for f in fails)
+
+
+def test_former_false_requires_an_open_current_edge() -> None:
+    case = case_from_dict(
+        {
+            "id": "c",
+            "note_text": "works for X",
+            "expect": {
+                "facts": [{"entity": "Me", "predicate": "worksFor", "object": "X", "former": False}]
+            },
+        }
+    )
+    commit = _commit(  # closed, but the case expected the current (open) value
+        (_cf(OWNER, "Me", "worksFor", kind="relationship", object_name="X", valid_to="2026-06-15"),)
+    )
+    assert any("former" in f for f in check_case_db(case, commit))
+
+
 # --- dispositions: active commit vs pending_review + card --------------------
 
 

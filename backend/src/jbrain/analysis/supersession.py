@@ -389,6 +389,12 @@ def decide(candidate: Candidate, existing: list[FactView], *, predicate: str = "
     for e in live:
         if not values_equal(candidate, e):
             continue
+        # A now-OPEN restatement of a CLOSED interval is a RE-OPEN (rejoined a
+        # former employer), not an idempotent refresh — refresh writes only
+        # rendering and would strand the row closed. Fall through to insert a
+        # fresh open interval beside the closed history.
+        if candidate.valid_to is None and e.valid_to is not None:
+            continue
         same_validity = e.valid_from == candidate.valid_from
         if accumulating and same_validity:
             return Decision(refresh_id=e.id)
@@ -441,10 +447,10 @@ def decide(candidate: Candidate, existing: list[FactView], *, predicate: str = "
     if candidate.kind == "relationship" and not is_functional(predicate):
         return Decision(insert=True)  # non-functional edges accumulate
 
-    # state / preference / functional relationship: single current value.
+    # state / preference / functional relationship: at most one CURRENT (OPEN)
+    # value; closed intervals are history that never contend for it.
     actives = [e for e in live if e.status == "active"]
-    if not actives:
-        return Decision(insert=True)
+    open_actives = [e for e in actives if e.valid_to is None]
 
     def key(valid_from: datetime | None, reported_at: datetime) -> tuple[datetime, datetime]:
         # Preferences are valid from when reported — newest report wins.
@@ -454,7 +460,77 @@ def decide(candidate: Candidate, existing: list[FactView], *, predicate: str = "
             return (reported_at, reported_at)
         return _validity(valid_from, reported_at)
 
-    current = max(actives, key=lambda e: key(e.valid_from, e.reported_at))
+    # Closed-on-arrival ("used to work for X"): history, never the CURRENT head
+    # (docs/research/legacy-links-handling.md §3.2). Gated to ASSERTED
+    # state/relationship: a NEGATED disposal supersedes (falls through), and an
+    # open-vs-open close was already taken by _interval_close.
+    if (
+        candidate.valid_to is not None
+        and candidate.assertion == "asserted"
+        and candidate.kind in ("state", "relationship")
+    ):
+        if open_actives:
+            # An open value holds the current slot — this past value lands behind
+            # it as closed retrospective history (chained), never displacing the
+            # open value the way a same-note reported_at tie would.
+            current_open = max(open_actives, key=lambda e: key(e.valid_from, e.reported_at))
+            return Decision(
+                insert=True,
+                insert_status="superseded",
+                insert_superseded_by=current_open.id,
+                insert_valid_to=candidate.valid_to,
+            )
+        # No open current. A same-INTERVAL, same-object, different-VALUE closed
+        # peer is a CORRECTION of that historical value ("in 2019 it was Columbus,
+        # not Cleveland") — newest-report wins, supersede + conflict. Otherwise the
+        # value is PARALLEL history — a co-equal closed head (two unrelated past
+        # jobs, or a distinct interval): no supersede, no conflict.
+        correction = max(
+            (
+                e
+                for e in actives
+                if e.valid_to is not None
+                and e.valid_from == candidate.valid_from
+                and e.object_entity_id == candidate.object_entity_id
+                and not values_equal(candidate, e)
+            ),
+            key=lambda e: key(e.valid_from, e.reported_at),
+            default=None,
+        )
+        if correction is None:
+            return Decision(insert=True, insert_valid_to=candidate.valid_to)
+        if correction.pinned:
+            # Re-flag a pinned human decision, never auto-flip it.
+            return Decision(
+                insert=True,
+                insert_valid_to=candidate.valid_to,
+                insert_status="pending_review",
+                review_kind="fact_conflict",
+                conflicting_id=correction.id,
+            )
+        if (
+            candidate.self_confidence < LOW_CONFIDENCE
+            and candidate.self_confidence < correction.confidence
+        ):
+            return Decision(
+                insert=True,
+                insert_valid_to=candidate.valid_to,
+                insert_status="pending_review",
+                review_kind="low_confidence",
+                conflicting_id=correction.id,
+            )
+        return Decision(
+            insert=True,
+            insert_valid_to=candidate.valid_to,
+            supersede_ids=[correction.id],
+            review_kind="fact_conflict",
+            conflicting_id=correction.id,
+        )
+
+    if not open_actives:
+        return Decision(insert=True)
+
+    current = max(open_actives, key=lambda e: key(e.valid_from, e.reported_at))
     if key(candidate.valid_from, candidate.reported_at) >= key(
         current.valid_from, current.reported_at
     ):

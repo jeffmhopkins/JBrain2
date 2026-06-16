@@ -488,5 +488,43 @@
       ],
       "rationale": "Vague note: no fabricated provider/drug entity, no 'the guy' entity, no guessed coreference."
     }
+  },
+  {
+    "id": "legacy-past-employment",
+    "category": "temporal",
+    "domain": "general",
+    "advisory": true,
+    "note_text": "I work for SpaceX, I used to work for the US army and Oregon Lithoprint",
+    "expect": {
+      "facts": [
+        {
+          "entity": "Me",
+          "predicate": "worksFor",
+          "object": "SpaceX",
+          "kind": "state",
+          "assertion": "asserted",
+          "former": false
+        },
+        {
+          "entity": "Me",
+          "predicate": "worksFor",
+          "object": "US army",
+          "assertion": "asserted",
+          "former": true
+        },
+        {
+          "entity": "Me",
+          "predicate": "worksFor",
+          "object": "Oregon Lithoprint",
+          "assertion": "asserted",
+          "former": true
+        }
+      ],
+      "absent_facts": [
+        { "entity": "US army", "predicate": "employs" },
+        { "entity": "Oregon Lithoprint", "predicate": "employs" }
+      ],
+      "rationale": "Current employer (SpaceX) is its own OPEN edge; the two stated former jobs are CLOSED (former), co-equal, and mint no reciprocal 'employs' inverse. Advisory until calibrated against live Grok (Failure B — emitting the current edge — is model-dependent; the closed-interval guarantee is pinned deterministically in test_extraction_pg)."
+    }
   }
 ]

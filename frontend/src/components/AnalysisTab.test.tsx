@@ -4,7 +4,7 @@
 
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { AttachmentExtract, NoteAnalysis } from "../api/client";
+import type { AttachmentExtract, FactOut, NoteAnalysis } from "../api/client";
 import type { StreamAttachment } from "../notes/useNotes";
 import { AnalysisTab } from "./AnalysisTab";
 
@@ -224,6 +224,61 @@ describe("AnalysisTab states", () => {
     // The provenance footer owns the re-run action, enabled when analyzed.
     expect(screen.getByText(/analyzed .*xai:grok-4\.3/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "re-run analysis" })).toBeEnabled();
+  });
+
+  it("renders a former (closed) relationship with a tenure track; current stays calm", async () => {
+    const base: FactOut = {
+      id: "f0",
+      entity_id: "ent-me",
+      entity_name: "Me",
+      predicate: "worksFor",
+      qualifier: null,
+      kind: "relationship",
+      statement: "",
+      value_json: null,
+      assertion: "asserted",
+      status: "active",
+      pinned: false,
+      confidence: 0.9,
+      valid_from: null,
+      valid_to: null,
+      reported_at: "2026-06-11T08:02:00Z",
+      temporal_precision: "era",
+      object_entity_id: null,
+      object_entity_name: null,
+      source_snippet: null,
+    };
+    const employment: NoteAnalysis = {
+      ...ANALYZED,
+      facts: [
+        {
+          ...base,
+          id: "f-spacex",
+          statement: "Me works for SpaceX.",
+          object_entity_id: "e-spacex",
+          object_entity_name: "SpaceX",
+          valid_to: null,
+        },
+        {
+          ...base,
+          id: "f-army",
+          statement: "Me used to work for the US army.",
+          object_entity_id: "e-army",
+          object_entity_name: "US army",
+          valid_to: "2026-06-15T00:00:00Z",
+        },
+      ],
+      entities: [{ id: "ent-me", kind: "Person", name: "Me", status: "active" }],
+    };
+    stubApi({ analysis: employment });
+    renderTab({ attachments: [] });
+
+    await screen.findByText("US army");
+    // the former edge carries the "former" label and the is-former treatment...
+    expect(screen.getByText("former")).toBeInTheDocument();
+    expect(screen.getByText("US army").closest(".fact-row")).toHaveClass("is-former");
+    // ...while the current (open) edge stays calm — no former marker.
+    expect(screen.getByText("SpaceX").closest(".fact-row")).not.toHaveClass("is-former");
   });
 
   it("collapses to the note-text row + footer when the note has no images", async () => {

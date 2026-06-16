@@ -73,6 +73,7 @@ from jbrain.analysis.extraction import (
     domain_floor,
     merge_extractions,
     normalize_future_assertion,
+    normalize_past_assertion,
     parse_extraction,
     ratchet_domain,
 )
@@ -1647,7 +1648,7 @@ class AnalysisPipeline:
         so the id (and the open card's fact_id link) survives. Returns the row id so
         _apply adds it to `touched` and the card can reference it; None when the
         entity (or object) didn't resolve, exactly like _upsert_fact."""
-        fact = normalize_future_assertion(fact, captured_at)
+        fact = normalize_past_assertion(normalize_future_assertion(fact, captured_at), captured_at)
         entity = resolved.get(fact.entity_ref)
         if entity is None:
             log.info("analysis.held_fact_skipped", reason="unlinked entity", ref=fact.entity_ref)
@@ -1847,9 +1848,10 @@ class AnalysisPipeline:
         chunks: list[_ChunkRef],
         extractor: str,
     ) -> uuid.UUID | None:
-        # A still-future fact is `expected`, never an asserted past event — the
-        # anchor is the note's capture time (docs/ANALYSIS.md "Temporal model").
-        fact = normalize_future_assertion(fact, captured_at)
+        # A still-future fact is `expected`, never an asserted past event; and an
+        # undated "used to" relationship is CLOSED, not current — both resolved
+        # against the note's capture anchor (docs/ANALYSIS.md "Temporal model").
+        fact = normalize_past_assertion(normalize_future_assertion(fact, captured_at), captured_at)
         entity = resolved.get(fact.entity_ref)
         if entity is None:
             log.info("analysis.fact_skipped", reason="unlinked entity", ref=fact.entity_ref)
@@ -2049,11 +2051,17 @@ class AnalysisPipeline:
         # inverse materialized on the object's stream, then the old source's
         # derived shadow re-pointed at it. Order matters — the new inverse must
         # exist before propagation can chain a superseded shadow onto it.
+        # A reciprocal is a CURRENT-value computation: only an active AND OPEN
+        # edge gets one. A closed (former) relationship — "used to work for X" —
+        # must NOT mint "X employs Me", or that derived edge would answer
+        # "who works for X?" with the owner, smuggling a past job back as current
+        # (docs/research/legacy-links-plan.md §ledger F1).
         new_inverse_id: uuid.UUID | None = None
         if (
             fact.kind == "relationship"
             and object_entity is not None
             and decision.insert_status == "active"
+            and (decision.insert_valid_to or valid_to) is None
         ):
             new_inverse_id = await self._materialize_inverse(
                 session,

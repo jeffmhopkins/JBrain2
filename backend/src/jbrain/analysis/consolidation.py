@@ -69,7 +69,9 @@ async def rewrite_predicate(session: AsyncSession, old: str, canonical: str) -> 
             "       AND g.subject_id IS NOT DISTINCT FROM f.subject_id"
             "       AND g.qualifier = f.qualifier"
             "       AND g.predicate = :canon"
-            "       AND g.status IN ('active', 'pending_review')"
+            # only a LIVE-CURRENT twin blocks the rewrite; a closed (former)
+            # value at the canonical address is history, not a collision.
+            "       AND g.status IN ('active', 'pending_review') AND g.valid_to IS NULL"
             "   )"
             " RETURNING f.id::text"
         ),
