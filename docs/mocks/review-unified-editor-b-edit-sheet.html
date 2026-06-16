@@ -1,0 +1,315 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Review — unified editable-fact card · B · compact card + edit sheet</title>
+    <style>
+      /* Design tokens — copied from frontend/src/styles/tokens.css. */
+      :root {
+        --steel: #7fa7c9; --steel-tint: rgba(127, 167, 201, 0.13);
+        --green: #8fbc9a; --green-tint: rgba(143, 188, 154, 0.13);
+        --amber: #c9a36a; --amber-tint: rgba(201, 163, 106, 0.13);
+        --rose: #cf8a8f; --rose-tint: rgba(207, 138, 143, 0.13);
+        --violet: #a493c9; --violet-tint: rgba(164, 147, 201, 0.14);
+        --slate: #9aa0a8; --accent: var(--steel); --font-scale: 1;
+        --fs-micro: calc(12px * var(--font-scale));
+        --fs-secondary: calc(14px * var(--font-scale));
+        --fs-note: calc(15px * var(--font-scale));
+        --fs-body: calc(16px * var(--font-scale));
+        --fs-title: calc(18px * var(--font-scale));
+        --fs-screen: calc(22px * var(--font-scale));
+        --r-input: 12px; --r-card: 16px; --r-pill: 999px;
+        --font-mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+      }
+      [data-theme="light"] { color-scheme: light; --page: #ecece9; --bg: #f7f7f5; --surface: #ffffff; --surface-2: #f0f0ee; --border: #e2e2df; --text: #1a1b1e; --text-2: #5c5f66; --text-3: #9a9da3; --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.06); }
+      [data-theme="dark"] { color-scheme: dark; --page: #060708; --bg: #0e0f11; --surface: #17181b; --surface-2: #1e2024; --border: #26282c; --text: #e6e7e9; --text-2: #9a9da3; --text-3: #5c5f66; --shadow-card: none; }
+      * { box-sizing: border-box; }
+      body { margin: 0; background: var(--page); color: var(--text); padding: 28px 16px 60px; font: 400 var(--fs-body) / 1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; display: flex; flex-direction: column; align-items: center; gap: 16px; }
+      .demo-bar { width: 100%; max-width: 460px; display: flex; align-items: center; gap: 12px; }
+      .demo-title { font-size: var(--fs-secondary); color: var(--text-2); }
+      .demo-title b { color: var(--text); }
+      .seg { margin-left: auto; display: flex; border: 1px solid var(--border); border-radius: var(--r-pill); overflow: hidden; }
+      .seg button { appearance: none; border: none; background: var(--surface); color: var(--text-2); font: inherit; font-size: var(--fs-micro); padding: 6px 13px; cursor: pointer; }
+      .seg button[aria-pressed="true"] { background: var(--steel-tint); color: var(--steel); }
+      .caption { width: 100%; max-width: 460px; font-size: var(--fs-secondary); color: var(--text-2); line-height: 1.5; }
+      .caption b { color: var(--text); }
+
+      .phone { width: 100%; max-width: 460px; height: 880px; background: var(--bg); border: 1px solid var(--border); border-radius: 30px; overflow: hidden; position: relative; display: flex; flex-direction: column; box-shadow: 0 20px 60px rgba(0, 0, 0, 0.25); }
+      .statusbar { display: flex; justify-content: space-between; align-items: center; padding: 14px 24px 4px; font-size: var(--fs-secondary); font-weight: 600; }
+      .screenhead { display: flex; align-items: center; gap: 12px; padding: 8px 18px 2px; }
+      .screenhead h1 { margin: 0; font-size: var(--fs-screen); font-weight: 600; }
+      .screenhead .pos { margin-left: auto; font-size: var(--fs-secondary); color: var(--text-2); font-variant-numeric: tabular-nums; }
+      .body { flex: 1; overflow-y: auto; padding: 10px 16px 40px; display: flex; flex-direction: column; gap: 12px; }
+
+      .subject { display: flex; align-items: center; gap: 11px; }
+      .avatar { width: 40px; height: 40px; border-radius: 50%; flex: none; display: grid; place-items: center; font-weight: 600; font-size: var(--fs-note); }
+      .subject-name { font-size: var(--fs-title); font-weight: 600; }
+      .subject-sub { font-size: var(--fs-micro); color: var(--text-3); display: flex; align-items: center; gap: 7px; }
+      .domain-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+      .kind-row { display: flex; align-items: center; gap: 8px; }
+      .kind-badge { font-size: var(--fs-micro); padding: 2px 9px; border-radius: var(--r-pill); background: var(--amber-tint); color: var(--amber); font-weight: 500; }
+      .conf-badge { font-size: var(--fs-micro); padding: 2px 9px; border-radius: var(--r-pill); border: 1px solid var(--border); color: var(--text-2); }
+
+      .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-card); box-shadow: var(--shadow-card); padding: 14px; display: flex; flex-direction: column; gap: 12px; }
+      .card-lbl { font-size: var(--fs-micro); text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-3); }
+      /* compact read view */
+      .edge { display: flex; align-items: center; gap: 9px; font-size: var(--fs-title); }
+      .edge .pred { font-family: var(--font-mono); font-size: var(--fs-note); color: var(--text-2); }
+      .edge .arrow { color: var(--text-3); }
+      .edge .obj { display: inline-flex; align-items: center; gap: 7px; font-weight: 600; }
+      .edge .obj .dot { width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center; font-size: 11px; font-weight: 600; background: var(--violet-tint); color: var(--violet); }
+      .meta-row { display: flex; flex-wrap: wrap; gap: 6px; }
+      .meta { font-size: var(--fs-micro); padding: 3px 9px; border-radius: var(--r-pill); border: 1px solid var(--border); color: var(--text-2); }
+      .meta.modal { background: var(--green-tint); color: var(--green); border-color: transparent; }
+      .meta.modal[data-v="negated"] { background: var(--rose-tint); color: var(--rose); }
+      .evi { background: var(--bg); border: 1px solid var(--border); border-radius: var(--r-input); padding: 10px 12px; font-size: var(--fs-secondary); color: var(--text-2); line-height: 1.5; }
+      .evi-src { font-size: var(--fs-micro); color: var(--text-3); margin-top: 6px; }
+      mark { background: var(--amber-tint); color: var(--amber); border-radius: 4px; padding: 0 3px; }
+
+      .actions { display: flex; flex-direction: column; gap: 9px; }
+      .btn { appearance: none; font: inherit; border: 1px solid var(--border); border-radius: var(--r-card); cursor: pointer; padding: 15px; font-size: var(--fs-note); font-weight: 600; background: var(--surface); color: var(--text); }
+      .btn.primary { background: var(--green); color: #06250f; border-color: transparent; }
+      .btn.primary.correction { background: var(--steel); color: #07223a; }
+      .btn.edit { background: var(--surface-2); color: var(--steel); }
+      .btn.ghost { color: var(--rose); }
+      .escape { display: flex; gap: 16px; justify-content: center; }
+      .escape button { appearance: none; background: none; border: none; color: var(--text-3); font: inherit; font-size: var(--fs-secondary); cursor: pointer; }
+
+      /* slide-up edit sheet */
+      .scrim { position: absolute; inset: 0; background: rgba(0, 0, 0, 0.45); opacity: 0; pointer-events: none; transition: opacity 0.2s; }
+      .scrim.open { opacity: 1; pointer-events: auto; }
+      .sheet { position: absolute; left: 0; right: 0; bottom: 0; max-height: 92%; background: var(--surface); border-top-left-radius: 22px; border-top-right-radius: 22px; border-top: 1px solid var(--border); transform: translateY(100%); transition: transform 0.24s ease; display: flex; flex-direction: column; }
+      .sheet.open { transform: translateY(0); }
+      .sheet-grip { width: 40px; height: 4px; border-radius: 2px; background: var(--border); margin: 10px auto 2px; }
+      .sheet-head { display: flex; align-items: center; gap: 10px; padding: 6px 16px 10px; border-bottom: 1px solid var(--border); }
+      .sheet-head .ttl { font-size: var(--fs-title); font-weight: 600; }
+      .sheet-head .done { margin-left: auto; appearance: none; border: none; background: none; color: var(--accent); font: inherit; font-weight: 600; cursor: pointer; }
+      .sheet-body { overflow-y: auto; padding: 14px 16px 16px; display: flex; flex-direction: column; gap: 16px; }
+
+      .frow { display: flex; flex-direction: column; gap: 7px; }
+      .frow > label { font-size: var(--fs-micro); text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-3); }
+      .frow input { font: inherit; font-size: var(--fs-note); background: var(--bg); border: 1px solid var(--border); border-radius: var(--r-input); padding: 10px 12px; color: var(--text); }
+      .frow input.mono { font-family: var(--font-mono); }
+      .seg-pick { display: flex; flex-wrap: wrap; gap: 6px; }
+      .seg-pick button { appearance: none; font: inherit; font-size: var(--fs-micro); padding: 7px 12px; border-radius: var(--r-pill); border: 1px solid var(--border); background: var(--bg); color: var(--text-2); cursor: pointer; }
+      .seg-pick button[aria-pressed="true"] { border-color: transparent; background: var(--steel-tint); color: var(--steel); font-weight: 600; }
+      .seg-pick.domains button[data-v="health"][aria-pressed="true"] { background: var(--rose-tint); color: var(--rose); }
+      .seg-pick.domains button[data-v="finance"][aria-pressed="true"] { background: var(--violet-tint); color: var(--violet); }
+      .hint { font-size: var(--fs-micro); color: var(--text-3); }
+
+      .setbox { display: flex; flex-direction: column; gap: 8px; }
+      .member { display: flex; align-items: center; gap: 9px; background: var(--bg); border: 1px solid var(--border); border-radius: var(--r-input); padding: 9px 11px; font-size: var(--fs-secondary); }
+      .member .dot { width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; font-size: 10px; font-weight: 600; background: var(--steel-tint); color: var(--steel); }
+      .member .nm { flex: 1; }
+      .member .act { appearance: none; border: 1px solid var(--border); background: var(--surface); color: var(--text-2); font: inherit; font-size: var(--fs-micro); padding: 4px 9px; border-radius: var(--r-pill); cursor: pointer; }
+      .member .act.replace[aria-pressed="true"] { border-color: transparent; background: var(--amber-tint); color: var(--amber); }
+      .member .act.remove[aria-pressed="true"] { border-color: transparent; background: var(--rose-tint); color: var(--rose); }
+      .member.new { border-style: dashed; }
+      .member.new .nm { color: var(--steel); font-weight: 600; }
+      .member.new .dot { background: var(--violet-tint); color: var(--violet); }
+      .sheet-foot { border-top: 1px solid var(--border); padding: 12px 16px; }
+      .sheet-foot .btn { width: 100%; }
+    </style>
+  </head>
+  <body>
+    <div class="demo-bar">
+      <div class="demo-title"><b>Review — unified editable-fact card.</b> B · compact card + edit sheet</div>
+      <div class="seg" role="group" aria-label="theme">
+        <button id="t-dark" aria-pressed="true">dark</button>
+        <button id="t-light" aria-pressed="false">light</button>
+      </div>
+    </div>
+    <div class="caption">
+      The card stays a tidy <b>read view</b> for fast triage; <b>Edit fields</b> slides up a full
+      structured editor where <b>kind is the sub-editor selector</b> at the top and every field is a
+      form row. Browse and edit are cleanly separated — the queue scans quickly, the sheet does the
+      deep work. Set predicates get <b>add / replace / remove</b> in the sheet; flip
+      <b>functional</b> to collapse them. Tap <b>Edit fields</b> to open it.
+    </div>
+
+    <div class="phone">
+      <div class="statusbar"><span>9:41</span><span>JBrain&nbsp;· 87</span></div>
+      <div class="screenhead"><h1>Review</h1><span class="pos">3 of 11</span></div>
+      <div class="body">
+        <div class="subject">
+          <div class="avatar" style="background: var(--steel-tint); color: var(--steel)">M</div>
+          <div>
+            <div class="subject-name">Me</div>
+            <div class="subject-sub"><span style="color: var(--steel)">Person</span><span class="domain-dot" id="domDot" style="background: var(--steel)"></span><span id="domLabel">general</span></div>
+          </div>
+        </div>
+        <div class="kind-row"><span class="kind-badge">new relation</span><span class="conf-badge">held · 0.71</span></div>
+
+        <div class="card">
+          <div class="card-lbl">proposed fact</div>
+          <div class="edge">
+            <span class="pred" id="rPred">friend</span><span class="arrow">→</span>
+            <span class="obj"><span class="dot" id="rObjDot">J</span><span id="rObj">Jordan Avery</span></span>
+          </div>
+          <div class="meta-row">
+            <span class="meta modal" id="rMod" data-v="asserted">asserted</span>
+            <span class="meta" id="rKind">relationship</span>
+            <span class="meta" id="rDom2">general</span>
+            <span class="meta" id="rTime">since 2026</span>
+            <span class="meta" id="rSet">set · adds to 3</span>
+          </div>
+          <div class="evi">“…grabbed coffee with my friend <mark>Jordan</mark> — we go way back.”<div class="evi-src">from note · captured Jun 10 · general</div></div>
+          <div class="actions">
+            <button class="btn primary" id="approveBtn">approve — add this friend</button>
+            <button class="btn edit" id="openSheet">edit fields ✎</button>
+            <button class="btn ghost">reject — discard</button>
+          </div>
+          <div class="escape"><button>defer</button><button>talk it over</button></div>
+        </div>
+      </div>
+
+      <!-- EDIT SHEET -->
+      <div class="scrim" id="scrim"></div>
+      <div class="sheet" id="sheet">
+        <div class="sheet-grip"></div>
+        <div class="sheet-head"><span class="ttl">Edit fact</span><button class="done" id="closeSheet">done</button></div>
+        <div class="sheet-body">
+          <div class="frow">
+            <label>kind — the sub-editor</label>
+            <div class="seg-pick" data-k="kind">
+              <button data-v="relationship" aria-pressed="true">relationship</button>
+              <button data-v="state">state</button>
+              <button data-v="attribute">attribute</button>
+              <button data-v="measurement">measurement</button>
+              <button data-v="event">event</button>
+              <button data-v="preference">preference</button>
+            </div>
+            <span class="hint">relationship → the value is another entity, so a link picker shows below.</span>
+          </div>
+
+          <div class="frow">
+            <label>relation (predicate)</label>
+            <input class="mono" id="iPred" value="friend" />
+            <span class="hint">nearest known: <b>friend</b> (exact) · knows (0.78) · colleague (0.64)</span>
+          </div>
+
+          <div class="frow" id="objRow">
+            <label>linked entity (object)</label>
+            <input id="iObj" value="Jordan Avery" />
+            <span class="hint">Person · or “＋ new person Jordan”. relink to a different node here.</span>
+          </div>
+
+          <div class="frow">
+            <label>modality</label>
+            <div class="seg-pick" data-k="mod">
+              <button data-v="asserted" aria-pressed="true">asserted</button>
+              <button data-v="negated">negated</button>
+              <button data-v="hypothetical">hypothetical</button>
+              <button data-v="reported">reported</button>
+              <button data-v="question">question</button>
+              <button data-v="expected">expected</button>
+            </div>
+          </div>
+
+          <div class="frow">
+            <label>domain (firewall)</label>
+            <div class="seg-pick domains" data-k="dom">
+              <button data-v="general" aria-pressed="true">general</button>
+              <button data-v="health">health</button>
+              <button data-v="finance">finance</button>
+              <button data-v="location">location</button>
+            </div>
+          </div>
+
+          <div class="frow">
+            <label>since · precision (blank = unknown)</label>
+            <input id="iTime" value="2026" placeholder="e.g. 2026, Jun 2026, 2026-06-10" />
+          </div>
+
+          <div class="frow" id="setRow">
+            <label>set membership — friend is set-valued</label>
+            <div class="setbox">
+              <div class="member"><span class="dot">R</span><span class="nm">Riley Chen</span></div>
+              <div class="member"><span class="dot">S</span><span class="nm">Sam Ortiz</span><button class="act replace">replace</button><button class="act remove">remove</button></div>
+              <div class="member"><span class="dot">D</span><span class="nm">Devon Park</span></div>
+              <div class="member new"><span class="dot">J</span><span class="nm">＋ add Jordan Avery</span></div>
+            </div>
+            <span class="hint" id="setHint">lands as <b>add</b> — a new co-equal edge, nothing superseded.</span>
+          </div>
+
+          <div class="frow">
+            <label>functional?</label>
+            <label class="hint" style="display: flex; gap: 8px; align-items: center"><input type="checkbox" id="fnToggle" style="margin: 0" /> treat as single-valued (registry-driven) — collapses the set to one "replace current"</label>
+          </div>
+        </div>
+        <div class="sheet-foot"><button class="btn primary correction" id="applyBtn">apply as correction</button></div>
+      </div>
+    </div>
+
+    <script>
+      const root = document.documentElement;
+      document.getElementById("t-dark").onclick = () => setTheme("dark");
+      document.getElementById("t-light").onclick = () => setTheme("light");
+      function setTheme(t) { root.dataset.theme = t; document.getElementById("t-dark").setAttribute("aria-pressed", t === "dark"); document.getElementById("t-light").setAttribute("aria-pressed", t === "light"); }
+
+      const sheet = document.getElementById("sheet"), scrim = document.getElementById("scrim");
+      const open = () => { sheet.classList.add("open"); scrim.classList.add("open"); };
+      const close = () => { sheet.classList.remove("open"); scrim.classList.remove("open"); };
+      document.getElementById("openSheet").onclick = open;
+      document.getElementById("closeSheet").onclick = close;
+      scrim.onclick = close;
+
+      const dirty = new Set();
+      // segmented pickers (live preview into the read card)
+      document.querySelectorAll(".seg-pick button").forEach((b) => {
+        b.onclick = () => {
+          const wrap = b.closest(".seg-pick"), k = wrap.dataset.k, v = b.dataset.v;
+          wrap.querySelectorAll("button").forEach((x) => x.setAttribute("aria-pressed", "false"));
+          b.setAttribute("aria-pressed", "true");
+          mark(k, v);
+          if (k === "kind") { document.getElementById("rKind").textContent = v; document.getElementById("objRow").style.display = v === "relationship" ? "" : "none"; }
+          if (k === "mod") { const m = document.getElementById("rMod"); m.textContent = v; m.dataset.v = v; }
+          if (k === "dom") {
+            document.getElementById("rDom2").textContent = v;
+            document.getElementById("domLabel").textContent = v;
+            document.getElementById("domDot").style.background = { general: "var(--steel)", health: "var(--rose)", finance: "var(--violet)", location: "var(--amber)" }[v];
+          }
+        };
+      });
+      document.getElementById("iPred").oninput = (e) => { document.getElementById("rPred").textContent = e.target.value || "—"; mark("pred", e.target.value); };
+      document.getElementById("iObj").oninput = (e) => { document.getElementById("rObj").textContent = e.target.value || "—"; document.getElementById("rObjDot").textContent = (e.target.value.match(/[A-Za-z]/) || ["?"])[0].toUpperCase(); mark("obj", e.target.value); };
+      document.getElementById("iTime").oninput = (e) => { document.getElementById("rTime").textContent = e.target.value ? "since " + e.target.value : "since unknown"; mark("time", e.target.value); };
+
+      let landing = "add";
+      document.querySelectorAll(".member .act").forEach((a) => {
+        a.onclick = () => {
+          const on = a.getAttribute("aria-pressed") === "true";
+          document.querySelectorAll(".member .act").forEach((x) => x.setAttribute("aria-pressed", "false"));
+          landing = on ? "add" : a.classList.contains("replace") ? "replace" : "remove";
+          if (!on) a.setAttribute("aria-pressed", "true");
+          setLanding();
+        };
+      });
+      document.querySelector(".member.new").onclick = () => { document.querySelectorAll(".member .act").forEach((x) => x.setAttribute("aria-pressed", "false")); landing = "add"; setLanding(); };
+      function setLanding() {
+        const map = { add: ["lands as <b>add</b> — a new co-equal edge, nothing superseded.", "set · adds to 3"], replace: ["lands as <b>replace</b> — supersedes Sam Ortiz, chains the history.", "set · replaces Sam"], remove: ["lands as <b>remove</b> — closes Sam Ortiz's edge (a retraction).", "set · removes Sam"] };
+        document.getElementById("setHint").innerHTML = map[landing][0];
+        document.getElementById("rSet").textContent = map[landing][1];
+        landing === "add" ? dirty.delete("set") : dirty.add("set");
+        reflect();
+      }
+      document.getElementById("fnToggle").onchange = (e) => {
+        const fn = e.target.checked;
+        document.getElementById("setRow").style.display = fn ? "none" : "";
+        document.getElementById("rSet").style.display = fn ? "none" : "";
+        document.querySelector(".kind-badge").textContent = fn ? "single value" : "new relation";
+        reflect();
+      };
+
+      function mark(k, v) { v && v !== orig[k] ? dirty.add(k) : dirty.delete(k); reflect(); }
+      const orig = { pred: "friend", obj: "Jordan Avery", time: "2026", kind: "relationship", mod: "asserted", dom: "general" };
+      function reflect() {
+        const edited = dirty.size > 0;
+        const a = document.getElementById("approveBtn");
+        a.classList.toggle("correction", edited);
+        a.textContent = edited ? "approve correction" : (document.getElementById("fnToggle").checked ? "approve — set this value" : "approve — add this friend");
+      }
+    </script>
+  </body>
+</html>

@@ -1,0 +1,318 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Review — unified editable-fact card · C · correct-in-place</title>
+    <style>
+      /* Design tokens — copied from frontend/src/styles/tokens.css. */
+      :root {
+        --steel: #7fa7c9; --steel-tint: rgba(127, 167, 201, 0.13);
+        --green: #8fbc9a; --green-tint: rgba(143, 188, 154, 0.13);
+        --amber: #c9a36a; --amber-tint: rgba(201, 163, 106, 0.13);
+        --rose: #cf8a8f; --rose-tint: rgba(207, 138, 143, 0.13);
+        --violet: #a493c9; --violet-tint: rgba(164, 147, 201, 0.14);
+        --slate: #9aa0a8; --accent: var(--steel); --font-scale: 1;
+        --fs-micro: calc(12px * var(--font-scale));
+        --fs-secondary: calc(14px * var(--font-scale));
+        --fs-note: calc(15px * var(--font-scale));
+        --fs-body: calc(16px * var(--font-scale));
+        --fs-title: calc(18px * var(--font-scale));
+        --fs-screen: calc(22px * var(--font-scale));
+        --r-input: 12px; --r-card: 16px; --r-pill: 999px;
+        --font-mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+      }
+      [data-theme="light"] { color-scheme: light; --page: #ecece9; --bg: #f7f7f5; --surface: #ffffff; --surface-2: #f0f0ee; --border: #e2e2df; --text: #1a1b1e; --text-2: #5c5f66; --text-3: #9a9da3; --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.06); }
+      [data-theme="dark"] { color-scheme: dark; --page: #060708; --bg: #0e0f11; --surface: #17181b; --surface-2: #1e2024; --border: #26282c; --text: #e6e7e9; --text-2: #9a9da3; --text-3: #5c5f66; --shadow-card: none; }
+      * { box-sizing: border-box; }
+      body { margin: 0; background: var(--page); color: var(--text); padding: 28px 16px 60px; font: 400 var(--fs-body) / 1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; display: flex; flex-direction: column; align-items: center; gap: 16px; }
+      .demo-bar { width: 100%; max-width: 460px; display: flex; align-items: center; gap: 12px; }
+      .demo-title { font-size: var(--fs-secondary); color: var(--text-2); }
+      .demo-title b { color: var(--text); }
+      .seg { margin-left: auto; display: flex; border: 1px solid var(--border); border-radius: var(--r-pill); overflow: hidden; }
+      .seg button { appearance: none; border: none; background: var(--surface); color: var(--text-2); font: inherit; font-size: var(--fs-micro); padding: 6px 13px; cursor: pointer; }
+      .seg button[aria-pressed="true"] { background: var(--steel-tint); color: var(--steel); }
+      .caption { width: 100%; max-width: 460px; font-size: var(--fs-secondary); color: var(--text-2); line-height: 1.5; }
+      .caption b { color: var(--text); }
+
+      .phone { width: 100%; max-width: 460px; min-height: 880px; background: var(--bg); border: 1px solid var(--border); border-radius: 30px; overflow: hidden; position: relative; display: flex; flex-direction: column; box-shadow: 0 20px 60px rgba(0, 0, 0, 0.25); }
+      .statusbar { display: flex; justify-content: space-between; align-items: center; padding: 14px 24px 4px; font-size: var(--fs-secondary); font-weight: 600; }
+      .screenhead { display: flex; align-items: center; gap: 12px; padding: 8px 18px 2px; }
+      .screenhead h1 { margin: 0; font-size: var(--fs-screen); font-weight: 600; }
+      .screenhead .pos { margin-left: auto; font-size: var(--fs-secondary); color: var(--text-2); font-variant-numeric: tabular-nums; }
+      .body { flex: 1; overflow-y: auto; padding: 10px 16px 40px; display: flex; flex-direction: column; gap: 12px; }
+
+      .subject { display: flex; align-items: center; gap: 11px; }
+      .avatar { width: 40px; height: 40px; border-radius: 50%; flex: none; display: grid; place-items: center; font-weight: 600; font-size: var(--fs-note); }
+      .subject-name { font-size: var(--fs-title); font-weight: 600; }
+      .subject-sub { font-size: var(--fs-micro); color: var(--text-3); display: flex; align-items: center; gap: 7px; }
+      .domain-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+      .kind-row { display: flex; align-items: center; gap: 8px; }
+      .kind-badge { font-size: var(--fs-micro); padding: 2px 9px; border-radius: var(--r-pill); background: var(--amber-tint); color: var(--amber); font-weight: 500; }
+      .conf-badge { font-size: var(--fs-micro); padding: 2px 9px; border-radius: var(--r-pill); border: 1px solid var(--border); color: var(--text-2); }
+      .hero { font-size: var(--fs-title); font-weight: 600; margin: 2px 0 0; }
+
+      .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-card); box-shadow: var(--shadow-card); padding: 8px 4px; display: flex; flex-direction: column; }
+      .card-lbl { font-size: var(--fs-micro); text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-3); padding: 8px 12px 4px; }
+
+      /* one row per field: label · current → proposed · pencil */
+      .row { display: flex; flex-direction: column; gap: 4px; padding: 10px 12px; border-bottom: 1px solid var(--border); }
+      .row:last-of-type { border-bottom: none; }
+      .row-head { display: flex; align-items: center; gap: 8px; }
+      .row-lbl { font-size: var(--fs-micro); color: var(--text-3); }
+      .row-pen { margin-left: auto; appearance: none; border: none; background: none; color: var(--accent); font: inherit; font-size: var(--fs-micro); cursor: pointer; }
+      .vline { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
+      .v-cur { color: var(--text-3); text-decoration: line-through; font-size: var(--fs-secondary); }
+      .v-arrow { color: var(--text-3); }
+      .v-new { font-weight: 600; font-size: var(--fs-note); }
+      .v-new.mono { font-family: var(--font-mono); font-weight: 500; }
+      .v-new.modal { color: var(--green); }
+      .v-new.modal[data-v="negated"] { color: var(--rose); }
+      .from { font-size: var(--fs-micro); color: var(--text-3); }
+      .row.changed { background: var(--steel-tint); }
+      .row.changed .row-lbl { color: var(--steel); }
+
+      /* inline correction editor */
+      .ed { margin-top: 7px; display: none; flex-direction: column; gap: 8px; }
+      .ed.open { display: flex; }
+      .ed input { font: inherit; font-size: var(--fs-note); background: var(--bg); border: 1px solid var(--steel); border-radius: var(--r-input); padding: 9px 11px; color: var(--text); }
+      .seg-pick { display: flex; flex-wrap: wrap; gap: 6px; }
+      .seg-pick button { appearance: none; font: inherit; font-size: var(--fs-micro); padding: 6px 11px; border-radius: var(--r-pill); border: 1px solid var(--border); background: var(--bg); color: var(--text-2); cursor: pointer; }
+      .seg-pick button[aria-pressed="true"] { border-color: transparent; background: var(--steel-tint); color: var(--steel); font-weight: 600; }
+      .seg-pick.domains button[data-v="health"][aria-pressed="true"] { background: var(--rose-tint); color: var(--rose); }
+      .seg-pick.domains button[data-v="finance"][aria-pressed="true"] { background: var(--violet-tint); color: var(--violet); }
+      .opt-list { display: flex; flex-direction: column; gap: 4px; }
+      .opt { appearance: none; text-align: left; font: inherit; font-size: var(--fs-secondary); background: var(--bg); border: 1px solid var(--border); border-radius: var(--r-input); padding: 8px 11px; color: var(--text); cursor: pointer; display: flex; gap: 9px; align-items: center; }
+      .opt:hover { border-color: var(--steel); background: var(--steel-tint); }
+      .opt .shape { margin-left: auto; font-size: var(--fs-micro); color: var(--text-3); font-family: var(--font-mono); }
+
+      /* set predicate: chip-list editor */
+      .chips { display: flex; flex-wrap: wrap; gap: 7px; align-items: center; }
+      .memchip { display: inline-flex; align-items: center; gap: 6px; font-size: var(--fs-secondary); background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--r-pill); padding: 5px 6px 5px 11px; }
+      .memchip .rm { appearance: none; border: none; background: none; color: var(--text-3); cursor: pointer; font-size: var(--fs-note); line-height: 1; padding: 0 2px; }
+      .memchip.removing { background: var(--rose-tint); border-color: transparent; }
+      .memchip.removing .nm { text-decoration: line-through; color: var(--rose); }
+      .memchip.add { background: var(--violet-tint); border-color: transparent; color: var(--violet); font-weight: 600; }
+      .addchip { appearance: none; border: 1px dashed var(--border); background: none; color: var(--text-2); font: inherit; font-size: var(--fs-secondary); border-radius: var(--r-pill); padding: 5px 12px; cursor: pointer; }
+
+      .evi { margin: 8px 12px 0; background: var(--bg); border: 1px solid var(--border); border-radius: var(--r-input); padding: 10px 12px; font-size: var(--fs-secondary); color: var(--text-2); line-height: 1.5; }
+      .evi-src { font-size: var(--fs-micro); color: var(--text-3); margin-top: 6px; }
+      mark { background: var(--amber-tint); color: var(--amber); border-radius: 4px; padding: 0 3px; }
+
+      .status { font-size: var(--fs-secondary); color: var(--text-2); line-height: 1.5; margin: 12px 4px 0; }
+      .status.edit { color: var(--steel); }
+      .actions { display: flex; flex-direction: column; gap: 9px; margin-top: 12px; }
+      .btn { appearance: none; font: inherit; border: 1px solid var(--border); border-radius: var(--r-card); cursor: pointer; padding: 15px; font-size: var(--fs-note); font-weight: 600; background: var(--surface); color: var(--text); }
+      .btn.primary { background: var(--green); color: #06250f; border-color: transparent; }
+      .btn.primary.correction { background: var(--steel); color: #07223a; }
+      .btn.ghost { color: var(--rose); }
+      .escape { display: flex; gap: 16px; justify-content: center; }
+      .escape button { appearance: none; background: none; border: none; color: var(--text-3); font: inherit; font-size: var(--fs-secondary); cursor: pointer; }
+      .fn { display: flex; align-items: center; gap: 8px; font-size: var(--fs-micro); color: var(--text-3); margin: 6px 4px 0; }
+    </style>
+  </head>
+  <body>
+    <div class="demo-bar">
+      <div class="demo-title"><b>Review — unified editable-fact card.</b> C · correct-in-place</div>
+      <div class="seg" role="group" aria-label="theme">
+        <button id="t-dark" aria-pressed="true">dark</button>
+        <button id="t-light" aria-pressed="false">light</button>
+      </div>
+    </div>
+    <div class="caption">
+      The card frames the held fact as a <b>proposed change</b> — one row per field, each with its own
+      <b>pencil</b> to correct in place (the <code>accept</code>/<code>correct</code> lineage from the
+      conflict cards). A corrected row tints and shows <s>was</s> → new. Set predicates render a
+      <b>chip-list</b>: × removes a member, ＋ adds one. Flip <b>functional</b> to collapse the set to a
+      single value. Tap any <b>edit</b>.
+    </div>
+
+    <div class="phone">
+      <div class="statusbar"><span>9:41</span><span>JBrain&nbsp;· 87</span></div>
+      <div class="screenhead"><h1>Review</h1><span class="pos">3 of 11</span></div>
+      <div class="body">
+        <div class="subject">
+          <div class="avatar" style="background: var(--steel-tint); color: var(--steel)">M</div>
+          <div>
+            <div class="subject-name">Me</div>
+            <div class="subject-sub"><span style="color: var(--steel)">Person</span><span class="domain-dot" id="domDot" style="background: var(--steel)"></span><span id="domLabel">general</span></div>
+          </div>
+        </div>
+        <div class="kind-row"><span class="kind-badge" id="kindBadge">new relation</span><span class="conf-badge">held · 0.71</span></div>
+        <p class="hero">a new <b>friend</b> edge for Me — review before it lands</p>
+
+        <div class="card">
+          <div class="card-lbl">proposed fact · correct any field</div>
+
+          <!-- predicate -->
+          <div class="row" data-field="pred">
+            <div class="row-head"><span class="row-lbl">relation</span><button class="row-pen" data-edit>edit ✎</button></div>
+            <div class="vline"><span class="v-new mono" data-val>friend</span><span class="from">from this note</span></div>
+            <div class="ed">
+              <input data-input value="friend" placeholder="search or coin a relation" />
+              <div class="opt-list">
+                <button class="opt" data-pick="friend"><span>friend</span><span class="shape">ref · set · exact</span></button>
+                <button class="opt" data-pick="knows"><span>knows</span><span class="shape">ref · set · 0.78</span></button>
+                <button class="opt" data-pick="colleague"><span>colleague</span><span class="shape">ref · set · 0.64</span></button>
+              </div>
+            </div>
+          </div>
+
+          <!-- object -->
+          <div class="row" data-field="obj">
+            <div class="row-head"><span class="row-lbl">linked entity</span><button class="row-pen" data-edit>relink ✎</button></div>
+            <div class="vline"><span class="v-new" data-val>Jordan Avery</span><span class="from">Person</span></div>
+            <div class="ed">
+              <input data-input value="Jordan Avery" placeholder="search entities…" />
+              <div class="opt-list">
+                <button class="opt" data-pick="Jordan Avery"><span>Jordan Avery</span><span class="shape">Person</span></button>
+                <button class="opt" data-pick="Jordan Avery-Cole"><span>Jordan Avery-Cole</span><span class="shape">maybe same?</span></button>
+                <button class="opt" data-pick="＋ new person “Jordan”"><span>＋ new person “Jordan”</span></button>
+              </div>
+            </div>
+          </div>
+
+          <!-- modality -->
+          <div class="row" data-field="mod">
+            <div class="row-head"><span class="row-lbl">modality</span><button class="row-pen" data-edit>edit ✎</button></div>
+            <div class="vline"><span class="v-new modal" data-val data-v="asserted">asserted</span></div>
+            <div class="ed">
+              <div class="seg-pick" data-seg>
+                <button data-v="asserted" aria-pressed="true">asserted</button>
+                <button data-v="negated">negated</button>
+                <button data-v="hypothetical">hypothetical</button>
+                <button data-v="reported">reported</button>
+                <button data-v="question">question</button>
+                <button data-v="expected">expected</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- domain -->
+          <div class="row" data-field="dom">
+            <div class="row-head"><span class="row-lbl">domain</span><button class="row-pen" data-edit>edit ✎</button></div>
+            <div class="vline"><span class="v-new" data-val>general</span></div>
+            <div class="ed">
+              <div class="seg-pick domains" data-seg>
+                <button data-v="general" aria-pressed="true">general</button>
+                <button data-v="health">health</button>
+                <button data-v="finance">finance</button>
+                <button data-v="location">location</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- temporal -->
+          <div class="row" data-field="time">
+            <div class="row-head"><span class="row-lbl">since · precision</span><button class="row-pen" data-edit>edit ✎</button></div>
+            <div class="vline"><span class="v-new" data-val>2026</span><span class="from">year</span></div>
+            <div class="ed"><input data-input value="2026" placeholder="e.g. 2026, Jun 2026 (blank = unknown)" /></div>
+          </div>
+
+          <!-- set membership (chip list) -->
+          <div class="row" id="setRow" data-field="set">
+            <div class="row-head"><span class="row-lbl">friend set — × removes, ＋ adds</span></div>
+            <div class="chips" id="chips">
+              <span class="memchip"><span class="nm">Riley Chen</span><button class="rm" data-toggle>×</button></span>
+              <span class="memchip"><span class="nm">Sam Ortiz</span><button class="rm" data-toggle>×</button></span>
+              <span class="memchip"><span class="nm">Devon Park</span><button class="rm" data-toggle>×</button></span>
+              <span class="memchip add"><span class="nm">＋ Jordan Avery</span></span>
+              <button class="addchip">＋ add another</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="fn"><input type="checkbox" id="fnToggle" style="margin: 0" /> <label for="fnToggle">treat as functional (single-valued) — collapses the set, one value supersedes</label></div>
+
+        <div class="evi">“…grabbed coffee with my friend <mark>Jordan</mark> — we go way back.”<div class="evi-src">from note · captured Jun 10 · general</div></div>
+
+        <p class="status" id="statusLine">No edits — approving adds the fact as the pipeline proposed it.</p>
+        <div class="actions">
+          <button class="btn primary" id="approveBtn">approve — add this friend</button>
+          <button class="btn ghost">reject — discard</button>
+        </div>
+        <div class="escape"><button>defer</button><button>talk it over</button></div>
+      </div>
+    </div>
+
+    <script>
+      const root = document.documentElement;
+      document.getElementById("t-dark").onclick = () => setTheme("dark");
+      document.getElementById("t-light").onclick = () => setTheme("light");
+      function setTheme(t) { root.dataset.theme = t; document.getElementById("t-dark").setAttribute("aria-pressed", t === "dark"); document.getElementById("t-light").setAttribute("aria-pressed", t === "light"); }
+
+      const dirty = new Set();
+      const orig = {};
+      document.querySelectorAll(".row [data-val]").forEach((v) => { orig[v.closest(".row").dataset.field] = v.textContent; });
+
+      // toggle a row's inline editor
+      document.querySelectorAll("[data-edit]").forEach((p) => {
+        p.onclick = () => {
+          const ed = p.closest(".row").querySelector(".ed");
+          const wasOpen = ed.classList.contains("open");
+          document.querySelectorAll(".ed.open").forEach((e) => e.classList.remove("open"));
+          if (!wasOpen) ed.classList.add("open");
+        };
+      });
+
+      function setVal(row, value) {
+        const field = row.dataset.field;
+        const v = row.querySelector("[data-val]");
+        const changed = value !== orig[field];
+        // show was → new only when changed
+        let cur = row.querySelector(".v-cur");
+        if (changed && !cur) {
+          cur = document.createElement("span"); cur.className = "v-cur"; cur.textContent = orig[field];
+          const arrow = document.createElement("span"); arrow.className = "v-arrow"; arrow.textContent = "→";
+          v.parentElement.insertBefore(arrow, v); v.parentElement.insertBefore(cur, arrow);
+        } else if (!changed && cur) {
+          cur.nextElementSibling.remove(); cur.remove();
+        }
+        v.textContent = value;
+        if (v.dataset.v !== undefined) v.dataset.v = value;
+        row.classList.toggle("changed", changed);
+        changed ? dirty.add(field) : dirty.delete(field);
+        if (field === "dom") {
+          document.getElementById("domLabel").textContent = value;
+          document.getElementById("domDot").style.background = { general: "var(--steel)", health: "var(--rose)", finance: "var(--violet)", location: "var(--amber)" }[value];
+        }
+        reflect();
+      }
+      document.querySelectorAll(".opt").forEach((o) => {
+        o.onclick = () => { const row = o.closest(".row"); row.querySelector("[data-input]").value = o.dataset.pick; setVal(row, o.dataset.pick); row.querySelector(".ed").classList.remove("open"); };
+      });
+      document.querySelectorAll("[data-input]").forEach((inp) => { inp.oninput = () => setVal(inp.closest(".row"), inp.value || "—"); });
+      document.querySelectorAll("[data-seg] button").forEach((b) => {
+        b.onclick = () => { const seg = b.closest("[data-seg]"); seg.querySelectorAll("button").forEach((x) => x.setAttribute("aria-pressed", "false")); b.setAttribute("aria-pressed", "true"); setVal(b.closest(".row"), b.dataset.v); };
+      });
+
+      // set chip-list: × marks a member for removal
+      document.querySelectorAll("[data-toggle]").forEach((rm) => {
+        rm.onclick = () => { const chip = rm.closest(".memchip"); const on = chip.classList.toggle("removing"); rm.textContent = on ? "↺" : "×"; on ? dirty.add("set:" + chip.querySelector(".nm").textContent) : dirty.delete("set:" + chip.querySelector(".nm").textContent); reflect(); };
+      });
+      document.querySelector(".addchip").onclick = () => alert("(mock) opens the same entity picker to add another friend");
+
+      document.getElementById("fnToggle").onchange = (e) => {
+        const fn = e.target.checked;
+        document.getElementById("setRow").style.display = fn ? "none" : "";
+        document.getElementById("kindBadge").textContent = fn ? "single value" : "new relation";
+        reflect();
+      };
+
+      function reflect() {
+        const edited = [...dirty].length > 0;
+        const a = document.getElementById("approveBtn"), s = document.getElementById("statusLine");
+        a.classList.toggle("correction", edited);
+        if (edited) {
+          a.textContent = "approve correction";
+          s.classList.add("edit");
+          s.innerHTML = "Your corrections file a correction note — the pipeline re-applies them, so the wiki stays machine-written.";
+        } else {
+          a.classList.remove("correction"); s.classList.remove("edit");
+          a.textContent = document.getElementById("fnToggle").checked ? "approve — set this value" : "approve — add this friend";
+          s.textContent = "No edits — approving adds the fact as the pipeline proposed it.";
+        }
+      }
+    </script>
+  </body>
+</html>
