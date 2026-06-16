@@ -8,12 +8,12 @@ import uuid
 from collections.abc import AsyncIterator
 
 import pytest
-from evals.promotion import EvalRun, FixtureScore
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
 from jbrain.db.session import SessionContext
 from jbrain.workflow.evalstore import EvalRunStore
+from jbrain.workflow.promotion import EvalRun, FixtureScore
 from tests.conftest import docker_available
 from tests.integration.test_rls import OWNER, UNSCOPED, database_url  # noqa: F401
 

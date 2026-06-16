@@ -19,7 +19,6 @@ import uuid
 from collections.abc import AsyncIterator
 
 import pytest
-from evals.promotion import EvalRun, FixtureScore
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
@@ -33,6 +32,7 @@ from jbrain.settings_store import (
 )
 from jbrain.workflow.eval_scorer import eval_run_handler
 from jbrain.workflow.evalstore import EvalRunStore
+from jbrain.workflow.promotion import EvalRun, FixtureScore
 from tests.conftest import docker_available
 from tests.integration.test_rls import OWNER, database_url  # noqa: F401
 

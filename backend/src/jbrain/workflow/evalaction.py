@@ -30,11 +30,10 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from typing import Any
 
-from evals.promotion import EvalRun
-
 from jbrain.db.session import SessionContext
 from jbrain.settings_store import SqlSettingsStore
 from jbrain.workflow.evalstore import EvalRunStore
+from jbrain.workflow.promotion import EvalRun
 from jbrain.workflow.registry import ActionSpec
 from jbrain.workflow.selfimprovement import SelfImprovementGate
 

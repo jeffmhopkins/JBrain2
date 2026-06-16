@@ -13,7 +13,6 @@ from datetime import UTC, datetime
 from typing import Any
 
 import pytest
-from evals.promotion import EvalRun, FixtureScore
 
 from jbrain.db.session import SessionContext
 from jbrain.queue import PermanentJobError
@@ -22,6 +21,7 @@ from jbrain.settings_store import (
     SELF_IMPROVEMENT_KILL_SWITCH_KEY,
 )
 from jbrain.workflow.evalaction import EVAL_RUN_SPEC, EvalRunAction
+from jbrain.workflow.promotion import EvalRun, FixtureScore
 from jbrain.workflow.promotion_service import PromotionService
 from tests.unit.test_self_improvement_budget import FakeSettings
 
