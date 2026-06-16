@@ -135,13 +135,23 @@ the identity ops (`merge_entities`, `split_entity`, `assert_distinct`).
   false positives and without any cross-firewall read.
 - **`merge_facts`:** provenance **unioned** (the list carrier, R3-6), cross-modality merge
   **rejected**, cross-domain **rejected**, conflicting typed values → review.
-- **Snapshot undo:** state-based, not per-op inverses. On un-tombstone the committer re-checks
-  `live_key` occupancy (occupied → "correct instead", a forward op, never a unique-index throw),
-  and **re-derives** `domain` + protection metadata from current topology (never resurrects a
-  frozen `domain_code`/flag — the firewall + R2 fixes). **Honest reversibility (amends framing
-  §4):** snapshot-revert with **cascade-or-block**; removing an earlier op's effect while
-  keeping a later dependent op is a **new forward correction, not an undo**. Human surface:
-  "undo last" / "revert to point" / "correct instead" — internals never exposed.
+- **Arbitrary-order undo via selective replay (Decision 3 — full reversibility).** The graph is
+  a deterministic fold of the append-only op-log, so *any* op X can be undone at *any* time, in
+  *any* order — not just the tail. Undo is itself a logged op (`undo(X)`; the log stays
+  append-only; redo = undo the undo). To undo X the committer: (1) computes the **affected slot
+  set** = X's target slots ∪ slots of later ops with a **recorded read-dependency** on X's
+  output; (2) for each, **recomputes the live state by folding that slot's short op
+  subsequence in order, skipping ops marked undone**; (3) writes the recomputed rows as new
+  tx-versions (append-only; the live-key unique index holds). Determinism comes from each op's
+  **frozen typed/link resolutions** (a later registry/parser change can't alter history), while
+  **domain/firewall is always re-derived live** (a frozen `domain_code` is never resurrected —
+  the security + R2/R3 fixes). Cost is **O(ops on the affected slots)** — a handful per fact —
+  never genesis-replay. A genuine semantic **read-dependency** (e.g. a `replace_head` that
+  targeted the exact value X created, now gone) surfaces that one later op as a **real conflict
+  to review** — a true semantic conflict, not a mechanism limitation. This **supersedes the
+  earlier "cascade-or-block" retreat**: the §4 framing invariant is met in full (arbitrary undo
+  is sound), with read-dependency conflicts the only (honest, rare) review escalation. Human
+  surface: "undo this" on any op, plus "undo last" / "revert to point"; internals never exposed.
 - **Review:** fat read projection (predicate metadata + cardinality + candidates + `ui_caps`
   firewall gates) / thin write (verdict + ordered typed op-list + `base_version`). One card
   parameterized by `(kind, value_shape, cardinality, reason)`; `kind`/`reason` are display
@@ -190,9 +200,14 @@ validate→repair→backfill→gate** pass that is the **sole authority** — te
   copy-forward, **one-way**, audited in both bands (protected metadata redacted from the general
   side). Undo = **tombstone** the general copy (not destroy); it cannot un-publish derivations —
   the owner is told a publish is **irreversible** (accepted as inherent to publishing).
-- **`add_fact`:** real cited note (committer derives domain from it) OR forced correction-note
-  round-trip; **non-droppable** `human_assertion` attribution; location-domain link objects
-  cannot be `add_fact`'d (no movement-pattern oracle).
+- **`add_fact` (Decision 2 — human facts are first-class, and shown):** a human-added fact is
+  always allowed and **always cites a note**. If it doesn't reference an existing note span,
+  `add_fact` **mints a human-authored note** carrying `{user, datetime, reason}` and that note
+  becomes the fact's referenced source — so the human authors a *note* (the citation) and the
+  machine still derives the fact from it (this *strengthens* #7: no direct graph write, the
+  human writes prose). The committer derives `domain` from that note. Attribution is
+  **non-droppable** (`provenance.kind = human_assertion`, surfaced wherever the fact shows);
+  location-domain link objects still cannot be `add_fact`'d (no movement-pattern oracle).
 - **Inferred-fact auto-commit deferred** (§2): derived facts route to human `add_fact`/review;
   the premise-verification hole is dissolved (nothing ungrounded auto-commits). *Note: ordinary
   relative-date resolution ("last Tuesday" → instant) is a normal extraction step, not an
@@ -221,18 +236,22 @@ press both.**
 
 ---
 
-## 8. Open decisions for sign-off (the gate)
+## 8. Decisions — RESOLVED at sign-off
 
-1. **Cross-domain resolver + global canonical index** — accept the bounded 1-bit residual
-   (recommended, firewall-first), or take the simpler global-entity-table + attribute-RLS with
-   its FK-channel mitigation cost?
-2. **`add_fact` strictness** — direct only with a cited note, else forced note round-trip
-   (recommended), vs always-direct (more ergonomic) vs always-note (stricter)?
-3. **Honest undo promise** — accept the bounded "snapshot + cascade-or-block; non-tail removal =
-   forward correction" framing (it is the honest maximum; v0 over-promised)?
-4. **Inferred facts deferred** — confirm derived facts (age→birth_year) are out of the first
-   build and route to human add_fact?
-5. **TypedValue at 5** — ship 5 (`boolean`→`enum`, `structured` on demand), or keep 7?
+1. **Entity model:** ✅ **per-domain entity projections + attribute-free global resolution
+   index** (firewall-first; bounded ≤1-bit/query residual, documented in §6).
+2. **`add_fact`:** ✅ **human facts are first-class and shown** — `add_fact` always cites a note;
+   when none exists it **mints a human-authored note `{user, datetime, reason}`** that becomes
+   the referenced source (§2/§6). Non-droppable attribution.
+3. **Reversibility:** ✅ **arbitrary-order undo** required → designed via **selective replay**
+   (§4); the bounded "cascade-or-block" framing is **superseded** — full undo is sound. Read-
+   dependency conflicts are the only (rare, honest) review escalation.
+4. **Inferred facts:** ✅ **deferred** — derived facts (age→birth_year) are out of the first
+   build and route to human `add_fact`; ordinary relative-date resolution is unaffected.
+5. **TypedValue:** ✅ **ship 5** (`boolean`→`enum`; `structured` on demand).
+
+**Next step:** ✅ run the follow-up **independent model + security verification pass** against
+this spec before the first build PR (§9).
 
 ## 9. Residual / before-build
 
@@ -249,6 +268,6 @@ press both.**
 (predicate, value, subject/object links, dates/temporal, modality, domain, kind) is editable;
 set-valued predicates make **add vs. replace vs. remove explicit** via cardinality-in-the-key;
 the review kind-zoo collapses to one structured editor; and the contract is reliably emittable,
-deterministically gated, versioned, firewall-safe, and reversible (in the honest bounded sense).
-It is ready for sign-off on the §8 decisions, with one model+security verification pass
-recommended before the first build PR.
+deterministically gated, versioned, firewall-safe, and **fully (arbitrary-order) reversible**
+via selective replay. The five sign-off decisions are **resolved** (§8); the one remaining
+gate before the first build PR is the **independent model + security verification pass** (§9).
