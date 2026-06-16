@@ -283,9 +283,19 @@ def _describe(w: WouldEnqueue) -> dict[str, Any]:
 # are queued-only on purpose, mirroring the hardcoded callers: a RUNNING job may
 # have read stale chunks, so it must never suppress a fresh enqueue (queue.py
 # has_active_analysis docstring; ingest/pipeline.py's queued-only integrate gate).
-# A kind absent here has no note-keyed twin and is enqueued unconditionally — the
-# would-be enqueue's own action keeps whatever dedup it already has.
+# A kind absent here has no note-keyed twin; if it carries no per-target payload key
+# at all it is deduped kind-only (_KIND_DEDUP below), else its own action keeps its
+# dedup.
 _NOTE_DEDUP_KINDS: frozenset[str] = frozenset(("ingest_note", "integrate_note"))
+
+# Payload-keyless idempotent sweeps the dispatcher live-enqueues off an event but
+# which carry NO per-target key (so the note-keyed guard above cannot apply).
+# consolidate_predicates is enqueued off resolution.changed on every remapping
+# resolution; without a guard every such event piles up a duplicate (idempotent)
+# sweep. Dedup kind-only — suppress a fresh enqueue while one is queued OR running —
+# because a duplicate adds no value (the sweep is whole-registry, not per-target) and
+# a running sweep already covers any change a re-delivered event reflects.
+_KIND_DEDUP_KINDS: frozenset[str] = frozenset(("consolidate_predicates",))
 
 
 async def _note_state(
@@ -333,10 +343,20 @@ async def _already_active(maker: async_sessionmaker[AsyncSession], w: WouldEnque
     the reconcilers): a RUNNING job may have read stale chunks, so it must never
     suppress a fresh enqueue. The state check closes the OTHER hole the cutover opens —
     a re-delivered/duplicate event for a note whose work already finished (no queued
-    twin survives) must not re-process. A kind with no note_id (or not in
-    _NOTE_DEDUP_KINDS) is never suppressed here; its own action keeps its dedup. All
-    reads run under SYSTEM_CTX (owner-only jobs/notes), like the claim loop."""
+    twin survives) must not re-process.
+
+    A payload-keyless idempotent sweep (_KIND_DEDUP_KINDS, e.g. consolidate_predicates)
+    has no per-target key, so it is deduped kind-only: suppress while a queued OR
+    running job of that kind exists. Since W2·C the dispatcher enqueues such a sweep
+    off a resolution.changed event on every remapping resolution; without this guard
+    each event piled up a duplicate sweep. A kind in neither set is never suppressed
+    here; its own action keeps its dedup. All reads run under SYSTEM_CTX (owner-only
+    jobs/notes), like the claim loop."""
     note_id = w.payload.get("note_id")
+    if w.kind in _KIND_DEDUP_KINDS and not isinstance(note_id, str):
+        # A whole-registry sweep with no per-target key: a running sweep already
+        # covers any change a re-delivered event reflects, so dedup includes running.
+        return await queue.has_active_kind(maker, SYSTEM_CTX, w.kind)
     if w.kind not in _NOTE_DEDUP_KINDS or not isinstance(note_id, str):
         return False
     if w.kind == "integrate_note":

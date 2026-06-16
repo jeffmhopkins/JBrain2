@@ -214,6 +214,32 @@ async def has_active(
     return row is not None
 
 
+async def has_active_kind(
+    maker: async_sessionmaker[AsyncSession],
+    ctx: SessionContext,
+    kind: str,
+    *,
+    statuses: tuple[str, ...] = ACTIVE_STATUSES,
+) -> bool:
+    """Whether ANY job of `kind` is in one of `statuses` — a payload-keyless dedup
+    for an idempotent sweep that carries no per-target key (e.g. consolidate_predicates).
+    `has_active` cannot express this: it is structurally payload-keyed
+    (`payload->>:field = :value`). Mirrors the kind-only guard
+    `backfill_sync_predicates` already uses
+    (`WHERE kind = :kind AND status IN ('queued','running')`), so a second sweep is
+    suppressed while one is queued or running."""
+    async with scoped_session(maker, ctx) as session:
+        row = (
+            await session.execute(
+                text(
+                    "SELECT 1 FROM app.jobs WHERE kind = :kind AND status IN :statuses LIMIT 1"
+                ).bindparams(bindparam("statuses", expanding=True)),
+                {"kind": kind, "statuses": list(statuses)},
+            )
+        ).first()
+    return row is not None
+
+
 async def has_active_analysis(
     maker: async_sessionmaker[AsyncSession],
     ctx: SessionContext,

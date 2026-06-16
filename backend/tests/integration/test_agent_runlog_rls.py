@@ -15,7 +15,7 @@ from jbrain.auth import service
 from jbrain.auth.repo import SqlAuthRepo
 from jbrain.db.session import SessionContext, scoped_session
 from tests.conftest import docker_available
-from tests.integration.test_rls import database_url  # noqa: F401
+from tests.integration.test_rls import APP_PASSWORD, database_url  # noqa: F401
 
 pytestmark = [
     pytest.mark.integration,
@@ -76,3 +76,67 @@ async def test_run_log_persists_and_is_owner_only(maker: async_sessionmaker) -> 
     async with scoped_session(maker, token) as session:
         assert (await session.execute(text("SELECT count(*) FROM app.runs"))).scalar() == 0
         assert (await session.execute(text("SELECT count(*) FROM app.run_steps"))).scalar() == 0
+
+
+async def test_run_step_job_id_db_fk_sets_null_when_job_ages_out(
+    maker: async_sessionmaker,
+    database_url: str,  # noqa: F811
+) -> None:
+    """N3: RunStep.job_id has NO ORM FK (app.jobs is the queue.py raw-SQL substrate,
+    not a mapped table — an ORM FK would fail mapper resolution), but the DB-level FK
+    exists ON DELETE SET NULL (migration 0037). Assert that behavior directly: a
+    run_step referencing a job, then the job row removed from app.jobs, leaves the
+    run_step intact with job_id NULL — a run-log read never breaks (not a dangling FK,
+    not a deleted run_step). The app role has no DELETE on app.jobs (the queue only
+    parks rows as done/failed), so the row removal is done via the admin role — the
+    point is the DB FK's referential action, not who removes the row."""
+    owner = await _owner(maker)
+    sessions = AgentSessionRepo(maker)
+    info = await sessions.create(owner, domain_scopes=["general"], title="fk")
+
+    log = AgentRunLog(maker)
+    run_id = await log.start(owner, session_id=info.id, prompt_version="agent-system-v1")
+
+    async with scoped_session(maker, owner) as session:
+        # A real app.jobs row the step references — the DB FK requires an existing job.
+        job_id = (
+            await session.execute(
+                text(
+                    "INSERT INTO app.jobs (id, kind, payload)"
+                    " VALUES (gen_random_uuid(), 'integrate_note', '{}'::jsonb)"
+                    " RETURNING id::text"
+                )
+            )
+        ).scalar_one()
+        step_id = (
+            await session.execute(
+                text(
+                    "INSERT INTO app.run_steps (id, run_id, idx, kind, name, job_id, ok)"
+                    " VALUES (gen_random_uuid(), :rid, 0, 'action', 'enqueue',"
+                    " cast(:jid AS uuid), true) RETURNING id::text"
+                ),
+                {"rid": run_id, "jid": job_id},
+            )
+        ).scalar_one()
+
+    # The job row is removed from app.jobs (the FK trigger fires regardless of who
+    # deletes it). Use the admin role since the app role intentionally lacks DELETE.
+    admin_url = database_url.replace(f"jbrain_app:{APP_PASSWORD}", "test:test")
+    admin = create_async_engine(admin_url, poolclass=NullPool)
+    try:
+        async with admin.begin() as conn:
+            await conn.execute(
+                text("DELETE FROM app.jobs WHERE id = cast(:jid AS uuid)"), {"jid": job_id}
+            )
+    finally:
+        await admin.dispose()
+
+    # The run_step survives with job_id nulled — ON DELETE SET NULL, not CASCADE.
+    async with scoped_session(maker, owner) as session:
+        row = (
+            await session.execute(
+                text("SELECT job_id FROM app.run_steps WHERE id = cast(:sid AS uuid)"),
+                {"sid": step_id},
+            )
+        ).one()
+    assert row.job_id is None
