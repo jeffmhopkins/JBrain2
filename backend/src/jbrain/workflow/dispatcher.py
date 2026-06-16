@@ -34,7 +34,7 @@ shadowing before cutover):
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import Any
 
@@ -49,13 +49,18 @@ from jbrain.workflow import events as event_emit
 from jbrain.workflow import scheduler
 from jbrain.workflow.contracts import Pipeline, TriggerFilter
 from jbrain.workflow.registry import ActionRegistry, ActionRegistryError
+from jbrain.workflow.runlog import EnqueuedStep, PipelineRunLog
 
 log = structlog.get_logger()
 
-# Gate for the dispatcher tick. Default ON for SHADOW: the dispatcher runs and
-# diffs from the first boot of this wave, but a real enqueue stays off until the
-# Wave-2 cutover (which is a code change, not just a flag flip). Flip to false
-# live (a settings upsert) to silence the shadow tick without a redeploy.
+# Master on/off gate for the dispatcher tick. Default ON. Since the Wave-2 cutover
+# the mode also defaults LIVE, so the engine is the live note->ingest /
+# ingest->integrate / resolution->consolidate path (the hardcoded enqueues that
+# twinned those events are gone). Flip this to false live (a settings upsert) to
+# silence the tick entirely without a redeploy — but with the hardcoded enqueues
+# removed, only the recurring reconcilers would then pick up new work, so disabling
+# the master switch is an emergency stop, not a no-op. To stop ENQUEUING while still
+# diffing, set workflow_dispatch_mode "shadow" instead.
 WORKFLOW_DISPATCH_KEY = "workflow_dispatch"
 WORKFLOW_DISPATCH_DEFAULT = True
 
@@ -83,14 +88,18 @@ class DispatchResolutionError(Exception):
 
 @dataclass(frozen=True)
 class WouldEnqueue:
-    """One job the engine WOULD enqueue for a matched event in live mode (shadow:
-    computed, never submitted). `kind` is the action's handler key — identical to
-    what a hardcoded trigger enqueues — and the stamp is the event's E1 scope."""
+    """One job the engine WOULD enqueue for a matched event (shadow: computed, never
+    submitted; live: actually enqueued). `kind` is the action's handler key —
+    identical to what a hardcoded trigger enqueues — and the stamp is the event's E1
+    scope. `trigger_id`/`pipeline` name the trigger + pipeline that produced it, so
+    the live path can run-log the dispatch against them (§8)."""
 
     kind: str
     payload: dict[str, Any]
     principal_id: str
     domain_code: str
+    trigger_id: str
+    pipeline: str
 
 
 @dataclass(frozen=True)
@@ -107,6 +116,11 @@ class ShadowDiff:
     actual: dict[str, Any] | None = None
     discrepancies: list[str] = field(default_factory=list)
     error: str | None = None
+    # The live WouldEnqueue objects this event resolved to — what LIVE mode submits
+    # and run-logs. compare=False so it never affects diff equality (the shadow
+    # equivalence tests assert on kind/payload via `would`, not these); it is
+    # carrier state, not part of the verdict.
+    enqueues: list[WouldEnqueue] = field(default_factory=list, compare=False)
 
 
 @dataclass(frozen=True)
@@ -170,13 +184,16 @@ def diff_pipeline(
     event: _CandidateEvent,
     pipeline: Pipeline,
     registry: ActionRegistry,
+    *,
+    trigger_id: str = "",
 ) -> tuple[list[WouldEnqueue], list[str]]:
     """The jobs a pipeline's steps WOULD enqueue for an event, plus any resolution
     discrepancies. Each step names a registered action (E3) at the pinned version;
     drift raises DispatchResolutionError. The would-be payload mirrors the hardcoded
     path: the engine carries the event's row-id payload forward, merged over the
     step's static params. The job stamp is the event's (principal_id, domain_code)
-    (E1)."""
+    (E1); `trigger_id`/`pipeline` are recorded on each WouldEnqueue so the live path
+    can run-log the dispatch."""
     would: list[WouldEnqueue] = []
     for step in pipeline.steps:
         try:
@@ -203,6 +220,8 @@ def diff_pipeline(
                 payload=merged,
                 principal_id=event.principal_id,
                 domain_code=event.domain_code,
+                trigger_id=trigger_id,
+                pipeline=pipeline.name,
             )
         )
     return would, []
@@ -256,6 +275,179 @@ def compute_diff(
 
 def _describe(w: WouldEnqueue) -> dict[str, Any]:
     return {"kind": w.kind, "payload": w.payload, "domain_code": w.domain_code}
+
+
+# The kinds the dispatcher live-enqueues that carry a note-keyed dedup guard,
+# mapping each to the queued-only active check the hardcoded path uses so an event
+# + the reconciler (or a double-dispatch) never double-process one note (E4). Both
+# are queued-only on purpose, mirroring the hardcoded callers: a RUNNING job may
+# have read stale chunks, so it must never suppress a fresh enqueue (queue.py
+# has_active_analysis docstring; ingest/pipeline.py's queued-only integrate gate).
+# A kind absent here has no note-keyed twin and is enqueued unconditionally — the
+# would-be enqueue's own action keeps whatever dedup it already has.
+_NOTE_DEDUP_KINDS: frozenset[str] = frozenset(("ingest_note", "integrate_note"))
+
+
+async def _note_state(
+    maker: async_sessionmaker[AsyncSession], note_id: str
+) -> tuple[str, str] | None:
+    """The (ingest_state, integration_state) for a note, or None when it does not
+    exist (or is deleted). Read under SYSTEM_CTX — ingest/integration are the owner's
+    own cross-domain machinery, exactly like the worker handlers (ingest/pipeline.py).
+    A missing/deleted note returns None so the caller treats the would-be enqueue as a
+    no-op target the handlers themselves already short-circuit (the handler is a no-op
+    on a missing note), never suppressing on absence in a way that could strand work."""
+    async with scoped_session(maker, SYSTEM_CTX) as session:
+        row = (
+            await session.execute(
+                text(
+                    "SELECT ingest_state, integration_state FROM app.notes"
+                    " WHERE id = :nid AND deleted_at IS NULL"
+                ),
+                {"nid": note_id},
+            )
+        ).first()
+    return (row.ingest_state, row.integration_state) if row is not None else None
+
+
+async def _already_active(maker: async_sessionmaker[AsyncSession], w: WouldEnqueue) -> bool:
+    """Whether this would-be enqueue is redundant — either a QUEUED twin job already
+    targets it (a live enqueue would double-process, E4), OR the note is already past
+    the STATE the matching reconciler would re-enqueue from (so the dispatcher skips
+    exactly what `backfill_pending_notes`/`backfill_pending_integration` would NOT
+    re-enqueue, keeping the two safety nets congruent under live).
+
+    Two guards, in this order — the cheap job check first, then the state check:
+
+    - `ingest_note`: skip on a queued `ingest_note` twin (the reconciler's active-job
+      check), AND skip when the note's `ingest_state != 'pending'` — once a note is
+      `processing`/`indexed`/`failed` the pending reconciler (which keys on
+      `ingest_state = 'pending'`) would not re-enqueue it, so neither does a live
+      dispatch of a stale/re-delivered `note.created` event.
+    - `integrate_note`: skip on a queued integrate twin (the note-keyed
+      active-analysis check), AND skip when `integration_state == 'integrated'` — the
+      integration reconciler keys on `integration_state <> 'integrated'`, so a note
+      already integrated is past it and a re-delivered `note.ingested` is suppressed.
+
+    The job check stays queued-only on purpose (mirroring the hardcoded callers and
+    the reconcilers): a RUNNING job may have read stale chunks, so it must never
+    suppress a fresh enqueue. The state check closes the OTHER hole the cutover opens —
+    a re-delivered/duplicate event for a note whose work already finished (no queued
+    twin survives) must not re-process. A kind with no note_id (or not in
+    _NOTE_DEDUP_KINDS) is never suppressed here; its own action keeps its dedup. All
+    reads run under SYSTEM_CTX (owner-only jobs/notes), like the claim loop."""
+    note_id = w.payload.get("note_id")
+    if w.kind not in _NOTE_DEDUP_KINDS or not isinstance(note_id, str):
+        return False
+    if w.kind == "integrate_note":
+        if await queue.has_active_analysis(maker, SYSTEM_CTX, note_id, statuses=("queued",)):
+            return True
+        state = await _note_state(maker, note_id)
+        # Skip a note already integrated (past the reconciler's eligibility); an
+        # absent note (None) is left to the handler's own missing-note no-op.
+        return state is not None and state[1] == "integrated"
+    # ingest_note: queued twin first, then the pending-state skip.
+    if await queue.has_active(
+        maker, SYSTEM_CTX, w.kind, payload_field="note_id", value=note_id, statuses=("queued",)
+    ):
+        return True
+    state = await _note_state(maker, note_id)
+    # Skip unless the note is still 'pending' (the only state the pending reconciler
+    # re-enqueues from); an absent note (None) is the handler's own no-op, not skipped.
+    return state is not None and state[0] != "pending"
+
+
+async def live_enqueue(
+    maker: async_sessionmaker[AsyncSession],
+    diff: ShadowDiff,
+    *,
+    run_log: PipelineRunLog,
+) -> None:
+    """Submit a resolved event's would-be enqueues for real (the Wave-2 LIVE path)
+    and run-log the dispatch (§8). For each WouldEnqueue: skip it if an equivalent
+    job is already active (the dedup guard, logged, never duplicated), else enqueue
+    it with the event's (principal_id, domain_code) stamp (E1) — the SAME stamp a
+    hardcoded enqueue would carry once the stamp is wired. Then write ONE pipeline
+    `runs` row per (trigger, pipeline) with a `run_step` per enqueued job, so the
+    dispatch is diagnosable from the run log alone.
+
+    A diff carrying an error never reaches here (the tick logs it and marks the
+    event dispatched without enqueuing); a matchless-but-error-free diff (e.g. an
+    unbound event type) has no enqueues and is a no-op. The dedup read + enqueue +
+    run-log run AFTER the claim transaction has committed dispatched_at, exactly
+    like the scheduler's enqueue runs outside its claim lock."""
+    # Group by (trigger_id, pipeline) so one dispatched event that fans into several
+    # triggers writes one run per trigger, each owning its steps.
+    grouped: dict[tuple[str, str], list[EnqueuedStep]] = {}
+    scoped = diff_is_scoped(diff)
+    for w in diff.enqueues:
+        if await _already_active(maker, w):
+            log.info(
+                "dispatcher.live_dedup_skip",
+                event_id=diff.event_id,
+                event_type=diff.event_type,
+                kind=w.kind,
+                payload=w.payload,
+            )
+            continue
+        # E1: stamp the job with the event's scope when present. A both-empty stamp
+        # is a system enqueue (NULL/NULL) the worker runs under SYSTEM_CTX, exactly
+        # as a hardcoded enqueue does today; a present stamp narrows at execution.
+        stamp = _stamp(w)
+        job_id = await queue.enqueue(
+            maker,
+            SYSTEM_CTX,
+            w.kind,
+            w.payload,
+            principal_id=stamp[0],
+            domain_code=stamp[1],
+        )
+        grouped.setdefault((w.trigger_id, w.pipeline), []).append(
+            EnqueuedStep(kind=w.kind, job_id=job_id)
+        )
+        log.info(
+            "dispatcher.live_enqueue",
+            event_id=diff.event_id,
+            event_type=diff.event_type,
+            kind=w.kind,
+            job_id=job_id,
+            trigger_id=w.trigger_id,
+            pipeline=w.pipeline,
+        )
+    for (trigger_id, pipeline), steps in grouped.items():
+        await run_log.record(
+            SYSTEM_CTX,
+            pipeline=pipeline,
+            trigger_id=trigger_id or None,
+            ran_as="scoped" if scoped else "system",
+            domain_code=diff.enqueues[0].domain_code if scoped else None,
+            principal_id=diff.enqueues[0].principal_id if scoped else None,
+            steps=steps,
+        )
+
+
+def diff_is_scoped(diff: ShadowDiff) -> bool:
+    """Whether this event ran under a NARROWED scope (E1): it carries a triggering
+    principal + domain (both halves of the stamp). The worker today emits events
+    under the owner principal with the note's domain — a well-formed stamp — so
+    these run `scoped`. A would-be enqueue with an empty principal/domain (a system
+    event) runs `system` and records that choice on the audit, never a smuggled
+    escalation."""
+    if not diff.enqueues:
+        return False
+    w = diff.enqueues[0]
+    return bool(w.principal_id) and bool(w.domain_code)
+
+
+def _stamp(w: WouldEnqueue) -> tuple[str | None, str | None]:
+    """The (principal_id, domain_code) to stamp on the enqueued job: the event's
+    scope when both halves are present (a narrowed E1 job), else (None, None) — a
+    system job the worker runs under SYSTEM_CTX. A half-stamp is never forwarded as
+    a partial (which would fail-close in the worker on a value that is really a
+    system enqueue); the all-or-nothing decision is made here off both halves."""
+    if w.principal_id and w.domain_code:
+        return w.principal_id, w.domain_code
+    return None, None
 
 
 async def _matching_triggers(
@@ -326,13 +518,15 @@ async def resolve_event(
             )
         try:
             pipeline = await scheduler._load_pipeline(session, trigger.pipeline)
-            would, _ = diff_pipeline(event, pipeline, registry)
+            would, _ = diff_pipeline(event, pipeline, registry, trigger_id=trigger.trigger_id)
         except (scheduler.ScheduleResolutionError, DispatchResolutionError) as exc:
             return ShadowDiff(
                 event_id=event.id, event_type=event.type, matches=False, error=repr(exc)
             )
         all_would.extend(would)
-    return compute_diff(event, all_would)
+    # `enqueues` carries the live WouldEnqueue objects through to the tick so LIVE
+    # mode can submit + run-log them; `compute_diff` owns the shadow verdict.
+    return replace(compute_diff(event, all_would), enqueues=all_would)
 
 
 async def _claim_event(session: AsyncSession) -> _CandidateEvent | None:
@@ -367,16 +561,27 @@ async def dispatcher_tick(
     registry: ActionRegistry,
     *,
     now: datetime | None = None,
+    live: bool = False,
+    run_log: PipelineRunLog | None = None,
 ) -> list[ShadowDiff]:
-    """Drain the undispatched-event backlog in SHADOW mode: resolve each event to
-    its would-be enqueue, diff against the hardcoded baseline, log any discrepancy,
-    and stamp `dispatched_at` — WITHOUT enqueuing (the hardcoded path still owns the
-    real work this wave; an enqueue here would double-process).
+    """Drain the undispatched-event backlog: resolve each event to its would-be
+    enqueue, diff against the hardcoded baseline, log any discrepancy, and stamp
+    `dispatched_at`.
+
+    In SHADOW (`live=False`, the default — prod stays here this wave) it NEVER
+    enqueues: the hardcoded path still owns the real work, and an enqueue here would
+    double-process. In LIVE (`live=True`, the Wave-2 cutover) it ALSO submits each
+    resolved would-be enqueue with the event's E1 stamp and run-logs the dispatch
+    (live_enqueue), applying the hardcoded path's dedup so an event + the reconciler
+    never double-process (E4). The diff still runs in live for observability.
 
     One claim transaction per event: claim + resolve + mark-dispatched commit
-    together so the event leaves the undispatched set atomically. Re-querying each
-    pass drains the whole backlog. A resolution/authorization error is logged and
-    the event still marked dispatched (it must not wedge the loop), never enqueued."""
+    together so the event leaves the undispatched set atomically. The LIVE enqueue +
+    run-log run AFTER that commit (outside the claim lock, like the scheduler), so a
+    re-emitted event is never double-claimed; the dedup guard handles the (rare)
+    re-enqueue race. Re-querying each pass drains the whole backlog. A
+    resolution/authorization error is logged and the event still marked dispatched
+    (it must not wedge the loop), never enqueued."""
     diffs: list[ShadowDiff] = []
     while True:
         async with scoped_session(maker, SYSTEM_CTX) as session:
@@ -394,6 +599,12 @@ async def dispatcher_tick(
                 {"id": event.id, "stamped": stamped},
             )
         diffs.append(diff)
+        # LIVE: the claim transaction has committed dispatched_at; now enqueue the
+        # resolved jobs (dedup-skipped) + run-log the dispatch. Only a clean,
+        # error-free diff enqueues — an error/poison event is logged below and was
+        # already marked dispatched, never enqueued (fail-closed, like shadow).
+        if live and run_log is not None and diff.error is None and diff.enqueues:
+            await live_enqueue(maker, diff, run_log=run_log)
         if diff.error is not None:
             # A fail-closed shadow error (E1/E2/E3): the event is marked dispatched
             # but no job would be enqueued. Loud, never silent.
@@ -422,10 +633,13 @@ async def dispatcher_tick(
 
 
 # How often the worker loop runs the dispatcher tick — the cadence the cheap
-# undispatched-event query is polled at. Kept low so a freshly emitted event is
-# diffed within seconds (the shadow signal is most useful while the hardcoded path
-# is still warm).
-TICK_SECONDS = 15.0
+# undispatched-event query (an indexed `dispatched_at IS NULL` scan) is polled at.
+# Dropped from 15s to 2s for the LIVE path: in shadow the cost of latency was only
+# a slightly-staler diff, but once live the tick IS the enqueue, so a freshly
+# emitted event must reach the queue within a couple of seconds (the hardcoded path
+# enqueued synchronously). The claim query is cheap enough to poll this often, and
+# it short-circuits immediately when no event is due (the common idle case).
+TICK_SECONDS = 2.0
 
 
 async def run_tick_safely(
@@ -433,15 +647,23 @@ async def run_tick_safely(
     registry: ActionRegistry,
     *,
     settings: SqlSettingsStore,
+    run_log: PipelineRunLog,
 ) -> None:
-    """Run one dispatcher tick, gated by the `workflow_dispatch` setting and
-    swallowing failures (mirrors scheduler.run_tick_safely): a dispatcher blip must
-    never kill the worker loop. The gate is read live so the operator can silence
-    the shadow tick without a redeploy; default ON for shadow."""
+    """Run one dispatcher tick, gated by the `workflow_dispatch` master switch + the
+    `workflow_dispatch_mode` setting, swallowing failures (mirrors
+    scheduler.run_tick_safely): a dispatcher blip must never kill the worker loop.
+    Both gates are read live so the operator silences the tick or rolls live→shadow
+    without a redeploy. The master switch defaults ON; since the Wave-2 cutover the
+    mode defaults LIVE, so the engine is the live enqueue path (the hardcoded enqueues
+    are gone). An operator upsert to mode "shadow"/"off" or the master switch to false
+    rolls it back. `off` (either gate) skips the tick entirely."""
     try:
         enabled = await settings.get(SYSTEM_CTX, WORKFLOW_DISPATCH_KEY, WORKFLOW_DISPATCH_DEFAULT)
         if enabled is not True:
             return
-        await dispatcher_tick(maker, registry)
+        mode = await settings.workflow_dispatch_mode(SYSTEM_CTX)
+        if mode == "off":
+            return
+        await dispatcher_tick(maker, registry, live=mode == "live", run_log=run_log)
     except Exception as exc:  # noqa: BLE001 - the tick must not crash the worker
         log.warning("dispatcher.tick_error", error=repr(exc))

@@ -62,6 +62,40 @@ PURGE_ACTION = ActionSpec(
     dedup_key_expr=None,
 )
 
+# The two boot self-heal backfills as registered actions so they ride a recurring
+# schedule + an emergency Ops trigger, not just boot (docs/WORKFLOW_ENGINE_PLAN.md
+# §5 Wave 2 — the dropped-event safety net). Post-cutover a dropped best-effort
+# event must not strand a note: the durability guarantee is the state columns
+# (`notes.ingest_state='pending'`, `notes.integration_state <> 'integrated'`), and
+# these sweeps are what reconcile them. Promoting them off boot-only means a
+# dropped event self-heals within minutes, not at the next restart.
+#
+# Like PURGE_ACTION these live in-code only (the registry is the source of truth;
+# the app.actions seed is its reference projection and its RLS test asserts an
+# exact six-row set), so the worker composes ACTION_SPECS + (these three) and a
+# pipeline references each by name. Both are cheap (a single bounded INSERT…SELECT
+# over an indexed predicate) and re-firing is harmless: the SELECT excludes notes
+# that already have an active job, so a second fire never double-enqueues (E4).
+RECONCILE_PENDING_NOTES_ACTION = ActionSpec(
+    name="reconcile_pending_notes",
+    version=1,
+    handler="reconcile_pending_notes",
+    domain_optional=True,
+    mutating=True,
+    cost_class="cheap",
+    dedup_key_expr=None,
+)
+
+RECONCILE_PENDING_INTEGRATION_ACTION = ActionSpec(
+    name="reconcile_pending_integration",
+    version=1,
+    handler="reconcile_pending_integration",
+    domain_optional=True,
+    mutating=True,
+    cost_class="cheap",
+    dedup_key_expr=None,
+)
+
 # A monotonic UTC clock the tick reads through, so a test can inject a frozen one
 # and prove next_run_at advances deterministically (no real timer, N3).
 Clock = Callable[[], datetime]
@@ -284,5 +318,37 @@ def purge_handler(
 
     async def handler(_payload: dict[str, Any]) -> None:
         await purge.backfill_deleted_note_artifacts(maker)
+
+    return handler
+
+
+def reconcile_pending_notes_handler(
+    maker: async_sessionmaker[AsyncSession],
+) -> Callable[[dict[str, Any]], Awaitable[None]]:
+    """Wrap the pending-ingest backfill as a queue handler so it is fireable as a
+    recurring schedule + an emergency Ops trigger, not just at boot. It takes no
+    payload — the sweep finds its own candidates (every note in `ingest_state =
+    'pending'` lacking an active `ingest_note` job) — and runs under SYSTEM_CTX
+    because reconciliation legitimately crosses every domain (E1). Re-firing is
+    safe: the underlying INSERT…SELECT skips notes that already have an active job,
+    so a dropped-event re-run enqueues nothing extra (E4)."""
+
+    async def handler(_payload: dict[str, Any]) -> None:
+        await queue.backfill_pending_notes(maker, queue.SYSTEM_CTX)
+
+    return handler
+
+
+def reconcile_pending_integration_handler(
+    maker: async_sessionmaker[AsyncSession],
+) -> Callable[[dict[str, Any]], Awaitable[None]]:
+    """Wrap the pending-integration backfill as a queue handler (bounded,
+    oldest-first), fireable on a recurring schedule + on demand from Ops. Same
+    SYSTEM_CTX + idempotency contract as the pending-notes reconciler: the
+    INSERT…SELECT skips notes with an active `integrate_note` job, so re-firing
+    never double-enqueues (E4)."""
+
+    async def handler(_payload: dict[str, Any]) -> None:
+        await queue.backfill_pending_integration(maker, queue.SYSTEM_CTX)
 
     return handler

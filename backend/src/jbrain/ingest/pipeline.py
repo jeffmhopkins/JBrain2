@@ -16,7 +16,7 @@ from typing import Any
 from uuid import UUID
 
 import structlog
-from sqlalchemy import bindparam, delete, select, text, update
+from sqlalchemy import bindparam, case, delete, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.sql import func
 
@@ -92,7 +92,23 @@ class IngestPipeline:
                 await session.execute(
                     update(Note)
                     .where(Note.id == note_id)
-                    .values(ingest_state="indexed", indexed_at=func.now())
+                    .values(
+                        ingest_state="indexed",
+                        indexed_at=func.now(),
+                        # A re-ingest of an already-integrated note (an edit, or the
+                        # OCR handler's re-describe) rebuilt the chunks, so the graph
+                        # is now stale: flip 'integrated' -> 'stale' so it is eligible
+                        # again under `integration_state <> 'integrated'` — both the
+                        # engine dispatcher's _already_active skip and the integration
+                        # reconciler key on that, and without the reset a re-delivered
+                        # note.ingested for the SAME unchanged note would be skipped but
+                        # so would this genuine re-integration. Pre-cutover the direct
+                        # integrate enqueue re-ran unconditionally; this preserves that.
+                        integration_state=case(
+                            (Note.integration_state == "integrated", "stale"),
+                            else_=Note.integration_state,
+                        ),
+                    )
                 )
         except Exception:
             async with scoped_session(self._maker, SYSTEM_CTX) as session:
@@ -113,24 +129,30 @@ class IngestPipeline:
         # docs/ANALYSIS.md), gated on outstanding vision WORK — never on
         # extract kinds or the image-analysis mode: a mode flip on a cached
         # attachment enqueues no job and must not block analysis. While OCR is
-        # outstanding the handler's re-ingest enqueues analysis instead, so an
-        # image note is extracted once, with its OCR text. The dedup is
-        # queued-only on purpose: a RUNNING analyze may have read stale
-        # chunks, so a fresh pass must still follow it. Single-worker
-        # invariant: the OCR handler enqueues this re-ingest before its own
-        # job completes, which is safe single-threaded — under multi-worker
-        # the gate could see that originating job as running and defer
-        # forever. TODO(queue): triggered_by_job exclusion if multi-worker
-        # lands.
+        # outstanding the OCR handler's re-ingest re-emits this event with its OCR
+        # text, so an image note is extracted once. The queued-only dedup is now the
+        # dispatcher's job (_already_active): a RUNNING analyze may have read stale
+        # chunks, so it never suppresses a fresh pass; a queued twin does, and so does
+        # an integrated note — but a re-ingest just flipped 'integrated' -> 'stale'
+        # above, so this re-emission re-integrates and only a duplicate event for an
+        # unchanged note is suppressed. Single-worker invariant: the OCR handler
+        # re-ingests before its own job completes, which is safe single-threaded —
+        # under multi-worker the gate could see that originating job as running and
+        # defer forever. TODO(queue): triggered_by_job exclusion if multi-worker lands.
         if not outstanding and not await queue.has_active_analysis(
             self._maker, SYSTEM_CTX, note_id, statuses=("queued",)
         ):
-            await queue.enqueue(self._maker, SYSTEM_CTX, "integrate_note", {"note_id": note_id})
-            # SHADOW (Wave 1): emit a note.ingested event ALONGSIDE the integrate
-            # enqueue (E7a) for the dispatcher to diff. domain is the note's
-            # fail-closed E2 stamp; the worker has no per-content principal, so the
-            # emit resolves the owner principal. Best-effort — a failed emit never
-            # disturbs ingestion (the integrate enqueue above owns the real path).
+            # W2·C cutover: emit the note.ingested event that DRIVES integration — the
+            # dispatcher resolves it to the integrate pipeline and enqueues the job
+            # (with the same queued-only / already-integrated dedup the direct enqueue
+            # carried, now in dispatcher._already_active). The direct integrate enqueue
+            # is gone; only the event remains. domain is the note's fail-closed E2
+            # stamp; the worker has no per-content principal, so the emit resolves the
+            # owner principal. Best-effort — a failed emit never disturbs ingestion;
+            # the recurring integration reconciler (backfill_pending_integration) is the
+            # safety net for a dropped event. The has_active_analysis gate above stays
+            # as a cheap pre-filter (skip emitting when a queued integrate already
+            # exists), but the dispatcher's dedup is the authoritative once-only.
             await wf_events.emit_event(
                 self._maker,
                 SYSTEM_CTX,

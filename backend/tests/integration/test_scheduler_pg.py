@@ -21,8 +21,12 @@ from jbrain.db.session import scoped_session
 from jbrain.workflow.registry import ACTION_SPECS, build_registry
 from jbrain.workflow.scheduler import (
     PURGE_ACTION,
+    RECONCILE_PENDING_INTEGRATION_ACTION,
+    RECONCILE_PENDING_NOTES_ACTION,
     ScheduleResolutionError,
     fire_trigger,
+    reconcile_pending_integration_handler,
+    reconcile_pending_notes_handler,
     scheduler_tick,
 )
 from tests.conftest import docker_available
@@ -37,7 +41,14 @@ NOW = datetime(2026, 6, 15, 2, 0, tzinfo=UTC)
 
 
 def _registry():  # noqa: ANN202
-    return build_registry((*ACTION_SPECS, PURGE_ACTION))
+    return build_registry(
+        (
+            *ACTION_SPECS,
+            PURGE_ACTION,
+            RECONCILE_PENDING_NOTES_ACTION,
+            RECONCILE_PENDING_INTEGRATION_ACTION,
+        )
+    )
 
 
 @pytest.fixture
@@ -91,6 +102,37 @@ async def _jobs_of_kind(maker: async_sessionmaker, kind: str) -> int:
         return (
             await s.execute(text("SELECT count(*) FROM app.jobs WHERE kind = :k"), {"k": kind})
         ).scalar_one()
+
+
+async def _jobs_for_note(maker: async_sessionmaker, kind: str, note_id: str) -> int:
+    async with scoped_session(maker, queue.SYSTEM_CTX) as s:
+        return (
+            await s.execute(
+                text(
+                    "SELECT count(*) FROM app.jobs WHERE kind = :k AND payload ->> 'note_id' = :n"
+                ),
+                {"k": kind, "n": note_id},
+            )
+        ).scalar_one()
+
+
+async def _seed_note(
+    maker: async_sessionmaker, *, ingest_state: str, integration_state: str
+) -> str:
+    """A bare note in a given state, with NO ingest/integrate job and NO event —
+    exactly the residue a dropped best-effort enqueue would leave behind. The
+    reconciler must self-heal it off the state columns alone."""
+    nid = str(uuid.uuid4())
+    async with scoped_session(maker, queue.SYSTEM_CTX) as s:
+        await s.execute(
+            text(
+                "INSERT INTO app.notes (id, client_id, domain_code, body,"
+                " ingest_state, integration_state)"
+                " VALUES (:i, :c, 'general', 'body', :ing, :int)"
+            ),
+            {"i": nid, "c": nid[:12], "ing": ingest_state, "int": integration_state},
+        )
+    return nid
 
 
 async def test_due_schedule_enqueues_its_action_and_advances_next_run_at(
@@ -198,3 +240,90 @@ async def test_seeded_nightly_sweeps_exist_and_are_fireable(maker: async_session
     before = await _jobs_of_kind(maker, "consolidate_predicates")
     await fire_trigger(maker, _registry(), str(trig))
     assert await _jobs_of_kind(maker, "consolidate_predicates") == before + 1
+
+
+# --- the dropped-event safety net (Wave 2 — the whole point of this task) -----
+
+
+async def test_seeded_reconciler_sweeps_exist_and_are_fireable(maker: async_sessionmaker) -> None:
+    """Migration 0041 seeds the two reconcilers as recurring (300s), manual,
+    schedule-bound triggers; each is fireable on demand from Ops."""
+    async with scoped_session(maker, queue.SYSTEM_CTX) as s:
+        rows = (
+            await s.execute(
+                text(
+                    "SELECT t.id, t.pipeline, s.interval_seconds FROM app.triggers t"
+                    " JOIN app.schedules s ON s.id = t.on_schedule_id"
+                    " WHERE t.manual AND t.pipeline LIKE 'reconcile_%'"
+                )
+            )
+        ).all()
+    by_pipeline = {r.pipeline: r for r in rows}
+    assert set(by_pipeline) == {"reconcile_pending_notes", "reconcile_pending_integration"}
+    # Recurring, not nightly: 5-minute cadence bounds dropped-event staleness.
+    assert all(r.interval_seconds == 300 for r in rows)
+    # Fire one on demand and confirm the reconcile job lands.
+    before = await _jobs_of_kind(maker, "reconcile_pending_notes")
+    await fire_trigger(maker, _registry(), str(by_pipeline["reconcile_pending_notes"].id))
+    assert await _jobs_of_kind(maker, "reconcile_pending_notes") == before + 1
+
+
+async def test_dropped_ingest_event_self_heals_and_is_idempotent(
+    maker: async_sessionmaker,
+) -> None:
+    """The core guarantee: a note stuck in ingest_state='pending' with NO ingest
+    job and NO event (a dropped best-effort enqueue) gets an ingest_note job when
+    the reconciler runs — exactly once, and re-running never double-enqueues (E4).
+
+    This drives the reconciler the way the schedule/trigger does: firing the
+    trigger enqueues a reconcile_pending_notes job, whose handler is the backfill.
+    Here we fire the trigger (proving the wiring) and then run the handler (proving
+    the reconciliation), since the worker loop that would claim the reconcile job
+    is not running in this test."""
+    note_id = await _seed_note(
+        maker, ingest_state="pending", integration_state="pending_integration"
+    )
+    ids = await _seed_schedule(
+        maker, action="reconcile_pending_notes", next_run_at=NOW - timedelta(minutes=1)
+    )
+
+    # Firing the trigger enqueues exactly one reconcile_pending_notes job (the
+    # schedule/Ops path), and no ingest job yet — that is the handler's work.
+    fired = await fire_trigger(maker, _registry(), ids["trigger"])
+    assert fired.pipeline == ids["pipeline"]
+    assert await _jobs_for_note(maker, "ingest_note", note_id) == 0
+
+    # Running the reconciler handler (what the worker would do on claiming that job)
+    # self-heals the dropped-event note: exactly one ingest_note job appears.
+    handler = reconcile_pending_notes_handler(maker)
+    await handler({})
+    assert await _jobs_for_note(maker, "ingest_note", note_id) == 1
+
+    # Idempotent: a second run does NOT double-enqueue (the backfill skips notes
+    # that already have an active ingest_note job).
+    await handler({})
+    assert await _jobs_for_note(maker, "ingest_note", note_id) == 1
+
+
+async def test_dropped_integration_event_self_heals_and_is_idempotent(
+    maker: async_sessionmaker,
+) -> None:
+    """Same guarantee for integration: an indexed-but-unintegrated note with NO
+    integrate job and NO event gets exactly one integrate_note job, idempotently."""
+    note_id = await _seed_note(
+        maker, ingest_state="indexed", integration_state="pending_integration"
+    )
+    ids = await _seed_schedule(
+        maker, action="reconcile_pending_integration", next_run_at=NOW - timedelta(minutes=1)
+    )
+
+    fired = await fire_trigger(maker, _registry(), ids["trigger"])
+    assert fired.pipeline == ids["pipeline"]
+    assert await _jobs_for_note(maker, "integrate_note", note_id) == 0
+
+    handler = reconcile_pending_integration_handler(maker)
+    await handler({})
+    assert await _jobs_for_note(maker, "integrate_note", note_id) == 1
+
+    await handler({})
+    assert await _jobs_for_note(maker, "integrate_note", note_id) == 1

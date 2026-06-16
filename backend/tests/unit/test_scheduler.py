@@ -22,8 +22,16 @@ NOW = datetime(2026, 6, 15, 2, 0, tzinfo=UTC)
 
 
 def _registry() -> ActionRegistry:
-    # The worker's composed registry: the shipped six plus the in-code purge action.
-    return build_registry((*ACTION_SPECS, scheduler.PURGE_ACTION))
+    # The worker's composed registry: the shipped six plus the in-code purge action
+    # and the two reconciler actions (the dropped-event safety net, Wave 2).
+    return build_registry(
+        (
+            *ACTION_SPECS,
+            scheduler.PURGE_ACTION,
+            scheduler.RECONCILE_PENDING_NOTES_ACTION,
+            scheduler.RECONCILE_PENDING_INTEGRATION_ACTION,
+        )
+    )
 
 
 class FakeResult:
@@ -227,3 +235,75 @@ async def test_tick_advances_then_skips_a_schedule_with_no_trigger(
     assert fired == []
     assert enqueued == []
     assert any("UPDATE app.schedules" in s for s, _ in claim.executed)
+
+
+# --- the two reconciler actions (the dropped-event safety net, Wave 2) -------
+
+
+def test_reconciler_actions_resolve_in_the_composed_registry() -> None:
+    # The worker composes both reconcilers into its registry; a pipeline that names
+    # one must resolve to its handler key (and not be confused with the others).
+    registry = _registry()
+    for action in ("reconcile_pending_notes", "reconcile_pending_integration"):
+        spec = registry.get(action)
+        assert spec.version == 1
+        assert spec.handler == action
+        assert spec.cost_class == "cheap"
+
+
+async def test_reconcile_pending_notes_handler_calls_the_pending_backfill(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The handler is the ingest reconciler: it calls queue.backfill_pending_notes
+    # under SYSTEM_CTX (reconciliation crosses every domain) and takes no payload.
+    calls: list[Any] = []
+
+    async def fake_backfill(maker: Any, ctx: Any) -> int:
+        assert ctx is queue.SYSTEM_CTX
+        calls.append(maker)
+        return 0
+
+    monkeypatch.setattr(scheduler.queue, "backfill_pending_notes", fake_backfill)
+    sentinel = object()
+    handler = scheduler.reconcile_pending_notes_handler(sentinel)  # type: ignore[arg-type]
+    await handler({})
+    assert calls == [sentinel]
+
+
+async def test_reconcile_pending_integration_handler_calls_the_integration_backfill(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[Any] = []
+
+    async def fake_backfill(maker: Any, ctx: Any) -> int:
+        assert ctx is queue.SYSTEM_CTX
+        calls.append(maker)
+        return 0
+
+    monkeypatch.setattr(scheduler.queue, "backfill_pending_integration", fake_backfill)
+    sentinel = object()
+    handler = scheduler.reconcile_pending_integration_handler(sentinel)  # type: ignore[arg-type]
+    await handler({})
+    assert calls == [sentinel]
+
+
+async def test_fire_reconciler_trigger_enqueues_the_reconcile_action(
+    monkeypatch: pytest.MonkeyPatch, enqueued: list[tuple[str, dict[str, Any]]]
+) -> None:
+    # End-to-end through fire_trigger: a trigger bound to the pending-notes
+    # reconciler pipeline enqueues a reconcile_pending_notes job (kind = handler).
+    steps = '[{"action": "reconcile_pending_notes", "action_version": 1, "params": {}}]'
+    db = FakeDB(
+        [
+            FakeSession([Row(pipeline="reconcile_pending_notes", enabled=True, manual=True)]),
+            FakeSession(
+                [Row(name="reconcile_pending_notes", version=1, steps=steps, description="")]
+            ),
+        ]
+    )
+    monkeypatch.setattr(scheduler, "scoped_session", db.scoped)
+
+    fired = await scheduler.fire_trigger(None, _registry(), "trig-recon")  # type: ignore[arg-type]
+
+    assert fired.pipeline == "reconcile_pending_notes"
+    assert enqueued == [("reconcile_pending_notes", {})]

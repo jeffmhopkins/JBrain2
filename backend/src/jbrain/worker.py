@@ -33,6 +33,7 @@ from jbrain.storage import FsBlobStore
 from jbrain.usage import SqlUsageRecorder
 from jbrain.workflow import dispatcher, scheduler
 from jbrain.workflow.registry import ACTION_SPECS, ActionRegistry, build_registry
+from jbrain.workflow.runlog import PipelineRunLog
 
 log = structlog.get_logger()
 
@@ -148,6 +149,9 @@ async def run_loop(
     last_heartbeat = 0.0
     last_tick = 0.0
     last_dispatch = 0.0
+    # The run-log writer the dispatcher uses when LIVE: one pipeline run per
+    # dispatched event (§8). Built once off the same maker (owner-scoped writes).
+    run_log = PipelineRunLog(maker)
     while True:
         now = time.monotonic()
         if now - last_heartbeat >= HEARTBEAT_SECONDS:
@@ -160,18 +164,19 @@ async def run_loop(
         if registry is not None and now - last_tick >= scheduler.TICK_SECONDS:
             await scheduler.run_tick_safely(maker, registry)
             last_tick = now
-        # Run the SHADOW dispatcher tick alongside the scheduler tick: claim
-        # undispatched events, diff the engine's would-be enqueue against the
-        # hardcoded path, and mark them dispatched — never enqueuing this wave
-        # (workflow/dispatcher.py). Gated by the `workflow_dispatch` setting and
-        # fault-swallowed exactly like the scheduler tick, so the shadow engine can
-        # never disturb the live job loop.
+        # Run the dispatcher tick alongside the scheduler tick: claim undispatched
+        # events, diff the engine's would-be enqueue against the hardcoded path, and
+        # mark them dispatched (workflow/dispatcher.py). In SHADOW (the prod default)
+        # it never enqueues; in LIVE (the Wave-2 cutover, an operator settings flip)
+        # it also enqueues + run-logs. Gated by `workflow_dispatch` +
+        # `workflow_dispatch_mode` and fault-swallowed exactly like the scheduler
+        # tick, so it can never disturb the live job loop.
         if (
             registry is not None
             and settings is not None
             and now - last_dispatch >= dispatcher.TICK_SECONDS
         ):
-            await dispatcher.run_tick_safely(maker, registry, settings=settings)
+            await dispatcher.run_tick_safely(maker, registry, settings=settings, run_log=run_log)
             last_dispatch = now
         try:
             if not backfilled:
@@ -253,15 +258,29 @@ async def run() -> None:
         # The deleted-note-artifact purge as a fireable action (Phase-5 Track B):
         # the same boot sweep, now also runnable on a nightly schedule / on demand.
         "purge_deleted_artifacts": scheduler.purge_handler(maker),
+        # The two boot self-heal backfills as fireable actions (Phase-5 Wave 2 —
+        # the dropped-event safety net). They still run at boot below, AND now on a
+        # recurring schedule + on-demand from Ops, so a dropped best-effort event
+        # self-heals within minutes rather than at the next restart.
+        "reconcile_pending_notes": scheduler.reconcile_pending_notes_handler(maker),
+        "reconcile_pending_integration": scheduler.reconcile_pending_integration_handler(maker),
     }
     # Build the dispatch table from the action registry (W0.1): an action without
     # a handler — or a handler with no registered action — fails the worker LOUDLY
     # here at boot, like the schema registry above, rather than failing a job at run
     # time (the old "no handler for kind" path). Behavior for known kinds is
     # unchanged: the dispatch table is the same {kind: handler} map as before. The
-    # registry adds the purge action to the shipped six (it lives in-code only, not
-    # in the app.actions seed — see scheduler.PURGE_ACTION).
-    registry = build_registry((*ACTION_SPECS, scheduler.PURGE_ACTION))
+    # registry adds the purge action and the two reconcilers to the shipped six
+    # (all three live in-code only, not in the app.actions seed — see
+    # scheduler.PURGE_ACTION / RECONCILE_PENDING_*_ACTION).
+    registry = build_registry(
+        (
+            *ACTION_SPECS,
+            scheduler.PURGE_ACTION,
+            scheduler.RECONCILE_PENDING_NOTES_ACTION,
+            scheduler.RECONCILE_PENDING_INTEGRATION_ACTION,
+        )
+    )
     handlers = registry.dispatch_table(impls)
     try:
         # The shadow dispatcher reads its `workflow_dispatch` gate through the same

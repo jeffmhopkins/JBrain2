@@ -143,7 +143,6 @@ async def create_note(
     body: CreateNoteRequest,
     principal: PrincipalDep,
     repo: NotesRepoDep,
-    jobs: JobQueueDep,
     maker: SessionMakerDep,
 ) -> NoteOut:
     ctx = ctx_for(principal)
@@ -165,11 +164,15 @@ async def create_note(
     # Only a fresh insert needs ingestion; an idempotent retry already has a
     # job (or finished one). Payload carries the id only, never note content.
     if created:
-        await jobs.enqueue(ctx, "ingest_note", {"note_id": note.id})
-        # SHADOW (Wave 1): emit a note.created event ALONGSIDE the enqueue (E7a) so
-        # the dispatcher can diff its would-be enqueue against this one. Best-effort
-        # — a failed emit never blocks note creation; the hardcoded enqueue above
-        # owns the real path this wave.
+        # W2·C cutover: emit the note.created event that DRIVES ingestion — the engine
+        # dispatcher resolves it to the ingest pipeline and enqueues the ingest_note
+        # job (with the queued / past-'pending' dedup now in dispatcher._already_active).
+        # The direct ingest enqueue is gone; only the event remains. Best-effort — a
+        # failed emit never blocks note creation, and the recurring pending reconciler
+        # (backfill_pending_notes, keyed on ingest_state='pending') is the safety net
+        # that re-drives ingestion for any note whose event was dropped. The
+        # `_shadow_enqueued` baseline rides along for the dispatcher's observability
+        # diff, not a second enqueue.
         await wf_events.emit_event(
             maker,
             ctx,

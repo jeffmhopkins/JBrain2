@@ -375,37 +375,103 @@ async def test_tick_returns_empty_when_no_events(monkeypatch: pytest.MonkeyPatch
 
 
 class FakeSettings:
-    def __init__(self, value: Any) -> None:
+    """Scripts both gates: the master `workflow_dispatch` bool (via `get`) and the
+    `workflow_dispatch_mode` typed getter the dispatcher reads to pick shadow/live/off."""
+
+    def __init__(self, value: Any, *, mode: str = "shadow") -> None:
         self._value = value
+        self._mode = mode
 
     async def get(self, ctx: Any, key: str, default: Any = None) -> Any:
         assert key == dispatcher.WORKFLOW_DISPATCH_KEY
         return self._value if self._value is not None else default
 
+    async def workflow_dispatch_mode(self, ctx: Any) -> str:
+        return self._mode
+
+
+class FakeRunLog:
+    """Records each pipeline run the live path writes (no DB)."""
+
+    def __init__(self) -> None:
+        self.records: list[dict[str, Any]] = []
+
+    async def record(self, ctx: Any, **kw: Any) -> str:
+        self.records.append(kw)
+        return "run-1"
+
 
 async def test_run_tick_safely_skips_when_gate_is_off(monkeypatch: pytest.MonkeyPatch) -> None:
-    ran: list[int] = []
+    ran: list[dict[str, Any]] = []
 
     async def fake_tick(*a: Any, **k: Any) -> list[Any]:
-        ran.append(1)
+        ran.append(k)
         return []
 
     monkeypatch.setattr(dispatcher, "dispatcher_tick", fake_tick)
-    await dispatcher.run_tick_safely(None, _registry(), settings=FakeSettings(False))  # type: ignore[arg-type]
+    await dispatcher.run_tick_safely(
+        None,  # type: ignore[arg-type]
+        _registry(),
+        settings=FakeSettings(False),  # type: ignore[arg-type]
+        run_log=FakeRunLog(),  # type: ignore[arg-type]
+    )
     assert ran == []
 
 
-async def test_run_tick_safely_runs_when_gate_default_on(monkeypatch: pytest.MonkeyPatch) -> None:
-    ran: list[int] = []
+async def test_run_tick_safely_skips_when_mode_is_off(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Master switch on, mode "off": the tick is skipped entirely.
+    ran: list[dict[str, Any]] = []
 
     async def fake_tick(*a: Any, **k: Any) -> list[Any]:
-        ran.append(1)
+        ran.append(k)
         return []
 
     monkeypatch.setattr(dispatcher, "dispatcher_tick", fake_tick)
-    # value None -> the getter returns the default (ON for shadow).
-    await dispatcher.run_tick_safely(None, _registry(), settings=FakeSettings(None))  # type: ignore[arg-type]
-    assert ran == [1]
+    await dispatcher.run_tick_safely(
+        None,  # type: ignore[arg-type]
+        _registry(),
+        settings=FakeSettings(True, mode="off"),  # type: ignore[arg-type]
+        run_log=FakeRunLog(),  # type: ignore[arg-type]
+    )
+    assert ran == []
+
+
+async def test_run_tick_safely_runs_shadow_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Default mode shadow: the tick runs with live=False (prod stays shadow).
+    ran: list[dict[str, Any]] = []
+
+    async def fake_tick(*a: Any, **k: Any) -> list[Any]:
+        ran.append(k)
+        return []
+
+    monkeypatch.setattr(dispatcher, "dispatcher_tick", fake_tick)
+    await dispatcher.run_tick_safely(
+        None,  # type: ignore[arg-type]
+        _registry(),
+        settings=FakeSettings(None, mode="shadow"),  # type: ignore[arg-type]
+        run_log=FakeRunLog(),  # type: ignore[arg-type]
+    )
+    assert len(ran) == 1
+    assert ran[0]["live"] is False
+
+
+async def test_run_tick_safely_runs_live_when_mode_live(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Mode "live": the tick runs with live=True (the Wave-2 cutover flip).
+    ran: list[dict[str, Any]] = []
+
+    async def fake_tick(*a: Any, **k: Any) -> list[Any]:
+        ran.append(k)
+        return []
+
+    monkeypatch.setattr(dispatcher, "dispatcher_tick", fake_tick)
+    await dispatcher.run_tick_safely(
+        None,  # type: ignore[arg-type]
+        _registry(),
+        settings=FakeSettings(True, mode="live"),  # type: ignore[arg-type]
+        run_log=FakeRunLog(),  # type: ignore[arg-type]
+    )
+    assert len(ran) == 1
+    assert ran[0]["live"] is True
 
 
 async def test_run_tick_safely_swallows_a_tick_fault(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -414,7 +480,12 @@ async def test_run_tick_safely_swallows_a_tick_fault(monkeypatch: pytest.MonkeyP
 
     monkeypatch.setattr(dispatcher, "dispatcher_tick", boom)
     # Must not raise: a dispatcher blip can never kill the worker loop.
-    await dispatcher.run_tick_safely(None, _registry(), settings=FakeSettings(True))  # type: ignore[arg-type]
+    await dispatcher.run_tick_safely(
+        None,  # type: ignore[arg-type]
+        _registry(),
+        settings=FakeSettings(True),  # type: ignore[arg-type]
+        run_log=FakeRunLog(),  # type: ignore[arg-type]
+    )
 
 
 async def test_tick_marks_a_poison_event_dispatched_without_enqueue(
@@ -441,3 +512,378 @@ async def test_tick_marks_a_poison_event_dispatched_without_enqueue(
     assert diffs[0].error is not None
     assert no_enqueue == []
     assert any("UPDATE app.events" in sql for sql in s1.executed)
+
+
+# --- mode resolution: SqlSettingsStore.workflow_dispatch_mode ----------------
+
+
+@pytest.mark.parametrize(
+    ("stored", "expected"),
+    [
+        (None, "live"),  # absent -> the cutover default (engine owns the path)
+        ("shadow", "shadow"),
+        ("live", "live"),
+        ("off", "off"),
+        ("garbage", "shadow"),  # junk fails closed to shadow, never live
+        (True, "shadow"),  # wrong type -> shadow
+    ],
+)
+async def test_workflow_dispatch_mode_resolves_and_fails_closed(
+    monkeypatch: pytest.MonkeyPatch, stored: Any, expected: str
+) -> None:
+    from jbrain.settings_store import SqlSettingsStore
+
+    store = SqlSettingsStore(maker=None)  # type: ignore[arg-type]
+
+    async def fake_get(ctx: Any, key: str, default: Any = None) -> Any:
+        return default if stored is None else stored
+
+    monkeypatch.setattr(store, "get", fake_get)
+    assert await store.workflow_dispatch_mode(queue.SYSTEM_CTX) == expected
+
+
+# --- LIVE mode: dedup-skip, stamped enqueue, run-logging (W2·B) --------------
+
+
+def _would(
+    *, kind: str = "integrate_note", note_id: str | None = "n-1", scoped: bool = True
+) -> dispatcher.WouldEnqueue:
+    return dispatcher.WouldEnqueue(
+        kind=kind,
+        payload={"note_id": note_id} if note_id is not None else {},
+        principal_id=PRINCIPAL if scoped else "",
+        domain_code="general" if scoped else "",
+        trigger_id="trig-1",
+        pipeline=f"event_{kind}",
+    )
+
+
+@pytest.fixture
+def captured_enqueue(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[dict[str, Any]]]:
+    """Capture every queue.enqueue call (args + stamp) and hand back a job id."""
+    calls: list[dict[str, Any]] = []
+
+    async def fake_enqueue(
+        maker: Any,
+        ctx: Any,
+        kind: str,
+        payload: dict[str, Any],
+        *,
+        principal_id: str | None = None,
+        domain_code: str | None = None,
+    ) -> str:
+        calls.append(
+            {
+                "kind": kind,
+                "payload": payload,
+                "principal_id": principal_id,
+                "domain_code": domain_code,
+            }
+        )
+        return f"job-{len(calls)}"
+
+    monkeypatch.setattr(dispatcher.queue, "enqueue", fake_enqueue)
+    yield calls
+
+
+async def test_already_active_skips_an_integrate_with_a_queued_twin(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen: list[tuple[str, tuple[str, ...]]] = []
+
+    async def fake_has_active_analysis(
+        maker: Any, ctx: Any, note_id: str, *, statuses: tuple[str, ...] = ()
+    ) -> bool:
+        seen.append((note_id, statuses))
+        return True
+
+    monkeypatch.setattr(dispatcher.queue, "has_active_analysis", fake_has_active_analysis)
+    assert await dispatcher._already_active(None, _would(kind="integrate_note"))  # type: ignore[arg-type]
+    # The guard mirrors the hardcoded path: note-keyed and QUEUED-only.
+    assert seen == [("n-1", ("queued",))]
+
+
+async def test_already_active_skips_an_ingest_with_a_queued_twin(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen: list[dict[str, Any]] = []
+
+    async def fake_has_active(
+        maker: Any,
+        ctx: Any,
+        kind: str,
+        *,
+        payload_field: str,
+        value: str,
+        statuses: tuple[str, ...],
+    ) -> bool:
+        seen.append({"kind": kind, "field": payload_field, "value": value, "statuses": statuses})
+        return True
+
+    monkeypatch.setattr(dispatcher.queue, "has_active", fake_has_active)
+    assert await dispatcher._already_active(None, _would(kind="ingest_note"))  # type: ignore[arg-type]
+    assert seen == [
+        {"kind": "ingest_note", "field": "note_id", "value": "n-1", "statuses": ("queued",)}
+    ]
+
+
+async def test_already_active_false_for_a_kind_without_a_note_twin() -> None:
+    # consolidate_predicates carries no note_id and no note-keyed guard — never
+    # suppressed here (its own action owns dedup).
+    w = dispatcher.WouldEnqueue(
+        kind="consolidate_predicates",
+        payload={},
+        principal_id=PRINCIPAL,
+        domain_code="general",
+        trigger_id="trig-1",
+        pipeline="p",
+    )
+    assert not await dispatcher._already_active(None, w)  # type: ignore[arg-type]
+
+
+# --- _already_active: state-based dedup hardening (W2·C) ----------------------
+# Under LIVE the queued-twin check is not enough: a re-delivered/duplicate event
+# for a note whose work already finished (no queued twin survives) must not be
+# re-processed. _already_active also skips exactly what the reconcilers would NOT
+# re-enqueue — ingest past 'pending', integration already 'integrated'.
+
+
+def _patch_state(monkeypatch: pytest.MonkeyPatch, state: tuple[str, str] | None) -> list[str]:
+    """Stub dispatcher._note_state to return `state` and record the note_id it read.
+    The real SELECT is integration-tested (test_dispatcher_pg); here we drive the
+    skip decision off the returned state."""
+    seen: list[str] = []
+
+    async def fake_state(maker: Any, note_id: str) -> tuple[str, str] | None:
+        seen.append(note_id)
+        return state
+
+    monkeypatch.setattr(dispatcher, "_note_state", fake_state)
+    return seen
+
+
+async def test_already_active_ingest_skips_a_note_past_pending(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # No queued twin, but the note is already 'indexed' — the pending reconciler
+    # would not re-enqueue it, so neither does a live dispatch.
+    async def no_twin(*a: Any, **k: Any) -> bool:
+        return False
+
+    monkeypatch.setattr(dispatcher.queue, "has_active", no_twin)
+    seen = _patch_state(monkeypatch, ("indexed", "pending_integration"))
+    assert await dispatcher._already_active(None, _would(kind="ingest_note"))  # type: ignore[arg-type]
+    assert seen == ["n-1"]
+
+
+async def test_already_active_ingest_allows_a_still_pending_note(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # No queued twin AND the note is still 'pending' — the pending reconciler WOULD
+    # re-enqueue it, so the dispatcher must too: not suppressed.
+    async def no_twin(*a: Any, **k: Any) -> bool:
+        return False
+
+    monkeypatch.setattr(dispatcher.queue, "has_active", no_twin)
+    _patch_state(monkeypatch, ("pending", "pending_integration"))
+    assert not await dispatcher._already_active(None, _would(kind="ingest_note"))  # type: ignore[arg-type]
+
+
+async def test_already_active_ingest_allows_a_missing_note(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # An absent note (state None) is left to the handler's own missing-note no-op,
+    # never suppressed on absence (which could strand a real, racing insert).
+    async def no_twin(*a: Any, **k: Any) -> bool:
+        return False
+
+    monkeypatch.setattr(dispatcher.queue, "has_active", no_twin)
+    _patch_state(monkeypatch, None)
+    assert not await dispatcher._already_active(None, _would(kind="ingest_note"))  # type: ignore[arg-type]
+
+
+async def test_already_active_integrate_skips_an_already_integrated_note(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # No queued twin, but integration already 'integrated' — past the integration
+    # reconciler's `integration_state <> 'integrated'`, so suppressed.
+    async def no_twin(*a: Any, **k: Any) -> bool:
+        return False
+
+    monkeypatch.setattr(dispatcher.queue, "has_active_analysis", no_twin)
+    seen = _patch_state(monkeypatch, ("indexed", "integrated"))
+    assert await dispatcher._already_active(None, _would(kind="integrate_note"))  # type: ignore[arg-type]
+    assert seen == ["n-1"]
+
+
+async def test_already_active_integrate_allows_a_not_yet_integrated_note(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # No queued twin and not yet integrated — the reconciler WOULD re-enqueue, so
+    # the dispatcher must too.
+    async def no_twin(*a: Any, **k: Any) -> bool:
+        return False
+
+    monkeypatch.setattr(dispatcher.queue, "has_active_analysis", no_twin)
+    _patch_state(monkeypatch, ("indexed", "pending_integration"))
+    assert not await dispatcher._already_active(None, _would(kind="integrate_note"))  # type: ignore[arg-type]
+
+
+async def test_already_active_queued_twin_short_circuits_before_state_read(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The cheap queued-twin check fires first: a queued twin suppresses without ever
+    # reading note state (one fewer query in the common back-to-back case).
+    async def has_twin(*a: Any, **k: Any) -> bool:
+        return True
+
+    monkeypatch.setattr(dispatcher.queue, "has_active_analysis", has_twin)
+    seen = _patch_state(monkeypatch, ("indexed", "pending_integration"))
+    assert await dispatcher._already_active(None, _would(kind="integrate_note"))  # type: ignore[arg-type]
+    assert seen == []  # state never read — the twin check short-circuited
+
+
+def _allow_state(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Stub _note_state to a not-yet-finished state so the state-skip guard never
+    suppresses — isolating these tests to the dedup/stamp/run-log path. The state
+    skip itself is covered by the _already_active state tests above."""
+
+    async def open_state(maker: Any, note_id: str) -> tuple[str, str]:
+        # ingest_state 'pending' (the pending reconciler WOULD re-enqueue) and
+        # integration_state not 'integrated' — neither guard suppresses.
+        return ("pending", "pending_integration")
+
+    monkeypatch.setattr(dispatcher, "_note_state", open_state)
+
+
+async def test_live_enqueue_stamps_the_event_scope_and_runlogs(
+    monkeypatch: pytest.MonkeyPatch, captured_enqueue: list[dict[str, Any]]
+) -> None:
+    async def no_active(*a: Any, **k: Any) -> bool:
+        return False
+
+    monkeypatch.setattr(dispatcher.queue, "has_active_analysis", no_active)
+    _allow_state(monkeypatch)
+    run_log = FakeRunLog()
+    diff = dispatcher.ShadowDiff(
+        event_id="ev-1",
+        event_type="note.ingested",
+        matches=True,
+        enqueues=[_would(kind="integrate_note")],
+    )
+    await dispatcher.live_enqueue(None, diff, run_log=run_log)  # type: ignore[arg-type]
+
+    # Exactly one enqueue, carrying the event's E1 stamp.
+    assert len(captured_enqueue) == 1
+    assert captured_enqueue[0]["kind"] == "integrate_note"
+    assert captured_enqueue[0]["principal_id"] == PRINCIPAL
+    assert captured_enqueue[0]["domain_code"] == "general"
+    # One pipeline run row, kind-discriminated 'pipeline', referencing the job id.
+    assert len(run_log.records) == 1
+    rec = run_log.records[0]
+    assert rec["pipeline"] == "event_integrate_note"
+    assert rec["trigger_id"] == "trig-1"
+    assert rec["ran_as"] == "scoped"
+    assert rec["domain_code"] == "general"
+    assert rec["principal_id"] == PRINCIPAL
+    assert [s.job_id for s in rec["steps"]] == ["job-1"]
+
+
+async def test_live_enqueue_skips_a_deduped_target_no_enqueue_no_runlog(
+    monkeypatch: pytest.MonkeyPatch, captured_enqueue: list[dict[str, Any]]
+) -> None:
+    async def already(*a: Any, **k: Any) -> bool:
+        return True
+
+    monkeypatch.setattr(dispatcher.queue, "has_active_analysis", already)
+    run_log = FakeRunLog()
+    diff = dispatcher.ShadowDiff(
+        event_id="ev-1",
+        event_type="note.ingested",
+        matches=True,
+        enqueues=[_would(kind="integrate_note")],
+    )
+    await dispatcher.live_enqueue(None, diff, run_log=run_log)  # type: ignore[arg-type]
+    # The target already has an active job: nothing enqueued, no run logged.
+    assert captured_enqueue == []
+    assert run_log.records == []
+
+
+async def test_live_enqueue_system_event_runs_as_system_unstamped(
+    monkeypatch: pytest.MonkeyPatch, captured_enqueue: list[dict[str, Any]]
+) -> None:
+    # A would-be enqueue with no principal/domain is a system enqueue: NULL stamp,
+    # ran_as 'system', no domain/principal recorded on the run.
+    async def no_active(*a: Any, **k: Any) -> bool:
+        return False
+
+    monkeypatch.setattr(dispatcher.queue, "has_active", no_active)
+    _allow_state(monkeypatch)
+    run_log = FakeRunLog()
+    diff = dispatcher.ShadowDiff(
+        event_id="ev-1",
+        event_type="note.created",
+        matches=True,
+        enqueues=[_would(kind="ingest_note", scoped=False)],
+    )
+    await dispatcher.live_enqueue(None, diff, run_log=run_log)  # type: ignore[arg-type]
+    assert captured_enqueue[0]["principal_id"] is None
+    assert captured_enqueue[0]["domain_code"] is None
+    rec = run_log.records[0]
+    assert rec["ran_as"] == "system"
+    assert rec["domain_code"] is None
+    assert rec["principal_id"] is None
+
+
+async def test_tick_live_enqueues_exactly_once_via_diff(
+    monkeypatch: pytest.MonkeyPatch, captured_enqueue: list[dict[str, Any]]
+) -> None:
+    import json
+
+    async def no_active(*a: Any, **k: Any) -> bool:
+        return False
+
+    monkeypatch.setattr(dispatcher.queue, "has_active_analysis", no_active)
+    _allow_state(monkeypatch)
+    claim_row = Row(
+        id="ev-1",
+        type="note.ingested",
+        payload=json.dumps(
+            {
+                "note_id": "n-1",
+                wf_events.SHADOW_ENQUEUED_KEY: {
+                    "kind": "integrate_note",
+                    "payload": {"note_id": "n-1"},
+                },
+            }
+        ),
+        domain_code="general",
+        principal_id=PRINCIPAL,
+    )
+    s1 = FakeSession(
+        [
+            FakeResult([claim_row]),
+            FakeResult([_trigger_row("event_integrate_note", {"event_types": ["note.ingested"]})]),
+            FakeResult([_pipeline_row("event_integrate_note", "integrate_note")]),
+            FakeResult([]),  # UPDATE dispatched_at
+        ]
+    )
+    s2 = FakeSession([FakeResult([])])  # drain
+    db = FakeDB([s1, s2])
+    monkeypatch.setattr(dispatcher, "scoped_session", db.scoped)
+    run_log = FakeRunLog()
+
+    diffs = await dispatcher.dispatcher_tick(
+        None,  # type: ignore[arg-type]
+        _registry(),
+        now=NOW,
+        live=True,
+        run_log=run_log,  # type: ignore[arg-type]
+    )
+
+    assert len(diffs) == 1 and diffs[0].matches
+    # LIVE: enqueued exactly once with the event's stamp, and one run logged.
+    assert len(captured_enqueue) == 1
+    assert captured_enqueue[0]["principal_id"] == PRINCIPAL
+    assert len(run_log.records) == 1
+    assert run_log.records[0]["steps"][0].job_id == "job-1"

@@ -375,16 +375,37 @@ def test_note_responses_expose_analyzed(
     assert patched["analyzed"] is True
 
 
-def test_create_note_enqueues_ingestion_once(
+def test_create_note_emits_a_single_ingest_event_and_no_direct_enqueue(
     client: tuple[TestClient, FakeNotesRepo, FakeJobQueue],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # W2·C cutover: create_note no longer enqueues ingest_note directly — it emits a
+    # note.created event the engine dispatcher drives to the ingest pipeline. Assert:
+    # (1) NO direct ingest enqueue, (2) exactly one note.created event emitted on a
+    # fresh insert, (3) the idempotent retry emits nothing more, (4) the event payload
+    # carries the id only, never note content.
+    from jbrain.api import notes as notes_api
+
+    emitted: list[dict] = []
+
+    async def fake_emit(maker, ctx, **kw):  # noqa: ANN001, ANN202
+        emitted.append(kw)
+        return "ev-1"
+
+    monkeypatch.setattr(notes_api.wf_events, "emit_event", fake_emit)
+
     c, _, jobs = client
     payload = {"client_id": "q1", "body": "index me"}
     note = c.post("/api/notes", json=payload).json()
-    c.post("/api/notes", json=payload)  # idempotent retry must not re-enqueue
-    assert jobs.enqueued == [("ingest_note", {"note_id": note["id"]})]
-    # Payload carries the id only — never note content.
-    assert "index me" not in str(jobs.enqueued)
+    c.post("/api/notes", json=payload)  # idempotent retry must not re-emit
+
+    # The engine owns ingestion now: no ingest_note enqueued straight from the API.
+    assert jobs.enqueued == []
+    # Exactly one note.created event, carrying the id only (never the body).
+    assert len(emitted) == 1
+    assert emitted[0]["type"] == notes_api.wf_events.NOTE_CREATED
+    assert emitted[0]["payload"] == {"note_id": note["id"]}
+    assert "index me" not in str(emitted)
 
 
 def test_attachment_upload_enqueues_reingestion(
