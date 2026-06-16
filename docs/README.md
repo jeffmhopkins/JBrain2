@@ -13,8 +13,8 @@ ingestion/search, the v3 note→graph analysis pipeline, the personal agent
 the Full Brain chat surface), lists and appointments, and the **workflow engine**
 (`events`/`triggers`/`pipelines`/`actions`/`runs` + scheduler + unified run-log +
 the cutover of ingest/integration/consolidation onto the engine), reflexion in the
-live turn, a fed eval harness, and the recurring self-heal reconcilers. Migrations
-run through 0043.
+live turn, a fed eval harness (the live scorer + a nightly schedule that stores
+`EvalRun`s), and the recurring self-heal reconcilers. Migrations run through 0044.
 
 **Next: Phase 5 residual completion → Phase 6 (Wiki).** Phase 5's engine is live;
 what remains (self-improvement Loops 2–4 and the not-yet-built hygiene sweeps) is

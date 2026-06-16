@@ -620,7 +620,9 @@ Stage accordingly — **do not describe a Phase-6 world as Phase 4**.
   for the review-inbox item types (agent-correction, knowledge-proposal).
 - **Phase 5 (workflow engine):** agent runs become `runs` rows; self-improvement
   loops become scheduled pipeline defs with daily budgets; the **eval harness** is
-  stood up as the gating dependency for Loops 2 and 4.
+  stood up as the gating dependency for Loops 2 and 4 — and *fed* by a nightly
+  `eval_run` schedule (Track H·B) that scores the live model and stores `EvalRun`s,
+  a standalone regression signal even before a promotion consumer exists.
 - **Phase 6 (wiki):** **Skill learning (Loop 2)** auto-promotion against the eval
   harness; **prompt/tool self-editing (Loop 4)** as PR-shaped proposals;
   **Tier-B** durable-knowledge promotion fully closes the loop through the wiki's
