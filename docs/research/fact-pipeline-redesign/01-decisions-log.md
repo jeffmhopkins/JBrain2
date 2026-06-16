@@ -43,3 +43,32 @@ is the chosen design implemented.
 - Backend/contract/storage work (the bulk of this spec) is unaffected; this gates only the
   GUI layer.
 
+## D3 — Incremental evolution, NOT a greenfield rebuild (supersedes D1's "clean rebuild")
+
+After comparing the spec to the shipped system (`50-comparison-to-current.md`), the current
+implementation already provides ~75–80% of the spec (bitemporal facts, modality column,
+supersession history, registry + canonicalization + value-shape typing, functional-vs-set
+accumulation = override-vs-array already solved at storage, entity merge/distinct/mentions,
+pinned, RLS firewalls, review inbox + #7 correction notes, the per-field editing + value
+recovery shipped this session). The plan is therefore:
+
+- **Posture: incremental evolution.** Keep the existing architecture; apply the spec's genuine
+  wins as targeted online migrations + small CI-green PRs. Do NOT rebuild greenfield.
+- **Adopt:** (1) modality in the selection key + `current()`=asserted-only (negation safety);
+  (2) structured-editing review (collapse the kind-zoo; every field editable; explicit
+  add/replace/remove) — GUI gated by D2; (3) **arbitrary-order undo** via a typed-op + audit
+  layer over the existing append-mostly history (selective replay); (4) stable `value_identity`
+  for scalar set members (small).
+- **Drop / shelf (revisit on a trigger):** per-domain entity projections — keep global tables +
+  RLS (revisit only for multi-user / untrusted-agent isolation); two-stage extraction — keep
+  single-stage + the deterministic backstops (revisit only if eval shows a grounding gap).
+- **D1 re-scoped:** "complete DB reset" = **re-ingest notes** under the improved pipeline, NOT
+  an architecture wipe. Most upgrades are online schema migrations on the existing tables.
+- **Preserve shipped nuance:** `derived_from_fact_id` (materialized reciprocal edges),
+  `subject_id` security separation, `is_schedule_binding`/inverse-predicate handling, the
+  residual functional allowlist — must survive any change.
+
+Sequence + PR slices: see `60-incremental-plan.md`. The greenfield spec (`40-final-spec.md`)
+remains the design reference for the adopted mechanisms; its §3.5/§6 projection model and §5
+two-stage extraction are shelved per this decision.
+

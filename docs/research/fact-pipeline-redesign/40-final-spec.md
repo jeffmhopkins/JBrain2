@@ -1,5 +1,15 @@
 # Fact pipeline & review redesign — FINAL SPEC (consolidated)
 
+> **POSTURE (decision D3 — read first):** this spec was written greenfield. After comparing it to
+> the shipped system (`50-comparison-to-current.md`), the plan is **incremental evolution of the
+> existing implementation, NOT a rebuild** (`60-incremental-plan.md`). Adopted: modality-in-
+> selection-key, structured-editing review, **arbitrary-order undo** (the op/audit layer), stable
+> value-identity. **Shelved** (revisit on a trigger): the §3.5/§6 **per-domain entity projections**
+> (keep global tables + RLS) and the §5 **two-stage extraction** (keep single-stage + the shipped
+> deterministic backstops). D1 = re-ingest notes, not an architecture wipe. The sections below
+> remain the design reference for the *adopted* mechanisms.
+
+
 **Status:** converged design for sign-off (gate G_final). Consolidates v0→v2 plus the
 Round-3 correctness fixes. For full per-section detail, the lineage is: `20-spec-v0.md`
 (integrated synthesis) → `21-spec-v1.md` (Round-1 fixes) → `22-spec-v2.md` (Round-2 fixes,
