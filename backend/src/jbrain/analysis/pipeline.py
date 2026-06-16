@@ -2147,6 +2147,10 @@ class AnalysisPipeline:
                         "fact_b": str(new_fact_id),
                         "predicate": fact.predicate,
                         "note_id": str(note_id),
+                        # The subject the card is about, so the review UI groups
+                        # this conflict under its entity instead of the catch-all
+                        # "Other" bucket (frontend reads payload.entity_ref).
+                        "entity_ref": fact.entity_ref,
                         **collision_display(
                             kind=decision.review_kind,
                             predicate=fact.predicate,
@@ -2322,6 +2326,9 @@ class AnalysisPipeline:
                         "fact_b": str(new_inverse.id),
                         "predicate": inverse_pred,
                         "note_id": str(note_id),
+                        # The inverse edge is about the object entity — group the
+                        # card under it (empty ref falls back to "Other").
+                        "entity_ref": fact.object_entity_ref or "",
                         # The card copy must flag that one side is the system's
                         # own reflection, so a human isn't asked to adjudicate it
                         # against the primary as if it were an independent claim.
