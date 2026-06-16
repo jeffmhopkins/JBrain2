@@ -373,8 +373,13 @@ def test_compute_signals_named_object_attests_a_fumbled_quote():
     intent = _intent(
         entity_resolutions=[
             _res("m1"),
-            _res("m2", mode="new", new_kind="Organization", new_name="Oregon Lithoprint",
-                 attested_span=AttestedSpan("c1", "Oregon Lithoprint")),
+            _res(
+                "m2",
+                mode="new",
+                new_kind="Organization",
+                new_name="Oregon Lithoprint",
+                attested_span=AttestedSpan("c1", "Oregon Lithoprint"),
+            ),
         ],
         facts=[
             _fact(
@@ -397,11 +402,24 @@ def test_compute_signals_named_object_does_not_rescue_an_inferred_edge():
     intent = _intent(
         entity_resolutions=[
             _res("m1"),
-            _res("m2", mode="new", new_kind="Organization", new_name="Globex",
-                 attested_span=AttestedSpan("c1", "Globex")),
+            _res(
+                "m2",
+                mode="new",
+                new_kind="Organization",
+                new_name="Globex",
+                attested_span=AttestedSpan("c1", "Globex"),
+            ),
         ],
-        facts=[_fact(entity_ref="m1", predicate="worksFor", kind="state",
-                     object_entity_ref="m2", attested_span=None, inferred=True)],
+        facts=[
+            _fact(
+                entity_ref="m1",
+                predicate="worksFor",
+                kind="state",
+                object_entity_ref="m2",
+                attested_span=None,
+                inferred=True,
+            )
+        ],
     )
     assert compute_signals(intent, ["I met someone from Globex."])[0].surface_attested is False
 
@@ -412,11 +430,24 @@ def test_compute_signals_named_object_absent_from_text_is_not_attested():
     intent = _intent(
         entity_resolutions=[
             _res("m1"),
-            _res("m2", mode="new", new_kind="Organization", new_name="Initech",
-                 attested_span=AttestedSpan("c1", "Initech")),
+            _res(
+                "m2",
+                mode="new",
+                new_kind="Organization",
+                new_name="Initech",
+                attested_span=AttestedSpan("c1", "Initech"),
+            ),
         ],
-        facts=[_fact(entity_ref="m1", predicate="worksFor", kind="state",
-                     object_entity_ref="m2", attested_span=None, inferred=False)],
+        facts=[
+            _fact(
+                entity_ref="m1",
+                predicate="worksFor",
+                kind="state",
+                object_entity_ref="m2",
+                attested_span=None,
+                inferred=False,
+            )
+        ],
     )
     assert compute_signals(intent, ["I work at Globex now."])[0].surface_attested is False
 
