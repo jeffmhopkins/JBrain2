@@ -23,10 +23,12 @@ from jbrain.workflow.scheduler import (
     PURGE_ACTION,
     RECONCILE_PENDING_INTEGRATION_ACTION,
     RECONCILE_PENDING_NOTES_ACTION,
+    RECONCILE_UNEMBEDDED_NOTES_ACTION,
     ScheduleResolutionError,
     fire_trigger,
     reconcile_pending_integration_handler,
     reconcile_pending_notes_handler,
+    reconcile_unembedded_notes_handler,
     scheduler_tick,
 )
 from tests.conftest import docker_available
@@ -47,6 +49,7 @@ def _registry():  # noqa: ANN202
             PURGE_ACTION,
             RECONCILE_PENDING_NOTES_ACTION,
             RECONCILE_PENDING_INTEGRATION_ACTION,
+            RECONCILE_UNEMBEDDED_NOTES_ACTION,
         )
     )
 
@@ -131,6 +134,32 @@ async def _seed_note(
                 " VALUES (:i, :c, 'general', 'body', :ing, :int)"
             ),
             {"i": nid, "c": nid[:12], "ing": ingest_state, "int": integration_state},
+        )
+    return nid
+
+
+async def _seed_unembedded_note(maker: async_sessionmaker) -> str:
+    """A note with one NULL-embedding chunk and NO embed_note job — the residue a
+    dropped embed enqueue (or a model-wipe) leaves. The unembedded reconciler must
+    self-heal it off the chunk state alone."""
+    nid = str(uuid.uuid4())
+    async with scoped_session(maker, queue.SYSTEM_CTX) as s:
+        await s.execute(
+            text(
+                "INSERT INTO app.notes (id, client_id, domain_code, body,"
+                " ingest_state, integration_state)"
+                " VALUES (:i, :c, 'general', 'body', 'indexed', 'integrated')"
+            ),
+            {"i": nid, "c": nid[:12]},
+        )
+        await s.execute(
+            text(
+                "INSERT INTO app.chunks"
+                " (id, note_id, domain_code, granularity, seq, text, embedding)"
+                " VALUES (gen_random_uuid(), :nid, 'general', 'paragraph', 0, 'c',"
+                "         cast(NULL AS vector))"
+            ),
+            {"nid": nid},
         )
     return nid
 
@@ -246,7 +275,7 @@ async def test_seeded_nightly_sweeps_exist_and_are_fireable(maker: async_session
 
 
 async def test_seeded_reconciler_sweeps_exist_and_are_fireable(maker: async_sessionmaker) -> None:
-    """Migration 0041 seeds the two reconcilers as recurring (300s), manual,
+    """Migrations 0041/0042 seed the three reconcilers as recurring (300s), manual,
     schedule-bound triggers; each is fireable on demand from Ops."""
     async with scoped_session(maker, queue.SYSTEM_CTX) as s:
         rows = (
@@ -259,7 +288,11 @@ async def test_seeded_reconciler_sweeps_exist_and_are_fireable(maker: async_sess
             )
         ).all()
     by_pipeline = {r.pipeline: r for r in rows}
-    assert set(by_pipeline) == {"reconcile_pending_notes", "reconcile_pending_integration"}
+    assert set(by_pipeline) == {
+        "reconcile_pending_notes",
+        "reconcile_pending_integration",
+        "reconcile_unembedded_notes",
+    }
     # Recurring, not nightly: 5-minute cadence bounds dropped-event staleness.
     assert all(r.interval_seconds == 300 for r in rows)
     # Fire one on demand and confirm the reconcile job lands.
@@ -327,3 +360,31 @@ async def test_dropped_integration_event_self_heals_and_is_idempotent(
 
     await handler({})
     assert await _jobs_for_note(maker, "integrate_note", note_id) == 1
+
+
+async def test_dropped_embed_self_heals_and_is_idempotent(
+    maker: async_sessionmaker,
+) -> None:
+    """Track S: a note with NULL-embedding chunks and NO embed_note job (a dropped
+    embed enqueue) gets exactly one embed_note job when the unembedded reconciler
+    runs — and a second run never double-enqueues, because the backfill skips any
+    note that already has an active embed_note job (E4)."""
+    note_id = await _seed_unembedded_note(maker)
+    ids = await _seed_schedule(
+        maker, action="reconcile_unembedded_notes", next_run_at=NOW - timedelta(minutes=1)
+    )
+
+    # The schedule/Ops path enqueues exactly one reconcile_unembedded_notes job —
+    # no embed_note job yet (that is the handler's work).
+    fired = await fire_trigger(maker, _registry(), ids["trigger"])
+    assert fired.pipeline == ids["pipeline"]
+    assert await _jobs_for_note(maker, "embed_note", note_id) == 0
+
+    handler = reconcile_unembedded_notes_handler(maker)
+    await handler({})
+    assert await _jobs_for_note(maker, "embed_note", note_id) == 1
+
+    # Idempotent: fire twice, still one — the active embed_note job suppresses the
+    # second enqueue.
+    await handler({})
+    assert await _jobs_for_note(maker, "embed_note", note_id) == 1
