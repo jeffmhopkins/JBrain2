@@ -367,6 +367,9 @@ async def test_run_registers_all_job_handlers(
         # Wave 2 — the dropped-event safety net): boot + schedule + on-demand.
         "reconcile_pending_notes",
         "reconcile_pending_integration",
+        # The opt-in self-improvement eval behind the budget gate (Phase-5 Track
+        # H·A) — wired in-code, NOT in ACTION_SPECS / the app.actions seed.
+        "eval_run",
     }
 
 
