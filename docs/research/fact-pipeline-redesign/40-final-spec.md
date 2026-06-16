@@ -62,7 +62,10 @@ confidence, provenance, temporal. Carried through three honest stage shapes
   lazy, expanded from `now()` with a cached `next_occurrence_at`. **No Allen auto-abutment** —
   supersession marks a prior value former in valid-time without inventing an end date.
 - **Modality:** `asserted | negated | hypothetical | reported | question | expected` — never
-  model-trusted; cue-less irrealis → review, never auto-`asserted`.
+  model-trusted. The line (verify V-M2): a real future event with a time ("dentist next Tuesday")
+  is `expected|scheduled` and **commits** with a future `valid_from`; only a genuinely
+  **conditional/`hypothetical`** statement ("*if* I switch to Acme") holds for review. Future ≠
+  asserted-now, but future ≠ review either.
 - **Provenance: a LIST**, not a single ref (R3-6 fix) — so merge/idempotent-merge unions source
   spans without dropping any; `kind ∈ {extracted, human_correction, human_assertion, agent}`.
   (`inferred` auto-commit is **deferred** — see §6.)
@@ -145,7 +148,9 @@ the identity ops (`merge_entities`, `split_entity`, `assert_distinct`).
   tx-versions (append-only; the live-key unique index holds). Determinism comes from each op's
   **frozen typed/link resolutions** (a later registry/parser change can't alter history), while
   **domain/firewall is always re-derived live** (a frozen `domain_code` is never resurrected —
-  the security + R2/R3 fixes). Cost is **O(ops on the affected slots)** — a handful per fact —
+  the security + R2/R3 fixes), and **each frozen link is re-validated against the CURRENT
+  firewall** (verify V-S1) — a link now cross-domain routes to review, never re-materializes an
+  edge across a wall. Cost is **O(ops on the affected slots)** — a handful per fact —
   never genesis-replay. A genuine semantic **read-dependency** (e.g. a `replace_head` that
   targeted the exact value X created, now gone) surfaces that one later op as a **real conflict
   to review** — a true semantic conflict, not a mechanism limitation. This **supersedes the
@@ -170,9 +175,12 @@ validate→repair→backfill→gate** pass that is the **sole authority** — te
 
 - **Grounding:** span verification (value is a substring of the cited span); **typed-value
   re-derivation** from the span, with two guards so "model+parser agree on a wrong span" is
-  catchable — a **mandatory registry plausibility range** (no range → review, not commit) and
-  **subject+predicate+value co-location** (catches cross-subject capture "Sam's A1c 5.4, mine
-  12.8"); modality cue cross-check (never auto-flip).
+  catchable — a **registry plausibility range** and **clause-level subject+predicate+value
+  co-location** (catches cross-subject capture "Sam's A1c 5.4, mine 12.8"); modality cue
+  cross-check (never auto-flip). **Range default (cold-start bootstrapping, verify V-M1):** *no
+  declared range → COMMIT flagged `type_unverified`* (opportunistic review, not blocked); only a
+  **declared** range hard-gates an out-of-range value to review — so a fresh corpus isn't
+  flooded. Ranges + co-location heuristics are **registry/schema-owned**, eval-tuned.
 - **Vocabulary:** enum coercion; predicate canonicalization owns the coined-slug dedup
   threshold (weak → `new_predicate` review); **cardinality stamped from the registry**.
 - **Link/firewall (100% tested):** entity existence in current RLS scope; cross-firewall link →
@@ -207,7 +215,10 @@ validate→repair→backfill→gate** pass that is the **sole authority** — te
   machine still derives the fact from it (this *strengthens* #7: no direct graph write, the
   human writes prose). The committer derives `domain` from that note. Attribution is
   **non-droppable** (`provenance.kind = human_assertion`, surfaced wherever the fact shows);
-  location-domain link objects still cannot be `add_fact`'d (no movement-pattern oracle).
+  location-domain link objects still cannot be `add_fact`'d (no movement-pattern oracle). The
+  minted-note path **inherits** the op-allowlist guards (verify V-S3): `add_fact` is **owner-only,
+  LLM/agent-cannot-emit**, the committer **re-derives domain from the minted note's operands**
+  (never a claimed one), and the fact's object must be a same-domain projection.
 - **Inferred-fact auto-commit deferred** (§2): derived facts route to human `add_fact`/review;
   the premise-verification hole is dissolved (nothing ungrounded auto-commits). *Note: ordinary
   relative-date resolution ("last Tuesday" → instant) is a normal extraction step, not an
@@ -253,14 +264,19 @@ press both.**
 **Next step:** ✅ run the follow-up **independent model + security verification pass** against
 this spec before the first build PR (§9).
 
-## 9. Residual / before-build
+## 9. Verification status / before-build
 
-- **Run the follow-up model + security verification pass** (R3 model/security didn't complete):
-  press the typing-guard review-volume question, relative-date-vs-inferred boundary, the publish
-  irreversibility, and the 1-bit index amplification.
+- **Model + security verification pass: DONE** (`41-verify-model.md`, `41-verify-security.md`).
+  Both returned **SHIP-WITH-CAVEATS, no SEV-1.** The caveats are folded above: range-coverage
+  defaults to *commit-flagged-not-block* (V-M1, §5); the scheduled/`expected`-commits vs
+  `hypothetical`-holds line (V-M2, §2); selective-replay re-validates frozen links against the
+  live firewall (V-S1, §4); derived-from-published stays public (V-S2); the `add_fact`-minted-note
+  path inherits owner-only + domain-re-derivation (V-S3, §6). Two bounded ACCEPTED-RISKs
+  reconfirmed (1-bit index, publish irreversibility).
 - **R3 correctness SEV-2 residuals folded above** (`realize` wiring, contradiction scoping,
-  multi-provenance carrier) should get a confirming correctness pass once written as code.
-- Everything else (R1+R2) is dispositioned in the version files' tables.
+  multi-provenance carrier) — get a confirming correctness pass once written as code.
+- Everything else (R1+R2) is dispositioned in the version files' tables. **The spec is
+  sign-off-complete; the next action is implementation, on your go.**
 
 ---
 
