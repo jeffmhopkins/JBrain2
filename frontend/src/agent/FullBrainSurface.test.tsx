@@ -596,6 +596,10 @@ describe("FullBrainSurface", () => {
     expect(screen.getByRole("note")).toHaveTextContent(/Not in your notes/);
     // No mis-anchored fallback — it landed inline.
     expect(document.querySelector(".md-flag-fallback")).toBeNull();
+    // The flagged claim TEXT is highlighted, not just marked with the trailing ⚠.
+    const claim = document.querySelector(".md-claim");
+    expect(claim).not.toBeNull();
+    expect(claim?.textContent).toBe("The roof needs replacing soon.");
   });
 
   it("renders no flag on a grounded turn (verdict passes / is absent)", async () => {
@@ -620,6 +624,8 @@ describe("FullBrainSurface", () => {
       expect(screen.getByText("Your cholesterol is elevated.")).toBeInTheDocument(),
     );
     expect(screen.queryByRole("button", { name: "unverified claim" })).toBeNull();
+    // A grounded turn highlights no claim text either.
+    expect(document.querySelector(".md-claim")).toBeNull();
   });
 
   it("degrades to an end-of-bubble flag when the claim can't be located in the prose", async () => {

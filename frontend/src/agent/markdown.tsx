@@ -239,7 +239,15 @@ function scanPlain(text: string, key: string, ctx: Ctx): ReactNode[] {
       const rightOk = after === "" || /^['")\]]?\s*[.!?]/.test(after) || /^\s*\n/.test(after);
       if (!flag || !leftOk || !rightOk) continue; // not a clean sentence match — scan as prose
       if (at > last) out.push(...scanEntities(text.slice(last, at), `${key}-g${i}`, ctx));
-      out.push(...scanEntities(m[0], `${key}-c${i}`, ctx));
+      // Mark the flagged TEXT (subtle amber), not just the trailing ⚠ — so the
+      // reader sees *which* prose is unverified. The interior still scans for
+      // entity/temporal tokens; the end-of-bubble fallback (below) carries only its
+      // flag, never this highlight.
+      out.push(
+        <span key={`${key}-cm${i}`} className="md-claim">
+          {scanEntities(m[0], `${key}-c${i}`, ctx)}
+        </span>,
+      );
       ctx.flags.placed.add(flag.id);
       out.push(<FlagMark key={`${key}-f${i}`} flag={flag} ctx={ctx} fkey={`${key}-fb${i}`} />);
       i++;

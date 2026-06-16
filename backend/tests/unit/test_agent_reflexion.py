@@ -82,6 +82,30 @@ class TestClaimsFrom:
     def test_empty_answer_yields_no_claims(self) -> None:
         assert claims_from("   ") == []
 
+    def test_abbreviation_period_does_not_split_the_sentence(self) -> None:
+        # The headline bug: "St." is not a sentence end, so the whole sentence is
+        # ONE claim (verbatim, internal "St." preserved) — the inline flag anchors on
+        # the rendered prose, so a fragmented "…mother of St" would mis-anchor. The
+        # final terminator (no following space, at EOS) stays on the claim, as today.
+        assert claims_from("It's also linked to Saint Celine, mother of St. Remigius.") == [
+            "It's also linked to Saint Celine, mother of St. Remigius."
+        ]
+
+    def test_an_abbreviation_mid_answer_still_splits_real_sentences(self) -> None:
+        # "Dr." doesn't split, but the real sentence end after "hi" does → 2 claims.
+        assert claims_from("Dr. Patel said hi. Then he left.") == [
+            "Dr. Patel said hi",
+            "Then he left.",
+        ]
+
+    def test_single_letter_initials_do_not_split(self) -> None:
+        # "J." and "M." are initials, not sentence ends → the name stays in one
+        # claim; the real "." after "here" splits → 2 claims.
+        assert claims_from("J. M. Hopkins lives here. Nearby.") == [
+            "J. M. Hopkins lives here",
+            "Nearby.",
+        ]
+
 
 class TestHasSubstantiveClaim:
     def test_etymology_answer_is_substantive(self) -> None:
