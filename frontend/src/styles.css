@@ -3610,11 +3610,6 @@ button.small {
   color: var(--amber);
 }
 
-.chip-discuss {
-  background: var(--steel-tint);
-  color: var(--steel);
-}
-
 /* ----- Bulk action bar (fixed, like the detail footer) ----- */
 
 .rbulk {
@@ -3635,16 +3630,6 @@ button.small {
 .rbulk-n {
   font-size: var(--fs-secondary);
   color: var(--text-2);
-}
-
-.rbulk-defer {
-  min-height: 44px;
-  padding: 0 14px;
-  font-weight: 500;
-  color: var(--amber);
-  background: var(--amber-tint);
-  border: 1px solid transparent;
-  border-radius: var(--r-input);
 }
 
 .rbulk-approve {
@@ -4848,30 +4833,12 @@ button.small {
   border: 1px solid var(--border);
 }
 
-.rfoot-defer {
-  color: var(--amber);
-  background: var(--amber-tint);
-  border-color: transparent;
-}
-
-.rfoot-discuss {
-  color: var(--steel);
-  background: var(--steel-tint);
-  border-color: transparent;
-}
-
 .rfoot-correct {
   color: var(--text);
   background: var(--surface-2);
 }
 
 .rfoot-correct.active {
-  color: var(--steel);
-  background: var(--steel-tint);
-  border-color: transparent;
-}
-
-.rfoot-resume {
   color: var(--steel);
   background: var(--steel-tint);
   border-color: transparent;

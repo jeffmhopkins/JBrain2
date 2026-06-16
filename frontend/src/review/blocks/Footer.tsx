@@ -3,8 +3,8 @@ import type { BlockCtx } from "./types";
 
 /** The lane-driven footer. Pending: inferences correct in place (predicate +
  * value on the card), so they show no footer; other kinds keep "correct it", the
- * free-form correction composer. Deferred: resume. Decided: an armed reopen that
- * unwinds the decision. */
+ * free-form correction composer. Decided: an armed reopen that unwinds the
+ * decision. */
 export function Footer({ ctx }: { ctx: BlockCtx }) {
   const { item, parsed, lane, queue, armed, tap, onClose, inference, composing } = ctx;
 
@@ -26,23 +26,6 @@ export function Footer({ ctx }: { ctx: BlockCtx }) {
           }}
         >
           correct it
-        </button>
-      </footer>
-    );
-  }
-
-  if (lane === "deferred") {
-    return (
-      <footer className="rdetail-foot">
-        <button
-          type="button"
-          className="rfoot-resume"
-          onClick={() => {
-            queue.reopen(item.id);
-            onClose();
-          }}
-        >
-          resume — back to pending
         </button>
       </footer>
     );

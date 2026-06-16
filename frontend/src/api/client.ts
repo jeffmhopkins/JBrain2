@@ -398,13 +398,13 @@ export type ReviewKind =
 
 export type ReviewStatus = "open" | "resolved" | "dismissed" | "deferred";
 
-// The inbox's three lanes map onto wire status filters: pending=open,
-// deferred=deferred, decided=resolved (the decided list folds in dismissals
-// and reopened tombstones).
-export type ReviewFilter = "pending" | "deferred" | "decided";
-export const FILTER_STATUS: Record<ReviewFilter, "open" | "deferred" | "resolved"> = {
+// The inbox's two lanes map onto wire status filters: pending=open,
+// decided=resolved (the decided list folds in dismissals and reopened
+// tombstones). The "deferred" wire status is retained for legacy rows; the UI
+// no longer parks items, so it has no lane.
+export type ReviewFilter = "pending" | "decided";
+export const FILTER_STATUS: Record<ReviewFilter, "open" | "resolved"> = {
   pending: "open",
-  deferred: "deferred",
   decided: "resolved",
 };
 

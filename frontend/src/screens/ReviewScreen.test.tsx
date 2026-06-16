@@ -187,13 +187,14 @@ describe("ReviewScreen (split inbox)", () => {
     vi.restoreAllMocks();
   });
 
-  it("shows three filter lanes with counts and a browsable list of all pending items", async () => {
+  it("shows the two filter lanes with counts and a browsable list of all pending items", async () => {
     render(<ReviewScreen />);
     await screen.findByText("two values recorded for Sarah's birthDate");
 
     expect(screen.getByRole("tab", { name: "pending 4" })).toHaveAttribute("aria-selected", "true");
-    expect(screen.getByRole("tab", { name: "deferred 1" })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "decided 2" })).toBeInTheDocument();
+    // Defer is retired — there is no deferred lane.
+    expect(screen.queryByRole("tab", { name: /deferred/ })).not.toBeInTheDocument();
     // Browsable: every pending item is listed, not one-at-a-time.
     expect(screen.getByText("are “Bob” and “Robert Chen” the same person?")).toBeInTheDocument();
     expect(screen.getByText("which Sam?")).toBeInTheDocument();
@@ -821,22 +822,17 @@ describe("ReviewScreen (split inbox)", () => {
     expect(screen.getByRole("tab", { name: "pending 2" })).toBeInTheDocument();
   });
 
-  it("select mode lets you defer several at once", async () => {
+  it("select mode offers bulk approve but no defer", async () => {
     render(<ReviewScreen />);
     await screen.findByText("two values recorded for Sarah's birthDate");
 
     fireEvent.click(screen.getByRole("button", { name: "select" }));
     fireEvent.click(screen.getByRole("checkbox", { name: /which Sam/ }));
     fireEvent.click(screen.getByRole("checkbox", { name: /Bob.*Robert Chen/ }));
-    fireEvent.click(screen.getByRole("button", { name: "defer all" }));
 
-    await waitFor(() =>
-      expect(fetchMock).toHaveBeenCalledWith(
-        "/api/review/resolve-batch",
-        expect.objectContaining({ method: "POST" }),
-      ),
-    );
-    expect(screen.getByRole("tab", { name: "pending 2" })).toBeInTheDocument();
+    // Defer is retired; bulk approve remains the only batch action.
+    expect(screen.queryByRole("button", { name: "defer all" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "approve all" })).toBeInTheDocument();
   });
 
   it("the decided lane lists decisions and reopen unwinds one", async () => {
@@ -934,9 +930,7 @@ describe("ReviewScreen (split inbox)", () => {
     expect(
       await screen.findByText("pending is clear — new items arrive as notes are analyzed."),
     ).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("tab", { name: "deferred 0" }));
-    expect(
-      screen.getByText("nothing parked — items you defer or talk over collect here."),
-    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: "decided 0" }));
+    expect(screen.getByText("no decisions yet — resolved items collect here.")).toBeInTheDocument();
   });
 });

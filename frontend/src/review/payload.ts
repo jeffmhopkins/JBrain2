@@ -162,7 +162,7 @@ export function parsePayload(payload: Record<string, unknown>): Parsed {
 
 /** The proposals to choose among, per kind. Choices carry their own; the
  * outcome kinds synthesize accept/reject buttons from their what-happens copy.
- * There is always at least one — and defer/discuss sit beside them — so reject
+ * There is always at least one — and "correct it" sits beside them — so reject
  * is never the only way out. */
 export function proposalsFor(p: Parsed): Proposal[] {
   if (p.choices.length > 0) return p.choices;

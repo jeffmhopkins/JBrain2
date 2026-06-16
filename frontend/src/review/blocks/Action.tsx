@@ -26,7 +26,7 @@ export function inferenceCorrection(item: ReviewItem, parsed: Parsed, inf: Infer
 /** The polymorphic decision block: the correction-note composer, then the
  * controls a pending item offers (new_predicate map/keep/rename/dismiss, an
  * inference's approve/reject, or the generic choose-among-proposals), or — in
- * the decided/deferred lanes — the record of what was decided. */
+ * the decided lane — the record of what was decided. */
 export const Action: ReviewBlock = ({ ctx }) => {
   const { item, parsed, lane, queue, armed, tap, onClose, onAdvance, inference, composing, draft } =
     ctx;
@@ -228,9 +228,6 @@ function DecidedNewPredicate({ item, parsed }: { item: ReviewItem; parsed: Parse
 function DecidedRecord({ item, parsed }: { item: ReviewItem; parsed: Parsed }) {
   const action = item.resolution?.action ?? null;
   const proposals = proposalsFor(parsed);
-  if (item.resolution?.action === "defer" || item.resolution?.action === "discuss") {
-    return <p className="rdetail-cands">parked — resume to bring it back to the pending queue.</p>;
-  }
   if (action === "correct") {
     return (
       <p className="rdetail-cands">
