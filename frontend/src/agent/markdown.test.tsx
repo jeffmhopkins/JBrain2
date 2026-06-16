@@ -159,6 +159,37 @@ describe("Markdown", () => {
     expect(fallback?.querySelector(".md-flag")).not.toBeNull();
   });
 
+  it("does not flag a grounded sentence that merely repeats an ungrounded claim as a prefix", () => {
+    // The same phrasing recurs: once as a standalone ungrounded sentence, then as
+    // the PREFIX of a longer grounded sentence. Only the standalone one is flagged —
+    // the boundary guard must not inject a false warning into the grounded prose.
+    render(
+      <Markdown
+        text="The roof needs replacing. The roof needs replacing soon and was paid for."
+        flags={[{ id: "ug-0", claim: "The roof needs replacing", reason: "no source" }]}
+      />,
+    );
+    expect(screen.getAllByRole("button", { name: "unverified claim" })).toHaveLength(1);
+    expect(document.querySelector(".md-flag-fallback")).toBeNull();
+    // The grounded second sentence is still present as unflagged prose.
+    expect(document.body.textContent).toContain("soon and was paid for");
+  });
+
+  it("degrades to the end-of-bubble fallback instead of anchoring a claim mid-sentence", () => {
+    // The claim occurs only mid-sentence (not on a sentence boundary), so no inline
+    // anchor is valid — it must fall back rather than mis-anchor inside the sentence.
+    render(
+      <Markdown
+        text="We discussed that the roof needs replacing soon, per the contractor."
+        flags={[{ id: "ug-0", claim: "the roof needs replacing soon", reason: "no source" }]}
+      />,
+    );
+    expect(document.querySelector(".md-flag-fallback")).not.toBeNull();
+    // The only flag is the fallback's — no inline mid-sentence anchor was placed.
+    expect(document.querySelectorAll(".md-flag-wrap")).toHaveLength(1);
+    expect(document.querySelector(".md-flag-fallback .md-flag-wrap")).not.toBeNull();
+  });
+
   it("renders no flag when there are none (unchanged prose)", () => {
     render(<Markdown text="A perfectly grounded answer." />);
     expect(screen.queryByRole("button", { name: "unverified claim" })).toBeNull();

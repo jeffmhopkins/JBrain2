@@ -225,7 +225,19 @@ function scanPlain(text: string, key: string, ctx: Ctx): ReactNode[] {
       const at = m.index ?? 0;
       const norm = normalizeClaim(m[0]);
       const flag = ctx.flags.byNorm.get(norm);
-      if (!flag) continue; // a normalized collision we didn't index — scan it as prose
+      // Anchor on SENTENCE boundaries: an ungrounded claim is a whole sentence
+      // (claims_from splits on sentence enders), so a real occurrence starts the run
+      // / follows a terminator+space / a newline, and ends the run / is followed by a
+      // terminator. Without this, a claim that is a prefix of a LONGER *grounded*
+      // sentence ("The roof needs replacing" inside "…replacing soon and was paid
+      // for.") would inject a false warning into grounded prose. A claim that fails
+      // the boundary check is left to the gap scan and the end-of-bubble fallback
+      // flags it instead — degrade safely, never mis-anchor.
+      const before = text.slice(0, at);
+      const after = text.slice(at + m[0].length);
+      const leftOk = at === 0 || /[.!?]['")\]]?\s+$/.test(before) || /\n\s*$/.test(before);
+      const rightOk = after === "" || /^['")\]]?\s*[.!?]/.test(after) || /^\s*\n/.test(after);
+      if (!flag || !leftOk || !rightOk) continue; // not a clean sentence match — scan as prose
       if (at > last) out.push(...scanEntities(text.slice(last, at), `${key}-g${i}`, ctx));
       out.push(...scanEntities(m[0], `${key}-c${i}`, ctx));
       ctx.flags.placed.add(flag.id);
