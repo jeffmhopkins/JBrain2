@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Reflexion verdict · 1 · inline flag (claim-anchored footnotes)</title>
+<style>
+  :root{
+    --bg:#0e0f11; --surface:#17181b; --surface-2:#1e2024; --border:#26282c;
+    --text:#e6e7e9; --text-2:#9a9da3; --text-3:#5c5f66;
+    --steel:#7fa7c9; --green:#8fbc9a; --amber:#c9a36a; --rose:#cf8a8f;
+    --steel-tint:rgba(127,167,201,.13); --amber-tint:rgba(201,163,106,.14);
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+  body{background:#000;color:var(--text);display:flex;flex-direction:column;align-items:center;gap:14px;padding:22px 14px 60px;min-height:100vh}
+  svg{fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+  .caption{width:392px;max-width:94vw;padding:0 6px;color:var(--text-2);font-size:12.5px;line-height:1.55}
+  .caption b{color:var(--text);font-weight:600}
+  .caption .tag{display:inline-block;font-size:11px;padding:2px 9px;border-radius:999px;margin-bottom:6px;background:var(--amber-tint);color:var(--amber)}
+
+  .phone{width:392px;max-width:94vw;height:720px;background:var(--bg);border:1px solid #2a2c30;border-radius:32px;overflow:hidden;display:flex;flex-direction:column}
+  .title{text-align:center;font-size:14px;font-weight:600;padding:14px 0 8px;flex:none;color:var(--text-2)}
+  .chat{flex:1;overflow-y:auto;padding:6px 16px 16px;display:flex;flex-direction:column;gap:10px}
+
+  .bubble{padding:11px 14px;border-radius:16px;font-size:15px;line-height:1.62}
+  .me{align-self:flex-end;max-width:82%;background:var(--steel-tint);border:1px solid rgba(127,167,201,.25);border-bottom-right-radius:5px}
+  .ai{align-self:flex-start;width:90%;background:var(--surface);border:1px solid var(--border);border-bottom-left-radius:5px}
+
+  /* grounded citation — provenance in the prose (existing convention) */
+  .cite{display:inline-flex;align-items:center;justify-content:center;min-width:17px;height:17px;padding:0 4px;margin:0 1px;border-radius:5px;background:var(--steel-tint);color:var(--steel);font-size:11px;font-weight:600;vertical-align:super;line-height:1;border:none;font-family:inherit}
+  /* the ungrounded-claim flag — same footnote slot, amber, tappable */
+  .flag{display:inline-flex;align-items:center;justify-content:center;min-width:17px;height:17px;padding:0 4px;margin:0 1px;border-radius:5px;background:var(--amber-tint);color:var(--amber);font-size:11px;font-weight:700;vertical-align:super;line-height:1;border:0;font-family:inherit;cursor:pointer}
+  .flag:focus-visible{outline:2px solid var(--amber);outline-offset:1px}
+  /* the flagged span gets a faint amber underline once the verdict lands */
+  .claim{transition:box-shadow .3s,background .3s;border-radius:3px}
+  .lit .claim{background:var(--amber-tint);box-shadow:inset 0 -2px 0 rgba(201,163,106,.55)}
+
+  /* inline popover anchored under the flag */
+  .pop{display:none;margin:8px 0 2px;border-left:2px solid var(--amber);background:var(--amber-tint);
+       border-radius:0 8px 8px 0;padding:8px 11px;font-size:12.5px;color:var(--text)}
+  .pop.show{display:block}
+  .pop .h{display:flex;align-items:center;gap:7px;font-weight:600;font-size:12px}
+  .pop .h svg{width:14px;height:14px;color:var(--amber)}
+  .pop p{color:var(--text-2);font-size:11.5px;margin-top:3px;line-height:1.5}
+
+  .tray{display:flex;flex-wrap:wrap;gap:6px;margin-top:11px;padding-top:9px;border-top:1px solid var(--border)}
+  .traylab{flex-basis:100%;font-size:10.5px;letter-spacing:.05em;text-transform:uppercase;color:var(--text-3);margin-bottom:2px}
+  .chip{display:inline-flex;align-items:center;gap:6px;padding:6px 10px;border:1px solid var(--border);border-radius:999px;background:var(--surface-2);font-size:12px;color:var(--text-2)}
+  .chip .n{display:inline-flex;align-items:center;justify-content:center;width:15px;height:15px;border-radius:999px;background:var(--steel-tint);color:var(--steel);font-size:10px;font-weight:600}
+  .foot{font-size:11px;color:var(--text-3);margin-top:10px;line-height:1.5}
+
+  .composer{flex:none;border-top:1px solid var(--border);padding:11px 12px 16px;display:flex;gap:9px;align-items:center}
+  .composer input{flex:1;background:var(--surface-2);border:1px solid var(--border);color:var(--text);border-radius:999px;padding:10px 14px;font-size:14px;outline:none}
+  .send{width:38px;height:38px;border-radius:50%;border:0;flex:none;background:var(--steel);color:#0e0f11;display:grid;place-items:center;cursor:pointer}
+  .caret{display:inline-block;width:7px;height:15px;vertical-align:-2px;background:var(--steel);animation:bl 1s steps(1) infinite}
+  @keyframes bl{50%{opacity:0}}
+  .replay{width:392px;max-width:94vw;text-align:center}
+  .replay button{background:var(--surface);border:1px solid var(--border);color:var(--text-2);border-radius:10px;padding:8px 16px;font-size:12.5px;cursor:pointer}
+  .replay button:hover{border-color:var(--amber)}
+</style>
+</head>
+<body>
+  <div class="caption"><span class="tag">Option 1 · inline flag</span><br>
+    The verdict lives <b>in the prose</b>, parallel to citations: a grounded claim keeps its
+    steel footnote¹, an ungrounded one gets an amber <b>⚠ flag</b> — tap it to see why. No banner,
+    no chrome; the warning is woven exactly where the doubtful words are.</div>
+
+  <div class="phone">
+    <div class="title">Full Brain</div>
+    <div class="chat" id="chat">
+      <div class="bubble me">What’s my cholesterol trend, and what should I cut back on?</div>
+      <div class="bubble ai" id="ai">
+        <span id="ans"></span>
+        <div class="tray" id="tray" style="display:none">
+          <span class="traylab">Sources</span>
+          <span class="chip"><span class="n">1</span> Checkup — Dr. Patel · Apr 14</span>
+          <span class="chip"><span class="n">2</span> Lab results · Oct 2</span>
+        </div>
+        <div class="foot" id="foot" style="display:none"></div>
+      </div>
+    </div>
+    <div class="composer">
+      <input placeholder="Ask your brain…" id="inp" />
+      <button class="send" id="send"><svg width="18" height="18" viewBox="0 0 24 24"><path d="M4 12h15M13 6l6 6-6 6"/></svg></button>
+    </div>
+  </div>
+  <div class="replay"><button id="replay">▶ Replay turn</button></div>
+
+<script>
+const SEG = [
+  {t:"Your LDL is trending up — 142 in April, from 128 in October",cite:1},
+  {t:". The main thing to cut back on is saturated fat",cite:2},
+  {t:" — Dr. Patel flagged it directly. "},
+  {t:"You should also start a statin and aim for 10,000 steps a day",flag:true},
+  {t:"."},
+];
+const ans=document.getElementById('ans'),tray=document.getElementById('tray'),
+      foot=document.getElementById('foot'),chat=document.getElementById('chat');
+function caret(){return '<span class="caret"></span>'}
+function reset(){ans.innerHTML='';ans.classList.remove('lit');tray.style.display='none';foot.style.display='none';foot.innerHTML=''}
+function build(done){
+  let i=0; ans.innerHTML=caret();
+  (function tick(){
+    if(i>=SEG.length){ans.querySelector('.caret')?.remove();done();return}
+    const s=SEG[i++]; const sp=document.createElement('span');
+    if(s.flag) sp.className='claim'; sp.textContent=s.t;
+    ans.querySelector('.caret')?.remove(); ans.appendChild(sp);
+    if(s.cite){const c=document.createElement('sup');c.className='cite';c.textContent=s.cite;ans.appendChild(c);}
+    ans.insertAdjacentHTML('beforeend',caret()); chat.scrollTop=chat.scrollHeight;
+    setTimeout(tick, 20*s.t.length+80);
+  })();
+}
+function reveal(){
+  tray.style.display='flex';
+  setTimeout(()=>{
+    ans.classList.add('lit');
+    // insert the amber flag right after the flagged claim
+    const claim=ans.querySelector('.claim');
+    const f=document.createElement('button'); f.className='flag'; f.textContent='⚠'; f.title='Unverified';
+    claim.after(f);
+    const pop=document.createElement('div'); pop.className='pop';
+    pop.innerHTML=`<div class="h"><svg viewBox="0 0 24 24"><path d="M12 3l9 16H3z"/><path d="M12 10v4M12 17h.01"/></svg>Not in your notes · grounding 0.42</div>
+      <p>“start a statin” and “10,000 steps a day” don’t appear in either cited note. The rest of the answer is grounded.</p>`;
+    foot.style.display='block'; foot.innerHTML='Tap ⚠ to see why a claim was flagged. Reflexion never edits the answer or your notes.';
+    f.after(pop);
+    f.onclick=()=>pop.classList.toggle('show');
+    pop.classList.add('show');
+    chat.scrollTop=chat.scrollHeight;
+  },380);
+}
+function go(){reset();build(reveal)}
+document.getElementById('replay').onclick=go;
+document.getElementById('send').onclick=go;
+document.getElementById('inp').addEventListener('keydown',e=>{if(e.key==='Enter')go()});
+go();
+</script>
+</body>
+</html>

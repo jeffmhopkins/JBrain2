@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Reflexion verdict · 2 · verdict banner (summary below the answer)</title>
+<style>
+  :root{
+    --bg:#0e0f11; --surface:#17181b; --surface-2:#1e2024; --border:#26282c;
+    --text:#e6e7e9; --text-2:#9a9da3; --text-3:#5c5f66;
+    --steel:#7fa7c9; --green:#8fbc9a; --amber:#c9a36a; --rose:#cf8a8f;
+    --steel-tint:rgba(127,167,201,.13); --amber-tint:rgba(201,163,106,.13);
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+  body{background:#000;color:var(--text);display:flex;flex-direction:column;align-items:center;gap:14px;padding:22px 14px 60px;min-height:100vh}
+  svg{fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+  .caption{width:392px;max-width:94vw;padding:0 6px;color:var(--text-2);font-size:12.5px;line-height:1.55}
+  .caption b{color:var(--text);font-weight:600}
+  .caption .tag{display:inline-block;font-size:11px;padding:2px 9px;border-radius:999px;margin-bottom:6px;background:var(--amber-tint);color:var(--amber)}
+
+  .phone{width:392px;max-width:94vw;height:720px;background:var(--bg);border:1px solid #2a2c30;border-radius:32px;overflow:hidden;display:flex;flex-direction:column}
+  .title{text-align:center;font-size:14px;font-weight:600;padding:14px 0 8px;flex:none;color:var(--text-2)}
+  .chat{flex:1;overflow-y:auto;padding:6px 16px 16px;display:flex;flex-direction:column;gap:10px}
+
+  .bubble{padding:11px 14px;border-radius:16px;font-size:15px;line-height:1.6}
+  .me{align-self:flex-end;max-width:82%;background:var(--steel-tint);border:1px solid rgba(127,167,201,.25);border-bottom-right-radius:5px}
+  .ai{align-self:flex-start;width:90%;background:var(--surface);border:1px solid var(--border);border-bottom-left-radius:5px}
+  .claim{border-radius:3px;transition:background .3s,box-shadow .3s}
+  .lit .claim{background:var(--amber-tint);box-shadow:inset 0 -2px 0 rgba(201,163,106,.5)}
+
+  /* the verdict banner — a distinct object below the answer */
+  .verdict{align-self:flex-start;width:90%;border-radius:12px;overflow:hidden;
+    border:1px solid rgba(201,163,106,.34);background:color-mix(in srgb,var(--amber) 10%,var(--surface));
+    opacity:0;transform:translateY(6px);transition:.35s}
+  .verdict.show{opacity:1;transform:none}
+  .vhead{display:flex;align-items:center;gap:10px;padding:10px 12px;cursor:pointer;min-height:44px}
+  .vhead .tri{width:18px;height:18px;color:var(--amber);flex:none}
+  .vttl{font-size:13px;font-weight:600}
+  .vsub{font-size:11.5px;color:var(--text-2);margin-top:1px}
+  .meter{display:flex;gap:3px;margin-left:auto;align-items:center}
+  .meter i{width:5px;height:14px;border-radius:2px;background:var(--surface-2)}
+  .meter i.on{background:var(--amber)}
+  .chev{color:var(--text-3);font-size:12px;transition:transform .2s;margin-left:8px}
+  .verdict.open .chev{transform:rotate(90deg)}
+  .vbody{display:grid;grid-template-rows:0fr;transition:grid-template-rows .28s ease}
+  .verdict.open .vbody{grid-template-rows:1fr}
+  .vbody>.inner{overflow:hidden;min-height:0}
+  .vbody .pad{padding:2px 12px 12px;border-top:1px solid rgba(201,163,106,.18)}
+  .iss{display:flex;gap:9px;padding:9px 0;border-bottom:1px solid var(--border);font-size:12.5px}
+  .iss:last-child{border-bottom:0}
+  .iss .q{color:var(--amber);font-weight:600}
+  .iss .why{color:var(--text-2);font-size:11.5px;margin-top:2px}
+  .vfoot{font-size:11px;color:var(--text-3);padding-top:9px;line-height:1.5}
+
+  .tray{display:flex;gap:6px;margin-top:10px;padding-top:9px;border-top:1px solid var(--border);flex-wrap:wrap}
+  .traylab{flex-basis:100%;font-size:10.5px;letter-spacing:.05em;text-transform:uppercase;color:var(--text-3);margin-bottom:2px}
+  .chip{display:inline-flex;align-items:center;gap:6px;padding:6px 10px;border:1px solid var(--border);border-radius:999px;background:var(--surface-2);font-size:12px;color:var(--text-2)}
+  .chip .n{display:inline-flex;align-items:center;justify-content:center;width:15px;height:15px;border-radius:999px;background:var(--steel-tint);color:var(--steel);font-size:10px;font-weight:600}
+
+  .composer{flex:none;border-top:1px solid var(--border);padding:11px 12px 16px;display:flex;gap:9px;align-items:center}
+  .composer input{flex:1;background:var(--surface-2);border:1px solid var(--border);color:var(--text);border-radius:999px;padding:10px 14px;font-size:14px;outline:none}
+  .send{width:38px;height:38px;border-radius:50%;border:0;flex:none;background:var(--steel);color:#0e0f11;display:grid;place-items:center;cursor:pointer}
+  .caret{display:inline-block;width:7px;height:15px;vertical-align:-2px;background:var(--steel);animation:bl 1s steps(1) infinite}
+  @keyframes bl{50%{opacity:0}}
+  .replay{width:392px;max-width:94vw;text-align:center}
+  .replay button{background:var(--surface);border:1px solid var(--border);color:var(--text-2);border-radius:10px;padding:8px 16px;font-size:12.5px;cursor:pointer}
+  .replay button:hover{border-color:var(--amber)}
+</style>
+</head>
+<body>
+  <div class="caption"><span class="tag">Option 2 · verdict banner</span><br>
+    A distinct <b>amber banner below the answer</b> — collapsed to a one-line verdict
+    (“1 unverified claim · grounding meter”), tap to expand the flagged phrases and why.
+    The answer layout stays clean; the judgment is a separate, scannable object you can ignore or open.</div>
+
+  <div class="phone">
+    <div class="title">Full Brain</div>
+    <div class="chat" id="chat">
+      <div class="bubble me">What’s my cholesterol trend, and what should I cut back on?</div>
+      <div class="bubble ai" id="ai">
+        <span id="ans"></span>
+        <div class="tray" id="tray" style="display:none">
+          <span class="traylab">Sources</span>
+          <span class="chip"><span class="n">1</span> Checkup — Dr. Patel · Apr 14</span>
+          <span class="chip"><span class="n">2</span> Lab results · Oct 2</span>
+        </div>
+      </div>
+
+      <div class="verdict" id="verdict">
+        <div class="vhead" id="vhead">
+          <svg class="tri" viewBox="0 0 24 24"><path d="M12 3l9 16H3z"/><path d="M12 10v4M12 17h.01"/></svg>
+          <div><div class="vttl">1 unverified claim</div><div class="vsub">not found in your notes</div></div>
+          <span class="meter" title="grounding 0.42"><i class="on"></i><i class="on"></i><i></i><i></i><i></i></span>
+          <span class="chev">▶</span>
+        </div>
+        <div class="vbody"><div class="inner"><div class="pad" id="pad"></div></div></div>
+      </div>
+    </div>
+
+    <div class="composer">
+      <input placeholder="Ask your brain…" id="inp" />
+      <button class="send" id="send"><svg width="18" height="18" viewBox="0 0 24 24"><path d="M4 12h15M13 6l6 6-6 6"/></svg></button>
+    </div>
+  </div>
+  <div class="replay"><button id="replay">▶ Replay turn</button></div>
+
+<script>
+const SEG=[
+  {t:"Your LDL is trending up — 142 in April, from 128 in October. The main thing to cut back on is saturated fat — Dr. Patel flagged it directly. "},
+  {t:"You should also start a statin and aim for 10,000 steps a day",flag:true},
+  {t:"."},
+];
+const ISS=[
+  {q:"“start a statin”",why:"No note mentions a statin or any prescription."},
+  {q:"“aim for 10,000 steps a day”",why:"No note records a step target or exercise plan."},
+];
+const ans=document.getElementById('ans'),tray=document.getElementById('tray'),
+      verdict=document.getElementById('verdict'),pad=document.getElementById('pad'),
+      chat=document.getElementById('chat'),ai=document.getElementById('ai');
+function caret(){return '<span class="caret"></span>'}
+function reset(){ans.innerHTML='';ai.classList.remove('lit');tray.style.display='none';verdict.classList.remove('show','open');pad.innerHTML=''}
+function build(done){
+  let i=0;ans.innerHTML=caret();
+  (function tick(){
+    if(i>=SEG.length){ans.querySelector('.caret')?.remove();done();return}
+    const s=SEG[i++],sp=document.createElement('span');
+    if(s.flag)sp.className='claim';sp.textContent=s.t;
+    ans.querySelector('.caret')?.remove();ans.appendChild(sp);ans.insertAdjacentHTML('beforeend',caret());
+    chat.scrollTop=chat.scrollHeight;setTimeout(tick,16*s.t.length+70);
+  })();
+}
+function reveal(){
+  tray.style.display='flex';
+  setTimeout(()=>{
+    pad.innerHTML=ISS.map(i=>`<div class="iss"><span class="q">“</span><div><div>${i.q}</div><div class="why">${i.why}</div></div></div>`).join('')
+      +`<div class="vfoot">These phrases aren’t backed by the cited notes. Reflexion flags them — it never changes the answer or your notes.</div>`;
+    verdict.classList.add('show');
+    chat.scrollTop=chat.scrollHeight;
+  },360);
+}
+document.getElementById('vhead').onclick=()=>{
+  verdict.classList.toggle('open');
+  ai.classList.toggle('lit', verdict.classList.contains('open')); // highlight prose only while open
+};
+function go(){reset();build(reveal)}
+document.getElementById('replay').onclick=go;
+document.getElementById('send').onclick=go;
+document.getElementById('inp').addEventListener('keydown',e=>{if(e.key==='Enter')go()});
+go();
+</script>
+</body>
+</html>
