@@ -113,6 +113,23 @@ describe("applyEvent reducer", () => {
     expect(ms[0]?.verdict).toEqual({ passed: true, score: 1, issues: [], ungroundedClaims: [] });
   });
 
+  it("marks a turn answered from general knowledge (no retrieval)", () => {
+    let ms: TranscriptMessage[] = [streaming()];
+    ms = applyEvent(ms, { type: "text_delta", text: "Jeff is a short form of Jeffrey." });
+    ms = applyEvent(ms, { type: "done", stop_reason: "end_turn" });
+    ms = applyEvent(ms, { type: "general_knowledge" });
+    expect(ms[0]?.generalKnowledge).toBe(true);
+    // Neutral, not a verdict — the two never co-occur.
+    expect(ms[0]?.verdict).toBeUndefined();
+  });
+
+  it("leaves a grounded turn unmarked (no general_knowledge event)", () => {
+    let ms: TranscriptMessage[] = [streaming()];
+    ms = applyEvent(ms, { type: "text_delta", text: "Your name is Jeff." });
+    ms = applyEvent(ms, { type: "done", stop_reason: "end_turn" });
+    expect(ms[0]?.generalKnowledge).toBeUndefined();
+  });
+
   it("attaches structured sources from a tool result to its tool", () => {
     let ms: TranscriptMessage[] = [streaming()];
     ms = applyEvent(ms, { type: "tool_call", id: "c1", name: "search", arguments: {} });

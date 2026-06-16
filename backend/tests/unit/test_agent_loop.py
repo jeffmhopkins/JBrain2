@@ -9,6 +9,7 @@ from jbrain.agent.contracts import (
     ChatEvent,
     DoneEvent,
     EntityRef,
+    GeneralKnowledgeEvent,
     JobEnqueuedEvent,
     NoteSource,
     ProposalRef,
@@ -229,10 +230,14 @@ async def test_run_stream_streams_text_then_done() -> None:
         stream_chunks=[["here ", "you go"]],
     )
     events = await collect(AgentLoop(router, registry_with(make_tool("search", search))))
+    # A zero-retrieval substantive answer now carries the neutral general-knowledge
+    # label after `done` (its own dedicated test covers the gating; here it just
+    # rides at the tail of the otherwise-mechanical stream).
     assert events == [
         TextDelta(text="here "),
         TextDelta(text="you go"),
         DoneEvent(stop_reason="end_turn"),
+        GeneralKnowledgeEvent(),
     ]
 
 
@@ -245,6 +250,9 @@ async def test_run_stream_emits_tool_call_and_result_around_dispatch() -> None:
     ]
     router, _ = stream_router_with(turns, stream_chunks=[["let me ", "check"], ["the answer"]])
     events = await collect(AgentLoop(router, registry_with(make_tool("search", search))))
+    # `search` here surfaces no sources (a plain str), so the grounding corpus is
+    # empty; the substantive answer therefore tails with the neutral general-
+    # knowledge label after `done`.
     assert events == [
         TextDelta(text="let me "),
         TextDelta(text="check"),
@@ -252,6 +260,7 @@ async def test_run_stream_emits_tool_call_and_result_around_dispatch() -> None:
         ToolResultEvent(tool_call_id="c1", ok=True, summary="found: x"),
         TextDelta(text="the answer"),
         DoneEvent(stop_reason="end_turn"),
+        GeneralKnowledgeEvent(),
     ]
 
 
@@ -336,7 +345,11 @@ async def test_run_stream_tool_error_surfaces_in_result_event() -> None:
     events = await collect(AgentLoop(router, registry_with(make_tool("boom", boom))))
     result = next(e for e in events if isinstance(e, ToolResultEvent))
     assert result.ok is False and "nope" in result.summary
-    assert events[-1] == DoneEvent(stop_reason="end_turn")
+    # The stream still settles cleanly after a recovered tool error. (The
+    # substantive "recovered" answer retrieved nothing, so a neutral
+    # general-knowledge label tails after the terminal done.)
+    assert events[-2] == DoneEvent(stop_reason="end_turn")
+    assert isinstance(events[-1], GeneralKnowledgeEvent)
 
 
 async def test_run_stream_max_steps_guardrail_emits_done() -> None:
@@ -522,11 +535,13 @@ async def test_touching_a_sensitive_source_makes_the_turn_critique_worthy() -> N
     assert isinstance(events[-1], VerdictEvent) and events[-1].passed is False
 
 
-async def test_held_sensitive_scope_without_retrieval_emits_no_false_verdict() -> None:
+async def test_held_sensitive_scope_without_retrieval_labels_general_knowledge() -> None:
     # A broadly-scoped (Full Brain) session that retrieved nothing: no sources, no
-    # entities, no mutation. The old scope-membership trigger flagged this; the new
-    # touched-sensitive trigger does not (nothing sensitive was actually touched),
-    # and the empty-corpus guard means grounding stays unverifiable — no false flag.
+    # entities, no mutation. The touched-sensitive trigger does not fire (nothing
+    # sensitive was actually touched) and the empty-corpus guard keeps grounding
+    # unverifiable — so NO amber verdict (#226: don't cry wolf). But the answer is a
+    # substantive claim from the model's own knowledge, so it now carries the neutral
+    # general-knowledge provenance label instead of passing silently.
     router, _ = stream_router_with(
         [LlmTurn("the roof needs replacing", (), "end_turn", LlmUsage(1, 1))],
         stream_chunks=[["the roof needs replacing"]],
@@ -535,8 +550,65 @@ async def test_held_sensitive_scope_without_retrieval_emits_no_false_verdict() -
         AgentLoop(router, registry_with(make_tool("search", search))),
         scopes=("general", "health", "finance", "location"),
     )
-    assert isinstance(events[-1], DoneEvent)
     assert not any(isinstance(e, VerdictEvent) for e in events)
+    assert isinstance(events[-2], DoneEvent)
+    assert isinstance(events[-1], GeneralKnowledgeEvent)
+
+
+async def test_zero_retrieval_substantive_turn_labels_general_knowledge() -> None:
+    # "What does Jeff stand for?" answered from the model's own world knowledge — no
+    # tools, no sources, no entities. The answer makes a substantive claim, so a
+    # single neutral GeneralKnowledgeEvent rides after done, and NO amber verdict.
+    router, _ = stream_router_with(
+        [LlmTurn("Jeff is a short form of Jeffrey.", (), "end_turn", LlmUsage(1, 1))],
+        stream_chunks=[["Jeff is a short form of Jeffrey."]],
+    )
+    events = await collect(AgentLoop(router, registry_with(make_tool("search", search))))
+    assert isinstance(events[-2], DoneEvent)
+    assert isinstance(events[-1], GeneralKnowledgeEvent)
+    assert not any(isinstance(e, VerdictEvent) for e in events)
+    # Exactly one label — the two signals never co-occur on a turn.
+    assert sum(isinstance(e, GeneralKnowledgeEvent) for e in events) == 1
+
+
+async def test_greeting_emits_no_general_knowledge_label() -> None:
+    # A pure greeting (no substantive claim) retrieved nothing, but it carries no
+    # checkable knowledge — so it stays silent: no label, no verdict.
+    router, _ = stream_router_with(
+        [LlmTurn("hello there!", (), "end_turn", LlmUsage(1, 1))],
+        stream_chunks=[["hello there!"]],
+    )
+    events = await collect(AgentLoop(router, registry_with(make_tool("search", search))))
+    assert isinstance(events[-1], DoneEvent)
+    assert not any(isinstance(e, GeneralKnowledgeEvent) for e in events)
+    assert not any(isinstance(e, VerdictEvent) for e in events)
+
+
+async def test_graph_answered_turn_labels_no_general_knowledge() -> None:
+    # The "What is my name?" turn grounded in retrieved entity aliases (non-empty
+    # corpus) — neither the neutral label (that's zero-retrieval only) nor the amber
+    # verdict (it grounded). The bubble shows nothing.
+    router, _ = stream_router_with(
+        _entity_turns(),
+        stream_chunks=[[""], ["Your name is Jeffrey Mark Hopkins (Jeff)."]],
+    )
+    events = await collect(AgentLoop(router, registry_with(make_tool("find_entity", find_me))))
+    assert isinstance(events[-1], DoneEvent)
+    assert not any(isinstance(e, (GeneralKnowledgeEvent, VerdictEvent)) for e in events)
+
+
+async def test_retrieved_ungrounded_turn_shows_verdict_not_general_knowledge() -> None:
+    # A genuinely ungrounded RETRIEVED claim still flags amber (verdict), never the
+    # neutral label — the two are mutually exclusive and retrieval picks the verdict.
+    router, _ = stream_router_with(
+        _sourced_turns(),
+        stream_chunks=[[""], ["the roof needs replacing soon"]],
+    )
+    events = await collect(
+        AgentLoop(router, registry_with(make_tool("search", search_cholesterol)))
+    )
+    assert isinstance(events[-1], VerdictEvent) and events[-1].passed is False
+    assert not any(isinstance(e, GeneralKnowledgeEvent) for e in events)
 
 
 async def test_a_staged_mutation_makes_the_turn_critique_worthy() -> None:
@@ -693,6 +765,21 @@ async def test_buffer_retry_non_critique_turn_does_not_retry() -> None:
     )
     events = await collect_buffered(AgentLoop(router, registry_with(make_tool("search", search))))
     assert "".join(e.text for e in events if isinstance(e, TextDelta)) == "hello there"
+    assert not any(isinstance(e, VerdictEvent) for e in events)
+    assert not any(isinstance(e, GeneralKnowledgeEvent) for e in events)  # a greeting: no label
+    assert len(fake.converse_calls) == 1  # produced once, no retry
+
+
+async def test_buffer_retry_zero_retrieval_substantive_turn_labels_general_knowledge() -> None:
+    # The buffered path mirrors the live path's tail: a zero-retrieval substantive
+    # answer (not critique-worthy, so produced once with no retry) still carries the
+    # neutral general-knowledge label after done.
+    router, fake = stream_router_with(
+        [LlmTurn("Jeff is a short form of Jeffrey.", (), "end_turn", LlmUsage(1, 1))],
+    )
+    events = await collect_buffered(AgentLoop(router, registry_with(make_tool("search", search))))
+    assert isinstance(events[-2], DoneEvent)
+    assert isinstance(events[-1], GeneralKnowledgeEvent)
     assert not any(isinstance(e, VerdictEvent) for e in events)
     assert len(fake.converse_calls) == 1  # produced once, no retry
 

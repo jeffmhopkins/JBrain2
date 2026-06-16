@@ -94,6 +94,14 @@ export interface VerdictEvent {
   issues?: string[];
   ungrounded_claims?: string[];
 }
+/** Neutral provenance label — rides *after* `done` when a turn was answered purely
+ * from the model's own world knowledge (zero retrieval) with a substantive claim.
+ * NOT a warning: it carries no claims and never co-occurs with `verdict` (a turn
+ * that retrieved nothing can't be grounding-flagged). The PWA renders a calm "from
+ * general knowledge — not your notes" chip. Ephemeral — never persisted. */
+export interface GeneralKnowledgeEvent {
+  type: "general_knowledge";
+}
 
 export type ChatEvent =
   | TextDelta
@@ -102,7 +110,8 @@ export type ChatEvent =
   | ToolViewEvent
   | JobEnqueuedEvent
   | DoneEvent
-  | VerdictEvent;
+  | VerdictEvent
+  | GeneralKnowledgeEvent;
 
 /** A persisted conversation turn (GET /api/sessions/{id}/transcript) — replays a
  * session on reopen. Assistant turns carry their tool steps + note sources. */

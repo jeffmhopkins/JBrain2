@@ -5512,6 +5512,34 @@ button.small {
   margin: 6px 0 0;
 }
 
+/* neutral "general knowledge" provenance note: a calm footer under an answer the
+   agent gave from its own world knowledge (zero retrieval). Deliberately NOT the
+   amber warning — info=steel, muted text (DESIGN.md). A quiet one-liner with a
+   faint steel-tint pill, never an alarm. */
+.fb-shell .fb-genknow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 6px 0 0;
+  padding: 3px 9px;
+  width: fit-content;
+  border-radius: var(--r-pill);
+  background: var(--steel-tint);
+  color: var(--text-2);
+  font-size: var(--fs-micro);
+  font-weight: 500;
+}
+.fb-shell .fb-genknow-ic {
+  width: 13px;
+  height: 13px;
+  flex: none;
+  fill: none;
+  stroke: var(--steel);
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
 /* entities a step resolved — a tappable chip row inside the Worked step detail,
    standing in for the raw ids (which retreat to the "raw result" rung) */
 .fb-shell .toolwork-ents {

@@ -330,6 +330,30 @@ def test_chat_forwards_a_reflexion_verdict_after_done(
     assert "verdict" not in transcript.recorded[-1]
 
 
+def test_chat_forwards_a_general_knowledge_label_after_done(
+    client: TestClient,
+    repo: FakeAuthRepo,
+    sessions_store: FakeAgentSessions,
+    transcript: FakeTranscript,
+) -> None:
+    # A turn answered purely from world knowledge — no tools, no sources — emits a
+    # neutral `general_knowledge` SSE event after `done`, forwarded but not recorded.
+    login(client, repo)
+    sessions_store.add(AgentSessionInfo("sess-1", "", "active", ("general",), (), NOW, NOW))
+    client.app.state.llm_router = stream_router(  # type: ignore[attr-defined]
+        [LlmTurn("Jeff is a short form of Jeffrey.", (), "end_turn", LlmUsage(1, 1))],
+        stream_chunks=[["Jeff is a short form of Jeffrey."]],
+    )
+    resp = client.post("/api/chat", json={"session_id": "sess-1", "message": "what is jeff?"})
+    events = sse_events(resp.text)
+    assert events[-2]["type"] == "done"
+    assert events[-1]["type"] == "general_knowledge"
+    # No amber verdict rode alongside it — the two are mutually exclusive.
+    assert not any(e["type"] == "verdict" for e in events)
+    # Ephemeral: the label is forwarded but never written to the transcript.
+    assert "general_knowledge" not in transcript.recorded[-1]
+
+
 def test_chat_buffer_retry_gate_default_off_streams_live(
     client: TestClient, repo: FakeAuthRepo, sessions_store: FakeAgentSessions
 ) -> None:

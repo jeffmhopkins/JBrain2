@@ -138,6 +138,55 @@ def claims_from(answer: str) -> list[str]:
     return [c.strip() for c in _SENTENCE.split(answer) if c.strip()]
 
 
+# Pure social/filler tokens — a greeting or acknowledgement carries no checkable
+# claim, so an answer made of only these is *not* substantive (the general-knowledge
+# label must never fire on "hi" → "hello!" or a bare "ok, sure"). These are dropped
+# only for the substantive-claim gate, never from grounding (where overlap on a
+# filler word is harmless anyway).
+_FILLER_TOKENS = frozenset(
+    [
+        "hi",
+        "hey",
+        "hello",
+        "hiya",
+        "yo",
+        "ok",
+        "okay",
+        "sure",
+        "yes",
+        "yep",
+        "yeah",
+        "no",
+        "nope",
+        "thanks",
+        "thank",
+        "welcome",
+        "please",
+        "sorry",
+        "bye",
+        "goodbye",
+        "cheers",
+        "there",
+        "here",
+        "morning",
+        "afternoon",
+        "evening",
+        "np",
+        "yw",
+    ]
+)
+
+
+def has_substantive_claim(answer: str) -> bool:
+    """Whether an answer asserts something checkable — used to decide if a turn that
+    retrieved NOTHING should carry the neutral "general knowledge" provenance label
+    (docs/ASSISTANT.md). True when any claim sentence has a significant token that
+    isn't pure social filler: an etymology ("Jeff is a short form of Jeffrey") is
+    substantive, a greeting ("hello there", "ok, sure") is not. Pure (no model call,
+    no I/O) so it stays as cheap and deterministic as the rest of the gate."""
+    return any(significant_tokens(claim) - _FILLER_TOKENS for claim in claims_from(answer))
+
+
 @dataclass(frozen=True)
 class VerificationResult:
     """A turn's verifier verdict: a 0..1 score and the concrete issues found.

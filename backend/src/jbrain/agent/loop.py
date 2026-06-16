@@ -18,6 +18,7 @@ from jbrain.agent.contracts import (
     ChatEvent,
     DoneEvent,
     EntityRef,
+    GeneralKnowledgeEvent,
     JobEnqueuedEvent,
     NoteSource,
     ProposalRef,
@@ -36,6 +37,7 @@ from jbrain.agent.reflexion import (
     aggregate,
     claims_from,
     critique_worthy,
+    has_substantive_claim,
     reflect,
     ungrounded_claims,
     verify_grounding,
@@ -487,7 +489,13 @@ class AgentLoop:
             yield ev
         yield DoneEvent(stop_reason=kept.stop_reason)
         corpus = _grounding_corpus(kept.sources, kept.entities)
-        if not kept_verdict.passed and corpus and _buffered_critique_worthy(kept):
+        # The same mutually-exclusive tail as `_finish`: an empty corpus + a
+        # substantive answer is the neutral general-knowledge label; a non-empty
+        # corpus that a critique-worthy turn failed to ground is the amber verdict.
+        if not corpus:
+            if has_substantive_claim(kept.answer):
+                yield GeneralKnowledgeEvent()
+        elif not kept_verdict.passed and _buffered_critique_worthy(kept):
             yield VerdictEvent(
                 passed=False,
                 score=kept_verdict.score,
@@ -623,24 +631,37 @@ class AgentLoop:
         entities: list[EntityRef],
         mutated: bool,
     ) -> AsyncIterator[ChatEvent]:
-        """Close the stream: emit the terminal `DoneEvent`, then — in the default
-        verify-and-annotate mode, only when the turn is critique-worthy and the
-        pure verifiers flag something — a tail `VerdictEvent`. No model call, no
-        retry, no persistence: the answer the user saw stands, annotated."""
+        """Close the stream: emit the terminal `DoneEvent`, then exactly one of two
+        mutually-exclusive tail annotations (or nothing). The answer the user saw
+        always stands — no model call, no retry, no persistence.
+
+        - **Zero retrieval, substantive answer →** a neutral `GeneralKnowledgeEvent`:
+          the turn answered from the model's own world knowledge (empty grounding
+          corpus) with a checkable claim, so we surface calm provenance ("not your
+          notes"). This is independent of `critique_worthy` (such a turn is never
+          critique-worthy, but we still label it). A greeting / acknowledgement (no
+          substantive claim) is left silent.
+        - **Retrieval + a critique-worthy turn whose claim failed grounding →** the
+          amber `VerdictEvent`. A non-empty corpus that grounds cleanly, or a turn
+          that isn't critique-worthy, emits nothing.
+
+        The two can never co-occur: general_knowledge requires an empty corpus, the
+        verdict a non-empty one."""
         yield DoneEvent(stop_reason=stop_reason)
+        corpus = _grounding_corpus(sources, entities)
+        if not corpus:
+            # Empty corpus (no note snippets AND no entity texts) → grounding is
+            # *unverifiable*, not ungrounded: never an amber flag. But a substantive
+            # answer here came purely from the model's own knowledge — label it.
+            if has_substantive_claim("".join(answer_parts)):
+                yield GeneralKnowledgeEvent()
+            return
         if not critique_worthy(
             source_count=len(sources),
             entity_count=len(entities),
             mutated=mutated,
             touched_sensitive=_touched_sensitive(sources, entities),
         ):
-            return
-        corpus = _grounding_corpus(sources, entities)
-        # Empty corpus (no note snippets AND no entity texts) → grounding is
-        # *unverifiable*, not ungrounded: don't cry wolf. Other verifiers are
-        # unaffected, but grounding is the only one this tail runs, so skip the
-        # verdict entirely when there is nothing to ground against.
-        if not corpus:
             return
         claims = claims_from("".join(answer_parts))
         verdict = aggregate([verify_grounding(claims, corpus)])
