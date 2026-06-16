@@ -52,13 +52,13 @@ def test_shipped_registry_loads_all_catalog_types(registry: SchemaRegistry) -> N
 def test_person_carries_family_kinship_edges(registry: SchemaRegistry) -> None:
     # Family edges are accumulating (a person has many relatives), so none are
     # functional, and the common drift spellings fold to the schema.org canonical.
-    for canonical in ("parent", "child", "sibling", "relative"):
+    for canonical in ("parent", "children", "sibling", "relative"):
         edge = registry.predicate_for_kind("Person", canonical)
         assert edge is not None and edge.value_shape == "ref"
         assert edge.range_type == "person"
         assert not edge.functional  # accumulating: a person has many relatives
     assert registry.normalize_predicate("mother") == "parent"
-    assert registry.normalize_predicate("son") == "child"
+    assert registry.normalize_predicate("son") == "children"  # schema.org plural canonical
     assert registry.normalize_predicate("brother") == "sibling"
     assert registry.normalize_predicate("speaksLanguage") == "knowsLanguage"
 

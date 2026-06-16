@@ -48,12 +48,12 @@ predicates:
     kind: relationship
     schema_org_ref: schema:parent
     renamed_from: [mother, father]
-  - canonical_name: child
+  - canonical_name: children          # schema.org spelling (plural); the pipeline's canonical
     value_shape: ref
     range_type: person
     kind: relationship
     schema_org_ref: schema:children
-    renamed_from: [children, son, daughter]
+    renamed_from: [child, son, daughter]
   - canonical_name: sibling
     value_shape: ref
     range_type: person
