@@ -1973,6 +1973,91 @@ async def test_entity_view_set_valued_relationship_shows_every_child(
     assert view["inbound"] == []
 
 
+async def test_set_valued_unfriend_files_a_contradiction_and_dedupes(
+    maker: async_sessionmaker[AsyncSession], tmp_path: Any
+) -> None:
+    """An asserted friend edge and a later negated one to the SAME person are a
+    contradiction, not two co-equal live edges (Wave 1, slice 3): the negation
+    parks behind a fact_conflict card while the asserted edge stays live, and
+    re-analysis (D1 re-ingest) refreshes both rows in place rather than filing a
+    duplicate card."""
+    friend = "Casey Unfriendtest"
+
+    def friend_payload(assertion: str, statement: str) -> str:
+        return json.dumps(
+            extraction_payload(
+                title="Friendship",
+                tags=["friend", "people", "social"],
+                mentions=[
+                    {"name": "Me", "kind": "Person", "surface_text": "I"},
+                    {"name": friend, "kind": "Person", "surface_text": "Casey"},
+                ],
+                facts=[
+                    {
+                        "predicate": "friend", "qualifier": "", "kind": "relationship",
+                        "statement": statement, "value_json": None, "assertion": assertion,
+                        "entity_ref": "Me", "object_entity_ref": friend,
+                        "temporal": None, "domain": "general", "confidence": 0.9,
+                    }
+                ],
+                temporal_tokens=[],
+            )
+        )  # fmt: skip
+
+    n1 = await make_note(maker, domain="general", body="Casey is my friend, I'm glad.")
+    await ingest(maker, n1, tmp_path)
+    await analyzer(maker, [friend_payload("asserted", "Casey is my friend.")]).analyze_note(
+        {"note_id": n1}
+    )
+    unfriend = friend_payload("negated", "Casey is no longer my friend.")
+    n2 = await make_note(maker, domain="general", body="Casey is no longer my friend.")
+    await ingest(maker, n2, tmp_path)
+    await analyzer(maker, [unfriend]).analyze_note({"note_id": n2})
+
+    async def primary_edges() -> list[Any]:
+        return await rows(
+            maker, OWNER,
+            "SELECT f.id::text AS id, f.assertion, f.status FROM app.facts f"
+            " JOIN app.entities e ON e.id = f.object_entity_id"
+            " WHERE f.predicate = 'friend' AND e.canonical_name = :n"
+            "   AND f.derived_from_fact_id IS NULL ORDER BY f.created_at",
+            n=friend,
+        )  # fmt: skip
+
+    async def conflict_cards(asserted_id: str, negated_id: str) -> list[Any]:
+        cards = await rows(
+            maker, OWNER,
+            "SELECT payload FROM app.review_items"
+            " WHERE kind = 'fact_conflict' AND status = 'open'",
+        )  # fmt: skip
+        return [
+            r
+            for r in cards
+            if r.payload.get("fact_a") == asserted_id and r.payload.get("fact_b") == negated_id
+        ]
+
+    edges = await primary_edges()
+    # Asserted stays the live edge; the negation parks for review — never two
+    # opposite-polarity edges both live.
+    assert [(e.assertion, e.status) for e in edges] == [
+        ("asserted", "active"),
+        ("negated", "pending_review"),
+    ]
+    assert len(await conflict_cards(edges[0].id, edges[1].id)) == 1
+
+    # Re-ingest both notes (D1): each row refreshes in place — no duplicate edge,
+    # no duplicate card.
+    await analyzer(maker, [friend_payload("asserted", "Casey is my friend.")]).analyze_note(
+        {"note_id": n1}
+    )
+    await analyzer(maker, [unfriend]).analyze_note({"note_id": n2})
+    edges_after = await primary_edges()
+    assert [(e.id, e.assertion, e.status) for e in edges_after] == [
+        (e.id, e.assertion, e.status) for e in edges
+    ]
+    assert len(await conflict_cards(edges_after[0].id, edges_after[1].id)) == 1
+
+
 async def test_domain_floor_raises_clinical_fact_in_general_note(
     maker: async_sessionmaker[AsyncSession],
 ) -> None:
