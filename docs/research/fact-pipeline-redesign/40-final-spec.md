@@ -240,7 +240,10 @@ press both.**
 1. **Schema + committer + registry + RLS** (the storage spine, two keys, projections,
    isolation tests). 2. **Extraction v-next + deterministic backstops + eval harness** (the
    reliability gate) behind a flag, shadow-diffed. 3. **Op algebra + snapshot undo + audit.**
-   4. **Review card** (read-only triage first, then editors). 5. **Clean-rebuild cutover (D1):**
+   4. **Review card** (read-only triage first, then editors) — **GUI work is gated by decision D2:
+   three interactive HTML mockups under `docs/mocks/` for the owner to choose from BEFORE any
+   implementation; the implementation PR is blocked until a design is chosen.** 5. **Clean-rebuild
+   cutover (D1):**
    drop the derived graph, re-ingest all notes under the new contract; the old graph is retained
    read-only for one cycle, then dropped. Each stage is its own branch+PR, CI-green, tests with
    code (CLAUDE.md rules).

@@ -26,3 +26,20 @@ is rebuilt.
   legacy cutover is a clean wipe.
 - Disposition: reclassify M7 from "must fix" to "out of scope (clean rebuild, D1)";
   keep M2/M3 in scope.
+
+## D2 — Every frontend GUI gets 3 interactive HTML mockups first (owner chooses)
+
+Any frontend/GUI to be built (the review card, entity views, any new screen) MUST first ship
+**three interactive HTML mockups** under `docs/mocks/` for the owner to choose the design,
+**before** any GUI implementation begins. The owner picks one (or directs a blend); only then
+is the chosen design implemented.
+
+**Implications:**
+- Applies to **all** GUI work, not just this redesign — a standing process rule (the same
+  pattern already used for the review/entity mockups in this session).
+- A GUI implementation PR is **blocked** until its mockups exist and a choice is recorded.
+- Mockups are interactive (toggle states, open sheets, switch approaches), match the design
+  tokens, and present **three genuinely distinct** directions — not three trivial variants.
+- Backend/contract/storage work (the bulk of this spec) is unaffected; this gates only the
+  GUI layer.
+
