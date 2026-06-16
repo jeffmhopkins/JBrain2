@@ -13,8 +13,9 @@ live; lists and appointments ship with it. The **Phase 5 workflow engine** —
 `events`/`triggers`/`pipelines`/`actions`/`runs`, the scheduler, the unified
 run-log, and the non-breaking cutover of ingest/integration/consolidation onto the
 engine — is also live, with reflexion-in-the-live-turn (Loop 1), a *fed* eval
-harness (the live scorer behind the self-improvement budget gate), and the recurring
-self-heal reconcilers; migrations run through 0043. The build records for the agent
+harness (the live scorer behind the self-improvement budget gate, on a nightly
+schedule that stores `EvalRun`s — Track H·B), and the recurring self-heal
+reconcilers; migrations run through 0044. The build records for the agent
 and the v3 pipeline are archived under `docs/archive/` (`ASSISTANT_PLAN.md`,
 `INTEGRATOR_PLAN.md`, `CUTOVER_V1_REMOVAL.md`).
 

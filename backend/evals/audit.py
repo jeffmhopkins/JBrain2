@@ -20,8 +20,8 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from evals.run import _norm, load_cases
 from jbrain.analysis.extraction import resolve_relative_date
+from jbrain.evals.runner import _norm, load_cases
 
 # Generic words that legitimately appear in a body but must never become an
 # entity — `absent_person` on these is correct even though the word is present.

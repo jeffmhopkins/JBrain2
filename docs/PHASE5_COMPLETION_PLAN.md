@@ -34,10 +34,18 @@ tests-with-code at **80% backend coverage / security paths 100%**, real Postgres
 via **testcontainers** with **LLM calls faked**, Conventional Commits + branch +
 PR + CI green, and `scripts/dev-setup.sh` updated with any new dep/tool/step.
 
-**Status (post Wave 1):** Tracks **R, H·A, S, N, D shipped** — migrations **0042**
-(Track S reconciler seed) and **0043** (Track N2 `skill_version`); next free is
-**0044**. H·A landed without a migration (the `eval_run` action is registered
-in-code; the H·B seed projection is deferred). What remains: the **Loop-4** owner
+**Status (post Wave 1 + H·B/H·C):** Tracks **R, H·A, H·B, H·C, S, N, D shipped** —
+migrations **0042** (Track S reconciler seed), **0043** (Track N2 `skill_version`),
+and **0044** (H·B nightly `eval_run` schedule). **H·B/H·C** landed at the owner's
+direction (overriding the decision-#3 "park until a consumer" recommendation): the
+nightly eval is a standalone production regression signal. Two deviations from the
+original H·B sketch, both verified by red-team against the code: (1) **no `app.actions`
+seed row** — `eval_run` is referenced by name through the in-code registry exactly as
+`PURGE_ACTION`/the reconcilers are (a seed row would break the exact-six-row
+`test_seeded_actions_are_globally_readable`); (2) the eval **runtime core + corpus were
+relocated into the shipped package** (`jbrain/evals/runner.py` + `jbrain/evals/cases/`)
+because `backend/evals/` is not in the prod image — without this the nightly schedule
+would `PermanentJobError` every night in production. What remains: the **Loop-4** owner
 decision (§5.2) and the `WORKFLOW_ENGINE_PLAN.md` archival close-out (Track D, §6).
 The per-track migration numbers below were the pre-build estimates — see the
 assigned-at-merge rule in §2.
@@ -74,10 +82,11 @@ assigned-at-merge rule in §2.
   calls. Production goes exclusively through `run_stream` (`loop.py:224`; caller
   `api/agent.py:242`).
 
-> **Migration-number reality check.** Migrations run through **0043** (0042 = the
-> Track S reconciler seed, 0043 = the Track N2 `skill_version` column). The
-> ROADMAP/README/CLAUDE.md "Phases 0–4 shipped … through 0034 … Phase 5 not started"
-> drift was corrected by Track D in this same wave.
+> **Migration-number reality check.** Migrations run through **0044** (0042 = the
+> Track S reconciler seed, 0043 = the Track N2 `skill_version` column, 0044 = the
+> H·B nightly `eval_run` schedule). The ROADMAP/README/CLAUDE.md "Phases 0–4 shipped
+> … through 0034 … Phase 5 not started" drift was corrected by Track D in this same
+> wave.
 
 ### Carried-forward Phase-5 items: status (all accounted for)
 
@@ -205,6 +214,16 @@ verifier + trigger paths are correctness-critical → push them to 100%.
 ---
 
 ### Track H — Eval-harness completion (A–C)
+
+> **SHIPPED (H·A, H·B, H·C) — see the status block above.** Two corrections to the
+> pre-build H·B sketch below, both proven against the code by red-team: there is **no
+> `app.actions` seed projection** (a seed row would break the exact-six-row
+> `test_seeded_actions_are_globally_readable`; `eval_run` resolves by name through the
+> in-code registry exactly as `PURGE_ACTION`/the reconcilers do), and the eval runtime
+> + corpus were **relocated into the shipped package** (`jbrain/evals/`) because
+> `backend/evals/` is not in the prod image. The schedule fires 03:00 UTC (migration
+> 0044), not "owner-local 02:00". Read the H·B/H·C bullets below as the original intent;
+> the status block records what actually shipped.
 
 **Framing.** The gate shipped; nothing feeds it. The highest-leverage quick win is
 **A** — without a live `Scorer` the gate can never run on real model output.

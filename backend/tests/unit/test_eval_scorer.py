@@ -14,8 +14,11 @@ import json
 from collections.abc import Sequence
 from typing import Any
 
+import pytest
+
 from jbrain.llm import LlmRouter
 from jbrain.llm.types import LlmImage, LlmResult, LlmUsage, parse_json_payload
+from jbrain.queue import PermanentJobError
 from jbrain.workflow.eval_scorer import _select_cases, build_live_scorer
 
 # A structurally valid (empty) extraction — every case parses, so the scorer
@@ -96,4 +99,10 @@ async def test_live_scorer_suite_filter_selects_a_slice() -> None:
 def test_select_cases_all_vs_filter() -> None:
     assert _select_cases("") == _select_cases("all")
     assert len(_select_cases("temporal")) < len(_select_cases(""))
-    assert _select_cases("no-such-case-name-zzz") == []
+
+
+def test_select_cases_fails_closed_when_filter_matches_nothing() -> None:
+    # A suite that selects zero cases is a fail-closed PermanentJobError, not an
+    # empty run: scoring nothing would silently store a contentless EvalRun.
+    with pytest.raises(PermanentJobError):
+        _select_cases("no-such-case-name-zzz")
