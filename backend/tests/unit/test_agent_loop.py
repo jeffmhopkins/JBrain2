@@ -16,6 +16,7 @@ from jbrain.agent.contracts import (
     ToolResultEvent,
     ToolSpec,
     ToolViewEvent,
+    VerdictEvent,
     ViewPayload,
 )
 from jbrain.agent.loop import (
@@ -43,8 +44,16 @@ from jbrain.llm import (
 OWNER = SessionContext(principal_kind="owner")
 
 
-def make_tool(name: str, handler: ToolHandler, *, permission: str = "read") -> RegisteredTool:
-    spec = ToolSpec(name=name, version=1, params={"type": "object"}, permission=permission)  # type: ignore[arg-type]
+def make_tool(
+    name: str, handler: ToolHandler, *, permission: str = "read", mutating: bool = False
+) -> RegisteredTool:
+    spec = ToolSpec(
+        name=name,
+        version=1,
+        params={"type": "object"},
+        permission=permission,  # type: ignore[arg-type]
+        mutating=mutating,
+    )
     return RegisteredTool(
         toolfile=ToolFile(spec=spec, description=f"the {name} tool"), handler=handler
     )
@@ -202,11 +211,13 @@ def stream_router_with(
     return LlmRouter({"xai": fake}, {"agent.turn": ("xai", "grok-4.3")}), fake
 
 
-async def collect(loop: AgentLoop, scopes: tuple[str, ...] = ("general",)) -> list[ChatEvent]:
+async def collect(
+    loop: AgentLoop, scopes: tuple[str, ...] = ("general",), message: str = "what do I know?"
+) -> list[ChatEvent]:
     return [
         event
         async for event in loop.run_stream(
-            session=OWNER, scopes=scopes, conversation=[UserMessage(text="what do I know?")]
+            session=OWNER, scopes=scopes, conversation=[UserMessage(text=message)]
         )
     ]
 
@@ -389,3 +400,234 @@ async def test_recorder_logs_model_and_tool_steps() -> None:
         ("tool", "search", True),
         ("model", "converse", True),
     ]
+
+
+# --- Reflexion (Loop 1) verify-and-annotate, default mode (b) ----------------
+
+
+async def search_cholesterol(arguments: dict, ctx: ToolContext) -> ToolOutput:
+    """A read that surfaces a source whose snippet the answer can (mis)ground in."""
+    return ToolOutput(
+        "found it",
+        (NoteSource(note_id="n1", domain="health", snippet="cholesterol reading is elevated"),),
+    )
+
+
+async def stage_correction(arguments: dict, ctx: ToolContext) -> ToolOutput:
+    return ToolOutput("staged it", proposal=ProposalRef(proposal_id="p1", kind="correction"))
+
+
+def _sourced_turns() -> list[LlmTurn]:
+    return [
+        LlmTurn("", (ToolCall("c1", "search", {}),), "tool_use", LlmUsage(1, 1)),
+        LlmTurn("answer", (), "end_turn", LlmUsage(1, 1)),
+    ]
+
+
+async def test_non_critique_turn_emits_no_verdict_and_streams_identically() -> None:
+    # A greeting: no sources, no mutation, general scope only — the stream is
+    # exactly what it was before reflexion (no tail verdict).
+    router, _ = stream_router_with(
+        [LlmTurn("hello there", (), "end_turn", LlmUsage(1, 1))],
+        stream_chunks=[["hello ", "there"]],
+    )
+    events = await collect(AgentLoop(router, registry_with(make_tool("search", search))))
+    assert events == [
+        TextDelta(text="hello "),
+        TextDelta(text="there"),
+        DoneEvent(stop_reason="end_turn"),
+    ]
+    assert not any(isinstance(e, VerdictEvent) for e in events)
+
+
+async def test_ungrounded_critique_turn_emits_a_verdict_after_done() -> None:
+    # The turn surfaced a source (critique-worthy) but the answer's claim grounds
+    # in nothing the source said → a tail VerdictEvent after DoneEvent.
+    router, _ = stream_router_with(
+        _sourced_turns(),
+        stream_chunks=[[""], ["the roof needs replacing soon"]],
+    )
+    events = await collect(
+        AgentLoop(router, registry_with(make_tool("search", search_cholesterol)))
+    )
+    assert isinstance(events[-2], DoneEvent)
+    verdict = events[-1]
+    assert isinstance(verdict, VerdictEvent)
+    assert verdict.passed is False
+    assert any("not grounded" in i for i in verdict.issues)
+
+
+async def test_grounded_critique_turn_emits_no_verdict() -> None:
+    # Same critique-worthy turn, but the answer grounds in the source → a clean
+    # pass, so no verdict is emitted (nothing to annotate).
+    router, _ = stream_router_with(
+        _sourced_turns(),
+        stream_chunks=[[""], ["your cholesterol reading is elevated"]],
+    )
+    events = await collect(
+        AgentLoop(router, registry_with(make_tool("search", search_cholesterol)))
+    )
+    assert isinstance(events[-1], DoneEvent)
+    assert not any(isinstance(e, VerdictEvent) for e in events)
+
+
+async def test_a_sensitive_scope_turn_is_verified_even_without_sources() -> None:
+    # No sources, no mutation, but the session touched 'health' → critique-worthy,
+    # so an ungrounded answer still surfaces a verdict.
+    router, _ = stream_router_with(
+        [LlmTurn("the roof needs replacing", (), "end_turn", LlmUsage(1, 1))],
+        stream_chunks=[["the roof needs replacing"]],
+    )
+    events = await collect(
+        AgentLoop(router, registry_with(make_tool("search", search))), scopes=("health",)
+    )
+    assert isinstance(events[-1], VerdictEvent) and events[-1].passed is False
+
+
+async def test_a_staged_mutation_makes_the_turn_critique_worthy() -> None:
+    # A staged proposal carries a write → critique-worthy even in general scope.
+    router, _ = stream_router_with(
+        [
+            LlmTurn("", (ToolCall("c1", "correct", {}),), "tool_use", LlmUsage(1, 1)),
+            LlmTurn("unrelated prose", (), "end_turn", LlmUsage(1, 1)),
+        ],
+        stream_chunks=[[""], ["the unrelated prose stands alone"]],
+    )
+    events = await collect(
+        AgentLoop(
+            router,
+            registry_with(
+                make_tool("correct", stage_correction, permission="mutate", mutating=True)
+            ),
+        )
+    )
+    assert any(isinstance(e, VerdictEvent) for e in events)
+
+
+async def test_verdict_rides_after_done_on_a_budget_stop() -> None:
+    # A non-end_turn terminal (budget cap) still routes through the verdict tail.
+    forever = [LlmTurn("over budget", (ToolCall("c", "search", {}),), "tool_use", LlmUsage(10, 10))]
+    router, _ = stream_router_with(forever, stream_chunks=[["the roof needs replacing"]])
+    loop = AgentLoop(
+        router,
+        registry_with(make_tool("search", search_cholesterol)),
+        guardrails=Guardrails(max_cost_tokens=5),
+    )
+    events = await collect(loop, scopes=("health",))
+    assert isinstance(events[-2], DoneEvent) and events[-2].stop_reason == "budget"
+    assert isinstance(events[-1], VerdictEvent)
+
+
+# --- Reflexion (Loop 1) opt-in buffer-then-retry, mode (a) -------------------
+
+
+async def collect_buffered(
+    loop: AgentLoop, scopes: tuple[str, ...] = ("general",)
+) -> list[ChatEvent]:
+    return [
+        event
+        async for event in loop.run_stream(
+            session=OWNER,
+            scopes=scopes,
+            conversation=[UserMessage(text="what do I know?")],
+            buffer_retry=True,
+        )
+    ]
+
+
+async def test_buffer_retry_off_by_default_streams_live_with_no_retry() -> None:
+    # The default path makes one streaming call; the buffered path is opt-in only.
+    router, fake = stream_router_with(
+        [LlmTurn("the roof needs replacing", (), "end_turn", LlmUsage(1, 1))],
+        stream_chunks=[["the roof needs replacing"]],
+    )
+    await collect(AgentLoop(router, registry_with(make_tool("search", search))), scopes=("health",))
+    assert len(fake.stream_calls) == 1 and fake.converse_calls == []
+
+
+async def test_buffer_retry_adopts_a_strictly_improving_reproduce() -> None:
+    # mode (a): a critique-worthy turn whose first answer is ungrounded is
+    # re-produced; the grounded retry strictly improves, so it is the one streamed.
+    # Each produce runs the same tool (surfacing the cholesterol snippet); the
+    # first answer ignores it (ungrounded), the second grounds in it.
+    tool_use = LlmTurn("", (ToolCall("c1", "search", {}),), "tool_use", LlmUsage(1, 1))
+    router, fake = stream_router_with(
+        [
+            tool_use,
+            LlmTurn("the roof needs replacing", (), "end_turn", LlmUsage(1, 1)),
+            tool_use,
+            LlmTurn("your cholesterol reading is elevated", (), "end_turn", LlmUsage(1, 1)),
+        ],
+    )
+    events = await collect_buffered(
+        AgentLoop(router, registry_with(make_tool("search", search_cholesterol)))
+    )
+    # The kept (second) attempt's text is what streamed; it grounds → no verdict.
+    text = "".join(e.text for e in events if isinstance(e, TextDelta))
+    assert text == "your cholesterol reading is elevated"
+    assert not any(isinstance(e, VerdictEvent) for e in events)
+    # Re-produce happened via the non-streaming converse path (2 produce-steps,
+    # 2 converse calls each).
+    assert len(fake.converse_calls) == 4 and fake.stream_calls == []
+
+
+async def test_buffer_retry_annotates_when_no_retry_improves() -> None:
+    # Both attempts are ungrounded (no strict improvement) → the incumbent stands
+    # and a verdict annotates it. The cap stops the loop; the user saw a spinner.
+    router, _ = stream_router_with(
+        [LlmTurn("the roof needs replacing", (), "end_turn", LlmUsage(1, 1))],
+    )
+    events = await collect_buffered(
+        AgentLoop(router, registry_with(make_tool("search", search))), scopes=("health",)
+    )
+    assert isinstance(events[-1], VerdictEvent) and events[-1].passed is False
+
+
+async def test_buffer_retry_non_critique_turn_does_not_retry() -> None:
+    # A greeting in general scope is not critique-worthy → produced once, streamed,
+    # no reflect loop and no verdict.
+    router, fake = stream_router_with(
+        [LlmTurn("hello there", (), "end_turn", LlmUsage(1, 1))],
+    )
+    events = await collect_buffered(AgentLoop(router, registry_with(make_tool("search", search))))
+    assert "".join(e.text for e in events if isinstance(e, TextDelta)) == "hello there"
+    assert not any(isinstance(e, VerdictEvent) for e in events)
+    assert len(fake.converse_calls) == 1  # produced once, no retry
+
+
+async def test_buffer_retry_replays_buffered_tool_events_of_the_kept_attempt() -> None:
+    # The buffered produce-step buffers tool_call / tool_result / view events; the
+    # kept attempt's are replayed in order as the live stream (no discarded draft).
+    router, _ = stream_router_with(
+        [
+            LlmTurn("", (ToolCall("c1", "read_list", {}),), "tool_use", LlmUsage(1, 1)),
+            LlmTurn("your cholesterol reading is elevated", (), "end_turn", LlmUsage(1, 1)),
+        ],
+    )
+    events = await collect_buffered(
+        AgentLoop(router, registry_with(make_tool("read_list", view_tool))), scopes=("health",)
+    )
+    types = [type(e).__name__ for e in events]
+    # The buffered tool events stream in the same order the live path would emit.
+    assert types.index("ToolCallEvent") < types.index("ToolResultEvent")
+    assert types.index("ToolViewEvent") == types.index("ToolResultEvent") + 1
+    assert "DoneEvent" in types
+
+
+async def test_buffer_retry_respects_the_cost_guardrail_across_attempts() -> None:
+    # A tiny per-turn budget: the first ungrounded produce already exhausts it, so
+    # the cost cap caps the retries (no unbounded reproduce). NOT the
+    # self-improvement budget — the ordinary per-turn guardrail.
+    router, fake = stream_router_with(
+        [LlmTurn("the roof needs replacing", (), "end_turn", LlmUsage(10, 10))],
+    )
+    loop = AgentLoop(
+        router,
+        registry_with(make_tool("search", search)),
+        guardrails=Guardrails(max_cost_tokens=5),
+    )
+    events = await collect_buffered(loop, scopes=("health",))
+    # The answer still streams + annotates, but the exhausted budget stopped any
+    # reproduce after the first attempt — exactly one model call, not a retry loop.
+    assert any(isinstance(e, VerdictEvent) for e in events)
+    assert len(fake.converse_calls) == 1

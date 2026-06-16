@@ -229,6 +229,9 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
     # the client localizes); None = UTC. Read on the owner ctx, not the narrowed
     # read ctx — a preference, not domain data.
     owner_tz = await get_settings_store(request).owner_timezone(owner_ctx)
+    # Reflexion mode gate (Track R): default verify-and-annotate; this opts into
+    # the buffer-then-retry path (off by default — a spinner-latency tradeoff).
+    buffer_retry = await get_settings_store(request).reflexion_buffer_retry(owner_ctx)
 
     async def events() -> AsyncIterator[bytes]:
         stop_reason = "error"
@@ -244,6 +247,7 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
                 scopes=session.domain_scopes,
                 conversation=conversation,
                 timezone=owner_tz,
+                buffer_retry=buffer_retry,
             ):
                 if event.type == "text_delta":
                     answer.append(event.text)
@@ -274,6 +278,9 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
                         step["view"] = event.view.model_dump()
                 elif event.type == "done":
                     stop_reason, status = event.stop_reason, "ended"
+                # A reflexion `verdict` rides after `done` (Loop 1's annotation of a
+                # critique-worthy turn). It is forwarded to the PWA but deliberately
+                # NOT recorded — Loop 1 is ephemeral and writes nothing durable.
                 yield f"data: {event.model_dump_json()}\n\n".encode()
             if status == "ended":
                 await _record_episode(request, read_ctx, session, run_id, body.message, answer)

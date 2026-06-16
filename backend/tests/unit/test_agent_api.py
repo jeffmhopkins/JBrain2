@@ -294,6 +294,78 @@ def test_chat_persists_tool_steps_with_sources(
     ]
 
 
+def test_chat_forwards_a_reflexion_verdict_after_done(
+    client: TestClient,
+    repo: FakeAuthRepo,
+    sessions_store: FakeAgentSessions,
+    transcript: FakeTranscript,
+) -> None:
+    # A critique-worthy turn (surfaced a source) whose answer is ungrounded emits a
+    # `verdict` SSE event after `done` — the default verify-and-annotate mode.
+    login(client, repo)
+    sessions_store.add(AgentSessionInfo("sess-1", "", "active", ("general",), (), NOW, NOW))
+
+    async def search(arguments, ctx):  # type: ignore[no-untyped-def]
+        return ToolOutput(
+            "found 1", (NoteSource(note_id="n1", domain="general", snippet="cholesterol labs"),)
+        )
+
+    client.app.state.agent_registry = registry_with_tool("search", search)  # type: ignore[attr-defined]
+    client.app.state.llm_router = stream_router(  # type: ignore[attr-defined]
+        [
+            LlmTurn("", (ToolCall("c1", "search", {}),), "tool_use", LlmUsage(1, 1)),
+            LlmTurn("the roof needs replacing", (), "end_turn", LlmUsage(1, 1)),
+        ],
+        stream_chunks=[[""], ["the roof needs replacing"]],
+    )
+    resp = client.post("/api/chat", json={"session_id": "sess-1", "message": "labs?"})
+    events = sse_events(resp.text)
+    # The verdict rides last, right after the terminal done.
+    assert events[-2]["type"] == "done"
+    assert events[-1]["type"] == "verdict" and events[-1]["passed"] is False
+    # Ephemeral: the verdict is forwarded but never written to the transcript.
+    assert "verdict" not in transcript.recorded[-1]
+
+
+def test_chat_buffer_retry_gate_default_off_streams_live(
+    client: TestClient, repo: FakeAuthRepo, sessions_store: FakeAgentSessions
+) -> None:
+    # With the gate unset (default off), the turn streams live (the streaming
+    # adapter path), not the buffered produce path.
+    login(client, repo)
+    sessions_store.add(AgentSessionInfo("sess-1", "", "active", ("health",), (), NOW, NOW))
+    router = stream_router(
+        [LlmTurn("the roof needs replacing", (), "end_turn", LlmUsage(1, 1))],
+        stream_chunks=[["the roof ", "needs replacing"]],
+    )
+    client.app.state.llm_router = router  # type: ignore[attr-defined]
+    resp = client.post("/api/chat", json={"session_id": "sess-1", "message": "hi"})
+    fake = cast(FakeLlmClient, router._clients["xai"])
+    assert len(fake.stream_calls) == 1 and fake.converse_calls == []
+    # The live stream still annotates (critique-worthy health scope, ungrounded).
+    assert sse_events(resp.text)[-1]["type"] == "verdict"
+
+
+def test_chat_buffer_retry_gate_on_uses_the_buffered_path(
+    client: TestClient, repo: FakeAuthRepo, sessions_store: FakeAgentSessions
+) -> None:
+    # Flipping the settings gate on routes the turn through buffer-then-retry: the
+    # non-streaming converse path produces it, then the kept answer streams.
+    login(client, repo)
+    sessions_store.add(AgentSessionInfo("sess-1", "", "active", ("health",), (), NOW, NOW))
+    client.app.state.settings_store.values["reflexion_buffer_retry"] = True  # type: ignore[attr-defined]
+    router = stream_router(
+        [LlmTurn("the roof needs replacing", (), "end_turn", LlmUsage(1, 1))],
+        stream_chunks=[["the roof needs replacing"]],
+    )
+    client.app.state.llm_router = router  # type: ignore[attr-defined]
+    resp = client.post("/api/chat", json={"session_id": "sess-1", "message": "hi"})
+    fake = cast(FakeLlmClient, router._clients["xai"])
+    # Buffered produce uses converse (non-streaming), not the streaming adapter.
+    assert fake.converse_calls and fake.stream_calls == []
+    assert sse_events(resp.text)[-1]["type"] == "verdict"
+
+
 def test_chat_persists_proposal_and_entity_chips(
     client: TestClient,
     repo: FakeAuthRepo,

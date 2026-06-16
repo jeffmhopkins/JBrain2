@@ -85,6 +85,9 @@ class FakeSettingsStore:
         tz = self.values.get("owner_timezone")
         return tz if isinstance(tz, str) and is_valid_timezone(tz) else None
 
+    async def reflexion_buffer_retry(self, ctx: object) -> bool:
+        return self.values.get("reflexion_buffer_retry", False) is True
+
     async def llm_task_overrides(self, ctx: object) -> dict[str, dict[str, str]]:
         # Mirrors the SQL store's sanitizing read (drops malformed entries).
         raw = self.values.get("llm_task_overrides", {})

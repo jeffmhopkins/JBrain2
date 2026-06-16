@@ -181,7 +181,30 @@ class DoneEvent(BaseModel):
     stop_reason: str
 
 
+class VerdictEvent(BaseModel):
+    """Reflexion's Loop-1 verdict on a critique-worthy turn (docs/ASSISTANT.md
+    "Self-improvement loops"). In the default verify-and-annotate mode it rides
+    *after* `DoneEvent` — the answer the user already saw stands, annotated: the
+    PWA renders an "unverified claims" note when `passed` is false. The score is
+    the aggregated verifier score (0..1) and `issues` are the concrete
+    ungrounded-claim / out-of-scope-citation strings the verifiers found. A
+    passing turn emits no VerdictEvent at all (nothing to annotate); this event
+    appears only when the verifiers flagged something. Ephemeral — never persisted
+    (Loop 1 writes nothing)."""
+
+    type: Literal["verdict"] = "verdict"
+    passed: bool
+    score: float
+    issues: list[str] = Field(default_factory=list)
+
+
 ChatEvent = Annotated[
-    TextDelta | ToolCallEvent | ToolResultEvent | ToolViewEvent | JobEnqueuedEvent | DoneEvent,
+    TextDelta
+    | ToolCallEvent
+    | ToolResultEvent
+    | ToolViewEvent
+    | JobEnqueuedEvent
+    | DoneEvent
+    | VerdictEvent,
     Field(discriminator="type"),
 ]
