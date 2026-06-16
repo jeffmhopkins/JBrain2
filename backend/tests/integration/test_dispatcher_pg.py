@@ -685,6 +685,9 @@ async def test_e2e_resolution_event_drives_consolidate_with_a_logged_run(
     pipeline run. (The resolution->emit path is covered in test_predicate_resolve_pg;
     here the event drives the engine to the sweep + run log.)"""
     pid = await _seed_owner_principal(maker)
+    # No queued/running consolidate must pre-exist, else N1's kind-only dedup would
+    # (correctly) suppress this enqueue — park any leftover from a sibling test.
+    await _quiesce_consolidate_jobs(maker)
     await _insert_event(
         maker,
         type=wf_events.RESOLUTION_CHANGED,
@@ -709,6 +712,99 @@ async def test_e2e_resolution_event_drives_consolidate_with_a_logged_run(
             )
         ).scalar_one()
     assert runs >= 1
+
+
+async def _quiesce_consolidate_jobs(maker: async_sessionmaker[AsyncSession]) -> None:
+    """Park every consolidate job as 'done' (the module shares one testcontainer; a
+    leftover queued/running sweep would suppress a sibling's expected enqueue via N1's
+    kind-only dedup). DELETE is denied on app.jobs even under OWNER, so we park (the
+    same trick test_queue_pg.quiesce_jobs uses)."""
+    async with scoped_session(maker, OWNER) as s:
+        await s.execute(
+            text("UPDATE app.jobs SET status = 'done' WHERE kind = 'consolidate_predicates'")
+        )
+
+
+async def _count_active_consolidate(maker: async_sessionmaker[AsyncSession]) -> int:
+    async with scoped_session(maker, OWNER) as s:
+        return (
+            await s.execute(
+                text(
+                    "SELECT count(*) FROM app.jobs WHERE kind = 'consolidate_predicates'"
+                    " AND status IN ('queued', 'running')"
+                )
+            )
+        ).scalar_one()
+
+
+async def test_live_tick_suppresses_a_second_consolidate_while_one_is_active(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """N1: consolidate_predicates is a payload-keyless idempotent sweep enqueued off
+    resolution.changed on every remapping resolution. With a queued sweep already
+    present, a fresh resolution.changed event must NOT pile up a second one — the
+    kind-only dedup (_already_active -> has_active_kind) suppresses it."""
+    pid = await _seed_owner_principal(maker)
+    await _quiesce_consolidate_jobs(maker)
+    # Stand up a QUEUED consolidate twin directly — the active sweep the dedup honors.
+    async with scoped_session(maker, OWNER) as s:
+        await s.execute(
+            text(
+                "INSERT INTO app.jobs (id, kind, payload, status)"
+                " VALUES (gen_random_uuid(), 'consolidate_predicates', '{}'::jsonb, 'queued')"
+            )
+        )
+    assert await _count_active_consolidate(maker) == 1
+
+    await _insert_event(
+        maker,
+        type=wf_events.RESOLUTION_CHANGED,
+        domain="general",
+        principal_id=pid,
+        payload={"item_id": str(uuid.uuid4())},
+    )
+
+    diffs = await dispatcher.dispatcher_tick(
+        maker, _registry(), live=True, run_log=PipelineRunLog(maker)
+    )
+    mine = [d for d in diffs if d.event_type == wf_events.RESOLUTION_CHANGED]
+    assert mine and all(d.error is None for d in mine)
+
+    # SUPPRESSED: still exactly one active consolidate — no second enqueued.
+    assert await _count_active_consolidate(maker) == 1
+    await _quiesce_consolidate_jobs(maker)
+
+
+async def test_live_tick_suppresses_consolidate_while_one_is_running(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """N1 (running half): the kind-only dedup is queued OR running — a RUNNING sweep
+    already covers the change a re-delivered resolution.changed event reflects, so a
+    fresh dispatch is suppressed (unlike the note-keyed guard, which is queued-only)."""
+    pid = await _seed_owner_principal(maker)
+    await _quiesce_consolidate_jobs(maker)
+    async with scoped_session(maker, OWNER) as s:
+        await s.execute(
+            text(
+                "INSERT INTO app.jobs (id, kind, payload, status, locked_at)"
+                " VALUES (gen_random_uuid(), 'consolidate_predicates', '{}'::jsonb,"
+                " 'running', now())"
+            )
+        )
+    assert await _count_active_consolidate(maker) == 1
+
+    await _insert_event(
+        maker,
+        type=wf_events.RESOLUTION_CHANGED,
+        domain="general",
+        principal_id=pid,
+        payload={"item_id": str(uuid.uuid4())},
+    )
+
+    await dispatcher.dispatcher_tick(maker, _registry(), live=True, run_log=PipelineRunLog(maker))
+
+    assert await _count_active_consolidate(maker) == 1
+    await _quiesce_consolidate_jobs(maker)
 
 
 async def test_events_rls_isolates_by_domain(maker: async_sessionmaker[AsyncSession]) -> None:

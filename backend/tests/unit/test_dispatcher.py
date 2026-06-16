@@ -627,10 +627,9 @@ async def test_already_active_skips_an_ingest_with_a_queued_twin(
     ]
 
 
-async def test_already_active_false_for_a_kind_without_a_note_twin() -> None:
-    # consolidate_predicates carries no note_id and no note-keyed guard — never
-    # suppressed here (its own action owns dedup).
-    w = dispatcher.WouldEnqueue(
+def _consolidate_would() -> dispatcher.WouldEnqueue:
+    # A payload-keyless sweep: no note_id, deduped kind-only (_KIND_DEDUP_KINDS).
+    return dispatcher.WouldEnqueue(
         kind="consolidate_predicates",
         payload={},
         principal_id=PRINCIPAL,
@@ -638,7 +637,54 @@ async def test_already_active_false_for_a_kind_without_a_note_twin() -> None:
         trigger_id="trig-1",
         pipeline="p",
     )
+
+
+async def test_already_active_false_for_a_kind_without_any_dedup_guard() -> None:
+    # A kind in neither dedup set, with no note_id, is never suppressed here (its own
+    # action owns dedup).
+    w = dispatcher.WouldEnqueue(
+        kind="some_other_sweep",
+        payload={},
+        principal_id=PRINCIPAL,
+        domain_code="general",
+        trigger_id="trig-1",
+        pipeline="p",
+    )
     assert not await dispatcher._already_active(None, w)  # type: ignore[arg-type]
+
+
+async def test_already_active_kind_only_suppresses_a_sweep_with_an_active_twin(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # N1: consolidate_predicates carries no per-target key, so it is deduped kind-only
+    # — suppressed while one is queued OR running (the running sweep already covers
+    # the change a re-delivered resolution.changed event reflects).
+    seen: list[tuple[str, tuple[str, ...]]] = []
+
+    # The fake mirrors the real helper's default statuses (ACTIVE_STATUSES = queued +
+    # running), so this asserts the dispatcher leans on that default — it does NOT
+    # narrow to queued-only as the note-keyed guard does.
+    async def fake_has_active_kind(
+        maker: Any, ctx: Any, kind: str, *, statuses: tuple[str, ...] = ("queued", "running")
+    ) -> bool:
+        seen.append((kind, statuses))
+        return True
+
+    monkeypatch.setattr(dispatcher.queue, "has_active_kind", fake_has_active_kind)
+    assert await dispatcher._already_active(None, _consolidate_would())  # type: ignore[arg-type]
+    # Kind-only check, leaning on the helper's default (queued+running) statuses.
+    assert seen == [("consolidate_predicates", ("queued", "running"))]
+
+
+async def test_already_active_kind_only_allows_a_sweep_with_no_active_twin(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # No queued/running sweep of that kind — the would-be enqueue proceeds.
+    async def no_twin(*a: Any, **k: Any) -> bool:
+        return False
+
+    monkeypatch.setattr(dispatcher.queue, "has_active_kind", no_twin)
+    assert not await dispatcher._already_active(None, _consolidate_would())  # type: ignore[arg-type]
 
 
 # --- _already_active: state-based dedup hardening (W2·C) ----------------------
