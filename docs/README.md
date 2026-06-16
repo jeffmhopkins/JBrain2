@@ -38,8 +38,12 @@ Phase-5 build record is `archive/PHASE5_COMPLETION_PLAN.md`.
 
 ## Active plan
 
-- **None.** Phase 5 is closed; **Phase 6 (Wiki)** is the next frontier — see the
-  Phase 6 section of `ROADMAP.md`. No Phase-6 build plan has been written yet.
+- `PHASE6_WIKI_PLAN.md` — the **Phase 6 (Wiki)** build plan (in progress): the
+  machine-written wiki (cross-domain articles, domain-tagged sections, incremental
+  nightly builder, correction-note loop, read-only UI). Owner decisions on scope +
+  revision storage are settled; remaining gates are the UI mock round and a cross-stream
+  citation/delta-feed contract with the entity-graph rebuild. Most of the phase is gated
+  on that rebuild; only the article/index shell + UI are parallel-safe now.
 
 ## Archive (history, not active)
 
