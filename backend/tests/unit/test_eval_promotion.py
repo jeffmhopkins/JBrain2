@@ -76,7 +76,6 @@ def test_mean_scores_headline() -> None:
 
 def test_eval_run_from_cases_splits_task_and_groundedness() -> None:
     from jbrain.evals.runner import CaseResult, eval_run_from_cases
-
     from jbrain.workflow.promotion import promotion_decision
 
     # A case where one task check missed and one groundedness guard (absent:) missed.

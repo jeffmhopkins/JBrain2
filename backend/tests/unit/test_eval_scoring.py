@@ -5,14 +5,13 @@ green prompt-eval run actually means what it says. The live run itself
 from datetime import UTC, datetime, timedelta, timezone
 from typing import Any
 
-from jbrain.evals.runner import _overlaps, _score, load_cases
-
 from jbrain.analysis.extraction import (
     ExtractedFact,
     ExtractedMention,
     ExtractedToken,
     Extraction,
 )
+from jbrain.evals.runner import _overlaps, _score, load_cases
 
 
 def _mention(name: str) -> ExtractedMention:
