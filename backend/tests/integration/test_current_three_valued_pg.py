@@ -298,9 +298,7 @@ async def test_reproject_does_not_project_a_negated_only_name(
     async with scoped_session(maker, SYSTEM_CTX) as s:
         assert await reproject_canonical_name(s, uuid.UUID(e)) is None
         name = (
-            await s.execute(
-                text("SELECT canonical_name FROM app.entities WHERE id = :i"), {"i": e}
-            )
+            await s.execute(text("SELECT canonical_name FROM app.entities WHERE id = :i"), {"i": e})
         ).scalar_one()
     assert name == "Sammy"
 
