@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { FactOut } from "../api/client";
-import { dedupeTokens, factValue, fmtQuantity, fmtTemporal, valueLabel } from "./format";
+import { dedupeTokens, factSpan, factValue, fmtQuantity, fmtTemporal, valueLabel } from "./format";
 
 // The field bug only reproduces in a negative-offset zone: UTC-midnight
 // calendar dates rendered locally slip to the previous evening. Node re-reads
@@ -178,5 +178,26 @@ describe("dedupeTokens", () => {
       tok(null, "later"),
     ]);
     expect(out).toHaveLength(4);
+  });
+});
+
+describe("factSpan (validity span — null bounds stay vague, never '—')", () => {
+  const fact = (valid_from: string | null, valid_to: string | null): FactOut =>
+    ({ valid_from, valid_to, temporal_precision: "year" }) as FactOut;
+
+  it("shows both bounds when both are known", () => {
+    expect(factSpan(fact("2023-03-01T12:00:00Z", "2026-06-01T12:00:00Z"))).toBe("2023 → 2026");
+  });
+
+  it("an unknown start with a known end reads 'until <end>', not '— → <end>'", () => {
+    expect(factSpan(fact(null, "2026-06-01T12:00:00Z"))).toBe("until 2026");
+  });
+
+  it("a known start that's still open reads 'since <start>'", () => {
+    expect(factSpan(fact("2023-03-01T12:00:00Z", null))).toBe("since 2023");
+  });
+
+  it("a wholly undated fact has no span", () => {
+    expect(factSpan(fact(null, null))).toBe("");
   });
 });
