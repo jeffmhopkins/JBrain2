@@ -5472,6 +5472,17 @@ button.small {
 /* an inline "unverified claim" flag (reflexion Loop 1, Option 1): a small amber
    ⚠ footnote anchored right after an ungrounded answer sentence — warning=amber
    (DESIGN.md). Tapping toggles a quiet reason note beside it. */
+/* the flagged claim TEXT itself: a subtle amber underline + faint tint so the
+   reader sees which prose is unverified, without a solid highlight block —
+   warning=amber (DESIGN.md). Paired with the inline ⚠; the end-of-bubble fallback
+   carries no .md-claim. */
+.fb-shell .md-claim {
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--amber) 70%, transparent);
+  text-underline-offset: 2px;
+  background: color-mix(in srgb, var(--amber) 14%, transparent);
+  border-radius: 3px;
+}
 .fb-shell .md-flag-wrap {
   position: relative;
   white-space: nowrap;

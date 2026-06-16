@@ -122,8 +122,51 @@ _WORD = re.compile(r"[a-z0-9]+")
 # Sentence boundaries for splitting an answer into checkable claims: a run of
 # .!? (or a hard newline) ends one. A coarse split is deliberate — the grounding
 # check is a token-overlap proxy, not a parser, so per-sentence granularity is
-# all the signal it can use.
-_SENTENCE = re.compile(r"[.!?]+\s+|\n+")
+# all the signal it can use. Matched (not split) so the boundary's preceding word
+# can be inspected to skip abbreviation periods ("St. Remigius" is one claim, not
+# two) — see `claims_from`. Groups: (1) the word right before the terminator and
+# (2) the terminator run, so the abbreviation check can require a period-only end.
+_SENTENCE = re.compile(r"([A-Za-z]+)?([.!?]+)\s+|\n+")
+# Abbreviations whose trailing period is not a sentence end. Lowercased; matched
+# against the word preceding a "."-only terminator. A single capital letter is
+# treated as an initial separately ("J. M. Hopkins" doesn't split).
+_ABBREV = frozenset(
+    [
+        "st",
+        "dr",
+        "mr",
+        "mrs",
+        "ms",
+        "sr",
+        "jr",
+        "prof",
+        "rev",
+        "gen",
+        "sen",
+        "vs",
+        "etc",
+        "al",
+        "eg",
+        "ie",
+        "inc",
+        "ltd",
+        "co",
+        "no",
+        "vol",
+        "jan",
+        "feb",
+        "mar",
+        "apr",
+        "jun",
+        "jul",
+        "aug",
+        "sep",
+        "sept",
+        "oct",
+        "nov",
+        "dec",
+    ]
+)
 
 
 def significant_tokens(text: str) -> set[str]:
@@ -131,11 +174,44 @@ def significant_tokens(text: str) -> set[str]:
     return {t for t in _WORD.findall(text.lower()) if len(t) > 1 and t not in _STOPWORDS}
 
 
+def _is_abbrev_boundary(m: re.Match[str]) -> bool:
+    """Whether a `_SENTENCE` match is a false boundary on an abbreviation period —
+    a period-only terminator ("." not "!"/"?") whose preceding word is a known
+    abbreviation ("St.", "Dr.") or a single-letter initial ("J.", "M."). Such a
+    period does not end a sentence, so the splitter must not cut here (otherwise
+    "St. Remigius" fragments and the inline flag anchors mid-name). A newline match
+    has no groups and is always a real boundary."""
+    word, term = m.group(1), m.group(2)
+    if word is None or term != ".":
+        return False
+    return word.lower() in _ABBREV or len(word) == 1
+
+
 def claims_from(answer: str) -> list[str]:
     """Split an answer into per-sentence claims for grounding (a coarse sentence
-    split). Blank fragments are dropped; a claim with no significant tokens passes
-    grounding anyway, so this never needs to be precise."""
-    return [c.strip() for c in _SENTENCE.split(answer) if c.strip()]
+    split). Position-based (finditer, not re.split) so each claim is a verbatim
+    substring of `answer` — the inline flag anchors by matching the rendered prose,
+    so an internal abbreviation period ("St.") must be preserved. Only the trailing
+    sentence terminator is excluded (as before). A boundary on an abbreviation
+    period or a single-letter initial is skipped, so "St. Remigius" stays one claim.
+    Blank fragments are dropped; a claim with no significant tokens passes grounding
+    anyway, so this never needs to be precise."""
+    claims: list[str] = []
+    start = 0
+    for m in _SENTENCE.finditer(answer):
+        if _is_abbrev_boundary(m):
+            continue
+        # The claim is the verbatim run up to the terminator (group 2) for a .!?
+        # boundary, or up to the newline run for a `\n+` match.
+        end = m.start(2) if m.group(2) is not None else m.start()
+        claim = answer[start:end].strip()
+        if claim:
+            claims.append(claim)
+        start = m.end()
+    tail = answer[start:].strip()
+    if tail:
+        claims.append(tail)
+    return claims
 
 
 # Pure social/filler tokens — a greeting or acknowledgement carries no checkable

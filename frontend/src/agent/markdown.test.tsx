@@ -132,6 +132,42 @@ describe("Markdown", () => {
     expect(screen.getByText("Not in your notes.")).toBeInTheDocument();
   });
 
+  it("highlights the flagged claim text with .md-claim alongside the ⚠", () => {
+    render(
+      <Markdown
+        text="You were born in 1986. The roof needs replacing."
+        flags={[{ id: "ug-0", claim: "The roof needs replacing.", reason: "Not in your notes." }]}
+      />,
+    );
+    const claim = document.querySelector(".md-claim");
+    expect(claim).not.toBeNull();
+    // The highlight wraps the flagged TEXT verbatim (subtle amber treatment), and
+    // the ⚠ flag still sits alongside it.
+    expect(claim?.textContent).toBe("The roof needs replacing.");
+    expect(screen.getByRole("button", { name: "unverified claim" })).toBeInTheDocument();
+    // The grounded prefix sentence is not highlighted.
+    expect(document.body.textContent).toContain("You were born in 1986.");
+  });
+
+  it("does not highlight any text on a grounded / no-verdict turn", () => {
+    render(<Markdown text="You were born in 1986. All grounded here." />);
+    expect(document.querySelector(".md-claim")).toBeNull();
+  });
+
+  it("gives the end-of-bubble fallback flag no .md-claim highlight", () => {
+    render(
+      <Markdown
+        text="An entirely different answer than the verdict expected."
+        flags={[
+          { id: "ug-0", claim: "A sentence that is nowhere in the prose.", reason: "no source" },
+        ]}
+      />,
+    );
+    // The fallback drops only the ⚠ — no claim text exists to highlight.
+    expect(document.querySelector(".md-flag-fallback")).not.toBeNull();
+    expect(document.querySelector(".md-claim")).toBeNull();
+  });
+
   it("anchors a flag through inline markdown (a bolded claim still matches)", () => {
     render(
       <Markdown
