@@ -39,16 +39,16 @@ deferred to Phase 6. See `PHASE5_COMPLETION_PLAN.md` and `ROADMAP.md`.
 
 - `PHASE5_COMPLETION_PLAN.md` — the buildable plan for **finishing Phase 5**
   (reflexion in the live turn, the fed eval harness, the last reconciler, the
-  nits, doc hygiene) plus the explicit Phase-6 deferrals. The current frontier.
-- `WORKFLOW_ENGINE_PLAN.md` — the (now-complete) build record for the Phase 5
-  workflow engine + cutover. Superseded by `PHASE5_COMPLETION_PLAN.md`; to be
-  moved to `archive/` in the Phase-5 close-out.
+  nits, doc hygiene) plus the explicit Phase-6 deferrals. The current frontier;
+  Wave 1 shipped, the Loop-4 decision remains.
 
 ## Archive (history, not active)
 
 `archive/` holds completed build plans and the design research that fed them.
 Kept for the audit trail; not the place to learn the current system.
 
+- `archive/WORKFLOW_ENGINE_PLAN.md` — the Phase-5 workflow-engine + cutover build
+  plan (completed); superseded by `PHASE5_COMPLETION_PLAN.md`.
 - `archive/ASSISTANT_PLAN.md` — the Phase-4 agent build plan (completed).
 - `archive/INTEGRATOR_PLAN.md` — the v3 note→graph pipeline build plan (completed).
 - `archive/CUTOVER_V1_REMOVAL.md` — the v1 `analyze_note` removal record (completed).

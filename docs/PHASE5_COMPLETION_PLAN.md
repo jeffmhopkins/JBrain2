@@ -13,7 +13,7 @@ This document is the residual-completion plan: the small, independent slices tha
 land Phase 5 as *done*, the one substantive new track (reflexion-in-the-live-turn
 and harness completion), and an explicit record of what is **deliberately deferred
 to Phase 6** with rationale. It is a plan doc only — no implementation code lands
-from this file. It follows the format of `docs/WORKFLOW_ENGINE_PLAN.md` (which it
+from this file. It follows the format of `docs/archive/WORKFLOW_ENGINE_PLAN.md` (which it
 supersedes and which should be archived once these slices land — see Track D).
 
 > **Design stance: the engine is done; finish the wiring, then close the books.**
@@ -373,7 +373,7 @@ and migrations run "through 0034." Fix the drift and archive the completed plan.
 - `CLAUDE.md`: the "Phases 0–4 are shipped" sentence → "Phases 0–4 shipped; the
   Phase-5 workflow engine + scheduler + run-log + cutover shipped (migrations
   through 0041); residual Phase-5 completion in `docs/PHASE5_COMPLETION_PLAN.md`."
-- `docs/WORKFLOW_ENGINE_PLAN.md`: **archive** it to `docs/archive/` once R/H/S/N
+- `docs/archive/WORKFLOW_ENGINE_PLAN.md`: **archive** it to `docs/archive/` once R/H/S/N
   land (it is the completed engine build record); leave a one-line pointer.
 
 **Sequencing.** The drift edits (ROADMAP/README/CLAUDE.md migration-number +
@@ -488,7 +488,7 @@ substantive tracks.
   S/N/D/R; parallel to R.)*
 
 ### Wave 2 — close-out (after Wave 1 merges)
-- Archive `docs/WORKFLOW_ENGINE_PLAN.md` → `docs/archive/` with a pointer (Track D
+- Archive `docs/archive/WORKFLOW_ENGINE_PLAN.md` → `docs/archive/` with a pointer (Track D
   archival half).
 - **(If the owner takes L4 in-Phase-5 per decision #2)** the Loop-4 prompt/tool
   self-edit track + its **adversarial-injection suite** lands here as its own
