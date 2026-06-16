@@ -163,6 +163,33 @@ async def test_has_active_statuses_filter(maker: async_sessionmaker[AsyncSession
     assert await queue.has_active(maker, OWNER, "integrate_note", **kwargs) is True
 
 
+async def test_has_active_kind_is_payload_keyless_and_spans_queued_and_running(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """N1's kind-only dedup helper: it matches a job purely by kind (no payload key),
+    over queued OR running by default — the guard for a payload-keyless idempotent
+    sweep like consolidate_predicates."""
+    await quiesce_jobs(maker)
+    assert await queue.has_active_kind(maker, OWNER, "consolidate_predicates") is False
+
+    job_id = await queue.enqueue(maker, OWNER, "consolidate_predicates", {})
+    assert await queue.has_active_kind(maker, OWNER, "consolidate_predicates") is True
+    # A different kind is not matched — the check is kind-scoped.
+    assert await queue.has_active_kind(maker, OWNER, "sync_predicates") is False
+
+    async with scoped_session(maker, OWNER) as session:
+        await session.execute(
+            text("UPDATE app.jobs SET status = 'running' WHERE id = :id"), {"id": job_id}
+        )
+    # Default statuses span running (unlike the note-keyed queued-only gate)...
+    assert await queue.has_active_kind(maker, OWNER, "consolidate_predicates") is True
+    # ...and a queued-only narrowing no longer sees the now-running sweep.
+    assert (
+        await queue.has_active_kind(maker, OWNER, "consolidate_predicates", statuses=("queued",))
+        is False
+    )
+
+
 async def test_has_active_ocr_for_note_spans_the_notes_attachments(
     maker: async_sessionmaker[AsyncSession],
 ) -> None:

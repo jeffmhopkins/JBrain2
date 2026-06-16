@@ -23,13 +23,14 @@ NOW = datetime(2026, 6, 15, 2, 0, tzinfo=UTC)
 
 def _registry() -> ActionRegistry:
     # The worker's composed registry: the shipped six plus the in-code purge action
-    # and the two reconciler actions (the dropped-event safety net, Wave 2).
+    # and the three reconciler actions (the dropped-event safety net, Wave 2 + Track S).
     return build_registry(
         (
             *ACTION_SPECS,
             scheduler.PURGE_ACTION,
             scheduler.RECONCILE_PENDING_NOTES_ACTION,
             scheduler.RECONCILE_PENDING_INTEGRATION_ACTION,
+            scheduler.RECONCILE_UNEMBEDDED_NOTES_ACTION,
         )
     )
 
@@ -244,7 +245,11 @@ def test_reconciler_actions_resolve_in_the_composed_registry() -> None:
     # The worker composes both reconcilers into its registry; a pipeline that names
     # one must resolve to its handler key (and not be confused with the others).
     registry = _registry()
-    for action in ("reconcile_pending_notes", "reconcile_pending_integration"):
+    for action in (
+        "reconcile_pending_notes",
+        "reconcile_pending_integration",
+        "reconcile_unembedded_notes",
+    ):
         spec = registry.get(action)
         assert spec.version == 1
         assert spec.handler == action
@@ -283,6 +288,25 @@ async def test_reconcile_pending_integration_handler_calls_the_integration_backf
     monkeypatch.setattr(scheduler.queue, "backfill_pending_integration", fake_backfill)
     sentinel = object()
     handler = scheduler.reconcile_pending_integration_handler(sentinel)  # type: ignore[arg-type]
+    await handler({})
+    assert calls == [sentinel]
+
+
+async def test_reconcile_unembedded_notes_handler_calls_the_unembedded_backfill(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The handler is the unembedded-notes reconciler (Track S): it calls
+    # queue.backfill_unembedded_notes under SYSTEM_CTX and takes no payload.
+    calls: list[Any] = []
+
+    async def fake_backfill(maker: Any, ctx: Any) -> int:
+        assert ctx is queue.SYSTEM_CTX
+        calls.append(maker)
+        return 0
+
+    monkeypatch.setattr(scheduler.queue, "backfill_unembedded_notes", fake_backfill)
+    sentinel = object()
+    handler = scheduler.reconcile_unembedded_notes_handler(sentinel)  # type: ignore[arg-type]
     await handler({})
     assert calls == [sentinel]
 

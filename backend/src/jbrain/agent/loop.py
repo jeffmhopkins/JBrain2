@@ -25,7 +25,17 @@ from jbrain.agent.contracts import (
     ToolCallEvent,
     ToolResultEvent,
     ToolViewEvent,
+    VerdictEvent,
     ViewPayload,
+)
+from jbrain.agent.reflexion import (
+    MAX_RETRIES,
+    VerificationResult,
+    aggregate,
+    claims_from,
+    critique_worthy,
+    reflect,
+    verify_grounding,
 )
 from jbrain.agent.toolregistry import ToolRegistry
 from jbrain.db.session import SessionContext
@@ -147,6 +157,21 @@ class _Dispatched:
     job: JobRef | None
 
 
+@dataclass(frozen=True)
+class _BufferedTurn:
+    """One non-streaming produce-step for the opt-in buffer-then-retry mode (a):
+    the whole turn run to completion with its ChatEvents *buffered* (not yet
+    streamed) plus the reflexion evidence. `reflect` re-runs the producer and keeps
+    only the strictly-improving attempt; the kept attempt's buffered events are
+    then replayed as the live stream, so the user never sees a discarded draft."""
+
+    events: tuple[ChatEvent, ...]
+    answer: str
+    sources: tuple[NoteSource, ...]
+    mutated: bool
+    stop_reason: str
+
+
 class AgentLoop:
     def __init__(
         self,
@@ -228,6 +253,7 @@ class AgentLoop:
         scopes: Sequence[str],
         conversation: Sequence[LlmMessage],
         timezone: str | None = None,
+        buffer_retry: bool = False,
     ) -> AsyncIterator[ChatEvent]:
         """The streaming twin of `run`: the same turn loop and guardrails, but it
         yields ChatEvents as they happen — `text_delta` per streamed chunk,
@@ -235,7 +261,26 @@ class AgentLoop:
         same stop reason `run` would return. /chat serializes these as SSE.
 
         Guardrail accounting is identical to `run` so the two paths agree; the
-        answer is only ever streamed (the deltas), never re-emitted whole."""
+        answer is only ever streamed (the deltas), never re-emitted whole.
+
+        Reflexion (Loop 1, docs/ASSISTANT.md) rides at the tail: the loop tracks
+        the answer text it streamed, the sources tools surfaced, and whether a
+        mutation was staged, then — only when the turn is critique-worthy — runs
+        the pure verifiers after the terminal `DoneEvent` and emits a `VerdictEvent`
+        if anything failed. The verifiers make **no model call** (they are pure
+        token-overlap / scope checks), so verify-and-annotate adds nothing to the
+        per-turn cost and the budget; a non-critique turn skips it entirely and its
+        stream is byte-for-byte what it was before.
+
+        `buffer_retry` (the opt-in mode (a), off by default) switches a
+        critique-worthy turn to buffer-then-retry: the turn is produced
+        non-streaming, the verifiers run, and `reflect` may re-produce (strict
+        improvement, capped at N=2) before the kept attempt's events stream. This
+        trades the live token stream for a spinner while verification clears."""
+        if buffer_retry:
+            async for ev in self._run_stream_buffered(session, scopes, conversation, timezone):
+                yield ev
+            return
         scopes = tuple(scopes)
         tools = self._registry.schemas_for(scopes)
         messages: list[LlmMessage] = list(conversation)
@@ -243,6 +288,11 @@ class AgentLoop:
         cost = 0
         consecutive_errors = 0
         idx = 0
+        # Reflexion's evidence for the tail verdict: the streamed answer, the source
+        # snippets tools surfaced, and whether any tool staged/declared a mutation.
+        answer_parts: list[str] = []
+        surfaced_sources: list[NoteSource] = []
+        mutated = False
 
         for _step in range(self._g.max_steps):
             turn: LlmTurn | None = None
@@ -255,13 +305,17 @@ class AgentLoop:
             ):
                 if isinstance(part, TextChunk):
                     if part.text:
+                        answer_parts.append(part.text)
                         yield TextDelta(text=part.text)
                 else:
                     turn = part
             if turn is None:
                 # The adapter always closes a stream with an LlmTurn; guard the
                 # contract anyway rather than dereference None.
-                yield DoneEvent(stop_reason="end_turn")
+                async for ev in self._finish(
+                    "end_turn", answer_parts, surfaced_sources, mutated, scopes
+                ):
+                    yield ev
                 return
             cost += turn.usage.input_tokens + turn.usage.output_tokens
             await self._record(
@@ -274,10 +328,16 @@ class AgentLoop:
             idx += 1
 
             if turn.stop_reason != "tool_use" or not turn.tool_calls:
-                yield DoneEvent(stop_reason="end_turn")
+                async for ev in self._finish(
+                    "end_turn", answer_parts, surfaced_sources, mutated, scopes
+                ):
+                    yield ev
                 return
             if cost >= self._g.max_cost_tokens:
-                yield DoneEvent(stop_reason="budget")
+                async for ev in self._finish(
+                    "budget", answer_parts, surfaced_sources, mutated, scopes
+                ):
+                    yield ev
                 return
 
             messages.append(AssistantMessage(text=turn.text, tool_calls=turn.tool_calls))
@@ -288,6 +348,10 @@ class AgentLoop:
                 dispatched = await self._dispatch(call, tool_ctx)
                 results.append(dispatched.result)
                 any_error = any_error or dispatched.result.is_error
+                surfaced_sources.extend(dispatched.sources)
+                # A staged Proposal, or a tool whose spec declares it mutating, makes
+                # the turn critique-worthy — it carried a write, not just a read.
+                mutated = mutated or dispatched.proposal is not None or self._is_mutating(call.name)
                 yield ToolResultEvent(
                     tool_call_id=call.id,
                     ok=not dispatched.result.is_error,
@@ -312,10 +376,192 @@ class AgentLoop:
 
             consecutive_errors = consecutive_errors + 1 if any_error else 0
             if consecutive_errors >= self._g.max_consecutive_tool_errors:
-                yield DoneEvent(stop_reason="too_many_errors")
+                async for ev in self._finish(
+                    "too_many_errors", answer_parts, surfaced_sources, mutated, scopes
+                ):
+                    yield ev
                 return
 
-        yield DoneEvent(stop_reason="max_steps")
+        async for ev in self._finish("max_steps", answer_parts, surfaced_sources, mutated, scopes):
+            yield ev
+
+    async def _run_stream_buffered(
+        self,
+        session: SessionContext,
+        scopes: Sequence[str],
+        conversation: Sequence[LlmMessage],
+        timezone: str | None,
+    ) -> AsyncIterator[ChatEvent]:
+        """Mode (a): produce the turn non-streaming, run `reflect` (strict
+        improvement, N=2 cap), then replay the kept attempt's buffered events as the
+        live stream + the tail verdict. Retries are bounded by `reflect`'s hard cap
+        AND by the loop's `max_cost_tokens` guardrail — a shared budget across
+        attempts — so reflexion can never overspend the per-turn cap. This spend is
+        the ordinary per-turn budget, NOT the self-improvement budget (a live
+        interactive turn must not be starved by a nightly eval)."""
+        scopes = tuple(scopes)
+        budget = [self._g.max_cost_tokens]  # mutable: shared remaining cap across attempts
+        incumbent: list[tuple[_BufferedTurn, VerificationResult] | None] = [None]
+
+        async def produce() -> tuple[_BufferedTurn, VerificationResult]:
+            # Once the per-turn cost cap is spent, stop re-producing: hand back the
+            # incumbent with its own (non-improving) score so `reflect`'s strict-
+            # improvement rule keeps the best answer so far and makes no further
+            # model call. This bounds reflexion by Guardrails.max_cost_tokens — the
+            # ordinary per-turn budget, NOT the self-improvement budget.
+            if budget[0] <= 0 and incumbent[0] is not None:
+                return incumbent[0]
+            turn = await self._produce_buffered(session, scopes, conversation, timezone, budget)
+            verdict = aggregate(
+                [verify_grounding(claims_from(turn.answer), [s.snippet for s in turn.sources])]
+            )
+            if incumbent[0] is None:
+                incumbent[0] = (turn, verdict)
+            return turn, verdict
+
+        first, verdict = await produce()
+        if critique_worthy(source_count=len(first.sources), mutated=first.mutated, scopes=scopes):
+            reflection = await reflect(
+                lambda: produce(),
+                max_retries=MAX_RETRIES,
+                seed=(first, verdict),
+            )
+            kept, kept_verdict = reflection.answer, reflection.result
+        else:
+            kept, kept_verdict = first, verdict
+
+        for ev in kept.events:
+            yield ev
+        yield DoneEvent(stop_reason=kept.stop_reason)
+        if not kept_verdict.passed and critique_worthy(
+            source_count=len(kept.sources), mutated=kept.mutated, scopes=scopes
+        ):
+            yield VerdictEvent(
+                passed=False, score=kept_verdict.score, issues=list(kept_verdict.issues)
+            )
+
+    async def _produce_buffered(
+        self,
+        session: SessionContext,
+        scopes: tuple[str, ...],
+        conversation: Sequence[LlmMessage],
+        timezone: str | None,
+        budget: list[int],
+    ) -> _BufferedTurn:
+        """One full non-streaming produce-step for mode (a): run the turn loop to a
+        terminal stop, buffering the ChatEvents it would have streamed (so a
+        discarded retry never reaches the user). Shares the remaining cost cap in
+        `budget` so retries cannot overspend the per-turn guardrail."""
+        tools = self._registry.schemas_for(scopes)
+        messages: list[LlmMessage] = list(conversation)
+        tool_ctx = ToolContext(session=session, scopes=scopes, timezone=timezone)
+        events: list[ChatEvent] = []
+        answer_parts: list[str] = []
+        sources: list[NoteSource] = []
+        mutated = False
+        idx = 0
+        spent = 0
+
+        for _step in range(self._g.max_steps):
+            turn = await self._router.converse(
+                self._task,
+                system=SYSTEM_PROMPT,
+                messages=messages,
+                tools=tools,
+                strength=SYSTEM_STRENGTH,
+            )
+            spent = turn.usage.input_tokens + turn.usage.output_tokens
+            budget[0] -= spent
+            await self._record(idx, "model", "converse", ok=True, cost_tokens=spent)
+            idx += 1
+            if turn.text:
+                answer_parts.append(turn.text)
+                events.append(TextDelta(text=turn.text))
+
+            if turn.stop_reason != "tool_use" or not turn.tool_calls:
+                return _BufferedTurn(
+                    tuple(events), "".join(answer_parts), tuple(sources), mutated, "end_turn"
+                )
+            if budget[0] <= 0:
+                return _BufferedTurn(
+                    tuple(events), "".join(answer_parts), tuple(sources), mutated, "budget"
+                )
+
+            messages.append(AssistantMessage(text=turn.text, tool_calls=turn.tool_calls))
+            results: list[ToolResult] = []
+            any_error = False
+            for call in turn.tool_calls:
+                events.append(ToolCallEvent(id=call.id, name=call.name, arguments=call.arguments))
+                dispatched = await self._dispatch(call, tool_ctx)
+                results.append(dispatched.result)
+                any_error = any_error or dispatched.result.is_error
+                sources.extend(dispatched.sources)
+                mutated = mutated or dispatched.proposal is not None or self._is_mutating(call.name)
+                events.append(
+                    ToolResultEvent(
+                        tool_call_id=call.id,
+                        ok=not dispatched.result.is_error,
+                        summary=dispatched.result.content,
+                        sources=list(dispatched.sources),
+                        proposal=dispatched.proposal,
+                        entities=list(dispatched.entities),
+                    )
+                )
+                if dispatched.view is not None:
+                    events.append(ToolViewEvent(tool_call_id=call.id, view=dispatched.view))
+                if dispatched.job is not None:
+                    events.append(
+                        JobEnqueuedEvent(
+                            job_id=dispatched.job.job_id, summary=dispatched.job.summary
+                        )
+                    )
+                await self._record(
+                    idx, "tool", call.name, ok=not dispatched.result.is_error, cost_tokens=0
+                )
+                idx += 1
+            messages.append(ToolResultMessage(results=results))
+            if any_error:
+                return _BufferedTurn(
+                    tuple(events),
+                    "".join(answer_parts),
+                    tuple(sources),
+                    mutated,
+                    "too_many_errors",
+                )
+
+        return _BufferedTurn(
+            tuple(events), "".join(answer_parts), tuple(sources), mutated, "max_steps"
+        )
+
+    def _is_mutating(self, name: str) -> bool:
+        """Whether a dispatched tool declares a write/sensitive effect — the
+        mutation signal Reflexion's trigger reads. An unknown name (a model slip)
+        is never mutating."""
+        if name not in self._registry:
+            return False
+        spec = self._registry.get(name).spec
+        return spec.mutating or spec.side_effecting or spec.permission in ("mutate", "sensitive")
+
+    async def _finish(
+        self,
+        stop_reason: str,
+        answer_parts: list[str],
+        sources: list[NoteSource],
+        mutated: bool,
+        scopes: tuple[str, ...],
+    ) -> AsyncIterator[ChatEvent]:
+        """Close the stream: emit the terminal `DoneEvent`, then — in the default
+        verify-and-annotate mode, only when the turn is critique-worthy and the
+        pure verifiers flag something — a tail `VerdictEvent`. No model call, no
+        retry, no persistence: the answer the user saw stands, annotated."""
+        yield DoneEvent(stop_reason=stop_reason)
+        if not critique_worthy(source_count=len(sources), mutated=mutated, scopes=scopes):
+            return
+        verdict = aggregate(
+            [verify_grounding(claims_from("".join(answer_parts)), [s.snippet for s in sources])]
+        )
+        if not verdict.passed:
+            yield VerdictEvent(passed=False, score=verdict.score, issues=list(verdict.issues))
 
     async def _dispatch(self, call: ToolCall, tool_ctx: ToolContext) -> _Dispatched:
         if call.name not in self._registry:

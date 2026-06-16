@@ -32,6 +32,8 @@ from jbrain.settings_store import SqlSettingsStore
 from jbrain.storage import FsBlobStore
 from jbrain.usage import SqlUsageRecorder
 from jbrain.workflow import dispatcher, scheduler
+from jbrain.workflow.eval_scorer import build_live_scorer, eval_run_handler
+from jbrain.workflow.evalaction import EVAL_RUN_SPEC
 from jbrain.workflow.registry import ACTION_SPECS, ActionRegistry, build_registry
 from jbrain.workflow.runlog import PipelineRunLog
 
@@ -264,21 +266,34 @@ async def run() -> None:
         # self-heals within minutes rather than at the next restart.
         "reconcile_pending_notes": scheduler.reconcile_pending_notes_handler(maker),
         "reconcile_pending_integration": scheduler.reconcile_pending_integration_handler(maker),
+        # The unembedded-notes backfill, likewise promoted off boot-only (Track S):
+        # a dropped embed_note enqueue no longer strands a note's chunks unembedded
+        # until the next restart — it self-heals within minutes / on demand from Ops.
+        "reconcile_unembedded_notes": scheduler.reconcile_unembedded_notes_handler(maker),
+        # The opt-in self-improvement eval (Phase-5 Track H·A): runs the note.extract
+        # suite through the LLM adapter behind the budget gate (fail-closed over the
+        # kill-switch / daily token budget). The live scorer is built here off the
+        # worker's router; CI never reaches it (no model). Like the purge/reconcile
+        # actions it lives in-code only — NOT in the app.actions seed — so the 0035
+        # seed-lockstep holds (the seed projection + nightly schedule are H·B).
+        "eval_run": eval_run_handler(maker, build_live_scorer(router)),
     }
     # Build the dispatch table from the action registry (W0.1): an action without
     # a handler — or a handler with no registered action — fails the worker LOUDLY
     # here at boot, like the schema registry above, rather than failing a job at run
     # time (the old "no handler for kind" path). Behavior for known kinds is
     # unchanged: the dispatch table is the same {kind: handler} map as before. The
-    # registry adds the purge action and the two reconcilers to the shipped six
-    # (all three live in-code only, not in the app.actions seed — see
-    # scheduler.PURGE_ACTION / RECONCILE_PENDING_*_ACTION).
+    # registry adds the purge action, the three reconcilers, and the opt-in eval_run
+    # to the shipped six (all in-code only, not in the app.actions seed — see
+    # scheduler.PURGE_ACTION / RECONCILE_*_ACTION / EVAL_RUN_SPEC).
     registry = build_registry(
         (
             *ACTION_SPECS,
             scheduler.PURGE_ACTION,
             scheduler.RECONCILE_PENDING_NOTES_ACTION,
             scheduler.RECONCILE_PENDING_INTEGRATION_ACTION,
+            scheduler.RECONCILE_UNEMBEDDED_NOTES_ACTION,
+            EVAL_RUN_SPEC,
         )
     )
     handlers = registry.dispatch_table(impls)

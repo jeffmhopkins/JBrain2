@@ -9,8 +9,10 @@ standards, `docs/PROCESS.md` for the binding multi-wave execution process,
 `docs/ASSISTANT.md` for the self-improving agent design, and
 `docs/PREDICATE_CANONICALIZATION.md` for the embedding-assisted predicate
 registry + typed value shapes (core shipped; self-improvement loop deferred).
-Phases 0–4 are shipped; completed build plans and design research live under
-`docs/archive/` (see `docs/README.md` for the full map).
+Phases 0–4 and the Phase 5 workflow engine (engine + scheduler + run-log + the
+ingest/integration cutover; migrations through 0043) are shipped; residual Phase-5
+completion is in `docs/PHASE5_COMPLETION_PLAN.md`. Completed build plans and design
+research live under `docs/archive/` (see `docs/README.md` for the full map).
 
 ## Non-negotiables for all code in this repo
 

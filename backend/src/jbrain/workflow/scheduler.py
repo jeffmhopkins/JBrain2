@@ -96,6 +96,22 @@ RECONCILE_PENDING_INTEGRATION_ACTION = ActionSpec(
     dedup_key_expr=None,
 )
 
+# The third boot self-heal backfill promoted off boot-only (Track S): a dropped
+# `embed_note` enqueue strands a note's chunks unembedded until the next restart.
+# Same in-code-only registration + idempotency contract as the two reconcilers
+# above (the underlying SELECT excludes notes with an active embed_note job, so
+# re-firing never double-enqueues, E4), so the worker composes it into its registry
+# and a pipeline references it by name; it is NOT in the app.actions seed.
+RECONCILE_UNEMBEDDED_NOTES_ACTION = ActionSpec(
+    name="reconcile_unembedded_notes",
+    version=1,
+    handler="reconcile_unembedded_notes",
+    domain_optional=True,
+    mutating=True,
+    cost_class="cheap",
+    dedup_key_expr=None,
+)
+
 # A monotonic UTC clock the tick reads through, so a test can inject a frozen one
 # and prove next_run_at advances deterministically (no real timer, N3).
 Clock = Callable[[], datetime]
@@ -350,5 +366,20 @@ def reconcile_pending_integration_handler(
 
     async def handler(_payload: dict[str, Any]) -> None:
         await queue.backfill_pending_integration(maker, queue.SYSTEM_CTX)
+
+    return handler
+
+
+def reconcile_unembedded_notes_handler(
+    maker: async_sessionmaker[AsyncSession],
+) -> Callable[[dict[str, Any]], Awaitable[None]]:
+    """Wrap the unembedded-notes backfill as a queue handler (Track S), fireable on
+    a recurring schedule + on demand from Ops, not just at boot. Same SYSTEM_CTX +
+    idempotency contract as the other reconcilers: the INSERT…SELECT enqueues
+    `embed_note` for notes with NULL-embedding chunks but skips any with an active
+    `embed_note` job, so a dropped-event re-run never double-enqueues (E4)."""
+
+    async def handler(_payload: dict[str, Any]) -> None:
+        await queue.backfill_unembedded_notes(maker, queue.SYSTEM_CTX)
 
     return handler

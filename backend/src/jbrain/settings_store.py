@@ -98,6 +98,20 @@ SELF_IMPROVEMENT_SPEND_PREFIX = "self_improvement_spend:"
 ENTITY_PROMOTION_KEY = "entity_promotion"
 ENTITY_PROMOTION_DEFAULT = False
 
+# Reflexion (Loop 1) buffer-then-retry mode (docs/ASSISTANT.md "Self-improvement
+# loops", Phase-5 Track R). DEFAULT is verify-and-annotate (mode b): a
+# critique-worthy /chat turn streams normally and emits a `verdict` event after
+# `done` (no retry, zero extra model calls — the verifiers are pure). This flag,
+# when ON, opts into mode (a): the turn is produced non-streaming, the verifiers
+# run, and the answer may be re-produced (strict-improvement, capped at N=2)
+# BEFORE any token streams — so the user sees a spinner instead of a live token
+# stream until verification clears. That latency tradeoff is why it is off by
+# default. Reflexion spend is bound by the ordinary per-turn cost guardrail
+# (Guardrails.max_cost_tokens), NOT the self-improvement budget. DB-backed; flip
+# live (a settings upsert) with no redeploy.
+REFLEXION_BUFFER_RETRY_KEY = "reflexion_buffer_retry"
+REFLEXION_BUFFER_RETRY_DEFAULT = False
+
 # Integration run + resolution-pin persistence (docs/WORKFLOW_ENGINE_PLAN.md §E7b,
 # Wave 1 Track A): when on, integrate_note writes an `app.runs` row
 # (kind='integration') and UPSERTs the Integrator's committed identity/predicate-key
@@ -198,6 +212,15 @@ class SqlSettingsStore:
         """Whether provisional->confirmed entity promotion is on (docs/entity.md).
         Defaults OFF; an explicit `true` enables it."""
         return await self.get(ctx, ENTITY_PROMOTION_KEY, ENTITY_PROMOTION_DEFAULT) is True
+
+    async def reflexion_buffer_retry(self, ctx: SessionContext) -> bool:
+        """Whether Reflexion's opt-in buffer-then-retry mode (a) is on (Track R).
+        Defaults OFF — the default is verify-and-annotate (mode b), which streams
+        normally. An explicit `true` enables the spinner-latency retry path; any
+        non-true value reads as off."""
+        return (
+            await self.get(ctx, REFLEXION_BUFFER_RETRY_KEY, REFLEXION_BUFFER_RETRY_DEFAULT) is True
+        )
 
     async def self_improvement_kill_switch(self, ctx: SessionContext) -> bool:
         """Whether the global self-improvement kill-switch is engaged (E5). When
