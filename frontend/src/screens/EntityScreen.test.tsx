@@ -320,6 +320,76 @@ describe("EntityScreen", () => {
     expect(screen.queryByRole("button", { name: /earlier →/ })).not.toBeInTheDocument();
   });
 
+  it("a negated current head stays visible, flagged 'not currently'", async () => {
+    // A live retraction with nothing positive replacing it ("no longer allergic
+    // to penicillin") must read as the current state — surfaced explicitly so it
+    // never looks like the value is still true (Wave 1, slice 2).
+    const notAllergic: FactOut = {
+      ...DENVER,
+      id: "f-neg",
+      predicate: "allergy",
+      qualifier: null,
+      value_json: "penicillin",
+      statement: "no longer allergic to penicillin",
+      assertion: "negated",
+      status: "active",
+      valid_from: null,
+      valid_to: null,
+      object_entity_id: null,
+      object_entity_name: null,
+    };
+    const me: EntityOut = {
+      ...SARAH,
+      predicates: [
+        { predicate: "allergy", qualifier: null, current: notAllergic, history: [notAllergic] },
+      ],
+      inbound: [],
+      mentions: [],
+    };
+    fetchMock.mockImplementation(async (input) => {
+      if (String(input) === "/api/entities/ent-sarah") return jsonResponse(me);
+      throw new Error(`Unexpected fetch: ${String(input)}`);
+    });
+    setup();
+    await screen.findByRole("heading", { name: "Sarah Hopkins" });
+    const current = screen.getByRole("heading", { name: "Current" }).closest("section");
+    expect(within(current as HTMLElement).getByText("penicillin")).toBeInTheDocument();
+    expect(within(current as HTMLElement).getByText("not currently")).toBeInTheDocument();
+  });
+
+  it("hides an irrealis-only slot from the value view", async () => {
+    // A hypothetical "maybe I'll switch to Acme" is not a claim about the
+    // present, so it never floors as current and is dropped from the page.
+    const maybe: FactOut = {
+      ...DENVER,
+      id: "f-maybe",
+      predicate: "employer",
+      qualifier: null,
+      value_json: "Acme (maybe)",
+      assertion: "hypothetical",
+      status: "active",
+      valid_from: null,
+      valid_to: null,
+      object_entity_id: null,
+      object_entity_name: null,
+    };
+    const dreamer: EntityOut = {
+      ...SARAH,
+      predicates: [{ predicate: "employer", qualifier: null, current: null, history: [maybe] }],
+      inbound: [],
+      mentions: [],
+    };
+    fetchMock.mockImplementation(async (input) => {
+      if (String(input) === "/api/entities/ent-sarah") return jsonResponse(dreamer);
+      throw new Error(`Unexpected fetch: ${String(input)}`);
+    });
+    setup();
+    await screen.findByRole("heading", { name: "Sarah Hopkins" });
+    expect(screen.queryByText("Acme (maybe)")).not.toBeInTheDocument();
+    // The only slot is irrealis → no current (or former) value section at all.
+    expect(screen.queryByRole("heading", { name: "Current" })).not.toBeInTheDocument();
+  });
+
   it("shows the quiet error line when the entity fails to load", async () => {
     fetchMock.mockResolvedValue(new Response(null, { status: 500 }));
     setup();

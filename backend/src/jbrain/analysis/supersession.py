@@ -189,6 +189,20 @@ LOW_CONFIDENCE = 0.5
 # (a schedule binding / appointment) keep their shipped supersede semantics.
 _IRREALIS = frozenset({"hypothetical", "question"})
 
+# The "current floor" (Wave 1, slice 2) — the assertions that are a claim about
+# the PRESENT truth and may therefore occupy an entity's current value slot. An
+# `asserted` head is the live value; a `negated` head with no asserted peer is
+# the live *retraction* state, shown explicitly as currently-negated (a real
+# negation like "no longer allergic to penicillin" must not read as forgotten).
+# The remaining modalities (hypothetical/reported/question/expected) are not
+# claims about now, so they never floor as current. This is BROADER than
+# _IRREALIS above: that set is only the two modalities barred from displacing an
+# asserted head in supersession; here every non-asserted, non-negated modality
+# is kept off the current floor. Used by the three read surfaces that previously
+# had no assertion filter (entity_view, note_currency, canonical name); the
+# graph/agent/consolidation paths already constrain `assertion = 'asserted'`.
+CURRENT_ASSERTIONS = frozenset({"asserted", "negated"})
+
 
 @dataclass(frozen=True)
 class FactView:

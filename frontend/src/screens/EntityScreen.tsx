@@ -21,10 +21,20 @@ const SWIPE_DOWN_PX = 56;
 
 type EntityState = { phase: "loading" } | { phase: "error" } | { phase: "done"; entity: EntityOut };
 
-/** The live value of a predicate: the active fact, else the newest non-retracted
- * one (a property whose only fact is pending_review still shows it). */
+// Modalities that aren't a claim about the present, so they never floor as a
+// current value (mirrors the backend CURRENT_ASSERTIONS — Wave 1, slice 2).
+const IRREALIS = new Set(["hypothetical", "reported", "question", "expected"]);
+
+/** The live value of a predicate. The backend `current` is the three-valued
+ * head — an asserted value, or a negated retraction shown explicitly, never an
+ * irrealis "maybe". Absent one, fall back to the newest fact that still belongs
+ * on a current-only page: a contested pending_review value, but never a
+ * machine-retracted error and never an irrealis assertion. A slot left with no
+ * head drops out of the value view entirely. */
 function predHead(pred: EntityPredicate): FactOut | undefined {
-  return pred.current ?? pred.history.find((f) => f.status !== "retracted") ?? pred.history[0];
+  return (
+    pred.current ?? pred.history.find((f) => f.status !== "retracted" && !IRREALIS.has(f.assertion))
+  );
 }
 
 /** Prior once-true values worth a history disclosure: superseded facts (never
@@ -69,7 +79,16 @@ function PredicateBlock({
         {span ? (
           <span className="fact-tenure-span">{span}</span>
         ) : (
-          head && <StatusChip status={head.status} pinned={head.pinned} />
+          head && (
+            <>
+              {/* A negated current head is a live retraction — surface it
+                  explicitly so the value doesn't read as still true. */}
+              {head.assertion === "negated" && (
+                <span className="fact-chip fact-chip-muted">not currently</span>
+              )}
+              <StatusChip status={head.status} pinned={head.pinned} />
+            </>
+          )
         )}
       </div>
       {earlier > 0 && (
@@ -186,8 +205,11 @@ export function EntityScreen({
               // current; one whose live value has ended (a closed interval) is
               // former and drops into the collapsed "Previously" group, so a
               // relationship you've left never reads as present.
-              const current = state.entity.predicates.filter((p) => !isFormer(p));
-              const former = state.entity.predicates.filter(isFormer);
+              // A slot with no current-eligible head (irrealis-only or
+              // machine-retracted-only) drops out of the value view entirely.
+              const shown = state.entity.predicates.filter((p) => predHead(p) !== undefined);
+              const current = shown.filter((p) => !isFormer(p));
+              const former = shown.filter(isFormer);
               // Key on the group's head fact (unique per block) — a set-valued
               // predicate yields one block per object, so the path alone collides.
               const keyOf = (p: EntityPredicate) =>

@@ -19,7 +19,7 @@ from jbrain.analysis.consolidation import rewrite_predicate
 from jbrain.analysis.display import mark_snippet
 from jbrain.analysis.entities import are_distinct, merge_entity_pair, plan_merge
 from jbrain.analysis.predicates import decide_predicate, raw_descriptor
-from jbrain.analysis.supersession import is_functional
+from jbrain.analysis.supersession import CURRENT_ASSERTIONS, is_functional
 from jbrain.db.session import SessionContext, scoped_session
 from jbrain.embed import EmbedClient
 from jbrain.schema import get_registry
@@ -653,7 +653,26 @@ class SqlAnalysisRepo:
             # "Current" means active AND OPEN (valid_to IS NULL); a closed
             # interval is a FORMER value, history not the live head, even when
             # nothing replaced it (docs/research/legacy-links-handling.md §3.1).
-            if group["current"] is None and row.status == "active" and row.valid_to is None:
+            # Three-valued by assertion (Wave 1, slice 2): an ASSERTED open head
+            # is the live value; absent one, a NEGATED open head is the live
+            # retraction, surfaced explicitly as currently-negated (it must not
+            # read as forgotten). Irrealis heads are not claims about the present,
+            # so they never floor as current. Rows arrive newest-first, so the
+            # first asserted head wins outright and a negated one only fills a
+            # slot no asserted head has claimed.
+            if row.status != "active" or row.valid_to is not None:
+                continue
+            if row.assertion not in CURRENT_ASSERTIONS:
+                continue
+            # An asserted head claims the slot over any negated peer (and the
+            # newest asserted wins among asserted); a negated head only fills a
+            # slot still unclaimed by either.
+            cur = group["current"]
+            asserted_wins = row.assertion == "asserted" and (
+                cur is None or cur["assertion"] != "asserted"
+            )
+            negated_fills = row.assertion == "negated" and cur is None
+            if asserted_wins or negated_fills:
                 group["current"] = shaped
 
         return {
@@ -757,7 +776,14 @@ class SqlAnalysisRepo:
                               AND a.predicate = f.predicate
                               AND a.qualifier = f.qualifier
                               AND a.status = 'active' AND a.valid_to IS NULL
-                            ORDER BY coalesce(a.valid_from, a.reported_at) DESC,
+                              -- Three-valued current (Wave 1, slice 2): the live
+                              -- value is an ASSERTED open head, or — absent one —
+                              -- a NEGATED open head (the retraction shown
+                              -- explicitly). Irrealis heads never floor as
+                              -- current, so asserted sorts ahead of negated.
+                              AND a.assertion IN ('asserted', 'negated')
+                            ORDER BY (a.assertion = 'asserted') DESC,
+                                     coalesce(a.valid_from, a.reported_at) DESC,
                                      a.reported_at DESC, a.created_at DESC
                             LIMIT 1
                         ) cur ON true
