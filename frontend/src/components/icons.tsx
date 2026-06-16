@@ -349,3 +349,15 @@ export const CoinsIcon = (p: IconProps) => (
     <path d="M12 7v10M9 9.5h4.5a1.5 1.5 0 0 1 0 3H9m0 0h5" />
   </Icon>
 );
+
+export const PlayIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M6 4l14 8-14 8V4z" />
+  </Icon>
+);
+
+export const ZapIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M13 2 4 14h7l-1 8 9-12h-7l1-8z" />
+  </Icon>
+);

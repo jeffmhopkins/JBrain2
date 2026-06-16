@@ -57,6 +57,11 @@ class ActionSpec:
     mutating: bool = True
     cost_class: CostClass = "standard"
     dedup_key_expr: str | None = None
+    # A one-line operator-facing summary of what the action does — the Catalog
+    # surface renders it. In-code metadata only (the `app.actions` projection has
+    # no description column), so the seed-lockstep test (which asserts the eight
+    # table columns) deliberately ignores it.
+    description: str = ""
 
 
 class ActionRegistry:
@@ -128,6 +133,7 @@ ACTION_SPECS: tuple[ActionSpec, ...] = (
         mutating=True,
         cost_class="standard",
         dedup_key_expr="note_id",
+        description="Index a note: chunk it and stage embeddings.",
     ),
     ActionSpec(
         name="embed_note",
@@ -137,6 +143,7 @@ ACTION_SPECS: tuple[ActionSpec, ...] = (
         mutating=True,
         cost_class="standard",
         dedup_key_expr="note_id",
+        description="Embed a note's chunks for retrieval.",
     ),
     ActionSpec(
         name="integrate_note",
@@ -146,6 +153,7 @@ ACTION_SPECS: tuple[ActionSpec, ...] = (
         mutating=True,
         cost_class="expensive",
         dedup_key_expr="note_id",
+        description="Extract facts, resolve entities, and write the graph.",
     ),
     ActionSpec(
         name="ocr_attachment",
@@ -155,6 +163,7 @@ ACTION_SPECS: tuple[ActionSpec, ...] = (
         mutating=True,
         cost_class="expensive",
         dedup_key_expr="attachment_id",
+        description="Vision OCR and description for an image or PDF attachment.",
     ),
     ActionSpec(
         name="consolidate_predicates",
@@ -164,6 +173,7 @@ ACTION_SPECS: tuple[ActionSpec, ...] = (
         mutating=True,
         cost_class="standard",
         dedup_key_expr=None,
+        description="Merge near-duplicate predicates left by older prompts.",
     ),
     ActionSpec(
         name="sync_predicates",
@@ -173,6 +183,7 @@ ACTION_SPECS: tuple[ActionSpec, ...] = (
         mutating=True,
         cost_class="standard",
         dedup_key_expr=None,
+        description="Re-embed the canonical_predicates index.",
     ),
 )
 

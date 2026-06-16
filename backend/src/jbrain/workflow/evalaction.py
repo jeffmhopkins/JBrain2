@@ -58,6 +58,7 @@ EVAL_RUN_SPEC = ActionSpec(
     mutating=False,
     cost_class="expensive",
     dedup_key_expr=None,
+    description="Run the eval suite (opt-in, budget-gated).",
 )
 
 

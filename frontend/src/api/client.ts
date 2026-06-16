@@ -533,6 +533,66 @@ export interface RunDetail {
   steps: RunStepView[];
 }
 
+// ===== Phase 5: the Automations operator surface (the Ops "Workflow" screen) =====
+// Mirrors backend/src/jbrain/api/ops.py's /ops/automations + /ops/actions 1:1 —
+// the engine config is owner-only.
+
+/** One ordered step of an automation's pipeline, resolved through the action
+ * registry so the card renders the cost-class chip + description. */
+export interface AutomationStep {
+  action: string;
+  cost_class: string;
+  description: string;
+  /** False when the pipeline names an action the registry doesn't carry (drift). */
+  known: boolean;
+}
+
+/** A run-log row for one automation's recent runs (the expanded card). */
+export interface AutomationRun {
+  id: string;
+  status: RunStatus;
+  started_at: string;
+  duration_ms: number | null;
+  /** A failed run's first-error hint; null unless status is "error". */
+  last_error: string | null;
+}
+
+/** One "when X -> run Y" card. `kind` is on_event (auto, not manually fireable)
+ * or schedule; `group` buckets it into the mock's sections. */
+export interface Automation {
+  trigger_id: string;
+  kind: "on_event" | "schedule";
+  group: "event" | "reconcile" | "nightly";
+  pipeline: string;
+  enabled: boolean;
+  /** Manually fireable (a sweep/reconciler). Event triggers are never manual. */
+  manual: boolean;
+  steps: AutomationStep[];
+  recent_runs: AutomationRun[];
+  /** Event-bound: the event type that fires it. null for schedules. */
+  on_event: string | null;
+  /** Schedule-bound: the schedule to toggle alongside the trigger. null for events. */
+  schedule_id: string | null;
+  interval_seconds: number | null;
+  next_run_at: string | null;
+  last_run_at: string | null;
+}
+
+/** A Catalog row: a registered action's metadata + whether it's seeded in app.actions. */
+export interface CatalogAction {
+  name: string;
+  cost_class: string;
+  domain_optional: boolean;
+  mutating: boolean;
+  description: string;
+  seeded: boolean;
+}
+
+export interface AutomationsResponse {
+  automations: Automation[];
+  actions: CatalogAction[];
+}
+
 export type SearchMatch = "semantic" | "keyword" | "both";
 
 export interface SearchResult {
@@ -992,6 +1052,30 @@ export const api = {
   // endpoint). Idempotent on the server; the new run shows up in `runs()`.
   async runTrigger(triggerId: string): Promise<void> {
     await request(`/api/ops/triggers/${encodeURIComponent(triggerId)}/run`, { method: "POST" });
+  },
+
+  // ===== The Automations operator surface (the Ops "Workflow" screen) =====
+
+  // The grouped "when -> do" cards + the action Catalog, from live engine config.
+  async automations(): Promise<AutomationsResponse> {
+    const response = await request("/api/ops/automations");
+    return (await response.json()) as AutomationsResponse;
+  },
+
+  // Enable/disable a trigger (the emergency-stop / re-arm). Owner-only mutation.
+  async setTriggerEnabled(triggerId: string, enabled: boolean): Promise<void> {
+    await request(
+      `/api/ops/triggers/${encodeURIComponent(triggerId)}`,
+      jsonInit("PATCH", { enabled }),
+    );
+  },
+
+  // Enable/disable a schedule (stops the tick from firing it). Owner-only mutation.
+  async setScheduleEnabled(scheduleId: string, enabled: boolean): Promise<void> {
+    await request(
+      `/api/ops/schedules/${encodeURIComponent(scheduleId)}`,
+      jsonInit("PATCH", { enabled }),
+    );
   },
 
   // ===== Phase 4: the agent — sessions + Full Brain chat (docs/ASSISTANT.md) =====

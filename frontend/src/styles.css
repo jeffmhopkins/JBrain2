@@ -8010,3 +8010,441 @@ input.ld-title {
   cursor: pointer;
   padding: 2px;
 }
+
+/* ===== Automations / Workflow surface (mock: workflow-ops-a) ===== */
+/* Reuses the runs-screen shell (fixed, slide-in) + tokens; only the
+   automation-card chrome and the Catalog rows are new. */
+
+.auto-tabs {
+  flex: none;
+  display: flex;
+  gap: 4px;
+  padding: 10px 14px 4px;
+}
+
+.auto-tab {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text-2);
+  font: inherit;
+  font-size: var(--fs-secondary);
+  font-weight: 500;
+  padding: 9px;
+  border-radius: 11px;
+  min-height: 42px;
+  cursor: pointer;
+}
+.auto-tab[aria-selected="true"] {
+  background: var(--steel-tint);
+  color: var(--steel);
+  border-color: transparent;
+}
+
+.auto-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  margin-bottom: 11px;
+  overflow: hidden;
+}
+.auto-card.off {
+  opacity: 0.62;
+}
+
+.auto-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 12px 13px;
+}
+
+.auto-headbtn {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 11px;
+  text-align: left;
+  background: none;
+  border: none;
+  color: inherit;
+  font: inherit;
+  padding: 0;
+  cursor: pointer;
+}
+
+.auto-card.open .auto-headbtn > svg {
+  transform: rotate(90deg);
+}
+.auto-headbtn > svg {
+  color: var(--text-3);
+  flex: none;
+  margin-top: 4px;
+  transition: transform 0.16s;
+}
+
+.auto-sdot {
+  width: 9px;
+  height: 9px;
+  border-radius: var(--r-pill);
+  flex: none;
+  margin-top: 5px;
+}
+.auto-sdot.ok {
+  background: var(--green);
+}
+.auto-sdot.failed {
+  background: var(--rose);
+}
+.auto-sdot.idle {
+  background: var(--text-3);
+}
+.auto-sdot.running {
+  background: var(--green);
+  animation: runs-pulse 1.4s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .auto-sdot.running {
+    animation: none;
+  }
+}
+
+.auto-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.auto-when {
+  display: block;
+  font-size: var(--fs-secondary);
+  line-height: 1.45;
+}
+.auto-ev {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: var(--fs-micro);
+  color: var(--steel);
+}
+.auto-pl {
+  font-weight: 600;
+}
+
+.auto-meta {
+  display: block;
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+  margin-top: 5px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* enable toggle */
+.auto-sw {
+  flex: none;
+  width: 42px;
+  height: 25px;
+  border-radius: var(--r-pill);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  position: relative;
+  cursor: pointer;
+  transition: 0.16s;
+  padding: 0;
+  margin-top: 2px;
+}
+.auto-sw[aria-checked="true"] {
+  background: var(--green-tint);
+  border-color: color-mix(in srgb, var(--green) 45%, transparent);
+}
+.auto-knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 19px;
+  height: 19px;
+  border-radius: var(--r-pill);
+  background: var(--text-3);
+  transition: 0.16s;
+}
+.auto-sw[aria-checked="true"] .auto-knob {
+  left: 19px;
+  background: var(--green);
+}
+
+.auto-body {
+  border-top: 1px solid var(--border);
+  padding: 0 14px 12px;
+}
+
+.auto-blab {
+  font-size: var(--fs-micro);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  margin: 13px 0 8px;
+}
+
+/* pipeline steps chain */
+.auto-strow {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+}
+.auto-srail {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  flex: none;
+}
+.auto-snode {
+  width: 20px;
+  height: 20px;
+  border-radius: var(--r-pill);
+  border: 1.5px solid var(--border);
+  background: var(--surface);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-3);
+}
+.auto-snode.ok {
+  border-color: var(--green);
+  color: var(--green);
+}
+.auto-sconn {
+  width: 1.5px;
+  flex: 1;
+  min-height: 14px;
+  background: var(--border);
+}
+.auto-scontent {
+  flex: 1;
+  min-width: 0;
+  padding-bottom: 12px;
+}
+.auto-saction {
+  font-size: var(--fs-secondary);
+  font-family: var(--font-mono, ui-monospace, monospace);
+}
+.auto-scost {
+  font-size: var(--fs-micro);
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  padding: 1px 6px;
+  border-radius: 5px;
+  margin-left: 7px;
+}
+.auto-scost-cheap {
+  background: var(--green-tint);
+  color: var(--green);
+}
+.auto-scost-standard {
+  background: var(--steel-tint);
+  color: var(--steel);
+}
+.auto-scost-expensive {
+  background: var(--amber-tint);
+  color: var(--amber);
+}
+.auto-sdesc {
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+  margin-top: 3px;
+  line-height: 1.4;
+}
+.auto-sdrift {
+  color: var(--amber);
+}
+
+/* recent runs mini */
+.auto-runrow {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 0;
+  border-top: 1px solid var(--border);
+  font-variant-numeric: tabular-nums;
+}
+.auto-runrow:first-of-type {
+  border-top: none;
+}
+.auto-rd {
+  width: 7px;
+  height: 7px;
+  border-radius: var(--r-pill);
+  flex: none;
+}
+.auto-rd.ok {
+  background: var(--green);
+}
+.auto-rd.failed {
+  background: var(--rose);
+}
+.auto-rd.running {
+  background: var(--green);
+  animation: runs-pulse 1.4s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .auto-rd.running {
+    animation: none;
+  }
+}
+.auto-rt {
+  font-size: var(--fs-secondary);
+  color: var(--text);
+}
+.auto-rm {
+  margin-left: auto;
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+}
+.auto-rerr {
+  font-size: var(--fs-micro);
+  color: var(--rose);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 6px 8px;
+  margin: 2px 0 6px;
+  line-height: 1.5;
+}
+.auto-norun {
+  padding: 2px 0 6px;
+}
+
+/* foot actions in card */
+.auto-acts {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+.auto-acts button {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text-2);
+  font: inherit;
+  font-size: var(--fs-secondary);
+  font-weight: 500;
+  border-radius: 10px;
+  padding: 9px;
+  min-height: 42px;
+  cursor: pointer;
+}
+.auto-runbtn {
+  background: var(--amber-tint);
+  color: var(--amber);
+  border-color: transparent;
+}
+.auto-runbtn.running {
+  background: var(--green-tint);
+  color: var(--green);
+}
+.auto-runbtn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.auto-runbtn.running > svg {
+  animation: runs-spin 1.1s linear infinite;
+}
+@keyframes runs-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .auto-runbtn.running > svg {
+    animation: none;
+  }
+}
+
+/* catalog */
+.auto-cat {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  overflow: hidden;
+}
+.auto-catrow {
+  display: flex;
+  gap: 11px;
+  align-items: flex-start;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border);
+}
+.auto-catrow:last-child {
+  border-bottom: none;
+}
+.auto-cic {
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--surface-2);
+  color: var(--text-2);
+}
+.auto-catmain {
+  flex: 1;
+  min-width: 0;
+}
+.auto-cn {
+  display: block;
+  font-size: var(--fs-secondary);
+  font-family: var(--font-mono, ui-monospace, monospace);
+}
+.auto-cd {
+  display: block;
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+  margin-top: 3px;
+  line-height: 1.4;
+}
+.auto-cmeta {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+  flex-wrap: wrap;
+}
+.auto-pill {
+  font-size: var(--fs-micro);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  padding: 2px 7px;
+  border-radius: 6px;
+}
+.auto-pill-cheap {
+  background: var(--green-tint);
+  color: var(--green);
+}
+.auto-pill-standard {
+  background: var(--steel-tint);
+  color: var(--steel);
+}
+.auto-pill-expensive {
+  background: var(--amber-tint);
+  color: var(--amber);
+}
+.auto-pill-dom {
+  background: var(--surface-2);
+  color: var(--text-2);
+}
+.auto-pill-opt {
+  background: var(--surface-2);
+  color: var(--text-3);
+}
+.auto-cathint {
+  margin: 12px 4px 0;
+  line-height: 1.5;
+}
