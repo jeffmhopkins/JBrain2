@@ -20,12 +20,17 @@ from jbrain.analysis.repo import (
 )
 from jbrain.api.deps import PrincipalDep
 from jbrain.api.notes import ctx_for
+from jbrain.embed import EmbedClient
 
 router = APIRouter()
 
 
 def get_analysis_repo(request: Request) -> SqlAnalysisRepo:
     return cast(SqlAnalysisRepo, request.app.state.analysis_repo)
+
+
+def get_embed_client(request: Request) -> EmbedClient:
+    return cast(EmbedClient, request.app.state.embed_client)
 
 
 @router.get("/notes/{note_id}/analysis")
@@ -91,6 +96,25 @@ async def review_list(
         raise HTTPException(status_code=400, detail="unknown status")
     items = await get_analysis_repo(request).list_review(ctx_for(principal), status)
     return {"items": items}
+
+
+@router.get("/review/{item_id}/predicate-suggestions")
+async def review_predicate_suggestions(
+    item_id: str, request: Request, principal: PrincipalDep
+) -> dict[str, Any]:
+    """The weighted relation candidates the correct-in-place predicate picker
+    offers for a held inference — computed on demand so any open card gets live
+    suggestions. Embedder failures surface as an empty list (the picker falls
+    back to manual entry); 404 only when the item is gone."""
+    try:
+        suggestions = await get_analysis_repo(request).predicate_suggestions(
+            ctx_for(principal), item_id, embedder=get_embed_client(request)
+        )
+    except Exception:  # noqa: BLE001 — a flaky embedder must not break the picker
+        return {"suggestions": []}
+    if suggestions is None:
+        raise HTTPException(status_code=404, detail="review item not found")
+    return {"suggestions": suggestions}
 
 
 class ResolveRequest(BaseModel):

@@ -138,10 +138,16 @@ function jsonResponse(body: unknown): Response {
 
 describe("ReviewScreen (split inbox)", () => {
   const fetchMock = vi.fn<typeof fetch>();
+  // The on-demand predicate-suggestions endpoint's reply (the picker fetches it
+  // for cards with no baked suggestions). Tests set it before opening a card.
+  let predicateSuggestions: { name: string; score: number }[] = [];
 
   function serve(pending: ReviewItem[], deferred: ReviewItem[], decided: ReviewItem[]) {
     fetchMock.mockImplementation(async (input, init) => {
       const path = String(input);
+      if (path.endsWith("/predicate-suggestions")) {
+        return jsonResponse({ suggestions: predicateSuggestions });
+      }
       if (path === "/api/review?status=open") return jsonResponse({ items: pending });
       if (path === "/api/review?status=deferred") return jsonResponse({ items: deferred });
       if (path === "/api/review?status=resolved") return jsonResponse({ items: decided });
@@ -180,6 +186,7 @@ describe("ReviewScreen (split inbox)", () => {
 
   beforeEach(() => {
     vi.stubGlobal("fetch", fetchMock);
+    predicateSuggestions = [];
     serve(PENDING, DEFERRED, DECIDED);
   });
   afterEach(() => {
@@ -363,6 +370,54 @@ describe("ReviewScreen (split inbox)", () => {
     const proposed = screen.getByLabelText("proposed fact");
     expect(within(proposed).getByText("name.nickname")).toBeInTheDocument();
     expect(within(proposed).getByText("Jeff")).toBeInTheDocument();
+    // The header names the subject entity (entity_ref "me" → "Me"), so the card
+    // says whose fact this is.
+    expect(screen.getByText("Me")).toBeInTheDocument();
+  });
+
+  it("fills the predicate picker from on-demand suggestions when none are baked in", async () => {
+    // A card with no predicate_suggestions in its payload (e.g. filed before the
+    // picker existed) fetches them on demand.
+    predicateSuggestions = [
+      { name: "name.given", score: 0.82 },
+      { name: "name.full", score: 0.6 },
+    ];
+    const inf: ReviewItem = {
+      id: "inf-od",
+      kind: "low_confidence_inference",
+      domain: "general",
+      created_at: "2026-06-15T13:00:00Z",
+      status: "open",
+      resolution: null,
+      resolved_at: null,
+      payload: {
+        entity_ref: "me",
+        predicate: "name.nickname",
+        qualifier: "",
+        statement: "People call me Jeff.",
+        value_json: { name: "Jeff" },
+        reasons: ["below_threshold"],
+        summary: "hold for review (below_threshold): People call me Jeff.",
+        outcomes: { accept: "recorded and pinned.", reject: "the fact is discarded." },
+      },
+    };
+    serve([inf], [], []);
+    render(<ReviewScreen />);
+    await screen.findByText(/hold for review/);
+    fireEvent.click(screen.getByRole("button", { name: /hold for review/ }));
+
+    // Open the relation picker; the on-demand suggestions populate the list.
+    fireEvent.click(screen.getByRole("button", { name: /name\.nickname/ }));
+    expect(await screen.findByRole("button", { name: /name\.given/ })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /name\.given/ }));
+    fireEvent.click(screen.getByRole("button", { name: "approve correction" }));
+    const noteCall = await waitFor(() => {
+      const call = fetchMock.mock.calls.find(([u]) => String(u) === "/api/notes");
+      if (!call) throw new Error("no note filed yet");
+      return call;
+    });
+    const body = JSON.parse(String((noteCall[1] as RequestInit).body)) as { body: string };
+    expect(body.body).toContain("relation should be name.given, not name.nickname");
   });
 
   // Direction C — correct in place. A typed (closed-enum) inference offers its

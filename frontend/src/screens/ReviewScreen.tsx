@@ -11,7 +11,7 @@
 
 import { type TouchEvent, useEffect, useMemo, useRef, useState } from "react";
 import { edgePath, valueLabel } from "../analysis/format";
-import type { ReviewFilter, ReviewItem } from "../api/client";
+import { type ReviewFilter, type ReviewItem, api } from "../api/client";
 import { EntityTypeIcon } from "../entities/kinds";
 import { DomainDot } from "../review/DomainDot";
 import { Footer } from "../review/blocks/Footer";
@@ -133,6 +133,31 @@ function Detail({ item, lane, queue, position, onClose, onAdvance, onNav }: Deta
   const predicateEdited =
     isInference && editPredicate.trim().length > 0 && editPredicate.trim() !== originalPredicate;
 
+  // The weighted picker prefers the suggestions baked into the payload, but a
+  // card filed before the picker existed has none — so fetch them on demand
+  // (the index is embedded server-side). Failures leave the picker on manual
+  // entry. Keyed on the item so it refetches when the detail pages to another.
+  const [fetchedSuggestions, setFetchedSuggestions] = useState<
+    { name: string; score: number }[] | null
+  >(null);
+  useEffect(() => {
+    if (!isInference || parsed.predicateSuggestions.length > 0) return;
+    let stale = false;
+    api
+      .reviewPredicateSuggestions(item.id)
+      .then((s) => {
+        if (!stale) setFetchedSuggestions(s);
+      })
+      .catch(() => {});
+    return () => {
+      stale = true;
+    };
+  }, [isInference, item.id, parsed.predicateSuggestions.length]);
+  const predicateSuggestions =
+    parsed.predicateSuggestions.length > 0
+      ? parsed.predicateSuggestions
+      : (fetchedSuggestions ?? []);
+
   // Carousel: swipe left/right pages to the next/prev item, the horizontal twin
   // of the ‹ › chevrons. Armed under the same condition they show, and only on a
   // horizontal-dominant drag so it never steals the vertical scroll.
@@ -177,7 +202,7 @@ function Detail({ item, lane, queue, position, onClose, onAdvance, onNav }: Deta
       editingPredicate,
       setEditingPredicate,
       predicateEdited,
-      predicateSuggestions: parsed.predicateSuggestions,
+      predicateSuggestions,
       edited: valueEdited || predicateEdited,
     },
     composing,

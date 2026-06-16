@@ -58,6 +58,8 @@ export interface Parsed {
   rationale: string | null;
   snippet: string | null;
   confidence: number | null;
+  // An inference card's hold weight (0–1), shown as its confidence badge.
+  weight: number | null;
   accept: string | null;
   reject: string | null;
   choices: Proposal[];
@@ -137,6 +139,7 @@ export function parsePayload(payload: Record<string, unknown>): Parsed {
     rationale: str(payload.rationale),
     snippet: str(payload.snippet),
     confidence: num(payload.confidence),
+    weight: num(payload.weight),
     accept: str(outcomes.accept),
     reject: str(outcomes.reject),
     choices,

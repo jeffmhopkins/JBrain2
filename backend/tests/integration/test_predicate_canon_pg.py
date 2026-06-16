@@ -9,6 +9,7 @@ predicate_canonicalization setting is off (the default).
 import hashlib
 import json
 import random
+import uuid
 
 import pytest
 from sqlalchemy import text
@@ -173,6 +174,30 @@ async def test_cold_match_keeps_raw_and_files_a_card(maker, tmp_path):  # noqa: 
     # raise UnknownAction — it leaves the fact under its raw name.
     resolved = await SqlAnalysisRepo(maker).resolve_review(OWNER, str(row.id), "reject", {})
     assert resolved is not None and resolved["status"] != "open"
+
+
+async def test_predicate_suggestions_for_a_card(maker):  # noqa: F811
+    # The on-demand picker source: nearest canonicals for a held card's predicate,
+    # computed live so cards filed before the picker existed still get them. Seed
+    # 'spouse' at the predicate descriptor's exact vector (cosine 1 → top).
+    pred = "isFondOf"
+    await _seed_canonical(maker, "spouse", raw_descriptor(pred, "x", None))
+    iid = str(uuid.uuid4())
+    async with scoped_session(maker, OWNER) as s:
+        await s.execute(
+            text(
+                "INSERT INTO app.review_items (id, kind, payload, domain_code)"
+                " VALUES (:id, 'low_confidence_inference', cast(:p AS jsonb), 'general')"
+            ),
+            {"id": iid, "p": json.dumps({"predicate": pred, "statement": "x"})},
+        )
+    repo = SqlAnalysisRepo(maker)
+
+    out = await repo.predicate_suggestions(OWNER, iid, embedder=_FakeEmbed())
+    assert out is not None and any(s["name"] == "spouse" for s in out)
+    # A missing item is None (a 404 upstream), distinct from an empty list.
+    missing = await repo.predicate_suggestions(OWNER, str(uuid.uuid4()), embedder=_FakeEmbed())
+    assert missing is None
 
 
 async def test_canonicalization_is_inert_when_the_setting_is_off(maker, tmp_path):  # noqa: F811
