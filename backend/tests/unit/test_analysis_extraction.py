@@ -1276,9 +1276,11 @@ def test_link_snaps_a_state_facts_near_miss_object() -> None:
     assert linked.object_entity_ref == "Umbrella Corp"
 
 
-def test_link_does_not_infer_a_dropped_object_for_state_facts() -> None:
-    # A state fact's missing object is left alone — value_json carries its value
-    # and inferring a person/org from prose is the risk reserved for none.
+def test_link_recovers_dropped_object_for_a_value_less_state_edge() -> None:
+    # worksFor/homeLocation are `state` but their value IS the object entity (no
+    # value_json), so a dropped ref would render the whole statement. Recovery
+    # binds the single non-subject mention the statement names — the user's
+    # "worksFor -> I used to work for Oregon Lithoprint." bug.
     mentions = [_person("Felix"), _org("Umbrella Corp")]
     fact = _rel(
         statement="Felix works for Umbrella Corp.",
@@ -1286,6 +1288,22 @@ def test_link_does_not_infer_a_dropped_object_for_state_facts() -> None:
         entity_ref="Felix",
         kind="state",
         predicate="worksFor",
+    )
+    [linked] = link_relationship_objects([fact], mentions)
+    assert linked.object_entity_ref == "Umbrella Corp"
+
+
+def test_link_keeps_state_exemption_when_value_json_renders_the_value() -> None:
+    # A state fact WITH value_json renders that datum, so there is no display gap
+    # and recovery stays off — the conservative exemption the comment reserves.
+    mentions = [_person("Felix"), _org("Umbrella Corp")]
+    fact = _rel(
+        statement="Felix works for Umbrella Corp.",
+        object_ref=None,
+        entity_ref="Felix",
+        kind="state",
+        predicate="jobStatus",
+        value_json={"value": "full-time"},
     )
     [linked] = link_relationship_objects([fact], mentions)
     assert linked.object_entity_ref is None

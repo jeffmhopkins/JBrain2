@@ -49,6 +49,24 @@ def test_facets_roll_down_into_types(registry: SchemaRegistry) -> None:
     assert "birthDate" in names and "spouse" in names
 
 
+def test_person_worksfor_is_a_declared_functional_org_edge(registry: SchemaRegistry) -> None:
+    # worksFor is the live pipeline's employer edge (extract/integrate prompts,
+    # rel_employer_change). Declaring it kills the recurring `new_predicate` card
+    # and the unknown-predicate weight penalty that held legit past employers in
+    # review. Drift spellings normalize to it, and it is functional (one current
+    # employer; former jobs are closed history).
+    works = registry.predicate_for_kind("Person", "worksFor")
+    assert works is not None
+    assert works.value_shape == "ref"
+    assert works.range_type == "organization"
+    assert registry.declares_predicate("worksFor")
+    assert registry.declares_predicate("works_for")  # renamed_from drift spelling -> worksFor
+    assert registry.is_functional("worksFor")
+    assert registry.is_functional("works_for")
+    # The folded-qualifier split stays a no-op (worksFor takes no qualifier vocab).
+    assert registry.decompose_predicate("worksFor.contractor", "") == ("worksFor.contractor", "")
+
+
 def test_lifecycle_status_enum_is_filled_from_status_values(registry: SchemaRegistry) -> None:
     status = registry.type("appointment").predicate("status")
     assert status is not None

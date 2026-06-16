@@ -33,6 +33,16 @@ predicates:
     kind: relationship
     functional: true
     schema_org_ref: schema:spouse
+  - canonical_name: worksFor       # functional relationship (ANALYSIS allowlist); employer
+    value_shape: ref
+    range_type: organization       # usual object; a ref edge never gates on range at runtime
+    kind: relationship
+    functional: true               # one CURRENT employer; former jobs are closed history
+    schema_org_ref: schema:worksFor
+    # Drift SPELLINGS of worksFor only. `employer` stays its own spelling: the
+    # residual supersession allowlist already makes it functional, and folding it
+    # here would silently rewrite existing `employer`-keyed history onto worksFor.
+    renamed_from: [works_for, worksAt, works_at]
 
 # Fed to the existing declared-name -> exact-alias machinery (NOT an identity key).
 alias_seeding_predicates: [name.full, name.preferred, name.aka, name.maiden]

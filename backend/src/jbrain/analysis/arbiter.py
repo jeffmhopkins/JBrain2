@@ -35,6 +35,7 @@ from jbrain.analysis.extraction import (
 )
 from jbrain.analysis.intent import (
     EntityPairProposal,
+    EntityResolution,
     IntegrationIntent,
     IntentFact,
     IntentViolation,
@@ -143,6 +144,29 @@ def plan_intent(
     )
 
 
+def _object_named(
+    fact: IntentFact, res_by_ref: Mapping[str, EntityResolution], haystack: str
+) -> bool:
+    """An edge whose OBJECT entity is literally named in the note is surface-
+    attested even when the model's own `attested_span` quote was imperfect or
+    missing: the object's verbatim presence is independent evidence the stated
+    edge exists. This is the deterministic backstop for the run-to-run flip the
+    model produces on conjoined objects ("used to work for the US army and Oregon
+    Lithoprint" — the second org's edge fumbles its quote and gets held below
+    threshold while the first commits). Bounded to object edges and gated upstream
+    by `not fact.inferred`, so a genuinely inferred edge — which makes no honest
+    quote claim — is never promoted. The positive twin of weight.py's reserved
+    `object_resolved` signal."""
+    ref = fact.object_entity_ref
+    if ref is None:
+        return False
+    res = res_by_ref.get(ref)
+    if res is None:
+        return False
+    surface = (res.attested_span.surface if res.attested_span else None) or res.new_name
+    return bool(surface) and surface in haystack
+
+
 def compute_signals(
     intent: IntegrationIntent, chunk_texts: list[str]
 ) -> dict[int, ConfidenceSignals]:
@@ -164,6 +188,7 @@ def compute_signals(
     # sound global proxy for the minor unknown-predicate weight penalty.
     types = registry.types.values()
     haystack = "\n".join(chunk_texts)
+    res_by_ref = {r.mention_ref: r for r in intent.entity_resolutions}
     supersede_keys = {
         (s.entity_ref, s.predicate, s.qualifier)
         for s in intent.supersession_proposals
@@ -171,10 +196,9 @@ def compute_signals(
     }
     out: dict[int, ConfidenceSignals] = {}
     for i, fact in enumerate(intent.facts):
-        surface_attested = (
-            not fact.inferred
-            and fact.attested_span is not None
-            and fact.attested_span.surface in haystack
+        surface_attested = not fact.inferred and (
+            (fact.attested_span is not None and fact.attested_span.surface in haystack)
+            or _object_named(fact, res_by_ref, haystack)
         )
         out[i] = ConfidenceSignals(
             surface_attested=surface_attested,
