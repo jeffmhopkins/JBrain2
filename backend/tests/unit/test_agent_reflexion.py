@@ -20,25 +20,49 @@ from jbrain.agent.reflexion import (
 
 
 class TestCritiqueWorthy:
-    def test_greeting_with_no_sources_or_mutation_is_not_worthy(self) -> None:
-        assert not critique_worthy(source_count=0, mutated=False, scopes=["general"])
+    def test_greeting_with_no_evidence_or_mutation_is_not_worthy(self) -> None:
+        assert not critique_worthy(
+            source_count=0, entity_count=0, mutated=False, touched_sensitive=False
+        )
 
     def test_surfaced_sources_make_a_turn_worthy(self) -> None:
-        assert critique_worthy(source_count=2, mutated=False, scopes=["general"])
+        assert critique_worthy(
+            source_count=2, entity_count=0, mutated=False, touched_sensitive=False
+        )
+
+    def test_surfaced_entities_make_a_turn_worthy(self) -> None:
+        # A graph-answered turn (find_entity/read_entity → EntityRefs, zero
+        # NoteSources) is just as checkable as a chunk-answered one — evidence counts
+        # entities, not only note sources, so it IS verified (and grounds against the
+        # entity label+aliases rather than an empty corpus).
+        assert critique_worthy(
+            source_count=0, entity_count=1, mutated=False, touched_sensitive=False
+        )
 
     def test_a_staged_mutation_makes_a_turn_worthy(self) -> None:
-        assert critique_worthy(source_count=0, mutated=True, scopes=["general"])
+        assert critique_worthy(
+            source_count=0, entity_count=0, mutated=True, touched_sensitive=False
+        )
 
-    def test_a_sensitive_scope_makes_a_turn_worthy(self) -> None:
-        # Health/finance/location carry real-world consequence — verify even a
-        # bare answer that cited nothing and staged nothing.
-        assert critique_worthy(source_count=0, mutated=False, scopes=["health"])
-        assert critique_worthy(source_count=0, mutated=False, scopes=["general", "finance"])
-        assert critique_worthy(source_count=0, mutated=False, scopes=["location"])
+    def test_touching_sensitive_data_makes_a_turn_worthy(self) -> None:
+        # A turn that surfaced a health|finance|location source/entity carries
+        # real-world consequence — verify even a bare answer that cited nothing.
+        assert critique_worthy(
+            source_count=0, entity_count=0, mutated=False, touched_sensitive=True
+        )
+
+    def test_a_held_sensitive_scope_alone_is_not_worthy(self) -> None:
+        # The trigger reads whether the turn TOUCHED sensitive data, NOT whether the
+        # session merely holds those scopes. Full Brain always holds health/finance/
+        # location, so a no-retrieval turn there must not be flagged.
+        assert not critique_worthy(
+            source_count=0, entity_count=0, mutated=False, touched_sensitive=False
+        )
 
     def test_general_only_chitchat_is_never_worthy(self) -> None:
-        assert not critique_worthy(source_count=0, mutated=False, scopes=[])
-        assert not critique_worthy(source_count=0, mutated=False, scopes=["general"])
+        assert not critique_worthy(
+            source_count=0, entity_count=0, mutated=False, touched_sensitive=False
+        )
 
 
 class TestClaimsFrom:

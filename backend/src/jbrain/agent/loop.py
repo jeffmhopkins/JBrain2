@@ -30,6 +30,8 @@ from jbrain.agent.contracts import (
 )
 from jbrain.agent.reflexion import (
     MAX_RETRIES,
+    PASS_SCORE,
+    SENSITIVE_SCOPES,
     VerificationResult,
     aggregate,
     claims_from,
@@ -58,6 +60,31 @@ _SYSTEM = load_prompt(Path(__file__).parent / "prompts" / "system.prompt")
 SYSTEM_PROMPT: str = _SYSTEM.render()
 SYSTEM_VERSION: str = _SYSTEM.version
 SYSTEM_STRENGTH: str = _SYSTEM.strength
+
+
+def _grounding_corpus(sources: Sequence[NoteSource], entities: Sequence[EntityRef]) -> list[str]:
+    """The texts a claim may ground against: note snippets PLUS each retrieved
+    entity's canonical label and every alias. A turn answered from the entity graph
+    (find_entity/read_entity → EntityRefs, zero NoteSources) would otherwise verify
+    against an empty corpus and every claim would score 0 — so "What is my name?"
+    answered "Jeffrey Mark Hopkins (Jeff)" grounds against those aliases instead of
+    being falsely flagged "not in your notes"."""
+    corpus = [s.snippet for s in sources]
+    for entity in entities:
+        corpus.append(entity.label)
+        corpus.extend(entity.aliases)
+    return corpus
+
+
+def _touched_sensitive(sources: Sequence[NoteSource], entities: Sequence[EntityRef]) -> bool:
+    """Whether the turn actually surfaced sensitive-domain data — a source or entity
+    whose domain is health|finance|location. The Reflexion sensitive-scope trigger
+    reads THIS, not the session's held scopes: Full Brain always holds every scope,
+    so a scope-membership test would flag every Full Brain turn. A turn only carries
+    real-world consequence when it touched the consequential data itself."""
+    return any(s.domain in SENSITIVE_SCOPES for s in sources) or any(
+        e.domain in SENSITIVE_SCOPES for e in entities
+    )
 
 
 @dataclass(frozen=True)
@@ -169,8 +196,20 @@ class _BufferedTurn:
     events: tuple[ChatEvent, ...]
     answer: str
     sources: tuple[NoteSource, ...]
+    entities: tuple[EntityRef, ...]
     mutated: bool
     stop_reason: str
+
+
+def _buffered_critique_worthy(turn: "_BufferedTurn") -> bool:
+    """The Loop-1 trigger applied to a buffered turn: evidence (sources OR entities),
+    a mutation, or sensitive data actually touched (not merely a held scope)."""
+    return critique_worthy(
+        source_count=len(turn.sources),
+        entity_count=len(turn.entities),
+        mutated=turn.mutated,
+        touched_sensitive=_touched_sensitive(turn.sources, turn.entities),
+    )
 
 
 class AgentLoop:
@@ -293,6 +332,7 @@ class AgentLoop:
         # snippets tools surfaced, and whether any tool staged/declared a mutation.
         answer_parts: list[str] = []
         surfaced_sources: list[NoteSource] = []
+        surfaced_entities: list[EntityRef] = []
         mutated = False
 
         for _step in range(self._g.max_steps):
@@ -314,7 +354,7 @@ class AgentLoop:
                 # The adapter always closes a stream with an LlmTurn; guard the
                 # contract anyway rather than dereference None.
                 async for ev in self._finish(
-                    "end_turn", answer_parts, surfaced_sources, mutated, scopes
+                    "end_turn", answer_parts, surfaced_sources, surfaced_entities, mutated
                 ):
                     yield ev
                 return
@@ -330,13 +370,13 @@ class AgentLoop:
 
             if turn.stop_reason != "tool_use" or not turn.tool_calls:
                 async for ev in self._finish(
-                    "end_turn", answer_parts, surfaced_sources, mutated, scopes
+                    "end_turn", answer_parts, surfaced_sources, surfaced_entities, mutated
                 ):
                     yield ev
                 return
             if cost >= self._g.max_cost_tokens:
                 async for ev in self._finish(
-                    "budget", answer_parts, surfaced_sources, mutated, scopes
+                    "budget", answer_parts, surfaced_sources, surfaced_entities, mutated
                 ):
                     yield ev
                 return
@@ -350,6 +390,7 @@ class AgentLoop:
                 results.append(dispatched.result)
                 any_error = any_error or dispatched.result.is_error
                 surfaced_sources.extend(dispatched.sources)
+                surfaced_entities.extend(dispatched.entities)
                 # A staged Proposal, or a tool whose spec declares it mutating, makes
                 # the turn critique-worthy — it carried a write, not just a read.
                 mutated = mutated or dispatched.proposal is not None or self._is_mutating(call.name)
@@ -378,12 +419,18 @@ class AgentLoop:
             consecutive_errors = consecutive_errors + 1 if any_error else 0
             if consecutive_errors >= self._g.max_consecutive_tool_errors:
                 async for ev in self._finish(
-                    "too_many_errors", answer_parts, surfaced_sources, mutated, scopes
+                    "too_many_errors",
+                    answer_parts,
+                    surfaced_sources,
+                    surfaced_entities,
+                    mutated,
                 ):
                     yield ev
                 return
 
-        async for ev in self._finish("max_steps", answer_parts, surfaced_sources, mutated, scopes):
+        async for ev in self._finish(
+            "max_steps", answer_parts, surfaced_sources, surfaced_entities, mutated
+        ):
             yield ev
 
     async def _run_stream_buffered(
@@ -413,15 +460,20 @@ class AgentLoop:
             if budget[0] <= 0 and incumbent[0] is not None:
                 return incumbent[0]
             turn = await self._produce_buffered(session, scopes, conversation, timezone, budget)
-            verdict = aggregate(
-                [verify_grounding(claims_from(turn.answer), [s.snippet for s in turn.sources])]
+            corpus = _grounding_corpus(turn.sources, turn.entities)
+            # Empty corpus → grounding is unverifiable, not failed: hand back a clean
+            # pass so reflexion neither retries nor flags a turn it cannot judge.
+            verdict = (
+                aggregate([verify_grounding(claims_from(turn.answer), corpus)])
+                if corpus
+                else VerificationResult(PASS_SCORE, ())
             )
             if incumbent[0] is None:
                 incumbent[0] = (turn, verdict)
             return turn, verdict
 
         first, verdict = await produce()
-        if critique_worthy(source_count=len(first.sources), mutated=first.mutated, scopes=scopes):
+        if _buffered_critique_worthy(first):
             reflection = await reflect(
                 lambda: produce(),
                 max_retries=MAX_RETRIES,
@@ -434,16 +486,13 @@ class AgentLoop:
         for ev in kept.events:
             yield ev
         yield DoneEvent(stop_reason=kept.stop_reason)
-        if not kept_verdict.passed and critique_worthy(
-            source_count=len(kept.sources), mutated=kept.mutated, scopes=scopes
-        ):
+        corpus = _grounding_corpus(kept.sources, kept.entities)
+        if not kept_verdict.passed and corpus and _buffered_critique_worthy(kept):
             yield VerdictEvent(
                 passed=False,
                 score=kept_verdict.score,
                 issues=list(kept_verdict.issues),
-                ungrounded_claims=ungrounded_claims(
-                    claims_from(kept.answer), [s.snippet for s in kept.sources]
-                ),
+                ungrounded_claims=ungrounded_claims(claims_from(kept.answer), corpus),
             )
 
     async def _produce_buffered(
@@ -464,6 +513,7 @@ class AgentLoop:
         events: list[ChatEvent] = []
         answer_parts: list[str] = []
         sources: list[NoteSource] = []
+        entities: list[EntityRef] = []
         mutated = False
         idx = 0
         spent = 0
@@ -486,11 +536,21 @@ class AgentLoop:
 
             if turn.stop_reason != "tool_use" or not turn.tool_calls:
                 return _BufferedTurn(
-                    tuple(events), "".join(answer_parts), tuple(sources), mutated, "end_turn"
+                    tuple(events),
+                    "".join(answer_parts),
+                    tuple(sources),
+                    tuple(entities),
+                    mutated,
+                    "end_turn",
                 )
             if budget[0] <= 0:
                 return _BufferedTurn(
-                    tuple(events), "".join(answer_parts), tuple(sources), mutated, "budget"
+                    tuple(events),
+                    "".join(answer_parts),
+                    tuple(sources),
+                    tuple(entities),
+                    mutated,
+                    "budget",
                 )
 
             messages.append(AssistantMessage(text=turn.text, tool_calls=turn.tool_calls))
@@ -502,6 +562,7 @@ class AgentLoop:
                 results.append(dispatched.result)
                 any_error = any_error or dispatched.result.is_error
                 sources.extend(dispatched.sources)
+                entities.extend(dispatched.entities)
                 mutated = mutated or dispatched.proposal is not None or self._is_mutating(call.name)
                 events.append(
                     ToolResultEvent(
@@ -531,12 +592,18 @@ class AgentLoop:
                     tuple(events),
                     "".join(answer_parts),
                     tuple(sources),
+                    tuple(entities),
                     mutated,
                     "too_many_errors",
                 )
 
         return _BufferedTurn(
-            tuple(events), "".join(answer_parts), tuple(sources), mutated, "max_steps"
+            tuple(events),
+            "".join(answer_parts),
+            tuple(sources),
+            tuple(entities),
+            mutated,
+            "max_steps",
         )
 
     def _is_mutating(self, name: str) -> bool:
@@ -553,25 +620,36 @@ class AgentLoop:
         stop_reason: str,
         answer_parts: list[str],
         sources: list[NoteSource],
+        entities: list[EntityRef],
         mutated: bool,
-        scopes: tuple[str, ...],
     ) -> AsyncIterator[ChatEvent]:
         """Close the stream: emit the terminal `DoneEvent`, then — in the default
         verify-and-annotate mode, only when the turn is critique-worthy and the
         pure verifiers flag something — a tail `VerdictEvent`. No model call, no
         retry, no persistence: the answer the user saw stands, annotated."""
         yield DoneEvent(stop_reason=stop_reason)
-        if not critique_worthy(source_count=len(sources), mutated=mutated, scopes=scopes):
+        if not critique_worthy(
+            source_count=len(sources),
+            entity_count=len(entities),
+            mutated=mutated,
+            touched_sensitive=_touched_sensitive(sources, entities),
+        ):
+            return
+        corpus = _grounding_corpus(sources, entities)
+        # Empty corpus (no note snippets AND no entity texts) → grounding is
+        # *unverifiable*, not ungrounded: don't cry wolf. Other verifiers are
+        # unaffected, but grounding is the only one this tail runs, so skip the
+        # verdict entirely when there is nothing to ground against.
+        if not corpus:
             return
         claims = claims_from("".join(answer_parts))
-        snippets = [s.snippet for s in sources]
-        verdict = aggregate([verify_grounding(claims, snippets)])
+        verdict = aggregate([verify_grounding(claims, corpus)])
         if not verdict.passed:
             yield VerdictEvent(
                 passed=False,
                 score=verdict.score,
                 issues=list(verdict.issues),
-                ungrounded_claims=ungrounded_claims(claims, snippets),
+                ungrounded_claims=ungrounded_claims(claims, corpus),
             )
 
     async def _dispatch(self, call: ToolCall, tool_ctx: ToolContext) -> _Dispatched:

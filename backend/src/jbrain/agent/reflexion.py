@@ -32,16 +32,27 @@ SENSITIVE_SCOPES = frozenset(["health", "finance", "location"])
 def critique_worthy(
     *,
     source_count: int,
+    entity_count: int = 0,
     mutated: bool,
-    scopes: Iterable[str],
+    touched_sensitive: bool,
 ) -> bool:
     """The Loop-1 trigger (docs/ASSISTANT.md "Self-improvement loops"): a turn is
     worth verifying when it made a checkable claim or carried real-world
-    consequence — it surfaced sources (citation-bearing), it staged a mutation, or
-    it ran in a sensitive scope (health|finance|location). Greetings and chit-chat
-    — no sources, no mutation, only the general scope — are never critique-worthy,
-    so the verifiers never run on them and the stream is untouched."""
-    return source_count > 0 or mutated or bool(SENSITIVE_SCOPES & set(scopes))
+    consequence — it surfaced evidence (note sources *or* graph entities, both
+    citation-bearing), it staged a mutation, or it actually touched sensitive data
+    (a surfaced source/entity in the health|finance|location domains).
+
+    Evidence counts entities, not only note sources: a turn answered straight from
+    the entity graph (find_entity/read_entity → EntityRefs, zero NoteSources) is
+    just as checkable as one answered from chunks, so it must be verified — and now
+    grounds against the entity label+aliases rather than an empty corpus.
+
+    The sensitive arm reads `touched_sensitive` (did a surfaced source/entity carry
+    a sensitive domain?), NOT whether the session merely *holds* those scopes — Full
+    Brain always holds general+health+finance+location, so a scope-membership test
+    would make every Full Brain turn critique-worthy. Greetings and chit-chat — no
+    evidence, no mutation, nothing sensitive touched — are never critique-worthy."""
+    return source_count > 0 or entity_count > 0 or mutated or touched_sensitive
 
 
 # A claim is "grounded" when at least this fraction of its significant tokens
