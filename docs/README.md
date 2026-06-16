@@ -7,7 +7,7 @@ the binding design docs. Project-wide non-negotiables live in the root
 
 ## Where the project is (2026-06)
 
-**Phases 0–4 and the Phase 5 workflow engine are shipped** — note capture,
+**Phases 0–5 are shipped** — note capture,
 ingestion/search, the v3 note→graph analysis pipeline, the personal agent
 (tool-calling loop, Tier-A memory, Proposals/review inbox, external connectors,
 the Full Brain chat surface), lists and appointments, and the **workflow engine**
@@ -16,9 +16,10 @@ the cutover of ingest/integration/consolidation onto the engine), reflexion in t
 live turn, a fed eval harness (the live scorer + a nightly schedule that stores
 `EvalRun`s), and the recurring self-heal reconcilers. Migrations run through 0044.
 
-**Next: Phase 5 residual completion → Phase 6 (Wiki).** Phase 5's engine is live;
-what remains (self-improvement Loops 2–4 and the not-yet-built hygiene sweeps) is
-deferred to Phase 6. See `PHASE5_COMPLETION_PLAN.md` and `ROADMAP.md`.
+**Phase 5 is complete; next is Phase 6 (Wiki).** The self-improvement Loops 2–4
+(skill learning, durable-knowledge promotion, prompt/tool self-edit) and the
+not-yet-built hygiene sweeps are deferred to Phase 6. See `ROADMAP.md`; the completed
+Phase-5 build record is `archive/PHASE5_COMPLETION_PLAN.md`.
 
 ## Living reference (read these)
 
@@ -37,18 +38,20 @@ deferred to Phase 6. See `PHASE5_COMPLETION_PLAN.md` and `ROADMAP.md`.
 
 ## Active plan
 
-- `PHASE5_COMPLETION_PLAN.md` — the buildable plan for **finishing Phase 5**
-  (reflexion in the live turn, the fed eval harness, the last reconciler, the
-  nits, doc hygiene) plus the explicit Phase-6 deferrals. The current frontier;
-  Wave 1 shipped, the Loop-4 decision remains.
+- **None.** Phase 5 is closed; **Phase 6 (Wiki)** is the next frontier — see the
+  Phase 6 section of `ROADMAP.md`. No Phase-6 build plan has been written yet.
 
 ## Archive (history, not active)
 
 `archive/` holds completed build plans and the design research that fed them.
 Kept for the audit trail; not the place to learn the current system.
 
+- `archive/PHASE5_COMPLETION_PLAN.md` — the Phase-5 residual-completion build plan
+  (completed): reflexion in the live turn, the fed eval harness + nightly schedule,
+  the last reconciler, the nits, doc hygiene, and the Phase-6 deferrals (incl. the
+  Loop-4 self-edit decision).
 - `archive/WORKFLOW_ENGINE_PLAN.md` — the Phase-5 workflow-engine + cutover build
-  plan (completed); superseded by `PHASE5_COMPLETION_PLAN.md`.
+  plan (completed); superseded by `archive/PHASE5_COMPLETION_PLAN.md`.
 - `archive/ASSISTANT_PLAN.md` — the Phase-4 agent build plan (completed).
 - `archive/INTEGRATOR_PLAN.md` — the v3 note→graph pipeline build plan (completed).
 - `archive/CUTOVER_V1_REMOVAL.md` — the v1 `analyze_note` removal record (completed).

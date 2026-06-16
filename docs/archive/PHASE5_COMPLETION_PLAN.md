@@ -1,5 +1,11 @@
 # JBrain2 — Phase 5 Completion Build Plan (residual slices + Phase-6 deferrals)
 
+> **✅ COMPLETED — Phase 5 is closed (2026-06).** All residual tracks shipped
+> (R, H·A, H·B, H·C, S, N, D), migrations run through **0044**, and the one open
+> owner decision is resolved: **Loop-4 prompt/tool self-edit is deferred to Phase 6**
+> (§5.2) — carried forward in `ROADMAP.md` Phase 6. This doc is now a completed
+> build record (archived under `docs/archive/`); the next frontier is Phase 6 (Wiki).
+
 The buildable plan for **finishing Phase 5**. The workflow engine (events →
 triggers → pipelines → actions → runs), the scheduler, the run-log, and the
 non-breaking cutover **already shipped** — PRs #217 / #220 / #221, migrations
@@ -7,14 +13,15 @@ non-breaking cutover **already shipped** — PRs #217 / #220 / #221, migrations
 the nightly + 5-minute reconciler schedules, and the emergency-trigger Ops
 control are all in `main`. The eval-harness *gate* shipped too (the pure
 `promotion_decision`, `EvalRunStore`, `PromotionService`, `SelfImprovementGate`,
-and an opt-in `eval_run` action) — but **nothing feeds it yet**.
+and an opt-in `eval_run` action) — and is now **fed by a nightly `eval_run`
+schedule** (Track H·B, migration 0044).
 
 This document is the residual-completion plan: the small, independent slices that
 land Phase 5 as *done*, the one substantive new track (reflexion-in-the-live-turn
 and harness completion), and an explicit record of what is **deliberately deferred
 to Phase 6** with rationale. It is a plan doc only — no implementation code lands
 from this file. It follows the format of `docs/archive/WORKFLOW_ENGINE_PLAN.md` (which it
-supersedes and which should be archived once these slices land — see Track D).
+supersedes and which is now archived — see Track D).
 
 > **Design stance: the engine is done; finish the wiring, then close the books.**
 > Every track here is either a near-mechanical mirror of something already shipped
@@ -45,10 +52,11 @@ seed row** — `eval_run` is referenced by name through the in-code registry exa
 `test_seeded_actions_are_globally_readable`); (2) the eval **runtime core + corpus were
 relocated into the shipped package** (`jbrain/evals/runner.py` + `jbrain/evals/cases/`)
 because `backend/evals/` is not in the prod image — without this the nightly schedule
-would `PermanentJobError` every night in production. What remains: the **Loop-4** owner
-decision (§5.2) and the `WORKFLOW_ENGINE_PLAN.md` archival close-out (Track D, §6).
-The per-track migration numbers below were the pre-build estimates — see the
-assigned-at-merge rule in §2.
+would `PermanentJobError` every night in production. **Phase 5 is now closed:** the
+`WORKFLOW_ENGINE_PLAN.md` archival is done (Track D, §6) and the one open owner
+decision is resolved — **Loop-4 self-edit is deferred to Phase 6** (§5.2), carried
+forward in `ROADMAP.md`. The per-track migration numbers below were the pre-build
+estimates — see the assigned-at-merge rule in §2.
 
 ---
 
@@ -448,7 +456,10 @@ These must be resolved before or during the relevant track's PRs.
    or pick (a)-default if catching a bad claim *before* the user reads it outweighs
    the latency.**
 
-2. **Loop 4 — in Phase 5 or defer to Phase 6? (the L4 decision track.)** Loop 4 is
+2. **Loop 4 — in Phase 5 or defer to Phase 6? (the L4 decision track.)**
+   **RESOLVED (2026-06): DEFERRED to Phase 6** — the owner took the recommendation
+   below. Loop-4 self-edit and its 100%-coverage adversarial-injection suite are
+   carried forward in `ROADMAP.md` Phase 6; Phase 5 closes without it. Loop 4 is
    prompt/tool **self-edit** as PR-shaped, human-gated proposals
    (`ASSISTANT.md:596`). It is **Phase-5-feasible**: it reuses the
    **fully-shipped** `.prompt`/`.tool` versioning + CI-pin infrastructure, needs
@@ -530,27 +541,27 @@ substantive tracks.
 
 ---
 
-## 7. Phase-5-complete exit criterion
+## 7. Phase-5-complete exit criterion — ✅ all met (2026-06)
 
-Phase 5 is **done** when:
-- Reflexion (Loop 1) runs in the **live `/chat` turn** — annotating ungrounded
+Phase 5 is **done** — every criterion below is satisfied:
+- ✅ Reflexion (Loop 1) runs in the **live `/chat` turn** — annotating ungrounded
   claims by default (mode b), with the buffer-retry mode (a) reachable opt-in — and
   `_GROUNDING_THRESHOLD` is calibrated.
-- The eval harness is **fed**: a nightly schedule runs a real-or-faked eval, stores
-  an `EvalRun` with the `{task, safety}` split, and `PromotionService` can gate a
-  promotion off stored runs behind the self-improvement budget + kill-switch (at
-  minimum H·A; H·B/H·C per decision #3).
-- **Every** existing periodic sweep is data-defined and on-demand triggerable —
+- ✅ The eval harness is **fed**: a nightly schedule (migration 0044) runs the eval,
+  stores an `EvalRun` with the `{task, safety}` split, and `PromotionService` can gate
+  a promotion off stored runs behind the self-improvement budget + kill-switch
+  (H·A + H·B + H·C all shipped).
+- ✅ **Every** existing periodic sweep is data-defined and on-demand triggerable —
   the last boot-only one (`backfill_unembedded_notes`) now self-heals on a schedule
   (Track S).
-- The three nits are closed: `consolidate_predicates` no longer double-enqueues
+- ✅ The three nits are closed: `consolidate_predicates` no longer double-enqueues
   (N1); `app.runs.skill_version` exists for Phase-6 auditability (N2); the
   `RunStep.job_id` FK asymmetry is documented (N3).
-- The docs tell the truth: no "Phase 5 not started," no "migrations through 0034";
-  `WORKFLOW_ENGINE_PLAN.md` is archived; this doc is the named active Phase-5
-  record.
-- The **owner decisions** (§5) are resolved — in particular the explicit
-  in-or-out call on **Loop-4 prompt/tool self-edit** and its adversarial suite.
+- ✅ The docs tell the truth: no "Phase 5 not started," no "migrations through 0034";
+  `WORKFLOW_ENGINE_PLAN.md` is archived; this doc is the completed Phase-5 record
+  (now archived itself).
+- ✅ The **owner decisions** (§5) are resolved — including the explicit in-or-out call
+  on **Loop-4 prompt/tool self-edit**: **deferred to Phase 6** (carried to ROADMAP).
 
 **Deferred to Phase 6 (not Phase 5 work):** skill learning (Loop 2), durable-
 knowledge + predicate-canon self-improvement (Loop 3), and the not-yet-built

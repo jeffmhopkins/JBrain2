@@ -19,10 +19,11 @@ reconcilers; migrations run through 0044. The build records for the agent
 and the v3 pipeline are archived under `docs/archive/` (`ASSISTANT_PLAN.md`,
 `INTEGRATOR_PLAN.md`, `CUTOVER_V1_REMOVAL.md`).
 
-**Phase 5 residual completion** is tracked in `docs/PHASE5_COMPLETION_PLAN.md`;
-what remains is deferred to Phase 6 (self-improvement Loops 2–4 — skill learning,
-durable-knowledge promotion, prompt/tool self-edit — and the not-yet-built
-hygiene sweeps), each gated on a spine Phase 5 deliberately did not build.
+**Phase 5 is complete** (the build record is archived at
+`docs/archive/PHASE5_COMPLETION_PLAN.md`). What was deferred to Phase 6 — the
+self-improvement Loops 2–4 (skill learning, durable-knowledge promotion, prompt/tool
+self-edit) and the not-yet-built hygiene sweeps — is carried into the Phase 6 section
+below; each is gated on a spine Phase 5 deliberately did not build.
 
 ## Phase 0 — Foundation ✅ Shipped
 
@@ -108,10 +109,15 @@ note-extraction proposals and a read-only ICS feed.
 **Exit:** the agent is the default way to ask "what do I know about X" and
 manage lists/appointments from the phone.
 
-## Phase 5 — Workflow engine ✅ Engine shipped (residual completion in flight)
+## Phase 5 — Workflow engine ✅ Shipped
 
 Generalize the hardcoded ingest pipeline into `events` / `triggers` /
-`pipelines` / `actions` / `runs`, with a scheduler and run-log UI.
+`pipelines` / `actions` / `runs`, with a scheduler and run-log UI. The engine,
+scheduler, run-log, cutover, reflexion-in-the-live-turn, the fed eval harness +
+nightly `eval_run` schedule, and the self-heal reconcilers all shipped (migrations
+through 0044; build record in `docs/archive/PHASE5_COMPLETION_PLAN.md`). The
+carried-forward items below all landed or were deliberately seamed/deferred; the
+self-improvement Loops 2–4 are carried to Phase 6 (see below).
 
 **Carried forward from Phases 3–4** (deferred deliberately, picked up here):
 
@@ -155,6 +161,27 @@ rewrites with enforced citations → versioned revisions. Editorial config
 (style guide, citation requirements) as data. Split/merge approvals via
 review inbox. Read-only wiki UI with citation hover-cards. "Discuss this
 article" correction-note loop.
+
+**Carried forward from Phase 5 (the self-improvement loops, deferred here because
+each needs a spine Phase 5 deliberately did not build):**
+
+- **Loop 2 — skill learning.** Skill distillation from successful episodes,
+  embedding + RRF retrieval, shadow→active promotion gated by the (now fed) eval
+  harness, and quarantine/eviction for regressed skills. The `skills` /
+  `skill_version` schema is groundwork shipped in Phase 5; it has no consumer yet.
+- **Loop 3 — durable-knowledge + predicate-canon self-improvement.** Tier-B
+  durable-knowledge promotion and the predicate-canonicalization self-improvement
+  loop (agent proposes registry merges via correction notes) — both need the
+  wiki/correction-note spine this phase builds.
+- **Loop 4 — prompt/tool self-edit.** PR-shaped, human-gated `.prompt`/`.tool`
+  diffs gated by the eval harness, with a **100%-coverage adversarial-injection
+  suite** and the data/instruction-boundary + domain-classification prompts
+  **structurally barred from self-edit** (non-negotiable #12 / ASSISTANT.md I-#12).
+  The single most security-sensitive deliverable on the roadmap.
+- **Not-yet-built hygiene sweeps** — entity hygiene, summary re-embedding, tag
+  consolidation, and the nightly wiki build — built as engine actions, then given
+  scheduled + emergency triggers (the pattern Phase 5 established for the existing
+  sweeps).
 
 **Exit:** a day of notes updates only the affected articles overnight, every
 claim cites a note, and corrections happen by out-arguing the wiki with a
