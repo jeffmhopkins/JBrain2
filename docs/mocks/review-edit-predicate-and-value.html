@@ -1,0 +1,676 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Review — correct predicate &amp; value · every type (interactive mock)</title>
+    <style>
+      /* Design tokens — copied from frontend/src/styles/tokens.css. */
+      :root {
+        --steel: #7fa7c9; --steel-tint: rgba(127, 167, 201, 0.13);
+        --green: #8fbc9a; --green-tint: rgba(143, 188, 154, 0.13);
+        --amber: #c9a36a; --amber-tint: rgba(201, 163, 106, 0.13);
+        --rose: #cf8a8f; --rose-tint: rgba(207, 138, 143, 0.13);
+        --violet: #a493c9; --violet-tint: rgba(164, 147, 201, 0.14);
+        --slate: #9aa0a8;
+        --accent: var(--steel);
+        --font-scale: 1;
+        --fs-micro: calc(12px * var(--font-scale));
+        --fs-head: calc(13px * var(--font-scale));
+        --fs-secondary: calc(14px * var(--font-scale));
+        --fs-note: calc(15px * var(--font-scale));
+        --fs-body: calc(16px * var(--font-scale));
+        --fs-title: calc(18px * var(--font-scale));
+        --fs-screen: calc(22px * var(--font-scale));
+        --fs-editor: calc(20px * var(--font-scale));
+        --r-input: 12px; --r-card: 16px; --r-pill: 999px;
+        --font-mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+      }
+      [data-theme="light"] {
+        color-scheme: light;
+        --page: #ecece9; --bg: #f7f7f5; --surface: #ffffff; --surface-2: #f0f0ee;
+        --border: #e2e2df; --text: #1a1b1e; --text-2: #5c5f66; --text-3: #9a9da3;
+        --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.06);
+      }
+      [data-theme="dark"] {
+        color-scheme: dark;
+        --page: #060708; --bg: #0e0f11; --surface: #17181b; --surface-2: #1e2024;
+        --border: #26282c; --text: #e6e7e9; --text-2: #9a9da3; --text-3: #5c5f66;
+        --shadow-card: none;
+      }
+
+      * { box-sizing: border-box; }
+      body {
+        margin: 0; background: var(--page); color: var(--text);
+        font: 400 var(--fs-body) / 1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+        display: flex; flex-direction: column; align-items: center; gap: 14px;
+        padding: 22px 14px 60px; min-height: 100vh;
+      }
+
+      /* ---- demo chrome ---- */
+      .demo-bar { width: 100%; max-width: 460px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+      .demo-title { font-size: var(--fs-secondary); color: var(--text-2); margin-right: auto; }
+      .demo-title b { color: var(--text); font-weight: 600; }
+      .seg { display: inline-flex; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-pill); padding: 3px; }
+      .seg button { appearance: none; border: none; background: none; color: var(--text-2); font: inherit; font-size: var(--fs-secondary); padding: 5px 13px; border-radius: var(--r-pill); cursor: pointer; }
+      .seg button[aria-pressed="true"] { background: var(--steel-tint); color: var(--steel); font-weight: 600; }
+      .type-row { width: 100%; max-width: 460px; display: flex; gap: 6px; flex-wrap: wrap; }
+      .type-chip { appearance: none; border: 1px solid var(--border); background: var(--surface); color: var(--text-2); font: inherit; font-size: var(--fs-micro); padding: 5px 10px; border-radius: var(--r-pill); cursor: pointer; }
+      .type-chip[aria-pressed="true"] { background: var(--steel-tint); border-color: transparent; color: var(--steel); font-weight: 600; }
+      .type-chip .reserved { opacity: 0.6; font-style: italic; }
+      .type-chip .edot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--green); margin-left: 5px; vertical-align: middle; }
+      .demo-note { width: 100%; max-width: 460px; font-size: var(--fs-head); color: var(--text-3); line-height: 1.55; }
+      .demo-note b { color: var(--text-2); font-weight: 600; }
+      .demo-note code { font-family: var(--font-mono); color: var(--text-2); }
+
+      /* ---- phone ---- */
+      .phone { width: 100%; max-width: 460px; height: 880px; background: var(--bg); border: 1px solid var(--border); border-radius: 30px; overflow: hidden; position: relative; display: flex; flex-direction: column; box-shadow: 0 20px 60px rgba(0, 0, 0, 0.25); }
+      .statusbar { display: flex; justify-content: space-between; align-items: center; padding: 14px 24px 4px; font-size: var(--fs-secondary); font-weight: 600; color: var(--text); }
+      .statusbar .right { display: flex; gap: 7px; align-items: center; color: var(--text-2); font-weight: 500; }
+      .batt { background: var(--green); color: #06250f; border-radius: 5px; padding: 1px 5px; font-size: 11px; font-weight: 700; }
+      .screenhead { display: flex; align-items: center; gap: 12px; padding: 8px 18px 2px; }
+      .screenhead h1 { margin: 0; font-size: var(--fs-screen); font-weight: 600; }
+      .screenhead .spacer { margin-left: auto; }
+      .live-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--green); }
+      .bolt { color: var(--text-2); font-size: var(--fs-title); }
+
+      .body { flex: 1; overflow-y: auto; padding: 8px 16px 24px; display: flex; flex-direction: column; gap: 12px; position: relative; }
+
+      .rdetail-bar { display: flex; align-items: center; gap: 10px; }
+      .rdetail-back { background: none; border: none; padding: 6px 2px; font-size: var(--fs-note); color: var(--accent); cursor: pointer; }
+      .rdetail-pos { margin-left: auto; font-size: var(--fs-secondary); color: var(--text-2); font-variant-numeric: tabular-nums; }
+      .rdetail-nav { display: flex; gap: 6px; }
+      .rdetail-nav button { width: 34px; height: 34px; border-radius: var(--r-pill); border: 1px solid var(--border); background: var(--surface); color: var(--text); font-size: var(--fs-body); cursor: pointer; }
+
+      /* subject + kind */
+      .subject { display: flex; align-items: center; gap: 11px; }
+      .avatar { width: 40px; height: 40px; border-radius: 50%; flex: none; display: grid; place-items: center; font-weight: 600; font-size: var(--fs-note); }
+      .subject-main { display: flex; flex-direction: column; gap: 1px; }
+      .subject-name { font-size: var(--fs-title); font-weight: 600; }
+      .subject-sub { font-size: var(--fs-micro); color: var(--text-3); display: flex; align-items: center; gap: 7px; }
+      .domain-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+      .kind-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+      .kind-badge { font-size: var(--fs-micro); padding: 2px 9px; border-radius: var(--r-pill); background: var(--amber-tint); color: var(--amber); font-weight: 500; }
+      .conf-badge { font-size: var(--fs-micro); padding: 2px 9px; border-radius: var(--r-pill); border: 1px solid var(--border); color: var(--text-2); }
+      .hero { margin: 2px 0 0; font-size: var(--fs-editor); line-height: 1.34; font-weight: 500; }
+      .why { font-size: var(--fs-secondary); color: var(--text-2); line-height: 1.5; margin: 0 2px; }
+
+      /* card primitive */
+      .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-card); box-shadow: var(--shadow-card); padding: 13px 14px; display: flex; flex-direction: column; gap: 11px; }
+      .card-lbl { font-size: var(--fs-micro); text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-3); display: flex; align-items: center; gap: 8px; }
+      .typed-tag { color: var(--steel); border: 1px solid var(--steel); border-radius: var(--r-pill); padding: 0 7px; letter-spacing: 0.02em; font-size: 10px; }
+
+      /* ---- the editable edge: predicate → value ---- */
+      .edge { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+      .edge-arrow { color: var(--text-3); font-size: var(--fs-title); }
+      /* a chip is the tap target for either side; dashed = untouched, solid steel = edited */
+      .chip { display: inline-flex; align-items: center; gap: 7px; font-weight: 600; background: var(--surface-2); border: 1px dashed var(--border); border-radius: var(--r-input); padding: 4px 11px; cursor: pointer; color: var(--text); font-family: inherit; }
+      .chip.pred { font-family: var(--font-mono); font-weight: 500; font-size: var(--fs-note); }
+      .chip.val { font-size: var(--fs-title); }
+      .chip .pen { font-size: var(--fs-micro); color: var(--text-3); }
+      .chip.edited { border-style: solid; border-color: var(--steel); background: var(--steel-tint); color: var(--steel); }
+      .chip.edited .pen { color: var(--steel); }
+
+      /* inline editor panel (predicate or value) */
+      .editor { border: 1px solid var(--steel); border-radius: var(--r-input); background: var(--bg); padding: 10px; display: flex; flex-direction: column; gap: 9px; }
+      .editor-lbl { font-size: var(--fs-micro); color: var(--text-2); display: flex; align-items: center; gap: 8px; }
+      .editor-lbl .x { margin-left: auto; color: var(--text-3); cursor: pointer; font-size: var(--fs-secondary); }
+      .editor input { font: inherit; font-size: var(--fs-note); background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-input); padding: 9px 11px; color: var(--text); width: 100%; }
+      .editor input:focus { outline: none; border-color: var(--steel); }
+      .pred-list { display: flex; flex-direction: column; gap: 4px; max-height: 196px; overflow-y: auto; }
+      .pred-opt { appearance: none; text-align: left; font: inherit; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-input); padding: 8px 11px; color: var(--text); cursor: pointer; display: flex; align-items: center; gap: 9px; }
+      .pred-opt:hover, .pred-opt.on { border-color: var(--steel); background: var(--steel-tint); }
+      .pred-opt .pname { font-family: var(--font-mono); font-size: var(--fs-secondary); }
+      .pred-opt .pmeta { font-size: var(--fs-micro); color: var(--text-3); margin-left: auto; }
+      .pred-opt .pshape { font-size: 10px; color: var(--text-3); border: 1px solid var(--border); border-radius: var(--r-pill); padding: 0 6px; }
+      .pred-opt.coin { border-style: dashed; }
+      .pred-opt.coin .pname { color: var(--amber); }
+      .pred-opt.cur .pmeta { color: var(--steel); }
+      .enum-row { display: flex; gap: 6px; flex-wrap: wrap; }
+      .enum-chip { appearance: none; font: inherit; font-size: var(--fs-secondary); background: var(--surface); border: 1px solid var(--border); color: var(--text-2); border-radius: var(--r-pill); padding: 5px 12px; cursor: pointer; }
+      .enum-chip.on { background: var(--steel-tint); border-color: var(--steel); color: var(--steel); font-weight: 600; }
+
+      /* status line below the edge */
+      .edge-status { font-size: var(--fs-secondary); color: var(--text-2); line-height: 1.5; margin: 0; }
+      .edge-status.edit { color: var(--steel); }
+      .edge-status s { color: var(--text-3); }
+      .edge-status b { color: var(--text); font-weight: 600; }
+      .edge-hint { font-size: var(--fs-micro); color: var(--text-3); }
+
+      /* value diff (conflict / collision context) */
+      .diff { display: flex; flex-direction: column; gap: 6px; }
+      .diff-row { display: flex; align-items: baseline; gap: 9px; font-size: var(--fs-secondary); }
+      .diff-row .v { font-weight: 600; }
+      .diff-row.before .v { text-decoration: line-through; color: var(--text-3); }
+      .diff-row .tag { font-size: var(--fs-micro); color: var(--text-3); margin-left: auto; }
+
+      /* candidates (merge / ambiguous / confirm) */
+      .cand { display: flex; flex-direction: column; gap: 7px; }
+      .cand-row { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--r-input); background: var(--surface-2); color: var(--text-2); font-size: var(--fs-secondary); }
+      .cand-row .dot { width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; font-size: var(--fs-micro); font-weight: 600; flex: none; }
+      .cand-note { font-size: var(--fs-micro); color: var(--text-3); }
+      .notice { display: flex; gap: 9px; align-items: flex-start; font-size: var(--fs-secondary); color: var(--text-2); line-height: 1.5; }
+      .notice .ic { color: var(--amber); flex: none; }
+
+      /* "how this was decided" disclosure */
+      .trace { border: 1px solid var(--border); border-radius: var(--r-input); background: var(--surface); overflow: hidden; }
+      .trace-head { display: flex; align-items: center; gap: 8px; padding: 12px 14px; cursor: pointer; font-size: var(--fs-note); color: var(--text-2); }
+      .trace-head b { color: var(--text); font-weight: 600; }
+      .trace-head .chev { margin-left: auto; color: var(--text-3); transition: transform 120ms; }
+      .trace[open] .trace-head .chev { transform: rotate(90deg); }
+      .trace-body { padding: 0 14px 12px; display: none; flex-direction: column; gap: 8px; }
+      .trace[open] .trace-body { display: flex; }
+      .stage { display: flex; gap: 10px; font-size: var(--fs-secondary); color: var(--text-2); }
+      .stage .n { color: var(--text-3); font-variant-numeric: tabular-nums; flex: none; }
+      .stage b { color: var(--text); font-weight: 600; }
+
+      /* evidence */
+      .evi { background: var(--surface-2); border-radius: var(--r-input); padding: 10px 12px; font-size: var(--fs-secondary); color: var(--text-2); line-height: 1.5; }
+      .evi mark { background: var(--amber-tint); color: var(--amber); border-radius: 3px; padding: 0 2px; }
+      .evi-src { font-size: var(--fs-micro); color: var(--text-3); margin-top: 6px; }
+
+      /* actions — the verdict (matches the screenshot) */
+      .verdict { display: flex; flex-direction: column; gap: 10px; }
+      .v-primary { appearance: none; font: inherit; border: none; border-radius: var(--r-card); cursor: pointer; padding: 17px; font-size: var(--fs-title); font-weight: 700; background: var(--green); color: #06250f; }
+      .v-primary.correction { background: var(--steel); color: #07223a; }
+      .v-reject { appearance: none; font: inherit; border: 1px solid var(--border); border-radius: var(--r-card); cursor: pointer; padding: 15px; font-size: var(--fs-note); font-weight: 600; background: var(--surface); color: var(--rose); }
+      .v-reject.armed { background: var(--rose); border-color: var(--rose); color: #fff; }
+      .v-correct { appearance: none; font: inherit; border: 1px solid var(--border); border-radius: var(--r-card); cursor: pointer; padding: 13px; font-size: var(--fs-note); font-weight: 600; background: var(--surface); color: var(--steel); }
+      .escape { display: flex; gap: 8px; padding-top: 4px; }
+      .escape button { flex: 1; appearance: none; font: inherit; font-size: var(--fs-secondary); background: var(--surface); border: 1px solid var(--border); color: var(--text-2); border-radius: var(--r-input); padding: 12px; min-height: 44px; cursor: pointer; }
+      .escape button.defer { color: var(--amber); }
+      .escape button.discuss { color: var(--steel); }
+
+      /* free-form correction composer (for cards with no fact edge) */
+      .compose { border: 1px solid var(--steel); border-radius: var(--r-input); background: var(--bg); padding: 11px; display: flex; flex-direction: column; gap: 8px; }
+      .compose textarea { font: inherit; font-size: var(--fs-secondary); background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-input); padding: 10px; color: var(--text); resize: vertical; }
+      .compose-row { display: flex; gap: 8px; }
+      .compose-row button { flex: 1; appearance: none; font: inherit; font-size: var(--fs-secondary); font-weight: 600; border-radius: var(--r-input); padding: 10px; cursor: pointer; }
+      .compose-row .cancel { background: var(--surface); border: 1px solid var(--border); color: var(--text-2); }
+      .compose-row .file { background: var(--steel-tint); border: 1px solid transparent; color: var(--steel); }
+
+      /* snackbar */
+      .snack { position: absolute; left: 14px; right: 14px; bottom: 16px; background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--r-input); padding: 12px 14px; display: flex; align-items: center; gap: 12px; font-size: var(--fs-secondary); color: var(--text); box-shadow: 0 8px 24px rgba(0,0,0,0.3); animation: rise 160ms ease-out; z-index: 5; }
+      .snack .msg { flex: 1; line-height: 1.4; }
+      .snack .msg b { font-weight: 600; }
+      .snack .msg .cons { color: var(--text-2); font-size: var(--fs-micro); display: block; margin-top: 2px; }
+      .snack .undo { color: var(--steel); font-weight: 600; cursor: pointer; flex: none; }
+      @keyframes rise { from { transform: translateY(12px); opacity: 0; } to { transform: none; opacity: 1; } }
+    </style>
+  </head>
+  <body>
+    <div class="demo-bar">
+      <div class="demo-title"><b>Review — correct predicate &amp; value.</b> every review type, edit either side</div>
+      <div class="seg" role="group" aria-label="theme">
+        <button id="t-dark" aria-pressed="true">dark</button>
+        <button id="t-light" aria-pressed="false">light</button>
+      </div>
+    </div>
+
+    <div class="type-row" id="typeRow"></div>
+
+    <div class="phone">
+      <div class="statusbar"><span>13:32</span><span class="right">JBrain&nbsp;· <span class="batt">47</span></span></div>
+      <div class="screenhead"><h1>Review</h1><span class="spacer"></span><span class="live-dot"></span><span class="bolt">⚡</span></div>
+      <div class="body" id="screen"></div>
+    </div>
+
+    <div class="demo-note" id="note"></div>
+
+    <script>
+      const ACCENT = { steel:"var(--steel)", rose:"var(--rose)", violet:"var(--violet)", green:"var(--green)", amber:"var(--amber)", slate:"var(--slate)" };
+      const TINT   = { steel:"var(--steel-tint)", rose:"var(--rose-tint)", violet:"var(--violet-tint)", green:"var(--green-tint)", amber:"var(--amber-tint)", slate:"rgba(154,160,168,0.14)" };
+      const DOMAIN_DOT = { general:"var(--steel)", health:"var(--rose)", finance:"var(--violet)" };
+
+      // The canonical-predicate registry the predicate editor searches. Mirrors
+      // app.canonical_predicates (name + value_shape); descriptor trimmed to a hint.
+      const REGISTRY = [
+        { name:"name.full",        shape:"text",  hint:"a person's full legal name" },
+        { name:"name.given",       shape:"text",  hint:"first / given name" },
+        { name:"name.nickname",    shape:"text",  hint:"informal name people use" },
+        { name:"birthDate",        shape:"date",  hint:"date of birth" },
+        { name:"blood_pressure",   shape:"quantity", hint:"systolic/diastolic mmHg" },
+        { name:"heart_rate",       shape:"quantity", hint:"beats per minute" },
+        { name:"medication",       shape:"ref",   hint:"a drug taken" },
+        { name:"dosage",           shape:"quantity", hint:"amount of a medication" },
+        { name:"copayment",        shape:"quantity", hint:"fixed fee per covered service" },
+        { name:"out_of_pocket",    shape:"quantity", hint:"member's share of cost" },
+        { name:"deductible",       shape:"quantity", hint:"amount before coverage starts" },
+        { name:"employer",         shape:"ref",   hint:"organization a person works for" },
+        { name:"email",            shape:"text",  hint:"email address" },
+        { name:"phone",            shape:"text",  hint:"phone number" },
+        { name:"relationship.type",shape:"enum",  hint:"spouse · parent · child · friend" },
+        { name:"requestedAction",  shape:"text",  hint:"a non-medical action requested" },
+      ];
+
+      // body.variant ∈ edge | diff | candidates | notice. `claim` is the editable
+      // predicate→value edge present on every fact-bearing card.
+      const KINDS = [
+        {
+          id:"low_confidence_inference", label:"low confidence inference", domain:"general", conf:0.60,
+          subject:{name:"Jeff Hopkins", type:"Person", accent:"steel", initial:"J"},
+          summary:"hold for review (below_threshold): My name is Jeff Hopkins.",
+          why:"a self-introduction inferred a full name — just below the commit threshold.",
+          snippet:"<mark>My name is Jeff Hopkins</mark>.",
+          source:"from this note · general",
+          claim:{ predicate:"name.full", value:"Jeff Hopkins", typed:false },
+          accept:"the fact is recorded and pinned — reprocessing won't drop it.",
+          stages:[
+            ["extraction","pulled <b>name.full → Jeff Hopkins</b> from the sentence"],
+            ["integration","no existing name on file; nothing to reconcile"],
+            ["arbiter","confidence <b>0.60</b> — under the 0.70 commit bar, so held for review"],
+          ],
+          rejectDestructive:false,
+        },
+        {
+          id:"fact_conflict", label:"fact conflict", domain:"health", conf:0.97,
+          subject:{name:"Me", type:"Person", accent:"rose", initial:"M"},
+          summary:"two blood_pressure values disagree for Me",
+          why:"a pharmacy-kiosk reading in this note disagrees with this morning's clinic value.",
+          snippet:"Pharmacy kiosk says <mark>138/92</mark> — way off this morning's 128/82 at Dr. Patel's.",
+          source:"from this note · health",
+          claim:{ predicate:"blood_pressure", value:"138/92 mmHg", typed:false },
+          diff:{ before:{v:"128/82 mmHg", tag:"on file (clinic, this morning)"}, after:{v:"138/92 mmHg", tag:"from this note (kiosk)"} },
+          accept:"the kiosk value becomes active; 128/82 is superseded but kept in history.",
+          stages:[
+            ["extraction","read <b>blood_pressure → 138/92</b> from the kiosk line"],
+            ["integration","collides with active <b>128/82 mmHg</b> on the same predicate"],
+            ["arbiter","both look real and recent — can't auto-pick, so held for review"],
+          ],
+          rejectDestructive:false, rejectLabel:"reject — keep 128/82",
+        },
+        {
+          id:"attribute_collision", label:"attribute collision", domain:"general", conf:0.74,
+          subject:{name:"Sarah", type:"Person", accent:"steel", initial:"S"},
+          summary:"two values recorded for Sarah's birthDate",
+          why:"a card in this note dates Sarah's birthday differently than the wiki.",
+          snippet:"card in the mail for <mark>Sarah's birthday on the 14th</mark>",
+          source:"from this note · general",
+          claim:{ predicate:"birthDate", value:"March 14, 1988", typed:false },
+          diff:{ before:{v:"May 2, 1990", tag:"previously recorded"}, after:{v:"March 14, 1988", tag:"from this note"} },
+          accept:"March 14, 1988 becomes active; the old date is superseded.",
+          stages:[
+            ["extraction","parsed <b>birthDate → March 14, 1988</b> from the card"],
+            ["integration","an existing <b>birthDate</b> already differs"],
+            ["arbiter","functional predicate with two values — held for you to pick"],
+          ],
+          rejectDestructive:false, rejectLabel:"reject — keep May 2, 1990",
+        },
+        {
+          id:"new_predicate", label:"new predicate", domain:"finance", conf:0.65,
+          subject:{name:"Aetna PPO", type:"Organization", accent:"violet", initial:"A"},
+          summary:"new predicate 'co_pay' — nearest: copayment (0.82)",
+          why:"the canonicalizer couldn't confidently merge this relation. the fact committed under its raw name — changing the predicate here is the whole point.",
+          snippet:"Specialist visits have a <mark>co-pay of $45</mark> under the new plan.",
+          source:"from a note · finance",
+          claim:{ predicate:"co_pay", value:"$45", typed:false, unknownPred:true },
+          accept:"keeps 'co_pay' as its own canonical relation. Map it to copayment instead by editing the predicate.",
+          stages:[
+            ["extraction","read an unknown relation <b>co_pay → $45</b>"],
+            ["canonicalize","nearest known is <b>copayment</b> at <b>0.82</b> — below the 0.90 auto-merge bar"],
+            ["review","held so you can map, rename, or keep it as new"],
+          ],
+          rejectDestructive:false, rejectLabel:"dismiss — leave raw",
+        },
+        {
+          id:"domain_promotion", label:"domain promotion", domain:"health", conf:0.86,
+          subject:{name:"Dr. Akin", type:"Person", accent:"rose", initial:"A"},
+          summary:"this requestedAction fact may belong in general, not health",
+          why:"the fact is administrative — it carries no medical content. you can also fix the relation or value while you're here.",
+          snippet:"Asked <mark>Dr. Akin's office to fax the form</mark> to the school nurse.",
+          source:"from a note · health",
+          claim:{ predicate:"requestedAction", value:"fax form to school nurse", typed:false },
+          accept:"the fact moves to general and is pinned — reprocessing can't pull it back.",
+          stages:[
+            ["extraction","read <b>requestedAction → fax form…</b> inside a health note"],
+            ["firewall","no medical content detected on the fact"],
+            ["review","held to confirm it can cross the health firewall into general"],
+          ],
+          rejectDestructive:false, rejectLabel:"keep in health",
+          primaryLabel:"approve — move to general",
+        },
+        {
+          id:"low_confidence", label:"low confidence (legacy)", domain:"health", conf:0.41, reserved:true,
+          subject:{name:"Me", type:"Person", accent:"rose", initial:"M"},
+          summary:"low-confidence extraction (41%)",
+          why:"extracted from an uncertain phrasing — verify the relation and value against the note.",
+          snippet:"Started <mark>vitamin D 2000 IU daily</mark> per Dr. Akin.",
+          source:"from a note · health",
+          claim:{ predicate:"medication", value:"vitamin D 2000 IU daily", typed:false },
+          accept:"the fact stands and gets pinned — reprocessing can't drop it.",
+          stages:[
+            ["extraction","read <b>medication → vitamin D 2000 IU</b>"],
+            ["integration","no prior medication record to reconcile"],
+            ["arbiter","confidence <b>0.41</b> — well under the bar, surfaced for a yes/no"],
+          ],
+          rejectDestructive:false, rejectLabel:"retract — a misread",
+        },
+        {
+          id:"merge_proposal", label:"merge proposal", domain:"general", conf:0.81,
+          subject:{name:"Bob", type:"Person", accent:"steel", initial:"B"},
+          summary:"are “Bob” and “Robert Chen” the same person?",
+          why:"same employer and overlapping mentions, but the names never co-occur. this card decides identity — there's no predicate→value to edit, but you can still file a correction.",
+          snippet:"Lunch with <mark>Bob</mark> — he's pitching the Donnelly account again next quarter.",
+          source:"from a note · general",
+          candidates:[
+            {name:"Bob", note:"3 mentions · employer Donnelly", accent:"steel", initial:"B"},
+            {name:"Robert Chen", note:"9 mentions · employer Donnelly", accent:"slate", initial:"RC"},
+          ], candNote:"merging folds Bob into Robert Chen; a later split can undo it.",
+          accept:"Bob folds into Robert Chen; a later split can undo it.",
+          stages:[
+            ["resolution","two entities share <b>employer Donnelly</b> and overlapping contexts"],
+            ["names","“Bob” never co-occurs with “Robert Chen” — could be a nickname"],
+            ["review","above the suggest bar but not certain — held for a yes/no"],
+          ],
+          rejectDestructive:true, primaryLabel:"approve — merge them", rejectLabel:"reject — keep separate", noEdge:true,
+        },
+        {
+          id:"ambiguous_mention", label:"ambiguous mention", domain:"general", conf:null,
+          subject:{name:"Sam", type:"Person", accent:"slate", initial:"S"},
+          summary:"which Sam?",
+          why:"the mention matches two known people; neither is a confident link. identity card — correct it by naming the right Sam in a note.",
+          snippet:"<mark>Sam</mark> said the roof quote covers the flashing too.",
+          source:"from a note · general",
+          candidates:[
+            {name:"Sam Rivera", note:"contractor · 6 mentions", accent:"steel", initial:"SR"},
+            {name:"Sam Okafor", note:"college friend · 2 mentions", accent:"slate", initial:"SO"},
+          ], candNote:"linking a specific Sam needs more signal — picking isn't offered yet.",
+          accept:null,
+          stages:[
+            ["resolution","the mention <b>Sam</b> matched two known people"],
+            ["scoring","neither candidate cleared the confident-link bar"],
+            ["review","left unlinked, surfaced so you can disambiguate"],
+          ],
+          rejectDestructive:false, rejectLabel:"leave unlinked", noEdge:true, noPrimary:true,
+        },
+        {
+          id:"confirm_entity", label:"confirm entity", domain:"general", conf:0.78,
+          subject:{name:"Alex Kim", type:"Person", accent:"steel", initial:"A"},
+          summary:"is this person “Alex Kim” a single, confirmed entity?",
+          why:"crossed the corroboration bar, but a live namesake makes the identity contested. identity card — no predicate to edit.",
+          snippet:"Caught up with <mark>Alex Kim</mark> — the one from the Seattle team, not the contractor.",
+          source:"from a note · general",
+          candidates:[
+            {name:"Alex Kim", note:"Seattle team · 5 mentions", accent:"steel", initial:"A"},
+            {name:"Alex Kim", note:"contractor · 2 mentions", accent:"slate", initial:"A"},
+          ], candNote:"confirming pins this as one entity; it stops being purge-eligible.",
+          accept:"the entity is confirmed and isn't auto-purged.",
+          stages:[
+            ["resolution","mentions corroborate one <b>Alex Kim</b>"],
+            ["namesake","a second live Alex Kim makes identity contested"],
+            ["review","held to confirm these mentions are one person"],
+          ],
+          rejectDestructive:false, primaryLabel:"confirm — one entity", rejectLabel:"leave provisional", noEdge:true,
+        },
+        {
+          id:"extraction_truncated", label:"extraction truncated", domain:"general", conf:null,
+          subject:{name:"Dad", type:"Person", accent:"steel", initial:"D"},
+          summary:"this note hit its fact budget — kept 40, skipped 6 facts",
+          why:null,
+          snippet:"Dad's full medical history — <mark>1998 appendectomy, 2011 ACL repair</mark>, and more…",
+          source:"from a note · general",
+          notice:"the note held more durable facts than its per-note budget, so the tail was clipped. re-run analysis with a larger budget to capture more. nothing to edit here.",
+          accept:null,
+          stages:[
+            ["extraction","the note exceeded its per-note fact budget"],
+            ["budget","kept the 40 most durable facts, clipped 6"],
+            ["review","surfaced as an FYI — re-run to capture the tail"],
+          ],
+          rejectDestructive:false, rejectLabel:"got it — dismiss", noEdge:true, noPrimary:true,
+        },
+      ];
+
+      let state = { theme:"dark", kindIdx:0 };
+      // per-card edit state, keyed by kind id
+      const edits = {};
+      function ed(k){
+        if(!edits[k.id]) edits[k.id] = {
+          predicate: k.claim ? k.claim.predicate : null,
+          value: k.claim ? k.claim.value : null,
+          editing: null,    // "pred" | "val" | null
+          search: k.claim ? k.claim.predicate : "",
+          composing: false,
+          armed: false,
+        };
+        return edits[k.id];
+      }
+      const orig = k => ({ predicate: k.claim ? k.claim.predicate : null, value: k.claim ? k.claim.value : null });
+      const predEdited = k => k.claim && ed(k).predicate !== k.claim.predicate;
+      const valEdited  = k => k.claim && ed(k).value !== k.claim.value;
+      const edited     = k => predEdited(k) || valEdited(k);
+
+      const confTxt = c => c==null ? "" : `${Math.round(c*100)}% conf`;
+      function avatar(s){ return `<div class="avatar" style="background:${TINT[s.accent]};color:${ACCENT[s.accent]}">${s.initial}</div>`; }
+      function subjectRow(k){ return `<div class="subject">${avatar(k.subject)}<div class="subject-main"><span class="subject-name">${k.subject.name}</span><span class="subject-sub"><span style="color:${ACCENT[k.subject.accent]}">${k.subject.type}</span><span class="domain-dot" style="background:${DOMAIN_DOT[k.domain]}"></span>${k.domain}</span></div></div>`; }
+      function kindRow(k){ return `<div class="kind-row"><span class="kind-badge">${k.label}</span>${k.conf!=null?`<span class="conf-badge">${confTxt(k.conf)}</span>`:""}</div>`; }
+      function evidence(k){ return `<div class="evi">${k.snippet}<div class="evi-src">${k.source}</div></div>`; }
+
+      function navBar(){
+        const n = state.kindIdx+1, m = KINDS.length;
+        return `<div class="rdetail-bar"><button class="rdetail-back">‹ inbox</button><span class="rdetail-pos">${n} of ${m}</span><div class="rdetail-nav"><button data-nav="-1">‹</button><button data-nav="1">›</button></div></div>`;
+      }
+
+      // ---- the editable predicate→value edge ----
+      function edgeBlock(k){
+        const e = ed(k);
+        const predCls = `chip pred${predEdited(k)?" edited":""}`;
+        const valCls  = `chip val${valEdited(k)?" edited":""}`;
+        let out = `<div class="card">
+          <div class="card-lbl">proposed fact${k.claim.unknownPred?' <span class="typed-tag" style="border-color:var(--amber);color:var(--amber)">unrecognized</span>':""}</div>`;
+
+        // before→after diff (conflict / collision) gives context above the editor
+        if(k.diff){
+          out += `<div class="diff">
+            <div class="diff-row before"><span class="v">${k.diff.before.v}</span><span class="tag">${k.diff.before.tag}</span></div>
+            <div class="diff-row after"><span class="v" style="color:var(--green)">${k.diff.after.v}</span><span class="tag">${k.diff.after.tag}</span></div></div>`;
+        }
+
+        out += `<div class="edge">
+          <button class="${predCls}" data-edit="pred"><span>${e.predicate}</span><span class="pen">✎</span></button>
+          <span class="edge-arrow">→</span>
+          <button class="${valCls}" data-edit="val"><span>${e.value}</span><span class="pen">✎</span></button>
+        </div>`;
+
+        // inline editor for whichever side is open
+        if(e.editing==="pred") out += predEditor(k);
+        if(e.editing==="val")  out += valEditor(k);
+
+        // status line — explains what the verdict will do
+        const o = orig(k);
+        if(edited(k)){
+          const parts = [];
+          if(predEdited(k)) parts.push(`relation <s>${o.predicate}</s> → <b>${e.predicate}</b>`);
+          if(valEdited(k))  parts.push(`value <s>${o.value}</s> → <b>${e.value}</b>`);
+          out += `<p class="edge-status edit">correcting ${parts.join(" · ")} — filed as a correction note; the pipeline applies it, so the wiki stays machine-written.</p>`;
+        } else {
+          out += `<p class="edge-status">${k.accept||"recorded and pinned — reprocessing won't drop it."}</p>
+            <p class="edge-hint">tap the relation or the value to correct either in place.</p>`;
+        }
+        out += `</div>`;
+        return out;
+      }
+
+      function predEditor(k){
+        const e = ed(k);
+        const q = e.search.trim().toLowerCase();
+        const matches = REGISTRY.filter(r => r.name.toLowerCase().includes(q) || r.hint.toLowerCase().includes(q));
+        const exact = REGISTRY.some(r => r.name.toLowerCase() === q);
+        let list = matches.map(r => {
+          const cur = r.name === e.predicate;
+          return `<button class="pred-opt${cur?" on cur":""}" data-pick-pred="${r.name}">
+            <span class="pname">${r.name}</span><span class="pshape">${r.shape}</span>
+            <span class="pmeta">${cur?"current":r.hint}</span></button>`;
+        }).join("");
+        // coin-a-new-predicate row when the typed text isn't already canonical
+        if(q.length && !exact){
+          list += `<button class="pred-opt coin" data-pick-pred="${e.search.trim()}">
+            <span class="pname">${e.search.trim()}</span>
+            <span class="pmeta">use as a new relation</span></button>`;
+        }
+        return `<div class="editor">
+          <div class="editor-lbl">choose a relation — search the registry or coin a new one<span class="x" data-close>done</span></div>
+          <input data-pred-search value="${e.search.replace(/"/g,'&quot;')}" placeholder="search relations…" aria-label="search relations" />
+          <div class="pred-list">${list || '<div class="cand-note" style="padding:6px 2px">no match — keep typing to coin a new relation</div>'}</div>
+        </div>`;
+      }
+
+      function valEditor(k){
+        const e = ed(k);
+        // typed/enum predicates would offer chips; this mock treats values as free text
+        return `<div class="editor">
+          <div class="editor-lbl">correct the value<span class="x" data-close>done</span></div>
+          <input data-val-input value="${e.value.replace(/"/g,'&quot;')}" placeholder="corrected value" aria-label="corrected value" />
+        </div>`;
+      }
+
+      function traceBlock(k){
+        const rows = k.stages.map((s,i)=>`<div class="stage"><span class="n">${i+1}</span><div><b>${s[0]}</b> — ${s[1]}</div></div>`).join("");
+        return `<div class="trace"><div class="trace-head" data-trace><span>how this was decided — <b>${k.stages.length} stages</b></span><span class="chev">›</span></div><div class="trace-body">${rows}</div></div>`;
+      }
+
+      function candidatesBlock(k){
+        return `<div class="card"><div class="card-lbl">identity</div><div class="cand">${k.candidates.map(c=>`<div class="cand-row"><span class="dot" style="background:${TINT[c.accent]};color:${ACCENT[c.accent]}">${c.initial}</span><div><div>${c.name}</div><div class="cand-note">${c.note}</div></div></div>`).join("")}<div class="cand-note">${k.candNote}</div></div></div>`;
+      }
+      function noticeBlock(k){ return `<div class="card"><div class="notice"><span class="ic">ⓘ</span><span>${k.notice}</span></div></div>`; }
+
+      function verdict(k){
+        const e = ed(k);
+        if(k.noEdge){
+          // identity / notice cards: native verdict + a universal "correct it" path
+          let out = `<div class="verdict">`;
+          if(!k.noPrimary) out += `<button class="v-primary" data-act="accept" data-cons="${(k.accept||'').replace(/"/g,'&quot;')}">${k.primaryLabel||"approve"}</button>`;
+          out += `<button class="v-reject${e.armed?" armed":""}" data-reject data-danger="${k.rejectDestructive?1:0}">${e.armed?"tap again — permanent":(k.rejectLabel||"reject — discard")}</button>`;
+          if(e.composing){
+            out += `<div class="compose"><textarea rows="3" placeholder="e.g. Sam here is Sam Rivera, the contractor.">${(e.draft||"")}</textarea>
+              <div class="compose-row"><button class="cancel" data-compose-cancel>cancel</button><button class="file" data-compose-file>file correction</button></div></div>`;
+          } else {
+            out += `<button class="v-correct" data-correct>correct it — file a note</button>`;
+          }
+          out += `<div class="escape"><button class="defer" data-act="defer" data-cons="parked in deferred — resume anytime.">defer</button><button class="discuss" data-act="discuss" data-cons="handed to the assistant — parked in deferred.">talk it over</button></div></div>`;
+          return out;
+        }
+        const corr = edited(k);
+        const primaryLabel = corr ? "approve correction" : (k.primaryLabel||"approve");
+        return `<div class="verdict">
+          <button class="v-primary${corr?" correction":""}" data-act="accept" data-corr="${corr?1:0}">${primaryLabel}</button>
+          <button class="v-reject${e.armed?" armed":""}" data-reject data-danger="${k.rejectDestructive?1:0}">${e.armed?"tap again — discard":(k.rejectLabel||"reject — discard")}</button>
+          <div class="escape"><button class="defer" data-act="defer" data-cons="parked in deferred — resume anytime.">defer</button><button class="discuss" data-act="discuss" data-cons="handed to the assistant — parked in deferred.">talk it over</button></div>
+        </div>`;
+      }
+
+      function render(){
+        const k = KINDS[state.kindIdx];
+        let body = "";
+        if(!k.noEdge) body = edgeBlock(k);
+        else if(k.candidates) body = candidatesBlock(k);
+        else if(k.notice) body = noticeBlock(k);
+
+        document.getElementById("screen").innerHTML =
+          navBar() +
+          subjectRow(k) + kindRow(k) +
+          `<p class="hero">${k.summary}</p>` +
+          body +
+          (k.why?`<p class="why">${k.why}</p>`:"") +
+          traceBlock(k) +
+          evidence(k) +
+          verdict(k);
+        wire(k);
+        renderTypes();
+        document.getElementById("note").innerHTML = noteFor(k);
+      }
+
+      function renderTypes(){
+        document.getElementById("typeRow").innerHTML = KINDS.map((k,i)=>
+          `<button class="type-chip" data-idx="${i}" aria-pressed="${i===state.kindIdx}">${k.label}${k.reserved?' <span class="reserved">·reserved</span>':""}${!k.noEdge?'<span class="edot" title="editable predicate & value"></span>':""}</button>`
+        ).join("");
+      }
+
+      function noteFor(k){
+        if(k.noEdge) return `<b>${k.label}.</b> An identity / FYI card — there's no <code>predicate → value</code> to rewrite, so it keeps its native verdict plus a universal <b>correct it</b> note composer. The green dot marks the cards where you can edit the relation and value directly.`;
+        return `<b>${k.label}.</b> Tap <code>${k.claim.predicate}</code> to swap the relation (search the registry or coin a new one) or the value to fix it. Any edit turns <b>approve</b> into <b>approve correction</b> — filed as a note so the wiki stays machine-written.`;
+      }
+
+      function toast(msg, cons){
+        const old = document.querySelector(".snack"); if(old) old.remove();
+        const s = document.createElement("div"); s.className="snack";
+        s.innerHTML = `<span class="msg"><b>${msg}</b>${cons?`<span class="cons">${cons}</span>`:""}</span><span class="undo">undo</span>`;
+        document.querySelector(".phone").appendChild(s);
+        const t = setTimeout(()=>s.remove(), 4200);
+        s.querySelector(".undo").onclick = ()=>{ clearTimeout(t); s.remove(); };
+      }
+
+      function wire(k){
+        const e = ed(k);
+        document.querySelector(".rdetail-back").onclick = ()=>toast("back to inbox");
+        document.querySelectorAll("[data-nav]").forEach(b=> b.onclick = ()=>{
+          state.kindIdx = (state.kindIdx + (+b.dataset.nav) + KINDS.length) % KINDS.length; e.armed=false; render();
+        });
+        document.querySelectorAll("[data-idx]").forEach(b=> b.onclick = ()=>{ state.kindIdx=+b.dataset.idx; render(); });
+
+        // open predicate / value editors
+        document.querySelectorAll("[data-edit]").forEach(b=> b.onclick = ()=>{
+          e.editing = e.editing===b.dataset.edit ? null : b.dataset.edit;
+          if(e.editing==="pred") e.search = e.predicate;
+          render();
+        });
+        const close = document.querySelector("[data-close]"); if(close) close.onclick = ()=>{ e.editing=null; render(); };
+
+        const ps = document.querySelector("[data-pred-search]");
+        if(ps){ ps.focus(); ps.setSelectionRange(ps.value.length, ps.value.length);
+          ps.oninput = ()=>{ e.search = ps.value; const list = document.querySelector(".pred-list"); if(list) list.outerHTML = tmpPredList(k); rebindPicks(k); };
+        }
+        document.querySelectorAll("[data-pick-pred]").forEach(b=> b.onclick = ()=>{ e.predicate = b.dataset.pickPred; e.editing=null; render(); });
+
+        const vi = document.querySelector("[data-val-input]");
+        if(vi){ vi.focus(); vi.setSelectionRange(vi.value.length, vi.value.length);
+          vi.oninput = ()=> e.value = vi.value;
+          vi.onkeydown = ev=>{ if(ev.key==="Enter"){ e.editing=null; render(); } };
+          vi.onblur = ()=>{ if(e.editing==="val"){ e.value = vi.value; } };
+        }
+
+        const tr = document.querySelector("[data-trace]"); if(tr) tr.onclick = ()=> tr.closest(".trace").toggleAttribute("open");
+
+        // verdict
+        document.querySelectorAll("[data-act]").forEach(b=> b.onclick = ()=>{
+          const act = b.dataset.act;
+          if(act==="accept"){
+            if(b.dataset.corr==="1" || edited(k)) toast(`correction filed — ${e.predicate} → ${e.value}`, "filed as a note in your "+k.domain+" domain; the pipeline applies it.");
+            else toast((k.primaryLabel||"approved"), b.dataset.cons);
+          } else if(act==="defer") toast("deferred", b.dataset.cons);
+          else if(act==="discuss") toast("handed to the assistant", b.dataset.cons);
+        });
+        const rj = document.querySelector("[data-reject]");
+        if(rj) rj.onclick = ()=>{
+          if(rj.dataset.danger==="1" && !e.armed){ e.armed=true; render(); return; }
+          e.armed=false; toast(k.rejectLabel||"rejected — discarded"); render();
+        };
+        const cc = document.querySelector("[data-correct]"); if(cc) cc.onclick = ()=>{ e.composing=true; render(); };
+        const ccx = document.querySelector("[data-compose-cancel]"); if(ccx) ccx.onclick = ()=>{ e.composing=false; render(); };
+        const ccf = document.querySelector("[data-compose-file]"); if(ccf) ccf.onclick = ()=>{ e.composing=false; toast("correction note filed", "the pipeline applies it; the wiki stays machine-written."); render(); };
+        const ta = document.querySelector(".compose textarea"); if(ta) ta.oninput = ()=> e.draft = ta.value;
+      }
+
+      // re-render just the predicate list as the search box changes (keeps input focus)
+      function tmpPredList(k){
+        const e = ed(k); const q = e.search.trim().toLowerCase();
+        const matches = REGISTRY.filter(r => r.name.toLowerCase().includes(q) || r.hint.toLowerCase().includes(q));
+        const exact = REGISTRY.some(r => r.name.toLowerCase() === q);
+        let list = matches.map(r => { const cur = r.name === e.predicate;
+          return `<button class="pred-opt${cur?" on cur":""}" data-pick-pred="${r.name}"><span class="pname">${r.name}</span><span class="pshape">${r.shape}</span><span class="pmeta">${cur?"current":r.hint}</span></button>`;
+        }).join("");
+        if(q.length && !exact) list += `<button class="pred-opt coin" data-pick-pred="${e.search.trim()}"><span class="pname">${e.search.trim()}</span><span class="pmeta">use as a new relation</span></button>`;
+        return `<div class="pred-list">${list || '<div class="cand-note" style="padding:6px 2px">no match — keep typing to coin a new relation</div>'}</div>`;
+      }
+      function rebindPicks(k){ const e=ed(k); document.querySelectorAll("[data-pick-pred]").forEach(b=> b.onclick = ()=>{ e.predicate=b.dataset.pickPred; e.editing=null; render(); }); }
+
+      // theme toggle
+      document.getElementById("t-dark").onclick = ()=>setTheme("dark");
+      document.getElementById("t-light").onclick = ()=>setTheme("light");
+      function setTheme(t){ state.theme=t; document.documentElement.dataset.theme=t;
+        document.getElementById("t-dark").setAttribute("aria-pressed", t==="dark");
+        document.getElementById("t-light").setAttribute("aria-pressed", t==="light"); }
+
+      render();
+    </script>
+  </body>
+</html>
