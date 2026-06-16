@@ -189,6 +189,20 @@ LOW_CONFIDENCE = 0.5
 # (a schedule binding / appointment) keep their shipped supersede semantics.
 _IRREALIS = frozenset({"hypothetical", "question"})
 
+# The "current floor" (Wave 1, slice 2) — the assertions that are a claim about
+# the PRESENT truth and may therefore occupy an entity's current value slot. An
+# `asserted` head is the live value; a `negated` head with no asserted peer is
+# the live *retraction* state, shown explicitly as currently-negated (a real
+# negation like "no longer allergic to penicillin" must not read as forgotten).
+# The remaining modalities (hypothetical/reported/question/expected) are not
+# claims about now, so they never floor as current. This is BROADER than
+# _IRREALIS above: that set is only the two modalities barred from displacing an
+# asserted head in supersession; here every non-asserted, non-negated modality
+# is kept off the current floor. Used by the three read surfaces that previously
+# had no assertion filter (entity_view, note_currency, canonical name); the
+# graph/agent/consolidation paths already constrain `assertion = 'asserted'`.
+CURRENT_ASSERTIONS = frozenset({"asserted", "negated"})
+
 
 @dataclass(frozen=True)
 class FactView:
@@ -452,6 +466,37 @@ def decide(candidate: Candidate, existing: list[FactView], *, predicate: str = "
         )
 
     if candidate.kind == "relationship" and not is_functional(predicate):
+        # Set-valued: edges to DISTINCT objects are co-equal live values and
+        # accumulate. But an ASSERTED and a NEGATED edge to the SAME object are a
+        # contradiction ("X is my friend" vs the unfriend "X is not my friend") —
+        # there is no `value`, so the edge identity IS the object_entity_id. An
+        # equal-polarity restatement was already taken by the refresh path above,
+        # so a remaining opposite-polarity same-object peer is the contradiction:
+        # hold the candidate behind a fact_conflict card (keyed on the peer's id —
+        # re-ingest refreshes both rows in place via the path above, so the card
+        # is never re-filed) rather than letting two opposite-polarity edges sit
+        # live. Other modality mixes (a "maybe" friend beside an asserted one)
+        # aren't contradictions and still accumulate.
+        contradiction = next(
+            (
+                e
+                for e in live
+                if candidate.object_entity_id is not None
+                and e.object_entity_id == candidate.object_entity_id
+                and e.status in ("active", "pending_review")
+                and e.assertion != candidate.assertion
+                and e.assertion in CURRENT_ASSERTIONS
+                and candidate.assertion in CURRENT_ASSERTIONS
+            ),
+            None,
+        )
+        if contradiction is not None:
+            return Decision(
+                insert=True,
+                insert_status="pending_review",
+                review_kind="fact_conflict",
+                conflicting_id=contradiction.id,
+            )
         return Decision(insert=True)  # non-functional edges accumulate
 
     # state / preference / functional relationship: at most one CURRENT (OPEN)

@@ -114,7 +114,11 @@ async def reproject_canonical_name(session: AsyncSession, entity_id: uuid.UUID) 
                 "SELECT predicate, value_json FROM app.facts"
                 # current value only: a closed (former) name must not re-project
                 # the display name (current = active AND valid_to IS NULL).
+                # Asserted only (Wave 1, slice 2): the canonical_name is a
+                # POSITIVE present identity claim, so a negated name ("not called
+                # Bob") or an irrealis/hypothetical name must never become it.
                 " WHERE entity_id = :id AND status = 'active' AND valid_to IS NULL"
+                "   AND assertion = 'asserted'"
             ),
             {"id": str(entity_id)},
         )
@@ -193,7 +197,10 @@ async def corroboration_count(session: AsyncSession, entity_id: uuid.UUID, domai
             "      AND derived_from_fact_id IS NULL AND status = 'active'"
             # current corroboration only: a former edge must not inflate the
             # auto-confirm count (current = active AND valid_to IS NULL).
-            "      AND valid_to IS NULL AND domain_code = :dom"
+            # Asserted only (Wave 1, slice 2): auto-confirm rests on firm
+            # POSITIVE evidence, so a negated or irrealis fact must not count
+            # toward it (a mention still corroborates existence regardless).
+            "      AND valid_to IS NULL AND assertion = 'asserted' AND domain_code = :dom"
             "  UNION"
             "  SELECT note_id FROM app.entity_mentions"
             "    WHERE entity_id = :id AND domain_code = :dom"

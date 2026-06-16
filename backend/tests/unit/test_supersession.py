@@ -487,6 +487,67 @@ def test_relationship_accumulates_by_default() -> None:
     assert d.insert and d.insert_status == "active" and d.supersede_ids == []
 
 
+def test_set_valued_unfriend_files_a_contradiction() -> None:
+    """An asserted friend edge plus a negated one to the SAME object ("X is not
+    my friend") is a contradiction, not two co-equal live edges — both park
+    behind a fact_conflict card for the owner, neither auto-supersedes."""
+    asserted = view(kind="relationship", object_entity_id="x", statement="X is my friend")
+    d = decide(
+        cand(
+            kind="relationship", object_entity_id="x", assertion="negated",
+            statement="X is no longer my friend",
+        ),
+        [asserted],
+        predicate="friend",
+    )  # fmt: skip
+    assert d.insert and d.insert_status == "pending_review"
+    assert d.review_kind == "fact_conflict" and d.conflicting_id == "old-1"
+    assert d.supersede_ids == [] and d.hold_ids == []
+
+
+def test_set_valued_contradiction_is_symmetric_in_arrival_order() -> None:
+    """The negated edge landing first, then the asserted one, files the same
+    card — whichever side arrives second parks behind it."""
+    negated = view(
+        kind="relationship", object_entity_id="x", assertion="negated", statement="not my friend"
+    )
+    d = decide(
+        cand(kind="relationship", object_entity_id="x", statement="X is my friend"),
+        [negated],
+        predicate="friend",
+    )
+    assert d.insert and d.insert_status == "pending_review"
+    assert d.review_kind == "fact_conflict" and d.conflicting_id == "old-1"
+
+
+def test_set_valued_distinct_objects_still_accumulate() -> None:
+    """Two friends are co-equal live edges, never a contradiction — the
+    object_entity_id is the edge identity, so distinct objects don't contend."""
+    friend_x = view(kind="relationship", object_entity_id="x", statement="X is my friend")
+    d = decide(
+        cand(kind="relationship", object_entity_id="y", statement="Y is my friend"),
+        [friend_x],
+        predicate="friend",
+    )
+    assert d.insert and d.insert_status == "active"
+    assert d.review_kind is None and d.supersede_ids == []
+
+
+def test_set_valued_irrealis_peer_is_not_a_contradiction() -> None:
+    """A 'maybe X is my friend' (hypothetical) beside an asserted friend edge is
+    not a hard contradiction — only asserted-vs-negated is — so it accumulates."""
+    asserted = view(kind="relationship", object_entity_id="x", statement="X is my friend")
+    d = decide(
+        cand(
+            kind="relationship", object_entity_id="x", assertion="hypothetical",
+            statement="maybe X is my friend",
+        ),
+        [asserted],
+        predicate="friend",
+    )  # fmt: skip
+    assert d.insert and d.insert_status == "active" and d.review_kind is None
+
+
 def test_functional_relationship_supersedes() -> None:
     old = view(kind="relationship", object_entity_id="acme", statement="works at Acme")
     d = decide(
