@@ -66,11 +66,35 @@ PR + CI green, and `scripts/dev-setup.sh` updated with any new dep/tool/step.
   and **UNWIRED**. The old non-streaming wiring was removed (W0·e, commit
   c9788a5); it only ever lived on `AgentLoop.run` (`loop.py`), which `/chat` never
   calls. Production goes exclusively through `run_stream` (`loop.py:224`; caller
-  `api/agent.py:233`).
+  `api/agent.py:242`).
 
 > **Migration-number reality check.** Migrations run through **0041**, not 0034.
 > `docs/ROADMAP.md:12`, `docs/README.md:13`, and the CLAUDE.md "Phases 0–4 are
 > shipped" framing are stale doc drift — see Track D.
+
+### Carried-forward Phase-5 items: status (all accounted for)
+
+The ROADMAP's "Carried forward from Phases 3–4" list is **already closed** by the
+engine waves — recorded here so Phase-5-completeness is verifiable from this doc,
+not only by re-deriving it from the code:
+
+- **`extraction_truncated` review card** — ✅ shipped (W0·c; `dropped_facts` threaded
+  through `plan_to_extraction`, `analysis/arbiter.py`).
+- **`integration_run` + `resolution_pin` tables (N9/N10)** — ✅ shipped (W1·A4;
+  `IntegrationRunLog` writes `kind='integration'` runs in `analysis/persist.py` /
+  `analysis/pipeline.py`; `resolution_pin` in `models/workflow.py`).
+- **N14 owner-ahead ordering** — ✅ seamed, teeth deferred to Phase 7
+  (`INTEGRATION_BACKFILL_ORDER_BY` inert until `untrusted_origin` provenance exists;
+  `WORKFLOW_ENGINE_PLAN.md §4`).
+- **Agent-loop maturation** — `JobEnqueuedEvent` ✅ shipped (W0·e, `agent/loop.py`);
+  `.tool` digest pins ✅ shipped (W0·e, `agent/toolfile.py` + read-tool guard);
+  **reflexion-in-the-live-turn** is the one remainder → **Track R** below.
+- **Merge proposals** — exist as review-card creation during analysis, **not** a
+  periodic sweep; there is nothing to *migrate*. A periodic merge-proposal *sweep*
+  is not-yet-built feature work → Phase 6 (§4).
+
+So the only carried-forward item still open for Phase 5 is reflexion (Track R);
+everything else shipped or is correctly seamed/deferred.
 
 ---
 
@@ -88,8 +112,13 @@ PR + CI green, and `scripts/dev-setup.sh` updated with any new dep/tool/step.
 | **(H6)** | Loop 3 durable-knowledge + predicate-canon self-improve | **Defer → Phase 6** | Large | — |
 | **(W6)** | Not-yet-built sweeps (entity hygiene / summary-reembed / tag-consolidation) | **Defer → Phase 6** | — | — |
 
-Migration numbers are reserved sequentially (0042 H, 0043 S, 0044 N2); a builder
-who lands tracks out of order takes the next free number and updates this table.
+**Migration numbers are assigned at *merge* time, not reserved.** A migration's
+number = the next free revision and its `down_revision` = the then-current head
+when it merges. The 0042/0043/0044 column above is **illustrative only** — it
+assumes an H→S→N2 merge order, but these tracks run **concurrently** in Wave 1, so
+do **not** hard-code a `down_revision` from this table: take the next free number
+at merge and chain `down_revision` to the current head. (The per-track numbers
+below carry the same caveat.)
 
 ---
 
@@ -276,9 +305,12 @@ All Small; independent of each other and of every other track.
   like `consolidate_predicates` is enqueued **unconditionally** every time. Add a
   **no-payload-key dedup branch** to `_already_active`: when the would-be enqueue
   has no note-key *and* a queued/running job of the same kind already exists,
-  suppress it (`queue.has_active(...)` with an empty payload field, statuses
-  `('queued','running')`). This mirrors the existing `sync_predicates` boot-backfill
-  guard (`queue.py:525-530`). **Migration:** none.
+  suppress it. **Mechanism (don't use `has_active`):** `has_active`
+  (`queue.py:185`) is structurally payload-keyed (`payload->>:field = :value`) and
+  **cannot** express a kind-only check. Add a small **kind-only active-check
+  helper** modeled on `enqueue_sync_predicates_if_absent`'s guard
+  (`queue.py:525-535`: raw `WHERE kind = :kind AND status IN ('queued','running')`)
+  and call it from `_already_active` for payload-keyless kinds. **Migration:** none.
 - **N2 — nullable `skill_version` on `app.runs`.** Add a nullable `skill_version`
   column to `app.runs` (migration **0044**) and the matching ORM field after
   `prompt_version` (`models/agent.py:88`). This is the deferred Track-C
@@ -296,7 +328,10 @@ All Small; independent of each other and of every other track.
   (`models/agent.py:110-114`) — N3 is just to *record* it here, optionally adding a
   testcontainers test that asserts the DB FK + its SET NULL behavior (a job aged
   out of `app.jobs` nulls `run_steps.job_id` rather than breaking a run-log read).
-  **Migration:** none.
+  **Numbering note:** the as-shipped code comments label this `job_id`-FK item
+  "(N2)" (`models/agent.py:97,113`) from an earlier task-numbering epoch; this plan
+  calls it **N3** and uses **N2** for `skill_version`. Same item — don't
+  cross-reference the wrong tag. **Migration:** none.
 
 **Sequencing/parallelism.** N1, N2, N3 are mutually independent and parallel to all
 other tracks. N2 carries the only migration in the track (0044).
