@@ -445,6 +445,31 @@ handoff is wired the footer affordance parks the item for the assistant.
 Whether a human may ever pin a typed value directly, short-circuiting the
 pipeline, stays the open #7 decision.
 
+*Detail composition: the block registry [decided].* The review detail is
+**assembled from a sequence of typed, reusable blocks**, not a per-kind
+conditional screen — so a new review kind is "declare a block sequence", not
+"add a branch". The vocabulary is `header`, `claim:{inference,diff,notice}`,
+`trace`, `action`, `evidence`, plus a lane-driven `footer` appended to every
+detail. A `kind → block-sequence` table (`frontend/src/review/blocks/registry`)
+declares each kind's blocks in a canonical order (e.g. a collision is
+`header · trace · claim:diff · action · evidence`; an inference is
+`header · claim:inference · trace · action · evidence`); listed blocks
+**self-gate** — they render nothing when their payload data is absent — so a
+sequence can be generous and reads as the kind's intent. The polymorphic
+`action` block carries the per-lane fork (pending controls / decided record /
+deferred park) and the per-kind controls (collision choices, inference
+approve-reject, new_predicate map/keep/rename); the inference's edit state is
+hoisted to the detail so `claim:inference` (the editable proposed-fact panel)
+and `action` (the approve button that flips to *approve correction* on an
+edit) share it. **The block-to-kind mapping is frontend-only** [decided]: it is
+derived from `kind` + payload-field presence, leaving the backend display
+contract (`display.py`, which emits card fields, not layout) and its tests
+untouched — layout iterates without a wire migration. A future kind that needs
+an ordering `kind` can't express may add an optional `payload.blocks` the
+frontend prefers; until then the table is the single source. (Rejected:
+backend-declared block sequences — couples the Python display contract to a
+React layout vocabulary for no present gain.)
+
 **Search** (settled in the Phase 2 review; input mode revised on-device):
 **live as-you-type** — results update per keystroke behind a 250ms
 debounce, stale responses sequence-guarded, previous results stay visible
