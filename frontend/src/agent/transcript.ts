@@ -50,6 +50,10 @@ export interface TranscriptMessage {
   stopReason?: string;
   /** Reflexion's flag on this turn — absent until a `verdict` event lands. */
   verdict?: Verdict;
+  /** Neutral provenance: the turn answered from the model's own knowledge with no
+   * retrieval — set when a `general_knowledge` event lands (mutually exclusive with
+   * `verdict`). Drives the calm "not your notes" footer chip. */
+  generalKnowledge?: boolean;
 }
 
 export function userMessage(text: string): TranscriptMessage {
@@ -121,6 +125,11 @@ export function applyEvent(messages: TranscriptMessage[], event: ChatEvent): Tra
         issues: event.issues ?? [],
         ungroundedClaims: event.ungrounded_claims ?? [],
       };
+      break;
+    case "general_knowledge":
+      // Rides after `done`, like the verdict — but neutral. The backend guarantees
+      // it never co-occurs with a verdict, so the bubble shows at most one footer.
+      next.generalKnowledge = true;
       break;
   }
   return [...messages.slice(0, -1), next];

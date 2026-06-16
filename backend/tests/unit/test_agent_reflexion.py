@@ -9,6 +9,7 @@ from jbrain.agent.reflexion import (
     aggregate,
     claims_from,
     critique_worthy,
+    has_substantive_claim,
     reflect,
     significant_tokens,
     strictly_improves,
@@ -80,6 +81,29 @@ class TestClaimsFrom:
 
     def test_empty_answer_yields_no_claims(self) -> None:
         assert claims_from("   ") == []
+
+
+class TestHasSubstantiveClaim:
+    def test_etymology_answer_is_substantive(self) -> None:
+        # The headline case: an answer purely from the model's own knowledge that
+        # asserts a fact (so a zero-retrieval turn earns the general-knowledge label).
+        assert has_substantive_claim("Jeff is a short form of Jeffrey.")
+
+    def test_a_greeting_is_not_substantive(self) -> None:
+        # Pure social tokens carry no checkable claim — the label must never fire on
+        # "hi" → "hello!" or a bare acknowledgement.
+        assert not has_substantive_claim("hello there!")
+        assert not has_substantive_claim("ok, sure")
+        assert not has_substantive_claim("Hi! Thanks.")
+
+    def test_empty_or_whitespace_is_not_substantive(self) -> None:
+        assert not has_substantive_claim("")
+        assert not has_substantive_claim("   ")
+
+    def test_one_substantive_sentence_among_filler_counts(self) -> None:
+        # A greeting wrapped around a real claim is still substantive (any claim
+        # with a non-filler significant token).
+        assert has_substantive_claim("Hi! The Eiffel Tower is in Paris.")
 
 
 class TestVerifyCitations:

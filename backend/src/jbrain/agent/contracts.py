@@ -205,6 +205,20 @@ class VerdictEvent(BaseModel):
     ungrounded_claims: list[str] = Field(default_factory=list)
 
 
+class GeneralKnowledgeEvent(BaseModel):
+    """The neutral provenance label for a turn answered purely from the model's own
+    world knowledge — zero retrieval (no note sources, no graph entities) yet a
+    substantive claim (docs/ASSISTANT.md). Like `VerdictEvent` it rides *after*
+    `DoneEvent`, but it is NOT a warning: it carries no claims and is mutually
+    exclusive with the amber verdict (a turn that retrieved nothing can't be
+    grounding-flagged; a turn that retrieved evidence is judged by the verifiers
+    instead). The PWA renders a calm "from general knowledge — not your notes" chip.
+    A greeting / acknowledgement (no substantive claim) emits nothing. Ephemeral —
+    never persisted (Loop 1 writes nothing)."""
+
+    type: Literal["general_knowledge"] = "general_knowledge"
+
+
 ChatEvent = Annotated[
     TextDelta
     | ToolCallEvent
@@ -212,6 +226,7 @@ ChatEvent = Annotated[
     | ToolViewEvent
     | JobEnqueuedEvent
     | DoneEvent
-    | VerdictEvent,
+    | VerdictEvent
+    | GeneralKnowledgeEvent,
     Field(discriminator="type"),
 ]

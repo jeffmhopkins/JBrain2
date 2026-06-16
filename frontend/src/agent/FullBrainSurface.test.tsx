@@ -659,6 +659,85 @@ describe("FullBrainSurface", () => {
     expect(screen.getByRole("note")).toHaveTextContent(/Not in your notes/);
   });
 
+  it("shows a neutral 'general knowledge' chip on a no-retrieval answer, not an amber flag", async () => {
+    async function* answer(): AsyncGenerator<ChatEvent> {
+      yield { type: "text_delta", text: "Jeff is a short form of Jeffrey." };
+      yield { type: "done", stop_reason: "end_turn" };
+      yield { type: "general_knowledge" };
+    }
+    render(<Harness d={deps({ chat: answer })} />);
+    await waitFor(() => screen.getByLabelText("Conversation"));
+    fireEvent.change(screen.getByLabelText("Composer"), { target: { value: "what is jeff?" } });
+    fireEvent.click(screen.getByRole("button", { name: "send" }));
+
+    // The calm neutral provenance note renders — and is steel/info, NOT the amber
+    // warning flag (DESIGN.md: info=steel, warning=amber).
+    const note = await screen.findByText(/From general knowledge — not your notes/);
+    expect(note).toHaveClass("fb-genknow");
+    // Distinct from the amber "unverified claim" flag — that must not appear.
+    expect(screen.queryByRole("button", { name: "unverified claim" })).toBeNull();
+    expect(document.querySelector(".md-flag")).toBeNull();
+  });
+
+  it("shows neither chip on a grounded (retrieved) answer", async () => {
+    async function* answer(): AsyncGenerator<ChatEvent> {
+      yield { type: "tool_call", id: "c1", name: "find_entity", arguments: {} };
+      yield {
+        type: "tool_result",
+        tool_call_id: "c1",
+        ok: true,
+        summary: "1",
+        entities: [{ kind: "entity", entity_id: "e1", label: "Jeff", domain: "general" }],
+      };
+      yield { type: "text_delta", text: "Your name is Jeff." };
+      yield { type: "done", stop_reason: "end_turn" };
+    }
+    render(<Harness d={deps({ chat: answer })} />);
+    await waitFor(() => screen.getByLabelText("Conversation"));
+    fireEvent.change(screen.getByLabelText("Composer"), { target: { value: "what is my name?" } });
+    fireEvent.click(screen.getByRole("button", { name: "send" }));
+
+    // The entity "Jeff" linkifies inline, splitting the prose across nodes — assert
+    // on the bubble's text content, as the other entity tests do.
+    await waitFor(() =>
+      expect(document.querySelector(".bubble.ai")?.textContent).toContain("Your name is Jeff."),
+    );
+    // A grounded retrieval shows no provenance chip and no amber flag.
+    expect(screen.queryByText(/From general knowledge/)).toBeNull();
+    expect(document.querySelector(".fb-genknow")).toBeNull();
+    expect(screen.queryByRole("button", { name: "unverified claim" })).toBeNull();
+  });
+
+  it("an ungrounded retrieved claim shows the amber flag, never the neutral chip", async () => {
+    async function* answer(): AsyncGenerator<ChatEvent> {
+      yield { type: "tool_call", id: "c1", name: "search", arguments: {} };
+      yield {
+        type: "tool_result",
+        tool_call_id: "c1",
+        ok: true,
+        summary: "1",
+        sources: [{ note_id: "n1", domain: "general", snippet: "cholesterol labs" }],
+      };
+      yield { type: "text_delta", text: "The roof needs replacing soon." };
+      yield { type: "done", stop_reason: "end_turn" };
+      yield {
+        type: "verdict",
+        passed: false,
+        score: 0,
+        issues: ["claim not grounded in retrieved sources: The roof needs replacing soon."],
+        ungrounded_claims: ["The roof needs replacing soon."],
+      };
+    }
+    render(<Harness d={deps({ chat: answer })} />);
+    await waitFor(() => screen.getByLabelText("Conversation"));
+    fireEvent.change(screen.getByLabelText("Composer"), { target: { value: "what's up?" } });
+    fireEvent.click(screen.getByRole("button", { name: "send" }));
+
+    // The amber flag stands; the neutral provenance chip must not appear.
+    expect(await screen.findByRole("button", { name: "unverified claim" })).toBeInTheDocument();
+    expect(document.querySelector(".fb-genknow")).toBeNull();
+  });
+
   it("a send with no chosen session surfaces the picker instead", async () => {
     const chat = vi.fn(noChat);
     render(<Harness d={deps({ listSessions: vi.fn(async () => []), chat })} />);
