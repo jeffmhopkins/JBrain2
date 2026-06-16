@@ -1,7 +1,7 @@
 """Wiring the pure promotion gate to the eval-run store (docs/WORKFLOW_ENGINE_PLAN.md
 §5 Track C).
 
-`evals.promotion.promotion_decision` is pure: it takes a baseline and a candidate
+`jbrain.workflow.promotion.promotion_decision` is pure: it takes a baseline and a candidate
 `EvalRun` and decides. This thin service supplies them from storage — loading the
 latest stored baseline run and a candidate run by version label and running the gate
 over them — so a self-improvement loop can ask "may this candidate be promoted over
@@ -17,11 +17,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from evals.promotion import PromotionResult, promotion_decision
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from jbrain.db.session import SessionContext
 from jbrain.workflow.evalstore import EvalRunStore, MalformedEvalRunError
+from jbrain.workflow.promotion import PromotionResult, promotion_decision
 
 
 @dataclass(frozen=True)

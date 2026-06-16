@@ -29,7 +29,6 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from evals.promotion import EvalRun, FixtureScore
 from jbrain.analysis.extraction import parse_extraction
 from jbrain.analysis.prompt import (
     EXTRACT_MAX_TOKENS,
@@ -42,6 +41,7 @@ from jbrain.analysis.prompt import (
 )
 from jbrain.config import Settings
 from jbrain.llm import build_router
+from jbrain.workflow.promotion import EvalRun, FixtureScore
 
 CASES_DIR = Path(__file__).parent / "cases"
 

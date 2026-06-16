@@ -1,7 +1,7 @@
 """Persisting eval runs so the promotion gate compares a candidate against a stored
 baseline over time (docs/WORKFLOW_ENGINE_PLAN.md §5 Track C, E5).
 
-The pure gate (`evals.promotion.promotion_decision`) takes two in-memory `EvalRun`s
+The pure gate (`jbrain.workflow.promotion.promotion_decision`) takes two in-memory `EvalRun`s
 and decides; today an eval run prints to stdout and is gone (`evals/run.py`). This
 store gives the gate memory: it persists an `EvalRun` into `app.eval_runs` (the
 per-fixture `{fixture, task, safety}` split into `scores` jsonb, plus
@@ -20,11 +20,11 @@ from __future__ import annotations
 import json
 import uuid
 
-from evals.promotion import EvalRun, FixtureScore
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from jbrain.db.session import SessionContext, scoped_session
+from jbrain.workflow.promotion import EvalRun, FixtureScore
 
 
 def _scores_to_json(run: EvalRun) -> str:

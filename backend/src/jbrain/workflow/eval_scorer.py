@@ -21,14 +21,13 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from typing import Any
 
-from evals.promotion import EvalRun
-from evals.run import eval_run_from_cases, load_cases, score_cases
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from jbrain.queue import SYSTEM_CTX
+from jbrain.queue import SYSTEM_CTX, PermanentJobError
 from jbrain.settings_store import SqlSettingsStore
 from jbrain.workflow.evalaction import EvalRunAction, Scorer
 from jbrain.workflow.evalstore import EvalRunStore
+from jbrain.workflow.promotion import EvalRun
 
 
 def build_live_scorer(router: Any) -> Scorer:
@@ -37,21 +36,46 @@ def build_live_scorer(router: Any) -> Scorer:
 
     `suite` selects the cases: a substring filter over case names, or `""`/`"all"`
     for the whole set (the nightly default). `version_label` is recorded as the
-    run's version so a later candidate is gated against this stored baseline."""
+    run's version so a later candidate is gated against this stored baseline.
+
+    The dev eval RUNNER (`evals/run.py`) is imported lazily, inside the callable —
+    NOT at module top level — so importing this module (and therefore `worker`/
+    `main`) never requires the dev-only `evals/` package, which the container image
+    does not ship. The runner is only needed when an `eval_run` job actually fires;
+    a deployment without the harness surfaces a graceful `PermanentJobError` rather
+    than a bare `ModuleNotFoundError` (eval_run is opt-in and on no prod schedule)."""
 
     async def scorer(suite: str, version_label: str) -> tuple[EvalRun, int]:
+        runner = _load_runner()
         cases = _select_cases(suite)
-        results, tokens = await score_cases(router, cases)
-        return eval_run_from_cases(results, version_label), tokens
+        results, tokens = await runner.score_cases(router, cases)
+        return runner.eval_run_from_cases(results, version_label), tokens
 
     return scorer
+
+
+def _load_runner() -> Any:
+    """Import the dev eval runner module on demand, translating its absence into a
+    `PermanentJobError` — the harness is dev/CI-only and not in the shipped image,
+    so an `eval_run` job in such a deployment fails cleanly instead of crashing."""
+    try:
+        import evals.run as runner
+    except (ModuleNotFoundError, ImportError) as exc:
+        raise PermanentJobError(
+            "eval harness not available in this deployment (evals/ is dev/CI-only)"
+        ) from exc
+    return runner
 
 
 def _select_cases(suite: str) -> list[dict[str, Any]]:
     """The cases a `suite` label runs. Empty / `all` is the whole curated set;
     anything else is a name-substring filter so an operator can score one slice
-    (e.g. `temporal`) without a separate fixture file."""
-    cases = load_cases()
+    (e.g. `temporal`) without a separate fixture file.
+
+    Loads cases via the lazily-imported dev runner so this module imports clean
+    without `evals/` (the gap that crash-looped the deploy); a deployment lacking
+    the harness gets a graceful `PermanentJobError` from `_load_runner`."""
+    cases = _load_runner().load_cases()
     selector = suite.strip().lower()
     if selector in ("", "all"):
         return cases
