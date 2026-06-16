@@ -1,0 +1,336 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>JBrain — reflexion verdict (unverified-claims warning)</title>
+<style>
+  /* Tokens from docs/DESIGN.md (dark theme) */
+  :root{
+    --bg:#0E0F11; --surface:#17181B; --surface-2:#1E2024; --border:#26282C;
+    --text:#E6E7E9; --text-2:#9A9DA3; --text-3:#5C5F66;
+    --steel:#7FA7C9; --green:#8FBC9A; --amber:#C9A36A; --rose:#CF8A8F; --violet:#A493C9;
+    --warn:var(--amber); --ok:var(--green); --info:var(--steel); --danger:var(--rose);
+    --radius:14px;
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:#000;color:var(--text)}
+  body{display:flex;align-items:center;justify-content:center;padding:20px;gap:24px;flex-wrap:wrap}
+
+  /* phone shell */
+  .phone{width:390px;height:780px;background:var(--bg);border:1px solid var(--border);
+    border-radius:34px;overflow:hidden;display:flex;flex-direction:column;position:relative}
+
+  /* header */
+  header{padding:14px 16px 12px;border-bottom:1px solid var(--border);background:var(--bg);
+    display:flex;align-items:center;justify-content:space-between;flex:0 0 auto}
+  .word{font-weight:650;font-size:17px;letter-spacing:.2px}
+  .word .dot{color:var(--steel)}
+  .mode{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--steel);
+    background:color-mix(in srgb,var(--steel) 13%,transparent);border:1px solid color-mix(in srgb,var(--steel) 30%,transparent);
+    padding:4px 9px;border-radius:999px}
+  .mode .d{width:7px;height:7px;border-radius:50%;background:var(--steel)}
+
+  /* thread */
+  .thread{flex:1 1 auto;overflow-y:auto;padding:16px 14px 8px;display:flex;flex-direction:column;gap:14px}
+  .row{display:flex;flex-direction:column;max-width:86%}
+  .row.user{align-self:flex-end;align-items:flex-end}
+  .row.ai{align-self:flex-start;align-items:flex-start}
+  .bubble{padding:10px 13px;border-radius:var(--radius);font-size:14.5px;line-height:1.5}
+  .user .bubble{background:color-mix(in srgb,var(--steel) 14%,var(--surface));
+    border:1px solid color-mix(in srgb,var(--steel) 26%,transparent);border-bottom-right-radius:5px}
+  .ai .bubble{background:var(--surface);border:1px solid var(--border);border-bottom-left-radius:5px}
+  .meta{font-size:11px;color:var(--text-3);margin:5px 3px 0}
+
+  /* the flagged (ungrounded) claim, highlighted inline when the warning is live */
+  .claim{border-radius:4px;padding:0 2px;transition:background .25s,box-shadow .25s}
+  .flagged .claim{background:color-mix(in srgb,var(--amber) 20%,transparent);
+    box-shadow:inset 0 -2px 0 color-mix(in srgb,var(--amber) 70%,transparent)}
+
+  /* source cards (what reflexion checks the answer against) */
+  .sources{display:flex;flex-direction:column;gap:6px;margin-top:9px;width:100%}
+  .src{display:flex;gap:8px;align-items:flex-start;background:var(--surface-2);
+    border:1px solid var(--border);border-radius:10px;padding:7px 9px;font-size:12px;color:var(--text-2)}
+  .src .ic{width:16px;height:16px;flex:0 0 auto;color:var(--text-3);margin-top:1px}
+  .src b{color:var(--text);font-weight:550}
+
+  /* the verdict warning banner */
+  .verdict{width:100%;margin-top:4px;border-radius:12px;overflow:hidden;
+    border:1px solid color-mix(in srgb,var(--amber) 34%,transparent);
+    background:color-mix(in srgb,var(--amber) 11%,var(--surface));
+    opacity:0;transform:translateY(6px);transition:opacity .35s,transform .35s;pointer-events:none}
+  .verdict.show{opacity:1;transform:none;pointer-events:auto}
+  .verdict .head{display:flex;align-items:center;gap:9px;padding:9px 11px;cursor:pointer;user-select:none}
+  .verdict .tri{width:18px;height:18px;color:var(--amber);flex:0 0 auto}
+  .verdict .ttl{font-size:13px;font-weight:600;color:var(--text)}
+  .verdict .sub{font-size:11.5px;color:var(--text-2)}
+  .verdict .chev{margin-left:auto;color:var(--text-3);transition:transform .2s;font-size:12px}
+  .verdict.open .chev{transform:rotate(90deg)}
+  .verdict .body{max-height:0;overflow:hidden;transition:max-height .3s ease}
+  .verdict.open .body{max-height:260px}
+  .verdict .body-inner{padding:0 11px 11px;border-top:1px solid color-mix(in srgb,var(--amber) 20%,transparent)}
+  .issue{display:flex;gap:8px;font-size:12.5px;color:var(--text);padding:9px 0;border-bottom:1px solid var(--border)}
+  .issue:last-child{border-bottom:0}
+  .issue .q{color:var(--amber);flex:0 0 auto}
+  .issue .why{color:var(--text-2);font-size:11.5px;margin-top:2px}
+  .verdict .foot{font-size:11px;color:var(--text-3);padding-top:9px;line-height:1.5}
+
+  /* a "Verified" pill for grounded turns (mode/example switch) */
+  .okpill{display:none;align-items:center;gap:7px;margin-top:6px;font-size:11.5px;color:var(--green);
+    background:color-mix(in srgb,var(--green) 12%,transparent);border:1px solid color-mix(in srgb,var(--green) 26%,transparent);
+    padding:5px 9px;border-radius:999px;width:max-content}
+  .okpill.show{display:inline-flex}
+
+  /* "checking…" overlay for buffer-retry mode */
+  .checking{display:none;align-items:center;gap:9px;background:var(--surface);border:1px solid var(--border);
+    border-radius:var(--radius);padding:11px 13px;font-size:13.5px;color:var(--text-2);width:max-content}
+  .checking.show{display:inline-flex}
+  .spin{width:15px;height:15px;border-radius:50%;border:2px solid var(--surface-2);
+    border-top-color:var(--steel);animation:sp .7s linear infinite}
+  @keyframes sp{to{transform:rotate(360deg)}}
+
+  /* composer */
+  .composer{flex:0 0 auto;border-top:1px solid var(--border);padding:11px 12px 16px;
+    display:flex;gap:9px;align-items:center;background:var(--bg)}
+  .composer input{flex:1;background:var(--surface-2);border:1px solid var(--border);color:var(--text);
+    border-radius:999px;padding:10px 14px;font-size:14px;outline:none}
+  .composer input::placeholder{color:var(--text-3)}
+  .send{width:38px;height:38px;border-radius:50%;border:0;flex:0 0 auto;cursor:pointer;
+    background:var(--steel);color:#0E0F11;display:grid;place-items:center}
+  .send:disabled{opacity:.45;cursor:default}
+
+  /* caret while streaming */
+  .caret{display:inline-block;width:7px;height:15px;vertical-align:-2px;margin-left:1px;
+    background:var(--steel);animation:blink 1s steps(1) infinite}
+  @keyframes blink{50%{opacity:0}}
+
+  /* side controls (not part of the app chrome — mock controls) */
+  .panel{width:300px;color:var(--text)}
+  .panel h1{font-size:15px;margin:0 0 4px}
+  .panel p{font-size:12.5px;color:var(--text-2);line-height:1.6;margin:0 0 14px}
+  .seg{display:flex;background:var(--surface-2);border:1px solid var(--border);border-radius:999px;padding:3px;margin-bottom:12px}
+  .seg button{flex:1;border:0;background:transparent;color:var(--text-2);font-size:12.5px;
+    padding:7px 8px;border-radius:999px;cursor:pointer}
+  .seg button.on{background:var(--surface);color:var(--text);border:1px solid var(--border)}
+  .row2{display:flex;gap:8px;margin-bottom:14px}
+  .btn{flex:1;background:var(--surface);border:1px solid var(--border);color:var(--text);
+    border-radius:10px;padding:9px;font-size:12.5px;cursor:pointer}
+  .btn:hover{border-color:var(--steel)}
+  .legend{font-size:11.5px;color:var(--text-3);line-height:1.7;border-top:1px solid var(--border);padding-top:12px}
+  .legend b{color:var(--text-2)}
+  .key{display:inline-block;width:10px;height:10px;border-radius:3px;vertical-align:-1px;margin-right:5px}
+</style>
+</head>
+<body>
+
+<!-- ===== phone ===== -->
+<div class="phone">
+  <header>
+    <span class="word">JBrain<span class="dot">.</span></span>
+    <span class="mode"><span class="d"></span> Full&nbsp;Brain</span>
+  </header>
+
+  <div class="thread" id="thread">
+    <div class="row user">
+      <div class="bubble">What’s my cholesterol trend, and what should I cut back on?</div>
+    </div>
+
+    <div class="row ai" id="aiRow">
+      <div class="bubble" id="answer"></div>
+
+      <!-- sources reflexion checks the answer against -->
+      <div class="sources" id="sources" style="display:none">
+        <div class="src"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M6 3h9l3 3v15H6z"/><path d="M9 12h6M9 16h6"/></svg>
+          <div>Note · <b>Checkup — Dr. Patel</b> · Apr 14<br>“LDL 142, up from 128 in October. Advised to reduce saturated fat.”</div></div>
+        <div class="src"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M6 3h9l3 3v15H6z"/><path d="M9 12h6M9 16h6"/></svg>
+          <div>Note · <b>Lab results</b> · Oct 2 · <span style="color:var(--rose)">health</span></div></div>
+      </div>
+
+      <!-- buffer-retry "checking" state -->
+      <div class="checking" id="checking"><span class="spin"></span> Checking the answer against your notes…</div>
+
+      <!-- the verdict warning (annotate mode) -->
+      <div class="verdict" id="verdict">
+        <div class="head" id="verdictHead">
+          <svg class="tri" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M12 3l9 16H3z"/><path d="M12 10v4M12 17h.01"/></svg>
+          <div>
+            <div class="ttl">Unverified claims</div>
+            <div class="sub" id="verdictSub">1 sentence isn’t backed by your notes · grounding 0.42</div>
+          </div>
+          <span class="chev">▶</span>
+        </div>
+        <div class="body"><div class="body-inner" id="issues"></div></div>
+      </div>
+
+      <!-- grounded turn pill -->
+      <div class="okpill" id="okpill">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 13l4 4L19 7"/></svg>
+        Verified against 2 notes · grounding 0.91
+      </div>
+
+      <div class="meta" id="meta"></div>
+    </div>
+  </div>
+
+  <div class="composer">
+    <input id="input" placeholder="Ask your brain…" />
+    <button class="send" id="send" title="Send">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 12h15M13 6l6 6-6 6"/></svg>
+    </button>
+  </div>
+</div>
+
+<!-- ===== mock controls (not part of the app) ===== -->
+<div class="panel">
+  <h1>Reflexion verdict — chat warning</h1>
+  <p>Design proposal for the <b>not-yet-built</b> PWA rendering of the backend’s
+     <code>VerdictEvent</code> (<code>passed</code>, <code>score</code>, <code>issues</code>).
+     The assistant checks its own answer against the notes it cited; an ungrounded claim
+     surfaces an amber warning <em>after</em> the answer (the answer never stops streaming).</p>
+
+  <div class="seg" id="modeSeg">
+    <button data-mode="annotate" class="on">Annotate (default)</button>
+    <button data-mode="retry">Buffer-retry (opt-in)</button>
+  </div>
+
+  <div class="row2">
+    <button class="btn" id="replay">▶ Replay turn</button>
+    <button class="btn" id="grounded">Show a clean turn</button>
+  </div>
+
+  <div class="legend">
+    <div><span class="key" style="background:var(--amber)"></span><b>Annotate</b> — default. Streams normally, then flags ungrounded claims. Zero extra model calls.</div>
+    <div style="margin-top:6px"><span class="key" style="background:var(--steel)"></span><b>Buffer-retry</b> — opt-in/off. Holds the answer, re-tries up to 2× for a grounded one, then shows it. Costs a spinner.</div>
+    <div style="margin-top:6px"><span class="key" style="background:var(--green)"></span><b>Grounded turn</b> — no warning at all; an optional “verified” pill.</div>
+    <div style="margin-top:10px;color:var(--text-3)">Reflexion writes nothing — the warning is momentary, never saved to your notes.</div>
+  </div>
+</div>
+
+<script>
+const ANSWER = [
+  {t:"Your LDL is trending up — ", g:true},
+  {t:"142 in April, from 128 in October", g:true},
+  {t:". The main thing to cut back on is ", g:true},
+  {t:"saturated fat", g:true},
+  {t:" — Dr. Patel flagged it directly. ", g:true},
+  // the ungrounded sentence:
+  {t:"You should also start taking a statin and aim for 10,000 steps a day", g:false},
+  {t:".", g:true},
+];
+const ISSUES = [
+  {q:"“start taking a statin”", why:"No note mentions a statin or any prescription."},
+  {q:"“aim for 10,000 steps a day”", why:"No note records a step-count or exercise target."},
+];
+
+const el = id => document.getElementById(id);
+const answer=el('answer'), sources=el('sources'), verdict=el('verdict'),
+      checking=el('checking'), okpill=el('okpill'), meta=el('meta'),
+      issues=el('issues'), send=el('send'), thread=el('thread');
+let mode='annotate';
+
+function reset(){
+  answer.innerHTML=''; answer.classList.remove('flagged');
+  sources.style.display='none'; checking.classList.remove('show');
+  verdict.classList.remove('show','open'); okpill.classList.remove('show');
+  meta.textContent=''; issues.innerHTML='';
+}
+
+function buildIssues(){
+  issues.innerHTML = ISSUES.map(i=>`
+    <div class="issue"><span class="q">“</span><div><div>${i.q}</div>
+    <div class="why">${i.why}</div></div></div>`).join('') +
+    `<div class="foot">These phrases didn’t appear in the notes the answer cited.
+     Reflexion flags them — it doesn’t remove them or change your notes.</div>`;
+}
+
+function streamAnswer(done){
+  let i=0;
+  answer.innerHTML='<span class="caret"></span>';
+  const caret=()=>'<span class="caret"></span>';
+  function tick(){
+    if(i>=ANSWER.length){ answer.querySelector('.caret')?.remove(); done(); return; }
+    const seg=ANSWER[i++];
+    const span=document.createElement('span');
+    if(!seg.g) span.className='claim';
+    span.textContent=seg.t;
+    answer.querySelector('.caret')?.remove();
+    answer.appendChild(span);
+    answer.insertAdjacentHTML('beforeend',caret());
+    thread.scrollTop=thread.scrollHeight;
+    setTimeout(tick, 26*seg.t.length + 90);
+  }
+  tick();
+}
+
+// ungrounded turn, annotate mode: stream → sources → verdict
+function runAnnotate(){
+  reset();
+  streamAnswer(()=>{
+    sources.style.display='flex';
+    setTimeout(()=>{
+      answer.classList.add('flagged');     // highlight the ungrounded sentence
+      buildIssues();
+      verdict.classList.add('show');
+      meta.textContent='checked in 0.0s · 0 extra model calls';
+      thread.scrollTop=thread.scrollHeight;
+    }, 360);
+  });
+}
+
+// ungrounded turn, buffer-retry mode: checking spinner → grounded answer, no warning
+function runRetry(){
+  reset();
+  checking.classList.add('show');
+  thread.scrollTop=thread.scrollHeight;
+  setTimeout(()=>{
+    checking.classList.remove('show');
+    // retry produced a grounded answer (drop the invented sentence)
+    streamGrounded(()=>{
+      sources.style.display='flex';
+      okpill.classList.remove('show'); // retry path: clean answer, quiet
+      meta.textContent='re-tried 1× · kept the grounded answer';
+    });
+  }, 1500);
+}
+
+// a genuinely grounded turn (no fabricated sentence) → optional verified pill
+function streamGrounded(after){
+  let i=0; const G=ANSWER.filter(s=>s.g);
+  answer.innerHTML='<span class="caret"></span>';
+  function tick(){
+    if(i>=G.length){ answer.querySelector('.caret')?.remove(); after&&after(); return; }
+    const seg=G[i++], span=document.createElement('span'); span.textContent=seg.t;
+    answer.querySelector('.caret')?.remove(); answer.appendChild(span);
+    answer.insertAdjacentHTML('beforeend','<span class="caret"></span>');
+    thread.scrollTop=thread.scrollHeight;
+    setTimeout(tick, 26*seg.t.length + 90);
+  }
+  tick();
+}
+function runGrounded(){
+  reset();
+  streamGrounded(()=>{
+    sources.style.display='flex';
+    okpill.classList.add('show');
+    meta.textContent='checked in 0.0s · grounded, no flags';
+    thread.scrollTop=thread.scrollHeight;
+  });
+}
+
+function go(){ mode==='annotate'?runAnnotate():runRetry(); }
+
+el('verdictHead').onclick=()=>verdict.classList.toggle('open');
+el('replay').onclick=go;
+el('grounded').onclick=runGrounded;
+send.onclick=go;
+el('input').addEventListener('keydown',e=>{if(e.key==='Enter')go();});
+document.querySelectorAll('#modeSeg button').forEach(b=>b.onclick=()=>{
+  document.querySelectorAll('#modeSeg button').forEach(x=>x.classList.remove('on'));
+  b.classList.add('on'); mode=b.dataset.mode; go();
+});
+
+go(); // autoplay on load
+</script>
+</body>
+</html>
