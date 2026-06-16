@@ -2724,6 +2724,61 @@ button.small {
   color: var(--text-2);
 }
 
+/* Former / past relationships — the "previously" group (DESIGN.md, variant B).
+   Predicates whose live value has ended collapse under a quiet subheader, so a
+   relationship you've left never reads as present. The former value dims one
+   step and carries a vague tenure span ("until 2026") in place of a chip. */
+.entity-pred.is-former .edge-object,
+.entity-pred.is-former .edge-value {
+  color: var(--text-2);
+  font-weight: 500;
+}
+
+.fact-tenure-span {
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+  white-space: nowrap;
+}
+
+.prev-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 11px 14px;
+  background: var(--surface-2);
+  border: none;
+  cursor: pointer;
+  font-size: var(--fs-micro);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-3);
+}
+
+.prev-head .count {
+  margin-left: auto;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--text-2);
+}
+
+.prev-head .caret {
+  color: var(--text-3);
+  transition: transform 0.15s ease;
+}
+
+.prev-group.collapsed .prev-head .caret {
+  transform: rotate(-90deg);
+}
+
+.prev-group.collapsed .prev-body {
+  display: none;
+}
+
+.prev-body .entity-pred + .entity-pred {
+  border-top: 1px solid var(--border);
+}
+
 /* Expanded citation: source words back-lit, provenance beneath. */
 .fact-citation {
   display: flex;

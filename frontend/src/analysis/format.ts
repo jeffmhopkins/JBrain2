@@ -130,9 +130,15 @@ export function dedupeTokens<
   return out;
 }
 
-/** A fact's validity span for timeline rails: "Mar 2023 → Jun 2026". */
+/** A fact's validity span for timeline rails and the "previously" group. Only
+ * dates the note actually gave are shown — a null bound stays vague rather than
+ * printing "—": "Mar 2023 → Jun 2026", "until Jun 2026" (unknown start),
+ * "since Mar 2023" (ongoing), or "" when the fact is wholly undated. */
 export function factSpan(fact: FactOut): string {
-  const from = fmtTemporal(fact.valid_from, fact.temporal_precision);
-  if (fact.valid_to === null) return from;
-  return `${from} → ${fmtTemporal(fact.valid_to, fact.temporal_precision)}`;
+  const from = fact.valid_from ? fmtTemporal(fact.valid_from, fact.temporal_precision) : null;
+  const to = fact.valid_to ? fmtTemporal(fact.valid_to, fact.temporal_precision) : null;
+  if (from && to) return `${from} → ${to}`;
+  if (to) return `until ${to}`;
+  if (from) return `since ${from}`;
+  return "";
 }

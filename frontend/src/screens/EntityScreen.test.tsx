@@ -98,6 +98,56 @@ const SARAH: EntityOut = {
   ],
 };
 
+// A person whose only worksFor values are FORMER ("I used to work…"): the head
+// is a closed interval (valid_to set, valid_from unknown), with no current
+// replacement — the case that must not read as present.
+const US_ARMY: FactOut = {
+  ...DENVER,
+  id: "f-army",
+  predicate: "worksFor",
+  qualifier: null,
+  value_json: "US Army",
+  status: "active",
+  valid_from: null,
+  valid_to: "2026-06-01T12:00:00Z",
+  temporal_precision: "year",
+  object_entity_id: "ent-army",
+  object_entity_name: "US Army",
+};
+const OREGON: FactOut = {
+  ...US_ARMY,
+  id: "f-oregon",
+  value_json: "Oregon Lithoprint",
+  object_entity_id: "ent-oregon",
+  object_entity_name: "Oregon Lithoprint",
+};
+const NAME_FULL: FactOut = {
+  ...DENVER,
+  id: "f-name",
+  predicate: "name.full",
+  qualifier: null,
+  value_json: "Jeff Hopkins",
+  status: "active",
+  valid_from: null,
+  valid_to: null,
+  object_entity_id: null,
+  object_entity_name: null,
+};
+const FORMER_ME: EntityOut = {
+  id: "ent-me",
+  kind: "Person",
+  canonical_name: "Me",
+  status: "active",
+  aliases: ["Jeff Hopkins"],
+  domain: "general",
+  predicates: [
+    { predicate: "name.full", qualifier: null, current: NAME_FULL, history: [NAME_FULL] },
+    { predicate: "worksFor", qualifier: null, current: null, history: [US_ARMY, OREGON] },
+  ],
+  inbound: [],
+  mentions: [],
+};
+
 function jsonResponse(body: unknown): Response {
   return new Response(JSON.stringify(body), {
     status: 200,
@@ -137,6 +187,34 @@ describe("EntityScreen", () => {
     expect(screen.getByText("provisional")).toBeInTheDocument();
     expect(screen.getByText("also “Sarah”, “sis”")).toBeInTheDocument();
     expect(screen.getByText("general")).toBeInTheDocument();
+  });
+
+  it("a former relationship drops into a collapsed 'previously' group with a vague span", async () => {
+    fetchMock.mockImplementation(async (input) => {
+      if (String(input) === "/api/entities/ent-me") return jsonResponse(FORMER_ME);
+      throw new Error(`Unexpected fetch: ${String(input)}`);
+    });
+    render(<EntityScreen entityId="ent-me" syncStatus="synced" {...handlers} />);
+    await screen.findByRole("heading", { name: "Me" });
+
+    // The current value (an open name) stays under Current.
+    const current = screen.getByRole("heading", { name: "Current" }).closest("section");
+    expect(within(current as HTMLElement).getByText("Jeff Hopkins")).toBeInTheDocument();
+
+    // worksFor's live value has ended → it sits under a "previously" group,
+    // collapsed by default, so a job you've left never reads as current.
+    const prev = screen.getByRole("button", { name: /previously/ });
+    expect(prev).toHaveAttribute("aria-expanded", "false");
+    expect(prev).toHaveTextContent("1 former");
+    // worksFor is NOT in the Current section.
+    expect(within(current as HTMLElement).queryByText("US Army")).not.toBeInTheDocument();
+    // The former employer shows a vague tenure span (unknown start), never "— → 2026".
+    expect(screen.getByText("US Army")).toBeInTheDocument();
+    expect(screen.getByText("until 2026")).toBeInTheDocument();
+    expect(screen.queryByText(/—\s*→/)).not.toBeInTheDocument();
+
+    fireEvent.click(prev);
+    expect(prev).toHaveAttribute("aria-expanded", "true");
   });
 
   it("page is current-only: history collapses behind a disclosure, no inline rail", async () => {

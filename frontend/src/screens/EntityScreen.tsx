@@ -9,7 +9,7 @@
 
 import { type TouchEvent, useEffect, useRef, useState } from "react";
 import { EdgeValue, MarkedText, StatusChip } from "../analysis/bits";
-import { edgePath } from "../analysis/format";
+import { edgePath, factSpan } from "../analysis/format";
 import { type EntityOut, type EntityPredicate, type FactOut, api } from "../api/client";
 import { TopBar } from "../components/TopBar";
 import { EntityTypeIcon } from "../entities/kinds";
@@ -33,19 +33,31 @@ function priorCount(pred: EntityPredicate, head: FactOut | undefined): number {
   return pred.history.filter((f) => f.id !== head?.id && f.status !== "retracted").length;
 }
 
+/** A predicate is FORMER when its live value is a closed interval (valid_to
+ * set): the relationship has ended and nothing current replaced it — so it reads
+ * as past, not present. An open head (valid_to null), including a pending one,
+ * is current. */
+function isFormer(pred: EntityPredicate): boolean {
+  return predHead(pred)?.valid_to != null;
+}
+
 function PredicateBlock({
   pred,
+  former = false,
   onOpenEntity,
   onOpenHistory,
 }: {
   pred: EntityPredicate;
+  // Renders the dimmed "previously" treatment with a vague tenure span.
+  former?: boolean;
   onOpenEntity: (entityId: string) => void;
   onOpenHistory: (pred: EntityPredicate) => void;
 }) {
   const head = predHead(pred);
   const earlier = priorCount(pred, head);
+  const span = former && head ? factSpan(head) : "";
   return (
-    <div className="entity-pred">
+    <div className={`entity-pred${former ? " is-former" : ""}`}>
       <div className="pred-head">
         <span className="fact-edge">
           <span className="edge-path">{edgePath(pred.predicate, pred.qualifier)}</span>
@@ -54,7 +66,11 @@ function PredicateBlock({
             {head ? <EdgeValue fact={head} onOpenEntity={onOpenEntity} /> : "—"}
           </span>
         </span>
-        {head && <StatusChip status={head.status} pinned={head.pinned} />}
+        {span ? (
+          <span className="fact-tenure-span">{span}</span>
+        ) : (
+          head && <StatusChip status={head.status} pinned={head.pinned} />
+        )}
       </div>
       {earlier > 0 && (
         <button type="button" className="pred-history-toggle" onClick={() => onOpenHistory(pred)}>
@@ -84,6 +100,9 @@ export function EntityScreen({
 }: EntityScreenProps) {
   const [state, setState] = useState<EntityState>({ phase: "loading" });
   const [historyPred, setHistoryPred] = useState<EntityPredicate | null>(null);
+  // "Previously" (former relationships) is collapsed by default — calm leads
+  // with what's true now.
+  const [prevOpen, setPrevOpen] = useState(false);
   const scrollerRef = useRef<HTMLDivElement>(null);
   const swipeStart = useRef<{ x: number; y: number } | null>(null);
 
@@ -162,24 +181,69 @@ export function EntityScreen({
               </p>
             </header>
 
-            {state.entity.predicates.length > 0 && (
-              <section>
-                <h3 className="section-header">Current</h3>
-                <div className="fact-card">
-                  {state.entity.predicates.map((pred) => (
-                    <PredicateBlock
-                      // A set-valued predicate (children, owns…) yields one block
-                      // per object, so the path alone collides — key on the
-                      // group's head fact, which is unique per block.
-                      key={pred.history[0]?.id ?? edgePath(pred.predicate, pred.qualifier)}
-                      pred={pred}
-                      onOpenEntity={onOpenEntity}
-                      onOpenHistory={setHistoryPred}
-                    />
-                  ))}
-                </div>
-              </section>
-            )}
+            {(() => {
+              // Split by tense: a predicate whose live value still holds is
+              // current; one whose live value has ended (a closed interval) is
+              // former and drops into the collapsed "Previously" group, so a
+              // relationship you've left never reads as present.
+              const current = state.entity.predicates.filter((p) => !isFormer(p));
+              const former = state.entity.predicates.filter(isFormer);
+              // Key on the group's head fact (unique per block) — a set-valued
+              // predicate yields one block per object, so the path alone collides.
+              const keyOf = (p: EntityPredicate) =>
+                p.history[0]?.id ?? edgePath(p.predicate, p.qualifier);
+              return (
+                <>
+                  {current.length > 0 && (
+                    <section>
+                      <h3 className="section-header">Current</h3>
+                      <div className="fact-card">
+                        {current.map((pred) => (
+                          <PredicateBlock
+                            key={keyOf(pred)}
+                            pred={pred}
+                            onOpenEntity={onOpenEntity}
+                            onOpenHistory={setHistoryPred}
+                          />
+                        ))}
+                      </div>
+                    </section>
+                  )}
+
+                  {former.length > 0 && (
+                    <section>
+                      <div className={`fact-card prev-group${prevOpen ? "" : " collapsed"}`}>
+                        <button
+                          type="button"
+                          className="prev-head"
+                          aria-expanded={prevOpen}
+                          onClick={() => setPrevOpen((o) => !o)}
+                        >
+                          <span className="caret" aria-hidden="true">
+                            ⌄
+                          </span>
+                          previously
+                          <span className="count">
+                            {former.length} former{current.length === 0 ? " · none current" : ""}
+                          </span>
+                        </button>
+                        <div className="prev-body">
+                          {former.map((pred) => (
+                            <PredicateBlock
+                              key={keyOf(pred)}
+                              pred={pred}
+                              former
+                              onOpenEntity={onOpenEntity}
+                              onOpenHistory={setHistoryPred}
+                            />
+                          ))}
+                        </div>
+                      </div>
+                    </section>
+                  )}
+                </>
+              );
+            })()}
 
             {state.entity.inbound.length > 0 && (
               <section>
