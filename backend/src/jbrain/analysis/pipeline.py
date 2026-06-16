@@ -76,6 +76,7 @@ from jbrain.analysis.extraction import (
     normalize_past_assertion,
     parse_extraction,
     ratchet_domain,
+    recover_scalar_value,
 )
 from jbrain.analysis.graph_context import build_graph_context
 from jbrain.analysis.integrate import Integrator
@@ -1731,6 +1732,7 @@ class AnalysisPipeline:
                 session,
                 entity_id=entity.id,
                 predicate=fact.predicate,
+                statement=fact.statement,
                 value_json=fact.value_json,
                 object_present=object_id is not None,
             ),
@@ -1822,24 +1824,25 @@ class AnalysisPipeline:
         *,
         entity_id: uuid.UUID,
         predicate: str,
+        statement: str,
         value_json: dict[str, Any] | None,
         object_present: bool,
     ) -> dict[str, Any] | None:
         """Typed value-shape validation (Phase 1/4, docs/PREDICATE_CANONICALIZATION.md).
-        Returns the value_json to commit: an enum value is first coerced to its
-        declared member (so a card reads "female", not the model's "Female
-        (inferred from 'wife')"); the result is then returned unchanged when it
-        fits the predicate's declared shape, or None (dropped — the fact survives
-        on its statement, the storage invariant) when it violates the shape AND the
-        value_shape_enforce setting is on. Default is log-only (returns it
-        unchanged); enforcement is flipped live after the eval confirms no false
-        drops. Kind is per entity-type, so this runs here (entity resolved) not at
-        parse time."""
-        if value_json is None:
-            return None
+        Returns the value_json to commit: when the model left value_json null it is
+        first deterministically recovered from the statement where it can be (an
+        enum member, a name.* lead-in), so the page shows the value, not the whole
+        sentence; an enum value the model wrote as prose is coerced to its declared
+        member ("Female (inferred from 'wife')" -> "female"); the result is then
+        returned unchanged when it fits the predicate's declared shape, or None
+        (dropped — the fact survives on its statement, the storage invariant) when
+        it violates the shape AND the value_shape_enforce setting is on. Default is
+        log-only (returns it unchanged); enforcement is flipped live after the eval
+        confirms no false drops. Kind is per entity-type, so this runs here (entity
+        resolved) not at parse time."""
         registry = get_registry()
-        # Skip the kind lookup for the many drift/unknown predicates no type
-        # declares — they have no shape to validate and are never rejected.
+        # Drift/unknown predicates no type declares have no shape to validate and
+        # nothing to recover against — never rejected.
         if not registry.declares_predicate(predicate):
             return value_json
         kind = (
@@ -1850,6 +1853,14 @@ class AnalysisPipeline:
         pred = registry.predicate_for_kind(kind, predicate)
         if pred is None:
             return value_json
+        # Recover a concise value the model omitted (value_json null, prose only):
+        # an enum member or a name after its lead-in. Leaves it null when nothing
+        # recovers, so the fact still falls back to its statement (no worse).
+        if value_json is None:
+            enum_values = pred.enum_values if pred.value_shape == "enum" else ()
+            value_json = recover_scalar_value(predicate, statement, enum_values)
+            if value_json is None:
+                return None
         # Normalize an enum value the model wrote as prose ("Female (inferred from
         # 'wife')") down to its member ("female") BEFORE validating, so the stored
         # datum — and the review card that renders it — reads as the clean member.
@@ -1935,6 +1946,7 @@ class AnalysisPipeline:
                 session,
                 entity_id=entity.id,
                 predicate=fact.predicate,
+                statement=fact.statement,
                 value_json=fact.value_json,
                 object_present=object_entity is not None,
             ),
