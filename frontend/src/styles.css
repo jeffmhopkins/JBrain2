@@ -3814,6 +3814,86 @@ button.small {
   color: var(--steel);
 }
 
+/* The relation chip and its weighted picker (docs/mocks/
+   review-edit-predicate-and-value.html): tap the predicate to swap it for one of
+   the canonicals nearest the proposed relation — ranked by similarity (the
+   rnp-match bar) — or type to coin a new one. */
+.rinf-chip.pred {
+  font-family: var(--font-mono);
+  font-size: var(--fs-secondary);
+}
+
+.rinf-pred-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 4px;
+  padding: 10px;
+  background: var(--bg);
+  border: 1px solid var(--steel);
+  border-radius: var(--r-input);
+}
+
+.rinf-pred-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+}
+
+.rinf-pred-done {
+  margin-left: auto;
+  font: inherit;
+  font-size: var(--fs-secondary);
+  color: var(--steel);
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+
+.rinf-pred-search {
+  width: 100%;
+  max-width: none;
+}
+
+.rinf-pred-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.rinf-pred-opt {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font: inherit;
+  text-align: left;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-input);
+  padding: 8px 11px;
+  cursor: pointer;
+}
+
+.rinf-pred-opt.current {
+  border-color: var(--steel);
+}
+
+.rinf-pred-name {
+  font-family: var(--font-mono);
+  font-size: var(--fs-secondary);
+}
+
+.rinf-pred-cur {
+  margin-left: auto;
+  font-size: var(--fs-micro);
+  color: var(--steel);
+}
+
 .rinf-enum {
   display: flex;
   flex-wrap: wrap;

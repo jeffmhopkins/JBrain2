@@ -542,6 +542,28 @@ class AnalysisPipeline:
             for s in intent.supersession_proposals
         }
         registry = get_registry()
+        # Weighted relation candidates for the correct-in-place predicate picker:
+        # the canonicals nearest each held predicate, by embedding similarity, so
+        # the card offers a ranked list to swap the relation onto. One embed call
+        # for all held facts. Inert without an embedder or with the
+        # canonicalization setting off — the picker then offers manual entry only.
+        pred_suggestions: dict[int, list[dict[str, Any]]] = {}
+        if (
+            self._embedder is not None
+            and self._settings is not None
+            and await self._settings.predicate_canonicalization(SYSTEM_CTX)
+        ):
+            held = [
+                (i, pf.fact) for i, pf in enumerate(plan.facts) if pf.status == "pending_review"
+            ]
+            if held:
+                decisions = await decide_predicates(
+                    session,
+                    [(f.predicate, f.statement, f.kind) for _, f in held],
+                    embedder=self._embedder,
+                )
+                for (i, _), decision in zip(held, decisions, strict=True):
+                    pred_suggestions[i] = [{"name": n, "score": s} for n, s in decision.suggestions]
         for i, pf in enumerate(plan.facts):
             if pf.status != "pending_review":
                 continue
@@ -628,6 +650,13 @@ class AnalysisPipeline:
                             extract_version=PROMPT_VERSION,
                             integrate_version=intent.prompt_version,
                             integrator_version=intent.integrator_version,
+                        ),
+                        # The ranked relation candidates the predicate picker
+                        # offers (omitted when there's no embedder to weight them).
+                        **(
+                            {"predicate_suggestions": pred_suggestions[i]}
+                            if pred_suggestions.get(i)
+                            else {}
                         ),
                         **inference_display(
                             statement=card_statement,

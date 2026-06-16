@@ -1,51 +1,31 @@
 import { correctionDraft } from "../payload";
 import type { BlockCtx } from "./types";
 
-/** The lane-driven footer of escape hatches — always present so reject is never
- * the only way out. Pending: defer · correct it · talk it over (correct it is
- * hidden for inferences, which edit in place). Deferred: resume. Decided: an
- * armed reopen that unwinds the decision. */
+/** The lane-driven footer. Pending: inferences correct in place (predicate +
+ * value on the card), so they show no footer; other kinds keep "correct it", the
+ * free-form correction composer. Deferred: resume. Decided: an armed reopen that
+ * unwinds the decision. */
 export function Footer({ ctx }: { ctx: BlockCtx }) {
   const { item, parsed, lane, queue, armed, tap, onClose, inference, composing } = ctx;
 
   if (lane === "pending") {
+    // Inferences edit predicate + value in place — nothing left for the footer.
+    if (inference.isInference) return null;
     return (
       <footer className="rdetail-foot">
         <button
           type="button"
-          className="rfoot-defer"
+          className={`rfoot-correct${composing ? " active" : ""}`}
           onClick={() => {
-            queue.resolve(item.id, "defer");
-            onClose();
+            if (composing) {
+              ctx.setComposing(false);
+            } else {
+              ctx.setDraft(correctionDraft(item, parsed));
+              ctx.setComposing(true);
+            }
           }}
         >
-          defer
-        </button>
-        {!inference.isInference && (
-          <button
-            type="button"
-            className={`rfoot-correct${composing ? " active" : ""}`}
-            onClick={() => {
-              if (composing) {
-                ctx.setComposing(false);
-              } else {
-                ctx.setDraft(correctionDraft(item, parsed));
-                ctx.setComposing(true);
-              }
-            }}
-          >
-            correct it
-          </button>
-        )}
-        <button
-          type="button"
-          className="rfoot-discuss"
-          onClick={() => {
-            queue.resolve(item.id, "discuss");
-            onClose();
-          }}
-        >
-          talk it over
+          correct it
         </button>
       </footer>
     );

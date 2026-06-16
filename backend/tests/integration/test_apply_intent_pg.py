@@ -4,12 +4,14 @@ LLM is not used — apply_intent consumes a pre-built intent + plan. Reuses the
 proven note/ingest helpers from test_extraction_pg.
 """
 
+import hashlib
+import random
 import uuid
 from datetime import UTC, datetime
 from typing import Any
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import select, text
 
 from jbrain.analysis.arbiter import plan_intent
 from jbrain.analysis.intent import (
@@ -19,6 +21,7 @@ from jbrain.analysis.intent import (
     IntentFact,
 )
 from jbrain.analysis.pipeline import AnalysisPipeline, _ChunkRef
+from jbrain.analysis.predicates import raw_descriptor
 from jbrain.analysis.weight import ConfidenceSignals
 from jbrain.db.session import scoped_session
 from jbrain.ingest.chunker import PARAGRAPH
@@ -26,6 +29,7 @@ from jbrain.llm import FakeLlmClient, LlmRouter
 from jbrain.models.analysis import Entity, Fact, ReviewItem
 from jbrain.models.notes import Chunk
 from jbrain.queue import SYSTEM_CTX
+from jbrain.settings_store import PREDICATE_CANON_KEY, SqlSettingsStore
 from tests.conftest import docker_available
 from tests.integration.test_extraction_pg import ingest, make_note, maker  # noqa: F401
 from tests.integration.test_rls import database_url  # noqa: F401
@@ -42,6 +46,50 @@ def _pipeline(maker) -> AnalysisPipeline:  # noqa: F811
     # apply_intent never calls the LLM; a stub router satisfies the constructor.
     router = LlmRouter({"xai": FakeLlmClient()}, {"note.extract": ("xai", "grok-4.3")})
     return AnalysisPipeline(maker, router)
+
+
+_EMBED_MODEL = "test-embed-v1"
+
+
+def _vec(t: str) -> list[float]:
+    rng = random.Random(int.from_bytes(hashlib.sha256(t.encode()).digest()[:8], "big"))
+    return [rng.uniform(-1, 1) for _ in range(384)]
+
+
+class _FakeEmbed:
+    async def embed(self, texts: list[str]) -> list[list[float]]:
+        return [_vec(t) for t in texts]
+
+
+def _embed_pipeline(maker) -> AnalysisPipeline:  # noqa: F811
+    # apply_intent's inference-card pass weights relation candidates through the
+    # embedder when the canonicalization setting is on; wire both up.
+    router = LlmRouter({"xai": FakeLlmClient()}, {"note.extract": ("xai", "grok-4.3")})
+    return AnalysisPipeline(
+        maker,
+        router,
+        embedder=_FakeEmbed(),
+        embed_model=_EMBED_MODEL,
+        settings=SqlSettingsStore(maker),
+    )
+
+
+async def _seed_canonical(maker, name: str, embedding_text: str) -> None:  # noqa: F811
+    async with scoped_session(maker, SYSTEM_CTX) as session:
+        await session.execute(
+            text(
+                "INSERT INTO app.canonical_predicates"
+                " (canonical_name, descriptor, value_shape, kind, embedding, embedding_model)"
+                " VALUES (:n, 'd', 'text', 'attribute', cast(:emb AS vector), :model)"
+                " ON CONFLICT (canonical_name) DO UPDATE SET"
+                " embedding = cast(:emb AS vector), embedding_model = :model"
+            ),
+            {
+                "n": name,
+                "emb": "[" + ",".join(map(str, _vec(embedding_text))) + "]",
+                "model": _EMBED_MODEL,
+            },
+        )
 
 
 async def _load_chunks(maker, note_id: str) -> list[_ChunkRef]:  # noqa: F811
@@ -85,10 +133,19 @@ def _intent(note_id: str, resolutions, facts) -> IntegrationIntent:
     )
 
 
-async def _run(maker, note_id, intent, plan, *, tmp_path, dropped_facts: int = 0) -> None:  # noqa: F811
+async def _run(
+    maker,  # noqa: F811
+    note_id,
+    intent,
+    plan,
+    *,
+    tmp_path,
+    dropped_facts: int = 0,
+    pipeline=None,
+) -> None:
     chunks = await _load_chunks(maker, note_id)
     async with scoped_session(maker, SYSTEM_CTX) as session:
-        await _pipeline(maker).apply_intent(
+        await (pipeline or _pipeline(maker)).apply_intent(
             session,
             note_id=uuid.UUID(note_id),
             note_domain="general",
@@ -197,6 +254,54 @@ async def test_apply_intent_holds_cross_subject_review_fact(maker, tmp_path):  #
     assert [s["key"] for s in trace["stages"]] == ["extraction", "integration", "arbiter"]
     arbiter_rows = dict(r for r in trace["stages"][2]["rows"])
     assert "cross_subject_link" in arbiter_rows["status"]
+
+
+async def test_held_card_carries_weighted_predicate_suggestions(maker, tmp_path):  # noqa: F811
+    # With the canonicalization setting on and an embedder wired, a held fact's
+    # inference card carries the canonicals nearest its relation — the weighted
+    # list the correct-in-place predicate picker offers. Seed 'sector' at the
+    # exact vector the held predicate's descriptor embeds to (cosine 1 → top).
+    await SqlSettingsStore(maker).upsert(SYSTEM_CTX, PREDICATE_CANON_KEY, True)
+    await _seed_canonical(
+        maker, "sector", raw_descriptor("industry", "Initech is in tech", "attribute")
+    )
+    note_id = await make_note(maker, domain="general", body="Globex and Initech notes.")
+    await ingest(maker, note_id, tmp_path)
+    intent = _intent(
+        note_id,
+        [
+            EntityResolution(
+                mention_ref="m1", mode="new", new_kind="Organization", new_name="Globex"
+            ),
+            EntityResolution(
+                mention_ref="m2",
+                mode="new",
+                new_kind="Organization",
+                new_name="Initech",
+                cross_subject=True,
+            ),
+        ],
+        [_fact("m1"), _fact("m2", statement="Initech is in tech")],
+    )
+    plan = plan_intent(intent, signals={0: _SURFACE, 1: _SURFACE})
+    await _run(maker, note_id, intent, plan, tmp_path=tmp_path, pipeline=_embed_pipeline(maker))
+
+    async with scoped_session(maker, SYSTEM_CTX) as session:
+        card = (
+            await session.execute(
+                select(ReviewItem).where(
+                    ReviewItem.kind == "low_confidence_inference",
+                    ReviewItem.payload["note_id"].astext == note_id,
+                )
+            )
+        ).scalar_one()
+    suggestions = card.payload["predicate_suggestions"]
+    assert isinstance(suggestions, list) and suggestions
+    names = {s["name"] for s in suggestions}
+    assert "sector" in names
+    # The strongest match is a near-perfect score (the seeded identical vector).
+    top = max(suggestions, key=lambda s: s["score"])
+    assert top["name"] == "sector" and top["score"] > 0.99
 
 
 async def test_apply_intent_holds_below_threshold_fact_decide_would_commit(maker, tmp_path):  # noqa: F811

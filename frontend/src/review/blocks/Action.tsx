@@ -2,7 +2,26 @@ import { edgePath } from "../../analysis/format";
 import type { ReviewItem } from "../../api/client";
 import { type Parsed, type Proposal, kindLabel, proposalsFor } from "../payload";
 import { NewPredicateCard } from "./NewPredicateCard";
-import type { ReviewBlock } from "./types";
+import type { InferenceEdit, ReviewBlock } from "./types";
+
+/** The correction note an edited inference files (the #7 channel — humans never
+ * touch the wiki, they describe the fix and the pipeline applies it). Spells out
+ * whichever side(s) changed: the relation, the value, or both. */
+export function inferenceCorrection(item: ReviewItem, parsed: Parsed, inf: InferenceEdit): string {
+  const fromPath = edgePath(inf.originalPredicate, parsed.qualifier);
+  const toPath = edgePath(inf.editPredicate.trim(), parsed.qualifier);
+  const value = inf.editValue.trim();
+  const lead = `Correction — ${parsed.statement ?? parsed.summary ?? kindLabel(item.kind)}`;
+  let fix: string;
+  if (inf.predicateEdited && inf.valueEdited) {
+    fix = `This should be ${toPath} → ${value}, not ${fromPath} → ${inf.originalValue}.`;
+  } else if (inf.predicateEdited) {
+    fix = `The relation should be ${toPath}, not ${fromPath} (value ${inf.originalValue}).`;
+  } else {
+    fix = `The value for ${fromPath} should be ${value}, not ${inf.originalValue}.`;
+  }
+  return `${lead}\n\n${fix}`;
+}
 
 /** The polymorphic decision block: the correction-note composer, then the
  * controls a pending item offers (new_predicate map/keep/rename/dismiss, an
@@ -30,10 +49,8 @@ export const Action: ReviewBlock = ({ ctx }) => {
   }
 
   function approveInference() {
-    if (inference.valueEdited) {
-      const path = edgePath(parsed.predicate ?? "", parsed.qualifier);
-      const body = `Correction — ${parsed.statement ?? parsed.summary ?? kindLabel(item.kind)}\n\nThe value for ${path} should be ${inference.editValue.trim()}, not ${inference.originalValue}.`;
-      queue.correct(item.id, body);
+    if (inference.edited) {
+      queue.correct(item.id, inferenceCorrection(item, parsed, inference));
     } else {
       queue.resolve(item.id, "accept", { choice: "approve" });
     }
@@ -104,10 +121,10 @@ export const Action: ReviewBlock = ({ ctx }) => {
         <div className="rinf-actions">
           <button
             type="button"
-            className={`rinf-approve${inference.valueEdited ? " correction" : ""}`}
+            className={`rinf-approve${inference.edited ? " correction" : ""}`}
             onClick={approveInference}
           >
-            {inference.valueEdited ? "approve correction" : "approve"}
+            {inference.edited ? "approve correction" : "approve"}
           </button>
           <button
             type="button"

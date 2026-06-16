@@ -116,17 +116,24 @@ function Detail({ item, lane, queue, position, onClose, onAdvance, onNav }: Deta
   const [composing, setComposing] = useState(false);
   const [draft, setDraft] = useState("");
 
-  // Direction C — correct in place: a low-confidence inference's value is
-  // editable on the card. The proposed-fact panel (claim:inference) and the
-  // approve button (action) share this edit state, so an edit flips approve to
-  // approve correction. A typed predicate offers its members as chips instead
-  // of free text.
+  // Direction C — correct in place: a low-confidence inference's predicate AND
+  // value are editable on the card. The proposed-fact panel (claim:inference)
+  // and the approve button (action) share this edit state, so editing either
+  // side flips approve to approve correction. The predicate side is a weighted
+  // picker (the canonicals nearest the proposed relation) plus free entry; the
+  // value is free text, or a typed predicate's members as chips.
   const isInference = item.kind === "low_confidence_inference" && parsed.predicate !== null;
   const originalValue = isInference ? valueLabel(parsed.valueJson, parsed.statement ?? "") : "";
   const [editValue, setEditValue] = useState(originalValue);
   const [editingValue, setEditingValue] = useState(false);
   const valueEdited =
     isInference && editValue.trim().length > 0 && editValue.trim() !== originalValue;
+
+  const originalPredicate = isInference ? (parsed.predicate ?? "") : "";
+  const [editPredicate, setEditPredicate] = useState(originalPredicate);
+  const [editingPredicate, setEditingPredicate] = useState(false);
+  const predicateEdited =
+    isInference && editPredicate.trim().length > 0 && editPredicate.trim() !== originalPredicate;
 
   // Carousel: swipe left/right pages to the next/prev item, the horizontal twin
   // of the ‹ › chevrons. Armed under the same condition they show, and only on a
@@ -166,6 +173,14 @@ function Detail({ item, lane, queue, position, onClose, onAdvance, onNav }: Deta
       editingValue,
       setEditingValue,
       valueEdited,
+      originalPredicate,
+      editPredicate,
+      setEditPredicate,
+      editingPredicate,
+      setEditingPredicate,
+      predicateEdited,
+      predicateSuggestions: parsed.predicateSuggestions,
+      edited: valueEdited || predicateEdited,
     },
     composing,
     setComposing,

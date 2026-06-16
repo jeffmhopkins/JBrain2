@@ -9,9 +9,12 @@ import type { ReviewFilter, ReviewItem } from "../../api/client";
 import type { Parsed } from "../payload";
 import type { ReviewQueueController } from "../useReviewQueue";
 
-/** The low-confidence-inference value, edited in place. Hoisted to the detail
- * so the proposed-fact panel (claim:inference) and the approve button (action)
- * share one edit state — editing flips approve → approve correction. */
+/** A low-confidence inference, corrected in place. Hoisted to the detail so the
+ * proposed-fact panel (claim:inference) and the approve button (action) share
+ * one edit state — editing either the predicate or the value flips approve →
+ * approve correction. The predicate picker offers `predicateSuggestions` (the
+ * canonicals nearest the proposed relation, weighted by similarity) and free
+ * entry; the value is free text, or an enum predicate's members as chips. */
 export interface InferenceEdit {
   isInference: boolean;
   originalValue: string;
@@ -20,6 +23,16 @@ export interface InferenceEdit {
   editingValue: boolean;
   setEditingValue: (b: boolean) => void;
   valueEdited: boolean;
+  // predicate (the relation) — the weighted-picker side of correct-in-place.
+  originalPredicate: string;
+  editPredicate: string;
+  setEditPredicate: (v: string) => void;
+  editingPredicate: boolean;
+  setEditingPredicate: (b: boolean) => void;
+  predicateEdited: boolean;
+  predicateSuggestions: { name: string; score: number }[];
+  // True when either side was changed — drives the approve-correction flip.
+  edited: boolean;
 }
 
 export interface BlockCtx {
