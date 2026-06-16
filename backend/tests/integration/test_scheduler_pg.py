@@ -18,6 +18,7 @@ from sqlalchemy.pool import NullPool
 
 from jbrain import queue
 from jbrain.db.session import scoped_session
+from jbrain.workflow.evalaction import EVAL_RUN_SPEC
 from jbrain.workflow.registry import ACTION_SPECS, build_registry
 from jbrain.workflow.scheduler import (
     PURGE_ACTION,
@@ -50,6 +51,7 @@ def _registry():  # noqa: ANN202
             RECONCILE_PENDING_NOTES_ACTION,
             RECONCILE_PENDING_INTEGRATION_ACTION,
             RECONCILE_UNEMBEDDED_NOTES_ACTION,
+            EVAL_RUN_SPEC,
         )
     )
 
@@ -104,6 +106,18 @@ async def _jobs_of_kind(maker: async_sessionmaker, kind: str) -> int:
     async with scoped_session(maker, queue.SYSTEM_CTX) as s:
         return (
             await s.execute(text("SELECT count(*) FROM app.jobs WHERE kind = :k"), {"k": kind})
+        ).scalar_one()
+
+
+async def _latest_payload_of_kind(maker: async_sessionmaker, kind: str) -> dict:
+    async with scoped_session(maker, queue.SYSTEM_CTX) as s:
+        return (
+            await s.execute(
+                text(
+                    "SELECT payload FROM app.jobs WHERE kind = :k ORDER BY created_at DESC LIMIT 1"
+                ),
+                {"k": kind},
+            )
         ).scalar_one()
 
 
@@ -263,12 +277,59 @@ async def test_seeded_nightly_sweeps_exist_and_are_fireable(maker: async_session
         "nightly_consolidate_predicates",
         "nightly_sync_predicates",
         "nightly_purge_deleted_artifacts",
+        "nightly_eval_run",
     }
     # Fire the consolidate sweep on demand and confirm a job lands.
     trig = next(r.id for r in rows if r.pipeline == "nightly_consolidate_predicates")
     before = await _jobs_of_kind(maker, "consolidate_predicates")
     await fire_trigger(maker, _registry(), str(trig))
     assert await _jobs_of_kind(maker, "consolidate_predicates") == before + 1
+
+
+async def test_seeded_nightly_eval_exists_and_carries_its_run_params(
+    maker: async_sessionmaker,
+) -> None:
+    """Migration 0044 seeds the nightly eval as a manual, schedule-bound trigger.
+    Firing it enqueues an `eval_run` job whose payload carries the seeded run params
+    (`suite`/`version_label`) — a scheduled trigger has no per-fire payload, so the
+    step params ARE the payload the handler reads. The action is referenced by name
+    through the in-code registry with NO app.actions row (like the sweeps)."""
+    async with scoped_session(maker, queue.SYSTEM_CTX) as s:
+        trigger_id = (
+            await s.execute(
+                text(
+                    "SELECT t.id FROM app.triggers t"
+                    " JOIN app.schedules sc ON sc.id = t.on_schedule_id"
+                    " WHERE t.manual AND t.pipeline = 'nightly_eval_run'"
+                )
+            )
+        ).scalar_one()
+
+    before = await _jobs_of_kind(maker, "eval_run")
+    fired = await fire_trigger(maker, _registry(), str(trigger_id))
+    assert fired.pipeline == "nightly_eval_run"
+    assert await _jobs_of_kind(maker, "eval_run") == before + 1
+    # The run params bound in the migration reach the job verbatim (the handler reads
+    # payload["suite"]/["version_label"]); "all" scores the whole curated corpus.
+    payload = await _latest_payload_of_kind(maker, "eval_run")
+    assert payload == {"suite": "all", "version_label": "nightly"}
+
+
+async def test_due_eval_schedule_enqueues_eval_run_via_tick(maker: async_sessionmaker) -> None:
+    """The scheduled path (not just manual fire) delivers the seeded params: drive the
+    real nightly-eval schedule due and tick — an `eval_run` job lands with the params."""
+    async with scoped_session(maker, queue.SYSTEM_CTX) as s:
+        await s.execute(
+            text(
+                "UPDATE app.schedules SET next_run_at = :nr"
+                " WHERE id = '00000000-0000-0000-0000-0000000c0017'"
+            ),
+            {"nr": NOW - timedelta(minutes=1)},
+        )
+    before = await _jobs_of_kind(maker, "eval_run")
+    await scheduler_tick(maker, _registry(), now=NOW)
+    assert await _jobs_of_kind(maker, "eval_run") == before + 1
+    assert (await _latest_payload_of_kind(maker, "eval_run"))["version_label"] == "nightly"
 
 
 # --- the dropped-event safety net (Wave 2 — the whole point of this task) -----

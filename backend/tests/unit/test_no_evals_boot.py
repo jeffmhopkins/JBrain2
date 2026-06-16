@@ -1,15 +1,18 @@
 """Regression guard: the shipped `jbrain` package must boot without the dev-only
-`evals/` package on the path.
+`backend/evals/` CLI package on the path.
 
-The container image ships only `src/jbrain` — `backend/evals/` (the eval runner +
-fixtures) is NOT copied. A top-level `from evals...` in any shipped module therefore
-crash-loops api/worker with `ModuleNotFoundError: No module named 'evals'` at import
-time. CI runs with `evals/` on `sys.path`, so it never caught this. This test hides
-the package entirely (an import hook that raises for `evals` and `evals.*`) and proves
-that importing `jbrain.workflow.eval_scorer`, `jbrain.worker`, and `jbrain.main`
-(building the app) all succeed regardless — and that an `eval_run` job fired without
-the harness fails GRACEFULLY with `PermanentJobError`, never a bare `ModuleNotFoundError`.
-"""
+The container image ships only `src/jbrain` — `backend/evals/` (the prompt-eval CLI
++ the offline audit) is NOT copied. A top-level `from evals...` in any shipped module
+would crash-loop api/worker with `ModuleNotFoundError: No module named 'evals'` at
+import time. CI runs with `evals/` on `sys.path`, so it never caught this. This test
+hides the package entirely (an import hook that raises for `evals` and `evals.*`) and
+proves that importing `jbrain.workflow.eval_scorer`, `jbrain.worker`, and `jbrain.main`
+(building the app) all succeed regardless.
+
+The eval RUNTIME (the scorer core + the case corpus) now lives IN the package as
+`jbrain.evals.runner` (Phase-5 Track H·B), so the nightly `eval_run` schedule runs in
+production; the dead "missing harness" branch is gone. The remaining fail-closed path
+is an EMPTY corpus (a stripped/mis-packaged image), asserted below."""
 
 from __future__ import annotations
 
@@ -85,7 +88,7 @@ def test_evals_is_actually_hidden(evals_hidden: None) -> None:
     """Sanity: the fixture genuinely makes `evals` unimportable, so the assertions
     below are meaningful (a no-op fixture would make this whole test vacuous)."""
     with pytest.raises(ModuleNotFoundError):
-        importlib.import_module("evals.promotion")
+        importlib.import_module("evals.run")
 
 
 def test_shipped_modules_import_without_evals(evals_hidden: None) -> None:
@@ -108,10 +111,13 @@ def test_promotion_gate_still_imports_from_jbrain(evals_hidden: None) -> None:
     assert hasattr(promotion, "promotion_decision")
 
 
-async def test_live_scorer_fails_gracefully_without_harness(evals_hidden: None) -> None:
-    """Firing the live scorer (what an `eval_run` job invokes) without the harness must
-    raise the graceful `PermanentJobError`, NOT a bare `ModuleNotFoundError` — the worker
-    fails the opt-in job cleanly instead of crash-looping."""
+async def test_live_scorer_fails_closed_on_empty_corpus(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Firing the live scorer when the case corpus is empty (a stripped/mis-packaged
+    image) must fail closed with `PermanentJobError`, NOT silently store a contentless
+    `EvalRun`. The worker fails the job cleanly (no retry — re-running finds no cases)."""
+    import jbrain.evals.runner as runner
+
+    monkeypatch.setattr(runner, "load_cases", lambda: [])
     eval_scorer = importlib.import_module("jbrain.workflow.eval_scorer")
     scorer = eval_scorer.build_live_scorer(router=object())
     with pytest.raises(PermanentJobError):

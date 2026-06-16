@@ -75,7 +75,7 @@ def test_mean_scores_headline() -> None:
 
 
 def test_eval_run_from_cases_splits_task_and_groundedness() -> None:
-    from evals.run import CaseResult, eval_run_from_cases
+    from jbrain.evals.runner import CaseResult, eval_run_from_cases
 
     from jbrain.workflow.promotion import promotion_decision
 

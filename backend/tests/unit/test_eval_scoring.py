@@ -5,7 +5,7 @@ green prompt-eval run actually means what it says. The live run itself
 from datetime import UTC, datetime, timedelta, timezone
 from typing import Any
 
-from evals.run import _overlaps, _score, load_cases
+from jbrain.evals.runner import _overlaps, _score, load_cases
 
 from jbrain.analysis.extraction import (
     ExtractedFact,
