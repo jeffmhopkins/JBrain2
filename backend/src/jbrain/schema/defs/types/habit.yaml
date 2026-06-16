@@ -1,0 +1,31 @@
+# Habit / routine — a recurring intended behavior, tracked over time. schema.org
+# has no fit; custom type. The schedule is a Recurrence token; adherence is a
+# measurement. [proposed]
+id: habit
+name: Habit
+schema_org_ref: schema:Thing
+description: A recurring practice; cadence is a Recurrence token, adherence a measurement.
+vehicle: graph
+facets: [Named, Temporal, Recurrence, Lifecycle, Related]
+default_fact_kind: state
+allow_open_predicates: true
+
+predicates:
+  - canonical_name: description
+    value_shape: text
+    kind: state
+  - canonical_name: contributesTo        # a goal this habit serves
+    value_shape: ref
+    range_type: goal
+    kind: relationship
+  - canonical_name: cadence              # human cadence label; the schedule is Recurrence
+    value_shape: text
+    kind: state
+    renamed_from: [frequency]
+  - canonical_name: lastPerformed
+    value_shape: date
+    kind: event
+    functional: true
+
+status_values: [active, paused, abandoned]
+display_name: [name]

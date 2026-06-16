@@ -14,6 +14,12 @@ predicates:
     shape: geofence
     kind: state
     description: Circular/polygon fence for geofence-transition workflow events.
+  - canonical_name: containedInPlace    # place hierarchy: building -> city -> region
+    value_shape: ref
+    range_type: place
+    kind: relationship
+    schema_org_ref: schema:containedInPlace
+    renamed_from: [containedIn, withinPlace]
 
 # address + geo come from Located (🔒). identifier.* from ExternalIdentified.
 alias_seeding_predicates: [name.aka]

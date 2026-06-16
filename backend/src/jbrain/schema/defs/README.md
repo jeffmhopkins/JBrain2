@@ -45,6 +45,8 @@ design, not built (docs/entity.md). Tests:
 5. `types/bill.yaml` / `appointment.yaml` — recurrence-as-token, not rows.
 6. `types/lab_result.yaml` — a deferred Phase-7 typed record's catalog.
 
-All fourteen catalog types are scaffolded: `person, organization, place, role,
-animal, appointment, bill, lab_result, vehicle, medication, financial_account,
-document, subscription, device`.
+All twenty-two catalog types are scaffolded. The original fourteen: `person,
+organization, place, role, animal, appointment, bill, lab_result, vehicle,
+medication, financial_account, document, subscription, device`; plus the
+productivity/knowledge/lifestyle set: `project, task, goal, habit, trip,
+creative_work, product, insurance_policy`.

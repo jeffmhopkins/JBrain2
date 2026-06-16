@@ -23,10 +23,6 @@ predicates:
     kind: state
     functional: true
     schema_org_ref: schema:gender
-  - canonical_name: pronouns
-    value_shape: text
-    kind: state
-    functional: true
   - canonical_name: spouse         # functional relationship (ANALYSIS allowlist); symmetric
     value_shape: ref
     range_type: person
@@ -43,6 +39,41 @@ predicates:
     # residual supersession allowlist already makes it functional, and folding it
     # here would silently rewrite existing `employer`-keyed history onto worksFor.
     renamed_from: [works_for, worksAt, works_at]
+  # Family / kinship edges — high-traffic in a personal KB. Accumulating (a person
+  # has many relatives), so NONE are functional; directionality is per-edge
+  # (parent: this person's parent is the object; child: the inverse).
+  - canonical_name: parent
+    value_shape: ref
+    range_type: person
+    kind: relationship
+    schema_org_ref: schema:parent
+    renamed_from: [mother, father]
+  - canonical_name: children          # schema.org spelling (plural); the pipeline's canonical
+    value_shape: ref
+    range_type: person
+    kind: relationship
+    schema_org_ref: schema:children
+    renamed_from: [child, son, daughter]
+  - canonical_name: sibling
+    value_shape: ref
+    range_type: person
+    kind: relationship
+    schema_org_ref: schema:sibling
+    renamed_from: [brother, sister]
+  - canonical_name: relative          # any other kin (cousin, aunt, in-law); qualifier = relation
+    value_shape: ref
+    range_type: person
+    kind: relationship
+    schema_org_ref: schema:relatedTo
+  - canonical_name: knowsLanguage     # BCP 47 tag preferred; vCard LANG. Accumulating.
+    value_shape: text
+    kind: attribute
+    schema_org_ref: schema:knowsLanguage
+    renamed_from: [language, languages, speaksLanguage]
+  - canonical_name: nationality       # ISO 3166 country; can change (naturalization)
+    value_shape: text
+    kind: state
+    schema_org_ref: schema:nationality
 
 # Fed to the existing declared-name -> exact-alias machinery (NOT an identity key).
 alias_seeding_predicates: [name.full, name.preferred, name.aka, name.maiden]

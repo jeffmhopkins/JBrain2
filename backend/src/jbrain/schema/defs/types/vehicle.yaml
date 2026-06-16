@@ -23,6 +23,24 @@ predicates:
     value_shape: scalar
     kind: attribute
     functional: true
+    schema_org_ref: schema:vehicleModelDate
+    renamed_from: [vehicleModelDate, modelYear, year]
+  - canonical_name: fuelType
+    value_shape: enum
+    enum_values: [gasoline, diesel, electric, hybrid, plugin_hybrid, hydrogen, other]
+    kind: attribute
+    functional: true
+    schema_org_ref: schema:fuelType
+  - canonical_name: bodyType           # SUV | sedan | hatchback | truck | ...
+    value_shape: text
+    kind: attribute
+    functional: true
+    schema_org_ref: schema:bodyType
+  - canonical_name: color              # "the blue Subaru" — a disambiguation signal
+    value_shape: text
+    kind: attribute
+    functional: true
+    schema_org_ref: schema:color
   - canonical_name: licensePlate       # 🔒 not stable (transfers/renewals)
     value_shape: structured
     shape: license_plate

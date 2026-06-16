@@ -268,6 +268,14 @@ def _load_types(types_dir: Path, meta: Meta, facets: dict[str, Facet]) -> dict[s
         display = _str_list(data.get("display_name"), where=f"{where} display_name")
         if not display:
             raise SchemaError(f"{where}: display_name is required")
+        # Every display_name token must resolve to a declared predicate — a `a+b`
+        # composite (canonical.project_display_name) splits on '+', each part a
+        # predicate. An unresolvable token would silently break the WIRED
+        # canonical-name projection, so we gate it here like alias seeding.
+        for token in display:
+            for part in token.split("+"):
+                if part not in eff_names:
+                    raise SchemaError(f"{where}: display_name token {part!r} is not a property")
 
         et = EntityType(
             id=tid,

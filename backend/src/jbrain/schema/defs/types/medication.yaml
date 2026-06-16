@@ -6,7 +6,7 @@ name: Medication
 schema_org_ref: schema:Drug
 description: A medication regimen as an interval state; prescriber is a Role edge.
 vehicle: graph                     # 🔒🔒 health-scoped
-facets: [ExternalIdentified, Temporal, Related, Lifecycle]
+facets: [Named, ExternalIdentified, Temporal, Related, Lifecycle]   # Named -> the display projection
 default_fact_kind: state
 allow_open_predicates: false
 

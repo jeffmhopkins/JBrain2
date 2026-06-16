@@ -1,0 +1,43 @@
+# Project — a coordinated effort composed of tasks, toward an outcome. [proposed]
+id: project
+name: Project
+schema_org_ref: schema:Project
+description: An effort made of tasks; contributes to a goal. Members are Role edges.
+vehicle: graph
+facets: [Named, Temporal, Lifecycle, Prioritized, Related]
+default_fact_kind: state
+allow_open_predicates: true
+
+predicates:
+  - canonical_name: description
+    value_shape: text
+    kind: state
+  - canonical_name: targetDate          # planned completion
+    value_shape: date
+    kind: state
+    functional: true
+    renamed_from: [deadline]
+  - canonical_name: contributesTo        # the goal this project serves
+    value_shape: ref
+    range_type: goal
+    kind: relationship
+    # NOT renamed_from [goal]: `goal` is too generic a token to rewrite globally
+    # and kind-agnostically onto contributesTo (it would capture any `X.goal`).
+  - canonical_name: parentProject
+    value_shape: ref
+    range_type: project
+    kind: relationship
+    functional: true
+  - canonical_name: lead                 # the accountable person
+    value_shape: ref
+    range_type: person
+    kind: relationship
+    functional: true
+    renamed_from: [projectLead]
+  - canonical_name: client               # who it is for — an org or person (polymorphic)
+    value_shape: ref
+    kind: relationship
+
+# priority comes from the Prioritized facet. Members are Role edges (Related).
+status_values: [planned, active, on_hold, completed, cancelled]
+display_name: [name]

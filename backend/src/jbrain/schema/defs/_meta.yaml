@@ -36,7 +36,7 @@ name_audiences: [kids, family, friends, work, public]
 
 # Preferred external-identifier schemes (qualifier on identifier.<scheme>).
 # Preferred, not closed — open schemes are accepted.
-id_scheme: [loinc, rxnorm, vin, imei, serial, mac, uuid, ein, duns, lei, microchip, last4, sha256]
+id_scheme: [loinc, rxnorm, vin, imei, serial, mac, uuid, ein, duns, lei, vatid, taxid, microchip, last4, sha256, isbn, doi, issn, policy_number]
 
 # Reusable structured shapes (atomic compounds only).
 shapes:

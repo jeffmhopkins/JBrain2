@@ -18,10 +18,10 @@ predicates:
     enum_values: [checking, savings, credit_card, loan, brokerage, other]
     kind: attribute
     functional: true
-  - canonical_name: currency
-    value_shape: enum
-    enum_values: [USD, EUR, GBP, CAD, AUD]   # ISO-4217 subset; open per the invariant
+  - canonical_name: currency               # ISO-4217 code; open (150+ codes), so scalar not enum
+    value_shape: scalar
     kind: attribute
+    functional: true
 
 # identifier.last4 (🔒) from ExternalIdentified — the ONLY account number stored.
 # accountHolder is a Role edge (Related).

@@ -24,6 +24,16 @@ predicates:
     value_shape: ref
     range_type: financial_account
     kind: relationship
+  - canonical_name: serviceType         # "streaming", "gym", "news" — the kind of service
+    value_shape: scalar
+    kind: state
+    schema_org_ref: schema:serviceType
+  - canonical_name: billingCycle        # the period unit; the RRULE freq in plain terms
+    value_shape: enum
+    enum_values: [daily, weekly, monthly, quarterly, semiannual, annual]
+    kind: state
+    functional: true
+    schema_org_ref: schema:billingDuration
 
 # Monetary.amount (🔒) is the price; Recurrence.recurrence carries the billing cycle.
 status_values: [active, paused, cancelled]

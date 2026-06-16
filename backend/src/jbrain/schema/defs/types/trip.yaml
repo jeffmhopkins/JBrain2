@@ -1,0 +1,45 @@
+# Trip / travel — a journey with destinations over a date interval. [proposed]
+# schema.org Trip. Itinerary detail rides the location firewall via Place refs.
+id: trip
+name: Trip
+schema_org_ref: schema:Trip
+description: A journey; destinations/accommodation are Place refs, travelers are Person refs.
+vehicle: graph
+facets: [Named, Temporal, Lifecycle, Related]
+default_fact_kind: state
+allow_open_predicates: true
+
+predicates:
+  - canonical_name: description
+    value_shape: text
+    kind: state
+  - canonical_name: destination          # may be several; accumulating Place refs 🔒 location
+    value_shape: ref
+    range_type: place
+    kind: relationship
+  - canonical_name: origin               # where it departs from
+    value_shape: ref
+    range_type: place
+    kind: relationship
+    functional: true
+  - canonical_name: traveler             # who is going; accumulating
+    value_shape: ref
+    range_type: person
+    kind: relationship
+  - canonical_name: accommodation        # where staying 🔒 location
+    value_shape: ref
+    range_type: place
+    kind: relationship
+  - canonical_name: transport            # primary mode of travel
+    value_shape: enum
+    enum_values: [flight, train, car, bus, ship, other]
+    kind: state
+  - canonical_name: purpose
+    value_shape: enum
+    enum_values: [leisure, business, family, medical, other]
+    kind: attribute
+
+# Temporal.startDate/endDate carry the date interval. Domain: location-adjacent —
+# the itinerary reveals presence; sensitive detail lives on the referenced Places.
+status_values: [planned, booked, in_progress, completed, cancelled]
+display_name: [name]

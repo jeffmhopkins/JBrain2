@@ -1,0 +1,55 @@
+# Creative work — a book/article/film/podcast/paper read, watched, or cited.
+# schema.org CreativeWork. Central to a knowledge system: notes cite sources as
+# first-class entities. [proposed]
+id: creative_work
+name: CreativeWork
+schema_org_ref: schema:CreativeWork
+description: A work consumed or referenced; author/publisher are refs, subject via `about`.
+vehicle: graph
+facets: [Named, Temporal, ExternalIdentified, Related]
+default_fact_kind: attribute
+allow_open_predicates: true
+
+predicates:
+  - canonical_name: workType
+    value_shape: enum
+    enum_values: [book, article, paper, movie, tv_series, podcast, episode, album, song, video, course, webpage, other]
+    kind: attribute
+    functional: true
+  - canonical_name: author               # person or org (polymorphic, no range_type)
+    value_shape: ref
+    kind: relationship
+    # NOT renamed_from [creator]: `creator` is a generic edge the model emits for
+    # non-works too (who created an org/tool); a global rewrite would mis-shape it
+    # into this polymorphic ref. Same discipline person.yaml uses for `employer`.
+    schema_org_ref: schema:author
+  - canonical_name: publisher
+    value_shape: ref
+    range_type: organization
+    kind: relationship
+    schema_org_ref: schema:publisher
+  - canonical_name: datePublished
+    value_shape: date
+    kind: attribute
+    schema_org_ref: schema:datePublished
+  - canonical_name: about                # subject matter; accumulating refs
+    value_shape: ref
+    kind: relationship
+    schema_org_ref: schema:about
+  - canonical_name: url
+    value_shape: scalar
+    kind: attribute
+    schema_org_ref: schema:url
+  - canonical_name: rating               # my rating on a 1-5 scale; an opinion, newest wins
+    value_shape: scalar
+    kind: preference
+    functional: true
+  - canonical_name: consumptionStatus    # wishlist / reading / done
+    value_shape: enum
+    enum_values: [wishlist, in_progress, completed, abandoned, reference]
+    kind: state
+    functional: true
+    renamed_from: [readingStatus, watchStatus]
+
+# identifier.isbn / .doi / .issn from ExternalIdentified — strong dedup/resolution.
+display_name: [name]

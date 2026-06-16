@@ -53,9 +53,8 @@ predicates:
     value_shape: text
     kind: state
     schema_org_ref: schema:description
-  - canonical_name: appointmentType  # the kind of appointment; open vocabulary
-    value_shape: enum
-    enum_values: [checkup, consult, meeting, call, social, service]
+  - canonical_name: appointmentType  # the kind of appointment; genuinely open vocabulary -> text
+    value_shape: text                # e.g. checkup, consult, meeting, call, social, service
     kind: state
     schema_org_ref: schema:keywords
 
