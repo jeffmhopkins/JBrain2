@@ -17,10 +17,12 @@ import {
   SettingsIcon,
   UsersIcon,
   XIcon,
+  ZapIcon,
 } from "./icons";
 
 export type LauncherTarget =
   | "ops"
+  | "automations"
   | "settings"
   | "llm-settings"
   | "search"
@@ -66,6 +68,7 @@ const SECTIONS: Section[] = [
     header: "System",
     tiles: [
       { title: "Ops", icon: <GaugeIcon size={24} />, target: "ops" },
+      { title: "Workflow", icon: <ZapIcon size={24} />, target: "automations" },
       { title: "Settings", icon: <SettingsIcon size={24} />, target: "settings" },
       { title: "LLM", icon: <BotIcon size={24} />, target: "llm-settings" },
     ],
