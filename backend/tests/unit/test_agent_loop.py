@@ -8,6 +8,7 @@ from typing import Any
 from jbrain.agent.contracts import (
     ChatEvent,
     DoneEvent,
+    EntityRef,
     JobEnqueuedEvent,
     NoteSource,
     ProposalRef,
@@ -417,6 +418,39 @@ async def stage_correction(arguments: dict, ctx: ToolContext) -> ToolOutput:
     return ToolOutput("staged it", proposal=ProposalRef(proposal_id="p1", kind="correction"))
 
 
+async def stage_correction_sourced(arguments: dict, ctx: ToolContext) -> ToolOutput:
+    """A mutating tool that also surfaces a source — so the turn is critique-worthy
+    via the mutation AND has a non-empty corpus for the grounding check to run."""
+    return ToolOutput(
+        "staged it",
+        (NoteSource(note_id="n1", domain="general", snippet="cholesterol reading is elevated"),),
+        proposal=ProposalRef(proposal_id="p1", kind="correction"),
+    )
+
+
+async def find_me(arguments: dict, ctx: ToolContext) -> ToolOutput:
+    """A graph answer: find_entity surfaces the owner entity with its aliases (the
+    real-world name forms) and ZERO note sources — the bug case."""
+    return ToolOutput(
+        "- Me [person] (general)",
+        entities=(
+            EntityRef(
+                entity_id="e1",
+                label="Me",
+                domain="general",
+                aliases=["Jeffrey Mark Hopkins", "Jeff"],
+            ),
+        ),
+    )
+
+
+def _entity_turns() -> list[LlmTurn]:
+    return [
+        LlmTurn("", (ToolCall("c1", "find_entity", {}),), "tool_use", LlmUsage(1, 1)),
+        LlmTurn("answer", (), "end_turn", LlmUsage(1, 1)),
+    ]
+
+
 def _sourced_turns() -> list[LlmTurn]:
     return [
         LlmTurn("", (ToolCall("c1", "search", {}),), "tool_use", LlmUsage(1, 1)),
@@ -474,21 +508,41 @@ async def test_grounded_critique_turn_emits_no_verdict() -> None:
     assert not any(isinstance(e, VerdictEvent) for e in events)
 
 
-async def test_a_sensitive_scope_turn_is_verified_even_without_sources() -> None:
-    # No sources, no mutation, but the session touched 'health' → critique-worthy,
-    # so an ungrounded answer still surfaces a verdict.
+async def test_touching_a_sensitive_source_makes_the_turn_critique_worthy() -> None:
+    # The turn surfaced a health-domain source → touched_sensitive → critique-worthy,
+    # so an ungrounded answer (it ignored the cholesterol snippet) surfaces a verdict.
+    router, _ = stream_router_with(
+        _sourced_turns(),
+        stream_chunks=[[""], ["the roof needs replacing soon"]],
+    )
+    events = await collect(
+        AgentLoop(router, registry_with(make_tool("search", search_cholesterol))),
+        scopes=("health",),
+    )
+    assert isinstance(events[-1], VerdictEvent) and events[-1].passed is False
+
+
+async def test_held_sensitive_scope_without_retrieval_emits_no_false_verdict() -> None:
+    # A broadly-scoped (Full Brain) session that retrieved nothing: no sources, no
+    # entities, no mutation. The old scope-membership trigger flagged this; the new
+    # touched-sensitive trigger does not (nothing sensitive was actually touched),
+    # and the empty-corpus guard means grounding stays unverifiable — no false flag.
     router, _ = stream_router_with(
         [LlmTurn("the roof needs replacing", (), "end_turn", LlmUsage(1, 1))],
         stream_chunks=[["the roof needs replacing"]],
     )
     events = await collect(
-        AgentLoop(router, registry_with(make_tool("search", search))), scopes=("health",)
+        AgentLoop(router, registry_with(make_tool("search", search))),
+        scopes=("general", "health", "finance", "location"),
     )
-    assert isinstance(events[-1], VerdictEvent) and events[-1].passed is False
+    assert isinstance(events[-1], DoneEvent)
+    assert not any(isinstance(e, VerdictEvent) for e in events)
 
 
 async def test_a_staged_mutation_makes_the_turn_critique_worthy() -> None:
-    # A staged proposal carries a write → critique-worthy even in general scope.
+    # A staged proposal carries a write → critique-worthy even in general scope. The
+    # tool also surfaces a source (a non-empty corpus), so the ungrounded answer is
+    # actually checkable and flags.
     router, _ = stream_router_with(
         [
             LlmTurn("", (ToolCall("c1", "correct", {}),), "tool_use", LlmUsage(1, 1)),
@@ -500,17 +554,52 @@ async def test_a_staged_mutation_makes_the_turn_critique_worthy() -> None:
         AgentLoop(
             router,
             registry_with(
-                make_tool("correct", stage_correction, permission="mutate", mutating=True)
+                make_tool("correct", stage_correction_sourced, permission="mutate", mutating=True)
             ),
         )
     )
     assert any(isinstance(e, VerdictEvent) for e in events)
 
 
+async def test_graph_answered_turn_grounds_against_entity_aliases() -> None:
+    # The headline fix: "What is my name?" answered "Jeffrey Mark Hopkins (Jeff)"
+    # straight from the entity graph — entities surfaced (critique-worthy via entity
+    # evidence), zero note sources. The answer grounds against the entity's aliases,
+    # so NO VerdictEvent is emitted (it was being falsely flagged "not in your
+    # notes" when grounding ran against an empty note-only corpus).
+    router, _ = stream_router_with(
+        _entity_turns(),
+        stream_chunks=[[""], ["Your name is Jeffrey Mark Hopkins (Jeff)."]],
+    )
+    events = await collect(AgentLoop(router, registry_with(make_tool("find_entity", find_me))))
+    assert isinstance(events[-1], DoneEvent)
+    assert not any(isinstance(e, VerdictEvent) for e in events)
+
+
+async def test_graph_answer_naming_an_unretrieved_entity_still_flags() -> None:
+    # The entity corpus does not paper over genuine hallucination: a name NOT among
+    # any retrieved entity/note (here the answer claims a different person) fails
+    # grounding and still surfaces a verdict.
+    router, _ = stream_router_with(
+        _entity_turns(),
+        stream_chunks=[[""], ["Your name is Napoleon Bonaparte."]],
+    )
+    events = await collect(AgentLoop(router, registry_with(make_tool("find_entity", find_me))))
+    assert isinstance(events[-2], DoneEvent)
+    assert isinstance(events[-1], VerdictEvent) and events[-1].passed is False
+
+
 async def test_verdict_rides_after_done_on_a_budget_stop() -> None:
-    # A non-end_turn terminal (budget cap) still routes through the verdict tail.
-    forever = [LlmTurn("over budget", (ToolCall("c", "search", {}),), "tool_use", LlmUsage(10, 10))]
-    router, _ = stream_router_with(forever, stream_chunks=[["the roof needs replacing"]])
+    # A non-end_turn terminal (budget cap) still routes through the verdict tail. The
+    # first (cheap) step surfaces the health source — touched_sensitive, non-empty
+    # corpus — then the next step trips the budget cap mid-stream.
+    router, _ = stream_router_with(
+        [
+            LlmTurn("", (ToolCall("c1", "search", {}),), "tool_use", LlmUsage(1, 1)),
+            LlmTurn("over budget", (ToolCall("c2", "search", {}),), "tool_use", LlmUsage(10, 10)),
+        ],
+        stream_chunks=[[""], ["the roof needs replacing"]],
+    )
     loop = AgentLoop(
         router,
         registry_with(make_tool("search", search_cholesterol)),
@@ -575,13 +664,23 @@ async def test_buffer_retry_adopts_a_strictly_improving_reproduce() -> None:
 
 
 async def test_buffer_retry_annotates_when_no_retry_improves() -> None:
-    # Both attempts are ungrounded (no strict improvement) → the incumbent stands
-    # and a verdict annotates it. The cap stops the loop; the user saw a spinner.
+    # Both attempts surface the cholesterol source (critique-worthy, non-empty
+    # corpus) but stay ungrounded (no strict improvement) → the incumbent stands and
+    # a verdict annotates it. The cap stops the loop; the user saw a spinner.
+    tool_use = LlmTurn("", (ToolCall("c1", "search", {}),), "tool_use", LlmUsage(1, 1))
     router, _ = stream_router_with(
-        [LlmTurn("the roof needs replacing", (), "end_turn", LlmUsage(1, 1))],
+        [
+            tool_use,
+            LlmTurn("the roof needs replacing", (), "end_turn", LlmUsage(1, 1)),
+            tool_use,
+            LlmTurn("the roof needs replacing", (), "end_turn", LlmUsage(1, 1)),
+            tool_use,
+            LlmTurn("the roof needs replacing", (), "end_turn", LlmUsage(1, 1)),
+        ],
     )
     events = await collect_buffered(
-        AgentLoop(router, registry_with(make_tool("search", search))), scopes=("health",)
+        AgentLoop(router, registry_with(make_tool("search", search_cholesterol))),
+        scopes=("health",),
     )
     assert isinstance(events[-1], VerdictEvent) and events[-1].passed is False
 
@@ -618,19 +717,46 @@ async def test_buffer_retry_replays_buffered_tool_events_of_the_kept_attempt() -
 
 
 async def test_buffer_retry_respects_the_cost_guardrail_across_attempts() -> None:
-    # A tiny per-turn budget: the first ungrounded produce already exhausts it, so
+    # A tiny per-turn budget: the first (cheap) step surfaces the sensitive source
+    # (critique-worthy, non-empty corpus), then the next step exhausts the budget, so
     # the cost cap caps the retries (no unbounded reproduce). NOT the
     # self-improvement budget — the ordinary per-turn guardrail.
     router, fake = stream_router_with(
-        [LlmTurn("the roof needs replacing", (), "end_turn", LlmUsage(10, 10))],
+        [
+            LlmTurn("", (ToolCall("c1", "search", {}),), "tool_use", LlmUsage(1, 1)),
+            LlmTurn(
+                "the roof needs replacing",
+                (ToolCall("c2", "search", {}),),
+                "tool_use",
+                LlmUsage(10, 10),
+            ),
+        ],
     )
     loop = AgentLoop(
         router,
-        registry_with(make_tool("search", search)),
+        registry_with(make_tool("search", search_cholesterol)),
         guardrails=Guardrails(max_cost_tokens=5),
     )
     events = await collect_buffered(loop, scopes=("health",))
     # The answer still streams + annotates, but the exhausted budget stopped any
-    # reproduce after the first attempt — exactly one model call, not a retry loop.
+    # reproduce after the first attempt — one produce-step (two converse calls), not
+    # a retry loop.
     assert any(isinstance(e, VerdictEvent) for e in events)
-    assert len(fake.converse_calls) == 1
+    assert len(fake.converse_calls) == 2
+
+
+async def test_buffer_retry_graph_answer_grounds_against_entity_aliases() -> None:
+    # The buffered path threads entities through too: a graph answer grounds against
+    # the entity aliases (critique-worthy via entity evidence, non-empty corpus), so
+    # it passes on the first attempt — no retry, no verdict.
+    router, fake = stream_router_with(
+        [
+            LlmTurn("", (ToolCall("c1", "find_entity", {}),), "tool_use", LlmUsage(1, 1)),
+            LlmTurn("Your name is Jeffrey Mark Hopkins (Jeff).", (), "end_turn", LlmUsage(1, 1)),
+        ],
+    )
+    events = await collect_buffered(
+        AgentLoop(router, registry_with(make_tool("find_entity", find_me)))
+    )
+    assert not any(isinstance(e, VerdictEvent) for e in events)
+    assert len(fake.converse_calls) == 2  # produced once, no retry

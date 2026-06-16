@@ -337,15 +337,28 @@ def test_chat_buffer_retry_gate_default_off_streams_live(
     # adapter path), not the buffered produce path.
     login(client, repo)
     sessions_store.add(AgentSessionInfo("sess-1", "", "active", ("health",), (), NOW, NOW))
+
+    async def search(arguments, ctx):  # type: ignore[no-untyped-def]
+        return ToolOutput(
+            "found 1", (NoteSource(note_id="n1", domain="health", snippet="cholesterol labs"),)
+        )
+
+    client.app.state.agent_registry = registry_with_tool("search", search)  # type: ignore[attr-defined]
     router = stream_router(
-        [LlmTurn("the roof needs replacing", (), "end_turn", LlmUsage(1, 1))],
-        stream_chunks=[["the roof ", "needs replacing"]],
+        [
+            LlmTurn("", (ToolCall("c1", "search", {}),), "tool_use", LlmUsage(1, 1)),
+            LlmTurn("the roof needs replacing", (), "end_turn", LlmUsage(1, 1)),
+        ],
+        stream_chunks=[[""], ["the roof ", "needs replacing"]],
     )
     client.app.state.llm_router = router  # type: ignore[attr-defined]
     resp = client.post("/api/chat", json={"session_id": "sess-1", "message": "hi"})
     fake = cast(FakeLlmClient, router._clients["xai"])
-    assert len(fake.stream_calls) == 1 and fake.converse_calls == []
-    # The live stream still annotates (critique-worthy health scope, ungrounded).
+    # The streaming adapter ran (one stream call per model turn); the non-streaming
+    # buffered produce path did not.
+    assert len(fake.stream_calls) == 2 and fake.converse_calls == []
+    # The live stream still annotates: it touched a health source (critique-worthy
+    # via touched_sensitive) and the answer is ungrounded against it.
     assert sse_events(resp.text)[-1]["type"] == "verdict"
 
 
@@ -357,15 +370,24 @@ def test_chat_buffer_retry_gate_on_uses_the_buffered_path(
     login(client, repo)
     sessions_store.add(AgentSessionInfo("sess-1", "", "active", ("health",), (), NOW, NOW))
     client.app.state.settings_store.values["reflexion_buffer_retry"] = True  # type: ignore[attr-defined]
-    router = stream_router(
-        [LlmTurn("the roof needs replacing", (), "end_turn", LlmUsage(1, 1))],
-        stream_chunks=[["the roof needs replacing"]],
-    )
+
+    async def search(arguments, ctx):  # type: ignore[no-untyped-def]
+        return ToolOutput(
+            "found 1", (NoteSource(note_id="n1", domain="health", snippet="cholesterol labs"),)
+        )
+
+    client.app.state.agent_registry = registry_with_tool("search", search)  # type: ignore[attr-defined]
+    tool_use = LlmTurn("", (ToolCall("c1", "search", {}),), "tool_use", LlmUsage(1, 1))
+    answer = LlmTurn("the roof needs replacing", (), "end_turn", LlmUsage(1, 1))
+    # Both produce attempts run the tool (surface the health source) and stay
+    # ungrounded → no strict improvement → the incumbent stands and a verdict rides.
+    router = stream_router([tool_use, answer, tool_use, answer], stream_chunks=[])
     client.app.state.llm_router = router  # type: ignore[attr-defined]
     resp = client.post("/api/chat", json={"session_id": "sess-1", "message": "hi"})
     fake = cast(FakeLlmClient, router._clients["xai"])
     # Buffered produce uses converse (non-streaming), not the streaming adapter.
     assert fake.converse_calls and fake.stream_calls == []
+    # It touched a health source (critique-worthy) and the answer is ungrounded.
     assert sse_events(resp.text)[-1]["type"] == "verdict"
 
 
