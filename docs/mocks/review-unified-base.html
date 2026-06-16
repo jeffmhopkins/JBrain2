@@ -1,0 +1,551 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Review — unified base view · 3 approaches (interactive mock)</title>
+    <style>
+      /* Design tokens — copied from frontend/src/styles/tokens.css. */
+      :root {
+        --steel: #7fa7c9; --steel-tint: rgba(127, 167, 201, 0.13);
+        --green: #8fbc9a; --green-tint: rgba(143, 188, 154, 0.13);
+        --amber: #c9a36a; --amber-tint: rgba(201, 163, 106, 0.13);
+        --rose: #cf8a8f; --rose-tint: rgba(207, 138, 143, 0.13);
+        --violet: #a493c9; --violet-tint: rgba(164, 147, 201, 0.14);
+        --slate: #9aa0a8;
+        --accent: var(--steel);
+        --font-scale: 1;
+        --fs-micro: calc(12px * var(--font-scale));
+        --fs-head: calc(13px * var(--font-scale));
+        --fs-secondary: calc(14px * var(--font-scale));
+        --fs-note: calc(15px * var(--font-scale));
+        --fs-body: calc(16px * var(--font-scale));
+        --fs-title: calc(18px * var(--font-scale));
+        --fs-screen: calc(22px * var(--font-scale));
+        --fs-editor: calc(20px * var(--font-scale));
+        --r-input: 12px; --r-card: 16px; --r-pill: 999px;
+        --font-mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+      }
+      [data-theme="light"] {
+        color-scheme: light;
+        --page: #ecece9; --bg: #f7f7f5; --surface: #ffffff; --surface-2: #f0f0ee;
+        --border: #e2e2df; --text: #1a1b1e; --text-2: #5c5f66; --text-3: #9a9da3;
+        --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.06);
+      }
+      [data-theme="dark"] {
+        color-scheme: dark;
+        --page: #060708; --bg: #0e0f11; --surface: #17181b; --surface-2: #1e2024;
+        --border: #26282c; --text: #e6e7e9; --text-2: #9a9da3; --text-3: #5c5f66;
+        --shadow-card: none;
+      }
+
+      * { box-sizing: border-box; }
+      body {
+        margin: 0; background: var(--page); color: var(--text);
+        font: 400 var(--fs-body) / 1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+        display: flex; flex-direction: column; align-items: center; gap: 14px;
+        padding: 22px 14px 60px; min-height: 100vh;
+      }
+
+      /* ---- demo chrome ---- */
+      .demo-bar { width: 100%; max-width: 460px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+      .demo-title { font-size: var(--fs-secondary); color: var(--text-2); margin-right: auto; }
+      .demo-title b { color: var(--text); font-weight: 600; }
+      .seg { display: inline-flex; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-pill); padding: 3px; }
+      .seg button { appearance: none; border: none; background: none; color: var(--text-2); font: inherit; font-size: var(--fs-secondary); padding: 5px 13px; border-radius: var(--r-pill); cursor: pointer; }
+      .seg button[aria-pressed="true"] { background: var(--steel-tint); color: var(--steel); font-weight: 600; }
+      .approach-row { width: 100%; max-width: 460px; display: flex; flex-direction: column; gap: 6px; }
+      .approach-seg { display: flex; gap: 6px; }
+      .approach-seg button { flex: 1; appearance: none; border: 1px solid var(--border); background: var(--surface); color: var(--text-2); font: inherit; font-size: var(--fs-secondary); padding: 9px 8px; border-radius: var(--r-input); cursor: pointer; text-align: left; line-height: 1.25; }
+      .approach-seg button .ttl { font-weight: 600; color: var(--text); display: block; }
+      .approach-seg button .sub { font-size: 11px; color: var(--text-3); }
+      .approach-seg button[aria-pressed="true"] { border-color: var(--steel); background: var(--steel-tint); }
+      .approach-seg button[aria-pressed="true"] .ttl { color: var(--steel); }
+      .type-row { width: 100%; max-width: 460px; display: flex; gap: 6px; flex-wrap: wrap; }
+      .type-chip { appearance: none; border: 1px solid var(--border); background: var(--surface); color: var(--text-2); font: inherit; font-size: var(--fs-micro); padding: 5px 10px; border-radius: var(--r-pill); cursor: pointer; }
+      .type-chip[aria-pressed="true"] { background: var(--steel-tint); border-color: transparent; color: var(--steel); font-weight: 600; }
+      .type-chip .reserved { opacity: 0.6; font-style: italic; }
+      .demo-note { width: 100%; max-width: 460px; font-size: var(--fs-head); color: var(--text-3); line-height: 1.55; }
+      .demo-note b { color: var(--text-2); font-weight: 600; }
+      .demo-note code { font-family: var(--font-mono); color: var(--text-2); }
+
+      /* ---- phone ---- */
+      .phone { width: 100%; max-width: 460px; height: 880px; background: var(--bg); border: 1px solid var(--border); border-radius: 30px; overflow: hidden; position: relative; display: flex; flex-direction: column; box-shadow: 0 20px 60px rgba(0, 0, 0, 0.25); }
+      .statusbar { display: flex; justify-content: space-between; align-items: center; padding: 14px 24px 4px; font-size: var(--fs-secondary); font-weight: 600; color: var(--text); }
+      .statusbar .right { display: flex; gap: 7px; align-items: center; color: var(--text-2); font-weight: 500; }
+      .batt { background: var(--green); color: #06250f; border-radius: 5px; padding: 1px 5px; font-size: 11px; font-weight: 700; }
+      .screenhead { display: flex; align-items: center; gap: 12px; padding: 8px 18px 2px; }
+      .screenhead h1 { margin: 0; font-size: var(--fs-screen); font-weight: 600; }
+      .screenhead .spacer { margin-left: auto; }
+      .live-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--green); }
+      .bolt { color: var(--text-2); font-size: var(--fs-title); }
+
+      .body { flex: 1; overflow-y: auto; padding: 8px 16px 120px; display: flex; flex-direction: column; gap: 12px; position: relative; }
+
+      .rdetail-bar { display: flex; align-items: center; gap: 10px; }
+      .rdetail-back { background: none; border: none; padding: 6px 2px; font-size: var(--fs-note); color: var(--accent); cursor: pointer; }
+      .rdetail-pos { margin-left: auto; font-size: var(--fs-secondary); color: var(--text-2); font-variant-numeric: tabular-nums; }
+      .rdetail-nav { display: flex; gap: 6px; }
+      .rdetail-nav button { width: 34px; height: 34px; border-radius: var(--r-pill); border: 1px solid var(--border); background: var(--surface); color: var(--text); font-size: var(--fs-body); cursor: pointer; }
+
+      /* subject row */
+      .subject { display: flex; align-items: center; gap: 11px; }
+      .avatar { width: 40px; height: 40px; border-radius: 50%; flex: none; display: grid; place-items: center; font-weight: 600; font-size: var(--fs-note); }
+      .subject-main { display: flex; flex-direction: column; gap: 1px; }
+      .subject-name { font-size: var(--fs-title); font-weight: 600; }
+      .subject-sub { font-size: var(--fs-micro); color: var(--text-3); display: flex; align-items: center; gap: 7px; }
+      .domain-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+
+      .kind-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+      .kind-badge { font-size: var(--fs-micro); padding: 2px 9px; border-radius: var(--r-pill); background: var(--amber-tint); color: var(--amber); font-weight: 500; }
+      .conf-badge { font-size: var(--fs-micro); padding: 2px 9px; border-radius: var(--r-pill); border: 1px solid var(--border); color: var(--text-2); }
+
+      .hero { margin: 2px 0 0; font-size: var(--fs-editor); line-height: 1.34; font-weight: 500; }
+      .why { font-size: var(--fs-secondary); color: var(--text-2); line-height: 1.5; margin: 0 2px; }
+
+      /* card primitive (used by every body variant) */
+      .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-card); box-shadow: var(--shadow-card); padding: 13px 14px; display: flex; flex-direction: column; gap: 10px; }
+      .card-lbl { font-size: var(--fs-micro); text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-3); display: flex; align-items: center; gap: 8px; }
+      .typed-tag { color: var(--steel); border: 1px solid var(--steel); border-radius: var(--r-pill); padding: 0 7px; letter-spacing: 0.02em; font-size: 10px; }
+
+      /* value diff */
+      .diff { display: flex; flex-direction: column; gap: 8px; }
+      .diff-path { font-family: var(--font-mono); font-size: var(--fs-secondary); color: var(--text-2); }
+      .diff-row { display: flex; align-items: baseline; gap: 9px; }
+      .diff-row .v { font-size: var(--fs-title); font-weight: 600; }
+      .diff-row.before .v { text-decoration: line-through; color: var(--text-3); }
+      .diff-row.after .v { color: var(--green); }
+      .diff-row .tag { font-size: var(--fs-micro); color: var(--text-3); }
+
+      /* proposed edge */
+      .edge { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+      .edge-path { font-family: var(--font-mono); font-size: var(--fs-note); color: var(--text-2); }
+      .edge-arrow { color: var(--text-3); }
+      .val-chip { display: inline-flex; align-items: center; gap: 7px; font-weight: 600; font-size: var(--fs-title); background: var(--surface-2); border: 1px dashed var(--border); border-radius: var(--r-input); padding: 4px 11px; cursor: pointer; color: var(--text); font-family: inherit; }
+      .val-chip .pen { font-size: var(--fs-micro); color: var(--text-3); }
+      .val-chip.edited { border-style: solid; border-color: var(--steel); background: var(--steel-tint); color: var(--steel); }
+      .val-input { font: inherit; font-size: var(--fs-title); font-weight: 600; background: var(--bg); border: 1px solid var(--steel); border-radius: var(--r-input); padding: 5px 11px; color: var(--text); width: 100%; max-width: 240px; }
+
+      /* candidates (ambiguous) */
+      .cand { display: flex; flex-direction: column; gap: 7px; }
+      .cand-row { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--r-input); background: var(--surface-2); color: var(--text-2); font-size: var(--fs-secondary); }
+      .cand-row .dot { width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; font-size: var(--fs-micro); font-weight: 600; flex: none; }
+      .cand-note { font-size: var(--fs-micro); color: var(--text-3); }
+
+      /* suggestions (new predicate) */
+      .sugg { display: flex; flex-direction: column; gap: 7px; }
+      .sugg-head { font-family: var(--font-mono); font-size: var(--fs-secondary); color: var(--text-2); }
+
+      /* evidence */
+      .evi { background: var(--surface-2); border-radius: var(--r-input); padding: 10px 12px; font-size: var(--fs-secondary); color: var(--text-2); line-height: 1.5; }
+      .evi mark { background: var(--amber-tint); color: var(--amber); border-radius: 3px; padding: 0 2px; }
+      .evi-src { font-size: var(--fs-micro); color: var(--text-3); margin-top: 6px; }
+
+      .notice { display: flex; gap: 9px; align-items: flex-start; font-size: var(--fs-secondary); color: var(--text-2); line-height: 1.5; }
+      .notice .ic { color: var(--amber); flex: none; }
+
+      /* actions */
+      .actions { display: flex; flex-direction: column; gap: 8px; }
+      .btn { appearance: none; font: inherit; border-radius: var(--r-input); border: 1px solid var(--border); cursor: pointer; text-align: left; padding: 11px 14px; min-height: 44px; display: flex; flex-direction: column; gap: 2px; }
+      .btn .l { font-size: var(--fs-note); font-weight: 600; color: var(--text); }
+      .btn .d { font-size: var(--fs-micro); color: var(--text-3); }
+      .btn.primary { background: var(--steel-tint); border-color: transparent; }
+      .btn.primary .l { color: var(--steel); }
+      .btn.neutral { background: var(--surface); }
+      .btn.danger { background: var(--rose-tint); border-color: transparent; }
+      .btn.danger .l { color: var(--rose); }
+      .btn.armed { background: var(--rose); border-color: var(--rose); }
+      .btn.armed .l, .btn.armed .d { color: #fff; }
+      .escape { display: flex; gap: 8px; }
+      .escape button { flex: 1; appearance: none; font: inherit; font-size: var(--fs-secondary); background: var(--surface); border: 1px solid var(--border); color: var(--text-2); border-radius: var(--r-input); padding: 10px; min-height: 44px; cursor: pointer; }
+
+      /* block framing for Approach C */
+      .block { position: relative; border: 1px solid var(--border); border-radius: var(--r-card); padding: 14px 14px 13px; background: var(--surface); display: flex; flex-direction: column; gap: 10px; }
+      .block.bare { background: transparent; border-style: dashed; }
+      .block-tag { position: absolute; top: -8px; left: 12px; font-family: var(--font-mono); font-size: 10px; color: var(--text-3); background: var(--bg); padding: 0 6px; letter-spacing: 0.02em; }
+
+      /* Approach B decision-first */
+      .b-context { display: flex; align-items: center; gap: 9px; font-size: var(--fs-micro); color: var(--text-3); }
+      .b-question { font-size: var(--fs-screen); line-height: 1.25; font-weight: 600; margin: 4px 0 2px; }
+      .b-disclosure { font-size: var(--fs-secondary); color: var(--steel); cursor: pointer; user-select: none; }
+      .b-big { appearance: none; font: inherit; width: 100%; border-radius: var(--r-card); cursor: pointer; padding: 15px 16px; min-height: 60px; display: flex; flex-direction: column; gap: 3px; text-align: left; border: 1px solid var(--border); }
+      .b-big .l { font-size: var(--fs-title); font-weight: 600; }
+      .b-big .d { font-size: var(--fs-secondary); }
+      .b-big.primary { background: var(--steel-tint); border-color: transparent; }
+      .b-big.primary .l { color: var(--steel); } .b-big.primary .d { color: var(--text-2); }
+      .b-big.danger { background: var(--rose-tint); border-color: transparent; }
+      .b-big.danger .l { color: var(--rose); } .b-big.danger .d { color: var(--text-2); }
+      .b-big.armed { background: var(--rose); border-color: var(--rose); }
+      .b-big.armed .l, .b-big.armed .d { color: #fff; }
+      .b-spacer { flex: 1; min-height: 8px; }
+      .b-escape { display: flex; gap: 8px; padding-top: 4px; border-top: 1px solid var(--border); margin-top: 4px; }
+      .b-escape button { flex: 1; appearance: none; font: inherit; font-size: var(--fs-secondary); background: none; border: none; color: var(--text-2); padding: 10px; min-height: 44px; cursor: pointer; }
+
+      /* snackbar (the response) */
+      .snack { position: absolute; left: 14px; right: 14px; bottom: 16px; background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--r-input); padding: 12px 14px; display: flex; align-items: center; gap: 12px; font-size: var(--fs-secondary); color: var(--text); box-shadow: 0 8px 24px rgba(0,0,0,0.3); animation: rise 160ms ease-out; }
+      .snack .msg { flex: 1; line-height: 1.4; }
+      .snack .msg b { font-weight: 600; }
+      .snack .msg .cons { color: var(--text-2); font-size: var(--fs-micro); display: block; margin-top: 2px; }
+      .snack .undo { color: var(--steel); font-weight: 600; cursor: pointer; flex: none; }
+      @keyframes rise { from { transform: translateY(12px); opacity: 0; } to { transform: none; opacity: 1; } }
+    </style>
+  </head>
+  <body>
+    <div class="demo-bar">
+      <div class="demo-title"><b>Review — unified base view.</b> one screen, every fact type</div>
+      <div class="seg" role="group" aria-label="theme">
+        <button id="t-dark" aria-pressed="true">dark</button>
+        <button id="t-light" aria-pressed="false">light</button>
+      </div>
+    </div>
+
+    <div class="approach-row">
+      <div class="approach-seg" role="group" aria-label="approach">
+        <button data-app="A" aria-pressed="true"><span class="ttl">A · unified card</span><span class="sub">one scaffold, polymorphic body</span></button>
+        <button data-app="B" aria-pressed="false"><span class="ttl">B · decision-first</span><span class="sub">choices are the screen</span></button>
+        <button data-app="C" aria-pressed="false"><span class="ttl">C · block registry</span><span class="sub">composed from typed blocks</span></button>
+      </div>
+    </div>
+
+    <div class="type-row" id="typeRow"></div>
+
+    <div class="phone">
+      <div class="statusbar"><span>9:41</span><span class="right">JBrain&nbsp;· <span class="batt">87</span></span></div>
+      <div class="screenhead"><h1>Review</h1><span class="spacer"></span><span class="live-dot"></span><span class="bolt">⚡</span></div>
+      <div class="body" id="screen"></div>
+    </div>
+
+    <div class="demo-note" id="note"></div>
+
+    <script>
+      // ===== normalized model: every fact-review kind in one shape =====
+      // body.variant ∈ diff | edge | candidates | suggestions | notice | question
+      // actions: the type's decisions; escapes (defer/talk it over) are universal.
+      const ACCENT = { steel:"var(--steel)", rose:"var(--rose)", violet:"var(--violet)", green:"var(--green)", amber:"var(--amber)", slate:"var(--slate)" };
+      const TINT   = { steel:"var(--steel-tint)", rose:"var(--rose-tint)", violet:"var(--violet-tint)", green:"var(--green-tint)", amber:"var(--amber-tint)", slate:"rgba(154,160,168,0.14)" };
+      const DOMAIN_DOT = { general:"var(--steel)", health:"var(--rose)", finance:"var(--violet)" };
+
+      const KINDS = [
+        {
+          id:"fact_conflict", label:"fact conflict", reserved:false, domain:"health", conf:0.97,
+          subject:{name:"Me", type:"Person", accent:"steel", initial:"M"},
+          summary:"two blood_pressure values disagree for Me",
+          why:"a pharmacy-kiosk reading in this note disagrees with this morning’s clinic value.",
+          snippet:"Pharmacy kiosk says <mark>138/92</mark> — way off this morning’s 128/82 at Dr. Patel’s.",
+          source:"from this note · health",
+          body:{ variant:"diff", path:"me.blood_pressure",
+            before:{v:"128/82 mmHg", tag:"previously recorded"},
+            after:{v:"138/92 mmHg", tag:"from this note"} },
+          actions:[
+            {id:"accept_a", label:"keep 128/82 mmHg", detail:"previously recorded", tone:"primary", cons:"128/82 stays active; 138/92 is retracted."},
+            {id:"accept_b", label:"use 138/92 mmHg", detail:"from this note", tone:"primary", cons:"138/92 becomes active; 128/82 is superseded."},
+          ],
+        },
+        {
+          id:"attribute_collision", label:"attribute collision", reserved:false, domain:"general", conf:0.74,
+          subject:{name:"Sarah", type:"Person", accent:"steel", initial:"S"},
+          summary:"two values recorded for Sarah’s birthDate",
+          why:"a card in this note dates Sarah’s birthday differently than the wiki.",
+          snippet:"card in the mail for <mark>Sarah’s birthday on the 14th</mark>",
+          source:"from this note · general",
+          body:{ variant:"diff", path:"sarah.birthDate",
+            before:{v:"May 2, 1990", tag:"previously recorded"},
+            after:{v:"March 14, 1988", tag:"from this note"} },
+          actions:[
+            {id:"accept_a", label:"keep May 2, 1990", detail:"previously recorded", tone:"primary", cons:"May 2, 1990 stays active."},
+            {id:"accept_b", label:"use March 14, 1988", detail:"from this note", tone:"primary", cons:"March 14, 1988 becomes active."},
+          ],
+        },
+        {
+          id:"merge_proposal", label:"merge proposal", reserved:false, domain:"general", conf:0.81,
+          subject:{name:"Bob", type:"Person", accent:"steel", initial:"B"},
+          summary:"are “Bob” and “Robert Chen” the same person?",
+          why:"same employer and overlapping mentions, but the names never co-occur.",
+          snippet:"Lunch with <mark>Bob</mark> — he’s pitching the Donnelly account again next quarter.",
+          source:"from a note · general",
+          body:{ variant:"question" },
+          actions:[
+            {id:"accept", label:"yes — merge them", detail:"mentions & facts combine", tone:"primary", cons:"Bob folds into Robert Chen; a later split can undo it."},
+            {id:"reject", label:"no — keep separate", detail:"writes a permanent distinct-from", tone:"danger", cons:"a permanent distinct-from edge is written; never re-proposed."},
+          ],
+        },
+        {
+          id:"ambiguous_mention", label:"ambiguous mention", reserved:false, domain:"general", conf:null,
+          subject:{name:"Sam", type:"Person", accent:"slate", initial:"S"},
+          summary:"which Sam?",
+          why:"the mention matches two known people; neither is a confident link.",
+          snippet:"<mark>Sam</mark> said the roof quote covers the flashing too.",
+          source:"from a note · general",
+          body:{ variant:"candidates", candidates:[
+            {name:"Sam Rivera", note:"contractor · 6 mentions", accent:"steel", initial:"SR"},
+            {name:"Sam Okafor", note:"college friend · 2 mentions", accent:"slate", initial:"SO"},
+          ], note:"linking a specific Sam needs more signal — picking isn’t offered yet." },
+          actions:[
+            {id:"reject", label:"leave unlinked", detail:"can be re-proposed with more signal", tone:"neutral", cons:"the mention stays unlinked."},
+          ],
+        },
+        {
+          id:"domain_promotion", label:"domain promotion", reserved:false, domain:"health", conf:0.86,
+          subject:{name:"Dr. Akin", type:"Person", accent:"rose", initial:"A"},
+          summary:"this faxRequest fact may belong in general, not health",
+          why:"the fact is administrative — it carries no medical content.",
+          snippet:"Asked <mark>Dr. Akin</mark>’s office to fax the form to the school nurse.",
+          source:"from a note · health",
+          body:{ variant:"question" },
+          actions:[
+            {id:"accept", label:"move to general & pin", detail:"leaves the health firewall", tone:"primary", cons:"the fact moves to general and is pinned — reprocessing can’t pull it back."},
+            {id:"reject", label:"keep in health", detail:"the note’s firewall holds", tone:"neutral", cons:"the fact stays in health."},
+          ],
+        },
+        {
+          id:"low_confidence_inference", label:"low-confidence inference", reserved:false, domain:"general", conf:0.60,
+          subject:{name:"Me", type:"Person", accent:"steel", initial:"M"},
+          summary:"hold for review (below threshold): People call me Jeff.",
+          why:"inferred a nickname from one phrasing — below the commit threshold.",
+          snippet:"<mark>People call me Jeff</mark>.",
+          source:"from this note · general",
+          body:{ variant:"edge", path:"me.name.nickname", value:"Jeff", typed:false },
+          actions:[
+            {id:"accept", label:"approve — record it", detail:"pinned through reprocessing", tone:"primary", cons:"the fact is recorded and pinned."},
+            {id:"reject", label:"discard", detail:"drop the inference", tone:"neutral", cons:"the fact is discarded."},
+          ],
+        },
+        {
+          id:"new_predicate", label:"new predicate", reserved:false, domain:"finance", conf:0.65,
+          subject:{name:"Aetna PPO", type:"Organization", accent:"violet", initial:"A"},
+          summary:"new predicate ‘co_pay’ — nearest: copayment (0.82)",
+          why:"the canonicalizer couldn’t confidently merge this predicate. the fact already committed under its raw name.",
+          snippet:"Specialist visits have a <mark>co-pay of $45</mark> under the new plan.",
+          source:"from a note · finance",
+          body:{ variant:"suggestions", predicate:"co_pay", suggestions:[
+            {name:"copayment", sim:0.82}, {name:"out_of_pocket", sim:0.61},
+          ] },
+          actions:[
+            {id:"map:copayment", label:"map onto copayment", detail:"≈ 0.82", tone:"primary", cons:"‘co_pay’ is remapped to copayment."},
+            {id:"map:out_of_pocket", label:"map onto out_of_pocket", detail:"≈ 0.61", tone:"neutral", cons:"‘co_pay’ is remapped to out_of_pocket."},
+            {id:"accept_as_new", label:"keep ‘co_pay’ as a new predicate", detail:"", tone:"neutral", cons:"‘co_pay’ joins the registry as canonical."},
+            {id:"reject", label:"dismiss", detail:"leave it as-is", tone:"neutral", cons:"left as-is."},
+          ],
+        },
+        {
+          id:"confirm_entity", label:"confirm entity", reserved:false, domain:"general", conf:0.78,
+          subject:{name:"Alex Kim", type:"Person", accent:"steel", initial:"A"},
+          summary:"is this person “Alex Kim” a single, confirmed entity?",
+          why:"crossed the corroboration bar, but a live namesake makes the identity contested.",
+          snippet:"Caught up with <mark>Alex Kim</mark> — the one from the Seattle team, not the contractor.",
+          source:"from a note · general",
+          body:{ variant:"question" },
+          actions:[
+            {id:"accept", label:"confirm — one entity", detail:"survives note deletion", tone:"primary", cons:"the entity is confirmed and isn’t auto-purged."},
+            {id:"reject", label:"leave provisional", detail:"stays purge-eligible", tone:"neutral", cons:"left provisional; never re-proposed."},
+          ],
+        },
+        {
+          id:"extraction_truncated", label:"extraction truncated", reserved:false, domain:"general", conf:null,
+          subject:{name:"Dad", type:"Person", accent:"steel", initial:"D"},
+          summary:"this note hit its fact budget — kept 40, skipped 6 facts",
+          why:null,
+          snippet:"Dad’s full medical history — <mark>1998 appendectomy, 2011 ACL repair</mark>, and more…",
+          source:"from a note · general",
+          body:{ variant:"notice", text:"the note held more durable facts than its per-note budget, so the tail was clipped. re-run analysis with a larger budget to capture more." },
+          actions:[
+            {id:"reject", label:"got it — dismiss", detail:"re-run to capture more", tone:"neutral", cons:"the note is left as-is."},
+          ],
+        },
+        {
+          id:"low_confidence", label:"low-confidence (legacy)", reserved:true, domain:"health", conf:0.41,
+          subject:{name:"Me", type:"Person", accent:"steel", initial:"M"},
+          summary:"low-confidence extraction (41%)",
+          why:"extracted from an uncertain phrasing — verify against the note.",
+          snippet:"Started <mark>vitamin D 2000 IU daily</mark> per Dr. Akin.",
+          source:"from a note · health",
+          body:{ variant:"notice", text:"a fact below the commit threshold, surfaced for a yes/no. reserved in the schema — no live pipeline writes this today." },
+          actions:[
+            {id:"accept", label:"accept & pin", detail:"reprocessing can’t drop it", tone:"primary", cons:"the fact stands and gets pinned."},
+            {id:"reject", label:"retract", detail:"a misread", tone:"neutral", cons:"the fact is retracted."},
+          ],
+        },
+        {
+          id:"split_proposal", label:"split proposal (reserved)", reserved:true, domain:"finance", conf:0.70,
+          subject:{name:"the Honda", type:"Product", accent:"amber", initial:"H"},
+          summary:"“the Honda” may be two different cars",
+          why:"two mileage readings on the same entity can’t both be true for one vehicle.",
+          snippet:"Oil change on <mark>the Honda</mark> — 152k miles now, the other receipt said 48k.",
+          source:"from a note · finance",
+          body:{ variant:"question" },
+          actions:[
+            {id:"accept", label:"split into two vehicles", detail:"mentions re-resolve", tone:"danger", cons:"the entity splits; mentions re-resolve from their spans."},
+            {id:"reject", label:"keep as one car", detail:"mileage goes back to review", tone:"neutral", cons:"stays one car; the conflict returns to fact review."},
+          ],
+        },
+      ];
+
+      let state = { theme:"dark", approach:"A", kindIdx:0 };
+
+      // ===== shared fragment builders =====
+      function escAll(){ return `<div class="escape"><button data-act="defer" data-cons="parked in deferred — resume anytime.">defer</button><button data-act="discuss" data-cons="handed to the assistant — parked in deferred.">talk it over</button></div>`; }
+      const confTxt = c => c==null ? "" : `${Math.round(c*100)}% conf`;
+
+      function avatar(s, size){ const sz = size||40; return `<div class="avatar" style="width:${sz}px;height:${sz}px;background:${TINT[s.accent]};color:${ACCENT[s.accent]}">${s.initial}</div>`; }
+      function subjectRow(k){ return `<div class="subject">${avatar(k.subject)}<div class="subject-main"><span class="subject-name">${k.subject.name}</span><span class="subject-sub"><span style="color:${ACCENT[k.subject.accent]}">${k.subject.type}</span><span class="domain-dot" style="background:${DOMAIN_DOT[k.domain]}"></span>${k.domain}</span></div></div>`; }
+      function kindRow(k){ return `<div class="kind-row"><span class="kind-badge">${k.label}</span>${k.conf!=null?`<span class="conf-badge">${confTxt(k.conf)}</span>`:""}</div>`; }
+      function evidence(k){ return `<div class="evi">${k.snippet}<div class="evi-src">${k.source}</div></div>`; }
+
+      // the polymorphic body region — shared across A and C, lightly reused in B
+      function bodyVariant(k){
+        const b = k.body;
+        if(b.variant==="diff"){
+          return `<div class="diff"><div class="diff-path">${b.path}</div>
+            <div class="diff-row before"><span class="v">${b.before.v}</span><span class="tag">${b.before.tag}</span></div>
+            <div class="diff-row after"><span class="v">${b.after.v}</span><span class="tag">${b.after.tag}</span></div></div>`;
+        }
+        if(b.variant==="edge"){
+          return `<div class="edge"><span class="edge-path">${b.path}</span><span class="edge-arrow">→</span>
+            <button class="val-chip" data-edit><span>${b.value}</span><span class="pen">✎</span></button></div>
+            <div class="cand-note">tap the value to correct in place — approve files it; an edit files a correction note.</div>`;
+        }
+        if(b.variant==="candidates"){
+          return `<div class="cand">${b.candidates.map(c=>`<div class="cand-row"><span class="dot" style="background:${TINT[c.accent]};color:${ACCENT[c.accent]}">${c.initial}</span><div><div>${c.name}</div><div class="cand-note">${c.note}</div></div></div>`).join("")}<div class="cand-note">${b.note}</div></div>`;
+        }
+        if(b.variant==="suggestions"){
+          return `<div class="sugg"><div class="sugg-head">${b.predicate} →</div>${b.suggestions.map(s=>`<div class="cand-row"><span style="font-family:var(--font-mono)">${s.name}</span><span class="cand-note" style="margin-left:auto">≈ ${s.sim.toFixed(2)}</span></div>`).join("")}</div>`;
+        }
+        if(b.variant==="notice"){
+          return `<div class="notice"><span class="ic">ⓘ</span><span>${b.text}</span></div>`;
+        }
+        if(b.variant==="question"){ return ""; } // the summary carries the question
+        return "";
+      }
+
+      function actionBtns(k){
+        return `<div class="actions">${k.actions.map(a=>`<button class="btn ${a.tone}" data-act="${a.id}" data-cons="${a.cons}" data-label="${a.label}" ${a.tone==="danger"?'data-danger="1"':""}><span class="l">${a.label}</span>${a.detail?`<span class="d">${a.detail}</span>`:""}</button>`).join("")}</div>`;
+      }
+
+      // ===== Approach A — unified card: one scaffold, polymorphic body =====
+      function renderA(k){
+        const hasBodyCard = k.body.variant!=="question";
+        return navBar() + `
+          ${subjectRow(k)}
+          ${kindRow(k)}
+          <p class="hero">${k.summary}</p>
+          ${hasBodyCard?`<div class="card"><div class="card-lbl">proposal ${k.body.typed?'<span class="typed-tag">typed</span>':""}</div>${bodyVariant(k)}</div>`:""}
+          ${k.why?`<p class="why">${k.why}</p>`:""}
+          ${evidence(k)}
+          ${actionBtns(k)}
+          ${escAll()}`;
+      }
+
+      // ===== Approach B — decision-first: choices are the screen =====
+      function renderB(k){
+        const ctx = `<div class="b-context"><span class="kind-badge">${k.label}</span>${avatar(k.subject,22)}<span>${k.subject.name}</span>${k.conf!=null?`· ${confTxt(k.conf)}`:""}</div>`;
+        const detailBody = (k.body.variant!=="question") ? `<div class="card" id="bDetail" hidden><div class="card-lbl">proposal</div>${bodyVariant(k)}</div>` : "";
+        const big = k.actions.map(a=>`<button class="b-big ${a.tone==="danger"?"danger":a.tone==="primary"?"primary":""}" data-act="${a.id}" data-cons="${a.cons}" data-label="${a.label}" ${a.tone==="danger"?'data-danger="1"':""}><span class="l">${a.label}</span>${a.detail?`<span class="d">${a.detail}</span>`:""}</button>`).join("");
+        return navBar() + `
+          ${ctx}
+          <p class="b-question">${k.summary}</p>
+          <div class="b-disclosure" data-disclose>▾ evidence &amp; details</div>
+          <div id="bDisclose" hidden>${evidence(k)}${k.why?`<p class="why">${k.why}</p>`:""}${detailBody}</div>
+          <div class="b-spacer"></div>
+          <div class="actions">${big}</div>
+          <div class="b-escape"><button data-act="defer" data-cons="parked in deferred — resume anytime.">defer</button><button data-act="discuss" data-cons="handed to the assistant — parked in deferred.">talk it over</button></div>`;
+      }
+
+      // ===== Approach C — block registry: composed from typed blocks =====
+      function renderC(k){
+        const blocks = [];
+        blocks.push(`<div class="block"><span class="block-tag">header</span>${subjectRow(k)}${kindRow(k)}<p class="hero" style="font-size:var(--fs-title)">${k.summary}</p></div>`);
+        if(k.body.variant!=="question"){
+          blocks.push(`<div class="block"><span class="block-tag">claim:${k.body.variant}</span>${bodyVariant(k)}</div>`);
+        }
+        blocks.push(`<div class="block"><span class="block-tag">evidence</span>${evidence(k)}${k.why?`<p class="why" style="margin:0">${k.why}</p>`:""}</div>`);
+        blocks.push(`<div class="block bare"><span class="block-tag">action:${k.actions.length>2?"choices":"verdict"}</span>${actionBtns(k)}${escAll()}</div>`);
+        return navBar() + blocks.join("");
+      }
+
+      function navBar(){
+        const n = state.kindIdx+1, m = KINDS.length;
+        return `<div class="rdetail-bar"><button class="rdetail-back">‹ inbox</button><span class="rdetail-pos">${n} of ${m}</span><div class="rdetail-nav"><button data-nav="-1">‹</button><button data-nav="1">›</button></div></div>`;
+      }
+
+      // ===== render & wiring =====
+      function render(){
+        const k = KINDS[state.kindIdx];
+        const screen = document.getElementById("screen");
+        screen.innerHTML = state.approach==="A" ? renderA(k) : state.approach==="B" ? renderB(k) : renderC(k);
+        wire(screen, k);
+        renderTypes();
+        document.getElementById("note").innerHTML = noteFor(k);
+      }
+
+      function noteFor(k){
+        const A = "<b>A · unified card</b> keeps the current scaffold (subject → kind → proposal → evidence → actions) and makes only the <b>proposal</b> region polymorphic — least disruptive, closest to today.";
+        const B = "<b>B · decision-first</b> inverts the hierarchy: the choices fill the thumb zone and evidence collapses — every type normalizes to a <b>choice stack</b>, best one-thumb ergonomics.";
+        const C = "<b>C · block registry</b> assembles the screen from typed blocks (<code>header · claim:&lt;variant&gt; · evidence · action</code>) declared by the payload — most extensible, you add a type by composing blocks.";
+        const map = {A,B,C};
+        return map[state.approach] + `<br><br>showing <code>${k.id}</code>${k.reserved?' <span style="color:var(--amber)">· reserved (no live pipeline)</span>':''} — body variant <code>${k.body.variant}</code>, ${k.actions.length} decision${k.actions.length>1?"s":""} + universal defer / talk-it-over.`;
+      }
+
+      function renderTypes(){
+        const row = document.getElementById("typeRow");
+        row.innerHTML = KINDS.map((k,i)=>`<button class="type-chip" data-idx="${i}" aria-pressed="${i===state.kindIdx}">${k.reserved?`<span class="reserved">${k.id}</span>`:k.id}</button>`).join("");
+        row.querySelectorAll("[data-idx]").forEach(b=>b.onclick=()=>{ state.kindIdx=+b.dataset.idx; render(); });
+      }
+
+      function wire(screen, k){
+        screen.querySelectorAll("[data-nav]").forEach(b=>b.onclick=()=>{ state.kindIdx=(state.kindIdx+ +b.dataset.nav + KINDS.length)%KINDS.length; render(); });
+        // editable value (inference)
+        screen.querySelectorAll("[data-edit]").forEach(chip=>chip.onclick=()=>{
+          const cur = chip.querySelector("span").textContent;
+          const input = document.createElement("input");
+          input.className="val-input"; input.value=cur;
+          chip.replaceWith(input); input.focus();
+          input.onblur=()=>{ const nv=input.value.trim()||cur; const edited = nv!==k.body.value;
+            const nb=document.createElement("button"); nb.className="val-chip"+(edited?" edited":""); nb.setAttribute("data-edit","");
+            nb.innerHTML=`<span>${nv}</span><span class="pen">✎</span>`; input.replaceWith(nb); wire(screen,k);
+            if(edited){ // an edit flips approve → approve correction
+              const ap = screen.querySelector('[data-act="accept"]'); if(ap){ const l=ap.querySelector(".l"); if(l) l.textContent="approve correction"; ap.dataset.cons="files a correction note in this domain — the pipeline re-adjudicates."; }
+            }
+          };
+          input.onkeydown=e=>{ if(e.key==="Enter") input.blur(); };
+        });
+        // disclosure (B)
+        const disc = screen.querySelector("[data-disclose]");
+        if(disc) disc.onclick=()=>{ const d=screen.querySelector("#bDisclose"); const bd=screen.querySelector("#bDetail"); d.hidden=!d.hidden; if(bd) bd.hidden=d.hidden; disc.textContent=(d.hidden?"▾":"▴")+" evidence & details"; };
+        // actions (incl. escapes) — armed tap-again for destructive
+        screen.querySelectorAll("[data-act]").forEach(btn=>btn.onclick=()=>{
+          if(btn.dataset.danger==="1" && btn.dataset.armed!=="1"){
+            btn.dataset.armed="1"; btn.classList.add("armed");
+            const l=btn.querySelector(".l"); if(l){ btn.dataset.orig=l.textContent; l.textContent="tap again to confirm"; }
+            setTimeout(()=>{ if(btn.dataset.armed==="1"){ btn.dataset.armed="0"; btn.classList.remove("armed"); const l2=btn.querySelector(".l"); if(l2&&btn.dataset.orig) l2.textContent=btn.dataset.orig; } },3000);
+            return;
+          }
+          snack(btn.dataset.label||btn.textContent.trim(), btn.dataset.cons||"");
+        });
+      }
+
+      function snack(label, cons){
+        const screen = document.getElementById("screen");
+        const old = screen.querySelector(".snack"); if(old) old.remove();
+        const el = document.createElement("div"); el.className="snack";
+        el.innerHTML = `<div class="msg"><b>${label}</b>${cons?`<span class="cons">${cons}</span>`:""}</div><span class="undo">undo</span>`;
+        screen.appendChild(el);
+        el.querySelector(".undo").onclick=()=>el.remove();
+        clearTimeout(snack._t); snack._t=setTimeout(()=>el.remove(),4200);
+      }
+
+      // theme + approach controls
+      document.getElementById("t-dark").onclick=()=>setTheme("dark");
+      document.getElementById("t-light").onclick=()=>setTheme("light");
+      function setTheme(t){ state.theme=t; document.documentElement.setAttribute("data-theme",t);
+        document.getElementById("t-dark").setAttribute("aria-pressed", t==="dark");
+        document.getElementById("t-light").setAttribute("aria-pressed", t==="light"); }
+      document.querySelectorAll("[data-app]").forEach(b=>b.onclick=()=>{
+        state.approach=b.dataset.app;
+        document.querySelectorAll("[data-app]").forEach(x=>x.setAttribute("aria-pressed", x.dataset.app===state.approach));
+        render();
+      });
+
+      render();
+    </script>
+  </body>
+</html>
