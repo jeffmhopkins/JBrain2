@@ -154,6 +154,25 @@ def verify_citations(
     return VerificationResult((len(cited) - len(invalid)) / len(cited), issues)
 
 
+def _is_grounded(claim: str, sources: set[str], threshold: float) -> bool:
+    """Whether one claim's significant tokens overlap the sources enough to count
+    as grounded. A claim with no significant tokens (a greeting, a hedge) can't be
+    ungrounded, so it grounds vacuously."""
+    toks = significant_tokens(claim)
+    return not toks or len(toks & sources) / len(toks) >= threshold
+
+
+def ungrounded_claims(
+    claims: Sequence[str], source_texts: Sequence[str], threshold: float = _GROUNDING_THRESHOLD
+) -> list[str]:
+    """The verbatim claim sentences that failed grounding — the structured twin of
+    `verify_grounding`'s prose issues, so the PWA can anchor a flag against the
+    exact answer sentence (docs/ASSISTANT.md "Self-improvement loops") instead of
+    re-parsing the `"claim not grounded…: <sentence>"` issue prefix."""
+    sources = significant_tokens(" ".join(source_texts))
+    return [c for c in claims if not _is_grounded(c, sources, threshold)]
+
+
 def verify_grounding(
     claims: Sequence[str], source_texts: Sequence[str], threshold: float = _GROUNDING_THRESHOLD
 ) -> VerificationResult:
@@ -166,8 +185,7 @@ def verify_grounding(
     grounded = 0
     issues: list[str] = []
     for claim in claims:
-        toks = significant_tokens(claim)
-        if not toks or len(toks & sources) / len(toks) >= threshold:
+        if _is_grounded(claim, sources, threshold):
             grounded += 1
         else:
             issues.append(f"claim not grounded in retrieved sources: {claim}")

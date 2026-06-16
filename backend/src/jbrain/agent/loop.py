@@ -35,6 +35,7 @@ from jbrain.agent.reflexion import (
     claims_from,
     critique_worthy,
     reflect,
+    ungrounded_claims,
     verify_grounding,
 )
 from jbrain.agent.toolregistry import ToolRegistry
@@ -437,7 +438,12 @@ class AgentLoop:
             source_count=len(kept.sources), mutated=kept.mutated, scopes=scopes
         ):
             yield VerdictEvent(
-                passed=False, score=kept_verdict.score, issues=list(kept_verdict.issues)
+                passed=False,
+                score=kept_verdict.score,
+                issues=list(kept_verdict.issues),
+                ungrounded_claims=ungrounded_claims(
+                    claims_from(kept.answer), [s.snippet for s in kept.sources]
+                ),
             )
 
     async def _produce_buffered(
@@ -557,11 +563,16 @@ class AgentLoop:
         yield DoneEvent(stop_reason=stop_reason)
         if not critique_worthy(source_count=len(sources), mutated=mutated, scopes=scopes):
             return
-        verdict = aggregate(
-            [verify_grounding(claims_from("".join(answer_parts)), [s.snippet for s in sources])]
-        )
+        claims = claims_from("".join(answer_parts))
+        snippets = [s.snippet for s in sources]
+        verdict = aggregate([verify_grounding(claims, snippets)])
         if not verdict.passed:
-            yield VerdictEvent(passed=False, score=verdict.score, issues=list(verdict.issues))
+            yield VerdictEvent(
+                passed=False,
+                score=verdict.score,
+                issues=list(verdict.issues),
+                ungrounded_claims=ungrounded_claims(claims, snippets),
+            )
 
     async def _dispatch(self, call: ToolCall, tool_ctx: ToolContext) -> _Dispatched:
         if call.name not in self._registry:

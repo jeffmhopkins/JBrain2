@@ -190,12 +190,19 @@ class VerdictEvent(BaseModel):
     ungrounded-claim / out-of-scope-citation strings the verifiers found. A
     passing turn emits no VerdictEvent at all (nothing to annotate); this event
     appears only when the verifiers flagged something. Ephemeral — never persisted
-    (Loop 1 writes nothing)."""
+    (Loop 1 writes nothing).
+
+    `ungrounded_claims` is the structured twin of the grounding subset of `issues`:
+    the *verbatim* answer sentences that failed grounding, so the PWA can anchor an
+    inline "unverified" flag against the exact prose instead of re-parsing the
+    prose `issues` prefix. `issues` stays the full human-readable list (it also
+    carries any citation/mutation issues, which have no answer-sentence to anchor)."""
 
     type: Literal["verdict"] = "verdict"
     passed: bool
     score: float
     issues: list[str] = Field(default_factory=list)
+    ungrounded_claims: list[str] = Field(default_factory=list)
 
 
 ChatEvent = Annotated[

@@ -455,6 +455,9 @@ async def test_ungrounded_critique_turn_emits_a_verdict_after_done() -> None:
     assert isinstance(verdict, VerdictEvent)
     assert verdict.passed is False
     assert any("not grounded" in i for i in verdict.issues)
+    # The structured field carries the verbatim ungrounded answer sentence (the PWA
+    # anchors its inline flag against this), not the prose-prefixed issue string.
+    assert verdict.ungrounded_claims == ["the roof needs replacing soon"]
 
 
 async def test_grounded_critique_turn_emits_no_verdict() -> None:

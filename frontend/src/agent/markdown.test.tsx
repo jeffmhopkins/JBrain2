@@ -105,6 +105,66 @@ describe("Markdown", () => {
     expect(onEntity).toHaveBeenCalledWith("me");
   });
 
+  it("anchors an amber ⚠ flag after an ungrounded claim and reveals its reason on tap", () => {
+    const onFlag = vi.fn();
+    const { rerender } = render(
+      <Markdown
+        text="You were born in 1986. The roof needs replacing."
+        flags={[{ id: "ug-0", claim: "The roof needs replacing.", reason: "Not in your notes." }]}
+        onFlag={onFlag}
+      />,
+    );
+    const flag = screen.getByRole("button", { name: "unverified claim" });
+    expect(flag).toHaveClass("md-flag");
+    // The note isn't shown until tapped.
+    expect(screen.queryByText("Not in your notes.")).toBeNull();
+    fireEvent.click(flag);
+    expect(onFlag).toHaveBeenCalledWith("ug-0");
+    // Drive the open state back in (the surface owns it) — the reason appears.
+    rerender(
+      <Markdown
+        text="You were born in 1986. The roof needs replacing."
+        flags={[{ id: "ug-0", claim: "The roof needs replacing.", reason: "Not in your notes." }]}
+        onFlag={onFlag}
+        openFlag="ug-0"
+      />,
+    );
+    expect(screen.getByText("Not in your notes.")).toBeInTheDocument();
+  });
+
+  it("anchors a flag through inline markdown (a bolded claim still matches)", () => {
+    render(
+      <Markdown
+        text="**The roof needs replacing.**"
+        flags={[{ id: "ug-0", claim: "**The roof needs replacing.**", reason: "no source" }]}
+      />,
+    );
+    // The claim's markdown source matches the rendered (marker-stripped) prose.
+    expect(screen.getByRole("button", { name: "unverified claim" })).toBeInTheDocument();
+    expect(document.querySelector(".md-flag-fallback")).toBeNull();
+  });
+
+  it("falls back to an end-of-bubble flag when a claim can't be located in the prose", () => {
+    render(
+      <Markdown
+        text="An entirely different answer than the verdict expected."
+        flags={[
+          { id: "ug-0", claim: "A sentence that is nowhere in the prose.", reason: "no source" },
+        ]}
+      />,
+    );
+    // No inline anchor was possible, so a single end-of-bubble flag stands in.
+    const fallback = document.querySelector(".md-flag-fallback");
+    expect(fallback).not.toBeNull();
+    expect(fallback?.querySelector(".md-flag")).not.toBeNull();
+  });
+
+  it("renders no flag when there are none (unchanged prose)", () => {
+    render(<Markdown text="A perfectly grounded answer." />);
+    expect(screen.queryByRole("button", { name: "unverified claim" })).toBeNull();
+    expect(document.querySelector(".md-flag-fallback")).toBeNull();
+  });
+
   it("prefers the longest entity label and respects word boundaries", () => {
     const onEntity = vi.fn();
     render(
