@@ -20,6 +20,7 @@ from jbrain.analysis.extraction import (
     parse_datetime,
     parse_extraction,
     ratchet_domain,
+    recover_scalar_value,
     resolve_relative_date,
     temporals_consistent,
     validate_backward_temporal,
@@ -460,7 +461,7 @@ def test_user_prompt_carries_the_per_note_fact_budget() -> None:
 
 
 def test_prompt_version_is_current() -> None:
-    assert PROMPT_VERSION == "note-extract-v18"
+    assert PROMPT_VERSION == "note-extract-v19"
 
 
 def test_user_prompt_carries_anchor_with_timezone_domain_and_content() -> None:
@@ -1445,3 +1446,37 @@ def test_merge_extractions_dedups_a_fact_restated_across_groups() -> None:
     shared = _mr_rel("Me", "Bob", predicate="sibling")
     merged = merge_extractions([_mr_part(facts=[shared]), _mr_part(facts=[shared])])
     assert len(merged.facts) == 1
+
+
+class TestRecoverScalarValue:
+    """recover_scalar_value rebuilds the concise datum a model left out of
+    value_json (it returned null with only a prose statement), so the page shows
+    the value, not the whole sentence — conservatively, never a guess."""
+
+    def test_enum_member_named_in_the_statement_is_recovered(self) -> None:
+        out = recover_scalar_value("gender", "Celine's gender is female.", ("male", "female"))
+        assert out == {"value": "female"}
+
+    def test_enum_with_no_member_or_two_members_recovers_nothing(self) -> None:
+        assert (
+            recover_scalar_value("gender", "Their gender is unstated.", ("male", "female")) is None
+        )
+        # 'male' is a whole word inside neither — but two distinct members would
+        # be ambiguous; an enum naming both stays null for validate to gate.
+        assert recover_scalar_value("x", "male or female", ("male", "female")) is None
+
+    def test_name_leadins_strip_to_the_bare_name(self) -> None:
+        assert recover_scalar_value("name.full", "Full name is Celine Kitina Hopkins.", ()) == {
+            "value": "Celine Kitina Hopkins"
+        }
+        assert recover_scalar_value("name.preferred", "Goes by Sammy.", ()) == {"value": "Sammy"}
+        assert recover_scalar_value("name.nickname", "Celine's nickname is Cel.", ()) == {
+            "value": "Cel"
+        }
+
+    def test_name_without_a_recoverable_tail_stays_null(self) -> None:
+        # No lead-in to anchor on, or an empty tail → null (falls back to prose).
+        assert recover_scalar_value("name.full", "She is well known locally.", ()) is None
+
+    def test_non_name_non_enum_predicate_is_left_alone(self) -> None:
+        assert recover_scalar_value("favoriteColor", "Her favorite color is teal.", ()) is None

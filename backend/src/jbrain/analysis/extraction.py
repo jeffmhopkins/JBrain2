@@ -716,6 +716,46 @@ def _recover_object_ref(
     return next(iter(named)) if len(named) == 1 else None
 
 
+# Lead-ins a name attribute's statement wraps the bare name in — so a model that
+# left value_json null still yields a concise value ("Full name is X." -> "X",
+# "Goes by X." -> "X"), instead of the page rendering the whole sentence.
+_NAME_LEADIN = re.compile(
+    r"\b(?:full name|preferred name|nick ?name|name|goes by|known as|called|named)\b"
+    r"\s*(?:is|are|was|:)?\s*",
+    re.IGNORECASE,
+)
+
+
+def recover_scalar_value(
+    predicate: str, statement: str, enum_values: tuple[str, ...]
+) -> dict[str, Any] | None:
+    """Recover a concise value the model omitted from value_json (it returned
+    null with only a prose statement, so the fact would render its whole
+    sentence). Two conservative, deterministic signals — never a guess:
+
+    - a closed-enum predicate: the ONE declared member named as a whole word in
+      the statement ("Celine's gender is female." -> {"value": "female"});
+    - a name.* predicate: the bare name after a name lead-in ("Full name is
+      Celine Kitina Hopkins." -> {"value": "Celine Kitina Hopkins"}).
+
+    Returns {"value": ...} or None when nothing is unambiguously recoverable.
+    """
+    s = statement.strip()
+    if enum_values:
+        low = s.casefold()
+        matched = [v for v in enum_values if re.search(rf"\b{re.escape(v.casefold())}\b", low)]
+        return {"value": matched[0]} if len(matched) == 1 else None
+    if predicate.startswith("name."):
+        m = _NAME_LEADIN.search(s)
+        if m is None:
+            return None
+        name = s[m.end() :].strip().strip("\"'“”").rstrip(".").strip()
+        # A plausible bare name, not a re-quoted sentence or an empty tail.
+        if name and len(name) <= 80 and name.casefold() != s.casefold():
+            return {"value": name}
+    return None
+
+
 def parse_extraction(
     payload: Any, *, anchor: datetime | None = None, max_facts: int = MAX_FACTS
 ) -> Extraction:

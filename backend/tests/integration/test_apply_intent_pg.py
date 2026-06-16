@@ -192,6 +192,37 @@ async def test_apply_intent_commits_a_surface_fact_and_mints_entity(maker, tmp_p
     assert facts[0].status == "active"
 
 
+async def test_name_fact_recovers_its_value_from_the_statement(maker, tmp_path):  # noqa: F811
+    # The model left value_json null and only a prose statement — _shape_check
+    # recovers the bare name so the page shows the value, not the sentence.
+    note_id = await make_note(maker, domain="general", body="My name is Jeff Hopkins.")
+    await ingest(maker, note_id, tmp_path)
+    intent = _intent(
+        note_id,
+        [EntityResolution(mention_ref="m1", mode="new", new_kind="Person", new_name="Jeff")],
+        [
+            _fact(
+                "m1",
+                predicate="name.full",
+                qualifier="",
+                kind="attribute",
+                statement="Full name is Jeff Hopkins.",
+                value_json=None,
+            )
+        ],
+    )
+    plan = plan_intent(intent, signals={0: _SURFACE})
+    await _run(maker, note_id, intent, plan, tmp_path=tmp_path)
+
+    async with scoped_session(maker, SYSTEM_CTX) as session:
+        fact = (
+            (await session.execute(select(Fact).where(Fact.note_id == uuid.UUID(note_id))))
+            .scalars()
+            .one()
+        )
+    assert fact.value_json == {"value": "Jeff Hopkins"}
+
+
 async def test_apply_intent_holds_cross_subject_review_fact(maker, tmp_path):  # noqa: F811
     note_id = await make_note(maker, domain="general", body="Globex and Initech notes.")
     await ingest(maker, note_id, tmp_path)
