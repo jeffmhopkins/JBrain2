@@ -1,0 +1,373 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Workflow · Ops — automation-centric (when → do)</title>
+<style>
+  :root{
+    --bg:#0E0F11; --surface:#17181B; --surface-2:#1E2024; --border:#26282C;
+    --text:#E6E7E9; --text-2:#9A9DA3; --text-3:#5C5F66;
+    --steel:#7FA7C9; --green:#8FBC9A; --amber:#C9A36A; --rose:#CF8A8F; --violet:#A493C9;
+    --steel-tint:rgba(127,167,201,.13); --green-tint:rgba(143,188,154,.13);
+    --amber-tint:rgba(201,163,106,.13); --rose-tint:rgba(207,138,143,.13); --violet-tint:rgba(164,147,201,.13);
+    --ok:var(--green); --warn:var(--amber); --danger:var(--rose); --info:var(--steel);
+    --font-mono:ui-monospace,"SF Mono","Cascadia Mono",Menlo,Consolas,monospace;
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  }
+  [data-theme="light"]{
+    color-scheme:light;
+    --bg:#F7F7F5; --surface:#FFFFFF; --surface-2:#F0F0EE; --border:#E2E2DF;
+    --text:#1A1B1E; --text-2:#5C5F66; --text-3:#9A9DA3;
+  }
+  [data-theme="dark"]{ color-scheme:dark; }
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+  body{background:#000;color:var(--text);display:flex;flex-direction:column;align-items:center;gap:14px;padding:18px 0 40px;min-height:100vh;}
+  svg{fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;}
+
+  .caption{max-width:392px;padding:0 18px;color:var(--text-2);font-size:13px;line-height:1.55;}
+  .caption b{color:var(--text);font-weight:500;}
+  .caption .tag{display:inline-block;background:var(--steel-tint);color:var(--steel);font-size:11px;padding:2px 8px;border-radius:999px;margin-bottom:6px;}
+  .toggle{display:inline-flex;background:var(--surface);border:1px solid var(--border);border-radius:999px;padding:3px;margin-left:8px;}
+  .toggle button{appearance:none;border:none;background:none;color:var(--text-2);font:inherit;font-size:11px;padding:4px 11px;border-radius:999px;cursor:pointer;}
+  .toggle button[aria-pressed="true"]{background:var(--steel-tint);color:var(--steel);font-weight:600;}
+
+  .phone{width:390px;height:800px;background:var(--bg);border:1px solid #2a2c30;border-radius:34px;overflow:hidden;position:relative;display:flex;flex-direction:column;}
+
+  .bar{height:56px;display:flex;align-items:center;gap:12px;padding:0 14px;border-bottom:1px solid var(--border);flex:none;}
+  .bar .back{color:var(--text-2);background:none;border:none;padding:4px;}
+  .bar .ttl{font-size:18px;font-weight:600;}
+  .bar .dot{margin-left:auto;width:8px;height:8px;border-radius:999px;background:var(--green);}
+  .bar .health{font-size:12px;color:var(--text-2);}
+
+  /* top tabs: Automations / Catalog */
+  .tabs{display:flex;gap:4px;padding:10px 14px 6px;flex:none;}
+  .tab{flex:1;appearance:none;border:1px solid var(--border);background:var(--surface-2);color:var(--text-2);font:inherit;font-size:13px;font-weight:500;padding:9px;border-radius:11px;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:7px;}
+  .tab[aria-selected="true"]{background:var(--steel-tint);color:var(--steel);border-color:transparent;}
+
+  .body{flex:1;overflow-y:auto;padding:4px 14px 16px;}
+  .sect{font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--text-3);margin:14px 2px 8px;}
+  .sect:first-child{margin-top:6px;}
+
+  /* automation card */
+  .auto{background:var(--surface);border:1px solid var(--border);border-radius:16px;margin-bottom:11px;overflow:hidden;}
+  .auto.off{opacity:.62;}
+  .auto-head{width:100%;text-align:left;background:none;border:none;color:inherit;font:inherit;padding:13px 14px;display:flex;gap:11px;align-items:flex-start;cursor:pointer;}
+  .sdot{width:9px;height:9px;border-radius:999px;flex:none;margin-top:5px;}
+  .sdot.running{background:var(--green);animation:pulse 1.4s ease-in-out infinite;}
+  @keyframes pulse{0%,100%{opacity:1;}50%{opacity:.3;}}
+  .sdot.ok{background:var(--green);}
+  .sdot.failed{background:var(--rose);}
+  .sdot.idle{background:var(--text-3);}
+  .amain{flex:1;min-width:0;}
+  .when{font-size:14.5px;line-height:1.45;}
+  .when .ev{font-family:var(--font-mono);font-size:13px;color:var(--steel);}
+  .when .ev.sched{color:var(--amber);}
+  .when .ev.man{color:var(--violet);}
+  .when .pl{font-weight:600;}
+  .ameta{font-size:11.5px;color:var(--text-3);margin-top:5px;font-variant-numeric:tabular-nums;display:flex;flex-wrap:wrap;gap:3px 8px;}
+  .ameta .sep{color:var(--border);}
+  .ameta .st-failed{color:var(--rose);}
+  .ameta .st-running{color:var(--green);}
+
+  /* enable toggle */
+  .sw{flex:none;width:42px;height:25px;border-radius:999px;background:var(--surface-2);border:1px solid var(--border);position:relative;cursor:pointer;transition:.16s;padding:0;margin-top:2px;}
+  .sw[aria-checked="true"]{background:var(--green-tint);border-color:rgba(143,188,154,.45);}
+  .sw .knob{position:absolute;top:2px;left:2px;width:19px;height:19px;border-radius:999px;background:var(--text-3);transition:.16s;}
+  .sw[aria-checked="true"] .knob{left:19px;background:var(--green);}
+
+  /* expanded body */
+  .auto-body{display:none;border-top:1px solid var(--border);padding:0 14px;}
+  .auto.open .auto-body{display:block;}
+  .auto.open .chev{transform:rotate(90deg);}
+  .chev{width:15px;height:15px;color:var(--text-3);flex:none;transition:transform .16s;margin-top:4px;}
+
+  .blab{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--text-3);margin:13px 0 7px;}
+
+  /* pipeline steps chain */
+  .steps{display:flex;flex-direction:column;gap:0;}
+  .strow{display:flex;gap:10px;align-items:flex-start;padding:0 0 2px;}
+  .srail{display:flex;flex-direction:column;align-items:center;flex:none;}
+  .snode{width:20px;height:20px;border-radius:999px;border:1.5px solid var(--border);background:var(--surface);display:flex;align-items:center;justify-content:center;color:var(--text-3);}
+  .snode.ok{border-color:var(--green);color:var(--green);}
+  .snode.run{border-color:var(--green);color:var(--green);}
+  .snode.run svg{animation:spin 1.1s linear infinite;}
+  @keyframes spin{to{transform:rotate(360deg);}}
+  .sconn{width:1.5px;flex:1;min-height:14px;background:var(--border);}
+  .scontent{flex:1;min-width:0;padding-bottom:12px;}
+  .saction{font-size:13.5px;font-family:var(--font-mono);}
+  .scost{font-size:10px;font-weight:700;letter-spacing:.03em;text-transform:uppercase;padding:1px 6px;border-radius:5px;margin-left:7px;}
+  .scost.cheap{background:var(--green-tint);color:var(--green);}
+  .scost.standard{background:var(--steel-tint);color:var(--steel);}
+  .scost.expensive{background:var(--amber-tint);color:var(--amber);}
+  .sdesc{font-size:11.5px;color:var(--text-3);margin-top:3px;line-height:1.4;}
+
+  /* recent runs mini */
+  .runrow{display:flex;align-items:center;gap:9px;padding:7px 0;border-top:1px solid var(--border);font-variant-numeric:tabular-nums;}
+  .runrow:first-of-type{border-top:none;}
+  .rd{width:7px;height:7px;border-radius:999px;flex:none;}
+  .rd.ok{background:var(--green);}.rd.failed{background:var(--rose);}.rd.run{background:var(--green);animation:pulse 1.4s ease-in-out infinite;}
+  .rt{font-size:12.5px;color:var(--text);}
+  .rm{margin-left:auto;font-size:11px;color:var(--text-3);}
+  .rerr{font-size:11.5px;color:var(--rose);font-family:var(--font-mono);background:var(--bg);border:1px solid var(--border);border-radius:7px;padding:6px 8px;margin:2px 0 6px;line-height:1.5;}
+
+  /* foot actions in card */
+  .acts{display:flex;gap:8px;margin:6px 0 14px;}
+  .acts button{flex:1;border:1px solid var(--border);background:var(--surface-2);color:var(--text-2);font:inherit;font-size:12.5px;font-weight:500;border-radius:10px;padding:9px;display:flex;align-items:center;justify-content:center;gap:6px;cursor:pointer;}
+  .acts button.run{background:var(--amber-tint);color:var(--amber);border-color:transparent;}
+  .acts button.run.running{background:var(--green-tint);color:var(--green);pointer-events:none;}
+  .acts button:disabled{opacity:.4;}
+  .acts button svg.spin{animation:spin 1.1s linear infinite;}
+
+  /* catalog (secondary tab) */
+  .cat{background:var(--surface);border:1px solid var(--border);border-radius:16px;overflow:hidden;}
+  .catrow{display:flex;gap:11px;align-items:flex-start;padding:12px 14px;border-bottom:1px solid var(--border);}
+  .catrow:last-child{border-bottom:none;}
+  .cic{width:30px;height:30px;border-radius:9px;flex:none;display:flex;align-items:center;justify-content:center;background:var(--surface-2);color:var(--text-2);}
+  .cn{font-size:14px;font-family:var(--font-mono);}
+  .cd{font-size:11.5px;color:var(--text-3);margin-top:3px;line-height:1.4;}
+  .cmeta{display:flex;gap:6px;margin-top:6px;flex-wrap:wrap;}
+  .pill{font-size:10px;font-weight:600;letter-spacing:.02em;padding:2px 7px;border-radius:6px;}
+  .pill.cheap{background:var(--green-tint);color:var(--green);}
+  .pill.standard{background:var(--steel-tint);color:var(--steel);}
+  .pill.expensive{background:var(--amber-tint);color:var(--amber);}
+  .pill.dom{background:var(--surface-2);color:var(--text-2);}
+  .pill.opt{background:var(--surface-2);color:var(--text-3);}
+
+  .pane{display:none;} .pane.show{display:block;}
+
+  .toast{position:absolute;left:16px;right:16px;bottom:24px;background:var(--surface-2);border:1px solid var(--border);border-radius:12px;padding:12px 14px;font-size:13px;color:var(--text-2);transform:translateY(160%);opacity:0;transition:.2s;z-index:40;display:flex;gap:9px;align-items:center;}
+  .toast.show{transform:translateY(0);opacity:1;}
+  .toast .ti{color:var(--steel);flex:none;}
+</style>
+</head>
+<body>
+  <div class="caption">
+    <span class="tag">Workflow · A — automations (when → do)</span>
+    <span class="toggle" role="group" aria-label="theme">
+      <button id="t-dark" aria-pressed="true" onclick="setTheme('dark')">dark</button>
+      <button id="t-light" aria-pressed="false" onclick="setTheme('light')">light</button>
+    </span><br/>
+    <b>Automation-centric</b>: triggers read as "when X → run Y". Each card carries an
+    enable toggle, next-run / last-run status, and a <b>Run now</b>. Tap a card to expand
+    the pipeline's steps + recent runs. Actions live in the <b>Catalog</b> tab.
+  </div>
+
+  <div class="phone">
+    <div class="bar">
+      <button class="back"><svg width="22" height="22" viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg></button>
+      <span class="ttl">Workflow</span>
+      <span class="dot"></span><span class="health">worker live · 1 worker</span>
+    </div>
+
+    <div class="tabs" role="tablist">
+      <button class="tab" role="tab" aria-selected="true" onclick="showTab('auto')">
+        <svg width="16" height="16" viewBox="0 0 24 24"><path d="M13 2 3 14h7l-1 8 10-12h-7l1-8z"/></svg>Automations</button>
+      <button class="tab" role="tab" aria-selected="false" onclick="showTab('cat')">
+        <svg width="16" height="16" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></svg>Catalog</button>
+    </div>
+
+    <div class="body">
+      <div class="pane show" id="pane-auto"></div>
+      <div class="pane" id="pane-cat"></div>
+    </div>
+
+    <div class="toast" id="toast"></div>
+  </div>
+
+<script>
+function setTheme(t){
+  document.documentElement.dataset.theme=t;
+  document.getElementById('t-dark').setAttribute('aria-pressed',String(t==='dark'));
+  document.getElementById('t-light').setAttribute('aria-pressed',String(t==='light'));
+}
+
+// ---- real engine catalog (registry.ACTION_SPECS + in-code purge/reconcile/eval) ----
+const ACTIONS={
+  ingest_note:{cost:'standard',desc:'Index a note: chunk + stage embeddings.'},
+  embed_note:{cost:'standard',desc:'Embed a note’s chunks for retrieval.'},
+  integrate_note:{cost:'expensive',desc:'Extract facts, resolve entities, write the graph.'},
+  ocr_attachment:{cost:'expensive',desc:'Vision OCR + description for an image/PDF.'},
+  consolidate_predicates:{cost:'standard',desc:'Merge near-duplicate predicates left by old prompts.'},
+  sync_predicates:{cost:'standard',desc:'Re-embed the canonical_predicates index.'},
+  purge_deleted_artifacts:{cost:'cheap',desc:'Reap chunks + blobs of deleted notes.'},
+  reconcile_pending_notes:{cost:'cheap',desc:'Re-enqueue ingest for notes still pending.'},
+  reconcile_pending_integration:{cost:'cheap',desc:'Re-enqueue integration for indexed-but-unintegrated notes.'},
+  reconcile_unembedded_notes:{cost:'cheap',desc:'Embed notes whose chunks slipped through.'},
+  eval_run:{cost:'expensive',desc:'Run the eval suite (opt-in, budget-gated).'},
+};
+
+// ---- triggers as automations (seeds 0040 event / 0038 nightly / 0041 reconcilers) ----
+const AUTOS=[
+  {id:'00000000-0000-0000-0000-0000000e0001',type:'event',ev:'note.created',pipeline:'event_ingest_note',
+   steps:['ingest_note'],enabled:true,last:'running',group:'event',
+   runs:[{s:'run',t:'roof-quote note',m:'now · 1 of 1'},{s:'ok',t:'grocery note',m:'2h ago · 9s'},{s:'ok',t:'labs PDF note',m:'4h ago · 11s'}]},
+  {id:'00000000-0000-0000-0000-0000000e0002',type:'event',ev:'note.ingested',pipeline:'event_integrate_note',
+   steps:['integrate_note'],enabled:true,last:'failed',group:'event',
+   runs:[{s:'failed',t:'labs PDF note',m:'18m ago · 31s',err:'integrate_note: ocr_attachment dep failed — extract skipped, retry queued.'},{s:'ok',t:'roof-quote note',m:'1h ago · 22s'}]},
+  {id:'00000000-0000-0000-0000-0000000e0003',type:'event',ev:'resolution.changed',pipeline:'event_consolidate_predicates',
+   steps:['consolidate_predicates'],enabled:true,last:'ok',group:'event',
+   runs:[{s:'ok',t:'after merge review',m:'40m ago · 3s'}]},
+
+  {id:'00000000-0000-0000-0000-0000000c0012',type:'schedule',interval:'every 5m',next:'in 2m',pipeline:'reconcile_pending_notes',
+   steps:['reconcile_pending_notes'],enabled:true,last:'ok',manual:true,group:'reconcile',
+   runs:[{s:'ok',t:'swept 0 pending',m:'3m ago · 0.2s'},{s:'ok',t:'swept 1 pending',m:'8m ago · 0.4s'}]},
+  {id:'00000000-0000-0000-0000-0000000c0014',type:'schedule',interval:'every 5m',next:'in 2m',pipeline:'reconcile_pending_integration',
+   steps:['reconcile_pending_integration'],enabled:true,last:'ok',manual:true,group:'reconcile',
+   runs:[{s:'ok',t:'swept 0 pending',m:'3m ago · 0.2s'}]},
+  {id:'00000000-0000-0000-0000-0000000c0011x',type:'schedule',interval:'every 5m',next:'in 2m',pipeline:'reconcile_unembedded_notes',
+   steps:['reconcile_unembedded_notes'],enabled:false,last:'idle',manual:true,group:'reconcile',
+   runs:[{s:'ok',t:'swept 0 unembedded',m:'1h ago · 0.3s'}]},
+
+  {id:'00000000-0000-0000-0000-0000000c0002',type:'schedule',interval:'nightly',next:'02:00 UTC · in 7h',pipeline:'nightly_consolidate_predicates',
+   steps:['consolidate_predicates'],enabled:true,last:'ok',manual:true,group:'nightly',
+   runs:[{s:'ok',t:'merged 4 predicates',m:'02:00 · 6s'},{s:'ok',t:'merged 2 predicates',m:'yest 02:00 · 5s'}]},
+  {id:'00000000-0000-0000-0000-0000000c0004',type:'schedule',interval:'nightly',next:'02:00 UTC · in 7h',pipeline:'nightly_sync_predicates',
+   steps:['sync_predicates'],enabled:true,last:'ok',manual:true,group:'nightly',
+   runs:[{s:'ok',t:'index in step',m:'02:00 · 2s'}]},
+  {id:'00000000-0000-0000-0000-0000000c0006',type:'schedule',interval:'nightly',next:'02:00 UTC · in 7h',pipeline:'nightly_purge_deleted_artifacts',
+   steps:['purge_deleted_artifacts'],enabled:true,last:'ok',manual:true,group:'nightly',
+   runs:[{s:'ok',t:'purged 12 orphans',m:'02:00 · 1s'}]},
+];
+
+const GROUPS=[['event','On a note event'],['reconcile','Reconcilers · every 5 min'],['nightly','Nightly sweeps · 02:00']];
+
+function whenLine(a){
+  if(a.type==='event') return `When <span class="ev">${a.ev}</span> &rarr; run <span class="pl">${a.pipeline}</span>`;
+  return `${a.interval[0].toUpperCase()+a.interval.slice(1)} &rarr; run <span class="pl">${a.pipeline}</span>`;
+}
+function metaLine(a){
+  const st = a.last==='running'?'<span class="st-running">running now</span>'
+    : a.last==='failed'?'<span class="st-failed">last run failed</span>'
+    : a.last==='ok'?'last run ok' : 'idle · disabled';
+  const nx = a.type==='schedule' && a.enabled ? `<span class="sep">·</span>next ${a.next}` : '';
+  const mn = a.manual ? `<span class="sep">·</span>manual-fireable` : '';
+  return `${st}${nx}${mn}`;
+}
+function stepHtml(steps){
+  return steps.map((s,i)=>{
+    const a=ACTIONS[s];const last=i===steps.length-1;
+    return `<div class="strow"><div class="srail"><div class="snode ok"><svg width="11" height="11" viewBox="0 0 24 24"><path d="M5 12l4 4L19 7"/></svg></div>${last?'':'<div class="sconn"></div>'}</div>
+      <div class="scontent"><span class="saction">${s}</span><span class="scost ${a.cost}">${a.cost}</span><div class="sdesc">${a.desc}</div></div></div>`;
+  }).join('');
+}
+function runHtml(runs){
+  return runs.map(r=>{
+    const main=`<div class="runrow"><span class="rd ${r.s}"></span><span class="rt">${r.t}</span><span class="rm">${r.m}</span></div>`;
+    return main + (r.err?`<div class="rerr">${r.err}</div>`:'');
+  }).join('');
+}
+function autoCard(a){
+  return `<div class="auto ${a.enabled?'':'off'}" id="card-${a.id}">
+    <button class="auto-head" onclick="toggleCard('${a.id}',event)">
+      <span class="sdot ${a.enabled?a.last:'idle'}"></span>
+      <span class="amain">
+        <span class="when">${whenLine(a)}</span>
+        <span class="ameta">${metaLine(a)}</span>
+      </span>
+      <span class="sw" role="switch" aria-checked="${a.enabled}" onclick="flip('${a.id}',event)"><span class="knob"></span></span>
+      <svg class="chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>
+    </button>
+    <div class="auto-body">
+      <div class="blab">Pipeline · ${a.steps.length} step${a.steps.length>1?'s':''}</div>
+      <div class="steps">${stepHtml(a.steps)}</div>
+      <div class="blab">Recent runs</div>
+      ${runHtml(a.runs)}
+      <div class="acts">
+        <button onclick="toast('Opened ${a.pipeline} runs in the Runs log.')"><svg width="14" height="14" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"/></svg>All runs</button>
+        <button class="run" id="run-${a.id}" ${a.manual?'':'disabled title="event-driven — fires automatically"'} onclick="runNow('${a.id}','${a.pipeline}',event)">
+          <svg width="14" height="14" viewBox="0 0 24 24"><path d="M5 3l14 9-14 9V3z"/></svg>Run now</button>
+      </div>
+    </div>
+  </div>`;
+}
+
+function renderAuto(){
+  let html='';
+  for(const [g,label] of GROUPS){
+    html+=`<div class="sect">${label}</div>`;
+    html+=AUTOS.filter(a=>a.group===g).map(autoCard).join('');
+  }
+  document.getElementById('pane-auto').innerHTML=html;
+}
+
+function toggleCard(id,e){
+  if(e.target.closest('.sw')||e.target.closest('.run')) return;
+  document.getElementById('card-'+id).classList.toggle('open');
+}
+function flip(id,e){
+  e.stopPropagation();
+  const a=AUTOS.find(x=>x.id===id);a.enabled=!a.enabled;
+  const sw=e.currentTarget;sw.setAttribute('aria-checked',String(a.enabled));
+  const card=document.getElementById('card-'+id);
+  card.classList.toggle('off',!a.enabled);
+  card.querySelector('.sdot').className='sdot '+(a.enabled?a.last:'idle');
+  card.querySelector('.ameta').innerHTML=metaLine(a);
+  const rb=document.getElementById('run-'+id);
+  if(rb&&a.manual){rb.disabled=!a.enabled;}
+  toast(`${a.pipeline} ${a.enabled?'enabled':'disabled'}.`);
+}
+function runNow(id,pl,e){
+  e.stopPropagation();
+  const a=AUTOS.find(x=>x.id===id);if(!a.enabled)return;
+  const btn=document.getElementById('run-'+id);
+  btn.classList.add('running');
+  btn.innerHTML='<svg class="spin" width="14" height="14" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-2.6-6.4"/></svg>running…';
+  setTimeout(()=>{
+    btn.classList.remove('running');
+    btn.innerHTML='<svg width="14" height="14" viewBox="0 0 24 24"><path d="M5 12l4 4L19 7"/></svg>queued';
+    a.runs.unshift({s:'run',t:'fired from Ops',m:'now · queued'});
+    toast(`Fired ${pl} now — run queued, watch recent runs.`);
+    setTimeout(()=>{btn.innerHTML='<svg width="14" height="14" viewBox="0 0 24 24"><path d="M5 3l14 9-14 9V3z"/></svg>Run now';},2200);
+  },1500);
+}
+
+// ---- catalog tab ----
+const CATALOG=[
+  {n:'ingest_note',dom:false},{n:'embed_note',dom:false},{n:'integrate_note',dom:false},
+  {n:'ocr_attachment',dom:false},{n:'consolidate_predicates',dom:false},{n:'sync_predicates',dom:false},
+  {n:'purge_deleted_artifacts',dom:false},{n:'reconcile_pending_notes',dom:false},
+  {n:'reconcile_pending_integration',dom:false},{n:'reconcile_unembedded_notes',dom:false},
+  {n:'eval_run',dom:false,opt:true},
+];
+function renderCat(){
+  const rows=CATALOG.map(c=>{
+    const a=ACTIONS[c.n];
+    return `<div class="catrow">
+      <span class="cic"><svg width="16" height="16" viewBox="0 0 24 24"><path d="M12 2 2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg></span>
+      <span style="flex:1;min-width:0;">
+        <span class="cn">${c.n}</span>
+        <span class="cd">${a.desc}</span>
+        <span class="cmeta">
+          <span class="pill ${a.cost}">${a.cost}</span>
+          <span class="pill dom">cross-domain</span>
+          <span class="pill ${a.cost==='expensive'?'expensive':'opt'}">${a.cost==='cheap'||a.cost==='standard'?'mutating':'mutating'}</span>
+          ${c.opt?'<span class="pill opt">opt-in</span>':''}
+        </span>
+      </span>
+    </div>`;
+  }).join('');
+  document.getElementById('pane-cat').innerHTML=
+    `<div class="sect">Action registry · ${CATALOG.length} actions</div><div class="cat">${rows}</div>
+     <div style="font-size:11.5px;color:var(--text-3);margin:12px 4px 0;line-height:1.5;">
+       Data-defined handlers the engine can wire into a pipeline. The six shipped actions are mirrored 1:1
+       to <span style="font-family:var(--font-mono)">app.actions</span>; the cheap reconcilers, purge, and
+       <span style="font-family:var(--font-mono)">eval_run</span> live in-code only.</div>`;
+}
+
+function showTab(which){
+  document.querySelectorAll('.tab').forEach((t,i)=>t.setAttribute('aria-selected',String((which==='auto')===(i===0))));
+  document.getElementById('pane-auto').classList.toggle('show',which==='auto');
+  document.getElementById('pane-cat').classList.toggle('show',which==='cat');
+}
+
+function toast(msg){
+  const t=document.getElementById('toast');
+  t.innerHTML=`<svg class="ti" width="16" height="16" viewBox="0 0 24 24"><path d="M5 12l4 4L19 7"/></svg>${msg}`;
+  t.classList.add('show');clearTimeout(toast._t);toast._t=setTimeout(()=>t.classList.remove('show'),3200);
+}
+
+renderAuto();renderCat();
+</script>
+</body>
+</html>
