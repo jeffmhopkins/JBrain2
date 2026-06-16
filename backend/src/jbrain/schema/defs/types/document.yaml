@@ -33,6 +33,10 @@ predicates:
   - canonical_name: encodingFormat      # MIME
     value_shape: scalar
     kind: attribute
+  - canonical_name: inLanguage          # BCP 47 tag; the document's language
+    value_shape: scalar
+    kind: attribute
+    schema_org_ref: schema:inLanguage
 
 # identifier.sha256 from ExternalIdentified — content hash, strong dedup/resolution key.
 display_name: [name]                    # else "<documentType> from <issuer> (<dateIssued>)"

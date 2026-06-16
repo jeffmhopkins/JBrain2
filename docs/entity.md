@@ -354,10 +354,10 @@ tables rather than prematurely folding them into the graph.
 
 | Vehicle | Meaning | Categories |
 |---|---|---|
-| **graph** | entity rows + facts now (Phase 3) | Person, Organization, Place, Role, Animal/Pet, Appointment*, Vehicle, Document, Device |
+| **graph** | entity rows + facts now (Phase 3) | Person, Organization, Place, Role, Animal/Pet, Appointment*, Vehicle, Document, Device, Project, Task, Goal, Habit, Trip, CreativeWork, Product |
 | **typed_record (P4)** | catalog now; **typed table** + ICS/agent tools in Phase 4 | `lists`/`list_items`, `appointments`** |
 | **typed_record (P7)** | catalog now; **typed parser + table** in Phase 7 | `lab_results`, and structured medical/financial documents |
-| **graph, 🔒-scoped** | graph entity within a firewall now; may gain a typed projection later | Bill/Invoice, FinancialAccount, Medication, Subscription |
+| **graph, 🔒-scoped** | graph entity within a firewall now; may gain a typed projection later | Bill/Invoice, FinancialAccount, Medication, Subscription, InsurancePolicy |
 
 \* An appointment is a **graph entity** (a time-bound entity) from Phase 3;
 Phase 4 adds the typed `appointments` projection for the ICS feed and agent
@@ -382,8 +382,10 @@ parentheses. 🔒 marks the firewall a category floors into.
 
 - **Person** *(graph; schema.org Person, vCard)* — facets: Named, Contactable,
   Located, Temporal, Related. Core: `name.*` (§Names), `birthDate`/`deathDate`
-  (event, functional), `gender`/`pronouns` (state 🔒). Display:
-  `[name.preferred, name.given+family, name.full]`. Alias-seed:
+  (event, functional), `gender` (state 🔒), `worksFor` (functional org edge),
+  kinship `parent`/`child`/`sibling`/`relative` (accumulating person refs;
+  drift `mother`/`son`/`brother`/… fold in), `knowsLanguage`, `nationality`.
+  Display: `[name.preferred, name.given+family, name.full]`. Alias-seed:
   `[name.full, name.preferred, name.aka, name.maiden]`. May be a security
   subject (set per-entity, not per-type). Domain: general.
 
@@ -473,6 +475,55 @@ parentheses. 🔒 marks the firewall a category floors into.
   `lastLocation` 🔒🔒 (live location — among the most sensitive fields),
   `status`. Domain: **location** 🔒🔒 for tracking devices.
 
+### Productivity / knowledge / lifestyle categories **[proposed]**
+
+These extend the catalog beyond the original fourteen. They reuse the shared
+facets (a new **Prioritized** facet supplies a single `priority` enum so
+goal/project/task agree structurally) and the soft-registry discipline — only
+high-traffic, standards-anchored, or projection-driving predicates; long-tail
+rides `allow_open_predicates`.
+
+- **Goal** *(graph; custom)* — facets: Named, Temporal, Lifecycle, Prioritized,
+  Related. Core: `targetDate` (← `deadline`), `parentGoal` (self-ref, acyclic by
+  convention), `priority`, `status` (`active|achieved|abandoned|on_hold`).
+  Projects/tasks/habits roll up to it via `contributesTo`.
+- **Project** *(graph; schema.org Project)* — facets: Named, Temporal,
+  Lifecycle, Prioritized, Related. Core: `contributesTo` (→ goal), `parentProject`
+  (self-ref), `lead` (person), `client` (polymorphic), `targetDate`, `priority`.
+- **Task** *(graph; iCalendar VTODO / schema.org Action)* — facets: Named,
+  Temporal, Recurrence, Lifecycle, Prioritized, Related. Core: `partOf` (→
+  project), `contributesTo` (→ goal), `assignee` (person), `blockedBy` (self-ref,
+  accumulating), `dueDate` (functional — reschedule supersedes), `completedDate`,
+  `status` (`todo|in_progress|blocked|done|cancelled`).
+- **Habit** *(graph; custom)* — facets: Named, Temporal, Recurrence, Lifecycle,
+  Related. Core: `contributesTo` (→ goal), `cadence` (← `frequency`; the machine
+  schedule is the Recurrence token), `lastPerformed`, `status`.
+- **Trip** *(graph; schema.org Trip)* — facets: Named, Temporal, Lifecycle,
+  Related. Core: `destination`/`accommodation`/`origin` (Place refs 🔒 location),
+  `traveler` (person), `transport` (enum), `purpose` (enum). Itinerary reveals
+  presence; sensitive geo lives on the referenced Places. Domain: location-adjacent.
+- **Creative work** *(graph; schema.org CreativeWork)* — facets: Named, Temporal,
+  ExternalIdentified, Related. Core: `workType` (enum), `author` (polymorphic;
+  `creator` deliberately NOT folded in), `publisher`, `datePublished`, `about`,
+  `rating` (preference), `consumptionStatus` (← `readingStatus`/`watchStatus`),
+  `identifier.isbn`/`.doi`/`.issn`. The "notes cite sources as entities" type.
+- **Product** *(graph; schema.org Product)* — facets: Named, ExternalIdentified,
+  Temporal, Related, Lifecycle, Monetary. Core: `brand`/`manufacturer`/`model`,
+  `category`, `purchaseDate`, `warrantyExpiration`, `location` 🔒 (where kept),
+  `amount` 🔒 finance (price/appraised value). Possessions not covered by
+  Vehicle/Device; owner/insurer are Role edges.
+- **Insurance policy** *(graph 🔒 finance; FHIR Coverage — schema.org has no fit)*
+  — facets: Named, Monetary, ExternalIdentified, Temporal, Related, Lifecycle.
+  Core: `insurer` (← `carrier`; Org), `policyType` (enum), `insures` (polymorphic
+  — vehicle/place/person/product), `subscriber` (person), `premium` 🔒,
+  `renewalDate`, `identifier.policy_number`. A health policy floors to health 🔒🔒
+  per-fact. The endpoint the product/vehicle/device "insurer" Roles point at.
+
+> **Deferred — `transaction`/purchase:** intentionally NOT a graph type. Per
+> ANALYSIS, individual purchases are long-tail prose and bulk financial
+> statements route to a typed parser; if added it is a `vehicle: typed_record`
+> (like `lab_result`), not an LLM-extracted entity.
+
 ## How this fixes the four observed inconsistencies
 
 1. **Predicate drift** → the `Named` facet and the cross-cutting facets give the
@@ -548,7 +599,8 @@ For transparency, the design choices the red-team cut from the first sketch:
    audiences (e.g. `gym`, `bandmates`) are accepted. This is the one vocabulary
    invariant applied to a qualifier: preferred where it matters, gated nowhere.
 
-All fourteen categories in the catalog are now scaffolded under
+All twenty-two categories in the catalog are now scaffolded under
 `backend/src/jbrain/schema/defs/`
 (`person, organization, place, role, animal, appointment, bill, lab_result,
-vehicle, medication, financial_account, document, subscription, device`).
+vehicle, medication, financial_account, document, subscription, device`, plus
+`project, task, goal, habit, trip, creative_work, product, insurance_policy`).

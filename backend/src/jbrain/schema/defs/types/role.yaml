@@ -12,7 +12,7 @@ default_fact_kind: relationship
 predicates:
   - canonical_name: roleName            # employee | contractor | owner | resident | prescriber | ...
     value_shape: enum
-    enum_values: [employee, contractor, board_member, owner, resident, prescriber, veterinarian, account_holder, member]
+    enum_values: [employee, contractor, board_member, owner, resident, tenant, landlord, prescriber, veterinarian, account_holder, member, student, patient, partner, founder]
     kind: state
     schema_org_ref: schema:roleName
   - canonical_name: jobTitle

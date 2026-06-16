@@ -170,3 +170,16 @@ facets:
         range_type: role
         kind: relationship
         schema_org_ref: schema:Role
+
+  Prioritized:
+    description: >-
+      A shared, fixed priority scale. Declared once here so every consuming type
+      (goal/project/task) agrees structurally — `enum_values_for` only returns a
+      member set when all declarers agree, so a per-type copy would silently
+      disable the review-card picker the moment one copy drifted.
+    predicates:
+      - canonical_name: priority
+        value_shape: enum
+        enum_values: [low, medium, high]
+        kind: state
+        functional: true

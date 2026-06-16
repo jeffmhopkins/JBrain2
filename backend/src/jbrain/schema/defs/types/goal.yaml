@@ -1,0 +1,30 @@
+# Goal — a personal objective with a horizon. Projects, tasks, and habits roll
+# up to it via contributesTo. schema.org has no fit; custom type. [proposed]
+id: goal
+name: Goal
+schema_org_ref: schema:Thing
+description: An objective; projects/tasks/habits contribute to it. Progress is a measurement.
+vehicle: graph
+facets: [Named, Temporal, Lifecycle, Prioritized, Related]
+default_fact_kind: state
+allow_open_predicates: true
+
+predicates:
+  - canonical_name: description
+    value_shape: text
+    kind: state
+  - canonical_name: targetDate          # the horizon / deadline
+    value_shape: date
+    kind: state
+    functional: true
+    renamed_from: [deadline]
+  - canonical_name: parentGoal          # a sub-goal of a larger objective (acyclic by convention)
+    value_shape: ref
+    range_type: goal
+    kind: relationship
+    functional: true
+
+# priority comes from the Prioritized facet. Numeric progress/targetValue are
+# deferred until a consumer exists — prose notes rarely yield clean {value, unit}.
+status_values: [active, achieved, abandoned, on_hold]
+display_name: [name]

@@ -1,0 +1,45 @@
+# Insurance policy / coverage — auto/home/health/life/etc. FHIR Coverage shape;
+# schema.org has no fit (InsuranceAgency is the agency, not the policy). It is the
+# endpoint the product/vehicle/device "insurer" Role edges point at. [proposed]
+# 🔒 finance (premium); a health policy floors to health 🔒🔒 per-fact, NOT type-wide.
+# Store the policy/member number as identifier.policy_number; if a subscriber id IS
+# an SSN, store last4 ONLY (same PCI discipline as financial_account).
+id: insurance_policy
+name: insurance_policy             # snake_case: no schema.org Coverage equivalent
+description: An insurance coverage; carrier, type, what it covers, premium, period.
+vehicle: graph                     # 🔒 finance-scoped
+facets: [Named, Monetary, ExternalIdentified, Temporal, Related, Lifecycle]
+default_fact_kind: state
+allow_open_predicates: false
+
+predicates:
+  - canonical_name: insurer            # the carrier (Org ref)
+    value_shape: ref
+    range_type: organization
+    kind: relationship
+    functional: true
+    renamed_from: [carrier]            # NOT `provider` (canonical on subscription)
+  - canonical_name: policyType
+    value_shape: enum
+    enum_values: [auto, home, renters, health, dental, vision, life, disability, travel, umbrella, other]
+    kind: attribute
+    functional: true
+  - canonical_name: insures            # what it covers — vehicle/place/person/product (polymorphic)
+    value_shape: ref
+    kind: relationship
+  - canonical_name: subscriber         # the policyholder (a Person)
+    value_shape: ref
+    range_type: person
+    kind: relationship
+    functional: true
+  - canonical_name: premium            # 🔒 the recurring cost (Monetary.amount is the same money axis)
+    value_shape: quantity
+    kind: measurement
+  - canonical_name: renewalDate
+    value_shape: date
+    kind: state
+    functional: true
+
+# identifier.policy_number from ExternalIdentified. Temporal.start/endDate = coverage interval.
+status_values: [active, lapsed, cancelled, expired]
+display_name: [name]               # else "<insurer> <policyType>"

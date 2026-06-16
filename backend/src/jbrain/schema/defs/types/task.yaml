@@ -1,0 +1,49 @@
+# Task / to-do — a single actionable item. iCalendar VTODO; schema.org has no
+# exact fit (Action is closest). May belong to a project and serve a goal. [proposed]
+id: task
+name: Task
+schema_org_ref: schema:Action
+description: An actionable item; may be part of a project and serve a goal.
+vehicle: graph
+facets: [Named, Temporal, Recurrence, Lifecycle, Prioritized, Related]
+default_fact_kind: state
+allow_open_predicates: true
+
+predicates:
+  - canonical_name: description
+    value_shape: text
+    kind: state
+  - canonical_name: dueDate
+    value_shape: date
+    kind: state
+    functional: true
+    renamed_from: [dueBy]
+  - canonical_name: completedDate
+    value_shape: date
+    kind: event
+    functional: true
+    renamed_from: [doneDate, completedOn]
+  - canonical_name: partOf               # the project this task belongs to
+    value_shape: ref
+    range_type: project
+    kind: relationship
+    functional: true
+    renamed_from: [project]
+  - canonical_name: contributesTo        # a goal it serves directly
+    value_shape: ref
+    range_type: goal
+    kind: relationship
+  - canonical_name: assignee             # who is responsible
+    value_shape: ref
+    range_type: person
+    kind: relationship
+    functional: true
+    renamed_from: [assignedTo]
+  - canonical_name: blockedBy            # a task that must finish first; accumulating
+    value_shape: ref
+    range_type: task
+    kind: relationship
+    renamed_from: [dependsOn]
+
+status_values: [todo, in_progress, blocked, done, cancelled]
+display_name: [name]

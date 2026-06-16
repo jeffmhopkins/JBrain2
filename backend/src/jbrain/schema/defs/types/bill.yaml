@@ -27,6 +27,20 @@ predicates:
     value_shape: ref
     range_type: financial_account  # 🔒
     kind: relationship
+  - canonical_name: minimumPaymentDue  # 🔒 the minimum due now, vs amount = total due
+    value_shape: quantity              # {value, unit: ISO-4217}
+    kind: measurement
+    schema_org_ref: schema:minimumPaymentDue
+  - canonical_name: invoiceNumber      # 🔒 the biller's invoice/statement id (resolution signal)
+    value_shape: scalar
+    kind: attribute
+    functional: true
+    schema_org_ref: schema:confirmationNumber
+    renamed_from: [statementNumber, billNumber]
+  - canonical_name: confirmationNumber # 🔒 payment confirmation/receipt id
+    value_shape: scalar
+    kind: attribute
+    schema_org_ref: schema:confirmationNumber
 
 # Monetary.amount (🔒) + Lifecycle.status carry the money and payment state.
 status_values: [PaymentDue, PaymentComplete, PaymentPastDue, PaymentDeclined, PaymentAutomaticallyApplied]

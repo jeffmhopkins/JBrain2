@@ -24,6 +24,11 @@ predicates:
   - canonical_name: birthDate        # often approximate; allow partial dates
     value_shape: date
     kind: attribute
+  - canonical_name: deathDate        # mirrors Person; functional event (shared canonical)
+    value_shape: date
+    kind: event
+    functional: true
+    schema_org_ref: schema:deathDate
   - canonical_name: color
     value_shape: text
     kind: attribute

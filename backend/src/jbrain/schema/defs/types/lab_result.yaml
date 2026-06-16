@@ -7,7 +7,7 @@ name: Observation                  # FHIR Observation shape
 schema_org_ref: schema:MedicalTest
 description: A clinical lab observation; FHIR/LOINC/UCUM-shaped typed record.
 vehicle: typed_record(P7)
-facets: [ExternalIdentified, Temporal, Related, Lifecycle]   # Lifecycle.status carries status_values
+facets: [Named, ExternalIdentified, Temporal, Related, Lifecycle]   # Named -> display; Lifecycle.status carries status_values
 default_fact_kind: measurement
 allow_open_predicates: false
 
@@ -16,8 +16,15 @@ predicates:
     qualifier_vocab: id_scheme
     value_shape: scalar
     kind: attribute
+  - canonical_name: category       # FHIR Observation.category: lab vs vital-sign vs imaging
+    value_shape: enum
+    enum_values: [laboratory, vital-signs, imaging, procedure, exam, survey, social-history, therapy, activity]
+    kind: attribute
   - canonical_name: value          # the reading
     value_shape: quantity          # {value, unit: UCUM}
+    kind: measurement
+  - canonical_name: component      # multi-part result (BP systolic/diastolic); qualifier = component LOINC
+    value_shape: quantity
     kind: measurement
   - canonical_name: referenceRange
     value_shape: structured
@@ -25,7 +32,7 @@ predicates:
     kind: attribute
   - canonical_name: interpretation
     value_shape: enum
-    enum_values: [normal, high, low, abnormal, critical]
+    enum_values: [normal, high, low, abnormal, critical, borderline, indeterminate]
     kind: attribute
   - canonical_name: effectiveDate  # clinically relevant time
     value_shape: date

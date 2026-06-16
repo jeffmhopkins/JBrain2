@@ -19,7 +19,18 @@ predicates:
     range_type: place
     kind: relationship
     schema_org_ref: schema:location
+  - canonical_name: foundingDate
+    value_shape: date
+    kind: event
+    functional: true
+    schema_org_ref: schema:foundingDate
+    renamed_from: [founded, dateFounded, established]
+  - canonical_name: numberOfEmployees # headcount over time, accumulating
+    value_shape: quantity
+    kind: measurement
+    schema_org_ref: schema:numberOfEmployees
 
-# identifier.ein / identifier.duns / identifier.lei come from ExternalIdentified.
+# identifier.ein / identifier.duns / identifier.lei / identifier.vatid come from
+# ExternalIdentified. legalName folds to name.full via the Named facet (not redeclared).
 alias_seeding_predicates: [name.full, name.aka]
 display_name: [name, name.full]

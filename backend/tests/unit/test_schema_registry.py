@@ -19,7 +19,7 @@ def registry() -> SchemaRegistry:
     return load_registry()
 
 
-def test_shipped_registry_loads_all_fourteen_types(registry: SchemaRegistry) -> None:
+def test_shipped_registry_loads_all_catalog_types(registry: SchemaRegistry) -> None:
     expected = {
         "person",
         "organization",
@@ -35,9 +35,101 @@ def test_shipped_registry_loads_all_fourteen_types(registry: SchemaRegistry) -> 
         "document",
         "subscription",
         "device",
+        # Productivity / knowledge / lifestyle types.
+        "project",
+        "task",
+        "goal",
+        "trip",
+        "creative_work",
+        "product",
+        "habit",
+        "insurance_policy",
     }
     assert set(registry.types) == expected
     assert registry.meta.schema_version >= 1
+
+
+def test_person_carries_family_kinship_edges(registry: SchemaRegistry) -> None:
+    # Family edges are accumulating (a person has many relatives), so none are
+    # functional, and the common drift spellings fold to the schema.org canonical.
+    for canonical in ("parent", "child", "sibling", "relative"):
+        edge = registry.predicate_for_kind("Person", canonical)
+        assert edge is not None and edge.value_shape == "ref"
+        assert edge.range_type == "person"
+        assert not edge.functional  # accumulating: a person has many relatives
+    assert registry.normalize_predicate("mother") == "parent"
+    assert registry.normalize_predicate("son") == "child"
+    assert registry.normalize_predicate("brother") == "sibling"
+    assert registry.normalize_predicate("speaksLanguage") == "knowsLanguage"
+
+
+def test_priority_is_a_shared_facet_so_members_agree(registry: SchemaRegistry) -> None:
+    # priority lives in the Prioritized facet, so every consumer (goal/project/task)
+    # shares one definition and enum_values_for never collapses to () on drift.
+    assert set(registry.enum_values_for("priority")) == {"low", "medium", "high"}
+    for tid in ("goal", "project", "task"):
+        pri = registry.type(tid).predicate("priority")
+        assert pri is not None and pri.value_shape == "enum" and pri.functional
+
+
+def test_insurance_policy_is_the_insurer_endpoint(registry: SchemaRegistry) -> None:
+    # The policy object the product/vehicle/device "insurer" Role edges point at.
+    insurer = registry.predicate_for_kind("insurance_policy", "insurer")
+    assert insurer is not None and insurer.range_type == "organization"
+    assert registry.normalize_predicate("carrier") == "insurer"
+    # `provider` (subscription's canonical) is NOT hijacked by the carrier attractor.
+    assert registry.normalize_predicate("provider") == "provider"
+    insures = registry.predicate_for_kind("insurance_policy", "insures")
+    assert insures is not None and insures.range_type is None  # polymorphic
+
+
+def test_creative_work_does_not_hijack_generic_creator(registry: SchemaRegistry) -> None:
+    # `creator` is too generic to globally rewrite onto creative_work.author.
+    assert registry.normalize_predicate("creator") == "creator"
+    assert registry.normalize_predicate("goal") == "goal"  # project.contributesTo drops it too
+
+
+def test_named_types_have_a_real_display_name_target(registry: SchemaRegistry) -> None:
+    # medication/lab_result project their display name from name.* (the Named facet
+    # was missing before); every display_name token must resolve to a predicate.
+    for tid in ("medication", "lab_result"):
+        t = registry.type(tid)
+        names = {p.canonical_name for p in t.effective_predicates}
+        assert "name" in names
+        for token in t.display_name:
+            for part in token.split("+"):
+                assert part in names
+
+
+def test_person_no_longer_declares_pronouns(registry: SchemaRegistry) -> None:
+    # pronouns was dropped from the Person catalog; it is not a declared predicate
+    # (it remains storable as any open predicate — the registry never gates names).
+    assert registry.predicate_for_kind("Person", "pronouns") is None
+    assert not registry.declares_predicate("pronouns")
+
+
+def test_project_task_goal_form_a_rollup_graph(registry: SchemaRegistry) -> None:
+    # A task belongs to a project (partOf), a project serves a goal (contributesTo),
+    # and a task may also serve a goal directly. All are typed ref edges, and the
+    # project/goal hierarchy refs are self-referential.
+    part_of = registry.predicate_for_kind("task", "partOf")
+    assert part_of is not None and part_of.value_shape == "ref"
+    assert part_of.range_type == "project" and part_of.functional
+    contributes = registry.predicate_for_kind("project", "contributesTo")
+    assert contributes is not None and contributes.range_type == "goal"
+    parent_goal = registry.predicate_for_kind("goal", "parentGoal")
+    assert parent_goal is not None and parent_goal.range_type == "goal"
+    blocked_by = registry.predicate_for_kind("task", "blockedBy")
+    assert blocked_by is not None and blocked_by.range_type == "task"  # self-ref
+
+
+def test_task_due_date_drift_and_functionality(registry: SchemaRegistry) -> None:
+    # dueDate is the shared canonical (also used by bill); it is functional on a
+    # task (a reschedule supersedes) and `dueBy` drifts onto it.
+    assert registry.normalize_predicate("dueBy") == "dueDate"
+    assert registry.is_functional("dueDate")
+    # `deadline` is the soft attractor for the project/goal targetDate horizon.
+    assert registry.normalize_predicate("deadline") == "targetDate"
 
 
 def test_facets_roll_down_into_types(registry: SchemaRegistry) -> None:
@@ -405,4 +497,22 @@ def test_missing_display_name_fails(tmp_path: Path) -> None:
         yaml.safe_dump({"id": "person", "name": "Person", "facets": ["Named"]})
     )
     with pytest.raises(SchemaError, match="display_name"):
+        load_registry(tmp_path)
+
+
+def test_display_name_token_must_be_a_property(tmp_path: Path) -> None:
+    # A display_name token (or a `+` composite part) that is not a declared
+    # predicate would silently break the canonical-name projection — fail at load.
+    _write_min_registry(tmp_path)
+    (tmp_path / "types" / "person.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "id": "person",
+                "name": "Person",
+                "facets": ["Named"],
+                "display_name": ["name+ghostField"],
+            }
+        )
+    )
+    with pytest.raises(SchemaError, match="display_name token"):
         load_registry(tmp_path)
