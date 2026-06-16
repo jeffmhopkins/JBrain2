@@ -6,6 +6,7 @@ only the supervisor's fixed command set.
 """
 
 from collections.abc import AsyncIterator
+from datetime import datetime
 from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
@@ -23,9 +24,146 @@ from jbrain.db.stats import database_stats
 from jbrain.storage import BackupShelf, BlobStore
 from jbrain.usage import usage_summary
 from jbrain.workflow import scheduler
+from jbrain.workflow.automations import AutomationsReader
 from jbrain.workflow.registry import ActionRegistry
 
 router = APIRouter(prefix="/ops", dependencies=[Depends(owner_only)])
+
+
+def _owner_ctx(principal: PrincipalDep) -> SessionContext:
+    """The owner session every Automations read/mutation runs under. The RLS
+    policies on triggers/schedules/pipelines/actions/runs are the real gate; this
+    just carries the authenticated owner identity into the scoped session."""
+    return SessionContext(principal_id=principal.id, principal_kind=principal.kind)
+
+
+def _automations_reader(request: Request) -> AutomationsReader:
+    return cast(AutomationsReader, request.app.state.automations_reader)
+
+
+# ---- Automations operator surface (the "Workflow" screen) ------------------
+# Read the live engine config + the run log as the "when -> do" cards and the
+# action Catalog; mutate the enable flag on a trigger or a schedule. All owner-only
+# (the router dep) and RLS-scoped (the reader's sessions). The run-now control is
+# the shipped POST /ops/triggers/{id}/run above — reused, not re-implemented.
+
+
+class StepOut(BaseModel):
+    action: str
+    cost_class: str
+    description: str
+    known: bool
+
+
+class RecentRunOut(BaseModel):
+    id: str
+    status: str
+    started_at: datetime
+    duration_ms: int | None
+    last_error: str | None
+
+
+class AutomationOut(BaseModel):
+    trigger_id: str
+    kind: str  # on_event | schedule
+    group: str  # event | reconcile | nightly
+    pipeline: str
+    enabled: bool
+    manual: bool
+    steps: list[StepOut]
+    recent_runs: list[RecentRunOut]
+    on_event: str | None
+    schedule_id: str | None
+    interval_seconds: int | None
+    next_run_at: datetime | None
+    last_run_at: datetime | None
+
+
+class ActionOut(BaseModel):
+    name: str
+    cost_class: str
+    domain_optional: bool
+    mutating: bool
+    description: str
+    seeded: bool
+
+
+class AutomationsOut(BaseModel):
+    automations: list[AutomationOut]
+    actions: list[ActionOut]
+
+
+class EnabledPatch(BaseModel):
+    enabled: bool
+
+
+@router.get("/automations")
+async def list_automations(request: Request, principal: PrincipalDep) -> AutomationsOut:
+    """Every trigger as a "when X -> run Y" card: its kind (on_event | schedule),
+    what fires it, the pipeline's ordered steps (cost class + description), enabled
+    + manual flags, a recent-run summary — plus the action Catalog. Owner-only,
+    RLS-scoped; reflects live DB state (no hardcoded automation list)."""
+    view = await _automations_reader(request).load(_owner_ctx(principal))
+    return AutomationsOut(
+        automations=[
+            AutomationOut(
+                trigger_id=a.trigger_id,
+                kind=a.kind,
+                group=a.group,
+                pipeline=a.pipeline,
+                enabled=a.enabled,
+                manual=a.manual,
+                steps=[StepOut(**vars(s)) for s in a.steps],
+                recent_runs=[RecentRunOut(**vars(r)) for r in a.recent_runs],
+                on_event=a.on_event,
+                schedule_id=a.schedule_id,
+                interval_seconds=a.interval_seconds,
+                next_run_at=a.next_run_at,
+                last_run_at=a.last_run_at,
+            )
+            for a in view.automations
+        ],
+        actions=[ActionOut(**vars(act)) for act in view.actions],
+    )
+
+
+@router.get("/actions")
+async def list_actions(request: Request, principal: PrincipalDep) -> list[ActionOut]:
+    """The action Catalog on its own: every registered action with cost class,
+    blast-radius flags, description, and whether it is seeded in app.actions."""
+    view = await _automations_reader(request).load(_owner_ctx(principal))
+    return [ActionOut(**vars(act)) for act in view.actions]
+
+
+@router.patch("/triggers/{trigger_id}")
+async def patch_trigger(
+    trigger_id: str, body: EnabledPatch, request: Request, principal: PrincipalDep
+) -> dict[str, object]:
+    """Enable/disable a trigger — a real mutation on engine config (e.g. disabling
+    note.created->ingest is a deliberate emergency stop). Owner-only, RLS-scoped,
+    audited via the existing structured logging. A 404 if no such trigger is in
+    scope (the RLS UPDATE policy is the firewall, not this code)."""
+    ok = await _automations_reader(request).set_trigger_enabled(
+        _owner_ctx(principal), trigger_id, body.enabled
+    )
+    if not ok:
+        raise HTTPException(status_code=404, detail="no such trigger")
+    return {"trigger_id": trigger_id, "enabled": body.enabled}
+
+
+@router.patch("/schedules/{schedule_id}")
+async def patch_schedule(
+    schedule_id: str, body: EnabledPatch, request: Request, principal: PrincipalDep
+) -> dict[str, object]:
+    """Enable/disable a schedule (a disabled schedule stops the scheduler tick from
+    firing it). Same owner-only, RLS-scoped contract as patch_trigger; 404 on an
+    unknown id."""
+    ok = await _automations_reader(request).set_schedule_enabled(
+        _owner_ctx(principal), schedule_id, body.enabled
+    )
+    if not ok:
+        raise HTTPException(status_code=404, detail="no such schedule")
+    return {"schedule_id": schedule_id, "enabled": body.enabled}
 
 
 @router.post("/triggers/{trigger_id}/run", status_code=202)

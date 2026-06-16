@@ -49,9 +49,16 @@ from jbrain.search.service import SearchService
 from jbrain.settings_store import SqlSettingsStore
 from jbrain.storage import FsBackupShelf, FsBlobStore
 from jbrain.usage import SqlUsageRecorder
+from jbrain.workflow.automations import AutomationsReader
+from jbrain.workflow.evalaction import EVAL_RUN_SPEC
 from jbrain.workflow.registry import ACTION_SPECS
 from jbrain.workflow.registry import build_registry as build_action_registry
-from jbrain.workflow.scheduler import PURGE_ACTION
+from jbrain.workflow.scheduler import (
+    PURGE_ACTION,
+    RECONCILE_PENDING_INTEGRATION_ACTION,
+    RECONCILE_PENDING_NOTES_ACTION,
+    RECONCILE_UNEMBEDDED_NOTES_ACTION,
+)
 
 structlog.configure(
     processors=[structlog.processors.TimeStamper(fmt="iso"), structlog.processors.JSONRenderer()]
@@ -75,10 +82,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.backup_shelf = FsBackupShelf(settings.backups_dir)
         app.state.job_queue = PgJobQueue(maker)
         # The action registry the emergency-trigger control resolves a sweep's
-        # pipeline through (workflow/scheduler.fire_trigger). Mirrors the worker's
-        # composed registry — the shipped six plus the in-code purge action — so a
-        # trigger fired from Ops enqueues exactly what the scheduler would.
-        app.state.action_registry = build_action_registry((*ACTION_SPECS, PURGE_ACTION))
+        # pipeline through (workflow/scheduler.fire_trigger) and the Automations
+        # surface renders the Catalog from. Mirrors the worker's composed registry
+        # EXACTLY — the shipped six plus every in-code action (purge, the three
+        # reconcilers, the opt-in eval_run) — so any manual trigger fired from Ops
+        # resolves to the same handler the scheduler would, and the Catalog lists
+        # the full set the worker can run.
+        action_registry = build_action_registry(
+            (
+                *ACTION_SPECS,
+                PURGE_ACTION,
+                RECONCILE_PENDING_NOTES_ACTION,
+                RECONCILE_PENDING_INTEGRATION_ACTION,
+                RECONCILE_UNEMBEDDED_NOTES_ACTION,
+                EVAL_RUN_SPEC,
+            )
+        )
+        app.state.action_registry = action_registry
         app.state.search_service = SearchService(
             SqlSearchRepo(maker), TeiEmbedClient(settings.embed_url)
         )
@@ -119,6 +139,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.agent_sessions = AgentSessionRepo(maker)
         app.state.agent_runlog = AgentRunLog(maker)
         app.state.run_reader = RunLogReader(maker)
+        # The Automations operator surface: projects the live trigger/schedule/
+        # pipeline config + the run log into the "when -> do" cards, and the action
+        # registry into the Catalog. `seeded_names` is the subset mirrored into
+        # app.actions (the shipped six, migration 0035); the rest are in-code only.
+        app.state.automations_reader = AutomationsReader(
+            maker,
+            action_registry,
+            frozenset(spec.name for spec in ACTION_SPECS),
+        )
         app.state.agent_transcript = AgentTranscript(maker)
         app.state.supervisor_client = httpx.AsyncClient(base_url=settings.supervisor_url)
         yield
