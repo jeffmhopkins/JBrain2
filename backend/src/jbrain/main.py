@@ -103,6 +103,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             SqlSearchRepo(maker), TeiEmbedClient(settings.embed_url)
         )
         app.state.analysis_repo = SqlAnalysisRepo(maker)
+        # Shared embedder for read-side embedding lookups (the review predicate
+        # picker's on-demand suggestions).
+        app.state.embed_client = TeiEmbedClient(settings.embed_url)
         settings_store = SqlSettingsStore(maker)
         app.state.settings_store = settings_store
         # Any API-side LLM call must flow through this router so its tokens

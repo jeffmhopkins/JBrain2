@@ -953,6 +953,14 @@ export const api = {
     return (await response.json()) as ReviewReopened;
   },
 
+  // The weighted relation candidates for a held inference's predicate picker,
+  // computed on demand (so cards filed before the picker existed get them too).
+  async reviewPredicateSuggestions(id: string): Promise<{ name: string; score: number }[]> {
+    const response = await request(`/api/review/${encodeURIComponent(id)}/predicate-suggestions`);
+    return ((await response.json()) as { suggestions: { name: string; score: number }[] })
+      .suggestions;
+  },
+
   async llmUsage(): Promise<LlmUsage> {
     const response = await request("/api/ops/llm-usage");
     return (await response.json()) as LlmUsage;

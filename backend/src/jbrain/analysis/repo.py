@@ -18,9 +18,10 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from jbrain.analysis.consolidation import rewrite_predicate
 from jbrain.analysis.display import mark_snippet
 from jbrain.analysis.entities import are_distinct, merge_entity_pair, plan_merge
-from jbrain.analysis.predicates import raw_descriptor
+from jbrain.analysis.predicates import decide_predicate, raw_descriptor
 from jbrain.analysis.supersession import is_functional
 from jbrain.db.session import SessionContext, scoped_session
+from jbrain.embed import EmbedClient
 from jbrain.schema import get_registry
 from jbrain.workflow import events as wf_events
 
@@ -814,6 +815,40 @@ class SqlAnalysisRepo:
                 )
             ).all()
         return [_item_dict(r) for r in rows]
+
+    async def predicate_suggestions(
+        self, ctx: SessionContext, item_id: str, *, embedder: EmbedClient, k: int = 5
+    ) -> list[dict[str, Any]] | None:
+        """The canonicals nearest a review item's proposed predicate, weighted by
+        cosine similarity (strongest first) — the ranked options the
+        correct-in-place predicate picker offers. Computed on demand so every
+        open card gets live suggestions, including ones filed before the picker
+        existed. None when the item doesn't exist; [] when it carries no
+        predicate (e.g. an identity card)."""
+        async with scoped_session(self._maker, ctx) as session:
+            row = (
+                await session.execute(
+                    text("SELECT payload FROM app.review_items WHERE id = :id"),
+                    {"id": item_id},
+                )
+            ).first()
+            if row is None:
+                return None
+            payload = row.payload
+            predicate = payload.get("predicate")
+            if not isinstance(predicate, str) or not predicate:
+                return []
+            statement = payload.get("statement")
+            kind = payload.get("fact_kind")
+            decision = await decide_predicate(
+                session,
+                predicate=predicate,
+                statement=statement if isinstance(statement, str) else "",
+                kind=kind if isinstance(kind, str) else None,
+                embedder=embedder,
+                k=k,
+            )
+        return [{"name": n, "score": s} for n, s in decision.suggestions]
 
     async def resolve_review(
         self, ctx: SessionContext, item_id: str, action: str, payload: dict[str, Any]

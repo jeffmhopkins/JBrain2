@@ -3701,6 +3701,33 @@ button.small {
   gap: 12px;
 }
 
+.rdetail-subject {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  margin-bottom: 2px;
+}
+
+.rdetail-subject-main {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.rdetail-subject-name {
+  font-size: var(--fs-title);
+  font-weight: 600;
+}
+
+.rdetail-subject-sub {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+}
+
 .rdetail-meta {
   display: flex;
   align-items: center;
