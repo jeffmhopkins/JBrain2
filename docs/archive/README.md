@@ -10,6 +10,8 @@ start at `docs/README.md` and the living reference docs beside it.
 | `ASSISTANT_PLAN.md` | Phase-4 personal-agent implementation plan (P4.1–P4.9). | Completed — agent shipped. |
 | `INTEGRATOR_PLAN.md` | Note→graph Integrator (v3) implementation plan. | Completed — pipeline shipped; a few deferrals carried to `ROADMAP.md`. |
 | `CUTOVER_V1_REMOVAL.md` | Record of removing the v1 `analyze_note` path. | Completed. |
+| `WORKFLOW_ENGINE_PLAN.md` | Phase-5 workflow-engine + cutover build plan. | Completed — superseded by `PHASE5_COMPLETION_PLAN.md`. |
+| `PHASE5_COMPLETION_PLAN.md` | Phase-5 residual-completion plan (reflexion in the live turn, fed eval harness + nightly schedule, last reconciler, nits, doc hygiene). | Completed — Phase 5 closed; Loops 2–4 carried to `ROADMAP.md` Phase 6. |
 | `research/` | Design-research dossiers (self-improving agent A–G, brain-tooluse-ux, session-panel-ux, subject-object-grammar, fix-options). | Findings baked into the shipped design + the docs above. |
 | `ui-exploration/` | Early PWA-icon and entity-graph / search-icon explorations. | Directions chosen; lifted into the app. |
 
