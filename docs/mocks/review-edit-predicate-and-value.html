@@ -125,7 +125,15 @@
       .pred-opt .pshape { font-size: 10px; color: var(--text-3); border: 1px solid var(--border); border-radius: var(--r-pill); padding: 0 6px; }
       .pred-opt.coin { border-style: dashed; }
       .pred-opt.coin .pname { color: var(--amber); }
-      .pred-opt.cur .pmeta { color: var(--steel); }
+      .pred-opt.cur { border-color: var(--steel); }
+      .pred-opt .pmeta.cur { color: var(--steel); }
+      /* weighted match-strength bar (mirrors the new_predicate card) */
+      .rnp-match { display: inline-flex; align-items: center; gap: 6px; margin-left: auto; font-size: 11px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+      .rnp-bar { width: 46px; height: 5px; border-radius: var(--r-pill); background: var(--surface-2); overflow: hidden; display: inline-block; flex: none; }
+      .rnp-bar i { display: block; height: 100%; border-radius: var(--r-pill); }
+      .rnp-match.strong { color: var(--green); } .rnp-match.strong .rnp-bar i { background: var(--green); }
+      .rnp-match.likely { color: var(--steel); } .rnp-match.likely .rnp-bar i { background: var(--steel); }
+      .rnp-match.weak   { color: var(--slate); } .rnp-match.weak .rnp-bar i { background: var(--slate); }
       .enum-row { display: flex; gap: 6px; flex-wrap: wrap; }
       .enum-chip { appearance: none; font: inherit; font-size: var(--fs-secondary); background: var(--surface); border: 1px solid var(--border); color: var(--text-2); border-radius: var(--r-pill); padding: 5px 12px; cursor: pointer; }
       .enum-chip.on { background: var(--steel-tint); border-color: var(--steel); color: var(--steel); font-weight: 600; }
@@ -254,6 +262,7 @@
           snippet:"<mark>My name is Jeff Hopkins</mark>.",
           source:"from this note · general",
           claim:{ predicate:"name.full", value:"Jeff Hopkins", typed:false },
+          predSuggest:[ {name:"name.full",score:0.97}, {name:"name.given",score:0.71}, {name:"name.nickname",score:0.62} ],
           accept:"the fact is recorded and pinned — reprocessing won't drop it.",
           stages:[
             ["extraction","pulled <b>name.full → Jeff Hopkins</b> from the sentence"],
@@ -270,6 +279,7 @@
           snippet:"Pharmacy kiosk says <mark>138/92</mark> — way off this morning's 128/82 at Dr. Patel's.",
           source:"from this note · health",
           claim:{ predicate:"blood_pressure", value:"138/92 mmHg", typed:false },
+          predSuggest:[ {name:"blood_pressure",score:0.99}, {name:"heart_rate",score:0.51}, {name:"dosage",score:0.33} ],
           diff:{ before:{v:"128/82 mmHg", tag:"on file (clinic, this morning)"}, after:{v:"138/92 mmHg", tag:"from this note (kiosk)"} },
           accept:"the kiosk value becomes active; 128/82 is superseded but kept in history.",
           stages:[
@@ -287,6 +297,7 @@
           snippet:"card in the mail for <mark>Sarah's birthday on the 14th</mark>",
           source:"from this note · general",
           claim:{ predicate:"birthDate", value:"March 14, 1988", typed:false },
+          predSuggest:[ {name:"birthDate",score:0.99}, {name:"name.given",score:0.34} ],
           diff:{ before:{v:"May 2, 1990", tag:"previously recorded"}, after:{v:"March 14, 1988", tag:"from this note"} },
           accept:"March 14, 1988 becomes active; the old date is superseded.",
           stages:[
@@ -304,6 +315,7 @@
           snippet:"Specialist visits have a <mark>co-pay of $45</mark> under the new plan.",
           source:"from a note · finance",
           claim:{ predicate:"co_pay", value:"$45", typed:false, unknownPred:true },
+          predSuggest:[ {name:"copayment",score:0.82}, {name:"out_of_pocket",score:0.61}, {name:"deductible",score:0.44} ],
           accept:"keeps 'co_pay' as its own canonical relation. Map it to copayment instead by editing the predicate.",
           stages:[
             ["extraction","read an unknown relation <b>co_pay → $45</b>"],
@@ -320,6 +332,7 @@
           snippet:"Asked <mark>Dr. Akin's office to fax the form</mark> to the school nurse.",
           source:"from a note · health",
           claim:{ predicate:"requestedAction", value:"fax form to school nurse", typed:false },
+          predSuggest:[ {name:"requestedAction",score:0.90}, {name:"email",score:0.29} ],
           accept:"the fact moves to general and is pinned — reprocessing can't pull it back.",
           stages:[
             ["extraction","read <b>requestedAction → fax form…</b> inside a health note"],
@@ -337,6 +350,7 @@
           snippet:"Started <mark>vitamin D 2000 IU daily</mark> per Dr. Akin.",
           source:"from a note · health",
           claim:{ predicate:"medication", value:"vitamin D 2000 IU daily", typed:false },
+          predSuggest:[ {name:"medication",score:0.95}, {name:"dosage",score:0.58}, {name:"requestedAction",score:0.31} ],
           accept:"the fact stands and gets pinned — reprocessing can't drop it.",
           stages:[
             ["extraction","read <b>medication → vitamin D 2000 IU</b>"],
@@ -490,27 +504,61 @@
         return out;
       }
 
-      function predEditor(k){
+      function matchBand(score){
+        if(score>=0.80) return {cls:"strong", label:"strong"};
+        if(score>=0.55) return {cls:"likely", label:"likely"};
+        return {cls:"weak", label:"weak"};
+      }
+
+      // The ranked list inside the predicate editor. Empty search → the card's
+      // weighted candidate relations, best fit first. A search → the registry
+      // filtered by query (weights kept where known), plus a coin-a-new row.
+      function predOptionsHTML(k){
         const e = ed(k);
         const q = e.search.trim().toLowerCase();
-        const matches = REGISTRY.filter(r => r.name.toLowerCase().includes(q) || r.hint.toLowerCase().includes(q));
-        const exact = REGISTRY.some(r => r.name.toLowerCase() === q);
-        let list = matches.map(r => {
-          const cur = r.name === e.predicate;
-          return `<button class="pred-opt${cur?" on cur":""}" data-pick-pred="${r.name}">
-            <span class="pname">${r.name}</span><span class="pshape">${r.shape}</span>
-            <span class="pmeta">${cur?"current":r.hint}</span></button>`;
-        }).join("");
-        // coin-a-new-predicate row when the typed text isn't already canonical
-        if(q.length && !exact){
-          list += `<button class="pred-opt coin" data-pick-pred="${e.search.trim()}">
-            <span class="pname">${e.search.trim()}</span>
-            <span class="pmeta">use as a new relation</span></button>`;
+        const sugg = k.predSuggest || [];
+        const reg = n => REGISTRY.find(r => r.name === n);
+        let rows;
+        if(q.length){
+          const weightOf = n => { const s = sugg.find(x => x.name === n); return s ? s.score : null; };
+          rows = REGISTRY
+            .filter(r => r.name.toLowerCase().includes(q) || r.hint.toLowerCase().includes(q))
+            .map(r => ({ name:r.name, score:weightOf(r.name), shape:r.shape, hint:r.hint }))
+            .sort((a,b) => (b.score||0) - (a.score||0));
+          const known = REGISTRY.some(r => r.name.toLowerCase() === q);
+          if(!known) rows.push({ coin:true, name:e.search.trim() });
+        } else {
+          rows = sugg.slice().sort((a,b) => b.score - a.score)
+            .map(s => ({ name:s.name, score:s.score, shape:(reg(s.name)||{}).shape, hint:(reg(s.name)||{}).hint||"new relation" }));
+          // an unrecognized current relation (new_predicate) — offer keeping it as new
+          if(k.claim.unknownPred && !sugg.some(s => s.name === e.predicate)){
+            rows.push({ coin:true, name:e.predicate, keep:true });
+          }
         }
+        const html = rows.map(r => {
+          if(r.coin) return `<button class="pred-opt coin" data-pick-pred="${r.name}">
+            <span class="pname">${r.name}</span><span class="pmeta">${r.keep?"keep as a new relation":"use as a new relation"}</span></button>`;
+          const cur = r.name === e.predicate;
+          const meta = cur
+            ? `<span class="pmeta cur">current</span>`
+            : (r.score!=null
+                ? `<span class="rnp-match ${matchBand(r.score).cls}"><span class="rnp-bar"><i style="width:${Math.round(r.score*100)}%"></i></span>${matchBand(r.score).label} ${r.score.toFixed(2)}</span>`
+                : `<span class="pmeta">${r.hint}</span>`);
+          return `<button class="pred-opt${cur?" cur":""}" data-pick-pred="${r.name}">
+            <span class="pname">${r.name}</span>${r.shape?`<span class="pshape">${r.shape}</span>`:""}${meta}</button>`;
+        }).join("");
+        return `<div class="pred-list">${html || '<div class="cand-note" style="padding:6px 2px">no match — keep typing to coin a new relation</div>'}</div>`;
+      }
+
+      function predEditor(k){
+        const e = ed(k);
+        const heading = e.search.trim().length
+          ? "matching relations — pick one or coin a new name"
+          : "relations ranked by fit — pick one, or type below to edit / coin a new one";
         return `<div class="editor">
-          <div class="editor-lbl">choose a relation — search the registry or coin a new one<span class="x" data-close>done</span></div>
-          <input data-pred-search value="${e.search.replace(/"/g,'&quot;')}" placeholder="search relations…" aria-label="search relations" />
-          <div class="pred-list">${list || '<div class="cand-note" style="padding:6px 2px">no match — keep typing to coin a new relation</div>'}</div>
+          <div class="editor-lbl">${heading}<span class="x" data-close>done</span></div>
+          <input data-pred-search value="${e.search.replace(/"/g,'&quot;')}" placeholder="search or type a new relation…" aria-label="search or type a relation" />
+          ${predOptionsHTML(k)}
         </div>`;
       }
 
@@ -546,7 +594,7 @@
           } else {
             out += `<button class="v-correct" data-correct>correct it — file a note</button>`;
           }
-          out += `<div class="escape"><button class="defer" data-act="defer" data-cons="parked in deferred — resume anytime.">defer</button><button class="discuss" data-act="discuss" data-cons="handed to the assistant — parked in deferred.">talk it over</button></div></div>`;
+          out += `</div>`;
           return out;
         }
         const corr = edited(k);
@@ -554,7 +602,6 @@
         return `<div class="verdict">
           <button class="v-primary${corr?" correction":""}" data-act="accept" data-corr="${corr?1:0}">${primaryLabel}</button>
           <button class="v-reject${e.armed?" armed":""}" data-reject data-danger="${k.rejectDestructive?1:0}">${e.armed?"tap again — discard":(k.rejectLabel||"reject — discard")}</button>
-          <div class="escape"><button class="defer" data-act="defer" data-cons="parked in deferred — resume anytime.">defer</button><button class="discuss" data-act="discuss" data-cons="handed to the assistant — parked in deferred.">talk it over</button></div>
         </div>`;
       }
 
@@ -617,7 +664,7 @@
 
         const ps = document.querySelector("[data-pred-search]");
         if(ps){ ps.focus(); ps.setSelectionRange(ps.value.length, ps.value.length);
-          ps.oninput = ()=>{ e.search = ps.value; const list = document.querySelector(".pred-list"); if(list) list.outerHTML = tmpPredList(k); rebindPicks(k); };
+          ps.oninput = ()=>{ e.search = ps.value; const list = document.querySelector(".pred-list"); if(list) list.outerHTML = predOptionsHTML(k); rebindPicks(k); };
         }
         document.querySelectorAll("[data-pick-pred]").forEach(b=> b.onclick = ()=>{ e.predicate = b.dataset.pickPred; e.editing=null; render(); });
 
@@ -650,17 +697,6 @@
         const ta = document.querySelector(".compose textarea"); if(ta) ta.oninput = ()=> e.draft = ta.value;
       }
 
-      // re-render just the predicate list as the search box changes (keeps input focus)
-      function tmpPredList(k){
-        const e = ed(k); const q = e.search.trim().toLowerCase();
-        const matches = REGISTRY.filter(r => r.name.toLowerCase().includes(q) || r.hint.toLowerCase().includes(q));
-        const exact = REGISTRY.some(r => r.name.toLowerCase() === q);
-        let list = matches.map(r => { const cur = r.name === e.predicate;
-          return `<button class="pred-opt${cur?" on cur":""}" data-pick-pred="${r.name}"><span class="pname">${r.name}</span><span class="pshape">${r.shape}</span><span class="pmeta">${cur?"current":r.hint}</span></button>`;
-        }).join("");
-        if(q.length && !exact) list += `<button class="pred-opt coin" data-pick-pred="${e.search.trim()}"><span class="pname">${e.search.trim()}</span><span class="pmeta">use as a new relation</span></button>`;
-        return `<div class="pred-list">${list || '<div class="cand-note" style="padding:6px 2px">no match — keep typing to coin a new relation</div>'}</div>`;
-      }
       function rebindPicks(k){ const e=ed(k); document.querySelectorAll("[data-pick-pred]").forEach(b=> b.onclick = ()=>{ e.predicate=b.dataset.pickPred; e.editing=null; render(); }); }
 
       // theme toggle
