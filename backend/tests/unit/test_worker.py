@@ -363,10 +363,11 @@ async def test_run_registers_all_job_handlers(
         "sync_predicates",
         # The purge sweep is now a fireable action (Phase-5 Track B).
         "purge_deleted_artifacts",
-        # The two boot self-heal backfills are now fireable actions too (Phase-5
-        # Wave 2 — the dropped-event safety net): boot + schedule + on-demand.
+        # The three boot self-heal backfills are now fireable actions too (Phase-5
+        # Wave 2 + Track S — the dropped-event safety net): boot + schedule + on-demand.
         "reconcile_pending_notes",
         "reconcile_pending_integration",
+        "reconcile_unembedded_notes",
     }
 
 

@@ -264,21 +264,26 @@ async def run() -> None:
         # self-heals within minutes rather than at the next restart.
         "reconcile_pending_notes": scheduler.reconcile_pending_notes_handler(maker),
         "reconcile_pending_integration": scheduler.reconcile_pending_integration_handler(maker),
+        # The unembedded-notes backfill, likewise promoted off boot-only (Track S):
+        # a dropped embed_note enqueue no longer strands a note's chunks unembedded
+        # until the next restart — it self-heals within minutes / on demand from Ops.
+        "reconcile_unembedded_notes": scheduler.reconcile_unembedded_notes_handler(maker),
     }
     # Build the dispatch table from the action registry (W0.1): an action without
     # a handler — or a handler with no registered action — fails the worker LOUDLY
     # here at boot, like the schema registry above, rather than failing a job at run
     # time (the old "no handler for kind" path). Behavior for known kinds is
     # unchanged: the dispatch table is the same {kind: handler} map as before. The
-    # registry adds the purge action and the two reconcilers to the shipped six
-    # (all three live in-code only, not in the app.actions seed — see
-    # scheduler.PURGE_ACTION / RECONCILE_PENDING_*_ACTION).
+    # registry adds the purge action and the three reconcilers to the shipped six
+    # (all four live in-code only, not in the app.actions seed — see
+    # scheduler.PURGE_ACTION / RECONCILE_*_ACTION).
     registry = build_registry(
         (
             *ACTION_SPECS,
             scheduler.PURGE_ACTION,
             scheduler.RECONCILE_PENDING_NOTES_ACTION,
             scheduler.RECONCILE_PENDING_INTEGRATION_ACTION,
+            scheduler.RECONCILE_UNEMBEDDED_NOTES_ACTION,
         )
     )
     handlers = registry.dispatch_table(impls)
