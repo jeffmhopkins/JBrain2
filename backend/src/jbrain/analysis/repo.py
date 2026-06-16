@@ -35,28 +35,13 @@ REVIEW_STATUSES = ("open", "resolved", "deferred")
 DEFER_ACTIONS = ("defer", "discuss")
 
 
-async def _enqueue_consolidate_predicates(session: AsyncSession) -> None:
-    """Queue the predicate-consolidation sweep once, deduped like
-    backfill_consolidate so repeated maps don't pile up sweeps. Shared by the
-    map_to_existing and suggest_better resolutions, which both heal stored facts
-    onto a canonical the registry alias (Phase 5) will later own."""
-    await session.execute(
-        text(
-            "INSERT INTO app.jobs (id, kind, payload)"
-            " SELECT gen_random_uuid(), 'consolidate_predicates', '{}'::jsonb"
-            " WHERE NOT EXISTS ("
-            "   SELECT 1 FROM app.jobs"
-            "   WHERE kind = 'consolidate_predicates'"
-            "     AND status IN ('queued', 'running'))"
-        )
-    )
-
-
 def _consolidate_enqueued(effects: list[dict[str, Any]]) -> bool:
-    """Whether this resolution's effects enqueued a consolidate sweep — true exactly
-    when the effects carry a `predicate_remapped` action (the only paths that call
-    `_enqueue_consolidate_predicates`). The signal the resolution.changed shadow
-    event keys on, so the emitted event mirrors the hardcoded enqueue 1:1 (E7a)."""
+    """Whether this resolution warrants a consolidate sweep — true exactly when the
+    effects carry a `predicate_remapped` action (the map_to_existing / suggest_better
+    paths that heal stored facts onto a canonical). The signal the resolution.changed
+    event keys on: since the W2·C cutover the event dispatcher (not a direct enqueue)
+    submits the consolidate job, so the emitted event is the SOLE trigger for the
+    sweep — this predicate gates whether the event is even emitted."""
     return any(e.get("action") == "predicate_remapped" for e in effects)
 
 
@@ -68,17 +53,22 @@ async def _emit_resolution_event(
     item_id: str,
     effects: list[dict[str, Any]],
 ) -> None:
-    """SHADOW (Wave 1): emit a resolution.changed event for the dispatcher to diff
-    (E7a), only when this resolution actually enqueued a consolidate sweep (so the
-    event and the hardcoded job are 1:1). domain is the review item's fail-closed
-    E2 stamp; the principal is the resolving owner.
+    """Emit a resolution.changed event that DRIVES the consolidate sweep (W2·C live):
+    the event dispatcher resolves it to the consolidate pipeline and enqueues the job.
+    Emitted only when this resolution remapped a predicate (`_consolidate_enqueued`),
+    so the event and the sweep stay 1:1. domain is the review item's fail-closed E2
+    stamp; the principal is the resolving owner. The `_shadow_enqueued` baseline is
+    retained on the event for the dispatcher's observability diff (it logs would-vs-
+    baseline even live), not as a second enqueue.
 
     Emitted AFTER the resolution transaction commits, in its OWN best-effort session
-    (wf_events.emit_event swallows every error): a shadow event that fails — e.g. a
+    (wf_events.emit_event swallows every error): an event whose insert fails — e.g. a
     test whose owner principal is not a real row — must never abort the resolution,
-    which is why this is a separate transaction, not the resolution's. The (tiny)
-    cost is that the event is not atomic with the consolidate enqueue; for an inert
-    shadow observation a dropped event on a crash between the two is harmless."""
+    which is why this is a separate transaction, not the resolution's. The cost is
+    that the event is not atomic with the resolution: a crash between commit and emit
+    drops the sweep trigger — but the boot `backfill_consolidate` self-heal and the
+    idempotent sweep are the safety net, so a missed event self-heals on the next
+    sweep rather than stranding the remap."""
     if not _consolidate_enqueued(effects):
         return
     if not ctx.principal_id:
@@ -876,8 +866,9 @@ class SqlAnalysisRepo:
                 )
             ).one()
             item_domain = item.domain_code
-        # SHADOW emit AFTER the resolution committed, in its own best-effort session,
-        # so a failed event can never abort the resolution (W1·A2, E7a).
+        # Emit the resolution.changed event AFTER the resolution committed, in its own
+        # best-effort session, so a failed event can never abort the resolution; the
+        # dispatcher enqueues the consolidate sweep off it (W2·C live).
         await _emit_resolution_event(
             self._maker, ctx, domain_code=item_domain, item_id=str(iid), effects=effects
         )
@@ -898,9 +889,9 @@ class SqlAnalysisRepo:
         items: list[dict[str, Any]] = []
         errors: list[dict[str, Any]] = []
         # (item_id, domain_code, effects) for each committed resolution that
-        # enqueued a consolidate — emitted as shadow events AFTER the batch
-        # transaction commits, never inside it (a failed emit must not roll back
-        # the batch, W1·A2).
+        # remapped a predicate — emitted as resolution.changed events AFTER the batch
+        # transaction commits, never inside it (a failed emit must not roll back the
+        # batch); the dispatcher enqueues the consolidate sweep off each (W2·C live).
         to_emit: list[tuple[str, str, list[dict[str, Any]]]] = []
         async with scoped_session(self._maker, ctx) as session:
             for decision in decisions:
@@ -958,8 +949,9 @@ class SqlAnalysisRepo:
                     )
                 ).one()
                 items.append(_item_dict(updated))
-        # SHADOW emits, after the batch committed, each in its own best-effort
-        # session (E7a) — a failed event can never roll back the resolutions.
+        # Emits after the batch committed, each in its own best-effort session — a
+        # failed event can never roll back the resolutions; the dispatcher enqueues
+        # each consolidate sweep off the event (W2·C live).
         for emit_item_id, emit_domain, emit_effects in to_emit:
             await _emit_resolution_event(
                 self._maker,
@@ -1245,8 +1237,11 @@ class SqlAnalysisRepo:
                 # registry alias is a Phase-5 correction note.
                 rewritten = await rewrite_predicate(session, raw, canonical)
                 # Forward-compat: once the alias lands in the registry (Phase 5),
-                # the sweep heals any row this pass had to skip.
-                await _enqueue_consolidate_predicates(session)
+                # the sweep heals any row this pass had to skip. The sweep is now
+                # enqueued by the event dispatcher (W2·C cutover): the
+                # `predicate_remapped` effect below drives `_emit_resolution_event`,
+                # whose resolution.changed event the engine resolves to the
+                # consolidate pipeline — the direct enqueue here is gone.
                 return "resolved", [
                     {
                         "action": "predicate_remapped",
@@ -1294,11 +1289,12 @@ class SqlAnalysisRepo:
             effects: list[dict[str, Any]] = [{"action": "minted", "canonical_name": name}]
             # suggest_better corrects the predicate's NAME, so the already-committed
             # fact adopts it: heal raw -> name in place (the same guarded rewrite
-            # map_to_existing uses) and enqueue the sweep. accept_as_new keeps the
+            # map_to_existing uses). The consolidate sweep is enqueued by the event
+            # dispatcher now (W2·C): the `predicate_remapped` effect drives the
+            # resolution.changed event, not a direct enqueue. accept_as_new keeps the
             # raw name (name == raw), so there is nothing to move.
             if name != raw:
                 rewritten = await rewrite_predicate(session, raw, name)
-                await _enqueue_consolidate_predicates(session)
                 effects.insert(
                     0,
                     {

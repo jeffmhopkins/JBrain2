@@ -520,7 +520,7 @@ async def test_tick_marks_a_poison_event_dispatched_without_enqueue(
 @pytest.mark.parametrize(
     ("stored", "expected"),
     [
-        (None, "shadow"),  # absent -> the prod-safe default
+        (None, "live"),  # absent -> the cutover default (engine owns the path)
         ("shadow", "shadow"),
         ("live", "live"),
         ("off", "off"),
@@ -641,6 +641,121 @@ async def test_already_active_false_for_a_kind_without_a_note_twin() -> None:
     assert not await dispatcher._already_active(None, w)  # type: ignore[arg-type]
 
 
+# --- _already_active: state-based dedup hardening (W2·C) ----------------------
+# Under LIVE the queued-twin check is not enough: a re-delivered/duplicate event
+# for a note whose work already finished (no queued twin survives) must not be
+# re-processed. _already_active also skips exactly what the reconcilers would NOT
+# re-enqueue — ingest past 'pending', integration already 'integrated'.
+
+
+def _patch_state(monkeypatch: pytest.MonkeyPatch, state: tuple[str, str] | None) -> list[str]:
+    """Stub dispatcher._note_state to return `state` and record the note_id it read.
+    The real SELECT is integration-tested (test_dispatcher_pg); here we drive the
+    skip decision off the returned state."""
+    seen: list[str] = []
+
+    async def fake_state(maker: Any, note_id: str) -> tuple[str, str] | None:
+        seen.append(note_id)
+        return state
+
+    monkeypatch.setattr(dispatcher, "_note_state", fake_state)
+    return seen
+
+
+async def test_already_active_ingest_skips_a_note_past_pending(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # No queued twin, but the note is already 'indexed' — the pending reconciler
+    # would not re-enqueue it, so neither does a live dispatch.
+    async def no_twin(*a: Any, **k: Any) -> bool:
+        return False
+
+    monkeypatch.setattr(dispatcher.queue, "has_active", no_twin)
+    seen = _patch_state(monkeypatch, ("indexed", "pending_integration"))
+    assert await dispatcher._already_active(None, _would(kind="ingest_note"))  # type: ignore[arg-type]
+    assert seen == ["n-1"]
+
+
+async def test_already_active_ingest_allows_a_still_pending_note(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # No queued twin AND the note is still 'pending' — the pending reconciler WOULD
+    # re-enqueue it, so the dispatcher must too: not suppressed.
+    async def no_twin(*a: Any, **k: Any) -> bool:
+        return False
+
+    monkeypatch.setattr(dispatcher.queue, "has_active", no_twin)
+    _patch_state(monkeypatch, ("pending", "pending_integration"))
+    assert not await dispatcher._already_active(None, _would(kind="ingest_note"))  # type: ignore[arg-type]
+
+
+async def test_already_active_ingest_allows_a_missing_note(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # An absent note (state None) is left to the handler's own missing-note no-op,
+    # never suppressed on absence (which could strand a real, racing insert).
+    async def no_twin(*a: Any, **k: Any) -> bool:
+        return False
+
+    monkeypatch.setattr(dispatcher.queue, "has_active", no_twin)
+    _patch_state(monkeypatch, None)
+    assert not await dispatcher._already_active(None, _would(kind="ingest_note"))  # type: ignore[arg-type]
+
+
+async def test_already_active_integrate_skips_an_already_integrated_note(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # No queued twin, but integration already 'integrated' — past the integration
+    # reconciler's `integration_state <> 'integrated'`, so suppressed.
+    async def no_twin(*a: Any, **k: Any) -> bool:
+        return False
+
+    monkeypatch.setattr(dispatcher.queue, "has_active_analysis", no_twin)
+    seen = _patch_state(monkeypatch, ("indexed", "integrated"))
+    assert await dispatcher._already_active(None, _would(kind="integrate_note"))  # type: ignore[arg-type]
+    assert seen == ["n-1"]
+
+
+async def test_already_active_integrate_allows_a_not_yet_integrated_note(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # No queued twin and not yet integrated — the reconciler WOULD re-enqueue, so
+    # the dispatcher must too.
+    async def no_twin(*a: Any, **k: Any) -> bool:
+        return False
+
+    monkeypatch.setattr(dispatcher.queue, "has_active_analysis", no_twin)
+    _patch_state(monkeypatch, ("indexed", "pending_integration"))
+    assert not await dispatcher._already_active(None, _would(kind="integrate_note"))  # type: ignore[arg-type]
+
+
+async def test_already_active_queued_twin_short_circuits_before_state_read(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The cheap queued-twin check fires first: a queued twin suppresses without ever
+    # reading note state (one fewer query in the common back-to-back case).
+    async def has_twin(*a: Any, **k: Any) -> bool:
+        return True
+
+    monkeypatch.setattr(dispatcher.queue, "has_active_analysis", has_twin)
+    seen = _patch_state(monkeypatch, ("indexed", "pending_integration"))
+    assert await dispatcher._already_active(None, _would(kind="integrate_note"))  # type: ignore[arg-type]
+    assert seen == []  # state never read — the twin check short-circuited
+
+
+def _allow_state(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Stub _note_state to a not-yet-finished state so the state-skip guard never
+    suppresses — isolating these tests to the dedup/stamp/run-log path. The state
+    skip itself is covered by the _already_active state tests above."""
+
+    async def open_state(maker: Any, note_id: str) -> tuple[str, str]:
+        # ingest_state 'pending' (the pending reconciler WOULD re-enqueue) and
+        # integration_state not 'integrated' — neither guard suppresses.
+        return ("pending", "pending_integration")
+
+    monkeypatch.setattr(dispatcher, "_note_state", open_state)
+
+
 async def test_live_enqueue_stamps_the_event_scope_and_runlogs(
     monkeypatch: pytest.MonkeyPatch, captured_enqueue: list[dict[str, Any]]
 ) -> None:
@@ -648,6 +763,7 @@ async def test_live_enqueue_stamps_the_event_scope_and_runlogs(
         return False
 
     monkeypatch.setattr(dispatcher.queue, "has_active_analysis", no_active)
+    _allow_state(monkeypatch)
     run_log = FakeRunLog()
     diff = dispatcher.ShadowDiff(
         event_id="ev-1",
@@ -702,6 +818,7 @@ async def test_live_enqueue_system_event_runs_as_system_unstamped(
         return False
 
     monkeypatch.setattr(dispatcher.queue, "has_active", no_active)
+    _allow_state(monkeypatch)
     run_log = FakeRunLog()
     diff = dispatcher.ShadowDiff(
         event_id="ev-1",
@@ -727,6 +844,7 @@ async def test_tick_live_enqueues_exactly_once_via_diff(
         return False
 
     monkeypatch.setattr(dispatcher.queue, "has_active_analysis", no_active)
+    _allow_state(monkeypatch)
     claim_row = Row(
         id="ev-1",
         type="note.ingested",

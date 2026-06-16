@@ -111,17 +111,31 @@ INTEGRATION_PERSIST_KEY = "integration_persist"
 INTEGRATION_PERSIST_DEFAULT = True
 
 # The dispatcher's enqueue mode (docs/WORKFLOW_ENGINE_PLAN.md §5 Wave 2, §E7a):
-# "shadow" (default) computes the would-be enqueue + diffs it but never enqueues —
-# the hardcoded trigger points still own the real path; "live" actually enqueues
-# the engine's resolved jobs (the Wave-2 cutover, gated here so prod stays shadow
-# until the diff is clean); "off" silences the dispatcher tick entirely. Separate
+# "shadow" computes the would-be enqueue + diffs it but never enqueues; "live"
+# (the default since the Wave-2 cutover, Sub-task C) actually enqueues the engine's
+# resolved jobs — the engine now OWNS the note->ingest, ingest->integrate, and
+# resolution->consolidate paths, and the three hardcoded enqueues that twinned those
+# events have been removed; "off" silences the dispatcher tick entirely. Separate
 # from the master `workflow_dispatch` on/off switch (dispatcher.WORKFLOW_DISPATCH_KEY):
 # that gate, when false, stops the tick regardless of mode. DB-backed, read live so
-# the cutover is a settings upsert, not a redeploy. Default "shadow": flipping
-# prod to live is an explicit operator action, never the deploy default.
+# an operator can ROLL BACK live with a single settings upsert (no redeploy): set
+# mode "shadow" to stop the engine enqueuing, or set the master switch false to stop
+# the tick — but with the hardcoded enqueues gone, only the reconcilers
+# (backfill_pending_notes / backfill_pending_integration, now recurring) would then
+# pick up new notes, so a rollback to shadow is a degraded mode, not the old path.
+# Default flipped shadow->live at the cutover: the diff was clean and the engine is
+# the live path; an unrecognized stored value still falls back to "shadow"
+# (workflow_dispatch_mode getter) — a junk value never reads as the active enqueue.
 WorkflowDispatchMode = Literal["shadow", "live", "off"]
 WORKFLOW_DISPATCH_MODES: tuple[WorkflowDispatchMode, ...] = ("shadow", "live", "off")
-WORKFLOW_DISPATCH_MODE_DEFAULT: WorkflowDispatchMode = "shadow"
+# The deploy default when NO row is stored (an absent setting): the cutover made this
+# "live" — the engine is the active enqueue path.
+WORKFLOW_DISPATCH_MODE_DEFAULT: WorkflowDispatchMode = "live"
+# The fail-closed fallback for a PRESENT but unrecognized stored value — distinct
+# from the absent-row default: a junk/corrupt mode must read diff-only ("shadow"),
+# never the active enqueue, even though the deploy default is now "live". Only an
+# absent row earns the live default; corrupt input degrades to shadow until fixed.
+WORKFLOW_DISPATCH_MODE_FALLBACK: WorkflowDispatchMode = "shadow"
 WORKFLOW_DISPATCH_MODE_KEY = "workflow_dispatch_mode"
 
 
@@ -230,15 +244,16 @@ class SqlSettingsStore:
         return await self.get(ctx, INTEGRATION_PERSIST_KEY, INTEGRATION_PERSIST_DEFAULT) is True
 
     async def workflow_dispatch_mode(self, ctx: SessionContext) -> WorkflowDispatchMode:
-        """The dispatcher's enqueue mode: "shadow" (default — diff only, never
-        enqueue), "live" (the Wave-2 cutover — actually enqueue), or "off". An
-        unrecognized stored value falls back to "shadow": a junk mode must never
-        read as "live" (fail-closed toward the prod-safe default)."""
+        """The dispatcher's enqueue mode: "live" (the default since the Wave-2 cutover
+        — actually enqueue, the engine owns the path), "shadow" (diff only, never
+        enqueue — now a degraded rollback, see WORKFLOW_DISPATCH_MODE_DEFAULT), or
+        "off". An unrecognized stored value falls back to "shadow": a junk mode must
+        never read as "live" off corrupt input (it stays diff-only until corrected)."""
         mode = await self.get(ctx, WORKFLOW_DISPATCH_MODE_KEY, WORKFLOW_DISPATCH_MODE_DEFAULT)
         return (
             cast(WorkflowDispatchMode, mode)
             if mode in WORKFLOW_DISPATCH_MODES
-            else WORKFLOW_DISPATCH_MODE_DEFAULT
+            else WORKFLOW_DISPATCH_MODE_FALLBACK
         )
 
     async def llm_task_overrides(self, ctx: SessionContext) -> dict[str, dict[str, str]]:

@@ -1,7 +1,8 @@
 """new_predicate card resolution (predicate canonicalization Phase 3b) against
 real Postgres: accept_as_new mints the raw predicate; suggest_better mints under
 a corrected name AND renames the committed fact onto it; map_to_existing rewrites
-stored facts onto the canonical and enqueues the consolidation sweep; reopen
+stored facts onto the canonical and emits a resolution.changed event that the
+dispatcher resolves to the consolidation sweep (W2·C — no direct enqueue); reopen
 reverses a map/rename but keeps a mint (durable vocabulary).
 """
 
@@ -134,21 +135,73 @@ async def test_suggest_better_mints_and_renames_the_fact(maker):  # noqa: F811
     assert await _fact_predicate(maker, fact_id) == "zzqBetterName"  # the fact adopts the name
 
 
-async def test_map_to_existing_rewrites_facts_and_enqueues_consolidation(maker):  # noqa: F811
-    await _seed_canonical(maker, "spouse")
-    fact_id, _ = await _seed_fact(maker, "zzqMapMe")
-    card = await _insert_card(maker, "zzqMapMe")
-    await SqlAnalysisRepo(maker).resolve_review(
-        OWNER, card, "map_to_existing", {"canonical_name": "spouse"}
-    )
-    assert await _fact_predicate(maker, fact_id) == "spouse"  # healed
+async def _seed_owner_principal(maker) -> str:  # noqa: F811
+    """A real owner principal row so the resolution.changed emit satisfies the events
+    FK; returns its id (the ctx principal the live tick will stamp the sweep with)."""
+    pid = str(uuid.uuid4())
+    async with scoped_session(maker, OWNER) as s:
+        await s.execute(
+            text(
+                "INSERT INTO app.principals (id, kind, key_hash)"
+                " VALUES (:id, 'owner', :kh) ON CONFLICT DO NOTHING"
+            ),
+            {"id": pid, "kh": f"resolve-{pid}"},
+        )
+    return pid
+
+
+async def _count_consolidate(maker) -> int:  # noqa: F811
     async with scoped_session(maker, SYSTEM_CTX) as session:
-        jobs = (
+        return (
             await session.execute(
                 text("SELECT count(*) FROM app.jobs WHERE kind = 'consolidate_predicates'")
             )
-        ).scalar()
-    assert jobs and jobs >= 1
+        ).scalar_one()
+
+
+async def test_map_to_existing_rewrites_facts_and_event_drives_consolidation(maker):  # noqa: F811
+    # W2·C cutover: the resolution no longer enqueues consolidate directly — it emits
+    # a resolution.changed event the dispatcher resolves to the consolidate pipeline.
+    from jbrain.db.session import SessionContext
+    from jbrain.workflow import dispatcher
+    from jbrain.workflow import events as wf_events
+    from jbrain.workflow.registry import ACTION_SPECS, build_registry
+    from jbrain.workflow.runlog import PipelineRunLog
+    from jbrain.workflow.scheduler import PURGE_ACTION
+
+    pid = await _seed_owner_principal(maker)
+    owner_ctx = SessionContext(principal_id=pid, principal_kind="owner")
+    await _seed_canonical(maker, "spouse")
+    fact_id, _ = await _seed_fact(maker, "zzqMapMe")
+    card = await _insert_card(maker, "zzqMapMe")
+
+    before = await _count_consolidate(maker)
+    await SqlAnalysisRepo(maker).resolve_review(
+        owner_ctx, card, "map_to_existing", {"canonical_name": "spouse"}
+    )
+    assert await _fact_predicate(maker, fact_id) == "spouse"  # healed in-band, as before
+
+    # The resolution enqueued NO consolidate directly (the direct enqueue is gone)...
+    assert await _count_consolidate(maker) == before
+    # ...but it emitted an undispatched resolution.changed event.
+    async with scoped_session(maker, owner_ctx) as s:
+        emitted = (
+            await s.execute(
+                text("SELECT count(*) FROM app.events WHERE type = :t AND dispatched_at IS NULL"),
+                {"t": wf_events.RESOLUTION_CHANGED},
+            )
+        ).scalar_one()
+    assert emitted >= 1
+
+    # A LIVE dispatcher tick resolves the event to the consolidate pipeline and
+    # enqueues exactly one consolidate sweep.
+    registry = build_registry((*ACTION_SPECS, PURGE_ACTION))
+    diffs = await dispatcher.dispatcher_tick(
+        maker, registry, live=True, run_log=PipelineRunLog(maker)
+    )
+    mine = [d for d in diffs if d.event_type == wf_events.RESOLUTION_CHANGED]
+    assert mine and all(d.error is None for d in mine)
+    assert await _count_consolidate(maker) == before + 1
 
 
 async def test_map_to_unknown_canonical_is_rejected(maker):  # noqa: F811
