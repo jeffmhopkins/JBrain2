@@ -40,9 +40,21 @@ describe("reviewSubject", () => {
     );
   });
 
+  it("reads the entity_ref a fact_conflict / attribute_collision carries", () => {
+    expect(
+      reviewSubject(item("6", "fact_conflict", { entity_ref: "Me", predicate: "worksFor" }))?.label,
+    ).toBe("Me");
+    expect(
+      reviewSubject(
+        item("7", "attribute_collision", { entity_ref: "sarah", predicate: "birthDate" }),
+      )?.label,
+    ).toBe("Sarah");
+  });
+
   it("returns null when the payload names no single subject", () => {
-    expect(reviewSubject(item("6", "merge_proposal", { entity_a: "x", entity_b: "y" }))).toBeNull();
-    expect(reviewSubject(item("7", "attribute_collision", { predicate: "birthDate" }))).toBeNull();
+    expect(reviewSubject(item("8", "merge_proposal", { entity_a: "x", entity_b: "y" }))).toBeNull();
+    // A collision missing its entity_ref still falls through to Other.
+    expect(reviewSubject(item("9", "attribute_collision", { predicate: "birthDate" }))).toBeNull();
   });
 });
 

@@ -1208,6 +1208,8 @@ async def test_state_change_forms_supersession_chain(
     assert [c["action"] for c in item["choices"]] == ["accept_a", "accept_b"]
     assert item["choices"][0]["label"] == "Lives at 4 Cedar Ct."
     assert "<mark>We</mark>" in item["snippet"]
+    # The subject the review UI groups the card under (vs the "Other" bucket).
+    assert item["entity_ref"] == "Me"
 
 
 async def test_relocation_state_supersedes_across_notes(

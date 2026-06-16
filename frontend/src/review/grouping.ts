@@ -2,8 +2,9 @@
 // reads as "everything held about Celine" instead of a flat chronological wall.
 // Entity identity isn't uniform across review kinds — the payload carries it
 // under different keys (entity_name, subject, name, entity_ref) and some kinds
-// (collisions, merges) name no single subject at all. We read the best-available
-// signal per item; anything without a subject collects in the "Other" bucket.
+// (merges, domain promotions) name no single subject at all. We read the
+// best-available signal per item; anything without a subject collects in the
+// "Other" bucket.
 
 import type { ReviewItem } from "../api/client";
 import { type EntityTypeKey, resolveEntityKind } from "../entities/kinds";
@@ -31,8 +32,8 @@ function titleCase(ref: string): string {
 }
 
 /** The subject this item is about as {label, kind}, or null when its payload
- * names no single entity (attribute_collision, fact_conflict, merge_proposal,
- * domain_promotion, …) — those land in the Other bucket. */
+ * names no single entity (merge_proposal, domain_promotion, …) — those land in
+ * the Other bucket. */
 export function reviewSubject(item: ReviewItem): { label: string; kind: EntityTypeKey } | null {
   const p = item.payload;
   const str = (v: unknown): string | null =>
@@ -41,7 +42,8 @@ export function reviewSubject(item: ReviewItem): { label: string; kind: EntityTy
     typeof p.entity_kind === "string" ? resolveEntityKind(p.entity_kind) : "Thing";
   // entity_name (confirm_entity) and subject (new_predicate, inverse_proposal)
   // and name (ambiguous_mention) are already display names; entity_ref
-  // (low_confidence_inference) is a slug, so title-case it.
+  // (low_confidence_inference, fact_conflict, attribute_collision) is a ref, so
+  // title-case it.
   const named = str(p.entity_name) ?? str(p.subject) ?? str(p.name);
   if (named !== null) return { label: named, kind };
   const ref = str(p.entity_ref);
