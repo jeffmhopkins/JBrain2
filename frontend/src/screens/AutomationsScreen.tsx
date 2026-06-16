@@ -336,7 +336,7 @@ export function AutomationsScreen({ onClose, onOpenRuns }: AutomationsScreenProp
   return (
     <section className="runs-screen">
       <header className="runs-bar">
-        <button type="button" className="icon-btn" onClick={onClose} aria-label="Back to Ops">
+        <button type="button" className="icon-btn" onClick={onClose} aria-label="Back to launcher">
           <ChevronLeftIcon size={22} />
         </button>
         <h2 className="runs-bar-title">Workflow</h2>

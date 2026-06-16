@@ -1,6 +1,38 @@
-import { act, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Launcher } from "./Launcher";
+
+// Tiles navigate by their `target`: clicking one routes the parent to the
+// matching surface. Workflow is its own first-class System card (promoted out
+// of Ops), so it must render and route to the Automations surface.
+describe("Launcher tile navigation", () => {
+  beforeEach(() => {
+    vi.stubGlobal("matchMedia", () => ({ matches: true }));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.reject(new Error("no network"))),
+    );
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("renders the Workflow card and routes it to the automations surface", () => {
+    const onNavigate = vi.fn();
+    render(<Launcher open onClose={() => {}} onNavigate={onNavigate} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Workflow" }));
+    expect(onNavigate).toHaveBeenCalledWith("automations");
+  });
+
+  it("still routes the sibling Ops card to ops", () => {
+    const onNavigate = vi.fn();
+    render(<Launcher open onClose={() => {}} onNavigate={onNavigate} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Ops" }));
+    expect(onNavigate).toHaveBeenCalledWith("ops");
+  });
+});
 
 // Any close — X/grab, swipe-down, Escape, or the platform back gesture — clears
 // `open` in the parent; the launcher then plays its slide-down retreat and

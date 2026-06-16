@@ -160,7 +160,7 @@ describe("AutomationsScreen", () => {
   it("returns to Ops via the back control", async () => {
     const { onClose } = mount();
     await screen.findByText("note.ingested");
-    fireEvent.click(screen.getByLabelText("Back to Ops"));
+    fireEvent.click(screen.getByLabelText("Back to launcher"));
     expect(onClose).toHaveBeenCalled();
   });
 });

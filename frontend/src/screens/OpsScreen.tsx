@@ -10,7 +10,6 @@ import {
   api,
   exportFileUrl,
 } from "../api/client";
-import { AutomationsScreen } from "./AutomationsScreen";
 import { RunsScreen } from "./RunsScreen";
 
 function fmtBytes(n: number): string {
@@ -561,9 +560,6 @@ export function OpsScreen() {
   // The Runs surface (Direction C) is an Ops sub-screen: it slides over Ops and
   // its back chevron returns here, matching the mock.
   const [showRuns, setShowRuns] = useState(false);
-  // The Workflow / Automations surface is a sibling Ops sub-screen; its "All runs"
-  // links drill through to the Runs surface above.
-  const [showAutomations, setShowAutomations] = useState(false);
 
   const refresh = useCallback(async () => {
     setBusy(true);
@@ -606,9 +602,6 @@ export function OpsScreen() {
       <header className="ops-header">
         <h2>Ops</h2>
         <div className="ops-actions">
-          <button type="button" onClick={() => setShowAutomations(true)}>
-            Workflow
-          </button>
           <button type="button" onClick={() => setShowRuns(true)}>
             Runs
           </button>
@@ -667,12 +660,6 @@ export function OpsScreen() {
       <DataCard />
       <UpdateCard />
 
-      {showAutomations && (
-        <AutomationsScreen
-          onClose={() => setShowAutomations(false)}
-          onOpenRuns={() => setShowRuns(true)}
-        />
-      )}
       {showRuns && <RunsScreen onClose={() => setShowRuns(false)} />}
     </section>
   );

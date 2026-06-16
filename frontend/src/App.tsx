@@ -6,6 +6,7 @@ import { MoveDomainSheet } from "./components/MoveDomainSheet";
 import { TopBar } from "./components/TopBar";
 import { useNoteActions } from "./notes/useNoteActions";
 import { type StreamAttachment, type StreamItem, useNotes } from "./notes/useNotes";
+import { AutomationsScreen } from "./screens/AutomationsScreen";
 import { CalendarScreen } from "./screens/CalendarScreen";
 import { EntityListScreen } from "./screens/EntityListScreen";
 import { EntityScreen } from "./screens/EntityScreen";
@@ -23,6 +24,7 @@ import {
 } from "./screens/NoteScreen";
 import { OpsScreen } from "./screens/OpsScreen";
 import { ReviewScreen } from "./screens/ReviewScreen";
+import { RunsScreen } from "./screens/RunsScreen";
 import { SearchScreen } from "./screens/SearchScreen";
 import { SettingsScreen } from "./screens/SettingsScreen";
 import { useBackGesture } from "./useBackGesture";
@@ -34,6 +36,7 @@ type Session =
 
 type Card =
   | "ops"
+  | "automations"
   | "settings"
   | "llm-settings"
   | "search"
@@ -43,7 +46,10 @@ type Card =
   | "calendar"
   | "graph";
 
-const SCREEN_TITLES: Record<Card, string> = {
+// Automations brings its own full-screen overlay (its own back bar + slide-in),
+// so it renders outside the shared subscreen TopBar wrapper — hence no entry
+// here. Every Card that uses the wrapper needs a title.
+const SCREEN_TITLES: Record<Exclude<Card, "automations">, string> = {
   ops: "Ops",
   settings: "Settings",
   "llm-settings": "LLM Settings",
@@ -62,6 +68,9 @@ export function App() {
   const [card, setCard] = useState<Card | null>(null);
   const [cardClosing, setCardClosing] = useState(false);
   const [launcherOpen, setLauncherOpen] = useState(false);
+  // The Runs surface stacks one layer above Automations: Automations' "All runs"
+  // drill-through opens it, and its own back bar closes it back to Automations.
+  const [runsOpen, setRunsOpen] = useState(false);
   // A calendar action (reschedule/cancel/ask) hands a prompt to the Full Brain
   // composer: close the card, then HomeScreen flips to Full Brain and seeds it.
   const [compose, setCompose] = useState<ComposeHandoff | null>(null);
@@ -125,6 +134,7 @@ export function App() {
     }
     setCard(null);
     setLauncherOpen(false);
+    setRunsOpen(false);
     setNoteView(null);
     setEntityView(null);
     setListView(null);
@@ -133,6 +143,13 @@ export function App() {
 
   function navigate(target: LauncherTarget) {
     setCard(target);
+  }
+
+  // Automations owns its own full-screen overlay, so it closes straight to the
+  // launcher (no subscreen slide-out to play) and drops any open Runs layer.
+  function closeAutomations() {
+    setRunsOpen(false);
+    setCard(null);
   }
 
   function reducedMotion(): boolean {
@@ -301,6 +318,7 @@ export function App() {
     (entityView !== null ? 1 : 0) +
     (noteView !== null ? 1 : 0) +
     (listView !== null ? 1 : 0) +
+    (runsOpen ? 1 : 0) +
     (card !== null ? 1 : 0) +
     (launcherOpen ? 1 : 0);
 
@@ -314,6 +332,9 @@ export function App() {
       setListsKey((k) => k + 1);
       return;
     }
+    // Runs stacks above Automations, so it climbs off first.
+    if (runsOpen) return setRunsOpen(false);
+    if (card === "automations") return closeAutomations();
     if (card !== null) return closeCardToLauncher();
     // Drops the depth immediately; the launcher plays its retreat off `open`.
     if (launcherOpen) return setLauncherOpen(false);
@@ -350,7 +371,9 @@ export function App() {
 
       <Launcher open={launcherOpen} onClose={() => setLauncherOpen(false)} onNavigate={navigate} />
 
-      {card !== null && (
+      {/* Automations is a self-contained full-screen overlay (its own back bar +
+          slide-in), rendered below — it skips the shared subscreen TopBar. */}
+      {card !== null && card !== "automations" && (
         <div
           className={`subscreen${cardClosing ? " subscreen-closing" : ""}`}
           ref={subRef}
@@ -391,6 +414,13 @@ export function App() {
           {card === "lists" && <ListsScreen key={listsKey} onOpenList={setListView} />}
         </div>
       )}
+
+      {/* The Workflow launcher card opens Automations as a top-level surface; its
+          "All runs" drill-through raises the Runs surface one layer above. */}
+      {card === "automations" && (
+        <AutomationsScreen onClose={closeAutomations} onOpenRuns={() => setRunsOpen(true)} />
+      )}
+      {runsOpen && <RunsScreen onClose={() => setRunsOpen(false)} />}
 
       {listView !== null && (
         <ListDetailScreen
