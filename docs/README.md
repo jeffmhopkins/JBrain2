@@ -7,13 +7,18 @@ the binding design docs. Project-wide non-negotiables live in the root
 
 ## Where the project is (2026-06)
 
-**Phases 0–4 are shipped** — note capture, ingestion/search, the v3 note→graph
-analysis pipeline, and the personal agent (tool-calling loop, Tier-A memory,
-Proposals/review inbox, external connectors, the Full Brain chat surface), plus
-lists and appointments. Migrations run through 0034.
+**Phases 0–4 and the Phase 5 workflow engine are shipped** — note capture,
+ingestion/search, the v3 note→graph analysis pipeline, the personal agent
+(tool-calling loop, Tier-A memory, Proposals/review inbox, external connectors,
+the Full Brain chat surface), lists and appointments, and the **workflow engine**
+(`events`/`triggers`/`pipelines`/`actions`/`runs` + scheduler + unified run-log +
+the cutover of ingest/integration/consolidation onto the engine), reflexion in the
+live turn, a fed eval harness, and the recurring self-heal reconcilers. Migrations
+run through 0043.
 
-**Next: Phase 5 — the workflow engine + eval harness.** See `ROADMAP.md` for the
-phase status and the items carried forward out of Phases 3–4.
+**Next: Phase 5 residual completion → Phase 6 (Wiki).** Phase 5's engine is live;
+what remains (self-improvement Loops 2–4 and the not-yet-built hygiene sweeps) is
+deferred to Phase 6. See `PHASE5_COMPLETION_PLAN.md` and `ROADMAP.md`.
 
 ## Living reference (read these)
 
@@ -32,10 +37,12 @@ phase status and the items carried forward out of Phases 3–4.
 
 ## Active plan
 
-- `WORKFLOW_ENGINE_PLAN.md` — the buildable plan for **Phase 5** (the workflow
-  engine + eval harness), the current frontier. Wave-sequenced, grounded in the
-  shipped queue/worker/eval substrate. Archived once Phase 5 ships, like the
-  completed plans below.
+- `PHASE5_COMPLETION_PLAN.md` — the buildable plan for **finishing Phase 5**
+  (reflexion in the live turn, the fed eval harness, the last reconciler, the
+  nits, doc hygiene) plus the explicit Phase-6 deferrals. The current frontier.
+- `WORKFLOW_ENGINE_PLAN.md` — the (now-complete) build record for the Phase 5
+  workflow engine + cutover. Superseded by `PHASE5_COMPLETION_PLAN.md`; to be
+  moved to `archive/` in the Phase-5 close-out.
 
 ## Archive (history, not active)
 

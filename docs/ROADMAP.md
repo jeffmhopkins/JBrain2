@@ -5,16 +5,23 @@ companion; 5–6 add the self-organizing wiki; 7 extends to family and devices.
 
 ## Status (2026-06)
 
-**Phases 0–4 are shipped.** Notes, ingestion/search, the v3 note→graph analysis
-pipeline (extract → Integrator → arbiter), and the personal agent (tool-calling
-loop, Tier-A memory, Proposals/review inbox, external connectors, the Full Brain
-chat surface) are all live; lists and appointments ship with it; migrations run
-through 0034. The build records for the agent and the v3 pipeline are archived
-under `docs/archive/` (`ASSISTANT_PLAN.md`, `INTEGRATOR_PLAN.md`,
-`CUTOVER_V1_REMOVAL.md`).
+**Phases 0–4 and the Phase 5 workflow engine are shipped.** Notes,
+ingestion/search, the v3 note→graph analysis pipeline (extract → Integrator →
+arbiter), and the personal agent (tool-calling loop, Tier-A memory,
+Proposals/review inbox, external connectors, the Full Brain chat surface) are all
+live; lists and appointments ship with it. The **Phase 5 workflow engine** —
+`events`/`triggers`/`pipelines`/`actions`/`runs`, the scheduler, the unified
+run-log, and the non-breaking cutover of ingest/integration/consolidation onto the
+engine — is also live, with reflexion-in-the-live-turn (Loop 1), a *fed* eval
+harness (the live scorer behind the self-improvement budget gate), and the recurring
+self-heal reconcilers; migrations run through 0043. The build records for the agent
+and the v3 pipeline are archived under `docs/archive/` (`ASSISTANT_PLAN.md`,
+`INTEGRATOR_PLAN.md`, `CUTOVER_V1_REMOVAL.md`).
 
-**Next: Phase 5 — the workflow engine + eval harness** (not started). The few
-items deferred out of Phases 3–4 are carried into Phase 5 below.
+**Phase 5 residual completion** is tracked in `docs/PHASE5_COMPLETION_PLAN.md`;
+what remains is deferred to Phase 6 (self-improvement Loops 2–4 — skill learning,
+durable-knowledge promotion, prompt/tool self-edit — and the not-yet-built
+hygiene sweeps), each gated on a spine Phase 5 deliberately did not build.
 
 ## Phase 0 — Foundation ✅ Shipped
 
@@ -100,7 +107,7 @@ note-extraction proposals and a read-only ICS feed.
 **Exit:** the agent is the default way to ask "what do I know about X" and
 manage lists/appointments from the phone.
 
-## Phase 5 — Workflow engine ◀ Next
+## Phase 5 — Workflow engine ✅ Engine shipped (residual completion in flight)
 
 Generalize the hardcoded ingest pipeline into `events` / `triggers` /
 `pipelines` / `actions` / `runs`, with a scheduler and run-log UI.
