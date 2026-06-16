@@ -40,6 +40,25 @@ describe("parseChatStream", () => {
     ]);
   });
 
+  it("parses a reflexion verdict frame after done", async () => {
+    const events = await collect(
+      streamOf([
+        'data: {"type": "done", "stop_reason": "end_turn"}\n\n',
+        'data: {"type": "verdict", "passed": false, "score": 0.5, "issues": ["claim not grounded in retrieved sources: the roof needs replacing"], "ungrounded_claims": ["the roof needs replacing"]}\n\n',
+      ]),
+    );
+    expect(events).toEqual([
+      { type: "done", stop_reason: "end_turn" },
+      {
+        type: "verdict",
+        passed: false,
+        score: 0.5,
+        issues: ["claim not grounded in retrieved sources: the roof needs replacing"],
+        ungrounded_claims: ["the roof needs replacing"],
+      },
+    ]);
+  });
+
   it("reassembles an event split across two reads", async () => {
     const events = await collect(streamOf(['data: {"type": "text_', 'delta", "text": "hi"}\n\n']));
     expect(events).toEqual([{ type: "text_delta", text: "hi" }]);

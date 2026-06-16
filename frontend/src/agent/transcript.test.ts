@@ -80,6 +80,39 @@ describe("applyEvent reducer", () => {
     ]);
   });
 
+  it("attaches a reflexion verdict (ungrounded claims) to the settled turn", () => {
+    let ms: TranscriptMessage[] = [streaming()];
+    ms = applyEvent(ms, { type: "text_delta", text: "The roof needs replacing." });
+    ms = applyEvent(ms, { type: "done", stop_reason: "end_turn" });
+    ms = applyEvent(ms, {
+      type: "verdict",
+      passed: false,
+      score: 0.5,
+      issues: ["claim not grounded in retrieved sources: The roof needs replacing."],
+      ungrounded_claims: ["The roof needs replacing."],
+    });
+    expect(ms[0]?.verdict).toEqual({
+      passed: false,
+      score: 0.5,
+      issues: ["claim not grounded in retrieved sources: The roof needs replacing."],
+      ungroundedClaims: ["The roof needs replacing."],
+    });
+  });
+
+  it("leaves a turn unflagged when no verdict arrives", () => {
+    let ms: TranscriptMessage[] = [streaming()];
+    ms = applyEvent(ms, { type: "text_delta", text: "All grounded." });
+    ms = applyEvent(ms, { type: "done", stop_reason: "end_turn" });
+    expect(ms[0]?.verdict).toBeUndefined();
+  });
+
+  it("attaches a passing verdict without claims (nothing to flag)", () => {
+    let ms: TranscriptMessage[] = [streaming()];
+    ms = applyEvent(ms, { type: "done", stop_reason: "end_turn" });
+    ms = applyEvent(ms, { type: "verdict", passed: true, score: 1 });
+    expect(ms[0]?.verdict).toEqual({ passed: true, score: 1, issues: [], ungroundedClaims: [] });
+  });
+
   it("attaches structured sources from a tool result to its tool", () => {
     let ms: TranscriptMessage[] = [streaming()];
     ms = applyEvent(ms, { type: "tool_call", id: "c1", name: "search", arguments: {} });

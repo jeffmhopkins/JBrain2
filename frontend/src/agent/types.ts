@@ -82,6 +82,18 @@ export interface DoneEvent {
   type: "done";
   stop_reason: string;
 }
+/** Reflexion's Loop-1 verdict on a critique-worthy turn — rides *after* `done`,
+ * only when the verifiers flagged something (a passing turn emits none). The PWA
+ * renders an "unverified claims" flag when `passed` is false; `ungrounded_claims`
+ * are the verbatim answer sentences to anchor each flag against (the structured
+ * twin of the grounding `issues`). Ephemeral — never persisted. */
+export interface VerdictEvent {
+  type: "verdict";
+  passed: boolean;
+  score: number;
+  issues?: string[];
+  ungrounded_claims?: string[];
+}
 
 export type ChatEvent =
   | TextDelta
@@ -89,7 +101,8 @@ export type ChatEvent =
   | ToolResultEvent
   | ToolViewEvent
   | JobEnqueuedEvent
-  | DoneEvent;
+  | DoneEvent
+  | VerdictEvent;
 
 /** A persisted conversation turn (GET /api/sessions/{id}/transcript) — replays a
  * session on reopen. Assistant turns carry their tool steps + note sources. */

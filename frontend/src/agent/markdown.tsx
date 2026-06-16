@@ -80,10 +80,34 @@ interface EntityIndex {
   byForm: Map<string, MdEntity>;
 }
 
+/** An ungrounded claim the reflexion verdict flagged — the verbatim answer
+ * sentence to anchor an amber ⚠ flag after, where it appears in the prose. */
+export interface MdFlag {
+  id: string;
+  /** The verbatim answer sentence (markdown source) that failed grounding. */
+  claim: string;
+  /** The reason to show on tap (drawn from the matching issue). */
+  reason: string;
+}
+
+/** A matcher over the ungrounded-claim sentences, plus a lookup from a matched
+ * (normalized) sentence back to its flag and a set the scanner marks as it places
+ * each flag — so the caller can fall back to an end-of-bubble flag for any claim
+ * it couldn't anchor in the rendered prose. Null matcher when there's nothing to
+ * flag. */
+interface FlagIndex {
+  matcher: RegExp | null;
+  byNorm: Map<string, MdFlag>;
+  placed: Set<string>;
+}
+
 interface Ctx {
   onCite?: ((n: number) => void) | undefined;
   onEntity?: ((entityId: string) => void) | undefined;
+  onFlag?: ((flagId: string) => void) | undefined;
+  openFlag?: string | null | undefined;
   index: EntityIndex;
+  flags: FlagIndex;
 }
 
 const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -128,9 +152,108 @@ export function unlinkedEntities(text: string, entities: MdEntity[]): MdEntity[]
   return entities.filter((e) => !linked.has(e.entity_id));
 }
 
+/** Normalize a claim/run for matching: drop inline markdown emphasis/code markers
+ * (so a claim's `**bold**` source matches the rendered run where the markers are
+ * gone), collapse whitespace, lowercase. Trailing sentence punctuation is dropped
+ * by the verbatim split already, so we don't strip it here. */
+const normalizeClaim = (s: string): string =>
+  s.replace(/[*`_]/g, "").replace(/\s+/g, " ").trim().toLowerCase();
+
+/** Index the ungrounded claims into a matcher over their normalized text (longest
+ * first, so a superset sentence wins). The first claim to claim a normalized form
+ * keeps it; an empty/contentless claim is dropped (nothing to anchor). */
+export function buildFlagIndex(flags: MdFlag[]): FlagIndex {
+  const byNorm = new Map<string, MdFlag>();
+  const forms: string[] = [];
+  for (const f of flags) {
+    const norm = normalizeClaim(f.claim);
+    if (norm && !byNorm.has(norm)) {
+      byNorm.set(norm, f);
+      forms.push(norm);
+    }
+  }
+  if (forms.length === 0) return { matcher: null, byNorm, placed: new Set() };
+  forms.sort((a, b) => b.length - a.length);
+  const alt = forms.map(escapeRe).join("|");
+  // Case-insensitive (the run carries the source casing); whitespace in a claim
+  // matches any run of whitespace, so a soft-wrapped sentence still anchors.
+  const pattern = alt.replace(/ /g, "\\s+");
+  return { matcher: new RegExp(`(?:${pattern})`, "gi"), byNorm, placed: new Set() };
+}
+
+/** A small amber ⚠ footnote flag placed after an ungrounded claim — tappable to
+ * reveal the reason ("not in your notes"). Shared by the inline anchor and the
+ * end-of-bubble fallback. */
+function FlagMark({ flag, ctx, fkey }: { flag: MdFlag; ctx: Ctx; fkey: string }): ReactNode {
+  const open = ctx.openFlag === flag.id;
+  return (
+    <span className="md-flag-wrap">
+      <button
+        key={fkey}
+        type="button"
+        className="md-flag"
+        aria-expanded={open}
+        aria-label="unverified claim"
+        title="unverified — not grounded in your notes"
+        onClick={() => ctx.onFlag?.(flag.id)}
+      >
+        ⚠
+      </button>
+      {open && (
+        <span className="md-flag-note" role="note">
+          {flag.reason}
+        </span>
+      )}
+    </span>
+  );
+}
+
 /** Split a plain-text run into entity links first, then temporal chips on the
- * gaps — so a name reads as prose but taps through to its entity page. */
+ * gaps — so a name reads as prose but taps through to its entity page. When an
+ * ungrounded claim sentence falls within this run, an amber ⚠ flag is appended
+ * right after it (mirroring the entity inlining), and the flag is marked placed so
+ * the caller doesn't double it at the bubble's end. */
 function scanPlain(text: string, key: string, ctx: Ctx): ReactNode[] {
+  // Flags anchor on whole sentences; match them first, render each matched
+  // sentence's interior through the normal entity/temporal scan, then append the
+  // flag. The gaps between flagged sentences scan normally too.
+  if (ctx.flags.matcher) {
+    const out: ReactNode[] = [];
+    let last = 0;
+    let i = 0;
+    for (const m of text.matchAll(ctx.flags.matcher)) {
+      const at = m.index ?? 0;
+      const norm = normalizeClaim(m[0]);
+      const flag = ctx.flags.byNorm.get(norm);
+      // Anchor on SENTENCE boundaries: an ungrounded claim is a whole sentence
+      // (claims_from splits on sentence enders), so a real occurrence starts the run
+      // / follows a terminator+space / a newline, and ends the run / is followed by a
+      // terminator. Without this, a claim that is a prefix of a LONGER *grounded*
+      // sentence ("The roof needs replacing" inside "…replacing soon and was paid
+      // for.") would inject a false warning into grounded prose. A claim that fails
+      // the boundary check is left to the gap scan and the end-of-bubble fallback
+      // flags it instead — degrade safely, never mis-anchor.
+      const before = text.slice(0, at);
+      const after = text.slice(at + m[0].length);
+      const leftOk = at === 0 || /[.!?]['")\]]?\s+$/.test(before) || /\n\s*$/.test(before);
+      const rightOk = after === "" || /^['")\]]?\s*[.!?]/.test(after) || /^\s*\n/.test(after);
+      if (!flag || !leftOk || !rightOk) continue; // not a clean sentence match — scan as prose
+      if (at > last) out.push(...scanEntities(text.slice(last, at), `${key}-g${i}`, ctx));
+      out.push(...scanEntities(m[0], `${key}-c${i}`, ctx));
+      ctx.flags.placed.add(flag.id);
+      out.push(<FlagMark key={`${key}-f${i}`} flag={flag} ctx={ctx} fkey={`${key}-fb${i}`} />);
+      i++;
+      last = at + m[0].length;
+    }
+    if (last < text.length) out.push(...scanEntities(text.slice(last), `${key}-g${i}`, ctx));
+    if (out.length) return out;
+  }
+  return scanEntities(text, key, ctx);
+}
+
+/** The entity/temporal half of a plain run — split out so the flag scanner can
+ * re-run it over a flagged sentence's interior and over the gaps. */
+function scanEntities(text: string, key: string, ctx: Ctx): ReactNode[] {
   if (!ctx.index.matcher) return withTemporal(text, key);
   const out: ReactNode[] = [];
   let last = 0;
@@ -346,6 +469,9 @@ export function Markdown({
   onCite,
   entities = [],
   onEntity,
+  flags = [],
+  onFlag,
+  openFlag,
 }: {
   text: string;
   /** Tap handler for a `[^n]` source citation. */
@@ -354,9 +480,41 @@ export function Markdown({
   entities?: MdEntity[];
   /** Tap handler for an inline entity link. */
   onEntity?: ((entityId: string) => void) | undefined;
+  /** Ungrounded claims the reflexion verdict flagged — an amber ⚠ flag is placed
+   * after each one where it appears in the prose. */
+  flags?: MdFlag[];
+  /** Tap handler for a ⚠ flag (toggles its reason note open). */
+  onFlag?: ((flagId: string) => void) | undefined;
+  /** The id of the flag whose reason note is currently open. */
+  openFlag?: string | null | undefined;
 }): ReactNode {
   const blocks = useMemo(() => parseBlocks(text), [text]);
   const index = useMemo(() => buildIndex(entities), [entities]);
-  const ctx: Ctx = { onCite, onEntity, index };
-  return <div className="md">{blocks.map((b, i) => renderBlock(b, `b${i}`, ctx))}</div>;
+  // Fresh per render: `placed` is mutated as the blocks scan, then read below to
+  // decide which flags need an end-of-bubble fallback.
+  const flagIndex = useMemo(() => buildFlagIndex(flags), [flags]);
+  const ctx: Ctx = { onCite, onEntity, onFlag, openFlag, index, flags: flagIndex };
+  const rendered = blocks.map((b, i) => renderBlock(b, `b${i}`, ctx));
+  // Graceful fallback: any flagged claim the scanner couldn't anchor in the prose
+  // (a markdown split, a reworded sentence) degrades to a single end-of-bubble
+  // flag that opens the same note — never crash, never mis-anchor.
+  const stranded = flags.filter(
+    (f) =>
+      !flagIndex.placed.has(f.id) &&
+      // Only the flag that owns its normalized form (a duplicate sentence shares
+      // one slot and one flag), and only when it had content to anchor at all.
+      flagIndex.byNorm.get(normalizeClaim(f.claim))?.id === f.id,
+  );
+  return (
+    <div className="md">
+      {rendered}
+      {stranded.length > 0 && (
+        <p className="md-flag-fallback">
+          {stranded.map((f, i) => (
+            <FlagMark key={`fb-${f.id}`} flag={f} ctx={ctx} fkey={`fbm-${i}`} />
+          ))}
+        </p>
+      )}
+    </div>
+  );
 }

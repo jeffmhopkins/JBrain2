@@ -563,6 +563,102 @@ describe("FullBrainSurface", () => {
     expect(await screen.findByRole("button", { name: "Celine" })).toHaveClass("entity-chip");
   });
 
+  it("flags an ungrounded claim inline and shows its reason on tap", async () => {
+    async function* answer(): AsyncGenerator<ChatEvent> {
+      yield { type: "tool_call", id: "c1", name: "search", arguments: {} };
+      yield {
+        type: "tool_result",
+        tool_call_id: "c1",
+        ok: true,
+        summary: "1",
+        sources: [{ note_id: "n1", domain: "general", snippet: "cholesterol labs" }],
+      };
+      yield { type: "text_delta", text: "The roof needs replacing soon." };
+      yield { type: "done", stop_reason: "end_turn" };
+      yield {
+        type: "verdict",
+        passed: false,
+        score: 0,
+        issues: ["claim not grounded in retrieved sources: The roof needs replacing soon."],
+        ungrounded_claims: ["The roof needs replacing soon."],
+      };
+    }
+    render(<Harness d={deps({ chat: answer })} />);
+    await waitFor(() => screen.getByLabelText("Conversation"));
+    fireEvent.change(screen.getByLabelText("Composer"), { target: { value: "what's up?" } });
+    fireEvent.click(screen.getByRole("button", { name: "send" }));
+
+    const flag = await screen.findByRole("button", { name: "unverified claim" });
+    expect(flag).toHaveClass("md-flag");
+    // The reason is hidden until the flag is tapped.
+    expect(screen.queryByRole("note")).toBeNull();
+    fireEvent.click(flag);
+    expect(screen.getByRole("note")).toHaveTextContent(/Not in your notes/);
+    // No mis-anchored fallback — it landed inline.
+    expect(document.querySelector(".md-flag-fallback")).toBeNull();
+  });
+
+  it("renders no flag on a grounded turn (verdict passes / is absent)", async () => {
+    async function* answer(): AsyncGenerator<ChatEvent> {
+      yield { type: "tool_call", id: "c1", name: "search", arguments: {} };
+      yield {
+        type: "tool_result",
+        tool_call_id: "c1",
+        ok: true,
+        summary: "1",
+        sources: [{ note_id: "n1", domain: "general", snippet: "cholesterol labs" }],
+      };
+      yield { type: "text_delta", text: "Your cholesterol is elevated." };
+      yield { type: "done", stop_reason: "end_turn" };
+    }
+    render(<Harness d={deps({ chat: answer })} />);
+    await waitFor(() => screen.getByLabelText("Conversation"));
+    fireEvent.change(screen.getByLabelText("Composer"), { target: { value: "labs?" } });
+    fireEvent.click(screen.getByRole("button", { name: "send" }));
+
+    await waitFor(() =>
+      expect(screen.getByText("Your cholesterol is elevated.")).toBeInTheDocument(),
+    );
+    expect(screen.queryByRole("button", { name: "unverified claim" })).toBeNull();
+  });
+
+  it("degrades to an end-of-bubble flag when the claim can't be located in the prose", async () => {
+    async function* answer(): AsyncGenerator<ChatEvent> {
+      yield { type: "tool_call", id: "c1", name: "search", arguments: {} };
+      yield {
+        type: "tool_result",
+        tool_call_id: "c1",
+        ok: true,
+        summary: "1",
+        sources: [{ note_id: "n1", domain: "general", snippet: "cholesterol labs" }],
+      };
+      yield { type: "text_delta", text: "Here is a different paraphrase of the answer." };
+      yield { type: "done", stop_reason: "end_turn" };
+      yield {
+        type: "verdict",
+        passed: false,
+        score: 0,
+        issues: ["claim not grounded in retrieved sources: A sentence not present verbatim."],
+        ungrounded_claims: ["A sentence not present verbatim."],
+      };
+    }
+    render(<Harness d={deps({ chat: answer })} />);
+    await waitFor(() => screen.getByLabelText("Conversation"));
+    fireEvent.change(screen.getByLabelText("Composer"), { target: { value: "what's up?" } });
+    fireEvent.click(screen.getByRole("button", { name: "send" }));
+
+    // The claim isn't in the prose verbatim, so a single end-of-bubble flag stands
+    // in (graceful fallback) and still opens the reason.
+    const fallback = await waitFor(() => {
+      const el = document.querySelector(".md-flag-fallback");
+      expect(el).not.toBeNull();
+      return el as HTMLElement;
+    });
+    const flag = fallback.querySelector(".md-flag") as HTMLElement;
+    fireEvent.click(flag);
+    expect(screen.getByRole("note")).toHaveTextContent(/Not in your notes/);
+  });
+
   it("a send with no chosen session surfaces the picker instead", async () => {
     const chat = vi.fn(noChat);
     render(<Harness d={deps({ listSessions: vi.fn(async () => []), chat })} />);

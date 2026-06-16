@@ -12,6 +12,7 @@ from jbrain.agent.reflexion import (
     reflect,
     significant_tokens,
     strictly_improves,
+    ungrounded_claims,
     verify_citations,
     verify_grounding,
     verify_mutation,
@@ -87,6 +88,31 @@ class TestVerifyGrounding:
 
     def test_no_claims_passes(self) -> None:
         assert verify_grounding([], ["anything"]).passed
+
+
+class TestUngroundedClaims:
+    """The structured twin of `verify_grounding`'s prose issues: the verbatim
+    sentences that failed grounding, for the PWA's inline flag anchoring."""
+
+    def test_returns_the_verbatim_ungrounded_sentence(self) -> None:
+        # The exact answer sentence comes back unprefixed (no "claim not grounded…"),
+        # so the PWA can locate it in the rendered prose.
+        assert ungrounded_claims(["the roof needs replacing"], ["cholesterol labs"]) == [
+            "the roof needs replacing"
+        ]
+
+    def test_keeps_only_the_ungrounded_claims(self) -> None:
+        out = ungrounded_claims(
+            ["cholesterol is elevated", "the roof needs replacing"],
+            ["the cholesterol reading is elevated"],
+        )
+        assert out == ["the roof needs replacing"]
+
+    def test_a_fully_grounded_answer_has_none(self) -> None:
+        assert ungrounded_claims(["cholesterol is elevated"], ["cholesterol is elevated"]) == []
+
+    def test_a_contentless_claim_is_never_ungrounded(self) -> None:
+        assert ungrounded_claims(["of the"], ["unrelated"]) == []
 
 
 class TestGroundingThresholdCalibration:

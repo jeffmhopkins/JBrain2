@@ -323,6 +323,9 @@ def test_chat_forwards_a_reflexion_verdict_after_done(
     # The verdict rides last, right after the terminal done.
     assert events[-2]["type"] == "done"
     assert events[-1]["type"] == "verdict" and events[-1]["passed"] is False
+    # The structured ungrounded-claim sentence crosses the wire (the PWA anchors its
+    # inline flag against it), alongside the prose issues.
+    assert events[-1]["ungrounded_claims"] == ["the roof needs replacing"]
     # Ephemeral: the verdict is forwarded but never written to the transcript.
     assert "verdict" not in transcript.recorded[-1]
 

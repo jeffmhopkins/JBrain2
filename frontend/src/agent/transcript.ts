@@ -31,6 +31,16 @@ export interface ToolActivity {
   entities?: EntityRef[];
 }
 
+/** Reflexion's verdict on this turn — present only when the verifiers flagged
+ * something (a passing/absent verdict leaves the message unflagged). Drives the
+ * inline "unverified" flags on the ungrounded answer sentences. */
+export interface Verdict {
+  passed: boolean;
+  score: number;
+  issues: string[];
+  ungroundedClaims: string[];
+}
+
 export interface TranscriptMessage {
   role: "user" | "assistant";
   text: string;
@@ -38,6 +48,8 @@ export interface TranscriptMessage {
   views: ViewPayload[];
   streaming: boolean;
   stopReason?: string;
+  /** Reflexion's flag on this turn — absent until a `verdict` event lands. */
+  verdict?: Verdict;
 }
 
 export function userMessage(text: string): TranscriptMessage {
@@ -99,6 +111,16 @@ export function applyEvent(messages: TranscriptMessage[], event: ChatEvent): Tra
     case "done":
       next.streaming = false;
       next.stopReason = event.stop_reason;
+      break;
+    case "verdict":
+      // Rides after `done` (Loop 1's annotation). Attach it to the just-settled
+      // turn; the bubble renders inline "unverified" flags when it isn't a pass.
+      next.verdict = {
+        passed: event.passed,
+        score: event.score,
+        issues: event.issues ?? [],
+        ungroundedClaims: event.ungrounded_claims ?? [],
+      };
       break;
   }
   return [...messages.slice(0, -1), next];

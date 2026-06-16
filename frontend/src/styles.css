@@ -5469,6 +5469,49 @@ button.small {
   opacity: 0.7;
 }
 
+/* an inline "unverified claim" flag (reflexion Loop 1, Option 1): a small amber
+   ⚠ footnote anchored right after an ungrounded answer sentence — warning=amber
+   (DESIGN.md). Tapping toggles a quiet reason note beside it. */
+.fb-shell .md-flag-wrap {
+  position: relative;
+  white-space: nowrap;
+}
+.fb-shell .md-flag {
+  vertical-align: super;
+  margin-left: 1px;
+  font-size: 10px;
+  line-height: 1;
+  min-width: 15px;
+  height: 15px;
+  padding: 0 3px;
+  border: none;
+  border-radius: 5px;
+  background: var(--amber-tint);
+  color: var(--amber);
+  cursor: pointer;
+}
+.fb-shell .md-flag[aria-expanded="true"] {
+  outline: 1px solid var(--amber);
+}
+/* the reason note: a calm amber-tinted inline aside the tap reveals */
+.fb-shell .md-flag-note {
+  display: inline-block;
+  white-space: normal;
+  margin-left: 6px;
+  padding: 3px 8px;
+  border-radius: 8px;
+  background: var(--amber-tint);
+  color: var(--amber);
+  font-size: 12px;
+  font-weight: 500;
+  vertical-align: middle;
+}
+/* the graceful fallback row: an end-of-bubble flag when a claim couldn't anchor
+   in the prose */
+.fb-shell .md-flag-fallback {
+  margin: 6px 0 0;
+}
+
 /* entities a step resolved — a tappable chip row inside the Worked step detail,
    standing in for the raw ids (which retreat to the "raw result" rung) */
 .fb-shell .toolwork-ents {
