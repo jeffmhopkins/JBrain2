@@ -28,6 +28,10 @@ from jbrain.llm import FakeLlmClient, LlmRouter
 from jbrain.notes.repo import SqlNotesRepo
 from jbrain.settings_store import SqlSettingsStore
 from jbrain.storage import FsBlobStore
+from jbrain.workflow import dispatcher
+from jbrain.workflow.registry import ACTION_SPECS, build_registry
+from jbrain.workflow.runlog import PipelineRunLog
+from jbrain.workflow.scheduler import PURGE_ACTION
 from tests.conftest import docker_available
 from tests.integration.test_rls import OWNER, database_url  # noqa: F401
 
@@ -56,7 +60,34 @@ def blobs(tmp_path: Path) -> FsBlobStore:
 EMPTY_INTENT = '{"resolutions": [], "facts": []}'
 
 
+def _registry():  # noqa: ANN202
+    return build_registry((*ACTION_SPECS, PURGE_ACTION))
+
+
+async def _seed_owner_principal(maker: async_sessionmaker[AsyncSession]) -> None:
+    """A real owner principal so ingest's worker-side note.ingested emit (which has
+    no per-content principal) can resolve one — without it emit_event short-circuits
+    with 'no owner principal' and the dispatcher has no event to drive integration."""
+    async with scoped_session(maker, OWNER) as s:
+        await s.execute(
+            text(
+                "INSERT INTO app.principals (id, kind, key_hash)"
+                " VALUES (gen_random_uuid(), 'owner', :kh) ON CONFLICT DO NOTHING"
+            ),
+            {"kh": f"gate-{uuid.uuid4()}"},
+        )
+
+
+async def tick(maker: async_sessionmaker[AsyncSession]) -> None:
+    """W2·C: ingest no longer enqueues integrate directly — it emits note.ingested,
+    and the LIVE engine dispatcher resolves that event to the integrate pipeline and
+    enqueues the job. The tests drive ingest in-process, so they drive the dispatcher
+    in-process too (mirroring the worker loop's tick alongside process_one)."""
+    await dispatcher.dispatcher_tick(maker, _registry(), live=True, run_log=PipelineRunLog(maker))
+
+
 async def make_note(maker: async_sessionmaker[AsyncSession], body: str = "plain note") -> str:
+    await _seed_owner_principal(maker)
     note, _ = await SqlNotesRepo(maker).create_note(
         OWNER, client_id=f"gate-{uuid.uuid4()}", domain="general", destination=None, body=body
     )
@@ -144,8 +175,24 @@ def handlers(
 
 
 async def drain(maker: async_sessionmaker[AsyncSession], h: dict[str, worker.Handler]) -> None:
-    while await worker.process_one(maker, h):
-        pass
+    """Run the worker to quiescence, ticking the LIVE dispatcher between jobs so a
+    note.ingested emitted by ingest (or the OCR handler's re-ingest) is resolved into
+    an integrate_note job — exactly what the worker loop does in production now that
+    integration is engine-driven. Loop until neither a job nor a tick makes progress."""
+    while True:
+        ran = await worker.process_one(maker, h)
+        before = await _undispatched_count(maker)
+        await tick(maker)
+        dispatched = before > 0
+        if not ran and not dispatched:
+            return
+
+
+async def _undispatched_count(maker: async_sessionmaker[AsyncSession]) -> int:
+    async with scoped_session(maker, OWNER) as s:
+        return (
+            await s.execute(text("SELECT count(*) FROM app.events WHERE dispatched_at IS NULL"))
+        ).scalar_one()
 
 
 async def test_image_note_ingest_enqueues_ocr_but_not_analyze(
@@ -168,6 +215,7 @@ async def test_oversized_image_note_analyzes_immediately(
     note_id = await make_note(maker, "giant scan attached")
     att_id = await add_image(maker, note_id, blobs=blobs, size_bytes=MAX_OCR_BYTES + 1)
     await IngestPipeline(maker, blobs).ingest_note({"note_id": note_id})
+    await tick(maker)
 
     assert await jobs_for(maker, "ocr_attachment", "attachment_id", att_id) == []
     assert await jobs_for(maker, "integrate_note", "note_id", note_id) == ["queued"]
@@ -178,6 +226,7 @@ async def test_imageless_note_analyzes_immediately(
 ) -> None:
     note_id = await make_note(maker)
     await IngestPipeline(maker, blobs).ingest_note({"note_id": note_id})
+    await tick(maker)
     assert await jobs_for(maker, "integrate_note", "note_id", note_id) == ["queued"]
 
 
@@ -186,9 +235,13 @@ async def test_queued_analyze_dedups_but_running_does_not(
 ) -> None:
     note_id = await make_note(maker)
     pipeline = IngestPipeline(maker, blobs)
+    # Two ingests, each driven through the engine. The queued twin from the first
+    # dispatch dedups the second (the dispatcher's _already_active skips a queued
+    # integrate) — one job covers the re-ingest, reading the rebuilt chunks.
     await pipeline.ingest_note({"note_id": note_id})
+    await tick(maker)
     await pipeline.ingest_note({"note_id": note_id})
-    # A queued job covers the re-ingest: it will read the rebuilt chunks.
+    await tick(maker)
     assert await jobs_for(maker, "integrate_note", "note_id", note_id) == ["queued"]
 
     async with scoped_session(maker, OWNER) as s:
@@ -200,7 +253,9 @@ async def test_queued_analyze_dedups_but_running_does_not(
             {"nid": note_id},
         )
     await pipeline.ingest_note({"note_id": note_id})
-    # A RUNNING analyze may have read stale chunks: a fresh pass must follow.
+    await tick(maker)
+    # A RUNNING analyze may have read stale chunks: a fresh pass must follow (the
+    # dispatcher's queued-only dedup never suppresses behind a running job).
     assert await jobs_for(maker, "integrate_note", "note_id", note_id) == ["running", "queued"]
 
 

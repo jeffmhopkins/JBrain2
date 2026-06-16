@@ -87,6 +87,20 @@ async def ingest(maker: async_sessionmaker[AsyncSession], note_id: str, tmp_path
     await IngestPipeline(maker, FsBlobStore(tmp_path)).ingest_note({"note_id": note_id})
 
 
+async def _seed_owner_principal(maker: async_sessionmaker[AsyncSession]) -> None:
+    """A real owner principal so ingest's worker-side note.ingested emit (which has
+    no per-content principal) can resolve one — without it emit_event short-circuits
+    with 'no owner principal' and never writes the event row this test asserts."""
+    async with scoped_session(maker, OWNER) as s:
+        await s.execute(
+            text(
+                "INSERT INTO app.principals (id, kind, key_hash)"
+                " VALUES (gen_random_uuid(), 'owner', :kh) ON CONFLICT DO NOTHING"
+            ),
+            {"kh": f"ana-{uuid.uuid4()}"},
+        )
+
+
 async def _entity_id_by_name(
     maker: async_sessionmaker[AsyncSession], name: str, domain: str
 ) -> str | None:
@@ -389,16 +403,21 @@ async def test_analyze_note_lands_everything(
     maker: async_sessionmaker[AsyncSession], tmp_path: Any
 ) -> None:
     note_id = await make_note(maker, domain="general", body=CHECKUP_BODY)
+    await _seed_owner_principal(maker)
     await ingest(maker, note_id, tmp_path)
 
-    # Ingest enqueued the analysis job (alongside embed) — ingest is LLM-free.
-    jobs = await rows(
+    # W2·C cutover: ingest is LLM-free and no longer enqueues integrate directly —
+    # it emits note.ingested, and the live dispatcher resolves that into the
+    # integrate_note job. This test drives integrate via analyze_note() below, so
+    # the job itself is never consumed here; ingest's side effect to verify is the
+    # event emission (the new engine-driven contract).
+    events = await rows(
         maker,
         OWNER,
-        "SELECT kind FROM app.jobs WHERE payload->>'note_id' = :nid ORDER BY kind",
+        "SELECT type FROM app.events WHERE payload->>'note_id' = :nid",
         nid=note_id,
     )
-    assert "integrate_note" in {j.kind for j in jobs}
+    assert "note.ingested" in {e.type for e in events}
 
     # The API's lifecycle flag rides the note row as a correlated EXISTS:
     # false until the analysis header lands, true right after.

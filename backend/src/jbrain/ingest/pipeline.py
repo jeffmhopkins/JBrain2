@@ -16,7 +16,7 @@ from typing import Any
 from uuid import UUID
 
 import structlog
-from sqlalchemy import bindparam, delete, select, text, update
+from sqlalchemy import bindparam, case, delete, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.sql import func
 
@@ -92,7 +92,23 @@ class IngestPipeline:
                 await session.execute(
                     update(Note)
                     .where(Note.id == note_id)
-                    .values(ingest_state="indexed", indexed_at=func.now())
+                    .values(
+                        ingest_state="indexed",
+                        indexed_at=func.now(),
+                        # A re-ingest of an already-integrated note (an edit, or the
+                        # OCR handler's re-describe) rebuilt the chunks, so the graph
+                        # is now stale: flip 'integrated' -> 'stale' so it is eligible
+                        # again under `integration_state <> 'integrated'` — both the
+                        # engine dispatcher's _already_active skip and the integration
+                        # reconciler key on that, and without the reset a re-delivered
+                        # note.ingested for the SAME unchanged note would be skipped but
+                        # so would this genuine re-integration. Pre-cutover the direct
+                        # integrate enqueue re-ran unconditionally; this preserves that.
+                        integration_state=case(
+                            (Note.integration_state == "integrated", "stale"),
+                            else_=Note.integration_state,
+                        ),
+                    )
                 )
         except Exception:
             async with scoped_session(self._maker, SYSTEM_CTX) as session:
@@ -116,8 +132,10 @@ class IngestPipeline:
         # outstanding the OCR handler's re-ingest re-emits this event with its OCR
         # text, so an image note is extracted once. The queued-only dedup is now the
         # dispatcher's job (_already_active): a RUNNING analyze may have read stale
-        # chunks, so it never suppresses a fresh pass; a queued twin (or an
-        # already-integrated note) does. Single-worker invariant: the OCR handler
+        # chunks, so it never suppresses a fresh pass; a queued twin does, and so does
+        # an integrated note — but a re-ingest just flipped 'integrated' -> 'stale'
+        # above, so this re-emission re-integrates and only a duplicate event for an
+        # unchanged note is suppressed. Single-worker invariant: the OCR handler
         # re-ingests before its own job completes, which is safe single-threaded —
         # under multi-worker the gate could see that originating job as running and
         # defer forever. TODO(queue): triggered_by_job exclusion if multi-worker lands.
