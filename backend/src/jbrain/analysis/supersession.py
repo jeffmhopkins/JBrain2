@@ -182,6 +182,13 @@ def is_schedule_binding(predicate: str) -> bool:
 # under-guarding a health fact is a silent overwrite by garbage.
 LOW_CONFIDENCE = 0.5
 
+# Irrealis assertions are not claims about the present truth, so they must never
+# auto-displace an ASSERTED current head — they park behind a conflict card for
+# the owner. NEGATED is excluded (a negated disposal "I no longer own X" is a
+# real retraction that supersedes); REPORTED (a third-party claim) and EXPECTED
+# (a schedule binding / appointment) keep their shipped supersede semantics.
+_IRREALIS = frozenset({"hypothetical", "question"})
+
 
 @dataclass(frozen=True)
 class FactView:
@@ -534,6 +541,18 @@ def decide(candidate: Candidate, existing: list[FactView], *, predicate: str = "
     if key(candidate.valid_from, candidate.reported_at) >= key(
         current.valid_from, current.reported_at
     ):
+        # An irrealis candidate (hypothetical/question) is not a claim about the
+        # present, so it must not displace an ASSERTED current head: park it
+        # behind a conflict card and leave the asserted value active (mirrors the
+        # pinned guard below). A negated/reported/expected candidate keeps its
+        # shipped semantics and falls through.
+        if candidate.assertion in _IRREALIS and current.assertion == "asserted":
+            return Decision(
+                insert=True,
+                insert_status="pending_review",
+                review_kind="fact_conflict",
+                conflicting_id=current.id,
+            )
         if current.pinned:
             # Re-flag, never flip: the human decision survives reprocessing.
             return Decision(
