@@ -222,20 +222,22 @@ def _print_case(r: CaseResult) -> None:
         print(r.dump, flush=True)  # what the model returned, so the prompt can be tuned
 
 
-async def _run(cases: list[dict[str, Any]]) -> list[CaseResult]:
-    # Parse WITH the anchor, exactly as the pipeline does for a note whose
-    # client offset is known: the score then reflects what the app actually
-    # STORES — model output plus the deterministic backward-date repair — so a
-    # green eval means a green app, not just a green prompt.
-    router = build_router(Settings())
-    provider, model = router.spec("note.extract", NOTE_EXTRACT_STRENGTH)
-    print(
-        f"prompt-eval — {provider}:{model} — {PROMPT_VERSION} — "
-        f"{datetime.now().isoformat(timespec='seconds')}",
-        flush=True,
-    )
-    print("-" * 64, flush=True)
+async def score_cases(
+    router: Any, cases: list[dict[str, Any]], *, echo: bool = False
+) -> tuple[list[CaseResult], int]:
+    """Drive every case's note through `router` (the LLM adapter — never a provider
+    SDK), score the model's own output, and return the results plus the total tokens
+    billed across the run. Router-injectable so the in-code `eval_run` action's live
+    Scorer reuses this exact path (CI passes a faked router), and the total spend is
+    what the self-improvement budget gate is charged via `record_spend`.
+
+    Parses WITH the case anchor, exactly as the pipeline does for a note whose client
+    offset is known: the score reflects what the app actually STORES (model output
+    plus the deterministic backward-date repair), so a green eval means a green app,
+    not just a green prompt. `echo` streams each case (the CLI report); the action
+    leaves it off."""
     results: list[CaseResult] = []
+    tokens = 0
     for case in cases:
         anchor = datetime.fromisoformat(case["created_at"])
         cap = fact_cap(case["body"])
@@ -251,11 +253,28 @@ async def _run(cases: list[dict[str, Any]]) -> list[CaseResult]:
                 max_tokens=EXTRACT_MAX_TOKENS,
                 strength=NOTE_EXTRACT_STRENGTH,
             )
+            tokens += out.usage.input_tokens + out.usage.output_tokens
             r = _score(case, parse_extraction(out.parsed, anchor=anchor, max_facts=cap), anchor)
         except Exception as exc:  # a live call can fail many ways; report, don't crash the run
             r = CaseResult(name=case["name"], error=f"{type(exc).__name__}: {exc}")
-        _print_case(r)
+        if echo:
+            _print_case(r)
         results.append(r)
+    return results, tokens
+
+
+async def _run(cases: list[dict[str, Any]]) -> list[CaseResult]:
+    # Parse WITH the anchor, exactly as the pipeline does for a note whose client
+    # offset is known (see score_cases) — a green eval then means a green app.
+    router = build_router(Settings())
+    provider, model = router.spec("note.extract", NOTE_EXTRACT_STRENGTH)
+    print(
+        f"prompt-eval — {provider}:{model} — {PROMPT_VERSION} — "
+        f"{datetime.now().isoformat(timespec='seconds')}",
+        flush=True,
+    )
+    print("-" * 64, flush=True)
+    results, _tokens = await score_cases(router, cases, echo=True)
     return results
 
 
