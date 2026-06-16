@@ -170,7 +170,6 @@ class _BufferedTurn:
     sources: tuple[NoteSource, ...]
     mutated: bool
     stop_reason: str
-    cost_tokens: int
 
 
 class AgentLoop:
@@ -481,11 +480,11 @@ class AgentLoop:
 
             if turn.stop_reason != "tool_use" or not turn.tool_calls:
                 return _BufferedTurn(
-                    tuple(events), "".join(answer_parts), tuple(sources), mutated, "end_turn", spent
+                    tuple(events), "".join(answer_parts), tuple(sources), mutated, "end_turn"
                 )
             if budget[0] <= 0:
                 return _BufferedTurn(
-                    tuple(events), "".join(answer_parts), tuple(sources), mutated, "budget", spent
+                    tuple(events), "".join(answer_parts), tuple(sources), mutated, "budget"
                 )
 
             messages.append(AssistantMessage(text=turn.text, tool_calls=turn.tool_calls))
@@ -528,11 +527,10 @@ class AgentLoop:
                     tuple(sources),
                     mutated,
                     "too_many_errors",
-                    spent,
                 )
 
         return _BufferedTurn(
-            tuple(events), "".join(answer_parts), tuple(sources), mutated, "max_steps", spent
+            tuple(events), "".join(answer_parts), tuple(sources), mutated, "max_steps"
         )
 
     def _is_mutating(self, name: str) -> bool:

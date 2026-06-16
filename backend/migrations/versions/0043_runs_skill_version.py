@@ -9,18 +9,18 @@ Column-only, mirroring `prompt_version` next to it; no new table, so no new RLS
 isolation test — `app.runs` keeps its owner-only posture (the existing runs RLS
 test re-asserts green). Reversible: up adds, down drops.
 
-`down_revision='0041'` makes this a single head off 0041 so the branch
-self-verifies; an integrator may re-chain it if a sibling migration merges first.
+Re-chained at integration to follow 0042 (Track S's reconciler seed) so the
+migration chain stays linear-single-head after both tracks merged.
 
 Revision ID: 0043
-Revises: 0041
+Revises: 0042
 Create Date: 2026-06-16
 """
 
 from alembic import op
 
 revision = "0043"
-down_revision = "0041"
+down_revision = "0042"
 branch_labels = None
 depends_on = None
 
