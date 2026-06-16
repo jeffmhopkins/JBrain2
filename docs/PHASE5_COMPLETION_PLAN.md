@@ -34,7 +34,13 @@ tests-with-code at **80% backend coverage / security paths 100%**, real Postgres
 via **testcontainers** with **LLM calls faked**, Conventional Commits + branch +
 PR + CI green, and `scripts/dev-setup.sh` updated with any new dep/tool/step.
 
-**Next migration number: 0042.**
+**Status (post Wave 1):** Tracks **R, H·A, S, N, D shipped** — migrations **0042**
+(Track S reconciler seed) and **0043** (Track N2 `skill_version`); next free is
+**0044**. H·A landed without a migration (the `eval_run` action is registered
+in-code; the H·B seed projection is deferred). What remains: the **Loop-4** owner
+decision (§5.2) and the `WORKFLOW_ENGINE_PLAN.md` archival close-out (Track D, §6).
+The per-track migration numbers below were the pre-build estimates — see the
+assigned-at-merge rule in §2.
 
 ---
 
@@ -68,9 +74,10 @@ PR + CI green, and `scripts/dev-setup.sh` updated with any new dep/tool/step.
   calls. Production goes exclusively through `run_stream` (`loop.py:224`; caller
   `api/agent.py:242`).
 
-> **Migration-number reality check.** Migrations run through **0041**, not 0034.
-> `docs/ROADMAP.md:12`, `docs/README.md:13`, and the CLAUDE.md "Phases 0–4 are
-> shipped" framing are stale doc drift — see Track D.
+> **Migration-number reality check.** Migrations run through **0043** (0042 = the
+> Track S reconciler seed, 0043 = the Track N2 `skill_version` column). The
+> ROADMAP/README/CLAUDE.md "Phases 0–4 shipped … through 0034 … Phase 5 not started"
+> drift was corrected by Track D in this same wave.
 
 ### Carried-forward Phase-5 items: status (all accounted for)
 
@@ -271,8 +278,8 @@ schedule + manual trigger** seed migration.
 - **Keep the boot backfill** (belt-and-suspenders, exactly as 0041 did —
   `worker.py:184` stays).
 
-**Migration:** **0043** (`0043_seed_unembedded_reconciler_sweep.py`), `down_revision
-= '0042'` (or the next free number if H lands later).
+**Migration:** shipped as **0042** (`0042_seed_unembedded_reconciler_sweep.py`),
+`down_revision = '0041'` — H·A needed no migration, so S took the first free number.
 
 **Sequencing/parallelism.** Fully independent, small, parallel to everything.
 
