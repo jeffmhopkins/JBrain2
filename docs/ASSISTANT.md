@@ -451,6 +451,35 @@ through the notes door so the wiki contract holds; behavior-defining prompt/tool
 edits are deliberate, versioned, reviewed migrations — never runtime self-mutation;
 and behavioral memory changes only on explicit owner confirmation.
 
+**Loop 1 in the live turn (shipped, Phase 5 Track R).** Reflexion is wired into
+the only production turn — `AgentLoop.run_stream` (the `/chat` SSE path). The turn
+loop tracks the answer it streamed, the sources its tools surfaced, and whether a
+mutation was staged, then classifies the turn with a pure `critique_worthy(...)`
+trigger (surfaced sources OR a staged/declared mutation OR a sensitive scope —
+health|finance|location; greetings and general-scope chit-chat are never verified).
+Two modes:
+
+- **(b) verify-and-annotate — the default.** The answer streams normally; after
+  the terminal `done`, the **pure** verifiers run over the streamed text + the
+  surfaced source snippets and, if they flag something, the loop emits a tail
+  `VerdictEvent` (a new `ChatEvent`; `/chat` forwards it as SSE, the PWA shows an
+  "unverified claims" note). **No retry, zero extra model calls** — verify-and-
+  annotate adds nothing to the per-turn cost. A non-critique turn skips it
+  entirely and its stream is byte-for-byte unchanged.
+- **(a) buffer-then-retry — opt-in, off by default** behind the
+  `reflexion_buffer_retry` settings gate. When on and the turn is critique-worthy,
+  the turn is produced non-streaming, the verifiers run, and `reflect`
+  (strict-improvement adoption, hard cap N=2) may re-produce before the kept
+  attempt's events stream — trading the live token stream for a spinner until
+  verification clears.
+
+Crucially, reflexion in the live turn is bound by the **ordinary per-turn cost
+guardrail** (`Guardrails.max_cost_tokens`), **not** the self-improvement daily
+budget — a live interactive turn must never be starved by a nightly eval. It
+writes **nothing durable** (Loop 1 is ephemeral): the verdict is forwarded to the
+phone but never persisted to the transcript, so there is no table, no migration,
+and no RLS surface.
+
 **Composition without runaway.** Each promotion strictly requires a *measured*
 gain (a verifier improvement, beating a safety-inclusive baseline, passing the
 fact-conflict flow, an eval win + human approval), so the system cannot spin

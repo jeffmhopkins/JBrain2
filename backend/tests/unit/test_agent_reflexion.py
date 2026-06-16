@@ -2,10 +2,13 @@
 hard-capped retry controller. Pure — no persistence, no real model."""
 
 from jbrain.agent.reflexion import (
+    _GROUNDING_THRESHOLD,
     PASS_SCORE,
     Reflection,
     VerificationResult,
     aggregate,
+    claims_from,
+    critique_worthy,
     reflect,
     significant_tokens,
     strictly_improves,
@@ -13,6 +16,45 @@ from jbrain.agent.reflexion import (
     verify_grounding,
     verify_mutation,
 )
+
+
+class TestCritiqueWorthy:
+    def test_greeting_with_no_sources_or_mutation_is_not_worthy(self) -> None:
+        assert not critique_worthy(source_count=0, mutated=False, scopes=["general"])
+
+    def test_surfaced_sources_make_a_turn_worthy(self) -> None:
+        assert critique_worthy(source_count=2, mutated=False, scopes=["general"])
+
+    def test_a_staged_mutation_makes_a_turn_worthy(self) -> None:
+        assert critique_worthy(source_count=0, mutated=True, scopes=["general"])
+
+    def test_a_sensitive_scope_makes_a_turn_worthy(self) -> None:
+        # Health/finance/location carry real-world consequence — verify even a
+        # bare answer that cited nothing and staged nothing.
+        assert critique_worthy(source_count=0, mutated=False, scopes=["health"])
+        assert critique_worthy(source_count=0, mutated=False, scopes=["general", "finance"])
+        assert critique_worthy(source_count=0, mutated=False, scopes=["location"])
+
+    def test_general_only_chitchat_is_never_worthy(self) -> None:
+        assert not critique_worthy(source_count=0, mutated=False, scopes=[])
+        assert not critique_worthy(source_count=0, mutated=False, scopes=["general"])
+
+
+class TestClaimsFrom:
+    def test_splits_on_sentence_punctuation(self) -> None:
+        # A boundary is .!? followed by whitespace; trailing punctuation with no
+        # following space stays on the last claim (harmless — grounding ignores it).
+        assert claims_from("The BP is fine. Cholesterol is high! Really?") == [
+            "The BP is fine",
+            "Cholesterol is high",
+            "Really?",
+        ]
+
+    def test_splits_on_newlines_and_drops_blanks(self) -> None:
+        assert claims_from("line one\n\nline two\n") == ["line one", "line two"]
+
+    def test_empty_answer_yields_no_claims(self) -> None:
+        assert claims_from("   ") == []
 
 
 class TestVerifyCitations:
@@ -45,6 +87,38 @@ class TestVerifyGrounding:
 
     def test_no_claims_passes(self) -> None:
         assert verify_grounding([], ["anything"]).passed
+
+
+class TestGroundingThresholdCalibration:
+    """Pins the `_GROUNDING_THRESHOLD=0.5` choice (Track R4). There is no
+    answer-grounding gold corpus in the repo (tests/eval/corpus targets the
+    extraction/integration chain, not chat-answer grounding), so the threshold is
+    kept at the conservative default and its behavior characterized here: 0.5 means
+    "at least half a claim's content tokens must appear in the retrieved sources".
+    Tuned UP it would flag more partially-grounded answers (more false positives,
+    noisier verdicts); tuned DOWN it would pass weakly-grounded ones (more false
+    negatives, missed warnings). 0.5 is deliberately lenient — Loop 1 in mode (b)
+    only *annotates*, so a missed verdict is cheaper than a noisy one on every
+    paraphrase."""
+
+    def test_default_threshold_is_one_half(self) -> None:
+        assert _GROUNDING_THRESHOLD == 0.5
+
+    def test_exactly_half_overlap_is_grounded_at_the_default(self) -> None:
+        # 2 of 4 content tokens overlap (= 0.5) → grounded (>= threshold).
+        r = verify_grounding(["alpha beta gamma delta"], ["alpha beta omega"])
+        assert r.passed
+
+    def test_just_under_half_is_flagged(self) -> None:
+        # 1 of 3 content tokens overlap (~0.33 < 0.5) → ungrounded.
+        r = verify_grounding(["alpha gamma delta"], ["alpha omega"])
+        assert r.score == 0.0 and "not grounded" in r.issues[0]
+
+    def test_a_stricter_threshold_would_flag_a_partial_paraphrase(self) -> None:
+        # The same half-overlap claim a stricter 0.75 cutoff would (over-)flag —
+        # the false-positive cost that keeps the default at the lenient 0.5.
+        partial = verify_grounding(["alpha beta gamma delta"], ["alpha beta omega"], threshold=0.75)
+        assert not partial.passed
 
 
 class TestVerifyMutation:

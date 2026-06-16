@@ -23,6 +23,27 @@ MAX_RETRIES = 2
 
 T = TypeVar("T")
 
+# The domains whose content carries real-world consequence (the owner_scoped
+# firewall — CLAUDE.md non-neg #3). A turn that touched any of these is worth
+# verifying even if it surfaced no source card and staged no mutation.
+SENSITIVE_SCOPES = frozenset(["health", "finance", "location"])
+
+
+def critique_worthy(
+    *,
+    source_count: int,
+    mutated: bool,
+    scopes: Iterable[str],
+) -> bool:
+    """The Loop-1 trigger (docs/ASSISTANT.md "Self-improvement loops"): a turn is
+    worth verifying when it made a checkable claim or carried real-world
+    consequence — it surfaced sources (citation-bearing), it staged a mutation, or
+    it ran in a sensitive scope (health|finance|location). Greetings and chit-chat
+    — no sources, no mutation, only the general scope — are never critique-worthy,
+    so the verifiers never run on them and the stream is untouched."""
+    return source_count > 0 or mutated or bool(SENSITIVE_SCOPES & set(scopes))
+
+
 # A claim is "grounded" when at least this fraction of its significant tokens
 # appear in the retrieved sources — a deterministic proxy for "grounds in chunks".
 _GROUNDING_THRESHOLD = 0.5
@@ -87,11 +108,23 @@ _STOPWORDS = frozenset(
     ]
 )
 _WORD = re.compile(r"[a-z0-9]+")
+# Sentence boundaries for splitting an answer into checkable claims: a run of
+# .!? (or a hard newline) ends one. A coarse split is deliberate — the grounding
+# check is a token-overlap proxy, not a parser, so per-sentence granularity is
+# all the signal it can use.
+_SENTENCE = re.compile(r"[.!?]+\s+|\n+")
 
 
 def significant_tokens(text: str) -> set[str]:
     """Lowercased content tokens (stopwords and 1-char tokens dropped)."""
     return {t for t in _WORD.findall(text.lower()) if len(t) > 1 and t not in _STOPWORDS}
+
+
+def claims_from(answer: str) -> list[str]:
+    """Split an answer into per-sentence claims for grounding (a coarse sentence
+    split). Blank fragments are dropped; a claim with no significant tokens passes
+    grounding anyway, so this never needs to be precise."""
+    return [c.strip() for c in _SENTENCE.split(answer) if c.strip()]
 
 
 @dataclass(frozen=True)
@@ -180,12 +213,17 @@ async def reflect(
     produce: Callable[[], Awaitable[tuple[T, VerificationResult]]],
     *,
     max_retries: int = MAX_RETRIES,
+    seed: tuple[T, VerificationResult] | None = None,
 ) -> Reflection[T]:
     """Run a turn, verify it, and re-run up to `max_retries` times — keeping a retry
     only when it strictly improves the verifier score. `produce` yields one
     (answer, verdict) per call; the loop owns the hard cap, so Reflexion can never
-    spin and can never adopt a worse answer than it already has."""
-    answer, result = await produce()
+    spin and can never adopt a worse answer than it already has.
+
+    `seed` supplies an already-produced first attempt (so a caller that produced it
+    to decide whether to reflect at all does not pay for it twice); when omitted the
+    controller produces the first attempt itself."""
+    answer, result = seed if seed is not None else await produce()
     retries = 0
     while not result.passed and retries < max_retries:
         retries += 1
