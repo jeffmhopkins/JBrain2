@@ -11,17 +11,30 @@ under the improved pipeline (D1 re-scoped) — an online data refresh, not an ar
 
 ---
 
-## Wave 1 — Negation safety (modality in the live selection)
-*The one shipped correctness gap; small and contained.*
-- **Migration:** index support for an asserted-only live floor; no table rewrite (the `assertion`
-  column already exists).
-- **`analysis/supersession.py`:** the live-slot identity for selection includes `assertion`
-  polarity; a `negated`/`hypothetical` value never supersedes an `asserted` of opposite polarity —
-  an asserted+negated pair on the same `(subject, entity, predicate, qualifier, value)` routes to
-  a contradiction review item instead.
-- **`current()` everywhere** (entity view, wiki, review live-floor): filter to `assertion='asserted'`
-  so non-asserted modalities never read as current.
-- **Tests:** negation can't overwrite assertion; non-asserted excluded from current; RLS.
+## Wave 1 — Negation/modality correctness (REVISED by design red-team — `70-wave1-design-redteam.md`)
+*The design red-team found the original "key on assertion everywhere" approach would REGRESS two
+shipped behaviors (negated disposals MUST supersede; active negations must stay visible) and that
+most read paths already filter asserted-only. Revised, narrow scope:*
+- **Selection key UNCHANGED** — `_existing_facts` keeps loading both polarities; do NOT add
+  `assertion` to the retrieval key or drop its domain filter. Polarity decided inside `decide`.
+- **Supersession (narrow):** opposite-polarity **same value/object** (asserted↔negated) = a
+  retraction/disposal → supersede as today (already shipped). A genuinely **modal** candidate
+  (`hypothetical|reported|question|expected`) must **never displace an `asserted` head** → file a
+  contradiction instead. (The real bug: a hypothetical/reported value can currently win the
+  functional/state head-contest.)
+- **Contradiction card:** reuse the existing `fact_conflict` machinery (hold both sides, key on
+  `conflicting_id` so it dedupes across re-ingest); extend to set-valued edges (asserted+negated
+  `friend→X`) and value-less object edges (key on `object_entity_id`).
+- **`current()` three-valued, scoped to the 3 surfaces that don't already filter assertion**
+  (`entity_view`, `note_currency`, `canonical` name/corroboration): current = asserted-open head,
+  **OR** a negated-open head with no asserted peer (rendered explicitly as *currently negated*, not
+  hidden). Leave the graph/agent/consolidation paths (already asserted-only).
+- **D1 re-ingest:** re-run the name reprojection; run-log diffs changed current-heads for review.
+- **Tests:** negated disposal still supersedes; a `reported`/`hypothetical` value can't displace an
+  asserted head (→ conflict card); negated-open-with-no-asserted-peer is shown; set-valued unfriend
+  files & dedupes; cross-domain negated candidate can't contest an asserted head behind the firewall.
+- **No new table** (index + a `fact_conflict` variant in existing `review_items`); RLS surface is
+  keeping the `_existing_facts` domain filter intact.
 
 ## Wave 2 — Structured-editing review (collapse the kind-zoo)
 *Builds directly on the per-field editing shipped in #234/#236.*
