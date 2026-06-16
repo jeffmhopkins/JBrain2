@@ -191,9 +191,7 @@ async def drain(maker: async_sessionmaker[AsyncSession], h: dict[str, worker.Han
 async def _undispatched_count(maker: async_sessionmaker[AsyncSession]) -> int:
     async with scoped_session(maker, OWNER) as s:
         return (
-            await s.execute(
-                text("SELECT count(*) FROM app.events WHERE dispatched_at IS NULL")
-            )
+            await s.execute(text("SELECT count(*) FROM app.events WHERE dispatched_at IS NULL"))
         ).scalar_one()
 
 
