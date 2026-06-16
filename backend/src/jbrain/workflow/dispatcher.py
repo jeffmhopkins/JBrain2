@@ -53,10 +53,14 @@ from jbrain.workflow.runlog import EnqueuedStep, PipelineRunLog
 
 log = structlog.get_logger()
 
-# Gate for the dispatcher tick. Default ON for SHADOW: the dispatcher runs and
-# diffs from the first boot of this wave, but a real enqueue stays off until the
-# Wave-2 cutover (which is a code change, not just a flag flip). Flip to false
-# live (a settings upsert) to silence the shadow tick without a redeploy.
+# Master on/off gate for the dispatcher tick. Default ON. Since the Wave-2 cutover
+# the mode also defaults LIVE, so the engine is the live note->ingest /
+# ingest->integrate / resolution->consolidate path (the hardcoded enqueues that
+# twinned those events are gone). Flip this to false live (a settings upsert) to
+# silence the tick entirely without a redeploy — but with the hardcoded enqueues
+# removed, only the recurring reconcilers would then pick up new work, so disabling
+# the master switch is an emergency stop, not a no-op. To stop ENQUEUING while still
+# diffing, set workflow_dispatch_mode "shadow" instead.
 WORKFLOW_DISPATCH_KEY = "workflow_dispatch"
 WORKFLOW_DISPATCH_DEFAULT = True
 
@@ -284,27 +288,73 @@ def _describe(w: WouldEnqueue) -> dict[str, Any]:
 _NOTE_DEDUP_KINDS: frozenset[str] = frozenset(("ingest_note", "integrate_note"))
 
 
+async def _note_state(
+    maker: async_sessionmaker[AsyncSession], note_id: str
+) -> tuple[str, str] | None:
+    """The (ingest_state, integration_state) for a note, or None when it does not
+    exist (or is deleted). Read under SYSTEM_CTX — ingest/integration are the owner's
+    own cross-domain machinery, exactly like the worker handlers (ingest/pipeline.py).
+    A missing/deleted note returns None so the caller treats the would-be enqueue as a
+    no-op target the handlers themselves already short-circuit (the handler is a no-op
+    on a missing note), never suppressing on absence in a way that could strand work."""
+    async with scoped_session(maker, SYSTEM_CTX) as session:
+        row = (
+            await session.execute(
+                text(
+                    "SELECT ingest_state, integration_state FROM app.notes"
+                    " WHERE id = :nid AND deleted_at IS NULL"
+                ),
+                {"nid": note_id},
+            )
+        ).first()
+    return (row.ingest_state, row.integration_state) if row is not None else None
+
+
 async def _already_active(maker: async_sessionmaker[AsyncSession], w: WouldEnqueue) -> bool:
-    """Whether this would-be enqueue already has a QUEUED job for its target, so a
-    live enqueue would double-process it (E4). `integrate_note` uses the note-keyed
-    active-analysis check; `ingest_note` the queued-only note_id guard. This is
-    queued-only and matches the reconcilers' active-job check; it does NOT yet skip
-    a note already past the reconciler-eligible STATE (`ingest_state != 'pending'`,
-    or already `integrated`). That gap is safe while the dispatcher is shadow-default
-    and each `note.created`/`note.ingested` event is claimed exactly once; the
-    state-based hardening (skip exactly what the pending/integration reconcilers
-    would not re-enqueue) lands with the LIVE cutover (Sub-task C), where it becomes
-    load-bearing. A kind with no note_id (or not in _NOTE_DEDUP_KINDS) is never
-    suppressed here. Read under SYSTEM_CTX (owner-only jobs), like the claim loop."""
+    """Whether this would-be enqueue is redundant — either a QUEUED twin job already
+    targets it (a live enqueue would double-process, E4), OR the note is already past
+    the STATE the matching reconciler would re-enqueue from (so the dispatcher skips
+    exactly what `backfill_pending_notes`/`backfill_pending_integration` would NOT
+    re-enqueue, keeping the two safety nets congruent under live).
+
+    Two guards, in this order — the cheap job check first, then the state check:
+
+    - `ingest_note`: skip on a queued `ingest_note` twin (the reconciler's active-job
+      check), AND skip when the note's `ingest_state != 'pending'` — once a note is
+      `processing`/`indexed`/`failed` the pending reconciler (which keys on
+      `ingest_state = 'pending'`) would not re-enqueue it, so neither does a live
+      dispatch of a stale/re-delivered `note.created` event.
+    - `integrate_note`: skip on a queued integrate twin (the note-keyed
+      active-analysis check), AND skip when `integration_state == 'integrated'` — the
+      integration reconciler keys on `integration_state <> 'integrated'`, so a note
+      already integrated is past it and a re-delivered `note.ingested` is suppressed.
+
+    The job check stays queued-only on purpose (mirroring the hardcoded callers and
+    the reconcilers): a RUNNING job may have read stale chunks, so it must never
+    suppress a fresh enqueue. The state check closes the OTHER hole the cutover opens —
+    a re-delivered/duplicate event for a note whose work already finished (no queued
+    twin survives) must not re-process. A kind with no note_id (or not in
+    _NOTE_DEDUP_KINDS) is never suppressed here; its own action keeps its dedup. All
+    reads run under SYSTEM_CTX (owner-only jobs/notes), like the claim loop."""
     note_id = w.payload.get("note_id")
     if w.kind not in _NOTE_DEDUP_KINDS or not isinstance(note_id, str):
         return False
     if w.kind == "integrate_note":
-        return await queue.has_active_analysis(maker, SYSTEM_CTX, note_id, statuses=("queued",))
-    # ingest_note: queued-only note_id guard (the state-based skip lands in C).
-    return await queue.has_active(
+        if await queue.has_active_analysis(maker, SYSTEM_CTX, note_id, statuses=("queued",)):
+            return True
+        state = await _note_state(maker, note_id)
+        # Skip a note already integrated (past the reconciler's eligibility); an
+        # absent note (None) is left to the handler's own missing-note no-op.
+        return state is not None and state[1] == "integrated"
+    # ingest_note: queued twin first, then the pending-state skip.
+    if await queue.has_active(
         maker, SYSTEM_CTX, w.kind, payload_field="note_id", value=note_id, statuses=("queued",)
-    )
+    ):
+        return True
+    state = await _note_state(maker, note_id)
+    # Skip unless the note is still 'pending' (the only state the pending reconciler
+    # re-enqueues from); an absent note (None) is the handler's own no-op, not skipped.
+    return state is not None and state[0] != "pending"
 
 
 async def live_enqueue(
@@ -602,10 +652,11 @@ async def run_tick_safely(
     """Run one dispatcher tick, gated by the `workflow_dispatch` master switch + the
     `workflow_dispatch_mode` setting, swallowing failures (mirrors
     scheduler.run_tick_safely): a dispatcher blip must never kill the worker loop.
-    Both gates are read live so the operator silences the tick or flips shadow→live
-    without a redeploy. The master switch defaults ON; the mode defaults SHADOW, so
-    prod stays shadow until an explicit operator upsert flips it. `off` (either gate)
-    skips the tick entirely."""
+    Both gates are read live so the operator silences the tick or rolls live→shadow
+    without a redeploy. The master switch defaults ON; since the Wave-2 cutover the
+    mode defaults LIVE, so the engine is the live enqueue path (the hardcoded enqueues
+    are gone). An operator upsert to mode "shadow"/"off" or the master switch to false
+    rolls it back. `off` (either gate) skips the tick entirely."""
     try:
         enabled = await settings.get(SYSTEM_CTX, WORKFLOW_DISPATCH_KEY, WORKFLOW_DISPATCH_DEFAULT)
         if enabled is not True:
