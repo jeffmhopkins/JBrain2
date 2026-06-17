@@ -820,6 +820,49 @@ describe("ReviewScreen (split inbox)", () => {
     expect(body.body).toContain("relation should be name.given, not name.nickname");
   });
 
+  it("editing the modality files a correction note spelling out the stance change", async () => {
+    const inf: ReviewItem = {
+      id: "inf-m",
+      kind: "low_confidence_inference",
+      domain: "general",
+      created_at: "2026-06-15T13:00:00Z",
+      status: "open",
+      resolution: null,
+      resolved_at: null,
+      payload: {
+        entity_ref: "me",
+        predicate: "employer",
+        qualifier: "",
+        // the modality the pipeline read — the card lets the owner correct it.
+        assertion: "asserted",
+        statement: "I might join Acme.",
+        value_json: { name: "Acme" },
+        reasons: ["below_threshold"],
+        summary: "hold for review (below_threshold): I might join Acme.",
+        outcomes: { accept: "recorded and pinned.", reject: "the fact is discarded." },
+      },
+    };
+    serve([inf], [], []);
+    render(<ReviewScreen />);
+    await screen.findByText(/hold for review/);
+    fireEvent.click(screen.getByRole("button", { name: /hold for review/ }));
+
+    // The modality control shows the current stance; open it and pick another.
+    fireEvent.click(screen.getByRole("button", { name: /asserted/ }));
+    fireEvent.click(screen.getByRole("button", { name: "hypothetical" }));
+
+    // The edit flips approve to a correction; the note spells out the modality
+    // change (the #7 channel — never a direct assertion write).
+    fireEvent.click(screen.getByRole("button", { name: "approve correction" }));
+    const noteCall = await waitFor(() => {
+      const call = fetchMock.mock.calls.find(([u]) => String(u) === "/api/notes");
+      if (!call) throw new Error("no note filed yet");
+      return call;
+    });
+    const body = JSON.parse(String((noteCall[1] as RequestInit).body)) as { body: string };
+    expect(body.body).toContain("This is hypothetical, not asserted");
+  });
+
   it("correct it files a correction note, then resolves the item as corrected", async () => {
     render(<ReviewScreen />);
     await screen.findByText("two values recorded for Sarah's birthDate");

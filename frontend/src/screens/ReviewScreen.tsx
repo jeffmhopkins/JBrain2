@@ -133,6 +133,12 @@ function Detail({ item, lane, queue, position, onClose, onAdvance, onNav }: Deta
   const predicateEdited =
     isInference && editPredicate.trim().length > 0 && editPredicate.trim() !== originalPredicate;
 
+  // Modality (the fact's assertion). A card filed before assertion was surfaced
+  // carries none — treat that as `asserted`, the common case.
+  const originalModality = isInference ? (parsed.assertion ?? "asserted") : "asserted";
+  const [editModality, setEditModality] = useState(originalModality);
+  const modalityEdited = isInference && editModality !== originalModality;
+
   // The weighted picker prefers the suggestions baked into the payload, but a
   // card filed before the picker existed has none — so fetch them on demand
   // (the index is embedded server-side). Failures leave the picker on manual
@@ -203,7 +209,11 @@ function Detail({ item, lane, queue, position, onClose, onAdvance, onNav }: Deta
       setEditingPredicate,
       predicateEdited,
       predicateSuggestions,
-      edited: valueEdited || predicateEdited,
+      originalModality,
+      editModality,
+      setEditModality,
+      modalityEdited,
+      edited: valueEdited || predicateEdited || modalityEdited,
     },
     composing,
     setComposing,

@@ -31,7 +31,14 @@ export interface InferenceEdit {
   setEditingPredicate: (b: boolean) => void;
   predicateEdited: boolean;
   predicateSuggestions: { name: string; score: number }[];
-  // True when either side was changed — drives the approve-correction flip.
+  // modality (the fact's assertion) — a closed-enum corrected in place, so the
+  // owner can fix "asserted" → "hypothetical"/"negated"/… when the pipeline
+  // mis-read the claim's stance.
+  originalModality: string;
+  editModality: string;
+  setEditModality: (v: string) => void;
+  modalityEdited: boolean;
+  // True when any side was changed — drives the approve-correction flip.
   edited: boolean;
 }
 

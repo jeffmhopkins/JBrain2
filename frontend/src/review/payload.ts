@@ -72,6 +72,10 @@ export interface Parsed {
   // the value it carries, so the owner sees the fact, not only the prose summary.
   predicate: string | null;
   qualifier: string | null;
+  // The fact's modality (assertion: asserted/negated/hypothetical/reported/
+  // question/expected), so the inference card can correct it in place. Null on
+  // cards filed before it was surfaced — the card then treats it as `asserted`.
+  assertion: string | null;
   statement: string | null;
   valueJson: unknown;
   // A typed (closed-enum) predicate's members — gender → [male, female,
@@ -150,6 +154,7 @@ export function parsePayload(payload: Record<string, unknown>): Parsed {
     candidateName: str(payload.name),
     predicate: str(payload.predicate),
     qualifier: str(payload.qualifier),
+    assertion: str(payload.assertion),
     statement: str(payload.statement),
     valueJson: payload.value_json,
     enumValues: Array.isArray(payload.enum_values)

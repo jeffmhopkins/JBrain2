@@ -3986,6 +3986,28 @@ button.small {
   font-weight: 600;
 }
 
+/* A labelled field row in the inference editor (modality and, in later slices,
+   the other unified-editor fields): a quiet uppercase label beside its inline
+   control (a chip that expands to the closed enum). */
+.rinf-field {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-top: 8px;
+  flex-wrap: wrap;
+}
+
+.rinf-field-lbl {
+  font-size: var(--fs-micro);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-3);
+}
+
+.rinf-field .rinf-enum {
+  margin-top: 0;
+}
+
 .rinf-status {
   margin: 4px 0 0;
   font-size: var(--fs-secondary);

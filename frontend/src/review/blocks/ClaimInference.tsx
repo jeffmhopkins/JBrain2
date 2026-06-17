@@ -3,6 +3,11 @@ import { edgePath } from "../../analysis/format";
 import { matchBand } from "../payload";
 import type { ReviewBlock } from "./types";
 
+// The modality vocabulary (the fact's `assertion`), mirroring the backend
+// ASSERTIONS set. `asserted` is the calm default; the rest let the owner correct
+// a mis-read stance ("this was hypothetical", "this is a negation").
+const MODALITIES = ["asserted", "negated", "hypothetical", "reported", "question", "expected"];
+
 /** The proposed-fact panel for a low-confidence inference (docs/mocks/
  * review-edit-predicate-and-value): the `predicate → value` edge it would write,
  * rendered as the entity page does, with BOTH sides editable in place. The
@@ -29,6 +34,10 @@ export const ClaimInference: ReviewBlock = ({ ctx }) => {
     setEditingPredicate,
     predicateEdited,
     predicateSuggestions,
+    originalModality,
+    editModality,
+    setEditModality,
+    modalityEdited,
   } = inference;
   const pending = lane === "pending";
 
@@ -116,6 +125,11 @@ export const ClaimInference: ReviewBlock = ({ ctx }) => {
           ))}
         </div>
       )}
+      {/* ── modality (the assertion stance) ── */}
+      {pending && (
+        <ModalityField value={editModality} edited={modalityEdited} onPick={setEditModality} />
+      )}
+
       {pending && (
         <p className={`rinf-status${inference.edited ? " edit" : ""}`}>
           {inference.edited ? (
@@ -132,6 +146,12 @@ export const ClaimInference: ReviewBlock = ({ ctx }) => {
                 <>
                   value <s>{originalValue}</s> → <b>{editValue.trim()}</b>
                 </>
+              )}
+              {(predicateEdited || valueEdited) && modalityEdited && " · "}
+              {modalityEdited && (
+                <>
+                  modality <s>{originalModality}</s> → <b>{editModality}</b>
+                </>
               )}{" "}
               — filed as a correction note; the pipeline applies it, so the wiki stays
               machine-written.
@@ -144,6 +164,57 @@ export const ClaimInference: ReviewBlock = ({ ctx }) => {
     </div>
   );
 };
+
+/** The modality control: a calm chip showing the fact's current stance
+ * (asserted by default), which expands to the closed set of assertions so the
+ * owner can correct a mis-read one — "this was hypothetical", "this is a
+ * negation". Like the predicate/value sides, a change flips approve → approve
+ * correction and is filed as a correction note (never a direct wiki edit). */
+function ModalityField({
+  value,
+  edited,
+  onPick,
+}: {
+  value: string;
+  edited: boolean;
+  onPick: (v: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="rinf-field" aria-label="modality">
+      <span className="rinf-field-lbl">modality</span>
+      {open ? (
+        <div className="rinf-enum">
+          {MODALITIES.map((m) => (
+            <button
+              key={m}
+              type="button"
+              className={`rinf-enum-chip${value === m ? " on" : ""}`}
+              aria-pressed={value === m}
+              onClick={() => {
+                onPick(m);
+                setOpen(false);
+              }}
+            >
+              {m}
+            </button>
+          ))}
+        </div>
+      ) : (
+        <button
+          type="button"
+          className={`rinf-chip${edited ? " edited" : ""}`}
+          onClick={() => setOpen(true)}
+        >
+          <span className="rinf-val">{value}</span>
+          <span className="rinf-pen" aria-hidden="true">
+            ✎ edit
+          </span>
+        </button>
+      )}
+    </div>
+  );
+}
 
 /** The relation picker: the canonicals nearest the proposed predicate (weighted
  * by similarity, strongest first, the current one marked at the top), plus a

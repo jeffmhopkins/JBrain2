@@ -623,6 +623,10 @@ class AnalysisPipeline:
                         "predicate": fact.predicate,
                         "qualifier": fact.qualifier,
                         "fact_kind": fact.kind,
+                        # The fact's modality, so the card can offer a
+                        # correct-in-place picker (asserted/negated/hypothetical/
+                        # …). A correction flips it via the prose-note channel.
+                        "assertion": fact.assertion,
                         "statement": card_statement,
                         # The structured value the card renders as `predicate →
                         # value`, so the owner sees the exact fact they're
