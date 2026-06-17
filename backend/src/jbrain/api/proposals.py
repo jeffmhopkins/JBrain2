@@ -15,6 +15,7 @@ from pydantic import BaseModel
 
 from jbrain.agent.connectortools import build_leaf_executor
 from jbrain.agent.proposals import ProposalRepo
+from jbrain.agent.skills import SkillsRepo
 from jbrain.analysis.repo import SqlAnalysisRepo
 from jbrain.api.deps import owner_only
 from jbrain.api.notes import ctx_for
@@ -46,6 +47,10 @@ def get_job_queue(request: Request) -> JobEnqueuer:
 
 def get_analysis_repo(request: Request) -> SqlAnalysisRepo:
     return cast(SqlAnalysisRepo, request.app.state.analysis_repo)
+
+
+def get_skills_repo(request: Request) -> SkillsRepo:
+    return cast(SkillsRepo, request.app.state.skills_repo)
 
 
 class ProposalSummaryOut(BaseModel):
@@ -143,6 +148,7 @@ async def enact_proposal(request: Request, principal: OwnerDep, proposal_id: str
         get_connector_service(request),
         get_job_queue(request),
         get_analysis_repo(request),
+        get_skills_repo(request),
     )
     try:
         plan = await repo.enact(ctx_for(principal), proposal_id, executor)
