@@ -93,7 +93,7 @@ Security-adjacent invariants are **100% coverage**.
 ## B. Key decisions (every brief gap + every red-team finding resolved)
 
 ### B1. PostGIS + storage shape
-`CREATE EXTENSION IF NOT EXISTS postgis` in its **own** migration (0054).
+`CREATE EXTENSION IF NOT EXISTS postgis` in its **own** migration (0059, as built).
 `location_fixes` stores raw `latitude`/`longitude` doubles **as source of truth**
 plus a **STORED generated** geography:
 `geog geography(Point,4326) GENERATED ALWAYS AS
@@ -264,8 +264,10 @@ with accuracy_m > 100 m** from detection; per-device rate cap = **60 fixes/min**
 ### Wave 1 — as-built refinements (discovered in implementation)
 - **Test image aligned to prod (owner-decided):** the integration suite runs
   `timescale/timescaledb-ha:pg17` (was `pgvector/pgvector:pg16`, which lacked
-  Timescale + PostGIS). Migration `0054` creates both `timescaledb` and `postgis`
-  extensions per-database so fresh test clones / deploys have them.
+  Timescale + PostGIS). Migration `0059` creates both `timescaledb` and `postgis`
+  extensions per-database so fresh test clones / deploys have them. The harness
+  also disables the timescale background-worker scheduler and retries the template
+  clone, since those workers otherwise race `CREATE DATABASE ... TEMPLATE`.
 - **No `geoalchemy2` dependency:** geometry is migration-owned and queried via raw
   `ST_*` SQL on the RLS-scoped session; ORM models map only scalar columns — so
   dev-setup needs no change (it already pre-pulls the timescale image; non-neg #8 met).
@@ -278,18 +280,23 @@ with accuracy_m > 100 m** from detection; per-device rate cap = **60 fixes/min**
 
 ---
 
-## C. Data model (migrations from 0054; each RLS-isolation-tested)
+## C. Data model (migrations from 0059; each RLS-isolation-tested)
 Models in `backend/src/jbrain/models/location.py`. Every table carries
 `domain_code text NOT NULL REFERENCES app.domains(code)` (always `'location'`),
 `subject_id`, and the RLS quartet (ENABLE/FORCE + B3 policy + GRANT).
 
+> **As built:** Wave 1 shipped on migrations **0059–0062** (chained off main's
+> `0058` head; the original `0054–0057` numbering collided after main advanced).
+> `0059` also creates the `timescaledb` extension; the `geofence_workflow` seed is
+> a later Wave-3 migration (the next free number).
+
 | Migration | Object | Notes |
 |---|---|---|
-| **0054_postgis** | `CREATE EXTENSION IF NOT EXISTS postgis` | First-in-repo; downgrade is a **no-op / guarded `DROP EXTENSION IF EXISTS`** only after dependents drop (revision chain handles order). Superuser, like 0003. |
-| **0055_location_fixes** | `app.location_fixes` (**hypertable**) | raw `latitude/longitude` doubles + generated `geog` (B1); `subject_id`, `principal_id` (device), `captured_at` (=`tst`), `received_at`, `accuracy_m`, `altitude_m`, `velocity`, `course`, `battery`, `connection`, `tid`, `raw jsonb` (size-capped, allowlisted, L9). `create_hypertable(by_range('captured_at'))`; GiST on `geog`; btree `(subject_id, captured_at desc)`; **unique `(subject_id, captured_at, latitude, longitude)`** → `ON CONFLICT DO NOTHING` (dedups verbatim retries). B2 order; B3 policy; **L3 chunk-RLS proof**. |
-| **0056_place_geofence** | `app.place_geofence` (derived read-model, L10) | `place_entity_id`, `subject_id` (nullable=all-devices), `center geography(Point,4326)`, `radius_m`, `polygon geography(Polygon,4326)`, `enabled`; CHECK exactly one of (center+radius)/polygon; GiST. Projected from the graph predicate, never edited directly. |
-| **0057_geofence_state** | `app.geofence_state` | PK `(subject_id, place_geofence_id)`; `state` (`inside/outside/unknown`), `confirming_fixes`, `since`, `last_fix_at`. Operational hysteresis state. |
-| **0058_seed_geofence_workflow** | trigger + pipeline + schedule | Seeded **in the same PR as the registered `geofence_sweep` ActionSpec** (else `DispatchResolutionError` every tick); pipeline-resolves test required. |
+| **0059_spatial_extensions** | `CREATE EXTENSION timescaledb` + `postgis` | First-in-repo; downgrade is a **no-op** (shared extensions; dependents drop via the revision chain). Superuser, like 0003. |
+| **0060_location_fixes** | `app.location_fixes` (**hypertable**) | raw `latitude/longitude` doubles + generated `geog` (B1); `subject_id`, `principal_id` (device), `captured_at` (=`tst`), `received_at`, `accuracy_m`, `altitude_m`, `velocity`, `course`, `battery`, `connection`, `tid`, `raw jsonb` (size-capped, allowlisted, L9). `create_hypertable(by_range('captured_at'))`; GiST on `geog`; btree `(subject_id, captured_at desc)`; **unique `(subject_id, captured_at, latitude, longitude)`** → `ON CONFLICT DO NOTHING` (dedups verbatim retries). B2 order; B3 policy; **L3 chunk-RLS proof**. |
+| **0061_place_geofence** | `app.place_geofence` (derived read-model, L10) | `place_entity_id`, `subject_id` (nullable=all-devices), `center geography(Point,4326)`, `radius_m`, `polygon geography(Polygon,4326)`, `enabled`; CHECK exactly one of (center+radius)/polygon; GiST. Projected from the graph predicate, never edited directly. |
+| **0062_geofence_state** | `app.geofence_state` | PK `(subject_id, place_geofence_id)`; `state` (`inside/outside/unknown`), `confirming_fixes`, `since`, `last_fix_at`. Operational hysteresis state. |
+| **(Wave 3) seed_geofence_workflow** | trigger + pipeline + schedule | Seeded **in the same PR as the registered `geofence_sweep` ActionSpec** (else `DispatchResolutionError` every tick); pipeline-resolves test required. |
 
 Fixes are DB rows, never the blob store (non-neg #2); `raw` is a column, not a file.
 
@@ -310,9 +317,10 @@ owner choice → `docs/mocks/` + teal token spec); owner sign-off on the open
 decisions and the Phase-6 sequencing deviation. **DoD:** chosen mock recorded;
 decisions logged.
 
-### Wave 1 — Spatial + identity foundation (security bedrock)
-- Migrations 0054–0057 (C); `models/location.py`; `geoalchemy2` dep
-  (pyproject + dev-setup, non-neg #8).
+### Wave 1 — Spatial + identity foundation (security bedrock) — ✅ shipped
+- Migrations 0059–0062 (C); `models/location.py`. (No `geoalchemy2`: geometry is
+  migration-owned and queried via raw `ST_*`; dev-setup already pre-pulls the
+  timescale image, so non-neg #8 needs no change.)
 - Auth plumbing prerequisites (B4): `PrincipalInfo.subject_id/owner_scoped`,
   `find_active_device_principal_by_key_hash`, `create_principal(subject_id)`,
   `device_context()`. (Kind CHECKs already exist in 0001 — verify, do not duplicate.)
@@ -343,7 +351,7 @@ decisions logged.
 - `place_geofence` **projector** wired into the fact-apply path (L10).
 - Pure `location/geofence.py` (B6); inline detection + `geofence_state` RMW; emit
   `location.geofence_transition` (B7); **per-trigger `forward_keys`** mechanism
-  (B8); `geofence_sweep` ActionSpec + `0058` seed.
+  (B8); `geofence_sweep` ActionSpec + the `seed_geofence_workflow` migration.
 - **Tests:** detector unit (enter/exit/hysteresis/flap-suppression/accuracy-gate);
   ingest→event integration (LIVE enqueue + run-log under narrowed location scope);
   E2 fail-closed; `forward_keys_no_coord_leak`; sweep reconcile; idempotency;
