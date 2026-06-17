@@ -20,7 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from jbrain.embed import EmbedClient, vector_literal
 from jbrain.schema import get_registry
-from jbrain.schema.models import Predicate, SchemaRegistry
+from jbrain.schema.models import Predicate, SchemaRegistry, _norm_key
 
 _CAMEL = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
 
@@ -127,6 +127,53 @@ def band_for(neighbors: tuple[tuple[str, float], ...]) -> PredicateDecision:
     return PredicateDecision("weak" if top >= _PRED_WEAK else "cold", None, neighbors)
 
 
+async def alias_canonicals(session: AsyncSession, raws: Sequence[str]) -> dict[str, str]:
+    """The durable raw->canonical aliases (Loop 3a, Wave 1) for a batch of raw predicates, keyed by
+    `_norm_key(raw)`. A confirmed `map_to_existing`/rename wrote these so a resolved drift spelling
+    collapses at canonicalize time instead of re-filing a card. Empty when none are aliased."""
+    keys = list({_norm_key(r) for r in raws})
+    if not keys:
+        return {}
+    rows = (
+        await session.execute(
+            text(
+                "SELECT raw_norm, canonical_name FROM app.predicate_aliases"
+                " WHERE raw_norm = ANY(:keys)"
+            ),
+            {"keys": keys},
+        )
+    ).all()
+    return {r.raw_norm: r.canonical_name for r in rows}
+
+
+async def record_predicate_alias(session: AsyncSession, raw: str, canonical: str) -> None:
+    """Record a durable raw->canonical alias (idempotent) so the drift spelling collapses at
+    canonicalize time on later runs. Written when a `new_predicate` card resolves to an existing
+    canonical (the owner-approved resolution path); the FK guarantees `canonical` is a real
+    canonical predicate."""
+    # DO UPDATE (not DO NOTHING): a later re-resolution of the same raw to a DIFFERENT canonical
+    # heals the stored facts onto the new target, so the durable alias must follow it too — else
+    # the next canonicalize run would re-collapse the spelling to the stale (superseded) canonical.
+    await session.execute(
+        text(
+            "INSERT INTO app.predicate_aliases (raw_norm, canonical_name)"
+            " VALUES (:k, :c)"
+            " ON CONFLICT (raw_norm) DO UPDATE SET canonical_name = excluded.canonical_name"
+        ),
+        {"k": _norm_key(raw), "c": canonical},
+    )
+
+
+async def delete_predicate_alias(session: AsyncSession, raw: str, canonical: str) -> None:
+    """Drop a durable alias (idempotent), guarded on `canonical` so a later re-map's different
+    alias isn't clobbered. Called when a `map_to_existing`/rename resolution is reopened, so the
+    reopen fully reverses instead of leaving the spelling collapsing to the rejected canonical."""
+    await session.execute(
+        text("DELETE FROM app.predicate_aliases WHERE raw_norm = :k AND canonical_name = :c"),
+        {"k": _norm_key(raw), "c": canonical},
+    )
+
+
 async def decide_predicates(
     session: AsyncSession,
     items: Sequence[tuple[str, str, str | None]],
@@ -134,13 +181,27 @@ async def decide_predicates(
     embedder: EmbedClient,
     k: int = _PRED_TOPK,
 ) -> list[PredicateDecision]:
-    """Cosine-match a batch of unknown predicates against the canonical index in
-    ONE embed call (each item is (predicate, statement, kind)). The storage
-    invariant holds for every band — the predicate name is never rejected."""
+    """Decide a batch of unknown predicates (each item is (predicate, statement, kind)). A durable
+    alias short-circuits to STRONG with no embed and no card (Wave 1); the rest cosine-match against
+    the canonical index in ONE embed call. The storage invariant holds for every band — the
+    predicate name is never rejected."""
     if not items:
         return []
-    vectors = await embedder.embed([raw_descriptor(p, s, kd) for p, s, kd in items])
-    return [band_for(tuple(await nearest_predicates(session, v, k))) for v in vectors]
+    aliases = await alias_canonicals(session, [p for p, _, _ in items])
+    out: list[PredicateDecision] = []
+    pending: list[tuple[int, str, str, str | None]] = []
+    for idx, (p, s, kd) in enumerate(items):
+        canonical = aliases.get(_norm_key(p))
+        if canonical is not None:
+            out.append(PredicateDecision("strong", canonical, ()))
+        else:
+            out.append(PredicateDecision("cold", None, ()))  # placeholder, filled after the embed
+            pending.append((idx, p, s, kd))
+    if pending:
+        vectors = await embedder.embed([raw_descriptor(p, s, kd) for _, p, s, kd in pending])
+        for (idx, _p, _s, _kd), v in zip(pending, vectors, strict=True):
+            out[idx] = band_for(tuple(await nearest_predicates(session, v, k)))
+    return out
 
 
 async def decide_predicate(

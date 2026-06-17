@@ -32,7 +32,13 @@ def _patch_nearest(monkeypatch: pytest.MonkeyPatch, neighbors: list[tuple[str, f
     async def fake(session: object, vec: object, k: int) -> list[tuple[str, float]]:
         return neighbors
 
+    async def no_aliases(session: object, raws: object) -> dict[str, str]:
+        return {}
+
     monkeypatch.setattr(pmod, "nearest_predicates", fake)
+    # The durable-alias consult (Wave 1) also reads the session; stub it so these band-logic tests
+    # keep their "session is never touched" contract.
+    monkeypatch.setattr(pmod, "alias_canonicals", no_aliases)
 
 
 def test_raw_descriptor_includes_token_statement_and_kind() -> None:
