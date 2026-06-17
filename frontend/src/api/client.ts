@@ -593,6 +593,99 @@ export interface AutomationsResponse {
   actions: CatalogAction[];
 }
 
+// ===== Phase 6: the wiki — the read-only article reader (docs/mocks/wiki-*) =====
+// The wiki is machine-written from notes; the reader renders it current-only and
+// read-only, every claim carrying a numbered citation back to its source note.
+
+/** One infobox field: a label and its value, with the citations it carries.
+ * `link` flags a wiki→wiki cross-link; `redLink` marks one with no article yet
+ * (the muted dotted treatment). Both are presentational hints only here. */
+export interface WikiInfoboxField {
+  label: string;
+  value: string;
+  /** Citation numbers this field cites (the [n] superscripts after the value). */
+  citations: number[];
+  /** Renders the value as a wiki cross-link (steel). */
+  link?: boolean;
+  /** Renders as a "no article yet" red-link (muted, dotted). */
+  redLink?: boolean;
+}
+
+/** The infobox: either an entity-type disc OR an owner-added photo slot. */
+export interface WikiInfobox {
+  title: string;
+  /** Entity kind for the type disc (see entities/kinds). Omit when `photo`. */
+  kind?: string;
+  /** True to render the owner-added photo slot instead of the type disc. */
+  photo?: boolean;
+  fields: WikiInfoboxField[];
+}
+
+/** One run of article prose: plain text, OR text carrying inline [n] markers
+ * the renderer turns into citation buttons. The body renderer reads `text`
+ * for the [n] markers, so a paragraph is just its raw string. */
+export interface WikiParagraph {
+  kind: "p";
+  /** Prose with inline `[n]` citation markers (e.g. "…in Brookline.[9]"). */
+  text: string;
+}
+
+export interface WikiList {
+  kind: "ul";
+  /** Each item is prose with inline `[n]` markers. */
+  items: string[];
+}
+
+export interface WikiTable {
+  kind: "table";
+  header: string[];
+  /** Each row's cells are prose with inline `[n]` markers. */
+  rows: string[][];
+}
+
+export type WikiBlock = WikiParagraph | WikiList | WikiTable;
+
+/** A type-guided section (H2): a domain dot + label, prose/list/table blocks,
+ * and nested subsections (H3). */
+export interface WikiSection {
+  heading: string;
+  /** Backend domain code (general | health | finance | …) — drives the dot. */
+  domain: string;
+  blocks: WikiBlock[];
+  subsections?: WikiSubsection[];
+}
+
+/** A nested subsection (H3) under a section: heading + blocks, no further nest. */
+export interface WikiSubsection {
+  heading: string;
+  blocks: WikiBlock[];
+}
+
+/** One numbered reference: the source note's provenance + snippet. `n` is the
+ * citation number the [n] superscripts and the References list share. */
+export interface WikiReference {
+  n: number;
+  /** The cited note id, for a future "open the note" jump (unused in B1). */
+  note_id: string;
+  /** Human provenance line, e.g. "Note · May 2, 2018". */
+  meta: string;
+  domain: string;
+  /** The cited snippet; may carry literal <mark> around the cited words. */
+  snippet: string;
+}
+
+export interface WikiArticleOut {
+  id: string;
+  title: string;
+  /** The grey one-liner under the title (e.g. "Person · pediatrician · …"). */
+  subtitle: string;
+  infobox: WikiInfobox;
+  /** The opening prose paragraph(s), with inline [n] markers. */
+  lead: WikiParagraph[];
+  sections: WikiSection[];
+  references: WikiReference[];
+}
+
 export type SearchMatch = "semantic" | "keyword" | "both";
 
 export interface SearchResult {
@@ -844,6 +937,12 @@ export const api = {
   async getEntity(entityId: string): Promise<EntityOut> {
     const response = await request(`/api/entities/${encodeURIComponent(entityId)}`);
     return (await response.json()) as EntityOut;
+  },
+
+  // ----- The wiki reader: one machine-written article, read-only -----
+  async getWikiArticle(id: string): Promise<WikiArticleOut> {
+    const response = await request(`/api/wiki/${encodeURIComponent(id)}`);
+    return (await response.json()) as WikiArticleOut;
   },
 
   // The ego subgraph for the graph view: the focal entity plus everything

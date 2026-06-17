@@ -25,6 +25,7 @@ import type {
   SearchMatch,
   SearchResult,
   SweepTrigger,
+  WikiArticleOut,
 } from "./client";
 
 const PRINCIPAL: Principal = {
@@ -460,6 +461,290 @@ const PATEL_BODY =
 
 const patelNote = seedNote("health", "Records", PATEL_BODY, daysAgo(0, 9, 40));
 notes.push(patelNote);
+
+// ===== Phase 6 fixture: the wiki reader's Priya Nair article =====
+// The example mock (docs/mocks/wiki-reader-example-priya.html) verbatim: lead,
+// type-guided sections with nested subsections, a bulleted list, two tables, and
+// the 20 numbered references the inline [n] superscripts cite.
+const PRIYA_ARTICLE: WikiArticleOut = {
+  id: "priya-nair",
+  title: "Priya Nair",
+  subtitle: "Person · pediatrician · machine-written from your notes",
+  infobox: {
+    title: "Priya Nair",
+    photo: true,
+    fields: [
+      { label: "Born", value: "Austin", citations: [1], link: true },
+      { label: "Sibling", value: "Jordan Hale (br.)", citations: [2], link: true },
+      { label: "Spouse", value: "Tom (m. 2021)", citations: [3], redLink: true },
+      { label: "Children", value: "Anaya, Mira", citations: [7], redLink: true },
+      { label: "Occupation", value: "Pediatrician", citations: [4] },
+      { label: "Practice", value: "Nair Pediatrics (2024–)", citations: [9], link: true },
+    ],
+  },
+  lead: [
+    {
+      kind: "p",
+      text: "Priya Nair is a pediatrician and the founder of [Nair Pediatrics](wiki:nair-pediatrics) in [Brookline](wiki:brookline).[9] She is the younger sister of [Jordan Hale](wiki:jordan-hale).[2]",
+    },
+  ],
+  sections: [
+    {
+      heading: "Early life",
+      domain: "general",
+      blocks: [
+        {
+          kind: "p",
+          text: "Nair grew up in [Austin](wiki:austin), Texas, where she was known within the family as a science enthusiast from an early age.[1] In 2019 she was admitted to medical school at [Johns Hopkins](wiki:johns-hopkins).[2]",
+        },
+      ],
+    },
+    {
+      heading: "Career",
+      domain: "general",
+      blocks: [
+        {
+          kind: "p",
+          text: "Nair is a pediatrician who trained at a children's clinic before founding her own practice.",
+        },
+      ],
+      subsections: [
+        {
+          heading: "Training and early career",
+          blocks: [
+            {
+              kind: "p",
+              text: "After completing her residency in 2022, Nair worked as a pediatrician at [Riverside Children's Clinic](wiki:riverside).[4]",
+            },
+          ],
+        },
+        {
+          heading: "Nair Pediatrics",
+          blocks: [
+            {
+              kind: "p",
+              text: "In 2024 she left Riverside to open her own practice, [Nair Pediatrics](wiki:nair-pediatrics), in [Brookline](wiki:brookline), where she currently practices.[9]",
+            },
+          ],
+        },
+        {
+          heading: "Talks and publications",
+          blocks: [
+            {
+              kind: "ul",
+              items: [
+                "Co-authored a paper on vaccine hesitancy in JAMA Pediatrics (2023).[16]",
+                "Presented at the regional conference on childhood nutrition (2024).[17]",
+                "Gave a talk at the state pediatric conference on childhood asthma (2025).[13]",
+              ],
+            },
+          ],
+        },
+      ],
+    },
+    {
+      heading: "Personal life",
+      domain: "general",
+      blocks: [
+        {
+          kind: "p",
+          text: "Nair married [Tom](redlink) in a small courthouse ceremony in 2021, attended only by family.[3] Their first daughter, [Anaya](redlink), was born in 2024,[7] and their second, [Mira](redlink), in 2026.[20] In 2025 the family moved to a larger home in [Brookline](wiki:brookline).[12]",
+        },
+        {
+          kind: "p",
+          text: "Nair is an accomplished marathon runner, improving her time in each successive race:",
+        },
+        {
+          kind: "table",
+          header: ["Event", "Year", "Time"],
+          rows: [
+            ["Boston", "2023", "3:52[5]"],
+            ["Chicago", "2024", "3:47[14]"],
+            ["NYC", "2025", "3:41[15]"],
+          ],
+        },
+        {
+          kind: "p",
+          text: "She is also regarded within the family as its best cook, known for her biryani.[10]",
+        },
+      ],
+    },
+    {
+      heading: "Health",
+      domain: "health",
+      blocks: [
+        {
+          kind: "p",
+          text: "Nair has a serious peanut allergy and carries an EpiPen.[6] She takes the following medications:",
+        },
+        {
+          kind: "table",
+          header: ["Medication", "Dose", "For"],
+          rows: [
+            ["Levothyroxine", "50 mcg", "Thyroid[18]"],
+            ["Cetirizine", "10 mg daily (spring)", "Seasonal allergies[19]"],
+          ],
+        },
+      ],
+    },
+    {
+      heading: "Finances",
+      domain: "finance",
+      blocks: [
+        {
+          kind: "p",
+          text: "In 2024 [Jordan Hale](wiki:jordan-hale) lent Nair $4,000 for clinic equipment[8]; the loan was repaid in full in 2025.[11]",
+        },
+      ],
+    },
+  ],
+  references: [
+    {
+      n: 1,
+      note_id: "note-priya-1",
+      meta: "Note · May 2, 2018",
+      domain: "general",
+      snippet: "Priya <mark>grew up in Austin</mark> — always the science nerd.",
+    },
+    {
+      n: 2,
+      note_id: "note-priya-2",
+      meta: "Note · Jun 10, 2019",
+      domain: "general",
+      snippet: "got into <mark>med school at Johns Hopkins</mark>! my little sister.",
+    },
+    {
+      n: 3,
+      note_id: "note-priya-3",
+      meta: "Note · Sep 2, 2021",
+      domain: "general",
+      snippet: "Priya <mark>married Tom</mark> at the courthouse — just family.",
+    },
+    {
+      n: 4,
+      note_id: "note-priya-4",
+      meta: "Note · Mar 15, 2022",
+      domain: "general",
+      snippet: "residency, started as a <mark>pediatrician at Riverside</mark>.",
+    },
+    {
+      n: 5,
+      note_id: "note-priya-5",
+      meta: "Note · Apr 18, 2023",
+      domain: "general",
+      snippet: "ran the <mark>Boston Marathon — 3:52</mark>!",
+    },
+    {
+      n: 6,
+      note_id: "note-priya-6",
+      meta: "Note · Nov 20, 2023",
+      domain: "health",
+      snippet: "carry her EpiPen — <mark>peanut allergy</mark> is serious.",
+    },
+    {
+      n: 7,
+      note_id: "note-priya-7",
+      meta: "Note · Jan 30, 2024",
+      domain: "general",
+      snippet: "Priya and Tom had a <mark>baby girl, Anaya</mark>.",
+    },
+    {
+      n: 8,
+      note_id: "note-priya-8",
+      meta: "Note · Jul 12, 2024",
+      domain: "finance",
+      snippet: "<mark>Lent Priya $4,000</mark> for clinic equipment.",
+    },
+    {
+      n: 9,
+      note_id: "note-priya-9",
+      meta: "Note · Sep 5, 2024",
+      domain: "general",
+      snippet: "<mark>left Riverside to open Nair Pediatrics in Brookline</mark>.",
+    },
+    {
+      n: 10,
+      note_id: "note-priya-10",
+      meta: "Note · Dec 1, 2024",
+      domain: "general",
+      snippet: "Priya's <mark>biryani</mark> — best cook in the family.",
+    },
+    {
+      n: 11,
+      note_id: "note-priya-11",
+      meta: "Note · May 20, 2025",
+      domain: "finance",
+      snippet: "<mark>paid back the $4,000 loan in full</mark>.",
+    },
+    {
+      n: 12,
+      note_id: "note-priya-12",
+      meta: "Note · Aug 10, 2025",
+      domain: "general",
+      snippet: "Priya and Tom <mark>moved to a bigger place in Brookline</mark>.",
+    },
+    {
+      n: 13,
+      note_id: "note-priya-13",
+      meta: "Note · Oct 1, 2025",
+      domain: "general",
+      snippet: "<mark>talk at the state pediatric conference on childhood asthma</mark>.",
+    },
+    {
+      n: 14,
+      note_id: "note-priya-14",
+      meta: "Note · Oct 13, 2024",
+      domain: "general",
+      snippet: "ran the <mark>Chicago Marathon — 3:47</mark>, a PR!",
+    },
+    {
+      n: 15,
+      note_id: "note-priya-15",
+      meta: "Note · Nov 2, 2025",
+      domain: "general",
+      snippet: "finished the <mark>NYC Marathon in 3:41</mark>.",
+    },
+    {
+      n: 16,
+      note_id: "note-priya-16",
+      meta: "Note · Jun 1, 2023",
+      domain: "general",
+      snippet: "co-authored a <mark>paper on vaccine hesitancy in JAMA Pediatrics</mark>.",
+    },
+    {
+      n: 17,
+      note_id: "note-priya-17",
+      meta: "Note · May 20, 2024",
+      domain: "general",
+      snippet: "<mark>presented at the regional conference on childhood nutrition</mark>.",
+    },
+    {
+      n: 18,
+      note_id: "note-priya-18",
+      meta: "Note · Mar 10, 2024",
+      domain: "health",
+      snippet: "started <mark>levothyroxine 50mcg</mark> for her thyroid.",
+    },
+    {
+      n: 19,
+      note_id: "note-priya-19",
+      meta: "Note · Apr 22, 2025",
+      domain: "health",
+      snippet: "takes <mark>cetirizine 10mg</mark> each day in spring.",
+    },
+    {
+      n: 20,
+      note_id: "note-priya-20",
+      meta: "Note · Feb 9, 2026",
+      domain: "general",
+      snippet: "Priya and Tom had a <mark>second girl, Mira</mark>.",
+    },
+  ],
+};
+
+const WIKI_ARTICLES: Record<string, WikiArticleOut> = {
+  [PRIYA_ARTICLE.id]: PRIYA_ARTICLE,
+};
 
 // ===== Phase 3 fixtures: analysis, entities, review, usage =====
 
@@ -1713,6 +1998,12 @@ export const mockFetch: typeof fetch = async (input, init) => {
   if (entityMatch && method === "GET") {
     const entity = ENTITIES[decodeURIComponent(entityMatch[1] ?? "")];
     return entity ? json(entity) : json({ detail: "entity not found" }, 404);
+  }
+
+  const wikiMatch = path.match(/^\/api\/wiki\/([^/]+)$/);
+  if (wikiMatch && method === "GET") {
+    const article = WIKI_ARTICLES[decodeURIComponent(wikiMatch[1] ?? "")];
+    return article ? json(article) : json({ detail: "article not found" }, 404);
   }
 
   if (path === "/api/review" && method === "GET") {

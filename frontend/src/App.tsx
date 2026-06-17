@@ -27,6 +27,7 @@ import { ReviewScreen } from "./screens/ReviewScreen";
 import { RunsScreen } from "./screens/RunsScreen";
 import { SearchScreen } from "./screens/SearchScreen";
 import { SettingsScreen } from "./screens/SettingsScreen";
+import { WikiScreen } from "./screens/WikiScreen";
 import { useBackGesture } from "./useBackGesture";
 
 type Session =
@@ -44,7 +45,8 @@ type Card =
   | "entities"
   | "lists"
   | "calendar"
-  | "graph";
+  | "graph"
+  | "wiki";
 
 // Automations brings its own full-screen overlay (its own back bar + slide-in),
 // so it renders outside the shared subscreen TopBar wrapper — hence no entry
@@ -59,6 +61,7 @@ const SCREEN_TITLES: Record<Exclude<Card, "automations">, string> = {
   lists: "Lists",
   calendar: "Calendar",
   graph: "Map",
+  wiki: "Wiki",
 };
 
 const CARD_EXIT_MS = 150;
@@ -373,7 +376,7 @@ export function App() {
 
       {/* Automations is a self-contained full-screen overlay (its own back bar +
           slide-in), rendered below — it skips the shared subscreen TopBar. */}
-      {card !== null && card !== "automations" && (
+      {card !== null && card !== "automations" && card !== "wiki" && (
         <div
           className={`subscreen${cardClosing ? " subscreen-closing" : ""}`}
           ref={subRef}
@@ -421,6 +424,19 @@ export function App() {
         <AutomationsScreen onClose={closeAutomations} onOpenRuns={() => setRunsOpen(true)} />
       )}
       {runsOpen && <RunsScreen onClose={() => setRunsOpen(false)} />}
+
+      {/* The wiki reader brings its own subscreen + TopBar (like the entity
+          page), so it renders outside the shared wrapper. B1 opens a fixed
+          fixture article; article navigation arrives in a later wave. */}
+      {card === "wiki" && (
+        <div className={cardClosing ? "wiki-layer-closing" : undefined}>
+          <WikiScreen
+            articleId="priya-nair"
+            syncStatus={notes.syncStatus}
+            onClose={closeCardToLauncher}
+          />
+        </div>
+      )}
 
       {listView !== null && (
         <ListDetailScreen
