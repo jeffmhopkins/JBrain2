@@ -47,6 +47,9 @@ class Entity(Base):
     domain_code: Mapped[str] = mapped_column(Text, ForeignKey("app.domains.code"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # The entity half of the wiki mark-and-sweep (migration 0046). Flipped back to false in
+    # Postgres on any fact/mention/identity change; the builder sets it true once incorporated.
+    wiki_built: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
 
 
 class EntityAlias(Base):
