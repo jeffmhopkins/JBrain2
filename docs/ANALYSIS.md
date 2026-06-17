@@ -446,7 +446,12 @@ hardware-tested `kyuz0/amd-strix-halo-toolboxes` llama.cpp image (Vulkan/RADV by
 default; a `rocm-*` tag is selectable via `LOCAL_LLM_BASE` and is faster but
 needs `/dev/kfd` + `seccomp=unconfined`), with llama-swap layered on. Host
 prerequisites the image can't supply: **kernel ≥ 6.18.4** (older has a gfx1151
-stability bug) and avoid `linux-firmware-20251125` (breaks ROCm). The catalog is
+stability bug) and avoid `linux-firmware-20251125` (breaks ROCm). The optional
+`scripts/strix-halo-host-setup.sh` (`jbrain strix-halo-host-setup`) applies the
+host tweaks from strix-halo-toolboxes.com — kernel params
+(`amdgpu.gttsize`/`ttm.pages_limit`/`amd_iommu=off` for the ~124GB unified pool),
+GPU device permissions, and a `tuned` perf profile — and is never run by the
+installer (it edits GRUB and needs a reboot). The catalog is
 the single source of truth — the settings screen surfaces enabled models as
 routing choices (vision tasks filter to vision-capable ones) and
 `scripts/local-llm-setup.sh` reads its JSON manifest to download weights. Tuned

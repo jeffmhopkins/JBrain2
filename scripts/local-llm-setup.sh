@@ -148,9 +148,8 @@ PY
 
 # The gateway container must join the HOST's video/render group GIDs to open
 # /dev/dri/renderD128. Prefer the device's actual owning GID (authoritative);
-# fall back to the named groups. Warn if we can't resolve any — the compose
-# name fallback then relies on the groups created in the image, which won't match
-# host device ownership and will likely fail to open the GPU.
+# fall back to the named groups. Warn if we can't resolve any — without a numeric
+# host GID the container likely can't open /dev/dri.
 RENDER_GID="$(stat -c %g /dev/dri/renderD128 2>/dev/null || getent group render | cut -d: -f3 || true)"
 VIDEO_GID="$(getent group video | cut -d: -f3 || true)"
 if [ -z "$RENDER_GID" ] && [ -z "$VIDEO_GID" ]; then
@@ -178,3 +177,7 @@ docker compose --profile local-llm up -d
 
 say "Done. Local models are now selectable in Settings → LLM. They stay OFF as"
 say "defaults — route specific tasks/tiers to them from that screen."
+if [ ! -e /dev/kfd ] && [ -e /dev/dri ]; then
+  say "Tip: for host tuning (unified-memory sizing, perf profile) see"
+  say "  'jbrain strix-halo-host-setup' (one-time, needs a reboot)."
+fi
