@@ -162,22 +162,24 @@ async def test_get_landing_groups_recent_and_hubs(maker: async_sessionmaker) -> 
     await _owner_pid(maker)
     priya = await _build(maker, "Priya Nair", "Person", [("general", f"p {i}") for i in range(3)])
     await _build(maker, "Globex", "Organization", [("general", f"g {i}") for i in range(3)])
-    # A link INTO Priya's entity makes her a hub (the builder counts inbound by entity_ref).
+    # A link from Globex's article INTO Priya's article makes her a hub (counted by to_article_id).
     async with scoped_session(maker, OWNER) as s:
-        other_section = (
+        other_section, priya_article = (
             await s.execute(
                 text(
-                    "SELECT s.id FROM app.wiki_sections s JOIN app.wiki_articles a"
-                    " ON a.id = s.article_id WHERE a.title = 'Globex' LIMIT 1"
-                )
+                    "SELECT (SELECT s.id FROM app.wiki_sections s JOIN app.wiki_articles a"
+                    "         ON a.id = s.article_id WHERE a.title = 'Globex' LIMIT 1),"
+                    "       (SELECT id FROM app.wiki_articles WHERE entity_ref = :p)"
+                ),
+                {"p": priya},
             )
-        ).scalar()
+        ).one()
         await s.execute(
             text(
-                "INSERT INTO app.wiki_links (from_section_id, to_entity_id, anchor, domain_code)"
-                " VALUES (:s, :e, 'Priya', 'general')"
+                "INSERT INTO app.wiki_links (from_section_id, to_entity_id, to_article_id, anchor,"
+                " domain_code) VALUES (:s, :e, :a, 'Priya', 'general')"
             ),
-            {"s": other_section, "e": priya},
+            {"s": other_section, "e": priya, "a": priya_article},
         )
     landing = await WikiReadStore(maker).get_landing(OWNER)
     titles = {e["title"] for e in landing["recent"]}
@@ -193,21 +195,22 @@ async def test_self_links_do_not_make_a_hub(maker: async_sessionmaker) -> None:
     await _owner_pid(maker)
     eid = await _build(maker, "Solo", "Organization", [("general", f"s {i}") for i in range(3)])
     async with scoped_session(maker, OWNER) as s:
-        own_section = (
+        own_section, own_article = (
             await s.execute(
                 text(
-                    "SELECT sec.id FROM app.wiki_sections sec JOIN app.wiki_articles a"
+                    "SELECT sec.id, a.id FROM app.wiki_sections sec JOIN app.wiki_articles a"
                     " ON a.id = sec.article_id WHERE a.entity_ref = :e LIMIT 1"
                 ),
                 {"e": eid},
             )
-        ).scalar()
+        ).one()
+        # A link from Solo's own section into Solo's own article — must be excluded from hubs.
         await s.execute(
             text(
-                "INSERT INTO app.wiki_links (from_section_id, to_entity_id, anchor, domain_code)"
-                " VALUES (:s, :e, 'Solo', 'general')"
+                "INSERT INTO app.wiki_links (from_section_id, to_entity_id, to_article_id, anchor,"
+                " domain_code) VALUES (:s, :e, :a, 'Solo', 'general')"
             ),
-            {"s": own_section, "e": eid},
+            {"s": own_section, "e": eid, "a": own_article},
         )
     landing = await WikiReadStore(maker).get_landing(OWNER)
     assert not any(h["title"] == "Solo" for h in landing["hubs"])

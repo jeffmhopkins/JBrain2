@@ -483,7 +483,13 @@ class WikiBuilder:
         """Get-or-create a same-domain `derived` copy of the source chunk (mirrors
         AnalysisPipeline._citation_chunk): the citable chunk for a ratcheted fact. Keyed on
         (note, fact_domain, source_anchor) so a rebuild reuses rather than duplicates. No
-        embedding — derived chunks are citation backing, excluded from search."""
+        embedding — derived chunks are citation backing, excluded from search.
+
+        BELT-AND-SUSPENDERS: the analysis pipeline already re-points a ratcheted fact's
+        `chunk_id` to its same-domain derived chunk at materialization (contract §3), so in
+        normal flow `_source` sees chunk.domain == fact.domain and never calls this. It only
+        fires for a fact whose stored chunk is somehow still lower-domain — the firewall would
+        otherwise reject the citation — so it is kept as a guarantee, not the primary path."""
         src = str(source_chunk_id)
         existing = (
             await session.execute(
@@ -633,14 +639,27 @@ class WikiBuilder:
             text("DELETE FROM app.wiki_links WHERE from_section_id = :s"), {"s": section_id}
         )
         for link in section.links:
+            # Resolve the target entity to its active article (system-scoped) so the link carries
+            # to_article_id — what powers the landing's "most connected" count and a future
+            # article→article jump. Null when the target has no article yet (a red-link target).
+            to_article = (
+                await session.execute(
+                    text(
+                        "SELECT id FROM app.wiki_articles"
+                        " WHERE entity_ref = :e AND status = 'active'"
+                    ),
+                    {"e": link.to_entity_id},
+                )
+            ).scalar()
             await session.execute(
                 text(
-                    "INSERT INTO app.wiki_links (from_section_id, to_entity_id, anchor,"
-                    " domain_code) VALUES (:s, :e, :anc, :d)"
+                    "INSERT INTO app.wiki_links (from_section_id, to_entity_id, to_article_id,"
+                    " anchor, domain_code) VALUES (:s, :e, :a, :anc, :d)"
                 ),
                 {
                     "s": section_id,
                     "e": link.to_entity_id,
+                    "a": to_article,
                     "anc": link.anchor,
                     "d": section.domain_code,
                 },

@@ -85,7 +85,7 @@ class WikiReadStore:
             art = (
                 await session.execute(
                     text(
-                        "SELECT id, title, kind, lead_summary, image_sha"
+                        "SELECT id, title, kind, lead_summary"
                         " FROM app.wiki_articles WHERE id = :a AND status = 'active'"
                     ),
                     {"a": aid},
@@ -131,6 +131,12 @@ class WikiReadStore:
             refs = (
                 await session.execute(
                     text(
+                        # Phase-7 note: the date comes from the source note (n.created_at). For a
+                        # ratcheted citation the note can be a LOWER domain than the section, so
+                        # under a future narrowed (capability) session the notes-RLS would filter
+                        # it and silently drop an otherwise-visible reference. Owner-only today
+                        # masks it; when scoped readers land, carry the date on the (same-domain)
+                        # citation/chunk so the card never dereferences the note across a firewall.
                         "SELECT DISTINCT c.seq, c.note_id, c.domain_code, n.created_at, ch.text"
                         " FROM app.wiki_citations c"
                         " JOIN app.wiki_revisions r ON r.id = c.revision_id"
@@ -148,12 +154,10 @@ class WikiReadStore:
             "id": str(art.id),
             "title": art.title,
             "subtitle": f"{kind} · machine-written from your notes",
-            "infobox": {
-                "title": art.title,
-                "kind": kind,
-                "photo": bool(art.image_sha),
-                "fields": [],
-            },
+            # The infobox renders the entity-type disc. (An owner-set profile image is a deferred
+            # follow-on — entities.image_sha + the entity-view upload + a build-time copy — so no
+            # `photo` is emitted today; the reader falls back to the disc.)
+            "infobox": {"title": art.title, "kind": kind, "fields": []},
             "lead": (
                 [{"kind": "p", "text": _CITE_MARKER.sub("", art.lead_summary).strip()}]
                 if art.lead_summary
@@ -188,16 +192,15 @@ class WikiReadStore:
             hubs = (
                 await session.execute(
                     text(
-                        # Inbound links count via the soft entity ref the builder populates
-                        # (`to_entity_id` = the target's `entity_ref`); the count is post-RLS,
-                        # so a scoped principal's hub totals equal their visible links. Only
-                        # CROSS-article links count — a link from the article's own section
-                        # (a self/reflexive relationship fact) is excluded, else an entity would
-                        # be reported as a hub of itself.
+                        # Inbound article links count via `to_article_id` (the builder resolves it
+                        # to the target's active article); the count is post-RLS, so a scoped
+                        # principal's hub totals equal their visible links. Only CROSS-article
+                        # links count — a link from the article's own section (a self/reflexive
+                        # relationship fact) is excluded, else an entity would be a hub of itself.
                         "SELECT a.id, a.title, a.kind, a.lead_summary,"
                         "   count(l.id) FILTER (WHERE fs.article_id <> a.id) AS links"
                         " FROM app.wiki_articles a"
-                        " LEFT JOIN app.wiki_links l ON l.to_entity_id = a.entity_ref"
+                        " LEFT JOIN app.wiki_links l ON l.to_article_id = a.id"
                         " LEFT JOIN app.wiki_sections fs ON fs.id = l.from_section_id"
                         " WHERE a.status = 'active'"
                         " GROUP BY a.id, a.title, a.kind, a.lead_summary"

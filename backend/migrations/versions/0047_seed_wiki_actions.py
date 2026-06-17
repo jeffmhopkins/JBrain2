@@ -11,8 +11,9 @@ Schedules (UTC, staggered after the 02:00 graph sweeps + 03:00 eval, per §3b). 
 seeded DISABLED in C2a: the builder ships with the deterministic `StubRewriter` (terse,
 non-prose), so auto-running it nightly would populate the live wiki + the landing/search rails
 with placeholder articles. The schedules are Ops-fireable on demand (manual triggers) for
-testing, and Wave C2b — which swaps in the LLM rewriter + grounding gate — enables the nightly
-`wiki_refresh` (03:30) and `wiki_prune` (03:45). `wiki_rebuild`/`wiki_reindex` stay Ops-manual.
+testing; a SEPARATE migration (0048, with Wave C2b's LLM rewriter + grounding gate) flips the
+nightly `wiki_refresh` (03:30) and `wiki_prune` (03:45) to enabled. `wiki_rebuild`/`wiki_reindex`
+stay Ops-manual (disabled schedule).
 
 `next_run_at` is seeded app-side-advanceable; a fixed UUID per trigger makes it addressable by
 the Ops/run-log surfaces across environments.
