@@ -795,30 +795,15 @@ class WikiBuilder:
         """Post one Build-log entry for a just-built article, in its OWN transaction (the build is
         already committed). Best-effort: the Build log is cosmetic editorial metadata, so a failure
         here is logged and swallowed — it must never undo a real build. Find-or-creates the
-        article's single `build_log` topic via the partial-unique-index arbiter, then appends the
-        builder post and bumps `last_post_at` in the same transaction (post+bump stay atomic)."""
+        article's single `build_log` topic SELECT-first (the common sequential path reuses it), with
+        a bare `ON CONFLICT DO NOTHING` + re-select backstop for the rare two-concurrent-runs race
+        (the partial unique index is the integrity guard); then appends the builder post and bumps
+        `last_post_at` in the same transaction (post + bump stay atomic)."""
         if note is None:
             return
         try:
             async with scoped_session(self._maker, SYSTEM_CTX) as session:
-                # The ON CONFLICT predicate is REQUIRED for Postgres to infer the partial index.
-                await session.execute(
-                    text(
-                        "INSERT INTO app.wiki_talk_topics (article_id, kind, title)"
-                        " VALUES (:a, 'build_log', 'Build log')"
-                        " ON CONFLICT (article_id) WHERE kind = 'build_log' DO NOTHING"
-                    ),
-                    {"a": note.article_id},
-                )
-                topic_id = (
-                    await session.execute(
-                        text(
-                            "SELECT id FROM app.wiki_talk_topics"
-                            " WHERE article_id = :a AND kind = 'build_log'"
-                        ),
-                        {"a": note.article_id},
-                    )
-                ).scalar()
+                topic_id = await self._build_log_topic(session, note.article_id)
                 await session.execute(
                     text(
                         "INSERT INTO app.wiki_talk_posts (topic_id, author, body)"
@@ -833,3 +818,43 @@ class WikiBuilder:
                 await session.commit()
         except Exception:  # noqa: BLE001 — cosmetic Build-log post must never fail a build
             log.warning("wiki_build_log_post_failed", article_id=str(note.article_id))
+
+    @staticmethod
+    async def _build_log_topic(session: AsyncSession, article_id: uuid.UUID) -> uuid.UUID:
+        """Find-or-create the article's single `build_log` topic. SELECT-first so a rebuild reuses
+        the existing topic; the bare ON CONFLICT DO NOTHING + re-select only matters if two builds
+        of the same article race (the partial unique index keeps it to one topic regardless)."""
+        existing = (
+            await session.execute(
+                text(
+                    "SELECT id FROM app.wiki_talk_topics"
+                    " WHERE article_id = :a AND kind = 'build_log'"
+                ),
+                {"a": article_id},
+            )
+        ).scalar()
+        if existing is not None:
+            return existing
+        inserted = (
+            await session.execute(
+                text(
+                    "INSERT INTO app.wiki_talk_topics (article_id, kind, title)"
+                    " VALUES (:a, 'build_log', 'Build log') ON CONFLICT DO NOTHING RETURNING id"
+                ),
+                {"a": article_id},
+            )
+        ).scalar()
+        if inserted is not None:
+            return inserted
+        # Lost the race: the concurrent run created it — re-select the winner's id.
+        won = (
+            await session.execute(
+                text(
+                    "SELECT id FROM app.wiki_talk_topics"
+                    " WHERE article_id = :a AND kind = 'build_log'"
+                ),
+                {"a": article_id},
+            )
+        ).scalar()
+        assert won is not None  # a row exists: either ours or the concurrent winner's
+        return won
