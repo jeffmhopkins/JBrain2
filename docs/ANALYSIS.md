@@ -439,14 +439,21 @@ returns outside those groups fall into an "Other" group, so nothing is dropped.
 stock deploy is cloud-only and no default ever points at `local`. An operator
 enables it at install (or `jbrain enable-local-models`), which provisions a
 curated set from `jbrain.llm.local_catalog` and starts the `local-llm` compose
-profile: a llama-swap gateway fronting llama.cpp (Vulkan) so several GGUF models
-share one OpenAI endpoint. The catalog is the single source of truth — the
-settings screen surfaces enabled models as routing choices (vision tasks filter
-to vision-capable ones) and `scripts/local-llm-setup.sh` reads its JSON manifest
-to download weights. Tuned for an AMD Strix Halo class box (large unified
-memory, ~256 GB/s): MoE / small-dense models only. Recommended set is
-**Qwen3-VL-30B-A3B** (vision + cheap text) and **gpt-oss-120b** (reasoning),
-kept resident together; routing stays a deliberate per-task/tier choice.
+profile: a llama-swap gateway so several GGUF models share one OpenAI endpoint.
+Rather than build llama.cpp ourselves (a moving target against the gfx1151
+Vulkan/ROCm runtime), the gateway image is based on the community-maintained,
+hardware-tested `kyuz0/amd-strix-halo-toolboxes` llama.cpp image (Vulkan/RADV by
+default; a `rocm-*` tag is selectable via `LOCAL_LLM_BASE` and is faster but
+needs `/dev/kfd` + `seccomp=unconfined`), with llama-swap layered on. Host
+prerequisites the image can't supply: **kernel ≥ 6.18.4** (older has a gfx1151
+stability bug) and avoid `linux-firmware-20251125` (breaks ROCm). The catalog is
+the single source of truth — the settings screen surfaces enabled models as
+routing choices (vision tasks filter to vision-capable ones) and
+`scripts/local-llm-setup.sh` reads its JSON manifest to download weights. Tuned
+for an AMD Strix Halo class box (large unified memory, ~256 GB/s): MoE /
+small-dense models only. Recommended set is **Qwen3-VL-30B-A3B** (vision + cheap
+text) and **gpt-oss-120b** (reasoning), kept resident together; routing stays a
+deliberate per-task/tier choice.
 
 **Token accounting [decided]**: every adapter call persists a usage row
 (`llm_usage`: task, provider, model, input/output tokens, timestamp) —

@@ -153,12 +153,18 @@ services:
     build:
       context: ./src
       dockerfile: deploy/Dockerfile.local-llm
+      args:
+        # Selectable gfx1151 base (default Vulkan/RADV). Set LOCAL_LLM_BASE to a
+        # rocm-* tag — or pin a @sha256 digest — to switch the backend.
+        LOCAL_LLM_BASE: ${LOCAL_LLM_BASE:-docker.io/kyuz0/amd-strix-halo-toolboxes:vulkan-radv}
     restart: unless-stopped
     # Read the config from the /models mount — no separate single-file bind mount
     # (a missing file would make Docker create a directory and wedge the gateway).
     command: ["llama-swap", "--listen", ":8080", "--config", "/models/llama-swap.yaml"]
     devices:
       - /dev/dri:/dev/dri
+    # The Vulkan default needs only /dev/dri. The ROCm base additionally needs
+    # `- /dev/kfd:/dev/kfd` here and `security_opt: [seccomp:unconfined]`.
     # The container must join the HOST's video/render group GIDs to open
     # /dev/dri/renderD128 — group *names* rarely line up across host/container.
     # The setup script writes the numeric host GIDs; names are the fallback.
