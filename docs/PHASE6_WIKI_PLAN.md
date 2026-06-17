@@ -375,6 +375,18 @@ ROADMAP listed under Phase 6 — **entity hygiene, summary re-embedding, tag con
 (distinct from `wiki_reindex`, which only re-embeds wiki summaries). Each is engine-action
 work on the Phase-5 pattern, deferred — not silently dropped.
 
+**Deferred wiki sub-features (built half-way, explicitly tracked, not implied-working):**
+- **Entity profile images** — `wiki_articles.image_sha` exists as a forward column but has no
+  writer; `entities.image_sha` + the entity-view upload + the build-time copy are unbuilt, so the
+  reader emits no `photo` (it shows the type disc). Land the full chain together.
+- **Inline wiki→wiki links in prose** — `wiki_links.to_article_id` is now populated (the landing
+  hubs use it), but the rewriter does not yet emit `[label](target)` markers in the body, so the
+  reader's live/red-link rendering path is dormant. Add link emission to the rewriter when this
+  lands.
+- **B2b·2 frontend** — the Talk board surface + the reader's "Discuss this article" → correction
+  submit are the remaining Phase-6 frontend; the backend (`/wiki/{id}/corrections`, the
+  `read_wiki` agent tool) is shipped.
+
 ## 8. Non-negotiables (CLAUDE.md) + exit
 
 Adapter-only LLM; storage abstraction; **firewalls enforced in Postgres** (the citation +

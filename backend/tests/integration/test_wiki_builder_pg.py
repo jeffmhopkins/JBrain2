@@ -679,3 +679,38 @@ async def test_prune_archives_an_orphaned_article(maker: async_sessionmaker) -> 
             )
         ).scalar()
         assert status == "archived"
+
+
+async def test_link_resolves_to_article_id_when_target_has_an_article(
+    maker: async_sessionmaker,
+) -> None:
+    # A relationship fact's link now carries to_article_id when the target entity has an active
+    # article (powers the landing hubs + a future article→article jump).
+    target = await _entity(maker, "general", "Globex")
+    for i in range(3):  # make the target notable so it gets an article
+        await _fact(maker, target, "general", f"Globex fact {i}")
+    subject = await _entity(maker, "general", "Celine")
+    for i in range(2):
+        await _fact(maker, subject, "general", f"Celine fact {i}")
+    await _fact(maker, subject, "general", "Celine works at Globex", object_entity_id=target)
+    builder, _ = _builder(maker)
+    await builder.refresh()
+    async with scoped_session(maker, OWNER) as s:
+        target_article = (
+            await s.execute(
+                text("SELECT id FROM app.wiki_articles WHERE entity_ref = :e"), {"e": target}
+            )
+        ).scalar()
+        to_article = (
+            await s.execute(
+                text(
+                    "SELECT l.to_article_id FROM app.wiki_links l"
+                    " JOIN app.wiki_sections sec ON sec.id = l.from_section_id"
+                    " JOIN app.wiki_articles a ON a.id = sec.article_id"
+                    " WHERE a.entity_ref = :e AND l.to_entity_id = :t"
+                ),
+                {"e": subject, "t": target},
+            )
+        ).scalar()
+        assert to_article is not None
+        assert str(to_article) == str(target_article)
