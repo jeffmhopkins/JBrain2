@@ -1,0 +1,50 @@
+[
+  {
+    "id": "temporal-age-resolves-to-birthdate",
+    "category": "temporal",
+    "domain": "general",
+    "note_text": "My dog Boss is about 8 years old.",
+    "advisory": true,
+    "expect": {
+      "facts": [
+        {
+          "entity": "Boss",
+          "predicate": "birthDate",
+          "kind": "attribute"
+        }
+      ],
+      "absent_facts": [
+        {
+          "predicate": "age"
+        }
+      ],
+      "rationale": "Age is relative-to-now and goes stale, so v20 resolves it to an approximate birthDate attribute, never a static `age` value (which also misfires the new_predicate card on the unknown `age` spelling). The exact birth year depends on the capture anchor, so only the predicate/kind and the ABSENCE of `age` are asserted; advisory because the precision (year vs era) is model latitude."
+    }
+  },
+  {
+    "id": "temporal-dated-range-job-is-closed-history",
+    "category": "temporal",
+    "domain": "general",
+    "note_text": "I worked at the US Army from 2008 to 2016, and I currently work at SpaceX.",
+    "advisory": true,
+    "expect": {
+      "facts": [
+        {
+          "entity": "Me",
+          "predicate": "worksFor",
+          "object": "US Army",
+          "kind": "state",
+          "former": true
+        },
+        {
+          "entity": "Me",
+          "predicate": "worksFor",
+          "object": "SpaceX",
+          "kind": "state",
+          "former": false
+        }
+      ],
+      "rationale": "An explicit dated range ('from 2008 to 2016') is a CLOSED interval (both bounds set), so the past job records as bounded history (former) beside the current open job — the two coexist as a work history rather than the past job staying open and forcing a functional-worksFor fact_conflict. Advisory because real-Grok temporal resolution of the range end is the thing under test."
+    }
+  }
+]
