@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Wiki landing — B — catalog / portal</title>
+<style>
+  :root{
+    --bg:#0E0F11;--surface:#17181B;--surface-2:#1E2024;--border:#26282C;
+    --text:#E6E7E9;--text-2:#9A9DA3;--text-3:#5C5F66;
+    --steel:#7FA7C9;--green:#8FBC9A;--amber:#C9A36A;--rose:#CF8A8F;--violet:#A493C9;--shadow:rgba(0,0,0,.45);
+  }
+  [data-theme="light"]{
+    --bg:#F7F7F5;--surface:#FFFFFF;--surface-2:#F0F0EE;--border:#E2E2DF;
+    --text:#1A1B1E;--text-2:#5C5F66;--text-3:#9A9DA3;
+    --steel:#7FA7C9;--green:#8FBC9A;--amber:#C9A36A;--rose:#CF8A8F;--violet:#A493C9;--shadow:rgba(20,30,50,.12);
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  body{margin:0;background:#05070a;font:15px/1.5 -apple-system,system-ui,sans-serif;display:grid;place-items:center;min-height:100vh;color:var(--text)}
+  .phone{width:390px;height:800px;background:var(--bg);border-radius:30px;overflow:hidden;position:relative;box-shadow:0 20px 60px var(--shadow);display:flex;flex-direction:column}
+  .topbar{height:56px;flex:0 0 56px;display:flex;align-items:center;gap:9px;padding:0 14px;border-bottom:1px solid var(--border);background:var(--surface)}
+  .brand{display:flex;align-items:center;gap:7px;flex:1;font-weight:700;font-size:16px}
+  .brand .dot{width:9px;height:9px;border-radius:50%;background:var(--steel)}
+  .icon-btn{width:36px;height:36px;display:grid;place-items:center;border-radius:9px;color:var(--text-2);background:transparent;border:0;cursor:pointer}
+  .icon-btn:hover{background:var(--surface-2);color:var(--text)}
+  svg{width:20px;height:20px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+  .fixed{padding:12px 16px 8px;border-bottom:1px solid var(--border);background:var(--bg)}
+  .search{display:flex;align-items:center;gap:8px;background:var(--surface-2);border:1px solid var(--border);border-radius:12px;padding:10px 13px;color:var(--text-3);font-size:14px}
+  .search svg{width:18px;height:18px}
+  .chips{display:flex;gap:7px;overflow-x:auto;margin-top:10px}
+  .chip{flex:0 0 auto;font-size:12px;padding:5px 11px;border-radius:18px;border:1px solid var(--border);color:var(--text-2);cursor:pointer}
+  .chip.on{background:var(--surface-2);color:var(--text);border-color:var(--steel)}
+  .scroll{overflow-y:auto;flex:1;padding:6px 16px 30px}
+  .sec{margin-top:14px}
+  .sechead{display:flex;align-items:baseline;gap:8px;border-bottom:2px solid var(--accent);padding-bottom:5px;margin-bottom:6px}
+  .sechead .h{font-family:Georgia,serif;font-size:18px;flex:1}
+  .sechead .c{font-size:11px;color:var(--text-3)}
+  .sechead .ldot{width:9px;height:9px;border-radius:50%;background:var(--accent)}
+  .row{display:flex;align-items:flex-start;gap:11px;padding:9px 0;border-bottom:1px solid var(--border);cursor:pointer}
+  .row:last-child{border-bottom:0}
+  .disc{width:32px;height:32px;border-radius:50%;flex:0 0 32px;display:grid;place-items:center;background:color-mix(in srgb,var(--accent) 16%,transparent);color:var(--accent)}
+  .disc svg{width:18px;height:18px}
+  .tx .t{font-weight:600;font-size:14px}
+  .tx .blurb{font-size:12px;color:var(--text-2);line-height:1.35;margin-top:1px}
+</style>
+</head>
+<body>
+<div class="phone">
+  <div class="topbar">
+    <div class="brand"><span class="dot"></span>Wiki</div>
+    <button class="icon-btn" id="theme"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4.5"/><path d="M12 2v2M12 20v2M4 12H2M22 12h-2M5 5l1.5 1.5M17.5 17.5L19 19M19 5l-1.5 1.5M6.5 17.5L5 19"/></svg></button>
+  </div>
+  <div class="fixed">
+    <div class="search"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg>Search the wiki…</div>
+    <div class="chips"><span class="chip on">All · 8</span><span class="chip">People</span><span class="chip">Orgs</span><span class="chip">Places</span><span class="chip">Projects</span></div>
+  </div>
+
+  <div class="scroll">
+    <div class="sec" style="--accent:var(--steel)">
+      <div class="sechead"><span class="ldot"></span><span class="h">People</span><span class="c">2 articles · A–Z</span></div>
+      <div class="row"><div class="disc"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-7 8-7s8 3 8 7"/></svg></div><div class="tx"><div class="t">Celine Hopkins</div><div class="blurb">Software engineer at Globex; the owner's spouse, based in Denver.</div></div></div>
+      <div class="row"><div class="disc"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-7 8-7s8 3 8 7"/></svg></div><div class="tx"><div class="t">Priya Nair</div><div class="blurb">Pediatrician; the owner's younger sister; founder of Nair Pediatrics.</div></div></div>
+    </div>
+    <div class="sec" style="--accent:var(--violet)">
+      <div class="sechead"><span class="ldot"></span><span class="h">Organizations</span><span class="c">2 articles</span></div>
+      <div class="row"><div class="disc"><svg viewBox="0 0 24 24"><path d="M3 21h18M5 21V7l7-4 7 4v14M9 21v-5h6v5"/></svg></div><div class="tx"><div class="t">Globex Corporation</div><div class="blurb">Tech company; Celine's employer since 2019.</div></div></div>
+      <div class="row"><div class="disc"><svg viewBox="0 0 24 24"><path d="M3 21h18M5 21V7l7-4 7 4v14M9 21v-5h6v5"/></svg></div><div class="tx"><div class="t">Nair Pediatrics</div><div class="blurb">Priya's pediatric practice in Brookline, opened 2024.</div></div></div>
+    </div>
+    <div class="sec" style="--accent:var(--green)">
+      <div class="sechead"><span class="ldot"></span><span class="h">Places</span><span class="c">2 articles</span></div>
+      <div class="row"><div class="disc"><svg viewBox="0 0 24 24"><path d="M12 21s-7-5.5-7-11a7 7 0 0114 0c0 5.5-7 11-7 11z"/><circle cx="12" cy="10" r="2.5"/></svg></div><div class="tx"><div class="t">Brookline</div><div class="blurb">Massachusetts town; where Priya lives and practices.</div></div></div>
+      <div class="row"><div class="disc"><svg viewBox="0 0 24 24"><path d="M12 21s-7-5.5-7-11a7 7 0 0114 0c0 5.5-7 11-7 11z"/><circle cx="12" cy="10" r="2.5"/></svg></div><div class="tx"><div class="t">Denver</div><div class="blurb">Colorado city; Celine's home.</div></div></div>
+    </div>
+    <div class="sec" style="--accent:var(--amber)">
+      <div class="sechead"><span class="ldot"></span><span class="h">Projects</span><span class="c">2 articles</span></div>
+      <div class="row"><div class="disc"><svg viewBox="0 0 24 24"><path d="M3 7l9-4 9 4-9 4-9-4zM3 12l9 4 9-4M3 17l9 4 9-4"/></svg></div><div class="tx"><div class="t">Kitchen remodel</div><div class="blurb">The owner's 2025 home renovation; budget tracked in Finances.</div></div></div>
+      <div class="row"><div class="disc"><svg viewBox="0 0 24 24"><path d="M3 7l9-4 9 4-9 4-9-4zM3 12l9 4 9-4M3 17l9 4 9-4"/></svg></div><div class="tx"><div class="t">Marathon training</div><div class="blurb">Priya's multi-year running goal; see her race table.</div></div></div>
+    </div>
+  </div>
+</div>
+<script>document.getElementById('theme').onclick=()=>{const h=document.documentElement;h.dataset.theme=h.dataset.theme==='dark'?'light':'dark'};
+document.querySelectorAll('.chip').forEach(c=>c.onclick=()=>{document.querySelectorAll('.chip').forEach(x=>x.classList.remove('on'));c.classList.add('on')});</script>
+</body>
+</html>
