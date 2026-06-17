@@ -137,8 +137,7 @@ function Detail({ item, lane, queue, position, onClose, onAdvance, onNav }: Deta
   const originalValue = editable ? valueLabel(parsed.valueJson, parsed.statement ?? "") : "";
   const [editValue, setEditValue] = useState(originalValue);
   const [editingValue, setEditingValue] = useState(false);
-  const valueEdited =
-    editable && editValue.trim().length > 0 && editValue.trim() !== originalValue;
+  const valueEdited = editable && editValue.trim().length > 0 && editValue.trim() !== originalValue;
 
   const originalPredicate = editable ? (parsed.predicate ?? "") : "";
   const [editPredicate, setEditPredicate] = useState(originalPredicate);

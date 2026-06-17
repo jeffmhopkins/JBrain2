@@ -298,7 +298,9 @@ describe("ReviewScreen (split inbox)", () => {
     );
     // A fact card is triage: deciding advances to the next item's detail (here the
     // BP conflict), and the undo snackbar offers a reversal.
-    expect(await screen.findByText("two blood_pressure values disagree for Me")).toBeInTheDocument();
+    expect(
+      await screen.findByText("two blood_pressure values disagree for Me"),
+    ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "undo" })).toBeInTheDocument();
   });
 
