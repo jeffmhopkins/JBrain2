@@ -483,3 +483,41 @@ def test_compute_signals_is_supersede_from_agent_proposal():
 def test_compute_signals_no_supersede_proposal_is_false():
     intent = _intent(entity_resolutions=[_res()], facts=[_fact(predicate="employer")])
     assert compute_signals(intent, ["x"])[0].is_supersede is False
+
+
+def test_correction_marks_surface_attested_fact_active_full_weight() -> None:
+    # A SURFACE-ATTESTED fact in a correction note commits active at full weight and is flagged
+    # a correction (so the executor force-supersedes + pins).
+    plan = plan_intent(
+        _intent(entity_resolutions=[_res()], facts=[_fact()]),
+        signals={0: _surface_sig()},
+        correction=True,
+    )
+    pf = plan.facts[0]
+    assert pf.weight == 1.0 and pf.status == "active" and pf.correction is True
+
+
+def test_inferred_fact_in_correction_note_is_not_elevated() -> None:
+    # An INFERRED fact inside a correction note must NOT be elevated or flagged a correction —
+    # a hallucinated value can't bypass the inferred ceiling or force-supersede a confident prior.
+    plan = plan_intent(
+        _intent(entity_resolutions=[_res()], facts=[_fact(inferred=True, predicate="coined_pred")]),
+        signals={0: ConfidenceSignals(False, False, True)},  # inferred, unknown, would-overwrite
+        correction=True,
+    )
+    pf = plan.facts[0]
+    assert pf.correction is False  # not a force-supersede
+    assert pf.weight < 1.0 and pf.status == "pending_review"  # normal capped/review path
+
+
+def test_correction_still_forced_to_review_by_a_safety_flag() -> None:
+    # A correction is authoritative on weight, but a cross-subject link is still held for review.
+    plan = plan_intent(
+        _intent(
+            entity_resolutions=[_res(cross_subject=True)],
+            facts=[_fact()],
+        ),
+        correction=True,
+    )
+    pf = plan.facts[0]
+    assert pf.status == "pending_review" and "cross_subject_link" in pf.review_reasons

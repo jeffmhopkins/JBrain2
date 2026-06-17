@@ -1,6 +1,7 @@
 """SQL notes repository. Every query runs on an RLS-scoped session, so
 domain filtering is enforced by Postgres, not by these methods."""
 
+import uuid
 from datetime import UTC, datetime
 
 from sqlalchemy import delete, select, update
@@ -70,6 +71,7 @@ class SqlNotesRepo:
         accuracy_m: float | None = None,
         provenance: str = "human",
         source_ref: str | None = None,
+        wiki_revision_id: uuid.UUID | None = None,
     ) -> tuple[NoteInfo, bool]:
         # FUTURE: ingestion (`ingest_note`) is enqueued by each caller (the notes
         # API, the proposal executor) rather than here — so a new write path can
@@ -95,6 +97,7 @@ class SqlNotesRepo:
                     location_accuracy_m=accuracy_m,
                     provenance=provenance,
                     source_ref=source_ref,
+                    wiki_revision_id=wiki_revision_id,
                     **captured,
                 )
                 session.add(note)

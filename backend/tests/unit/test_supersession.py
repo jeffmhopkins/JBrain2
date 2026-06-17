@@ -806,3 +806,69 @@ def test_non_functional_inverse_accumulates() -> None:
     )
     d = decide(candidate, [existing], predicate="employs")
     assert d.insert and not d.supersede_ids
+
+
+# --- owner correction: force-supersede + pin (Phase 6 §4) -----------------
+
+
+def test_correction_force_supersedes_current_head_and_pins() -> None:
+    # An owner correction on a single-head (state) address supersedes the active head
+    # and commits active + pinned, even when its validity is OLDER than the head's.
+    d = decide(
+        cand(correction=True, valid_from=T0, reported_at=T2),
+        [view(id="old-1", valid_from=T1, reported_at=T1)],
+    )
+    assert d.insert and d.insert_status == "active" and d.insert_pinned is True
+    assert d.supersede_ids == ["old-1"]
+
+
+def test_correction_with_no_existing_just_inserts_pinned() -> None:
+    d = decide(cand(correction=True), [])
+    assert d.insert and d.insert_pinned is True and not d.supersede_ids
+
+
+def test_correction_supersedes_even_a_pinned_head() -> None:
+    # A newer owner correction out-argues an older pinned correction (no manual re-flag).
+    d = decide(cand(correction=True), [view(id="old-1", pinned=True)])
+    assert d.insert_pinned is True and d.supersede_ids == ["old-1"]
+
+
+def test_correction_holds_a_pending_review_head_not_supersede() -> None:
+    d = decide(cand(correction=True), [view(id="old-1", status="pending_review")])
+    assert d.insert and d.insert_pinned is True
+    assert d.hold_ids == ["old-1"] and not d.supersede_ids
+
+
+def test_correction_identical_value_still_just_refreshes() -> None:
+    # Re-asserting the SAME current value is idempotent even under correction.
+    d = decide(
+        cand(correction=True, statement="lives at 12 Oak St", valid_from=T0, reported_at=T0),
+        [view()],
+    )
+    assert d.refresh_id == "old-1" and not d.insert
+
+
+def test_correction_on_accumulating_kind_does_not_force_supersede() -> None:
+    # A measurement is a time-series: a correction is a new datapoint / conflict, never a
+    # wholesale supersede of the series (the single-head guard excludes accumulating kinds).
+    d = decide(
+        cand(correction=True, kind="measurement", valid_from=T2, reported_at=T2),
+        [view(id="old-1", kind="measurement", valid_from=T1, reported_at=T1)],
+    )
+    assert not d.insert_pinned and not d.supersede_ids
+
+
+def test_non_correction_path_is_unchanged() -> None:
+    # The default (correction=False) candidate never pins and follows the normal path.
+    d = decide(cand(), [view(id="old-1")])
+    assert d.insert_pinned is False
+
+
+def test_correction_supersedes_all_active_heads() -> None:
+    # The branch collects supersede_ids from EVERY active head (not just one).
+    d = decide(
+        cand(correction=True),
+        [view(id="h1"), view(id="h2", statement="lives at 7 Elm")],
+    )
+    assert d.insert and d.insert_pinned is True
+    assert set(d.supersede_ids) == {"h1", "h2"}
