@@ -200,20 +200,42 @@ Pipeline (ARCHITECTURE.md §Wiki):
    review inbox** before enactment.
 6. **Re-embed** changed summaries into `wiki_index`.
 
-## 4. Correction-note loop — NEW owner-authored machinery (not a thin wrapper)
+## 4. Editorial discussion board ("Talk") + the correction loop
 
-"Discuss this article," anchored to a revision, must produce an **owner-authored,
-elevated-weight** correction note citing the disputed revision (ARCHITECTURE.md:117-120).
-The existing `propose_correction` (`agent/proposaltools.py`) produces an **agent**-authored
-note at **NORMAL** weight — the *wrong* path. So this is **new machinery**, not a wrapper:
-- an **owner-authored** note path (not the agent proposal tool);
-- a **revision-anchoring** mechanism (no column anchors a note to a `wiki_revision` today);
-- **verify the elevated-weight extraction path even exists** (grep found no "elevated"
-  in code; migration 0018 reserves elevated weight for owner corrections but the
-  pathway may be unimplemented).
+Like a Wikipedia **Talk page**: a persistent, article-anchored **editorial conversation**
+between the owner and the agent — the generalization of one-shot "discuss this article."
+The wiki stays machine-written; Talk is the **conversational front-end** over the
+sanctioned levers (correction note, source exclusion, rebuild, split/merge proposal).
 
-The note-creation + anchoring is graph-independent (it writes a note); its *effect* on
-articles is downstream of the gated builder.
+**Two voices write the thread:**
+- **The batch builder posts editorial-decision summaries** per build (Wikipedia's
+  bot-on-Talk behavior): "split off Finances", "dropped 2 uncited claims", "excluded
+  note X per your request", "merged …". Transparency into what changed and why.
+- **The interactive agent converses** — the **Phase-4 chat agent** given wiki context +
+  editorial tools (NOT the batch builder). It can **explain** the article (why a claim is
+  there, which note/run/guide produced it) by introspecting the **build run + citations +
+  type guide**, and it enacts outcomes.
+
+**Reuse, not new infra:** the agent loop / tool-calling / Proposals / transcript store
+(Phase 4). A Talk **thread = an agent session anchored to an `article_id`** (reuse
+`agent_sessions` + transcript; the builder's decision posts append to the same thread —
+durable editorial history). **New = a small set of wiki-editorial tools:**
+`explain_article` / `get_sources` (transparency), `file_correction`, `add_source_exclusion`,
+`request_rebuild`, `propose_split_merge`. Consequential actions are owner-approved via the
+Proposals primitive. **Owner-only**, with the **firewall on the agent's reads** (it can't
+surface a health source while discussing a general section).
+
+**Correction-note path (one Talk outcome) — NEW owner-authored machinery, not a thin
+wrapper.** A correction must be an **owner-authored, elevated-weight** note citing the
+disputed revision (ARCHITECTURE.md:117-120). The existing `propose_correction`
+(`agent/proposaltools.py`) produces an **agent**-authored note at **NORMAL** weight — the
+wrong path. So this needs: an owner-authored note path; a **revision-anchoring** column
+(none today anchors a note to a `wiki_revision`); and **verify the elevated-weight
+extraction path even exists** (grep found no "elevated" in code).
+
+**Coupling:** the thread storage + agent wiring + the owner-correction/anchoring are
+graph-independent (Wave B). The **explain-sources depth** and the **builder's
+decision-logging** read facts/citations → graph-coupled (gated, Wave C).
 
 ## 5. Read-only wiki UI — mock gate ✅ done; build against fixtures
 
@@ -224,6 +246,12 @@ were presented; the owner chose **A (prose), refined to read like Wikipedia**:
 sections**, and **Wikipedia-style numbered `[n]` citations → a References section**. Its
 rationale is recorded in `docs/mocks/wiki-reader-README.md` and lands in `DESIGN.md` when
 Wave B starts.
+
+**Second surface — the Talk board (§4) — needs its OWN mock gate (pending).** The
+discussion-thread view is distinct from the reader (a threaded conversation with the
+builder's decision posts + the owner/agent exchange + inline "this became a correction /
+exclusion / rebuild" markers). Three interactive mocks → owner pick, before its UI is
+built. Queue it alongside Wave B.
 
 Full-screen read-only surface, amber/read-only tint, the stubbed Wiki tile. Renders
 stored articles/sections/revisions; **wiki→wiki links** (a mentioned entity opens its
@@ -293,8 +321,11 @@ corrections in production today.
   ActionSpec **stub only** (no schedule seed yet).
 - **Wave B — UI (after the mock gate):** the read-only reader on fixtures, citation
   hover-cards, entity-chip nav, the **owner-authored** "discuss this article" → correction
-  path + revision anchoring; **the owner-only Rebuild / Exclude-source affordances** (§5).
-  Graph-independent.
+  path + revision anchoring; **the owner-only Rebuild / Exclude-source affordances** (§5);
+  **the editorial Talk board** (§4 — its own mock gate first): the thread surface, the
+  agent's wiki-editorial tools, and the thread↔article anchoring (reuse the Phase-4 agent +
+  transcript). Graph-independent (the explain-sources *depth* + builder decision-logging
+  ride Wave C).
 - **Wave C — builder brain (GATED on the rebuild contract #4–#5):** `wiki_citations`
   (hard FK + Postgres firewall CHECK + isolation test), delta-detection on the agreed
   feed, index-match triage, cited rewrite with the corrected citability predicate + the
