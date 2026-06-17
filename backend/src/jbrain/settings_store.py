@@ -120,6 +120,10 @@ ENTITY_PROMOTION_DEFAULT = False
 # live (a settings upsert) with no redeploy.
 REFLEXION_BUFFER_RETRY_KEY = "reflexion_buffer_retry"
 REFLEXION_BUFFER_RETRY_DEFAULT = False
+# Loop 2: surface active skills as a data-framed reference block at turn time. Default OFF in Wave 1
+# (none exist yet); flipped on once distillation + owner promotion (Wave 2) populate them.
+SKILLS_ENABLED_KEY = "skills_enabled"
+SKILLS_ENABLED_DEFAULT = False
 
 # Integration run + resolution-pin persistence (docs/WORKFLOW_ENGINE_PLAN.md §E7b,
 # Wave 1 Track A): when on, integrate_note writes an `app.runs` row
@@ -230,6 +234,11 @@ class SqlSettingsStore:
         return (
             await self.get(ctx, REFLEXION_BUFFER_RETRY_KEY, REFLEXION_BUFFER_RETRY_DEFAULT) is True
         )
+
+    async def skills_enabled(self, ctx: SessionContext) -> bool:
+        """Whether Loop-2 skill playbooks are surfaced at turn time. Defaults OFF (Wave 1 ships the
+        retrieval path inert; flip on once active skills exist). Any non-true value reads as off."""
+        return await self.get(ctx, SKILLS_ENABLED_KEY, SKILLS_ENABLED_DEFAULT) is True
 
     async def self_improvement_kill_switch(self, ctx: SessionContext) -> bool:
         """Whether the global self-improvement kill-switch is engaged (E5). When

@@ -70,6 +70,15 @@ class AgentRunLog:
                 )
             )
 
+    async def stamp_skill_version(
+        self, ctx: SessionContext, run_id: str, *, skill_version: str
+    ) -> None:
+        """Audit which skills were surfaced for this run (Loop 2, Wave 1)."""
+        async with scoped_session(self._maker, ctx) as session:
+            await session.execute(
+                update(Run).where(Run.id == uuid.UUID(run_id)).values(skill_version=skill_version)
+            )
+
     async def finish(
         self,
         ctx: SessionContext,

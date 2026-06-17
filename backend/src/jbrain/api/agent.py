@@ -28,6 +28,7 @@ from jbrain.agent.loop import SYSTEM_VERSION, AgentLoop
 from jbrain.agent.memory import MemoryService
 from jbrain.agent.runlog import AgentRunLog
 from jbrain.agent.session import AgentSessionInfo, AgentSessionRepo, read_context
+from jbrain.agent.skills import SkillService, format_skills
 from jbrain.agent.titler import SessionTitler
 from jbrain.agent.toolregistry import ToolRegistry
 from jbrain.agent.transcript_store import AgentTranscript
@@ -82,6 +83,10 @@ def get_llm_router(request: Request) -> LlmRouter:
 
 def get_agent_memory(request: Request) -> MemoryService:
     return cast(MemoryService, request.app.state.agent_memory)
+
+
+def get_skill_service(request: Request) -> SkillService:
+    return cast(SkillService, request.app.state.skill_service)
 
 
 def get_agent_transcript(request: Request) -> AgentTranscript:
@@ -225,6 +230,16 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
     loop = AgentLoop(get_llm_router(request), get_agent_registry(request), recorder=tally)
     read_ctx = read_context(principal.id, session.domain_scopes)
     conversation = _conversation(body)
+    # Loop 2: surface matching active skills as a DATA-framed reference block in the conversation
+    # channel (never the system prompt — the data/instruction boundary). Off by default until
+    # distillation + owner promotion populate active skills; recall is RLS-scoped (in-scope only).
+    if await get_settings_store(request).skills_enabled(read_ctx):
+        hits = await get_skill_service(request).recall(read_ctx, body.message)
+        if hits:
+            conversation = [UserMessage(text=format_skills(hits)), *conversation]
+            await runlog.stamp_skill_version(
+                owner_ctx, run_id, skill_version=",".join(f"{h.name}@v{h.version}" for h in hits)
+            )
     # The owner's display zone so the agent's time prose matches the cards (which
     # the client localizes); None = UTC. Read on the owner ctx, not the narrowed
     # read ctx — a preference, not domain data.
