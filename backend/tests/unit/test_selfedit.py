@@ -94,6 +94,32 @@ def test_discovery_is_fail_closed_on_a_duplicate_name(tmp_path: Path) -> None:
         self_editable_targets(tmp_path)
 
 
+def test_self_editable_and_drafter_prompts_are_digest_pinned() -> None:
+    """The version-bump guard extended to the new self-editable prompt and the locked
+    drafter: editing either body fails until the version AND this pin are bumped (the
+    plan's cross-cutting non-negotiable). Mirrors the note_extract content guard."""
+    import hashlib
+
+    import jbrain
+    from jbrain.llm.promptfile import load_prompt
+
+    prompts = Path(jbrain.__file__).resolve().parent / "agent" / "prompts"
+    pins = {
+        "session_title.prompt": (
+            "session-title-v1",
+            "0d8e141a91b79f596e8bd27e1b07a265125aba286611827eeef3fbe9e30ce216",
+        ),
+        "prompt_self_edit.prompt": (
+            "prompt-self-edit-v1",
+            "aff5e48f0fd955cf7ec195d5f2a77eaa1f6ecb01b016990ee9e691161c689091",
+        ),
+    }
+    for filename, expected in pins.items():
+        pf = load_prompt(prompts / filename)
+        digest = hashlib.sha256(pf.body.encode()).hexdigest()
+        assert (pf.version, digest) == expected
+
+
 def test_no_analysis_prompt_is_self_editable() -> None:
     """The domain-classification / graph-integration prompts live under
     analysis/prompts; non-neg #12's intent is broader than the deny-set names, so
@@ -202,3 +228,20 @@ def test_lint_rejects_egress_and_markup_surfaces() -> None:
     assert lint_proposed_body("Render <img src=x onerror=1>")  # HTML tag
     # Every violation carries the #9 attribution so the refusal is legible.
     assert all("#9" in r for r in lint_proposed_body("[a](http://b) <i>c</i>"))
+
+
+def test_lint_rejects_non_http_schemes_and_obfuscations() -> None:
+    # The scheme allowlist gap the red-team found: not just http(s).
+    assert lint_proposed_body("fetch ftp://evil.test/x")
+    assert lint_proposed_body("read file:///etc/passwd")
+    assert lint_proposed_body("send to mailto:leak@evil.test")
+    assert lint_proposed_body("embed data:text/html;base64,AAAA")
+    assert lint_proposed_body("call javascript:alert(1)")
+    assert lint_proposed_body("load //evil.test/x")  # protocol-relative
+    assert lint_proposed_body("[ref]: http://evil.test/x")  # reference-style markdown
+    assert lint_proposed_body("UPPER HTTP://EVIL.TEST")  # case-insensitive
+
+
+def test_lint_passes_ordinary_prose_with_slashes() -> None:
+    # No false positive on benign text (a date, a fraction, and/or).
+    assert lint_proposed_body("Give the value as mg/dL on 2026/06/17, and/or note the unit.") == []

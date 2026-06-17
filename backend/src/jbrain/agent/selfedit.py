@@ -136,26 +136,35 @@ def unified_diff(old: str, new: str, *, rel_path: str) -> str:
     )
 
 
-# Shapes a self-edit draft must never introduce — the egress/exfiltration surfaces
-# #9 forbids in agent output, applied here to the proposed body so a drafter tricked
-# by a poisoned failure-mode can't smuggle one past the structural gate. The owner
-# review is the terminal gate; this is defense-in-depth before staging.
+# Structural surfaces a self-edit draft must never introduce — the external-load /
+# markup channels #9 forbids in agent output, applied to the proposed body so a
+# drafter tricked by a poisoned failure-mode can't smuggle one past the gate. This
+# catches the *structural* shapes (URIs of any scheme, links, markup); a prose
+# instruction to misuse a tool can't be reliably linted — the allowlist bar + owner
+# review of the diff are the real guarantees, and this is defense-in-depth.
 _MARKDOWN_LINK = re.compile(r"!?\[[^\]]*\]\([^)]*\)")
-_URL = re.compile(r"https?://", re.IGNORECASE)
+# Reference-style markdown link/image target: `[id]: http://…`.
+_MARKDOWN_REF = re.compile(r"^[ \t]*\[[^\]]+\]:[ \t]*\S", re.MULTILINE)
+# Any `scheme://…` (http, https, ftp, file, …) — not just http(s).
+_SCHEME = re.compile(r"[a-z][a-z0-9+.\-]*://", re.IGNORECASE)
+# Schemeless-but-fetching URIs: data:, mailto:, tel:, javascript:.
+_RISKY_URI = re.compile(r"\b(?:data|mailto|tel|javascript):", re.IGNORECASE)
+# Protocol-relative URL: `//host/…`.
+_PROTOCOL_REL = re.compile(r"(?:^|[\s(<\"'])//[\w.\-]")
 _HTML_TAG = re.compile(r"</?[a-zA-Z][^>]*>")
 
 
 def lint_proposed_body(body: str) -> list[str]:
     """Reject a proposed prompt/tool body that introduces an external-load or markup
-    surface (#9): markdown links/images, bare URLs, or HTML tags. Returns a list of
-    violation reasons (empty = clean). Pure and total, so the injection suite can pin
-    it; the real guarantee is still the allowlist bar + owner review, this is the
-    belt against a drafter coaxed into an exfil-shaped draft."""
+    surface (#9): markdown links/images (inline or reference-style), a URI of any
+    scheme (incl. data:/mailto:/protocol-relative), or HTML tags. Returns a list of
+    violation reasons (empty = clean). Pure and total, so the injection suite pins it;
+    the real guarantee is still the allowlist bar + owner review of the diff."""
     reasons: list[str] = []
-    if _MARKDOWN_LINK.search(body):
+    if _MARKDOWN_LINK.search(body) or _MARKDOWN_REF.search(body):
         reasons.append("introduces a markdown link/image (an external-load surface, #9)")
-    if _URL.search(body):
-        reasons.append("introduces a URL (an external-load surface, #9)")
+    if _SCHEME.search(body) or _RISKY_URI.search(body) or _PROTOCOL_REL.search(body):
+        reasons.append("introduces a URL/URI (an external-load surface, #9)")
     if _HTML_TAG.search(body):
         reasons.append("introduces an HTML tag (a markup-injection surface, #9)")
     return reasons

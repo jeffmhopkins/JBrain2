@@ -94,13 +94,20 @@ def build_selfedit_handlers(
             f"Current body:\n{target.body}\n\n"
             f"{_SIGNAL_FRAME}\n{failure_mode}"
         )
-        result = await router.complete(
-            "prompt.self_edit",
-            system=_PROMPT.body,
-            user_text=user_text,
-            json_schema=_SCHEMA,
-            strength="high",
-        )
+        try:
+            result = await router.complete(
+                "prompt.self_edit",
+                system=_PROMPT.body,
+                user_text=user_text,
+                json_schema=_SCHEMA,
+                strength="high",
+            )
+        except Exception:  # noqa: BLE001 — a drafting failure (unparseable JSON after the
+            # re-ask) STILL spent provider tokens; charge the budget the conservative
+            # estimate so a flaky/garbage response can't be replayed for free (#10).
+            await gate.record_spend(ctx.session, tokens=_DRAFT_ESTIMATE_TOKENS)
+            log.warning("prompt_self_edit_draft_failed", target=target.name)
+            return "I couldn't draft that edit (the model's response was unusable)."
         await gate.record_spend(
             ctx.session, tokens=result.usage.input_tokens + result.usage.output_tokens
         )
