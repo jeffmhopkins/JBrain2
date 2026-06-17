@@ -27,15 +27,15 @@ a single-column primary key that omits the partition column, so the surrogate ke
 is `(id, captured_at)` and idempotent OwnTracks retries dedup on the natural key
 `(subject_id, captured_at, latitude, longitude)`.
 
-Revision ID: 0060
-Revises: 0059
+Revision ID: 0061
+Revises: 0060
 Create Date: 2026-06-17
 """
 
 from alembic import op
 
-revision = "0060"
-down_revision = "0059"
+revision = "0061"
+down_revision = "0060"
 branch_labels = None
 depends_on = None
 
