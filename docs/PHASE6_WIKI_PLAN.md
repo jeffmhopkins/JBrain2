@@ -383,9 +383,11 @@ work on the Phase-5 pattern, deferred — not silently dropped.
   hubs use it), but the rewriter does not yet emit `[label](target)` markers in the body, so the
   reader's live/red-link rendering path is dormant. Add link emission to the rewriter when this
   lands.
-- **B2b·2 frontend** — the Talk board surface + the reader's "Discuss this article" → correction
-  submit are the remaining Phase-6 frontend; the backend (`/wiki/{id}/corrections`, the
-  `read_wiki` agent tool) is shipped.
+- **Threaded Talk board** — the reader's "Discuss this article" now files a correction
+  (`DiscussSheet` → `/wiki/{id}/corrections`), and the agent holds the editorial write tools, so
+  the correction loop is reachable from the UI. The PERSISTENT threaded Talk board (topics +
+  Build-log + an agent session anchored per article — the B-topics mock) is the remaining
+  Phase-6 frontend follow-on; the correction submit + agent tools that power it are shipped.
 
 ## 8. Non-negotiables (CLAUDE.md) + exit
 

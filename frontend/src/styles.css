@@ -8981,6 +8981,55 @@ input.ld-title {
   line-height: 1.5;
 }
 
+/* The correction form: an editable textarea (overrides the placeholder-div styling), a domain
+   select, and the file-correction submit. */
+.wiki-discuss-input {
+  width: 100%;
+  font-style: normal;
+  color: var(--text);
+  border: 1px solid var(--border);
+  resize: vertical;
+  font-family: inherit;
+}
+
+.wiki-discuss-row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin-top: 10px;
+}
+
+.wiki-discuss-domain {
+  flex: 0 0 auto;
+  background: var(--surface-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: var(--fs-secondary);
+}
+
+.wiki-discuss-submit {
+  flex: 1;
+  height: 38px;
+  border-radius: 10px;
+  border: 0;
+  background: var(--steel);
+  color: var(--bg);
+  font-size: var(--fs-secondary);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.wiki-discuss-submit:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.wiki-discuss-err {
+  color: var(--rose);
+}
+
 /* ===== Wiki landing (Phase 6, Wave B2a — docs/mocks/wiki-landing-a-*.html) ===== */
 /* Search-first home over the article set: a search box, the read-only line, then
    three derived rails (recently-updated cards, hub list, type index). Retokenized

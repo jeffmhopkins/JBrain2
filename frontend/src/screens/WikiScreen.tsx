@@ -175,7 +175,17 @@ export function WikiScreen({ articleId, syncStatus, onClose }: WikiScreenProps) 
           onJump={jumpToReference}
         />
       )}
-      {discussOpen && <DiscussSheet onClose={() => setDiscussOpen(false)} />}
+      {discussOpen && article && (
+        <DiscussSheet
+          articleId={articleId}
+          domains={
+            article.sections.length
+              ? [...new Set(article.sections.map((s) => s.domain))]
+              : ["general"]
+          }
+          onClose={() => setDiscussOpen(false)}
+        />
+      )}
     </div>
   );
 }
