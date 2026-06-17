@@ -376,9 +376,13 @@ ROADMAP listed under Phase 6 — **entity hygiene, summary re-embedding, tag con
 work on the Phase-5 pattern, deferred — not silently dropped.
 
 **Deferred wiki sub-features (built half-way, explicitly tracked, not implied-working):**
-- **Entity profile images** — `wiki_articles.image_sha` exists as a forward column but has no
-  writer; `entities.image_sha` + the entity-view upload + the build-time copy are unbuilt, so the
-  reader emits no `photo` (it shows the type disc). Land the full chain together.
+- **Entity profile images** — SHIPPED. `entities.image_sha` (migration 0052) is set by the owner
+  via the entity view (PUT `/api/entities/{id}/image`, multipart, magic-byte sniffed — the
+  Content-Type is not trusted), stored content-addressed in the blob store, and copied onto
+  `wiki_articles.image_sha` both directly on upload (cheap, no LLM rebuild) and at every build
+  (`_ensure_article`). The reader emits `infobox.photo` + an `image_url` (GET `/api/wiki/{id}/image`)
+  and the Infobox renders the `<img>`; the entity view shows + uploads the photo. The image is
+  owner metadata, not a claim — prose stays machine-written (#7).
 - **Inline wiki→wiki links in prose** — SHIPPED. The builder (`_write_section` → `_linkify`)
   weaves `[anchor](wiki:<slug>)` / `[anchor](redlink)` markers into the persisted section body for
   each relationship fact's object entity (live vs red resolved at build time from the target's

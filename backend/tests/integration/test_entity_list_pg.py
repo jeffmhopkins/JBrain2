@@ -292,6 +292,21 @@ async def test_list_is_rls_scoped(
     assert await repo.list_entities(UNSCOPED) == []
 
 
+async def test_entity_image_set_and_read_are_rls_scoped(
+    maker: async_sessionmaker[AsyncSession], seeded: dict[str, str]
+) -> None:
+    repo = SqlAnalysisRepo(maker)
+    # A general-only principal can set/read an in-scope entity's image but not the health one —
+    # the firewall holds for owner metadata too. The owner (all scopes) reads it back.
+    assert await repo.set_entity_image(GENERAL_ONLY, seeded["alma"], "sha-alma") is True
+    assert await repo.set_entity_image(GENERAL_ONLY, seeded["helio"], "sha-helio") is False
+    assert await repo.entity_image_sha(GENERAL_ONLY, seeded["alma"]) == "sha-alma"
+    assert await repo.entity_image_sha(GENERAL_ONLY, seeded["helio"]) is None
+    assert await repo.entity_image_sha(OWNER, seeded["alma"]) == "sha-alma"
+    # The out-of-scope write never landed (the owner sees no image on helio).
+    assert await repo.entity_image_sha(OWNER, seeded["helio"]) is None
+
+
 async def test_entities_api_round_trip(
     database_url: str,  # noqa: F811
     maker: async_sessionmaker[AsyncSession],

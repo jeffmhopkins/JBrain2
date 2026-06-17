@@ -50,6 +50,9 @@ class Entity(Base):
     # The entity half of the wiki mark-and-sweep (migration 0046). Flipped back to false in
     # Postgres on any fact/mention/identity change; the builder sets it true once incorporated.
     wiki_built: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    # Owner-set profile image (migration 0052): the sha256 of the blob-store bytes, copied onto
+    # the wiki article at build. Owner metadata, not a claim.
+    image_sha: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class EntityAlias(Base):

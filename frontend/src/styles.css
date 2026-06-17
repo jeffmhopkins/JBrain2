@@ -3052,6 +3052,30 @@ button.small {
   text-align: center;
 }
 
+.entity-photo {
+  display: grid;
+  place-items: center;
+  gap: 3px;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  color: var(--text-3);
+}
+
+.entity-photo-img {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  object-fit: cover;
+}
+
+.entity-photo-edit {
+  font-size: var(--fs-micro);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
 .entity-name {
   margin: 0;
   font-size: var(--fs-screen);
@@ -8689,6 +8713,13 @@ input.ld-title {
     color-mix(in srgb, var(--steel) 28%, var(--surface)),
     color-mix(in srgb, var(--violet) 24%, var(--surface))
   );
+}
+
+.wiki-ib-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 8px;
 }
 
 .wiki-ib-cap {

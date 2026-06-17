@@ -554,7 +554,7 @@ class SqlAnalysisRepo:
             entity = (
                 await session.execute(
                     text(
-                        "SELECT id::text, kind, canonical_name, status, domain_code"
+                        "SELECT id::text, kind, canonical_name, status, domain_code, image_sha"
                         " FROM app.entities WHERE id = :id"
                     ),
                     {"id": str(eid)},
@@ -682,6 +682,7 @@ class SqlAnalysisRepo:
             "status": entity.status,
             "aliases": list(aliases),
             "domain": entity.domain_code,
+            "image_sha": entity.image_sha,
             "predicates": list(predicates.values()),
             "inbound": [
                 {
@@ -738,6 +739,45 @@ class SqlAnalysisRepo:
             plan = await plan_merge(session, a, b)
             await merge_entity_pair(session, keep=plan.keep_id, gone=plan.gone_id)
             return MergeOutcome(str(plan.keep_id), str(plan.gone_id), merged=True)
+
+    async def set_entity_image(self, ctx: SessionContext, entity_id: str, image_sha: str) -> bool:
+        """Set an entity's owner-uploaded profile image (the blob's sha256) and cheaply copy it
+        onto the entity's active article so the change shows without an LLM rebuild. The image is
+        owner metadata, not machine-written prose — the article's prose/sections stay untouched —
+        and a future rebuild re-copies it from the entity row (`_ensure_article`). RLS-scoped:
+        returns False when the entity is not in the caller's scope (or unknown)."""
+        eid = _as_uuid(entity_id)
+        if eid is None:
+            return False
+        async with scoped_session(self._maker, ctx) as session:
+            updated = (
+                await session.execute(
+                    text("UPDATE app.entities SET image_sha = :s WHERE id = :id RETURNING id"),
+                    {"s": image_sha, "id": str(eid)},
+                )
+            ).scalar()
+            if updated is None:
+                return False
+            await session.execute(
+                text(
+                    "UPDATE app.wiki_articles SET image_sha = :s, updated_at = now()"
+                    " WHERE entity_ref = :id AND status = 'active'"
+                ),
+                {"s": image_sha, "id": str(eid)},
+            )
+            return True
+
+    async def entity_image_sha(self, ctx: SessionContext, entity_id: str) -> str | None:
+        """The entity's profile-image sha, RLS-scoped (None when unset or out of scope)."""
+        eid = _as_uuid(entity_id)
+        if eid is None:
+            return None
+        async with scoped_session(self._maker, ctx) as session:
+            return (
+                await session.execute(
+                    text("SELECT image_sha FROM app.entities WHERE id = :id"), {"id": str(eid)}
+                )
+            ).scalar()
 
     async def note_currency(
         self, ctx: SessionContext, note_ids: list[str]

@@ -390,6 +390,38 @@ describe("EntityScreen", () => {
     expect(screen.queryByRole("heading", { name: "Current" })).not.toBeInTheDocument();
   });
 
+  it("uploads a profile photo and re-renders the image", async () => {
+    let uploaded = false;
+    fetchMock.mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url === "/api/entities/ent-sarah") {
+        // After the PUT, the refetched entity carries the new sha → the img renders.
+        return jsonResponse(uploaded ? { ...SARAH, image_sha: "img-1" } : SARAH);
+      }
+      if (url === "/api/entities/ent-sarah/image" && init?.method === "PUT") {
+        uploaded = true;
+        return jsonResponse({ image_sha: "img-1", media_type: "image/png" });
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+    setup();
+    await screen.findByRole("heading", { name: "Sarah Hopkins" });
+    // No image yet: the type icon stands in (no <img>).
+    expect(screen.queryByRole("img")).not.toBeInTheDocument();
+
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+    const file = new File([new Uint8Array([1, 2, 3])], "p.png", { type: "image/png" });
+    fireEvent.change(input, { target: { files: [file] } });
+
+    const img = await screen.findByRole("img");
+    expect(img.getAttribute("src")).toContain("/api/entities/ent-sarah/image?v=img-1");
+    const put = fetchMock.mock.calls.find(
+      ([u, init]) =>
+        String(u) === "/api/entities/ent-sarah/image" && (init as RequestInit)?.method === "PUT",
+    );
+    expect(put).toBeTruthy();
+  });
+
   it("shows the quiet error line when the entity fails to load", async () => {
     fetchMock.mockResolvedValue(new Response(null, { status: 500 }));
     setup();

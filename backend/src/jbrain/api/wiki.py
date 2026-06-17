@@ -12,12 +12,14 @@ import uuid
 from typing import Any, cast
 
 from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from jbrain.api.deps import OwnerDep, PrincipalDep
-from jbrain.api.notes import ctx_for
+from jbrain.api.images import sniff_path
+from jbrain.api.notes import BlobStoreDep, ctx_for
 from jbrain.db.session import scoped_session
 from jbrain.notes.repo import SqlNotesRepo
 from jbrain.notes.service import UnknownDomain
@@ -52,6 +54,32 @@ async def wiki_article(
     if article is None:
         raise HTTPException(status_code=404, detail="article not found")
     return article
+
+
+@router.get("/wiki/{article_id}/image")
+async def wiki_article_image(
+    article_id: str, principal: PrincipalDep, request: Request, blobs: BlobStoreDep
+) -> FileResponse:
+    """Serve the article's owner profile image — the sha the builder copied onto the article row
+    (so the bytes are never dereferenced across the firewall). RLS-scoped via the article shell."""
+    try:
+        aid = str(uuid.UUID(article_id))
+    except ValueError:
+        raise HTTPException(status_code=404, detail="no image") from None
+    async with scoped_session(get_session_maker(request), ctx_for(principal)) as session:
+        sha = (
+            await session.execute(
+                text("SELECT image_sha FROM app.wiki_articles WHERE id = :a AND status = 'active'"),
+                {"a": aid},
+            )
+        ).scalar()
+    if sha is None or not await blobs.exists(sha):
+        raise HTTPException(status_code=404, detail="no image")
+    path = blobs.path_for(sha)
+    # nosniff: served inline with a magic-byte-derived type — don't let the browser re-sniff.
+    return FileResponse(
+        path, media_type=sniff_path(path), headers={"X-Content-Type-Options": "nosniff"}
+    )
 
 
 class CorrectionRequest(BaseModel):

@@ -66,6 +66,9 @@ class SourcedEntity:
     domain_code: str
     claims: list[Claim]
     note_count: int
+    # The owner-set profile image sha (entity metadata, not a claim); copied onto the article so a
+    # scoped reader never reads the single-domain entity row across the firewall. None when unset.
+    image_sha: str | None = None
 
 
 # What a `Rewriter` returns. A citation's `seq` is the article-wide [n] number; a link points
@@ -422,7 +425,7 @@ class WikiBuilder:
         ent = (
             await session.execute(
                 text(
-                    "SELECT canonical_name, kind, domain_code, merged_into_id"
+                    "SELECT canonical_name, kind, domain_code, merged_into_id, image_sha"
                     " FROM app.entities WHERE id = :e"
                 ),
                 {"e": entity_id},
@@ -496,6 +499,7 @@ class WikiBuilder:
             domain_code=ent.domain_code,
             claims=claims,
             note_count=len(notes),
+            image_sha=ent.image_sha,
         )
 
     async def _exclusions(self, session: AsyncSession) -> tuple[set[uuid.UUID], set[uuid.UUID]]:
@@ -573,7 +577,7 @@ class WikiBuilder:
             await session.execute(
                 text(
                     "UPDATE app.wiki_articles SET title = :t, kind = :k, lead_summary = :ls,"
-                    " lead_embedding = cast(:v AS vector), status = 'active',"
+                    " lead_embedding = cast(:v AS vector), image_sha = :img, status = 'active',"
                     " merged_into_id = NULL, updated_at = now() WHERE id = :a"
                 ),
                 {
@@ -581,6 +585,7 @@ class WikiBuilder:
                     "k": sourced.kind,
                     "ls": plan.lead_summary,
                     "v": lead_vec,
+                    "img": sourced.image_sha,
                     "a": existing,
                 },
             )
@@ -589,8 +594,8 @@ class WikiBuilder:
             await session.execute(
                 text(
                     "INSERT INTO app.wiki_articles (entity_ref, title, kind, slug, lead_summary,"
-                    " lead_embedding)"
-                    " VALUES (:e, :t, :k, :sl, :ls, cast(:v AS vector)) RETURNING id"
+                    " lead_embedding, image_sha)"
+                    " VALUES (:e, :t, :k, :sl, :ls, cast(:v AS vector), :img) RETURNING id"
                 ),
                 {
                     "e": sourced.entity_id,
@@ -599,6 +604,7 @@ class WikiBuilder:
                     "sl": _slug(sourced.name),
                     "ls": plan.lead_summary,
                     "v": lead_vec,
+                    "img": sourced.image_sha,
                 },
             )
         ).scalar()

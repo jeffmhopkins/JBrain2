@@ -123,6 +123,25 @@ async def test_get_article_assembles_the_reader_shape(maker: async_sessionmaker)
     assert ref["meta"].startswith("Note ·")
 
 
+async def test_get_article_emits_the_profile_photo_when_set(maker: async_sessionmaker) -> None:
+    await _owner_pid(maker)
+    eid = await _build(maker, "Imogen", "Person", [("general", f"fact {i}") for i in range(3)])
+    aid = await _article_id(maker, eid)
+    store = WikiReadStore(maker)
+    # No image yet → the reader falls back to the type disc (no photo).
+    art = await store.get_article(OWNER, aid)
+    assert art is not None and art["infobox"]["photo"] is False
+    assert art["infobox"]["image_url"] is None
+    # Once the article carries an image sha, the infobox emits photo + the serve URL.
+    async with scoped_session(maker, OWNER) as s:
+        await s.execute(
+            text("UPDATE app.wiki_articles SET image_sha = 'abc123' WHERE id = :a"), {"a": aid}
+        )
+    art = await store.get_article(OWNER, aid)
+    assert art is not None and art["infobox"]["photo"] is True
+    assert art["infobox"]["image_url"] == f"/api/wiki/{aid}/image?v=abc123"
+
+
 async def test_article_health_section_hidden_from_general_scope(maker: async_sessionmaker) -> None:
     pid = await _owner_pid(maker)
     eid = await _build(
