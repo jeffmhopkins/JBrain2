@@ -9,31 +9,39 @@
 # part of the default stack.
 FROM ubuntu:24.04 AS build
 
+# GOTOOLCHAIN=auto lets the distro Go fetch the newer toolchain llama-swap's
+# go.mod may require, so we don't depend on Ubuntu shipping the exact version.
+ENV GOTOOLCHAIN=auto
+
+# glslc compiles the Vulkan compute shaders; golang-go builds llama-swap.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    git cmake build-essential libcurl4-openssl-dev \
-    glslc libvulkan-dev vulkan-tools \
+    git ca-certificates cmake build-essential libcurl4-openssl-dev \
+    glslc libvulkan-dev vulkan-tools golang-go \
     && rm -rf /var/lib/apt/lists/*
 
-# Build llama-server with Vulkan. Pinned at build time by the base image's
-# package set; bump the clone ref to move llama.cpp forward.
+# Build llama-server with Vulkan. Bump the clone ref to move llama.cpp forward.
 RUN git clone --depth 1 https://github.com/ggml-org/llama.cpp /src/llama.cpp \
     && cmake -S /src/llama.cpp -B /src/llama.cpp/build \
         -DGGML_VULKAN=ON -DLLAMA_CURL=ON -DCMAKE_BUILD_TYPE=Release \
     && cmake --build /src/llama.cpp/build --config Release -j "$(nproc)" --target llama-server
 
+# llama-swap is a Go project — build from source so we don't guess release-asset
+# names/versions. Pin LLAMA_SWAP_VERSION to a tag (e.g. v167) for reproducibility.
+ARG LLAMA_SWAP_VERSION=latest
+RUN GOBIN=/out go install "github.com/mostlygeek/llama-swap@${LLAMA_SWAP_VERSION}"
+
 FROM ubuntu:24.04
 
-# Runtime: Mesa Vulkan (RADV) for the AMD iGPU + a tiny libcurl for model pulls.
+# Runtime: Mesa Vulkan (RADV) for the AMD iGPU, the Vulkan loader, OpenMP, and
+# libcurl (llama.cpp links it). vulkan-tools ships vulkaninfo for debugging.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    mesa-vulkan-drivers libvulkan1 vulkan-tools libcurl4 ca-certificates curl \
+    mesa-vulkan-drivers libvulkan1 vulkan-tools libcurl4 libgomp1 ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=build /src/llama.cpp/build/bin/llama-server /usr/local/bin/llama-server
-
-# llama-swap: a static release binary fronting llama-server on one OpenAI port.
-ARG LLAMA_SWAP_VERSION=v1.30.0
-RUN curl -fsSL \
-    "https://github.com/mostlygeek/llama-swap/releases/download/${LLAMA_SWAP_VERSION}/llama-swap_linux_amd64" \
-    -o /usr/local/bin/llama-swap && chmod +x /usr/local/bin/llama-swap
+# Copy the whole bin dir, not just the binary: llama.cpp builds shared libs
+# (libllama.so, libggml*.so) and links them with an $ORIGIN rpath, so they must
+# sit beside llama-server.
+COPY --from=build /src/llama.cpp/build/bin/ /usr/local/bin/
+COPY --from=build /out/llama-swap /usr/local/bin/llama-swap
 
 EXPOSE 8080

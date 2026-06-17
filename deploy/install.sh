@@ -26,6 +26,11 @@ if ! command -v git >/dev/null 2>&1; then
   say "Installing git"
   apt-get update -qq && apt-get install -y -qq git
 fi
+# python3 is used by the opt-in local-model setup (scripts/local-llm-setup.sh).
+if ! command -v python3 >/dev/null 2>&1; then
+  say "Installing python3"
+  apt-get update -qq && apt-get install -y -qq python3
+fi
 
 say "Setting up $INSTALL_DIR"
 mkdir -p "$INSTALL_DIR/backups" "$INSTALL_DIR/db-init"
