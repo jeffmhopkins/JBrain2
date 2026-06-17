@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from jbrain import queue
 from jbrain.agent.skilldistill import SKILL_DISTILL_SPEC, skill_distill_handler
+from jbrain.agent.skillsweep import SKILL_SWEEP_SPEC, skill_sweep_handler
 from jbrain.analysis import purge
 from jbrain.analysis.consolidation import Consolidator
 from jbrain.analysis.pipeline import AnalysisPipeline
@@ -288,6 +289,9 @@ async def run() -> None:
             embedder=TeiEmbedClient(settings.embed_url),
             embedding_model=settings.embed_model,
         ),
+        # Loop 2 skill hygiene (Wave 3): cap active skills per domain, demoting the least-useful
+        # back to shadow (reversible). No LLM call; in-code only (a migration seeds the schedule).
+        "skill_sweep": skill_sweep_handler(maker),
         # The wiki builder (Phase-6 Wave C2): dirty-bit-driven article build + reindex + prune.
         # In-code only (not in the app.actions seed); a migration seeds the schedules. The live
         # LLM rewriter (C2b) drives router.complete behind the grounding gate + wiki-build budget;
@@ -316,6 +320,7 @@ async def run() -> None:
             scheduler.RECONCILE_UNEMBEDDED_NOTES_ACTION,
             EVAL_RUN_SPEC,
             SKILL_DISTILL_SPEC,
+            SKILL_SWEEP_SPEC,
             *WIKI_SPECS,
         )
     )

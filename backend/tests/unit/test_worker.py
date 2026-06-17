@@ -373,6 +373,8 @@ async def test_run_registers_all_job_handlers(
         "eval_run",
         # Loop 2 skill distillation (Wave 2) — in-code only, not in ACTION_SPECS / the seed.
         "skill_distill",
+        # Loop 2 skill hygiene sweep (Wave 3) — likewise in-code only.
+        "skill_sweep",
         # The wiki builder (Phase-6 Wave C2a) — four in-code actions, likewise not
         # in ACTION_SPECS / the app.actions seed.
         "wiki_refresh",
