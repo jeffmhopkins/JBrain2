@@ -131,7 +131,7 @@ def test_upload_is_owner_only(api: tuple[TestClient, StubAnalysisRepo, FsBlobSto
 
 
 def test_serve_404s_when_the_blob_is_missing(
-    api: tuple[TestClient, StubAnalysisRepo, FsBlobStore]
+    api: tuple[TestClient, StubAnalysisRepo, FsBlobStore],
 ) -> None:
     # The row points at a sha whose bytes are gone (e.g. partial restore) → a clean 404, not 500.
     client, repo, _ = api

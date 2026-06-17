@@ -69,10 +69,7 @@ async def wiki_article_image(
     async with scoped_session(get_session_maker(request), ctx_for(principal)) as session:
         sha = (
             await session.execute(
-                text(
-                    "SELECT image_sha FROM app.wiki_articles"
-                    " WHERE id = :a AND status = 'active'"
-                ),
+                text("SELECT image_sha FROM app.wiki_articles WHERE id = :a AND status = 'active'"),
                 {"a": aid},
             )
         ).scalar()

@@ -740,9 +740,7 @@ class SqlAnalysisRepo:
             await merge_entity_pair(session, keep=plan.keep_id, gone=plan.gone_id)
             return MergeOutcome(str(plan.keep_id), str(plan.gone_id), merged=True)
 
-    async def set_entity_image(
-        self, ctx: SessionContext, entity_id: str, image_sha: str
-    ) -> bool:
+    async def set_entity_image(self, ctx: SessionContext, entity_id: str, image_sha: str) -> bool:
         """Set an entity's owner-uploaded profile image (the blob's sha256) and cheaply copy it
         onto the entity's active article so the change shows without an LLM rebuild. The image is
         owner metadata, not machine-written prose — the article's prose/sections stay untouched —
