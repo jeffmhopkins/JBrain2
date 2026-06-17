@@ -9039,10 +9039,12 @@ input.ld-title {
   bottom: 0;
   padding: 12px 16px calc(12px + env(safe-area-inset-bottom));
   background: linear-gradient(to top, var(--bg) 72%, transparent);
+  display: flex;
+  gap: 8px;
 }
 
 .wiki-discuss-btn {
-  width: 100%;
+  flex: 1;
   height: 44px;
   border-radius: 12px;
   border: 1px solid var(--border);
@@ -9054,6 +9056,261 @@ input.ld-title {
   align-items: center;
   justify-content: center;
   gap: 8px;
+  cursor: pointer;
+}
+
+/* ----- Talk board (docs/mocks/wiki-talk-b-topics.html) ----- */
+.talk-view {
+  padding: 0 0 30px;
+}
+
+.talk-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.talk-bar h2 {
+  flex: 1;
+  margin: 0;
+  font-family: Georgia, serif;
+  font-weight: 400;
+  font-size: var(--fs-screen);
+}
+
+.talk-openart {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: transparent;
+  color: var(--text-2);
+  cursor: pointer;
+}
+
+.talk-new {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: transparent;
+  color: var(--steel);
+  font-size: var(--fs-micro);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.talk-compose {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.talk-compose-title,
+.talk-compose-body {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 9px 11px;
+  color: var(--text);
+  font-size: var(--fs-secondary);
+  outline: none;
+}
+
+.talk-compose-body {
+  min-height: 72px;
+  resize: vertical;
+}
+
+.talk-compose-row {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.talk-cancel,
+.talk-create {
+  border: 0;
+  background: transparent;
+  font-size: var(--fs-secondary);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.talk-cancel {
+  color: var(--text-3);
+}
+
+.talk-create {
+  color: var(--steel);
+}
+
+.talk-create:disabled {
+  color: var(--text-3);
+  cursor: default;
+}
+
+.talk-err {
+  margin: 8px 16px 0;
+  color: var(--rose);
+  font-size: var(--fs-micro);
+}
+
+.talk-topic {
+  border-bottom: 1px solid var(--border);
+}
+
+.talk-thead {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 12px 16px;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.talk-chev {
+  display: grid;
+  place-items: center;
+  color: var(--text-3);
+  transition: transform 0.15s;
+}
+
+.talk-topic.open .talk-chev {
+  transform: rotate(90deg);
+}
+
+.talk-tt {
+  flex: 1;
+  font-size: var(--fs-secondary);
+  font-weight: 600;
+}
+
+.talk-meta {
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+}
+
+.talk-badge {
+  font-size: var(--fs-micro);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 1px 7px;
+  border-radius: 20px;
+  border: 1px solid var(--border);
+  color: var(--text-3);
+}
+
+.talk-badge.open {
+  color: var(--amber);
+  border-color: color-mix(in srgb, var(--amber) 35%, transparent);
+}
+
+.talk-badge.resolved {
+  color: var(--green);
+  border-color: color-mix(in srgb, var(--green) 35%, transparent);
+}
+
+.talk-tbody {
+  padding: 0 16px 14px 38px;
+}
+
+.talk-reply {
+  margin-bottom: 11px;
+}
+
+.talk-sig {
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+  margin-bottom: 2px;
+}
+
+.talk-sig b {
+  color: var(--text-2);
+  font-weight: 600;
+}
+
+.talk-reply.bot .talk-sig b {
+  color: var(--violet);
+}
+
+.talk-body {
+  font-size: var(--fs-secondary);
+  color: var(--text);
+}
+
+.talk-reply.bot .talk-body {
+  color: var(--text-2);
+}
+
+.talk-src {
+  margin-top: 5px;
+  padding: 7px 9px;
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.talk-outcome {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+  font-size: var(--fs-micro);
+  color: var(--green);
+}
+
+.talk-replybox {
+  display: flex;
+  gap: 7px;
+  margin-top: 8px;
+}
+
+.talk-replybox input {
+  flex: 1;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  padding: 8px 12px;
+  color: var(--text);
+  font-size: var(--fs-secondary);
+  outline: none;
+}
+
+.talk-replybox button {
+  border: 0;
+  background: transparent;
+  color: var(--steel);
+  font-size: var(--fs-micro);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.talk-replybox button:disabled {
+  color: var(--text-3);
+  cursor: default;
+}
+
+.talk-resolve {
+  margin-top: 8px;
+  border: 0;
+  background: transparent;
+  color: var(--text-3);
+  font-size: var(--fs-micro);
   cursor: pointer;
 }
 

@@ -29,6 +29,8 @@ import type {
   WikiArticleOut,
   WikiLandingOut,
   WikiSearchResult,
+  WikiTalkOut,
+  WikiTalkTopic,
 } from "./client";
 
 const PRINCIPAL: Principal = {
@@ -951,6 +953,120 @@ const WIKI_LANDING: WikiLandingOut = {
 
 // Flat list of every article, for the search wiki leg (the type index covers all).
 const WIKI_INDEX = WIKI_LANDING.groups.flatMap((g) => g.entries);
+
+// The Talk board (docs/mocks/wiki-talk-b-topics.html): per-article threaded topics + an auto
+// Build-log. Mutated by the mock's new-topic / reply / resolve routes so dev exercises the loop.
+const WIKI_TALK: Record<string, WikiTalkOut> = {
+  "priya-nair": {
+    title: "Priya Nair",
+    topics: [
+      {
+        id: "topic-globex",
+        kind: "discussion",
+        title: "Outdated: still says she works at Globex",
+        status: "open",
+        meta: null,
+        posts: [
+          {
+            id: "p-g1",
+            author: "owner",
+            body: "She left Globex in March. The Career section is wrong.",
+            source: null,
+            outcome: null,
+            created_at: "2026-06-17T09:14:00Z",
+            rev: null,
+          },
+          {
+            id: "p-g2",
+            author: "editor",
+            body: '"Works at Globex" is sourced from one note with no later departure.',
+            source: {
+              note_id: "note-priya-9",
+              meta: "Note · Jan 19, 2026",
+              snippet: "promoted to senior engineer at Globex.",
+              domain: "general",
+            },
+            outcome: null,
+            created_at: "2026-06-17T09:14:30Z",
+            rev: null,
+          },
+          {
+            id: "p-g3",
+            author: "owner",
+            body: "File a correction — left Globex March 2026.",
+            source: null,
+            outcome: "correction note filed → rebuild queued",
+            created_at: "2026-06-17T09:16:00Z",
+            rev: null,
+          },
+        ],
+      },
+      {
+        id: "topic-addr",
+        kind: "discussion",
+        title: "Drop the old apartment address?",
+        status: "resolved",
+        meta: null,
+        posts: [
+          {
+            id: "p-a1",
+            author: "owner",
+            body: "Don't feature the old Boulder address.",
+            source: null,
+            outcome: null,
+            created_at: "2026-03-12T10:00:00Z",
+            rev: null,
+          },
+          {
+            id: "p-a2",
+            author: "editor",
+            body: "Excluded that note from this article.",
+            source: null,
+            outcome: "source excluded · rebuilt",
+            created_at: "2026-03-12T10:01:00Z",
+            rev: null,
+          },
+        ],
+      },
+      {
+        id: "topic-log",
+        kind: "build_log",
+        title: "Build log",
+        status: "open",
+        meta: "auto · 3 entries",
+        posts: [
+          {
+            id: "p-l1",
+            author: "builder",
+            body: "Created article (Person guide); 11 facts across 3 domains.",
+            source: null,
+            outcome: null,
+            created_at: "2026-03-02T02:11:00Z",
+            rev: 1,
+          },
+          {
+            id: "p-l2",
+            author: "builder",
+            body: "Excluded note (Boulder address) per discussion; rewrote Personal life.",
+            source: null,
+            outcome: null,
+            created_at: "2026-03-12T02:09:00Z",
+            rev: 2,
+          },
+          {
+            id: "p-l3",
+            author: "builder",
+            body: "Rebuilt article (Person guide); 12 facts across 3 domains.",
+            source: null,
+            outcome: null,
+            created_at: "2026-03-17T02:14:00Z",
+            rev: 3,
+          },
+        ],
+      },
+    ],
+  },
+};
 
 // ===== Phase 3 fixtures: analysis, entities, review, usage =====
 
@@ -2277,6 +2393,73 @@ export const mockFetch: typeof fetch = async (input, init) => {
   const correctionMatch = path.match(/^\/api\/wiki\/([^/]+)\/corrections$/);
   if (correctionMatch && method === "POST") {
     return json({ note_id: id("note"), created: true }, 201);
+  }
+
+  // Talk board — most-specific routes first (reply, then status, then new-topic, then board).
+  const talkReplyMatch = path.match(/^\/api\/wiki\/([^/]+)\/talk\/topics\/([^/]+)\/posts$/);
+  if (talkReplyMatch && method === "POST") {
+    const board = WIKI_TALK[decodeURIComponent(talkReplyMatch[1] ?? "")];
+    const topic = board?.topics.find((t) => t.id === decodeURIComponent(talkReplyMatch[2] ?? ""));
+    if (!topic) return json({ detail: "topic not found" }, 404);
+    if (topic.kind === "build_log")
+      return json({ detail: "the Build log is machine-written" }, 409);
+    const body = (JSON.parse(String(init?.body)) as { body: string }).body;
+    const post = {
+      id: id("post"),
+      author: "owner" as const,
+      body,
+      source: null,
+      outcome: null,
+      created_at: new Date().toISOString(),
+      rev: null,
+    };
+    topic.posts.push(post);
+    return json(post, 201);
+  }
+
+  const talkStatusMatch = path.match(/^\/api\/wiki\/([^/]+)\/talk\/topics\/([^/]+)$/);
+  if (talkStatusMatch && method === "PATCH") {
+    const board = WIKI_TALK[decodeURIComponent(talkStatusMatch[1] ?? "")];
+    const topic = board?.topics.find((t) => t.id === decodeURIComponent(talkStatusMatch[2] ?? ""));
+    if (!topic) return json({ detail: "topic not found" }, 404);
+    if (topic.kind === "build_log")
+      return json({ detail: "the Build log is machine-written" }, 409);
+    const status = (JSON.parse(String(init?.body)) as { status: "open" | "resolved" }).status;
+    topic.status = status;
+    return json({ id: topic.id, status });
+  }
+
+  const talkTopicsMatch = path.match(/^\/api\/wiki\/([^/]+)\/talk\/topics$/);
+  if (talkTopicsMatch && method === "POST") {
+    const board = WIKI_TALK[decodeURIComponent(talkTopicsMatch[1] ?? "")];
+    if (!board) return json({ detail: "article not found" }, 404);
+    const payload = JSON.parse(String(init?.body)) as { title: string; body: string };
+    const topic: WikiTalkTopic = {
+      id: id("topic"),
+      kind: "discussion",
+      title: payload.title,
+      status: "open",
+      meta: null,
+      posts: [
+        {
+          id: id("post"),
+          author: "owner",
+          body: payload.body,
+          source: null,
+          outcome: null,
+          created_at: new Date().toISOString(),
+          rev: null,
+        },
+      ],
+    };
+    board.topics.unshift(topic);
+    return json(topic, 201);
+  }
+
+  const talkMatch = path.match(/^\/api\/wiki\/([^/]+)\/talk$/);
+  if (talkMatch && method === "GET") {
+    const board = WIKI_TALK[decodeURIComponent(talkMatch[1] ?? "")];
+    return board ? json(board) : json({ detail: "article not found" }, 404);
   }
 
   const wikiMatch = path.match(/^\/api\/wiki\/([^/]+)$/);

@@ -25,6 +25,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Protocol
 
+import structlog
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -32,6 +33,18 @@ from jbrain.db.session import scoped_session
 from jbrain.embed import EmbedClient, vector_literal
 from jbrain.queue import SYSTEM_CTX
 from jbrain.wiki.budget import WikiBudgetExceeded
+
+log = structlog.get_logger()
+
+
+@dataclass(frozen=True)
+class _BuildLogNote:
+    """A one-line Build-log post the builder emits for an article it just built/redirected. Posted
+    in its own transaction AFTER the build commits (best-effort) so a cosmetic post can never roll
+    back a real build. `summary` is domain-neutral (counts + subject kind, never a domain name)."""
+
+    article_id: uuid.UUID
+    summary: str
 
 
 class WikiGroundingError(Exception):
@@ -265,12 +278,13 @@ class WikiBuilder:
         for entity_id in dirty:
             try:
                 async with scoped_session(self._maker, SYSTEM_CTX) as session:
-                    await self._build_entity(session, entity_id)
+                    note = await self._build_entity(session, entity_id)
                     await session.commit()
             except WikiBudgetExceeded:
                 break  # out of budget for today — leave the rest dirty for the next window
             except WikiGroundingError:
                 continue  # one entity's verifier failed — leave it dirty, keep building the rest
+            await self._post_build_log(note)  # best-effort, post-commit (never aborts the build)
             processed += 1
         return processed
 
@@ -305,12 +319,13 @@ class WikiBuilder:
         for entity_id in refs:
             try:
                 async with scoped_session(self._maker, SYSTEM_CTX) as session:
-                    await self._build_entity(session, entity_id)
+                    note = await self._build_entity(session, entity_id)
                     await session.commit()
             except WikiBudgetExceeded:
                 break
             except WikiGroundingError:
                 continue
+            await self._post_build_log(note)  # best-effort, post-commit
             processed += 1
         return processed
 
@@ -363,7 +378,11 @@ class WikiBuilder:
 
     # ---- the per-entity build ------------------------------------------------------------
 
-    async def _build_entity(self, session: AsyncSession, entity_id: uuid.UUID) -> None:
+    async def _build_entity(
+        self, session: AsyncSession, entity_id: uuid.UUID
+    ) -> _BuildLogNote | None:
+        """Build one entity's article; return the Build-log note to post post-commit (None when
+        nothing was built — missing/not-notable/empty, or a redirect with no survivor article)."""
         merged_into = (
             await session.execute(
                 text("SELECT merged_into_id FROM app.entities WHERE id = :e"), {"e": entity_id}
@@ -372,41 +391,62 @@ class WikiBuilder:
         if merged_into is not None:
             # The entity was folded into another (the merge dirtied it via the 0046 trigger):
             # turn its article into a reversible redirect rather than rebuilding it.
-            await self._enact_redirect(session, entity_id, merged_into)
+            survivor_article, gone_name = await self._enact_redirect(
+                session, entity_id, merged_into
+            )
             await self._mark_built(session, entity_id)
-            return
+            # Record the merge on the SURVIVOR's (active, readable) Build-log — only when both the
+            # merged entity had an article and the survivor has one to post against.
+            if survivor_article is not None:
+                return _BuildLogNote(survivor_article, f"Merged in {gone_name}.")
+            return None
         sourced = await self._source(session, entity_id)
         if sourced is None:
-            return  # missing entity — nothing to build
+            return None  # missing entity — nothing to build
         if not is_notable(sourced):
             await self._mark_built(session, entity_id)
-            return
+            return None
         plan = await self._rewriter.plan(sourced)
         # A notable entity can still yield zero sections — e.g. all its facts were dropped by the
         # same-domain-chunk skip, or it's notable only via mentions. Don't strand an empty article
         # in the landing/search rails; mark it built so it isn't re-scanned until it changes.
         if not plan.sections:
             await self._mark_built(session, entity_id)
-            return
-        article_id = await self._ensure_article(session, sourced, plan)
+            return None
+        article_id, created = await self._ensure_article(session, sourced, plan)
         for seq, section in enumerate(plan.sections):
             await self._write_section(session, article_id, section, seq=seq)
         await self._mark_built(session, entity_id)
+        n_domains = len({s.domain_code for s in plan.sections})
+        verb = "Created" if created else "Rebuilt"
+        return _BuildLogNote(
+            article_id,
+            f"{verb} article ({sourced.kind} guide);"
+            f" {len(sourced.claims)} facts across {n_domains} domains.",
+        )
 
     async def _enact_redirect(
         self, session: AsyncSession, gone_entity: uuid.UUID, survivor_entity: uuid.UUID
-    ) -> None:
+    ) -> tuple[uuid.UUID | None, str]:
         """Make the merged entity's article a reversible redirect to the survivor's article
         (status='merged', merged_into_id). The redirect-followable-only-if-the-survivor-has-an-
         in-scope-section firewall is enforced when the redirect is *followed* (a read concern);
-        recording it here is firewall-neutral (owner-only `wiki_articles`)."""
-        gone_article = (
+        recording it here is firewall-neutral (owner-only `wiki_articles`).
+
+        Returns `(survivor_article_id, gone_name)` for the Build-log: the survivor article id is
+        None (no Build-log post) when the merged entity had no article or the survivor has none."""
+        gone = (
             await session.execute(
-                text("SELECT id FROM app.wiki_articles WHERE entity_ref = :e"), {"e": gone_entity}
+                text(
+                    "SELECT id, (SELECT canonical_name FROM app.entities WHERE id = :e) AS name"
+                    " FROM app.wiki_articles WHERE entity_ref = :e"
+                ),
+                {"e": gone_entity},
             )
-        ).scalar()
-        if gone_article is None:
-            return  # the merged entity never had an article — nothing to redirect
+        ).first()
+        gone_name = (gone.name if gone is not None else None) or "another entity"
+        if gone is None:
+            return None, gone_name  # the merged entity never had an article — nothing to redirect
         survivor_article = (
             await session.execute(
                 text("SELECT id FROM app.wiki_articles WHERE entity_ref = :e"),
@@ -418,8 +458,9 @@ class WikiBuilder:
                 "UPDATE app.wiki_articles SET status = 'merged', merged_into_id = :s,"
                 " updated_at = now() WHERE id = :a"
             ),
-            {"s": survivor_article, "a": gone_article},
+            {"s": survivor_article, "a": gone.id},
         )
+        return survivor_article, gone_name
 
     async def _source(self, session: AsyncSession, entity_id: uuid.UUID) -> SourcedEntity | None:
         ent = (
@@ -562,7 +603,9 @@ class WikiBuilder:
 
     async def _ensure_article(
         self, session: AsyncSession, sourced: SourcedEntity, plan: PlannedArticle
-    ) -> uuid.UUID:
+    ) -> tuple[uuid.UUID, bool]:
+        """Upsert the article shell; return `(article_id, created)` — `created` is False on a
+        rebuild of an existing article (drives the Build-log's Created/Rebuilt verb)."""
         existing = (
             await session.execute(
                 text("SELECT id FROM app.wiki_articles WHERE entity_ref = :e"),
@@ -589,7 +632,7 @@ class WikiBuilder:
                     "a": existing,
                 },
             )
-            return existing
+            return existing, False
         created = (
             await session.execute(
                 text(
@@ -609,7 +652,7 @@ class WikiBuilder:
             )
         ).scalar()
         assert created is not None  # INSERT ... RETURNING always yields the id
-        return created
+        return created, True
 
     async def _write_section(
         self, session: AsyncSession, article_id: uuid.UUID, section: PlannedSection, *, seq: int
@@ -747,3 +790,71 @@ class WikiBuilder:
         await session.execute(
             text("UPDATE app.entities SET wiki_built = true WHERE id = :e"), {"e": entity_id}
         )
+
+    async def _post_build_log(self, note: _BuildLogNote | None) -> None:
+        """Post one Build-log entry for a just-built article, in its OWN transaction (the build is
+        already committed). Best-effort: the Build log is cosmetic editorial metadata, so a failure
+        here is logged and swallowed — it must never undo a real build. Find-or-creates the
+        article's single `build_log` topic SELECT-first (the common sequential path reuses it), with
+        a bare `ON CONFLICT DO NOTHING` + re-select backstop for the rare two-concurrent-runs race
+        (the partial unique index is the integrity guard); then appends the builder post and bumps
+        `last_post_at` in the same transaction (post + bump stay atomic)."""
+        if note is None:
+            return
+        try:
+            async with scoped_session(self._maker, SYSTEM_CTX) as session:
+                topic_id = await self._build_log_topic(session, note.article_id)
+                await session.execute(
+                    text(
+                        "INSERT INTO app.wiki_talk_posts (topic_id, author, body)"
+                        " VALUES (:t, 'builder', :b)"
+                    ),
+                    {"t": topic_id, "b": note.summary},
+                )
+                await session.execute(
+                    text("UPDATE app.wiki_talk_topics SET last_post_at = now() WHERE id = :t"),
+                    {"t": topic_id},
+                )
+                await session.commit()
+        except Exception:  # noqa: BLE001 — cosmetic Build-log post must never fail a build
+            log.warning("wiki_build_log_post_failed", article_id=str(note.article_id))
+
+    @staticmethod
+    async def _build_log_topic(session: AsyncSession, article_id: uuid.UUID) -> uuid.UUID:
+        """Find-or-create the article's single `build_log` topic. SELECT-first so a rebuild reuses
+        the existing topic; the bare ON CONFLICT DO NOTHING + re-select only matters if two builds
+        of the same article race (the partial unique index keeps it to one topic regardless)."""
+        existing = (
+            await session.execute(
+                text(
+                    "SELECT id FROM app.wiki_talk_topics"
+                    " WHERE article_id = :a AND kind = 'build_log'"
+                ),
+                {"a": article_id},
+            )
+        ).scalar()
+        if existing is not None:
+            return existing
+        inserted = (
+            await session.execute(
+                text(
+                    "INSERT INTO app.wiki_talk_topics (article_id, kind, title)"
+                    " VALUES (:a, 'build_log', 'Build log') ON CONFLICT DO NOTHING RETURNING id"
+                ),
+                {"a": article_id},
+            )
+        ).scalar()
+        if inserted is not None:
+            return inserted
+        # Lost the race: the concurrent run created it — re-select the winner's id.
+        won = (
+            await session.execute(
+                text(
+                    "SELECT id FROM app.wiki_talk_topics"
+                    " WHERE article_id = :a AND kind = 'build_log'"
+                ),
+                {"a": article_id},
+            )
+        ).scalar()
+        assert won is not None  # a row exists: either ours or the concurrent winner's
+        return won

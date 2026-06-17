@@ -638,6 +638,34 @@ export interface WikiInfoboxField {
   redLink?: boolean;
 }
 
+/** A Talk-board post (mock B). `author` is one of the three voices; `source` backs the source
+ * card and `outcome` the green outcome chip; `rev` is the Build-log "rev N" (else null). */
+export interface WikiTalkPost {
+  id: string;
+  author: "owner" | "editor" | "builder";
+  body: string;
+  source: { note_id: string; meta: string; snippet: string; domain: string } | null;
+  outcome: string | null;
+  created_at: string;
+  rev: number | null;
+}
+
+/** A Talk thread: an owner `discussion` topic (with open/resolved status) or the auto
+ * `build_log` topic (with `meta` = "auto · N entries"). */
+export interface WikiTalkTopic {
+  id: string;
+  kind: "discussion" | "build_log";
+  title: string;
+  status: "open" | "resolved";
+  meta: string | null;
+  posts: WikiTalkPost[];
+}
+
+export interface WikiTalkOut {
+  title: string;
+  topics: WikiTalkTopic[];
+}
+
 /** The infobox: either an entity-type disc OR an owner-added photo slot. */
 export interface WikiInfobox {
   title: string;
@@ -1070,6 +1098,47 @@ export const api = {
       jsonInit("POST", correction),
     );
     return (await response.json()) as { note_id: string; created: boolean };
+  },
+
+  // ----- The wiki Talk board: the article's editorial discussion + auto Build-log -----
+  async getTalk(articleId: string): Promise<WikiTalkOut> {
+    const response = await request(`/api/wiki/${encodeURIComponent(articleId)}/talk`);
+    return (await response.json()) as WikiTalkOut;
+  },
+
+  async createTalkTopic(
+    articleId: string,
+    topic: { title: string; body: string },
+  ): Promise<WikiTalkTopic> {
+    const response = await request(
+      `/api/wiki/${encodeURIComponent(articleId)}/talk/topics`,
+      jsonInit("POST", topic),
+    );
+    return (await response.json()) as WikiTalkTopic;
+  },
+
+  async postTalkReply(
+    articleId: string,
+    topicId: string,
+    reply: { body: string },
+  ): Promise<WikiTalkPost> {
+    const response = await request(
+      `/api/wiki/${encodeURIComponent(articleId)}/talk/topics/${encodeURIComponent(topicId)}/posts`,
+      jsonInit("POST", reply),
+    );
+    return (await response.json()) as WikiTalkPost;
+  },
+
+  async setTalkTopicStatus(
+    articleId: string,
+    topicId: string,
+    status: "open" | "resolved",
+  ): Promise<{ id: string; status: string }> {
+    const response = await request(
+      `/api/wiki/${encodeURIComponent(articleId)}/talk/topics/${encodeURIComponent(topicId)}`,
+      jsonInit("PATCH", { status }),
+    );
+    return (await response.json()) as { id: string; status: string };
   },
 
   // The ego subgraph for the graph view: the focal entity plus everything

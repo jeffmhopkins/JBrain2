@@ -27,6 +27,7 @@ import { ReviewScreen } from "./screens/ReviewScreen";
 import { RunsScreen } from "./screens/RunsScreen";
 import { SearchScreen } from "./screens/SearchScreen";
 import { SettingsScreen } from "./screens/SettingsScreen";
+import { TalkScreen } from "./screens/TalkScreen";
 import { WikiLandingScreen } from "./screens/WikiLandingScreen";
 import { WikiScreen } from "./screens/WikiScreen";
 import { useBackGesture } from "./useBackGesture";
@@ -92,6 +93,7 @@ export function App() {
   // The wiki reader stacks above the wiki landing (and above Search, when a wiki
   // hit is tapped there) — its own layer, like the entity page.
   const [wikiArticle, setWikiArticle] = useState<string | null>(null);
+  const [talkArticle, setTalkArticle] = useState<string | null>(null);
   const [wikiClosing, setWikiClosing] = useState(false);
 
   // Lives at the app level so the outbox keeps flushing while the user is
@@ -221,6 +223,12 @@ export function App() {
     }, CARD_EXIT_MS);
   }
 
+  // The Talk board stacks above the reader; jumping to the article closes Talk and opens it.
+  function openArticleFromTalk(id: string) {
+    setTalkArticle(null);
+    setWikiArticle(id);
+  }
+
   function openNoteFromStream(item: StreamItem) {
     setNoteView(noteViewFromItem(item));
   }
@@ -336,6 +344,7 @@ export function App() {
   const overlayDepth =
     (actions.editing !== null ? 1 : 0) +
     (actions.moveTarget !== null ? 1 : 0) +
+    (talkArticle !== null ? 1 : 0) +
     (wikiArticle !== null ? 1 : 0) +
     (entityView !== null ? 1 : 0) +
     (noteView !== null ? 1 : 0) +
@@ -347,6 +356,8 @@ export function App() {
   function closeTopLayer() {
     if (actions.editing !== null) return actions.cancelEdit();
     if (actions.moveTarget !== null) return actions.cancelMove();
+    // The Talk board stacks above the reader (opened from it), so it climbs off first.
+    if (talkArticle !== null) return setTalkArticle(null);
     // The wiki reader is the topmost reading layer (opened from the landing or a
     // search hit), so it climbs off before the entity/note/card layers beneath.
     if (wikiArticle !== null) return closeWikiArticle();
@@ -462,8 +473,19 @@ export function App() {
             articleId={wikiArticle}
             syncStatus={notes.syncStatus}
             onClose={closeWikiArticle}
+            onOpenTalk={setTalkArticle}
           />
         </div>
+      )}
+
+      {talkArticle !== null && (
+        <TalkScreen
+          key={talkArticle}
+          articleId={talkArticle}
+          syncStatus={notes.syncStatus}
+          onClose={() => setTalkArticle(null)}
+          onOpenArticle={openArticleFromTalk}
+        />
       )}
 
       {listView !== null && (
