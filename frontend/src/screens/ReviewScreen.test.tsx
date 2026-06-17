@@ -19,6 +19,11 @@ const PENDING: ReviewItem[] = [
       fact_a: "fact-old",
       fact_b: "fact-new",
       predicate: "birthDate",
+      qualifier: "",
+      fact_kind: "attribute",
+      assertion: "asserted",
+      statement: "Sarah's birthday is March 14, 1988.",
+      value_json: { value: "March 14, 1988" },
       summary: "two values recorded for Sarah's birthDate",
       rationale: "a card dates Sarah's birthday differently than the wiki.",
       confidence: 0.86,
@@ -40,6 +45,12 @@ const PENDING: ReviewItem[] = [
     payload: {
       fact_a: "bp-old",
       fact_b: "bp-new",
+      predicate: "blood_pressure",
+      qualifier: "",
+      fact_kind: "measurement",
+      assertion: "asserted",
+      statement: "Pharmacy kiosk blood pressure was 138/92 mmHg.",
+      value_json: { systolic: 138, diastolic: 92, unit: "mmHg" },
       summary: "two blood_pressure values disagree for Me",
       confidence: 0.78,
       snippet: "kiosk says <mark>138/92</mark>",
@@ -215,12 +226,13 @@ describe("ReviewScreen (split inbox)", () => {
     const diff = screen.getByLabelText("before and after");
     expect(within(diff).getByText("May 2, 1990")).toBeInTheDocument();
     expect(within(diff).getByText("March 14, 1988")).toBeInTheDocument();
-    // The proposals to choose among.
-    expect(screen.getByRole("button", { name: /March 14, 1988/ })).toBeInTheDocument();
+    // The proposals to choose among (matched by their "from this note" detail so
+    // the editable value chip carrying the same value isn't ambiguous).
+    expect(screen.getByRole("button", { name: /from this note/ })).toBeInTheDocument();
     expect(screen.getByText("1 of 4")).toBeInTheDocument();
-    // A collision shows its diff, not the inference card's proposed-fact panel —
-    // even though its payload carries a `predicate`.
-    expect(screen.queryByLabelText("proposed fact")).toBeNull();
+    // A collision now ALSO shows the editable proposed-fact panel (the common
+    // correct-in-place path), seeded from the value this note proposed.
+    expect(screen.getByLabelText("proposed fact")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "‹ inbox" }));
     expect(screen.getByRole("tab", { name: "pending 4" })).toBeInTheDocument();
@@ -273,7 +285,7 @@ describe("ReviewScreen (split inbox)", () => {
     render(<ReviewScreen />);
     await screen.findByText("two values recorded for Sarah's birthDate");
     fireEvent.click(screen.getByRole("button", { name: /two values recorded for Sarah/ }));
-    fireEvent.click(screen.getByRole("button", { name: /March 14, 1988/ }));
+    fireEvent.click(screen.getByRole("button", { name: /from this note/ }));
 
     await waitFor(() =>
       expect(fetchMock).toHaveBeenCalledWith(
@@ -284,8 +296,11 @@ describe("ReviewScreen (split inbox)", () => {
         }),
       ),
     );
-    // Back in the list, the item is gone and the undo snackbar offers a reversal.
-    expect(screen.getByRole("tab", { name: "pending 3" })).toBeInTheDocument();
+    // A fact card is triage: deciding advances to the next item's detail (here the
+    // BP conflict), and the undo snackbar offers a reversal.
+    expect(
+      await screen.findByText("two blood_pressure values disagree for Me"),
+    ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "undo" })).toBeInTheDocument();
   });
 
@@ -452,7 +467,7 @@ describe("ReviewScreen (split inbox)", () => {
 
     // The enum members render as chips, the proposed one selected; no edit yet.
     expect(screen.getByRole("button", { name: "female", pressed: true })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "approve" }));
+    fireEvent.click(screen.getByRole("button", { name: /^approve/ }));
 
     await waitFor(() =>
       expect(fetchMock).toHaveBeenCalledWith(
@@ -563,7 +578,7 @@ describe("ReviewScreen (split inbox)", () => {
     render(<ReviewScreen />);
     await screen.findByText(/People call me Jeff/);
     fireEvent.click(screen.getByRole("button", { name: /People call me Jeff/ }));
-    fireEvent.click(screen.getByRole("button", { name: "approve" }));
+    fireEvent.click(screen.getByRole("button", { name: /^approve/ }));
 
     // Lands on the next card's detail (its enum chips), still in the detail view
     // — the lane tabs only render in the list, so their absence proves it.
@@ -591,7 +606,7 @@ describe("ReviewScreen (split inbox)", () => {
     render(<ReviewScreen />);
     await screen.findByText(/People call me Jeff/);
     fireEvent.click(screen.getByRole("button", { name: /People call me Jeff/ }));
-    fireEvent.click(screen.getByRole("button", { name: "approve" }));
+    fireEvent.click(screen.getByRole("button", { name: /^approve/ }));
 
     // Nothing left to advance to: the inbox list (lane tabs) comes back.
     expect(await screen.findByRole("tab", { name: "pending 0" })).toBeInTheDocument();
@@ -863,26 +878,33 @@ describe("ReviewScreen (split inbox)", () => {
     expect(body.body).toContain("This is hypothetical, not asserted");
   });
 
-  it("correct it files a correction note, then resolves the item as corrected", async () => {
+  it("correcting a collision in place files a correction note and resolves as corrected", async () => {
     render(<ReviewScreen />);
     await screen.findByText("two values recorded for Sarah's birthDate");
     fireEvent.click(screen.getByRole("button", { name: /two values recorded for Sarah/ }));
-    fireEvent.click(screen.getByRole("button", { name: "correct it" }));
 
-    const box = screen.getByLabelText("correction note");
-    fireEvent.change(box, { target: { value: "Correction — her birthday is March 14, 1988." } });
-    fireEvent.click(screen.getByRole("button", { name: "file correction" }));
+    // The proposed value is editable in place — no "correct it" detour (the
+    // common correct-in-place path replaces it for every fact-bearing card).
+    expect(screen.queryByRole("button", { name: "correct it" })).toBeNull();
+    const panel = screen.getByLabelText("proposed fact");
+    fireEvent.click(within(panel).getByText("March 14, 1988"));
+    fireEvent.change(screen.getByLabelText("corrected value"), {
+      target: { value: "March 15, 1988" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "approve correction" }));
 
-    // First a real note is filed in the item's domain...
-    await waitFor(() =>
-      expect(fetchMock).toHaveBeenCalledWith(
-        "/api/notes",
-        expect.objectContaining({
-          method: "POST",
-          body: expect.stringContaining('"domain":"general"'),
-        }),
-      ),
-    );
+    // A real note is filed in the item's domain, spelling out the fix...
+    const noteCall = await waitFor(() => {
+      const call = fetchMock.mock.calls.find(([u]) => String(u) === "/api/notes");
+      if (!call) throw new Error("no note filed yet");
+      return call;
+    });
+    const body = JSON.parse(String((noteCall[1] as RequestInit).body)) as {
+      domain: string;
+      body: string;
+    };
+    expect(body.domain).toBe("general");
+    expect(body.body).toContain("should be March 15, 1988, not March 14, 1988");
     // ...then the item resolves as corrected, linking that note.
     await waitFor(() =>
       expect(fetchMock).toHaveBeenCalledWith(
@@ -895,7 +917,6 @@ describe("ReviewScreen (split inbox)", () => {
     );
     const correctCall = fetchMock.mock.calls.find((c) => String(c[0]) === "/api/review/c1/resolve");
     expect(String((correctCall?.[1] as RequestInit).body)).toContain('"note_id":"note-new"');
-    expect(screen.getByRole("tab", { name: "pending 3" })).toBeInTheDocument();
   });
 
   it("the high-confidence suggestion bulk-approves via resolve-batch", async () => {

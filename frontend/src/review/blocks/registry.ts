@@ -37,8 +37,10 @@ const DEFAULT_SEQUENCE: BlockId[] = [
 ];
 
 const SEQUENCE: Partial<Record<ReviewItem["kind"], BlockId[]>> = {
-  fact_conflict: ["header", "trace", "claim:diff", "action", "evidence"],
-  attribute_collision: ["header", "trace", "claim:diff", "action", "evidence"],
+  // claim:diff is the read-only context (current → from this note); claim:inference
+  // is the editable proposed-fact panel, so a conflict corrects in place too.
+  fact_conflict: ["header", "trace", "claim:diff", "claim:inference", "action", "evidence"],
+  attribute_collision: ["header", "trace", "claim:diff", "claim:inference", "action", "evidence"],
   low_confidence_inference: ["header", "claim:inference", "trace", "action", "evidence"],
   ambiguous_mention: ["header", "claim:notice", "action", "evidence"],
   new_predicate: ["header", "action", "evidence"],

@@ -445,6 +445,28 @@ def test_system_prompt_teaches_assertions_and_backward_temporal() -> None:
     assert "Never invent a date" in SYSTEM_PROMPT
 
 
+def test_system_prompt_teaches_dated_ranges_close_their_interval() -> None:
+    """v20: an explicit dated range on a state ("from 2008 to 2016") is a CLOSED
+    interval — both bounds set — so a past job records as bounded history and
+    does not contend as a second current employer (the worksFor "conflict" bug)."""
+    assert "EXPLICIT DATED range" in SYSTEM_PROMPT
+    assert "BOTH resolved_start AND resolved_end" in SYSTEM_PROMPT
+    # The worked example shows the closed US Army interval beside a current job.
+    assert "from 2008 to 2016" in SYSTEM_PROMPT
+    assert "never competes as a second CURRENT employer" in SYSTEM_PROMPT
+
+
+def test_system_prompt_teaches_age_resolves_to_birthdate() -> None:
+    """v20: age is relative-to-now and goes stale, so it resolves to an
+    approximate birthDate attribute, never a static `age` predicate (which also
+    avoids the misfiring new_predicate card on the unknown `age` spelling)."""
+    assert "AGE is relative-to-NOW" in SYSTEM_PROMPT
+    assert "resolves to an approximate birthDate" in SYSTEM_PROMPT
+    assert "coin an `age` predicate" in SYSTEM_PROMPT
+    # The worked example renders the birth year, not the age.
+    assert "Boss was born around 2018." in SYSTEM_PROMPT
+
+
 def test_system_prompt_teaches_per_fact_domain_for_the_firewall() -> None:
     """Domain is judged PER FACT regardless of the note's capture domain, so a
     family member's health fact in a general journal still floors to health —
@@ -461,7 +483,7 @@ def test_user_prompt_carries_the_per_note_fact_budget() -> None:
 
 
 def test_prompt_version_is_current() -> None:
-    assert PROMPT_VERSION == "note-extract-v19"
+    assert PROMPT_VERSION == "note-extract-v20"
 
 
 def test_user_prompt_carries_anchor_with_timezone_domain_and_content() -> None:

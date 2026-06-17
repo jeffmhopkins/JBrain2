@@ -29,6 +29,15 @@ import {
 import { useArmed } from "../review/useArmed";
 import { type ReviewQueueController, useReviewQueue } from "../review/useReviewQueue";
 
+// The kinds that carry a structured proposed fact and so correct in place
+// (predicate + value + modality, filed as a correction note). A conflict's
+// editable side is fact_b — the value this note proposed.
+const EDITABLE_FACT_KINDS = new Set<ReviewItem["kind"]>([
+  "low_confidence_inference",
+  "fact_conflict",
+  "attribute_collision",
+]);
+
 // ===== List =====
 
 interface ListRowProps {
@@ -114,30 +123,33 @@ function Detail({ item, lane, queue, position, onClose, onAdvance, onNav }: Deta
   const [composing, setComposing] = useState(false);
   const [draft, setDraft] = useState("");
 
-  // Direction C — correct in place: a low-confidence inference's predicate AND
-  // value are editable on the card. The proposed-fact panel (claim:inference)
-  // and the approve button (action) share this edit state, so editing either
-  // side flips approve to approve correction. The predicate side is a weighted
-  // picker (the canonicals nearest the proposed relation) plus free entry; the
-  // value is free text, or a typed predicate's members as chips.
-  const isInference = item.kind === "low_confidence_inference" && parsed.predicate !== null;
-  const originalValue = isInference ? valueLabel(parsed.valueJson, parsed.statement ?? "") : "";
+  // Direction C — correct in place: the proposed fact's predicate, value, AND
+  // modality are editable on the card. The proposed-fact panel (claim:inference)
+  // and the action block share this edit state, so an edit flips the decision to
+  // a correction (filed as a note, never a hand-written fact). This is wired for
+  // a low-confidence inference AND for fact_conflict / attribute_collision (both
+  // carry a structured proposed fact, fact_b for a conflict) — so a conflict is
+  // no longer pick-fact_a-or-fact_b only; the owner can correct it to a third
+  // value. The predicate side is a weighted picker (the canonicals nearest the
+  // proposed relation) plus free entry; the value is free text, or a typed
+  // predicate's members as chips.
+  const editable = EDITABLE_FACT_KINDS.has(item.kind) && parsed.predicate !== null;
+  const originalValue = editable ? valueLabel(parsed.valueJson, parsed.statement ?? "") : "";
   const [editValue, setEditValue] = useState(originalValue);
   const [editingValue, setEditingValue] = useState(false);
-  const valueEdited =
-    isInference && editValue.trim().length > 0 && editValue.trim() !== originalValue;
+  const valueEdited = editable && editValue.trim().length > 0 && editValue.trim() !== originalValue;
 
-  const originalPredicate = isInference ? (parsed.predicate ?? "") : "";
+  const originalPredicate = editable ? (parsed.predicate ?? "") : "";
   const [editPredicate, setEditPredicate] = useState(originalPredicate);
   const [editingPredicate, setEditingPredicate] = useState(false);
   const predicateEdited =
-    isInference && editPredicate.trim().length > 0 && editPredicate.trim() !== originalPredicate;
+    editable && editPredicate.trim().length > 0 && editPredicate.trim() !== originalPredicate;
 
   // Modality (the fact's assertion). A card filed before assertion was surfaced
   // carries none — treat that as `asserted`, the common case.
-  const originalModality = isInference ? (parsed.assertion ?? "asserted") : "asserted";
+  const originalModality = editable ? (parsed.assertion ?? "asserted") : "asserted";
   const [editModality, setEditModality] = useState(originalModality);
-  const modalityEdited = isInference && editModality !== originalModality;
+  const modalityEdited = editable && editModality !== originalModality;
 
   // The weighted picker prefers the suggestions baked into the payload, but a
   // card filed before the picker existed has none — so fetch them on demand
@@ -147,7 +159,7 @@ function Detail({ item, lane, queue, position, onClose, onAdvance, onNav }: Deta
     { name: string; score: number }[] | null
   >(null);
   useEffect(() => {
-    if (!isInference || parsed.predicateSuggestions.length > 0) return;
+    if (!editable || parsed.predicateSuggestions.length > 0) return;
     let stale = false;
     api
       .reviewPredicateSuggestions(item.id)
@@ -158,7 +170,7 @@ function Detail({ item, lane, queue, position, onClose, onAdvance, onNav }: Deta
     return () => {
       stale = true;
     };
-  }, [isInference, item.id, parsed.predicateSuggestions.length]);
+  }, [editable, item.id, parsed.predicateSuggestions.length]);
   const predicateSuggestions =
     parsed.predicateSuggestions.length > 0
       ? parsed.predicateSuggestions
@@ -195,7 +207,7 @@ function Detail({ item, lane, queue, position, onClose, onAdvance, onNav }: Deta
     onClose,
     onAdvance,
     inference: {
-      isInference,
+      editable,
       originalValue,
       editValue,
       setEditValue,

@@ -393,15 +393,20 @@ undo. Tapping a row **pushes a detail** view (back to inbox + **N of M** +
 list). The detail leads with the proposal: a **before→after value diff**
 for collisions/conflicts (struck `current` over green `from this note`),
 a **proposed-fact panel** (the `predicate → value` edge it would write,
-rendered exactly as the entity page) for low-confidence inference holds so
-it's clear what *approve* records — and that value is **editable in place**
-(*correct in place*, docs/mocks/review-inference-c-correct-in-place.html): a
-free-text chip→input, or a member picker for a **typed (closed-enum)
-predicate** like `gender → {male, female, unknown}`, whose members ride on the
-card payload. *Approve* unchanged records the inference; an edit flips it to
-*approve correction*, which files a correction note (the #7 channel — the
-wiki stays machine-written) instead of the footer's *correct it* detour
-(dropped for this kind). Or a what-happens panel for the rest;
+rendered exactly as the entity page) for **every fact-bearing card** — a
+low-confidence inference hold, and (beside the before→after diff) a fact
+conflict or attribute collision — so it's clear what the decision records, and
+that fact is **editable in place** (*correct in place*,
+docs/mocks/review-inference-c-correct-in-place.html): the predicate via a
+weighted picker (the canonicals nearest the proposed relation, plus free
+entry), the value as a free-text chip→input or a member picker for a **typed
+(closed-enum) predicate** like `gender → {male, female, unknown}` whose members
+ride on the card payload, and the modality (the assertion stance). Deciding
+unchanged records the pick (an inference's *approve*, a conflict's chosen
+side); an edit flips the primary to *approve correction*, which files a
+correction note (the #7 channel — the wiki stays machine-written) instead of
+the footer's *correct it* detour (dropped for every editable fact card,
+replaced by the inline edit). Or a what-happens panel for the rest;
 then a one-line rationale, a
 confidence badge, the **cited evidence** snippet (provenance), and the
 **proposals to choose among** as stacked buttons (destructive ones —
@@ -433,7 +438,14 @@ read as one calm `--text-2` sentence each.
 *Edit model:* "approve with edits" has two shapes, neither of which writes
 the graph by hand (honoring non-negotiable #7 — facts aren't edited
 directly). **Choose-among-proposals** picks among the values the pipeline
-already proposed. **Correct it** opens a composer that files the human's
+already proposed. **Correct in place** edits the proposed fact's predicate,
+value, or modality directly on the card — available on **every fact-bearing
+card** (inference holds, fact conflicts, attribute collisions), since each now
+carries its structured proposed fact in the payload; an edit files the same
+**correction note** rather than a verbatim pick, so the inline editor *is* the
+correction channel for these kinds (their footer *correct it* is dropped).
+For the kinds that carry no editable fact (merges, ambiguous mentions, domain
+moves, …), **correct it** opens a composer that files the human's
 fix as a real **correction note** (the #7 channel) in the item's domain and
 resolves the item as *corrected*; the pipeline applies it when it processes
 that note (**re-adjudicate**, never a hand-written fact), so the wiki stays

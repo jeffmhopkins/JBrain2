@@ -45,9 +45,17 @@ describe("block registry", () => {
     }
   });
 
-  it("places claim:inference only in the inference sequence", () => {
-    expect(blockSequenceFor(item("low_confidence_inference"))).toContain("claim:inference");
-    expect(blockSequenceFor(item("fact_conflict"))).not.toContain("claim:inference");
+  it("gives the editable proposed-fact panel to inference and conflict/collision", () => {
+    // claim:inference is the correct-in-place editor; conflict/collision pair it
+    // with the read-only claim:diff so they edit a third value, not only pick a/b.
+    for (const kind of [
+      "low_confidence_inference",
+      "fact_conflict",
+      "attribute_collision",
+    ] as const)
+      expect(blockSequenceFor(item(kind))).toContain("claim:inference");
+    // Kinds with no structured proposed fact never show the editor.
+    expect(blockSequenceFor(item("merge_proposal"))).not.toContain("claim:inference");
   });
 
   it("gives a collision its before→after diff block", () => {

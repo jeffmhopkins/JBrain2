@@ -1,16 +1,17 @@
 import { correctionDraft } from "../payload";
 import type { BlockCtx } from "./types";
 
-/** The lane-driven footer. Pending: inferences correct in place (predicate +
- * value on the card), so they show no footer; other kinds keep "correct it", the
- * free-form correction composer. Decided: an armed reopen that unwinds the
- * decision. */
+/** The lane-driven footer. Pending: fact-bearing cards correct in place
+ * (predicate + value + modality on the card), so they show no footer; other
+ * kinds keep "correct it", the free-form correction composer. Decided: an armed
+ * reopen that unwinds the decision. */
 export function Footer({ ctx }: { ctx: BlockCtx }) {
   const { item, parsed, lane, queue, armed, tap, onClose, inference, composing } = ctx;
 
   if (lane === "pending") {
-    // Inferences edit predicate + value in place — nothing left for the footer.
-    if (inference.isInference) return null;
+    // Editable fact cards correct predicate + value in place — nothing left for
+    // the footer (an edit files the correction note the composer otherwise would).
+    if (inference.editable) return null;
     return (
       <footer className="rdetail-foot">
         <button

@@ -9,14 +9,17 @@ import type { ReviewFilter, ReviewItem } from "../../api/client";
 import type { Parsed } from "../payload";
 import type { ReviewQueueController } from "../useReviewQueue";
 
-/** A low-confidence inference, corrected in place. Hoisted to the detail so the
- * proposed-fact panel (claim:inference) and the approve button (action) share
- * one edit state — editing either the predicate or the value flips approve →
- * approve correction. The predicate picker offers `predicateSuggestions` (the
- * canonicals nearest the proposed relation, weighted by similarity) and free
- * entry; the value is free text, or an enum predicate's members as chips. */
+/** A fact-bearing card corrected in place. Hoisted to the detail so the
+ * proposed-fact panel (claim:inference) and the action block share one edit
+ * state — editing the predicate, value, or modality flips the decision to a
+ * correction (filed as a note, the #7 channel, never a hand-written fact). The
+ * predicate picker offers `predicateSuggestions` (the canonicals nearest the
+ * proposed relation, weighted by similarity) and free entry; the value is free
+ * text, or an enum predicate's members as chips. `editable` is true for a
+ * low-confidence inference AND for fact_conflict / attribute_collision — both
+ * carry a structured proposed fact, so both correct in place. */
 export interface InferenceEdit {
-  isInference: boolean;
+  editable: boolean;
   originalValue: string;
   editValue: string;
   setEditValue: (v: string) => void;

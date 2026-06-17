@@ -19,7 +19,7 @@ const MODALITIES = ["asserted", "negated", "hypothetical", "reported", "question
  * Self-gates unless this is an inference. */
 export const ClaimInference: ReviewBlock = ({ ctx }) => {
   const { parsed, lane, inference } = ctx;
-  if (!inference.isInference) return null;
+  if (!inference.editable) return null;
   const {
     originalValue,
     editValue,
@@ -130,7 +130,7 @@ export const ClaimInference: ReviewBlock = ({ ctx }) => {
         <ModalityField value={editModality} edited={modalityEdited} onPick={setEditModality} />
       )}
 
-      {pending && (
+      {pending && (inference.edited || parsed.accept !== null) && (
         <p className={`rinf-status${inference.edited ? " edit" : ""}`}>
           {inference.edited ? (
             <>
@@ -157,7 +157,7 @@ export const ClaimInference: ReviewBlock = ({ ctx }) => {
               machine-written.
             </>
           ) : (
-            (parsed.accept ?? "recorded and pinned — reprocessing won't drop it.")
+            parsed.accept
           )}
         </p>
       )}
