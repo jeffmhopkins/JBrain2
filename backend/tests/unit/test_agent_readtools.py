@@ -176,6 +176,30 @@ def test_format_search_lists_results() -> None:
     assert "note n1 [general]" in out and "eggs and coffee" in out
 
 
+def test_format_search_surfaces_wiki_hits_and_sources_stay_notes() -> None:
+    from jbrain.agent.readtools import search_sources
+    from jbrain.search.service import WikiSearchResult
+
+    wiki = WikiSearchResult(
+        article_id="a1",
+        title="Priya Nair",
+        blurb="a pediatrician",
+        entity_kind="Person",
+        domain="general",
+        snippet="founded the clinic",
+        match="both",
+        score=2.0,
+    )
+    resp = SearchResponse(degraded=False, results=[wiki, result(snippet="eggs")])
+    out = format_search(resp)
+    # The wiki article is surfaced as a read_wiki target; the note line is still there.
+    assert 'wiki "Priya Nair" [general]' in out
+    assert "note n1 [general]" in out
+    # Structured source cards stay note-only (the wiki hit is in the prose, not a NoteSource).
+    sources = search_sources(resp)
+    assert [s.note_id for s in sources] == ["n1"]
+
+
 def test_format_search_empty_and_degraded() -> None:
     assert (
         format_search(SearchResponse(degraded=False, results=[])) == "No matching notes in scope."
