@@ -61,11 +61,16 @@ class Note(Base):
     # chunks/embeddings are untouched, so the note stays searchable. NULL =
     # visible; an instant = when it was hidden. Distinct from deleted_at.
     hidden_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    # 'human' (the default for captured notes) or 'agent' for an agent-authored
-    # note enacted from a Proposal; source_ref attributes it to what prompted it
-    # (the proposal/conversation id). Agent notes get NORMAL extraction weight (#7).
+    # 'human' (the default for captured notes), 'agent' (an agent-authored note enacted from a
+    # Proposal — NORMAL extraction weight), or 'owner_correction' (an owner correction note,
+    # Phase 6 §4: full-weight, force-supersedes + pins). source_ref attributes it to what
+    # prompted it (the proposal/conversation id).
     provenance: Mapped[str] = mapped_column(Text, default="human", server_default="human")
     source_ref: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # The wiki revision an owner correction note disputes (migration 0051); nullable.
+    wiki_revision_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("app.wiki_revisions.id", ondelete="SET NULL"), nullable=True
+    )
     # Whether note.extract has produced this note's note_analysis row — the
     # API's "analysis done" signal for the lifecycle chip. A correlated EXISTS
     # (the has_extracts pattern) so list/get serialization needs no second

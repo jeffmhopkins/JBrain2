@@ -90,6 +90,10 @@ class ExtractedFact:
     # — full plan weight — still can't silently overwrite a confident prior.
     # Defaults to 1.0 so non-integrate constructions are treated as confident.
     self_confidence: float = 1.0
+    # True when this fact comes from an owner CORRECTION note (Phase 6 §4): it
+    # commits at full weight and force-supersedes the current head + pins (see
+    # supersession.decide). Defaults False — every non-correction path is unchanged.
+    correction: bool = False
 
 
 @dataclass(frozen=True)

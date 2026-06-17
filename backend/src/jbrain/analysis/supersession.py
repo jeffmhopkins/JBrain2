@@ -247,6 +247,11 @@ class Candidate:
     # prior. Defaults to 1.0 (confident) for callers that don't carry a self-report.
     confidence: float = 1.0
     self_confidence: float = 1.0
+    # True when this candidate comes from an owner-authored CORRECTION note. Such a
+    # candidate "out-argues the graph": on a single-head address it force-supersedes
+    # the current head(s) and commits active + pinned, regardless of temporal order
+    # (the only path by which a human assertion forcibly overrides — Phase 6 §4).
+    correction: bool = False
 
 
 @dataclass
@@ -266,6 +271,9 @@ class Decision:
     close_valid_to: datetime | None = None
     insert: bool = False
     insert_status: str = "active"
+    # The inserted row is pinned (an owner correction): protected from future
+    # auto-supersession (a later non-correction note re-flags rather than flips it).
+    insert_pinned: bool = False
     insert_superseded_by: str | None = None
     insert_valid_to: datetime | None = None
     supersede_ids: list[str] = field(default_factory=list)
@@ -421,6 +429,26 @@ def decide(candidate: Candidate, existing: list[FactView], *, predicate: str = "
             return Decision(refresh_id=e.id)
         if not accumulating and (e.status in ("active", "pending_review") or same_validity):
             return Decision(refresh_id=e.id)
+
+    # An owner correction out-argues the graph on a SINGLE-HEAD address (state /
+    # attribute / preference / functional relationship): supersede every current head
+    # and commit the correction active + pinned, regardless of temporal order. An
+    # identical-value restatement was already refreshed above, so reaching here means a
+    # genuine override. Accumulating kinds (event/measurement) and set-valued
+    # (non-functional) relationships fall through to the normal path — a correction
+    # there is a new datapoint/edge, not a wholesale replacement.
+    single_head = candidate.kind in ("state", "attribute", "preference") or (
+        candidate.kind == "relationship" and is_functional(predicate)
+    )
+    if candidate.correction and single_head:
+        heads = [e for e in live if e.status in ("active", "pending_review")]
+        return Decision(
+            insert=True,
+            insert_status="active",
+            insert_pinned=True,
+            supersede_ids=[e.id for e in heads if e.status == "active"],
+            hold_ids=[e.id for e in heads if e.status == "pending_review"],
+        )
 
     if candidate.kind in ("event", "measurement"):
         clash = next(

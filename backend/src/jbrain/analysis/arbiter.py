@@ -64,6 +64,8 @@ class PlannedFact:
     # Non-empty when the status was forced to review by a resolution flag
     # (ambiguous / cross-subject), independent of the weight threshold.
     review_reasons: tuple[str, ...] = ()
+    # Owner-correction fact (Phase 6 §4): the executor force-supersedes + pins.
+    correction: bool = False
 
 
 @dataclass(frozen=True)
@@ -87,10 +89,21 @@ class ArbiterPlan:
 def plan_intent(
     intent: IntegrationIntent,
     signals: Mapping[int, ConfidenceSignals] | None = None,
+    *,
+    correction: bool = False,
 ) -> ArbiterPlan:
     """Partition an intent into commit / review / reject. `signals[i]` is the
     deterministic ConfidenceSignals for `intent.facts[i]` (executor-supplied;
-    a missing entry is treated conservatively)."""
+    a missing entry is treated conservatively).
+
+    `correction=True` (an owner-authored correction note, Phase 6 §4): each
+    SURFACE-ATTESTED fact commits at FULL weight (the note is authoritative for what
+    it literally states — skipping the ceiling so it never falls to review on
+    threshold) and is marked a correction so the executor force-supersedes the
+    current head + pins. An INFERRED fact in a correction note is NOT elevated (it
+    follows the normal capped path) — a hallucinated value can't bypass the
+    inferred-overwrite guard. Safety review flags (ambiguous mention, cross-subject
+    link) STILL force review regardless."""
     sig = signals or {}
 
     violations = validate_intent(intent)
@@ -114,8 +127,16 @@ def plan_intent(
 
     planned: list[PlannedFact] = []
     for i, fact in enumerate(intent.facts):
-        weight = effective_weight(fact.self_confidence, sig.get(i, _CONSERVATIVE))
-        status = commit_status(fact.kind, weight)
+        signals_i = sig.get(i, _CONSERVATIVE)
+        # A correction is authoritative only for what the note LITERALLY STATES (the note is the
+        # authority, §4): an INFERRED (non-surface-attested) fact inside a correction note is NOT
+        # allowed to bypass the weight ceiling or force-supersede a confident prior — a
+        # hallucinated/pronoun-inferred value is the most destructive write, so it follows the
+        # normal capped/review path. Only a surface-attested correction fact gets full weight +
+        # force-supersede + pin.
+        fact_correction = correction and signals_i.surface_attested
+        weight = 1.0 if fact_correction else effective_weight(fact.self_confidence, signals_i)
+        status: CommitStatus = "active" if fact_correction else commit_status(fact.kind, weight)
         # Order-preserving de-dup: a self-edge (same flagged mention as both
         # subject and object) must not repeat its reason.
         reasons = list(
@@ -132,7 +153,13 @@ def plan_intent(
             # reason so the inbox (A1b) needn't reconstruct it from weight+kind.
             reasons = ["below_threshold"]
         planned.append(
-            PlannedFact(fact=fact, weight=weight, status=status, review_reasons=tuple(reasons))
+            PlannedFact(
+                fact=fact,
+                weight=weight,
+                status=status,
+                review_reasons=tuple(reasons),
+                correction=fact_correction,
+            )
         )
 
     return ArbiterPlan(
@@ -208,7 +235,9 @@ def compute_signals(
     return out
 
 
-def _to_extracted(fact: IntentFact, confidence: float) -> ExtractedFact:
+def _to_extracted(
+    fact: IntentFact, confidence: float, *, correction: bool = False
+) -> ExtractedFact:
     temporal = (
         ExtractedTemporal(
             phrase=fact.temporal.phrase,
@@ -236,6 +265,7 @@ def _to_extracted(fact: IntentFact, confidence: float) -> ExtractedFact:
         # The model's self-report rides alongside the plan weight so the
         # supersession guard can still hold a low-confidence overwrite (N11).
         self_confidence=fact.self_confidence,
+        correction=correction,
     )
 
 
@@ -282,7 +312,7 @@ def plan_to_extraction(
         )
         for r in intent.entity_resolutions
     ]
-    facts = [_to_extracted(pf.fact, pf.weight) for pf in source]
+    facts = [_to_extracted(pf.fact, pf.weight, correction=pf.correction) for pf in source]
     return Extraction(
         title=title,
         tags=list(tags or []),

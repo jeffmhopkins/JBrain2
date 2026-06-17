@@ -289,6 +289,9 @@ class AnalysisPipeline:
                 return
             body, domain, captured_at = note.body, note.domain_code, note.created_at
             tz_offset = note.tz_offset_minutes
+            # An owner correction note (Phase 6 §4) extracts at full weight and
+            # force-supersedes + pins the current head, so it out-argues the graph.
+            correction = note.provenance == "owner_correction"
             chunk_rows = (
                 await session.execute(
                     select(Chunk.id, Chunk.text, Chunk.source_kind, Attachment.filename)
@@ -341,7 +344,9 @@ class AnalysisPipeline:
         # STRONG embedding match collapses the committed graph address and the
         # weight model sees the canonical name (Phase 3 §3.1; no-op when off).
         await self.canonicalize_intent(intent, note_domain=domain)
-        plan = plan_intent(intent, compute_signals(intent, [c.text for c in chunks]))
+        plan = plan_intent(
+            intent, compute_signals(intent, [c.text for c in chunks]), correction=correction
+        )
 
         provider, model = self._router.spec("integrate.note", INTEGRATE_STRENGTH)
         async with scoped_session(self._maker, SYSTEM_CTX) as session:
@@ -1966,6 +1971,7 @@ class AnalysisPipeline:
             reported_at=captured_at,
             confidence=fact.confidence,
             self_confidence=fact.self_confidence,
+            correction=fact.correction,
         )
         existing = await self._existing_facts(
             session,
@@ -2066,6 +2072,7 @@ class AnalysisPipeline:
             temporal_precision=precision,
             temporal_token_id=token_id,
             status=decision.insert_status,
+            pinned=decision.insert_pinned,
             superseded_by=(
                 uuid.UUID(decision.insert_superseded_by) if decision.insert_superseded_by else None
             ),
