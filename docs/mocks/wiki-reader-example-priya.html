@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Wiki article — Priya Nair (rendered from notes)</title>
+<style>
+  :root{
+    --bg:#0e1116;--surface:#161b22;--surface-2:#1b2230;--border:#2a313c;
+    --text:#e6edf3;--text-2:#9aa7b4;--text-3:#6b7785;--link:#6ea8fe;--red:#e26d6d;
+    --steel:#6ea8fe;--violet:#b08cff;--amber:#e0a85b;--health:#f17d8a;--finance:#5bc2a0;
+    --mark:#3a2f17;--shadow:rgba(0,0,0,.45);
+  }
+  [data-theme="light"]{
+    --bg:#f7f6f2;--surface:#fff;--surface-2:#f0f0ec;--border:#d8d8d0;
+    --text:#202122;--text-2:#54595d;--text-3:#8b9096;--link:#3366cc;--red:#b32424;
+    --steel:#2f6fe0;--violet:#7a4fd0;--amber:#9a6b1e;--health:#c0455a;--finance:#1f8f6e;
+    --mark:#fbe7c6;--shadow:rgba(20,30,50,.12);
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  body{margin:0;background:#05070a;font:15px/1.6 -apple-system,system-ui,"Segoe UI",sans-serif;display:grid;place-items:center;min-height:100vh;color:var(--text)}
+  .phone{width:390px;height:800px;background:var(--bg);border-radius:30px;overflow:hidden;position:relative;box-shadow:0 20px 60px var(--shadow);display:flex;flex-direction:column}
+  .topbar{height:56px;flex:0 0 56px;display:flex;align-items:center;gap:10px;padding:0 14px;border-bottom:1px solid var(--border);background:var(--surface)}
+  .topbar .ttl{font-weight:600;font-size:16px;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .icon-btn{width:36px;height:36px;display:grid;place-items:center;border-radius:9px;color:var(--text-2);background:transparent;border:0;cursor:pointer}
+  .icon-btn:hover{background:var(--surface-2);color:var(--text)}
+  svg{width:20px;height:20px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+  .scroll{overflow-y:auto;padding:14px 16px 40px;flex:1}
+  h1.title{font-size:26px;font-weight:400;font-family:Georgia,"Times New Roman",serif;margin:4px 0 2px;line-height:1.15}
+  .subtitle{font-size:13px;color:var(--text-3);border-bottom:1px solid var(--border);padding-bottom:10px;margin-bottom:12px}
+  .ro{display:inline-flex;align-items:center;gap:6px;font-size:11px;color:var(--amber);background:color-mix(in srgb,var(--amber) 12%,transparent);border-radius:8px;padding:5px 9px;margin-bottom:14px}
+  .ro svg{width:13px;height:13px}
+  .infobox{float:right;width:172px;margin:0 0 10px 12px;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:10px;font-size:11.5px}
+  .infobox .ib-title{text-align:center;font-weight:700;font-size:12.5px;padding-bottom:7px;border-bottom:1px solid var(--border);margin-bottom:7px}
+  .infobox .ib-disc{width:64px;height:64px;border-radius:50%;margin:0 auto 8px;display:grid;place-items:center;background:color-mix(in srgb,var(--steel) 16%,transparent);color:var(--steel)}
+  .infobox .ib-disc svg{width:32px;height:32px}
+  .infobox dl{margin:0;display:grid;grid-template-columns:auto 1fr;gap:5px 8px}
+  .infobox dt{color:var(--text-3);font-weight:600}
+  .infobox dd{margin:0}
+  p{margin:0 0 12px}
+  a.link{color:var(--link);text-decoration:none;cursor:pointer}
+  a.link:hover{text-decoration:underline}
+  a.red{color:var(--red);text-decoration:none;cursor:pointer;border-bottom:1px dotted var(--red)}
+  a.red:hover{background:color-mix(in srgb,var(--red) 12%,transparent)}
+  sup.ref{font-size:10px;line-height:0}
+  sup.ref a{color:var(--link);text-decoration:none;cursor:pointer}
+  h2.sec{font-family:Georgia,serif;font-weight:400;font-size:19px;margin:20px 0 8px;padding-bottom:4px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px}
+  h2.sec .dom{width:8px;height:8px;border-radius:50%;flex:0 0 8px}
+  h2.sec .dom-lbl{font-size:10px;font-family:system-ui;color:var(--text-3);border:1px solid var(--border);border-radius:20px;padding:0 7px;margin-left:auto;text-transform:uppercase;letter-spacing:.04em}
+  h2.refs{font-family:Georgia,serif;font-weight:400;font-size:18px;margin:24px 0 8px;padding-bottom:4px;border-bottom:1px solid var(--border)}
+  ol.reflist{margin:0;padding-left:22px;font-size:12px;color:var(--text-2)}
+  ol.reflist li{margin-bottom:7px}
+  ol.reflist li.hl{background:color-mix(in srgb,var(--amber) 14%,transparent);border-radius:6px;padding:2px 4px;margin-left:-4px}
+  ol.reflist .meta{color:var(--text-3)}
+  ol.reflist mark{background:var(--mark);color:var(--text);border-radius:3px;padding:0 2px}
+  ol.reflist .dchip{font-size:9px;text-transform:uppercase;letter-spacing:.04em;border:1px solid var(--border);border-radius:10px;padding:0 5px;color:var(--text-3);margin-left:4px}
+  .discuss{position:absolute;left:0;right:0;bottom:0;padding:12px 16px calc(12px + env(safe-area-inset-bottom));background:linear-gradient(to top,var(--bg) 72%,transparent)}
+  .discuss button{width:100%;height:44px;border-radius:12px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-size:14px;font-weight:600;display:inline-flex;align-items:center;justify-content:center;gap:8px;cursor:pointer}
+</style>
+</head>
+<body>
+<div class="phone">
+  <div class="topbar">
+    <button class="icon-btn"><svg viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg></button>
+    <div class="ttl">Priya Nair</div>
+    <button class="icon-btn" title="Talk"><svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg></button>
+    <button class="icon-btn" id="theme"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4.5"/><path d="M12 2v2M12 20v2M4 12H2M22 12h-2M5 5l1.5 1.5M17.5 17.5L19 19M19 5l-1.5 1.5M6.5 17.5L5 19"/></svg></button>
+  </div>
+
+  <div class="scroll">
+    <h1 class="title">Priya Nair</h1>
+    <div class="subtitle">Person · pediatrician · machine-written from your notes</div>
+    <div class="ro"><svg viewBox="0 0 24 24"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>Read-only — correct it by discussing</div>
+
+    <div class="infobox">
+      <div class="ib-disc"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-7 8-7s8 3 8 7"/></svg></div>
+      <div class="ib-title">Priya Nair</div>
+      <dl>
+        <dt>Relation</dt><dd>Sister of <a class="link">Jordan&nbsp;Hale</a><sup class="ref"><a onclick="j(2)">[2]</a></sup></dd>
+        <dt>Raised</dt><dd><a class="link">Austin</a><sup class="ref"><a onclick="j(1)">[1]</a></sup></dd>
+        <dt>Spouse</dt><dd><a class="red" title="No article yet">Tom</a> (m.&nbsp;2021)<sup class="ref"><a onclick="j(3)">[3]</a></sup></dd>
+        <dt>Child</dt><dd><a class="red" title="No article yet">Anaya</a> (b.&nbsp;2024)<sup class="ref"><a onclick="j(7)">[7]</a></sup></dd>
+        <dt>Education</dt><dd>M.D., <a class="link">Johns&nbsp;Hopkins</a><sup class="ref"><a onclick="j(2)">[2]</a></sup></dd>
+        <dt>Practice</dt><dd><a class="link">Nair&nbsp;Pediatrics</a>, <a class="link">Brookline</a> (2024–)<sup class="ref"><a onclick="j(9)">[9]</a></sup></dd>
+      </dl>
+    </div>
+
+    <p><strong>Priya Nair</strong> is a pediatrician and the younger sister of
+      <a class="link">Jordan Hale</a>.<sup class="ref"><a onclick="j(2)">[2]</a></sup> She grew up in
+      <a class="link">Austin</a><sup class="ref"><a onclick="j(1)">[1]</a></sup>, trained in medicine at
+      <a class="link">Johns Hopkins</a><sup class="ref"><a onclick="j(2)">[2]</a></sup>, and as of 2024 runs her own
+      practice, <a class="link">Nair Pediatrics</a>, in <a class="link">Brookline</a>.<sup class="ref"><a onclick="j(9)">[9]</a></sup></p>
+
+    <h2 class="sec"><span class="dom" style="background:var(--steel)"></span>Early life</h2>
+    <p>Nair grew up in <a class="link">Austin</a>, where she was regarded within the family as the one most
+      drawn to science.<sup class="ref"><a onclick="j(1)">[1]</a></sup></p>
+
+    <h2 class="sec"><span class="dom" style="background:var(--steel)"></span>Career</h2>
+    <p>Nair was admitted to medical school at <a class="link">Johns Hopkins</a> in 2019.<sup class="ref"><a onclick="j(2)">[2]</a></sup>
+      After completing her residency, she began working as a pediatrician at
+      <a class="link">Riverside Children's Clinic</a> in March 2022.<sup class="ref"><a onclick="j(4)">[4]</a></sup>
+      In September 2024 she left Riverside to open her own practice, <a class="link">Nair Pediatrics</a>, in
+      <a class="link">Brookline</a>.<sup class="ref"><a onclick="j(9)">[9]</a></sup> In October 2025 she gave a talk on
+      childhood asthma at the state pediatric conference.<sup class="ref"><a onclick="j(13)">[13]</a></sup></p>
+
+    <h2 class="sec"><span class="dom" style="background:var(--steel)"></span>Personal life</h2>
+    <p>Nair married <a class="red" title="No article yet">Tom</a> in a small courthouse ceremony attended only by
+      family in September 2021.<sup class="ref"><a onclick="j(3)">[3]</a></sup> In January 2024 the couple had a
+      daughter, <a class="red" title="No article yet">Anaya</a>.<sup class="ref"><a onclick="j(7)">[7]</a></sup> In August 2025
+      Nair and Tom moved to a larger home in <a class="link">Brookline</a>, near her practice.<sup class="ref"><a onclick="j(12)">[12]</a></sup>
+      She is noted within the family for her biryani<sup class="ref"><a onclick="j(10)">[10]</a></sup>, and in April 2023 she
+      ran the Boston Marathon in 3:52, having trained for over a year.<sup class="ref"><a onclick="j(5)">[5]</a></sup></p>
+
+    <h2 class="sec"><span class="dom" style="background:var(--health)"></span>Health<span class="dom-lbl">health</span></h2>
+    <p>Nair has a serious peanut allergy and carries an EpiPen.<sup class="ref"><a onclick="j(6)">[6]</a></sup></p>
+
+    <h2 class="sec"><span class="dom" style="background:var(--finance)"></span>Finances<span class="dom-lbl">finance</span></h2>
+    <p>In July 2024 Nair borrowed $4,000 from <a class="link">Jordan Hale</a> for clinic equipment while opening her
+      practice<sup class="ref"><a onclick="j(8)">[8]</a></sup>; she repaid the loan in full in May 2025.<sup class="ref"><a onclick="j(11)">[11]</a></sup></p>
+
+    <h2 class="refs">References</h2>
+    <ol class="reflist">
+      <li id="r1"><span class="meta">Note · May 2, 2018 —</span> "Priya <mark>grew up in Austin</mark> with me — always the science nerd." <span class="dchip">general</span></li>
+      <li id="r2"><span class="meta">Note · Jun 10, 2019 —</span> "Priya got into <mark>med school at Johns Hopkins</mark>! my little sister." <span class="dchip">general</span></li>
+      <li id="r3"><span class="meta">Note · Sep 2, 2021 —</span> "Priya <mark>married Tom</mark> at the courthouse — tiny ceremony, just family." <span class="dchip">general</span></li>
+      <li id="r4"><span class="meta">Note · Mar 15, 2022 —</span> "finished her residency and started as a <mark>pediatrician at Riverside Children's Clinic</mark>." <span class="dchip">general</span></li>
+      <li id="r5"><span class="meta">Note · Apr 18, 2023 —</span> "ran the <mark>Boston Marathon</mark> yesterday — 3:52!" <span class="dchip">general</span></li>
+      <li id="r6"><span class="meta">Note · Nov 20, 2023 —</span> "carry her EpiPen — her <mark>peanut allergy</mark> is serious." <span class="dchip">health</span></li>
+      <li id="r7"><span class="meta">Note · Jan 30, 2024 —</span> "Priya and Tom had a <mark>baby girl, Anaya</mark>." <span class="dchip">general</span></li>
+      <li id="r8"><span class="meta">Note · Jul 12, 2024 —</span> "<mark>Lent Priya $4,000</mark> for clinic equipment." <span class="dchip">finance</span></li>
+      <li id="r9"><span class="meta">Note · Sep 5, 2024 —</span> "Priya <mark>left Riverside to open Nair Pediatrics in Brookline</mark>." <span class="dchip">general</span></li>
+      <li id="r10"><span class="meta">Note · Dec 1, 2024 —</span> "Priya's <mark>biryani</mark> was unreal — best cook in the family." <span class="dchip">general</span></li>
+      <li id="r11"><span class="meta">Note · May 20, 2025 —</span> "Priya <mark>paid back the $4,000 loan in full</mark>." <span class="dchip">finance</span></li>
+      <li id="r12"><span class="meta">Note · Aug 10, 2025 —</span> "Priya and Tom <mark>moved to a bigger place in Brookline</mark>." <span class="dchip">general</span></li>
+      <li id="r13"><span class="meta">Note · Oct 1, 2025 —</span> "gave a <mark>talk at the state pediatric conference on childhood asthma</mark>." <span class="dchip">general</span></li>
+    </ol>
+  </div>
+
+  <div class="discuss"><button><svg viewBox="0 0 24 24" style="width:18px;height:18px"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>Discuss this article</button></div>
+</div>
+<script>
+  document.getElementById('theme').onclick=()=>{const h=document.documentElement;h.dataset.theme=h.dataset.theme==='dark'?'light':'dark'};
+  const scroll=document.querySelector('.scroll');
+  function j(n){document.querySelectorAll('.reflist li').forEach(li=>li.classList.remove('hl'));const li=document.getElementById('r'+n);li.classList.add('hl');li.scrollIntoView({behavior:'smooth',block:'center'});setTimeout(()=>li.classList.remove('hl'),2200)}
+</script>
+</body>
+</html>
