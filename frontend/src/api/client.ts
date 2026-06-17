@@ -322,6 +322,8 @@ export interface EntityOut {
   status: string;
   aliases: string[];
   domain: string;
+  /** The owner-set profile image sha (served by GET /api/entities/{id}/image). */
+  image_sha?: string | null;
   predicates: EntityPredicate[];
   inbound: InboundEdge[];
   mentions: EntityMention[];
@@ -621,6 +623,8 @@ export interface WikiInfobox {
   kind?: string;
   /** True to render the owner-added photo slot instead of the type disc. */
   photo?: boolean;
+  /** Where to load the owner photo from (GET /api/wiki/{id}/image). Set iff `photo`. */
+  image_url?: string | null;
   fields: WikiInfoboxField[];
 }
 
@@ -1002,6 +1006,22 @@ export const api = {
   async getEntity(entityId: string): Promise<EntityOut> {
     const response = await request(`/api/entities/${encodeURIComponent(entityId)}`);
     return (await response.json()) as EntityOut;
+  },
+
+  /** Upload/replace an entity's owner profile image (multipart). The server sniffs the bytes,
+   * stores them content-addressed, and copies the sha onto the entity's wiki article. */
+  async uploadEntityImage(
+    entityId: string,
+    blob: Blob,
+    filename: string,
+  ): Promise<{ image_sha: string; media_type: string }> {
+    const form = new FormData();
+    form.append("file", blob, filename);
+    const response = await request(`/api/entities/${encodeURIComponent(entityId)}/image`, {
+      method: "PUT",
+      body: form,
+    });
+    return (await response.json()) as { image_sha: string; media_type: string };
   },
 
   // ----- The wiki: a machine-written, read-only encyclopedia -----

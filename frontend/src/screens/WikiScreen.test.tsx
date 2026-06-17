@@ -13,6 +13,7 @@ const PRIYA: WikiArticleOut = {
   infobox: {
     title: "Priya Nair",
     photo: true,
+    image_url: "/api/wiki/priya-nair/image",
     fields: [
       { label: "Occupation", value: "Pediatrician", citations: [4] },
       { label: "Practice", value: "Nair Pediatrics (2024–)", citations: [9], link: true },
@@ -157,6 +158,13 @@ describe("WikiScreen", () => {
     ).toBeInTheDocument();
     expect(screen.getByText(/Read-only — correct it by discussing/)).toBeInTheDocument();
     expect(screen.getByText(/is a pediatrician and the founder of/)).toBeInTheDocument();
+  });
+
+  it("renders the owner profile photo in the infobox when set", async () => {
+    setup();
+    await screen.findByRole("heading", { name: "Priya Nair", level: 1 });
+    const img = screen.getByRole("img", { name: "Priya Nair" });
+    expect(img.getAttribute("src")).toBe("/api/wiki/priya-nair/image");
   });
 
   it("renders in-prose wiki links and red-links", async () => {

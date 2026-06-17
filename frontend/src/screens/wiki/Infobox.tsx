@@ -15,7 +15,11 @@ export function Infobox({
       {infobox.photo ? (
         <>
           <div className="wiki-ib-photo">
-            <EntityTypeIcon kind={infobox.kind ?? "Person"} size={46} />
+            {infobox.image_url ? (
+              <img className="wiki-ib-img" src={infobox.image_url} alt={infobox.title} />
+            ) : (
+              <EntityTypeIcon kind={infobox.kind ?? "Person"} size={46} />
+            )}
           </div>
           <div className="wiki-ib-cap">owner-added photo</div>
         </>

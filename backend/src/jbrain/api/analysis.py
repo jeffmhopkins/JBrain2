@@ -8,7 +8,8 @@ only with a coordinated frontend PR.
 
 from typing import Annotated, Any, cast
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, HTTPException, Query, Request, UploadFile
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from jbrain.analysis.repo import (
@@ -18,8 +19,9 @@ from jbrain.analysis.repo import (
     SqlAnalysisRepo,
     UnknownAction,
 )
-from jbrain.api.deps import PrincipalDep
-from jbrain.api.notes import ctx_for
+from jbrain.api.deps import OwnerDep, PrincipalDep
+from jbrain.api.images import MAX_IMAGE_BYTES, sniff_image_type, sniff_path
+from jbrain.api.notes import BlobStoreDep, ctx_for
 from jbrain.embed import EmbedClient
 
 router = APIRouter()
@@ -75,6 +77,39 @@ async def entity_neighbors(
     if view is None:
         raise HTTPException(status_code=404, detail="entity not found")
     return view
+
+
+@router.put("/entities/{entity_id}/image")
+async def set_entity_image(
+    entity_id: str, file: UploadFile, owner: OwnerDep, request: Request, blobs: BlobStoreDep
+) -> dict[str, str]:
+    """Set an entity's owner profile image. Owner-only; the media type is sniffed from the bytes
+    (the client's Content-Type is not trusted), so a non-image is rejected before it is stored."""
+    data = await file.read(MAX_IMAGE_BYTES + 1)
+    if len(data) > MAX_IMAGE_BYTES:
+        raise HTTPException(status_code=413, detail="image too large")
+    media_type = sniff_image_type(data[:16])
+    if media_type is None:
+        raise HTTPException(status_code=415, detail="unsupported image type")
+    digest = await blobs.put(data)
+    if not await get_analysis_repo(request).set_entity_image(ctx_for(owner), entity_id, digest):
+        raise HTTPException(status_code=404, detail="entity not found")
+    return {"image_sha": digest, "media_type": media_type}
+
+
+@router.get("/entities/{entity_id}/image")
+async def get_entity_image(
+    entity_id: str, principal: PrincipalDep, request: Request, blobs: BlobStoreDep
+) -> FileResponse:
+    sha = await get_analysis_repo(request).entity_image_sha(ctx_for(principal), entity_id)
+    if sha is None or not await blobs.exists(sha):
+        raise HTTPException(status_code=404, detail="no image")
+    path = blobs.path_for(sha)
+    # nosniff: the bytes are served inline with a magic-byte-derived type, so a browser must not
+    # re-sniff a chameleon file (image header + HTML tail) into something executable.
+    return FileResponse(
+        path, media_type=sniff_path(path), headers={"X-Content-Type-Options": "nosniff"}
+    )
 
 
 @router.get("/graph")

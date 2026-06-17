@@ -729,3 +729,26 @@ async def test_link_resolves_to_article_id_when_target_has_an_article(
             )
         ).scalar()
         assert body is not None and "[Globex](wiki:" in body
+
+
+async def test_build_copies_entity_image_onto_the_article(maker: async_sessionmaker) -> None:
+    # The owner-set entity image (a blob sha) is denormalized onto the article at build, so a
+    # scoped reader never reads the single-domain entity row across the firewall.
+    entity = await _entity(maker, "general", "Imogen")
+    for i in range(3):
+        await _fact(maker, entity, "general", f"Imogen fact {i}")
+    async with scoped_session(maker, OWNER) as s:
+        await s.execute(
+            text("UPDATE app.entities SET image_sha = :sha WHERE id = :e"),
+            {"sha": "deadbeef", "e": entity},
+        )
+    builder, _ = _builder(maker)
+    await builder.refresh()
+    async with scoped_session(maker, OWNER) as s:
+        image = (
+            await s.execute(
+                text("SELECT image_sha FROM app.wiki_articles WHERE entity_ref = :e"),
+                {"e": entity},
+            )
+        ).scalar()
+        assert image == "deadbeef"

@@ -7,7 +7,7 @@
 // value view entirely. Inbound edges, mentions. A slide-up tree layer like the
 // note view: back chevron + swipe-down exit.
 
-import { type TouchEvent, useEffect, useRef, useState } from "react";
+import { type ChangeEvent, type TouchEvent, useEffect, useRef, useState } from "react";
 import { EdgeValue, MarkedText, StatusChip } from "../analysis/bits";
 import { edgePath, factSpan } from "../analysis/format";
 import { type EntityOut, type EntityPredicate, type FactOut, api } from "../api/client";
@@ -122,6 +122,10 @@ export function EntityScreen({
   // "Previously" (former relationships) is collapsed by default — calm leads
   // with what's true now.
   const [prevOpen, setPrevOpen] = useState(false);
+  // The owner can attach a profile photo — the only owner-set bit of entity metadata; it's
+  // copied onto the wiki article at upload and rebuild (not a claim, never machine-edited).
+  const [photoBusy, setPhotoBusy] = useState(false);
+  const photoRef = useRef<HTMLInputElement>(null);
   const scrollerRef = useRef<HTMLDivElement>(null);
   const swipeStart = useRef<{ x: number; y: number } | null>(null);
 
@@ -140,6 +144,22 @@ export function EntityScreen({
       stale = true;
     };
   }, [entityId]);
+
+  async function onPickPhoto(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = ""; // let the same file be re-picked after a failure
+    if (!file) return;
+    setPhotoBusy(true);
+    try {
+      await api.uploadEntityImage(entityId, file, file.name);
+      const entity = await api.getEntity(entityId); // refetch so the new sha re-renders the img
+      setState({ phase: "done", entity });
+    } catch {
+      // A transient upload failure just leaves the current photo; the owner can retry.
+    } finally {
+      setPhotoBusy(false);
+    }
+  }
 
   // Swipe-down at scroll-top climbs back, same as every card layer.
   function onTouchStart(event: TouchEvent) {
@@ -178,7 +198,24 @@ export function EntityScreen({
         {state.phase === "done" && (
           <>
             <header className="entity-hub">
-              <EntityTypeIcon kind={state.entity.kind} size={48} />
+              <button
+                type="button"
+                className="entity-photo"
+                onClick={() => photoRef.current?.click()}
+                aria-label={photoBusy ? "Uploading photo" : "Set profile photo"}
+              >
+                {state.entity.image_sha ? (
+                  <img
+                    className="entity-photo-img"
+                    src={`/api/entities/${encodeURIComponent(entityId)}/image?v=${state.entity.image_sha}`}
+                    alt={state.entity.canonical_name}
+                  />
+                ) : (
+                  <EntityTypeIcon kind={state.entity.kind} size={48} />
+                )}
+                <span className="entity-photo-edit">{photoBusy ? "…" : "photo"}</span>
+              </button>
+              <input ref={photoRef} type="file" accept="image/*" hidden onChange={onPickPhoto} />
               <h2 className="entity-name">{state.entity.canonical_name}</h2>
               <p className="entity-kind-row">
                 <span>{state.entity.kind.toLowerCase()}</span>

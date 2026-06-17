@@ -1863,6 +1863,14 @@ function json(body: unknown, status = 200): Response {
 const LATENCY_MS = 120;
 const sleep = () => new Promise((resolve) => setTimeout(resolve, LATENCY_MS));
 
+// A 1×1 transparent PNG — the mock's stand-in for a served profile image.
+const TRANSPARENT_PNG = Uint8Array.from(
+  atob(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M8AAAMBAQDJ/p8WAAAAAElFTkSuQmCC",
+  ),
+  (c) => c.charCodeAt(0),
+);
+
 const VALID_DOMAINS = new Set(["general", "health", "finance", "location"]);
 
 // Fake passage search over the note fixtures: substring match per term, a
@@ -2211,6 +2219,24 @@ export const mockFetch: typeof fetch = async (input, init) => {
       Number(url.searchParams.get("depth") ?? "2"),
     );
     return graph ? json(graph) : json({ detail: "entity not found" }, 404);
+  }
+
+  const entityImageMatch = path.match(/^\/api\/entities\/([^/]+)\/image$/);
+  if (entityImageMatch) {
+    const entity = ENTITIES[decodeURIComponent(entityImageMatch[1] ?? "")];
+    if (!entity) return json({ detail: "entity not found" }, 404);
+    if (method === "PUT") {
+      // Mint a sha so the refetched entity re-renders the image slot (the bytes are ignored).
+      entity.image_sha = id("img");
+      return json({ image_sha: entity.image_sha, media_type: "image/png" });
+    }
+    if (method === "GET") {
+      if (!entity.image_sha) return json({ detail: "no image" }, 404);
+      return new Response(TRANSPARENT_PNG, {
+        status: 200,
+        headers: { "Content-Type": "image/png" },
+      });
+    }
   }
 
   const entityMatch = path.match(/^\/api\/entities\/([^/]+)$/);

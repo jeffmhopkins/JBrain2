@@ -85,7 +85,7 @@ class WikiReadStore:
             art = (
                 await session.execute(
                     text(
-                        "SELECT id, title, kind, lead_summary"
+                        "SELECT id, title, kind, lead_summary, image_sha"
                         " FROM app.wiki_articles WHERE id = :a AND status = 'active'"
                     ),
                     {"a": aid},
@@ -154,10 +154,19 @@ class WikiReadStore:
             "id": str(art.id),
             "title": art.title,
             "subtitle": f"{kind} · machine-written from your notes",
-            # The infobox renders the entity-type disc. (An owner-set profile image is a deferred
-            # follow-on — entities.image_sha + the entity-view upload + a build-time copy — so no
-            # `photo` is emitted today; the reader falls back to the disc.)
-            "infobox": {"title": art.title, "kind": kind, "fields": []},
+            # The infobox renders an owner-set profile image when the build copied one onto the
+            # article (image_sha, served by GET /api/wiki/{id}/image), else the entity-type disc.
+            # The bytes never touch the firewall — the article shell carries the denormalized sha.
+            "infobox": {
+                "title": art.title,
+                "kind": kind,
+                "photo": bool(art.image_sha),
+                # `?v=sha` cache-busts so a replaced image (new sha) reloads in the reader.
+                "image_url": (
+                    f"/api/wiki/{art.id}/image?v={art.image_sha}" if art.image_sha else None
+                ),
+                "fields": [],
+            },
             "lead": (
                 [{"kind": "p", "text": _CITE_MARKER.sub("", art.lead_summary).strip()}]
                 if art.lead_summary
