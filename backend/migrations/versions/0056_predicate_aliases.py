@@ -55,11 +55,17 @@ def upgrade() -> None:
         "CREATE POLICY predicate_aliases_insert ON app.predicate_aliases"
         " FOR INSERT WITH CHECK (app.is_owner())"
     )
+    # UPDATE is reachable via the INSERT ... ON CONFLICT DO UPDATE path (a re-resolution of the
+    # same raw to a different canonical), so it needs both a policy and the grant — owner-only.
+    op.execute(
+        "CREATE POLICY predicate_aliases_update ON app.predicate_aliases"
+        " FOR UPDATE USING (app.is_owner()) WITH CHECK (app.is_owner())"
+    )
     op.execute(
         "CREATE POLICY predicate_aliases_delete ON app.predicate_aliases"
         " FOR DELETE USING (app.is_owner())"
     )
-    op.execute("GRANT SELECT, INSERT, DELETE ON app.predicate_aliases TO jbrain_app")
+    op.execute("GRANT SELECT, INSERT, UPDATE, DELETE ON app.predicate_aliases TO jbrain_app")
 
 
 def downgrade() -> None:
