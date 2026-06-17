@@ -727,8 +727,10 @@ builder) — a **New topic** composer, a per-topic reply box, and an auto **Buil
 scannable archive it gives across many editorial threads over time; A/C are retained as the record
 (`wiki-talk-{a,b,c}`). Owner-only; tokens-only; same shell as the reader (TopBar +
 swipe-down-to-close). The wiki stays **machine-written** — Talk is the front-end over the sanctioned
-levers (correction note, source exclusion, rebuild). **Wave T1** ships the board + the Builder voice
-+ owner topics/replies; the live **Editor** (agent) reply is **Wave T2**. Reachable from the reader's
+levers (correction note, source exclusion, rebuild). **Wave T1** shipped the board + the Builder voice
++ owner topics/replies; **Wave T2** shipped the live **Editor** (agent) reply — an owner reply draws an
+agent turn (`AgentLoop` + the wiki tools, a dedicated Editor system prompt) that explains sourcing and
+enacts via the levers, posted as an `editor` post with an outcome chip. Reachable from the reader's
 **Discussion** affordance (the quick-fix correction sheet stays beside it until T2 unifies them). DoD
 fixtures: empty (Build-log only) / long-thread / pending-action / error / offline.
 

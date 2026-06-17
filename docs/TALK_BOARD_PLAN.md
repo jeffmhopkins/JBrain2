@@ -185,9 +185,131 @@ test per new table**; tests-with-code; Conventional Commits + per-wave PR + CI g
 (dev-setup.sh unchanged); the wiki stays machine-written (Talk posts are discussion/Build-log
 metadata, never article prose; the article's sections/revisions are untouched).
 
-## T2 sketch (next wave, not built here)
+## T2 — the live Editor (agent) voice
 
-Owner reply → `AgentLoop.run_stream(session=read_context(...), scopes=…, conversation=topic history)`
-with the wiki registry; stream `editor` posts + tool effects into the topic; outcome chips from
-`JobEnqueuedEvent`/tool results; reuse `Bubble`/`Worked`/`StepRow`/`parseChatStream`. Retire
-DiscussSheet in favor of the in-topic correction once this lands.
+Wave T2 makes an owner's reply in a **discussion** topic draw an **Editor** response: the Phase-4
+agent reads the article's sourcing and replies in the thread, optionally enacting via the sanctioned
+wiki tools (file_correction / add_source_exclusion / request_rebuild), with an **outcome chip** when
+it does. The wiki stays machine-written — the Editor only pulls the same levers the owner can.
+
+### Design decisions (grounded in the agent surface; v2 after red-team)
+
+- **`AgentLoop.run()` (non-streaming), not SSE.** A Talk topic is a threaded record, not a live chat;
+  the Editor reply **arrives as a post**, not a token stream. `run()` returns
+  `AgentResult(text, stop_reason, steps, cost_tokens)` — enough for the post body. (mock B shows a
+  finished Editor post + source card + outcome chip, never a live-typing transcript.)
+- **Two calls + an idempotency key (C2/H1).** The owner reply (`POST …/posts`, T1, fast) is
+  **unchanged**. A separate `POST /wiki/{id}/talk/topics/{tid}/editor` body `{after_post_id}` runs the
+  turn and returns the Editor post. The endpoint **409s unless `after_post_id` is the topic's latest
+  post** — so a double-tap, a client/proxy retry, or replying-to-the-Editor's-own-reply all fail
+  server-side (the first turn makes the editor post the latest → the retry's check fails). This also
+  enforces "the turn only runs when the latest post is an owner post." (Residual: two *truly
+  simultaneous* requests could both pass the pre-check — negligible for a single-owner surface; noted,
+  not mechanized, in T2.) Runs **in the endpoint** (router + registry on `app.state`); no worker job.
+- **Dedicated Editor system prompt (H2).** The fixed Full Brain `system.prompt` instructs the agent to
+  **not** write directly and to **stage everything for approval** — the opposite of what the Editor
+  must do — and a leading UserMessage is too weak to override it. So add an optional
+  `system: str | None = None` seam to `AgentLoop.run()` (defaults to the current `SYSTEM_PROMPT`; fully
+  backward-compatible), and pass a dedicated **Editor** system prompt (a new
+  `agent/prompts/wiki_editor.prompt`): persona = the wiki Editor for one article; **enact** corrections
+  / exclusions / rebuilds **directly** via the tools when the owner is right; explain sourcing from
+  `read_wiki`; be concise (1–2 short paragraphs); never claim to edit prose (the rebuild does that).
+  The article id/title + topic title are **appended to the system string** (not a leading
+  UserMessage), so the `conversation` is *only* the mapped posts — avoiding two consecutive
+  UserMessages on a topic's first reply (N2).
+- **Owner full-read context (C1), not narrowed.** The Editor runs under `ctx_for(owner)` (the owner's
+  normal full-scope context), **not** a domain-narrowed `read_context`. Rationale: the endpoint is
+  `OwnerDep`-only; the owner already has full cross-domain read in the reader; and narrowing to the
+  article's section domains would make a `file_correction`/`add_source_exclusion` whose model-chosen
+  `domain` falls outside those sections **fail the Postgres WITH CHECK** — blocking the very action T2
+  exists to perform. The cross-domain firewall protects *scoped/capability* principals (P7), which can
+  never reach this owner-gated endpoint. (The write tools' enqueued `ingest_note`/`wiki_rebuild` jobs
+  already run system-scoped — `SYSTEM_CTX` — so the rebuild re-derives the whole article regardless;
+  documented, intended for the system builder.)
+- **Outcome chip via a recording recorder (H3/H4).** `run()` calls
+  `recorder.step(*, idx, kind, name, ok, cost_tokens)` per tool (loop.py:279). `_ToolTally` implements
+  that **exact** signature and records the **names of `kind=="tool"` steps with `ok is True`** (a
+  rejected tool is recorded too, so the `ok` filter is required — no chip for a failed correction).
+  Chip by precedence **correction > exclusion > rebuild**: `file_correction`→"correction filed →
+  rebuild queued"; `add_source_exclusion`→"source excluded · **rebuild queued**" (the tool *queues*,
+  not synchronously rebuilds); `request_rebuild`→"rebuild queued"; else none.
+- **Post iff there's something to show — even on timeout (M1/N1/N3).** Write tools commit eagerly
+  (`file_correction`/`add_source_exclusion` create the note / exclusion + enqueue jobs *before* the
+  turn's final prose). So the rule is: **post an Editor reply when `result.text.strip()` is non-empty
+  OR the tally recorded a successful write tool** — body = `result.text` if present, else a short
+  chip-derived line ("Filed your correction.", etc.); outcome = chip. The turn runs under
+  `asyncio.wait_for(..., timeout≈60s)`; on timeout/exception the `_ToolTally` (mutated in-place during
+  the run) still reflects any write that committed before cancellation, so a **chip-only** reply is
+  posted when a lever fired — an enacted action is never invisible. Only a turn with **no prose and no
+  successful write** yields `{"post": null}` (the owner's post stands; never a half-written thread).
+
+### Backend
+
+- **`agent/loop.py`**: add `system: str | None = None` to `run()` — `system or SYSTEM_PROMPT` is passed
+  to `router.converse`. (No behavior change for existing callers.)
+- **`agent/prompts/wiki_editor.prompt`**: the Editor persona/instructions above (loaded like the other
+  `.prompt` files).
+- **`wiki/editor.py` — `run_editor_turn(router, registry, ctx, *, article_id, article_title,
+  topic_title, posts, timezone) -> EditorReply | None`.** `conversation` = the topic's posts mapped
+  `owner→UserMessage`, `editor→AssistantMessage` (builder posts skipped) — **no leading data message**
+  (the article id/title + topic title are appended to the system string). Runs
+  `AgentLoop(router, registry, recorder=tally).run(session=ctx, scopes=ALL_DOMAINS, conversation=…,
+  timezone=…, system=WIKI_EDITOR_PROMPT + context)` inside `asyncio.wait_for`. Returns
+  `EditorReply(body, outcome)` when prose is non-empty **or** a write tool succeeded (body = prose or a
+  chip-derived fallback), else `None`. `scopes=ALL_DOMAINS` (the domain codes) so every wiki tool is
+  offered and full-owner read is in effect. Catches `TimeoutError`/`Exception` and still returns a
+  chip-only `EditorReply` when the tally shows a successful write, else `None`.
+- **`WikiTalkStore`** gains: `topic_for_editor(ctx, article_id, topic_id, after_post_id) -> (title,
+  topic_title, posts)` — in one scoped session: active-article guard (404), discussion-kind guard (409
+  on build_log), and the **idempotency guard** (409 `TalkEditorConflict` unless the topic's latest post
+  id == `after_post_id`); and `add_editor_post(ctx, article_id, topic_id, body, outcome) -> dict`
+  (author='editor', **re-checks** active-article + discussion-kind in the *insert* session, bumps
+  `last_post_at`).
+- **API: `POST /wiki/{article_id}/talk/topics/{topic_id}/editor`** `{after_post_id}` (OwnerDep) →
+  `topic_for_editor(...)` (404/409), `run_editor_turn(..., ctx=ctx_for(owner))`, and if non-null
+  `add_editor_post(...)`; return `{"post": <editor post> | null}`. Uses `get_llm_router(request)` +
+  `get_agent_registry(request)`.
+
+### Frontend
+
+- `api.requestEditorReply(articleId, topicId, afterPostId) -> { post: WikiTalkPost | null }`.
+- `TalkScreen.postReply`: after the owner post lands, set a per-topic **responding** flag (renders an
+  "Editor is responding…" line; the reply box is disabled while set — UI guard complementing the
+  server 409), call `requestEditorReply(…, ownerPost.id)`, append the Editor post (or clear the flag on
+  null/error). The Editor post already renders (author `editor` → violet "Editor" bot style, with the
+  source card + outcome chip from T1). Mock-mode `…/editor` route returns a canned Editor post with an
+  outcome chip so dev exercises the loop.
+
+### Tests
+
+- **Backend integration (real PG + `FakeLlmClient`):** script a two-turn run (turn 1 calls
+  `file_correction` with an **in-scope `domain`** — seed a section in that domain — then turn 2 answers)
+  → the Editor post is inserted `author='editor'` + "correction filed → rebuild queued", AND the
+  `owner_correction` note is actually created; a plain explanatory turn (no tool) → Editor post, no
+  chip; the **idempotency 409** when `after_post_id` isn't the latest; 409 on the build_log editor
+  endpoint; 404 on a missing/inactive article; an empty-text turn → `{"post": null}`, owner post intact.
+- **Backend unit:** the editor endpoint with a **stubbed runner + store** (auth, owner-gating, 409
+  conflict, 409 build_log, 404, null→no-post) — TestClient, no Docker. Plus a `_ToolTally` unit
+  (precedence + `ok` filter) and a `run_editor_turn` unit with a FakeLlmClient (no DB) asserting the
+  conversation mapping — **including a topic's first reply (a single owner UserMessage, no consecutive
+  Users)** (N2) — and the chip / chip-only-on-empty-prose-with-write (N3) behavior.
+- **Frontend:** `TalkScreen` editor-reply flow (owner post → "responding" → Editor post appended with
+  chip; null → no Editor post; reply box disabled while responding) + mock route round-trip.
+- ruff / ruff format / pyright / biome / tsc green; security-100% on the new endpoint.
+
+### Docs / non-negotiables
+
+- DESIGN.md Talk entry: flip "Editor = Wave T2" to shipped; `PHASE6_WIKI_PLAN.md` status. The reader's
+  separate DiscussSheet quick-fix is **deliberately kept** this wave (a follow-up unifies it) — noted
+  so it isn't a silent omission. This adds **no new design surface** (the Editor post + chip are
+  already in mock B); the new frontend flow/states still get tests.
+- LLM via the **adapter/router only** (no provider SDK); the wiki stays machine-written (the Editor
+  writes a Talk post + pulls sanctioned levers, never edits article prose — the Editor runs on the
+  full shared registry but it contains **no prose/section writer tool**, so the only article-affecting
+  levers are file_correction/add_source_exclusion/request_rebuild, which mutate the graph/sources and
+  queue a rebuild); RLS in Postgres (owner full-read
+  on an owner-only endpoint; the cross-domain firewall protects P7 scoped tokens, which can't reach it).
+  The turn is **unmetered** beyond the loop's per-turn guardrail (max_steps 10 / max_cost 200k) —
+  acceptable for an owner-only surface, and spend still lands in `app.llm_usage` via the router. No new
+  deps; per-wave PR + CI green.
+

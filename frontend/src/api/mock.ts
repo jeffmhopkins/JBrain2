@@ -2397,7 +2397,28 @@ export const mockFetch: typeof fetch = async (input, init) => {
     return json({ note_id: id("note"), created: true }, 201);
   }
 
-  // Talk board — most-specific routes first (reply, then status, then new-topic, then board).
+  // Talk board — most-specific routes first (editor, reply, status, new-topic, board).
+  const talkEditorMatch = path.match(/^\/api\/wiki\/([^/]+)\/talk\/topics\/([^/]+)\/editor$/);
+  if (talkEditorMatch && method === "POST") {
+    const board = WIKI_TALK[decodeURIComponent(talkEditorMatch[1] ?? "")];
+    const topic = board?.topics.find((t) => t.id === decodeURIComponent(talkEditorMatch[2] ?? ""));
+    if (!topic) return json({ detail: "topic not found" }, 404);
+    if (topic.kind === "build_log")
+      return json({ detail: "the Build log is machine-written" }, 409);
+    // A canned Editor turn: explains the sourcing and files a correction (with an outcome chip).
+    const post = {
+      id: id("post"),
+      author: "editor" as const,
+      body: "That claim cites one note with no later departure. I filed your correction; the article will rebuild from the corrected graph.",
+      source: null,
+      outcome: "correction filed → rebuild queued",
+      created_at: new Date().toISOString(),
+      rev: null,
+    };
+    topic.posts.push(post);
+    return json({ post });
+  }
+
   const talkReplyMatch = path.match(/^\/api\/wiki\/([^/]+)\/talk\/topics\/([^/]+)\/posts$/);
   if (talkReplyMatch && method === "POST") {
     const board = WIKI_TALK[decodeURIComponent(talkReplyMatch[1] ?? "")];

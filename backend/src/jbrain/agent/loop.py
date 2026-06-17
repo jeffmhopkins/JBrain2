@@ -237,11 +237,15 @@ class AgentLoop:
         scopes: Sequence[str],
         conversation: Sequence[LlmMessage],
         timezone: str | None = None,
+        system: str | None = None,
     ) -> AgentResult:
         scopes = tuple(scopes)
         tools = self._registry.schemas_for(scopes)
         messages: list[LlmMessage] = list(conversation)
         tool_ctx = ToolContext(session=session, scopes=scopes, timezone=timezone)
+        # A caller can swap the system prompt (the wiki Editor uses its own persona); existing
+        # callers pass nothing and keep the Full Brain prompt — fully backward-compatible.
+        system_prompt = system or SYSTEM_PROMPT
         cost = 0
         consecutive_errors = 0
         idx = 0
@@ -249,7 +253,7 @@ class AgentLoop:
         for step in range(self._g.max_steps):
             turn = await self._router.converse(
                 self._task,
-                system=SYSTEM_PROMPT,
+                system=system_prompt,
                 messages=messages,
                 tools=tools,
                 strength=SYSTEM_STRENGTH,

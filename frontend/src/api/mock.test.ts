@@ -112,6 +112,20 @@ describe("mock API", () => {
       jsonInit("POST", { body: "nope" }),
     );
     expect(refused.status).toBe(409);
+
+    // The Editor turn returns a reply post with an outcome chip; refused on the Build log.
+    const editor = await call(
+      `/api/wiki/priya-nair/talk/topics/${topic.id}/editor`,
+      jsonInit("POST", { after_post_id: "p" }),
+    );
+    const edited = (await editor.json()) as { post: { author: string; outcome: string | null } };
+    expect(edited.post.author).toBe("editor");
+    expect(edited.post.outcome).toContain("correction filed");
+    const editorRefused = await call(
+      `/api/wiki/priya-nair/talk/topics/${log?.id}/editor`,
+      jsonInit("POST", { after_post_id: "p" }),
+    );
+    expect(editorRefused.status).toBe(409);
   });
 
   it("accepts capture location on create and echoes it back", async () => {

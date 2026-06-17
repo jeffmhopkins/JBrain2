@@ -144,6 +144,19 @@ describe("TalkScreen", () => {
       if (url === "/api/wiki/celine/talk/topics/t-globex" && method === "PATCH") {
         return jsonResponse({ id: "t-globex", status: "resolved" });
       }
+      if (url === "/api/wiki/celine/talk/topics/t-globex/editor" && method === "POST") {
+        return jsonResponse({
+          post: {
+            id: "ed1",
+            author: "editor",
+            body: "It cites one note; I filed your correction.",
+            source: null,
+            outcome: "correction filed → rebuild queued",
+            created_at: "2026-06-17T12:02:00Z",
+            rev: null,
+          },
+        });
+      }
       throw new Error(`Unexpected fetch: ${method} ${url}`);
     });
   });
@@ -206,14 +219,59 @@ describe("TalkScreen", () => {
     expect(post).toBeTruthy();
   });
 
-  it("posts a reply to an open topic", async () => {
+  it("posts a reply, then the Editor responds with an outcome chip", async () => {
     setup();
     await screen.findByText("She left Globex in March.");
     fireEvent.change(screen.getByLabelText(/Reply to Outdated/), {
       target: { value: "Please fix the Career section." },
     });
     fireEvent.click(screen.getByRole("button", { name: "Post" }));
+    // The owner reply appears, then the Editor's reply + its outcome chip arrive.
     expect(await screen.findByText("Please fix the Career section.")).toBeInTheDocument();
+    expect(
+      await screen.findByText("It cites one note; I filed your correction."),
+    ).toBeInTheDocument();
+    expect(screen.getByText("correction filed → rebuild queued")).toBeInTheDocument();
+    const editorCall = fetchMock.mock.calls.find(
+      ([u, init]) =>
+        String(u) === "/api/wiki/celine/talk/topics/t-globex/editor" &&
+        (init as RequestInit)?.method === "POST",
+    );
+    // The editor call carries the just-filed owner post id as the idempotency key.
+    expect(JSON.parse(String((editorCall?.[1] as RequestInit).body)).after_post_id).toBe("pr");
+  });
+
+  it("shows no Editor reply when the turn yields nothing", async () => {
+    fetchMock.mockImplementation(async (input, init) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      if (url === "/api/wiki/celine/talk") return jsonResponse(BOARD);
+      if (url === "/api/wiki/celine/talk/topics/t-globex/posts" && method === "POST") {
+        return jsonResponse(
+          {
+            id: "pr",
+            author: "owner",
+            body: "x",
+            source: null,
+            outcome: null,
+            created_at: "2026-06-17T12:01:00Z",
+            rev: null,
+          },
+          201,
+        );
+      }
+      if (url === "/api/wiki/celine/talk/topics/t-globex/editor" && method === "POST") {
+        return jsonResponse({ post: null });
+      }
+      throw new Error(`Unexpected fetch: ${method} ${url}`);
+    });
+    setup();
+    await screen.findByText("She left Globex in March.");
+    fireEvent.change(screen.getByLabelText(/Reply to Outdated/), { target: { value: "x" } });
+    fireEvent.click(screen.getByRole("button", { name: "Post" }));
+    // The "responding" line clears and no Editor post is added (only the owner's).
+    await screen.findByText("x");
+    expect(screen.queryByText("Editor is responding…")).not.toBeInTheDocument();
   });
 
   it("resolves an open topic", async () => {

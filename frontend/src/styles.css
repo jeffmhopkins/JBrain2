@@ -9270,6 +9270,13 @@ input.ld-title {
   color: var(--green);
 }
 
+.talk-responding {
+  margin: 2px 0 8px;
+  font-size: var(--fs-micro);
+  font-style: italic;
+  color: var(--violet);
+}
+
 .talk-replybox {
   display: flex;
   gap: 7px;

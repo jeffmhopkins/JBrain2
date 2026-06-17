@@ -1141,6 +1141,21 @@ export const api = {
     return (await response.json()) as { id: string; status: string };
   },
 
+  // Run the Editor (agent) over the topic and get its reply. `afterPostId` is the owner post just
+  // filed — the server 409s if it's no longer the latest (the double-submit guard). `post` is null
+  // when the Editor produced no prose and pulled no lever.
+  async requestEditorReply(
+    articleId: string,
+    topicId: string,
+    afterPostId: string,
+  ): Promise<{ post: WikiTalkPost | null }> {
+    const response = await request(
+      `/api/wiki/${encodeURIComponent(articleId)}/talk/topics/${encodeURIComponent(topicId)}/editor`,
+      jsonInit("POST", { after_post_id: afterPostId }),
+    );
+    return (await response.json()) as { post: WikiTalkPost | null };
+  },
+
   // The ego subgraph for the graph view: the focal entity plus everything
   // within `depth` relationship hops, RLS-scoped server-side.
   async getNeighbors(entityId: string, depth = 2): Promise<EgoGraph> {
