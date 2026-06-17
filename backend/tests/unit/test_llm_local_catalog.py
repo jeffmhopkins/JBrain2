@@ -1,6 +1,7 @@
 """The local-model catalog and how it drives the opt-in settings choices."""
 
 import json
+from typing import Any
 
 from jbrain.config import Settings
 from jbrain.llm import local_catalog
@@ -48,7 +49,7 @@ def test_manifest_is_json_with_provisioning_fields() -> None:
     assert entry["served_model"] == "qwen3-vl-30b-a3b"
 
 
-def _settings(**kw: object) -> Settings:
+def _settings(**kw: Any) -> Settings:
     return Settings(database_url="postgresql+asyncpg://nobody@localhost:1/none", **kw)
 
 
