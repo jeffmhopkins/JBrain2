@@ -36,7 +36,9 @@ new projection. So the coupling is deeper than v1 admitted. Verified line:
 **Hard cross-stream dependency (new):** before the coupled work can start, the rebuild
 stream must **freeze a citation contract** — (a) the citable unit's shape (a stable id
 + a citability predicate + `domain_code`), and (b) a **reliable fact change-feed**
-(see §3). These are the rebuild's deliverables; this plan consumes them. Recorded as a
+(see §3). **Written up as a hand-off spec for the rebuild team:
+`docs/PHASE6_WIKI_GRAPH_CONTRACT.md`.** These are the rebuild's deliverables; this plan
+consumes them. Recorded as a
 gating dependency, not a hope.
 
 **What this means:** the genuinely parallel-safe work now is the **article/revision
@@ -106,7 +108,9 @@ the source note per `[n]`. (Chosen reader mock: `docs/mocks/wiki-reader-chosen-w
   default domain + an include-if rule), a **style** spec (voice/tense/lead), and hard
   **requirements** (every claim cites a note, omit uncited/empty, no speculation, dates
   in the note's local tz). The builder loads the guide for the article's type at rewrite
-  time. A settings table, not code; owner-tunable. (Seed common type-families first.)
+  time. A settings table, not code; owner-tunable. **Starter set:
+  `docs/WIKI_TYPE_GUIDES.md`** (Person/Org/Place/Project/Event/Concept + a generic
+  fallback) — seed it into the editorial-config table.
 
 **Gated on the rebuild (FKs into the frozen fact shape):**
 - **`app.wiki_citations`**: `id`, `revision_id` (FK ON DELETE CASCADE), `fact_id`
@@ -212,10 +216,13 @@ the owner-correction path (§4). Graph-independent shell — built against **fix
    for entities that have no article yet (never a dead end). (§3 step 4, §5, `wiki_links`.)
 
 **Must settle WITH the rebuild stream BEFORE the gated work (builder/citations/links):**
+*Written up as a hand-off interface spec — `docs/PHASE6_WIKI_GRAPH_CONTRACT.md` (give it
+to the rebuild team).*
 4. **Citation contract:** the citable unit's frozen shape + the `fact_id` FK ondelete
    policy (RESTRICT vs SET NULL+rebuild-trigger). *Also covers `wiki_links.to_entity_id`
-   resolution (mention → article).*
-5. **Delta feed:** `facts.updated_at` vs fact-mutation events (a rebuild deliverable).
+   resolution (mention → article) — entity id stability + merge/split re-point.*
+5. **Delta feed:** `facts.updated_at` vs fact-mutation events (a rebuild deliverable),
+   covering create/close/refresh/pin/retract/merge/purge/re-key.
 
 **File now as a standalone bug (independent of Phase 6):** the correction-note weight
 doc/code discrepancy (ARCHITECTURE "elevated" vs code "normal") — it affects agent
