@@ -32,8 +32,10 @@
   .ro svg{width:13px;height:13px}
   .infobox{float:right;width:174px;margin:0 0 10px 12px;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:10px;font-size:11.5px}
   .infobox .ib-title{text-align:center;font-weight:700;font-size:12.5px;padding-bottom:7px;border-bottom:1px solid var(--border);margin-bottom:7px}
-  .infobox .ib-disc{width:64px;height:64px;border-radius:50%;margin:0 auto 8px;display:grid;place-items:center;background:color-mix(in srgb,var(--steel) 16%,transparent);color:var(--steel)}
-  .infobox .ib-disc svg{width:32px;height:32px}
+  .infobox .ib-photo{width:100%;height:108px;border-radius:8px;margin-bottom:5px;display:grid;place-items:center;background:linear-gradient(135deg,color-mix(in srgb,var(--steel) 28%,var(--surface)),color-mix(in srgb,var(--violet) 24%,var(--surface)));color:var(--text-2)}
+  .infobox .ib-photo svg{width:46px;height:46px;opacity:.75}
+  .infobox .ib-cap{font-size:9px;color:var(--text-3);text-align:center;margin-bottom:8px;text-transform:uppercase;letter-spacing:.04em}
+  h3.sub{font-family:Georgia,serif;font-weight:600;font-size:15px;margin:14px 0 5px}
   .infobox dl{margin:0;display:grid;grid-template-columns:auto 1fr;gap:5px 8px}
   .infobox dt{color:var(--text-3);font-weight:600}
   .infobox dd{margin:0}
@@ -78,7 +80,8 @@
     <div class="ro"><svg viewBox="0 0 24 24"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>Read-only — correct it by discussing</div>
 
     <div class="infobox">
-      <div class="ib-disc"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-7 8-7s8 3 8 7"/></svg></div>
+      <div class="ib-photo"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-7 8-7s8 3 8 7"/></svg></div>
+      <div class="ib-cap">owner-added photo</div>
       <div class="ib-title">Priya Nair</div>
       <dl>
         <dt>Born</dt><dd><a class="link">Austin</a><sup class="ref"><a onclick="j(1)">[1]</a></sup></dd>
@@ -100,11 +103,14 @@
       school at <a class="link">Johns Hopkins</a>.<sup class="ref"><a onclick="j(2)">[2]</a></sup></p>
 
     <h2 class="sec"><span class="dom" style="background:var(--steel)"></span>Career</h2>
-    <p>After completing her residency in 2022, Nair began working as a pediatrician at
-      <a class="link">Riverside Children's Clinic</a>.<sup class="ref"><a onclick="j(4)">[4]</a></sup> She left Riverside
-      in 2024 to open her own practice, <a class="link">Nair Pediatrics</a>, in Brookline, where she currently
-      practices.<sup class="ref"><a onclick="j(9)">[9]</a></sup></p>
-    <p>Her talks and publications include:</p>
+    <p>Nair is a pediatrician who trained at a children's clinic before founding her own practice.</p>
+    <h3 class="sub">Training and early career</h3>
+    <p>After completing her residency in 2022, Nair worked as a pediatrician at
+      <a class="link">Riverside Children's Clinic</a>.<sup class="ref"><a onclick="j(4)">[4]</a></sup></p>
+    <h3 class="sub">Nair Pediatrics</h3>
+    <p>In 2024 she left Riverside to open her own practice, <a class="link">Nair Pediatrics</a>, in Brookline,
+      where she currently practices.<sup class="ref"><a onclick="j(9)">[9]</a></sup></p>
+    <h3 class="sub">Talks and publications</h3>
     <ul class="wl">
       <li>Co-authored a paper on vaccine hesitancy in <a class="link">JAMA Pediatrics</a> (2023).<sup class="ref"><a onclick="j(16)">[16]</a></sup></li>
       <li>Presented at the regional conference on childhood nutrition (2024).<sup class="ref"><a onclick="j(17)">[17]</a></sup></li>

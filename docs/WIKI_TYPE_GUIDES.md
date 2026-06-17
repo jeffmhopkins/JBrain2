@@ -73,6 +73,21 @@ worked example — `docs/mocks/wiki-reader-example-priya.html`.)*
   own `[n]`; lists/tables stay **single-domain** (a Health medications table lives in
   Health). A type guide may declare a section's preferred format.
 
+**Section hierarchy (subsections)**
+- A section may nest into **subsections** (H2 → H3 → H4), like Wikipedia. A type guide can
+  declare subsections under a section (e.g. Person → Career → {Training, Current practice,
+  Talks and publications}), and the builder may **auto-subdivide** a long section into
+  natural subsections. **Subsections inherit their top-level section's domain** — no
+  cross-domain nesting; the top-level domain section is the firewall unit and its whole
+  subtree hides together for out-of-scope viewers. Use subsections only when a section is
+  genuinely long or has distinct sub-topics; short sections stay flat.
+
+**Images**
+- An entity's **owner-set profile image** (`entities.image_sha`) renders in the infobox (a
+  person's photo, a business logo, a place's location shot). It is owner metadata, **not a
+  cited claim** — no `[n]`. Uploaded in the entity view; the article picks it up
+  automatically.
+
 ---
 
 ## Person

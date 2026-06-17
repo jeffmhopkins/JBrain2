@@ -94,9 +94,18 @@ the source note per `[n]`. (Chosen reader mock: `docs/mocks/wiki-reader-chosen-w
   entity-anchor linkage is graph-coupled → set at article creation in the gated builder
   wave; the table shape is not.)*
 - **`app.wiki_sections`** (the firewall unit): `id`, `article_id` (FK ON DELETE CASCADE),
-  `domain_code` (FK, NOT NULL), `current_revision_id` (FK→revisions ON DELETE SET NULL),
+  `domain_code` (FK, NOT NULL), `parent_section_id` (**self-FK, nullable — subsections**:
+  sections form a tree, H2→H3→H4), `current_revision_id` (FK→revisions ON DELETE SET NULL),
   `seq`. **RLS `has_domain_scope(domain_code)` governs BOTH content and existence** — an
-  out-of-scope section returns no row to a scoped session.
+  out-of-scope section (and its whole subtree) returns no row to a scoped session.
+  **Subsections inherit their top-level section's domain** (no cross-domain nesting — the
+  top-level domain section stays the firewall unit, its subtree hides together). A type
+  guide may declare nested subsections; the builder may also auto-subdivide a long section.
+- **Entity profile image (owner metadata, not a claim):** entities gain an owner-set image
+  — `entities.image_sha` (blob-stored via the storage abstraction; sha256), uploaded in the
+  **entity view**, **auto-rendered in the article infobox** (a person's photo, a business
+  logo, a place's location shot). No citation (owner-provided, not note-derived); survives
+  merges (keep the survivor's, owner may re-pick). Entity-keyed → graph-coupled (contract).
 - **`app.wiki_revisions`** (append-only, **per section**): `id`, `section_id` (FK ON
   DELETE CASCADE), `seq`, `run_id` (FK→`app.runs`), `body` (**inline `text`, markdown**),
   `summary`, `created_at`. Immutable; a domain rewrite touches only its section's
@@ -289,11 +298,14 @@ topic" action, and an auto **Build-log** topic for the builder's decision posts)
 Rationale in `docs/mocks/wiki-talk-README.md`; lands in `DESIGN.md` when its UI is built.
 
 Full-screen read-only surface, amber/read-only tint, the stubbed Wiki tile. Renders
-stored articles/sections/revisions; **wiki→wiki links** (a mentioned entity opens its
-*article* if one exists, else a red-link to its `EntityScreen`); `[n]` jumps to the
-References list; a **"what links here"** back-links affordance; "discuss this article" →
-the owner-correction path (§4). Graph-independent shell — built against **fixture data**.
-**DoD includes fixtures for default / empty / long-article / error / offline states.**
+stored articles/sections/revisions as encyclopedic prose with **nested sections (H2/H3/H4)**,
+**bulleted lists + tables** (per the writing-style spec), the **entity profile image** in
+the infobox, **wiki→wiki links** (a mentioned entity opens its *article* if one exists, else
+a red-link to its `EntityScreen`); `[n]` jumps to the References list; a **"what links here"**
+back-links affordance; "discuss this article" → the owner-correction path (§4).
+Graph-independent shell — built against **fixture data**. (Worked example, all of the above:
+`docs/mocks/wiki-reader-example-priya.html`.) **DoD includes fixtures for default / empty /
+long-article / error / offline states.**
 
 **Owner-only editorial affordances** (distinct from the read-only reader; gated to the
 owner): **Rebuild** (fire `wiki_rebuild` for this article) and **Exclude this source**
@@ -351,13 +363,15 @@ corrections in production today.
   settle decisions #1–#3 (done); open the cross-stream **citation contract + `wiki_built`
   dirty bit** with the rebuild team (#4–#5). Wave 0 unblocks the rest.
 - **Wave A — graph-independent spine (parallel-safe now, after #1–#3):** `wiki_articles`
-  (incl. `merged_into_id`/`status` for redirects) + `wiki_sections` + `wiki_revisions`
-  (append-only, full body → diffs) + `wiki_index` tables + RLS + isolation tests (against
-  the STABLE `domain_code`/note/chunk provenance — the fact-firewall test is deferred to
-  the citation wave); editorial-config-as-data (incl. the type guides); the `wiki_index`
-  embedding path; the `wiki_source_exclusions` table shape (note-id rows are stable);
-  **`notes.wiki_built` dirty bit** (graph-independent); the `wiki_build` ActionSpec **stub
-  only** (no schedule seed yet).
+  (incl. `merged_into_id`/`status` for redirects) + `wiki_sections` (incl.
+  `parent_section_id` for subsections) + `wiki_revisions` (append-only, full body → diffs)
+  + `wiki_index` tables + RLS + isolation tests (against the STABLE `domain_code`/note/chunk
+  provenance — the fact-firewall test is deferred to the citation wave); editorial-config-
+  as-data (incl. the type guides + writing-style spec); the `wiki_index` embedding path;
+  the `wiki_source_exclusions` table shape (note-id rows are stable); **`notes.wiki_built`
+  dirty bit** (graph-independent); the `wiki_build` ActionSpec **stub only** (no schedule
+  seed yet). *(Entity-side, small: `entities.image_sha` + entity-view upload — graph-coupled,
+  rides the entity layer; the wiki just reads it.)*
 - **Wave B — UI (after the mock gates):** the **reader** (chosen Wikipedia-style) on
   fixtures, citation hover-cards, entity-chip/wiki links, the **revision diff view**, the
   **owner-authored** "discuss this article" → correction path + revision anchoring; **the

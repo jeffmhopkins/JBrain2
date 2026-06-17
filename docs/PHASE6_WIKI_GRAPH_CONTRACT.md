@@ -66,6 +66,10 @@ The wiki links article→article by resolving a mentioned **entity** to its arti
   `entity.merged_into_id`); on split, a way to re-resolve mentions to the right new
   identity. The wiki re-resolves links on the next build off these signals.
 - Same id-stability / migration-map guarantee as §1, for entities.
+- **Entity-keyed owner metadata must survive identity changes.** Entities carry owner-set
+  metadata the wiki renders — notably a **profile image** (`entities.image_sha`). On
+  merge/split/rebuild it must migrate with the entity identity (on merge, keep the
+  survivor's image; the owner may re-pick). Don't drop owner metadata when re-issuing ids.
 - **The mention index is a wiki SOURCE, not just a link resolver (decision B).** The
   wiki sources article *context* from `entity_mentions` (entity ↔ chunk) — including note
   detail that never became a fact. So the **entity↔chunk mention linkage must be stable /
