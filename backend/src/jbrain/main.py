@@ -49,6 +49,7 @@ from jbrain.search.service import SearchService
 from jbrain.settings_store import SqlSettingsStore
 from jbrain.storage import FsBackupShelf, FsBlobStore
 from jbrain.usage import SqlUsageRecorder
+from jbrain.wiki.actions import WIKI_SPECS
 from jbrain.workflow.automations import AutomationsReader
 from jbrain.workflow.evalaction import EVAL_RUN_SPEC
 from jbrain.workflow.registry import ACTION_SPECS
@@ -96,6 +97,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 RECONCILE_PENDING_INTEGRATION_ACTION,
                 RECONCILE_UNEMBEDDED_NOTES_ACTION,
                 EVAL_RUN_SPEC,
+                *WIKI_SPECS,
             )
         )
         app.state.action_registry = action_registry

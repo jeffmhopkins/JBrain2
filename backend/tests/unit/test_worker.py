@@ -371,6 +371,12 @@ async def test_run_registers_all_job_handlers(
         # The opt-in self-improvement eval behind the budget gate (Phase-5 Track
         # H·A) — wired in-code, NOT in ACTION_SPECS / the app.actions seed.
         "eval_run",
+        # The wiki builder (Phase-6 Wave C2a) — four in-code actions, likewise not
+        # in ACTION_SPECS / the app.actions seed.
+        "wiki_refresh",
+        "wiki_rebuild",
+        "wiki_reindex",
+        "wiki_prune",
     }
 
 
