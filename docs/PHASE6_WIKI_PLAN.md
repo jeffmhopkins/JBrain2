@@ -169,9 +169,11 @@ dishonest Ops "run now"). Pipeline (ARCHITECTURE.md §Wiki):
    **multiple co-equal current facts**. **Grounding gate (required, load-bearing under B):**
    a verifier asserts every sentence is **entailed by its cited chunk** and same-domain
    (reuse the eval-harness groundedness scoring + reflexion's citation check); fail-closed
-   drops/flags unsupported prose. **Discipline:** the current fact graph wins for core
-   status; chunk-only claims add detail and must not contradict a current fact or resurface
-   superseded/retracted content.
+   drops/flags unsupported prose. **Discipline — the entity graph wins on conflict:** facts
+   are authoritative. The grounding gate checks each candidate claim against the entity's
+   **current fact set** (not just its cited chunk); a chunk-only (note-derived) claim that
+   **contradicts a current fact is dropped** — the fact prevails. Chunk-only claims may
+   only add **non-conflicting** detail, and never resurface superseded/retracted content.
 5. **Split/merge** — stage a `wiki-restructure` proposal; **owner-approved via the
    review inbox** before enactment.
 6. **Re-embed** changed summaries into `wiki_index`.
@@ -230,10 +232,12 @@ the owner-correction path (§4). Graph-independent shell — built against **fix
 8. **Source depth (fact-only vs note-derived):** ✅ RESOLVED — **B: chunk-only
    note-derived claims allowed.** The builder sources from cited chunk *text* (not just
    fact statements) via facts (backbone) + `entity_mentions → chunks` (context); claims
-   may be fact-backed or chunk-only; both cite a chunk. **Consequence — new required
-   deliverable:** a **grounding gate** (every claim entailed by its cited chunk,
-   same-domain; current facts win; no resurrecting superseded/retracted content) is now
-   mandatory in the builder wave, not optional. (§2 `wiki_citations`, §3 steps 3b/4.)
+   may be fact-backed or chunk-only; both cite a chunk. **Precedence rule: the entity
+   graph wins on any fact-vs-note conflict** — a chunk-only claim contradicting a current
+   fact is dropped. **Consequence — new required deliverable:** a **grounding gate** (every
+   claim entailed by its cited chunk + same-domain + consistent with the current fact set;
+   no resurrecting superseded/retracted content) is now mandatory in the builder wave, not
+   optional. (§2 `wiki_citations`, §3 steps 3b/4.)
 
 **Must settle WITH the rebuild stream BEFORE the gated work (builder/citations/links):**
 *Written up as a hand-off interface spec — `docs/PHASE6_WIKI_GRAPH_CONTRACT.md` (give it
