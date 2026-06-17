@@ -12,6 +12,7 @@ from jbrain.agent.readtools import build_registry
 from jbrain.agent.runlog import AgentRunLog, RunLogReader
 from jbrain.agent.session import AgentSessionRepo
 from jbrain.agent.transcript_store import AgentTranscript
+from jbrain.agent.wikiwritetools import build_wiki_write_handlers
 from jbrain.analysis.repo import SqlAnalysisRepo
 from jbrain.api import (
     agent,
@@ -144,6 +145,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             app.state.lists_repo,
             app.state.appointments_repo,
             app.state.wiki_read_store,
+            build_wiki_write_handlers(app.state.notes_repo, app.state.job_queue, maker),
         )
         app.state.agent_sessions = AgentSessionRepo(maker)
         app.state.agent_runlog = AgentRunLog(maker)
