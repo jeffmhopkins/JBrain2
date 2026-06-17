@@ -16,6 +16,7 @@ from jbrain.agent.readtools import (
     format_note,
     format_relations,
     format_search,
+    format_wiki_article,
 )
 from jbrain.agent.toolfile import load_tool
 from jbrain.connectors.base import ConnectorRegistry
@@ -461,9 +462,11 @@ def test_build_registry_binds_the_shipped_sidecars() -> None:
         ConnectorRegistry(medical_connectors("http://rx", "http://mp")),
         object(),  # type: ignore[arg-type]
         object(),  # type: ignore[arg-type]
+        object(),  # type: ignore[arg-type]  # wiki reader
     )
     shipped = {
         "search",
+        "read_wiki",
         "read_note",
         "read_entity",
         "find_entity",
@@ -604,6 +607,11 @@ def test_sidecars_pinned_to_their_versions() -> None:
             1,
             "7fcd25cf5705ae0de9199a7a7c926b0551eb91e0fa3db62a8d03dd32c108fc7e",
         ),
+        "read_wiki.tool": (
+            "read_wiki",
+            1,
+            "16c880ea78ce613abb9373ec926a3a266bc40cff04176aaa49f59b87a89c2997",
+        ),
     }
     # Every shipped sidecar must appear above — a new `.tool` cannot slip in
     # unpinned (the gap this closes: propose_merge was registered but never pinned).
@@ -612,3 +620,62 @@ def test_sidecars_pinned_to_their_versions() -> None:
     for filename, expected in pins.items():
         tf = load_tool(TOOLS_DIR / filename)
         assert (tf.spec.name, tf.spec.version, tf.digest) == expected
+
+
+# --- read_wiki (the read-only wiki-editorial tool) ------------------------
+
+
+class FakeWiki:
+    def __init__(self, article: dict | None):
+        self.article = article
+
+    async def get_article(self, ctx, article_id):  # noqa: ANN001
+        return self.article if self.article and article_id == self.article["id"] else None
+
+
+def _article() -> dict:
+    return {
+        "id": "a1",
+        "title": "Priya Nair",
+        "subtitle": "Person · machine-written",
+        "lead": [{"kind": "p", "text": "Priya is a pediatrician.[1]"}],
+        "sections": [
+            {
+                "heading": "Career",
+                "domain": "general",
+                "blocks": [{"kind": "p", "text": "Founded a clinic.[1]"}],
+                "subsections": [
+                    {"heading": "Training", "blocks": [{"kind": "p", "text": "Residency."}]}
+                ],
+            }
+        ],
+        "references": [
+            {
+                "n": 1,
+                "meta": "Note · Sep 5, 2024",
+                "domain": "general",
+                "snippet": "opened the clinic",
+            }
+        ],
+    }
+
+
+def test_format_wiki_article_renders_lead_sections_and_references() -> None:
+    out = format_wiki_article(_article())
+    assert "# Priya Nair" in out
+    assert "## Career [general]" in out
+    assert "### Training" in out
+    assert "Founded a clinic.[1]" in out
+    assert "References:" in out and "[1] Note · Sep 5, 2024 — opened the clinic" in out
+
+
+async def test_read_wiki_tool_returns_the_article_else_a_quiet_miss() -> None:
+    from jbrain.agent.readtools import build_wiki_handlers
+
+    handler = build_wiki_handlers(FakeWiki(_article()))["read_wiki"]  # type: ignore[arg-type]
+    hit = await handler({"article_id": "a1"}, CTX)
+    assert isinstance(hit, ToolOutput) and "Priya Nair" in hit
+    miss = await handler({"article_id": "nope"}, CTX)
+    assert "No wiki article" in miss
+    empty = await handler({"article_id": ""}, CTX)
+    assert "needs an article_id" in empty
