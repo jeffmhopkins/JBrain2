@@ -15,7 +15,8 @@ out-of-scope viewers (existence included).
 
 ```yaml
 requirements:
-  - every claim cites a note ([n] → References); drop any claim that can't be cited
+  - every claim cites a CHUNK ([n] → References, rendered as the source note: date·domain·
+    snippet); the cited chunk must be same-domain as the section; drop any uncitable claim
   - omit empty sections; never invent a section not in the guide
   - no speculation or inference beyond the cited facts
   - dates render in the note's local timezone
@@ -55,10 +56,12 @@ worked example — `docs/mocks/wiki-reader-example-priya.html`.)*
   both endpoints are cited. Superseded facts are written as past, never as current.
 
 **Citations**
-- Every claim carries a Wikipedia-style `[n]` → the numbered References list (note date ·
-  domain · snippet). **Cite at the smallest distinct clause** (lent…[n]; repaid…[m]), not
-  stacked at the sentence end. Fact-backed and note-derived claims are cited identically
-  (no visual tiering — the citation is the uniform trust signal).
+- Every claim carries a Wikipedia-style `[n]` resolving to a **chunk** (rendered in the
+  References list as its source note: date · domain · snippet). **Cite at the smallest
+  distinct clause** (lent…[n]; repaid…[m]), not stacked at the sentence end — this is the
+  same granularity the **grounding gate** verifies (each cited clause must be entailed by
+  its chunk). Fact-backed and note-derived claims are cited identically (no visual tiering
+  — the citation is the uniform trust signal).
 
 **Prose vs. lists vs. tables**
 - **Prose by default** — biography reads as paragraphs.
@@ -128,8 +131,10 @@ sections:
   - {name: Overview,    domain: general,  include_if: what the place is, geography}
   - {name: History,     domain: general,  include_if: history / significance}
   - {name: Associations, domain: general, include_if: who/what the owner connects to it}
-  - {name: Visits,      domain: location, include_if: owner's visits / location facts (Phase 7+)}
-style: "Descriptive. The Visits section is location-domain and stays empty until location data exists."
+  # NOT seeded in v1: a Visits (domain: location) section. The `location` domain has no
+  # RLS scope or color until Phase 7 — seeding a location-domain section now would create a
+  # firewall unit whose isolation test can't be written. Add Visits when Phase 7 lands.
+style: "Descriptive."
 ```
 
 ## Project
@@ -167,6 +172,44 @@ sections:
   - {name: Details,    domain: general, include_if: elaboration, examples}
   - {name: Related,    domain: general, include_if: links to related articles}
 style: "Define first, then elaborate. Heavier on wiki-to-wiki links than prose."
+```
+
+## Medical entities (Drug / MedicalCondition / MedicalProcedure)
+
+In a health-heavy personal KB these entities accrue cited facts and deserve real
+articles, **not** the generic fallback. They are **article-worthy** (added to the
+notability gate, §6 plan) and their primary sections are **health-domain**, so most of
+each article is firewalled and hidden from out-of-scope viewers.
+
+```yaml
+type: Drug                 # a medication the owner or a subject takes
+lead: "What it is + who takes it (link the person)."
+sections:
+  - {name: Overview,    domain: general, include_if: what the drug is / class}
+  - {name: Use,         domain: health,  include_if: who takes it, dose, schedule, for what}
+  - {name: Notes,       domain: health,  include_if: effects, changes, allergies/interactions}
+style: "Clinical-neutral; current dose present tense, past regimens as history."
+```
+```yaml
+type: MedicalCondition     # also: MedicalProcedure (Overview/Course/Treatment)
+lead: "What it is + whose (link the person)."
+sections:
+  - {name: Overview,    domain: general, include_if: what the condition is}
+  - {name: Course,      domain: health,  include_if: diagnosis date, progression, episodes}
+  - {name: Treatment,   domain: health,  include_if: medications/procedures, providers}
+style: "Clinical-neutral; chronological course; cite each clinical claim to its note."
+```
+
+## Product
+
+```yaml
+type: Product              # a device/possession/service the owner owns or uses
+lead: "What it is + the owner's relation (owns / uses)."
+sections:
+  - {name: Overview,    domain: general, include_if: what it is}
+  - {name: Ownership,   domain: general, include_if: acquired when, usage}
+  - {name: Finances,    domain: finance, include_if: price, warranty, payments}
+style: "Factual."
 ```
 
 ## Generic (fallback)

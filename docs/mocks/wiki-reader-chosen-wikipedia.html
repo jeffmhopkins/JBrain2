@@ -6,18 +6,16 @@
 <title>Wiki reader — chosen — Wikipedia-style, type-guided sections</title>
 <style>
   :root {
-    --bg: #0e1116; --surface: #161b22; --surface-2: #1b2230; --border: #2a313c;
-    --text: #e6edf3; --text-2: #9aa7b4; --text-3: #6b7785; --link: #6ea8fe;
-    --steel: #6ea8fe; --violet: #b08cff; --amber: #e0a85b;
-    --general: #6ea8fe; --health: #f17d8a; --finance: #5bc2a0; --location: #b08cff;
-    --mark: #3a2f17; --shadow: rgba(0,0,0,.45);
+    --bg: #0E0F11; --surface: #17181B; --surface-2: #1E2024; --border: #26282C;
+    --text: #E6E7E9; --text-2: #9A9DA3; --text-3: #5C5F66;
+    --steel: #7FA7C9; --green: #8FBC9A; --amber: #C9A36A; --rose: #CF8A8F; --violet: #A493C9;
+    --link: var(--steel); --mark: color-mix(in srgb, var(--amber) 22%, transparent); --shadow: rgba(0,0,0,.45);
   }
   [data-theme="light"] {
-    --bg: #f7f6f2; --surface: #ffffff; --surface-2: #f0f0ec; --border: #d8d8d0;
-    --text: #202122; --text-2: #54595d; --text-3: #8b9096; --link: #3366cc;
-    --steel: #2f6fe0; --violet: #7a4fd0; --amber: #9a6b1e;
-    --general: #2f6fe0; --health: #c0455a; --finance: #1f8f6e; --location: #7a4fd0;
-    --mark: #fbe7c6; --shadow: rgba(20,30,50,.12);
+    --bg: #F7F7F5; --surface: #FFFFFF; --surface-2: #F0F0EE; --border: #E2E2DF;
+    --text: #1A1B1E; --text-2: #5C5F66; --text-3: #9A9DA3;
+    --steel: #7FA7C9; --green: #8FBC9A; --amber: #C9A36A; --rose: #CF8A8F; --violet: #A493C9;
+    --link: var(--steel); --mark: color-mix(in srgb, var(--amber) 26%, transparent); --shadow: rgba(20,30,50,.12);
   }
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   body { margin: 0; background: #05070a; font: 15px/1.6 -apple-system, system-ui, "Segoe UI", sans-serif;
@@ -76,6 +74,16 @@
   .sheet h4 { margin: 0 0 6px; font-size: 14px; }
   .sheet .ta { background: var(--surface-2); border-radius: 10px; padding: 11px; font-size: 13px; color: var(--text-3); min-height: 60px; }
   .sheet .note { font-size: 11.5px; color: var(--text-3); margin-top: 10px; }
+  /* citation card */
+  .cite-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+  .cite-head .cdom { width: 9px; height: 9px; border-radius: 50%; flex: 0 0 9px; }
+  .cite-head .cmeta { font-size: 11.5px; color: var(--text-3); }
+  .cite-snip { background: var(--surface-2); border-radius: 10px; padding: 11px; font-size: 13px; color: var(--text-2); }
+  .cite-snip mark { background: var(--mark); color: var(--text); border-radius: 3px; padding: 0 2px; }
+  .cite-actions { display: flex; gap: 10px; margin-top: 12px; }
+  .cite-actions button { flex: 1; height: 38px; border-radius: 10px; border: 1px solid var(--border); background: var(--surface-2);
+    color: var(--text); font-size: 13px; font-weight: 600; display: inline-flex; align-items: center; justify-content: center; gap: 6px; cursor: pointer; }
+  .cite-actions button svg { width: 15px; height: 15px; }
 </style>
 </head>
 <body>
@@ -95,34 +103,34 @@
       <div class="ib-disc"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-7 8-7s8 3 8 7"/></svg></div>
       <div class="ib-title">Celine Hopkins</div>
       <dl>
-        <dt>Spouse</dt><dd><a class="link">Jeff</a><sup class="ref"><a onclick="jump(1)">[1]</a></sup></dd>
-        <dt>Employer</dt><dd><a class="link">Globex</a><sup class="ref"><a onclick="jump(2)">[2]</a></sup></dd>
-        <dt>Lives in</dt><dd><a class="link">Denver</a><sup class="ref"><a onclick="jump(3)">[3]</a></sup></dd>
+        <dt>Spouse</dt><dd><a class="link">Jeff</a><sup class="ref"><a onclick="cite(1)">[1]</a></sup></dd>
+        <dt>Employer</dt><dd><a class="link">Globex</a><sup class="ref"><a onclick="cite(2)">[2]</a></sup></dd>
+        <dt>Lives in</dt><dd><a class="link">Denver</a><sup class="ref"><a onclick="cite(3)">[3]</a></sup></dd>
       </dl>
     </div>
 
     <p><strong>Celine Hopkins</strong> is a software engineer based in
-      <a class="link">Denver, Colorado</a>.<sup class="ref"><a onclick="jump(3)">[3]</a></sup>
-      She is married to <a class="link">Jeff</a><sup class="ref"><a onclick="jump(1)">[1]</a></sup> and has worked at
-      <a class="link">Globex Corporation</a> since 2019.<sup class="ref"><a onclick="jump(2)">[2]</a></sup></p>
+      <a class="link">Denver, Colorado</a>.<sup class="ref"><a onclick="cite(3)">[3]</a></sup>
+      She is married to <a class="link">Jeff</a><sup class="ref"><a onclick="cite(1)">[1]</a></sup> and has worked at
+      <a class="link">Globex Corporation</a> since 2019.<sup class="ref"><a onclick="cite(2)">[2]</a></sup></p>
 
-    <h2 class="sec"><span class="dom" style="background:var(--general)"></span>Career</h2>
+    <h2 class="sec"><span class="dom" style="background:var(--steel)"></span>Career</h2>
     <p>Hopkins joined <a class="link">Globex Corporation</a> in 2019 and was promoted to senior
-      engineer in early 2026.<sup class="ref"><a onclick="jump(2)">[2]</a></sup> She previously worked at
-      <a class="link">Initech</a> from 2016 to 2019.<sup class="ref"><a onclick="jump(4)">[4]</a></sup></p>
+      engineer in early 2026.<sup class="ref"><a onclick="cite(2)">[2]</a></sup> She previously worked at
+      <a class="link">Initech</a> from 2016 to 2019.<sup class="ref"><a onclick="cite(4)">[4]</a></sup></p>
 
-    <h2 class="sec"><span class="dom" style="background:var(--general)"></span>Personal life</h2>
+    <h2 class="sec"><span class="dom" style="background:var(--steel)"></span>Personal life</h2>
     <p>She married <a class="link">Jeff</a> in 2016; the couple celebrated their tenth anniversary in
-      2026.<sup class="ref"><a onclick="jump(1)">[1]</a></sup> They moved into a house in
-      <a class="link">Denver</a> in late 2025.<sup class="ref"><a onclick="jump(3)">[3]</a></sup></p>
+      2026.<sup class="ref"><a onclick="cite(1)">[1]</a></sup> They moved into a house in
+      <a class="link">Denver</a> in late 2025.<sup class="ref"><a onclick="cite(3)">[3]</a></sup></p>
 
-    <h2 class="sec"><span class="dom" style="background:var(--health)"></span>Health<span class="dom-lbl">health</span></h2>
-    <p>Hopkins has a recorded <a class="link">penicillin allergy</a><sup class="ref"><a onclick="jump(5)">[5]</a></sup>
-      and takes levothyroxine 75 mcg each morning.<sup class="ref"><a onclick="jump(5)">[5]</a></sup></p>
+    <h2 class="sec"><span class="dom" style="background:var(--rose)"></span>Health<span class="dom-lbl">health</span></h2>
+    <p>Hopkins has a recorded <a class="link">penicillin allergy</a><sup class="ref"><a onclick="cite(5)">[5]</a></sup>
+      and takes levothyroxine 75 mcg each morning.<sup class="ref"><a onclick="cite(5)">[5]</a></sup></p>
 
-    <h2 class="sec"><span class="dom" style="background:var(--finance)"></span>Finances<span class="dom-lbl">finance</span></h2>
+    <h2 class="sec"><span class="dom" style="background:var(--violet)"></span>Finances<span class="dom-lbl">finance</span></h2>
     <p>She holds a joint account with <a class="link">Chase</a>, into which her payroll is
-      deposited.<sup class="ref"><a onclick="jump(6)">[6]</a></sup></p>
+      deposited.<sup class="ref"><a onclick="cite(6)">[6]</a></sup></p>
 
     <h2 class="refs">References</h2>
     <ol class="reflist">
@@ -143,6 +151,15 @@
     <div class="ta"><em>Describe what's wrong and what it should say…</em></div>
     <div class="note">Filed as a note (in the relevant domain) — the pipeline applies it on the next build, so the wiki stays machine-written. Facts are never edited directly.</div>
   </div>
+
+  <div class="sheet" id="cite-sheet">
+    <h4>Source</h4>
+    <div class="cite-head"><span class="cdom" id="cite-dom"></span><span class="cmeta" id="cite-meta"></span></div>
+    <div class="cite-snip" id="cite-snip"></div>
+    <div class="cite-actions">
+      <button onclick="citeJump()"><svg viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg>Jump to references</button>
+    </div>
+  </div>
 </div>
 
 <script>
@@ -155,7 +172,29 @@
     setTimeout(() => li.classList.remove('hl'), 2200);
   }
   function discuss() { document.getElementById('scrim').classList.add('on'); document.getElementById('sheet').classList.add('on'); }
-  function close_() { document.getElementById('scrim').classList.remove('on'); document.getElementById('sheet').classList.remove('on'); }
+  function close_() {
+    document.getElementById('scrim').classList.remove('on');
+    document.getElementById('sheet').classList.remove('on');
+    document.getElementById('cite-sheet').classList.remove('on');
+  }
+  const domColor = { health: 'var(--rose)', finance: 'var(--violet)', general: 'var(--steel)' };
+  let citeN = null;
+  function cite(n) {
+    citeN = n;
+    const li = document.getElementById('r' + n);
+    const meta = li.querySelector('.meta').textContent.replace(/—\s*$/, '').trim();
+    const dom = (meta.match(/·\s*(health|finance|general)/i) || [])[1] || 'general';
+    document.getElementById('cite-dom').style.background = domColor[dom.toLowerCase()] || 'var(--steel)';
+    document.getElementById('cite-meta').textContent = meta;
+    // snippet = the reference text after the meta span (preserve <mark> highlights)
+    const snip = li.cloneNode(true);
+    snip.querySelector('.meta').remove();
+    const disc = snip.querySelector('.disc'); if (disc) disc.remove();
+    document.getElementById('cite-snip').innerHTML = snip.innerHTML.replace(/^\s*·?\s*/, '').replace(/·\s*$/, '').trim();
+    document.getElementById('scrim').classList.add('on');
+    document.getElementById('cite-sheet').classList.add('on');
+  }
+  function citeJump() { const n = citeN; close_(); jump(n); }
 </script>
 </body>
 </html>

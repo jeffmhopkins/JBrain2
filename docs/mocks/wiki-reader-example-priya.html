@@ -6,16 +6,16 @@
 <title>Wiki article — Priya Nair (prose + list + tables)</title>
 <style>
   :root{
-    --bg:#0e1116;--surface:#161b22;--surface-2:#1b2230;--border:#2a313c;
-    --text:#e6edf3;--text-2:#9aa7b4;--text-3:#6b7785;--link:#6ea8fe;--red:#e26d6d;
-    --steel:#6ea8fe;--violet:#b08cff;--amber:#e0a85b;--health:#f17d8a;--finance:#5bc2a0;
-    --mark:#3a2f17;--shadow:rgba(0,0,0,.45);
+    --bg:#0E0F11;--surface:#17181B;--surface-2:#1E2024;--border:#26282C;
+    --text:#E6E7E9;--text-2:#9A9DA3;--text-3:#5C5F66;
+    --steel:#7FA7C9;--green:#8FBC9A;--amber:#C9A36A;--rose:#CF8A8F;--violet:#A493C9;
+    --link:var(--steel);--mark:color-mix(in srgb, var(--amber) 22%, transparent);--shadow:rgba(0,0,0,.45);
   }
   [data-theme="light"]{
-    --bg:#f7f6f2;--surface:#fff;--surface-2:#f0f0ec;--border:#d8d8d0;
-    --text:#202122;--text-2:#54595d;--text-3:#8b9096;--link:#3366cc;--red:#b32424;
-    --steel:#2f6fe0;--violet:#7a4fd0;--amber:#9a6b1e;--health:#c0455a;--finance:#1f8f6e;
-    --mark:#fbe7c6;--shadow:rgba(20,30,50,.12);
+    --bg:#F7F7F5;--surface:#FFFFFF;--surface-2:#F0F0EE;--border:#E2E2DF;
+    --text:#1A1B1E;--text-2:#5C5F66;--text-3:#9A9DA3;
+    --steel:#7FA7C9;--green:#8FBC9A;--amber:#C9A36A;--rose:#CF8A8F;--violet:#A493C9;
+    --link:var(--steel);--mark:color-mix(in srgb, var(--amber) 26%, transparent);--shadow:rgba(20,30,50,.12);
   }
   *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
   body{margin:0;background:#05070a;font:15px/1.6 -apple-system,system-ui,"Segoe UI",sans-serif;display:grid;place-items:center;min-height:100vh;color:var(--text)}
@@ -42,7 +42,7 @@
   p{margin:0 0 12px}
   a.link{color:var(--link);text-decoration:none;cursor:pointer}
   a.link:hover{text-decoration:underline}
-  a.red{color:var(--red);text-decoration:none;cursor:pointer;border-bottom:1px dotted var(--red)}
+  a.red{color:var(--text-3);text-decoration:none;cursor:pointer;border-bottom:1px dotted var(--text-3)}
   sup.ref{font-size:10px;line-height:0}
   sup.ref a{color:var(--link);text-decoration:none;cursor:pointer}
   h2.sec{font-family:Georgia,serif;font-weight:400;font-size:19px;margin:20px 0 8px;padding-bottom:4px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px}
@@ -61,8 +61,24 @@
   ol.reflist .meta{color:var(--text-3)}
   ol.reflist mark{background:var(--mark);color:var(--text);border-radius:3px;padding:0 2px}
   ol.reflist .dchip{font-size:9px;text-transform:uppercase;letter-spacing:.04em;border:1px solid var(--border);border-radius:10px;padding:0 5px;color:var(--text-3);margin-left:4px}
+  ol.reflist .dchip.health{color:var(--rose);border-color:color-mix(in srgb,var(--rose) 35%,transparent)}
+  ol.reflist .dchip.finance{color:var(--violet);border-color:color-mix(in srgb,var(--violet) 35%,transparent)}
+  ol.reflist .dchip.general{color:var(--steel);border-color:color-mix(in srgb,var(--steel) 35%,transparent)}
   .discuss{position:absolute;left:0;right:0;bottom:0;padding:12px 16px calc(12px + env(safe-area-inset-bottom));background:linear-gradient(to top,var(--bg) 72%,transparent)}
   .discuss button{width:100%;height:44px;border-radius:12px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-size:14px;font-weight:600;display:inline-flex;align-items:center;justify-content:center;gap:8px;cursor:pointer}
+  .scrim{position:absolute;inset:0;background:rgba(0,0,0,.45);opacity:0;pointer-events:none;transition:opacity .15s}
+  .scrim.on{opacity:1;pointer-events:auto}
+  .sheet{position:absolute;left:12px;right:12px;bottom:12px;background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:14px;transform:translateY(150%);transition:transform .2s cubic-bezier(.2,.8,.2,1);box-shadow:0 -8px 30px var(--shadow)}
+  .sheet.on{transform:translateY(0)}
+  .sheet h4{margin:0 0 8px;font-size:14px}
+  .cite-head{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+  .cite-head .cdom{width:9px;height:9px;border-radius:50%;flex:0 0 9px}
+  .cite-head .cmeta{font-size:11.5px;color:var(--text-3)}
+  .cite-snip{background:var(--surface-2);border-radius:10px;padding:11px;font-size:13px;color:var(--text-2)}
+  .cite-snip mark{background:var(--mark);color:var(--text);border-radius:3px;padding:0 2px}
+  .cite-actions{display:flex;gap:10px;margin-top:12px}
+  .cite-actions button{flex:1;height:38px;border-radius:10px;border:1px solid var(--border);background:var(--surface-2);color:var(--text);font-size:13px;font-weight:600;display:inline-flex;align-items:center;justify-content:center;gap:6px;cursor:pointer}
+  .cite-actions button svg{width:15px;height:15px}
 </style>
 </head>
 <body>
@@ -84,97 +100,126 @@
       <div class="ib-cap">owner-added photo</div>
       <div class="ib-title">Priya Nair</div>
       <dl>
-        <dt>Born</dt><dd><a class="link">Austin</a><sup class="ref"><a onclick="j(1)">[1]</a></sup></dd>
-        <dt>Sibling</dt><dd><a class="link">Jordan&nbsp;Hale</a> (br.)<sup class="ref"><a onclick="j(2)">[2]</a></sup></dd>
-        <dt>Spouse</dt><dd><a class="red">Tom</a> (m.&nbsp;2021)<sup class="ref"><a onclick="j(3)">[3]</a></sup></dd>
-        <dt>Children</dt><dd><a class="red">Anaya</a>, <a class="red">Mira</a><sup class="ref"><a onclick="j(7)">[7]</a></sup></dd>
-        <dt>Occupation</dt><dd>Pediatrician<sup class="ref"><a onclick="j(4)">[4]</a></sup></dd>
-        <dt>Practice</dt><dd><a class="link">Nair&nbsp;Pediatrics</a> (2024–)<sup class="ref"><a onclick="j(9)">[9]</a></sup></dd>
+        <dt>Born</dt><dd><a class="link">Austin</a><sup class="ref"><a onclick="cite(1)">[1]</a></sup></dd>
+        <dt>Sibling</dt><dd><a class="link">Jordan&nbsp;Hale</a> (br.)<sup class="ref"><a onclick="cite(2)">[2]</a></sup></dd>
+        <dt>Spouse</dt><dd><a class="red">Tom</a> (m.&nbsp;2021)<sup class="ref"><a onclick="cite(3)">[3]</a></sup></dd>
+        <dt>Children</dt><dd><a class="red">Anaya</a>, <a class="red">Mira</a><sup class="ref"><a onclick="cite(7)">[7]</a></sup></dd>
+        <dt>Occupation</dt><dd>Pediatrician<sup class="ref"><a onclick="cite(4)">[4]</a></sup></dd>
+        <dt>Practice</dt><dd><a class="link">Nair&nbsp;Pediatrics</a> (2024–)<sup class="ref"><a onclick="cite(9)">[9]</a></sup></dd>
       </dl>
     </div>
 
     <p><strong>Priya Nair</strong> is a pediatrician and the founder of <a class="link">Nair Pediatrics</a> in
-      <a class="link">Brookline</a>.<sup class="ref"><a onclick="j(9)">[9]</a></sup> She is the younger sister of
-      <a class="link">Jordan Hale</a>.<sup class="ref"><a onclick="j(2)">[2]</a></sup></p>
+      <a class="link">Brookline</a>.<sup class="ref"><a onclick="cite(9)">[9]</a></sup> She is the younger sister of
+      <a class="link">Jordan Hale</a>.<sup class="ref"><a onclick="cite(2)">[2]</a></sup></p>
 
     <h2 class="sec"><span class="dom" style="background:var(--steel)"></span>Early life</h2>
     <p>Nair grew up in <a class="link">Austin</a>, Texas, where she was known within the family as a science
-      enthusiast from an early age.<sup class="ref"><a onclick="j(1)">[1]</a></sup> In 2019 she was admitted to medical
-      school at <a class="link">Johns Hopkins</a>.<sup class="ref"><a onclick="j(2)">[2]</a></sup></p>
+      enthusiast from an early age.<sup class="ref"><a onclick="cite(1)">[1]</a></sup> In 2019 she was admitted to medical
+      school at <a class="link">Johns Hopkins</a>.<sup class="ref"><a onclick="cite(2)">[2]</a></sup></p>
 
     <h2 class="sec"><span class="dom" style="background:var(--steel)"></span>Career</h2>
     <p>Nair is a pediatrician who trained at a children's clinic before founding her own practice.</p>
     <h3 class="sub">Training and early career</h3>
     <p>After completing her residency in 2022, Nair worked as a pediatrician at
-      <a class="link">Riverside Children's Clinic</a>.<sup class="ref"><a onclick="j(4)">[4]</a></sup></p>
+      <a class="link">Riverside Children's Clinic</a>.<sup class="ref"><a onclick="cite(4)">[4]</a></sup></p>
     <h3 class="sub">Nair Pediatrics</h3>
     <p>In 2024 she left Riverside to open her own practice, <a class="link">Nair Pediatrics</a>, in Brookline,
-      where she currently practices.<sup class="ref"><a onclick="j(9)">[9]</a></sup></p>
+      where she currently practices.<sup class="ref"><a onclick="cite(9)">[9]</a></sup></p>
     <h3 class="sub">Talks and publications</h3>
     <ul class="wl">
-      <li>Co-authored a paper on vaccine hesitancy in <a class="link">JAMA Pediatrics</a> (2023).<sup class="ref"><a onclick="j(16)">[16]</a></sup></li>
-      <li>Presented at the regional conference on childhood nutrition (2024).<sup class="ref"><a onclick="j(17)">[17]</a></sup></li>
-      <li>Gave a talk at the state pediatric conference on childhood asthma (2025).<sup class="ref"><a onclick="j(13)">[13]</a></sup></li>
+      <li>Co-authored a paper on vaccine hesitancy in <a class="link">JAMA Pediatrics</a> (2023).<sup class="ref"><a onclick="cite(16)">[16]</a></sup></li>
+      <li>Presented at the regional conference on childhood nutrition (2024).<sup class="ref"><a onclick="cite(17)">[17]</a></sup></li>
+      <li>Gave a talk at the state pediatric conference on childhood asthma (2025).<sup class="ref"><a onclick="cite(13)">[13]</a></sup></li>
     </ul>
 
     <h2 class="sec"><span class="dom" style="background:var(--steel)"></span>Personal life</h2>
     <p>Nair married <a class="red">Tom</a> in a small courthouse ceremony in 2021, attended only by
-      family.<sup class="ref"><a onclick="j(3)">[3]</a></sup> Their first daughter, <a class="red">Anaya</a>, was born in
-      2024,<sup class="ref"><a onclick="j(7)">[7]</a></sup> and their second, <a class="red">Mira</a>, in
-      2026.<sup class="ref"><a onclick="j(20)">[20]</a></sup> In 2025 the family moved to a larger home in
-      <a class="link">Brookline</a>.<sup class="ref"><a onclick="j(12)">[12]</a></sup></p>
+      family.<sup class="ref"><a onclick="cite(3)">[3]</a></sup> Their first daughter, <a class="red">Anaya</a>, was born in
+      2024,<sup class="ref"><a onclick="cite(7)">[7]</a></sup> and their second, <a class="red">Mira</a>, in
+      2026.<sup class="ref"><a onclick="cite(20)">[20]</a></sup> In 2025 the family moved to a larger home in
+      <a class="link">Brookline</a>.<sup class="ref"><a onclick="cite(12)">[12]</a></sup></p>
     <p>Nair is an accomplished marathon runner, improving her time in each successive race:</p>
     <table class="wt">
       <tr><th>Event</th><th>Year</th><th>Time</th></tr>
-      <tr><td><a class="link">Boston</a></td><td>2023</td><td>3:52<sup class="ref"><a onclick="j(5)">[5]</a></sup></td></tr>
-      <tr><td><a class="link">Chicago</a></td><td>2024</td><td>3:47<sup class="ref"><a onclick="j(14)">[14]</a></sup></td></tr>
-      <tr><td><a class="link">NYC</a></td><td>2025</td><td>3:41<sup class="ref"><a onclick="j(15)">[15]</a></sup></td></tr>
+      <tr><td><a class="link">Boston</a></td><td>2023</td><td>3:52<sup class="ref"><a onclick="cite(5)">[5]</a></sup></td></tr>
+      <tr><td><a class="link">Chicago</a></td><td>2024</td><td>3:47<sup class="ref"><a onclick="cite(14)">[14]</a></sup></td></tr>
+      <tr><td><a class="link">NYC</a></td><td>2025</td><td>3:41<sup class="ref"><a onclick="cite(15)">[15]</a></sup></td></tr>
     </table>
-    <p>She is also regarded within the family as its best cook, known for her biryani.<sup class="ref"><a onclick="j(10)">[10]</a></sup></p>
+    <p>She is also regarded within the family as its best cook, known for her biryani.<sup class="ref"><a onclick="cite(10)">[10]</a></sup></p>
 
-    <h2 class="sec"><span class="dom" style="background:var(--health)"></span>Health<span class="dom-lbl">health</span></h2>
-    <p>Nair has a serious peanut allergy and carries an <a class="link">EpiPen</a>.<sup class="ref"><a onclick="j(6)">[6]</a></sup>
+    <h2 class="sec"><span class="dom" style="background:var(--rose)"></span>Health<span class="dom-lbl">health</span></h2>
+    <p>Nair has a serious peanut allergy and carries an <a class="link">EpiPen</a>.<sup class="ref"><a onclick="cite(6)">[6]</a></sup>
       She takes the following medications:</p>
     <table class="wt">
       <tr><th>Medication</th><th>Dose</th><th>For</th></tr>
-      <tr><td><a class="link">Levothyroxine</a></td><td>50 mcg</td><td>Thyroid<sup class="ref"><a onclick="j(18)">[18]</a></sup></td></tr>
-      <tr><td><a class="link">Cetirizine</a></td><td>10 mg daily (spring)</td><td>Seasonal allergies<sup class="ref"><a onclick="j(19)">[19]</a></sup></td></tr>
+      <tr><td><a class="link">Levothyroxine</a></td><td>50 mcg</td><td>Thyroid<sup class="ref"><a onclick="cite(18)">[18]</a></sup></td></tr>
+      <tr><td><a class="link">Cetirizine</a></td><td>10 mg daily (spring)</td><td>Seasonal allergies<sup class="ref"><a onclick="cite(19)">[19]</a></sup></td></tr>
     </table>
 
-    <h2 class="sec"><span class="dom" style="background:var(--finance)"></span>Finances<span class="dom-lbl">finance</span></h2>
-    <p>In 2024 <a class="link">Jordan Hale</a> lent Nair $4,000 for clinic equipment<sup class="ref"><a onclick="j(8)">[8]</a></sup>;
-      the loan was repaid in full in 2025.<sup class="ref"><a onclick="j(11)">[11]</a></sup></p>
+    <h2 class="sec"><span class="dom" style="background:var(--violet)"></span>Finances<span class="dom-lbl">finance</span></h2>
+    <p>In 2024 <a class="link">Jordan Hale</a> lent Nair $4,000 for clinic equipment<sup class="ref"><a onclick="cite(8)">[8]</a></sup>;
+      the loan was repaid in full in 2025.<sup class="ref"><a onclick="cite(11)">[11]</a></sup></p>
 
     <h2 class="refs">References</h2>
     <ol class="reflist">
-      <li id="r1"><span class="meta">Note · May 2, 2018 —</span> "Priya <mark>grew up in Austin</mark> — always the science nerd." <span class="dchip">general</span></li>
-      <li id="r2"><span class="meta">Note · Jun 10, 2019 —</span> "got into <mark>med school at Johns Hopkins</mark>! my little sister." <span class="dchip">general</span></li>
-      <li id="r3"><span class="meta">Note · Sep 2, 2021 —</span> "Priya <mark>married Tom</mark> at the courthouse — just family." <span class="dchip">general</span></li>
-      <li id="r4"><span class="meta">Note · Mar 15, 2022 —</span> "residency, started as a <mark>pediatrician at Riverside</mark>." <span class="dchip">general</span></li>
-      <li id="r5"><span class="meta">Note · Apr 18, 2023 —</span> "ran the <mark>Boston Marathon — 3:52</mark>!" <span class="dchip">general</span></li>
-      <li id="r6"><span class="meta">Note · Nov 20, 2023 —</span> "carry her EpiPen — <mark>peanut allergy</mark> is serious." <span class="dchip">health</span></li>
-      <li id="r7"><span class="meta">Note · Jan 30, 2024 —</span> "Priya and Tom had a <mark>baby girl, Anaya</mark>." <span class="dchip">general</span></li>
-      <li id="r8"><span class="meta">Note · Jul 12, 2024 —</span> "<mark>Lent Priya $4,000</mark> for clinic equipment." <span class="dchip">finance</span></li>
-      <li id="r9"><span class="meta">Note · Sep 5, 2024 —</span> "<mark>left Riverside to open Nair Pediatrics in Brookline</mark>." <span class="dchip">general</span></li>
-      <li id="r10"><span class="meta">Note · Dec 1, 2024 —</span> "Priya's <mark>biryani</mark> — best cook in the family." <span class="dchip">general</span></li>
-      <li id="r11"><span class="meta">Note · May 20, 2025 —</span> "<mark>paid back the $4,000 loan in full</mark>." <span class="dchip">finance</span></li>
-      <li id="r12"><span class="meta">Note · Aug 10, 2025 —</span> "Priya and Tom <mark>moved to a bigger place in Brookline</mark>." <span class="dchip">general</span></li>
-      <li id="r13"><span class="meta">Note · Oct 1, 2025 —</span> "<mark>talk at the state pediatric conference on childhood asthma</mark>." <span class="dchip">general</span></li>
-      <li id="r14"><span class="meta">Note · Oct 13, 2024 —</span> "ran the <mark>Chicago Marathon — 3:47</mark>, a PR!" <span class="dchip">general</span></li>
-      <li id="r15"><span class="meta">Note · Nov 2, 2025 —</span> "finished the <mark>NYC Marathon in 3:41</mark>." <span class="dchip">general</span></li>
-      <li id="r16"><span class="meta">Note · Jun 1, 2023 —</span> "co-authored a <mark>paper on vaccine hesitancy in JAMA Pediatrics</mark>." <span class="dchip">general</span></li>
-      <li id="r17"><span class="meta">Note · May 20, 2024 —</span> "<mark>presented at the regional conference on childhood nutrition</mark>." <span class="dchip">general</span></li>
-      <li id="r18"><span class="meta">Note · Mar 10, 2024 —</span> "started <mark>levothyroxine 50mcg</mark> for her thyroid." <span class="dchip">health</span></li>
-      <li id="r19"><span class="meta">Note · Apr 22, 2025 —</span> "takes <mark>cetirizine 10mg</mark> each day in spring." <span class="dchip">health</span></li>
-      <li id="r20"><span class="meta">Note · Feb 9, 2026 —</span> "Priya and Tom had a <mark>second girl, Mira</mark>." <span class="dchip">general</span></li>
+      <li id="r1"><span class="meta">Note · May 2, 2018 —</span> "Priya <mark>grew up in Austin</mark> — always the science nerd." <span class="dchip general">general</span></li>
+      <li id="r2"><span class="meta">Note · Jun 10, 2019 —</span> "got into <mark>med school at Johns Hopkins</mark>! my little sister." <span class="dchip general">general</span></li>
+      <li id="r3"><span class="meta">Note · Sep 2, 2021 —</span> "Priya <mark>married Tom</mark> at the courthouse — just family." <span class="dchip general">general</span></li>
+      <li id="r4"><span class="meta">Note · Mar 15, 2022 —</span> "residency, started as a <mark>pediatrician at Riverside</mark>." <span class="dchip general">general</span></li>
+      <li id="r5"><span class="meta">Note · Apr 18, 2023 —</span> "ran the <mark>Boston Marathon — 3:52</mark>!" <span class="dchip general">general</span></li>
+      <li id="r6"><span class="meta">Note · Nov 20, 2023 —</span> "carry her EpiPen — <mark>peanut allergy</mark> is serious." <span class="dchip health">health</span></li>
+      <li id="r7"><span class="meta">Note · Jan 30, 2024 —</span> "Priya and Tom had a <mark>baby girl, Anaya</mark>." <span class="dchip general">general</span></li>
+      <li id="r8"><span class="meta">Note · Jul 12, 2024 —</span> "<mark>Lent Priya $4,000</mark> for clinic equipment." <span class="dchip finance">finance</span></li>
+      <li id="r9"><span class="meta">Note · Sep 5, 2024 —</span> "<mark>left Riverside to open Nair Pediatrics in Brookline</mark>." <span class="dchip general">general</span></li>
+      <li id="r10"><span class="meta">Note · Dec 1, 2024 —</span> "Priya's <mark>biryani</mark> — best cook in the family." <span class="dchip general">general</span></li>
+      <li id="r11"><span class="meta">Note · May 20, 2025 —</span> "<mark>paid back the $4,000 loan in full</mark>." <span class="dchip finance">finance</span></li>
+      <li id="r12"><span class="meta">Note · Aug 10, 2025 —</span> "Priya and Tom <mark>moved to a bigger place in Brookline</mark>." <span class="dchip general">general</span></li>
+      <li id="r13"><span class="meta">Note · Oct 1, 2025 —</span> "<mark>talk at the state pediatric conference on childhood asthma</mark>." <span class="dchip general">general</span></li>
+      <li id="r14"><span class="meta">Note · Oct 13, 2024 —</span> "ran the <mark>Chicago Marathon — 3:47</mark>, a PR!" <span class="dchip general">general</span></li>
+      <li id="r15"><span class="meta">Note · Nov 2, 2025 —</span> "finished the <mark>NYC Marathon in 3:41</mark>." <span class="dchip general">general</span></li>
+      <li id="r16"><span class="meta">Note · Jun 1, 2023 —</span> "co-authored a <mark>paper on vaccine hesitancy in JAMA Pediatrics</mark>." <span class="dchip general">general</span></li>
+      <li id="r17"><span class="meta">Note · May 20, 2024 —</span> "<mark>presented at the regional conference on childhood nutrition</mark>." <span class="dchip general">general</span></li>
+      <li id="r18"><span class="meta">Note · Mar 10, 2024 —</span> "started <mark>levothyroxine 50mcg</mark> for her thyroid." <span class="dchip health">health</span></li>
+      <li id="r19"><span class="meta">Note · Apr 22, 2025 —</span> "takes <mark>cetirizine 10mg</mark> each day in spring." <span class="dchip health">health</span></li>
+      <li id="r20"><span class="meta">Note · Feb 9, 2026 —</span> "Priya and Tom had a <mark>second girl, Mira</mark>." <span class="dchip general">general</span></li>
     </ol>
   </div>
 
   <div class="discuss"><button><svg viewBox="0 0 24 24" style="width:18px;height:18px"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>Discuss this article</button></div>
+
+  <div class="scrim" id="scrim" onclick="close_()"></div>
+  <div class="sheet" id="cite-sheet">
+    <h4>Source</h4>
+    <div class="cite-head"><span class="cdom" id="cite-dom"></span><span class="cmeta" id="cite-meta"></span></div>
+    <div class="cite-snip" id="cite-snip"></div>
+    <div class="cite-actions">
+      <button onclick="citeJump()"><svg viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg>Jump to references</button>
+    </div>
+  </div>
 </div>
 <script>
   document.getElementById('theme').onclick=()=>{const h=document.documentElement;h.dataset.theme=h.dataset.theme==='dark'?'light':'dark'};
   function j(n){document.querySelectorAll('.reflist li').forEach(li=>li.classList.remove('hl'));const li=document.getElementById('r'+n);li.classList.add('hl');li.scrollIntoView({behavior:'smooth',block:'center'});setTimeout(()=>li.classList.remove('hl'),2200)}
+  function close_(){document.getElementById('scrim').classList.remove('on');document.getElementById('cite-sheet').classList.remove('on')}
+  const domColor={health:'var(--rose)',finance:'var(--violet)',general:'var(--steel)'};
+  let citeN=null;
+  function cite(n){
+    citeN=n;
+    const li=document.getElementById('r'+n);
+    const meta=li.querySelector('.meta').textContent.replace(/—\s*$/,'').trim();
+    const chip=li.querySelector('.dchip');
+    const dom=chip?chip.textContent.trim().toLowerCase():'general';
+    document.getElementById('cite-dom').style.background=domColor[dom]||'var(--steel)';
+    document.getElementById('cite-meta').textContent=meta+' · '+dom;
+    const snip=li.cloneNode(true);
+    snip.querySelector('.meta').remove();
+    const c=snip.querySelector('.dchip');if(c)c.remove();
+    document.getElementById('cite-snip').innerHTML=snip.innerHTML.trim();
+    document.getElementById('scrim').classList.add('on');
+    document.getElementById('cite-sheet').classList.add('on');
+  }
+  function citeJump(){const n=citeN;close_();j(n)}
 </script>
 </body>
 </html>
