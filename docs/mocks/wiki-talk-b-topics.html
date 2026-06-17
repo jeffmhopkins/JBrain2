@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Wiki Talk — B — threaded topics</title>
+<style>
+  :root{
+    --bg:#0e1116;--surface:#161b22;--surface-2:#1b2230;--border:#2a313c;
+    --text:#e6edf3;--text-2:#9aa7b4;--text-3:#6b7785;
+    --steel:#6ea8fe;--violet:#b08cff;--amber:#e0a85b;--green:#5bc2a0;
+    --shadow:rgba(0,0,0,.45);
+  }
+  [data-theme="light"]{
+    --bg:#f7f6f2;--surface:#fff;--surface-2:#f0f0ec;--border:#d8d8d0;
+    --text:#202122;--text-2:#54595d;--text-3:#8b9096;
+    --steel:#3366cc;--violet:#7a4fd0;--amber:#9a6b1e;--green:#1f8f6e;--shadow:rgba(20,30,50,.12);
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  body{margin:0;background:#05070a;font:15px/1.55 -apple-system,system-ui,sans-serif;display:grid;place-items:center;min-height:100vh;color:var(--text)}
+  .phone{width:390px;height:800px;background:var(--bg);border-radius:30px;overflow:hidden;position:relative;box-shadow:0 20px 60px var(--shadow);display:flex;flex-direction:column}
+  .topbar{height:56px;flex:0 0 56px;display:flex;align-items:center;gap:10px;padding:0 14px;border-bottom:1px solid var(--border);background:var(--surface)}
+  .topbar .ttl{font-weight:600;font-size:15px;flex:1;line-height:1.1}
+  .topbar .ttl small{display:block;font-size:11px;color:var(--text-3);font-weight:400}
+  .icon-btn{width:36px;height:36px;display:grid;place-items:center;border-radius:9px;color:var(--text-2);background:transparent;border:0;cursor:pointer}
+  .icon-btn:hover{background:var(--surface-2);color:var(--text)}
+  svg{width:20px;height:20px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+  .bar{display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid var(--border)}
+  .bar h2{font-family:Georgia,serif;font-weight:400;font-size:17px;margin:0;flex:1}
+  .newbtn{font-size:12.5px;font-weight:600;color:var(--steel);background:transparent;border:1px solid var(--border);border-radius:9px;padding:6px 10px;cursor:pointer;display:inline-flex;gap:5px;align-items:center}
+  .newbtn svg{width:14px;height:14px}
+  .scroll{overflow-y:auto;flex:1;padding:6px 0 30px}
+  .topic{border-bottom:1px solid var(--border)}
+  .thead{display:flex;align-items:center;gap:9px;padding:12px 14px;cursor:pointer}
+  .thead .chev{transition:transform .15s;color:var(--text-3)}
+  .topic.open .thead .chev{transform:rotate(90deg)}
+  .thead .tt{flex:1;font-weight:600;font-size:14px}
+  .thead .meta{font-size:11px;color:var(--text-3)}
+  .badge{font-size:9.5px;text-transform:uppercase;letter-spacing:.04em;padding:1px 6px;border-radius:20px;border:1px solid var(--border);color:var(--text-3)}
+  .badge.open{color:var(--amber);border-color:color-mix(in srgb,var(--amber) 35%,transparent)}
+  .badge.done{color:var(--green);border-color:color-mix(in srgb,var(--green) 35%,transparent)}
+  .tbody{display:none;padding:0 14px 14px 36px}
+  .topic.open .tbody{display:block}
+  .reply{margin-bottom:11px}
+  .reply .sig{font-size:11px;color:var(--text-3);margin-bottom:2px}
+  .reply .sig b{color:var(--text-2);font-weight:600}
+  .reply.bot .sig b{color:var(--violet)}
+  .reply .body{font-size:13.5px;color:var(--text)}
+  .reply .src{margin-top:5px;font-size:12px;color:var(--text-3);background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:7px 9px}
+  .reply.bot .body{color:var(--text-2)}
+  .outcome{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;color:var(--green);margin-top:4px}
+  .outcome svg{width:13px;height:13px}
+  .replybox{display:flex;gap:7px;margin-top:8px}
+  .replybox input{flex:1;background:var(--surface-2);border:1px solid var(--border);border-radius:18px;padding:8px 12px;color:var(--text);font-size:13px;outline:none}
+  .replybox button{font-size:12px;font-weight:600;color:var(--steel);background:transparent;border:0;cursor:pointer}
+</style>
+</head>
+<body>
+<div class="phone">
+  <div class="topbar">
+    <button class="icon-btn"><svg viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg></button>
+    <div class="ttl">Talk<small>Celine Hopkins</small></div>
+    <button class="icon-btn" title="Open article"><svg viewBox="0 0 24 24"><path d="M4 19.5V5a2 2 0 012-2h12v17H6a2 2 0 01-2-1.5z"/><path d="M8 7h8M8 11h6"/></svg></button>
+    <button class="icon-btn" id="theme"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4.5"/><path d="M12 2v2M12 20v2M4 12H2M22 12h-2M5 5l1.5 1.5M17.5 17.5L19 19M19 5l-1.5 1.5M6.5 17.5L5 19"/></svg></button>
+  </div>
+  <div class="bar"><h2>Discussion</h2>
+    <button class="newbtn"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>New topic</button>
+  </div>
+
+  <div class="scroll">
+    <div class="topic open" onclick="tog(event,this)">
+      <div class="thead"><svg class="chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>
+        <span class="tt">Outdated: still says she works at Globex</span><span class="badge open">open</span></div>
+      <div class="tbody">
+        <div class="reply"><div class="sig"><b>You</b> · today 9:14</div><div class="body">She left Globex in March. The Career section is wrong.</div></div>
+        <div class="reply bot"><div class="sig"><b>Editor</b> · today 9:14</div>
+          <div class="body">"Works at Globex" cites:
+            <div class="src">Note · Jan 19, 2026 — "promoted to senior engineer at Globex." No later note marks a departure, so the graph reads it as current. File a correction (she left Mar 2026), or exclude the note?</div>
+          </div></div>
+        <div class="reply"><div class="sig"><b>You</b> · today 9:16</div><div class="body">File a correction — left Globex March 2026.</div>
+          <div class="outcome"><svg viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg>correction note filed → rebuild queued</div></div>
+        <div class="replybox" onclick="event.stopPropagation()"><input placeholder="Reply…" /><button>Post</button></div>
+      </div>
+    </div>
+
+    <div class="topic" onclick="tog(event,this)">
+      <div class="thead"><svg class="chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>
+        <span class="tt">Drop the old apartment address?</span><span class="badge done">resolved</span></div>
+      <div class="tbody">
+        <div class="reply"><div class="sig"><b>You</b> · Mar 12</div><div class="body">Don't feature the old Boulder address.</div></div>
+        <div class="reply bot"><div class="sig"><b>Editor</b> · Mar 12</div><div class="body">Excluded that note from this article.
+          <div class="outcome"><svg viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg>source excluded · rebuilt</div></div></div>
+        <div class="replybox" onclick="event.stopPropagation()"><input placeholder="Reply…" /><button>Post</button></div>
+      </div>
+    </div>
+
+    <div class="topic" onclick="tog(event,this)">
+      <div class="thead"><svg class="chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>
+        <span class="tt">Build log</span><span class="meta">auto · 6 entries</span></div>
+      <div class="tbody">
+        <div class="reply bot"><div class="sig"><b>Builder</b> · Mar 17 02:14 · rev 4</div>
+          <div class="body">Split off <b>Finances</b>; dropped 2 uncited claims; +1 reference in Career.</div></div>
+        <div class="reply bot"><div class="sig"><b>Builder</b> · Mar 12 02:09 · rev 3</div>
+          <div class="body">Excluded note (Boulder address) per discussion; rewrote Personal life.</div></div>
+        <div class="reply bot"><div class="sig"><b>Builder</b> · Mar 2 02:11 · rev 2</div>
+          <div class="body">Created article (Person guide); 11 facts across 3 domains.</div></div>
+      </div>
+    </div>
+  </div>
+</div>
+<script>
+  document.getElementById('theme').onclick=()=>{const h=document.documentElement;h.dataset.theme=h.dataset.theme==='dark'?'light':'dark'};
+  function tog(e,el){if(e.target.closest('.replybox'))return;el.classList.toggle('open')}
+</script>
+</body>
+</html>
