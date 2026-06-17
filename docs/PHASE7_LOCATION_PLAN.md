@@ -254,10 +254,27 @@ three-mock GUI gate** → `docs/mocks/`; location domain color **teal** in
 
 ### Open decisions
 **Owner-decided:** proceed now (sequencing); **full RLS subject-pin** for
-cross-subject isolation (the default specified in B3). **Remaining for Wave 0
-tuning:** debounce constants (default 2 fixes; exit buffer radius+50 m); accuracy
-threshold; per-device rate cap; OSM extract region; `create_location_note` default
-(off).
+cross-subject isolation (the default specified in B3). **Wave 0 constants — locked
+defaults (tunable later via the settings store):** geofence debounce = **2
+confirming fixes**; exit buffer = **radius + 50 m**; accuracy gate = **drop fixes
+with accuracy_m > 100 m** from detection; per-device rate cap = **60 fixes/min**
+(429 over); OSM extract region = **owner-chosen at install**; `create_location_note`
+= **off**.
+
+### Wave 1 — as-built refinements (discovered in implementation)
+- **Test image aligned to prod (owner-decided):** the integration suite runs
+  `timescale/timescaledb-ha:pg17` (was `pgvector/pgvector:pg16`, which lacked
+  Timescale + PostGIS). Migration `0054` creates both `timescaledb` and `postgis`
+  extensions per-database so fresh test clones / deploys have them.
+- **No `geoalchemy2` dependency:** geometry is migration-owned and queried via raw
+  `ST_*` SQL on the RLS-scoped session; ORM models map only scalar columns — so
+  dev-setup needs no change (it already pre-pulls the timescale image; non-neg #8 met).
+- **Hypertable key:** a hypertable forbids a single-column PK omitting the partition
+  column, so `location_fixes` uses composite PK `(id, captured_at)` plus the
+  natural-key UNIQUE `(subject_id, captured_at, latitude, longitude)`.
+- **`place_geofence` read policy** guards the subject-less "all devices" branch to
+  `principal_kind='device_key'`, so a non-device location-scoped token cannot read
+  fence geometry; writes are full-owner/system only.
 
 ---
 

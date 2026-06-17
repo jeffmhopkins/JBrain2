@@ -20,10 +20,18 @@ class PrincipalInfo:
     id: str
     kind: str
     label: str
+    # The subject a credential is bound to ("" for the owner, who has no subject).
+    # Phase 7 device keys carry their device subject so a device session can pin
+    # its row visibility to that subject (jbrain.db.session.device_context).
+    subject_id: str = ""
 
 
 class AuthRepo(Protocol):
     async def find_active_principal_by_key_hash(self, key_hash: str) -> PrincipalInfo | None: ...
+
+    async def find_active_device_principal_by_key_hash(
+        self, key_hash: str
+    ) -> PrincipalInfo | None: ...
 
     async def create_session(self, principal_id: str, token_hash: str, label: str) -> None: ...
 
@@ -35,7 +43,9 @@ class AuthRepo(Protocol):
 
     async def revoke_principals_of_kind(self, kind: str) -> None: ...
 
-    async def create_principal(self, kind: str, key_hash: str, label: str) -> None: ...
+    async def create_principal(
+        self, kind: str, key_hash: str, label: str, subject_id: str | None = None
+    ) -> None: ...
 
 
 async def login(repo: AuthRepo, owner_key: str, device_label: str) -> str:

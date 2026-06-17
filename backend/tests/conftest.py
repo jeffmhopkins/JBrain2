@@ -15,10 +15,13 @@ def docker_available() -> bool:
 
 
 def pgvector_container() -> "PostgresContainer":
-    """Postgres-with-pgvector container that also runs on bridge-less daemons.
+    """The production Postgres image, which also runs on bridge-less daemons.
 
-    Migration 0003 needs pgvector; the plain alpine image doesn't ship it
-    (production uses timescaledb-ha, which does).
+    Uses `timescale/timescaledb-ha:pg17` — the same image production runs — so the
+    integration suite exercises the real engine set: pgvector (migration 0003),
+    plus TimescaleDB hypertables and PostGIS (Phase 7 location). The plain alpine
+    or pgvector-only images ship none of the latter, so the location migrations
+    would fail to even apply.
 
     Sandboxed dev environments run dockerd with --bridge=none --iptables=false,
     so published ports never materialize and the Ryuk reaper cannot start.
@@ -28,7 +31,7 @@ def pgvector_container() -> "PostgresContainer":
     """
     from testcontainers.postgres import PostgresContainer
 
-    image = "pgvector/pgvector:pg16"
+    image = "timescale/timescaledb-ha:pg17"
     has_bridge = (
         subprocess.run(
             ["docker", "network", "inspect", "bridge"], capture_output=True, check=False
