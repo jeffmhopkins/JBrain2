@@ -25,6 +25,7 @@ Usage: jbrain <command>
   reset-owner-key  revoke the owner key and print a new one
   update           pull latest source, rebuild, migrate, restart
   enable-local-models [ids...]  provision + enable self-hosted local models
+  strix-halo-host-setup [args]  one-time AMD Strix Halo host prep (kernel/udev)
   backup           run a backup now
   restore [stamp]  restore a backup (no stamp: list available)
   down | up        stop / start the stack
@@ -68,6 +69,12 @@ case "${1:-}" in
     # logic lives with the source so it tracks the catalog. Absolute path so it
     # works regardless of cwd.
     JBRAIN_INSTALL_DIR=/opt/jbrain2 bash /opt/jbrain2/src/scripts/local-llm-setup.sh "$@"
+    ;;
+  strix-halo-host-setup)
+    shift
+    # One-time host prep (kernel params, GPU perms, perf profile). Edits GRUB +
+    # udev and needs a reboot — deliberately separate from the stack.
+    bash /opt/jbrain2/src/scripts/strix-halo-host-setup.sh "$@"
     ;;
   backup)
     ./backup.sh

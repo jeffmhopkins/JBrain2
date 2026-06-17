@@ -1,58 +1,38 @@
-# OPT-IN local model gateway: llama.cpp built with the Vulkan backend (the
-# reliable path on AMD Strix Halo / gfx1151 — ROCm is still preview there) plus
-# llama-swap, which fronts several GGUF models behind one OpenAI-compatible port
-# and loads/swaps them on demand. Vulkan reaches the iGPU through /dev/dri
-# (passed in by compose); the Mesa RADV driver installed here must match the
-# host kernel closely enough — pin a newer base if device enumeration fails.
+# OPT-IN local model gateway for AMD Strix Halo (gfx1151).
+#
+# Rather than build llama.cpp ourselves (a moving target against the gfx1151
+# Vulkan/ROCm runtime — Mesa/glslc versions, kernel quirks), we base on the
+# community-maintained, hardware-tested llama.cpp image from the
+# amd-strix-halo-toolboxes project, which ships a working `llama-server` kept in
+# sync with llama.cpp master, and layer on llama-swap (multi-model OpenAI
+# gateway). The base is selectable: the default is the Vulkan/RADV build (only
+# needs /dev/dri); a `rocm-*` tag enables the ROCm/rocWMMA path (faster on
+# gfx1151, but also needs /dev/kfd + seccomp=unconfined — see docker-compose.yml).
+#
+# Host prerequisites for gfx1151 (the image can't supply these):
+#   - kernel >= 6.18.4 (older has a gfx1151 stability bug)
+#   - avoid linux-firmware-20251125 (breaks ROCm on Strix Halo)
+#
+# SUPPLY CHAIN: this is a community image. Pin LOCAL_LLM_BASE to a digest
+# (kyuz0/amd-strix-halo-toolboxes@sha256:...) for a reproducible, trusted build
+# once you've confirmed a tag works on your box.
 #
 # This image is built only when the operator enables local hosting; it is never
 # part of the default stack.
-FROM ubuntu:24.04 AS build
 
-# GOTOOLCHAIN=auto lets the distro Go fetch the newer toolchain llama-swap's
-# go.mod may require, so we don't depend on Ubuntu shipping the exact version.
+# Build llama-swap (pure-Go) in a throwaway stage so we don't need a toolchain
+# in the runtime image. PIN LLAMA_SWAP_VERSION to a tag (e.g. v167) for a
+# reproducible build.
+FROM golang:1.23-bookworm AS swap
 ENV GOTOOLCHAIN=auto
-
-# glslc compiles the Vulkan compute shaders; golang-go builds llama-swap.
-# NOTE: Ubuntu 24.04's apt `glslc` is marginal with very recent llama.cpp shader
-# sources; pinning LLAMACPP_REF to a known-good commit (below) keeps the pair in
-# sync. If a shader fails to compile, bump glslc (LunarG SDK) or LLAMACPP_REF.
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    git ca-certificates cmake build-essential libcurl4-openssl-dev \
-    glslc libvulkan-dev vulkan-tools golang-go \
-    && rm -rf /var/lib/apt/lists/*
-
-# Build llama-server with Vulkan. LLAMACPP_REF defaults to master so the image
-# builds today; PIN it to a tag/commit (e.g. b4585) for a reproducible build
-# once you've confirmed one works on your box.
-ARG LLAMACPP_REF=master
-RUN git clone https://github.com/ggml-org/llama.cpp /src/llama.cpp \
-    && git -C /src/llama.cpp checkout "${LLAMACPP_REF}" \
-    && cmake -S /src/llama.cpp -B /src/llama.cpp/build \
-        -DGGML_VULKAN=ON -DLLAMA_CURL=ON -DCMAKE_BUILD_TYPE=Release \
-    && cmake --build /src/llama.cpp/build --config Release -j "$(nproc)" --target llama-server
-
-# llama-swap is a Go project — build from source so we don't guess release-asset
-# names. PIN LLAMA_SWAP_VERSION to a tag (e.g. v167) for a reproducible build.
 ARG LLAMA_SWAP_VERSION=latest
 RUN GOBIN=/out go install "github.com/mostlygeek/llama-swap@${LLAMA_SWAP_VERSION}"
 
-FROM ubuntu:24.04
+ARG LOCAL_LLM_BASE=docker.io/kyuz0/amd-strix-halo-toolboxes:vulkan-radv
+FROM ${LOCAL_LLM_BASE}
 
-# Runtime: Mesa Vulkan (RADV) for the AMD iGPU, the Vulkan loader, OpenMP, and
-# libcurl (llama.cpp links it). vulkan-tools ships vulkaninfo for debugging.
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    mesa-vulkan-drivers libvulkan1 vulkan-tools libcurl4 libgomp1 ca-certificates \
-    && rm -rf /var/lib/apt/lists/* \
-    # Ensure the video/render group NAMES exist so compose's name fallback can't
-    # fail container creation when the host GIDs aren't passed (the setup script
-    # passes numeric host GIDs, which is what actually grants /dev/dri access).
-    && groupadd -f video && groupadd -f render
-
-# Copy the whole bin dir, not just the binary: llama.cpp builds shared libs
-# (libllama.so, libggml*.so) and links them with an $ORIGIN rpath, so they must
-# sit beside llama-server.
-COPY --from=build /src/llama.cpp/build/bin/ /usr/local/bin/
-COPY --from=build /out/llama-swap /usr/local/bin/llama-swap
+# llama-swap is a static Go binary — drops in next to the image's llama-server
+# (which is on PATH; the generated config invokes it by name).
+COPY --from=swap /out/llama-swap /usr/local/bin/llama-swap
 
 EXPOSE 8080

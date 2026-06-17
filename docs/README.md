@@ -34,6 +34,7 @@ Phase-5 build record is `archive/PHASE5_COMPLETION_PLAN.md`.
 | `entity.md` | The entity & soft-schema model: predicates, facets, names, relationships, resolution. |
 | `PREDICATE_CANONICALIZATION.md` | Embedding-assisted predicate registry + typed value shapes (core shipped; self-improvement loop deferred). |
 | `ASSISTANT.md` | The self-improving agent design — the Phase-4 core (shipped) plus the deferred loops 2–4 (Phases 5–7). |
+| `STRIX_HALO_SETUP.md` | End-to-end runbook for self-hosting the optional local models on an AMD Strix Halo (Ryzen AI Max+ 395) box: distro → kernel → Vulkan → install → routing. |
 | `mocks/` | Interactive HTML UI mockups. `DESIGN.md` cites these as the **binding spec** for reviewed surfaces — a living reference, not throwaway prototypes. |
 
 ## Active plan
