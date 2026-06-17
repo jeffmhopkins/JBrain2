@@ -21,6 +21,7 @@ from jbrain.agent.proposals import (
     ProposalSpec,
 )
 from jbrain.agent.skills import SkillsRepo
+from jbrain.analysis.repo import AlreadyResolved, SqlAnalysisRepo
 from jbrain.db.session import SessionContext
 from jbrain.notes.repo import SqlNotesRepo
 from jbrain.queue import JobEnqueuer
@@ -118,5 +119,29 @@ def skill_promotion_executor(skills: SkillsRepo) -> LeafExecutor:
         if not skill_id:
             return
         await skills.set_status(ctx, skill_id, "active")
+
+    return execute
+
+
+def predicate_resolution_executor(analysis: SqlAnalysisRepo) -> LeafExecutor:
+    """Enact a predicate-canon leaf (Loop 3a, Wave 2): apply the owner-approved resolution of a
+    `new_predicate` card via the SHIPPED `resolve_review` (map_to_existing / accept_as_new),
+    reusing all its committed logic — fact rewrite, mint, the durable alias (Wave 1), the
+    consolidate event. The nightly action only STAGES this; owner approval IS the trust gate (no
+    auto-resolve). Idempotent: a re-enact of an already-resolved card is a no-op."""
+
+    async def execute(ctx: SessionContext, proposal: ProposalRow, node: NodeRow) -> None:
+        card_id = str(node.preview.get("card_id", "")).strip()
+        action = str(node.preview.get("action", "")).strip()
+        if not card_id or not action:
+            return
+        payload: dict[str, str] = {}
+        canonical = node.preview.get("canonical_name")
+        if isinstance(canonical, str) and canonical:
+            payload["canonical_name"] = canonical
+        try:
+            await analysis.resolve_review(ctx, card_id, action, payload)
+        except AlreadyResolved:
+            return  # a re-enact (or an owner who already resolved it in the UI) — idempotent
 
     return execute

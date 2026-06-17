@@ -114,10 +114,17 @@ class FakeJobs:
 class FakeAnalysis:
     def __init__(self) -> None:
         self.merged: list[tuple[str, str]] = []
+        self.resolved: list[tuple[str, str, dict]] = []
 
     async def merge_entities(self, ctx: object, entity_a: str, entity_b: str) -> object:
         self.merged.append((entity_a, entity_b))
         return None
+
+    async def resolve_review(
+        self, ctx: object, item_id: str, action: str, payload: dict
+    ) -> dict | None:
+        self.resolved.append((item_id, action, payload))
+        return {"status": "resolved"}
 
 
 class FakeSkills:
@@ -160,10 +167,21 @@ async def test_leaf_executor_dispatches_by_op() -> None:
     skill_node = NodeRow(
         "s", None, "leaf", "skill_promote", "", {"skill_id": "sk1"}, (), "approved"
     )
+    predicate_node = NodeRow(
+        "pr",
+        None,
+        "leaf",
+        "predicate_resolve",
+        "",
+        {"card_id": "card-1", "action": "map_to_existing", "canonical_name": "spouse"},
+        (),
+        "approved",
+    )
     await execute(HEALTH.session, proposal, egress_node)
     await execute(HEALTH.session, proposal, note_node)
     await execute(HEALTH.session, proposal, merge_node)
     await execute(HEALTH.session, proposal, skill_node)
+    await execute(HEALTH.session, proposal, predicate_node)
     assert svc.fetched == [("lookup_condition", {"name": "x"}, "p1")]
     assert notes.created[0]["provenance"] == "agent"
     # The agent note re-enters ingestion; the egress leaf does not enqueue a note.
@@ -172,3 +190,5 @@ async def test_leaf_executor_dispatches_by_op() -> None:
     assert analysis.merged == [("e1", "e2")]
     # A skill_promote leaf flips the distilled shadow skill to active.
     assert skills.promoted == [("sk1", "active")]
+    # A predicate_resolve leaf applies the card resolution via the shipped resolve_review.
+    assert analysis.resolved == [("card-1", "map_to_existing", {"canonical_name": "spouse"})]
