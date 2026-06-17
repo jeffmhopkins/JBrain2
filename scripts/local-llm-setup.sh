@@ -141,9 +141,23 @@ for m in models:
     lines.append(f"  {m['served_model']}:")
     lines.append("    cmd: >")
     lines.append("      " + " ".join(cmd))
+
+# llama-swap swaps models by default (one at a time). Keep the recommended set
+# loaded concurrently via a non-swapping group so the hot paths (vision + the
+# reasoner) never pay a cold-load on every task switch; non-recommended models
+# stay swappable. Only meaningful with >1 resident model, but harmless with one.
+resident = [m["served_model"] for m in models if m.get("recommended")]
+if len(resident) > 1:
+    lines.append("groups:")
+    lines.append("  resident:")
+    lines.append("    swap: false")      # members run concurrently, never unload each other
+    lines.append("    exclusive: false")  # requesting a non-member doesn't evict the group
+    lines.append("    members:")
+    lines += [f"      - {name}" for name in resident]
+
 with open(os.path.join(root, "llama-swap.yaml"), "w") as f:
     f.write("\n".join(lines) + "\n")
-print("resolved", len(models), "model(s)")
+print(f"resolved {len(models)} model(s); {len(resident)} kept resident")
 PY
 
 # The gateway container must join the HOST's video/render group GIDs to open
