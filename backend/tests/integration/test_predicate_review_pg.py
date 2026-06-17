@@ -16,6 +16,7 @@ from sqlalchemy.pool import NullPool
 from jbrain.agent.connectortools import build_leaf_executor
 from jbrain.agent.predicatereview import PredicateReviewAction
 from jbrain.agent.proposals import ProposalRepo
+from jbrain.agent.session import read_context
 from jbrain.analysis.repo import SqlAnalysisRepo
 from jbrain.auth import service
 from jbrain.auth.repo import SqlAuthRepo
@@ -78,7 +79,11 @@ async def _seed_canonical(maker: async_sessionmaker, name: str) -> None:
 
 
 async def _seed_card(
-    maker: async_sessionmaker, predicate: str, suggestions: list[list[Any]]
+    maker: async_sessionmaker,
+    predicate: str,
+    suggestions: list[list[Any]],
+    *,
+    domain: str = "general",
 ) -> str:
     payload = {
         "predicate": predicate,
@@ -91,10 +96,10 @@ async def _seed_card(
             await s.execute(
                 text(
                     "INSERT INTO app.review_items (id, kind, payload, domain_code)"
-                    " VALUES (gen_random_uuid(), 'new_predicate', cast(:p AS jsonb), 'general')"
+                    " VALUES (gen_random_uuid(), 'new_predicate', cast(:p AS jsonb), :d)"
                     " RETURNING id::text"
                 ),
-                {"p": json.dumps(payload)},
+                {"p": json.dumps(payload), "d": domain},
             )
         ).scalar_one()
 
@@ -167,6 +172,23 @@ async def test_rerun_is_idempotent(maker: async_sessionmaker) -> None:
     # A second sweep finds the card already carried by a staged proposal → stages nothing more.
     await _action(maker).run({})
     assert await _proposal_count(maker, owner) == 1
+
+
+async def test_proposals_are_domain_firewalled(maker: async_sessionmaker) -> None:
+    # One proposal per domain (predicatereview groups by the card's domain). A narrowed session
+    # only ever sees the proposal in a domain it holds (non-neg #3 — the card-batch/proposal path).
+    owner = await _owner(maker)
+    pid = str(owner.principal_id)
+    await _seed_card(maker, "zzqGeneralPred", [], domain="general")
+    await _seed_card(maker, "zzqHealthPred", [], domain="health")
+
+    await _action(maker).run({})
+
+    proposals = ProposalRepo(maker)
+    general_only = await proposals.list_open(read_context(pid, ("general",)))
+    health_only = await proposals.list_open(read_context(pid, ("health",)))
+    assert [p.domain for p in general_only] == ["general"]  # health proposal is firewalled out
+    assert [p.domain for p in health_only] == ["health"]
 
 
 async def test_refused_when_kill_switch_on(maker: async_sessionmaker) -> None:

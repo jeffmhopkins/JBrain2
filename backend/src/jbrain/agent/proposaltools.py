@@ -10,6 +10,8 @@ idempotent on its node id so re-enacting can never duplicate it.
 
 import uuid
 
+import structlog
+
 from jbrain.agent.contracts import ProposalRef
 from jbrain.agent.loop import ToolContext, ToolHandler, ToolOutput
 from jbrain.agent.proposals import (
@@ -21,10 +23,12 @@ from jbrain.agent.proposals import (
     ProposalSpec,
 )
 from jbrain.agent.skills import SkillsRepo
-from jbrain.analysis.repo import AlreadyResolved, SqlAnalysisRepo
+from jbrain.analysis.repo import AlreadyResolved, SqlAnalysisRepo, UnknownAction
 from jbrain.db.session import SessionContext
 from jbrain.notes.repo import SqlNotesRepo
 from jbrain.queue import JobEnqueuer
+
+log = structlog.get_logger()
 
 _TITLE_LEN = 80
 
@@ -143,5 +147,10 @@ def predicate_resolution_executor(analysis: SqlAnalysisRepo) -> LeafExecutor:
             await analysis.resolve_review(ctx, card_id, action, payload)
         except AlreadyResolved:
             return  # a re-enact (or an owner who already resolved it in the UI) — idempotent
+        except UnknownAction:
+            # The map target was removed between propose and enact (or the card is gone). Skip this
+            # one leaf rather than 500-ing the whole domain proposal and blocking its valid leaves;
+            # the card stays open and the next sweep re-proposes it with a fresh resolution.
+            log.warning("predicate_resolve_skipped", card_id=card_id, action=action)
 
     return execute
