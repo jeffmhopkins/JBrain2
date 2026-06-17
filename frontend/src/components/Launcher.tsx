@@ -30,7 +30,8 @@ export type LauncherTarget =
   | "entities"
   | "lists"
   | "calendar"
-  | "graph";
+  | "graph"
+  | "wiki";
 
 interface Tile {
   title: string;
@@ -50,7 +51,7 @@ const SECTIONS: Section[] = [
     header: "Knowledge",
     tiles: [
       { title: "Search", icon: <SearchIcon size={24} />, target: "search" },
-      { title: "Wiki", icon: <BookIcon size={24} />, phase: "P6" },
+      { title: "Wiki", icon: <BookIcon size={24} />, target: "wiki" },
       { title: "Calendar", icon: <CalendarIcon size={24} />, target: "calendar" },
       { title: "Lists", icon: <ListIcon size={24} />, target: "lists" },
       { title: "Entities", icon: <UsersIcon size={24} />, target: "entities" },
