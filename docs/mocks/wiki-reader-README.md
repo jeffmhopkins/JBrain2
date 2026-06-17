@@ -2,7 +2,7 @@
 
 Three interactive directions for the **read-only wiki article reader**, per the
 PROCESS.md GUI gate. Pick one; the chosen mock becomes the binding spec and its
-rationale is recorded in `DESIGN.md` when Wave B (UI) implementation starts.
+rationale is recorded in `DESIGN.md` when Wave B1 (the read-only reader) implementation starts.
 
 All three render the **same sample article** — a cross-domain person ("Celine
 Hopkins") with **domain-tagged sections** (General / Health / Finance), matching the
@@ -55,4 +55,4 @@ hidden). The builder routes a finance fact (e.g. salary) to **Finances**, not in
 reader uses the sample subject "Celine Hopkins"; the end-to-end worked example
 (`wiki-reader-example-priya.html`, built by an independent agent from notes) uses "Priya
 Nair / Jordan Hale" — two different fixtures, same rules. Mock fixtures for
-default / empty / long-article / error / offline states are part of Wave B's DoD.
+default / empty / long-article / error / offline states are part of Wave B1's DoD.

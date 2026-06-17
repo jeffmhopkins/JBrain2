@@ -8,8 +8,9 @@ article-worthy type families (the notability gate, `PHASE6_WIKI_PLAN.md §6`); t
 remaining catalog types fall back to the generic guide until given their own.
 
 Section `domain` is the firewall unit (single-domain per section). A section is **omitted**
-when it has no cited facts. `health`/`finance`/`location` sections are hidden from
-out-of-scope viewers (existence included).
+when it has no cited facts. `health`/`finance` sections are hidden from out-of-scope viewers
+(existence included). *(The `location` domain has no RLS scope until Phase 7, so no
+location-domain sections are seeded in v1 — see the Place guide.)*
 
 ## Shared requirements (apply to every guide)
 
