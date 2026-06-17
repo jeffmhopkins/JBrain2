@@ -19,6 +19,7 @@ from jbrain.api import (
     agent,
     analysis,
     auth,
+    devices,
     feed,
     health,
     notes,
@@ -42,6 +43,7 @@ from jbrain.connectors.base import ConnectorRegistry
 from jbrain.connectors.medical import medical_connectors
 from jbrain.connectors.repo import SqlConnectorCache
 from jbrain.connectors.service import ConnectorService
+from jbrain.devices.repo import SqlDeviceRepo
 from jbrain.embed import TeiEmbedClient
 from jbrain.lists.repo import SqlListsRepo
 from jbrain.llm import build_router
@@ -81,6 +83,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.engine = engine
         app.state.session_maker = maker
         app.state.auth_repo = SqlAuthRepo(maker)
+        app.state.device_repo = SqlDeviceRepo(maker)
         app.state.notes_repo = SqlNotesRepo(maker)
         app.state.lists_repo = SqlListsRepo(maker)
         app.state.appointments_repo = SqlAppointmentsRepo(maker)
@@ -179,6 +182,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(analysis.router, prefix="/api")
     app.include_router(appointments_api.router, prefix="/api")
     app.include_router(auth.router, prefix="/api")
+    app.include_router(devices.router, prefix="/api")
     app.include_router(feed.router, prefix="/api")
     app.include_router(lists_api.router, prefix="/api")
     app.include_router(llm_settings_api.router, prefix="/api")

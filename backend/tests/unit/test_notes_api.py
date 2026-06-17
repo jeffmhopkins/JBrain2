@@ -7,8 +7,10 @@ from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import cast
 
 import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from jbrain.auth import service as auth_service
@@ -518,6 +520,61 @@ def test_hide_unhide_missing_note_404(
     c, _, _ = client
     assert c.post(f"/api/notes/{uuid.uuid4()}/hide").status_code == 404
     assert c.post(f"/api/notes/{uuid.uuid4()}/unhide").status_code == 404
+
+
+def test_note_out_strips_location_for_non_owner() -> None:
+    # The serializer is the SOLE defense for note GPS (it rides note rows across
+    # all domains, so the domain RLS firewall doesn't gate it).
+    from jbrain.api.notes import note_out
+
+    n = NoteInfo(
+        id="n1",
+        client_id="c1",
+        domain="general",
+        destination=None,
+        body="here",
+        created_at=datetime.now(UTC),
+        tz_offset_minutes=None,
+        latitude=47.6,
+        longitude=-122.3,
+        accuracy_m=10.0,
+    )
+    owner_view = note_out(n, include_location=True)
+    assert (owner_view.latitude, owner_view.longitude, owner_view.accuracy_m) == (
+        47.6,
+        -122.3,
+        10.0,
+    )
+    scoped_view = note_out(n, include_location=False)
+    assert scoped_view.latitude is None
+    assert scoped_view.longitude is None
+    assert scoped_view.accuracy_m is None
+
+
+def test_non_owner_responses_omit_note_location(
+    client: tuple[TestClient, FakeNotesRepo, FakeJobQueue],
+) -> None:
+    from jbrain.api.deps import current_principal
+
+    c, _, _ = client
+    created = c.post(
+        "/api/notes",
+        json={"client_id": "locx", "body": "here", "latitude": 47.6, "longitude": -122.3},
+    ).json()
+    assert created["latitude"] == 47.6  # owner sees it on write
+
+    # A non-owner capability principal never receives coordinates on any read path.
+    app = cast(FastAPI, c.app)
+    app.dependency_overrides[current_principal] = lambda: auth_service.PrincipalInfo(
+        id="cap-1", kind="capability_token", label="scoped"
+    )
+    try:
+        one = c.get(f"/api/notes/{created['id']}").json()
+        assert one["latitude"] is None and one["longitude"] is None and one["accuracy_m"] is None
+        listed = c.get("/api/notes").json()["notes"][0]
+        assert listed["latitude"] is None and listed["longitude"] is None
+    finally:
+        app.dependency_overrides.clear()
 
 
 def test_create_note_stores_location_verbatim(

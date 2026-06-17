@@ -1,9 +1,14 @@
 """In-memory AuthRepo for unit-testing auth flows without Postgres."""
 
+import dataclasses
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 
 from jbrain.auth.service import PrincipalInfo
+from jbrain.db.session import SessionContext
+from jbrain.devices.repo import DeviceInfo
 
 
 @dataclass
@@ -72,6 +77,39 @@ class FakeAuthRepo:
 
 def _info(p: FakePrincipal) -> PrincipalInfo:
     return PrincipalInfo(id=p.id, kind=p.kind, label=p.label, subject_id=p.subject_id)
+
+
+@dataclass
+class FakeDeviceRepo:
+    """In-memory DeviceRepo for unit-testing device provisioning without Postgres."""
+
+    devices: list[DeviceInfo] = field(default_factory=list)
+    key_hashes: dict[str, str] = field(default_factory=dict)  # device id -> active key hash
+
+    async def provision(self, ctx: SessionContext, *, label: str, key_hash: str) -> DeviceInfo:
+        device = DeviceInfo(
+            id=str(uuid.uuid4()), label=label, created_at=datetime.now(UTC), revoked=False
+        )
+        self.devices.append(device)
+        self.key_hashes[device.id] = key_hash
+        return device
+
+    async def list(self, ctx: SessionContext) -> Sequence[DeviceInfo]:
+        return list(self.devices)
+
+    async def rotate(self, ctx: SessionContext, device_id: str, key_hash: str) -> bool:
+        if not any(d.id == device_id for d in self.devices):
+            return False
+        self.key_hashes[device_id] = key_hash
+        return True
+
+    async def revoke(self, ctx: SessionContext, device_id: str) -> bool:
+        for i, d in enumerate(self.devices):
+            if d.id == device_id:
+                self.devices[i] = dataclasses.replace(d, revoked=True)
+                self.key_hashes.pop(device_id, None)
+                return True
+        return False
 
 
 @dataclass

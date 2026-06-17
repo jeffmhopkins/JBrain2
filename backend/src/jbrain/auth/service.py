@@ -64,6 +64,20 @@ async def authenticate(repo: AuthRepo, token: str) -> PrincipalInfo | None:
     return await repo.find_principal_by_session_token_hash(keys.hash_token(token))
 
 
+async def authenticate_device(repo: AuthRepo, key: str) -> PrincipalInfo | None:
+    """Resolve an OwnTracks HTTP Basic password (the device key) to its principal.
+
+    Kind-filtered in SQL (`find_active_device_principal_by_key_hash`) so an owner
+    or capability key presented on the device path never authenticates — the
+    device surface and the owner-cookie surface can never be conflated. Security
+    rests on 256-bit key entropy + SHA-256 + the `revoked_at IS NULL` filter; an
+    unknown/revoked/wrong-kind key returns None (the caller 401s, writing nothing).
+    """
+    if not key:
+        return None
+    return await repo.find_active_device_principal_by_key_hash(keys.hash_key(key))
+
+
 async def logout(repo: AuthRepo, token: str) -> None:
     if token:
         await repo.revoke_session(keys.hash_token(token))
