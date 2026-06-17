@@ -6,9 +6,14 @@ import { LLMSettingsScreen } from "./LLMSettingsScreen";
 function initialSettings(): LlmSettings {
   return {
     providers: [
-      { id: "grok", label: "Grok 4.3", supports_reasoning: true },
-      { id: "claude", label: "Claude Sonnet 4.6", supports_reasoning: false },
-      { id: "local", label: "Local model", supports_reasoning: false },
+      { id: "grok", label: "Grok 4.3", supports_reasoning: true, supports_vision: true },
+      {
+        id: "claude",
+        label: "Claude Sonnet 4.6",
+        supports_reasoning: false,
+        supports_vision: true,
+      },
+      { id: "local", label: "Local model", supports_reasoning: false, supports_vision: true },
     ],
     reasoning_efforts: ["none", "low", "medium", "high"],
     reasoning_default: "low",
@@ -33,6 +38,20 @@ function initialSettings(): LlmSettings {
         reasoning_effort: "medium",
       },
       { id: "note.extract", label: "Note extract", provider: "grok", reasoning_effort: "low" },
+    ],
+    local_hosting_enabled: false,
+    local_models: [
+      {
+        id: "qwen3-vl-30b",
+        label: "Qwen3-VL 30B",
+        enabled: false,
+        supports_vision: true,
+        supports_tools: true,
+        tiers: ["vision", "low"],
+        quant: "Q8_0",
+        size_gb: 32,
+        note: "",
+      },
     ],
   };
 }
@@ -85,9 +104,10 @@ describe("LLMSettingsScreen", () => {
     render(<LLMSettingsScreen />);
     expect(await screen.findByText("High-stakes reasoning")).toBeInTheDocument();
     expect(screen.getByText("Lightweight")).toBeInTheDocument();
-    // 4 of the 5 tasks fall in the high-stakes tier; note.extract in lightweight.
+    // 3 of the 5 fixture tasks land in high (agent.turn, integrate.note,
+    // note.extract); entity.disambiguate + fact.adjudicate fall to lightweight.
     const high = await group("High-stakes reasoning");
-    expect(within(high).getByText("4 tasks")).toBeInTheDocument();
+    expect(within(high).getByText("3 tasks")).toBeInTheDocument();
   });
 
   it("hides reasoning and shows the Claude note when a tier moves off grok", async () => {
@@ -118,6 +138,102 @@ describe("LLMSettingsScreen", () => {
     await waitFor(() => expect(puts.length).toBeGreaterThan(0));
     const lastPatch = puts[puts.length - 1]?.tasks ?? {};
     expect(lastPatch["agent.turn"]).toEqual({ provider: "grok", reasoning_effort: "high" });
+  });
+
+  it("omits text-only local models from the Vision tier's choices", async () => {
+    const s = initialSettings();
+    s.providers = [
+      { id: "grok", label: "Grok 4.3", supports_reasoning: true, supports_vision: true },
+      { id: "qwen3-vl-30b", label: "Qwen3-VL", supports_reasoning: false, supports_vision: true },
+      { id: "gpt-oss-120b", label: "GPT-OSS", supports_reasoning: false, supports_vision: false },
+    ];
+    s.tasks = [
+      { id: "vision.ocr", label: "Vision OCR", provider: "grok", reasoning_effort: null },
+      { id: "session.title", label: "Session title", provider: "grok", reasoning_effort: "low" },
+    ];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>(
+        async () =>
+          new Response(JSON.stringify(s), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          }),
+      ),
+    );
+    render(<LLMSettingsScreen />);
+
+    const vision = await group("Vision");
+    const visionSelect = within(vision).getByLabelText(/Vision provider/i) as HTMLSelectElement;
+    const visionOptions = Array.from(visionSelect.options).map((o) => o.value);
+    expect(visionOptions).toContain("qwen3-vl-30b");
+    expect(visionOptions).not.toContain("gpt-oss-120b");
+
+    // The text reasoner is still available to a non-vision tier.
+    const light = await group("Lightweight");
+    const lightSelect = within(light).getByLabelText(/Lightweight provider/i) as HTMLSelectElement;
+    expect(Array.from(lightSelect.options).map((o) => o.value)).toContain("gpt-oss-120b");
+  });
+
+  it("shows the local-models drawer with state and the enable command", async () => {
+    const s = initialSettings();
+    s.local_hosting_enabled = true;
+    s.local_models = [
+      {
+        id: "qwen3-vl-30b",
+        label: "Qwen3-VL 30B",
+        enabled: true,
+        supports_vision: true,
+        supports_tools: true,
+        tiers: ["vision", "low"],
+        quant: "Q8_0",
+        size_gb: 32,
+        note: "",
+      },
+      {
+        id: "gpt-oss-120b",
+        label: "GPT-OSS 120B",
+        enabled: false,
+        supports_vision: false,
+        supports_tools: true,
+        tiers: ["high", "synthesis"],
+        quant: "MXFP4",
+        size_gb: 59,
+        note: "",
+      },
+    ];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>(
+        async () =>
+          new Response(JSON.stringify(s), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          }),
+      ),
+    );
+    render(<LLMSettingsScreen />);
+
+    const toggle = await screen.findByRole("button", { name: /Local models/i });
+    expect(toggle).toHaveTextContent("1 of 2 enabled");
+    fireEvent.click(toggle);
+
+    expect(await screen.findByText("Qwen3-VL 30B")).toBeInTheDocument();
+    // The enabled one reads "enabled"; the other reads "available".
+    expect(screen.getByText("enabled")).toBeInTheDocument();
+    expect(screen.getByText("available")).toBeInTheDocument();
+    // The text reasoner shows a reasoning chip, not a vision chip.
+    const gpt = screen.getByText("GPT-OSS 120B").closest(".llm-local-row") as HTMLElement;
+    expect(within(gpt).getByText("reasoning")).toBeInTheDocument();
+    expect(within(gpt).queryByText("vision")).not.toBeInTheDocument();
+  });
+
+  it("points at the CLI when local hosting is off", async () => {
+    render(<LLMSettingsScreen />); // default fixture: hosting off
+    const toggle = await screen.findByRole("button", { name: /Local models/i });
+    expect(toggle).toHaveTextContent("off");
+    fireEvent.click(toggle);
+    expect(await screen.findByText(/enable-local-models/)).toBeInTheDocument();
   });
 
   it("lets a per-task override diverge from its tier", async () => {

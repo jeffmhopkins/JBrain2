@@ -32,11 +32,24 @@ class Settings(BaseSettings):
 
     anthropic_api_key: str = ""
     xai_api_key: str = ""
-    # Future-GPU escape hatch: any OpenAI-compatible server (Ollama default).
+    # Self-hosted local models are an OFF-BY-DEFAULT opt-in: the stock deploy
+    # routes everything to the cloud providers, and the settings screen offers no
+    # local options until an operator turns this on (deploy/install.sh prompt →
+    # the `local-llm` compose profile + scripts/local-llm-setup.sh). When false the
+    # `local` provider client is still wired but nothing routes to it.
+    local_llm_enabled: bool = False
+    # Future-GPU escape hatch: any OpenAI-compatible server (the llama-swap gateway
+    # the local-llm profile runs, or an Ollama default).
     local_llm_url: str = "http://localhost:11434/v1"
-    # The model name the `local` provider spec resolves to (local:<model>) — the
-    # local server's served model. A plain default so the spec is always concrete.
+    # The model name the bare `local` provider spec resolves to (local:<model>)
+    # when no curated catalog model is selected — the local server's served model.
+    # A plain default so the spec is always concrete.
     local_llm_model: str = "local"
+    # Catalog ids (jbrain.llm.local_catalog) the operator has provisioned and wants
+    # offered in the settings screen. Empty + enabled falls back to the single
+    # generic `local_llm_model` escape-hatch choice. Set by the install/update path
+    # (JBRAIN_LOCAL_MODELS) alongside the downloaded weights.
+    local_models: list[str] = []
     # JSON object of per-task "provider:model" overrides, merged over the
     # adapter defaults — see jbrain.llm.router.TASK_DEFAULTS.
     llm_tasks: dict[str, str] = {}

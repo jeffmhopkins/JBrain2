@@ -14,6 +14,7 @@ Usage: jbrain <command>
   logs [svc]       follow logs (default: all services)
   reset-owner-key  revoke the owner key and print a new one
   update           pull latest source, rebuild, migrate, restart
+  enable-local-models [ids...]  provision + enable self-hosted local models
   backup           run a backup now
   restore [stamp]  restore a backup (no stamp: list available)
   down | up        stop / start the stack
@@ -50,6 +51,12 @@ case "${1:-}" in
     # so disk use stays bounded without losing build speed.
     docker image prune -f
     docker builder prune -f --keep-storage 10GB >/dev/null 2>&1 || true
+    ;;
+  enable-local-models)
+    shift
+    # Opt-in, heavy (downloads weights, starts a GPU service). The provisioning
+    # logic lives with the source so it tracks the catalog.
+    JBRAIN_INSTALL_DIR=/opt/jbrain2 bash src/scripts/local-llm-setup.sh "$@"
     ;;
   backup)
     ./backup.sh

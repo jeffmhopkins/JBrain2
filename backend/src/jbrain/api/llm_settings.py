@@ -16,6 +16,7 @@ from jbrain.api.deps import PrincipalDep, SettingsDep
 from jbrain.api.notes import ctx_for
 from jbrain.config import Settings
 from jbrain.db.session import SessionContext
+from jbrain.llm import local_catalog
 from jbrain.llm.providers import (
     REASONING_DEFAULT,
     REASONING_EFFORTS,
@@ -41,7 +42,9 @@ TASK_LABELS: dict[str, str] = {
     "session.title": "Session title",
 }
 
-ProviderId = Literal["grok", "claude", "local"]
+# Provider ids are no longer a fixed set: enabling local hosting adds one id per
+# provisioned catalog model. The PUT validates the id against the live choices
+# instead of a Literal — see update_llm_settings.
 ReasoningEffort = Literal["none", "low", "medium", "high"]
 
 
@@ -56,6 +59,8 @@ class ProviderInfo(BaseModel):
     id: str
     label: str
     supports_reasoning: bool
+    # The screen filters vision tasks to vision-capable choices.
+    supports_vision: bool
 
 
 class TaskInfo(BaseModel):
@@ -67,17 +72,39 @@ class TaskInfo(BaseModel):
     reasoning_effort: str | None
 
 
+class LocalModelInfo(BaseModel):
+    """A catalog model for the 'Manage local models' drawer — what it is and
+    whether it is currently offered for routing. Provisioning (the weight
+    download) stays a server-side, opt-in step, so this is read-only."""
+
+    id: str
+    label: str
+    enabled: bool
+    supports_vision: bool
+    supports_tools: bool
+    tiers: list[str]
+    quant: str
+    size_gb: float
+    note: str
+
+
 class LlmSettingsOut(BaseModel):
     providers: list[ProviderInfo]
     reasoning_efforts: list[str]
     reasoning_default: str
     tasks: list[TaskInfo]
+    # Local hosting is off by default; the drawer shows the catalog either way so
+    # an operator can see what they could provision (via the install/CLI path).
+    local_hosting_enabled: bool
+    local_models: list[LocalModelInfo]
 
 
 class TaskOverrideIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    provider: ProviderId
+    # Validated against the live provider choices in update_llm_settings (an
+    # unknown id 422s there) — the set is dynamic once local hosting is on.
+    provider: str
     reasoning_effort: ReasoningEffort
 
 
@@ -111,12 +138,34 @@ async def _snapshot(
     overrides = await store.llm_task_overrides(ctx)
     return LlmSettingsOut(
         providers=[
-            ProviderInfo(id=c.id, label=c.label, supports_reasoning=c.supports_reasoning)
+            ProviderInfo(
+                id=c.id,
+                label=c.label,
+                supports_reasoning=c.supports_reasoning,
+                supports_vision=c.supports_vision,
+            )
             for c in provider_choices(settings)
         ],
         reasoning_efforts=list(REASONING_EFFORTS),
         reasoning_default=REASONING_DEFAULT,
         tasks=[_effective(settings, task, overrides) for task in TASK_DEFAULTS],
+        local_hosting_enabled=settings.local_llm_enabled,
+        local_models=[_local_model_info(settings, m) for m in local_catalog.CATALOG],
+    )
+
+
+def _local_model_info(settings: Settings, m: local_catalog.LocalModel) -> LocalModelInfo:
+    enabled = settings.local_llm_enabled and m.id in settings.local_models
+    return LocalModelInfo(
+        id=m.id,
+        label=m.label,
+        enabled=enabled,
+        supports_vision=m.supports_vision,
+        supports_tools=m.supports_tools,
+        tiers=list(m.tiers),
+        quant=m.quant,
+        size_gb=m.size_gb,
+        note=m.note,
     )
 
 
@@ -141,7 +190,8 @@ async def update_llm_settings(
     overrides = await store.llm_task_overrides(ctx)
     for task, choice in body.tasks.items():
         spec = spec_for_id(settings, choice.provider)
-        if spec is None:  # unreachable given the Literal, but keep the store honest
+        # Unknown id, or a local model offered only when local hosting is enabled.
+        if spec is None:
             raise HTTPException(status_code=422, detail=f"unknown provider: {choice.provider}")
         entry: dict[str, str] = {"spec": spec}
         # reasoning_effort is meaningful only for grok; drop it otherwise so the

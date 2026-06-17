@@ -92,4 +92,11 @@ else
       "harness will be skipped; unit tests and linters are unaffected"
 fi
 
+# --- Local model hosting (opt-in, NOT bootstrapped here) ---
+# Self-hosted models (Settings → LLM, AMD Strix Halo class box) are provisioned
+# separately by scripts/local-llm-setup.sh: it downloads tens of GB of weights
+# and starts a GPU service, so it must NEVER run from this auto-bootstrapped
+# path (web/CI containers have no GPU). Mentioned here per the dev-setup
+# single-source-of-truth rule; deliberately a no-op in dev.
+
 log "done"
