@@ -1,20 +1,20 @@
-"""The wiki builder engine (docs/PHASE6_WIKI_PLAN.md §3, Wave C2a — engine + sourcing).
+"""The wiki builder engine (docs/PHASE6_WIKI_PLAN.md §3).
 
-This wave lands the *mechanism*: dirty-bit scan → source the entity's citable facts (and
-their same-domain chunks) → write type-guided single-domain sections, append-only revisions,
-clause citations, wiki links, and the per-section embedding index → emit the lead blurb →
-mark the entity built. The prose-generation step is an injected `Rewriter` seam: C2a ships a
-deterministic, non-LLM `StubRewriter` (real cited output, just terse) so the whole write path
-is exercised end-to-end and firewall-correct; the LLM rewrite + grounding gate + type guides +
-merge/split enactment + the token budget land in Wave C2b, swapping the rewriter only.
+The builder is the *mechanism*: dirty-bit scan → source the entity's citable facts (minting a
+same-domain derived chunk for a ratcheted fact) → enact a redirect for a merged entity → write
+type-guided single-domain sections, append-only revisions, clause citations, wiki links, and the
+per-section embedding index → emit the lead blurb → mark the entity built. The prose-generation
+step is an injected `Rewriter` seam: the `StubRewriter` here is the deterministic, no-LLM
+rendering used by tests; the live `LlmRewriter` (wiki/rewriter.py) drives the LLM behind a
+grounding gate + the wiki-build budget and is what the worker injects.
 
 Every write goes through the storage/firewall the way the contract requires: claims are sourced
-at the fact's domain and cite a SAME-DOMAIN chunk (a fact whose backing chunk sits in another
-domain is skipped here — derived-chunk minting for the ratcheted/chunk-only case is C2b), so a
-section, its revisions, its citations, and its index row are all one domain and the Postgres
-firewall triggers (migration 0046) accept them. The builder runs system-scoped (SYSTEM_CTX): it
-legitimately crosses every domain to assemble a cross-domain article, and the per-section RLS is
-what keeps a scoped reader from seeing an out-of-scope section.
+at the fact's domain and cite a SAME-DOMAIN chunk (a ratcheted fact gets a minted derived chunk
+in its own domain), so a section, its revisions, its citations, and its index row are all one
+domain and the Postgres firewall triggers (migration 0046) accept them. The builder runs
+system-scoped (SYSTEM_CTX): it legitimately crosses every domain to assemble a cross-domain
+article, and the per-section RLS is what keeps a scoped reader from seeing an out-of-scope
+section.
 """
 
 from __future__ import annotations
@@ -31,6 +31,14 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from jbrain.db.session import scoped_session
 from jbrain.embed import EmbedClient, vector_literal
 from jbrain.queue import SYSTEM_CTX
+from jbrain.wiki.budget import WikiBudgetExceeded
+
+
+class WikiGroundingError(Exception):
+    """The grounding verifier failed (unparseable/ill-shaped verdict). Fail-closed: the build is
+    abandoned for this entity (nothing published, the entity stays dirty for retry) rather than
+    publishing unverified prose. Caught per-entity by the builder loop so one bad entity doesn't
+    fail the whole run. Defined here (not the rewriter) so the builder can catch it cycle-free."""
 
 
 # A cited fact reduced to what the article needs: the claim text, the domain it belongs in,
@@ -45,6 +53,9 @@ class Claim:
     fact_id: uuid.UUID | None
     object_entity_id: uuid.UUID | None
     object_name: str | None
+    # The cited chunk's text — what the rewriter writes prose from and the grounding gate
+    # checks each clause against. (For a ratcheted fact, the same text in a minted derived chunk.)
+    chunk_text: str = ""
 
 
 @dataclass(frozen=True)
@@ -198,22 +209,27 @@ class WikiBuilder:
         """Incremental: build every dirty (`wiki_built=false`) entity, mark it built. Returns
         the number of entities processed."""
         async with scoped_session(self._maker, SYSTEM_CTX) as session:
+            # Merged entities are dirty too (the merge flips the bit) and need their article
+            # turned into a redirect, so they are NOT excluded here.
             dirty = list(
                 (
                     await session.execute(
-                        text(
-                            "SELECT id FROM app.entities"
-                            " WHERE NOT wiki_built AND merged_into_id IS NULL"
-                            " ORDER BY created_at"
-                        )
+                        text("SELECT id FROM app.entities WHERE NOT wiki_built ORDER BY created_at")
                     )
                 ).scalars()
             )
+        processed = 0
         for entity_id in dirty:
-            async with scoped_session(self._maker, SYSTEM_CTX) as session:
-                await self._build_entity(session, entity_id)
-                await session.commit()
-        return len(dirty)
+            try:
+                async with scoped_session(self._maker, SYSTEM_CTX) as session:
+                    await self._build_entity(session, entity_id)
+                    await session.commit()
+            except WikiBudgetExceeded:
+                break  # out of budget for today — leave the rest dirty for the next window
+            except WikiGroundingError:
+                continue  # one entity's verifier failed — leave it dirty, keep building the rest
+            processed += 1
+        return processed
 
     async def rebuild(self, target: str) -> int:
         """Full re-derive ignoring the dirty bit: one article by id, or every active article
@@ -242,11 +258,18 @@ class WikiBuilder:
                         )
                     ).scalars()
                 )
+        processed = 0
         for entity_id in refs:
-            async with scoped_session(self._maker, SYSTEM_CTX) as session:
-                await self._build_entity(session, entity_id)
-                await session.commit()
-        return len(refs)
+            try:
+                async with scoped_session(self._maker, SYSTEM_CTX) as session:
+                    await self._build_entity(session, entity_id)
+                    await session.commit()
+            except WikiBudgetExceeded:
+                break
+            except WikiGroundingError:
+                continue
+            processed += 1
+        return processed
 
     async def reindex(self) -> int:
         """Re-embed every `wiki_index` summary (after an embedding-model swap)."""
@@ -268,7 +291,10 @@ class WikiBuilder:
         return len(rows)
 
     async def prune(self) -> int:
-        """Archive articles whose anchor entity is gone or merged away (orphans)."""
+        """Archive articles whose anchor entity is GONE (purged). A merged entity still exists
+        and is handled by the redirect path (refresh), so it is deliberately NOT pruned — else a
+        merge whose redirect refresh hasn't reached yet would be wrongly archived (the redirect
+        lost)."""
         async with scoped_session(self._maker, SYSTEM_CTX) as session:
             orphans = list(
                 (
@@ -276,8 +302,7 @@ class WikiBuilder:
                         text(
                             "SELECT a.id FROM app.wiki_articles a WHERE a.status = 'active'"
                             " AND a.entity_ref IS NOT NULL AND NOT EXISTS ("
-                            "   SELECT 1 FROM app.entities e"
-                            "   WHERE e.id = a.entity_ref AND e.merged_into_id IS NULL)"
+                            "   SELECT 1 FROM app.entities e WHERE e.id = a.entity_ref)"
                         )
                     )
                 ).scalars()
@@ -296,9 +321,20 @@ class WikiBuilder:
     # ---- the per-entity build ------------------------------------------------------------
 
     async def _build_entity(self, session: AsyncSession, entity_id: uuid.UUID) -> None:
+        merged_into = (
+            await session.execute(
+                text("SELECT merged_into_id FROM app.entities WHERE id = :e"), {"e": entity_id}
+            )
+        ).scalar()
+        if merged_into is not None:
+            # The entity was folded into another (the merge dirtied it via the 0046 trigger):
+            # turn its article into a reversible redirect rather than rebuilding it.
+            await self._enact_redirect(session, entity_id, merged_into)
+            await self._mark_built(session, entity_id)
+            return
         sourced = await self._source(session, entity_id)
         if sourced is None:
-            return  # merged/missing entity — nothing to build
+            return  # missing entity — nothing to build
         if not is_notable(sourced):
             await self._mark_built(session, entity_id)
             return
@@ -310,9 +346,37 @@ class WikiBuilder:
             await self._mark_built(session, entity_id)
             return
         article_id = await self._ensure_article(session, sourced, plan)
-        for section in plan.sections:
-            await self._write_section(session, article_id, section)
+        for seq, section in enumerate(plan.sections):
+            await self._write_section(session, article_id, section, seq=seq)
         await self._mark_built(session, entity_id)
+
+    async def _enact_redirect(
+        self, session: AsyncSession, gone_entity: uuid.UUID, survivor_entity: uuid.UUID
+    ) -> None:
+        """Make the merged entity's article a reversible redirect to the survivor's article
+        (status='merged', merged_into_id). The redirect-followable-only-if-the-survivor-has-an-
+        in-scope-section firewall is enforced when the redirect is *followed* (a read concern);
+        recording it here is firewall-neutral (owner-only `wiki_articles`)."""
+        gone_article = (
+            await session.execute(
+                text("SELECT id FROM app.wiki_articles WHERE entity_ref = :e"), {"e": gone_entity}
+            )
+        ).scalar()
+        if gone_article is None:
+            return  # the merged entity never had an article — nothing to redirect
+        survivor_article = (
+            await session.execute(
+                text("SELECT id FROM app.wiki_articles WHERE entity_ref = :e"),
+                {"e": survivor_entity},
+            )
+        ).scalar()
+        await session.execute(
+            text(
+                "UPDATE app.wiki_articles SET status = 'merged', merged_into_id = :s,"
+                " updated_at = now() WHERE id = :a"
+            ),
+            {"s": survivor_article, "a": gone_article},
+        )
 
     async def _source(self, session: AsyncSession, entity_id: uuid.UUID) -> SourcedEntity | None:
         ent = (
@@ -328,15 +392,17 @@ class WikiBuilder:
             return None
 
         excluded_notes, excluded_facts = await self._exclusions(session)
-        # Cite a SAME-DOMAIN chunk (c.domain_code = f.domain_code) and the chunk's own note, so
-        # the citation firewall (citation.domain = section = chunk, note = chunk.note) accepts it.
+        # Pull each citable fact with its backing chunk's domain/note/text. A fact whose chunk
+        # is a LOWER domain (a ratcheted fact) gets a minted same-domain derived chunk below, so
+        # the citation firewall (citation.domain = section = chunk, note = chunk.note) holds.
         rows = (
             await session.execute(
                 text(
-                    "SELECT f.id AS fact_id, f.statement, f.domain_code, f.chunk_id,"
-                    " c.note_id AS note_id, f.object_entity_id, oe.canonical_name AS object_name"
+                    "SELECT f.id AS fact_id, f.statement, f.domain_code AS fact_domain,"
+                    " f.chunk_id, c.domain_code AS chunk_domain, c.note_id AS note_id,"
+                    " c.text AS chunk_text, f.object_entity_id, oe.canonical_name AS object_name"
                     " FROM app.facts f"
-                    " JOIN app.chunks c ON c.id = f.chunk_id AND c.domain_code = f.domain_code"
+                    " JOIN app.chunks c ON c.id = f.chunk_id"
                     " LEFT JOIN app.entities oe ON oe.id = f.object_entity_id"
                     # active + superseded (historical) stay citable per §3; retracted is gone and
                     # pending_review/flagged facts (incl. cross_subject_link) are NOT published.
@@ -346,19 +412,32 @@ class WikiBuilder:
                 {"e": entity_id},
             )
         ).all()
-        claims = [
-            Claim(
-                statement=r.statement,
-                domain_code=r.domain_code,
-                chunk_id=r.chunk_id,
-                note_id=r.note_id,
-                fact_id=r.fact_id,
-                object_entity_id=r.object_entity_id,
-                object_name=r.object_name,
+        claims: list[Claim] = []
+        for r in rows:
+            if r.note_id in excluded_notes or r.fact_id in excluded_facts:
+                continue
+            cite_chunk = r.chunk_id
+            if r.chunk_domain != r.fact_domain:
+                # Ratcheted fact: mint/reuse a same-domain derived chunk to cite (mirrors
+                # AnalysisPipeline._citation_chunk) — never cite the lower-domain chunk.
+                cite_chunk = await self._derived_chunk(
+                    session,
+                    source_chunk_id=r.chunk_id,
+                    fact_domain=r.fact_domain,
+                    note_id=r.note_id,
+                )
+            claims.append(
+                Claim(
+                    statement=r.statement,
+                    domain_code=r.fact_domain,
+                    chunk_id=cite_chunk,
+                    note_id=r.note_id,
+                    fact_id=r.fact_id,
+                    object_entity_id=r.object_entity_id,
+                    object_name=r.object_name,
+                    chunk_text=r.chunk_text,
+                )
             )
-            for r in rows
-            if r.note_id not in excluded_notes and r.fact_id not in excluded_facts
-        ]
         notes = {c.note_id for c in claims}
         # A mention-only entity still counts its source notes toward notability.
         mention_notes = set(
@@ -393,6 +472,44 @@ class WikiBuilder:
         facts = {r.fact_id for r in rows if r.fact_id is not None}
         return notes, facts
 
+    async def _derived_chunk(
+        self,
+        session: AsyncSession,
+        *,
+        source_chunk_id: uuid.UUID,
+        fact_domain: str,
+        note_id: uuid.UUID,
+    ) -> uuid.UUID:
+        """Get-or-create a same-domain `derived` copy of the source chunk (mirrors
+        AnalysisPipeline._citation_chunk): the citable chunk for a ratcheted fact. Keyed on
+        (note, fact_domain, source_anchor) so a rebuild reuses rather than duplicates. No
+        embedding — derived chunks are citation backing, excluded from search."""
+        src = str(source_chunk_id)
+        existing = (
+            await session.execute(
+                text(
+                    "SELECT id FROM app.chunks WHERE note_id = :n AND domain_code = :d"
+                    " AND source_kind = 'derived' AND source_anchor = :src LIMIT 1"
+                ),
+                {"n": str(note_id), "d": fact_domain, "src": src},
+            )
+        ).scalar()
+        if existing is not None:
+            return existing
+        minted = (
+            await session.execute(
+                text(
+                    "INSERT INTO app.chunks (id, note_id, domain_code, granularity, seq,"
+                    " char_start, char_end, source_kind, source_anchor, text)"
+                    " SELECT :new, note_id, :d, granularity, seq, char_start, char_end, 'derived',"
+                    " :anchor, text FROM app.chunks WHERE id = :src RETURNING id"
+                ),
+                {"new": str(uuid.uuid4()), "d": fact_domain, "anchor": src, "src": src},
+            )
+        ).scalar()
+        assert minted is not None  # INSERT ... RETURNING always yields the id
+        return minted
+
     async def _ensure_article(
         self, session: AsyncSession, sourced: SourcedEntity, plan: PlannedArticle
     ) -> uuid.UUID:
@@ -404,10 +521,14 @@ class WikiBuilder:
         ).scalar()
         lead_vec = vector_literal((await self._embed.embed([plan.lead_summary]))[0])
         if existing is not None:
+            # Rebuilding an existing article reactivates it: if it had been a merged redirect and
+            # the entity was since un-merged, clear status/merged_into_id so the redirect is truly
+            # reversible (otherwise a rebuilt article would stay a redirect forever).
             await session.execute(
                 text(
                     "UPDATE app.wiki_articles SET title = :t, lead_summary = :ls,"
-                    " lead_embedding = cast(:v AS vector), updated_at = now() WHERE id = :a"
+                    " lead_embedding = cast(:v AS vector), status = 'active',"
+                    " merged_into_id = NULL, updated_at = now() WHERE id = :a"
                 ),
                 {"t": sourced.name, "ls": plan.lead_summary, "v": lead_vec, "a": existing},
             )
@@ -431,31 +552,37 @@ class WikiBuilder:
         return created
 
     async def _write_section(
-        self, session: AsyncSession, article_id: uuid.UUID, section: PlannedSection
+        self, session: AsyncSession, article_id: uuid.UUID, section: PlannedSection, *, seq: int
     ) -> None:
-        # Find-or-create the (article, heading, domain) section; revisions are append-only, so a
-        # rebuild adds a new revision and re-points current_revision_id — the full diff history
-        # the owner asked for is preserved.
+        # Find-or-create the section by (article, domain, heading) — a domain has several
+        # sections (Person → Early life / Career / …), so the heading is its identity. Revisions
+        # are append-only: a rebuild adds a new revision and re-points current_revision_id,
+        # preserving the full diff history; `seq` reorders the section to the plan's order.
         section_id = (
             await session.execute(
                 text(
                     "SELECT id FROM app.wiki_sections"
-                    " WHERE article_id = :a AND domain_code = :d AND parent_section_id IS NULL"
-                    " ORDER BY seq LIMIT 1"
+                    " WHERE article_id = :a AND domain_code = :d AND heading = :h"
+                    " AND parent_section_id IS NULL LIMIT 1"
                 ),
-                {"a": article_id, "d": section.domain_code},
+                {"a": article_id, "d": section.domain_code, "h": section.heading},
             )
         ).scalar()
         if section_id is None:
             section_id = (
                 await session.execute(
                     text(
-                        "INSERT INTO app.wiki_sections (article_id, domain_code, seq)"
-                        " VALUES (:a, :d, :s) RETURNING id"
+                        "INSERT INTO app.wiki_sections (article_id, domain_code, heading, seq)"
+                        " VALUES (:a, :d, :h, :s) RETURNING id"
                     ),
-                    {"a": article_id, "d": section.domain_code, "s": 0},
+                    {"a": article_id, "d": section.domain_code, "h": section.heading, "s": seq},
                 )
             ).scalar()
+        else:
+            await session.execute(
+                text("UPDATE app.wiki_sections SET seq = :s WHERE id = :id"),
+                {"s": seq, "id": section_id},
+            )
         assert section_id is not None  # found or just inserted
         next_seq = (
             await session.execute(

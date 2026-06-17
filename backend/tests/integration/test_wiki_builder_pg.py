@@ -1,16 +1,18 @@
-"""The wiki builder (Phase 6, Wave C2a) against real Postgres: dirty-bit-driven build →
-single-domain sections + append-only revisions + clause citations + links + the embedding
-index → mark built. Exercises the whole write path through the migration-0046 firewall with
-the deterministic StubRewriter and a faked embed client (no network).
+"""The wiki builder (Phase 6) against real Postgres: dirty-bit-driven build → single-domain
+sections + append-only revisions + clause citations + links + the embedding index → mark built.
+Exercises the whole write path through the migration-0046 firewall with the deterministic
+StubRewriter (and, in one case, the live LlmRewriter behind a faked router) + a faked embed
+client (no network).
 
-- a notable dirty entity becomes a cited article; the entity is marked built; below-threshold
-  entities are skipped (and marked built so they aren't re-scanned).
-- a health fact lands a health section + health citation/index (firewall holds; the citation's
-  domain = section = chunk).
-- a second refresh appends a new revision (history preserved), no duplicate article.
-- reindex re-embeds; prune archives an orphaned article.
+- a notable dirty entity becomes a cited article; below-threshold/zero-section entities are
+  marked built but get no article; a health fact lands a firewall-valid health section.
+- a ratcheted fact (chunk in a lower domain) mints a same-domain derived chunk to cite (C2b).
+- a second refresh appends a revision (history preserved); rebuild re-derives; reindex re-embeds.
+- a merged entity's article becomes a redirect; prune archives orphans.
+- the live LlmRewriter + grounding gate write a firewall-valid cited article (faked router).
 """
 
+import json
 import uuid
 from collections.abc import AsyncIterator
 
@@ -20,8 +22,20 @@ from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async
 from sqlalchemy.pool import NullPool
 
 from jbrain.db.session import scoped_session
+from jbrain.llm.fake import FakeLlmClient
+from jbrain.llm.router import LlmRouter
 from jbrain.queue import SYSTEM_CTX
-from jbrain.wiki.builder import StubRewriter, WikiBuilder
+from jbrain.settings_store import SqlSettingsStore
+from jbrain.wiki.builder import (
+    PlannedArticle,
+    PlannedCitation,
+    PlannedSection,
+    SourcedEntity,
+    StubRewriter,
+    WikiBuilder,
+    WikiGroundingError,
+)
+from jbrain.wiki.rewriter import LlmRewriter
 from tests.conftest import docker_available
 from tests.integration.test_rls import OWNER, database_url  # noqa: F401
 
@@ -320,12 +334,12 @@ async def test_reindex_reembeds_every_index_row(maker: async_sessionmaker) -> No
     assert embed.calls > before
 
 
-async def test_cross_domain_chunk_fact_is_skipped(maker: async_sessionmaker) -> None:
+async def test_cross_domain_chunk_fact_mints_a_derived_chunk(maker: async_sessionmaker) -> None:
     eid = await _entity(maker, "general", "Ratchet")
     for i in range(3):  # three citable same-domain facts → notable, builds
         await _fact(maker, eid, "general", f"claim {i}")
-    # A health fact backed by a GENERAL chunk: dropped by the same-domain-chunk join (C2a defers
-    # derived-chunk minting to C2b), so no health section and no fourth citation appear.
+    # A health fact backed by a GENERAL chunk (ratcheted): C2b mints a same-domain derived chunk
+    # so it CAN be cited — a health section appears, citing the minted derived chunk.
     await _ratcheted_fact(maker, eid, fact_domain="health", chunk_domain="general")
     builder, _ = _builder(maker)
     await builder.refresh()
@@ -341,19 +355,19 @@ async def test_cross_domain_chunk_fact_is_skipped(maker: async_sessionmaker) -> 
                 )
             ).scalars()
         )
-        assert domains == ["general"]  # the health (ratcheted) fact produced no section
-        cites = (
+        assert domains == ["general", "health"]  # the ratcheted fact produced a health section
+        # The health citation cites a MINTED derived chunk (source_kind='derived', health domain).
+        derived = (
             await s.execute(
                 text(
                     "SELECT count(*) FROM app.wiki_citations c"
-                    " JOIN app.wiki_revisions r ON r.id = c.revision_id"
-                    " JOIN app.wiki_sections s ON s.id = r.section_id"
-                    " JOIN app.wiki_articles a ON a.id = s.article_id WHERE a.entity_ref = :e"
-                ),
-                {"e": eid},
+                    " JOIN app.chunks ch ON ch.id = c.chunk_id"
+                    " WHERE c.domain_code = 'health' AND ch.source_kind = 'derived'"
+                    " AND ch.domain_code = 'health'"
+                )
             )
         ).scalar()
-        assert cites == 3
+        assert derived == 1
 
 
 async def test_notable_but_zero_sections_creates_no_article(maker: async_sessionmaker) -> None:
@@ -414,6 +428,235 @@ async def test_action_handlers_drive_the_builder(maker: async_sessionmaker) -> N
     await handlers["wiki_reindex"]({})
     await handlers["wiki_rebuild"]({"target": "all"})
     await handlers["wiki_prune"]({})
+
+
+async def test_merge_turns_the_article_into_a_redirect(maker: async_sessionmaker) -> None:
+    gone = await _entity(maker, "general", "GoneCo")
+    keep = await _entity(maker, "general", "KeepCo")
+    for i in range(3):
+        await _fact(maker, gone, "general", f"gone claim {i}")
+        await _fact(maker, keep, "general", f"keep claim {i}")
+    builder, _ = _builder(maker)
+    await builder.refresh()  # both build into active articles, marked clean
+    # Merge gone → keep (the 0046 trigger re-dirties gone); refresh enacts the redirect.
+    async with scoped_session(maker, OWNER) as s:
+        await s.execute(
+            text("UPDATE app.entities SET status = 'merged', merged_into_id = :k WHERE id = :g"),
+            {"k": keep, "g": gone},
+        )
+    await builder.refresh()
+    async with scoped_session(maker, OWNER) as s:
+        keep_article = (
+            await s.execute(
+                text("SELECT id FROM app.wiki_articles WHERE entity_ref = :e"), {"e": keep}
+            )
+        ).scalar()
+        gone_row = (
+            await s.execute(
+                text("SELECT status, merged_into_id FROM app.wiki_articles WHERE entity_ref = :e"),
+                {"e": gone},
+            )
+        ).first()
+        assert gone_row is not None
+        assert gone_row.status == "merged"
+        assert gone_row.merged_into_id == keep_article
+        assert await _is_built(maker, gone) is True
+
+
+async def test_live_rewriter_writes_a_grounded_cited_article(maker: async_sessionmaker) -> None:
+    # The real LlmRewriter + grounding gate, driven by a FAKED router, must write a
+    # firewall-valid cited article (proving the LLM-produced citations pass the 0046 triggers).
+    eid = await _entity(maker, "general", "LiveSubject")
+    for i in range(3):
+        await _fact(maker, eid, "general", f"live claim {i}")
+    rewrite = {
+        "lead_summary": "LiveSubject is a person.",
+        "sections": [
+            {
+                "heading": "Overview",
+                "domain": "general",
+                "clauses": [
+                    {"text": "First fact", "claim_ids": [0]},
+                    {"text": "Second fact", "claim_ids": [1]},
+                    {"text": "Third fact", "claim_ids": [2]},
+                ],
+            }
+        ],
+    }
+    ground = {"verdicts": [{"index": i, "supported": True} for i in range(3)]}
+    fake = FakeLlmClient(responses=[json.dumps(rewrite), json.dumps(ground)])
+    router = LlmRouter({"xai": fake}, {"wiki.rewrite": ("xai", "m"), "wiki.ground": ("xai", "m")})
+    rewriter = LlmRewriter(router, settings=SqlSettingsStore(maker), ctx=SYSTEM_CTX)
+    builder = WikiBuilder(maker, embed=FakeEmbed(), rewriter=rewriter, embedding_model="fake-embed")
+    await builder.refresh()
+    async with scoped_session(maker, OWNER) as s:
+        article = (
+            await s.execute(
+                text("SELECT id, lead_summary FROM app.wiki_articles WHERE entity_ref = :e"),
+                {"e": eid},
+            )
+        ).first()
+        assert article is not None
+        assert article.lead_summary == "LiveSubject is a person."
+        cites = (
+            await s.execute(
+                text(
+                    "SELECT count(*) FROM app.wiki_citations c"
+                    " JOIN app.wiki_revisions r ON r.id = c.revision_id"
+                    " JOIN app.wiki_sections sec ON sec.id = r.section_id"
+                    " WHERE sec.article_id = :a"
+                ),
+                {"a": article.id},
+            )
+        ).scalar()
+        assert cites == 3
+
+
+class _TwoGeneralSections:
+    """A fake rewriter emitting two SAME-domain (general) sections, to prove they coexist (the
+    multi-same-domain-section regression) — each cites a distinct claim by index."""
+
+    async def plan(self, sourced: SourcedEntity) -> PlannedArticle:
+        return PlannedArticle(
+            lead_summary=f"{sourced.name} lead.",
+            sections=[
+                PlannedSection(
+                    heading="Early life",
+                    domain_code="general",
+                    body="Born somewhere.[1]",
+                    summary="Early life.",
+                    citations=[
+                        PlannedCitation(
+                            seq=1,
+                            fact_id=sourced.claims[0].fact_id,
+                            chunk_id=sourced.claims[0].chunk_id,
+                            note_id=sourced.claims[0].note_id,
+                            domain_code="general",
+                        )
+                    ],
+                ),
+                PlannedSection(
+                    heading="Career",
+                    domain_code="general",
+                    body="Worked somewhere.[2]",
+                    summary="Career.",
+                    citations=[
+                        PlannedCitation(
+                            seq=2,
+                            fact_id=sourced.claims[1].fact_id,
+                            chunk_id=sourced.claims[1].chunk_id,
+                            note_id=sourced.claims[1].note_id,
+                            domain_code="general",
+                        )
+                    ],
+                ),
+            ],
+        )
+
+
+async def test_multiple_same_domain_sections_coexist(maker: async_sessionmaker) -> None:
+    eid = await _entity(maker, "general", "MultiSection")
+    for i in range(3):
+        await _fact(maker, eid, "general", f"claim {i}")
+    builder = WikiBuilder(
+        maker, embed=FakeEmbed(), rewriter=_TwoGeneralSections(), embedding_model="fake-embed"
+    )
+    await builder.refresh()
+    async with scoped_session(maker, OWNER) as s:
+        headings = sorted(
+            (
+                await s.execute(
+                    text(
+                        "SELECT sec.heading FROM app.wiki_sections sec"
+                        " JOIN app.wiki_articles a ON a.id = sec.article_id"
+                        " WHERE a.entity_ref = :e AND sec.domain_code = 'general'"
+                    ),
+                    {"e": eid},
+                )
+            ).scalars()
+        )
+        # Both general sections survive (pre-fix they collapsed onto one row, losing one).
+        assert headings == ["Career", "Early life"]
+
+
+async def test_unmerge_reactivates_the_article(maker: async_sessionmaker) -> None:
+    gone = await _entity(maker, "general", "UnmergeMe")
+    keep = await _entity(maker, "general", "Survivor")
+    for i in range(3):
+        await _fact(maker, gone, "general", f"g{i}")
+        await _fact(maker, keep, "general", f"k{i}")
+    builder, _ = _builder(maker)
+    await builder.refresh()
+    # Merge → redirect, then un-merge (clear merged_into_id) → rebuild must reactivate.
+    async with scoped_session(maker, OWNER) as s:
+        await s.execute(
+            text("UPDATE app.entities SET status='merged', merged_into_id=:k WHERE id=:g"),
+            {"k": keep, "g": gone},
+        )
+    await builder.refresh()
+    async with scoped_session(maker, OWNER) as s:
+        await s.execute(
+            text("UPDATE app.entities SET status='confirmed', merged_into_id=NULL WHERE id=:g"),
+            {"g": gone},
+        )
+    await builder.refresh()
+    async with scoped_session(maker, OWNER) as s:
+        row = (
+            await s.execute(
+                text("SELECT status, merged_into_id FROM app.wiki_articles WHERE entity_ref = :e"),
+                {"e": gone},
+            )
+        ).first()
+        assert row is not None
+        assert row.status == "active"  # reactivated
+        assert row.merged_into_id is None
+
+
+async def test_prune_skips_merged_entities(maker: async_sessionmaker) -> None:
+    gone = await _entity(maker, "general", "PruneMerged")
+    keep = await _entity(maker, "general", "PruneKeep")
+    for i in range(3):
+        await _fact(maker, gone, "general", f"g{i}")
+        await _fact(maker, keep, "general", f"k{i}")
+    builder, _ = _builder(maker)
+    await builder.refresh()
+    # Merge gone → keep but DON'T run refresh (the redirect isn't enacted yet); prune must not
+    # archive the still-active article (else the pending redirect is lost).
+    async with scoped_session(maker, OWNER) as s:
+        await s.execute(
+            text("UPDATE app.entities SET status='merged', merged_into_id=:k WHERE id=:g"),
+            {"k": keep, "g": gone},
+        )
+    await builder.prune()
+    async with scoped_session(maker, OWNER) as s:
+        status = (
+            await s.execute(
+                text("SELECT status FROM app.wiki_articles WHERE entity_ref = :e"), {"e": gone}
+            )
+        ).scalar()
+        assert status == "active"  # merged entity still exists → not pruned
+
+
+class _GroundingFails:
+    async def plan(self, sourced: SourcedEntity) -> PlannedArticle:
+        raise WikiGroundingError("verifier blew up")
+
+
+async def test_grounding_failure_skips_entity_but_continues(maker: async_sessionmaker) -> None:
+    eid = await _entity(maker, "general", "Ungroundable")
+    for i in range(3):
+        await _fact(maker, eid, "general", f"claim {i}")
+    builder = WikiBuilder(
+        maker, embed=FakeEmbed(), rewriter=_GroundingFails(), embedding_model="fake-embed"
+    )
+    await builder.refresh()  # must not raise — the ungroundable entity is skipped, others build
+    assert await _is_built(maker, eid) is False  # left dirty for retry, no article
+    async with scoped_session(maker, OWNER) as s:
+        assert (
+            await s.execute(
+                text("SELECT count(*) FROM app.wiki_articles WHERE entity_ref = :e"), {"e": eid}
+            )
+        ).scalar() == 0
 
 
 async def test_prune_archives_an_orphaned_article(maker: async_sessionmaker) -> None:
