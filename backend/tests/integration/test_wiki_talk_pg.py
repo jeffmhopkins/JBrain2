@@ -5,20 +5,33 @@ reader). Uses the deterministic StubRewriter + a faked embed client (no network)
 
 import uuid
 from collections.abc import AsyncIterator
+from typing import Any
 
 import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
+from jbrain.agent.readtools import build_registry
 from jbrain.agent.session import read_context
+from jbrain.agent.toolregistry import ToolRegistry
+from jbrain.agent.wikiwritetools import build_wiki_write_handlers
 from jbrain.auth import service
 from jbrain.auth.repo import SqlAuthRepo
+from jbrain.connectors.base import ConnectorRegistry
+from jbrain.connectors.medical import medical_connectors
 from jbrain.db.session import SessionContext, scoped_session
+from jbrain.llm.fake import FakeLlmClient
+from jbrain.llm.router import LlmRouter
+from jbrain.llm.types import LlmTurn, LlmUsage, ToolCall
+from jbrain.notes.repo import SqlNotesRepo
 from jbrain.wiki.builder import StubRewriter, WikiBuilder
+from jbrain.wiki.editor import run_editor_turn
+from jbrain.wiki.readstore import WikiReadStore
 from jbrain.wiki.talkstore import (
     TalkArticleNotFound,
     TalkBuildLogReadonly,
+    TalkEditorConflict,
     TalkTopicNotFound,
     WikiTalkStore,
 )
@@ -271,3 +284,145 @@ async def test_build_log_is_read_only_and_missing_article_404s(maker: async_sess
             text("UPDATE app.wiki_articles SET status = 'merged' WHERE id = :a"), {"a": aid}
         )
     assert await store.get_board(OWNER, aid) is None
+
+
+# ---- T2: the Editor turn's store seam (idempotency + editor posts) ----------------------------
+
+
+async def test_editor_idempotency_and_post(maker: async_sessionmaker) -> None:
+    await _owner_pid(maker)
+    eid = await _notable(maker, "Edie")
+    await _builder(maker).refresh()
+    aid = await _article_id(maker, eid)
+    store = WikiTalkStore(maker)
+    topic = await store.create_topic(OWNER, aid, title="Wrong job", body="She left.")
+    tid = topic["id"]
+    first_post = topic["posts"][0]["id"]
+
+    # The latest post is the owner reply → the Editor turn is allowed; context comes back.
+    topic_title, article_title, posts = await store.topic_for_editor(OWNER, aid, tid, first_post)
+    assert topic_title == "Wrong job" and article_title == "Edie" and len(posts) == 1
+
+    # A stale after_post_id (not the latest) → 409 conflict (double-tap / retry guard).
+    with pytest.raises(TalkEditorConflict):
+        await store.topic_for_editor(OWNER, aid, tid, str(uuid.uuid4()))
+
+    # The Editor posts its reply; it shows as an 'editor' post with the outcome chip.
+    ed = await store.add_editor_post(
+        OWNER, aid, tid, body="It cites one note.", outcome="correction filed → rebuild queued"
+    )
+    assert ed["author"] == "editor" and ed["outcome"].startswith("correction filed")
+
+    # Now the editor post is the latest, so re-running against the original owner post 409s — the
+    # turn never double-fires for the same owner reply.
+    with pytest.raises(TalkEditorConflict):
+        await store.topic_for_editor(OWNER, aid, tid, first_post)
+
+    board = await store.get_board(OWNER, aid)
+    assert board is not None
+    disc = next(t for t in board["topics"] if t["id"] == tid)
+    assert [p["author"] for p in disc["posts"]] == ["owner", "editor"]
+
+
+async def test_editor_turn_refused_on_build_log_and_inactive(maker: async_sessionmaker) -> None:
+    await _owner_pid(maker)
+    eid = await _notable(maker, "Edwin")
+    await _builder(maker).refresh()
+    aid = await _article_id(maker, eid)
+    store = WikiTalkStore(maker)
+    board = await store.get_board(OWNER, aid)
+    assert board is not None
+    log_id = next(t["id"] for t in board["topics"] if t["kind"] == "build_log")
+    with pytest.raises(TalkBuildLogReadonly):
+        await store.topic_for_editor(OWNER, aid, log_id, str(uuid.uuid4()))
+    with pytest.raises(TalkArticleNotFound):
+        await store.topic_for_editor(OWNER, str(uuid.uuid4()), log_id, str(uuid.uuid4()))
+
+
+class _FakeJobs:
+    def __init__(self) -> None:
+        self.enqueued: list[tuple[str, dict]] = []
+
+    async def enqueue(self, ctx: object, kind: str, payload: dict, **_kw: object) -> str:
+        self.enqueued.append((kind, payload))
+        return "job-1"
+
+
+def _editor_registry(maker: async_sessionmaker, jobs: _FakeJobs) -> ToolRegistry:
+    # The full registry, but only file_correction is exercised by the scripted turn; the unused
+    # services are inert stubs (only build_connector_handlers touches its arg at construction).
+    notes = SqlNotesRepo(maker)
+    stub: Any = object()
+    return build_registry(
+        stub,  # search
+        notes,
+        stub,  # entities
+        stub,  # memory
+        stub,  # proposals
+        ConnectorRegistry(medical_connectors("http://x", "http://y")),
+        stub,  # lists
+        stub,  # appointments
+        WikiReadStore(maker),
+        build_wiki_write_handlers(notes, jobs, maker),  # type: ignore[arg-type]
+    )
+
+
+async def test_editor_turn_files_a_correction_end_to_end(maker: async_sessionmaker) -> None:
+    # The headline T2 path: a scripted agent turn calls file_correction (in-scope domain), which
+    # actually creates the owner_correction note; run_editor_turn returns the chip + prose.
+    await _owner_pid(maker)
+    eid = await _notable(maker, "Edmund")
+    await _builder(maker).refresh()
+    aid = await _article_id(maker, eid)
+
+    jobs = _FakeJobs()
+    registry = _editor_registry(maker, jobs)
+    fake = FakeLlmClient(
+        turns=[
+            LlmTurn(
+                text="",
+                tool_calls=(
+                    ToolCall(
+                        id="c1",
+                        name="file_correction",
+                        arguments={
+                            "body": "She left Globex in March 2026.",
+                            "domain": "general",
+                            "article_id": aid,
+                        },
+                    ),
+                ),
+                stop_reason="tool_use",
+                usage=LlmUsage(1, 1),
+            ),
+            LlmTurn(
+                text="Filed your correction; the article will rebuild.",
+                tool_calls=(),
+                stop_reason="end_turn",
+                usage=LlmUsage(1, 1),
+            ),
+        ]
+    )
+    router = LlmRouter({"xai": fake}, {"agent.turn": ("xai", "m")})
+
+    reply = await run_editor_turn(
+        router,
+        registry,
+        OWNER,
+        article_id=aid,
+        article_title="Edmund",
+        topic_title="Outdated",
+        posts=[{"author": "owner", "body": "she left globex"}],
+    )
+    assert reply is not None
+    assert reply.outcome == "correction filed → rebuild queued"
+    assert "Filed" in reply.body
+    # The lever actually fired: an owner_correction note was created + an ingest job queued.
+    assert any(kind == "ingest_note" for kind, _ in jobs.enqueued)
+    async with scoped_session(maker, OWNER) as s:
+        count = (
+            await s.execute(
+                text("SELECT count(*) FROM app.notes WHERE provenance = 'owner_correction'")
+            )
+        ).scalar()
+    assert count == 1

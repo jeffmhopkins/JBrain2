@@ -40,6 +40,8 @@ export function TalkScreen({ articleId, syncStatus, onClose, onOpenArticle }: Ta
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState(false);
+  // Topics whose owner reply is awaiting the Editor's (agent) response.
+  const [responding, setResponding] = useState<Set<string>>(new Set());
   const scrollerRef = useRef<HTMLDivElement>(null);
   const swipeStart = useRef<{ x: number; y: number } | null>(null);
 
@@ -128,17 +130,34 @@ export function TalkScreen({ articleId, syncStatus, onClose, onOpenArticle }: Ta
 
   async function postReply(topicId: string) {
     const body = (drafts[topicId] ?? "").trim();
-    if (!body || busy) return;
+    if (!body || busy || responding.has(topicId)) return;
     setBusy(true);
     setFailed(false);
+    let ownerPostId: string | null = null;
     try {
       const post = await api.postTalkReply(articleId, topicId, { body });
+      ownerPostId = post.id;
       patchTopic(topicId, (t) => ({ ...t, posts: [...t.posts, post] }));
       setDrafts((d) => ({ ...d, [topicId]: "" }));
     } catch {
       setFailed(true);
     } finally {
       setBusy(false);
+    }
+    if (!ownerPostId) return;
+    // The Editor (agent) responds to the owner reply; show a responding line, then append its post.
+    setResponding((r) => new Set(r).add(topicId));
+    try {
+      const { post } = await api.requestEditorReply(articleId, topicId, ownerPostId);
+      if (post) patchTopic(topicId, (t) => ({ ...t, posts: [...t.posts, post] }));
+    } catch {
+      // Best-effort: the owner's post stands; no Editor reply on failure.
+    } finally {
+      setResponding((r) => {
+        const next = new Set(r);
+        next.delete(topicId);
+        return next;
+      });
     }
   }
 
@@ -245,6 +264,9 @@ export function TalkScreen({ articleId, syncStatus, onClose, onOpenArticle }: Ta
                       {topic.posts.map((post) => (
                         <Post key={post.id} post={post} />
                       ))}
+                      {responding.has(topic.id) && (
+                        <div className="talk-responding">Editor is responding…</div>
+                      )}
                       {!isLog && (
                         <>
                           <div className="talk-replybox">
@@ -252,13 +274,16 @@ export function TalkScreen({ articleId, syncStatus, onClose, onOpenArticle }: Ta
                               placeholder="Reply…"
                               aria-label={`Reply to ${topic.title}`}
                               value={drafts[topic.id] ?? ""}
+                              disabled={responding.has(topic.id)}
                               onChange={(e) =>
                                 setDrafts((d) => ({ ...d, [topic.id]: e.target.value }))
                               }
                             />
                             <button
                               type="button"
-                              disabled={!(drafts[topic.id] ?? "").trim() || busy}
+                              disabled={
+                                !(drafts[topic.id] ?? "").trim() || busy || responding.has(topic.id)
+                              }
                               onClick={() => postReply(topic.id)}
                             >
                               Post

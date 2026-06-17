@@ -393,9 +393,11 @@ work on the Phase-5 pattern, deferred — not silently dropped.
   `wiki_talk_posts`, owner-only RLS, migration 0053), the **Builder** voice (a Build-log decision
   summary posted per rebuild), owner topics/replies/resolve (`GET/POST/PATCH /wiki/{id}/talk…`),
   and the B-topics reader screen (`TalkScreen`) reachable via the reader's Discussion affordance.
-  See `docs/TALK_BOARD_PLAN.md`. **Wave T2 (pending):** the live **Editor** (agent) reply —
-  `AgentLoop.run_stream` + the wiki tools streamed into a topic, with outcome chips — after which
-  the DiscussSheet quick-fix correction folds into the in-topic flow.
+  **Wave T2 shipped:** the live **Editor** (agent) reply — an owner reply draws an `AgentLoop.run()`
+  turn (dedicated Editor system prompt + the wiki tools, owner full-read, `after_post_id` idempotency
+  guard) that explains sourcing and enacts via the levers, posted as an `editor` post with an outcome
+  chip (`POST /wiki/{id}/talk/topics/{tid}/editor`). See `docs/TALK_BOARD_PLAN.md`. Deferred follow-up:
+  fold the reader's DiscussSheet quick-fix into the in-topic flow.
 
 ## 8. Non-negotiables (CLAUDE.md) + exit
 

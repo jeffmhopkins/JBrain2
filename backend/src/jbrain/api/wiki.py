@@ -17,16 +17,20 @@ from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from jbrain.agent.toolregistry import ToolRegistry
 from jbrain.api.deps import OwnerDep, PrincipalDep
 from jbrain.api.images import sniff_path
 from jbrain.api.notes import BlobStoreDep, ctx_for
 from jbrain.db.session import scoped_session
+from jbrain.llm.router import LlmRouter
 from jbrain.notes.repo import SqlNotesRepo
 from jbrain.notes.service import UnknownDomain
+from jbrain.wiki.editor import run_editor_turn
 from jbrain.wiki.readstore import WikiReadStore
 from jbrain.wiki.talkstore import (
     TalkArticleNotFound,
     TalkBuildLogReadonly,
+    TalkEditorConflict,
     TalkTopicNotFound,
     WikiTalkStore,
 )
@@ -41,6 +45,14 @@ def get_wiki_read_store(request: Request) -> WikiReadStore:
 
 def get_wiki_talk_store(request: Request) -> WikiTalkStore:
     return cast(WikiTalkStore, request.app.state.wiki_talk_store)
+
+
+def get_llm_router(request: Request) -> LlmRouter:
+    return cast(LlmRouter, request.app.state.llm_router)
+
+
+def get_agent_registry(request: Request) -> ToolRegistry:
+    return cast(ToolRegistry, request.app.state.agent_registry)
 
 
 def get_notes_repo(request: Request) -> SqlNotesRepo:
@@ -158,6 +170,49 @@ async def wiki_talk_set_status(
         raise HTTPException(status_code=404, detail="topic not found") from None
     except TalkBuildLogReadonly:
         raise HTTPException(status_code=409, detail="the Build log is machine-written") from None
+
+
+class EditorRequest(BaseModel):
+    # The owner post this Editor turn responds to; it must still be the topic's latest post (the
+    # idempotency guard against double-taps / retries / replying to the Editor's own reply).
+    after_post_id: str = Field(min_length=1)
+
+
+@router.post("/wiki/{article_id}/talk/topics/{topic_id}/editor", status_code=201)
+async def wiki_talk_editor(
+    article_id: str, topic_id: str, body: EditorRequest, owner: OwnerDep, request: Request
+) -> dict[str, Any]:
+    """Run the Editor (agent) over the topic and post its reply. Owner-only; 409 on the Build-log or
+    when `after_post_id` isn't the latest post; 404 on a missing/inactive article. Returns
+    `{"post": <editor post> | null}` (null when the turn produced no prose and pulled no lever)."""
+    store = get_wiki_talk_store(request)
+    ctx = ctx_for(owner)
+    try:
+        topic_title, article_title, posts = await store.topic_for_editor(
+            ctx, article_id, topic_id, body.after_post_id
+        )
+    except (TalkArticleNotFound, TalkTopicNotFound):
+        raise HTTPException(status_code=404, detail="topic not found") from None
+    except TalkBuildLogReadonly:
+        raise HTTPException(status_code=409, detail="the Build log is machine-written") from None
+    except TalkEditorConflict:
+        raise HTTPException(status_code=409, detail="topic moved on") from None
+
+    reply = await run_editor_turn(
+        get_llm_router(request),
+        get_agent_registry(request),
+        ctx,
+        article_id=article_id,
+        article_title=article_title,
+        topic_title=topic_title,
+        posts=posts,
+    )
+    if reply is None:
+        return {"post": None}
+    post = await store.add_editor_post(
+        ctx, article_id, topic_id, body=reply.body, outcome=reply.outcome
+    )
+    return {"post": post}
 
 
 class CorrectionRequest(BaseModel):
