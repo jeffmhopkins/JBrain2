@@ -367,6 +367,13 @@ h3 {
   color: var(--text-3);
 }
 
+/* A quiet attribution tag on agent-authored (Proposal-enacted) notes — steel,
+   not an alarm; the note body itself stays clean of any "prepared by" prose. */
+.note-by-assistant {
+  color: var(--steel);
+  white-space: nowrap;
+}
+
 .domain-dot {
   width: 7px;
   height: 7px;

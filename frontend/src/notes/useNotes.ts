@@ -5,6 +5,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { type AttachmentOut, type NoteOut, type NoteUpdate, api } from "../api/client";
 import { freshCoords } from "../location";
+import { lifecycleChip } from "./lifecycle";
 import { type OutboxStore, type PendingNote, createIdbStore, flushOutbox } from "./outbox";
 
 export interface StreamAttachment {
@@ -30,6 +31,9 @@ export interface StreamItem {
   ingestState: string | null;
   /** True once the analysis pipeline finished — the lifecycle chip's end. */
   analyzed: boolean;
+  /** "human" or "agent" — the stream tags agent-authored notes; outbox rows
+   * are always "human" (the owner just wrote them). */
+  provenance: string;
   attachments: StreamAttachment[];
   pending: boolean;
   /** Hidden from the stream server-side; outbox rows are never hidden. */
@@ -48,6 +52,10 @@ export interface SendInput {
 export interface NotesController {
   items: StreamItem[];
   syncStatus: SyncStatus;
+  /** Pull the server list now — wired to events that create notes out of band
+   * (e.g. enacting a Proposal) so the stream reflects them without waiting for
+   * the poll tick. */
+  refresh(): Promise<void>;
   send(input: SendInput): Promise<void>;
   update(id: string, patch: NoteUpdate): Promise<void>;
   remove(id: string): Promise<void>;
@@ -62,8 +70,20 @@ export interface NotesController {
   removeAttachment(attachmentId: string): Promise<void>;
 }
 
-const FLUSH_INTERVAL_MS = 30_000;
+// The resting poll cadence. While any note is still moving through the pipeline
+// (indexing → ocr → analyzing) we poll far faster so the lifecycle chip and a
+// freshly-enacted note settle live instead of crawling forward 30s at a time.
+const IDLE_INTERVAL_MS = 30_000;
+const ACTIVE_INTERVAL_MS = 2_500;
 const PAGE_SIZE = 100;
+
+/** A note still working through the pipeline — a "pending"-tone lifecycle chip.
+ * "failed" is terminal, so it doesn't keep the fast poll alive. Mirrors the chip
+ * the row actually shows so what we poll on is what the owner sees moving. */
+function inFlight(item: StreamItem): boolean {
+  const chip = lifecycleChip(item);
+  return chip !== null && chip.tone === "pending";
+}
 // There is no GET /api/notes/{id}; a cache miss (e.g. a search hit older than
 // the stream window) pages the list a bounded number of times before giving
 // up and leaving the caller with the search-result preview.
@@ -78,6 +98,7 @@ function serverItem(note: NoteOut): StreamItem {
     createdAt: new Date(note.created_at),
     ingestState: note.ingest_state,
     analyzed: note.analyzed,
+    provenance: note.provenance,
     attachments: note.attachments.map((a: AttachmentOut) => ({
       id: a.id,
       filename: a.filename,
@@ -101,6 +122,7 @@ function pendingItem(note: PendingNote): StreamItem {
     createdAt: new Date(note.created_at),
     ingestState: null,
     analyzed: false, // analysis can only have run server-side
+    provenance: "human", // an outbox row is the owner's own capture
     attachments: note.attachments.map((a) => ({
       id: null,
       filename: a.filename,
@@ -149,17 +171,23 @@ export function useNotes(enabled: boolean, store?: OutboxStore): NotesController
     setPending((await outbox.all()).map(pendingItem));
   }, [outbox]);
 
+  // Any server note still mid-pipeline drives the faster cadence; flipping it
+  // re-arms the interval below (and runs an immediate sync, so an enacted or
+  // freshly-settled note reflects at once rather than on the next slow tick).
+  const anyInFlight = useMemo(() => serverItems.some(inFlight), [serverItems]);
+
   useEffect(() => {
     if (!enabled) return;
     void sync();
     const onOnline = () => void sync();
     window.addEventListener("online", onOnline);
-    const interval = setInterval(() => void sync(), FLUSH_INTERVAL_MS);
+    const period = anyInFlight ? ACTIVE_INTERVAL_MS : IDLE_INTERVAL_MS;
+    const interval = setInterval(() => void sync(), period);
     return () => {
       window.removeEventListener("online", onOnline);
       clearInterval(interval);
     };
-  }, [enabled, sync]);
+  }, [enabled, sync, anyInFlight]);
 
   const send = useCallback(
     async (input: SendInput) => {
@@ -264,6 +292,7 @@ export function useNotes(enabled: boolean, store?: OutboxStore): NotesController
   return {
     items,
     syncStatus,
+    refresh: sync,
     send,
     update,
     remove,

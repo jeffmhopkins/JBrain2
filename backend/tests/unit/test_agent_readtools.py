@@ -547,8 +547,8 @@ def test_sidecars_pinned_to_their_versions() -> None:
         ),
         "propose_correction.tool": (
             "propose_correction",
-            1,
-            "d0e2fe9b1a1af0922a84fde2c5c299184ec2ac4e8d88ef28a9e2cd64bea9eaa6",
+            2,
+            "978041c1ab636277dc626cdf996544eb0464116db0699065a0b3a2b08f8c4ee9",
         ),
         "propose_merge.tool": (
             "propose_merge",

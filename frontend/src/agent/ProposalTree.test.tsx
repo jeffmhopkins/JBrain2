@@ -146,4 +146,22 @@ describe("ProposalTree", () => {
     await waitFor(() => expect(enactProposal).toHaveBeenCalledWith("p1"));
     expect(await screen.findByText("Enacted 1 · held 0")).toBeInTheDocument();
   });
+
+  it("fires onEnacted after a successful enact so the stream can refresh", async () => {
+    const onEnacted = vi.fn();
+    render(
+      <ProposalTree
+        proposalId="p1"
+        onClose={vi.fn()}
+        onEnacted={onEnacted}
+        getProposal={vi.fn(async () =>
+          detail({ nodes: detail().nodes.map((n) => ({ ...n, status: "approved" })) }),
+        )}
+        decideNode={vi.fn()}
+        enactProposal={vi.fn(async (): Promise<EnactResult> => ({ enacted: ["a"], held: [] }))}
+      />,
+    );
+    fireEvent.click(await screen.findByText("Enact approved"));
+    await waitFor(() => expect(onEnacted).toHaveBeenCalledTimes(1));
+  });
 });

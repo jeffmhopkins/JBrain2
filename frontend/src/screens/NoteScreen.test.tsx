@@ -13,6 +13,7 @@ const ITEM: StreamItem = {
   createdAt: new Date(2026, 5, 9, 10, 5),
   ingestState: "pending",
   analyzed: false,
+  provenance: "human",
   attachments: [
     {
       id: "a1",

@@ -145,7 +145,14 @@ export function HomeScreen({
     <>
       <TopBar syncStatus={notes.syncStatus} onBolt={onOpenLauncher} session={fbSession} />
       {seg.mode === "fullbrain" ? (
-        <FullBrainSurface fb={fb} onOpenNote={onOpenNoteById} onOpenEntity={onOpenEntity} />
+        <FullBrainSurface
+          fb={fb}
+          onOpenNote={onOpenNoteById}
+          onOpenEntity={onOpenEntity}
+          // Enacting a correction creates a note out of band; refresh the stream
+          // now so it's already there when the owner flips back to entry mode.
+          onProposalEnacted={() => void notes.refresh()}
+        />
       ) : conversational ? (
         <main className="stream conv-area">
           <p

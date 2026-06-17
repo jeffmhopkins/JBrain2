@@ -15,6 +15,7 @@ function item(overrides: Partial<StreamItem> = {}): StreamItem {
     createdAt: new Date(),
     ingestState: "indexed",
     analyzed: true,
+    provenance: "human",
     attachments: [],
     pending: false,
     hidden: false,
@@ -74,6 +75,16 @@ describe("Stream", () => {
   it("clamps bubble bodies at 3 lines", () => {
     renderStream([item({ body: "clamp me" })]);
     expect(screen.getByText("clamp me")).toHaveClass("note-body-clamp");
+  });
+
+  it("tags agent-authored notes and leaves human ones untagged", () => {
+    renderStream([
+      item({ body: "agent note", provenance: "agent" }),
+      item({ body: "my note", provenance: "human" }),
+    ]);
+    // The tag appears once — only on the agent note (attribution is metadata,
+    // not body text, so "agent note" itself never contains it).
+    expect(screen.getAllByText(/assistant/i)).toHaveLength(1);
   });
 
   it("walks the chip through the pipeline lifecycle, one state per bubble", () => {

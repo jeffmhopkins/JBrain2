@@ -19,6 +19,9 @@ const OP_LABEL: Record<string, string> = {
 interface Props {
   proposalId: string;
   onClose: () => void;
+  /** Fired after a successful enact so the caller can refresh dependent views
+   * (the home stream, which an add_note leaf just wrote into). */
+  onEnacted?: (() => void) | undefined;
   getProposal?: (id: string) => Promise<ProposalDetail>;
   decideNode?: (proposalId: string, nodeId: string, decision: Decision) => Promise<void>;
   enactProposal?: (id: string) => Promise<EnactResult>;
@@ -27,6 +30,7 @@ interface Props {
 export function ProposalTree({
   proposalId,
   onClose,
+  onEnacted,
   getProposal = api.getProposal,
   decideNode = api.decideNode,
   enactProposal = api.enactProposal,
@@ -58,6 +62,7 @@ export function ProposalTree({
     try {
       setEnacted(await enactProposal(proposalId));
       await load();
+      onEnacted?.();
     } finally {
       setBusy(false);
     }

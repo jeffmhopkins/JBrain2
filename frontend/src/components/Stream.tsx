@@ -170,6 +170,11 @@ function NoteRow({ item, railOpen, onRailChange, onOpen, onEdit, onDelete, onHid
               style={{ background: DOMAIN_COLOR[item.domain] ?? "var(--steel)" }}
             />
             {headText(item)}
+            {item.provenance === "agent" && (
+              // Attribution is metadata, surfaced as a quiet tag — never written
+              // into the note body (docs/ASSISTANT.md #7).
+              <span className="note-by-assistant"> · assistant</span>
+            )}
           </span>
           <span className="note-body note-body-clamp" ref={bodyRef}>
             {item.body}
