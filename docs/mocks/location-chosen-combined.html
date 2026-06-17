@@ -64,9 +64,8 @@
   .rail{display:flex;flex-direction:column;align-items:center;flex:0 0 30px}
   .rail .ln{width:2px;flex:1;background:var(--border)}
   .rail .ic{width:30px;height:30px;border-radius:50%;display:grid;place-items:center;flex:0 0 30px}
-  .ic.in{background:color-mix(in srgb,var(--green) 15%,transparent);color:var(--green)}
-  .ic.out{background:color-mix(in srgb,var(--amber) 15%,transparent);color:var(--amber)}
-  .ic.dev{background:color-mix(in srgb,var(--steel) 15%,transparent);color:var(--steel)}
+  /* neutral, monochrome — the sentence carries the meaning, not color */
+  .ic.in,.ic.out,.ic.dev{background:var(--surface-2);color:var(--text-2)}
   .ev .b2{flex:1;padding:0 0 14px}
   .ev .t{font-size:14.5px}.ev .t b{font-weight:600}
   .ev .m{font-size:11.5px;color:var(--text-3);margin-top:2px}
@@ -87,6 +86,24 @@
   .maptag svg{width:13px;height:13px}
   .mapctl{position:absolute;right:12px;bottom:12px;display:flex;flex-direction:column;gap:6px}
   .mapctl button{width:34px;height:34px;border-radius:9px;border:1px solid var(--border);background:var(--surface);color:var(--text);cursor:pointer;font-size:18px;display:grid;place-items:center}
+  /* map control bar: date range + mode */
+  .mapbar{display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid var(--border);background:var(--surface)}
+  .daterange{display:flex;align-items:center;gap:7px;font-size:12.5px;font-weight:600;color:var(--text);background:var(--surface-2);border:1px solid var(--border);border-radius:999px;padding:6px 12px;cursor:pointer}
+  .daterange svg{width:14px;height:14px;color:var(--teal)}
+  .modeseg{display:flex;margin-left:auto;background:var(--surface-2);border-radius:10px;padding:3px;gap:2px}
+  .modeseg button{border:0;background:transparent;color:var(--text-2);font-size:12px;font-weight:600;padding:5px 11px;border-radius:8px;cursor:pointer}
+  .modeseg button.on{background:var(--surface);color:var(--text)}
+  /* map layers toggled by #map[data-mode] */
+  .layer{position:absolute;inset:0;display:none}
+  #map[data-mode="live"] .live-layer{display:block}
+  #map[data-mode="trail"] .trail-layer{display:block}
+  #map[data-mode="heat"] .heat-layer{display:block}
+  .trail-layer{width:100%;height:100%}
+  .heat{position:absolute;border-radius:50%;transform:translate(-50%,-50%);filter:blur(7px);
+    background:radial-gradient(circle,color-mix(in srgb,var(--teal) 80%,transparent) 0%,transparent 70%)}
+  .heat.hot{background:radial-gradient(circle,color-mix(in srgb,var(--amber) 85%,transparent) 0%,color-mix(in srgb,var(--teal) 55%,transparent) 55%,transparent 75%)}
+  .legend{position:absolute;left:12px;bottom:12px;font-size:10.5px;color:var(--text-2);background:color-mix(in srgb,var(--bg) 72%,transparent);border:1px solid var(--border);border-radius:8px;padding:5px 8px;display:flex;align-items:center;gap:7px}
+  .legend i{width:42px;height:7px;border-radius:4px;background:linear-gradient(90deg,color-mix(in srgb,var(--teal) 55%,transparent),var(--amber))}
   /* FAB (map + devices add) */
   .fab{position:absolute;right:16px;bottom:74px;width:50px;height:50px;border-radius:50%;border:0;background:var(--teal);color:#04100f;display:none;place-items:center;cursor:pointer;box-shadow:0 6px 18px rgba(0,0,0,.4);z-index:4}
   .fab.show{display:grid}
@@ -169,33 +186,64 @@
         </div>
         <div class="daysep">Today</div>
         <div class="ev"><div class="rail"><div class="ic in"><svg viewBox="0 0 24 24"><path d="M5 12l5 5L20 7"/></svg></div><div class="ln"></div></div>
-          <div class="b2"><div class="t">Arrived <b>Home</b></div><div class="m">Jeff’s iPhone · 5:42p</div>
+          <div class="b2"><div class="t"><b>Jeff</b> arrived at <b>Home</b></div><div class="m">Jeff’s iPhone · 5:42p</div>
             <div class="addr"><svg viewBox="0 0 24 24"><path d="M12 21s-6-5.7-6-10a6 6 0 0112 0c0 4.3-6 10-6 10z"/><circle cx="12" cy="11" r="2"/></svg>1142 Pine St<span class="tag">local geocode</span></div></div></div>
         <div class="ev"><div class="rail"><div class="ic out"><svg viewBox="0 0 24 24"><path d="M14 5l-7 7 7 7"/></svg></div><div class="ln"></div></div>
-          <div class="b2"><div class="t">Left <b>Office</b></div><div class="m">Jeff’s iPhone · 5:10p · here 8h 22m</div></div></div>
+          <div class="b2"><div class="t"><b>Jeff</b> left <b>Office</b></div><div class="m">Jeff’s iPhone · 5:10p · there 8h 22m</div></div></div>
         <div class="ev"><div class="rail"><div class="ic dev"><svg viewBox="0 0 24 24"><rect x="6" y="2" width="12" height="20" rx="3"/><path d="M11 18h2"/></svg></div><div class="ln"></div></div>
-          <div class="b2"><div class="t"><b>Celine’s Pixel</b> battery low</div><div class="m">31% · last fix 2h ago</div></div></div>
+          <div class="b2"><div class="t"><b>Celine’s Pixel</b> battery is low</div><div class="m">31% · last fix 2h ago</div></div></div>
         <div class="ev"><div class="rail"><div class="ic in"><svg viewBox="0 0 24 24"><path d="M5 12l5 5L20 7"/></svg></div><div class="ln"></div></div>
-          <div class="b2"><div class="t">Arrived <b>Office</b></div><div class="m">Jeff’s iPhone · 8:48a</div></div></div>
+          <div class="b2"><div class="t"><b>Jeff</b> arrived at <b>Office</b></div><div class="m">Jeff’s iPhone · 8:48a</div></div></div>
         <div class="daysep">Yesterday</div>
         <div class="ev"><div class="rail"><div class="ic in"><svg viewBox="0 0 24 24"><path d="M5 12l5 5L20 7"/></svg></div><div class="ln"></div></div>
-          <div class="b2"><div class="t">Arrived <b>Mom’s house</b></div><div class="m">Celine’s Pixel · 3:21p</div></div></div>
+          <div class="b2"><div class="t"><b>Celine</b> arrived at <b>Mom’s house</b></div><div class="m">Celine’s Pixel · 3:21p</div></div></div>
         <div class="ev"><div class="rail"><div class="ic out"><svg viewBox="0 0 24 24"><path d="M14 5l-7 7 7 7"/></svg></div></div>
-          <div class="b2"><div class="t">Left <b>Home</b></div><div class="m">Celine’s Pixel · 2:55p</div></div></div>
+          <div class="b2"><div class="t"><b>Celine</b> left <b>Home</b></div><div class="m">Celine’s Pixel · 2:55p</div></div></div>
       </div>
     </div>
 
     <!-- ===== MAP ===== -->
     <div class="pane" id="p-map">
-      <div class="map">
+      <div class="mapbar">
+        <button class="daterange" onclick="openSheet('dates')"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 9h18M8 3v4M16 3v4"/></svg>Jun 1 – Jun 17</button>
+        <div class="modeseg">
+          <button class="on" onclick="setMode(this,'live')">Live</button>
+          <button onclick="setMode(this,'trail')">Trail</button>
+          <button onclick="setMode(this,'heat')">Heat</button>
+        </div>
+      </div>
+      <div class="map" id="map" data-mode="live">
         <div class="maptag"><svg viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>on-box render · no tile servers</div>
         <div class="road" style="left:0;right:0;top:48%;height:10px"></div>
         <div class="road" style="top:0;bottom:0;left:34%;width:10px"></div>
         <div class="road" style="left:0;right:0;top:72%;height:6px"></div>
+        <!-- fences: context in every mode -->
         <div class="fence" style="left:36%;top:44%;width:130px;height:130px" onclick="openSheet('fence')"><span>Home</span></div>
         <div class="fence" style="left:78%;top:28%;width:84px;height:84px" onclick="openSheet('fence')"><span>Office</span></div>
-        <div class="pin lv" style="left:37%;top:50%"><div class="head"></div><div class="lbl">Jeff · now</div></div>
-        <div class="pin st" style="left:77%;top:36%"><div class="head"></div><div class="lbl">Celine · 2h</div></div>
+
+        <!-- LIVE: last-seen pins -->
+        <div class="layer live-layer">
+          <div class="pin lv" style="left:37%;top:50%"><div class="head"></div><div class="lbl">Jeff · now</div></div>
+          <div class="pin st" style="left:77%;top:36%"><div class="head"></div><div class="lbl">Celine · 2h</div></div>
+        </div>
+
+        <!-- TRAIL: path between the two dates -->
+        <svg class="layer trail-layer" viewBox="0 0 100 100" preserveAspectRatio="none">
+          <polyline points="78,30 73,34 66,40 60,44 54,46 48,47 43,47 39,46 37,48"
+            fill="none" stroke="var(--teal)" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round" opacity=".95"/>
+          <circle cx="78" cy="30" r="1.8" fill="var(--amber)"/>
+          <circle cx="37" cy="48" r="1.8" fill="var(--teal)"/>
+        </svg>
+
+        <!-- HEAT: dwell density between the two dates -->
+        <div class="layer heat-layer">
+          <div class="heat hot" style="left:37%;top:48%;width:120px;height:120px"></div>
+          <div class="heat" style="left:78%;top:32%;width:84px;height:84px"></div>
+          <div class="heat" style="left:60%;top:43%;width:40px;height:40px;opacity:.7"></div>
+          <div class="heat" style="left:50%;top:46%;width:30px;height:30px;opacity:.55"></div>
+          <div class="legend">less <i></i> more · dwell time</div>
+        </div>
+
         <div class="mapctl"><button>+</button><button>−</button></div>
       </div>
     </div>
@@ -224,6 +272,17 @@
     <button class="btn danger" onclick="closeAll()">Revoke this device</button>
   </div>
 
+  <div class="sheet" id="sheet-dates">
+    <div class="grab"></div>
+    <h3>Trail &amp; heatmap range</h3>
+    <p class="lead">Pull a device’s track and dwell density between two dates.</p>
+    <label class="fld">Device</label><input class="inp" value="Jeff’s iPhone" />
+    <label class="fld">From</label><input class="inp" type="date" value="2026-06-01" />
+    <label class="fld">To</label><input class="inp" type="date" value="2026-06-17" />
+    <button class="btn pri" onclick="closeAll()">Apply range</button>
+    <button class="btn ghost" onclick="closeAll()">Cancel</button>
+  </div>
+
   <div class="sheet" id="sheet-fence">
     <div class="grab"></div>
     <h3>Edit place — Home</h3>
@@ -247,6 +306,10 @@
     window._tab=id;
     // FAB shows on Devices (add device) and Map (add place); hidden on Timeline
     const fab=document.getElementById('fab');fab.classList.toggle('show', id==='map'||id==='devices');
+  }
+  function setMode(btn,m){
+    btn.parentElement.querySelectorAll('button').forEach(b=>b.classList.remove('on'));btn.classList.add('on');
+    document.getElementById('map').dataset.mode=m;
   }
   function openSheet(k){document.getElementById('scrim').classList.add('on');document.getElementById('sheet-'+k).classList.add('on');}
   function closeAll(){document.getElementById('scrim').classList.remove('on');document.querySelectorAll('.sheet').forEach(s=>s.classList.remove('on'));}

@@ -53,10 +53,14 @@ direction, the surface merges all three into **one screen with a bottom nav of t
 tabs — Devices · Timeline · Map**:
 - **Devices** — A's rich device cards (last-seen / battery / connection, fix counts,
   add / rotate / revoke, key-shown-once + OwnTracks HTTP+Basic config).
-- **Timeline** — C's chronological arrived/left feed with a presence strip and
-  on-box-geocoded addresses (the default landing tab).
-- **Map** — B's self-rendered schematic map (pins + dashed fence circles, no tile
-  servers); tap a fence to edit the place.
+- **Timeline** — C's chronological feed with a presence strip and on-box-geocoded
+  addresses (the default landing tab). Entries read as **natural sentences**
+  ("Jeff left Office", "Celine arrived at Mom’s house") — the verb carries the
+  meaning, not a color code; icons are monochrome.
+- **Map** — B's self-rendered schematic map (no tile servers) with a **date-range
+  picker** and three modes: **Live** (last-seen pins), **Trail** (the device's
+  path between the two dates), and **Heat** (dwell-density heatmap). Fences show as
+  context in every mode; tap one to edit the place.
 
 A context FAB appears on Devices (add device) and Map (add place); the geofence
 editor files a **place note** (never edits the graph directly). The a/b/c files are
