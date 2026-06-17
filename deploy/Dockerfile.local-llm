@@ -14,19 +14,26 @@ FROM ubuntu:24.04 AS build
 ENV GOTOOLCHAIN=auto
 
 # glslc compiles the Vulkan compute shaders; golang-go builds llama-swap.
+# NOTE: Ubuntu 24.04's apt `glslc` is marginal with very recent llama.cpp shader
+# sources; pinning LLAMACPP_REF to a known-good commit (below) keeps the pair in
+# sync. If a shader fails to compile, bump glslc (LunarG SDK) or LLAMACPP_REF.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git ca-certificates cmake build-essential libcurl4-openssl-dev \
     glslc libvulkan-dev vulkan-tools golang-go \
     && rm -rf /var/lib/apt/lists/*
 
-# Build llama-server with Vulkan. Bump the clone ref to move llama.cpp forward.
-RUN git clone --depth 1 https://github.com/ggml-org/llama.cpp /src/llama.cpp \
+# Build llama-server with Vulkan. LLAMACPP_REF defaults to master so the image
+# builds today; PIN it to a tag/commit (e.g. b4585) for a reproducible build
+# once you've confirmed one works on your box.
+ARG LLAMACPP_REF=master
+RUN git clone https://github.com/ggml-org/llama.cpp /src/llama.cpp \
+    && git -C /src/llama.cpp checkout "${LLAMACPP_REF}" \
     && cmake -S /src/llama.cpp -B /src/llama.cpp/build \
         -DGGML_VULKAN=ON -DLLAMA_CURL=ON -DCMAKE_BUILD_TYPE=Release \
     && cmake --build /src/llama.cpp/build --config Release -j "$(nproc)" --target llama-server
 
 # llama-swap is a Go project — build from source so we don't guess release-asset
-# names/versions. Pin LLAMA_SWAP_VERSION to a tag (e.g. v167) for reproducibility.
+# names. PIN LLAMA_SWAP_VERSION to a tag (e.g. v167) for a reproducible build.
 ARG LLAMA_SWAP_VERSION=latest
 RUN GOBIN=/out go install "github.com/mostlygeek/llama-swap@${LLAMA_SWAP_VERSION}"
 
@@ -36,7 +43,11 @@ FROM ubuntu:24.04
 # libcurl (llama.cpp links it). vulkan-tools ships vulkaninfo for debugging.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     mesa-vulkan-drivers libvulkan1 vulkan-tools libcurl4 libgomp1 ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    # Ensure the video/render group NAMES exist so compose's name fallback can't
+    # fail container creation when the host GIDs aren't passed (the setup script
+    # passes numeric host GIDs, which is what actually grants /dev/dri access).
+    && groupadd -f video && groupadd -f render
 
 # Copy the whole bin dir, not just the binary: llama.cpp builds shared libs
 # (libllama.so, libggml*.so) and links them with an $ORIGIN rpath, so they must

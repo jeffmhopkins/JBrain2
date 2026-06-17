@@ -23,11 +23,8 @@ from typing import Any
 import yaml
 
 # Capability tiers a prompt may request; jbrain.llm.router maps each to a
-# concrete provider:model, so a prompt file never names a model. `synthesis` is
-# reserved for the Phase 6 wiki's machine-writing — no prompt declares it yet,
-# but the tier and its routing slot exist so the wiki lands as config, not a
-# schema change.
-STRENGTHS = frozenset({"high", "low", "vision", "synthesis", "embedding"})
+# concrete provider:model, so a prompt file never names a model.
+STRENGTHS = frozenset({"high", "low", "vision", "embedding"})
 
 _FRONTMATTER = re.compile(r"\A---\n(.*?)\n---\n(.*)\Z", re.DOTALL)
 _VAR = re.compile(r"\{\{\s*(\w+)\s*\}\}")

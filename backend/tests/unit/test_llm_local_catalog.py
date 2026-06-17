@@ -5,9 +5,8 @@ from typing import Any
 
 from jbrain.config import Settings
 from jbrain.llm import local_catalog
-from jbrain.llm.promptfile import STRENGTHS
 from jbrain.llm.providers import provider_choices
-from jbrain.llm.router import PROVIDERS, TIER_DEFAULTS, _split_spec
+from jbrain.llm.router import PROVIDERS, _split_spec
 
 
 def test_catalog_entries_are_well_formed() -> None:
@@ -26,14 +25,6 @@ def test_catalog_entries_are_well_formed() -> None:
 
 def test_recommended_set_is_the_two_resident_models() -> None:
     assert local_catalog.recommended_ids() == ("qwen3-vl-30b", "gpt-oss-120b")
-
-
-def test_synthesis_tier_is_reserved_and_served_by_the_reasoners() -> None:
-    # The Phase 6 wiki tier exists end-to-end without any wiki task wired yet.
-    assert "synthesis" in STRENGTHS
-    assert TIER_DEFAULTS["synthesis"] == "xai:grok-4.3"
-    serve_synthesis = {m.id for m in local_catalog.CATALOG if "synthesis" in m.tiers}
-    assert serve_synthesis == {"gpt-oss-120b", "glm-4.5-air"}
 
 
 def test_selected_keeps_catalog_order_and_drops_unknown() -> None:

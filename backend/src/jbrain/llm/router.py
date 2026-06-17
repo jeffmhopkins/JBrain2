@@ -67,10 +67,6 @@ TIER_DEFAULTS: dict[str, str] = {
     "high": "xai:grok-4.3",
     "low": "xai:grok-4.3",
     "vision": "xai:grok-4.3",
-    # Reserved for the Phase 6 wiki's synthesis writing — defaults to the same
-    # cloud model as the rest; a future wiki prompt declares `strength: synthesis`
-    # and operators can repoint it (e.g. to a long-context local reasoner).
-    "synthesis": "xai:grok-4.3",
 }
 
 PROVIDERS = ("anthropic", "xai", "local")
