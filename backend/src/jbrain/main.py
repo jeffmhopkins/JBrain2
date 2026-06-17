@@ -143,6 +143,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             connector_registry,
             app.state.lists_repo,
             app.state.appointments_repo,
+            app.state.wiki_read_store,
         )
         app.state.agent_sessions = AgentSessionRepo(maker)
         app.state.agent_runlog = AgentRunLog(maker)

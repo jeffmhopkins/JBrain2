@@ -318,6 +318,50 @@ def build_entity_handlers(entities: EntityReader) -> dict[str, ToolHandler]:
     }
 
 
+class WikiReader(Protocol):
+    async def get_article(self, ctx: SessionContext, article_id: str) -> dict[str, Any] | None:
+        """The assembled article (lead + sections + references), RLS-scoped; None if not visible."""
+        ...
+
+
+def format_wiki_article(article: dict[str, Any]) -> str:
+    """Render an article for the agent to discuss/cite: the lead + each section's prose, then the
+    numbered References (the [n] markers in the prose index into them)."""
+    lines = [f"# {article['title']}", str(article.get("subtitle", ""))]
+    for para in article.get("lead", []):
+        lines.append(str(para.get("text", "")))
+    for section in article.get("sections", []):
+        lines.append(f"\n## {section['heading']} [{section['domain']}]")
+        for block in section.get("blocks", []):
+            lines.append(str(block.get("text", "")))
+        for sub in section.get("subsections", []):
+            lines.append(f"### {sub['heading']}")
+            for block in sub.get("blocks", []):
+                lines.append(str(block.get("text", "")))
+    refs = article.get("references", [])
+    if refs:
+        lines.append("\nReferences:")
+        lines.extend(f"[{r['n']}] {r['meta']} — {r['snippet']}" for r in refs)
+    return "\n".join(line for line in lines if line.strip())
+
+
+def build_wiki_handlers(wiki: WikiReader) -> dict[str, ToolHandler]:
+    """The read-only wiki-editorial tool: read a machine-written article (with its sources) so the
+    agent can explain or discuss it in Talk. Read-only — the wiki is never edited directly; the
+    write levers (correction note, source exclusion, rebuild) are separate."""
+
+    async def read_wiki_tool(arguments: dict, ctx: ToolContext) -> ToolOutput:
+        article_id = str(arguments.get("article_id", "")).strip()
+        if not article_id:
+            return ToolOutput("read_wiki needs an article_id.")
+        article = await wiki.get_article(ctx.session, article_id)
+        if article is None:
+            return ToolOutput("No wiki article with that id is in scope.")
+        return ToolOutput(format_wiki_article(article))
+
+    return {"read_wiki": read_wiki_tool}
+
+
 def build_registry(
     search: SearchService,
     notes: NotesRepo,
@@ -327,6 +371,7 @@ def build_registry(
     connectors: ConnectorRegistry,
     lists: ListsRepo,
     appointments: AppointmentsRepo,
+    wiki: WikiReader,
 ) -> ToolRegistry:
     """The agent's tool registry: every shipped sidecar bound to its handler — the
     read tools, the Tier-A memory tools, the list tools (which write the owner's
@@ -348,5 +393,6 @@ def build_registry(
             **build_proposal_handlers(proposals),
             **build_merge_handlers(proposals, entities),
             **build_connector_handlers(connectors, proposals),
+            **build_wiki_handlers(wiki),
         },
     )
