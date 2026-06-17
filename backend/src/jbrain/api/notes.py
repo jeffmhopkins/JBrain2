@@ -84,7 +84,12 @@ class NoteOut(BaseModel):
     accuracy_m: float | None
 
 
-def note_out(n: NoteInfo) -> NoteOut:
+def note_out(n: NoteInfo, *, include_location: bool) -> NoteOut:
+    # Note lat/lon/accuracy are owner-eyes metadata living on the note row across
+    # ALL domains, so the domain RLS firewall does not strip them — this
+    # serializer is the sole defense. HTTP request principals are never
+    # owner-narrowed (ctx_for sets no owner_scoped), so `kind == 'owner'` is the
+    # correct gate here; the owner-narrowed agent/tool layer guards separately.
     return NoteOut(
         id=n.id,
         client_id=n.client_id,
@@ -108,9 +113,9 @@ def note_out(n: NoteInfo) -> NoteOut:
             )
             for a in n.attachments
         ],
-        latitude=n.latitude,
-        longitude=n.longitude,
-        accuracy_m=n.accuracy_m,
+        latitude=n.latitude if include_location else None,
+        longitude=n.longitude if include_location else None,
+        accuracy_m=n.accuracy_m if include_location else None,
     )
 
 
@@ -186,7 +191,7 @@ async def create_note(
             enqueued=wf_events.shadow_enqueued("ingest_note", {"note_id": note.id}),
             principal_id=ctx.principal_id,
         )
-    return note_out(note)
+    return note_out(note, include_location=principal.kind == "owner")
 
 
 @router.get("/notes")
@@ -199,7 +204,11 @@ async def list_notes(
     limit = max(1, min(limit, 200))
     notes = await repo.list_notes(ctx_for(principal), limit=limit, before=before)
     next_cursor = notes[-1].created_at if len(notes) == limit else None
-    return NoteListOut(notes=[note_out(n) for n in notes], next_cursor=next_cursor)
+    include_location = principal.kind == "owner"
+    return NoteListOut(
+        notes=[note_out(n, include_location=include_location) for n in notes],
+        next_cursor=next_cursor,
+    )
 
 
 @router.patch("/notes/{note_id}")
@@ -227,7 +236,7 @@ async def update_note(
     # Re-chunk under the (possibly new) domain — chunks always derive domain
     # from the note at ingest time; ingest then re-enqueues embedding.
     await jobs.enqueue(ctx, "ingest_note", {"note_id": note_id})
-    return note_out(note)
+    return note_out(note, include_location=principal.kind == "owner")
 
 
 @router.delete("/notes/{note_id}", status_code=204)
@@ -255,7 +264,7 @@ async def get_note(note_id: str, principal: PrincipalDep, repo: NotesRepoDep) ->
     note = await repo.get_note(ctx_for(principal), note_id)
     if note is None:
         raise HTTPException(status_code=404, detail="note not found")
-    return note_out(note)
+    return note_out(note, include_location=principal.kind == "owner")
 
 
 @router.post("/notes/{note_id}/attachments", status_code=201)
