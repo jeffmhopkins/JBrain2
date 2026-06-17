@@ -182,6 +182,97 @@ async def test_subsection_must_inherit_parent_domain(maker: async_sessionmaker) 
         )
 
 
+async def test_subsection_trigger_holds_under_a_narrowed_session(maker: async_sessionmaker) -> None:
+    # The firewall-critical case: under a HEALTH-narrowed session the parent SELECT is
+    # RLS-filtered, so an INVOKER trigger would see NULL and let a cross-domain child through.
+    # The SECURITY DEFINER trigger must still see the finance parent and reject.
+    pid = await _owner_pid(maker)
+    aid = await _article(maker, uuid.uuid4().hex[:8])
+    finance_parent = await _section(maker, aid, "finance")  # created as full OWNER
+    health = read_context(pid, ("health",))
+    with pytest.raises(DBAPIError):
+        async with scoped_session(maker, health) as s:
+            await s.execute(
+                text(
+                    "INSERT INTO app.wiki_sections (article_id, domain_code, parent_section_id)"
+                    " VALUES (:a, 'health', :p)"
+                ),
+                {"a": aid, "p": finance_parent},
+            )
+
+
+async def test_subsection_trigger_holds_on_update_reparent(maker: async_sessionmaker) -> None:
+    await _owner_pid(maker)
+    aid = await _article(maker, uuid.uuid4().hex[:8])
+    finance_parent = await _section(maker, aid, "finance")
+    child = await _section(maker, aid, "health")
+    # Re-parenting a health child under a finance parent must be rejected on UPDATE.
+    with pytest.raises(DBAPIError):
+        async with scoped_session(maker, OWNER) as s:
+            await s.execute(
+                text("UPDATE app.wiki_sections SET parent_section_id = :p WHERE id = :c"),
+                {"p": finance_parent, "c": child},
+            )
+
+
+async def test_cannot_change_domain_of_section_with_subsections(maker: async_sessionmaker) -> None:
+    await _owner_pid(maker)
+    aid = await _article(maker, uuid.uuid4().hex[:8])
+    parent = await _section(maker, aid, "health")
+    async with scoped_session(maker, OWNER) as s:
+        await s.execute(
+            text(
+                "INSERT INTO app.wiki_sections (article_id, domain_code, parent_section_id)"
+                " VALUES (:a, 'health', :p)"
+            ),
+            {"a": aid, "p": parent},
+        )
+    # Changing the parent's domain would orphan the subtree into a mismatch — rejected.
+    with pytest.raises(DBAPIError):
+        async with scoped_session(maker, OWNER) as s:
+            await s.execute(
+                text("UPDATE app.wiki_sections SET domain_code = 'finance' WHERE id = :p"),
+                {"p": parent},
+            )
+
+
+async def test_index_domain_must_match_section(maker: async_sessionmaker) -> None:
+    await _owner_pid(maker)
+    aid = await _article(maker, uuid.uuid4().hex[:8])
+    health_section = await _section(maker, aid, "health")
+    # A mislabeled index row (general for a health section) must be rejected by the trigger,
+    # or it would make the health embedding rankable by a general-scoped ANN query.
+    with pytest.raises(DBAPIError):
+        async with scoped_session(maker, OWNER) as s:
+            await s.execute(
+                text(
+                    "INSERT INTO app.wiki_index (section_id, domain_code, summary)"
+                    " VALUES (:s, 'general', 'sum')"
+                ),
+                {"s": health_section},
+            )
+
+
+async def test_non_owner_cannot_write(maker: async_sessionmaker) -> None:
+    await _owner_pid(maker)
+    aid = await _article(maker, uuid.uuid4().hex[:8])
+    token = SessionContext(principal_kind="capability_token", domain_scopes=("general",))
+    # A non-owner capability token can neither create an article nor a section (WITH CHECK).
+    with pytest.raises(ProgrammingError):
+        async with scoped_session(maker, token) as s:
+            await s.execute(
+                text("INSERT INTO app.wiki_articles (title, slug) VALUES ('x', 'x-tok')")
+            )
+    with pytest.raises(ProgrammingError):
+        async with scoped_session(maker, token) as s:
+            await s.execute(
+                text(
+                    "INSERT INTO app.wiki_sections (article_id, domain_code) VALUES (:a, 'general')"
+                ),
+                {"a": aid},
+            )
+
+
 async def test_source_exclusions_owner_and_domain(maker: async_sessionmaker) -> None:
     pid = await _owner_pid(maker)
     nid = str(uuid.uuid4())

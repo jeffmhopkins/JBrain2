@@ -87,20 +87,33 @@ def upgrade() -> None:
     op.execute("CREATE INDEX wiki_sections_parent_idx ON app.wiki_sections (parent_section_id)")
     # A subsection must share its parent's domain, so the whole subtree is one firewall unit
     # and hides together. Enforced in Postgres, not app code (non-negotiable #3).
+    # SECURITY DEFINER + pinned search_path: the parent lookup must see ALL sections, because
+    # the writers are narrowed/owner-scoped sessions under FORCE RLS — an INVOKER lookup would
+    # be RLS-filtered to NULL and silently let a cross-domain child through. NULL parent domain
+    # is a hard failure (IS DISTINCT FROM is NULL-safe). On UPDATE, a row that already has
+    # subsections cannot change its own domain (that would orphan the subtree into a mismatch);
+    # combined with the per-parent equality this keeps the whole chain a single domain.
     op.execute(
         """
-        CREATE FUNCTION app.wiki_section_domain_inherit() RETURNS trigger AS $$
+        CREATE FUNCTION app.wiki_section_domain_inherit() RETURNS trigger
+        LANGUAGE plpgsql SECURITY DEFINER SET search_path = app, pg_temp AS $$
+        DECLARE parent_domain text;
         BEGIN
-            IF NEW.parent_section_id IS NOT NULL
-               AND NEW.domain_code <> (
-                   SELECT domain_code FROM app.wiki_sections WHERE id = NEW.parent_section_id
-               ) THEN
-                RAISE EXCEPTION
-                    'wiki subsection domain % must equal its parent''s domain', NEW.domain_code;
+            IF NEW.parent_section_id IS NOT NULL THEN
+                SELECT domain_code INTO parent_domain
+                    FROM app.wiki_sections WHERE id = NEW.parent_section_id;
+                IF parent_domain IS NULL OR NEW.domain_code IS DISTINCT FROM parent_domain THEN
+                    RAISE EXCEPTION
+                        'wiki subsection domain % must equal its parent''s domain', NEW.domain_code;
+                END IF;
+            END IF;
+            IF TG_OP = 'UPDATE' AND NEW.domain_code IS DISTINCT FROM OLD.domain_code
+               AND EXISTS (SELECT 1 FROM app.wiki_sections WHERE parent_section_id = NEW.id) THEN
+                RAISE EXCEPTION 'cannot change the domain of a wiki_section that has subsections';
             END IF;
             RETURN NEW;
         END;
-        $$ LANGUAGE plpgsql
+        $$
         """
     )
     op.execute(
@@ -185,6 +198,33 @@ def upgrade() -> None:
         """
     )
     op.execute("GRANT SELECT, INSERT, UPDATE, DELETE ON app.wiki_index TO jbrain_app")
+    # The index row's domain MUST equal its section's (the contract's Postgres-enforced
+    # firewall), so a mislabeled index row can't make a health section's embedding rankable
+    # by a general-scoped ANN query. SECURITY DEFINER so the section lookup bypasses RLS.
+    op.execute(
+        """
+        CREATE FUNCTION app.wiki_index_domain_match() RETURNS trigger
+        LANGUAGE plpgsql SECURITY DEFINER SET search_path = app, pg_temp AS $$
+        DECLARE section_domain text;
+        BEGIN
+            SELECT domain_code INTO section_domain
+                FROM app.wiki_sections WHERE id = NEW.section_id;
+            IF section_domain IS NULL OR NEW.domain_code IS DISTINCT FROM section_domain THEN
+                RAISE EXCEPTION 'wiki_index domain % must equal its section''s domain',
+                    NEW.domain_code;
+            END IF;
+            RETURN NEW;
+        END;
+        $$
+        """
+    )
+    op.execute(
+        """
+        CREATE TRIGGER wiki_index_domain_match
+        BEFORE INSERT OR UPDATE ON app.wiki_index
+        FOR EACH ROW EXECUTE FUNCTION app.wiki_index_domain_match()
+        """
+    )
 
     # --- source exclusions: owner editorial suppression (note-id half; fact_id FK is Wave C)
     op.execute(
@@ -220,10 +260,13 @@ def upgrade() -> None:
 def downgrade() -> None:
     op.execute("DROP INDEX IF EXISTS app.notes_wiki_unbuilt_idx")
     op.execute("ALTER TABLE app.notes DROP COLUMN wiki_built")
-    op.execute("DROP TABLE app.wiki_source_exclusions")
-    op.execute("DROP TABLE app.wiki_index")
-    op.execute("ALTER TABLE app.wiki_sections DROP CONSTRAINT wiki_sections_current_revision_fk")
-    op.execute("DROP TABLE app.wiki_revisions")
-    op.execute("DROP TABLE app.wiki_sections")
-    op.execute("DROP FUNCTION app.wiki_section_domain_inherit")
-    op.execute("DROP TABLE app.wiki_articles")
+    op.execute("DROP TABLE IF EXISTS app.wiki_source_exclusions")
+    op.execute("DROP TABLE IF EXISTS app.wiki_index")  # drops its domain-match trigger
+    op.execute("DROP FUNCTION IF EXISTS app.wiki_index_domain_match")
+    op.execute(
+        "ALTER TABLE app.wiki_sections DROP CONSTRAINT IF EXISTS wiki_sections_current_revision_fk"
+    )
+    op.execute("DROP TABLE IF EXISTS app.wiki_revisions")
+    op.execute("DROP TABLE IF EXISTS app.wiki_sections")  # drops its domain-inherit trigger
+    op.execute("DROP FUNCTION IF EXISTS app.wiki_section_domain_inherit")
+    op.execute("DROP TABLE IF EXISTS app.wiki_articles")
