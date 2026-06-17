@@ -12,13 +12,22 @@ from datetime import UTC, datetime
 
 import pytest
 from sqlalchemy import text
+from sqlalchemy.exc import ProgrammingError
 
+from jbrain.analysis.predicates import alias_canonicals, decide_predicates, record_predicate_alias
 from jbrain.analysis.repo import SqlAnalysisRepo
-from jbrain.db.session import scoped_session
+from jbrain.db.session import SessionContext, scoped_session
 from jbrain.queue import SYSTEM_CTX
 from tests.conftest import docker_available
 from tests.integration.test_extraction_pg import make_note, maker  # noqa: F401
 from tests.integration.test_rls import OWNER, database_url  # noqa: F401
+
+
+class _BoomEmbed:
+    """Fails if touched — proves an aliased predicate short-circuits with no embed."""
+
+    async def embed(self, texts: list[str]) -> list[list[float]]:
+        raise AssertionError("decide_predicates embedded an aliased predicate")
 
 pytestmark = [
     pytest.mark.integration,
@@ -202,6 +211,63 @@ async def test_map_to_existing_rewrites_facts_and_event_drives_consolidation(mak
     mine = [d for d in diffs if d.event_type == wf_events.RESOLUTION_CHANGED]
     assert mine and all(d.error is None for d in mine)
     assert await _count_consolidate(maker) == before + 1
+
+
+async def _aliases(maker) -> dict[str, str]:  # noqa: F811
+    async with scoped_session(maker, SYSTEM_CTX) as s:
+        rows = (
+            await s.execute(text("SELECT raw_norm, canonical_name FROM app.predicate_aliases"))
+        ).all()
+    return {r.raw_norm: r.canonical_name for r in rows}
+
+
+async def test_map_to_existing_records_a_durable_alias(maker):  # noqa: F811
+    # Loop 3a Wave 1: resolving raw->canonical must record a durable alias so the drift spelling
+    # collapses at canonicalize time next run (not just a one-time stored-fact heal).
+    await _seed_canonical(maker, "spouse")
+    _fact, _ = await _seed_fact(maker, "zzqMarriedTo")
+    card = await _insert_card(maker, "zzqMarriedTo")
+    await SqlAnalysisRepo(maker).resolve_review(
+        OWNER, card, "map_to_existing", {"canonical_name": "spouse"}
+    )
+    # The alias is keyed by _norm_key (case/separator-insensitive), so a spelling variant collapses.
+    assert (await _aliases(maker)).get("zzqmarriedto") == "spouse"
+
+
+async def test_aliased_predicate_short_circuits_to_strong_without_embedding(maker):  # noqa: F811
+    await _seed_canonical(maker, "spouse")
+    async with scoped_session(maker, SYSTEM_CTX) as s:
+        await record_predicate_alias(s, "married_To", "spouse")
+    # A spelling variant of the aliased raw still resolves (the alias key is normalized), and the
+    # BoomEmbed proves no embedding ran for it.
+    async with scoped_session(maker, SYSTEM_CTX) as s:
+        decisions = await decide_predicates(
+            s, [("MarriedTo", "x marriedTo y", "relationship")], embedder=_BoomEmbed()
+        )
+    assert len(decisions) == 1
+    assert decisions[0].band == "strong" and decisions[0].canonical == "spouse"
+
+
+async def test_alias_canonicals_is_normalized_and_batched(maker):  # noqa: F811
+    await _seed_canonical(maker, "spouse")
+    async with scoped_session(maker, SYSTEM_CTX) as s:
+        await record_predicate_alias(s, "marriedTo", "spouse")
+        got = await alias_canonicals(s, ["Married_To", "unaliasedPred"])
+    assert got == {"marriedto": "spouse"}  # only the aliased raw, under its normalized key
+
+
+async def test_predicate_alias_insert_is_owner_only(maker):  # noqa: F811
+    # The new table is global-read but owner/system-insert (RLS isolation, CLAUDE.md rule 3).
+    await _seed_canonical(maker, "spouse")
+    token = SessionContext(principal_kind="capability_token", domain_scopes=("general",))
+    with pytest.raises(ProgrammingError):  # RLS WITH CHECK denies a non-owner insert
+        async with scoped_session(maker, token) as s:
+            await record_predicate_alias(s, "sneakyAlias", "spouse")
+    # ...and a non-owner still READS the global reference data (a row the owner recorded).
+    async with scoped_session(maker, SYSTEM_CTX) as s:
+        await record_predicate_alias(s, "ownerAlias", "spouse")
+    async with scoped_session(maker, token) as s:
+        assert (await alias_canonicals(s, ["ownerAlias"])) == {"owneralias": "spouse"}
 
 
 async def test_map_to_unknown_canonical_is_rejected(maker):  # noqa: F811

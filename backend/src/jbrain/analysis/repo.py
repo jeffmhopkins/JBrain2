@@ -18,7 +18,11 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from jbrain.analysis.consolidation import rewrite_predicate
 from jbrain.analysis.display import mark_snippet
 from jbrain.analysis.entities import are_distinct, merge_entity_pair, plan_merge
-from jbrain.analysis.predicates import decide_predicate, raw_descriptor
+from jbrain.analysis.predicates import (
+    decide_predicate,
+    raw_descriptor,
+    record_predicate_alias,
+)
 from jbrain.analysis.supersession import CURRENT_ASSERTIONS, is_functional
 from jbrain.db.session import SessionContext, scoped_session
 from jbrain.embed import EmbedClient
@@ -1340,9 +1344,11 @@ class SqlAnalysisRepo:
                 # store the YAML-backed normalize_predicate reads, so the durable
                 # registry alias is a Phase-5 correction note.
                 rewritten = await rewrite_predicate(session, raw, canonical)
-                # Forward-compat: once the alias lands in the registry (Phase 5),
-                # the sweep heals any row this pass had to skip. The sweep is now
-                # enqueued by the event dispatcher (W2·C cutover): the
+                # Durable alias (Loop 3a, Wave 1): record raw->canonical so the drift spelling
+                # collapses at canonicalize time next run instead of re-filing this card. Closes
+                # the re-drift loop this branch's TODO once deferred to "a Phase-5 correction note".
+                await record_predicate_alias(session, raw, canonical)
+                # The sweep is enqueued by the event dispatcher (W2·C cutover): the
                 # `predicate_remapped` effect below drives `_emit_resolution_event`,
                 # whose resolution.changed event the engine resolves to the
                 # consolidate pipeline — the direct enqueue here is gone.
@@ -1399,6 +1405,13 @@ class SqlAnalysisRepo:
             # raw name (name == raw), so there is nothing to move.
             if name != raw:
                 rewritten = await rewrite_predicate(session, raw, name)
+                # Durable alias (Loop 3a, Wave 1) so the raw spelling collapses next run. FK-safe
+                # only when `name` is a real canonical row: the mint above guarantees that for a
+                # minted name; a registry-declared name may not be synced into canonical_predicates
+                # yet (the alias FK requires it), so skip that case — it re-cards until the sync,
+                # a pre-existing limitation, not a Loop-3a regression.
+                if not get_registry().declares_predicate(name):
+                    await record_predicate_alias(session, raw, name)
                 effects.insert(
                     0,
                     {
