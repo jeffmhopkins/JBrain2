@@ -17,6 +17,7 @@ import structlog
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from jbrain import queue
+from jbrain.agent.correctionmine import CORRECTION_MINE_SPEC, correction_mine_handler
 from jbrain.agent.predicatereview import PREDICATE_REVIEW_SPEC, predicate_review_handler
 from jbrain.agent.skilldistill import SKILL_DISTILL_SPEC, skill_distill_handler
 from jbrain.agent.skillsweep import SKILL_SWEEP_SPEC, skill_sweep_handler
@@ -296,6 +297,9 @@ async def run() -> None:
         # Loop 3a predicate-canon review (Wave 2): stage owner proposals to resolve open
         # new_predicate cards (map/mint). No LLM call; in-code only (a migration seeds it).
         "predicate_review": predicate_review_handler(maker),
+        # Loop 3b Tier-B (correction mining): read ended chats for owner corrections of facts and
+        # stage owner correction-note proposals (the LLM judges; budget-gated). In-code only.
+        "correction_mine": correction_mine_handler(maker, router=router),
         # The wiki builder (Phase-6 Wave C2): dirty-bit-driven article build + reindex + prune.
         # In-code only (not in the app.actions seed); a migration seeds the schedules. The live
         # LLM rewriter (C2b) drives router.complete behind the grounding gate + wiki-build budget;
@@ -326,6 +330,7 @@ async def run() -> None:
             SKILL_DISTILL_SPEC,
             SKILL_SWEEP_SPEC,
             PREDICATE_REVIEW_SPEC,
+            CORRECTION_MINE_SPEC,
             *WIKI_SPECS,
         )
     )
