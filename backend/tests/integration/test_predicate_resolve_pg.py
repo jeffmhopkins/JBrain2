@@ -14,7 +14,12 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.exc import ProgrammingError
 
-from jbrain.analysis.predicates import alias_canonicals, decide_predicates, record_predicate_alias
+from jbrain.analysis.predicates import (
+    alias_canonicals,
+    decide_predicates,
+    delete_predicate_alias,
+    record_predicate_alias,
+)
 from jbrain.analysis.repo import SqlAnalysisRepo
 from jbrain.db.session import SessionContext, scoped_session
 from jbrain.queue import SYSTEM_CTX
@@ -28,6 +33,17 @@ class _BoomEmbed:
 
     async def embed(self, texts: list[str]) -> list[list[float]]:
         raise AssertionError("decide_predicates embedded an aliased predicate")
+
+
+class _RecordingEmbed:
+    """Records the texts it embedded — proves a mixed batch embeds ONLY the non-aliased subset."""
+
+    def __init__(self) -> None:
+        self.texts: list[str] = []
+
+    async def embed(self, texts: list[str]) -> list[list[float]]:
+        self.texts.extend(texts)
+        return [[0.0] * 384 for _ in texts]
 
 
 pytestmark = [
@@ -255,6 +271,67 @@ async def test_alias_canonicals_is_normalized_and_batched(maker):  # noqa: F811
         await record_predicate_alias(s, "marriedTo", "spouse")
         got = await alias_canonicals(s, ["Married_To", "unaliasedPred"])
     assert got == {"marriedto": "spouse"}  # only the aliased raw, under its normalized key
+
+
+async def test_decide_predicates_mixed_batch_embeds_only_the_non_aliased(maker):  # noqa: F811
+    # The placeholder-then-fill must preserve order/length and embed ONLY the non-aliased subset.
+    await _seed_canonical(maker, "spouse")
+    async with scoped_session(maker, SYSTEM_CTX) as s:
+        await record_predicate_alias(s, "marriedTo", "spouse")
+        await record_predicate_alias(s, "wedTo", "spouse")
+    rec = _RecordingEmbed()
+    async with scoped_session(maker, SYSTEM_CTX) as s:
+        decisions = await decide_predicates(
+            s,
+            [
+                ("marriedTo", "x marriedTo y", "relationship"),  # aliased
+                ("frobnicates", "x frobnicates y", "state"),  # not aliased
+                ("wedTo", "x wedTo y", "relationship"),  # aliased
+            ],
+            embedder=rec,
+        )
+    # Order + length preserved; the aliased items map to STRONG/spouse, the middle falls through.
+    assert [d.band for d in decisions] == ["strong", "cold", "strong"]
+    assert decisions[0].canonical == "spouse" and decisions[2].canonical == "spouse"
+    assert decisions[1].canonical is None
+    # Cost + right-index mapping: exactly the one non-aliased predicate was embedded.
+    assert len(rec.texts) == 1 and "frobnicates" in rec.texts[0]
+
+
+async def test_remap_updates_the_alias_to_the_latest_canonical(maker):  # noqa: F811
+    # A re-resolution to a DIFFERENT canonical heals the facts onto it, so the alias must follow.
+    await _seed_canonical(maker, "spouse")
+    await _seed_canonical(maker, "partner")
+    async with scoped_session(maker, SYSTEM_CTX) as s:
+        await record_predicate_alias(s, "pairBondedWith", "spouse")
+        await record_predicate_alias(s, "pairBondedWith", "partner")
+    assert (await _aliases(maker)).get("pairbondedwith") == "partner"
+
+
+async def test_reopen_map_drops_the_durable_alias(maker):  # noqa: F811
+    # Reopening a map must fully reverse: facts back to raw AND the durable alias gone, else the
+    # next canonicalize run silently re-collapses the spelling to the rejected canonical.
+    await _seed_canonical(maker, "spouse")
+    fact_id, _ = await _seed_fact(maker, "zzqReopenAlias")
+    card = await _insert_card(maker, "zzqReopenAlias")
+    repo = SqlAnalysisRepo(maker)
+    await repo.resolve_review(OWNER, card, "map_to_existing", {"canonical_name": "spouse"})
+    assert (await _aliases(maker)).get("zzqreopenalias") == "spouse"
+    await repo.reopen_review(OWNER, card)
+    assert "zzqreopenalias" not in await _aliases(maker)  # alias dropped
+    assert await _fact_predicate(maker, fact_id) == "zzqReopenAlias"  # fact restored
+
+
+async def test_predicate_alias_delete_is_owner_only(maker):  # noqa: F811
+    # DELETE is owner/system-only too (RLS USING(is_owner())): a non-owner's delete matches no rows
+    # (silently, not an error — unlike the INSERT WITH CHECK), so the alias survives.
+    await _seed_canonical(maker, "spouse")
+    async with scoped_session(maker, SYSTEM_CTX) as s:
+        await record_predicate_alias(s, "ownerOnlyDel", "spouse")
+    token = SessionContext(principal_kind="capability_token", domain_scopes=("general",))
+    async with scoped_session(maker, token) as s:
+        await delete_predicate_alias(s, "ownerOnlyDel", "spouse")
+    assert (await _aliases(maker)).get("owneronlydel") == "spouse"  # survived the non-owner delete
 
 
 async def test_predicate_alias_insert_is_owner_only(maker):  # noqa: F811

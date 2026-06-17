@@ -20,6 +20,7 @@ from jbrain.analysis.display import mark_snippet
 from jbrain.analysis.entities import are_distinct, merge_entity_pair, plan_merge
 from jbrain.analysis.predicates import (
     decide_predicate,
+    delete_predicate_alias,
     raw_descriptor,
     record_predicate_alias,
 )
@@ -1623,6 +1624,9 @@ class SqlAnalysisRepo:
                         ),
                         {"raw": effect["raw"], "id": row_id, "canon": effect["canonical"]},
                     )
+                # Drop the durable alias too, so the reopen fully reverses — else the next
+                # canonicalize run would re-collapse the raw spelling to the now-rejected canonical.
+                await delete_predicate_alias(session, effect["raw"], effect["canonical"])
             elif action == "minted":
                 # A minted canonical predicate is durable vocabulary other facts
                 # may already use; reopening re-queues the card but never un-mints

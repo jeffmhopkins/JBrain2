@@ -151,11 +151,25 @@ async def record_predicate_alias(session: AsyncSession, raw: str, canonical: str
     canonicalize time on later runs. Written when a `new_predicate` card resolves to an existing
     canonical (the owner-approved resolution path); the FK guarantees `canonical` is a real
     canonical predicate."""
+    # DO UPDATE (not DO NOTHING): a later re-resolution of the same raw to a DIFFERENT canonical
+    # heals the stored facts onto the new target, so the durable alias must follow it too — else
+    # the next canonicalize run would re-collapse the spelling to the stale (superseded) canonical.
     await session.execute(
         text(
             "INSERT INTO app.predicate_aliases (raw_norm, canonical_name)"
-            " VALUES (:k, :c) ON CONFLICT (raw_norm) DO NOTHING"
+            " VALUES (:k, :c)"
+            " ON CONFLICT (raw_norm) DO UPDATE SET canonical_name = excluded.canonical_name"
         ),
+        {"k": _norm_key(raw), "c": canonical},
+    )
+
+
+async def delete_predicate_alias(session: AsyncSession, raw: str, canonical: str) -> None:
+    """Drop a durable alias (idempotent), guarded on `canonical` so a later re-map's different
+    alias isn't clobbered. Called when a `map_to_existing`/rename resolution is reopened, so the
+    reopen fully reverses instead of leaving the spelling collapsing to the rejected canonical."""
+    await session.execute(
+        text("DELETE FROM app.predicate_aliases WHERE raw_norm = :k AND canonical_name = :c"),
         {"k": _norm_key(raw), "c": canonical},
     )
 

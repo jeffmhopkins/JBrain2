@@ -49,12 +49,17 @@ def upgrade() -> None:
     op.execute(
         "CREATE POLICY predicate_aliases_read ON app.predicate_aliases FOR SELECT USING (true)"
     )
-    # Self-extending: only the owner/system context records an alias (an approved resolution).
+    # Self-extending: only the owner/system context records an alias (an approved resolution)
+    # or drops one (reopening that resolution — the reopen must fully reverse).
     op.execute(
         "CREATE POLICY predicate_aliases_insert ON app.predicate_aliases"
         " FOR INSERT WITH CHECK (app.is_owner())"
     )
-    op.execute("GRANT SELECT, INSERT ON app.predicate_aliases TO jbrain_app")
+    op.execute(
+        "CREATE POLICY predicate_aliases_delete ON app.predicate_aliases"
+        " FOR DELETE USING (app.is_owner())"
+    )
+    op.execute("GRANT SELECT, INSERT, DELETE ON app.predicate_aliases TO jbrain_app")
 
 
 def downgrade() -> None:
