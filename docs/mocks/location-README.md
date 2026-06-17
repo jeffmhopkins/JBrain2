@@ -48,9 +48,25 @@ faithful to the firewall, not just pretty:
 
 ## Decision
 
-**Chosen: _[pending owner selection]_.** Once picked, the chosen file is refined
-to `location-chosen-<name>.html`, the **teal** location token is recorded in
-`DESIGN.md` (the domain-color table) and `frontend/src/styles/tokens.css`, and the
-a/b/c files are retained as the decision record. Mock fixtures for
-default / empty / error / offline / revoked-device states are part of Wave 5's DoD.
-Live-tracking map visualization beyond the schematic is a named, deferred follow-on.
+**Chosen: a combined direction → `location-chosen-combined.html`.** Per owner
+direction, the surface merges all three into **one screen with a bottom nav of three
+tabs — Devices · Timeline · Map**:
+- **Devices** — A's rich device cards (last-seen / battery / connection, fix counts,
+  add / rotate / revoke, key-shown-once + OwnTracks HTTP+Basic config).
+- **Timeline** — C's chronological arrived/left feed with a presence strip and
+  on-box-geocoded addresses (the default landing tab).
+- **Map** — B's self-rendered schematic map (pins + dashed fence circles, no tile
+  servers); tap a fence to edit the place.
+
+A context FAB appears on Devices (add device) and Map (add place); the geofence
+editor files a **place note** (never edits the graph directly). The a/b/c files are
+retained as the decision record. The **teal** location token gets recorded in
+`DESIGN.md` (domain-color table) and `frontend/src/styles/tokens.css` when Wave 5
+starts. Mock fixtures for default / empty / error / offline / revoked-device states
+are part of Wave 5's DoD; live-tracking map visualization beyond the schematic is a
+named, deferred follow-on.
+
+> **Token note for Wave 5:** `--teal (#6fb6b1)` is currently the *MedicalProcedure*
+> entity-type accent in `tokens.css`. Reusing it as the *location domain* color is a
+> different table (entity-type accents vs domain colors), but the overlap should be
+> confirmed with the owner — or a distinct location hue chosen — at implementation.
