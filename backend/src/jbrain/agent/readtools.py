@@ -372,6 +372,7 @@ def build_registry(
     lists: ListsRepo,
     appointments: AppointmentsRepo,
     wiki: WikiReader,
+    wiki_write: dict[str, ToolHandler],
 ) -> ToolRegistry:
     """The agent's tool registry: every shipped sidecar bound to its handler — the
     read tools, the Tier-A memory tools, the list tools (which write the owner's
@@ -394,5 +395,6 @@ def build_registry(
             **build_merge_handlers(proposals, entities),
             **build_connector_handlers(connectors, proposals),
             **build_wiki_handlers(wiki),
+            **wiki_write,
         },
     )

@@ -19,6 +19,7 @@ from jbrain.agent.readtools import (
     format_wiki_article,
 )
 from jbrain.agent.toolfile import load_tool
+from jbrain.agent.wikiwritetools import build_wiki_write_handlers
 from jbrain.connectors.base import ConnectorRegistry
 from jbrain.connectors.medical import medical_connectors
 from jbrain.db.session import SessionContext
@@ -463,10 +464,14 @@ def test_build_registry_binds_the_shipped_sidecars() -> None:
         object(),  # type: ignore[arg-type]
         object(),  # type: ignore[arg-type]
         object(),  # type: ignore[arg-type]  # wiki reader
+        build_wiki_write_handlers(object(), object(), object()),  # type: ignore[arg-type]
     )
     shipped = {
         "search",
         "read_wiki",
+        "file_correction",
+        "request_rebuild",
+        "add_source_exclusion",
         "read_note",
         "read_entity",
         "find_entity",
@@ -611,6 +616,21 @@ def test_sidecars_pinned_to_their_versions() -> None:
             "read_wiki",
             1,
             "16c880ea78ce613abb9373ec926a3a266bc40cff04176aaa49f59b87a89c2997",
+        ),
+        "file_correction.tool": (
+            "file_correction",
+            1,
+            "00bdff904f7d167f0e865ce11ec01e0221d0de7570a589c531ee2af61a69d87d",
+        ),
+        "request_rebuild.tool": (
+            "request_rebuild",
+            1,
+            "3e26e964361fc0f20826ae116661700603253a93bd0459f6ad276225157a9e1c",
+        ),
+        "add_source_exclusion.tool": (
+            "add_source_exclusion",
+            1,
+            "216ca56795bcb7484aa43b7d14b4bf970c717a463e3b8af71d77dfd2c13eccf8",
         ),
     }
     # Every shipped sidecar must appear above — a new `.tool` cannot slip in
