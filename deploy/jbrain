@@ -5,6 +5,16 @@ set -euo pipefail
 
 cd /opt/jbrain2
 
+# The opt-in GPU gateway lives behind the `local-llm` compose profile. Activate
+# it for routine commands ONLY when the operator enabled local hosting, so a
+# stock stack never builds/starts it. (We deliberately do NOT persist
+# COMPOSE_PROFILES in .env — that would drag the gateway into every command and
+# silently drop the `tools` profile.)
+PROFILE=()
+if [ -f .env ] && grep -q '^LOCAL_LLM_ENABLED=true' .env; then
+  PROFILE=(--profile local-llm)
+fi
+
 usage() {
   cat <<EOF
 Usage: jbrain <command>
@@ -23,13 +33,13 @@ EOF
 
 case "${1:-}" in
   status)
-    docker compose ps
+    docker compose "${PROFILE[@]}" ps
     ;;
   restart)
-    docker compose restart ${2:-}
+    docker compose "${PROFILE[@]}" restart ${2:-}
     ;;
   logs)
-    docker compose logs -f --tail 200 ${2:-}
+    docker compose "${PROFILE[@]}" logs -f --tail 200 ${2:-}
     ;;
   reset-owner-key)
     docker compose run --rm api python -m jbrain.cli reset-owner-key
@@ -44,9 +54,9 @@ case "${1:-}" in
     done
     cp src/deploy/db-init/01-app-role.sh db-init/
     chmod +x jbrain backup.sh restore.sh db-init/01-app-role.sh
-    docker compose build
+    docker compose "${PROFILE[@]}" build
     docker compose run --rm migrate
-    docker compose up -d
+    docker compose "${PROFILE[@]}" up -d
     # Reclaim layers orphaned by the rebuild; shared (cached) layers survive,
     # so disk use stays bounded without losing build speed.
     docker image prune -f
@@ -55,8 +65,9 @@ case "${1:-}" in
   enable-local-models)
     shift
     # Opt-in, heavy (downloads weights, starts a GPU service). The provisioning
-    # logic lives with the source so it tracks the catalog.
-    JBRAIN_INSTALL_DIR=/opt/jbrain2 bash src/scripts/local-llm-setup.sh "$@"
+    # logic lives with the source so it tracks the catalog. Absolute path so it
+    # works regardless of cwd.
+    JBRAIN_INSTALL_DIR=/opt/jbrain2 bash /opt/jbrain2/src/scripts/local-llm-setup.sh "$@"
     ;;
   backup)
     ./backup.sh
@@ -65,10 +76,10 @@ case "${1:-}" in
     ./restore.sh ${2:-}
     ;;
   down)
-    docker compose down
+    docker compose "${PROFILE[@]}" down
     ;;
   up)
-    docker compose up -d
+    docker compose "${PROFILE[@]}" up -d
     ;;
   *)
     usage

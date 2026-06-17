@@ -154,15 +154,19 @@ services:
       context: ./src
       dockerfile: deploy/Dockerfile.local-llm
     restart: unless-stopped
-    command: ["llama-swap", "--listen", ":8080", "--config", "/config/llama-swap.yaml"]
+    # Read the config from the /models mount — no separate single-file bind mount
+    # (a missing file would make Docker create a directory and wedge the gateway).
+    command: ["llama-swap", "--listen", ":8080", "--config", "/models/llama-swap.yaml"]
     devices:
       - /dev/dri:/dev/dri
+    # The container must join the HOST's video/render group GIDs to open
+    # /dev/dri/renderD128 — group *names* rarely line up across host/container.
+    # The setup script writes the numeric host GIDs; names are the fallback.
     group_add:
-      - video
-      - render
+      - "${VIDEO_GID:-video}"
+      - "${RENDER_GID:-render}"
     volumes:
       - ./local-models:/models:ro
-      - ./local-models/llama-swap.yaml:/config/llama-swap.yaml:ro
     networks: [internal]
 
   embed:

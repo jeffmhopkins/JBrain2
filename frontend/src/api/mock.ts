@@ -277,6 +277,8 @@ const LLM_SETTINGS: LlmSettings = {
     { id: "vision.caption", label: "Vision caption", provider: "grok", reasoning_effort: "low" },
   ],
   local_hosting_enabled: false,
+  // A non-authoritative snapshot of jbrain.llm.local_catalog for the offline UI
+  // mock only — the backend is the source of truth; this may drift.
   local_models: [
     {
       id: "qwen3-vl-30b",
@@ -295,7 +297,7 @@ const LLM_SETTINGS: LlmSettings = {
       enabled: false,
       supports_vision: false,
       supports_tools: true,
-      tiers: ["high", "synthesis"],
+      tiers: ["high"],
       quant: "MXFP4",
       size_gb: 59,
       note: "Strongest open reasoning that still runs fast here.",

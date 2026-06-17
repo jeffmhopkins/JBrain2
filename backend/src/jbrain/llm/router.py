@@ -67,10 +67,6 @@ TIER_DEFAULTS: dict[str, str] = {
     "high": "xai:grok-4.3",
     "low": "xai:grok-4.3",
     "vision": "xai:grok-4.3",
-    # Reserved for the Phase 6 wiki's synthesis writing — defaults to the same
-    # cloud model as the rest; a future wiki prompt declares `strength: synthesis`
-    # and operators can repoint it (e.g. to a long-context local reasoner).
-    "synthesis": "xai:grok-4.3",
 }
 
 PROVIDERS = ("anthropic", "xai", "local")
@@ -131,10 +127,16 @@ class LlmRouter:
         tiers: Mapping[str, tuple[str, str]] | None = None,
         pinned: frozenset[str] = frozenset(),
         overrides_loader: Callable[[], Awaitable[Mapping[str, Mapping[str, str]]]] | None = None,
+        local_enabled: bool = True,
     ):
         self._clients = clients
         self._tasks = tasks
         self._recorder = recorder
+        # When local hosting is off, a stale stored `local:` override (saved while
+        # it was on, then disabled) is ignored rather than routed at a dead
+        # gateway — defense-in-depth behind the API's PUT guard. Defaults True so
+        # test fakes behave as before.
+        self._local_enabled = local_enabled
         # Capability-tier → (provider, model), and the set of tasks a human
         # explicitly pinned in config (an explicit pin outranks a prompt's tier).
         # Default to TIER_DEFAULTS so any router (including test fakes that pass
@@ -178,9 +180,15 @@ class LlmRouter:
             spec = entry.get("spec")
             if spec is not None:
                 try:
-                    provider, model = _split_spec(task, spec)
+                    sp, sm = _split_spec(task, spec)
                 except LlmError:
                     log.warning("llm.override_bad_spec", task=task, spec=spec)
+                else:
+                    # Ignore a local override the operator can no longer serve.
+                    if sp == "local" and not self._local_enabled:
+                        log.warning("llm.local_override_ignored", task=task, spec=spec)
+                    else:
+                        provider, model = sp, sm
             effort = entry.get("reasoning_effort")
             if effort is not None and provider == "xai":
                 reasoning_effort = effort
@@ -356,4 +364,5 @@ def build_router(
         tiers=resolve_tiers(settings.llm_tiers),
         pinned=frozenset(settings.llm_tasks),
         overrides_loader=overrides_loader,
+        local_enabled=settings.local_llm_enabled,
     )

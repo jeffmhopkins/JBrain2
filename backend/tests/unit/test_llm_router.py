@@ -205,6 +205,35 @@ async def test_stored_spec_overrides_env_pin_and_tier() -> None:
     assert anthropic.calls[0]["model"] == "claude-x" and not xai.calls
 
 
+async def test_stale_local_override_ignored_when_hosting_disabled() -> None:
+    # A `local:` spec saved while hosting was on, then disabled: the call must
+    # fall back to the cloud default rather than route at a dead gateway.
+    xai, local = FakeLlmClient(["x"]), FakeLlmClient(["l"])
+
+    async def load() -> dict[str, dict[str, str]]:
+        return {"note.extract": {"spec": "local:qwen3-vl-30b-a3b"}}
+
+    router = LlmRouter(
+        {"xai": xai, "local": local},
+        {"note.extract": ("xai", "grok-4.3")},
+        overrides_loader=load,
+        local_enabled=False,
+    )
+    await router.complete("note.extract", system="s", user_text="u")
+    assert xai.calls and not local.calls
+
+    # With hosting enabled the same override IS honored.
+    xai2, local2 = FakeLlmClient(["x"]), FakeLlmClient(["l"])
+    router2 = LlmRouter(
+        {"xai": xai2, "local": local2},
+        {"note.extract": ("xai", "grok-4.3")},
+        overrides_loader=load,
+        local_enabled=True,
+    )
+    await router2.complete("note.extract", system="s", user_text="u")
+    assert local2.calls and not xai2.calls
+
+
 async def test_stored_reasoning_effort_reaches_xai_client() -> None:
     xai = FakeLlmClient(["x"])
     router = _override_router({"xai": xai}, {"note.extract": {"reasoning_effort": "high"}})

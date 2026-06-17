@@ -17,12 +17,12 @@ from jbrain.api.notes import ctx_for
 from jbrain.config import Settings
 from jbrain.db.session import SessionContext
 from jbrain.llm import local_catalog
+from jbrain.llm.errors import LlmError
 from jbrain.llm.providers import (
     REASONING_DEFAULT,
     REASONING_EFFORTS,
     id_for_spec,
     provider_choices,
-    spec_for_id,
 )
 from jbrain.llm.router import TASK_DEFAULTS, _split_spec
 from jbrain.settings_store import LLM_TASK_OVERRIDES_KEY, SqlSettingsStore
@@ -123,8 +123,12 @@ def _effective(settings: Settings, task: str, overrides: dict[str, dict[str, str
     provider_id = id_for_spec(settings, spec)
     # Off-menu spec (e.g. an env pin to a model the UI doesn't list): surface the
     # provider half so the screen shows something truthful rather than crashing.
+    # Tolerate a malformed stored spec too — show it raw rather than 500.
     if provider_id is None:
-        provider_label = _split_spec(task, spec)[0]
+        try:
+            provider_label = _split_spec(task, spec)[0]
+        except LlmError:
+            provider_label = spec
         return TaskInfo(
             id=task, label=TASK_LABELS[task], provider=provider_label, reasoning_effort=None
         )
@@ -188,12 +192,21 @@ async def update_llm_settings(
         if task not in TASK_DEFAULTS:
             raise HTTPException(status_code=422, detail=f"unknown task: {task}")
     overrides = await store.llm_task_overrides(ctx)
+    choices = {c.id: c for c in provider_choices(settings)}
     for task, choice in body.tasks.items():
-        spec = spec_for_id(settings, choice.provider)
+        picked = choices.get(choice.provider)
         # Unknown id, or a local model offered only when local hosting is enabled.
-        if spec is None:
+        if picked is None:
             raise HTTPException(status_code=422, detail=f"unknown provider: {choice.provider}")
-        entry: dict[str, str] = {"spec": spec}
+        # A vision task must draw a vision-capable provider — the UI filters this,
+        # but enforce it server-side so a direct PUT can't send images to a
+        # text-only local model (the stored override outranks the prompt tier).
+        if task.startswith("vision.") and not picked.supports_vision:
+            raise HTTPException(
+                status_code=422,
+                detail=f"{choice.provider} cannot serve vision task {task}",
+            )
+        entry: dict[str, str] = {"spec": picked.spec}
         # reasoning_effort is meaningful only for grok; drop it otherwise so the
         # stored shape stays clean and the router never misapplies it.
         if choice.provider == "grok":

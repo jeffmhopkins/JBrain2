@@ -187,7 +187,7 @@ def test_drawer_catalog_present_with_enabled_flags() -> None:
     by_id2 = {m["id"]: m for m in body2["local_models"]}
     assert by_id2["gpt-oss-120b"]["enabled"] is True
     assert by_id2["qwen3-vl-30b"]["enabled"] is False
-    assert "synthesis" in by_id2["gpt-oss-120b"]["tiers"]
+    assert by_id2["gpt-oss-120b"]["tiers"] == ["high"]
 
 
 def test_put_rejects_local_model_when_hosting_disabled() -> None:
@@ -204,3 +204,59 @@ def test_put_rejects_local_model_when_hosting_disabled() -> None:
     )
     assert resp.status_code == 422
     assert "llm_task_overrides" not in store.values
+
+
+def test_put_rejects_text_only_model_for_a_vision_task() -> None:
+    # gpt-oss is enabled but text-only; routing a vision task to it must 422 even
+    # though the provider id is otherwise valid (the UI filters this; the API
+    # enforces it so a direct PUT can't send images to a blind model).
+    c, store = _authed_client(
+        Settings(
+            secure_cookies=False,
+            database_url="postgresql+asyncpg://nobody@localhost:1/none",
+            local_llm_enabled=True,
+            local_models=["qwen3-vl-30b", "gpt-oss-120b"],
+        )
+    )
+    resp = c.put(
+        "/api/settings/llm",
+        json={"tasks": {"vision.ocr": {"provider": "gpt-oss-120b", "reasoning_effort": "low"}}},
+    )
+    assert resp.status_code == 422
+    assert "llm_task_overrides" not in store.values
+    # The vision-capable local model is still accepted for the same task.
+    ok = c.put(
+        "/api/settings/llm",
+        json={"tasks": {"vision.ocr": {"provider": "qwen3-vl-30b", "reasoning_effort": "low"}}},
+    )
+    assert ok.status_code == 200
+
+
+def test_get_surfaces_a_pinned_local_model_after_hosting_disabled() -> None:
+    # Pin vision.ocr to a local model, then turn hosting OFF: the stored override
+    # reverse-maps to no menu id, so the GET surfaces the raw provider half rather
+    # than crashing, with no reasoning level.
+    enabled = Settings(
+        secure_cookies=False,
+        database_url="postgresql+asyncpg://nobody@localhost:1/none",
+        local_llm_enabled=True,
+        local_models=["qwen3-vl-30b"],
+    )
+    c, store = _authed_client(enabled)
+    assert (
+        c.put(
+            "/api/settings/llm",
+            json={"tasks": {"vision.ocr": {"provider": "qwen3-vl-30b", "reasoning_effort": "low"}}},
+        ).status_code
+        == 200
+    )
+    overrides = store.values["llm_task_overrides"]
+
+    # Same stored overrides, but a settings object with hosting off.
+    c2, store2 = _authed_client(
+        Settings(secure_cookies=False, database_url="postgresql+asyncpg://nobody@localhost:1/none")
+    )
+    store2.values["llm_task_overrides"] = overrides
+    tasks = {t["id"]: t for t in c2.get("/api/settings/llm").json()["tasks"]}
+    assert tasks["vision.ocr"]["provider"] == "local"  # bare spec half, off-menu
+    assert tasks["vision.ocr"]["reasoning_effort"] is None

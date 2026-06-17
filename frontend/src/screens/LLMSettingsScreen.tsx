@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type {
   LlmProviderId,
   LlmSettings,
@@ -14,7 +14,7 @@ import { api } from "../api/client";
 interface GroupDef {
   key: string;
   /** Accent class flips the group's left rail (docs/DESIGN.md accents). */
-  accent: "high" | "light" | "vision" | "synthesis";
+  accent: "high" | "light" | "vision";
   name: string;
   desc: string;
   taskIds: string[];
@@ -24,9 +24,9 @@ interface GroupDef {
 // which work is heavy: note.extract/integrate.note/agent.turn are `high`,
 // entity.disambiguate/session.title are `low`. fact.adjudicate &
 // correction_note.extract have no prompt yet — placed by their design intent
-// (docs/ANALYSIS.md: adjudicate=cheap, correction=strong). The Synthesis group
-// is reserved for the Phase 6 wiki tier — empty groups drop out, so it stays
-// invisible until a wiki task ships, then auto-populates.
+// (docs/ANALYSIS.md: adjudicate=cheap, correction=strong). A task the API
+// returns outside these defs lands in a synthesized "Other" group, so new
+// routable tasks are never silently dropped.
 const GROUP_DEFS: GroupDef[] = [
   {
     key: "high",
@@ -48,13 +48,6 @@ const GROUP_DEFS: GroupDef[] = [
     name: "Vision",
     desc: "Anything that reads or describes images.",
     taskIds: ["vision.ocr", "vision.caption"],
-  },
-  {
-    key: "synthesis",
-    accent: "synthesis",
-    name: "Synthesis",
-    desc: "Machine-written wiki (Phase 6).",
-    taskIds: ["wiki.synthesize"],
   },
 ];
 
@@ -143,6 +136,9 @@ export function LLMSettingsScreen() {
   // Which tiers have their per-task overrides expanded.
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [localOpen, setLocalOpen] = useState(false);
+  // Sequence token so an earlier PUT's response can't clobber a later one (and a
+  // response after unmount is ignored).
+  const putSeq = useRef(0);
 
   const groups = useMemo(() => (settings ? groupTasks(settings.tasks) : []), [settings]);
 
@@ -163,6 +159,10 @@ export function LLMSettingsScreen() {
   const visionProviders = providers.filter((p) => p.supports_vision);
   const providersFor = (isVision: boolean) => (isVision ? visionProviders : providers);
   const isVisionTask = (taskId: string) => taskId.startsWith("vision.");
+  const byId = new Map(providers.map((p) => [p.id, p]));
+  // Reasoning is a per-provider capability (today only grok), read from the wire
+  // flag rather than a hardcoded id so a future reasoning-capable provider works.
+  const reasonOn = (id: string) => byId.get(id)?.supports_reasoning ?? false;
   // Snapshot the tasks past the null guard so the wire-builder closure below
   // reads them without TS re-widening the `settings` state back to nullable.
   const currentTasks = settings.tasks;
@@ -200,9 +200,12 @@ export function LLMSettingsScreen() {
             }
           : { provider };
     }
+    const seq = ++putSeq.current;
     void api
       .updateLlmSettings({ tasks: wire })
-      .then(setSettings)
+      .then((s) => {
+        if (seq === putSeq.current) setSettings(s);
+      })
       .catch(() => {});
   }
 
@@ -255,15 +258,21 @@ export function LLMSettingsScreen() {
       {groups.map((group) => {
         const provider = sharedProvider(group.tasks);
         const reasoning = sharedReasoning(group.tasks);
-        const grokOn = provider === "grok";
+        const grokOn = provider !== "mixed" && reasonOn(provider);
         const isOpen = expanded.has(group.key);
         const groupVision = group.accent === "vision";
-        // Any non-grok, non-mixed provider can't take a reasoning level; claude
-        // gets its own wording, every local model shares the generic note.
+        // The current provider may not be in the (filtered) option list — e.g. a
+        // task pinned to a local model after hosting was turned off. Surface it as
+        // a disabled option so the select shows the truth and can't be silently
+        // overwritten (mirrors the `mixed` handling).
+        const optMissing =
+          provider !== "mixed" && !providersFor(groupVision).some((p) => p.id === provider);
+        // Claude gets its own wording; any other non-reasoning provider (local
+        // models) shares the generic note; reasoning-capable or mixed → no note.
         const naNote =
           provider === "claude"
             ? "Claude manages thinking on its own."
-            : provider === "grok" || provider === "mixed"
+            : grokOn || provider === "mixed"
               ? null
               : "Local models take no reasoning level.";
 
@@ -286,6 +295,11 @@ export function LLMSettingsScreen() {
                 {provider === "mixed" && (
                   <option value="mixed" disabled>
                     Mixed
+                  </option>
+                )}
+                {optMissing && (
+                  <option value={provider} disabled>
+                    {provider} (unavailable)
                   </option>
                 )}
                 {providersFor(groupVision).map((p) => (
@@ -333,7 +347,9 @@ export function LLMSettingsScreen() {
               {isOpen && (
                 <div className="llm-members">
                   {group.tasks.map((task) => {
-                    const taskGrok = task.provider === "grok";
+                    const taskGrok = reasonOn(task.provider);
+                    const taskOpts = providersFor(isVisionTask(task.id));
+                    const taskMissing = !taskOpts.some((p) => p.id === task.provider);
                     return (
                       <div key={task.id} className="llm-member">
                         <div className="llm-member-name">
@@ -349,7 +365,12 @@ export function LLMSettingsScreen() {
                               setTaskProvider(task.id, e.target.value as LlmProviderId)
                             }
                           >
-                            {providersFor(isVisionTask(task.id)).map((p) => (
+                            {taskMissing && (
+                              <option value={task.provider} disabled>
+                                {task.provider} (unavailable)
+                              </option>
+                            )}
+                            {taskOpts.map((p) => (
                               <option key={p.id} value={p.id}>
                                 {p.label}
                               </option>
@@ -403,8 +424,7 @@ interface LlmTaskPatchLocal {
 function capabilityChips(m: LocalModelInfo) {
   const chips: { key: string; label: string; cls: string }[] = [];
   if (m.supports_vision) chips.push({ key: "vision", label: "vision", cls: "vision" });
-  if (m.tiers.includes("high") || m.tiers.includes("synthesis"))
-    chips.push({ key: "reason", label: "reasoning", cls: "reason" });
+  if (m.tiers.includes("high")) chips.push({ key: "reason", label: "reasoning", cls: "reason" });
   if (m.supports_tools) chips.push({ key: "tools", label: "tools", cls: "tools" });
   return chips;
 }
@@ -427,10 +447,19 @@ function LocalModelsDrawer({
 }) {
   const enabledCount = models.filter((m) => m.enabled).length;
   const summary = !hostingEnabled ? "off" : `${enabledCount} of ${models.length} enabled`;
+  // Spell out hosting state for screen readers — the dot is decorative and the
+  // one-word summary ("off") is ambiguous on its own.
+  const ariaLabel = `Local models — ${hostingEnabled ? `hosting on, ${summary}` : "hosting off"}`;
 
   return (
     <section className="llm-local">
-      <button type="button" className="llm-local-toggle" aria-expanded={open} onClick={onToggle}>
+      <button
+        type="button"
+        className="llm-local-toggle"
+        aria-expanded={open}
+        aria-label={ariaLabel}
+        onClick={onToggle}
+      >
         <span className={`llm-local-dot${hostingEnabled ? " on" : ""}`} aria-hidden="true" />
         <span className="llm-local-title">Local models</span>
         <span className="llm-local-summary">{summary}</span>

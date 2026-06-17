@@ -36,8 +36,9 @@ class ProviderChoice:
     spec: str
     supports_reasoning: bool
     # The vision tasks only offer vision-capable choices; cloud providers are
-    # multi-modal, a local text-only model is not.
-    supports_vision: bool = True
+    # multi-modal, a local text-only model is not. Required (no default) so a
+    # new provider must state its vision capability deliberately.
+    supports_vision: bool
 
 
 def _local_choices(settings: Settings) -> tuple[ProviderChoice, ...]:
@@ -65,9 +66,15 @@ def provider_choices(settings: Settings) -> tuple[ProviderChoice, ...]:
     """The selectable providers in UI order: the two cloud providers always, then
     any opt-in local models the operator has enabled."""
     return (
-        ProviderChoice("grok", "Grok 4.3", "xai:grok-4.3", supports_reasoning=True),
         ProviderChoice(
-            "claude", "Claude Sonnet 4.6", "anthropic:claude-sonnet-4-6", supports_reasoning=False
+            "grok", "Grok 4.3", "xai:grok-4.3", supports_reasoning=True, supports_vision=True
+        ),
+        ProviderChoice(
+            "claude",
+            "Claude Sonnet 4.6",
+            "anthropic:claude-sonnet-4-6",
+            supports_reasoning=False,
+            supports_vision=True,
         ),
         *_local_choices(settings),
     )

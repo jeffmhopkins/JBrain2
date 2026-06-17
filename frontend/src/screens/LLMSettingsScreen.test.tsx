@@ -196,7 +196,7 @@ describe("LLMSettingsScreen", () => {
         enabled: false,
         supports_vision: false,
         supports_tools: true,
-        tiers: ["high", "synthesis"],
+        tiers: ["high"],
         quant: "MXFP4",
         size_gb: 59,
         note: "",
