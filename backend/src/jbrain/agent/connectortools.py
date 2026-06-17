@@ -25,6 +25,7 @@ from jbrain.agent.proposals import (
 from jbrain.agent.proposaltools import (
     agent_note_executor,
     predicate_resolution_executor,
+    prompt_edit_executor,
     skill_promotion_executor,
 )
 from jbrain.agent.skills import SkillsRepo
@@ -128,6 +129,9 @@ def build_leaf_executor(
     merge = entity_merge_executor(analysis)
     skill_promote = skill_promotion_executor(skills)
     predicate_resolve = predicate_resolution_executor(analysis)
+    # A prompt_edit_record leaf (Loop 4) records a self-edit and does nothing else
+    # on the box — PR-shaped, never runtime-applied (#6).
+    prompt_edit = prompt_edit_executor()
 
     async def execute(ctx: SessionContext, proposal: ProposalRow, node: NodeRow) -> None:
         if node.op == "egress_call":
@@ -138,6 +142,11 @@ def build_leaf_executor(
             await skill_promote(ctx, proposal, node)
         elif node.op == "predicate_resolve":
             await predicate_resolve(ctx, proposal, node)
+        elif node.op == "prompt_edit_record":
+            # Loop 4: record-only — never a runtime apply (#6). Explicitly NOT the
+            # note executor, so an empty-body prompt-edit leaf can't accidentally
+            # become a note.
+            await prompt_edit(ctx, proposal, node)
         else:
             await note_executor(ctx, proposal, node)
 

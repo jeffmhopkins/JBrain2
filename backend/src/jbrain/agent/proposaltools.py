@@ -127,6 +127,27 @@ def skill_promotion_executor(skills: SkillsRepo) -> LeafExecutor:
     return execute
 
 
+def prompt_edit_executor() -> LeafExecutor:
+    """Enact a prompt-edit leaf (Loop 4): RECORD-ONLY. A self-edit is PR-shaped and
+    is NEVER runtime-applied (non-neg #6) — the box is air-gapped from git. So enact
+    writes NO prompt/tool file, creates NO note, runs NO connector, and changes NO
+    runtime behavior; the diff in the proposal preview IS the deliverable, which the
+    owner applies as a real PR off-box. This explicit op exists so a prompt-edit leaf
+    never falls through to the agent-note executor; the proposal row + its enacted
+    status are the record (an audit line, nothing else)."""
+
+    async def execute(ctx: SessionContext, proposal: ProposalRow, node: NodeRow) -> None:
+        log.info(
+            "prompt_edit_recorded",
+            proposal_id=proposal.id,
+            node_id=node.id,
+            target=node.preview.get("target_name"),
+            proposed_version=node.preview.get("proposed_version"),
+        )
+
+    return execute
+
+
 def predicate_resolution_executor(analysis: SqlAnalysisRepo) -> LeafExecutor:
     """Enact a predicate-canon leaf (Loop 3a, Wave 2): apply the owner-approved resolution of a
     `new_predicate` card via the SHIPPED `resolve_review` (map_to_existing / accept_as_new),

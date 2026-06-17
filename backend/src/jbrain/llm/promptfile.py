@@ -48,6 +48,11 @@ class PromptFile:
     output_format: str | None = None
     output_schema: dict[str, Any] | None = None
     domain_guidance: dict[str, str] = field(default_factory=dict)
+    # Loop 4 governance flag (docs/LOOP4_PROMPT_TOOL_EDIT_PLAN.md): opt-in, default
+    # False — only an explicitly-marked prompt is eligible for prompt/tool self-edit,
+    # and even then the SELF_EDIT_LOCKED deny-set wins (non-neg #12). Not part of the
+    # prompt's behavior, so it never enters the version-bump content digest.
+    self_editable: bool = False
 
     def render(self, **variables: Any) -> str:
         """The body with every declared `{{ var }}` substituted. Every input the
@@ -107,4 +112,5 @@ def load_prompt(path: Path) -> PromptFile:
         output_format=output.get("format"),
         output_schema=schema,
         domain_guidance=dict(meta.get("domain_guidance") or {}),
+        self_editable=bool(meta.get("self_editable", False)),
     )

@@ -36,6 +36,12 @@ class ToolFile:
 
     spec: ToolSpec
     description: str
+    # Loop 4 governance flag (docs/LOOP4_PROMPT_TOOL_EDIT_PLAN.md): opt-in, default
+    # False. Deliberately NOT a ToolSpec field — it is governance metadata, not
+    # model-facing behavior, so it stays out of the digest and a tool's editability
+    # can change without forcing a version bump. The SELF_EDIT_LOCKED deny-set still
+    # wins over it (non-neg #12).
+    self_editable: bool = False
 
     @property
     def digest(self) -> str:
@@ -61,8 +67,11 @@ def load_tool(path: Path) -> ToolFile:
         body = body[:-1]
     if not body.strip():
         raise ToolFileError(f"{path}: empty description body — the model needs one")
+    # Pop the governance flag before ToolSpec (which forbids extras) so it never
+    # touches the spec or the digest — it is sidecar metadata, not a tool contract.
+    self_editable = bool(meta.pop("self_editable", False))
     try:
         spec = ToolSpec.model_validate(meta)
     except ValidationError as exc:
         raise ToolFileError(f"{path}: invalid tool frontmatter: {exc}") from exc
-    return ToolFile(spec=spec, description=body)
+    return ToolFile(spec=spec, description=body, self_editable=self_editable)
