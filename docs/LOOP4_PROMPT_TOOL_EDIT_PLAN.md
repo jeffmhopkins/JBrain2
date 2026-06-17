@@ -17,12 +17,14 @@ the roadmap** — the agent drafts changes to its own behavior-defining prompts/
 >    `git pull --ff-only` → rebuild → migrate → restart). So "PR-shaped, never
 >    runtime-applied" (non-neg #6) is not merely policy here, it is physical. A
 >    `prompt-edit` Proposal's enactment is **record-only** — it writes **no** prompt
->    or tool file and changes **no** runtime behavior. The preview *is* the deliverable
->    (a unified diff + bumped version + rationale + a new eval fixture); on approval the
->    patch is emitted as a **storage artifact** the owner takes to a dev environment and
->    lands as a real branch + PR (e.g. via Claude Code). Writing into the on-box
->    checkout was considered and **rejected**: it crosses the air-gap and sits a hair
->    from runtime self-application — exactly what #6 forbids.
+>    or tool file and changes **no** runtime behavior. The **preview is the
+>    deliverable**: a git-applyable unified diff + bumped version + rationale + a new
+>    eval fixture, which the owner reads in the Proposals UI and takes to a dev
+>    environment to land as a real branch + PR (e.g. via Claude Code). (Exporting the
+>    diff as a downloadable `.patch` storage artifact for a one-step `git apply` is a
+>    deferred convenience — the diff already rides the preview verbatim.) Writing into
+>    the on-box checkout was considered and **rejected**: it crosses the air-gap and
+>    sits a hair from runtime self-application — exactly what #6 forbids.
 > 2. **The eval gate lives at the PR/CI boundary, not pre-stage (Fork B).** A pre-stage
 >    "no-regression" blocker would require scoring a *candidate* prompt variant before
 >    it is applied — the **scorer-injection seam Loop 2 deferred (C2)**: the live scorer
@@ -124,17 +126,21 @@ Wave 2 drafts proposals; provable in isolation.
   diff is computed **server-side** from `current_body` vs `proposed_body` — never authored
   as prose by the model, never executable.
 - **`prompt_edit_executor` (record-only).** A `LeafExecutor` keyed on `op =
-  "prompt_edit_record"`: it writes **no** file and changes **no** runtime state; it
-  records enactment (status → enacted) and **emits the patch as a storage artifact**
-  (`{name}.v{old}-v{new}.patch`) via the storage abstraction — never a raw path — for the
-  owner to `git apply`. Idempotent on `node.id`. Wire into `build_leaf_executor` dispatch
-  and the `api/proposals.py` enact site.
+  "prompt_edit_record"`: it writes **no** file, creates **no** note, enqueues **no**
+  job, and changes **no** runtime state — the explicit op only exists so a prompt-edit
+  leaf never falls through to the agent-note executor. The proposal row + its enacted
+  status are the record; the diff in the preview is the deliverable. Wire into
+  `build_leaf_executor` dispatch (no new collaborators) and the `api/proposals.py` enact
+  site stays unchanged. (Patch-artifact export via the storage abstraction is deferred —
+  see Deferred.)
 - **Tests:** the immutability bar (a barred/unmarked target cannot be staged or enacted,
-  even if a payload claims `self_editable`); the **no-runtime-apply invariant** (every
-  targeted file's digest is byte-identical before/after enact — the load-bearing #6 test);
-  proposed_version > current enforced; stage→approve→enact roundtrip + artifact emission;
-  RLS isolation on the new query path (+ the autouse admin TRUNCATE fixture for any
-  `*_pg.py`). Security-100% on the executor + the bar.
+  even if a payload claims `self_editable`); discovery is fail-closed (a same-name
+  collision raises; a symlink escaping the package is ineligible); the **no-runtime-apply
+  invariant** (every targeted file's digest is byte-identical before/after enact, and a
+  crafted preview carrying a `body` key still creates no note — the load-bearing #6
+  tests); a version bump is required; stage→approve→enact roundtrip; RLS isolation on the
+  new query path (+ the autouse admin TRUNCATE fixture for any `*_pg.py`). Security-100%
+  on the executor + the bar.
 
 ### Wave 2 — Owner-initiated drafting → `prompt-edit` Proposal (the value wave)
 
@@ -244,6 +250,10 @@ no new runtime deps; `dev-setup.sh` current.
   *barred* extraction prompts); revisit once self-editable prompts have eval coverage.
 - **Multi-prompt / batched self-edits** and **auto-approval of any prompt-edit** — never
   in scope; behavior edits are always single, owner-approved migrations.
+- **Patch-artifact export** — emitting the preview diff as a downloadable
+  `{name}.v{old}-v{new}.patch` blob (via the storage abstraction, never a raw path) for a
+  one-step off-box `git apply`. A pure convenience: the unified diff already rides the
+  proposal preview verbatim, so the deliverable is not lost without it.
 
 ## Open tunables (defaults; tune in Ops config later)
 

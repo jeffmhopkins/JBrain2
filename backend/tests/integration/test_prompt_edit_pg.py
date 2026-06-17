@@ -6,6 +6,7 @@ content is byte-identical before and after). The diff lives only in the preview.
 """
 
 import hashlib
+import uuid
 from collections.abc import AsyncIterator
 from pathlib import Path
 
@@ -132,6 +133,42 @@ async def test_prompt_edit_enact_is_record_only(
     # The diff survived as data in the preview — the deliverable the owner applies.
     assert nodes[0].preview["target_name"] == "session.title"
     assert nodes[0].preview["unified_diff"].startswith("--- a/")
+
+
+async def test_crafted_body_preview_still_creates_no_note(maker: async_sessionmaker) -> None:
+    """The axis-2 threat made concrete: a prompt-edit leaf whose preview carries a
+    `body` key (the field the agent-note executor reads) must STILL create no note —
+    proving dispatch keys on `op`, not preview, and never falls through to the note
+    executor. Build the spec by hand to inject the hostile `body`."""
+    from jbrain.agent.proposals import NodeSpec, ProposalSpec
+
+    pid = await _owner_principal(maker)
+    repo = ProposalRepo(maker)
+    jobs = _Jobs()
+    node = NodeSpec(
+        id=str(uuid.uuid4()),
+        type="leaf",
+        op="prompt_edit_record",
+        label="hostile",
+        preview={"target_name": "x", "unified_diff": "--- a/x", "body": "smuggle me into a note"},
+    )
+    spec = ProposalSpec(kind="prompt-edit", domain="general", title="hostile", nodes=[node])
+    prop_id = await repo.stage(OWNER, principal_id=pid, spec=spec)
+
+    executor = build_leaf_executor(
+        notes=None,  # type: ignore[arg-type]
+        connectors=None,  # type: ignore[arg-type]
+        jobs=jobs,  # type: ignore[arg-type]
+        analysis=None,  # type: ignore[arg-type]
+        skills=None,  # type: ignore[arg-type]
+    )
+    await repo.decide(OWNER, node.id, approve=True)
+    await repo.enact(OWNER, prop_id, executor)
+
+    assert jobs.enqueued == []
+    async with scoped_session(maker, OWNER) as session:
+        note_count = (await session.execute(text("SELECT count(*) FROM app.notes"))).scalar()
+    assert note_count == 0
 
 
 async def test_self_editable_targets_finds_the_marked_prompt(editable_tree: Path) -> None:

@@ -83,6 +83,30 @@ def test_no_shipped_prompt_or_tool_marks_a_locked_name_editable() -> None:
     assert not (set(shipped) & SELF_EDIT_LOCKED)
 
 
+def test_discovery_is_fail_closed_on_a_duplicate_name(tmp_path: Path) -> None:
+    """Two self-editable artifacts sharing a `name` must not silently shadow (which
+    would diff/export the wrong file) — discovery raises until it's resolved."""
+    dup = _PROMPT.format(name="dup.prompt", version="v1", flag="true")
+    _write(tmp_path, "a/dup.prompt", dup)
+    _write(tmp_path, "b/dup.prompt", dup)
+    with pytest.raises(PromptEditError, match="duplicate self-editable"):
+        self_editable_targets(tmp_path)
+
+
+def test_no_analysis_prompt_is_self_editable() -> None:
+    """The domain-classification / graph-integration prompts live under
+    analysis/prompts; non-neg #12's intent is broader than the deny-set names, so
+    assert none of them ever opts in (a future-maintainer guard)."""
+    import jbrain
+    from jbrain.llm.promptfile import load_prompt
+
+    analysis_prompts = (Path(jbrain.__file__).resolve().parent / "analysis" / "prompts")
+    files = list(analysis_prompts.rglob("*.prompt"))
+    assert files  # the dir exists and has prompts — guard against a silent empty pass
+    for path in files:
+        assert not load_prompt(path).self_editable, f"{path} must not be self_editable (#12)"
+
+
 def test_build_spec_refuses_a_locked_target(tree: Path) -> None:
     with pytest.raises(PromptEditError, match="not a self-editable target"):
         build_prompt_edit_spec(

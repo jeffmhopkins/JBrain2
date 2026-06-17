@@ -65,39 +65,62 @@ def _package_root() -> Path:
 
 def self_editable_targets(root: Path | None = None) -> dict[str, EditableTarget]:
     """Discover every `.prompt`/`.tool` under `root` (default: the jbrain package)
-    that is `self_editable` AND not in `SELF_EDIT_LOCKED`, keyed by name. The two
-    filters are the structural immutability bar; a malformed sidecar that fails to
-    load is skipped (it is not a valid edit target), never crashing discovery."""
-    base = root or _package_root()
+    that is `self_editable` AND not in `SELF_EDIT_LOCKED`, keyed by artifact name.
+    The two filters are the structural immutability bar; a malformed sidecar that
+    fails to load is skipped (it is not a valid edit target), never crashing
+    discovery. Two filters make this fail-closed:
+
+    - a path that resolves OUTSIDE `base` (e.g. a symlink escaping the package) is
+      ineligible — discovery never surfaces a target it can't honestly locate;
+    - a duplicate `self_editable` name across files raises (a config error must not
+      silently let one file shadow another, which would diff/export the wrong one).
+    """
+    base = (root or _package_root()).resolve()
     targets: dict[str, EditableTarget] = {}
+
+    def _add(name: str, target: EditableTarget) -> None:
+        if name in targets:
+            raise PromptEditError(
+                f"duplicate self-editable artifact name {name!r}"
+                f" ({targets[name].rel_path} and {target.rel_path}) — refusing to"
+                " stage until the collision is resolved"
+            )
+        targets[name] = target
+
     for path in sorted(base.rglob("*.prompt")):
+        if not _within(path, base):
+            continue
         try:
             pf = load_prompt(path)
         except PromptError:
             continue
         if not pf.self_editable or pf.name in SELF_EDIT_LOCKED:
             continue
-        targets[pf.name] = EditableTarget(
-            "prompt", pf.name, _rel(path, base), pf.version, pf.body
-        )
+        _add(pf.name, EditableTarget("prompt", pf.name, _rel(path, base), pf.version, pf.body))
     for path in sorted(base.rglob("*.tool")):
+        if not _within(path, base):
+            continue
         try:
             tf = load_tool(path)
         except ToolFileError:
             continue
         if not tf.self_editable or tf.spec.name in SELF_EDIT_LOCKED:
             continue
-        targets[tf.spec.name] = EditableTarget(
-            "tool", tf.spec.name, _rel(path, base), str(tf.spec.version), tf.description
+        _add(
+            tf.spec.name,
+            EditableTarget(
+                "tool", tf.spec.name, _rel(path, base), str(tf.spec.version), tf.description
+            ),
         )
     return targets
 
 
+def _within(path: Path, base: Path) -> bool:
+    return path.resolve().is_relative_to(base)
+
+
 def _rel(path: Path, base: Path) -> str:
-    try:
-        return str(path.resolve().relative_to(base))
-    except ValueError:
-        return path.name
+    return str(path.resolve().relative_to(base))
 
 
 def unified_diff(old: str, new: str, *, rel_path: str) -> str:
@@ -137,6 +160,12 @@ def build_prompt_edit_spec(
             f"{target_name!r} is not a self-editable target (locked, unmarked, or unknown)"
             " — refusing to stage"
         )
+    proposed_version = proposed_version.strip()
+    if not proposed_version:
+        raise PromptEditError(f"{target_name}: a proposed version is required")
+    # A change of version, not strict ordering: prompt versions are opaque strings
+    # (`agent-system-v4`). The monotonic-bump semantics are enforced where they can
+    # be — the applied branch's CI digest-pin guard — not here (Fork B).
     if proposed_version == target.version:
         raise PromptEditError(
             f"{target_name}: version must be bumped from {target.version!r} (got the same)"
