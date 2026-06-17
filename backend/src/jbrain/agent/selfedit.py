@@ -33,9 +33,7 @@ from jbrain.llm.promptfile import PromptError, load_prompt
 # the belt to the flag's suspenders (non-neg #12). Editing this set is a human code
 # change behind normal PR review — it is code, not data, and unreachable from a
 # drafting turn.
-SELF_EDIT_LOCKED: frozenset[str] = frozenset(
-    {"agent.system", "note.extract", "prompt.self_edit"}
-)
+SELF_EDIT_LOCKED: frozenset[str] = frozenset({"agent.system", "note.extract", "prompt.self_edit"})
 
 
 class PromptEditError(ValueError):

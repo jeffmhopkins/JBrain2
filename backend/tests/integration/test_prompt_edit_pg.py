@@ -56,9 +56,7 @@ async def _isolate(database_url: str) -> AsyncIterator[None]:  # noqa: F811
     )
     try:
         async with admin.begin() as conn:
-            await conn.execute(
-                text("TRUNCATE app.proposals, app.notes RESTART IDENTITY CASCADE")
-            )
+            await conn.execute(text("TRUNCATE app.proposals, app.notes RESTART IDENTITY CASCADE"))
     finally:
         await admin.dispose()
 

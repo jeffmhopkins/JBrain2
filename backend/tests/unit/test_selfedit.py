@@ -100,7 +100,7 @@ def test_no_analysis_prompt_is_self_editable() -> None:
     import jbrain
     from jbrain.llm.promptfile import load_prompt
 
-    analysis_prompts = (Path(jbrain.__file__).resolve().parent / "analysis" / "prompts")
+    analysis_prompts = Path(jbrain.__file__).resolve().parent / "analysis" / "prompts"
     files = list(analysis_prompts.rglob("*.prompt"))
     assert files  # the dir exists and has prompts — guard against a silent empty pass
     for path in files:
