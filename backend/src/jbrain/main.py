@@ -25,6 +25,7 @@ from jbrain.api import (
     runs,
     search,
     sessions,
+    wiki,
 )
 from jbrain.api import (
     appointments as appointments_api,
@@ -50,6 +51,7 @@ from jbrain.settings_store import SqlSettingsStore
 from jbrain.storage import FsBackupShelf, FsBlobStore
 from jbrain.usage import SqlUsageRecorder
 from jbrain.wiki.actions import WIKI_SPECS
+from jbrain.wiki.readstore import WikiReadStore
 from jbrain.workflow.automations import AutomationsReader
 from jbrain.workflow.evalaction import EVAL_RUN_SPEC
 from jbrain.workflow.registry import ACTION_SPECS
@@ -105,6 +107,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             SqlSearchRepo(maker), TeiEmbedClient(settings.embed_url)
         )
         app.state.analysis_repo = SqlAnalysisRepo(maker)
+        app.state.wiki_read_store = WikiReadStore(maker)
         # Shared embedder for read-side embedding lookups (the review predicate
         # picker's on-demand suggestions).
         app.state.embed_client = TeiEmbedClient(settings.embed_url)
@@ -176,6 +179,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(search.router, prefix="/api")
     app.include_router(sessions.router, prefix="/api")
     app.include_router(settings_api.router, prefix="/api")
+    app.include_router(wiki.router, prefix="/api")
     return app
 
 
