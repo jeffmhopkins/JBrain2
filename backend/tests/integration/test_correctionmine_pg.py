@@ -118,7 +118,7 @@ async def test_mines_owner_proposal_then_enact_creates_a_note(maker: async_sessi
     await proposals.decide(owner, nodes[0].id, approve=True)
     jobs = _Jobs()
     none: Any = cast(Any, None)
-    executor = build_leaf_executor(SqlNotesRepo(maker), none, jobs, none, none)
+    executor = build_leaf_executor(SqlNotesRepo(maker), none, cast(Any, jobs), none, none)
     await proposals.enact(owner, prop_id, executor)
     assert await _note_count(maker, owner) == notes_before + 1
     assert jobs.enqueued == [("ingest_note", {"note_id": jobs.enqueued[0][1]["note_id"]})]
