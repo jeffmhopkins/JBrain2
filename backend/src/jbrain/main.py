@@ -24,6 +24,7 @@ from jbrain.api import (
     health,
     notes,
     ops,
+    owntracks,
     proposals,
     runs,
     search,
@@ -47,6 +48,8 @@ from jbrain.devices.repo import SqlDeviceRepo
 from jbrain.embed import TeiEmbedClient
 from jbrain.lists.repo import SqlListsRepo
 from jbrain.llm import build_router
+from jbrain.locations import SqlLocationRepo
+from jbrain.locations.ratelimit import TokenBucket
 from jbrain.notes.repo import SqlNotesRepo
 from jbrain.queue import SYSTEM_CTX, PgJobQueue
 from jbrain.search.repo import SqlSearchRepo
@@ -84,6 +87,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.session_maker = maker
         app.state.auth_repo = SqlAuthRepo(maker)
         app.state.device_repo = SqlDeviceRepo(maker)
+        app.state.location_repo = SqlLocationRepo(maker)
+        # Per-device ingest cap: 60 fixes/min sustained (burst 60). A flooding
+        # device gets a 429 and backs off; normal move-mode never trips it.
+        app.state.location_rate_limiter = TokenBucket(capacity=60, refill_per_sec=1.0)
         app.state.notes_repo = SqlNotesRepo(maker)
         app.state.lists_repo = SqlListsRepo(maker)
         app.state.appointments_repo = SqlAppointmentsRepo(maker)
@@ -188,6 +195,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(llm_settings_api.router, prefix="/api")
     app.include_router(notes.router, prefix="/api")
     app.include_router(ops.router, prefix="/api")
+    app.include_router(owntracks.router, prefix="/api")
     app.include_router(proposals.router, prefix="/api")
     app.include_router(runs.router, prefix="/api")
     app.include_router(search.router, prefix="/api")
