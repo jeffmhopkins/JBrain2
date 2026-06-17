@@ -379,10 +379,12 @@ work on the Phase-5 pattern, deferred — not silently dropped.
 - **Entity profile images** — `wiki_articles.image_sha` exists as a forward column but has no
   writer; `entities.image_sha` + the entity-view upload + the build-time copy are unbuilt, so the
   reader emits no `photo` (it shows the type disc). Land the full chain together.
-- **Inline wiki→wiki links in prose** — `wiki_links.to_article_id` is now populated (the landing
-  hubs use it), but the rewriter does not yet emit `[label](target)` markers in the body, so the
-  reader's live/red-link rendering path is dormant. Add link emission to the rewriter when this
-  lands.
+- **Inline wiki→wiki links in prose** — SHIPPED. The builder (`_write_section` → `_linkify`)
+  weaves `[anchor](wiki:<slug>)` / `[anchor](redlink)` markers into the persisted section body for
+  each relationship fact's object entity (live vs red resolved at build time from the target's
+  active article), so the reader's live/red-link rendering path is now exercised end-to-end. An
+  anchor the grounded prose phrases differently is left unlinked; the `wiki_links` row still
+  records the connection. Article→article navigation on tap remains a later reader wave.
 - **Threaded Talk board** — the reader's "Discuss this article" now files a correction
   (`DiscussSheet` → `/wiki/{id}/corrections`), and the agent holds the editorial write tools, so
   the correction loop is reachable from the UI. The PERSISTENT threaded Talk board (topics +
