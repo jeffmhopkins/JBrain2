@@ -82,6 +82,24 @@ def narrowed_context(principal_id: str | None, domain_code: str | None) -> Sessi
     )
 
 
+def device_context(principal_id: str, subject_id: str) -> SessionContext:
+    """The session a Phase 7 OwnTracks device runs ingest under.
+
+    Deliberately NOT `narrowed_context`: that one launders any stamp into
+    `principal_kind="owner"`, which would let a device key read/write every
+    subject's location under the location-fixes policy. A device must stay a
+    *non-owner* principal pinned to its own subject — `is_full_owner()` is false,
+    so the RLS subject pin (`subject_id = app.subject_id`) is load-bearing and a
+    stolen key can touch only its own device's fixes. Scoped to `location` alone.
+    """
+    return SessionContext(
+        principal_id=principal_id,
+        principal_kind="device_key",
+        subject_id=subject_id,
+        domain_scopes=("location",),
+    )
+
+
 @asynccontextmanager
 async def scoped_session(
     maker: async_sessionmaker[AsyncSession], ctx: SessionContext

@@ -5,6 +5,8 @@ and device_sessions only open up for these GUC values, so this module is the
 sole code path that can touch credentials before a principal context exists.
 """
 
+import uuid
+
 from sqlalchemy import select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -31,7 +33,24 @@ class SqlAuthRepo:
             ).scalar_one_or_none()
             if row is None:
                 return None
-            return PrincipalInfo(id=str(row.id), kind=row.kind, label=row.label)
+            return _principal_info(row)
+
+    async def find_active_device_principal_by_key_hash(self, key_hash: str) -> PrincipalInfo | None:
+        """Look up a device key, kind-filtered in SQL so an owner or capability key
+        can never authenticate on the device path (no kind confusion)."""
+        async with scoped_session(self._maker, _LOGIN) as session:
+            row = (
+                await session.execute(
+                    select(Principal).where(
+                        Principal.key_hash == key_hash,
+                        Principal.kind == "device_key",
+                        Principal.revoked_at.is_(None),
+                    )
+                )
+            ).scalar_one_or_none()
+            if row is None:
+                return None
+            return _principal_info(row)
 
     async def create_session(self, principal_id: str, token_hash: str, label: str) -> None:
         async with scoped_session(self._maker, _LOGIN) as session:
@@ -59,7 +78,7 @@ class SqlAuthRepo:
                 .where(DeviceSession.token_hash == token_hash)
                 .values(last_seen_at=text("now()"))
             )
-            return PrincipalInfo(id=str(row.id), kind=row.kind, label=row.label)
+            return _principal_info(row)
 
     async def revoke_session(self, token_hash: str) -> None:
         async with scoped_session(self._maker, _LOGIN) as session:
@@ -77,6 +96,24 @@ class SqlAuthRepo:
                 .values(revoked_at=text("now()"))
             )
 
-    async def create_principal(self, kind: str, key_hash: str, label: str) -> None:
+    async def create_principal(
+        self, kind: str, key_hash: str, label: str, subject_id: str | None = None
+    ) -> None:
         async with scoped_session(self._maker, _BOOTSTRAP) as session:
-            session.add(Principal(kind=kind, key_hash=key_hash, label=label))
+            session.add(
+                Principal(
+                    kind=kind,
+                    key_hash=key_hash,
+                    label=label,
+                    subject_id=uuid.UUID(subject_id) if subject_id else None,
+                )
+            )
+
+
+def _principal_info(row: Principal) -> PrincipalInfo:
+    return PrincipalInfo(
+        id=str(row.id),
+        kind=row.kind,
+        label=row.label,
+        subject_id=str(row.subject_id) if row.subject_id is not None else "",
+    )

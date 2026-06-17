@@ -13,6 +13,7 @@ class FakePrincipal:
     key_hash: str
     label: str
     revoked: bool = False
+    subject_id: str = ""
 
 
 @dataclass
@@ -31,7 +32,13 @@ class FakeAuthRepo:
     async def find_active_principal_by_key_hash(self, key_hash: str) -> PrincipalInfo | None:
         for p in self.principals:
             if p.key_hash == key_hash and not p.revoked:
-                return PrincipalInfo(id=p.id, kind=p.kind, label=p.label)
+                return _info(p)
+        return None
+
+    async def find_active_device_principal_by_key_hash(self, key_hash: str) -> PrincipalInfo | None:
+        for p in self.principals:
+            if p.key_hash == key_hash and p.kind == "device_key" and not p.revoked:
+                return _info(p)
         return None
 
     async def create_session(self, principal_id: str, token_hash: str, label: str) -> None:
@@ -42,7 +49,7 @@ class FakeAuthRepo:
             if s.token_hash == token_hash and not s.revoked:
                 for p in self.principals:
                     if p.id == s.principal_id and not p.revoked:
-                        return PrincipalInfo(id=p.id, kind=p.kind, label=p.label)
+                        return _info(p)
         return None
 
     async def revoke_session(self, token_hash: str) -> None:
@@ -55,8 +62,16 @@ class FakeAuthRepo:
             if p.kind == kind:
                 p.revoked = True
 
-    async def create_principal(self, kind: str, key_hash: str, label: str) -> None:
-        self.principals.append(FakePrincipal(str(uuid.uuid4()), kind, key_hash, label))
+    async def create_principal(
+        self, kind: str, key_hash: str, label: str, subject_id: str | None = None
+    ) -> None:
+        self.principals.append(
+            FakePrincipal(str(uuid.uuid4()), kind, key_hash, label, subject_id=subject_id or "")
+        )
+
+
+def _info(p: FakePrincipal) -> PrincipalInfo:
+    return PrincipalInfo(id=p.id, kind=p.kind, label=p.label, subject_id=p.subject_id)
 
 
 @dataclass
