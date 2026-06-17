@@ -12,13 +12,39 @@ from datetime import UTC, datetime
 
 import pytest
 from sqlalchemy import text
+from sqlalchemy.exc import ProgrammingError
 
+from jbrain.analysis.predicates import (
+    alias_canonicals,
+    decide_predicates,
+    delete_predicate_alias,
+    record_predicate_alias,
+)
 from jbrain.analysis.repo import SqlAnalysisRepo
-from jbrain.db.session import scoped_session
+from jbrain.db.session import SessionContext, scoped_session
 from jbrain.queue import SYSTEM_CTX
 from tests.conftest import docker_available
 from tests.integration.test_extraction_pg import make_note, maker  # noqa: F401
 from tests.integration.test_rls import OWNER, database_url  # noqa: F401
+
+
+class _BoomEmbed:
+    """Fails if touched — proves an aliased predicate short-circuits with no embed."""
+
+    async def embed(self, texts: list[str]) -> list[list[float]]:
+        raise AssertionError("decide_predicates embedded an aliased predicate")
+
+
+class _RecordingEmbed:
+    """Records the texts it embedded — proves a mixed batch embeds ONLY the non-aliased subset."""
+
+    def __init__(self) -> None:
+        self.texts: list[str] = []
+
+    async def embed(self, texts: list[str]) -> list[list[float]]:
+        self.texts.extend(texts)
+        return [[0.0] * 384 for _ in texts]
+
 
 pytestmark = [
     pytest.mark.integration,
@@ -202,6 +228,124 @@ async def test_map_to_existing_rewrites_facts_and_event_drives_consolidation(mak
     mine = [d for d in diffs if d.event_type == wf_events.RESOLUTION_CHANGED]
     assert mine and all(d.error is None for d in mine)
     assert await _count_consolidate(maker) == before + 1
+
+
+async def _aliases(maker) -> dict[str, str]:  # noqa: F811
+    async with scoped_session(maker, SYSTEM_CTX) as s:
+        rows = (
+            await s.execute(text("SELECT raw_norm, canonical_name FROM app.predicate_aliases"))
+        ).all()
+    return {r.raw_norm: r.canonical_name for r in rows}
+
+
+async def test_map_to_existing_records_a_durable_alias(maker):  # noqa: F811
+    # Loop 3a Wave 1: resolving raw->canonical must record a durable alias so the drift spelling
+    # collapses at canonicalize time next run (not just a one-time stored-fact heal).
+    await _seed_canonical(maker, "spouse")
+    _fact, _ = await _seed_fact(maker, "zzqMarriedTo")
+    card = await _insert_card(maker, "zzqMarriedTo")
+    await SqlAnalysisRepo(maker).resolve_review(
+        OWNER, card, "map_to_existing", {"canonical_name": "spouse"}
+    )
+    # The alias is keyed by _norm_key (case/separator-insensitive), so a spelling variant collapses.
+    assert (await _aliases(maker)).get("zzqmarriedto") == "spouse"
+
+
+async def test_aliased_predicate_short_circuits_to_strong_without_embedding(maker):  # noqa: F811
+    await _seed_canonical(maker, "spouse")
+    async with scoped_session(maker, SYSTEM_CTX) as s:
+        await record_predicate_alias(s, "married_To", "spouse")
+    # A spelling variant of the aliased raw still resolves (the alias key is normalized), and the
+    # BoomEmbed proves no embedding ran for it.
+    async with scoped_session(maker, SYSTEM_CTX) as s:
+        decisions = await decide_predicates(
+            s, [("MarriedTo", "x marriedTo y", "relationship")], embedder=_BoomEmbed()
+        )
+    assert len(decisions) == 1
+    assert decisions[0].band == "strong" and decisions[0].canonical == "spouse"
+
+
+async def test_alias_canonicals_is_normalized_and_batched(maker):  # noqa: F811
+    await _seed_canonical(maker, "spouse")
+    async with scoped_session(maker, SYSTEM_CTX) as s:
+        await record_predicate_alias(s, "marriedTo", "spouse")
+        got = await alias_canonicals(s, ["Married_To", "unaliasedPred"])
+    assert got == {"marriedto": "spouse"}  # only the aliased raw, under its normalized key
+
+
+async def test_decide_predicates_mixed_batch_embeds_only_the_non_aliased(maker):  # noqa: F811
+    # The placeholder-then-fill must preserve order/length and embed ONLY the non-aliased subset.
+    await _seed_canonical(maker, "spouse")
+    async with scoped_session(maker, SYSTEM_CTX) as s:
+        await record_predicate_alias(s, "marriedTo", "spouse")
+        await record_predicate_alias(s, "wedTo", "spouse")
+    rec = _RecordingEmbed()
+    async with scoped_session(maker, SYSTEM_CTX) as s:
+        decisions = await decide_predicates(
+            s,
+            [
+                ("marriedTo", "x marriedTo y", "relationship"),  # aliased
+                ("frobnicates", "x frobnicates y", "state"),  # not aliased
+                ("wedTo", "x wedTo y", "relationship"),  # aliased
+            ],
+            embedder=rec,
+        )
+    # Order + length preserved; the aliased items map to STRONG/spouse, the middle falls through.
+    assert [d.band for d in decisions] == ["strong", "cold", "strong"]
+    assert decisions[0].canonical == "spouse" and decisions[2].canonical == "spouse"
+    assert decisions[1].canonical is None
+    # Cost + right-index mapping: exactly the one non-aliased predicate was embedded.
+    assert len(rec.texts) == 1 and "frobnicates" in rec.texts[0]
+
+
+async def test_remap_updates_the_alias_to_the_latest_canonical(maker):  # noqa: F811
+    # A re-resolution to a DIFFERENT canonical heals the facts onto it, so the alias must follow.
+    await _seed_canonical(maker, "spouse")
+    await _seed_canonical(maker, "partner")
+    async with scoped_session(maker, SYSTEM_CTX) as s:
+        await record_predicate_alias(s, "pairBondedWith", "spouse")
+        await record_predicate_alias(s, "pairBondedWith", "partner")
+    assert (await _aliases(maker)).get("pairbondedwith") == "partner"
+
+
+async def test_reopen_map_drops_the_durable_alias(maker):  # noqa: F811
+    # Reopening a map must fully reverse: facts back to raw AND the durable alias gone, else the
+    # next canonicalize run silently re-collapses the spelling to the rejected canonical.
+    await _seed_canonical(maker, "spouse")
+    fact_id, _ = await _seed_fact(maker, "zzqReopenAlias")
+    card = await _insert_card(maker, "zzqReopenAlias")
+    repo = SqlAnalysisRepo(maker)
+    await repo.resolve_review(OWNER, card, "map_to_existing", {"canonical_name": "spouse"})
+    assert (await _aliases(maker)).get("zzqreopenalias") == "spouse"
+    await repo.reopen_review(OWNER, card)
+    assert "zzqreopenalias" not in await _aliases(maker)  # alias dropped
+    assert await _fact_predicate(maker, fact_id) == "zzqReopenAlias"  # fact restored
+
+
+async def test_predicate_alias_delete_is_owner_only(maker):  # noqa: F811
+    # DELETE is owner/system-only too (RLS USING(is_owner())): a non-owner's delete matches no rows
+    # (silently, not an error — unlike the INSERT WITH CHECK), so the alias survives.
+    await _seed_canonical(maker, "spouse")
+    async with scoped_session(maker, SYSTEM_CTX) as s:
+        await record_predicate_alias(s, "ownerOnlyDel", "spouse")
+    token = SessionContext(principal_kind="capability_token", domain_scopes=("general",))
+    async with scoped_session(maker, token) as s:
+        await delete_predicate_alias(s, "ownerOnlyDel", "spouse")
+    assert (await _aliases(maker)).get("owneronlydel") == "spouse"  # survived the non-owner delete
+
+
+async def test_predicate_alias_insert_is_owner_only(maker):  # noqa: F811
+    # The new table is global-read but owner/system-insert (RLS isolation, CLAUDE.md rule 3).
+    await _seed_canonical(maker, "spouse")
+    token = SessionContext(principal_kind="capability_token", domain_scopes=("general",))
+    with pytest.raises(ProgrammingError):  # RLS WITH CHECK denies a non-owner insert
+        async with scoped_session(maker, token) as s:
+            await record_predicate_alias(s, "sneakyAlias", "spouse")
+    # ...and a non-owner still READS the global reference data (a row the owner recorded).
+    async with scoped_session(maker, SYSTEM_CTX) as s:
+        await record_predicate_alias(s, "ownerAlias", "spouse")
+    async with scoped_session(maker, token) as s:
+        assert (await alias_canonicals(s, ["ownerAlias"])) == {"owneralias": "spouse"}
 
 
 async def test_map_to_unknown_canonical_is_rejected(maker):  # noqa: F811

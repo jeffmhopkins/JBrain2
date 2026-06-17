@@ -125,6 +125,13 @@ REFLEXION_BUFFER_RETRY_DEFAULT = False
 SKILLS_ENABLED_KEY = "skills_enabled"
 SKILLS_ENABLED_DEFAULT = False
 
+# Loop 2 Wave 3: the per-domain ACTIVE-skill cap the nightly `skill_sweep` enforces with
+# usefulness-decay eviction (active->shadow). A tunable, owner-overridable via a settings upsert; a
+# malformed or non-positive stored value falls back to the default (a junk value must never read as
+# "no cap"). Retrieval surfaces only top-K, so this bounds the library, not what a turn sees.
+SKILL_ACTIVE_CAP_KEY = "skill_active_cap_per_domain"
+SKILL_ACTIVE_CAP_DEFAULT = 25
+
 # Integration run + resolution-pin persistence (docs/WORKFLOW_ENGINE_PLAN.md §E7b,
 # Wave 1 Track A): when on, integrate_note writes an `app.runs` row
 # (kind='integration') and UPSERTs the Integrator's committed identity/predicate-key
@@ -239,6 +246,17 @@ class SqlSettingsStore:
         """Whether Loop-2 skill playbooks are surfaced at turn time. Defaults OFF (Wave 1 ships the
         retrieval path inert; flip on once active skills exist). Any non-true value reads as off."""
         return await self.get(ctx, SKILLS_ENABLED_KEY, SKILLS_ENABLED_DEFAULT) is True
+
+    async def skill_active_cap(self, ctx: SessionContext) -> int:
+        """The per-domain ACTIVE-skill cap `skill_sweep` enforces (Wave 3). A malformed or
+        non-positive stored value falls back to the default — fail-closed: a junk value must never
+        read as "uncapped" (which would defeat the eviction)."""
+        raw = await self.get(ctx, SKILL_ACTIVE_CAP_KEY, SKILL_ACTIVE_CAP_DEFAULT)
+        return (
+            raw
+            if isinstance(raw, int) and not isinstance(raw, bool) and raw > 0
+            else SKILL_ACTIVE_CAP_DEFAULT
+        )
 
     async def self_improvement_kill_switch(self, ctx: SessionContext) -> bool:
         """Whether the global self-improvement kill-switch is engaged (E5). When

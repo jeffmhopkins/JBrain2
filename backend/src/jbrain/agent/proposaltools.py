@@ -10,6 +10,8 @@ idempotent on its node id so re-enacting can never duplicate it.
 
 import uuid
 
+import structlog
+
 from jbrain.agent.contracts import ProposalRef
 from jbrain.agent.loop import ToolContext, ToolHandler, ToolOutput
 from jbrain.agent.proposals import (
@@ -20,9 +22,13 @@ from jbrain.agent.proposals import (
     ProposalRow,
     ProposalSpec,
 )
+from jbrain.agent.skills import SkillsRepo
+from jbrain.analysis.repo import AlreadyResolved, SqlAnalysisRepo, UnknownAction
 from jbrain.db.session import SessionContext
 from jbrain.notes.repo import SqlNotesRepo
 from jbrain.queue import JobEnqueuer
+
+log = structlog.get_logger()
 
 _TITLE_LEN = 80
 
@@ -102,5 +108,49 @@ def agent_note_executor(notes: SqlNotesRepo, jobs: JobEnqueuer) -> LeafExecutor:
         # has a note and a job). Without this the note never leaves 'pending'.
         if created:
             await jobs.enqueue(ctx, "ingest_note", {"note_id": note.id})
+
+    return execute
+
+
+def skill_promotion_executor(skills: SkillsRepo) -> LeafExecutor:
+    """Enact a skill-promotion leaf (Loop 2): flip the owner-reviewed shadow skill to `active`,
+    so it becomes eligible for turn-time retrieval. Idempotent — set_status is a plain UPDATE, so
+    a re-enact is a no-op. The owner approving the proposal IS the trust+promotion gate (the MVP's
+    answer to auto-promotion); no auto path writes 'active'."""
+
+    async def execute(ctx: SessionContext, proposal: ProposalRow, node: NodeRow) -> None:
+        skill_id = str(node.preview.get("skill_id", "")).strip()
+        if not skill_id:
+            return
+        await skills.set_status(ctx, skill_id, "active")
+
+    return execute
+
+
+def predicate_resolution_executor(analysis: SqlAnalysisRepo) -> LeafExecutor:
+    """Enact a predicate-canon leaf (Loop 3a, Wave 2): apply the owner-approved resolution of a
+    `new_predicate` card via the SHIPPED `resolve_review` (map_to_existing / accept_as_new),
+    reusing all its committed logic — fact rewrite, mint, the durable alias (Wave 1), the
+    consolidate event. The nightly action only STAGES this; owner approval IS the trust gate (no
+    auto-resolve). Idempotent: a re-enact of an already-resolved card is a no-op."""
+
+    async def execute(ctx: SessionContext, proposal: ProposalRow, node: NodeRow) -> None:
+        card_id = str(node.preview.get("card_id", "")).strip()
+        action = str(node.preview.get("action", "")).strip()
+        if not card_id or not action:
+            return
+        payload: dict[str, str] = {}
+        canonical = node.preview.get("canonical_name")
+        if isinstance(canonical, str) and canonical:
+            payload["canonical_name"] = canonical
+        try:
+            await analysis.resolve_review(ctx, card_id, action, payload)
+        except AlreadyResolved:
+            return  # a re-enact (or an owner who already resolved it in the UI) — idempotent
+        except UnknownAction:
+            # The map target was removed between propose and enact (or the card is gone). Skip this
+            # one leaf rather than 500-ing the whole domain proposal and blocking its valid leaves;
+            # the card stays open and the next sweep re-proposes it with a fresh resolution.
+            log.warning("predicate_resolve_skipped", card_id=card_id, action=action)
 
     return execute

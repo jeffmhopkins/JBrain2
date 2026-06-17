@@ -145,6 +145,56 @@ class SkillsRepo:
                 {"s": status, "id": skill_id},
             )
 
+    async def demote_over_cap(self, ctx: SessionContext, cap: int) -> list[tuple[str, str]]:
+        """Usefulness-decay eviction (Wave 3): per domain, keep the `cap` most-useful ACTIVE skills
+        and demote the rest to `shadow` — reversible (the owner can re-promote), never deleted.
+        "Most useful" = most-recently surfaced, then most-surfaced; a never-surfaced skill falls
+        back to its `created_at` so a freshly promoted one isn't evicted before it can prove out.
+        `id` is the final, deterministic tiebreak. Quarantined/shadow skills are not in the active
+        set, so they neither count toward the cap nor get demoted. The demote is domain-firewalled
+        by RLS — a scoped session only ever touches skills in a domain it holds. Returns the
+        (id, domain) of each demoted skill."""
+        async with scoped_session(self._maker, ctx) as session:
+            rows = (
+                await session.execute(
+                    text(
+                        "WITH ranked AS ("
+                        "  SELECT id, row_number() OVER ("
+                        "    PARTITION BY domain_code ORDER BY"
+                        "      coalesce((success_stats->>'last_surfaced_at')::timestamptz,"
+                        "               created_at) DESC,"
+                        "      coalesce((success_stats->>'surfaced')::int, 0) DESC,"
+                        "      created_at DESC, id"
+                        "  ) AS rn FROM app.skills WHERE status = 'active'"
+                        ")"
+                        " UPDATE app.skills s SET status = 'shadow' FROM ranked"
+                        " WHERE s.id = ranked.id AND ranked.rn > :cap"
+                        " RETURNING s.id::text AS id, s.domain_code AS domain"
+                    ),
+                    {"cap": cap},
+                )
+            ).all()
+        return [(r.id, r.domain) for r in rows]
+
+    async def nearest_distance(
+        self, ctx: SessionContext, domain_code: str, qvec: list[float]
+    ) -> float | None:
+        """Cosine distance to the closest existing skill in `domain_code` (any status) — the dedup
+        signal: distillation skips a candidate too close to one already on file. None when the
+        domain has no embedded skill yet."""
+        async with scoped_session(self._maker, ctx) as session:
+            dist = (
+                await session.execute(
+                    text(
+                        "SELECT embedding <=> cast(:v AS vector) FROM app.skills"
+                        " WHERE domain_code = :d AND embedding IS NOT NULL"
+                        " ORDER BY embedding <=> cast(:v AS vector) LIMIT 1"
+                    ),
+                    {"v": vector_literal(qvec), "d": domain_code},
+                )
+            ).scalar()
+        return float(dist) if dist is not None else None
+
 
 # How much nothing nudges rank yet — recall is pure similarity RRF in the MVP (parity with memory's
 # importance tiebreak hook, kept at zero until a quality signal exists).

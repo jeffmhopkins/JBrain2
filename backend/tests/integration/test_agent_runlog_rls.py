@@ -6,6 +6,7 @@ from collections.abc import AsyncIterator
 
 import pytest
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
@@ -140,3 +141,39 @@ async def test_run_step_job_id_db_fk_sets_null_when_job_ages_out(
             )
         ).one()
     assert row.job_id is None
+
+
+async def test_chat_finalization_statuses_satisfy_the_runs_constraint(
+    maker: async_sessionmaker,
+) -> None:
+    """The /chat endpoint closes a run with one of exactly three statuses — `done` (the turn
+    completed), `error` (a mid-stream failure OR a client disconnect) — and the runs status CHECK
+    (migration 0016) must accept them, since `finish()` is shielded + suppressed in the endpoint
+    and would otherwise strand the run at `running`. This pins that vocabulary to the constraint
+    (and to the frontend RunStatus = running|done|error): a regression to the old invalid
+    `ended`/`cancelled`/`failed` strings is caught here, not silently swallowed in production."""
+    owner = await _owner(maker)
+    sessions = AgentSessionRepo(maker)
+    log = AgentRunLog(maker)
+
+    for status, stop_reason in (("done", "end_turn"), ("error", "disconnected")):
+        info = await sessions.create(owner, domain_scopes=["general"], title="t")
+        run_id = await log.start(owner, session_id=info.id, prompt_version="agent-system-v1")
+        await log.finish(
+            owner, run_id, status=status, stop_reason=stop_reason, step_count=1, cost_tokens=1
+        )
+        async with scoped_session(maker, owner) as session:
+            got = (
+                await session.execute(
+                    text("SELECT status FROM app.runs WHERE id = :id"), {"id": run_id}
+                )
+            ).scalar_one()
+        assert got == status  # persisted, not stranded at 'running'
+
+    # The old vocabulary the endpoint used to write violates the constraint — guards the fix.
+    info = await sessions.create(owner, domain_scopes=["general"], title="bad")
+    run_id = await log.start(owner, session_id=info.id, prompt_version="agent-system-v1")
+    with pytest.raises(IntegrityError):
+        await log.finish(
+            owner, run_id, status="ended", stop_reason="end_turn", step_count=1, cost_tokens=1
+        )

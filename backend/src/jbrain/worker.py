@@ -17,6 +17,9 @@ import structlog
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from jbrain import queue
+from jbrain.agent.predicatereview import PREDICATE_REVIEW_SPEC, predicate_review_handler
+from jbrain.agent.skilldistill import SKILL_DISTILL_SPEC, skill_distill_handler
+from jbrain.agent.skillsweep import SKILL_SWEEP_SPEC, skill_sweep_handler
 from jbrain.analysis import purge
 from jbrain.analysis.consolidation import Consolidator
 from jbrain.analysis.pipeline import AnalysisPipeline
@@ -279,6 +282,20 @@ async def run() -> None:
         # actions it lives in-code only — NOT in the app.actions seed — so the 0035
         # seed-lockstep holds (the seed projection + nightly schedule are H·B).
         "eval_run": eval_run_handler(maker, build_live_scorer(router)),
+        # Loop 2 skill distillation (Wave 2): distill successful runs into owner-reviewed shadow
+        # skills, budget-gated. In-code only (not in app.actions); a migration seeds the schedule.
+        "skill_distill": skill_distill_handler(
+            maker,
+            router=router,
+            embedder=TeiEmbedClient(settings.embed_url),
+            embedding_model=settings.embed_model,
+        ),
+        # Loop 2 skill hygiene (Wave 3): cap active skills per domain, demoting the least-useful
+        # back to shadow (reversible). No LLM call; in-code only (a migration seeds the schedule).
+        "skill_sweep": skill_sweep_handler(maker),
+        # Loop 3a predicate-canon review (Wave 2): stage owner proposals to resolve open
+        # new_predicate cards (map/mint). No LLM call; in-code only (a migration seeds it).
+        "predicate_review": predicate_review_handler(maker),
         # The wiki builder (Phase-6 Wave C2): dirty-bit-driven article build + reindex + prune.
         # In-code only (not in the app.actions seed); a migration seeds the schedules. The live
         # LLM rewriter (C2b) drives router.complete behind the grounding gate + wiki-build budget;
@@ -306,6 +323,9 @@ async def run() -> None:
             scheduler.RECONCILE_PENDING_INTEGRATION_ACTION,
             scheduler.RECONCILE_UNEMBEDDED_NOTES_ACTION,
             EVAL_RUN_SPEC,
+            SKILL_DISTILL_SPEC,
+            SKILL_SWEEP_SPEC,
+            PREDICATE_REVIEW_SPEC,
             *WIKI_SPECS,
         )
     )

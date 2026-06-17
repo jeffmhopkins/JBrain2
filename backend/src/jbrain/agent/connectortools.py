@@ -22,7 +22,12 @@ from jbrain.agent.proposals import (
     ProposalRow,
     ProposalSpec,
 )
-from jbrain.agent.proposaltools import agent_note_executor
+from jbrain.agent.proposaltools import (
+    agent_note_executor,
+    predicate_resolution_executor,
+    skill_promotion_executor,
+)
+from jbrain.agent.skills import SkillsRepo
 from jbrain.analysis.repo import SqlAnalysisRepo
 from jbrain.connectors.base import ConnectorRegistry, EgressGuardError, build_egress
 from jbrain.connectors.service import ConnectorService
@@ -109,22 +114,30 @@ def build_leaf_executor(
     connectors: ConnectorService,
     jobs: JobEnqueuer,
     analysis: SqlAnalysisRepo,
+    skills: SkillsRepo,
 ) -> LeafExecutor:
     """The Proposal executor, dispatching by leaf op: an egress_call fires the
     connector; a merge_entities leaf folds one entity into another through the
-    analysis repo; everything else (correction/knowledge, and a manage_appointment
+    analysis repo; a skill_promote leaf flips a distilled shadow skill to active
+    (Loop 2); everything else (correction/knowledge, and a manage_appointment
     change) re-enters as an agent note from its preview `body` (which enqueues
     ingestion via `jobs`) — so an approved appointment flows through extraction to
     the projection like any note."""
     note_executor = agent_note_executor(notes, jobs)
     egress = egress_executor(connectors)
     merge = entity_merge_executor(analysis)
+    skill_promote = skill_promotion_executor(skills)
+    predicate_resolve = predicate_resolution_executor(analysis)
 
     async def execute(ctx: SessionContext, proposal: ProposalRow, node: NodeRow) -> None:
         if node.op == "egress_call":
             await egress(ctx, proposal, node)
         elif node.op == "merge_entities":
             await merge(ctx, proposal, node)
+        elif node.op == "skill_promote":
+            await skill_promote(ctx, proposal, node)
+        elif node.op == "predicate_resolve":
+            await predicate_resolve(ctx, proposal, node)
         else:
             await note_executor(ctx, proposal, node)
 
