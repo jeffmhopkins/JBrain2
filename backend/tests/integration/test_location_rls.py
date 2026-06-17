@@ -1,4 +1,4 @@
-"""Phase 7 location firewall against real Postgres (migrations 0054-0057).
+"""Phase 7 location firewall against real Postgres (migrations 0059-0062).
 
 The continuous GPS stream is the most sensitive data class in JBrain2, so these
 are the enforcement evidence for its stricter-than-domain firewall (CLAUDE.md

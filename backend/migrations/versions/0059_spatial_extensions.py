@@ -14,17 +14,17 @@ them in the default database.
 
 Downgrade is intentionally a no-op: the extensions are shared infrastructure that
 ships with the image and may back objects outside this feature; the dependent
-location tables are dropped by the 0055–0057 downgrades via the revision chain.
+location tables are dropped by the 0060–0062 downgrades via the revision chain.
 
-Revision ID: 0054
-Revises: 0053
+Revision ID: 0059
+Revises: 0058
 Create Date: 2026-06-17
 """
 
 from alembic import op
 
-revision = "0054"
-down_revision = "0053"
+revision = "0059"
+down_revision = "0058"
 branch_labels = None
 depends_on = None
 

@@ -1,4 +1,4 @@
-"""Phase 7 location tables (migrations 0055-0057).
+"""Phase 7 location tables (migrations 0060-0062).
 
 The PostGIS `geography` columns (`location_fixes.geog`, `place_geofence.center`/
 `polygon`) are deliberately NOT mapped here: `geog` is a DB-generated column and

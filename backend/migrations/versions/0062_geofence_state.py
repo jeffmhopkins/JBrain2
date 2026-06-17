@@ -2,19 +2,19 @@
 
 Operational state the inline detector reads-modifies-writes on each fix: how many
 consecutive confirming fixes have accrued and whether the subject is currently
-inside/outside/unknown for a given fence. Unlike the geometry mirror (0056), this
+inside/outside/unknown for a given fence. Unlike the geometry mirror (0061), this
 IS written by the device session at ingest, so it carries the full subject-pinned
 firewall (a device writes only its own state; a full owner / the sweep sees all).
 
-Revision ID: 0057
-Revises: 0056
+Revision ID: 0062
+Revises: 0061
 Create Date: 2026-06-17
 """
 
 from alembic import op
 
-revision = "0057"
-down_revision = "0056"
+revision = "0062"
+down_revision = "0061"
 branch_labels = None
 depends_on = None
 
