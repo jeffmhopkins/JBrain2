@@ -66,9 +66,15 @@ The wiki links article→article by resolving a mentioned **entity** to its arti
   `entity.merged_into_id`); on split, a way to re-resolve mentions to the right new
   identity. The wiki re-resolves links on the next build off these signals.
 - Same id-stability / migration-map guarantee as §1, for entities.
+- **The mention index is a wiki SOURCE, not just a link resolver (decision B).** The
+  wiki sources article *context* from `entity_mentions` (entity ↔ chunk) — including note
+  detail that never became a fact. So the **entity↔chunk mention linkage must be stable /
+  re-resolvable** across the rebuild, and mention **re-routing on merge/split must be
+  followable** (we re-pull context on the next build). If the rebuild changes how mentions
+  attach to entities, give us the same id-map / signal as §1.
 
-*Why:* without it, every cross-article link and "what links here" back-link breaks on a
-merge/split/rebuild.
+*Why:* without it, every cross-article link, back-link, AND the note-derived prose breaks
+on a merge/split/rebuild.
 
 ## 5. A reliable **fact change-feed** (the delta the nightly builder consumes)
 
@@ -99,6 +105,15 @@ change classes (all of which alter an article's correct content):
 Either must cover **all** the classes above. Removals (purge) must be observable too (so
 the builder can drop now-uncitable claims), e.g. a `fact.removed` event or a tombstone.
 
+**Also (decision B — note-derived prose):** the feed must surface **note/chunk/mention**
+changes keyed to the affected entity, not only *fact* changes. Under B a new note that
+merely **mentions** an entity (producing no new fact) still changes that entity's article,
+and a note edit/deletion changes cited chunk text. So we need to detect "entity E's source
+material changed" via new/edited/removed `entity_mentions`/chunks for E — `chunks` already
+have timestamps; expose the entity↔chunk delta (e.g. `mention.created/removed` or a
+`chunks.updated_at` reachable from E via the mention index). Without it, B-sourced context
+goes stale silently.
+
 *Why:* without a complete change-feed the wiki goes stale silently — an article keeps
 asserting "currently works at Acme" after the fact's interval was closed in place.
 
@@ -111,7 +126,10 @@ asserting "currently works at Acme" after the fact's interval was closed in plac
       accumulation preserved; `pending_review` policy confirmed.
 - [ ] `domain_code` on the citable unit (firewall-enforceable in Postgres).
 - [ ] A stable entity id + merge/split re-point signals for link resolution.
-- [ ] A complete fact change-feed (`updated_at` **or** events) covering create / in-place
-      close / refresh / pin / retract / **merge** / **purge** / re-key, watermark-queryable.
+- [ ] A stable / re-resolvable **entity↔chunk mention index** (the wiki sources
+      note-derived context from it — decision B).
+- [ ] A complete change-feed (`updated_at` **or** events) covering fact create / in-place
+      close / refresh / pin / retract / **merge** / **purge** / re-key — **and**
+      note/chunk/mention changes keyed to the affected entity — watermark-queryable.
 
 When these land, the wiki's gated wave (citations, links, nightly builder) can start.

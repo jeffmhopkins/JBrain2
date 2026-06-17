@@ -113,12 +113,13 @@ the source note per `[n]`. (Chosen reader mock: `docs/mocks/wiki-reader-chosen-w
   fallback) — seed it into the editorial-config table.
 
 **Gated on the rebuild (FKs into the frozen fact shape):**
-- **`app.wiki_citations`**: `id`, `revision_id` (FK ON DELETE CASCADE), `fact_id`
-  (**hard FK → app.facts(id) ON DELETE RESTRICT** — a cited fact can't be purged without
-  rewriting the revision; or SET NULL + rebuild trigger — §6 Q), `note_id`/`chunk_id`
-  (**hard FK ON DELETE CASCADE** — honor the note-deletion purge), `entity_canonical_name`
-  (render **cache only**), `domain_code`. **Firewall in Postgres (non-negotiable #3):** a
-  CHECK/trigger asserting `citation.domain_code = section.domain_code = facts.domain_code`,
+- **`app.wiki_citations`**: `id`, `revision_id` (FK ON DELETE CASCADE), **`fact_id`
+  (nullable** hard FK → app.facts(id) ON DELETE RESTRICT — a *fact-backed* claim; null for
+  a *chunk-only* note-derived claim, decision §6 = B), **`chunk_id` (hard FK, NOT NULL** ON
+  DELETE CASCADE — every claim cites at least a chunk; honors the note-deletion purge),
+  `note_id`, `entity_canonical_name` (render **cache only**), `domain_code`. **Firewall in
+  Postgres (non-negotiable #3):** a CHECK/trigger asserting `citation.domain_code =
+  section.domain_code = chunk.domain_code` (and `= facts.domain_code` when fact-backed),
   plus an isolation test that a scoped session can neither create nor read a cross-domain
   citation, and cannot observe an out-of-scope section at all.
 - **`app.wiki_links`** (wiki↔wiki links + back-links): `id`, `from_section_id` (FK ON
@@ -151,14 +152,26 @@ dishonest Ops "run now"). Pipeline (ARCHITECTURE.md §Wiki):
    entity stays link-target-only (no article).
 3a. **Type + guide selection** — the article's type = the entity's kind; load that type's
    **wiki guide** (sections/style/requirements) to drive the rewrite.
-4. **Cited rewrite** — `router.complete("wiki.rewrite", json_schema=…)`, following the
-   type guide; **resolve mentions to wiki links** (`wiki_links`: a mentioned entity →
-   its article if one exists, else a red-link to the entity page). **Citation
-   enforcement (corrected):** every claim cites a fact that is **non-retracted and
-   same-domain** — NOT "the active head." Historical/superseded facts MUST be citable
-   (biographical claims; "superseded facts stay queryable for citation integrity",
-   ARCHITECTURE.md:96), and accumulating predicates legitimately have **multiple
-   co-equal current facts**. Post-validate fail-closed against this predicate.
+3b. **Source-finding (decision §6 = B):** two-tier, per affected section's domain.
+   *Backbone* = the entity's **citable facts** (`entity_id = E` or `object_entity_id = E`),
+   each carrying its chunk citation — the arbitrated truth. *Context* = the entity's
+   **mention-linked chunks** (`entity_mentions → chunks`, same-domain) — the source
+   paragraphs, including detail that never became a fact. The builder writes prose from the
+   **chunk text** (not just the terse fact statement), so claims can be *fact-backed* or
+   *chunk-only*. (This is the "entity + note search" — bounded via the mention index, not
+   an open trawl; an optional semantic chunk search can supplement.)
+4. **Cited rewrite + grounding gate** — `router.complete("wiki.rewrite", json_schema=…)`,
+   following the type guide; **resolve mentions to wiki links** (`wiki_links`: a mentioned
+   entity → its article if one exists, else a red-link to the entity page). **Citation
+   enforcement:** every claim cites a **chunk** (and a fact when fact-backed) that is
+   **non-retracted and same-domain** — NOT "the active head"; historical/superseded facts
+   stay citable (biography; ARCHITECTURE.md:96), and accumulating predicates have
+   **multiple co-equal current facts**. **Grounding gate (required, load-bearing under B):**
+   a verifier asserts every sentence is **entailed by its cited chunk** and same-domain
+   (reuse the eval-harness groundedness scoring + reflexion's citation check); fail-closed
+   drops/flags unsupported prose. **Discipline:** the current fact graph wins for core
+   status; chunk-only claims add detail and must not contradict a current fact or resurface
+   superseded/retracted content.
 5. **Split/merge** — stage a `wiki-restructure` proposal; **owner-approved via the
    review inbox** before enactment.
 6. **Re-embed** changed summaries into `wiki_index`.
@@ -214,6 +227,13 @@ the owner-correction path (§4). Graph-independent shell — built against **fix
    one-offs stay plain entities. Lives in editorial config, so re-tunable without code.
 7. **Link fallback:** ✅ RESOLVED — **wiki→wiki, with a red-link entity-page fallback**
    for entities that have no article yet (never a dead end). (§3 step 4, §5, `wiki_links`.)
+8. **Source depth (fact-only vs note-derived):** ✅ RESOLVED — **B: chunk-only
+   note-derived claims allowed.** The builder sources from cited chunk *text* (not just
+   fact statements) via facts (backbone) + `entity_mentions → chunks` (context); claims
+   may be fact-backed or chunk-only; both cite a chunk. **Consequence — new required
+   deliverable:** a **grounding gate** (every claim entailed by its cited chunk,
+   same-domain; current facts win; no resurrecting superseded/retracted content) is now
+   mandatory in the builder wave, not optional. (§2 `wiki_citations`, §3 steps 3b/4.)
 
 **Must settle WITH the rebuild stream BEFORE the gated work (builder/citations/links):**
 *Written up as a hand-off interface spec — `docs/PHASE6_WIKI_GRAPH_CONTRACT.md` (give it
