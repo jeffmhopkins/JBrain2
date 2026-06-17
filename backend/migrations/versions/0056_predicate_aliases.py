@@ -40,8 +40,7 @@ def upgrade() -> None:
         """
     )
     op.execute(
-        "CREATE INDEX predicate_aliases_canonical_idx"
-        " ON app.predicate_aliases (canonical_name)"
+        "CREATE INDEX predicate_aliases_canonical_idx ON app.predicate_aliases (canonical_name)"
     )
 
     op.execute("ALTER TABLE app.predicate_aliases ENABLE ROW LEVEL SECURITY")

@@ -29,6 +29,7 @@ class _BoomEmbed:
     async def embed(self, texts: list[str]) -> list[list[float]]:
         raise AssertionError("decide_predicates embedded an aliased predicate")
 
+
 pytestmark = [
     pytest.mark.integration,
     pytest.mark.skipif(not docker_available(), reason="requires a Docker daemon"),
