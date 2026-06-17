@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Wiki article — Priya Nair (rendered from notes)</title>
+<title>Wiki article — Priya Nair (prose + list + tables)</title>
 <style>
   :root{
     --bg:#0e1116;--surface:#161b22;--surface-2:#1b2230;--border:#2a313c;
@@ -30,7 +30,7 @@
   .subtitle{font-size:13px;color:var(--text-3);border-bottom:1px solid var(--border);padding-bottom:10px;margin-bottom:12px}
   .ro{display:inline-flex;align-items:center;gap:6px;font-size:11px;color:var(--amber);background:color-mix(in srgb,var(--amber) 12%,transparent);border-radius:8px;padding:5px 9px;margin-bottom:14px}
   .ro svg{width:13px;height:13px}
-  .infobox{float:right;width:172px;margin:0 0 10px 12px;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:10px;font-size:11.5px}
+  .infobox{float:right;width:174px;margin:0 0 10px 12px;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:10px;font-size:11.5px}
   .infobox .ib-title{text-align:center;font-weight:700;font-size:12.5px;padding-bottom:7px;border-bottom:1px solid var(--border);margin-bottom:7px}
   .infobox .ib-disc{width:64px;height:64px;border-radius:50%;margin:0 auto 8px;display:grid;place-items:center;background:color-mix(in srgb,var(--steel) 16%,transparent);color:var(--steel)}
   .infobox .ib-disc svg{width:32px;height:32px}
@@ -41,12 +41,17 @@
   a.link{color:var(--link);text-decoration:none;cursor:pointer}
   a.link:hover{text-decoration:underline}
   a.red{color:var(--red);text-decoration:none;cursor:pointer;border-bottom:1px dotted var(--red)}
-  a.red:hover{background:color-mix(in srgb,var(--red) 12%,transparent)}
   sup.ref{font-size:10px;line-height:0}
   sup.ref a{color:var(--link);text-decoration:none;cursor:pointer}
   h2.sec{font-family:Georgia,serif;font-weight:400;font-size:19px;margin:20px 0 8px;padding-bottom:4px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px}
   h2.sec .dom{width:8px;height:8px;border-radius:50%;flex:0 0 8px}
   h2.sec .dom-lbl{font-size:10px;font-family:system-ui;color:var(--text-3);border:1px solid var(--border);border-radius:20px;padding:0 7px;margin-left:auto;text-transform:uppercase;letter-spacing:.04em}
+  ul.wl{margin:0 0 12px;padding-left:20px}
+  ul.wl li{margin-bottom:5px}
+  table.wt{width:100%;border-collapse:collapse;margin:2px 0 13px;font-size:13px}
+  table.wt th,table.wt td{border:1px solid var(--border);padding:5px 8px;text-align:left}
+  table.wt th{background:var(--surface-2);font-weight:600;font-size:12px;color:var(--text-2)}
+  table.wt td{color:var(--text-2)}
   h2.refs{font-family:Georgia,serif;font-weight:400;font-size:18px;margin:24px 0 8px;padding-bottom:4px;border-bottom:1px solid var(--border)}
   ol.reflist{margin:0;padding-left:22px;font-size:12px;color:var(--text-2)}
   ol.reflist li{margin-bottom:7px}
@@ -76,63 +81,86 @@
       <div class="ib-disc"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-7 8-7s8 3 8 7"/></svg></div>
       <div class="ib-title">Priya Nair</div>
       <dl>
-        <dt>Relation</dt><dd>Sister of <a class="link">Jordan&nbsp;Hale</a><sup class="ref"><a onclick="j(2)">[2]</a></sup></dd>
-        <dt>Raised</dt><dd><a class="link">Austin</a><sup class="ref"><a onclick="j(1)">[1]</a></sup></dd>
-        <dt>Spouse</dt><dd><a class="red" title="No article yet">Tom</a> (m.&nbsp;2021)<sup class="ref"><a onclick="j(3)">[3]</a></sup></dd>
-        <dt>Child</dt><dd><a class="red" title="No article yet">Anaya</a> (b.&nbsp;2024)<sup class="ref"><a onclick="j(7)">[7]</a></sup></dd>
-        <dt>Education</dt><dd>M.D., <a class="link">Johns&nbsp;Hopkins</a><sup class="ref"><a onclick="j(2)">[2]</a></sup></dd>
-        <dt>Practice</dt><dd><a class="link">Nair&nbsp;Pediatrics</a>, <a class="link">Brookline</a> (2024–)<sup class="ref"><a onclick="j(9)">[9]</a></sup></dd>
+        <dt>Born</dt><dd><a class="link">Austin</a><sup class="ref"><a onclick="j(1)">[1]</a></sup></dd>
+        <dt>Sibling</dt><dd><a class="link">Jordan&nbsp;Hale</a> (br.)<sup class="ref"><a onclick="j(2)">[2]</a></sup></dd>
+        <dt>Spouse</dt><dd><a class="red">Tom</a> (m.&nbsp;2021)<sup class="ref"><a onclick="j(3)">[3]</a></sup></dd>
+        <dt>Children</dt><dd><a class="red">Anaya</a>, <a class="red">Mira</a><sup class="ref"><a onclick="j(7)">[7]</a></sup></dd>
+        <dt>Occupation</dt><dd>Pediatrician<sup class="ref"><a onclick="j(4)">[4]</a></sup></dd>
+        <dt>Practice</dt><dd><a class="link">Nair&nbsp;Pediatrics</a> (2024–)<sup class="ref"><a onclick="j(9)">[9]</a></sup></dd>
       </dl>
     </div>
 
-    <p><strong>Priya Nair</strong> is a pediatrician and the younger sister of
-      <a class="link">Jordan Hale</a>.<sup class="ref"><a onclick="j(2)">[2]</a></sup> She grew up in
-      <a class="link">Austin</a><sup class="ref"><a onclick="j(1)">[1]</a></sup>, trained in medicine at
-      <a class="link">Johns Hopkins</a><sup class="ref"><a onclick="j(2)">[2]</a></sup>, and as of 2024 runs her own
-      practice, <a class="link">Nair Pediatrics</a>, in <a class="link">Brookline</a>.<sup class="ref"><a onclick="j(9)">[9]</a></sup></p>
+    <p><strong>Priya Nair</strong> is a pediatrician and the founder of <a class="link">Nair Pediatrics</a> in
+      <a class="link">Brookline</a>.<sup class="ref"><a onclick="j(9)">[9]</a></sup> She is the younger sister of
+      <a class="link">Jordan Hale</a>.<sup class="ref"><a onclick="j(2)">[2]</a></sup></p>
 
     <h2 class="sec"><span class="dom" style="background:var(--steel)"></span>Early life</h2>
-    <p>Nair grew up in <a class="link">Austin</a>, where she was regarded within the family as the one most
-      drawn to science.<sup class="ref"><a onclick="j(1)">[1]</a></sup></p>
+    <p>Nair grew up in <a class="link">Austin</a>, Texas, where she was known within the family as a science
+      enthusiast from an early age.<sup class="ref"><a onclick="j(1)">[1]</a></sup> In 2019 she was admitted to medical
+      school at <a class="link">Johns Hopkins</a>.<sup class="ref"><a onclick="j(2)">[2]</a></sup></p>
 
     <h2 class="sec"><span class="dom" style="background:var(--steel)"></span>Career</h2>
-    <p>Nair was admitted to medical school at <a class="link">Johns Hopkins</a> in 2019.<sup class="ref"><a onclick="j(2)">[2]</a></sup>
-      After completing her residency, she began working as a pediatrician at
-      <a class="link">Riverside Children's Clinic</a> in March 2022.<sup class="ref"><a onclick="j(4)">[4]</a></sup>
-      In September 2024 she left Riverside to open her own practice, <a class="link">Nair Pediatrics</a>, in
-      <a class="link">Brookline</a>.<sup class="ref"><a onclick="j(9)">[9]</a></sup> In October 2025 she gave a talk on
-      childhood asthma at the state pediatric conference.<sup class="ref"><a onclick="j(13)">[13]</a></sup></p>
+    <p>After completing her residency in 2022, Nair began working as a pediatrician at
+      <a class="link">Riverside Children's Clinic</a>.<sup class="ref"><a onclick="j(4)">[4]</a></sup> She left Riverside
+      in 2024 to open her own practice, <a class="link">Nair Pediatrics</a>, in Brookline, where she currently
+      practices.<sup class="ref"><a onclick="j(9)">[9]</a></sup></p>
+    <p>Her talks and publications include:</p>
+    <ul class="wl">
+      <li>Co-authored a paper on vaccine hesitancy in <a class="link">JAMA Pediatrics</a> (2023).<sup class="ref"><a onclick="j(16)">[16]</a></sup></li>
+      <li>Presented at the regional conference on childhood nutrition (2024).<sup class="ref"><a onclick="j(17)">[17]</a></sup></li>
+      <li>Gave a talk at the state pediatric conference on childhood asthma (2025).<sup class="ref"><a onclick="j(13)">[13]</a></sup></li>
+    </ul>
 
     <h2 class="sec"><span class="dom" style="background:var(--steel)"></span>Personal life</h2>
-    <p>Nair married <a class="red" title="No article yet">Tom</a> in a small courthouse ceremony attended only by
-      family in September 2021.<sup class="ref"><a onclick="j(3)">[3]</a></sup> In January 2024 the couple had a
-      daughter, <a class="red" title="No article yet">Anaya</a>.<sup class="ref"><a onclick="j(7)">[7]</a></sup> In August 2025
-      Nair and Tom moved to a larger home in <a class="link">Brookline</a>, near her practice.<sup class="ref"><a onclick="j(12)">[12]</a></sup>
-      She is noted within the family for her biryani<sup class="ref"><a onclick="j(10)">[10]</a></sup>, and in April 2023 she
-      ran the Boston Marathon in 3:52, having trained for over a year.<sup class="ref"><a onclick="j(5)">[5]</a></sup></p>
+    <p>Nair married <a class="red">Tom</a> in a small courthouse ceremony in 2021, attended only by
+      family.<sup class="ref"><a onclick="j(3)">[3]</a></sup> Their first daughter, <a class="red">Anaya</a>, was born in
+      2024,<sup class="ref"><a onclick="j(7)">[7]</a></sup> and their second, <a class="red">Mira</a>, in
+      2026.<sup class="ref"><a onclick="j(20)">[20]</a></sup> In 2025 the family moved to a larger home in
+      <a class="link">Brookline</a>.<sup class="ref"><a onclick="j(12)">[12]</a></sup></p>
+    <p>Nair is an accomplished marathon runner, improving her time in each successive race:</p>
+    <table class="wt">
+      <tr><th>Event</th><th>Year</th><th>Time</th></tr>
+      <tr><td><a class="link">Boston</a></td><td>2023</td><td>3:52<sup class="ref"><a onclick="j(5)">[5]</a></sup></td></tr>
+      <tr><td><a class="link">Chicago</a></td><td>2024</td><td>3:47<sup class="ref"><a onclick="j(14)">[14]</a></sup></td></tr>
+      <tr><td><a class="link">NYC</a></td><td>2025</td><td>3:41<sup class="ref"><a onclick="j(15)">[15]</a></sup></td></tr>
+    </table>
+    <p>She is also regarded within the family as its best cook, known for her biryani.<sup class="ref"><a onclick="j(10)">[10]</a></sup></p>
 
     <h2 class="sec"><span class="dom" style="background:var(--health)"></span>Health<span class="dom-lbl">health</span></h2>
-    <p>Nair has a serious peanut allergy and carries an EpiPen.<sup class="ref"><a onclick="j(6)">[6]</a></sup></p>
+    <p>Nair has a serious peanut allergy and carries an <a class="link">EpiPen</a>.<sup class="ref"><a onclick="j(6)">[6]</a></sup>
+      She takes the following medications:</p>
+    <table class="wt">
+      <tr><th>Medication</th><th>Dose</th><th>For</th></tr>
+      <tr><td><a class="link">Levothyroxine</a></td><td>50 mcg</td><td>Thyroid<sup class="ref"><a onclick="j(18)">[18]</a></sup></td></tr>
+      <tr><td><a class="link">Cetirizine</a></td><td>10 mg daily (spring)</td><td>Seasonal allergies<sup class="ref"><a onclick="j(19)">[19]</a></sup></td></tr>
+    </table>
 
     <h2 class="sec"><span class="dom" style="background:var(--finance)"></span>Finances<span class="dom-lbl">finance</span></h2>
-    <p>In July 2024 Nair borrowed $4,000 from <a class="link">Jordan Hale</a> for clinic equipment while opening her
-      practice<sup class="ref"><a onclick="j(8)">[8]</a></sup>; she repaid the loan in full in May 2025.<sup class="ref"><a onclick="j(11)">[11]</a></sup></p>
+    <p>In 2024 <a class="link">Jordan Hale</a> lent Nair $4,000 for clinic equipment<sup class="ref"><a onclick="j(8)">[8]</a></sup>;
+      the loan was repaid in full in 2025.<sup class="ref"><a onclick="j(11)">[11]</a></sup></p>
 
     <h2 class="refs">References</h2>
     <ol class="reflist">
-      <li id="r1"><span class="meta">Note · May 2, 2018 —</span> "Priya <mark>grew up in Austin</mark> with me — always the science nerd." <span class="dchip">general</span></li>
-      <li id="r2"><span class="meta">Note · Jun 10, 2019 —</span> "Priya got into <mark>med school at Johns Hopkins</mark>! my little sister." <span class="dchip">general</span></li>
-      <li id="r3"><span class="meta">Note · Sep 2, 2021 —</span> "Priya <mark>married Tom</mark> at the courthouse — tiny ceremony, just family." <span class="dchip">general</span></li>
-      <li id="r4"><span class="meta">Note · Mar 15, 2022 —</span> "finished her residency and started as a <mark>pediatrician at Riverside Children's Clinic</mark>." <span class="dchip">general</span></li>
-      <li id="r5"><span class="meta">Note · Apr 18, 2023 —</span> "ran the <mark>Boston Marathon</mark> yesterday — 3:52!" <span class="dchip">general</span></li>
-      <li id="r6"><span class="meta">Note · Nov 20, 2023 —</span> "carry her EpiPen — her <mark>peanut allergy</mark> is serious." <span class="dchip">health</span></li>
+      <li id="r1"><span class="meta">Note · May 2, 2018 —</span> "Priya <mark>grew up in Austin</mark> — always the science nerd." <span class="dchip">general</span></li>
+      <li id="r2"><span class="meta">Note · Jun 10, 2019 —</span> "got into <mark>med school at Johns Hopkins</mark>! my little sister." <span class="dchip">general</span></li>
+      <li id="r3"><span class="meta">Note · Sep 2, 2021 —</span> "Priya <mark>married Tom</mark> at the courthouse — just family." <span class="dchip">general</span></li>
+      <li id="r4"><span class="meta">Note · Mar 15, 2022 —</span> "residency, started as a <mark>pediatrician at Riverside</mark>." <span class="dchip">general</span></li>
+      <li id="r5"><span class="meta">Note · Apr 18, 2023 —</span> "ran the <mark>Boston Marathon — 3:52</mark>!" <span class="dchip">general</span></li>
+      <li id="r6"><span class="meta">Note · Nov 20, 2023 —</span> "carry her EpiPen — <mark>peanut allergy</mark> is serious." <span class="dchip">health</span></li>
       <li id="r7"><span class="meta">Note · Jan 30, 2024 —</span> "Priya and Tom had a <mark>baby girl, Anaya</mark>." <span class="dchip">general</span></li>
       <li id="r8"><span class="meta">Note · Jul 12, 2024 —</span> "<mark>Lent Priya $4,000</mark> for clinic equipment." <span class="dchip">finance</span></li>
-      <li id="r9"><span class="meta">Note · Sep 5, 2024 —</span> "Priya <mark>left Riverside to open Nair Pediatrics in Brookline</mark>." <span class="dchip">general</span></li>
-      <li id="r10"><span class="meta">Note · Dec 1, 2024 —</span> "Priya's <mark>biryani</mark> was unreal — best cook in the family." <span class="dchip">general</span></li>
-      <li id="r11"><span class="meta">Note · May 20, 2025 —</span> "Priya <mark>paid back the $4,000 loan in full</mark>." <span class="dchip">finance</span></li>
+      <li id="r9"><span class="meta">Note · Sep 5, 2024 —</span> "<mark>left Riverside to open Nair Pediatrics in Brookline</mark>." <span class="dchip">general</span></li>
+      <li id="r10"><span class="meta">Note · Dec 1, 2024 —</span> "Priya's <mark>biryani</mark> — best cook in the family." <span class="dchip">general</span></li>
+      <li id="r11"><span class="meta">Note · May 20, 2025 —</span> "<mark>paid back the $4,000 loan in full</mark>." <span class="dchip">finance</span></li>
       <li id="r12"><span class="meta">Note · Aug 10, 2025 —</span> "Priya and Tom <mark>moved to a bigger place in Brookline</mark>." <span class="dchip">general</span></li>
-      <li id="r13"><span class="meta">Note · Oct 1, 2025 —</span> "gave a <mark>talk at the state pediatric conference on childhood asthma</mark>." <span class="dchip">general</span></li>
+      <li id="r13"><span class="meta">Note · Oct 1, 2025 —</span> "<mark>talk at the state pediatric conference on childhood asthma</mark>." <span class="dchip">general</span></li>
+      <li id="r14"><span class="meta">Note · Oct 13, 2024 —</span> "ran the <mark>Chicago Marathon — 3:47</mark>, a PR!" <span class="dchip">general</span></li>
+      <li id="r15"><span class="meta">Note · Nov 2, 2025 —</span> "finished the <mark>NYC Marathon in 3:41</mark>." <span class="dchip">general</span></li>
+      <li id="r16"><span class="meta">Note · Jun 1, 2023 —</span> "co-authored a <mark>paper on vaccine hesitancy in JAMA Pediatrics</mark>." <span class="dchip">general</span></li>
+      <li id="r17"><span class="meta">Note · May 20, 2024 —</span> "<mark>presented at the regional conference on childhood nutrition</mark>." <span class="dchip">general</span></li>
+      <li id="r18"><span class="meta">Note · Mar 10, 2024 —</span> "started <mark>levothyroxine 50mcg</mark> for her thyroid." <span class="dchip">health</span></li>
+      <li id="r19"><span class="meta">Note · Apr 22, 2025 —</span> "takes <mark>cetirizine 10mg</mark> each day in spring." <span class="dchip">health</span></li>
+      <li id="r20"><span class="meta">Note · Feb 9, 2026 —</span> "Priya and Tom had a <mark>second girl, Mira</mark>." <span class="dchip">general</span></li>
     </ol>
   </div>
 
@@ -140,7 +168,6 @@
 </div>
 <script>
   document.getElementById('theme').onclick=()=>{const h=document.documentElement;h.dataset.theme=h.dataset.theme==='dark'?'light':'dark'};
-  const scroll=document.querySelector('.scroll');
   function j(n){document.querySelectorAll('.reflist li').forEach(li=>li.classList.remove('hl'));const li=document.getElementById('r'+n);li.classList.add('hl');li.scrollIntoView({behavior:'smooth',block:'center'});setTimeout(()=>li.classList.remove('hl'),2200)}
 </script>
 </body>

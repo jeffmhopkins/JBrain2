@@ -30,6 +30,49 @@ style_default: "Neutral encyclopedic third person. Lead identifies the subject a
   unless the facts are inherently enumerable."
 ```
 
+## Writing style (binding — every article)
+
+Encyclopedic, like a Wikipedia article. The builder follows these; the hard rules
+(citation, single-domain, omit-empty) are enforced regardless. *(Validated against a
+worked example — `docs/mocks/wiki-reader-example-priya.html`.)*
+
+**Voice & reference**
+- Neutral third person. **No first person** — "I/my" never appears.
+- Past tense for history and events; present tense for current state.
+- First mention of the subject = full name (bold in the lead); afterwards surname or she/he/they.
+- The **owner is a named entity**: refer to them by name and wiki-link them like anyone
+  else ("the younger sister of [[Jordan Hale]]") — never "the owner" or first person.
+- **Minors are named by default** (private single-user KB); an editorial-config toggle can
+  anonymize them ("a daughter") for owners who prefer it.
+- First mention of any other entity is a wiki-link; red-link if it has no article yet.
+
+**Facts, dates, numbers**
+- Assert what's cited; no "reportedly"/hedging unless the fact's assertion status is
+  reported/hypothetical. No speculation beyond cited content.
+- Keep numbers/measurements **verbatim** (3:52, $4,000, 50 mcg) — never round or invent.
+- Date only real-world-dated events; state an undated lifelong fact tenselessly (don't
+  attach the note's capture date). A grounded interval may be a range ("2022–2024") when
+  both endpoints are cited. Superseded facts are written as past, never as current.
+
+**Citations**
+- Every claim carries a Wikipedia-style `[n]` → the numbered References list (note date ·
+  domain · snippet). **Cite at the smallest distinct clause** (lent…[n]; repaid…[m]), not
+  stacked at the sentence end. Fact-backed and note-derived claims are cited identically
+  (no visual tiering — the citation is the uniform trust signal).
+
+**Prose vs. lists vs. tables**
+- **Prose by default** — biography reads as paragraphs.
+- **Bulleted list** only for ≥3 short, parallel, non-narrative items of one kind that don't
+  flow as a sentence (talks, publications, awards, affiliations). No "Trivia" sections.
+- **Table** for genuinely tabular data: a **time series** of measurements (one predicate
+  over time → date/label | value) or structured records sharing fields (medications →
+  name | dose | for; races → event | year | time). The builder picks format from the
+  **shape of the underlying facts** (measurement-kind / repeated same-predicate `value_json`).
+- 2 items or fewer → prose; structure only at ≥3 records or a time series (a genuinely
+  tabular 2-row set is a borderline judgment call). Every list item / table row carries its
+  own `[n]`; lists/tables stay **single-domain** (a Health medications table lives in
+  Health). A type guide may declare a section's preferred format.
+
 ---
 
 ## Person
