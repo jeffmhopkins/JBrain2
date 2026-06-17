@@ -153,39 +153,42 @@ gives them their scheduled and manual triggers.
 **Exit:** ingest and a scheduled job run as user-defined pipeline
 definitions; failures are diagnosable from run logs alone.
 
-## Phase 6 — Wiki — Planned
+## Phase 6 — Wiki — Planned (build plan: `docs/PHASE6_WIKI_PLAN.md`)
 
-Wiki index (article summaries + embeddings). Incremental nightly builder:
-delta facts → index match → triage (update/create/split/merge) → targeted
-rewrites with enforced citations → versioned revisions. Editorial config
-(style guide, citation requirements) as data. Split/merge approvals via
-review inbox. Read-only wiki UI with citation hover-cards. "Discuss this
-article" correction-note loop.
+The LLM-maintained wiki, and **only** the wiki. Wiki index (article summaries +
+embeddings). Incremental nightly builder: delta facts → index match → triage
+(update/create/split/merge) → targeted rewrites with enforced citations →
+versioned revisions. Editorial config (style guide, citation requirements,
+per-type guides) as data. Split/merge approvals via the review inbox. Read-only
+wiki UI with citation cards. "Discuss this article" correction-note loop (Talk).
+A living, search-first landing; search extended to include articles. See the
+detailed build plan for the data model, the four engine actions, the writing-style
+spec, the firewall design, and the cross-stream `PHASE6_WIKI_GRAPH_CONTRACT.md`.
 
-**Carried forward from Phase 5 (the self-improvement loops, deferred here because
-each needs a spine Phase 5 deliberately did not build):**
+**Exit:** a day of notes updates only the affected articles overnight, every
+claim cites a note, and corrections happen by out-arguing the wiki with a
+correction note.
+
+## Phase 6 follow-ons — Planned (separate plans, unblocked *by* the wiki spine)
+
+Relocated out of the Phase-6 wiki build (each is its own multi-wave plan; folding
+them into the wiki broke one-PR-per-wave and hid the true size):
 
 - **Loop 2 — skill learning.** Skill distillation from successful episodes,
-  embedding + RRF retrieval, shadow→active promotion gated by the (now fed) eval
-  harness, and quarantine/eviction for regressed skills. The `skills` /
-  `skill_version` schema is groundwork shipped in Phase 5; it has no consumer yet.
+  embedding + RRF retrieval, shadow→active promotion gated by the eval harness,
+  quarantine/eviction. The `skills`/`skill_version` schema shipped in Phase 5.
 - **Loop 3 — durable-knowledge + predicate-canon self-improvement.** Tier-B
-  durable-knowledge promotion and the predicate-canonicalization self-improvement
-  loop (agent proposes registry merges via correction notes) — both need the
-  wiki/correction-note spine this phase builds.
+  durable-knowledge promotion + the predicate-canonicalization loop (agent proposes
+  registry merges via correction notes) — both need the wiki/correction-note spine.
 - **Loop 4 — prompt/tool self-edit.** PR-shaped, human-gated `.prompt`/`.tool`
   diffs gated by the eval harness, with a **100%-coverage adversarial-injection
   suite** and the data/instruction-boundary + domain-classification prompts
   **structurally barred from self-edit** (non-negotiable #12 / ASSISTANT.md I-#12).
   The single most security-sensitive deliverable on the roadmap.
-- **Not-yet-built hygiene sweeps** — entity hygiene, summary re-embedding, tag
-  consolidation, and the nightly wiki build — built as engine actions, then given
-  scheduled + emergency triggers (the pattern Phase 5 established for the existing
-  sweeps).
-
-**Exit:** a day of notes updates only the affected articles overnight, every
-claim cites a note, and corrections happen by out-arguing the wiki with a
-correction note.
+- **Hygiene sweeps (not yet built)** — entity hygiene, summary re-embedding, tag
+  consolidation — built as engine actions, then given scheduled + emergency
+  triggers (the Phase-5 sweep pattern). Distinct from the wiki's own `wiki_reindex`
+  (which only re-embeds wiki summaries).
 
 ## Phase 7 — Outer ring — Planned
 

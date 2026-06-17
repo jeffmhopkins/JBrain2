@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Wiki reader — C — evidence cards</title>
+<style>
+  :root {
+    --bg: #0e1116; --surface: #161b22; --surface-2: #1b2230; --border: #2a313c;
+    --text: #e6edf3; --text-2: #9aa7b4; --text-3: #6b7785;
+    --steel: #6ea8fe; --violet: #b08cff; --amber: #e0a85b;
+    --general: #6ea8fe; --health: #f17d8a; --finance: #5bc2a0; --location: #b08cff;
+    --mark: #3a2f17; --shadow: rgba(0,0,0,.45);
+  }
+  [data-theme="light"] {
+    --bg: #f4f6f9; --surface: #ffffff; --surface-2: #eef1f6; --border: #d9dee7;
+    --text: #1a2029; --text-2: #55606e; --text-3: #8b95a3;
+    --steel: #2f6fe0; --violet: #7a4fd0; --amber: #9a6b1e;
+    --general: #2f6fe0; --health: #c0455a; --finance: #1f8f6e; --location: #7a4fd0;
+    --mark: #fbe7c6; --shadow: rgba(20,30,50,.12);
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body { margin: 0; background: #05070a; font: 15px/1.5 -apple-system, system-ui, sans-serif;
+    display: grid; place-items: center; min-height: 100vh; color: var(--text); }
+  .phone { width: 390px; height: 800px; background: var(--bg); border-radius: 30px; overflow: hidden;
+    position: relative; box-shadow: 0 20px 60px var(--shadow); display: flex; flex-direction: column; }
+  .topbar { height: 56px; flex: 0 0 56px; display: flex; align-items: center; gap: 10px; padding: 0 14px;
+    border-bottom: 1px solid var(--border); background: var(--surface); }
+  .topbar .ttl { font-weight: 600; font-size: 16px; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .icon-btn { width: 36px; height: 36px; display: grid; place-items: center; border-radius: 9px; color: var(--text-2); background: transparent; border: 0; cursor: pointer; }
+  .icon-btn:hover { background: var(--surface-2); color: var(--text); }
+  svg { width: 20px; height: 20px; stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+  .scroll { overflow-y: auto; padding: 16px 14px 80px; flex: 1; }
+  .hero { display: flex; gap: 12px; align-items: center; margin-bottom: 4px; }
+  .disc { width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center; flex: 0 0 44px;
+    background: color-mix(in srgb, var(--steel) 16%, transparent); color: var(--steel); }
+  .disc svg { width: 23px; height: 23px; }
+  .h-title { font-size: 21px; font-weight: 700; }
+  .h-sub { font-size: 12px; color: var(--text-3); }
+  .ro { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; color: var(--amber); margin: 10px 0 18px; }
+  .ro svg { width: 13px; height: 13px; }
+  .sec-name { font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--text-2);
+    display: flex; align-items: center; gap: 8px; margin: 18px 2px 9px; }
+  .sec-name .d { width: 9px; height: 9px; border-radius: 50%; }
+  .ev { background: var(--surface); border: 1px solid var(--border); border-left: 3px solid var(--dc);
+    border-radius: 12px; padding: 12px 13px; margin-bottom: 10px; }
+  .ev .claim { font-size: 14.5px; font-weight: 550; }
+  .ev .chip { display: inline-flex; align-items: center; gap: 4px; padding: 1px 7px; border-radius: 20px; cursor: pointer;
+    background: color-mix(in srgb, var(--ec) 16%, transparent); color: var(--ec); font-size: 13px; font-weight: 500; }
+  .ev .chip::before { content:""; width:5px; height:5px; border-radius:50%; background: var(--ec); }
+  .ev .evi { margin-top: 9px; background: var(--surface-2); border-radius: 9px; padding: 9px 10px; }
+  .ev .evi .src { font-size: 11px; color: var(--text-3); display: flex; align-items: center; gap: 6px; margin-bottom: 5px; }
+  .ev .evi .src .dd { width: 6px; height: 6px; border-radius: 50%; background: var(--dc); }
+  .ev .evi .snip { font-size: 12.5px; color: var(--text-2); }
+  .ev .evi .snip mark { background: var(--mark); color: var(--text); border-radius: 3px; padding: 0 2px; }
+  .ev .foot { display: flex; align-items: center; justify-content: space-between; margin-top: 8px; }
+  .ev .meta { font-size: 10.5px; color: var(--text-3); display: flex; gap: 8px; }
+  .ev .disc-btn { font-size: 11px; color: var(--text-2); background: transparent; border: 0; cursor: pointer; display: inline-flex; align-items: center; gap: 4px; padding: 4px; }
+  .ev .disc-btn:hover { color: var(--text); }
+  .ev .disc-btn svg { width: 13px; height: 13px; }
+  .ev.super { opacity: .62; }
+  .ev .badge { font-size: 9.5px; text-transform: uppercase; letter-spacing: .05em; color: var(--text-3);
+    border: 1px solid var(--border); border-radius: 20px; padding: 1px 7px; }
+  .scrim { position: absolute; inset: 0; background: rgba(0,0,0,.45); opacity: 0; pointer-events: none; transition: opacity .15s; }
+  .scrim.on { opacity: 1; pointer-events: auto; }
+  .sheet { position: absolute; left: 12px; right: 12px; bottom: 12px; background: var(--surface); border: 1px solid var(--border);
+    border-radius: 16px; padding: 14px; transform: translateY(150%); transition: transform .2s cubic-bezier(.2,.8,.2,1); box-shadow: 0 -8px 30px var(--shadow); }
+  .sheet.on { transform: translateY(0); }
+  .sheet h4 { margin: 0 0 6px; font-size: 14px; }
+  .sheet .ta { background: var(--surface-2); border-radius: 10px; padding: 11px; font-size: 13px; color: var(--text-3); min-height: 64px; }
+  .sheet .note { font-size: 11.5px; color: var(--text-3); margin-top: 10px; }
+</style>
+</head>
+<body>
+<div class="phone">
+  <div class="topbar">
+    <button class="icon-btn"><svg viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg></button>
+    <div class="ttl">Celine Hopkins</div>
+    <button class="icon-btn" id="theme"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4.5"/><path d="M12 2v2M12 20v2M4 12H2M22 12h-2M5 5l1.5 1.5M17.5 17.5L19 19M19 5l-1.5 1.5M6.5 17.5L5 19"/></svg></button>
+  </div>
+
+  <div class="scroll">
+    <div class="hero">
+      <div class="disc"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-7 8-7s8 3 8 7"/></svg></div>
+      <div><div class="h-title">Celine Hopkins</div><div class="h-sub">Person · every claim shows its source</div></div>
+    </div>
+    <div class="ro"><svg viewBox="0 0 24 24"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>Machine-written · read-only</div>
+
+    <!-- GENERAL -->
+    <div class="sec-name"><span class="d" style="background:var(--general)"></span>General</div>
+    <div class="ev" style="--dc:var(--general)">
+      <div class="claim">Married to <span class="chip" style="--ec:var(--steel)">Jeff</span> since 2016.</div>
+      <div class="evi"><div class="src"><span class="dd"></span>Note · Mar 2, 2026 · general</div>
+        <div class="snip">"Celine and I celebrated our <mark>tenth anniversary</mark> today."</div></div>
+      <div class="foot"><span class="meta"><span>relationship · spouse</span><span>conf 0.95</span></span>
+        <button class="disc-btn" onclick="discuss()"><svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>discuss</button></div>
+    </div>
+    <div class="ev" style="--dc:var(--general)">
+      <div class="claim">Senior engineer at <span class="chip" style="--ec:var(--violet)">Globex Corporation</span>.</div>
+      <div class="evi"><div class="src"><span class="dd"></span>Note · Jan 19, 2026 · general</div>
+        <div class="snip">"Celine got <mark>promoted to senior engineer at Globex</mark> this week."</div></div>
+      <div class="foot"><span class="meta"><span>state · employer</span><span>conf 0.9</span></span>
+        <button class="disc-btn" onclick="discuss()"><svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>discuss</button></div>
+    </div>
+    <div class="ev super" style="--dc:var(--general)">
+      <div class="foot" style="margin:0 0 6px"><span class="badge">superseded · history</span></div>
+      <div class="claim">Engineer at Initech (2016–2019).</div>
+      <div class="evi"><div class="src"><span class="dd"></span>Note · Jun 1, 2016 · general</div>
+        <div class="snip">"Celine started at <mark>Initech</mark> today."</div></div>
+    </div>
+
+    <!-- HEALTH -->
+    <div class="sec-name"><span class="d" style="background:var(--health)"></span>Health</div>
+    <div class="ev" style="--dc:var(--health)">
+      <div class="claim">Allergic to penicillin.</div>
+      <div class="evi"><div class="src"><span class="dd"></span>Note · Feb 11, 2026 · health</div>
+        <div class="snip">"Reminded the clinic Celine has a <mark>penicillin allergy</mark>."</div></div>
+      <div class="foot"><span class="meta"><span>attribute · allergy</span><span>conf 0.92</span></span>
+        <button class="disc-btn" onclick="discuss()"><svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>discuss</button></div>
+    </div>
+    <div class="ev" style="--dc:var(--health)">
+      <div class="claim">Levothyroxine 75mcg, each morning.</div>
+      <div class="evi"><div class="src"><span class="dd"></span>Note · Feb 11, 2026 · health</div>
+        <div class="snip">"Refilled Celine's <mark>levothyroxine 75mcg</mark> — once each morning."</div></div>
+      <div class="foot"><span class="meta"><span>measurement · medication</span><span>conf 0.9</span></span>
+        <button class="disc-btn" onclick="discuss()"><svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>discuss</button></div>
+    </div>
+
+    <!-- FINANCE -->
+    <div class="sec-name"><span class="d" style="background:var(--finance)"></span>Finance</div>
+    <div class="ev" style="--dc:var(--finance)">
+      <div class="claim">Joint account with <span class="chip" style="--ec:var(--finance)">Chase</span>.</div>
+      <div class="evi"><div class="src"><span class="dd"></span>Note · Dec 20, 2025 · finance</div>
+        <div class="snip">"Moved Celine's payroll to the <mark>joint Chase account</mark>."</div></div>
+      <div class="foot"><span class="meta"><span>relationship · banks_with</span><span>conf 0.88</span></span>
+        <button class="disc-btn" onclick="discuss()"><svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>discuss</button></div>
+    </div>
+  </div>
+
+  <div class="scrim" id="scrim" onclick="close_()"></div>
+  <div class="sheet" id="sheet">
+    <h4>Discuss this claim</h4>
+    <div class="ta"><em>Describe what's wrong and what it should say…</em></div>
+    <div class="note">Filed as a note in this claim's domain — the pipeline applies it, so the wiki stays machine-written. Facts are never edited directly.</div>
+  </div>
+</div>
+
+<script>
+  document.getElementById('theme').onclick = () => { const h = document.documentElement; h.dataset.theme = h.dataset.theme === 'dark' ? 'light' : 'dark'; };
+  function discuss() { document.getElementById('scrim').classList.add('on'); document.getElementById('sheet').classList.add('on'); }
+  function close_() { document.getElementById('scrim').classList.remove('on'); document.getElementById('sheet').classList.remove('on'); }
+</script>
+</body>
+</html>

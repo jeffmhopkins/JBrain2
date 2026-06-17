@@ -100,6 +100,13 @@ note saved → event → extraction (attachments) → multi-granularity chunking
 
 ## Wiki
 
+> **Build plan: `docs/PHASE6_WIKI_PLAN.md`** (+ `PHASE6_WIKI_GRAPH_CONTRACT.md`). Where this
+> section differs, the plan governs: split/merge **thresholds** are vestigial under the
+> entity-driven model (the *article* restructure follows the owner-approved **entity**
+> merge/split — not a separate review-inbox approval); citations are FKs to **chunks**
+> (rendered as their note); and the "elevated extraction weight" below is a **not-yet-built
+> Phase-6 prerequisite**, not existing behavior.
+
 Articles, revisions, and citations are Postgres rows; citations are foreign
 keys to facts/chunks — enforced data, not markdown convention. The wiki is
 **machine-written only**, governed by an editorial config (style guide,

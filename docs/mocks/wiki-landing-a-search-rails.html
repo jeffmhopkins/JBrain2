@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Wiki landing — A — search-first + rails</title>
+<style>
+  :root{
+    --bg:#0E0F11;--surface:#17181B;--surface-2:#1E2024;--border:#26282C;
+    --text:#E6E7E9;--text-2:#9A9DA3;--text-3:#5C5F66;
+    --steel:#7FA7C9;--green:#8FBC9A;--amber:#C9A36A;--rose:#CF8A8F;--violet:#A493C9;
+    --periwinkle:#8F9FD0;--slate:#9AA0A8;--shadow:rgba(0,0,0,.45);
+  }
+  [data-theme="light"]{
+    --bg:#F7F7F5;--surface:#FFFFFF;--surface-2:#F0F0EE;--border:#E2E2DF;
+    --text:#1A1B1E;--text-2:#5C5F66;--text-3:#9A9DA3;
+    --steel:#7FA7C9;--green:#8FBC9A;--amber:#C9A36A;--rose:#CF8A8F;--violet:#A493C9;
+    --periwinkle:#8F9FD0;--slate:#9AA0A8;--shadow:rgba(20,30,50,.12);
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  body{margin:0;background:#05070a;font:15px/1.5 -apple-system,system-ui,sans-serif;display:grid;place-items:center;min-height:100vh;color:var(--text)}
+  .phone{width:390px;height:800px;background:var(--bg);border-radius:30px;overflow:hidden;position:relative;box-shadow:0 20px 60px var(--shadow);display:flex;flex-direction:column}
+  .topbar{height:56px;flex:0 0 56px;display:flex;align-items:center;gap:9px;padding:0 14px;border-bottom:1px solid var(--border);background:var(--surface)}
+  .brand{display:flex;align-items:center;gap:7px;flex:1;font-weight:700;font-size:16px}
+  .brand .dot{width:9px;height:9px;border-radius:50%;background:var(--steel)}
+  .icon-btn{width:36px;height:36px;display:grid;place-items:center;border-radius:9px;color:var(--text-2);background:transparent;border:0;cursor:pointer}
+  .icon-btn:hover{background:var(--surface-2);color:var(--text)}
+  svg{width:20px;height:20px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+  .scroll{overflow-y:auto;flex:1;padding:14px 16px 30px}
+  .search{display:flex;align-items:center;gap:8px;background:var(--surface-2);border:1px solid var(--border);border-radius:12px;padding:11px 13px;color:var(--text-3);font-size:14px}
+  .search svg{width:18px;height:18px}
+  .ro{display:inline-flex;align-items:center;gap:6px;font-size:11px;color:var(--amber);margin:11px 0 4px}
+  .ro svg{width:13px;height:13px}
+  .railhead{display:flex;align-items:center;gap:7px;margin:18px 0 9px;font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--text-2)}
+  .railhead svg{width:14px;height:14px;color:var(--text-3)}
+  /* recently-updated horizontal cards */
+  .hrail{display:flex;gap:10px;overflow-x:auto;padding-bottom:4px;margin:0 -16px;padding-left:16px;padding-right:16px}
+  .ucard{flex:0 0 150px;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:11px}
+  .ucard .disc{width:30px;height:30px;border-radius:50%;display:grid;place-items:center;margin-bottom:7px}
+  .ucard .disc svg{width:17px;height:17px}
+  .ucard .t{font-weight:600;font-size:13.5px;line-height:1.2}
+  .ucard .when{font-size:10.5px;color:var(--text-3);margin-top:3px}
+  /* hub list + index rows */
+  .row{display:flex;align-items:center;gap:11px;padding:9px 0;border-bottom:1px solid var(--border);cursor:pointer}
+  .row:last-child{border-bottom:0}
+  .disc{width:34px;height:34px;border-radius:50%;flex:0 0 34px;display:grid;place-items:center}
+  .disc svg{width:19px;height:19px}
+  .row .tx{flex:1;min-width:0}
+  .row .t{font-weight:600;font-size:14px}
+  .row .blurb{font-size:12px;color:var(--text-2);line-height:1.35;margin-top:1px;overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+  .row .cnt{font-size:11px;color:var(--text-3);display:flex;align-items:center;gap:3px;flex:0 0 auto}
+  .row .cnt svg{width:12px;height:12px}
+  .grp{margin-top:16px}
+  .grphead{display:flex;align-items:center;gap:8px;cursor:pointer;padding:6px 0}
+  .grphead .gt{flex:1;font-family:Georgia,serif;font-size:16px}
+  .grphead .gc{font-size:11px;color:var(--text-3)}
+  .grphead .chev{color:var(--text-3);transition:transform .15s}
+  .grp.closed .chev{transform:rotate(-90deg)}
+  .grp.closed .rows{display:none}
+</style>
+</head>
+<body>
+<div class="phone">
+  <div class="topbar">
+    <div class="brand"><span class="dot"></span>Wiki</div>
+    <button class="icon-btn" title="What links / graph"><svg viewBox="0 0 24 24"><circle cx="5" cy="6" r="2.5"/><circle cx="18" cy="9" r="2.5"/><circle cx="9" cy="18" r="2.5"/><path d="M7 7l9 1.5M7.5 16l1-7M16 11l-6 6"/></svg></button>
+    <button class="icon-btn" id="theme"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4.5"/><path d="M12 2v2M12 20v2M4 12H2M22 12h-2M5 5l1.5 1.5M17.5 17.5L19 19M19 5l-1.5 1.5M6.5 17.5L5 19"/></svg></button>
+  </div>
+
+  <div class="scroll">
+    <div class="search"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg>Search the wiki…</div>
+    <div class="ro"><svg viewBox="0 0 24 24"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>Machine-written from your notes · read-only</div>
+
+    <div class="railhead"><svg viewBox="0 0 24 24"><path d="M12 8v4l3 2"/><circle cx="12" cy="12" r="9"/></svg>Recently updated</div>
+    <div class="hrail">
+      <div class="ucard"><div class="disc" style="background:color-mix(in srgb,var(--steel) 16%,transparent);color:var(--steel)"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-7 8-7s8 3 8 7"/></svg></div><div class="t">Priya Nair</div><div class="when">updated 2h ago</div></div>
+      <div class="ucard"><div class="disc" style="background:color-mix(in srgb,var(--violet) 16%,transparent);color:var(--violet)"><svg viewBox="0 0 24 24"><path d="M3 21h18M5 21V7l7-4 7 4v14M9 21v-5h6v5"/></svg></div><div class="t">Globex Corp.</div><div class="when">yesterday</div></div>
+      <div class="ucard"><div class="disc" style="background:color-mix(in srgb,var(--green) 16%,transparent);color:var(--green)"><svg viewBox="0 0 24 24"><path d="M12 21s-7-5.5-7-11a7 7 0 0114 0c0 5.5-7 11-7 11z"/><circle cx="12" cy="10" r="2.5"/></svg></div><div class="t">Brookline</div><div class="when">3 days ago</div></div>
+    </div>
+
+    <div class="railhead"><svg viewBox="0 0 24 24"><circle cx="5" cy="6" r="2"/><circle cx="18" cy="9" r="2"/><circle cx="9" cy="18" r="2"/><path d="M7 7l9 1.5M7.5 16l1-7M16 11l-6 6"/></svg>Most connected</div>
+    <div class="row"><div class="disc" style="background:color-mix(in srgb,var(--steel) 16%,transparent);color:var(--steel)"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-7 8-7s8 3 8 7"/></svg></div><div class="tx"><div class="t">Celine Hopkins</div><div class="blurb">Software engineer at Globex; the owner's spouse.</div></div><div class="cnt"><svg viewBox="0 0 24 24"><path d="M9 17H7A5 5 0 017 7h2M15 7h2a5 5 0 010 10h-2M8 12h8"/></svg>12</div></div>
+    <div class="row"><div class="disc" style="background:color-mix(in srgb,var(--violet) 16%,transparent);color:var(--violet)"><svg viewBox="0 0 24 24"><path d="M3 21h18M5 21V7l7-4 7 4v14M9 21v-5h6v5"/></svg></div><div class="tx"><div class="t">Globex Corporation</div><div class="blurb">Tech company; Celine's employer since 2019.</div></div><div class="cnt"><svg viewBox="0 0 24 24"><path d="M9 17H7A5 5 0 017 7h2M15 7h2a5 5 0 010 10h-2M8 12h8"/></svg>9</div></div>
+    <div class="row"><div class="disc" style="background:color-mix(in srgb,var(--green) 16%,transparent);color:var(--green)"><svg viewBox="0 0 24 24"><path d="M12 21s-7-5.5-7-11a7 7 0 0114 0c0 5.5-7 11-7 11z"/><circle cx="12" cy="10" r="2.5"/></svg></div><div class="tx"><div class="t">Brookline</div><div class="blurb">Massachusetts town; where Priya lives and practices.</div></div><div class="cnt"><svg viewBox="0 0 24 24"><path d="M9 17H7A5 5 0 017 7h2M15 7h2a5 5 0 010 10h-2M8 12h8"/></svg>7</div></div>
+
+    <div class="railhead"><svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"/></svg>Browse by type</div>
+    <div class="grp" id="g1"><div class="grphead" onclick="g('g1')"><svg class="chev" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg><span class="gt">People</span><span class="gc">2</span></div>
+      <div class="rows">
+        <div class="row"><div class="disc" style="background:color-mix(in srgb,var(--steel) 16%,transparent);color:var(--steel)"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-7 8-7s8 3 8 7"/></svg></div><div class="tx"><div class="t">Celine Hopkins</div><div class="blurb">Software engineer at Globex; the owner's spouse.</div></div></div>
+        <div class="row"><div class="disc" style="background:color-mix(in srgb,var(--steel) 16%,transparent);color:var(--steel)"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-7 8-7s8 3 8 7"/></svg></div><div class="tx"><div class="t">Priya Nair</div><div class="blurb">Pediatrician; the owner's younger sister; founder of Nair Pediatrics.</div></div></div>
+      </div>
+    </div>
+    <div class="grp" id="g2"><div class="grphead" onclick="g('g2')"><svg class="chev" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg><span class="gt">Organizations</span><span class="gc">2</span></div>
+      <div class="rows">
+        <div class="row"><div class="disc" style="background:color-mix(in srgb,var(--violet) 16%,transparent);color:var(--violet)"><svg viewBox="0 0 24 24"><path d="M3 21h18M5 21V7l7-4 7 4v14M9 21v-5h6v5"/></svg></div><div class="tx"><div class="t">Globex Corporation</div><div class="blurb">Tech company; Celine's employer since 2019.</div></div></div>
+        <div class="row"><div class="disc" style="background:color-mix(in srgb,var(--violet) 16%,transparent);color:var(--violet)"><svg viewBox="0 0 24 24"><path d="M3 21h18M5 21V7l7-4 7 4v14M9 21v-5h6v5"/></svg></div><div class="tx"><div class="t">Nair Pediatrics</div><div class="blurb">Priya's pediatric practice in Brookline, opened 2024.</div></div></div>
+      </div>
+    </div>
+    <div class="grp closed" id="g3"><div class="grphead" onclick="g('g3')"><svg class="chev" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg><span class="gt">Places</span><span class="gc">2</span></div>
+      <div class="rows">
+        <div class="row"><div class="disc" style="background:color-mix(in srgb,var(--green) 16%,transparent);color:var(--green)"><svg viewBox="0 0 24 24"><path d="M12 21s-7-5.5-7-11a7 7 0 0114 0c0 5.5-7 11-7 11z"/><circle cx="12" cy="10" r="2.5"/></svg></div><div class="tx"><div class="t">Brookline</div><div class="blurb">Massachusetts town; where Priya lives and practices.</div></div></div>
+        <div class="row"><div class="disc" style="background:color-mix(in srgb,var(--green) 16%,transparent);color:var(--green)"><svg viewBox="0 0 24 24"><path d="M12 21s-7-5.5-7-11a7 7 0 0114 0c0 5.5-7 11-7 11z"/><circle cx="12" cy="10" r="2.5"/></svg></div><div class="tx"><div class="t">Denver</div><div class="blurb">Colorado city; Celine's home.</div></div></div>
+      </div>
+    </div>
+  </div>
+</div>
+<script>
+  document.getElementById('theme').onclick=()=>{const h=document.documentElement;h.dataset.theme=h.dataset.theme==='dark'?'light':'dark'};
+  function g(id){document.getElementById(id).classList.toggle('closed')}
+</script>
+</body>
+</html>

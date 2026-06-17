@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Wiki Talk — C — anchored annotations</title>
+<style>
+  :root{
+    --bg:#0e1116;--surface:#161b22;--surface-2:#1b2230;--border:#2a313c;
+    --text:#e6edf3;--text-2:#9aa7b4;--text-3:#6b7785;
+    --steel:#6ea8fe;--violet:#b08cff;--amber:#e0a85b;--green:#5bc2a0;--shadow:rgba(0,0,0,.45);
+  }
+  [data-theme="light"]{
+    --bg:#f7f6f2;--surface:#fff;--surface-2:#f0f0ec;--border:#d8d8d0;
+    --text:#202122;--text-2:#54595d;--text-3:#8b9096;
+    --steel:#3366cc;--violet:#7a4fd0;--amber:#9a6b1e;--green:#1f8f6e;--shadow:rgba(20,30,50,.12);
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  body{margin:0;background:#05070a;font:15px/1.6 -apple-system,system-ui,sans-serif;display:grid;place-items:center;min-height:100vh;color:var(--text)}
+  .phone{width:390px;height:800px;background:var(--bg);border-radius:30px;overflow:hidden;position:relative;box-shadow:0 20px 60px var(--shadow);display:flex;flex-direction:column}
+  .topbar{height:56px;flex:0 0 56px;display:flex;align-items:center;gap:10px;padding:0 14px;border-bottom:1px solid var(--border);background:var(--surface)}
+  .topbar .ttl{font-weight:600;font-size:15px;flex:1;line-height:1.1}
+  .topbar .ttl small{display:block;font-size:11px;color:var(--text-3);font-weight:400}
+  .icon-btn{width:36px;height:36px;display:grid;place-items:center;border-radius:9px;color:var(--text-2);background:transparent;border:0;cursor:pointer}
+  .icon-btn:hover{background:var(--surface-2);color:var(--text)}
+  svg{width:20px;height:20px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+  .hint{font-size:11.5px;color:var(--text-3);padding:9px 14px;border-bottom:1px solid var(--border);display:flex;gap:7px;align-items:center}
+  .hint svg{width:14px;height:14px;color:var(--amber)}
+  .scroll{overflow-y:auto;flex:1;padding:14px 16px 30px}
+  h1{font-family:Georgia,serif;font-weight:400;font-size:22px;margin:2px 0 12px}
+  h2{font-family:Georgia,serif;font-weight:400;font-size:16px;margin:18px 0 6px;padding-bottom:3px;border-bottom:1px solid var(--border)}
+  p{margin:0 0 10px}
+  .claim{cursor:pointer;border-radius:4px;padding:1px 2px;position:relative}
+  .claim:hover{background:var(--surface-2)}
+  .claim.has::after{content:attr(data-n);position:relative;top:-6px;font-size:10px;font-weight:700;color:var(--steel);margin-left:2px;background:color-mix(in srgb,var(--steel) 18%,transparent);border-radius:8px;padding:0 5px}
+  .claim.flag{background:color-mix(in srgb,var(--amber) 14%,transparent)}
+  .claim.flag.has::after{color:var(--amber);background:color-mix(in srgb,var(--amber) 18%,transparent)}
+  /* thread sheet */
+  .scrim{position:absolute;inset:0;background:rgba(0,0,0,.5);opacity:0;pointer-events:none;transition:opacity .15s}
+  .scrim.on{opacity:1;pointer-events:auto}
+  .sheet{position:absolute;left:0;right:0;bottom:0;max-height:74%;background:var(--surface);border-top-left-radius:18px;border-top-right-radius:18px;
+    border-top:1px solid var(--border);transform:translateY(100%);transition:transform .22s cubic-bezier(.2,.8,.2,1);display:flex;flex-direction:column}
+  .sheet.on{transform:translateY(0)}
+  .sheet .grab{width:36px;height:4px;background:var(--border);border-radius:3px;margin:8px auto 4px}
+  .sheet .anchor{font-size:12px;color:var(--text-3);padding:4px 16px 10px;border-bottom:1px solid var(--border)}
+  .sheet .anchor b{color:var(--text-2)}
+  .sheet .thread{overflow-y:auto;padding:12px 16px;display:flex;flex-direction:column;gap:10px}
+  .m{max-width:88%;font-size:13.5px;padding:8px 11px;border-radius:13px}
+  .m.agent{align-self:flex-start;background:var(--surface-2);border-bottom-left-radius:4px}
+  .m.owner{align-self:flex-end;background:color-mix(in srgb,var(--steel) 22%,transparent);border-bottom-right-radius:4px}
+  .m .nm{font-size:10px;color:var(--text-3);margin-bottom:2px}
+  .m .src{margin-top:6px;font-size:12px;color:var(--text-3);background:var(--bg);border-radius:7px;padding:6px 8px}
+  .actrow{display:flex;gap:7px;flex-wrap:wrap;padding:10px 16px;border-top:1px solid var(--border)}
+  .actrow button{font-size:12px;padding:7px 11px;border-radius:10px;border:1px solid var(--border);background:var(--surface-2);color:var(--text);cursor:pointer}
+  .actrow button.warn{color:var(--amber);border-color:color-mix(in srgb,var(--amber) 30%,transparent)}
+  .composer{display:flex;gap:8px;padding:10px 16px calc(10px + env(safe-area-inset-bottom))}
+  .composer input{flex:1;background:var(--surface-2);border:1px solid var(--border);border-radius:18px;padding:9px 13px;color:var(--text);font-size:13.5px;outline:none}
+  .composer .send{width:38px;height:38px;border-radius:50%;border:0;background:var(--steel);display:grid;place-items:center;cursor:pointer}
+  .composer .send svg{stroke:#04101f;width:18px;height:18px}
+</style>
+</head>
+<body>
+<div class="phone">
+  <div class="topbar">
+    <button class="icon-btn"><svg viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg></button>
+    <div class="ttl">Talk<small>Celine Hopkins · tap a claim to discuss</small></div>
+    <button class="icon-btn" id="theme"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4.5"/><path d="M12 2v2M12 20v2M4 12H2M22 12h-2M5 5l1.5 1.5M17.5 17.5L19 19M19 5l-1.5 1.5M6.5 17.5L5 19"/></svg></button>
+  </div>
+  <div class="hint"><svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>Discussion is anchored to claims — tap any line. ② = open thread.</div>
+
+  <div class="scroll">
+    <h1>Celine Hopkins</h1>
+    <p><span class="claim" onclick="open_('lead')">Software engineer based in Denver.</span>
+       <span class="claim has flag" data-n="2" onclick="open_('globex')">Married to Jeff; works at Globex since 2019.</span></p>
+    <h2>Career</h2>
+    <p><span class="claim has flag" data-n="2" onclick="open_('globex')">Joined Globex in 2019; promoted to senior engineer in 2026.</span>
+       <span class="claim" onclick="open_('initech')">Previously at Initech, 2016–2019.</span></p>
+    <h2>Personal life</h2>
+    <p><span class="claim has" data-n="1" onclick="open_('boulder')">Married Jeff in 2016; moved to Denver in 2025.</span></p>
+    <h2>Finances</h2>
+    <p><span class="claim" onclick="open_('chase')">Joint account with Chase.</span></p>
+  </div>
+
+  <div class="scrim" id="scrim" onclick="close_()"></div>
+  <div class="sheet" id="sheet">
+    <div class="grab"></div>
+    <div class="anchor">on: <b id="anchorTxt">Career — "works at Globex since 2019"</b></div>
+    <div class="thread" id="thread">
+      <div class="m owner"><div class="nm">You</div>She left Globex in March.</div>
+      <div class="m agent"><div class="nm">Editor</div>This cites:
+        <div class="src">Note · Jan 19, 2026 — "promoted to senior engineer at Globex." No later note marks a departure.</div>
+        Set the record straight?</div>
+    </div>
+    <div class="actrow">
+      <button onclick="resolve('correction note filed')">File correction</button>
+      <button class="warn" onclick="resolve('source excluded')">Exclude source</button>
+      <button onclick="resolve('rebuild queued')">Rebuild</button>
+    </div>
+    <div class="composer"><input id="inp" placeholder="Reply to the editor…" /><button class="send" onclick="reply()"><svg viewBox="0 0 24 24"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4z"/></svg></button></div>
+  </div>
+</div>
+<script>
+  document.getElementById('theme').onclick=()=>{const h=document.documentElement;h.dataset.theme=h.dataset.theme==='dark'?'light':'dark'};
+  const anchors={lead:'Lead — "based in Denver"',globex:'Career — "works at Globex since 2019"',initech:'Career — "previously at Initech"',boulder:'Personal life — "married Jeff in 2016"',chase:'Finances — "joint account with Chase"'};
+  const th=document.getElementById('thread');
+  function open_(k){document.getElementById('anchorTxt').textContent=anchors[k]||k;document.getElementById('scrim').classList.add('on');document.getElementById('sheet').classList.add('on')}
+  function close_(){document.getElementById('scrim').classList.remove('on');document.getElementById('sheet').classList.remove('on')}
+  function reply(){const i=document.getElementById('inp');if(!i.value.trim())return;const d=document.createElement('div');d.className='m owner';d.innerHTML='<div class="nm">You</div>'+i.value;th.appendChild(d);i.value='';th.scrollTop=th.scrollHeight}
+  function resolve(t){const d=document.createElement('div');d.className='m agent';d.innerHTML='<div class="nm">Editor</div>Done — '+t+', anchored to this claim. Rebuilds on the next pass.';th.appendChild(d);th.scrollTop=th.scrollHeight}
+</script>
+</body>
+</html>
