@@ -100,9 +100,13 @@ the source note per `[n]`. (Chosen reader mock: `docs/mocks/wiki-reader-chosen-w
   `summary`, `summary_embedding vector(384)`, `embedding_model`, HNSW index. The
   domain-scoped match target.
 - **Editorial config as data** (grounded — ARCHITECTURE.md:105-107): style guide,
-  citation-density floor, split/merge thresholds, **and per-article-type section
-  templates** (the type-guided section taxonomy — Person/Org/Place/Event/… → their
-  ordered sections, each with a default domain) — a settings row / small table, not code.
+  citation-density floor, split/merge thresholds, the **notability gate** (which
+  entities earn an article — §6), **and per-entity-type WIKI GUIDES**: for each entity
+  type (Person/Org/Place/Event/…), an ordered **section** template (each section with a
+  default domain + an include-if rule), a **style** spec (voice/tense/lead), and hard
+  **requirements** (every claim cites a note, omit uncited/empty, no speculation, dates
+  in the note's local tz). The builder loads the guide for the article's type at rewrite
+  time. A settings table, not code; owner-tunable. (Seed common type-families first.)
 
 **Gated on the rebuild (FKs into the frozen fact shape):**
 - **`app.wiki_citations`**: `id`, `revision_id` (FK ON DELETE CASCADE), `fact_id`
@@ -113,6 +117,14 @@ the source note per `[n]`. (Chosen reader mock: `docs/mocks/wiki-reader-chosen-w
   CHECK/trigger asserting `citation.domain_code = section.domain_code = facts.domain_code`,
   plus an isolation test that a scoped session can neither create nor read a cross-domain
   citation, and cannot observe an out-of-scope section at all.
+- **`app.wiki_links`** (wiki↔wiki links + back-links): `id`, `from_section_id` (FK ON
+  DELETE CASCADE), `to_entity_id` (the mentioned entity — the stable anchor),
+  `to_article_id` (FK, nullable — resolved when/if the target has an article), `anchor`,
+  `domain_code`. Powers article→article linking, the **"what links here"** back-links
+  list, and a **notability signal** (inbound link count). Graph-coupled (references
+  entities) → gated. Back-links are RLS-filtered by `from_section.domain_code` (you only
+  see links from sections you can read). Targets are article *shells* (cross-domain), so
+  a link never exposes the target's out-of-scope sections.
 
 ## 3. The nightly builder (GRAPH-COUPLED — gated)
 
@@ -131,7 +143,13 @@ dishonest Ops "run now"). Pipeline (ARCHITECTURE.md §Wiki):
    without it.
 2. **Index match** — embed the delta cluster, RRF against `wiki_index` → candidates.
 3. **Triage** — one cheap LLM call per cluster → update | create | split | merge | ignore.
-4. **Cited rewrite** — `router.complete("wiki.rewrite", json_schema=…)`. **Citation
+   `create` is gated by the **notability gate** (editorial config); a sub-threshold
+   entity stays link-target-only (no article).
+3a. **Type + guide selection** — the article's type = the entity's kind; load that type's
+   **wiki guide** (sections/style/requirements) to drive the rewrite.
+4. **Cited rewrite** — `router.complete("wiki.rewrite", json_schema=…)`, following the
+   type guide; **resolve mentions to wiki links** (`wiki_links`: a mentioned entity →
+   its article if one exists, else a red-link to the entity page). **Citation
    enforcement (corrected):** every claim cites a fact that is **non-retracted and
    same-domain** — NOT "the active head." Historical/superseded facts MUST be citable
    (biographical claims; "superseded facts stay queryable for citation integrity",
@@ -167,10 +185,11 @@ rationale is recorded in `docs/mocks/wiki-reader-README.md` and lands in `DESIGN
 Wave B starts.
 
 Full-screen read-only surface, amber/read-only tint, the stubbed Wiki tile. Renders
-stored articles/sections/revisions; entity chips → `EntityScreen`; `[n]` jumps to the
-References list; "discuss this article" → the owner-correction path (§4). Graph-independent
-— built against **fixture data**. **DoD includes fixtures for default / empty /
-long-article / error / offline states.**
+stored articles/sections/revisions; **wiki→wiki links** (a mentioned entity opens its
+*article* if one exists, else a red-link to its `EntityScreen`); `[n]` jumps to the
+References list; a **"what links here"** back-links affordance; "discuss this article" →
+the owner-correction path (§4). Graph-independent shell — built against **fixture data**.
+**DoD includes fixtures for default / empty / long-article / error / offline states.**
 
 ## 6. Open decisions — triaged by what they block
 
@@ -184,9 +203,18 @@ long-article / error / offline states.**
 3. **UI direction:** ✅ RESOLVED — Wikipedia-style prose reader with type-guided
    sections + numbered references (`wiki-reader-chosen-wikipedia.html`). (§5.)
 
-**Must settle WITH the rebuild stream BEFORE the gated work (builder/citations):**
+**Editorial-config tuning (data; sensible default now, owner-tunable anytime):**
+6. **Notability gate:** what earns an article vs link-target-only. *Recommended default:*
+   an entity with ≥3 cited facts OR referenced by ≥2 notes, restricted to the
+   article-worthy type-families (Person/Org/Place/Project/Event/Concept); trivial
+   one-offs stay plain entities. Lives in editorial config, so re-tunable without code.
+7. **Link fallback:** ✅ RESOLVED — **wiki→wiki, with a red-link entity-page fallback**
+   for entities that have no article yet (never a dead end). (§3 step 4, §5, `wiki_links`.)
+
+**Must settle WITH the rebuild stream BEFORE the gated work (builder/citations/links):**
 4. **Citation contract:** the citable unit's frozen shape + the `fact_id` FK ondelete
-   policy (RESTRICT vs SET NULL+rebuild-trigger).
+   policy (RESTRICT vs SET NULL+rebuild-trigger). *Also covers `wiki_links.to_entity_id`
+   resolution (mention → article).*
 5. **Delta feed:** `facts.updated_at` vs fact-mutation events (a rebuild deliverable).
 
 **File now as a standalone bug (independent of Phase 6):** the correction-note weight
