@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -115,13 +116,18 @@ async def _fetch_candidates(
                 " JOIN app.run_steps rs ON rs.run_id = r.id"
                 " JOIN app.agent_sessions ses ON ses.id = r.session_id"
                 " WHERE r.kind = 'agent' AND r.status = 'done' AND r.stop_reason = 'end_turn'"
-                "   AND (r.started_at, r.id)"
-                "     > (cast(:after_ts AS timestamptz), cast(:after_id AS uuid))"
+                "   AND (r.started_at, r.id) > (:after_ts, :after_id)"
                 " GROUP BY r.id, r.started_at, ses.domain_scopes"
                 " HAVING count(*) FILTER (WHERE rs.kind = 'tool') >= 2"
                 " ORDER BY r.started_at, r.id LIMIT :limit"
             ),
-            {"after_ts": after_ts, "after_id": after_id, "limit": limit},
+            # Bind typed objects, not strings: the row comparison pins each param to the column's
+            # type for asyncpg, so a `cast(... AS timestamptz)` is ignored and a str is rejected.
+            {
+                "after_ts": datetime.fromisoformat(after_ts),
+                "after_id": uuid.UUID(after_id),
+                "limit": limit,
+            },
         )
     ).all()
     out: list[_Candidate] = []
