@@ -714,3 +714,18 @@ async def test_link_resolves_to_article_id_when_target_has_an_article(
         ).scalar()
         assert to_article is not None
         assert str(to_article) == str(target_article)
+        # The relationship's anchor is also woven into the prose as an inline wiki link, so the
+        # reader renders a live cross-link rather than plain text.
+        body = (
+            await s.execute(
+                text(
+                    "SELECT r.body FROM app.wiki_revisions r"
+                    " JOIN app.wiki_sections sec ON sec.id = r.section_id"
+                    "   AND r.id = sec.current_revision_id"
+                    " JOIN app.wiki_articles a ON a.id = sec.article_id"
+                    " WHERE a.entity_ref = :e"
+                ),
+                {"e": subject},
+            )
+        ).scalar()
+        assert body is not None and "[Globex](wiki:" in body

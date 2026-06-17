@@ -176,6 +176,46 @@ def _slug(name: str) -> str:
     return f"{base}-{uuid.uuid4().hex[:6]}"
 
 
+# The reader's inline-marker grammar (mirrors the frontend citations.tsx INLINE_RE): a `[n]`
+# citation or a `[label](target)` link. `_linkify` seeds these spans as protected and refuses any
+# anchor carrying the grammar's delimiters, so a woven link can never corrupt a citation/link.
+_MARKER_RE = re.compile(r"\[\d+\]|\[[^\]]+\]\([^)]+\)")
+_UNSAFE_ANCHOR = re.compile(r"[\[\]()]")
+
+
+def _linkify(body: str, links: list[tuple[str, str]]) -> str:
+    """Weave inline wiki→wiki link markers into prose: wrap the FIRST whole-word occurrence of
+    each link anchor as `[anchor](target)` (target `wiki:<slug>` for a live article, `redlink`
+    when the target has none yet), which is what the reader renders as a live/red cross-link.
+
+    Pre-existing citation/link markers are seeded as protected spans and the longest anchors go
+    first, so an anchor never lands inside a `[n]` citation (an entity literally named "2") nor
+    nests inside another's freshly-woven marker ("Nair" inside "[Nair Pediatrics](…)"); seeding the
+    markers also makes a re-run idempotent. An anchor carrying the marker delimiters, or one not
+    found verbatim (the grounded prose may phrase the relationship differently), is left unlinked —
+    the `wiki_links` row still records the connection regardless. The body is always fresh rewriter
+    output here, never a previously-linkified body."""
+    seen: dict[str, str] = {}
+    for anchor, target in links:
+        if anchor and not _UNSAFE_ANCHOR.search(anchor) and anchor not in seen:
+            seen[anchor] = target
+    protected: list[tuple[int, int]] = [m.span() for m in _MARKER_RE.finditer(body)]
+    for anchor in sorted(seen, key=len, reverse=True):
+        for m in re.finditer(rf"\b{re.escape(anchor)}\b", body):
+            if any(s < m.end() and m.start() < e for s, e in protected):
+                continue  # this occurrence sits inside a citation or an already-woven link marker
+            marker = f"[{anchor}]({seen[anchor]})"
+            delta = len(marker) - (m.end() - m.start())
+            protected = [
+                (s + delta if s >= m.end() else s, e + delta if e >= m.end() else e)
+                for s, e in protected
+            ]
+            protected.append((m.start(), m.start() + len(marker)))
+            body = body[: m.start()] + marker + body[m.end() :]
+            break  # one link per anchor; the rest of the prose stays plain
+    return body
+
+
 # Notability (docs/PHASE6_WIKI_PLAN.md §6 #6): an entity earns an article with ≥3 cited facts
 # OR ≥2 distinct source notes. Tunable in editorial config later; a constant for C2a.
 NOTABILITY_MIN_FACTS = 3
@@ -598,6 +638,27 @@ class WikiBuilder:
                 {"s": seq, "id": section_id},
             )
         assert section_id is not None  # found or just inserted
+        # Resolve each link's target article up front (system-scoped): its id powers the landing's
+        # hub count + a future article→article jump, and its slug — or a redlink when the target
+        # has no article yet — is woven into the prose below as an inline wiki link.
+        resolved: list[tuple[PlannedLink, uuid.UUID | None]] = []
+        anchor_targets: list[tuple[str, str]] = []
+        for link in section.links:
+            row = (
+                await session.execute(
+                    text(
+                        "SELECT id, slug FROM app.wiki_articles"
+                        " WHERE entity_ref = :e AND status = 'active'"
+                    ),
+                    {"e": link.to_entity_id},
+                )
+            ).first()
+            resolved.append((link, row.id if row is not None else None))
+            if link.anchor:
+                anchor_targets.append(
+                    (link.anchor, f"wiki:{row.slug}" if row is not None else "redlink")
+                )
+        body = _linkify(section.body, anchor_targets)
         next_seq = (
             await session.execute(
                 text(
@@ -612,7 +673,7 @@ class WikiBuilder:
                     "INSERT INTO app.wiki_revisions (section_id, seq, body, summary)"
                     " VALUES (:s, :seq, :b, :sum) RETURNING id"
                 ),
-                {"s": section_id, "seq": next_seq, "b": section.body, "sum": section.summary},
+                {"s": section_id, "seq": next_seq, "b": body, "sum": section.summary},
             )
         ).scalar()
         await session.execute(
@@ -634,23 +695,12 @@ class WikiBuilder:
                     "d": cit.domain_code,
                 },
             )
-        # Links are per-section (not per-revision): replace them on each build.
+        # Links are per-section (not per-revision): replace them on each build, reusing the
+        # targets already resolved above (to_article_id is null for a red-link target).
         await session.execute(
             text("DELETE FROM app.wiki_links WHERE from_section_id = :s"), {"s": section_id}
         )
-        for link in section.links:
-            # Resolve the target entity to its active article (system-scoped) so the link carries
-            # to_article_id — what powers the landing's "most connected" count and a future
-            # article→article jump. Null when the target has no article yet (a red-link target).
-            to_article = (
-                await session.execute(
-                    text(
-                        "SELECT id FROM app.wiki_articles"
-                        " WHERE entity_ref = :e AND status = 'active'"
-                    ),
-                    {"e": link.to_entity_id},
-                )
-            ).scalar()
+        for link, to_article in resolved:
             await session.execute(
                 text(
                     "INSERT INTO app.wiki_links (from_section_id, to_entity_id, to_article_id,"

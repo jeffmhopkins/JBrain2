@@ -11,6 +11,7 @@ from jbrain.wiki.builder import (
     Claim,
     SourcedEntity,
     StubRewriter,
+    _linkify,
     is_notable,
 )
 
@@ -89,6 +90,62 @@ async def test_stub_lead_summary_names_the_entity() -> None:
     plan = await StubRewriter().plan(_sourced([_claim("general", "x")], notes=4))
     assert "Subj" in plan.lead_summary
     assert "4 note" in plan.lead_summary
+
+
+def test_linkify_wraps_first_occurrence_live_and_red() -> None:
+    body = "Celine works at Globex and later left Globex. Tom married her.[2]"
+    out = _linkify(body, [("Globex", "wiki:globex-ab12cd"), ("Tom", "redlink")])
+    # The live target becomes a wiki link, the article-less one a redlink — first hit only,
+    # and the trailing [2] citation marker is left untouched.
+    assert "[Globex](wiki:globex-ab12cd)" in out
+    assert out.count("[Globex](wiki:globex-ab12cd)") == 1
+    assert "later left Globex." in out  # the second mention stays plain
+    assert "[Tom](redlink)" in out
+    assert out.endswith("married her.[2]")
+
+
+def test_linkify_does_not_nest_an_anchor_inside_a_longer_one() -> None:
+    # "Nair" must not be wrapped inside the "Nair Pediatrics" marker — longest-first + the
+    # protected-span guard keep the markers flat.
+    out = _linkify(
+        "She founded Nair Pediatrics in Brookline.",
+        [("Nair", "redlink"), ("Nair Pediatrics", "wiki:nair-pediatrics-9f")],
+    )
+    assert "[Nair Pediatrics](wiki:nair-pediatrics-9f)" in out
+    assert "[Nair](redlink)" not in out
+
+
+def test_linkify_leaves_prose_untouched_when_anchor_absent() -> None:
+    # The grounded prose may phrase the relationship without the canonical name; no marker then.
+    body = "Her younger sister is a physician."
+    assert _linkify(body, [("Jordan Hale", "wiki:jordan-hale-77")]) == body
+
+
+def test_linkify_respects_word_boundaries() -> None:
+    # "May" the name must not match inside "Maybe"; the anchor is left unlinked here.
+    assert _linkify("Maybe later.", [("May", "redlink")]) == "Maybe later."
+
+
+def test_linkify_never_corrupts_an_existing_citation_marker() -> None:
+    # An entity literally named "2" must NOT wrap inside the `[2]` citation marker (which would
+    # corrupt both the citation and the link in the reader's parser).
+    body = "Born here.[2] Lives there.[3]"
+    assert _linkify(body, [("2", "redlink")]) == body
+
+
+def test_linkify_refuses_anchors_carrying_marker_delimiters() -> None:
+    # A name with `[`/`]`/`(`/`)` can't be embedded in `[label](target)` without breaking the
+    # reader grammar (it would inject a phantom citation), so it's left unlinked.
+    for bad in ("Section [9] team", "Acme (Holdings)", "a]b"):
+        body = f"Saw {bad} today."
+        assert _linkify(body, [(bad, "wiki:x-12")]) == body
+
+
+def test_linkify_is_idempotent() -> None:
+    # Re-running on already-linkified prose must not nest markers (the woven marker is protected).
+    once = _linkify("Works at Globex.[1]", [("Globex", "wiki:globex-1a")])
+    assert once == _linkify(once, [("Globex", "wiki:globex-1a")])
+    assert once.count("(wiki:globex-1a)") == 1
 
 
 @pytest.mark.parametrize("kind", ["Person", "Organization", "Place"])
