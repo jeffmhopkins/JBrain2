@@ -279,6 +279,8 @@ async def test_apply_intent_holds_cross_subject_review_fact(maker, tmp_path):  #
     # owner sees the fact, not only the prose statement.
     assert cards[0].payload["predicate"] == "industry"
     assert "value_json" in cards[0].payload
+    # The fact's modality rides along so the card can correct it in place.
+    assert cards[0].payload["assertion"] == "asserted"
     # The verbose process trace travels in the payload: the three pipeline stages
     # the review UI plays back, with the arbiter stage naming the held reason.
     trace = cards[0].payload["trace"]

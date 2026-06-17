@@ -12,15 +12,23 @@ export function inferenceCorrection(item: ReviewItem, parsed: Parsed, inf: Infer
   const toPath = edgePath(inf.editPredicate.trim(), parsed.qualifier);
   const value = inf.editValue.trim();
   const lead = `Correction — ${parsed.statement ?? parsed.summary ?? kindLabel(item.kind)}`;
-  let fix: string;
+  // The edge clause covers whichever of relation/value changed. Modality (the
+  // assertion stance) is orthogonal, so it gets its own sentence — and may be
+  // the only edit, hence the standalone branch.
+  const clauses: string[] = [];
   if (inf.predicateEdited && inf.valueEdited) {
-    fix = `This should be ${toPath} → ${value}, not ${fromPath} → ${inf.originalValue}.`;
+    clauses.push(`This should be ${toPath} → ${value}, not ${fromPath} → ${inf.originalValue}.`);
   } else if (inf.predicateEdited) {
-    fix = `The relation should be ${toPath}, not ${fromPath} (value ${inf.originalValue}).`;
-  } else {
-    fix = `The value for ${fromPath} should be ${value}, not ${inf.originalValue}.`;
+    clauses.push(`The relation should be ${toPath}, not ${fromPath} (value ${inf.originalValue}).`);
+  } else if (inf.valueEdited) {
+    clauses.push(`The value for ${fromPath} should be ${value}, not ${inf.originalValue}.`);
   }
-  return `${lead}\n\n${fix}`;
+  if (inf.modalityEdited) {
+    clauses.push(
+      `This is ${inf.editModality}, not ${inf.originalModality} (${toPath} → ${value}).`,
+    );
+  }
+  return `${lead}\n\n${clauses.join(" ")}`;
 }
 
 /** The polymorphic decision block: the correction-note composer, then the
