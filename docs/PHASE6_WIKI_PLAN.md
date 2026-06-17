@@ -130,12 +130,32 @@ the source note per `[n]`. (Chosen reader mock: `docs/mocks/wiki-reader-chosen-w
   entities) → gated. Back-links are RLS-filtered by `from_section.domain_code` (you only
   see links from sections you can read). Targets are article *shells* (cross-domain), so
   a link never exposes the target's out-of-scope sections.
+- **`app.wiki_source_exclusions`** (owner editorial suppression): `id`,
+  `note_id` (nullable, hard FK, stable) **or** `fact_id` (nullable, hard FK, graph-coupled)
+  — exactly one set, `scope` (`global` | a specific `article_id`), `reason`, `created_at`,
+  `domain_code`. The builder filters these out of source-finding (step 3b). Owner-only RLS;
+  audited. **≠ deletion** (source stays searchable) and **≠ retraction** (fact stays true)
+  — purely "don't feature this in the wiki." The note-only rows are graph-independent (note
+  ids are stable); fact-scoped rows are gated with the rest. An insert/delete here enqueues
+  a `wiki_rebuild` of the affected article(s).
 
-## 3. The nightly builder (GRAPH-COUPLED — gated)
+## 3. The builder (GRAPH-COUPLED — gated)
 
-`wiki_build` action + nightly schedule (mirror 0044; the **schedule seed lands with the
-builder, not before** — a no-op scheduled action would spam the run-log and present a
-dishonest Ops "run now"). Pipeline (ARCHITECTURE.md §Wiki):
+Two entry points, same pipeline below:
+- **`wiki_build`** — the **incremental nightly** (delta-driven; schedule seed lands with
+  the builder, not before — a no-op scheduled action would spam the run-log).
+- **`wiki_rebuild`** — an **on-demand FULL rebuild** (non-delta), per-article *or*
+  full-corpus, **manual-triggerable from Ops** (run after a prompt/type-guide change, the
+  entity-graph rebuild, or an exclusion edit). Skips the delta step (step 1) and sources
+  the full current set; still produces a new revision (history preserved) and is a
+  run-logged `app.runs` row like any pipeline.
+
+Both honor the **source-exclusion list** (§2 `wiki_source_exclusions`): notes/facts the
+owner has purposefully suppressed are filtered out of source-finding (step 3b) — editorial
+input-curation, distinct from deletion (still searchable) and retraction (still true). An
+exclusion edit triggers a `wiki_rebuild` of the affected articles.
+
+Pipeline (ARCHITECTURE.md §Wiki):
 
 1. **Delta facts.** **The hard problem.** Facts have **no reliable change-feed**:
    `Fact` has only `created_at` (no `updated_at`), and a naive `created_at >= last_run`
@@ -159,7 +179,9 @@ dishonest Ops "run now"). Pipeline (ARCHITECTURE.md §Wiki):
    paragraphs, including detail that never became a fact. The builder writes prose from the
    **chunk text** (not just the terse fact statement), so claims can be *fact-backed* or
    *chunk-only*. (This is the "entity + note search" — bounded via the mention index, not
-   an open trawl; an optional semantic chunk search can supplement.)
+   an open trawl; an optional semantic chunk search can supplement.) **Then filter out any
+   note/fact on the `wiki_source_exclusions` list** (global, or scoped to this article)
+   before rewriting — the owner's purposeful suppressions never reach the prose.
 4. **Cited rewrite + grounding gate** — `router.complete("wiki.rewrite", json_schema=…)`,
    following the type guide; **resolve mentions to wiki links** (`wiki_links`: a mentioned
    entity → its article if one exists, else a red-link to the entity page). **Citation
@@ -209,6 +231,12 @@ stored articles/sections/revisions; **wiki→wiki links** (a mentioned entity op
 References list; a **"what links here"** back-links affordance; "discuss this article" →
 the owner-correction path (§4). Graph-independent shell — built against **fixture data**.
 **DoD includes fixtures for default / empty / long-article / error / offline states.**
+
+**Owner-only editorial affordances** (distinct from the read-only reader; gated to the
+owner): **Rebuild** (fire `wiki_rebuild` for this article) and **Exclude this source**
+(add a reference's note/fact to `wiki_source_exclusions`, then rebuild). These are
+curation, not article-text edits — the wiki stays machine-written. They surface on the
+reader (an owner "⋯" menu / a per-reference action) but enact in the gated builder wave.
 
 ## 6. Open decisions — triaged by what they block
 
@@ -260,16 +288,19 @@ corrections in production today.
 - **Wave A — graph-independent spine (parallel-safe now, after #1–#3):** `wiki_articles`
   + `wiki_revisions` + `wiki_index` tables + RLS + isolation tests (against the STABLE
   `domain_code`/note/chunk provenance — the fact-firewall test is deferred to the citation
-  wave); editorial-config-as-data; the `wiki_index` embedding path; the `wiki_build`
+  wave); editorial-config-as-data; the `wiki_index` embedding path; the
+  `wiki_source_exclusions` table shape (the note-id rows are stable); the `wiki_build`
   ActionSpec **stub only** (no schedule seed yet).
 - **Wave B — UI (after the mock gate):** the read-only reader on fixtures, citation
   hover-cards, entity-chip nav, the **owner-authored** "discuss this article" → correction
-  path + revision anchoring. Graph-independent.
+  path + revision anchoring; **the owner-only Rebuild / Exclude-source affordances** (§5).
+  Graph-independent.
 - **Wave C — builder brain (GATED on the rebuild contract #4–#5):** `wiki_citations`
   (hard FK + Postgres firewall CHECK + isolation test), delta-detection on the agreed
-  feed, index-match triage, cited rewrite with the corrected citability predicate,
-  split/merge via the review inbox, re-embed, **and the nightly schedule seed** (now it
-  does real work).
+  feed, index-match triage, cited rewrite with the corrected citability predicate + the
+  **grounding gate**, source-exclusion filtering, split/merge via the review inbox,
+  re-embed, the **`wiki_rebuild`** full/manual action, **and the nightly schedule seed**
+  (now it does real work).
 
 **Out of scope (explicitly):** self-improvement Loops 2 (skill learning), 3
 (durable-knowledge + predicate-canon), and 4 (prompt/tool self-edit + the 100%
