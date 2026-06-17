@@ -136,6 +136,12 @@ export function LLMSettingsScreen() {
   const providers = settings.providers;
   const efforts = settings.reasoning_efforts;
   const defaultEffort = settings.reasoning_default;
+
+  // Vision tasks may only run on vision-capable providers (the cloud models, or
+  // a vision local model) — a text-only local model can't read images.
+  const visionProviders = providers.filter((p) => p.supports_vision);
+  const providersFor = (isVision: boolean) => (isVision ? visionProviders : providers);
+  const isVisionTask = (taskId: string) => taskId.startsWith("vision.");
   // Snapshot the tasks past the null guard so the wire-builder closure below
   // reads them without TS re-widening the `settings` state back to nullable.
   const currentTasks = settings.tasks;
@@ -223,12 +229,15 @@ export function LLMSettingsScreen() {
         const reasoning = sharedReasoning(group.tasks);
         const grokOn = provider === "grok";
         const isOpen = expanded.has(group.key);
+        const groupVision = group.accent === "vision";
+        // Any non-grok, non-mixed provider can't take a reasoning level; claude
+        // gets its own wording, every local model shares the generic note.
         const naNote =
           provider === "claude"
             ? "Claude manages thinking on its own."
-            : provider === "local"
-              ? "Local models take no reasoning level."
-              : null;
+            : provider === "grok" || provider === "mixed"
+              ? null
+              : "Local models take no reasoning level.";
 
         return (
           <section key={group.key} className={`llm-group llm-${group.accent}`}>
@@ -251,7 +260,7 @@ export function LLMSettingsScreen() {
                     Mixed
                   </option>
                 )}
-                {providers.map((p) => (
+                {providersFor(groupVision).map((p) => (
                   <option key={p.id} value={p.id}>
                     {p.label}
                   </option>
@@ -312,7 +321,7 @@ export function LLMSettingsScreen() {
                               setTaskProvider(task.id, e.target.value as LlmProviderId)
                             }
                           >
-                            {providers.map((p) => (
+                            {providersFor(isVisionTask(task.id)).map((p) => (
                               <option key={p.id} value={p.id}>
                                 {p.label}
                               </option>

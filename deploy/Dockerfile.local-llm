@@ -1,0 +1,39 @@
+# OPT-IN local model gateway: llama.cpp built with the Vulkan backend (the
+# reliable path on AMD Strix Halo / gfx1151 — ROCm is still preview there) plus
+# llama-swap, which fronts several GGUF models behind one OpenAI-compatible port
+# and loads/swaps them on demand. Vulkan reaches the iGPU through /dev/dri
+# (passed in by compose); the Mesa RADV driver installed here must match the
+# host kernel closely enough — pin a newer base if device enumeration fails.
+#
+# This image is built only when the operator enables local hosting; it is never
+# part of the default stack.
+FROM ubuntu:24.04 AS build
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git cmake build-essential libcurl4-openssl-dev \
+    glslc libvulkan-dev vulkan-tools \
+    && rm -rf /var/lib/apt/lists/*
+
+# Build llama-server with Vulkan. Pinned at build time by the base image's
+# package set; bump the clone ref to move llama.cpp forward.
+RUN git clone --depth 1 https://github.com/ggml-org/llama.cpp /src/llama.cpp \
+    && cmake -S /src/llama.cpp -B /src/llama.cpp/build \
+        -DGGML_VULKAN=ON -DLLAMA_CURL=ON -DCMAKE_BUILD_TYPE=Release \
+    && cmake --build /src/llama.cpp/build --config Release -j "$(nproc)" --target llama-server
+
+FROM ubuntu:24.04
+
+# Runtime: Mesa Vulkan (RADV) for the AMD iGPU + a tiny libcurl for model pulls.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    mesa-vulkan-drivers libvulkan1 vulkan-tools libcurl4 ca-certificates curl \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=build /src/llama.cpp/build/bin/llama-server /usr/local/bin/llama-server
+
+# llama-swap: a static release binary fronting llama-server on one OpenAI port.
+ARG LLAMA_SWAP_VERSION=v1.30.0
+RUN curl -fsSL \
+    "https://github.com/mostlygeek/llama-swap/releases/download/${LLAMA_SWAP_VERSION}/llama-swap_linux_amd64" \
+    -o /usr/local/bin/llama-swap && chmod +x /usr/local/bin/llama-swap
+
+EXPOSE 8080

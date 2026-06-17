@@ -52,7 +52,8 @@ def test_get_defaults_grok_and_low_for_empty_store(
     body = c.get("/api/settings/llm").json()
     assert body["reasoning_efforts"] == ["none", "low", "medium", "high"]
     assert body["reasoning_default"] == "low"
-    assert {p["id"] for p in body["providers"]} == {"grok", "claude", "local"}
+    # Local hosting is off by default — only the two cloud providers are offered.
+    assert {p["id"] for p in body["providers"]} == {"grok", "claude"}
     grok = next(p for p in body["providers"] if p["id"] == "grok")
     assert grok["supports_reasoning"] is True
     # Every routed task lists with the grok default + the default effort.
@@ -105,3 +106,71 @@ def test_put_rejects_unknown_task_provider_and_effort(
     for body in bad_bodies:
         assert c.put("/api/settings/llm", json=body).status_code == 422
     assert "llm_task_overrides" not in store.values  # nothing leaked
+
+
+def _authed_client(settings: Settings) -> tuple[TestClient, FakeSettingsStore]:
+    """A logged-in client over the given settings (the fixture pins defaults)."""
+    app = create_app(settings)
+    store = FakeSettingsStore()
+    c = TestClient(app)
+    c.__enter__()
+    app.state.auth_repo = FakeAuthRepo()
+    app.state.settings_store = store
+    key = asyncio.run(auth_service.rotate_owner_key(app.state.auth_repo))
+    assert (
+        c.post("/api/auth/session", json={"owner_key": key, "device_label": "t"}).status_code == 204
+    )
+    return c, store
+
+
+def test_local_models_offered_only_when_hosting_enabled() -> None:
+    settings = Settings(
+        secure_cookies=False,
+        database_url="postgresql+asyncpg://nobody@localhost:1/none",
+        local_llm_enabled=True,
+        local_models=["qwen3-vl-30b", "gpt-oss-120b"],
+    )
+    c, _ = _authed_client(settings)
+    providers = {p["id"]: p for p in c.get("/api/settings/llm").json()["providers"]}
+    assert set(providers) == {"grok", "claude", "qwen3-vl-30b", "gpt-oss-120b"}
+    # The vision model carries its capability; the text reasoner does not.
+    assert providers["qwen3-vl-30b"]["supports_vision"] is True
+    assert providers["gpt-oss-120b"]["supports_vision"] is False
+    assert providers["qwen3-vl-30b"]["supports_reasoning"] is False
+
+
+def test_put_routes_a_task_to_an_enabled_local_model() -> None:
+    settings = Settings(
+        secure_cookies=False,
+        database_url="postgresql+asyncpg://nobody@localhost:1/none",
+        local_llm_enabled=True,
+        local_models=["qwen3-vl-30b"],
+    )
+    c, store = _authed_client(settings)
+    resp = c.put(
+        "/api/settings/llm",
+        json={"tasks": {"vision.ocr": {"provider": "qwen3-vl-30b", "reasoning_effort": "low"}}},
+    )
+    assert resp.status_code == 200
+    tasks = {t["id"]: t for t in resp.json()["tasks"]}
+    assert tasks["vision.ocr"]["provider"] == "qwen3-vl-30b"
+    # Local models take no reasoning level — it drops from the stored shape.
+    assert tasks["vision.ocr"]["reasoning_effort"] is None
+    stored = cast(dict[str, object], store.values["llm_task_overrides"])
+    assert stored["vision.ocr"] == {"spec": "local:qwen3-vl-30b-a3b"}
+
+
+def test_put_rejects_local_model_when_hosting_disabled() -> None:
+    c, store = _authed_client(
+        Settings(
+            secure_cookies=False,
+            database_url="postgresql+asyncpg://nobody@localhost:1/none",
+        )
+    )
+    # A real catalog id, but unreachable because local hosting is off.
+    resp = c.put(
+        "/api/settings/llm",
+        json={"tasks": {"vision.ocr": {"provider": "qwen3-vl-30b", "reasoning_effort": "low"}}},
+    )
+    assert resp.status_code == 422
+    assert "llm_task_overrides" not in store.values

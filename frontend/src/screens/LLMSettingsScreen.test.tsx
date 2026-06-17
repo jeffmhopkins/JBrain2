@@ -6,9 +6,14 @@ import { LLMSettingsScreen } from "./LLMSettingsScreen";
 function initialSettings(): LlmSettings {
   return {
     providers: [
-      { id: "grok", label: "Grok 4.3", supports_reasoning: true },
-      { id: "claude", label: "Claude Sonnet 4.6", supports_reasoning: false },
-      { id: "local", label: "Local model", supports_reasoning: false },
+      { id: "grok", label: "Grok 4.3", supports_reasoning: true, supports_vision: true },
+      {
+        id: "claude",
+        label: "Claude Sonnet 4.6",
+        supports_reasoning: false,
+        supports_vision: true,
+      },
+      { id: "local", label: "Local model", supports_reasoning: false, supports_vision: true },
     ],
     reasoning_efforts: ["none", "low", "medium", "high"],
     reasoning_default: "low",
@@ -118,6 +123,41 @@ describe("LLMSettingsScreen", () => {
     await waitFor(() => expect(puts.length).toBeGreaterThan(0));
     const lastPatch = puts[puts.length - 1]?.tasks ?? {};
     expect(lastPatch["agent.turn"]).toEqual({ provider: "grok", reasoning_effort: "high" });
+  });
+
+  it("omits text-only local models from the Vision tier's choices", async () => {
+    const s = initialSettings();
+    s.providers = [
+      { id: "grok", label: "Grok 4.3", supports_reasoning: true, supports_vision: true },
+      { id: "qwen3-vl-30b", label: "Qwen3-VL", supports_reasoning: false, supports_vision: true },
+      { id: "gpt-oss-120b", label: "GPT-OSS", supports_reasoning: false, supports_vision: false },
+    ];
+    s.tasks = [
+      { id: "vision.ocr", label: "Vision OCR", provider: "grok", reasoning_effort: null },
+      { id: "note.extract", label: "Note extract", provider: "grok", reasoning_effort: "low" },
+    ];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>(
+        async () =>
+          new Response(JSON.stringify(s), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          }),
+      ),
+    );
+    render(<LLMSettingsScreen />);
+
+    const vision = await group("Vision");
+    const visionSelect = within(vision).getByLabelText(/Vision provider/i) as HTMLSelectElement;
+    const visionOptions = Array.from(visionSelect.options).map((o) => o.value);
+    expect(visionOptions).toContain("qwen3-vl-30b");
+    expect(visionOptions).not.toContain("gpt-oss-120b");
+
+    // The text reasoner is still available to a non-vision tier.
+    const light = await group("Lightweight");
+    const lightSelect = within(light).getByLabelText(/Lightweight provider/i) as HTMLSelectElement;
+    expect(Array.from(lightSelect.options).map((o) => o.value)).toContain("gpt-oss-120b");
   });
 
   it("lets a per-task override diverge from its tier", async () => {

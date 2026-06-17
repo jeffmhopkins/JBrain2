@@ -37,6 +37,12 @@ services:
       JBRAIN_BLOB_DIR: /data/blobs
       JBRAIN_BACKUPS_DIR: /data/backups
       JBRAIN_EMBED_URL: http://embed:80
+      # Self-hosted local models — OFF unless the operator opted in at install.
+      # When enabled, points at the local-llm gateway (below) and lists the
+      # provisioned catalog ids the settings screen may route to.
+      JBRAIN_LOCAL_LLM_ENABLED: ${LOCAL_LLM_ENABLED:-false}
+      JBRAIN_LOCAL_LLM_URL: ${LOCAL_LLM_URL:-http://local-llm:8080/v1}
+      JBRAIN_LOCAL_MODELS: ${LOCAL_MODELS:-[]}
     volumes:
       - blobs:/data/blobs
       # Export downloads stream from here; import uploads land here for the
@@ -133,6 +139,30 @@ services:
       PROJECT_DIR: /opt/jbrain2
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+    networks: [internal]
+
+  # OPT-IN local model gateway: llama-swap fronting llama.cpp (Vulkan) so several
+  # GGUF models share one OpenAI-compatible endpoint, loaded/swapped on demand.
+  # Guarded by the `local-llm` compose profile so it NEVER starts on a stock
+  # deploy — `jbrain enable-local-models` (scripts/local-llm-setup.sh) provisions
+  # weights + config and flips the profile on. Vulkan needs only /dev/dri (not
+  # /dev/kfd); weights and the generated config bind-mount from the host.
+  local-llm:
+    profiles: [local-llm]
+    image: jbrain2-local-llm:local
+    build:
+      context: ./src
+      dockerfile: deploy/Dockerfile.local-llm
+    restart: unless-stopped
+    command: ["llama-swap", "--listen", ":8080", "--config", "/config/llama-swap.yaml"]
+    devices:
+      - /dev/dri:/dev/dri
+    group_add:
+      - video
+      - render
+    volumes:
+      - ./local-models:/models:ro
+      - ./local-models/llama-swap.yaml:/config/llama-swap.yaml:ro
     networks: [internal]
 
   embed:

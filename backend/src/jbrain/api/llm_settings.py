@@ -41,7 +41,9 @@ TASK_LABELS: dict[str, str] = {
     "session.title": "Session title",
 }
 
-ProviderId = Literal["grok", "claude", "local"]
+# Provider ids are no longer a fixed set: enabling local hosting adds one id per
+# provisioned catalog model. The PUT validates the id against the live choices
+# instead of a Literal — see update_llm_settings.
 ReasoningEffort = Literal["none", "low", "medium", "high"]
 
 
@@ -56,6 +58,8 @@ class ProviderInfo(BaseModel):
     id: str
     label: str
     supports_reasoning: bool
+    # The screen filters vision tasks to vision-capable choices.
+    supports_vision: bool
 
 
 class TaskInfo(BaseModel):
@@ -77,7 +81,9 @@ class LlmSettingsOut(BaseModel):
 class TaskOverrideIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    provider: ProviderId
+    # Validated against the live provider choices in update_llm_settings (an
+    # unknown id 422s there) — the set is dynamic once local hosting is on.
+    provider: str
     reasoning_effort: ReasoningEffort
 
 
@@ -111,7 +117,12 @@ async def _snapshot(
     overrides = await store.llm_task_overrides(ctx)
     return LlmSettingsOut(
         providers=[
-            ProviderInfo(id=c.id, label=c.label, supports_reasoning=c.supports_reasoning)
+            ProviderInfo(
+                id=c.id,
+                label=c.label,
+                supports_reasoning=c.supports_reasoning,
+                supports_vision=c.supports_vision,
+            )
             for c in provider_choices(settings)
         ],
         reasoning_efforts=list(REASONING_EFFORTS),
@@ -141,7 +152,8 @@ async def update_llm_settings(
     overrides = await store.llm_task_overrides(ctx)
     for task, choice in body.tasks.items():
         spec = spec_for_id(settings, choice.provider)
-        if spec is None:  # unreachable given the Literal, but keep the store honest
+        # Unknown id, or a local model offered only when local hosting is enabled.
+        if spec is None:
             raise HTTPException(status_code=422, detail=f"unknown provider: {choice.provider}")
         entry: dict[str, str] = {"spec": spec}
         # reasoning_effort is meaningful only for grok; drop it otherwise so the

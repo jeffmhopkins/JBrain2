@@ -247,9 +247,9 @@ const SETTINGS: AppSettings = { image_analysis_mode: "full", owner_timezone: nul
 const LLM_REASONING_DEFAULT: ReasoningEffort = "low";
 const LLM_SETTINGS: LlmSettings = {
   providers: [
-    { id: "grok", label: "Grok 4.3", supports_reasoning: true },
-    { id: "claude", label: "Claude Sonnet 4.6", supports_reasoning: false },
-    { id: "local", label: "Local model", supports_reasoning: false },
+    { id: "grok", label: "Grok 4.3", supports_reasoning: true, supports_vision: true },
+    { id: "claude", label: "Claude Sonnet 4.6", supports_reasoning: false, supports_vision: true },
+    { id: "local", label: "Local model", supports_reasoning: false, supports_vision: true },
   ],
   reasoning_efforts: ["none", "low", "medium", "high"],
   reasoning_default: LLM_REASONING_DEFAULT,

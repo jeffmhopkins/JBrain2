@@ -54,6 +54,10 @@ if [ ! -f .env ]; then
   read -rp "Domain for this server (e.g. brain.example.com): " DOMAIN
   read -rp "Anthropic API key (blank to skip): " ANTHROPIC_KEY
   read -rp "xAI API key (blank to skip): " XAI_KEY
+  # Self-hosted local models are off by default; offer them only on capable
+  # hardware (AMD Strix Halo class GPU). Provisioning is deferred to after the
+  # stack is up because it downloads tens of GB of weights.
+  read -rp "Enable self-hosted local models? Needs an AMD GPU + lots of RAM [y/N]: " LOCAL_CHOICE
 
   cat > .env <<EOF
 JBRAIN_DOMAIN=$DOMAIN
@@ -87,6 +91,12 @@ if [ ! -f .owner-initialized ]; then
   say "Generating your owner key"
   docker compose run --rm api python -m jbrain.cli init
   touch .owner-initialized
+fi
+
+if [ "${LOCAL_CHOICE:-}" = "y" ] || [ "${LOCAL_CHOICE:-}" = "Y" ]; then
+  say "Provisioning self-hosted local models (recommended set)"
+  JBRAIN_INSTALL_DIR="$INSTALL_DIR" bash "$INSTALL_DIR/src/scripts/local-llm-setup.sh" \
+    || say "Local model setup did not complete — run 'jbrain enable-local-models' later."
 fi
 
 say "Installing nightly backup (03:30)"

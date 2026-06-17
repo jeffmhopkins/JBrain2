@@ -111,7 +111,11 @@ export interface FeedConfig {
 
 // ----- Per-task LLM routing (GET/PUT /api/settings/llm) -----
 
-export type LlmProviderId = "grok" | "claude" | "local";
+/**
+ * "grok" | "claude" are always present; enabling local hosting adds one id per
+ * provisioned catalog model, so the set is open — keep it a string.
+ */
+export type LlmProviderId = string;
 export type ReasoningEffort = "none" | "low" | "medium" | "high";
 
 export interface LlmProvider {
@@ -119,6 +123,8 @@ export interface LlmProvider {
   label: string;
   /** Only grok exposes a reasoning level; the UI hides the control otherwise. */
   supports_reasoning: boolean;
+  /** Vision tasks only offer vision-capable providers (cloud, or VL local models). */
+  supports_vision: boolean;
 }
 
 /** One routable task: which provider runs it, and (grok only) how hard it thinks. */
