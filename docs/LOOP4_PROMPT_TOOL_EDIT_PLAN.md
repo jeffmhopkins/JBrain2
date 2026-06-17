@@ -152,7 +152,11 @@ fix and stages a Proposal. This is the deterministic, no-false-positive spine.
   target via `self_editable_targets()` (rejecting barred/unknown targets with a structured
   `is_error` observation), reads the **current first-party body**, and calls the drafter.
   The model **only ever sees self-editable bodies** — the barred `system.prompt` is never
-  exposed to this tool.
+  exposed to this tool. The discovery root is fixed to the package (a **test-only** `root`
+  override on the factory, never a tool argument), so the model can't point the editor at
+  an arbitrary directory. **`session.title` is opted in as the first real target** (a
+  peripheral, no-citation, no-firewall prompt); broadening the allowlist stays a per-prompt
+  owner decision.
 - **Drafter prompt** `agent/prompts/prompt_self_edit.prompt` (`self_editable: false`;
   router, budget-gated): inputs = current body + the **data-framed** failure-mode signal;
   outputs = revised body + bumped version + rationale + a proposed new eval fixture. The

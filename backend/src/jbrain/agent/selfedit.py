@@ -18,6 +18,7 @@ from the current first-party body; it is **data**, never executable.
 from __future__ import annotations
 
 import difflib
+import re
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -133,6 +134,31 @@ def unified_diff(old: str, new: str, *, rel_path: str) -> str:
             lineterm="",
         )
     )
+
+
+# Shapes a self-edit draft must never introduce — the egress/exfiltration surfaces
+# #9 forbids in agent output, applied here to the proposed body so a drafter tricked
+# by a poisoned failure-mode can't smuggle one past the structural gate. The owner
+# review is the terminal gate; this is defense-in-depth before staging.
+_MARKDOWN_LINK = re.compile(r"!?\[[^\]]*\]\([^)]*\)")
+_URL = re.compile(r"https?://", re.IGNORECASE)
+_HTML_TAG = re.compile(r"</?[a-zA-Z][^>]*>")
+
+
+def lint_proposed_body(body: str) -> list[str]:
+    """Reject a proposed prompt/tool body that introduces an external-load or markup
+    surface (#9): markdown links/images, bare URLs, or HTML tags. Returns a list of
+    violation reasons (empty = clean). Pure and total, so the injection suite can pin
+    it; the real guarantee is still the allowlist bar + owner review, this is the
+    belt against a drafter coaxed into an exfil-shaped draft."""
+    reasons: list[str] = []
+    if _MARKDOWN_LINK.search(body):
+        reasons.append("introduces a markdown link/image (an external-load surface, #9)")
+    if _URL.search(body):
+        reasons.append("introduces a URL (an external-load surface, #9)")
+    if _HTML_TAG.search(body):
+        reasons.append("introduces an HTML tag (a markup-injection surface, #9)")
+    return reasons
 
 
 def build_prompt_edit_spec(

