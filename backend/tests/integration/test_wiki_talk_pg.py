@@ -135,21 +135,34 @@ async def test_build_posts_a_build_log_entry(maker: async_sessionmaker) -> None:
 
 
 async def test_build_log_find_or_create_is_idempotent(maker: async_sessionmaker) -> None:
-    # A second build of the same article appends a second Build-log post to the SAME topic
-    # (the partial-unique-index ON CONFLICT prevents a duplicate build_log topic).
+    # A second build of the same article reuses the SAME build_log topic and appends a second
+    # builder post (SELECT-first find-or-create). Counts are scoped to THIS article — the module
+    # shares one database across tests, so a global count would see sibling tests' build logs.
     await _owner_pid(maker)
     eid = await _notable(maker, "Dana")
     builder = _builder(maker)
     await builder.refresh()
-    await builder.rebuild(await _article_id(maker, eid))
+    aid = await _article_id(maker, eid)
+    await builder.rebuild(aid)
     async with scoped_session(maker, OWNER) as s:
         topics = (
             await s.execute(
-                text("SELECT count(*) FROM app.wiki_talk_topics WHERE kind = 'build_log'")
+                text(
+                    "SELECT count(*) FROM app.wiki_talk_topics"
+                    " WHERE article_id = :a AND kind = 'build_log'"
+                ),
+                {"a": aid},
             )
         ).scalar()
         posts = (
-            await s.execute(text("SELECT count(*) FROM app.wiki_talk_posts WHERE author='builder'"))
+            await s.execute(
+                text(
+                    "SELECT count(*) FROM app.wiki_talk_posts p"
+                    " JOIN app.wiki_talk_topics t ON t.id = p.topic_id"
+                    " WHERE t.article_id = :a AND p.author = 'builder'"
+                ),
+                {"a": aid},
+            )
         ).scalar()
     assert topics == 1 and posts == 2
 
