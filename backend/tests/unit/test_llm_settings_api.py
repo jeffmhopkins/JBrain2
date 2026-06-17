@@ -160,6 +160,36 @@ def test_put_routes_a_task_to_an_enabled_local_model() -> None:
     assert stored["vision.ocr"] == {"spec": "local:qwen3-vl-30b-a3b"}
 
 
+def test_drawer_catalog_present_with_enabled_flags() -> None:
+    # Off by default: the catalog still ships (so the drawer can show what's
+    # available) but nothing is enabled.
+    c, _ = _authed_client(
+        Settings(secure_cookies=False, database_url="postgresql+asyncpg://nobody@localhost:1/none")
+    )
+    body = c.get("/api/settings/llm").json()
+    assert body["local_hosting_enabled"] is False
+    by_id = {m["id"]: m for m in body["local_models"]}
+    assert "qwen3-vl-30b" in by_id and "gpt-oss-120b" in by_id
+    assert all(m["enabled"] is False for m in body["local_models"])
+    assert by_id["qwen3-vl-30b"]["supports_vision"] is True
+
+    # Enabled + a selection: only the selected catalog model reads enabled.
+    c2, _ = _authed_client(
+        Settings(
+            secure_cookies=False,
+            database_url="postgresql+asyncpg://nobody@localhost:1/none",
+            local_llm_enabled=True,
+            local_models=["gpt-oss-120b"],
+        )
+    )
+    body2 = c2.get("/api/settings/llm").json()
+    assert body2["local_hosting_enabled"] is True
+    by_id2 = {m["id"]: m for m in body2["local_models"]}
+    assert by_id2["gpt-oss-120b"]["enabled"] is True
+    assert by_id2["qwen3-vl-30b"]["enabled"] is False
+    assert "synthesis" in by_id2["gpt-oss-120b"]["tiers"]
+
+
 def test_put_rejects_local_model_when_hosting_disabled() -> None:
     c, store = _authed_client(
         Settings(

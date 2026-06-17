@@ -883,6 +883,119 @@ h3 {
   --llm-accent: var(--amber);
   --llm-accent-tint: var(--amber-tint);
 }
+.llm-synthesis {
+  --llm-accent: var(--steel);
+  --llm-accent-tint: var(--steel-tint);
+}
+
+/* "Manage local models" drawer — a read-only roster of self-hosted models that
+   sits above the tiers. Same hairline-card register as the tier cards. */
+.llm-local {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
+  margin-bottom: 12px;
+  overflow: hidden;
+}
+.llm-local-toggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: transparent;
+  border: 0;
+  padding: 14px 16px;
+  font: inherit;
+  color: var(--text);
+  cursor: pointer;
+}
+.llm-local-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: var(--r-pill);
+  background: var(--text-3);
+  flex: none;
+}
+.llm-local-dot.on {
+  background: var(--green);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--green) 18%, transparent);
+}
+.llm-local-title {
+  font-weight: 500;
+}
+.llm-local-summary {
+  margin-left: auto;
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+}
+.llm-local-body {
+  padding: 0 16px 8px;
+}
+.llm-local-hint {
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+  margin: 0 0 10px;
+  line-height: 1.5;
+}
+.llm-local-hint code {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 1px 6px;
+  font-size: 0.92em;
+}
+.llm-local-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 0;
+  border-top: 1px solid var(--border);
+}
+.llm-local-name {
+  font-size: var(--fs-body);
+  font-weight: 500;
+}
+.llm-local-meta {
+  display: block;
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+}
+.llm-local-chips {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+  flex-wrap: wrap;
+}
+.llm-chip {
+  font-size: var(--fs-micro);
+  padding: 2px 8px;
+  border-radius: var(--r-pill);
+  font-weight: 500;
+}
+.llm-chip-vision {
+  color: var(--violet);
+  background: var(--violet-tint);
+}
+.llm-chip-reason {
+  color: var(--amber);
+  background: var(--amber-tint);
+}
+.llm-chip-tools {
+  color: var(--steel);
+  background: var(--steel-tint);
+}
+.llm-local-state {
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+  min-width: 64px;
+  text-align: right;
+}
+.llm-local-state.on {
+  color: var(--green);
+}
+.llm-local-row.on .llm-local-name {
+  color: var(--text);
+}
 
 /* The ambient --mode-tint that .seg-on fills with isn't set on this screen, so
    a selected segment had no fill and was nearly invisible in both themes. Tie

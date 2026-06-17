@@ -429,6 +429,15 @@ exists from day one as the all-local escape hatch. **Vision-LLM is the
 first OCR backend [decided]** — Tesseract remains a later config option on
 the dispatcher's routing axis.
 
+**Tiers track prompt strength**: the settings screen groups tasks by their
+prompt `strength:` (high / low / vision), so the screen tells the truth about
+which work is heavy rather than a cosmetic grouping. A `synthesis` tier is
+reserved for the Phase 6 wiki's machine-writing — it exists in `STRENGTHS` and
+`TIER_DEFAULTS` (defaulting to the cloud model) and the catalog's reasoners
+carry it, so the wiki lands as config (a `wiki.*` task + a `strength: synthesis`
+prompt), not a schema change. The settings screen is data-driven, so that task
+gets its routing control for free.
+
 **Self-hosted local models [opt-in]**: local hosting is OFF by default — the
 stock deploy is cloud-only and no default ever points at `local`. An operator
 enables it at install (or `jbrain enable-local-models`), which provisions a

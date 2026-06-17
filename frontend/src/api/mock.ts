@@ -274,6 +274,31 @@ const LLM_SETTINGS: LlmSettings = {
     { id: "vision.ocr", label: "Vision OCR", provider: "local", reasoning_effort: null },
     { id: "vision.caption", label: "Vision caption", provider: "grok", reasoning_effort: "low" },
   ],
+  local_hosting_enabled: false,
+  local_models: [
+    {
+      id: "qwen3-vl-30b",
+      label: "Qwen3-VL 30B · vision",
+      enabled: false,
+      supports_vision: true,
+      supports_tools: true,
+      tiers: ["vision", "low"],
+      quant: "Q8_0",
+      size_gb: 32,
+      note: "Vision + a capable cheap text model.",
+    },
+    {
+      id: "gpt-oss-120b",
+      label: "GPT-OSS 120B · reasoning",
+      enabled: false,
+      supports_vision: false,
+      supports_tools: true,
+      tiers: ["high", "synthesis"],
+      quant: "MXFP4",
+      size_gb: 59,
+      note: "Strongest open reasoning that still runs fast here.",
+    },
+  ],
 };
 
 // Apply one task patch like the backend would: grok keeps/sets a reasoning

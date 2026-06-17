@@ -1,5 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
-import type { LlmProviderId, LlmSettings, LlmTask, ReasoningEffort } from "../api/client";
+import type {
+  LlmProviderId,
+  LlmSettings,
+  LlmTask,
+  LocalModelInfo,
+  ReasoningEffort,
+} from "../api/client";
 import { api } from "../api/client";
 
 // Strategy C — tasks are tiered by role. The grouping lives in the frontend
@@ -8,26 +14,33 @@ import { api } from "../api/client";
 interface GroupDef {
   key: string;
   /** Accent class flips the group's left rail (docs/DESIGN.md accents). */
-  accent: "high" | "light" | "vision";
+  accent: "high" | "light" | "vision" | "synthesis";
   name: string;
   desc: string;
   taskIds: string[];
 }
 
+// Groups mirror the prompts' `strength:` so the screen tells the truth about
+// which work is heavy: note.extract/integrate.note/agent.turn are `high`,
+// entity.disambiguate/session.title are `low`. fact.adjudicate &
+// correction_note.extract have no prompt yet — placed by their design intent
+// (docs/ANALYSIS.md: adjudicate=cheap, correction=strong). The Synthesis group
+// is reserved for the Phase 6 wiki tier — empty groups drop out, so it stays
+// invisible until a wiki task ships, then auto-populates.
 const GROUP_DEFS: GroupDef[] = [
   {
     key: "high",
     accent: "high",
     name: "High-stakes reasoning",
     desc: "The hard judgment calls — worth deeper thinking.",
-    taskIds: ["agent.turn", "integrate.note", "fact.adjudicate", "entity.disambiguate"],
+    taskIds: ["agent.turn", "integrate.note", "note.extract", "correction_note.extract"],
   },
   {
     key: "light",
     accent: "light",
     name: "Lightweight",
     desc: "Cheap, frequent extraction & one-shots.",
-    taskIds: ["note.extract", "correction_note.extract", "session.title"],
+    taskIds: ["entity.disambiguate", "fact.adjudicate", "session.title"],
   },
   {
     key: "vision",
@@ -35,6 +48,13 @@ const GROUP_DEFS: GroupDef[] = [
     name: "Vision",
     desc: "Anything that reads or describes images.",
     taskIds: ["vision.ocr", "vision.caption"],
+  },
+  {
+    key: "synthesis",
+    accent: "synthesis",
+    name: "Synthesis",
+    desc: "Machine-written wiki (Phase 6).",
+    taskIds: ["wiki.synthesize"],
   },
 ];
 
@@ -122,6 +142,7 @@ export function LLMSettingsScreen() {
 
   // Which tiers have their per-task overrides expanded.
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [localOpen, setLocalOpen] = useState(false);
 
   const groups = useMemo(() => (settings ? groupTasks(settings.tasks) : []), [settings]);
 
@@ -223,6 +244,13 @@ export function LLMSettingsScreen() {
         Tasks are grouped by role. Set the provider and reasoning once per tier; expand a tier to
         fine-tune individual tasks that should diverge.
       </p>
+
+      <LocalModelsDrawer
+        open={localOpen}
+        onToggle={() => setLocalOpen((v) => !v)}
+        hostingEnabled={settings.local_hosting_enabled}
+        models={settings.local_models}
+      />
 
       {groups.map((group) => {
         const provider = sharedProvider(group.tasks);
@@ -368,4 +396,80 @@ export function LLMSettingsScreen() {
 interface LlmTaskPatchLocal {
   provider?: LlmProviderId;
   reasoning_effort?: ReasoningEffort;
+}
+
+// Capability chips for a local model — same muted register as the rest of the
+// chrome (docs/DESIGN.md), keyed by what the model can do.
+function capabilityChips(m: LocalModelInfo) {
+  const chips: { key: string; label: string; cls: string }[] = [];
+  if (m.supports_vision) chips.push({ key: "vision", label: "vision", cls: "vision" });
+  if (m.tiers.includes("high") || m.tiers.includes("synthesis"))
+    chips.push({ key: "reason", label: "reasoning", cls: "reason" });
+  if (m.supports_tools) chips.push({ key: "tools", label: "tools", cls: "tools" });
+  return chips;
+}
+
+// Read-only roster of self-hosted models. Enabling a model (downloading weights,
+// starting the GPU gateway) is a deliberate server-side step — `jbrain
+// enable-local-models` — so the drawer shows state and the command rather than
+// pretending the browser can pull tens of GB. Enabled models appear in the tier
+// pickers above; this is the "what's available and what's on" companion.
+function LocalModelsDrawer({
+  open,
+  onToggle,
+  hostingEnabled,
+  models,
+}: {
+  open: boolean;
+  onToggle: () => void;
+  hostingEnabled: boolean;
+  models: LocalModelInfo[];
+}) {
+  const enabledCount = models.filter((m) => m.enabled).length;
+  const summary = !hostingEnabled ? "off" : `${enabledCount} of ${models.length} enabled`;
+
+  return (
+    <section className="llm-local">
+      <button type="button" className="llm-local-toggle" aria-expanded={open} onClick={onToggle}>
+        <span className={`llm-local-dot${hostingEnabled ? " on" : ""}`} aria-hidden="true" />
+        <span className="llm-local-title">Local models</span>
+        <span className="llm-local-summary">{summary}</span>
+        <span className={`llm-exp-caret${open ? " llm-exp-open" : ""}`} aria-hidden="true">
+          ›
+        </span>
+      </button>
+
+      {open && (
+        <div className="llm-local-body">
+          {!hostingEnabled && (
+            <p className="llm-local-hint">
+              Self-hosting is off. Provision on the server with{" "}
+              <code>jbrain enable-local-models</code>; models you enable there become selectable in
+              the tiers above.
+            </p>
+          )}
+          {models.map((m) => (
+            <div key={m.id} className={`llm-local-row${m.enabled ? " on" : ""}`}>
+              <div className="llm-local-name">
+                {m.label}
+                <span className="llm-local-meta">
+                  {m.quant} · {m.size_gb} GB
+                </span>
+              </div>
+              <div className="llm-local-chips">
+                {capabilityChips(m).map((c) => (
+                  <span key={c.key} className={`llm-chip llm-chip-${c.cls}`}>
+                    {c.label}
+                  </span>
+                ))}
+              </div>
+              <span className={`llm-local-state${m.enabled ? " on" : ""}`}>
+                {m.enabled ? "enabled" : "available"}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  );
 }

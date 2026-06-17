@@ -136,11 +136,27 @@ export interface LlmTask {
   reasoning_effort: ReasoningEffort | null;
 }
 
+/** A catalog model for the "Manage local models" drawer (read-only — weights
+ * are provisioned server-side, off by default). */
+export interface LocalModelInfo {
+  id: string;
+  label: string;
+  enabled: boolean;
+  supports_vision: boolean;
+  supports_tools: boolean;
+  tiers: string[];
+  quant: string;
+  size_gb: number;
+  note: string;
+}
+
 export interface LlmSettings {
   providers: LlmProvider[];
   reasoning_efforts: ReasoningEffort[];
   reasoning_default: ReasoningEffort;
   tasks: LlmTask[];
+  local_hosting_enabled: boolean;
+  local_models: LocalModelInfo[];
 }
 
 /** One task's desired routing; reasoning_effort is sent only for grok. */

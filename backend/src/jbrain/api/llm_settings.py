@@ -16,6 +16,7 @@ from jbrain.api.deps import PrincipalDep, SettingsDep
 from jbrain.api.notes import ctx_for
 from jbrain.config import Settings
 from jbrain.db.session import SessionContext
+from jbrain.llm import local_catalog
 from jbrain.llm.providers import (
     REASONING_DEFAULT,
     REASONING_EFFORTS,
@@ -71,11 +72,31 @@ class TaskInfo(BaseModel):
     reasoning_effort: str | None
 
 
+class LocalModelInfo(BaseModel):
+    """A catalog model for the 'Manage local models' drawer — what it is and
+    whether it is currently offered for routing. Provisioning (the weight
+    download) stays a server-side, opt-in step, so this is read-only."""
+
+    id: str
+    label: str
+    enabled: bool
+    supports_vision: bool
+    supports_tools: bool
+    tiers: list[str]
+    quant: str
+    size_gb: float
+    note: str
+
+
 class LlmSettingsOut(BaseModel):
     providers: list[ProviderInfo]
     reasoning_efforts: list[str]
     reasoning_default: str
     tasks: list[TaskInfo]
+    # Local hosting is off by default; the drawer shows the catalog either way so
+    # an operator can see what they could provision (via the install/CLI path).
+    local_hosting_enabled: bool
+    local_models: list[LocalModelInfo]
 
 
 class TaskOverrideIn(BaseModel):
@@ -128,6 +149,23 @@ async def _snapshot(
         reasoning_efforts=list(REASONING_EFFORTS),
         reasoning_default=REASONING_DEFAULT,
         tasks=[_effective(settings, task, overrides) for task in TASK_DEFAULTS],
+        local_hosting_enabled=settings.local_llm_enabled,
+        local_models=[_local_model_info(settings, m) for m in local_catalog.CATALOG],
+    )
+
+
+def _local_model_info(settings: Settings, m: local_catalog.LocalModel) -> LocalModelInfo:
+    enabled = settings.local_llm_enabled and m.id in settings.local_models
+    return LocalModelInfo(
+        id=m.id,
+        label=m.label,
+        enabled=enabled,
+        supports_vision=m.supports_vision,
+        supports_tools=m.supports_tools,
+        tiers=list(m.tiers),
+        quant=m.quant,
+        size_gb=m.size_gb,
+        note=m.note,
     )
 
 

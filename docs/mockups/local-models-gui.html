@@ -1,0 +1,471 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>JBrain · Local models — GUI directions</title>
+<style>
+  :root {
+    --bg:#0E0F11; --surface:#17181B; --surface-2:#1E2024; --border:#26282C;
+    --text:#E6E7E9; --text-2:#9A9DA3; --text-3:#5C5F66;
+    --steel:#7FA7C9; --green:#8FBC9A; --amber:#C9A36A; --rose:#CF8A8F; --violet:#A493C9;
+    --teal:#6FB6B1;
+    --font:-apple-system,system-ui,"Segoe UI",Roboto,sans-serif;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font);
+         font-size:15px; line-height:1.4; -webkit-font-smoothing:antialiased; }
+  .wrap { max-width:520px; margin:0 auto; padding:16px; }
+  .chooser { position:sticky; top:0; z-index:5; background:var(--bg);
+             padding:14px 16px 10px; border-bottom:1px solid var(--border); }
+  .chooser h1 { font-size:13px; letter-spacing:.08em; text-transform:uppercase;
+                color:var(--text-3); margin:0 0 8px; font-weight:500; }
+  .seg { display:flex; gap:4px; background:var(--surface-2); padding:4px;
+         border-radius:12px; border:1px solid var(--border); }
+  .seg button { flex:1; border:0; background:transparent; color:var(--text-2);
+                padding:9px 8px; border-radius:9px; font:inherit; font-weight:500;
+                cursor:pointer; font-size:13px; }
+  .seg button.on { background:var(--steel); color:#0E0F11; }
+  .blurb { color:var(--text-2); font-size:13px; margin:8px 2px 0; }
+
+  .screen { display:none; }
+  .screen.on { display:block; }
+  .screen-title { font-size:22px; font-weight:500; margin:4px 0 2px; }
+  .meta { color:var(--text-2); font-size:13px; margin:0 0 16px; }
+
+  /* status banner */
+  .status { display:flex; align-items:center; gap:10px; background:var(--surface);
+            border:1px solid var(--border); border-radius:16px; padding:12px 14px;
+            margin-bottom:14px; }
+  .dot { width:9px; height:9px; border-radius:999px; background:var(--green);
+         box-shadow:0 0 0 4px color-mix(in srgb,var(--green) 18%,transparent); flex:none; }
+  .dot.warn { background:var(--amber); box-shadow:0 0 0 4px color-mix(in srgb,var(--amber) 18%,transparent); }
+  .dot.off { background:var(--text-3); box-shadow:none; }
+  .status .s-main { font-weight:500; font-size:14px; }
+  .status .s-sub { color:var(--text-2); font-size:12px; }
+
+  /* memory budget meter */
+  .mem { margin-left:auto; text-align:right; min-width:120px; }
+  .mem-bar { height:8px; border-radius:999px; background:var(--surface-2);
+             overflow:hidden; display:flex; margin-top:5px; border:1px solid var(--border); }
+  .mem-bar i { height:100%; display:block; }
+  .mem-num { font-size:12px; color:var(--text-2); }
+
+  /* section header */
+  .sec-h { font-size:12px; letter-spacing:.08em; text-transform:uppercase;
+           color:var(--text-3); margin:18px 2px 8px; font-weight:500; }
+
+  /* model card */
+  .card { background:var(--surface); border:1px solid var(--border);
+          border-radius:16px; padding:14px; margin-bottom:10px; }
+  .card.resident { border-color:color-mix(in srgb,var(--green) 40%,var(--border)); }
+  .card-top { display:flex; align-items:flex-start; gap:10px; }
+  .card-name { font-size:16px; font-weight:500; }
+  .card-sub { color:var(--text-2); font-size:12px; margin-top:2px; }
+  .badges { display:flex; gap:6px; flex-wrap:wrap; margin-top:9px; }
+  .badge { font-size:11px; padding:3px 8px; border-radius:999px; font-weight:500;
+           border:1px solid transparent; }
+  .b-vision { color:var(--violet); background:color-mix(in srgb,var(--violet) 13%,transparent); }
+  .b-tools  { color:var(--steel);  background:color-mix(in srgb,var(--steel) 13%,transparent); }
+  .b-reason { color:var(--amber);  background:color-mix(in srgb,var(--amber) 13%,transparent); }
+  .b-rec    { color:var(--green);  background:color-mix(in srgb,var(--green) 13%,transparent); }
+  .b-slow   { color:var(--rose);   background:color-mix(in srgb,var(--rose) 13%,transparent); }
+  .b-tier   { color:var(--text-2); background:var(--surface-2); border-color:var(--border); }
+  .spacer { flex:1; }
+
+  /* toggle switch */
+  .sw { width:46px; height:27px; border-radius:999px; background:var(--surface-2);
+        border:1px solid var(--border); position:relative; cursor:pointer; flex:none;
+        transition:background .15s; }
+  .sw i { position:absolute; top:2px; left:2px; width:21px; height:21px; border-radius:999px;
+          background:var(--text-2); transition:transform .15s,background .15s; }
+  .sw.on { background:color-mix(in srgb,var(--green) 30%,var(--surface-2)); }
+  .sw.on i { transform:translateX(19px); background:var(--green); }
+
+  /* buttons */
+  .btn { border:1px solid var(--border); background:var(--surface-2); color:var(--text);
+         padding:8px 14px; border-radius:10px; font:inherit; font-size:13px; font-weight:500;
+         cursor:pointer; }
+  .btn.primary { background:var(--steel); color:#0E0F11; border-color:var(--steel); }
+  .btn.ghost { background:transparent; color:var(--text-2); }
+  .btn:disabled { opacity:.45; cursor:default; }
+  .row { display:flex; align-items:center; gap:10px; margin-top:12px; }
+
+  /* download progress */
+  .dl { margin-top:11px; display:none; }
+  .dl.show { display:block; }
+  .dl-bar { height:6px; border-radius:999px; background:var(--surface-2); overflow:hidden;
+            border:1px solid var(--border); }
+  .dl-bar i { display:block; height:100%; width:0; background:var(--amber); transition:width .3s; }
+  .dl-txt { font-size:11px; color:var(--text-2); margin-top:5px; }
+
+  /* B: tier cards + drawer */
+  .tier { background:var(--surface); border:1px solid var(--border); border-radius:16px;
+          padding:14px; margin-bottom:10px; border-left:3px solid var(--steel); }
+  .tier.vision { border-left-color:var(--violet); }
+  .tier.light { border-left-color:var(--green); }
+  .tier-name { font-weight:500; font-size:15px; }
+  .tier-desc { color:var(--text-2); font-size:12px; margin:2px 0 10px; }
+  .field-tag { font-size:11px; letter-spacing:.06em; text-transform:uppercase;
+               color:var(--text-3); display:block; margin-bottom:5px; }
+  select.sel { width:100%; background:var(--surface-2); color:var(--text);
+               border:1px solid var(--border); border-radius:10px; padding:10px;
+               font:inherit; font-size:14px; }
+  .drawer-toggle { width:100%; text-align:left; background:transparent; border:0;
+                   color:var(--text-2); font:inherit; font-size:13px; cursor:pointer;
+                   padding:12px 2px; display:flex; align-items:center; gap:8px; }
+  .caret { transition:transform .15s; color:var(--text-3); }
+  .caret.open { transform:rotate(90deg); }
+  .drawer { display:none; background:var(--surface); border:1px solid var(--border);
+            border-radius:16px; padding:6px 14px; margin-bottom:10px; }
+  .drawer.open { display:block; }
+  .mini { display:flex; align-items:center; gap:10px; padding:12px 0;
+          border-bottom:1px solid var(--border); }
+  .mini:last-child { border-bottom:0; }
+  .mini-name { font-weight:500; font-size:14px; }
+  .mini-sub { color:var(--text-2); font-size:11px; }
+  .chip { font-size:10px; padding:2px 7px; border-radius:999px; font-weight:500; }
+  .chip.res { color:var(--green); background:color-mix(in srgb,var(--green) 14%,transparent); }
+  .chip.cold { color:var(--text-2); background:var(--surface-2); }
+  .chip.off { color:var(--text-3); background:var(--surface-2); }
+  .check { width:22px; height:22px; border-radius:6px; border:1px solid var(--border);
+           background:var(--surface-2); cursor:pointer; flex:none; display:flex;
+           align-items:center; justify-content:center; color:#0E0F11; font-size:14px; }
+  .check.on { background:var(--green); border-color:var(--green); }
+
+  /* C: wizard */
+  .tabs { display:flex; gap:4px; background:var(--surface-2); padding:4px;
+          border-radius:12px; border:1px solid var(--border); margin-bottom:14px; }
+  .tabs button { flex:1; border:0; background:transparent; color:var(--text-2);
+                 padding:9px; border-radius:9px; font:inherit; font-weight:500; font-size:13px; cursor:pointer; }
+  .tabs button.on { background:var(--surface); color:var(--text); border:1px solid var(--border); }
+  .tabpane { display:none; } .tabpane.on { display:block; }
+  .steps { display:flex; margin:6px 0 16px; }
+  .step { flex:1; text-align:center; position:relative; font-size:11px; color:var(--text-3); }
+  .step .n { width:26px; height:26px; border-radius:999px; border:1px solid var(--border);
+             background:var(--surface); display:flex; align-items:center; justify-content:center;
+             margin:0 auto 5px; font-size:12px; font-weight:500; }
+  .step.done .n { background:var(--green); color:#0E0F11; border-color:var(--green); }
+  .step.cur .n { background:var(--steel); color:#0E0F11; border-color:var(--steel); }
+  .step.cur, .step.done { color:var(--text-2); }
+  .step:not(:last-child):after { content:""; position:absolute; top:13px; left:60%; right:-40%;
+            height:1px; background:var(--border); }
+  .hw { display:flex; align-items:center; gap:10px; padding:10px 0;
+        border-bottom:1px solid var(--border); font-size:14px; }
+  .hw:last-child { border-bottom:0; }
+  .hw .ok { color:var(--green); } .hw .v { margin-left:auto; color:var(--text-2); font-size:13px; }
+  .activity { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:12px;
+              color:var(--text-2); }
+  .activity div { padding:7px 0; border-bottom:1px solid var(--border); }
+  .activity .t { color:var(--text-3); } .activity .g { color:var(--green); } .activity .a { color:var(--amber); }
+  .note { font-size:12px; color:var(--text-3); margin-top:14px; padding:0 2px; }
+  .legend { font-size:11px; color:var(--text-3); display:flex; gap:14px; margin-top:10px; flex-wrap:wrap; }
+</style>
+</head>
+<body>
+<div class="chooser">
+  <h1>Local models · GUI direction</h1>
+  <div class="seg">
+    <button class="on" data-s="A">A · Cards + status</button>
+    <button data-s="B">B · Inline drawer</button>
+    <button data-s="C">C · Hosting screen</button>
+  </div>
+  <p class="blurb" id="blurb">Direction A — a dedicated section at the top of LLM Settings: a gateway status banner with a live memory meter, then one card per catalog model with capability badges and an enable/download toggle.</p>
+</div>
+
+<div class="wrap">
+
+<!-- ============ DIRECTION A ============ -->
+<section class="screen on" id="scr-A">
+  <div class="screen-title">Local models</div>
+  <p class="meta">Self-hosted, off by default. Enable models to make them selectable for tasks below. Routing stays a deliberate choice.</p>
+
+  <div class="status">
+    <span class="dot" id="A-dot"></span>
+    <div>
+      <div class="s-main" id="A-state">Gateway running</div>
+      <div class="s-sub" id="A-sub">2 resident · llama-swap · Vulkan</div>
+    </div>
+    <div class="mem">
+      <div class="mem-num"><span id="A-mem">91</span> / 128 GB</div>
+      <div class="mem-bar" id="A-membar"></div>
+    </div>
+  </div>
+
+  <div class="sec-h">Recommended</div>
+  <div id="A-rec"></div>
+  <div class="sec-h">More models</div>
+  <div id="A-more"></div>
+  <div class="legend">
+    <span><span class="badge b-vision">vision</span> reads images</span>
+    <span><span class="badge b-reason">reasoning</span> strong tier</span>
+    <span><span class="badge b-slow">slow</span> batch only</span>
+  </div>
+</section>
+
+<!-- ============ DIRECTION B ============ -->
+<section class="screen" id="scr-B">
+  <div class="screen-title">LLM Settings</div>
+  <p class="meta">Local models live inside the routing you already use. Manage which are installed in the drawer; pick them per tier below.</p>
+
+  <button class="drawer-toggle" id="B-dt"><span class="caret" id="B-caret">›</span> Manage local models · <span id="B-count">2 enabled</span></button>
+  <div class="drawer" id="B-drawer"></div>
+
+  <div class="tier vision">
+    <div class="tier-name">Vision</div>
+    <div class="tier-desc">Anything that reads or describes images.</div>
+    <span class="field-tag">Provider</span>
+    <select class="sel" id="B-vsel"></select>
+  </div>
+  <div class="tier">
+    <div class="tier-name">High-stakes reasoning</div>
+    <div class="tier-desc">The hard judgment calls — worth deeper thinking.</div>
+    <span class="field-tag">Provider</span>
+    <select class="sel" id="B-hsel"></select>
+  </div>
+  <div class="tier light">
+    <div class="tier-name">Lightweight</div>
+    <div class="tier-desc">Cheap, frequent extraction &amp; one-shots.</div>
+    <span class="field-tag">Provider</span>
+    <select class="sel" id="B-lsel"></select>
+  </div>
+  <p class="note">Text-only local models never appear under Vision. Disabled models are dimmed in the drawer with a "download to enable" action.</p>
+</section>
+
+<!-- ============ DIRECTION C ============ -->
+<section class="screen" id="scr-C">
+  <div class="screen-title">Local hosting</div>
+  <p class="meta">A dedicated screen: hardware status, a guided setup, and a live activity log for the on-box gateway.</p>
+
+  <div class="tabs">
+    <button class="on" data-t="setup">Setup</button>
+    <button data-t="models">Models</button>
+    <button data-t="activity">Activity</button>
+  </div>
+
+  <div class="tabpane on" id="C-setup">
+    <div class="steps">
+      <div class="step done"><div class="n">✓</div>Hardware</div>
+      <div class="step cur"><div class="n">2</div>Choose</div>
+      <div class="step"><div class="n">3</div>Download</div>
+      <div class="step"><div class="n">4</div>Route</div>
+    </div>
+    <div class="card">
+      <div class="hw"><span class="ok">✓</span> AMD GPU (/dev/dri) <span class="v">Radeon 8060S · gfx1151</span></div>
+      <div class="hw"><span class="ok">✓</span> Unified memory <span class="v">128 GB</span></div>
+      <div class="hw"><span class="ok">✓</span> Vulkan runtime <span class="v">RADV detected</span></div>
+      <div class="hw"><span class="ok">✓</span> Gateway image <span class="v">built</span></div>
+    </div>
+    <div class="row"><button class="btn primary" onclick="document.querySelector('.tabs button[data-t=models]').click()">Choose models →</button>
+      <span class="s-sub" style="color:var(--text-2)">Recommended set fits in memory with room for context.</span></div>
+  </div>
+
+  <div class="tabpane" id="C-models">
+    <div class="status">
+      <span class="dot" id="C-dot"></span>
+      <div><div class="s-main" id="C-state">Gateway running</div><div class="s-sub">resident models stay loaded</div></div>
+      <div class="mem"><div class="mem-num"><span id="C-mem">91</span> / 128 GB</div><div class="mem-bar" id="C-membar"></div></div>
+    </div>
+    <div id="C-list"></div>
+  </div>
+
+  <div class="tabpane" id="C-activity">
+    <div class="card activity" id="C-log">
+      <div><span class="t">19:42:07</span> <span class="g">▶ loaded</span> qwen3-vl-30b-a3b (32 GB) · 41 t/s</div>
+      <div><span class="t">19:42:03</span> <span class="g">▶ loaded</span> gpt-oss-120b (59 GB) · 31 t/s</div>
+      <div><span class="t">19:41:58</span> <span class="a">⇄ swap-out</span> qwen3-30b-a3b (idle 5m)</div>
+      <div><span class="t">19:30:11</span> <span class="t">gateway start</span> · llama-swap v1.30 · Vulkan</div>
+    </div>
+    <p class="note">Streams llama-swap load/swap events so you can see what's resident and why a cold model paused before its first token.</p>
+  </div>
+</section>
+
+</div>
+
+<script>
+const CATALOG = [
+  { id:"qwen3-vl-30b", name:"Qwen3-VL 30B", served:"qwen3-vl-30b-a3b", quant:"Q8_0", gb:32,
+    tier:"vision · low", badges:["vision","tools"], rec:true, on:true, resident:true },
+  { id:"gpt-oss-120b", name:"GPT-OSS 120B", served:"gpt-oss-120b", quant:"MXFP4", gb:59,
+    tier:"high", badges:["reasoning","tools"], rec:true, on:true, resident:true },
+  { id:"glm-4.5-air", name:"GLM-4.5 Air", served:"glm-4.5-air", quant:"Q4_K_M", gb:70,
+    tier:"high (alt)", badges:["reasoning","tools"], rec:false, on:false, resident:false },
+  { id:"qwen3-30b-a3b", name:"Qwen3 30B", served:"qwen3-30b-a3b", quant:"Q4_K_M", gb:18,
+    tier:"low", badges:["tools"], rec:false, on:false, resident:false },
+  { id:"llama-3.3-70b", name:"Llama 3.3 70B", served:"llama-3.3-70b", quant:"Q4_K_M", gb:40,
+    tier:"high (batch)", badges:["reasoning","slow"], rec:false, on:false, resident:false },
+];
+const BUDGET = 128;
+const BADGE_CLASS = { vision:"b-vision", tools:"b-tools", reasoning:"b-reason", slow:"b-slow" };
+const ACCENT = { vision:"var(--violet)", reasoning:"var(--amber)", high:"var(--amber)", low:"var(--green)", "high (alt)":"var(--amber)", "low ":"var(--green)" };
+
+function residentGB(){ return CATALOG.filter(m=>m.on&&m.resident).reduce((s,m)=>s+m.gb,0); }
+
+function paintMem(barEl, numEl){
+  const used = residentGB();
+  numEl.textContent = used;
+  barEl.innerHTML = "";
+  CATALOG.filter(m=>m.on&&m.resident).forEach((m,i)=>{
+    const seg = document.createElement("i");
+    seg.style.width = (m.gb/BUDGET*100)+"%";
+    const cols=["var(--violet)","var(--amber)","var(--green)","var(--steel)","var(--teal)"];
+    seg.style.background = cols[i%cols.length];
+    barEl.appendChild(seg);
+  });
+}
+function paintStatus(){
+  const on = CATALOG.filter(m=>m.on).length;
+  const res = CATALOG.filter(m=>m.on&&m.resident).length;
+  ["A","C"].forEach(p=>{
+    const dot=document.getElementById(p+"-dot"); if(!dot) return;
+    dot.className = "dot" + (on? "":" off");
+    const st=document.getElementById(p+"-state"); if(st) st.textContent = on? "Gateway running":"Gateway idle";
+    const mb=document.getElementById(p+"-membar"), mn=document.getElementById(p+"-mem");
+    if(mb&&mn) paintMem(mb,mn);
+  });
+  const sub=document.getElementById("A-sub"); if(sub) sub.textContent = res+" resident · llama-swap · Vulkan";
+}
+
+// ---- shared download sim ----
+function startDownload(m, barEl, txtEl, done){
+  let p=0; txtEl.parentElement.classList.add("show");
+  const t=setInterval(()=>{
+    p+=Math.random()*16+6; if(p>=100){p=100;clearInterval(t);
+      txtEl.textContent="Downloaded · "+m.gb+" GB"; setTimeout(()=>{m.on=true;m.resident=true;done();},350);}
+    else txtEl.textContent="Downloading "+m.served+" — "+Math.floor(p)+"%";
+    barEl.style.width=p+"%";
+  },260);
+}
+
+/* ============ DIRECTION A ============ */
+function cardA(m){
+  const el=document.createElement("div");
+  el.className="card"+(m.on&&m.resident?" resident":"");
+  el.innerHTML = `
+    <div class="card-top">
+      <div>
+        <div class="card-name">${m.name}</div>
+        <div class="card-sub">${m.quant} · ${m.gb} GB · serves ${m.tier}</div>
+      </div>
+      <div class="spacer"></div>
+      <div class="sw ${m.on?"on":""}"><i></i></div>
+    </div>
+    <div class="badges">
+      ${m.rec?'<span class="badge b-rec">recommended</span>':''}
+      ${m.badges.map(b=>`<span class="badge ${BADGE_CLASS[b]}">${b}</span>`).join("")}
+      <span class="badge b-tier">${m.tier}</span>
+      ${m.on?`<span class="badge ${m.resident?'b-rec':'b-tier'}">${m.resident?'resident':'cold'}</span>`:''}
+    </div>
+    <div class="dl"><div class="dl-bar"><i></i></div><div class="dl-txt"></div></div>`;
+  const sw=el.querySelector(".sw"), dl=el.querySelector(".dl"), bar=el.querySelector(".dl-bar i"), txt=el.querySelector(".dl-txt");
+  sw.onclick=()=>{
+    if(!m.on){
+      // first enable for non-installed → simulate download
+      if(!m.resident && !m._installed){ startDownload(m,bar,txt,()=>{m._installed=true;renderA();paintStatus();}); }
+      else { m.on=true; m.resident=true; renderA(); paintStatus(); }
+    } else { m.on=false; m.resident=false; renderA(); paintStatus(); }
+  };
+  return el;
+}
+function renderA(){
+  const rec=document.getElementById("A-rec"), more=document.getElementById("A-more");
+  if(!rec) return;
+  rec.innerHTML=""; more.innerHTML="";
+  CATALOG.filter(m=>m.rec).forEach(m=>rec.appendChild(cardA(m)));
+  CATALOG.filter(m=>!m.rec).forEach(m=>more.appendChild(cardA(m)));
+}
+
+/* ============ DIRECTION B ============ */
+const CLOUD=[{id:"grok",name:"Grok 4.3",vision:true},{id:"claude",name:"Claude Sonnet 4.6",vision:true}];
+function optionsFor(visionOnly, selected){
+  let html = CLOUD.map(c=>`<option ${selected===c.id?"selected":""}>${c.name}</option>`).join("");
+  CATALOG.filter(m=>m.on && (!visionOnly || m.badges.includes("vision"))).forEach(m=>{
+    const tag = m.badges.includes("vision")?" · vision":m.badges.includes("reasoning")?" · reasoning":"";
+    html += `<option ${selected===m.id?"selected":""}>${m.name}${tag}</option>`;
+  });
+  return html;
+}
+function renderB(){
+  const dr=document.getElementById("B-drawer"); if(!dr) return;
+  dr.innerHTML = CATALOG.map(m=>`
+    <div class="mini" data-id="${m.id}">
+      <div class="check ${m.on?'on':''}">${m.on?'✓':''}</div>
+      <div>
+        <div class="mini-name">${m.name}</div>
+        <div class="mini-sub">${m.quant} · ${m.gb} GB · ${m.badges.join(", ")}</div>
+      </div>
+      <div class="spacer"></div>
+      <span class="chip ${m.on?(m.resident?'res':'cold'):'off'}">${m.on?(m.resident?'resident':'cold'):'not installed'}</span>
+    </div>`).join("");
+  dr.querySelectorAll(".mini").forEach(row=>{
+    row.querySelector(".check").onclick=()=>{
+      const m=CATALOG.find(x=>x.id===row.dataset.id);
+      m.on=!m.on; m.resident=m.on; renderB(); paintStatus();
+    };
+  });
+  document.getElementById("B-count").textContent = CATALOG.filter(m=>m.on).length+" enabled";
+  document.getElementById("B-vsel").innerHTML = optionsFor(true, "qwen3-vl-30b");
+  document.getElementById("B-hsel").innerHTML = optionsFor(false, "grok");
+  document.getElementById("B-lsel").innerHTML = optionsFor(false, "grok");
+}
+document.getElementById("B-dt").onclick=()=>{
+  document.getElementById("B-drawer").classList.toggle("open");
+  document.getElementById("B-caret").classList.toggle("open");
+};
+
+/* ============ DIRECTION C ============ */
+function renderC(){
+  const list=document.getElementById("C-list"); if(!list) return;
+  list.innerHTML="";
+  CATALOG.forEach(m=>{
+    const el=document.createElement("div"); el.className="card"+(m.on&&m.resident?" resident":"");
+    el.innerHTML=`
+      <div class="card-top">
+        <div><div class="card-name">${m.name}</div>
+          <div class="card-sub">${m.quant} · ${m.gb} GB · ${m.tier}</div></div>
+        <div class="spacer"></div>
+        <div class="sw ${m.on?"on":""}"><i></i></div>
+      </div>
+      <div class="badges">
+        ${m.badges.map(b=>`<span class="badge ${BADGE_CLASS[b]}">${b}</span>`).join("")}
+        ${m.on?`<span class="badge ${m.resident?'b-rec':'b-tier'}">${m.resident?'resident':'cold (loads on demand)'}</span>`:'<span class="badge b-tier">not installed</span>'}
+      </div>
+      <div class="dl"><div class="dl-bar"><i></i></div><div class="dl-txt"></div></div>`;
+    const sw=el.querySelector(".sw"),bar=el.querySelector(".dl-bar i"),txt=el.querySelector(".dl-txt");
+    sw.onclick=()=>{
+      if(!m.on){ if(!m._installed){ startDownload(m,bar,txt,()=>{m._installed=true;renderC();paintStatus();}); }
+        else { m.on=true;m.resident=true;renderC();paintStatus(); } }
+      else { m.on=false;m.resident=false;renderC();paintStatus(); }
+    };
+    list.appendChild(el);
+  });
+}
+document.querySelectorAll(".tabs button").forEach(b=>{
+  b.onclick=()=>{
+    document.querySelectorAll(".tabs button").forEach(x=>x.classList.remove("on"));
+    b.classList.add("on");
+    document.querySelectorAll(".tabpane").forEach(p=>p.classList.remove("on"));
+    document.getElementById("C-"+b.dataset.t).classList.add("on");
+  };
+});
+
+/* ---- screen switcher ---- */
+const BLURBS={
+  A:"Direction A — a dedicated section at the top of LLM Settings: a gateway status banner with a live memory meter, then one card per catalog model with capability badges and an enable/download toggle.",
+  B:"Direction B — minimal: local models live inside the existing routing dropdowns (vision-filtered), with a compact 'Manage local models' drawer for install/enable. Least new surface area.",
+  C:"Direction C — a dedicated Local Hosting screen: a guided setup wizard (hardware → choose → download → route), a Models tab with resident toggles, and a live Activity log of load/swap events."
+};
+document.querySelectorAll(".seg button").forEach(b=>{
+  b.onclick=()=>{
+    document.querySelectorAll(".seg button").forEach(x=>x.classList.remove("on"));
+    b.classList.add("on");
+    document.querySelectorAll(".screen").forEach(s=>s.classList.remove("on"));
+    document.getElementById("scr-"+b.dataset.s).classList.add("on");
+    document.getElementById("blurb").textContent=BLURBS[b.dataset.s];
+  };
+});
+
+renderA(); renderB(); renderC(); paintStatus();
+</script>
+</body>
+</html>
