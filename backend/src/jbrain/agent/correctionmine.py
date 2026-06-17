@@ -48,7 +48,9 @@ _SCHEMA: dict[str, Any] = {
 _SENSITIVITY = {"general": 0, "location": 1, "finance": 2, "health": 3}
 
 _BATCH = 5
-_PER_RUN_ESTIMATE = 6_000  # a transcript + the judgment; the up-front budget check
+# Up-front budget estimate per candidate: a WHOLE-session transcript can be long, so this is
+# generous (real spend is metered after via record_spend; _BATCH bounds a single sweep's overshoot).
+_PER_RUN_ESTIMATE = 12_000
 _TITLE_LEN = 80
 
 _HWM_KEY = "correction_mine:after"
@@ -101,26 +103,36 @@ def _parse_hwm(raw: Any) -> tuple[str, str]:
 async def _fetch_candidates(
     session: AsyncSession, *, after_ts: str, after_id: str, limit: int
 ) -> list[_Candidate]:
-    """Ended chat runs past the (started_at, run_id) mark whose session has ≥2 user turns (a
-    back-and-forth where a correction is possible) and no open mined `correction` proposal yet."""
+    """One candidate per SESSION (the latest ended run) past the (started_at, run_id) mark, whose
+    session has ≥2 user turns (a back-and-forth where a correction is possible) and no open mined
+    `correction` proposal yet. Dedup-per-session is load-bearing: the judge reads the WHOLE-session
+    transcript, so selecting per-run would re-judge (and re-propose, and re-spend) one session once
+    per exchange. The HWM advances past the session's latest run, so a found-nothing session is not
+    re-mined until it gets new activity."""
     rows = (
         await session.execute(
             text(
-                "SELECT r.id::text AS run_id, r.started_at, ses.id::text AS session_id,"
-                " ses.domain_scopes AS scopes,"
-                " (SELECT string_agg(upper(t.role) || ': ' || t.content, E'\n\n' ORDER BY t.seq)"
-                "    FROM app.agent_turns t WHERE t.session_id = ses.id) AS transcript"
-                " FROM app.runs r"
-                " JOIN app.agent_sessions ses ON ses.id = r.session_id"
-                " WHERE r.kind = 'agent' AND r.status = 'done' AND r.stop_reason = 'end_turn'"
-                "   AND (r.started_at, r.id) > (:after_ts, :after_id)"
-                "   AND (SELECT count(*) FROM app.agent_turns t"
-                "          WHERE t.session_id = ses.id AND t.role = 'user') >= 2"
-                "   AND NOT EXISTS (SELECT 1 FROM app.proposals p"
-                "          WHERE p.kind = 'correction' AND p.status IN ('staged', 'approved')"
-                "            AND p.provenance->>'source' = 'correction_mine'"
-                "            AND p.provenance->>'session_id' = ses.id::text)"
-                " ORDER BY r.started_at, r.id LIMIT :limit"
+                "WITH ranked AS ("
+                "  SELECT r.id::text AS run_id, r.started_at AS started_at, ses.id AS sid,"
+                "    ses.domain_scopes AS scopes,"
+                "    row_number() OVER (PARTITION BY ses.id"
+                "      ORDER BY r.started_at DESC, r.id DESC) AS rn"
+                "  FROM app.runs r"
+                "  JOIN app.agent_sessions ses ON ses.id = r.session_id"
+                "  WHERE r.kind = 'agent' AND r.status = 'done' AND r.stop_reason = 'end_turn'"
+                "    AND (r.started_at, r.id) > (:after_ts, :after_id)"
+                "    AND (SELECT count(*) FROM app.agent_turns t"
+                "           WHERE t.session_id = ses.id AND t.role = 'user') >= 2"
+                "    AND NOT EXISTS (SELECT 1 FROM app.proposals p"
+                "           WHERE p.kind = 'correction' AND p.status IN ('staged', 'approved')"
+                "             AND p.provenance->>'source' = 'correction_mine'"
+                "             AND p.provenance->>'session_id' = ses.id::text)"
+                ")"
+                " SELECT run_id, started_at, sid::text AS session_id, scopes,"
+                "   (SELECT string_agg(upper(t.role) || ': ' || t.content, E'\n\n' ORDER BY t.seq)"
+                "      FROM app.agent_turns t WHERE t.session_id = ranked.sid) AS transcript"
+                " FROM ranked WHERE rn = 1"
+                " ORDER BY started_at, run_id LIMIT :limit"
             ),
             {
                 "after_ts": datetime.fromisoformat(after_ts),

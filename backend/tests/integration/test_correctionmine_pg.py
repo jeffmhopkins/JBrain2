@@ -16,7 +16,7 @@ from jbrain.agent.connectortools import build_leaf_executor
 from jbrain.agent.correctionmine import CorrectionMineAction
 from jbrain.agent.proposals import ProposalRepo
 from jbrain.agent.runlog import AgentRunLog
-from jbrain.agent.session import AgentSessionRepo
+from jbrain.agent.session import AgentSessionRepo, read_context
 from jbrain.auth import service
 from jbrain.auth.repo import SqlAuthRepo
 from jbrain.db.session import SessionContext, scoped_session
@@ -56,29 +56,38 @@ async def _owner(maker: async_sessionmaker) -> SessionContext:
     return SessionContext(principal_id=str(pid), principal_kind="owner")
 
 
-async def _seed_run(maker: async_sessionmaker, owner: SessionContext) -> str:
-    """An ended chat run whose session has two user turns (a correction back-and-forth)."""
-    info = await AgentSessionRepo(maker).create(owner, domain_scopes=["general"], title="t")
+_TURNS = [
+    ("user", "my cardiologist is Dr. Lee"),
+    ("assistant", "Got it — Dr. Patel is your cardiologist."),
+    ("user", "no, it's Dr. Lee"),
+]
+
+
+async def _run_on(maker: async_sessionmaker, owner: SessionContext, session_id: str) -> str:
+    """One ended run (with the correction back-and-forth turns) on an existing session."""
     log = AgentRunLog(maker)
-    run_id = await log.start(owner, session_id=info.id, prompt_version="v1")
-    turns = [
-        ("user", "my cardiologist is Dr. Lee"),
-        ("assistant", "Got it — Dr. Patel is your cardiologist."),
-        ("user", "no, it's Dr. Lee"),
-    ]
+    run_id = await log.start(owner, session_id=session_id, prompt_version="v1")
     async with scoped_session(maker, owner) as s:
-        for role, content in turns:
+        for role, content in _TURNS:
             await s.execute(
                 text(
                     "INSERT INTO app.agent_turns (id, session_id, run_id, role, content, tools)"
                     " VALUES (gen_random_uuid(), :s, :r, :role, :c, '[]'::jsonb)"
                 ),
-                {"s": info.id, "r": run_id, "role": role, "c": content},
+                {"s": session_id, "r": run_id, "role": role, "c": content},
             )
     await log.finish(
         owner, run_id, status="done", stop_reason="end_turn", step_count=3, cost_tokens=10
     )
     return run_id
+
+
+async def _seed_run(
+    maker: async_sessionmaker, owner: SessionContext, *, domain: str = "general"
+) -> str:
+    """An ended chat run whose session has two user turns (a correction back-and-forth)."""
+    info = await AgentSessionRepo(maker).create(owner, domain_scopes=[domain], title="t")
+    return await _run_on(maker, owner, info.id)
 
 
 def _action(maker: async_sessionmaker, payload: dict) -> CorrectionMineAction:
@@ -133,6 +142,34 @@ async def test_refused_when_kill_switch_on(maker: async_sessionmaker) -> None:
     with pytest.raises(PermanentJobError):
         await _action(maker, _FOUND).run({})
     assert await ProposalRepo(maker).list_open(owner) == []  # nothing staged behind the gate
+
+
+async def test_multi_run_session_yields_one_proposal(maker: async_sessionmaker) -> None:
+    # A session with TWO ended runs (two exchanges) must mine to exactly ONE proposal — the action
+    # judges the whole-session transcript, so it dedups candidates to one run per session.
+    owner = await _owner(maker)
+    info = await AgentSessionRepo(maker).create(owner, domain_scopes=["general"], title="t")
+    await _run_on(maker, owner, info.id)
+    await _run_on(maker, owner, info.id)
+
+    await _action(maker, _FOUND).run({})
+    assert len(await ProposalRepo(maker).list_open(owner)) == 1  # not one-per-run
+
+
+async def test_proposal_is_domain_firewalled(maker: async_sessionmaker) -> None:
+    # The mined proposal's domain = the source session's scope, so a narrowed session only sees a
+    # correction in a domain it holds (the output firewall; the transcript read is SYSTEM_CTX by
+    # design, like every miner).
+    owner = await _owner(maker)
+    pid = str(owner.principal_id)
+    await _seed_run(maker, owner, domain="health")
+
+    await _action(maker, _FOUND).run({})
+
+    proposals = ProposalRepo(maker)
+    health_props = await proposals.list_open(read_context(pid, ("health",)))
+    assert [p.domain for p in health_props] == ["health"]
+    assert await proposals.list_open(read_context(pid, ("general",))) == []  # firewalled out
 
 
 async def test_high_water_mark_prevents_remining(maker: async_sessionmaker) -> None:
