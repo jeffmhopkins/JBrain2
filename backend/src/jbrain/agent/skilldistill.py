@@ -114,7 +114,7 @@ async def _fetch_candidates(
                 " FROM app.runs r"
                 " JOIN app.run_steps rs ON rs.run_id = r.id"
                 " JOIN app.agent_sessions ses ON ses.id = r.session_id"
-                " WHERE r.kind = 'agent' AND r.status = 'ended' AND r.stop_reason = 'end_turn'"
+                " WHERE r.kind = 'agent' AND r.status = 'done' AND r.stop_reason = 'end_turn'"
                 "   AND (r.started_at, r.id)"
                 "     > (cast(:after_ts AS timestamptz), cast(:after_id AS uuid))"
                 " GROUP BY r.id, r.started_at, ses.domain_scopes"

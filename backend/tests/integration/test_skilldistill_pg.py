@@ -77,7 +77,7 @@ async def _seed_run(maker: async_sessionmaker, owner: SessionContext) -> str:
             {"s": info.id, "r": run_id, "c": "I searched and cited the note."},
         )
     await log.finish(
-        owner, run_id, status="ended", stop_reason="end_turn", step_count=3, cost_tokens=10
+        owner, run_id, status="done", stop_reason="end_turn", step_count=3, cost_tokens=10
     )
     return run_id
 

@@ -250,7 +250,7 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
 
     async def events() -> AsyncIterator[bytes]:
         stop_reason = "error"
-        status = "failed"
+        status = "error"
         answer: list[str] = []
         # Tool steps in call order, each gaining its sources when the result lands —
         # the assistant turn's "Worked" block, persisted with the transcript.
@@ -292,12 +292,12 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
                     if step is not None:
                         step["view"] = event.view.model_dump()
                 elif event.type == "done":
-                    stop_reason, status = event.stop_reason, "ended"
+                    stop_reason, status = event.stop_reason, "done"
                 # A reflexion `verdict` rides after `done` (Loop 1's annotation of a
                 # critique-worthy turn). It is forwarded to the PWA but deliberately
                 # NOT recorded — Loop 1 is ephemeral and writes nothing durable.
                 yield f"data: {event.model_dump_json()}\n\n".encode()
-            if status == "ended":
+            if status == "done":
                 await _record_episode(request, read_ctx, session, run_id, body.message, answer)
                 await _record_transcript(
                     request,
@@ -310,10 +310,12 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
                 )
                 await _maybe_autotitle(request, owner_ctx, sessions, session, body.message, answer)
         except asyncio.CancelledError:
-            # The client disconnected mid-stream (closed the PWA, lost signal) —
-            # a benign abort, not a failure. Record it as such, then re-raise so
-            # the task unwinds normally.
-            status, stop_reason = "cancelled", "disconnected"
+            # The client disconnected mid-stream (closed the PWA, lost signal) — the turn never
+            # completed, so it closes as `error` (the constraint-valid terminal; the runs table
+            # carries only running/done/error, mirrored by the frontend RunStatus). The benign
+            # disconnect nuance is preserved in stop_reason, not the status. Re-raise so the task
+            # unwinds normally.
+            status, stop_reason = "error", "disconnected"
             raise
         except Exception as exc:  # noqa: BLE001 — surface a terminal event, never a 500 mid-stream
             log.warning("agent.chat_failed", run_id=run_id, error=repr(exc))
