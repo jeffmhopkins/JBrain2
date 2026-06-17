@@ -11,6 +11,7 @@ from jbrain.agent.proposals import ProposalRepo
 from jbrain.agent.readtools import build_registry
 from jbrain.agent.runlog import AgentRunLog, RunLogReader
 from jbrain.agent.session import AgentSessionRepo
+from jbrain.agent.skills import SkillService, SkillsRepo
 from jbrain.agent.transcript_store import AgentTranscript
 from jbrain.agent.wikiwritetools import build_wiki_write_handlers
 from jbrain.analysis.repo import SqlAnalysisRepo
@@ -129,6 +130,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # sidecars at startup), the session capability store, and the run log.
         app.state.agent_memory = MemoryService(
             MemoryRepo(maker), TeiEmbedClient(settings.embed_url), settings.embed_model
+        )
+        app.state.skill_service = SkillService(
+            SkillsRepo(maker), TeiEmbedClient(settings.embed_url), settings.embed_model
         )
         app.state.agent_proposals = ProposalRepo(maker)
         # The egress chokepoint: a fixed allowlist of connectors, served only on an

@@ -15,6 +15,7 @@ from fastapi.testclient import TestClient
 from jbrain.agent.contracts import EntityRef, NoteSource, ProposalRef, ToolSpec, ViewPayload
 from jbrain.agent.loop import ToolOutput
 from jbrain.agent.session import AgentSessionInfo
+from jbrain.agent.skills import _SKILL_FRAME, SkillHit
 from jbrain.agent.toolfile import ToolFile
 from jbrain.agent.toolregistry import RegisteredTool, ToolRegistry
 from jbrain.agent.transcript_store import TurnRecord
@@ -93,6 +94,9 @@ class FakeRunLog:
 
     async def step(self, *, idx, kind, name, ok, cost_tokens):  # type: ignore[no-untyped-def]
         self.steps.append((kind, name))
+
+    async def stamp_skill_version(self, ctx, run_id, *, skill_version):  # type: ignore[no-untyped-def]
+        self.stamped = skill_version
 
     async def finish(self, ctx, run_id, *, status, stop_reason, step_count, cost_tokens):  # type: ignore[no-untyped-def]
         self.finished.append(
@@ -716,3 +720,60 @@ def test_chat_does_not_retitle_a_named_session(
     client.post("/api/chat", json={"session_id": "sess-1", "message": "anything"})
     # An owner-named chat is left alone — auto-titling only fills an empty title.
     assert sessions_store._by_id["sess-1"].title == "My Chat"
+
+
+class _StubSkills:
+    """A skill service that returns canned hits (no DB); records whether recall ran."""
+
+    def __init__(self, hits: list[SkillHit]) -> None:
+        self._hits = hits
+        self.called = False
+
+    async def recall(self, ctx: object, query: str, limit: int = 3) -> list[SkillHit]:
+        self.called = True
+        return self._hits
+
+
+def _capturing_router() -> tuple[LlmRouter, FakeLlmClient]:
+    fake = FakeLlmClient(
+        turns=[LlmTurn("ok", (), "end_turn", LlmUsage(1, 1))], stream_chunks=[["ok"]]
+    )
+    return LlmRouter({"xai": fake}, {"agent.turn": ("xai", "grok-4.3")}), fake
+
+
+def test_chat_injects_data_framed_skills_when_enabled(
+    client: TestClient, repo: FakeAuthRepo, sessions_store: FakeAgentSessions
+) -> None:
+    login(client, repo)
+    sessions_store.add(AgentSessionInfo("sess-sk", "", "active", ("general",), (), NOW, NOW))
+    router, fake = _capturing_router()
+    client.app.state.llm_router = router  # type: ignore[attr-defined]
+    skills = _StubSkills([SkillHit("s1", "Cite a fact", 1, "cite", "1. search", "general")])
+    client.app.state.skill_service = skills  # type: ignore[attr-defined]
+    client.app.state.settings_store.values["skills_enabled"] = True  # type: ignore[attr-defined]
+
+    resp = client.post("/api/chat", json={"session_id": "sess-sk", "message": "how do I cite?"})
+    assert resp.status_code == 200
+    # The skill block was prepended into the CONVERSATION channel (a user message), data-framed.
+    msgs = fake.stream_calls[0]["messages"]
+    joined = "\n".join(getattr(m, "text", "") for m in msgs)
+    assert _SKILL_FRAME in joined and "## Playbook: Cite a fact" in joined
+    assert skills.called
+
+
+def test_chat_skips_skills_when_disabled(
+    client: TestClient, repo: FakeAuthRepo, sessions_store: FakeAgentSessions
+) -> None:
+    login(client, repo)
+    sessions_store.add(AgentSessionInfo("sess-off", "", "active", ("general",), (), NOW, NOW))
+    router, fake = _capturing_router()
+    client.app.state.llm_router = router  # type: ignore[attr-defined]
+    skills = _StubSkills([SkillHit("s1", "Cite", 1, "cite", "1. search", "general")])
+    client.app.state.skill_service = skills  # type: ignore[attr-defined]
+    # skills_enabled defaults False — the off path must not even call recall.
+
+    resp = client.post("/api/chat", json={"session_id": "sess-off", "message": "how do I cite?"})
+    assert resp.status_code == 200
+    assert not skills.called
+    joined = "\n".join(getattr(m, "text", "") for m in fake.stream_calls[0]["messages"])
+    assert _SKILL_FRAME not in joined
