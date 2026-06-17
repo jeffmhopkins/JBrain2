@@ -6,8 +6,8 @@ per-section revisions, the per-section embedding index, and owner source-exclusi
 The pgvector columns (`wiki_articles.lead_embedding`, `wiki_index.summary_embedding`) and
 the generated `wiki_revisions.body_tsv` are deliberately UNMAPPED — written/cosine-queried
 via raw SQL exactly like `Entity.summary_embedding` / `Chunk.embedding`; the ORM is for the
-relational columns. `wiki_citations` / `wiki_links` and the `fact_id` exclusion FK are NOT
-here — they FK into the in-flux fact/entity shape and land in the gated Wave C.
+relational columns. `wiki_citations` / `wiki_links` and the `fact_id` exclusion FK FK into
+the fact/entity shape and land with the graph-coupled write layer (migration 0046, Wave C1).
 """
 
 import uuid
@@ -116,10 +116,62 @@ class WikiSourceExclusion(Base):
     note_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("app.notes.id", ondelete="CASCADE"), nullable=True
     )
-    fact_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    fact_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("app.facts.id", ondelete="CASCADE"), nullable=True
+    )
     article_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("app.wiki_articles.id", ondelete="CASCADE"), nullable=True
     )
     reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    domain_code: Mapped[str] = mapped_column(Text, ForeignKey("app.domains.code"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class WikiCitation(Base):
+    """One clause-granular citation on a revision (migration 0046). Cites a same-domain chunk
+    (hard FK) and, when fact-backed, the fact (`fact_id`, SET NULL so a purge can't abort);
+    `note_id` is denormalized for the References render. A Postgres trigger enforces
+    citation.domain = section.domain = chunk.domain (= fact.domain when fact-backed) and
+    citation.note_id = chunk.note_id, so a cross-domain citation can't be created or read."""
+
+    __tablename__ = "wiki_citations"
+    __table_args__ = {"schema": "app"}
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    revision_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("app.wiki_revisions.id", ondelete="CASCADE")
+    )
+    fact_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("app.facts.id", ondelete="SET NULL"), nullable=True
+    )
+    chunk_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("app.chunks.id", ondelete="CASCADE")
+    )
+    note_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("app.notes.id", ondelete="CASCADE")
+    )
+    seq: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    domain_code: Mapped[str] = mapped_column(Text, ForeignKey("app.domains.code"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class WikiLink(Base):
+    """A wiki↔wiki link + the "what links here" back-index (migration 0046). `to_entity_id` is
+    a SOFT ref (no FK): `entities` is single-domain RLS, so a cross-domain back-link query
+    can't carry an FK readable by a scoped principal — it's resolved system-scoped at build,
+    like `WikiArticle.entity_ref`. A trigger pins the link's domain to its source section's."""
+
+    __tablename__ = "wiki_links"
+    __table_args__ = {"schema": "app"}
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    from_section_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("app.wiki_sections.id", ondelete="CASCADE")
+    )
+    to_entity_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    to_article_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("app.wiki_articles.id", ondelete="SET NULL"), nullable=True
+    )
+    anchor: Mapped[str | None] = mapped_column(Text, nullable=True)
     domain_code: Mapped[str] = mapped_column(Text, ForeignKey("app.domains.code"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

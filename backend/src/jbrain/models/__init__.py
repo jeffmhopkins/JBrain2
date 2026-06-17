@@ -13,7 +13,9 @@ from jbrain.models.core import Base, DeviceSession, Domain, Principal, Subject
 from jbrain.models.telemetry import LlmUsage
 from jbrain.models.wiki import (
     WikiArticle,
+    WikiCitation,
     WikiIndexEntry,
+    WikiLink,
     WikiRevision,
     WikiSection,
     WikiSourceExclusion,
@@ -54,7 +56,9 @@ __all__ = [
     "TemporalToken",
     "Trigger",
     "WikiArticle",
+    "WikiCitation",
     "WikiIndexEntry",
+    "WikiLink",
     "WikiRevision",
     "WikiSection",
     "WikiSourceExclusion",
