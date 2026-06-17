@@ -1,12 +1,13 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import type { SearchOut, SearchResult } from "../api/client";
+import type { SearchOut, SearchResult, WikiSearchResult } from "../api/client";
 import { SearchScreen } from "./SearchScreen";
 
 let seq = 0;
 function result(overrides: Partial<SearchResult> = {}): SearchResult {
   seq += 1;
   return {
+    kind: "note",
     note_id: `n-${seq}`,
     chunk_id: `c-${seq}`,
     snippet: `plain snippet ${seq}`,
@@ -23,11 +24,28 @@ function result(overrides: Partial<SearchResult> = {}): SearchResult {
   };
 }
 
+function wikiResult(overrides: Partial<WikiSearchResult> = {}): WikiSearchResult {
+  seq += 1;
+  return {
+    kind: "wiki",
+    article_id: `a-${seq}`,
+    title: `Article ${seq}`,
+    blurb: `blurb ${seq}`,
+    entity_kind: "Person",
+    domain: "general",
+    snippet: `wiki snippet ${seq}`,
+    match: "semantic",
+    score: 2,
+    ...overrides,
+  };
+}
+
 function setup(out: SearchOut) {
   const search = vi.fn(async () => out);
   const onOpenResult = vi.fn();
-  render(<SearchScreen onOpenResult={onOpenResult} search={search} />);
-  return { search, onOpenResult };
+  const onOpenWiki = vi.fn();
+  render(<SearchScreen onOpenResult={onOpenResult} onOpenWiki={onOpenWiki} search={search} />);
+  return { search, onOpenResult, onOpenWiki };
 }
 
 async function submit(query: string) {
@@ -136,5 +154,50 @@ describe("SearchScreen", () => {
       screen.getByText("tap this result", { selector: "span" }).closest("button") as HTMLElement,
     );
     expect(onOpenResult).toHaveBeenCalledWith(hit);
+  });
+
+  it("renders a wiki hit with its Wiki badge, title, and blurb", async () => {
+    setup({
+      degraded: false,
+      results: [
+        wikiResult({ title: "Priya Nair", blurb: "Pediatrician and founder of Nair Pediatrics." }),
+      ],
+    });
+    await submit("priya");
+    expect(screen.getByText("Wiki")).toHaveClass("result-type", "result-type-wiki");
+    expect(screen.getByText("Priya Nair")).toBeInTheDocument();
+    expect(screen.getByText("Pediatrician and founder of Nair Pediatrics.")).toBeInTheDocument();
+  });
+
+  it("labels note hits with a Note badge alongside their match badge", async () => {
+    setup({ degraded: false, results: [result({ match: "keyword" })] });
+    await submit("anything");
+    expect(screen.getByText("Note")).toHaveClass("result-type", "result-type-note");
+    expect(screen.getByText("keyword")).toHaveClass("match-badge");
+  });
+
+  it("renders a mixed list: both a wiki and a note hit, each with its badge", async () => {
+    setup({
+      degraded: false,
+      results: [
+        wikiResult({ title: "Priya Nair" }),
+        result({ snippet: "a note passage", match: "both" }),
+      ],
+    });
+    await submit("priya");
+    // Both branches coexist: a Wiki card and a Note card, with both type badges.
+    expect(screen.getByText("Priya Nair")).toBeInTheDocument();
+    expect(screen.getByText("a note passage", { selector: "span" })).toBeInTheDocument();
+    expect(screen.getByText("Wiki")).toHaveClass("result-type-wiki");
+    expect(screen.getByText("Note")).toHaveClass("result-type-note");
+  });
+
+  it("opens the reader for a tapped wiki hit, not the note view", async () => {
+    const hit = wikiResult({ article_id: "priya-nair", title: "Priya Nair" });
+    const { onOpenWiki, onOpenResult } = setup({ degraded: false, results: [hit] });
+    await submit("priya");
+    fireEvent.click(screen.getByText("Priya Nair").closest("button") as HTMLElement);
+    expect(onOpenWiki).toHaveBeenCalledWith("priya-nair");
+    expect(onOpenResult).not.toHaveBeenCalled();
   });
 });

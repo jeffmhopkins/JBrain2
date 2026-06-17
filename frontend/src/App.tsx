@@ -27,6 +27,7 @@ import { ReviewScreen } from "./screens/ReviewScreen";
 import { RunsScreen } from "./screens/RunsScreen";
 import { SearchScreen } from "./screens/SearchScreen";
 import { SettingsScreen } from "./screens/SettingsScreen";
+import { WikiLandingScreen } from "./screens/WikiLandingScreen";
 import { WikiScreen } from "./screens/WikiScreen";
 import { useBackGesture } from "./useBackGesture";
 
@@ -88,6 +89,10 @@ export function App() {
   // the grid on close so its card previews/counts reflect any edits.
   const [listView, setListView] = useState<string | null>(null);
   const [listsKey, setListsKey] = useState(0);
+  // The wiki reader stacks above the wiki landing (and above Search, when a wiki
+  // hit is tapped there) — its own layer, like the entity page.
+  const [wikiArticle, setWikiArticle] = useState<string | null>(null);
+  const [wikiClosing, setWikiClosing] = useState(false);
 
   // Lives at the app level so the outbox keeps flushing while the user is
   // on Ops or Settings.
@@ -141,6 +146,7 @@ export function App() {
     setNoteView(null);
     setEntityView(null);
     setListView(null);
+    setWikiArticle(null);
     setSession({ status: "anonymous" });
   }
 
@@ -200,6 +206,18 @@ export function App() {
     setTimeout(() => {
       setEntityClosing(false);
       setEntityView(null);
+    }, CARD_EXIT_MS);
+  }
+
+  function closeWikiArticle() {
+    if (reducedMotion()) {
+      setWikiArticle(null);
+      return;
+    }
+    setWikiClosing(true);
+    setTimeout(() => {
+      setWikiClosing(false);
+      setWikiArticle(null);
     }, CARD_EXIT_MS);
   }
 
@@ -318,6 +336,7 @@ export function App() {
   const overlayDepth =
     (actions.editing !== null ? 1 : 0) +
     (actions.moveTarget !== null ? 1 : 0) +
+    (wikiArticle !== null ? 1 : 0) +
     (entityView !== null ? 1 : 0) +
     (noteView !== null ? 1 : 0) +
     (listView !== null ? 1 : 0) +
@@ -328,6 +347,9 @@ export function App() {
   function closeTopLayer() {
     if (actions.editing !== null) return actions.cancelEdit();
     if (actions.moveTarget !== null) return actions.cancelMove();
+    // The wiki reader is the topmost reading layer (opened from the landing or a
+    // search hit), so it climbs off before the entity/note/card layers beneath.
+    if (wikiArticle !== null) return closeWikiArticle();
     if (entityView !== null) return closeEntityView();
     if (noteView !== null) return closeNoteView();
     if (listView !== null) {
@@ -376,7 +398,7 @@ export function App() {
 
       {/* Automations is a self-contained full-screen overlay (its own back bar +
           slide-in), rendered below — it skips the shared subscreen TopBar. */}
-      {card !== null && card !== "automations" && card !== "wiki" && (
+      {card !== null && card !== "automations" && (
         <div
           className={`subscreen${cardClosing ? " subscreen-closing" : ""}`}
           ref={subRef}
@@ -398,7 +420,12 @@ export function App() {
             <SettingsScreen deviceLabel={session.principal.label} onLogout={() => void logout()} />
           )}
           {card === "llm-settings" && <LLMSettingsScreen />}
-          {card === "search" && <SearchScreen onOpenResult={openNoteFromSearch} />}
+          {card === "search" && (
+            <SearchScreen onOpenResult={openNoteFromSearch} onOpenWiki={setWikiArticle} />
+          )}
+          {/* The wiki landing: search-first rails over the article set; a row
+              opens the reader layer above. */}
+          {card === "wiki" && <WikiLandingScreen onOpenArticle={setWikiArticle} />}
           {card === "calendar" && (
             <CalendarScreen
               onOpenNote={(noteId) => void openNoteById(noteId)}
@@ -426,14 +453,15 @@ export function App() {
       {runsOpen && <RunsScreen onClose={() => setRunsOpen(false)} />}
 
       {/* The wiki reader brings its own subscreen + TopBar (like the entity
-          page), so it renders outside the shared wrapper. B1 opens a fixed
-          fixture article; article navigation arrives in a later wave. */}
-      {card === "wiki" && (
-        <div className={cardClosing ? "wiki-layer-closing" : undefined}>
+          page), so it renders outside the shared wrapper. It stacks above the
+          wiki landing (or Search, when a wiki hit is tapped there). */}
+      {wikiArticle !== null && (
+        <div className={wikiClosing ? "wiki-layer-closing" : undefined}>
           <WikiScreen
-            articleId="priya-nair"
+            key={wikiArticle}
+            articleId={wikiArticle}
             syncStatus={notes.syncStatus}
-            onClose={closeCardToLauncher}
+            onClose={closeWikiArticle}
           />
         </div>
       )}
