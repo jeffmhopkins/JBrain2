@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type {
   LlmProviderId,
   LlmSettings,
@@ -136,6 +136,9 @@ export function LLMSettingsScreen() {
   // Which tiers have their per-task overrides expanded.
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [localOpen, setLocalOpen] = useState(false);
+  // Sequence token so an earlier PUT's response can't clobber a later one (and a
+  // response after unmount is ignored).
+  const putSeq = useRef(0);
 
   const groups = useMemo(() => (settings ? groupTasks(settings.tasks) : []), [settings]);
 
@@ -197,9 +200,12 @@ export function LLMSettingsScreen() {
             }
           : { provider };
     }
+    const seq = ++putSeq.current;
     void api
       .updateLlmSettings({ tasks: wire })
-      .then(setSettings)
+      .then((s) => {
+        if (seq === putSeq.current) setSettings(s);
+      })
       .catch(() => {});
   }
 
