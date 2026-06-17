@@ -11,6 +11,13 @@ from jbrain.models.analysis import (
 )
 from jbrain.models.core import Base, DeviceSession, Domain, Principal, Subject
 from jbrain.models.telemetry import LlmUsage
+from jbrain.models.wiki import (
+    WikiArticle,
+    WikiIndexEntry,
+    WikiRevision,
+    WikiSection,
+    WikiSourceExclusion,
+)
 from jbrain.models.workflow import (
     EvalRun,
     Event,
@@ -46,4 +53,9 @@ __all__ = [
     "Subject",
     "TemporalToken",
     "Trigger",
+    "WikiArticle",
+    "WikiIndexEntry",
+    "WikiRevision",
+    "WikiSection",
+    "WikiSourceExclusion",
 ]

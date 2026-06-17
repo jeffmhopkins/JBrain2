@@ -3,6 +3,7 @@ from datetime import datetime
 
 from sqlalchemy import (
     BigInteger,
+    Boolean,
     DateTime,
     Double,
     Float,
@@ -42,6 +43,9 @@ class Note(Base):
     integration_state: Mapped[str] = mapped_column(
         Text, default="pending_integration", server_default="pending_integration"
     )
+    # Phase-6 wiki dirty bit (mark-and-sweep): false at create/edit, set true once a wiki
+    # build has incorporated the note. The builder targets wiki_built = false notes.
+    wiki_built: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     # Capture location: owner-eyes metadata, excluded from Phase 7 scoped views.
     latitude: Mapped[float | None] = mapped_column(Double, nullable=True)
     longitude: Mapped[float | None] = mapped_column(Double, nullable=True)
