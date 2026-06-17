@@ -6,12 +6,17 @@ application politeness — decide row visibility.
 """
 
 import argparse
+import json
+import subprocess
 import uuid
 from collections.abc import AsyncIterator, Iterator
+from dataclasses import asdict, dataclass
 
 import pytest
+import sqlalchemy
 from alembic import command
 from alembic.config import Config
+from filelock import FileLock
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
@@ -27,25 +32,150 @@ pytestmark = [
 ]
 
 APP_PASSWORD = "app_test_pw"
+# Migrate once into this template; every module then clones a fresh database
+# from it (a near-instant file copy) instead of replaying the full 44-migration
+# chain — that per-module replay was the bulk of the old backend CI time.
+TEMPLATE_DB = "jbrain_template"
+
+
+@dataclass(frozen=True)
+class _Cluster:
+    """Coordinates of the shared Postgres, serialisable as JSON so xdist worker
+    processes can share one container (the live object cannot cross processes)."""
+
+    host: str
+    port: int
+    admin_db: str
+    user: str
+    password: str
+    container_id: str
+
+
+# Holds the provisioning worker's container object for the session so it is not
+# garbage-collected; teardown happens by id via the docker CLI, from whichever
+# worker is last out — so the object itself is never needed again.
+_PROVISIONED: list = []
+
+
+def _admin_url(c: _Cluster, dbname: str, *, driver: str) -> str:
+    return f"postgresql+{driver}://{c.user}:{c.password}@{c.host}:{c.port}/{dbname}"
+
+
+def _drop_connections(conn: sqlalchemy.Connection, dbname: str) -> None:
+    """A database cannot be cloned-from or dropped while sessions are attached."""
+    conn.execute(
+        text(
+            "SELECT pg_terminate_backend(pid) FROM pg_stat_activity"
+            " WHERE datname = :db AND pid <> pg_backend_pid()"
+        ),
+        {"db": dbname},
+    )
+
+
+def _provision() -> _Cluster:
+    """Start the one container, create the app role, and migrate the template."""
+    pg = pgvector_container()
+    pg.start()
+    _PROVISIONED.append(pg)
+
+    container_id = pg.get_wrapped_container().id
+    assert container_id is not None  # always set once the container is running
+
+    cluster = _Cluster(
+        host=pg.get_container_host_ip(),
+        port=int(pg.get_exposed_port(5432)),
+        admin_db=pg.dbname,
+        user=pg.username,
+        password=pg.password,
+        container_id=container_id,
+    )
+
+    admin = sqlalchemy.create_engine(
+        _admin_url(cluster, cluster.admin_db, driver="psycopg"), isolation_level="AUTOCOMMIT"
+    )
+    with admin.connect() as conn:
+        conn.execute(text(f"CREATE ROLE jbrain_app LOGIN PASSWORD '{APP_PASSWORD}'"))
+        conn.execute(text(f'CREATE DATABASE "{TEMPLATE_DB}"'))
+    admin.dispose()
+
+    cfg = Config("alembic.ini")
+    cfg.cmd_opts = argparse.Namespace(
+        x=[f"database_url={_admin_url(cluster, TEMPLATE_DB, driver='asyncpg')}"]
+    )
+    command.upgrade(cfg, "head")
+
+    # Guarantee the template is connection-free before any module clones it.
+    admin = sqlalchemy.create_engine(
+        _admin_url(cluster, cluster.admin_db, driver="psycopg"), isolation_level="AUTOCOMMIT"
+    )
+    with admin.connect() as conn:
+        _drop_connections(conn, TEMPLATE_DB)
+    admin.dispose()
+    return cluster
+
+
+def _remove_container(container_id: str) -> None:
+    subprocess.run(["docker", "rm", "-f", container_id], capture_output=True, check=False)
+
+
+@pytest.fixture(scope="session")
+def _pg_cluster(tmp_path_factory: pytest.TempPathFactory, worker_id: str) -> Iterator[_Cluster]:
+    """The single Postgres container, shared across every xdist worker.
+
+    Off xdist (worker_id == "master") it is provisioned and removed directly.
+    Under xdist the first worker to win the lock provisions it and publishes its
+    coordinates to the shared temp root; the rest reuse them. A refcount in that
+    file lets the last worker out remove the container — by id, since the live
+    container object exists only in the provisioning worker's process.
+    """
+    if worker_id == "master":
+        cluster = _provision()
+        try:
+            yield cluster
+        finally:
+            _remove_container(cluster.container_id)
+        return
+
+    state = tmp_path_factory.getbasetemp().parent / "pg_cluster.json"
+    with FileLock(f"{state}.lock"):
+        if state.exists():
+            data = json.loads(state.read_text())
+            data["refs"] += 1
+            state.write_text(json.dumps(data))
+            cluster = _Cluster(**{k: v for k, v in data.items() if k != "refs"})
+        else:
+            cluster = _provision()
+            state.write_text(json.dumps({**asdict(cluster), "refs": 1}))
+    try:
+        yield cluster
+    finally:
+        with FileLock(f"{state}.lock"):
+            data = json.loads(state.read_text())
+            data["refs"] -= 1
+            last = data["refs"] <= 0
+            state.write_text(json.dumps(data))
+        if last:
+            _remove_container(cluster.container_id)
 
 
 @pytest.fixture(scope="module")
-def database_url() -> Iterator[str]:
-    with pgvector_container() as pg:
-        admin_url = pg.get_connection_url(driver="psycopg")
-        import sqlalchemy
-
-        admin = sqlalchemy.create_engine(admin_url, isolation_level="AUTOCOMMIT")
-        with admin.connect() as conn:
-            conn.execute(text(f"CREATE ROLE jbrain_app LOGIN PASSWORD '{APP_PASSWORD}'"))
-        async_url = pg.get_connection_url(driver="asyncpg")
-        cfg = Config("alembic.ini")
-        cfg.cmd_opts = argparse.Namespace(x=[f"database_url={async_url}"])
-        command.upgrade(cfg, "head")
-
-        host, port = pg.get_container_host_ip(), pg.get_exposed_port(5432)
-        yield f"postgresql+asyncpg://jbrain_app:{APP_PASSWORD}@{host}:{port}/{pg.dbname}"
-        admin.dispose()
+def database_url(_pg_cluster: _Cluster) -> Iterator[str]:
+    """A pristine database for the module, cloned from the migrated template."""
+    dbname = f"t_{uuid.uuid4().hex}"
+    admin = sqlalchemy.create_engine(
+        _admin_url(_pg_cluster, _pg_cluster.admin_db, driver="psycopg"),
+        isolation_level="AUTOCOMMIT",
+    )
+    with admin.connect() as conn:
+        conn.execute(text(f'CREATE DATABASE "{dbname}" TEMPLATE "{TEMPLATE_DB}"'))
+    yield (
+        f"postgresql+asyncpg://jbrain_app:{APP_PASSWORD}"
+        f"@{_pg_cluster.host}:{_pg_cluster.port}/{dbname}"
+    )
+    with admin.connect() as conn:
+        _drop_connections(conn, dbname)
+        conn.execute(text(f'DROP DATABASE IF EXISTS "{dbname}"'))
+    admin.dispose()
 
 
 @pytest.fixture
