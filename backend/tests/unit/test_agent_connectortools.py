@@ -120,9 +120,18 @@ class FakeAnalysis:
         return None
 
 
+class FakeSkills:
+    def __init__(self) -> None:
+        self.promoted: list[tuple[str, str]] = []
+
+    async def set_status(self, ctx: object, skill_id: str, status: str) -> None:
+        self.promoted.append((skill_id, status))
+
+
 async def test_leaf_executor_dispatches_by_op() -> None:
     notes, svc, jobs, analysis = FakeNotes(), FakeConnectorService(), FakeJobs(), FakeAnalysis()
-    execute = build_leaf_executor(notes, svc, jobs, analysis)  # type: ignore[arg-type]
+    skills = FakeSkills()
+    execute = build_leaf_executor(notes, svc, jobs, analysis, skills)  # type: ignore[arg-type]
     proposal = ProposalRow("p", "egress", "approved", "health", "t", None)
 
     egress_node = NodeRow(
@@ -148,12 +157,18 @@ async def test_leaf_executor_dispatches_by_op() -> None:
         (),
         "approved",
     )
+    skill_node = NodeRow(
+        "s", None, "leaf", "skill_promote", "", {"skill_id": "sk1"}, (), "approved"
+    )
     await execute(HEALTH.session, proposal, egress_node)
     await execute(HEALTH.session, proposal, note_node)
     await execute(HEALTH.session, proposal, merge_node)
+    await execute(HEALTH.session, proposal, skill_node)
     assert svc.fetched == [("lookup_condition", {"name": "x"}, "p1")]
     assert notes.created[0]["provenance"] == "agent"
     # The agent note re-enters ingestion; the egress leaf does not enqueue a note.
     assert jobs.enqueued == [("ingest_note", {"note_id": "n1"})]
     # A merge leaf folds through the analysis repo, not the note path.
     assert analysis.merged == [("e1", "e2")]
+    # A skill_promote leaf flips the distilled shadow skill to active.
+    assert skills.promoted == [("sk1", "active")]

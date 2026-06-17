@@ -20,6 +20,7 @@ from jbrain.agent.proposals import (
     ProposalRow,
     ProposalSpec,
 )
+from jbrain.agent.skills import SkillsRepo
 from jbrain.db.session import SessionContext
 from jbrain.notes.repo import SqlNotesRepo
 from jbrain.queue import JobEnqueuer
@@ -102,5 +103,20 @@ def agent_note_executor(notes: SqlNotesRepo, jobs: JobEnqueuer) -> LeafExecutor:
         # has a note and a job). Without this the note never leaves 'pending'.
         if created:
             await jobs.enqueue(ctx, "ingest_note", {"note_id": note.id})
+
+    return execute
+
+
+def skill_promotion_executor(skills: SkillsRepo) -> LeafExecutor:
+    """Enact a skill-promotion leaf (Loop 2): flip the owner-reviewed shadow skill to `active`,
+    so it becomes eligible for turn-time retrieval. Idempotent — set_status is a plain UPDATE, so
+    a re-enact is a no-op. The owner approving the proposal IS the trust+promotion gate (the MVP's
+    answer to auto-promotion); no auto path writes 'active'."""
+
+    async def execute(ctx: SessionContext, proposal: ProposalRow, node: NodeRow) -> None:
+        skill_id = str(node.preview.get("skill_id", "")).strip()
+        if not skill_id:
+            return
+        await skills.set_status(ctx, skill_id, "active")
 
     return execute

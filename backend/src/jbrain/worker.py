@@ -17,6 +17,7 @@ import structlog
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from jbrain import queue
+from jbrain.agent.skilldistill import SKILL_DISTILL_SPEC, skill_distill_handler
 from jbrain.analysis import purge
 from jbrain.analysis.consolidation import Consolidator
 from jbrain.analysis.pipeline import AnalysisPipeline
@@ -279,6 +280,14 @@ async def run() -> None:
         # actions it lives in-code only — NOT in the app.actions seed — so the 0035
         # seed-lockstep holds (the seed projection + nightly schedule are H·B).
         "eval_run": eval_run_handler(maker, build_live_scorer(router)),
+        # Loop 2 skill distillation (Wave 2): distill successful runs into owner-reviewed shadow
+        # skills, budget-gated. In-code only (not in app.actions); a migration seeds the schedule.
+        "skill_distill": skill_distill_handler(
+            maker,
+            router=router,
+            embedder=TeiEmbedClient(settings.embed_url),
+            embedding_model=settings.embed_model,
+        ),
         # The wiki builder (Phase-6 Wave C2): dirty-bit-driven article build + reindex + prune.
         # In-code only (not in the app.actions seed); a migration seeds the schedules. The live
         # LLM rewriter (C2b) drives router.complete behind the grounding gate + wiki-build budget;
@@ -306,6 +315,7 @@ async def run() -> None:
             scheduler.RECONCILE_PENDING_INTEGRATION_ACTION,
             scheduler.RECONCILE_UNEMBEDDED_NOTES_ACTION,
             EVAL_RUN_SPEC,
+            SKILL_DISTILL_SPEC,
             *WIKI_SPECS,
         )
     )

@@ -240,7 +240,7 @@ def test_chat_streams_text_then_done(
     assert runlog.started == [("sess-1", "agent-system-v4")]
     assert sessions_store.touched == ["sess-1"]
     assert runlog.finished == [
-        {"status": "ended", "stop_reason": "end_turn", "step_count": 1, "cost_tokens": 10}
+        {"status": "done", "stop_reason": "end_turn", "step_count": 1, "cost_tokens": 10}
     ]
 
 
@@ -600,7 +600,7 @@ def test_chat_model_failure_emits_error_done_and_marks_run_failed(
     # The failure surfaces as a terminal event, never a 500, and the run is closed.
     assert resp.status_code == 200
     assert sse_events(resp.text)[-1] == {"type": "done", "stop_reason": "error"}
-    assert runlog.finished[-1]["status"] == "failed"
+    assert runlog.finished[-1]["status"] == "error"
     assert runlog.finished[-1]["stop_reason"] == "error"
 
 

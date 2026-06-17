@@ -131,8 +131,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.agent_memory = MemoryService(
             MemoryRepo(maker), TeiEmbedClient(settings.embed_url), settings.embed_model
         )
+        app.state.skills_repo = SkillsRepo(maker)
         app.state.skill_service = SkillService(
-            SkillsRepo(maker), TeiEmbedClient(settings.embed_url), settings.embed_model
+            app.state.skills_repo, TeiEmbedClient(settings.embed_url), settings.embed_model
         )
         app.state.agent_proposals = ProposalRepo(maker)
         # The egress chokepoint: a fixed allowlist of connectors, served only on an

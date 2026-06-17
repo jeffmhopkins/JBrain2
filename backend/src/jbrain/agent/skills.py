@@ -145,6 +145,25 @@ class SkillsRepo:
                 {"s": status, "id": skill_id},
             )
 
+    async def nearest_distance(
+        self, ctx: SessionContext, domain_code: str, qvec: list[float]
+    ) -> float | None:
+        """Cosine distance to the closest existing skill in `domain_code` (any status) — the dedup
+        signal: distillation skips a candidate too close to one already on file. None when the
+        domain has no embedded skill yet."""
+        async with scoped_session(self._maker, ctx) as session:
+            dist = (
+                await session.execute(
+                    text(
+                        "SELECT embedding <=> cast(:v AS vector) FROM app.skills"
+                        " WHERE domain_code = :d AND embedding IS NOT NULL"
+                        " ORDER BY embedding <=> cast(:v AS vector) LIMIT 1"
+                    ),
+                    {"v": vector_literal(qvec), "d": domain_code},
+                )
+            ).scalar()
+        return float(dist) if dist is not None else None
+
 
 # How much nothing nudges rank yet — recall is pure similarity RRF in the MVP (parity with memory's
 # importance tiebreak hook, kept at zero until a quality signal exists).
