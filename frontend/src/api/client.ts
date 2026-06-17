@@ -1017,6 +1017,19 @@ export const api = {
     return (await response.json()) as WikiArticleOut;
   },
 
+  // File an owner correction against an article: an owner-authored note that out-argues the
+  // graph (force-supersedes + pins), so the article rebuilds — the wiki stays machine-written.
+  async fileCorrection(
+    articleId: string,
+    correction: { body: string; domain: string; revision_id?: string },
+  ): Promise<{ note_id: string; created: boolean }> {
+    const response = await request(
+      `/api/wiki/${encodeURIComponent(articleId)}/corrections`,
+      jsonInit("POST", correction),
+    );
+    return (await response.json()) as { note_id: string; created: boolean };
+  },
+
   // The ego subgraph for the graph view: the focal entity plus everything
   // within `depth` relationship hops, RLS-scoped server-side.
   async getNeighbors(entityId: string, depth = 2): Promise<EgoGraph> {

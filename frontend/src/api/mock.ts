@@ -2223,6 +2223,11 @@ export const mockFetch: typeof fetch = async (input, init) => {
     return json(WIKI_LANDING);
   }
 
+  const correctionMatch = path.match(/^\/api\/wiki\/([^/]+)\/corrections$/);
+  if (correctionMatch && method === "POST") {
+    return json({ note_id: id("note"), created: true }, 201);
+  }
+
   const wikiMatch = path.match(/^\/api\/wiki\/([^/]+)$/);
   if (wikiMatch && method === "GET") {
     const article = WIKI_ARTICLES[decodeURIComponent(wikiMatch[1] ?? "")];

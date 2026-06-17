@@ -118,9 +118,9 @@ const PRIYA: WikiArticleOut = {
   ],
 };
 
-function jsonResponse(body: unknown): Response {
+function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
-    status: 200,
+    status,
     headers: { "Content-Type": "application/json" },
   });
 }
@@ -131,9 +131,13 @@ describe("WikiScreen", () => {
 
   beforeEach(() => {
     vi.stubGlobal("fetch", fetchMock);
-    fetchMock.mockImplementation(async (input) => {
-      if (String(input) === "/api/wiki/priya-nair") return jsonResponse(PRIYA);
-      throw new Error(`Unexpected fetch: ${String(input)}`);
+    fetchMock.mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url === "/api/wiki/priya-nair") return jsonResponse(PRIYA);
+      if (url === "/api/wiki/priya-nair/corrections" && init?.method === "POST") {
+        return jsonResponse({ note_id: "note-x", created: true }, 201);
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
     });
   });
 
@@ -247,6 +251,29 @@ describe("WikiScreen", () => {
     fireEvent.click(screen.getByRole("button", { name: /Discuss this article/ }));
     const sheet = screen.getByRole("dialog", { name: "Discuss this article" });
     expect(within(sheet).getByText(/the wiki stays machine-written/)).toBeInTheDocument();
+  });
+
+  it("filing a correction posts it and confirms", async () => {
+    setup();
+    await screen.findByRole("heading", { name: "Priya Nair", level: 1 });
+    fireEvent.click(screen.getByRole("button", { name: /Discuss this article/ }));
+
+    // Submit is disabled until there's text, then it POSTs the correction.
+    const submit = screen.getByRole("button", { name: "File correction" });
+    expect(submit).toBeDisabled();
+    fireEvent.change(screen.getByLabelText(/What's wrong/), {
+      target: { value: "She founded Nair Pediatrics, not Riverside." },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "File correction" }));
+
+    expect(await screen.findByText(/out-argues the conflicting fact/)).toBeInTheDocument();
+    const post = fetchMock.mock.calls.find(
+      ([u, init]) =>
+        String(u) === "/api/wiki/priya-nair/corrections" &&
+        (init as RequestInit)?.method === "POST",
+    );
+    expect(post).toBeTruthy();
+    expect(JSON.parse(String((post?.[1] as RequestInit).body)).body).toContain("Nair Pediatrics");
   });
 
   it("shows the quiet error line when the article fails to load", async () => {
