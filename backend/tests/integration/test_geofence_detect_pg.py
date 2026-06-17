@@ -101,20 +101,24 @@ async def test_walk_in_and_out_emits_one_enter_and_one_exit(maker: async_session
     # Exactly the two transition events landed, typed and stamped to location.
     async with scoped_session(maker, OWNER) as session:
         events = (
-            await session.execute(
-                text(
-                    "SELECT payload->>'transition' AS t FROM app.events"
-                    " WHERE type = 'location.geofence_transition' AND domain_code = 'location'"
-                    " ORDER BY occurred_at"
+            (
+                await session.execute(
+                    text(
+                        "SELECT payload->>'transition' FROM app.events"
+                        " WHERE type = 'location.geofence_transition' AND domain_code = 'location'"
+                        " ORDER BY occurred_at"
+                    )
                 )
             )
-        ).all()
+            .scalars()
+            .all()
+        )
         state = (
             await session.execute(
                 text("SELECT state FROM app.geofence_state WHERE subject_id = :s"), {"s": sid}
             )
         ).scalar()
-    assert [e.t for e in events] == ["enter", "exit"]
+    assert list(events) == ["enter", "exit"]
     assert state == "outside"
 
 
