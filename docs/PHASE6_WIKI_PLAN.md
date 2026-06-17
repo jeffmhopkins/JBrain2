@@ -1,14 +1,17 @@
 # JBrain2 — Phase 6 (Wiki) Build Plan
 
-> **Status (in progress):** research + two red-team passes done. Owner decisions
-> settled: #1 article scope (cross-domain article; type-guided single-domain sections;
-> section existence hidden from out-of-scope viewers), #2 revision storage (inline
-> `text`), and #3 UI direction (Wikipedia-style prose reader with type-guided sections +
-> numbered references — chosen mock `docs/mocks/wiki-reader-chosen-wikipedia.html`).
-> Remaining before build: the cross-stream **citation/delta-feed contract** with the
-> entity-graph rebuild (#4/#5). Most of Phase 6 is graph-coupled and gated on that
-> rebuild; the parallel-safe slice now is the article/revision/index shell, editorial
-> config (incl. per-type section templates), and the read-only UI.
+> **Status (in progress):** research + two red-team passes done. Owner decisions settled:
+> #1 article scope (cross-domain article; type-guided single-domain sections; hidden
+> out-of-scope sections); #2 revision storage (inline `text`, full-body → reconstructable
+> diffs); #3 reader UI (Wikipedia-style — `wiki-reader-chosen-wikipedia.html`); the Talk
+> board (chosen **B**, threaded topics); source depth (**B** — chunk-cited note-derived
+> claims + grounding gate, entity graph wins on conflict); linking (wiki→wiki + red-link
+> fallback); rebuild + source-exclusion controls; and the **`wiki_built` dirty bit** as
+> the delta mechanism (replaces the change-feed). Remaining before the gated build: the
+> cross-stream **citation contract + dirty bit** with the entity-graph rebuild (#4/#5).
+> Most of Phase 6 is graph-coupled and gated on that rebuild; the parallel-safe slice now
+> is the article/section/revision/index shell, editorial config (+ type guides), the
+> `notes.wiki_built` bit, and the read-only UI + Talk board.
 
 The LLM-maintained wiki: notes → facts → entities → **machine-written articles**,
 every claim citing a note, corrected only by out-arguing it with a correction note.
@@ -35,8 +38,8 @@ new projection. So the coupling is deeper than v1 admitted. Verified line:
 
 **Hard cross-stream dependency (new):** before the coupled work can start, the rebuild
 stream must **freeze a citation contract** — (a) the citable unit's shape (a stable id
-+ a citability predicate + `domain_code`), and (b) a **reliable fact change-feed**
-(see §3). **Written up as a hand-off spec for the rebuild team:
++ a citability predicate + `domain_code`), and (b) a **`wiki_built` dirty bit** on
+entities (see §3 step 1). **Written up as a hand-off spec for the rebuild team:
 `docs/PHASE6_WIKI_GRAPH_CONTRACT.md`.** These are the rebuild's deliverables; this plan
 consumes them. Recorded as a
 gating dependency, not a hope.
@@ -96,8 +99,10 @@ the source note per `[n]`. (Chosen reader mock: `docs/mocks/wiki-reader-chosen-w
   out-of-scope section returns no row to a scoped session.
 - **`app.wiki_revisions`** (append-only, **per section**): `id`, `section_id` (FK ON
   DELETE CASCADE), `seq`, `run_id` (FK→`app.runs`), `body` (**inline `text`, markdown**),
-  `summary`, `created_at`. Immutable; a domain rewrite touches only its
-  section's revisions.
+  `summary`, `created_at`. Immutable; a domain rewrite touches only its section's
+  revisions. **Full history + diffs:** every revision keeps its full body, so the **diff
+  between any two (incl. each build vs. its predecessor) is reconstructable** — a diff view
+  needs no extra storage; optionally cache a short diff `summary` for the Talk Build-log.
 - **`app.wiki_index`** (**per section**): `id`, `section_id` (FK), `domain_code`,
   `summary`, `summary_embedding vector(384)`, `embedding_model`, HNSW index. The
   domain-scoped match target.
@@ -157,16 +162,18 @@ exclusion edit triggers a `wiki_rebuild` of the affected articles.
 
 Pipeline (ARCHITECTURE.md §Wiki):
 
-1. **Delta facts.** **The hard problem.** Facts have **no reliable change-feed**:
-   `Fact` has only `created_at` (no `updated_at`), and a naive `created_at >= last_run`
-   watermark **misses** in-place `valid_to` interval-close, in-place refresh, `pinned`
-   toggle, `status→retracted`/held, **entity merge** (`merged_into_id` re-points facts),
-   note-deletion purge (removals), and `resolution.changed` re-keying
-   (supersession.py / events.py). **Requirement on the rebuild stream:** add
-   `facts.updated_at` (touched on every in-place mutation) **or** emit fact-mutation
-   events into `app.events`. The builder consumes that feed; it cannot be built reliably
-   without it.
-2. **Index match** — embed the delta cluster, RRF against `wiki_index` → candidates.
+1. **Delta via a `wiki_built` dirty bit (mark-and-sweep — owner decision).** A boolean
+   `wiki_built` on **notes** and **entities**, default **false at create and at edit**
+   (and on fact change / entity merge / split / retract), set **true** once a build has
+   incorporated it. The builder targets `wiki_built = false` rows and marks them true on
+   success. This **replaces the brittle `created_at` watermark** — it cannot silently miss
+   an in-place mutation (`valid_to` close, pin toggle, refresh, retract, merge), because
+   *every write path flips the bit*. A **note edit also dirties the entities it mentions**
+   (mention index), so decision-B chunk-only context is picked up even when no fact
+   changed. The build target set = dirty entities (→ rebuild their articles) + dirty notes
+   (re-extract / re-source). *(`wiki_built` on notes is graph-independent — Wave A; on
+   entities it's the rebuild team's to maintain — contract §5.)*
+2. **Index match** — embed the dirty cluster, RRF against `wiki_index` → candidate articles.
 3. **Triage** — one cheap LLM call per cluster → update | create | split | merge | ignore.
    `create` is gated by the **notability gate** (editorial config); a sub-threshold
    entity stays link-target-only (no article).
@@ -196,9 +203,37 @@ Pipeline (ARCHITECTURE.md §Wiki):
    **current fact set** (not just its cited chunk); a chunk-only (note-derived) claim that
    **contradicts a current fact is dropped** — the fact prevails. Chunk-only claims may
    only add **non-conflicting** detail, and never resurface superseded/retracted content.
-5. **Split/merge** — stage a `wiki-restructure` proposal; **owner-approved via the
-   review inbox** before enactment.
-6. **Re-embed** changed summaries into `wiki_index`.
+5. **Merge/split — follows the ENTITY graph (see §3a).** Article identity = entity
+   identity, so a merge/split is driven by the entity-resolution decision (owner-approved
+   in the review inbox), not invented by the wiki. The builder enacts the downstream
+   article effect (redirect / re-partition), logs it to the Talk Build-log, and re-resolves
+   links/citations. A builder-detected candidate surfaces as a `wiki-restructure` proposal
+   that **routes to the entity-level** merge/split (so wiki and graph never fork).
+6. **Re-embed** changed section summaries into `wiki_index`; **mark the built notes/entities
+   `wiki_built = true`** (close the mark-and-sweep loop).
+
+## 3a. Taxonomy & merge/split (article identity = entity identity)
+
+**Taxonomy is inherited, not invented.** One article per **notable entity** (the
+notability gate); the article's **type = the entity's kind** → its **wiki guide** →
+sections. No separate article-classification step; Wikipedia-style cross-cutting
+**categories** are derivable later from type + the link graph (deferred).
+
+**Merge** (entity A → B): B absorbs A's facts/sources (re-pointed by the merge); **A's
+article becomes a redirect** to B (`status=merged`, `merged_into_id=B`; A's title/slug
+become aliases that resolve to B — never deleted, so back-links + history survive). Both
+entities marked dirty → rebuild B; Build-log "merged A into B". **Reversible** (un-merge
+restores A's article from the redirect), mirroring the graph's reversible un-merge.
+
+**Split** (entity X → X + Y): partition X's facts/mentions/sources by the new identities
+(the resolver re-partitions mentions by span/provenance); rewrite X; **create Y's article**
+if notable; move Y's claims over; re-resolve links/citations. Build-log "split Y from X".
+Reversible.
+
+**Approval & no-drift:** the **entity** merge/split is the single owner-approved decision
+(review inbox); the article restructure is a downstream, logged, reversible build effect —
+not a second approval. **Deferred:** purely-editorial length/topic splits (no entity
+change) — rare at personal scale; merge/split stays entity-driven for v1.
 
 ## 4. Editorial discussion board ("Talk") + the correction loop
 
@@ -247,11 +282,11 @@ sections**, and **Wikipedia-style numbered `[n]` citations → a References sect
 rationale is recorded in `docs/mocks/wiki-reader-README.md` and lands in `DESIGN.md` when
 Wave B starts.
 
-**Second surface — the Talk board (§4) — needs its OWN mock gate (pending).** The
-discussion-thread view is distinct from the reader (a threaded conversation with the
-builder's decision posts + the owner/agent exchange + inline "this became a correction /
-exclusion / rebuild" markers). Three interactive mocks → owner pick, before its UI is
-built. Queue it alongside Wave B.
+**Second surface — the Talk board (§4) — mock gate ✅ DONE.** Three directions
+(`wiki-talk-a/b/c-*.html`) were presented; the owner chose **B — threaded topics** (true
+Wikipedia Talk: collapsible topics with status badges, signed/timestamped replies, a "New
+topic" action, and an auto **Build-log** topic for the builder's decision posts).
+Rationale in `docs/mocks/wiki-talk-README.md`; lands in `DESIGN.md` when its UI is built.
 
 Full-screen read-only surface, amber/read-only tint, the stubbed Wiki tile. Renders
 stored articles/sections/revisions; **wiki→wiki links** (a mentioned entity opens its
@@ -301,8 +336,10 @@ to the rebuild team).*
 4. **Citation contract:** the citable unit's frozen shape + the `fact_id` FK ondelete
    policy (RESTRICT vs SET NULL+rebuild-trigger). *Also covers `wiki_links.to_entity_id`
    resolution (mention → article) — entity id stability + merge/split re-point.*
-5. **Delta feed:** `facts.updated_at` vs fact-mutation events (a rebuild deliverable),
-   covering create/close/refresh/pin/retract/merge/purge/re-key.
+5. **Delta = the `wiki_built` dirty bit (RESOLVED approach):** the rebuild team maintains
+   `wiki_built` on **entities** (false on any fact/identity change — create/edit/merge/
+   split/retract; the builder sets true). Replaces the change-feed. (`wiki_built` on
+   **notes** is graph-independent — Wave A; note edits also dirty mentioned entities.)
 
 **File now as a standalone bug (independent of Phase 6):** the correction-note weight
 doc/code discrepancy (ARCHITECTURE "elevated" vs code "normal") — it affects agent
@@ -310,28 +347,31 @@ corrections in production today.
 
 ## 7. Waves (PROCESS.md: worktrees, per-task + per-wave adversarial review, one PR/wave)
 
-- **Wave 0 — gates (no code):** the **mock gate** (3 mocks → owner pick → `docs/mocks/`);
-  settle decisions #1–#3; open the cross-stream **citation/delta-feed contract** with
-  the rebuild team (#4–#5). Wave 0 unblocks the rest.
+- **Wave 0 — gates (no code):** the **mock gates** (reader ✅ + Talk ✅, both chosen);
+  settle decisions #1–#3 (done); open the cross-stream **citation contract + `wiki_built`
+  dirty bit** with the rebuild team (#4–#5). Wave 0 unblocks the rest.
 - **Wave A — graph-independent spine (parallel-safe now, after #1–#3):** `wiki_articles`
-  + `wiki_revisions` + `wiki_index` tables + RLS + isolation tests (against the STABLE
-  `domain_code`/note/chunk provenance — the fact-firewall test is deferred to the citation
-  wave); editorial-config-as-data; the `wiki_index` embedding path; the
-  `wiki_source_exclusions` table shape (the note-id rows are stable); the `wiki_build`
-  ActionSpec **stub only** (no schedule seed yet).
-- **Wave B — UI (after the mock gate):** the read-only reader on fixtures, citation
-  hover-cards, entity-chip nav, the **owner-authored** "discuss this article" → correction
-  path + revision anchoring; **the owner-only Rebuild / Exclude-source affordances** (§5);
-  **the editorial Talk board** (§4 — its own mock gate first): the thread surface, the
-  agent's wiki-editorial tools, and the thread↔article anchoring (reuse the Phase-4 agent +
-  transcript). Graph-independent (the explain-sources *depth* + builder decision-logging
-  ride Wave C).
+  (incl. `merged_into_id`/`status` for redirects) + `wiki_sections` + `wiki_revisions`
+  (append-only, full body → diffs) + `wiki_index` tables + RLS + isolation tests (against
+  the STABLE `domain_code`/note/chunk provenance — the fact-firewall test is deferred to
+  the citation wave); editorial-config-as-data (incl. the type guides); the `wiki_index`
+  embedding path; the `wiki_source_exclusions` table shape (note-id rows are stable);
+  **`notes.wiki_built` dirty bit** (graph-independent); the `wiki_build` ActionSpec **stub
+  only** (no schedule seed yet).
+- **Wave B — UI (after the mock gates):** the **reader** (chosen Wikipedia-style) on
+  fixtures, citation hover-cards, entity-chip/wiki links, the **revision diff view**, the
+  **owner-authored** "discuss this article" → correction path + revision anchoring; **the
+  owner-only Rebuild / Exclude-source affordances** (§5); **the Talk board** (chosen B —
+  threaded topics + Build-log): the thread surface, the agent's wiki-editorial tools, the
+  thread↔article anchoring (reuse the Phase-4 agent + transcript). Graph-independent (the
+  explain-sources *depth* + builder decision-logging ride Wave C).
 - **Wave C — builder brain (GATED on the rebuild contract #4–#5):** `wiki_citations`
-  (hard FK + Postgres firewall CHECK + isolation test), delta-detection on the agreed
-  feed, index-match triage, cited rewrite with the corrected citability predicate + the
-  **grounding gate**, source-exclusion filtering, split/merge via the review inbox,
-  re-embed, the **`wiki_rebuild`** full/manual action, **and the nightly schedule seed**
-  (now it does real work).
+  (hard FK + Postgres firewall CHECK + isolation test) + `wiki_links`; **dirty-bit
+  consumption** (mark-and-sweep), index-match triage, cited rewrite with the citability
+  predicate + the **grounding gate** + B's chunk sourcing, source-exclusion filtering,
+  **entity-driven merge/split enactment (redirects, §3a)** via the review inbox, re-embed,
+  the **`wiki_rebuild`** full/manual action, the **builder's Talk Build-log posts**, **and
+  the nightly schedule seed** (now it does real work).
 
 **Out of scope (explicitly):** self-improvement Loops 2 (skill learning), 3
 (durable-knowledge + predicate-canon), and 4 (prompt/tool self-edit + the 100%

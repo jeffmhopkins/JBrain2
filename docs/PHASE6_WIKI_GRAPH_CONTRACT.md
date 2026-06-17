@@ -76,43 +76,27 @@ The wiki links article→article by resolving a mentioned **entity** to its arti
 *Why:* without it, every cross-article link, back-link, AND the note-derived prose breaks
 on a merge/split/rebuild.
 
-## 5. A reliable **fact change-feed** (the delta the nightly builder consumes)
+## 5. A `wiki_built` **dirty bit** on entities (the delta the builder consumes)
 
-The incremental builder rewrites only articles whose facts changed since the last run.
-Today there is **no reliable change-feed**: `app.facts` has only `created_at` (no
-`updated_at`), so a naive `created_at >= last_run` watermark **silently misses** these
-change classes (all of which alter an article's correct content):
+The builder rebuilds only what changed. Rather than a fragile `created_at` watermark
+(which silently misses in-place mutations), the owner chose a **mark-and-sweep dirty bit**:
 
-| change class | today's signal | caught by `created_at`? |
-|---|---|---|
-| new fact | `created_at` | ✅ |
-| in-place interval close (`valid_to` set) | UPDATE in place | ❌ |
-| in-place refresh (provenance/render) | UPDATE in place | ❌ |
-| `pinned` toggle | UPDATE, no timestamp | ❌ |
-| `status → retracted` / held | UPDATE | ❌ |
-| **entity merge** (`merged_into_id` re-points) | UPDATE on entity | ❌ |
-| note deletion / purge (removal) | row gone | ❌ |
-| `resolution.changed` re-key | event | partial |
+**Ask:** maintain a boolean **`entities.wiki_built`** (default **false**), and **flip it to
+false on ANY change to the entity's facts or identity** — fact create/edit, in-place
+`valid_to` close, refresh, `pinned` toggle, `status→retracted`/held, **merge**
+(`merged_into_id`), **split**, and `resolution.changed` re-key. The builder selects
+`wiki_built = false` entities, rebuilds their articles, and sets `wiki_built = true`. Expose
+it queryable + writable by the builder.
 
-**Ask — pick one (we'll consume either):**
-- **(A) `facts.updated_at`** (+ entity `updated_at`), touched on **every** in-place
-  mutation in the persistence layer, indexed. The builder watermarks on
-  `updated_at >= last_run`. Simplest.
-- **(B) fact-mutation events** emitted into `app.events` (the workflow log) — e.g.
-  `fact.created` / `fact.changed` / `fact.retracted` / `entity.merged` — carrying the
-  changed `(entity_id, domain_code)`. Cleaner and event-native; the builder subscribes.
+This is strictly more robust than a timestamp/event feed: every write path that touches an
+entity's facts/identity already has to flip one bit, so **no change class can be missed**.
+(The wiki maintains the parallel `notes.wiki_built` itself — that's graph-independent. A
+**note edit must also flip `wiki_built=false` on the entities it mentions** — if the
+rebuild owns the mention index, please propagate that; otherwise expose the entity↔chunk
+mention delta and the wiki will.)
 
-Either must cover **all** the classes above. Removals (purge) must be observable too (so
-the builder can drop now-uncitable claims), e.g. a `fact.removed` event or a tombstone.
-
-**Also (decision B — note-derived prose):** the feed must surface **note/chunk/mention**
-changes keyed to the affected entity, not only *fact* changes. Under B a new note that
-merely **mentions** an entity (producing no new fact) still changes that entity's article,
-and a note edit/deletion changes cited chunk text. So we need to detect "entity E's source
-material changed" via new/edited/removed `entity_mentions`/chunks for E — `chunks` already
-have timestamps; expose the entity↔chunk delta (e.g. `mention.created/removed` or a
-`chunks.updated_at` reachable from E via the mention index). Without it, B-sourced context
-goes stale silently.
+Removals still need to be observable (purge): a purged entity/fact must leave its articles
+dirty (or signal removal) so the builder drops now-uncitable claims.
 
 *Why:* without a complete change-feed the wiki goes stale silently — an article keeps
 asserting "currently works at Acme" after the fact's interval was closed in place.
@@ -128,8 +112,8 @@ asserting "currently works at Acme" after the fact's interval was closed in plac
 - [ ] A stable entity id + merge/split re-point signals for link resolution.
 - [ ] A stable / re-resolvable **entity↔chunk mention index** (the wiki sources
       note-derived context from it — decision B).
-- [ ] A complete change-feed (`updated_at` **or** events) covering fact create / in-place
-      close / refresh / pin / retract / **merge** / **purge** / re-key — **and**
-      note/chunk/mention changes keyed to the affected entity — watermark-queryable.
+- [ ] An `entities.wiki_built` dirty bit flipped false on ANY fact/identity change
+      (create/edit/close/refresh/pin/retract/**merge**/**split**/re-key) + purge
+      observability; builder-queryable + writable. (Note edits dirty mentioned entities.)
 
 When these land, the wiki's gated wave (citations, links, nightly builder) can start.

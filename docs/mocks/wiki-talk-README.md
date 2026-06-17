@@ -31,7 +31,9 @@ theme toggle, tokens-only, outline icons).
 
 ## Decision
 
-Owner picks one (or a hybrid — e.g. **B**'s topic/Build-log archive with **C**'s
-tap-a-claim entry point). The choice + rationale land in `DESIGN.md`; the others stay as
-the record. DoD includes fixtures for empty (no discussion yet) / long-thread / pending-
-action / error / offline states.
+**Chosen: B — threaded topics** (`wiki-talk-b-topics.html`): true Wikipedia Talk —
+collapsible topics with open/resolved badges, signed + timestamped replies, a "New topic"
+action, and an auto **Build-log** topic for the builder's per-build decision posts. A/C
+retained as the record. The choice + rationale land in `DESIGN.md` when the Talk UI is
+built. DoD includes fixtures for empty (no discussion yet) / long-thread / pending-action /
+error / offline states.
