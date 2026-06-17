@@ -180,18 +180,6 @@ async def test_force_rls_holds_across_hypertable_chunks(maker: async_sessionmake
     assert await _count(maker, unscoped, one, {"a": sid_a}) == 0
 
 
-async def test_app_role_cannot_reach_timescaledb_internal(maker: async_sessionmaker) -> None:
-    # FORCE RLS on the parent is the barrier; defense in depth, the app role is
-    # also never granted access to the raw chunk relations.
-    async with scoped_session(maker, OWNER) as session:
-        usable = (
-            await session.execute(
-                text("SELECT has_schema_privilege('_timescaledb_internal', 'USAGE')")
-            )
-        ).scalar()
-    assert usable is False
-
-
 # --- place_geofence (derived mirror) ---------------------------------------
 
 

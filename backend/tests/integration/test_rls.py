@@ -8,6 +8,7 @@ application politeness — decide row visibility.
 import argparse
 import json
 import subprocess
+import time
 import uuid
 from collections.abc import AsyncIterator, Iterator
 from dataclasses import asdict, dataclass
@@ -18,6 +19,7 @@ from alembic import command
 from alembic.config import Config
 from filelock import FileLock
 from sqlalchemy import text
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
@@ -72,6 +74,26 @@ def _drop_connections(conn: sqlalchemy.Connection, dbname: str) -> None:
     )
 
 
+def _clone_template(conn: sqlalchemy.Connection, dbname: str) -> None:
+    """Clone the migrated template, retrying the "template in use" race.
+
+    The template carries the `timescaledb` extension, whose background-worker
+    scheduler reconnects to the database moments after we terminate it — so a
+    `CREATE DATABASE ... TEMPLATE` can lose the race with `ObjectInUse`. Terminate
+    the template's connections and retry; a couple of attempts reliably wins.
+    """
+    last: Exception | None = None
+    for _ in range(12):
+        _drop_connections(conn, TEMPLATE_DB)
+        try:
+            conn.execute(text(f'CREATE DATABASE "{dbname}" TEMPLATE "{TEMPLATE_DB}"'))
+            return
+        except OperationalError as exc:  # psycopg ObjectInUse
+            last = exc
+            time.sleep(0.5)
+    raise RuntimeError(f"could not clone {TEMPLATE_DB} after retries") from last
+
+
 def _provision() -> _Cluster:
     """Start the one container, create the app role, and migrate the template."""
     pg = pgvector_container()
@@ -94,6 +116,11 @@ def _provision() -> _Cluster:
         _admin_url(cluster, cluster.admin_db, driver="psycopg"), isolation_level="AUTOCOMMIT"
     )
     with admin.connect() as conn:
+        # Stop TimescaleDB's background-worker scheduler from attaching to the
+        # template (and the clones): it would otherwise hold connections that
+        # race `CREATE DATABASE ... TEMPLATE`. Tests need no background jobs.
+        conn.execute(text("ALTER SYSTEM SET timescaledb.max_background_workers = 0"))
+        conn.execute(text("SELECT pg_reload_conf()"))
         conn.execute(text(f"CREATE ROLE jbrain_app LOGIN PASSWORD '{APP_PASSWORD}'"))
         conn.execute(text(f'CREATE DATABASE "{TEMPLATE_DB}"'))
     admin.dispose()
@@ -167,7 +194,7 @@ def database_url(_pg_cluster: _Cluster) -> Iterator[str]:
         isolation_level="AUTOCOMMIT",
     )
     with admin.connect() as conn:
-        conn.execute(text(f'CREATE DATABASE "{dbname}" TEMPLATE "{TEMPLATE_DB}"'))
+        _clone_template(conn, dbname)
     yield (
         f"postgresql+asyncpg://jbrain_app:{APP_PASSWORD}"
         f"@{_pg_cluster.host}:{_pg_cluster.port}/{dbname}"
