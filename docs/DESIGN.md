@@ -715,6 +715,23 @@ path slots (never a tile, image, or model-authored SVG string), no free
 `button`/`link`, no generic `chart` kitchen-sink (purpose-built plots only), no
 dashboard/layout components.
 
+## Wiki Talk board (settled in a three-way GUI review — reference mock: `docs/mocks/wiki-talk-b-topics.html`)
+
+The article's editorial board (Phase 6) — the wiki's second surface after the reader. Chosen
+**B — threaded topics** over A (single chat thread) and C (claim-anchored annotations): discrete
+collapsible topics with **open/resolved** badges (amber/green), signed + timestamped posts in
+**three voices** — `You` (owner), `Editor` (the agent, violet signature), `Builder` (the batch
+builder) — a **New topic** composer, a per-topic reply box, and an auto **Build log** topic
+(`auto · N entries`) the builder posts a one-line decision summary to on every rebuild
+("Created/Rebuilt article …; N facts across M domains", "Merged in X"). B won for the durable,
+scannable archive it gives across many editorial threads over time; A/C are retained as the record
+(`wiki-talk-{a,b,c}`). Owner-only; tokens-only; same shell as the reader (TopBar +
+swipe-down-to-close). The wiki stays **machine-written** — Talk is the front-end over the sanctioned
+levers (correction note, source exclusion, rebuild). **Wave T1** ships the board + the Builder voice
++ owner topics/replies; the live **Editor** (agent) reply is **Wave T2**. Reachable from the reader's
+**Discussion** affordance (the quick-fix correction sheet stays beside it until T2 unifies them). DoD
+fixtures: empty (Build-log only) / long-thread / pending-action / error / offline.
+
 ## Implementation rules
 
 1. Tokens live in one file (`frontend/src/styles/tokens.css`); components

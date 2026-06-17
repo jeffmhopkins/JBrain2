@@ -15,6 +15,7 @@ import type {
   SearchOut,
   WikiArticleOut,
   WikiLandingOut,
+  WikiTalkOut,
 } from "./client";
 import { mockFetch } from "./mock";
 
@@ -79,6 +80,38 @@ describe("mock API", () => {
       const article = (await (await call(`/api/wiki/${entry.id}`)).json()) as WikiArticleOut;
       expect(article.id).toBe(entry.id);
     }
+  });
+
+  it("serves the Talk board and round-trips new-topic / reply / resolve / 409", async () => {
+    const board = (await (await call("/api/wiki/priya-nair/talk")).json()) as WikiTalkOut;
+    expect(board.title).toBe("Priya Nair");
+    const log = board.topics.find((t) => t.kind === "build_log");
+    expect(log?.posts.at(-1)?.author).toBe("builder");
+
+    // New topic prepends; a reply appends; resolve flips status.
+    const created = await call(
+      "/api/wiki/priya-nair/talk/topics",
+      jsonInit("POST", { title: "Wrong title", body: "fix it" }),
+    );
+    expect(created.status).toBe(201);
+    const topic = (await created.json()) as { id: string };
+    const reply = await call(
+      `/api/wiki/priya-nair/talk/topics/${topic.id}/posts`,
+      jsonInit("POST", { body: "please" }),
+    );
+    expect(reply.status).toBe(201);
+    const patched = await call(
+      `/api/wiki/priya-nair/talk/topics/${topic.id}`,
+      jsonInit("PATCH", { status: "resolved" }),
+    );
+    expect(((await patched.json()) as { status: string }).status).toBe("resolved");
+
+    // The Build log is machine-written: owner posts/resolves are refused.
+    const refused = await call(
+      `/api/wiki/priya-nair/talk/topics/${log?.id}/posts`,
+      jsonInit("POST", { body: "nope" }),
+    );
+    expect(refused.status).toBe(409);
   });
 
   it("accepts capture location on create and echoes it back", async () => {

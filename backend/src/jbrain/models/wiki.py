@@ -14,7 +14,7 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import DateTime, ForeignKey, Integer, Text, func
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from jbrain.models.core import Base
@@ -179,4 +179,48 @@ class WikiLink(Base):
     )
     anchor: Mapped[str | None] = mapped_column(Text, nullable=True)
     domain_code: Mapped[str] = mapped_column(Text, ForeignKey("app.domains.code"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class WikiTalkTopic(Base):
+    """A Talk-board thread on an article (migration 0053): an owner `discussion` topic, or the
+    auto `build_log` topic (≤1 per article). Owner-only RLS like `wiki_articles` — Talk is
+    editorial metadata about the cross-domain shell, not domain facts."""
+
+    __tablename__ = "wiki_talk_topics"
+    __table_args__ = {"schema": "app"}
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    article_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("app.wiki_articles.id", ondelete="CASCADE")
+    )
+    kind: Mapped[str] = mapped_column(Text, default="discussion", server_default="discussion")
+    title: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(Text, default="open", server_default="open")
+    last_post_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class WikiTalkPost(Base):
+    """An append-only signed post in a Talk topic (migration 0053). `author` is one of the
+    mock's three voices (`owner`/`editor`/`builder`); no principals FK (the builder writes as the
+    string-id system principal). No `seq` — ordered by (created_at, id). `run_id` is forward-
+    looking and unused in T1; `source_json`/`outcome` back the source card + outcome chip."""
+
+    __tablename__ = "wiki_talk_posts"
+    __table_args__ = {"schema": "app"}
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    topic_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("app.wiki_talk_topics.id", ondelete="CASCADE")
+    )
+    author: Mapped[str] = mapped_column(Text)
+    body: Mapped[str] = mapped_column(Text)
+    source_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    outcome: Mapped[str | None] = mapped_column(Text, nullable=True)
+    run_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("app.runs.id", ondelete="SET NULL"), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

@@ -36,9 +36,12 @@ interface WikiScreenProps {
   articleId: string;
   syncStatus: SyncStatus;
   onClose: () => void;
+  // Open the article's Talk board (the threaded discussion + Build-log). Optional so the reader
+  // still renders standalone in tests; the correction sheet (below) stays the quick-fix path.
+  onOpenTalk?: (articleId: string) => void;
 }
 
-export function WikiScreen({ articleId, syncStatus, onClose }: WikiScreenProps) {
+export function WikiScreen({ articleId, syncStatus, onClose, onOpenTalk }: WikiScreenProps) {
   const [state, setState] = useState<WikiState>({ phase: "loading" });
   // The citation number whose card is open (null = closed); and whether the
   // discuss sheet is open. The two sheets are mutually exclusive in the mock.
@@ -161,6 +164,16 @@ export function WikiScreen({ articleId, syncStatus, onClose }: WikiScreenProps) 
 
       {article && (
         <div className="wiki-discuss-bar">
+          {onOpenTalk && (
+            <button
+              type="button"
+              className="wiki-discuss-btn wiki-discuss-talk"
+              onClick={() => onOpenTalk(articleId)}
+            >
+              <ChatIcon size={18} />
+              Discussion
+            </button>
+          )}
           <button type="button" className="wiki-discuss-btn" onClick={() => setDiscussOpen(true)}>
             <ChatIcon size={18} />
             Discuss this article

@@ -24,6 +24,12 @@ from jbrain.db.session import scoped_session
 from jbrain.notes.repo import SqlNotesRepo
 from jbrain.notes.service import UnknownDomain
 from jbrain.wiki.readstore import WikiReadStore
+from jbrain.wiki.talkstore import (
+    TalkArticleNotFound,
+    TalkBuildLogReadonly,
+    TalkTopicNotFound,
+    WikiTalkStore,
+)
 from jbrain.workflow import events as wf_events
 
 router = APIRouter()
@@ -31,6 +37,10 @@ router = APIRouter()
 
 def get_wiki_read_store(request: Request) -> WikiReadStore:
     return cast(WikiReadStore, request.app.state.wiki_read_store)
+
+
+def get_wiki_talk_store(request: Request) -> WikiTalkStore:
+    return cast(WikiTalkStore, request.app.state.wiki_talk_store)
 
 
 def get_notes_repo(request: Request) -> SqlNotesRepo:
@@ -80,6 +90,74 @@ async def wiki_article_image(
     return FileResponse(
         path, media_type=sniff_path(path), headers={"X-Content-Type-Options": "nosniff"}
     )
+
+
+# ---- Talk board (Phase 6, Wave T1) — owner-only threaded discussion + the auto Build-log -------
+
+
+class NewTopicRequest(BaseModel):
+    title: str = Field(min_length=1)
+    body: str = Field(min_length=1)
+
+
+class ReplyRequest(BaseModel):
+    body: str = Field(min_length=1)
+
+
+class TopicStatusRequest(BaseModel):
+    status: str = Field(pattern="^(open|resolved)$")
+
+
+@router.get("/wiki/{article_id}/talk")
+async def wiki_talk(article_id: str, request: Request, principal: PrincipalDep) -> dict[str, Any]:
+    """The article's Talk board (owner-only pre-P7; 404 unless the article is active)."""
+    board = await get_wiki_talk_store(request).get_board(ctx_for(principal), article_id)
+    if board is None:
+        raise HTTPException(status_code=404, detail="article not found")
+    return board
+
+
+@router.post("/wiki/{article_id}/talk/topics", status_code=201)
+async def wiki_talk_new_topic(
+    article_id: str, body: NewTopicRequest, owner: OwnerDep, request: Request
+) -> dict[str, Any]:
+    """Open a discussion topic + its first owner post (owner-only)."""
+    try:
+        return await get_wiki_talk_store(request).create_topic(
+            ctx_for(owner), article_id, title=body.title, body=body.body
+        )
+    except TalkArticleNotFound:
+        raise HTTPException(status_code=404, detail="article not found") from None
+
+
+@router.post("/wiki/{article_id}/talk/topics/{topic_id}/posts", status_code=201)
+async def wiki_talk_reply(
+    article_id: str, topic_id: str, body: ReplyRequest, owner: OwnerDep, request: Request
+) -> dict[str, Any]:
+    """Append an owner reply to a discussion topic. 409 on the auto Build-log topic."""
+    try:
+        return await get_wiki_talk_store(request).add_reply(
+            ctx_for(owner), article_id, topic_id, body=body.body
+        )
+    except (TalkArticleNotFound, TalkTopicNotFound):
+        raise HTTPException(status_code=404, detail="topic not found") from None
+    except TalkBuildLogReadonly:
+        raise HTTPException(status_code=409, detail="the Build log is machine-written") from None
+
+
+@router.patch("/wiki/{article_id}/talk/topics/{topic_id}")
+async def wiki_talk_set_status(
+    article_id: str, topic_id: str, body: TopicStatusRequest, owner: OwnerDep, request: Request
+) -> dict[str, Any]:
+    """Resolve or reopen a discussion topic. 409 on the auto Build-log topic."""
+    try:
+        return await get_wiki_talk_store(request).set_status(
+            ctx_for(owner), article_id, topic_id, status=body.status
+        )
+    except (TalkArticleNotFound, TalkTopicNotFound):
+        raise HTTPException(status_code=404, detail="topic not found") from None
+    except TalkBuildLogReadonly:
+        raise HTTPException(status_code=409, detail="the Build log is machine-written") from None
 
 
 class CorrectionRequest(BaseModel):

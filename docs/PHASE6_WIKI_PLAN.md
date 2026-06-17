@@ -389,11 +389,13 @@ work on the Phase-5 pattern, deferred — not silently dropped.
   active article), so the reader's live/red-link rendering path is now exercised end-to-end. An
   anchor the grounded prose phrases differently is left unlinked; the `wiki_links` row still
   records the connection. Article→article navigation on tap remains a later reader wave.
-- **Threaded Talk board** — the reader's "Discuss this article" now files a correction
-  (`DiscussSheet` → `/wiki/{id}/corrections`), and the agent holds the editorial write tools, so
-  the correction loop is reachable from the UI. The PERSISTENT threaded Talk board (topics +
-  Build-log + an agent session anchored per article — the B-topics mock) is the remaining
-  Phase-6 frontend follow-on; the correction submit + agent tools that power it are shipped.
+- **Threaded Talk board** — Wave **T1 shipped**: the persistent board (`wiki_talk_topics`/
+  `wiki_talk_posts`, owner-only RLS, migration 0053), the **Builder** voice (a Build-log decision
+  summary posted per rebuild), owner topics/replies/resolve (`GET/POST/PATCH /wiki/{id}/talk…`),
+  and the B-topics reader screen (`TalkScreen`) reachable via the reader's Discussion affordance.
+  See `docs/TALK_BOARD_PLAN.md`. **Wave T2 (pending):** the live **Editor** (agent) reply —
+  `AgentLoop.run_stream` + the wiki tools streamed into a topic, with outcome chips — after which
+  the DiscussSheet quick-fix correction folds into the in-topic flow.
 
 ## 8. Non-negotiables (CLAUDE.md) + exit
 
