@@ -36,3 +36,7 @@ async def owner_only(principal: PrincipalDep) -> PrincipalInfo:
     if principal.kind != "owner":
         raise HTTPException(status_code=403, detail="owner access required")
     return principal
+
+
+# An owner-gated principal: the route 403s a non-owner (capability) token.
+OwnerDep = Annotated[PrincipalInfo, Depends(owner_only)]

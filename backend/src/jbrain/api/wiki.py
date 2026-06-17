@@ -1,24 +1,42 @@
-"""GET /api/wiki/landing and /api/wiki/{id} — the read side of the machine-written wiki.
+"""GET /api/wiki/landing and /api/wiki/{id} — the read side of the machine-written wiki —
+plus POST /api/wiki/{id}/corrections — the owner correction-note create path (Phase 6 §4).
 
-Owner-only is implicit pre-P7 (every query runs on the principal's RLS context, only the owner
-holds a session today). The response shapes are a frozen contract with the frontend reader/landing
-(WikiArticleOut / WikiLandingOut in frontend/src/api/client.ts) — change them only with a
-coordinated frontend PR. `landing` is declared before `{id}` so the static path wins the match.
+Owner-only is implicit pre-P7 (every read query runs on the principal's RLS context, only the
+owner holds a session today). The correction create path is EXPLICITLY owner-gated: minting an
+`owner_correction` note is the one privileged write that force-supersedes the graph, so it must
+never be reachable by a non-owner (capability) token. The response shapes are a frozen contract
+with the frontend reader/landing; `landing` is declared before `{id}` so the static path wins.
 """
 
+import uuid
 from typing import Any, cast
 
 from fastapi import APIRouter, HTTPException, Request
+from pydantic import BaseModel, Field
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from jbrain.api.deps import PrincipalDep
+from jbrain.api.deps import OwnerDep, PrincipalDep
 from jbrain.api.notes import ctx_for
+from jbrain.db.session import scoped_session
+from jbrain.notes.repo import SqlNotesRepo
+from jbrain.notes.service import UnknownDomain
 from jbrain.wiki.readstore import WikiReadStore
+from jbrain.workflow import events as wf_events
 
 router = APIRouter()
 
 
 def get_wiki_read_store(request: Request) -> WikiReadStore:
     return cast(WikiReadStore, request.app.state.wiki_read_store)
+
+
+def get_notes_repo(request: Request) -> SqlNotesRepo:
+    return cast(SqlNotesRepo, request.app.state.notes_repo)
+
+
+def get_session_maker(request: Request) -> "async_sessionmaker[AsyncSession]":
+    return cast("async_sessionmaker[AsyncSession]", request.app.state.session_maker)
 
 
 @router.get("/wiki/landing")
@@ -34,3 +52,66 @@ async def wiki_article(
     if article is None:
         raise HTTPException(status_code=404, detail="article not found")
     return article
+
+
+class CorrectionRequest(BaseModel):
+    body: str = Field(min_length=1)
+    domain: str
+    # The revision the correction disputes (the anchor); optional — a correction can also be a
+    # standalone reassertion. Must be a revision the owner can see.
+    revision_id: str | None = None
+
+
+@router.post("/wiki/{article_id}/corrections", status_code=201)
+async def file_correction(
+    article_id: str, body: CorrectionRequest, owner: OwnerDep, request: Request
+) -> dict[str, Any]:
+    """Mint an owner-authored CORRECTION note (Phase 6 §4): provenance=owner_correction, anchored
+    to the disputed revision, then drive ingestion. Its surface-attested facts extract at full
+    weight and force-supersede + pin the conflicting head (Wave A+), and the changed entity is
+    dirtied so the next builder run rewrites the article — the owner has out-argued the wiki."""
+    ctx = ctx_for(owner)
+    maker = get_session_maker(request)
+    rev: uuid.UUID | None = None
+    if body.revision_id is not None:
+        try:
+            rev = uuid.UUID(body.revision_id)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="bad revision_id") from None
+        # The anchor must be a revision the owner can see (RLS-scoped); reject a dangling one
+        # rather than let the FK raise an opaque IntegrityError mid-create.
+        async with scoped_session(maker, ctx) as session:
+            seen = (
+                await session.execute(
+                    text("SELECT 1 FROM app.wiki_revisions WHERE id = :r"), {"r": str(rev)}
+                )
+            ).first()
+        if seen is None:
+            raise HTTPException(status_code=404, detail="revision not found")
+
+    try:
+        note, created = await get_notes_repo(request).create_note(
+            ctx,
+            client_id=f"correction-{uuid.uuid4().hex}",
+            domain=body.domain,
+            destination=None,
+            body=body.body,
+            provenance="owner_correction",
+            source_ref=f"wiki:{article_id}",
+            wiki_revision_id=rev,
+        )
+    except UnknownDomain:
+        raise HTTPException(status_code=400, detail="unknown domain") from None
+    if created:
+        # Drive ingestion via the note.created event (the dispatcher resolves it to ingest_note);
+        # the correction then flows extract → integrate → force-supersede + pin → dirty → rebuild.
+        await wf_events.emit_event(
+            maker,
+            ctx,
+            type=wf_events.NOTE_CREATED,
+            domain_code=note.domain,
+            payload={"note_id": note.id},
+            enqueued=wf_events.shadow_enqueued("ingest_note", {"note_id": note.id}),
+            principal_id=ctx.principal_id,
+        )
+    return {"note_id": note.id, "created": created}
