@@ -21,7 +21,7 @@ from jbrain.settings_store import (
     SqlSettingsStore,
 )
 from tests.conftest import docker_available
-from tests.integration.test_rls import OWNER, database_url  # noqa: F401
+from tests.integration.test_rls import APP_PASSWORD, OWNER, database_url  # noqa: F401
 
 pytestmark = [
     pytest.mark.integration,
@@ -34,6 +34,22 @@ async def maker(database_url: str) -> AsyncIterator[async_sessionmaker]:  # noqa
     engine: AsyncEngine = create_async_engine(database_url, poolclass=NullPool)
     yield async_sessionmaker(engine, expire_on_commit=False)
     await engine.dispose()
+
+
+@pytest.fixture(autouse=True)
+async def _isolate(database_url: str) -> AsyncIterator[None]:  # noqa: F811
+    """The module-scoped DB is shared across tests, so a seeded skill (or the cap settings row)
+    would leak into the next — inflating the active set and colliding on the UNIQUE(name, version).
+    Truncate after each test via the admin role (the app role lacks DELETE on app.skills)."""
+    yield
+    admin = create_async_engine(
+        database_url.replace(f"jbrain_app:{APP_PASSWORD}", "test:test"), poolclass=NullPool
+    )
+    try:
+        async with admin.begin() as conn:
+            await conn.execute(text("TRUNCATE app.skills, app.settings RESTART IDENTITY CASCADE"))
+    finally:
+        await admin.dispose()
 
 
 async def _owner_pid(maker: async_sessionmaker) -> str:
