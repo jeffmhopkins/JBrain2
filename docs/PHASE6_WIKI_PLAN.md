@@ -51,7 +51,7 @@ contract. This is narrower than v1 claimed, and that's the honest read.
 
 ## 1. What already exists (reuse, don't rebuild) — cited
 
-- **Workflow engine** (Phase 5): add a `wiki_build` **in-code** ActionSpec (mirror
+- **Workflow engine** (Phase 5): add the wiki **in-code** ActionSpecs (mirror
   `EVAL_RUN_SPEC`/`PURGE_ACTION` — no `app.actions` row) + a nightly schedule/trigger
   seed migration (mirror `0044`). **Migration number assigned at build time** (the
   rebuild stream is consuming numbers in parallel — don't pin one).
@@ -155,14 +155,17 @@ the source note per `[n]`. (Chosen reader mock: `docs/mocks/wiki-reader-chosen-w
 
 ## 3. The builder (GRAPH-COUPLED — gated)
 
-Two entry points, same pipeline below:
-- **`wiki_build`** — the **incremental nightly** (delta-driven; schedule seed lands with
-  the builder, not before — a no-op scheduled action would spam the run-log).
+The builder runs as workflow-engine **actions** (in-code ActionSpecs, no `app.actions`
+row — like `eval_run`/the reconcilers; pipelines + schedules + manual triggers seeded by
+migration; every run a `runs` row). See **§3c** for the full action/trigger/budget map.
+The two build entry points share the pipeline below:
+- **`wiki_refresh`** — the **incremental** workhorse (dirty-bit driven; nightly schedule +
+  Ops manual; schedule seed lands with the builder, not before — a no-op scheduled action
+  would spam the run-log).
 - **`wiki_rebuild`** — an **on-demand FULL rebuild** (non-delta), per-article *or*
-  full-corpus, **manual-triggerable from Ops** (run after a prompt/type-guide change, the
-  entity-graph rebuild, or an exclusion edit). Skips the delta step (step 1) and sources
-  the full current set; still produces a new revision (history preserved) and is a
-  run-logged `app.runs` row like any pipeline.
+  full-corpus, **manual-triggerable from Ops** (after a prompt/type-guide change, the
+  entity-graph rebuild, or an exclusion edit). Skips the delta step (step 1), sources the
+  full current set; `"all"` runs chunked + budget-aware. Both produce new revisions.
 
 Both honor the **source-exclusion list** (§2 `wiki_source_exclusions`): notes/facts the
 owner has purposefully suppressed are filtered out of source-finding (step 3b) — editorial
@@ -218,8 +221,9 @@ Pipeline (ARCHITECTURE.md §Wiki):
    article effect (redirect / re-partition), logs it to the Talk Build-log, and re-resolves
    links/citations. A builder-detected candidate surfaces as a `wiki-restructure` proposal
    that **routes to the entity-level** merge/split (so wiki and graph never fork).
-6. **Re-embed** changed section summaries into `wiki_index`; **mark the built notes/entities
-   `wiki_built = true`** (close the mark-and-sweep loop).
+6. **Re-embed** changed section summaries into `wiki_index`; **emit the per-article blurb**
+   (the lead's 1–2 sentences, stored for the landing index + search); **mark the built
+   notes/entities `wiki_built = true`** (close the mark-and-sweep loop).
 
 ## 3a. Taxonomy & merge/split (article identity = entity identity)
 
@@ -243,6 +247,33 @@ Reversible.
 (review inbox); the article restructure is a downstream, logged, reversible build effect —
 not a second approval. **Deferred:** purely-editorial length/topic splits (no entity
 change) — rare at personal scale; merge/split stays entity-driven for v1.
+
+## 3c. Actions & workflows (the engine map)
+
+All four are **in-code ActionSpecs** (no `app.actions` row — like `eval_run`/the
+reconcilers); pipelines + schedules + `manual=true` triggers seeded by migration; every
+run is a `runs` row in the Ops Automations catalog. All GATED → Wave C.
+
+| Action | What it does | Triggers | Class |
+|---|---|---|---|
+| **`wiki_refresh`** | Incremental, **dirty-bit driven**: build/update articles for `wiki_built=false` entities (+ notes→mentioned), enact merge/split redirects for dirtied entities, re-embed touched summaries, post the Build-log, mark clean. Cost scales with the day's changes. | nightly schedule + Ops manual + *(opt)* entity-change event | expensive · mutating · budgeted |
+| **`wiki_rebuild`** | **Full re-derive** `{article_id\|"all"}`, ignores the dirty bit; new revisions; `"all"` is chunked + budget-aware. | Ops manual; auto-enqueued by an exclusion edit + prompt/guide version bumps | expensive · mutating · budgeted |
+| **`wiki_reindex`** | Re-embed **all** `wiki_index` summaries after an embedding-model swap (mirrors `sync_predicates`). | Ops manual + on model change | standard · mutating(index) |
+| **`wiki_prune`** | Archive/redirect **orphaned** articles (entity purged / below notability); GC (mirrors `purge_deleted_artifacts`). | nightly (after refresh) + Ops manual | cheap · mutating |
+
+**Self-reconciling:** `wiki_refresh` is a dirty-sweep, so a dropped enqueue self-heals on
+the next scheduled run — no separate reconciler action needed (a bonus of the dirty bit
+over an event feed).
+
+**Triggers / events:** nightly schedule → `wiki_refresh` → `wiki_prune`; Ops manual → any;
+`wiki_source_exclusions` insert/delete → `wiki_rebuild(article)`; entity merge/split
+resolution → entities dirtied → next `wiki_refresh`; correction note → ingest → dirtied →
+`wiki_refresh`; embedding-model change → `wiki_reindex`.
+
+**Budget:** a dedicated **wiki-build token budget** (mirrors the integration budget;
+SEPARATE from the self-improvement/eval budget — wiki building is core maintenance, not
+self-improvement). `wiki_rebuild("all")` chunks so a full re-derive can't blow a night's
+budget. **Schedule placement:** ~03:30 UTC, after the 02:00 graph sweeps + 03:00 eval.
 
 ## 4. Editorial discussion board ("Talk") + the correction loop
 
@@ -313,6 +344,38 @@ owner): **Rebuild** (fire `wiki_rebuild` for this article) and **Exclude this so
 curation, not article-text edits — the wiki stays machine-written. They surface on the
 reader (an owner "⋯" menu / a per-reference action) but enact in the gated builder wave.
 
+## 5b. Wiki landing + search
+
+**Landing — a *living* home, not a static index** (its own mock gate — pending). The Wiki
+tile opens a **search-first** home with auto-curated rails, each entry a title + a 1–2
+sentence **blurb** (the article's **lead** — already written by the builder; stored as a
+per-article summary for the index + search, no new generation):
+- **Search box** up top (the article-aware search below).
+- **Recently updated** — what the last `wiki_refresh`/`wiki_rebuild` changed (from the
+  Build-log / `runs`); a living wiki shows its pulse.
+- **Most connected (hubs)** — articles with the most inbound `wiki_links` (the
+  back-link/centrality signal) — the natural entry points, ranked for free from the graph.
+- **Type-grouped index** — People · Organizations · Places · Projects · Events · Concepts,
+  collapsible, A–Z within. The index as one rail.
+- *(Optional later: a graph/map view of the link network as a secondary tab.)*
+
+**Taxonomy is derived, never hand-maintained:** primary grouping = the **entity type**
+(inherited from the catalog — no classification step); enriched by **link-graph centrality**
+(ordering + the hubs rail) and **recency** (the updated rail). Explicit owner
+categories/portals are an optional later layer; the derived taxonomy is the default.
+
+**Search includes wiki articles.** Extend the Phase-2 hybrid search (dense + FTS, RRF k=60
+over `chunks`) with a **wiki leg**: the `wiki_index` summaries are already embedded; add FTS
+over revision bodies; RRF-merge so results **blend notes + wiki articles**, each with a
+result-type badge (Note / Wiki). The **firewall rides section RLS** automatically (a scoped
+viewer's wiki hits exclude out-of-scope sections). Because an article is usually the better
+answer to "what do I know about X," **articles rank as the headline result with notes
+beneath** — the wiki becomes the *answer layer* over the note substrate, which the **agent**
+also retrieves first (high-level + cited) before drilling to facts/notes. *(Search code
+reuses `search/service.py`+`repo.py`; the wiki leg has content only once the gated builder
+has produced articles → Wave C, with the Search-UI badge + landing in Wave B against
+fixtures.)*
+
 ## 6. Open decisions — triaged by what they block
 
 **Must settle BEFORE the now-safe work (Wave A schema/UI):**
@@ -369,23 +432,25 @@ corrections in production today.
   provenance — the fact-firewall test is deferred to the citation wave); editorial-config-
   as-data (incl. the type guides + writing-style spec); the `wiki_index` embedding path;
   the `wiki_source_exclusions` table shape (note-id rows are stable); **`notes.wiki_built`
-  dirty bit** (graph-independent); the `wiki_build` ActionSpec **stub only** (no schedule
-  seed yet). *(Entity-side, small: `entities.image_sha` + entity-view upload — graph-coupled,
+  dirty bit** (graph-independent); the wiki ActionSpec **stubs only** (no schedule seed yet). *(Entity-side, small: `entities.image_sha` + entity-view upload — graph-coupled,
   rides the entity layer; the wiki just reads it.)*
-- **Wave B — UI (after the mock gates):** the **reader** (chosen Wikipedia-style) on
-  fixtures, citation hover-cards, entity-chip/wiki links, the **revision diff view**, the
-  **owner-authored** "discuss this article" → correction path + revision anchoring; **the
-  owner-only Rebuild / Exclude-source affordances** (§5); **the Talk board** (chosen B —
-  threaded topics + Build-log): the thread surface, the agent's wiki-editorial tools, the
-  thread↔article anchoring (reuse the Phase-4 agent + transcript). Graph-independent (the
-  explain-sources *depth* + builder decision-logging ride Wave C).
-- **Wave C — builder brain (GATED on the rebuild contract #4–#5):** `wiki_citations`
-  (hard FK + Postgres firewall CHECK + isolation test) + `wiki_links`; **dirty-bit
-  consumption** (mark-and-sweep), index-match triage, cited rewrite with the citability
-  predicate + the **grounding gate** + B's chunk sourcing, source-exclusion filtering,
-  **entity-driven merge/split enactment (redirects, §3a)** via the review inbox, re-embed,
-  the **`wiki_rebuild`** full/manual action, the **builder's Talk Build-log posts**, **and
-  the nightly schedule seed** (now it does real work).
+- **Wave B — UI (after the mock gates: reader ✅, Talk ✅, landing pending):** the **reader**
+  (chosen Wikipedia-style) on fixtures, citation hover-cards, entity-chip/wiki links, the
+  **revision diff view**, the **owner-authored** "discuss this article" → correction path +
+  revision anchoring; **the owner-only Rebuild / Exclude-source affordances** (§5); **the
+  Talk board** (chosen B — threaded topics + Build-log): thread surface, agent
+  wiki-editorial tools, thread↔article anchoring (reuse the Phase-4 agent + transcript);
+  **the wiki landing** (§5b — search-first + rails + type index, on fixtures) and the
+  **Search-UI wiki badge**. Graph-independent (the explain-sources *depth*, builder
+  decision-logging, and the live search wiki-leg ride Wave C).
+- **Wave C — builder brain (GATED on the rebuild contract #4–#5):** the four wiki actions
+  (`wiki_refresh`/`wiki_rebuild`/`wiki_reindex`/`wiki_prune`, §3c) + their schedules;
+  `wiki_citations` (hard FK + Postgres firewall CHECK + isolation test) + `wiki_links`;
+  **dirty-bit consumption** (mark-and-sweep), index-match triage, cited rewrite with the
+  citability predicate + the **grounding gate** + B's chunk sourcing, source-exclusion
+  filtering, **entity-driven merge/split enactment (redirects, §3a)**, per-article blurbs,
+  the **search wiki-leg** (RRF over `wiki_index`/bodies), the **builder's Talk Build-log
+  posts**, and the **wiki-build budget**.
 
 **Out of scope (explicitly):** self-improvement Loops 2 (skill learning), 3
 (durable-knowledge + predicate-canon), and 4 (prompt/tool self-edit + the 100%
