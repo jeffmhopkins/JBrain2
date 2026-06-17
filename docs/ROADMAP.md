@@ -180,11 +180,14 @@ them into the wiki broke one-PR-per-wave and hid the true size):
 - **Loop 3 — durable-knowledge + predicate-canon self-improvement.** Tier-B
   durable-knowledge promotion + the predicate-canonicalization loop (agent proposes
   registry merges via correction notes) — both need the wiki/correction-note spine.
-- **Loop 4 — prompt/tool self-edit.** PR-shaped, human-gated `.prompt`/`.tool`
-  diffs gated by the eval harness, with a **100%-coverage adversarial-injection
-  suite** and the data/instruction-boundary + domain-classification prompts
-  **structurally barred from self-edit** (non-negotiable #12 / ASSISTANT.md I-#12).
-  The single most security-sensitive deliverable on the roadmap.
+- **Loop 4 — prompt/tool self-edit** (build plan: `docs/LOOP4_PROMPT_TOOL_EDIT_PLAN.md`).
+  PR-shaped, human-gated `.prompt`/`.tool` diffs, with a **100%-coverage
+  adversarial-injection suite** and the data/instruction-boundary +
+  domain-classification prompts **structurally barred from self-edit**
+  (non-negotiable #12 / ASSISTANT.md I-#12). The single most security-sensitive
+  deliverable on the roadmap. The propose-only MVP (the box is air-gapped from git;
+  enact is record-only) stages a `prompt-edit` Proposal whose diff the owner applies
+  as a real PR — the eval gate lives at that PR's CI, not pre-stage.
 - **Hygiene sweeps (not yet built)** — entity hygiene, summary re-embedding, tag
   consolidation — built as engine actions, then given scheduled + emergency
   triggers (the Phase-5 sweep pattern). Distinct from the wiki's own `wiki_reindex`
