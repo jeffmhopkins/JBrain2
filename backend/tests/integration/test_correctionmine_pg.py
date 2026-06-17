@@ -25,7 +25,7 @@ from jbrain.llm.router import LlmRouter
 from jbrain.notes.repo import SqlNotesRepo
 from jbrain.settings_store import SELF_IMPROVEMENT_KILL_SWITCH_KEY, SqlSettingsStore
 from tests.conftest import docker_available
-from tests.integration.test_rls import OWNER, database_url  # noqa: F401
+from tests.integration.test_rls import APP_PASSWORD, OWNER, database_url  # noqa: F401
 
 pytestmark = [
     pytest.mark.integration,
@@ -47,6 +47,26 @@ async def maker(database_url: str) -> AsyncIterator[async_sessionmaker]:  # noqa
     engine: AsyncEngine = create_async_engine(database_url, poolclass=NullPool)
     yield async_sessionmaker(engine, expire_on_commit=False)
     await engine.dispose()
+
+
+@pytest.fixture(autouse=True)
+async def _isolate(database_url: str) -> AsyncIterator[None]:  # noqa: F811
+    """The module-scoped DB is shared; truncate what each test mutates so the kill-switch setting,
+    runs, and proposals don't leak between tests. Admin role — the app role lacks DELETE."""
+    yield
+    admin = create_async_engine(
+        database_url.replace(f"jbrain_app:{APP_PASSWORD}", "test:test"), poolclass=NullPool
+    )
+    try:
+        async with admin.begin() as conn:
+            await conn.execute(
+                text(
+                    "TRUNCATE app.proposals, app.runs, app.agent_sessions, app.notes, app.settings"
+                    " RESTART IDENTITY CASCADE"
+                )
+            )
+    finally:
+        await admin.dispose()
 
 
 async def _owner(maker: async_sessionmaker) -> SessionContext:
