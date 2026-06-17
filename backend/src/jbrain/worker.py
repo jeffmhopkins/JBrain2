@@ -32,6 +32,7 @@ from jbrain.settings_store import SqlSettingsStore
 from jbrain.storage import FsBlobStore
 from jbrain.usage import SqlUsageRecorder
 from jbrain.wiki.actions import WIKI_SPECS, wiki_handlers
+from jbrain.wiki.rewriter import LlmRewriter
 from jbrain.workflow import dispatcher, scheduler
 from jbrain.workflow.eval_scorer import build_live_scorer, eval_run_handler
 from jbrain.workflow.evalaction import EVAL_RUN_SPEC
@@ -278,11 +279,15 @@ async def run() -> None:
         # actions it lives in-code only — NOT in the app.actions seed — so the 0035
         # seed-lockstep holds (the seed projection + nightly schedule are H·B).
         "eval_run": eval_run_handler(maker, build_live_scorer(router)),
-        # The wiki builder (Phase-6 Wave C2a): dirty-bit-driven article build + reindex +
-        # prune. In-code only (not in the app.actions seed); a migration seeds the schedules.
-        # C2a uses the deterministic StubRewriter; C2b injects the LLM rewriter here.
+        # The wiki builder (Phase-6 Wave C2): dirty-bit-driven article build + reindex + prune.
+        # In-code only (not in the app.actions seed); a migration seeds the schedules. The live
+        # LLM rewriter (C2b) drives router.complete behind the grounding gate + wiki-build budget;
+        # CI fakes the router. (The deterministic StubRewriter remains the default for tests.)
         **wiki_handlers(
-            maker, embed=TeiEmbedClient(settings.embed_url), embedding_model=settings.embed_model
+            maker,
+            embed=TeiEmbedClient(settings.embed_url),
+            embedding_model=settings.embed_model,
+            rewriter=LlmRewriter(router, settings=worker_settings_store, ctx=queue.SYSTEM_CTX),
         ),
     }
     # Build the dispatch table from the action registry (W0.1): an action without

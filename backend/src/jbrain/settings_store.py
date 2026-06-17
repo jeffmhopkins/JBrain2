@@ -88,6 +88,15 @@ SELF_IMPROVEMENT_KILL_SWITCH_KEY = "self_improvement_kill_switch"
 SELF_IMPROVEMENT_KILL_SWITCH_DEFAULT = False
 SELF_IMPROVEMENT_SPEND_PREFIX = "self_improvement_spend:"
 
+# The wiki-build token budget (Phase-6 §3b) — SEPARATE from self-improvement so a runaway
+# rewrite loop can't starve eval spend (and vice-versa). Same constant-not-a-migration store:
+# the per-day spend tally lives in a settings row keyed by UTC date.
+WIKI_BUILD_BUDGET_KEY = "wiki_build_daily_tokens"
+WIKI_BUILD_BUDGET_DEFAULT = 500_000
+WIKI_BUILD_KILL_SWITCH_KEY = "wiki_build_kill_switch"
+WIKI_BUILD_KILL_SWITCH_DEFAULT = False
+WIKI_BUILD_SPEND_PREFIX = "wiki_build_spend:"
+
 
 # Provisional -> confirmed entity promotion (docs/entity.md "Entity lifecycle"):
 # when on, an entity corroborated by >= CORROBORATION_THRESHOLD distinct
@@ -260,6 +269,36 @@ class SqlSettingsStore:
         delta is clamped to 0 so a bad caller can never refund the budget."""
         current = await self.self_improvement_spent_today(ctx, day=day)
         await self.upsert(ctx, SELF_IMPROVEMENT_SPEND_PREFIX + day, current + max(tokens, 0))
+
+    async def wiki_build_kill_switch(self, ctx: SessionContext) -> bool:
+        """Whether the wiki-build kill-switch is engaged. When on, the builder refuses to
+        spend. Defaults OFF; only an explicit `true` engages it."""
+        return (
+            await self.get(ctx, WIKI_BUILD_KILL_SWITCH_KEY, WIKI_BUILD_KILL_SWITCH_DEFAULT) is True
+        )
+
+    async def wiki_build_daily_budget(self, ctx: SessionContext) -> int:
+        """The per-day wiki-build TOKEN budget, separate from self-improvement. A malformed
+        or non-positive stored value falls back to the default (fail-closed: junk is never
+        unlimited)."""
+        raw = await self.get(ctx, WIKI_BUILD_BUDGET_KEY, WIKI_BUILD_BUDGET_DEFAULT)
+        return (
+            raw
+            if isinstance(raw, int) and not isinstance(raw, bool) and raw > 0
+            else WIKI_BUILD_BUDGET_DEFAULT
+        )
+
+    async def wiki_build_spent_today(self, ctx: SessionContext, *, day: str) -> int:
+        """Tokens spent on wiki builds on UTC date `day` (a per-day settings row, no table).
+        Absent/malformed = 0."""
+        raw = await self.get(ctx, WIKI_BUILD_SPEND_PREFIX + day, 0)
+        return raw if isinstance(raw, int) and not isinstance(raw, bool) and raw >= 0 else 0
+
+    async def record_wiki_build_spend(self, ctx: SessionContext, *, day: str, tokens: int) -> None:
+        """Add `tokens` to UTC date `day`'s wiki-build tally (read-modify-write). A negative
+        delta is clamped to 0 so a bad caller can never refund the budget."""
+        current = await self.wiki_build_spent_today(ctx, day=day)
+        await self.upsert(ctx, WIKI_BUILD_SPEND_PREFIX + day, current + max(tokens, 0))
 
     async def integration_persist(self, ctx: SessionContext) -> bool:
         """Whether the Integrator persists its run + resolution pins (§E7b).

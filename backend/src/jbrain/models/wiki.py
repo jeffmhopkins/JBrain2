@@ -56,6 +56,9 @@ class WikiSection(Base):
         UUID(as_uuid=True), ForeignKey("app.wiki_articles.id", ondelete="CASCADE")
     )
     domain_code: Mapped[str] = mapped_column(Text, ForeignKey("app.domains.code"))
+    # The section's heading — its identity within a domain (a domain can have several sections)
+    # and what the reader renders. Added in migration 0049.
+    heading: Mapped[str] = mapped_column(Text, default="", server_default="")
     parent_section_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("app.wiki_sections.id", ondelete="CASCADE"), nullable=True
     )
