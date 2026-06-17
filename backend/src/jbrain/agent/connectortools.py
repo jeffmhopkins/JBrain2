@@ -22,7 +22,11 @@ from jbrain.agent.proposals import (
     ProposalRow,
     ProposalSpec,
 )
-from jbrain.agent.proposaltools import agent_note_executor, skill_promotion_executor
+from jbrain.agent.proposaltools import (
+    agent_note_executor,
+    predicate_resolution_executor,
+    skill_promotion_executor,
+)
 from jbrain.agent.skills import SkillsRepo
 from jbrain.analysis.repo import SqlAnalysisRepo
 from jbrain.connectors.base import ConnectorRegistry, EgressGuardError, build_egress
@@ -123,6 +127,7 @@ def build_leaf_executor(
     egress = egress_executor(connectors)
     merge = entity_merge_executor(analysis)
     skill_promote = skill_promotion_executor(skills)
+    predicate_resolve = predicate_resolution_executor(analysis)
 
     async def execute(ctx: SessionContext, proposal: ProposalRow, node: NodeRow) -> None:
         if node.op == "egress_call":
@@ -131,6 +136,8 @@ def build_leaf_executor(
             await merge(ctx, proposal, node)
         elif node.op == "skill_promote":
             await skill_promote(ctx, proposal, node)
+        elif node.op == "predicate_resolve":
+            await predicate_resolve(ctx, proposal, node)
         else:
             await note_executor(ctx, proposal, node)
 

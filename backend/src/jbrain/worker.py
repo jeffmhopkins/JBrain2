@@ -17,6 +17,7 @@ import structlog
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from jbrain import queue
+from jbrain.agent.predicatereview import PREDICATE_REVIEW_SPEC, predicate_review_handler
 from jbrain.agent.skilldistill import SKILL_DISTILL_SPEC, skill_distill_handler
 from jbrain.agent.skillsweep import SKILL_SWEEP_SPEC, skill_sweep_handler
 from jbrain.analysis import purge
@@ -292,6 +293,9 @@ async def run() -> None:
         # Loop 2 skill hygiene (Wave 3): cap active skills per domain, demoting the least-useful
         # back to shadow (reversible). No LLM call; in-code only (a migration seeds the schedule).
         "skill_sweep": skill_sweep_handler(maker),
+        # Loop 3a predicate-canon review (Wave 2): stage owner proposals to resolve open
+        # new_predicate cards (map/mint). No LLM call; in-code only (a migration seeds it).
+        "predicate_review": predicate_review_handler(maker),
         # The wiki builder (Phase-6 Wave C2): dirty-bit-driven article build + reindex + prune.
         # In-code only (not in the app.actions seed); a migration seeds the schedules. The live
         # LLM rewriter (C2b) drives router.complete behind the grounding gate + wiki-build budget;
@@ -321,6 +325,7 @@ async def run() -> None:
             EVAL_RUN_SPEC,
             SKILL_DISTILL_SPEC,
             SKILL_SWEEP_SPEC,
+            PREDICATE_REVIEW_SPEC,
             *WIKI_SPECS,
         )
     )
