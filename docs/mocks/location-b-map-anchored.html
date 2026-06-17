@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Location — B — map anchored</title>
+<style>
+  :root{
+    --bg:#0e0f11;--surface:#17181b;--surface-2:#1e2024;--border:#26282c;
+    --text:#e6e7e9;--text-2:#9a9da3;--text-3:#5c5f66;--scrim:rgba(14,15,17,.6);
+    --steel:#7fa7c9;--green:#8fbc9a;--amber:#c9a36a;--rose:#cf8a8f;--violet:#a493c9;
+    --teal:#6fb6b1;--shadow:rgba(0,0,0,.45);
+    --grid:#1c1e22;
+  }
+  [data-theme="light"]{
+    --bg:#f7f7f5;--surface:#fff;--surface-2:#f0f0ee;--border:#e2e2df;
+    --text:#1a1b1e;--text-2:#5c5f66;--text-3:#9a9da3;--scrim:rgba(247,247,245,.6);
+    --teal:#3a8f8a;--shadow:rgba(20,30,50,.12);--grid:#e7e7e4;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  body{margin:0;background:#05070a;font:15px/1.5 system-ui,-apple-system,sans-serif;display:grid;place-items:center;min-height:100vh;color:var(--text)}
+  .phone{width:390px;height:800px;background:var(--bg);border-radius:30px;overflow:hidden;position:relative;box-shadow:0 20px 60px var(--shadow);display:flex;flex-direction:column}
+  .topbar{height:56px;flex:0 0 56px;display:flex;align-items:center;gap:10px;padding:0 14px;border-bottom:1px solid var(--border);background:var(--surface);z-index:3}
+  .topbar .dot{width:10px;height:10px;border-radius:50%;background:var(--teal)}
+  .topbar .ttl{font-weight:600;font-size:16px;flex:1}
+  .icon-btn{width:36px;height:36px;display:grid;place-items:center;border-radius:9px;color:var(--text-2);background:transparent;border:0;cursor:pointer}
+  .icon-btn:hover{background:var(--surface-2);color:var(--text)}
+  svg{width:20px;height:20px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+  /* self-rendered schematic map — NO external tiles (location never leaves the box) */
+  .map{position:relative;height:300px;flex:0 0 300px;overflow:hidden;
+    background:
+      repeating-linear-gradient(0deg,transparent 0 23px,var(--grid) 23px 24px),
+      repeating-linear-gradient(90deg,transparent 0 23px,var(--grid) 23px 24px),
+      var(--surface)}
+  .road{position:absolute;background:var(--surface-2)}
+  .pin{position:absolute;transform:translate(-50%,-100%);text-align:center}
+  .pin .head{width:22px;height:22px;border-radius:50% 50% 50% 0;transform:rotate(-45deg);margin:0 auto;border:2px solid var(--bg);box-shadow:0 2px 5px rgba(0,0,0,.4)}
+  .pin .lbl{font-size:10px;color:var(--text);background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:1px 5px;margin-top:3px;white-space:nowrap;display:inline-block}
+  .pin.live .head{background:var(--green)}.pin.stale .head{background:var(--amber)}
+  .fence{position:absolute;transform:translate(-50%,-50%);border:2px dashed var(--teal);border-radius:50%;
+    background:color-mix(in srgb,var(--teal) 9%,transparent);display:grid;place-items:end center;cursor:pointer}
+  .fence span{font-size:10px;color:var(--teal);background:var(--bg);border-radius:5px;padding:0 4px;transform:translateY(11px)}
+  .maptag{position:absolute;left:12px;top:12px;font-size:11px;color:var(--text-3);background:color-mix(in srgb,var(--bg) 70%,transparent);border:1px solid var(--border);border-radius:999px;padding:3px 9px;display:flex;gap:6px;align-items:center}
+  .maptag svg{width:13px;height:13px}
+  .mapctl{position:absolute;right:12px;bottom:12px;display:flex;flex-direction:column;gap:6px}
+  .mapctl button{width:34px;height:34px;border-radius:9px;border:1px solid var(--border);background:var(--surface);color:var(--text);cursor:pointer;font-size:18px;display:grid;place-items:center}
+  /* sheet-ish list pulled up over the map bottom */
+  .list{flex:1;overflow-y:auto;background:var(--bg);border-top-left-radius:20px;border-top-right-radius:20px;margin-top:-18px;position:relative;z-index:2;padding:6px 14px 90px;border-top:1px solid var(--border)}
+  .grab{width:36px;height:4px;border-radius:2px;background:var(--border);margin:8px auto 6px}
+  .segline{display:flex;gap:16px;border-bottom:1px solid var(--border);margin-bottom:6px}
+  .segline button{border:0;background:transparent;color:var(--text-2);font-size:13px;font-weight:600;padding:9px 0;cursor:pointer;border-bottom:2px solid transparent}
+  .segline button.on{color:var(--text);border-bottom-color:var(--teal)}
+  .pane{display:none}.pane.on{display:block}
+  .item{display:flex;align-items:center;gap:11px;padding:11px 2px;border-bottom:1px solid var(--border)}
+  .item:last-child{border-bottom:0}
+  .swatch{width:12px;height:12px;border-radius:50%;flex:0 0 12px}
+  .grow{flex:1;min-width:0}
+  .nm{font-size:15px;font-weight:600}
+  .sub{font-size:12px;color:var(--text-2);margin-top:1px;display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+  .live{color:var(--green)}.stale{color:var(--amber)}
+  .chip{font-size:10.5px;padding:2px 7px;border-radius:999px;background:var(--surface-2);color:var(--text-3);border:1px solid var(--border)}
+  .kebab{color:var(--text-3)}
+  .priv{display:flex;gap:8px;font-size:11.5px;color:var(--teal);padding:8px 2px 2px}
+  .priv svg{width:14px;height:14px;flex:0 0 14px}
+  .fab{position:absolute;right:18px;bottom:22px;width:52px;height:52px;border-radius:50%;border:0;background:var(--teal);color:#04100f;display:grid;place-items:center;cursor:pointer;box-shadow:0 6px 18px rgba(0,0,0,.4);z-index:4}
+  .fab svg{stroke:#04100f;stroke-width:2.2;width:24px;height:24px}
+  .scrim{position:absolute;inset:0;background:var(--scrim);opacity:0;pointer-events:none;transition:opacity .15s;z-index:5}
+  .scrim.on{opacity:1;pointer-events:auto}
+  .sheet{position:absolute;left:0;right:0;bottom:0;z-index:6;background:var(--surface);border-top-left-radius:24px;border-top-right-radius:24px;border-top:1px solid var(--border);transform:translateY(100%);transition:transform .18s ease-out;padding:8px 18px calc(20px + env(safe-area-inset-bottom));max-height:88%;overflow-y:auto}
+  .sheet.on{transform:translateY(0)}
+  .sheet h3{margin:0 0 3px;font-size:18px}.sheet .lead{font-size:13px;color:var(--text-2);margin:0 0 14px}
+  label.fld{display:block;font-size:12px;color:var(--text-2);margin:0 0 6px}
+  .inp{width:100%;background:var(--surface-2);border:1px solid var(--border);border-radius:12px;padding:11px 13px;color:var(--text);font-size:16px;outline:none;margin-bottom:14px}
+  .inp:focus{border-color:var(--teal);box-shadow:0 0 0 2px color-mix(in srgb,var(--teal) 35%,transparent)}
+  .rng{width:100%;margin:2px 0 14px;accent-color:var(--teal)}
+  .btn{width:100%;border:0;border-radius:12px;padding:13px;font-size:15px;font-weight:600;cursor:pointer}
+  .btn.pri{background:var(--teal);color:#04100f}.btn.ghost{background:var(--surface-2);color:var(--text);border:1px solid var(--border);margin-top:9px}
+  .note-hint{display:flex;gap:8px;font-size:12px;color:var(--text-2);background:var(--surface-2);border:1px solid var(--border);border-radius:12px;padding:10px;margin-bottom:14px}
+  .note-hint svg{width:15px;height:15px;flex:0 0 15px;color:var(--violet);margin-top:1px}
+  .keybox{font-family:ui-monospace,Menlo,monospace;font-size:13px;background:var(--bg);border:1px dashed var(--teal);border-radius:12px;padding:13px;color:var(--text);word-break:break-all;margin-bottom:8px}
+  .once{font-size:11.5px;color:var(--amber);display:flex;gap:6px;align-items:center;margin-bottom:8px}.once svg{width:14px;height:14px}
+</style>
+</head>
+<body>
+<div class="phone">
+  <div class="topbar">
+    <span class="dot"></span>
+    <div class="ttl">Location</div>
+    <button class="icon-btn" title="Fit all"><svg viewBox="0 0 24 24"><path d="M3 8V5a2 2 0 012-2h3M16 3h3a2 2 0 012 2v3M21 16v3a2 2 0 01-2 2h-3M8 21H5a2 2 0 01-2-2v-3"/></svg></button>
+    <button class="icon-btn" id="theme"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4.5"/><path d="M12 2v2M12 20v2M4 12H2M22 12h-2M5 5l1.5 1.5M17.5 17.5L19 19M19 5l-1.5 1.5M6.5 17.5L5 19"/></svg></button>
+  </div>
+
+  <div class="map">
+    <div class="maptag"><svg viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>on-box render · no tile servers</div>
+    <div class="road" style="left:0;right:0;top:150px;height:10px"></div>
+    <div class="road" style="top:0;bottom:0;left:130px;width:10px"></div>
+    <div class="road" style="left:0;right:0;top:235px;height:6px"></div>
+    <!-- fences -->
+    <div class="fence" style="left:135px;top:130px;width:120px;height:120px" onclick="openSheet('fence')"><span>Home</span></div>
+    <div class="fence" style="left:300px;top:90px;width:78px;height:78px" onclick="openSheet('fence')"><span>Office</span></div>
+    <!-- pins -->
+    <div class="pin live" style="left:140px;top:150px"><div class="head"></div><div class="lbl">Jeff · now</div></div>
+    <div class="pin stale" style="left:296px;top:120px"><div class="head"></div><div class="lbl">Celine · 2h</div></div>
+    <div class="mapctl"><button>+</button><button>−</button></div>
+  </div>
+
+  <div class="list">
+    <div class="grab"></div>
+    <div class="segline">
+      <button class="on" onclick="tab(this,'devices')">Devices</button>
+      <button onclick="tab(this,'fences')">Places</button>
+      <button onclick="tab(this,'activity')">Activity</button>
+    </div>
+
+    <div class="pane on" id="devices">
+      <div class="item">
+        <span class="swatch" style="background:var(--green)"></span>
+        <div class="grow"><div class="nm">Jeff’s iPhone</div><div class="sub"><span class="live">live · 40s</span><span class="chip">wifi</span><span class="chip">87%</span><span class="chip">Home</span></div></div>
+        <button class="icon-btn kebab" onclick="openSheet('dev')"><svg viewBox="0 0 24 24"><circle cx="12" cy="5" r="1.4"/><circle cx="12" cy="12" r="1.4"/><circle cx="12" cy="19" r="1.4"/></svg></button>
+      </div>
+      <div class="item">
+        <span class="swatch" style="background:var(--amber)"></span>
+        <div class="grow"><div class="nm">Celine’s Pixel</div><div class="sub"><span class="stale">2h ago</span><span class="chip">mobile</span><span class="chip">31%</span></div></div>
+        <button class="icon-btn kebab" onclick="openSheet('dev')"><svg viewBox="0 0 24 24"><circle cx="12" cy="5" r="1.4"/><circle cx="12" cy="12" r="1.4"/><circle cx="12" cy="19" r="1.4"/></svg></button>
+      </div>
+      <div class="priv"><svg viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>Each device sees only its own track. Owner-eyes only.</div>
+    </div>
+
+    <div class="pane" id="fences">
+      <div class="item"><span class="swatch" style="background:var(--teal)"></span><div class="grow"><div class="nm">Home</div><div class="sub">120 m · all devices · <span class="chip">2 inside</span></div></div><button class="icon-btn kebab" onclick="openSheet('fence')"><svg viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4z"/></svg></button></div>
+      <div class="item"><span class="swatch" style="background:var(--teal)"></span><div class="grow"><div class="nm">Office</div><div class="sub">80 m · Jeff’s iPhone</div></div><button class="icon-btn kebab" onclick="openSheet('fence')"><svg viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4z"/></svg></button></div>
+      <div class="item"><span class="swatch" style="background:var(--teal)"></span><div class="grow"><div class="nm">Mom’s house</div><div class="sub">150 m · all devices</div></div><button class="icon-btn kebab" onclick="openSheet('fence')"><svg viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4z"/></svg></button></div>
+    </div>
+
+    <div class="pane" id="activity">
+      <div class="item"><span class="swatch" style="background:var(--green)"></span><div class="grow"><div class="nm" style="font-weight:500;font-size:14px">Arrived Home · Jeff</div><div class="sub">today 5:42p</div></div></div>
+      <div class="item"><span class="swatch" style="background:var(--amber)"></span><div class="grow"><div class="nm" style="font-weight:500;font-size:14px">Left Office · Jeff</div><div class="sub">today 5:10p</div></div></div>
+      <div class="item"><span class="swatch" style="background:var(--green)"></span><div class="grow"><div class="nm" style="font-weight:500;font-size:14px">Arrived Mom’s · Celine</div><div class="sub">yesterday 3:21p</div></div></div>
+    </div>
+  </div>
+
+  <button class="fab" id="fab" onclick="fabAdd()"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>
+
+  <div class="scrim" id="scrim" onclick="closeAll()"></div>
+  <div class="sheet" id="sheet-dev">
+    <div class="grab"></div>
+    <h3>Add a device</h3><p class="lead">Creates a device subject + per-device key, shown once.</p>
+    <label class="fld">Device name</label><input class="inp" value="Jeff’s iPhone" />
+    <div class="keybox">otrk_9f2c·a1d4·7b60·e3f8·c2aa·5519</div>
+    <div class="once"><svg viewBox="0 0 24 24"><path d="M12 9v4M12 17h.01"/><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg>Copy now — shown once.</div>
+    <button class="btn pri" onclick="closeAll()">Copy key &amp; done</button>
+    <button class="btn ghost" onclick="closeAll()">Cancel</button>
+  </div>
+  <div class="sheet" id="sheet-fence">
+    <div class="grab"></div>
+    <h3>Edit place — Home</h3><p class="lead">Drag the circle on the map, or set radius.</p>
+    <div class="note-hint"><svg viewBox="0 0 24 24"><path d="M4 19.5V5a2 2 0 012-2h12v17H6a2 2 0 01-2-1.5z"/><path d="M8 7h8M8 11h6"/></svg>Saving files a <b style="color:var(--text)">place note</b> — never edits the graph directly.</div>
+    <label class="fld">Radius — <span id="rv">120</span> m</label>
+    <input class="rng" type="range" min="40" max="400" value="120" oninput="document.getElementById('rv').textContent=this.value" />
+    <button class="btn pri" onclick="closeAll()">File place note</button>
+    <button class="btn ghost" onclick="closeAll()">Cancel</button>
+  </div>
+</div>
+<script>
+  const h=document.documentElement;
+  document.getElementById('theme').onclick=()=>h.dataset.theme=h.dataset.theme==='dark'?'light':'dark';
+  window._tab='devices';
+  function tab(btn,id){document.querySelectorAll('.segline button').forEach(b=>b.classList.remove('on'));btn.classList.add('on');document.querySelectorAll('.pane').forEach(p=>p.classList.remove('on'));document.getElementById(id).classList.add('on');window._tab=id;}
+  function openSheet(k){document.getElementById('scrim').classList.add('on');document.getElementById('sheet-'+k).classList.add('on');}
+  function closeAll(){document.getElementById('scrim').classList.remove('on');document.querySelectorAll('.sheet').forEach(s=>s.classList.remove('on'));}
+  function fabAdd(){openSheet(window._tab==='fences'?'fence':'dev');}
+</script>
+</body>
+</html>
