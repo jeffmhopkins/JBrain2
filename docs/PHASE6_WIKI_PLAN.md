@@ -8,10 +8,11 @@
 > depth (**B**, chunk-cited note-derived claims + grounding gate; **entity graph wins on
 > conflict**), linking (wiki→wiki + muted red-link fallback), the **`wiki_built` dirty
 > bit** as the delta mechanism, on-demand rebuild + source-exclusion, entity profile
-> images, subsections, and the four engine actions (§3b). **Open:** the landing mock gate
-> (§6 #9) and the cross-stream **wiki↔graph contract** (`PHASE6_WIKI_GRAPH_CONTRACT.md`,
-> §6 #4/#5) — the audit expanded that contract to cover four firewall realities (entity-row
-> RLS, derived-chunk citability, mention-domain, purge). Most of Phase 6 is graph-coupled
+> images, subsections, and the four engine actions (§3b). All three GUI mock gates
+> (reader, Talk, landing — landing = search-first + rails) are **closed**. **Open:** only
+> the cross-stream **wiki↔graph contract** (`PHASE6_WIKI_GRAPH_CONTRACT.md`, §6 #4/#5) — the
+> audit expanded it to cover four firewall realities (entity-row RLS, derived-chunk
+> citability, mention-domain, purge). Most of Phase 6 is graph-coupled
 > and gated on the rebuild; the parallel-safe slice now is the article/section/revision/
 > index shell, editorial config, the `notes.wiki_built` bit, and the read-only UI on fixtures.
 
@@ -271,8 +272,9 @@ this source** (on an owner "⋯" / per-reference action) — enact in the gated 
 
 ## 5b. Wiki landing + search
 
-**Landing — a living, search-first home** (its own mock gate — §6 #9, pending). Rails, each
-entry = title + the per-article `lead_summary` blurb:
+**Landing — a living, search-first home** (mock gate ✅ — chosen **A**,
+`docs/mocks/wiki-landing-a-search-rails.html`). Rails, each entry = title + the per-article
+`lead_summary` blurb:
 - **Search box** (the article-aware search below).
 - **Recently updated** — from the last build (Build-log / `runs`).
 - **Most connected (hubs)** — top inbound `wiki_links`, **computed post-RLS** (a scoped
@@ -310,8 +312,11 @@ wiki becomes the *answer layer* the agent also retrieves first.
    maintenance; the **entity row's single-domain RLS vs the cross-domain shell** (resolved
    here by §2's article-row display identity — confirm with the rebuild team);
    **mention-as-source domain**; **purge dirties + rebuilds** surviving articles.
-9. **Landing mock gate** — three interactive mocks → owner pick, **before** the landing UI
-   is built (Wave 0). *(Pending — the only open GUI gate.)*
+9. **Landing mock gate** — ✅ RESOLVED: owner chose **A — search-first + rails**
+   (`docs/mocks/wiki-landing-a-search-rails.html`): search + Recently-updated + Most-connected
+   hubs + a Browse-by-type index with blurbs (taxonomy derived: type + centrality + recency).
+   C's graph view may return as an optional secondary tab. (All three GUI mock gates —
+   reader, Talk, landing — are now closed.)
 10. **Split/merge approval reinterpretation** — confirm the article restructure as a
     downstream build effect (not a second review-inbox approval) is acceptable vs the
     binding ARCHITECTURE wording.

@@ -26,7 +26,11 @@ Article type discs use the DESIGN entity-type accents (Person=steel, Org=violet,
 
 ## Decision
 
-Owner picks one (or a hybrid — e.g. **A** as the home with **C**'s graph as a toggle/second
-tab). The choice + rationale land in `DESIGN.md`; the others stay as the record. Search on
-all three is the article-aware hybrid search (§5b). DoD: fixtures for empty (no articles
-yet) / few-articles / many-articles / offline. This closes the last Phase-6 mock gate.
+**Chosen: A — search-first + rails** (`wiki-landing-a-search-rails.html`): a prominent
+search box, a Recently-updated rail, a Most-connected (hubs) list, and a collapsible
+Browse-by-type index with `lead_summary` blurbs. The living-home direction; everything on
+it is derived for free (recency + centrality + type). C's graph may return later as an
+optional secondary view/tab. B/C retained as the record. The choice + rationale land in
+`DESIGN.md` when the landing UI is built (Wave B2a). Search is the article-aware hybrid
+search (§5b). DoD: fixtures for empty (no articles yet) / few-articles / many-articles /
+offline. **This closes the last Phase-6 mock gate.**
