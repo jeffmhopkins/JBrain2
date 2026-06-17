@@ -526,22 +526,30 @@ class WikiBuilder:
             # reversible (otherwise a rebuilt article would stay a redirect forever).
             await session.execute(
                 text(
-                    "UPDATE app.wiki_articles SET title = :t, lead_summary = :ls,"
+                    "UPDATE app.wiki_articles SET title = :t, kind = :k, lead_summary = :ls,"
                     " lead_embedding = cast(:v AS vector), status = 'active',"
                     " merged_into_id = NULL, updated_at = now() WHERE id = :a"
                 ),
-                {"t": sourced.name, "ls": plan.lead_summary, "v": lead_vec, "a": existing},
+                {
+                    "t": sourced.name,
+                    "k": sourced.kind,
+                    "ls": plan.lead_summary,
+                    "v": lead_vec,
+                    "a": existing,
+                },
             )
             return existing
         created = (
             await session.execute(
                 text(
-                    "INSERT INTO app.wiki_articles (entity_ref, title, slug, lead_summary,"
-                    " lead_embedding) VALUES (:e, :t, :sl, :ls, cast(:v AS vector)) RETURNING id"
+                    "INSERT INTO app.wiki_articles (entity_ref, title, kind, slug, lead_summary,"
+                    " lead_embedding)"
+                    " VALUES (:e, :t, :k, :sl, :ls, cast(:v AS vector)) RETURNING id"
                 ),
                 {
                     "e": sourced.entity_id,
                     "t": sourced.name,
+                    "k": sourced.kind,
                     "sl": _slug(sourced.name),
                     "ls": plan.lead_summary,
                     "v": lead_vec,

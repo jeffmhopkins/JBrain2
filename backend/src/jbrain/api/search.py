@@ -6,14 +6,14 @@
 
 from dataclasses import asdict
 from datetime import datetime
-from typing import Annotated, cast
+from typing import Annotated, Literal, cast
 
 from fastapi import APIRouter, Query, Request
 from pydantic import BaseModel
 
 from jbrain.api.deps import PrincipalDep
 from jbrain.api.notes import ctx_for
-from jbrain.search.service import SearchResponse, SearchService
+from jbrain.search.service import SearchResponse, SearchService, WikiSearchResult
 
 router = APIRouter()
 
@@ -23,6 +23,7 @@ def get_search_service(request: Request) -> SearchService:
 
 
 class SearchResultOut(BaseModel):
+    kind: Literal["note"] = "note"
     note_id: str
     chunk_id: str
     snippet: str
@@ -37,15 +38,33 @@ class SearchResultOut(BaseModel):
     source_anchor: str | None
 
 
+class WikiSearchResultOut(BaseModel):
+    kind: Literal["wiki"] = "wiki"
+    article_id: str
+    title: str
+    blurb: str
+    entity_kind: str
+    domain: str
+    snippet: str
+    match: str
+    score: float
+
+
 class SearchOut(BaseModel):
     degraded: bool
-    results: list[SearchResultOut]
+    # A discriminated union: note passages and wiki articles, `kind` telling them apart.
+    results: list[SearchResultOut | WikiSearchResultOut]
 
 
 def search_out(resp: SearchResponse) -> SearchOut:
     return SearchOut(
         degraded=resp.degraded,
-        results=[SearchResultOut(**asdict(r)) for r in resp.results],
+        results=[
+            WikiSearchResultOut(**asdict(r))
+            if isinstance(r, WikiSearchResult)
+            else SearchResultOut(**asdict(r))
+            for r in resp.results
+        ],
     )
 
 

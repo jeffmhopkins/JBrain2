@@ -32,6 +32,8 @@ class WikiArticle(Base):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     entity_ref: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     title: Mapped[str] = mapped_column(Text)
+    # The entity's kind, denormalized at build for the type disc (the entities row is RLS-hidden).
+    kind: Mapped[str] = mapped_column(Text, default="", server_default="")
     slug: Mapped[str] = mapped_column(Text, unique=True)
     image_sha: Mapped[str | None] = mapped_column(Text, nullable=True)
     lead_summary: Mapped[str | None] = mapped_column(Text, nullable=True)

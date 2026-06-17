@@ -6,6 +6,7 @@ container unreachable) is a feature, not an error: keyword results still
 return, flagged so the UI can show its amber banner.
 """
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal, Protocol
@@ -43,6 +44,22 @@ class ChunkHit:
 
 
 @dataclass(frozen=True)
+class WikiHit:
+    """One candidate wiki SECTION from either wiki leg, joined to its article. The matched
+    section's domain is what's shown (a cross-domain article surfaces under the in-scope section
+    that matched); the article shell carries the display identity (title/blurb/kind)."""
+
+    article_id: str
+    section_id: str
+    title: str
+    blurb: str
+    entity_kind: str
+    domain: str
+    text: str
+    headline: str | None = None  # ts_headline, FTS leg only
+
+
+@dataclass(frozen=True)
 class SearchResult:
     note_id: str
     chunk_id: str
@@ -56,12 +73,30 @@ class SearchResult:
     attachment_count: int
     source_kind: str
     source_anchor: str | None
+    kind: Literal["note"] = "note"  # discriminates note hits from wiki hits in the merged list
+
+
+@dataclass(frozen=True)
+class WikiSearchResult:
+    """A wiki-article hit — the headline answer layer (an article usually out-answers a raw
+    passage), surfaced above note hits in the merged result list."""
+
+    article_id: str
+    title: str
+    blurb: str
+    entity_kind: str
+    domain: str
+    snippet: str
+    match: Match
+    score: float
+    kind: Literal["wiki"] = "wiki"
 
 
 @dataclass(frozen=True)
 class SearchResponse:
     degraded: bool
-    results: list[SearchResult]
+    # Covariant Sequence so a note-only `list[SearchResult]` (the common case) assigns cleanly.
+    results: Sequence[SearchResult | WikiSearchResult]
 
 
 class SearchRepo(Protocol):
@@ -75,6 +110,18 @@ class SearchRepo(Protocol):
         self, ctx: SessionContext, q: str, domain: str | None, limit: int
     ) -> list[ChunkHit]:
         """Top chunks by ts_rank with <mark> headlines; non-deleted notes."""
+        ...
+
+    async def wiki_dense_search(
+        self, ctx: SessionContext, qvec: list[float], domain: str | None, limit: int
+    ) -> list[WikiHit]:
+        """Top wiki sections by `wiki_index.summary_embedding` cosine distance (RLS-scoped)."""
+        ...
+
+    async def wiki_fts_search(
+        self, ctx: SessionContext, q: str, domain: str | None, limit: int
+    ) -> list[WikiHit]:
+        """Top wiki sections by `wiki_revisions.body_tsv` ts_rank with <mark> headlines."""
         ...
 
 
@@ -101,6 +148,7 @@ class SearchService:
     ) -> SearchResponse:
         degraded = False
         dense: list[ChunkHit] = []
+        wiki_dense: list[WikiHit] = []
         try:
             qvec = (await self._embedder.embed([q]))[0]
         except Exception as exc:  # noqa: BLE001 - degraded search, never an error
@@ -108,8 +156,55 @@ class SearchService:
             log.warning("search.degraded", error=repr(exc))
         else:
             dense = await self._repo.dense_search(ctx, qvec, domain, LEG_LIMIT)
+            wiki_dense = await self._repo.wiki_dense_search(ctx, qvec, domain, LEG_LIMIT)
         fts = await self._repo.fts_search(ctx, q, domain, LEG_LIMIT)
-        return SearchResponse(degraded=degraded, results=self._fuse(dense, fts, limit))
+        wiki_fts = await self._repo.wiki_fts_search(ctx, q, domain, LEG_LIMIT)
+        # Articles out-answer raw passages, so wiki hits head the list, notes beneath, capped at
+        # `limit`. Every leg runs inside the RLS-scoped session, so out-of-scope sections never
+        # rank or leak via ordering.
+        wiki = self._fuse_wiki(wiki_dense, wiki_fts, limit)
+        notes = self._fuse(dense, fts, limit)
+        merged: list[SearchResult | WikiSearchResult] = [*wiki, *notes]
+        return SearchResponse(degraded=degraded, results=merged[:limit])
+
+    def _fuse_wiki(
+        self, dense: list[WikiHit], fts: list[WikiHit], limit: int
+    ) -> list[WikiSearchResult]:
+        scores = rrf_scores([h.section_id for h in dense], [h.section_id for h in fts])
+        dense_ids = {h.section_id for h in dense}
+        fts_by_id = {h.section_id: h for h in fts}
+        hits = {h.section_id: h for h in [*dense, *fts]}
+
+        # One hit per article: its best-scoring section (a cross-domain article matches once).
+        best_per_article: dict[str, str] = {}
+        for section_id, _ in sorted(scores.items(), key=lambda kv: (-kv[1], kv[0])):
+            best_per_article.setdefault(hits[section_id].article_id, section_id)
+
+        results: list[WikiSearchResult] = []
+        for section_id in list(best_per_article.values())[:limit]:
+            hit = hits[section_id]
+            in_fts = section_id in fts_by_id
+            match: Match = (
+                "both"
+                if in_fts and section_id in dense_ids
+                else "keyword"
+                if in_fts
+                else "semantic"
+            )
+            headline = fts_by_id[section_id].headline if in_fts else None
+            results.append(
+                WikiSearchResult(
+                    article_id=hit.article_id,
+                    title=hit.title,
+                    blurb=hit.blurb,
+                    entity_kind=hit.entity_kind,
+                    domain=hit.domain,
+                    snippet=headline or truncate(hit.text, SNIPPET_CHARS),
+                    match=match,
+                    score=scores[section_id],
+                )
+            )
+        return results
 
     def _fuse(self, dense: list[ChunkHit], fts: list[ChunkHit], limit: int) -> list[SearchResult]:
         scores = rrf_scores([h.chunk_id for h in dense], [h.chunk_id for h in fts])

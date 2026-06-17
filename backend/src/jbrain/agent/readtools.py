@@ -30,7 +30,12 @@ from jbrain.connectors.base import ConnectorRegistry
 from jbrain.db.session import SessionContext
 from jbrain.lists.service import ListsRepo
 from jbrain.notes.service import NoteInfo, NotesRepo
-from jbrain.search.service import SearchResponse, SearchService
+from jbrain.search.service import (
+    SearchResponse,
+    SearchResult,
+    SearchService,
+    WikiSearchResult,
+)
 
 TOOLS_DIR = Path(__file__).parent / "tools"
 _DEFAULT_LIMIT = 8
@@ -83,6 +88,10 @@ def format_search(
         return "No matching notes in scope."
     lines = ["(keyword-only search — semantic ranking unavailable)"] if resp.degraded else []
     for r in resp.results:
+        if isinstance(r, WikiSearchResult):
+            # A wiki article is the answer layer: surface it as a read_wiki target above notes.
+            lines.append(f'- wiki "{r.title}" [{r.domain}]: {r.snippet.strip()}')
+            continue
         line = f"- note {r.note_id} [{r.domain}] {r.created_at:%Y-%m-%d}: {r.snippet.strip()}"
         stale = (currency or {}).get(r.note_id)
         if stale:
@@ -138,10 +147,12 @@ def format_note(note: NoteInfo) -> str:
 
 
 def search_sources(resp: SearchResponse) -> tuple[NoteSource, ...]:
-    """The structured twin of format_search: a source per hit for the UI's cards."""
+    """The structured twin of format_search: a note source per note hit for the UI's cards.
+    Wiki hits are surfaced in the prose (read_wiki targets); a wiki source card is a later UI."""
     return tuple(
         NoteSource(note_id=r.note_id, domain=r.domain, snippet=r.snippet.strip())
         for r in resp.results
+        if isinstance(r, SearchResult)
     )
 
 
@@ -209,8 +220,8 @@ def build_read_handlers(
             return ToolOutput("search needs a non-empty query.")
         limit = int(arguments.get("limit", _DEFAULT_LIMIT))
         resp = await search.search(ctx.session, query, None, limit)
-        # Overlay the supersession/review outcome the snippet's prose can't show.
-        note_ids = list({r.note_id for r in resp.results})
+        # Overlay the supersession/review outcome the snippet's prose can't show (note hits only).
+        note_ids = list({r.note_id for r in resp.results if isinstance(r, SearchResult)})
         currency = await entities.note_currency(ctx.session, note_ids) if note_ids else {}
         return ToolOutput(format_search(resp, currency), search_sources(resp))
 

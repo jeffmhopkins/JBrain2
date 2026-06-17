@@ -25,7 +25,7 @@ from jbrain.embed import NoteEmbedder, vector_literal
 from jbrain.ingest.pipeline import IngestPipeline
 from jbrain.notes.repo import SqlNotesRepo
 from jbrain.search.repo import SqlSearchRepo
-from jbrain.search.service import SearchResponse, SearchService
+from jbrain.search.service import SearchResponse, SearchResult, SearchService
 from jbrain.storage import FsBlobStore
 from tests.conftest import docker_available
 from tests.integration.test_rls import OWNER, UNSCOPED, database_url  # noqa: F401
@@ -105,6 +105,11 @@ async def search_as(
     return await service.search(ctx, q, domain, 20)
 
 
+def _notes(resp: SearchResponse) -> list[SearchResult]:
+    """These tests build only notes; narrow the (note|wiki) union for note-field assertions."""
+    return [r for r in resp.results if isinstance(r, SearchResult)]
+
+
 async def test_embed_note_handler_fills_only_null_embeddings(
     maker: async_sessionmaker[AsyncSession], tmp_path: Path
 ) -> None:
@@ -146,11 +151,11 @@ async def test_dense_ordering_follows_cosine_distance(
     # 'zzzqq' matches nothing in FTS, so ordering is purely the dense leg.
     resp = await search_as(maker, OWNER, "zzzqq", qvec=vec(1.0, 0.0))
     assert not resp.degraded
-    ordered = [r.note_id for r in resp.results if r.note_id in {closest, middle, farthest}]
+    ordered = [r.note_id for r in _notes(resp) if r.note_id in {closest, middle, farthest}]
     assert ordered == [closest, middle, farthest]
-    assert all(r.match == "semantic" for r in resp.results)
+    assert all(r.match == "semantic" for r in _notes(resp))
     # Dense-only snippets are the chunk text, no <mark>s.
-    assert resp.results[0].snippet == "alpha topic"
+    assert _notes(resp)[0].snippet == "alpha topic"
 
 
 async def test_fts_relevance_headline_and_degraded_mode(
@@ -163,9 +168,9 @@ async def test_fts_relevance_headline_and_degraded_mode(
 
     resp = await search_as(maker, OWNER, "maple syrup", fail_embed=True)
     assert resp.degraded  # embed down -> FTS-only, never an error
-    note_ids = [r.note_id for r in resp.results]
+    note_ids = [r.note_id for r in _notes(resp)]
     assert hit_note in note_ids
-    top = next(r for r in resp.results if r.note_id == hit_note)
+    top = next(r for r in _notes(resp) if r.note_id == hit_note)
     assert top.match == "keyword"
     assert "<mark>maple</mark>" in top.snippet and "<mark>syrup</mark>" in top.snippet
     assert top.body_preview.startswith("pancake recipe")
@@ -182,7 +187,7 @@ async def test_chunk_in_both_legs_is_labeled_both(
     await plant_embedding(maker, note_id, vec(1.0))
 
     resp = await search_as(maker, OWNER, "budget spreadsheet", qvec=vec(1.0))
-    top = next(r for r in resp.results if r.note_id == note_id)
+    top = next(r for r in _notes(resp) if r.note_id == note_id)
     assert top.match == "both"
     assert "<mark>" in top.snippet  # FTS headline wins when both legs hit
 
@@ -204,20 +209,20 @@ async def test_search_respects_the_domain_firewall(
     # The dense leg has no distance cutoff, so other general-domain test
     # notes may ride along — the proof is that health rows never do.
     scoped = await search_as(maker, GENERAL_ONLY, "blood pressure", qvec=vec(1.0))
-    scoped_ids = {r.note_id for r in scoped.results}
+    scoped_ids = {r.note_id for r in _notes(scoped)}
     assert general_note in scoped_ids and health_note not in scoped_ids
-    assert all(r.domain == "general" for r in scoped.results)
+    assert all(r.domain == "general" for r in _notes(scoped))
 
     unscoped = await search_as(maker, UNSCOPED, "blood pressure", qvec=vec(1.0))
-    assert unscoped.results == []
+    assert _notes(unscoped) == []
 
     owner = await search_as(maker, OWNER, "blood pressure", qvec=vec(1.0))
-    assert {health_note, general_note} <= {r.note_id for r in owner.results}
+    assert {health_note, general_note} <= {r.note_id for r in _notes(owner)}
 
     # The domain param narrows further within the owner's full visibility.
     narrowed = await search_as(maker, OWNER, "blood pressure", qvec=vec(1.0), domain="health")
-    assert health_note in {r.note_id for r in narrowed.results}
-    assert all(r.domain == "health" for r in narrowed.results)
+    assert health_note in {r.note_id for r in _notes(narrowed)}
+    assert all(r.domain == "health" for r in _notes(narrowed))
 
 
 async def test_deleted_notes_are_excluded_from_both_legs(
@@ -235,4 +240,4 @@ async def test_deleted_notes_are_excluded_from_both_legs(
         )
 
     resp = await search_as(maker, OWNER, "zebra sighting", qvec=vec(1.0))
-    assert all(r.note_id != note_id for r in resp.results)
+    assert all(r.note_id != note_id for r in _notes(resp))
