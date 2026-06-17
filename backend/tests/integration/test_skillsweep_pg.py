@@ -57,8 +57,11 @@ async def _seed_skill(
     never surfaced) and a `last_surfaced_at`/`created_at` `age_days` ago (older = staler)."""
     stats = "'{}'::jsonb"
     if surfaced is not None:
+        # `cast(:surfaced AS integer)`, not `:surfaced::int` — SQLAlchemy's bind regex skips a
+        # `:param` immediately followed by `::` (it reads the `::` as a Postgres cast), which would
+        # leave the placeholder literal and break the SQL.
         stats = (
-            "jsonb_build_object('surfaced', :surfaced::int,"
+            "jsonb_build_object('surfaced', cast(:surfaced AS integer),"
             " 'last_surfaced_at', (now() - make_interval(days => :age)))"
         )
     async with scoped_session(maker, OWNER) as s:
