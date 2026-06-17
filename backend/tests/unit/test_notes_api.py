@@ -375,6 +375,22 @@ def test_note_responses_expose_analyzed(
     assert patched["analyzed"] is True
 
 
+def test_note_responses_expose_provenance(
+    client: tuple[TestClient, FakeNotesRepo, FakeJobQueue],
+) -> None:
+    c, repo, _ = client
+    # A captured note defaults to human provenance on every read path.
+    created = c.post("/api/notes", json={"client_id": "pv1", "body": "mine"}).json()
+    assert created["provenance"] == "human"
+    assert c.get("/api/notes").json()["notes"][0]["provenance"] == "human"
+
+    # An agent-authored note (enacted from a Proposal) carries provenance="agent"
+    # — the stream's "assistant" tag reads this, not the body.
+    repo.notes[0] = dataclasses.replace(repo.notes[0], provenance="agent")
+    assert c.get("/api/notes").json()["notes"][0]["provenance"] == "agent"
+    assert c.get(f"/api/notes/{created['id']}").json()["provenance"] == "agent"
+
+
 def test_create_note_emits_a_single_ingest_event_and_no_direct_enqueue(
     client: tuple[TestClient, FakeNotesRepo, FakeJobQueue],
     monkeypatch: pytest.MonkeyPatch,

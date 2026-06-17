@@ -357,6 +357,7 @@ function seedNote(
   // Settled fixtures default to fully analyzed; pipeline-stage fixtures
   // override this to exercise the lifecycle chip's intermediate states.
   analyzed = ingestState === "indexed",
+  provenance = "human",
 ): NoteOut {
   return {
     id: id("note"),
@@ -368,6 +369,7 @@ function seedNote(
     tz_offset_minutes: null,
     ingest_state: ingestState,
     analyzed,
+    provenance,
     hidden: false,
     attachments,
     latitude: null,

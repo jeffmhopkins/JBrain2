@@ -190,6 +190,9 @@ export interface NoteOut {
   ingest_state: string;
   /** True once the analyze_note job has written the note_analysis row. */
   analyzed: boolean;
+  /** "human" (owner-captured) or "agent" (enacted from a Proposal). Drives the
+   * stream's "assistant" tag; attribution is metadata, never body prose. */
+  provenance: string;
   /** Hidden from the home stream (still searchable); toggled via hide/unhide. */
   hidden: boolean;
   attachments: AttachmentOut[];

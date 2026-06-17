@@ -25,6 +25,7 @@ function noteOut(clientId: string): NoteOut {
     tz_offset_minutes: null,
     ingest_state: "pending",
     analyzed: false,
+    provenance: "human",
     hidden: false,
     attachments: [],
     latitude: null,

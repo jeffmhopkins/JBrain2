@@ -73,6 +73,9 @@ class NoteOut(BaseModel):
     # True once the integrate_note job has written the note_analysis row —
     # the client's lifecycle chip disappears on it.
     analyzed: bool
+    # 'human' or 'agent' — the stream tags agent-authored (Proposal-enacted)
+    # notes without polluting the body with attribution prose (ASSISTANT.md #7).
+    provenance: str
     attachments: list[AttachmentOut]
     # Location fields are owner-eyes metadata: Phase 7 scoped-token
     # serialization must exclude them from non-owner responses.
@@ -93,6 +96,7 @@ def note_out(n: NoteInfo) -> NoteOut:
         ingest_state=n.ingest_state,
         hidden=n.hidden,
         analyzed=n.analyzed,
+        provenance=n.provenance,
         attachments=[
             AttachmentOut(
                 id=a.id,

@@ -27,6 +27,9 @@ export interface NoteViewSource {
   ingestState: string | null;
   /** True once analysis finished — ends the header's lifecycle chip. */
   analyzed: boolean;
+  /** "human" or "agent"; a search-result fallback assumes "human" until the
+   * full note resolves. Drives the header's "assistant" tag. */
+  provenance: string;
   /** null = unknown (search-result fallback until the full note resolves). */
   attachments: StreamAttachment[] | null;
   attachmentCount: number;
@@ -43,6 +46,7 @@ export function noteViewFromItem(item: StreamItem): NoteViewSource {
     createdAt: item.createdAt,
     ingestState: item.ingestState,
     analyzed: item.analyzed,
+    provenance: item.provenance,
     attachments: item.attachments,
     attachmentCount: item.attachments.length,
     partial: false,
@@ -60,6 +64,7 @@ export function noteViewFromSearch(result: SearchResult): NoteViewSource {
     // suppresses the lifecycle chip, so analyzed=false is inert here.
     ingestState: null,
     analyzed: false,
+    provenance: "human",
     attachments: null,
     attachmentCount: result.attachment_count,
     partial: true,
@@ -369,6 +374,9 @@ export function NoteScreen({
             · {view.createdAt.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}
           </span>
           <IngestChip item={{ ...view, attachments: view.attachments ?? [] }} />
+          {view.provenance === "agent" && (
+            <span className="note-by-assistant">prepared by assistant</span>
+          )}
           {noteId !== null && (
             <button
               type="button"

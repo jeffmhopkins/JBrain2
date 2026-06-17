@@ -35,6 +35,7 @@ function fakeController(): NotesController {
   return {
     items: [],
     syncStatus: "synced",
+    refresh: vi.fn(async () => {}),
     send: vi.fn(async () => {}),
     update: vi.fn(async () => {}),
     remove: vi.fn(async () => {}),
@@ -175,6 +176,7 @@ function streamItem() {
     createdAt: new Date(),
     ingestState: "indexed",
     analyzed: true,
+    provenance: "human",
     attachments: [],
     pending: false,
     hidden: false,
