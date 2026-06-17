@@ -22,10 +22,13 @@ import type {
   ReviewItem,
   RunDetail,
   RunSummary,
+  SearchHit,
   SearchMatch,
   SearchResult,
   SweepTrigger,
   WikiArticleOut,
+  WikiLandingOut,
+  WikiSearchResult,
 } from "./client";
 
 const PRINCIPAL: Principal = {
@@ -742,9 +745,185 @@ const PRIYA_ARTICLE: WikiArticleOut = {
   ],
 };
 
+// A compact, valid article for the landing's secondary entries, so every row is
+// navigable in the mock (Priya is the rich worked example; these are stubs).
+function stubArticle(
+  id: string,
+  title: string,
+  kind: string,
+  domain: string,
+  blurb: string,
+): WikiArticleOut {
+  return {
+    id,
+    title,
+    subtitle: `${kind} · machine-written from your notes`,
+    infobox: { title, kind, fields: [] },
+    lead: [{ kind: "p", text: `${blurb}[1]` }],
+    sections: [],
+    references: [
+      {
+        n: 1,
+        note_id: `note-${id}-1`,
+        meta: "Note · 2024",
+        domain,
+        snippet: `captured in a note about <mark>${title}</mark>.`,
+      },
+    ],
+  };
+}
+
 const WIKI_ARTICLES: Record<string, WikiArticleOut> = {
   [PRIYA_ARTICLE.id]: PRIYA_ARTICLE,
+  "celine-hopkins": stubArticle(
+    "celine-hopkins",
+    "Celine Hopkins",
+    "Person",
+    "general",
+    "Software engineer at Globex; the owner's spouse.",
+  ),
+  "globex-corp": stubArticle(
+    "globex-corp",
+    "Globex Corporation",
+    "Organization",
+    "general",
+    "Tech company; Celine's employer since 2019.",
+  ),
+  "nair-pediatrics": stubArticle(
+    "nair-pediatrics",
+    "Nair Pediatrics",
+    "Organization",
+    "general",
+    "Priya's pediatric practice in Brookline, opened 2024.",
+  ),
+  brookline: stubArticle(
+    "brookline",
+    "Brookline",
+    "Place",
+    "general",
+    "Massachusetts town; where Priya lives and practices.",
+  ),
+  denver: stubArticle("denver", "Denver", "Place", "general", "Colorado city; Celine's home."),
 };
+
+// The wiki landing (docs/mocks/wiki-landing-a-search-rails.html): derived rails
+// over the article set — recently-updated, most-connected hubs, type index.
+const WIKI_LANDING: WikiLandingOut = {
+  recent: [
+    {
+      id: "priya-nair",
+      title: "Priya Nair",
+      kind: "Person",
+      domain: "general",
+      blurb: "Pediatrician; the owner's younger sister; founder of Nair Pediatrics.",
+      when: "updated 2h ago",
+    },
+    {
+      id: "globex-corp",
+      title: "Globex Corporation",
+      kind: "Organization",
+      domain: "general",
+      blurb: "Tech company; Celine's employer since 2019.",
+      when: "yesterday",
+    },
+    {
+      id: "brookline",
+      title: "Brookline",
+      kind: "Place",
+      domain: "general",
+      blurb: "Massachusetts town; where Priya lives and practices.",
+      when: "3 days ago",
+    },
+  ],
+  hubs: [
+    {
+      id: "celine-hopkins",
+      title: "Celine Hopkins",
+      kind: "Person",
+      domain: "general",
+      blurb: "Software engineer at Globex; the owner's spouse.",
+      links: 12,
+    },
+    {
+      id: "globex-corp",
+      title: "Globex Corporation",
+      kind: "Organization",
+      domain: "general",
+      blurb: "Tech company; Celine's employer since 2019.",
+      links: 9,
+    },
+    {
+      id: "brookline",
+      title: "Brookline",
+      kind: "Place",
+      domain: "general",
+      blurb: "Massachusetts town; where Priya lives and practices.",
+      links: 7,
+    },
+  ],
+  groups: [
+    {
+      type: "People",
+      entries: [
+        {
+          id: "celine-hopkins",
+          title: "Celine Hopkins",
+          kind: "Person",
+          domain: "general",
+          blurb: "Software engineer at Globex; the owner's spouse.",
+        },
+        {
+          id: "priya-nair",
+          title: "Priya Nair",
+          kind: "Person",
+          domain: "general",
+          blurb: "Pediatrician; the owner's younger sister; founder of Nair Pediatrics.",
+        },
+      ],
+    },
+    {
+      type: "Organizations",
+      entries: [
+        {
+          id: "globex-corp",
+          title: "Globex Corporation",
+          kind: "Organization",
+          domain: "general",
+          blurb: "Tech company; Celine's employer since 2019.",
+        },
+        {
+          id: "nair-pediatrics",
+          title: "Nair Pediatrics",
+          kind: "Organization",
+          domain: "general",
+          blurb: "Priya's pediatric practice in Brookline, opened 2024.",
+        },
+      ],
+    },
+    {
+      type: "Places",
+      entries: [
+        {
+          id: "brookline",
+          title: "Brookline",
+          kind: "Place",
+          domain: "general",
+          blurb: "Massachusetts town; where Priya lives and practices.",
+        },
+        {
+          id: "denver",
+          title: "Denver",
+          kind: "Place",
+          domain: "general",
+          blurb: "Colorado city; Celine's home.",
+        },
+      ],
+    },
+  ],
+};
+
+// Flat list of every article, for the search wiki leg (the type index covers all).
+const WIKI_INDEX = WIKI_LANDING.groups.flatMap((g) => g.entries);
 
 // ===== Phase 3 fixtures: analysis, entities, review, usage =====
 
@@ -1688,7 +1867,7 @@ const VALID_DOMAINS = new Set(["general", "health", "finance", "location"]);
 // literal <mark> around the first hit (exercising the UI's mark-splitting),
 // and a rotating match badge. `degraded!` anywhere in the query flips the
 // keyword-only degraded banner on.
-function mockSearch(params: URLSearchParams): { degraded: boolean; results: SearchResult[] } {
+function mockSearch(params: URLSearchParams): { degraded: boolean; results: SearchHit[] } {
   const rawQ = params.get("q") ?? "";
   const domain = params.get("domain");
   const limit = Number(params.get("limit") ?? "20");
@@ -1704,7 +1883,7 @@ function mockSearch(params: URLSearchParams): { degraded: boolean; results: Sear
   });
 
   const badges: SearchMatch[] = ["semantic", "keyword", "both"];
-  const results = matches.slice(0, limit).map((n, i): SearchResult => {
+  const noteHits = matches.slice(0, limit).map((n, i): SearchResult => {
     const term = terms.find((t) => n.body.toLowerCase().includes(t));
     const at = term ? n.body.toLowerCase().indexOf(term) : -1;
     const snippet =
@@ -1713,6 +1892,7 @@ function mockSearch(params: URLSearchParams): { degraded: boolean; results: Sear
         : n.body.slice(0, 140);
     const fromAttachment = n.attachments.length > 0 && i % 2 === 1;
     return {
+      kind: "note",
       note_id: n.id,
       chunk_id: id("chunk"),
       snippet,
@@ -1727,6 +1907,43 @@ function mockSearch(params: URLSearchParams): { degraded: boolean; results: Sear
       source_anchor: fromAttachment ? `${n.attachments[0]?.filename ?? "file"} · p.1` : null,
     };
   });
+
+  // The wiki leg: an article whose title/blurb matches a term ranks above note
+  // passages (an article usually out-answers a raw passage). Degraded = the
+  // semantic leg is down, so wiki articles (index-embedding-ranked) drop out.
+  const wikiHits: WikiSearchResult[] =
+    degraded || terms.length === 0
+      ? []
+      : WIKI_INDEX.filter((a) => {
+          if (domain && a.domain !== domain) return false;
+          const hay = `${a.title} ${a.blurb}`.toLowerCase();
+          return terms.some((t) => hay.includes(t));
+        }).map((a, i): WikiSearchResult => {
+          const hay = `${a.title} ${a.blurb}`;
+          const term = terms.find((t) => hay.toLowerCase().includes(t)) ?? "";
+          const at = hay.toLowerCase().indexOf(term);
+          const snippet =
+            at >= 0 && term
+              ? `${hay.slice(Math.max(0, at - 40), at)}<mark>${hay.slice(at, at + term.length)}</mark>${hay.slice(at + term.length, at + term.length + 60)}`
+              : a.blurb;
+          return {
+            kind: "wiki",
+            article_id: a.id,
+            title: a.title,
+            blurb: a.blurb,
+            entity_kind: a.kind,
+            domain: a.domain,
+            snippet,
+            match: "semantic",
+            score: 2 - i * 0.05,
+          };
+        });
+
+  // Merge by score (wiki articles score above note passages — the headline
+  // answer layer), then honor the same `limit` the real API applies.
+  const results: SearchHit[] = [...wikiHits, ...noteHits]
+    .sort((a, b) => b.score - a.score)
+    .slice(0, limit);
   return { degraded, results };
 }
 
@@ -1998,6 +2215,10 @@ export const mockFetch: typeof fetch = async (input, init) => {
   if (entityMatch && method === "GET") {
     const entity = ENTITIES[decodeURIComponent(entityMatch[1] ?? "")];
     return entity ? json(entity) : json({ detail: "entity not found" }, 404);
+  }
+
+  if (path === "/api/wiki/landing" && method === "GET") {
+    return json(WIKI_LANDING);
   }
 
   const wikiMatch = path.match(/^\/api\/wiki\/([^/]+)$/);

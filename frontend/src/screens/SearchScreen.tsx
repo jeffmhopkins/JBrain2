@@ -5,8 +5,15 @@
 // reorder results.
 
 import { type FormEvent, useEffect, useRef, useState } from "react";
-import { type SearchOut, type SearchResult, api } from "../api/client";
+import {
+  type SearchHit,
+  type SearchOut,
+  type SearchResult,
+  type WikiSearchResult,
+  api,
+} from "../api/client";
 import { ClipIcon, SearchIcon } from "../components/icons";
+import { EntityTypeIcon } from "../entities/kinds";
 import { dayLabel } from "../notes/grouping";
 import { DOMAIN_COLOR, DOMAIN_TITLE } from "../notes/modes";
 import { splitMarks } from "../search/marks";
@@ -51,13 +58,15 @@ type SearchState =
 
 interface SearchScreenProps {
   onOpenResult: (result: SearchResult) => void;
+  /** Open a wiki article hit in the reader. */
+  onOpenWiki: (articleId: string) => void;
   /** Injectable for tests; defaults to the real client. */
   search?: (q: string, domain?: string) => Promise<SearchOut>;
 }
 
 const DEBOUNCE_MS = 250;
 
-export function SearchScreen({ onOpenResult, search }: SearchScreenProps) {
+export function SearchScreen({ onOpenResult, onOpenWiki, search }: SearchScreenProps) {
   const doSearch = search ?? ((q: string, domain?: string) => api.search(q, domain));
   const [query, setQuery] = useState("");
   const [domain, setDomain] = useState<string | null>(null);
@@ -141,41 +150,83 @@ export function SearchScreen({ onOpenResult, search }: SearchScreenProps) {
           {state.out.results.length === 0 && (
             <p className="search-empty">nothing matched “{state.query}” — try different words.</p>
           )}
-          {state.out.results.map((result) => (
-            <button
-              key={result.chunk_id}
-              type="button"
-              className="result-card"
-              onClick={() => onOpenResult(result)}
-            >
-              <span className="result-head">
-                <span
-                  className="domain-dot"
-                  style={{ background: DOMAIN_COLOR[result.domain] ?? "var(--steel)" }}
-                  title={DOMAIN_TITLE[result.domain] ?? result.domain}
-                />
-                <span className="result-date">
-                  {dayLabel(new Date(result.created_at))}
-                  {result.destination ? ` · ${result.destination}` : ""}
-                </span>
-                <MatchBadge match={result.match} />
-              </span>
-              <Snippet snippet={result.snippet} />
-              <span className="result-context">
-                <span className="result-preview">{result.body_preview}</span>
-                {result.attachment_count > 0 && (
-                  <span className="result-attachments">
-                    <ClipIcon size={13} /> {result.attachment_count}
-                  </span>
-                )}
-                {result.source_anchor && (
-                  <span className="result-anchor">{result.source_anchor}</span>
-                )}
-              </span>
-            </button>
-          ))}
+          {state.out.results.map((hit) =>
+            hit.kind === "wiki" ? (
+              <WikiResultCard key={`wiki-${hit.article_id}`} hit={hit} onOpen={onOpenWiki} />
+            ) : (
+              <NoteResultCard key={hit.chunk_id} hit={hit} onOpen={onOpenResult} />
+            ),
+          )}
         </>
       )}
     </main>
+  );
+}
+
+/** The small "Note" / "Wiki" badge that labels each result's source layer. */
+function TypeBadge({ kind }: { kind: SearchHit["kind"] }) {
+  return (
+    <span className={`result-type result-type-${kind}`}>{kind === "wiki" ? "Wiki" : "Note"}</span>
+  );
+}
+
+function NoteResultCard({
+  hit,
+  onOpen,
+}: { hit: SearchResult; onOpen: (result: SearchResult) => void }) {
+  return (
+    <button type="button" className="result-card" onClick={() => onOpen(hit)}>
+      <span className="result-head">
+        <span
+          className="domain-dot"
+          style={{ background: DOMAIN_COLOR[hit.domain] ?? "var(--steel)" }}
+          title={DOMAIN_TITLE[hit.domain] ?? hit.domain}
+        />
+        <span className="result-date">
+          {dayLabel(new Date(hit.created_at))}
+          {hit.destination ? ` · ${hit.destination}` : ""}
+        </span>
+        <TypeBadge kind="note" />
+        <MatchBadge match={hit.match} />
+      </span>
+      <Snippet snippet={hit.snippet} />
+      <span className="result-context">
+        <span className="result-preview">{hit.body_preview}</span>
+        {hit.attachment_count > 0 && (
+          <span className="result-attachments">
+            <ClipIcon size={13} /> {hit.attachment_count}
+          </span>
+        )}
+        {hit.source_anchor && <span className="result-anchor">{hit.source_anchor}</span>}
+      </span>
+    </button>
+  );
+}
+
+/** A wiki-article hit: the headline answer layer — type disc + title + blurb, with
+ * the matched body snippet beneath. Tapping opens the reader. */
+function WikiResultCard({
+  hit,
+  onOpen,
+}: { hit: WikiSearchResult; onOpen: (articleId: string) => void }) {
+  return (
+    <button
+      type="button"
+      className="result-card result-card-wiki"
+      onClick={() => onOpen(hit.article_id)}
+    >
+      <span className="result-head">
+        <TypeBadge kind="wiki" />
+        <MatchBadge match={hit.match} />
+      </span>
+      <span className="result-wiki-main">
+        <EntityTypeIcon kind={hit.entity_kind} size={34} />
+        <span className="result-wiki-tx">
+          <span className="result-wiki-title">{hit.title}</span>
+          <span className="result-wiki-blurb">{hit.blurb}</span>
+        </span>
+      </span>
+      <Snippet snippet={hit.snippet} />
+    </button>
   );
 }

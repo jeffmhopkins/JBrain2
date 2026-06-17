@@ -8973,3 +8973,230 @@ input.ld-title {
   margin-top: 10px;
   line-height: 1.5;
 }
+
+/* ===== Wiki landing (Phase 6, Wave B2a — docs/mocks/wiki-landing-a-*.html) ===== */
+/* Search-first home over the article set: a search box, the read-only line, then
+   three derived rails (recently-updated cards, hub list, type index). Retokenized
+   from the chosen mock (no raw hex). */
+
+.wiki-search-box {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 0 13px;
+  color: var(--text-3);
+}
+
+.wiki-search-box input {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: 0;
+  outline: none;
+  color: var(--text);
+  font-size: var(--fs-secondary);
+  padding: 11px 0;
+}
+
+.wiki-search-box input::placeholder {
+  color: var(--text-3);
+}
+
+/* The landing's read-only line is inline (no pill background, unlike the reader). */
+.wiki-ro-landing {
+  background: transparent;
+  padding: 0;
+  margin: 11px 0 4px;
+}
+
+.wiki-railhead {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 18px 0 9px;
+  font-size: var(--fs-micro);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-2);
+}
+
+.wiki-railhead svg {
+  color: var(--text-3);
+}
+
+/* Recently-updated: a horizontally-scrolling card strip, bleeding to the edges. */
+.wiki-hrail {
+  display: flex;
+  gap: 10px;
+  overflow-x: auto;
+  padding: 0 16px 4px;
+  margin: 0 -16px;
+}
+
+.wiki-ucard {
+  flex: 0 0 150px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 7px;
+  text-align: left;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 11px;
+  cursor: pointer;
+}
+
+.wiki-ucard-t {
+  font-weight: 600;
+  font-size: var(--fs-secondary);
+  line-height: 1.2;
+}
+
+.wiki-ucard-when {
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+}
+
+/* Hub + index rows share the row chrome. */
+.wiki-lrow {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  padding: 9px 0;
+  cursor: pointer;
+  color: var(--text);
+}
+
+.wiki-lrow-tx {
+  flex: 1;
+  min-width: 0;
+}
+
+.wiki-lrow-t {
+  display: block;
+  font-weight: 600;
+  font-size: var(--fs-secondary);
+}
+
+.wiki-lrow-blurb {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: var(--fs-head);
+  color: var(--text-2);
+  line-height: 1.35;
+  margin-top: 1px;
+}
+
+.wiki-lrow-cnt {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex: 0 0 auto;
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+}
+
+/* Type index: collapsible groups, A–Z within. */
+.wiki-grp {
+  margin-top: 8px;
+}
+
+.wiki-grphead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  padding: 6px 0;
+  cursor: pointer;
+  color: var(--text);
+}
+
+.wiki-grphead svg {
+  color: var(--text-3);
+  transition: transform 0.15s;
+  transform: rotate(90deg);
+}
+
+.wiki-grp-closed .wiki-grphead svg {
+  transform: rotate(0deg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wiki-grphead svg {
+    transition: none;
+  }
+}
+
+.wiki-gt {
+  flex: 1;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: var(--fs-head);
+}
+
+.wiki-gc {
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+}
+
+/* ===== Search wiki leg (Phase 6, Wave B2a) ===== */
+/* The Note/Wiki type badge that labels each result's source layer. */
+.result-type {
+  font-size: var(--fs-micro);
+  border-radius: var(--r-pill);
+  padding: 2px 9px;
+  background: var(--surface-2);
+  color: var(--text-2);
+}
+
+.result-type-wiki {
+  background: var(--steel-tint);
+  color: var(--steel);
+}
+
+/* A wiki-article hit: the headline answer card (disc + title + blurb). */
+.result-card-wiki .match-badge {
+  margin-left: auto;
+}
+
+.result-wiki-main {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+}
+
+.result-wiki-tx {
+  flex: 1;
+  min-width: 0;
+}
+
+.result-wiki-title {
+  display: block;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: var(--fs-secondary);
+  font-weight: 600;
+}
+
+.result-wiki-blurb {
+  display: block;
+  font-size: var(--fs-head);
+  color: var(--text-2);
+  line-height: 1.35;
+  margin-top: 1px;
+}

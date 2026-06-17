@@ -438,6 +438,7 @@ describe("NoteScreen", () => {
 
   it("a search opening starts from the preview, then resolves the full note", async () => {
     const result: SearchResult = {
+      kind: "note",
       note_id: "n1",
       chunk_id: "c1",
       snippet: "snippet",

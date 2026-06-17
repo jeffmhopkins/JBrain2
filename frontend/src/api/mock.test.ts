@@ -13,6 +13,8 @@ import type {
   ReviewItem,
   ReviewQueue,
   SearchOut,
+  WikiArticleOut,
+  WikiLandingOut,
 } from "./client";
 import { mockFetch } from "./mock";
 
@@ -45,6 +47,38 @@ describe("mock API", () => {
     const res = await call("/api/search?q=vitamin&domain=finance");
     const out = (await res.json()) as SearchOut;
     expect(out.results.every((r) => r.domain === "finance")).toBe(true);
+  });
+
+  it("the search wiki leg returns a matching article ranked above note passages", async () => {
+    // "denver" matches exactly one article's title/blurb; a wiki hit outscores
+    // any note passage, so it heads the merged list.
+    const res = await call("/api/search?q=denver");
+    const out = (await res.json()) as SearchOut;
+    const first = out.results[0];
+    expect(first?.kind).toBe("wiki");
+    if (first?.kind === "wiki") {
+      expect(first.title).toBe("Denver");
+      expect(first.article_id).toBe("denver");
+    }
+  });
+
+  it("degraded mode drops the wiki leg (the semantic index is down)", async () => {
+    const res = await call("/api/search?q=degraded!%20globex");
+    const out = (await res.json()) as SearchOut;
+    expect(out.results.some((r) => r.kind === "wiki")).toBe(false);
+  });
+
+  it("serves the wiki landing rails, and 'landing' is not swallowed by /api/wiki/:id", async () => {
+    const res = await call("/api/wiki/landing");
+    const landing = (await res.json()) as WikiLandingOut;
+    expect(landing.recent.length).toBeGreaterThan(0);
+    expect(landing.hubs.length).toBeGreaterThan(0);
+    expect(landing.groups.length).toBeGreaterThan(0);
+    // Every landing entry resolves to a real article (all rows are navigable).
+    for (const entry of landing.groups.flatMap((g) => g.entries)) {
+      const article = (await (await call(`/api/wiki/${entry.id}`)).json()) as WikiArticleOut;
+      expect(article.id).toBe(entry.id);
+    }
   });
 
   it("accepts capture location on create and echoes it back", async () => {

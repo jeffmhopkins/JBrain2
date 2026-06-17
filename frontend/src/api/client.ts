@@ -688,7 +688,10 @@ export interface WikiArticleOut {
 
 export type SearchMatch = "semantic" | "keyword" | "both";
 
+/** A note/passage hit — the Phase-2 result shape. `kind: "note"` discriminates it
+ * from the wiki leg in the merged result list. */
 export interface SearchResult {
+  kind: "note";
   note_id: string;
   chunk_id: string;
   snippet: string;
@@ -703,9 +706,68 @@ export interface SearchResult {
   source_anchor: string | null;
 }
 
+/** A wiki-article hit from the search wiki leg (dense over `wiki_index` + FTS over
+ * `wiki_revisions.body_tsv`, RLS-scoped server-side). Articles usually out-answer a
+ * raw passage, so they rank as the headline result above note hits. */
+export interface WikiSearchResult {
+  kind: "wiki";
+  article_id: string;
+  title: string;
+  /** The 1–2 sentence `lead_summary` blurb, shown under the title. */
+  blurb: string;
+  /** Entity kind → the type disc/glyph (people=steel, orgs=violet, …). */
+  entity_kind: string;
+  /** The matched section's domain — drives the domain chip. */
+  domain: string;
+  /** The matched body snippet; may carry literal <mark> around the matched words. */
+  snippet: string;
+  match: SearchMatch;
+  score: number;
+}
+
+/** One row in the merged result list: a note passage or a wiki article. */
+export type SearchHit = SearchResult | WikiSearchResult;
+
 export interface SearchOut {
   degraded: boolean;
-  results: SearchResult[];
+  results: SearchHit[];
+}
+
+// ----- The wiki landing (Phase 6, Wave B2a — docs/mocks/wiki-landing-a-*.html) -----
+
+/** A landing entry: an article reference rendered as a row/card. */
+export interface WikiLandingEntry {
+  id: string;
+  title: string;
+  /** Entity kind → the type disc/glyph + accent. */
+  kind: string;
+  /** The matched section/article domain (drives nothing visible yet; kept for parity). */
+  domain: string;
+  /** The per-article `lead_summary` blurb (≤2 lines, clamped in CSS). */
+  blurb: string;
+}
+
+/** "Recently updated" carries a human "when" line from the last build. */
+export interface WikiRecentEntry extends WikiLandingEntry {
+  when: string;
+}
+
+/** "Most connected" carries the inbound link count (computed post-RLS). */
+export interface WikiHubEntry extends WikiLandingEntry {
+  links: number;
+}
+
+/** "Browse by type": the canonical type label + its A–Z entries. */
+export interface WikiTypeGroup {
+  type: string;
+  entries: WikiLandingEntry[];
+}
+
+/** The wiki landing payload: search-first rails over the article set. */
+export interface WikiLandingOut {
+  recent: WikiRecentEntry[];
+  hubs: WikiHubEntry[];
+  groups: WikiTypeGroup[];
 }
 
 export class ApiError extends Error {
@@ -939,7 +1001,14 @@ export const api = {
     return (await response.json()) as EntityOut;
   },
 
-  // ----- The wiki reader: one machine-written article, read-only -----
+  // ----- The wiki: a machine-written, read-only encyclopedia -----
+  /** The landing rails: recently-updated, most-connected hubs, and the
+   * type-grouped index — all derived (no hand-maintained taxonomy). */
+  async getWikiLanding(): Promise<WikiLandingOut> {
+    const response = await request("/api/wiki/landing");
+    return (await response.json()) as WikiLandingOut;
+  },
+
   async getWikiArticle(id: string): Promise<WikiArticleOut> {
     const response = await request(`/api/wiki/${encodeURIComponent(id)}`);
     return (await response.json()) as WikiArticleOut;
