@@ -31,6 +31,7 @@ from jbrain.schema import get_registry
 from jbrain.settings_store import SqlSettingsStore
 from jbrain.storage import FsBlobStore
 from jbrain.usage import SqlUsageRecorder
+from jbrain.wiki.actions import WIKI_SPECS, wiki_handlers
 from jbrain.workflow import dispatcher, scheduler
 from jbrain.workflow.eval_scorer import build_live_scorer, eval_run_handler
 from jbrain.workflow.evalaction import EVAL_RUN_SPEC
@@ -277,6 +278,12 @@ async def run() -> None:
         # actions it lives in-code only — NOT in the app.actions seed — so the 0035
         # seed-lockstep holds (the seed projection + nightly schedule are H·B).
         "eval_run": eval_run_handler(maker, build_live_scorer(router)),
+        # The wiki builder (Phase-6 Wave C2a): dirty-bit-driven article build + reindex +
+        # prune. In-code only (not in the app.actions seed); a migration seeds the schedules.
+        # C2a uses the deterministic StubRewriter; C2b injects the LLM rewriter here.
+        **wiki_handlers(
+            maker, embed=TeiEmbedClient(settings.embed_url), embedding_model=settings.embed_model
+        ),
     }
     # Build the dispatch table from the action registry (W0.1): an action without
     # a handler — or a handler with no registered action — fails the worker LOUDLY
@@ -294,6 +301,7 @@ async def run() -> None:
             scheduler.RECONCILE_PENDING_INTEGRATION_ACTION,
             scheduler.RECONCILE_UNEMBEDDED_NOTES_ACTION,
             EVAL_RUN_SPEC,
+            *WIKI_SPECS,
         )
     )
     handlers = registry.dispatch_table(impls)

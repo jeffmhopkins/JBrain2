@@ -18,6 +18,7 @@ from sqlalchemy.pool import NullPool
 
 from jbrain import queue
 from jbrain.db.session import scoped_session
+from jbrain.wiki.actions import WIKI_SPECS
 from jbrain.workflow.evalaction import EVAL_RUN_SPEC
 from jbrain.workflow.registry import ACTION_SPECS, build_registry
 from jbrain.workflow.scheduler import (
@@ -52,6 +53,7 @@ def _registry():  # noqa: ANN202
             RECONCILE_PENDING_INTEGRATION_ACTION,
             RECONCILE_UNEMBEDDED_NOTES_ACTION,
             EVAL_RUN_SPEC,
+            *WIKI_SPECS,
         )
     )
 
@@ -278,6 +280,8 @@ async def test_seeded_nightly_sweeps_exist_and_are_fireable(maker: async_session
         "nightly_sync_predicates",
         "nightly_purge_deleted_artifacts",
         "nightly_eval_run",
+        "nightly_wiki_refresh",
+        "nightly_wiki_prune",
     }
     # Fire the consolidate sweep on demand and confirm a job lands.
     trig = next(r.id for r in rows if r.pipeline == "nightly_consolidate_predicates")
