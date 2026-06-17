@@ -437,6 +437,40 @@ async def test_held_fact_does_not_supersede_an_existing_active_fact(maker, tmp_p
     assert held[0].statement == "Acme: new"
 
 
+async def test_conflict_card_carries_the_editable_proposed_fact(maker, tmp_path):  # noqa: F811
+    # A conflict/collision card must carry the structured proposed fact (predicate,
+    # value, modality, kind) — not only the fact_a/fact_b ids — so the review screen
+    # can correct it IN PLACE, the common correct-in-place path every fact-bearing
+    # card now shares (docs/DESIGN.md "Edit model").
+    ent_id, active_id = await _seed_active_fact(maker, predicate="industry", statement="Acme: old")
+    note_id = await make_note(maker, domain="general", body="Acme industry notes.")
+    await ingest(maker, note_id, tmp_path)
+    # Resolve to the existing Acme; a surface-attested, different value collides with
+    # the active attribute → both held behind one attribute_collision card.
+    intent = _intent(
+        note_id,
+        [EntityResolution(mention_ref="m1", mode="existing", proposed_entity_id=ent_id)],
+        [_fact("m1", statement="Acme: fintech now", value_json={"value": "fintech"})],
+    )
+    plan = plan_intent(intent, signals={0: _SURFACE})
+    await _run(maker, note_id, intent, plan, tmp_path=tmp_path)
+
+    async with scoped_session(maker, SYSTEM_CTX) as session:
+        card = (
+            await session.execute(
+                select(ReviewItem).where(ReviewItem.kind == "attribute_collision")
+            )
+        ).scalar_one()
+    p = card.payload
+    # The verbatim pick (fact_a/fact_b) AND the structured fields the editor reads.
+    assert p["fact_a"] == active_id and p["fact_b"]
+    assert p["predicate"] == "industry"
+    assert p["fact_kind"] == "attribute"
+    assert p["assertion"] == "asserted"
+    assert p["value_json"] == {"value": "fintech"}
+    assert p["statement"] == "Acme: fintech now"
+
+
 async def test_held_fact_is_idempotent_across_reanalysis(maker, tmp_path):  # noqa: F811
     # Real reprocessing resolves a mention to the SAME existing entity (the agent
     # sees it in graph context, so mode="existing"), so re-running must refresh the

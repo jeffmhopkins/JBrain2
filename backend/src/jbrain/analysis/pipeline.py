@@ -2191,6 +2191,12 @@ class AnalysisPipeline:
                 update(Fact).where(Fact.id == uuid.UUID(old_id)).values(status="pending_review")
             )
         if decision.review_kind is not None:
+            # Structured fields mirroring the inference card, so a conflict/collision
+            # is correctable IN PLACE (predicate + value + modality) and not only by
+            # picking fact_a/fact_b verbatim — an edit files a correction note (the #7
+            # channel), never a hand-written fact. The editable side is fact_b, the
+            # value this note proposes. enum_values rides only for a typed predicate.
+            enum_members = get_registry().enum_values_for(fact.predicate)
             session.add(
                 ReviewItem(
                     kind=decision.review_kind,
@@ -2198,6 +2204,12 @@ class AnalysisPipeline:
                         "fact_a": decision.conflicting_id,
                         "fact_b": str(new_fact_id),
                         "predicate": fact.predicate,
+                        "qualifier": fact.qualifier,
+                        "fact_kind": fact.kind,
+                        "assertion": fact.assertion,
+                        "statement": fact.statement,
+                        "value_json": fact.value_json,
+                        **({"enum_values": list(enum_members)} if enum_members else {}),
                         "note_id": str(note_id),
                         # The subject the card is about, so the review UI groups
                         # this conflict under its entity instead of the catch-all

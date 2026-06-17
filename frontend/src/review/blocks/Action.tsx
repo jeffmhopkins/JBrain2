@@ -33,21 +33,26 @@ export function inferenceCorrection(item: ReviewItem, parsed: Parsed, inf: Infer
 
 /** The polymorphic decision block: the correction-note composer, then the
  * controls a pending item offers (new_predicate map/keep/rename/dismiss, an
- * inference's approve/reject, or the generic choose-among-proposals), or — in
- * the decided lane — the record of what was decided. */
+ * inference's approve/reject, a conflict/collision's choose-among-proposals that
+ * becomes apply/discard once edited in place, or the generic
+ * choose-among-proposals), or — in the decided lane — the record of what was
+ * decided. */
 export const Action: ReviewBlock = ({ ctx }) => {
   const { item, parsed, lane, queue, armed, tap, onClose, onAdvance, inference, composing, draft } =
     ctx;
   const proposals = proposalsFor(parsed);
 
-  function choose(proposal: Proposal) {
+  // Resolve via a proposal the card advertises (data, not a per-kind branch).
+  // Fact-bearing cards advance to the next item (triage flow); the rest return
+  // to the list. A destructive proposal arms a confirm-tap first.
+  function choose(proposal: Proposal, advance: boolean) {
     const key = `prop-${proposal.action}`;
     if (proposal.destructive && !tap(key)) return;
     queue.resolve(item.id, proposal.action, {
       choice: proposal.label,
       ...(proposal.payload ?? {}),
     });
-    onClose();
+    advance ? onAdvance() : onClose();
   }
 
   function fileCorrection() {
@@ -56,18 +61,19 @@ export const Action: ReviewBlock = ({ ctx }) => {
     onClose();
   }
 
-  function approveInference() {
-    if (inference.edited) {
-      queue.correct(item.id, inferenceCorrection(item, parsed, inference));
-    } else {
-      queue.resolve(item.id, "accept", { choice: "approve" });
-    }
+  // An edited proposed fact (any editable card — inference, conflict, collision)
+  // files a correction note instead of a verbatim pick: the #7 channel, never a
+  // hand-written fact. Discard reverts the edit so the card's proposals return.
+  function approveCorrection() {
+    queue.correct(item.id, inferenceCorrection(item, parsed, inference));
     onAdvance();
   }
-  function rejectInference() {
-    if (parsed.rejectDestructive && !tap("inf-reject")) return;
-    queue.resolve(item.id, "reject", { choice: "reject" });
-    onAdvance();
+  function discardEdit() {
+    inference.setEditValue(inference.originalValue);
+    inference.setEditPredicate(inference.originalPredicate);
+    inference.setEditModality(inference.originalModality);
+    inference.setEditingValue(false);
+    inference.setEditingPredicate(false);
   }
 
   if (lane !== "pending") return <DecidedRecord item={item} parsed={parsed} />;
@@ -102,6 +108,9 @@ export const Action: ReviewBlock = ({ ctx }) => {
           </div>
         </div>
       )}
+      {/* new_predicate edits a predicate MAPPING (not a value), so it keeps its
+          own control. Every other fact-bearing card shares one path: edit the
+          proposed fact -> approve correction; else pick among its proposals. */}
       {item.kind === "new_predicate" ? (
         <NewPredicateCard
           parsed={parsed}
@@ -125,54 +134,68 @@ export const Action: ReviewBlock = ({ ctx }) => {
             onClose();
           }}
         />
-      ) : inference.isInference ? (
+      ) : inference.editable && inference.edited ? (
         <div className="rinf-actions">
-          <button
-            type="button"
-            className={`rinf-approve${inference.edited ? " correction" : ""}`}
-            onClick={approveInference}
-          >
-            {inference.edited ? "approve correction" : "approve"}
+          <button type="button" className="rinf-approve correction" onClick={approveCorrection}>
+            approve correction
           </button>
-          <button
-            type="button"
-            className={`rinf-reject${armed === "inf-reject" ? " armed" : ""}`}
-            onClick={rejectInference}
-          >
-            {armed === "inf-reject" ? "tap again — discard" : "reject — discard"}
+          <button type="button" className="rinf-reject" onClick={discardEdit}>
+            discard edit
           </button>
         </div>
       ) : (
-        <>
-          <h3 className="section-header">choose among proposals</h3>
-          <div className="rproposals">
-            {proposals.map((proposal) => {
-              const key = `prop-${proposal.action}`;
-              const isArmed = armed === key;
-              return (
-                <button
-                  key={proposal.action}
-                  type="button"
-                  className={`rprop${proposal.destructive ? " rprop-destructive" : ""}${
-                    isArmed ? " armed" : ""
-                  }`}
-                  onClick={() => choose(proposal)}
-                >
-                  <span className="rprop-label">
-                    {isArmed ? "tap again — this is permanent" : proposal.label}
-                  </span>
-                  {!isArmed && proposal.detail !== null && (
-                    <span className="rprop-detail">{proposal.detail}</span>
-                  )}
-                </button>
-              );
-            })}
-          </div>
-        </>
+        <Proposals
+          proposals={proposals}
+          armed={armed}
+          onChoose={(p) => choose(p, inference.editable)}
+        />
       )}
     </>
   );
 };
+
+/** The proposals a pending card advertises, as stacked buttons. One renderer for
+ * every kind that picks among values (a conflict's accept_a/accept_b, an
+ * inference's approve/reject, a merge's accept/reject) — the difference is the
+ * data the card carries, not the control. A destructive proposal shows its
+ * armed confirm copy. */
+function Proposals({
+  proposals,
+  armed,
+  onChoose,
+}: {
+  proposals: Proposal[];
+  armed: string | null;
+  onChoose: (proposal: Proposal) => void;
+}) {
+  return (
+    <>
+      <h3 className="section-header">choose among proposals</h3>
+      <div className="rproposals">
+        {proposals.map((proposal) => {
+          const isArmed = armed === `prop-${proposal.action}`;
+          return (
+            <button
+              key={proposal.action}
+              type="button"
+              className={`rprop${proposal.destructive ? " rprop-destructive" : ""}${
+                isArmed ? " armed" : ""
+              }`}
+              onClick={() => onChoose(proposal)}
+            >
+              <span className="rprop-label">
+                {isArmed ? "tap again — this is permanent" : proposal.label}
+              </span>
+              {!isArmed && proposal.detail !== null && (
+                <span className="rprop-detail">{proposal.detail}</span>
+              )}
+            </button>
+          );
+        })}
+      </div>
+    </>
+  );
+}
 
 /** The decided record for a new_predicate card — Direction C (docs/mocks/
  * decided-view-mockups.html): a before→after diff of the change the decision
