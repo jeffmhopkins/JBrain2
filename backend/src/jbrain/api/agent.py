@@ -37,7 +37,10 @@ from jbrain.api.notes import ctx_for
 from jbrain.api.settings import get_settings_store
 from jbrain.auth.service import PrincipalInfo
 from jbrain.db.session import SessionContext
+from jbrain.devices.repo import SqlDeviceRepo
 from jbrain.llm import AssistantMessage, LlmMessage, LlmRouter, UserMessage
+from jbrain.locations import LocationToolRefusal, SqlLocationRepo
+from jbrain.locations.presence import presence_block, read_owner_presence
 
 log = structlog.get_logger()
 
@@ -91,6 +94,44 @@ def get_skill_service(request: Request) -> SkillService:
 
 def get_agent_transcript(request: Request) -> AgentTranscript:
     return cast(AgentTranscript, request.app.state.agent_transcript)
+
+
+def get_location_repo(request: Request) -> SqlLocationRepo:
+    return cast(SqlLocationRepo, request.app.state.location_repo)
+
+
+def get_device_repo(request: Request) -> SqlDeviceRepo:
+    return cast(SqlDeviceRepo, request.app.state.device_repo)
+
+
+async def _presence_block(
+    request: Request, owner_ctx: SessionContext, session: AgentSessionInfo
+) -> str:
+    """The data-framed owner-presence line to prepend to the conversation (L7b), or
+    "" when none. Owner-GATED and freshness-honest, mirroring the skills block's
+    data/instruction boundary (a prepended data-framed `UserMessage`, NOT the system
+    prompt — `run_stream` hardcodes `system=SYSTEM_PROMPT`, so a system injection
+    would silently no-op in streaming).
+
+    Two gates make it absent for a narrowed/non-owner session: the session must hold
+    the `location` scope (a health-only chat gets nothing), and the read itself runs
+    under the FULL owner ctx through `read_owner_presence`, which calls
+    `require_full_owner`. Best-effort — a presence read failure never breaks a turn,
+    it just injects no line."""
+    if "location" not in session.domain_scopes:
+        return ""
+    try:
+        presence = await read_owner_presence(
+            get_location_repo(request), get_device_repo(request), owner_ctx
+        )
+    except LocationToolRefusal:
+        # The session is not a full owner for location — inject nothing (the gate
+        # held; presence is simply unavailable here).
+        return ""
+    except Exception as exc:  # noqa: BLE001 - a presence read hiccup must not break the turn
+        log.warning("agent.presence_failed", error=repr(exc))
+        return ""
+    return presence_block(presence)
 
 
 async def _record_episode(
@@ -240,6 +281,15 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
             await runlog.stamp_skill_version(
                 owner_ctx, run_id, skill_version=",".join(f"{h.name}@v{h.version}" for h in hits)
             )
+    # L7b: prepend the owner's coarse presence as a DATA-framed UserMessage, exactly
+    # like the skills block above (same data/instruction boundary) — NOT the system
+    # prompt (run_stream hardcodes SYSTEM_PROMPT, so a system injection would no-op in
+    # streaming). Owner-gated: absent unless the session holds the `location` scope,
+    # and the read runs under the FULL owner ctx (require_full_owner), so a narrowed
+    # session never gets a presence line. Names + times only, freshness-honest.
+    presence = await _presence_block(request, owner_ctx, session)
+    if presence:
+        conversation = [UserMessage(text=presence), *conversation]
     # The owner's display zone so the agent's time prose matches the cards (which
     # the client localizes); None = UTC. Read on the owner ctx, not the narrowed
     # read ctx — a preference, not domain data.

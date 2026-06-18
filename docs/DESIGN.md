@@ -788,6 +788,22 @@ coordinate** (this is why neither needs a basemap):
   The panel is a regular surface element (not a modal): it follows the inline-expansion
   paradigm, collapsed/expanded by its header.
 
+- **App-open presence toast (L7b — chosen Option C).** On app/chat open a small
+  **corner toast** rises bottom-anchored above the nav (the existing toast paradigm —
+  bottom-anchored, auto-dismiss, single action), showing the owner's OWN latest place.
+  It is **freshness-honest**: a fresh fix reads teal "Currently at <place>"; a stale
+  fix reads amber "Last known: <place> · N ago · may have moved", **never "here now"**.
+  It self-dismisses after a few seconds and carries one **"open"** action (jump to the
+  Locations surface); it is **absent entirely when there is no usable fix**. Names +
+  times only — no coordinate. This is a **distinct presence toast**, NOT the
+  connectivity status banner DESIGN reserves for sync state (it uses `role`/live-region
+  semantics via an `<output>` element). The toast reads `GET /api/locations/presence`
+  (owner + full-owner gated). The SAME presence read also reaches the assistant — but
+  as a **data-framed `UserMessage` prepended to the conversation** in
+  `api/agent.py::_conversation` (mirroring the Loop-2 skills block's data/instruction
+  boundary), **not** the system prompt and **not** the toast — owner-gated (present
+  only for a location-scoped full-owner session), so a narrowed session gets neither.
+
 ## Implementation rules
 
 1. Tokens live in one file (`frontend/src/styles/tokens.css`); components

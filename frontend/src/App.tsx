@@ -3,6 +3,7 @@ import { type Principal, type SearchResult, api, setUnauthorizedHandler } from "
 import { EditLayer } from "./components/EditLayer";
 import { Launcher, type LauncherTarget } from "./components/Launcher";
 import { MoveDomainSheet } from "./components/MoveDomainSheet";
+import { PresenceToast } from "./components/PresenceToast";
 import { TopBar } from "./components/TopBar";
 import { useNoteActions } from "./notes/useNoteActions";
 import { type StreamAttachment, type StreamItem, useNotes } from "./notes/useNotes";
@@ -556,6 +557,12 @@ export function App() {
           onRemoveAttachment={removeAttachmentFrom}
         />
       )}
+
+      {/* L7b: the app-open presence toast — the owner's own latest place, freshness-
+          honest (teal fresh / amber "last known"), self-dismissing. Keyed on the
+          principal so it raises once per app-open; "open" jumps to the Location
+          surface. Absent when there's no usable fix (the toast renders nothing). */}
+      <PresenceToast key={session.principal.principal_id} onOpen={() => setCard("location")} />
     </div>
   );
 }

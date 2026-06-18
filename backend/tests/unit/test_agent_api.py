@@ -777,3 +777,144 @@ def test_chat_skips_skills_when_disabled(
     assert not skills.called
     joined = "\n".join(getattr(m, "text", "") for m in fake.stream_calls[0]["messages"])
     assert _SKILL_FRAME not in joined
+
+
+# --- L7b: the data-framed owner-presence injection --------------------------
+# The app-open presence reaches the agent as a PREPENDED data-framed UserMessage in
+# the conversation channel (mirroring the skills block) — NOT the system prompt
+# (run_stream hardcodes SYSTEM_PROMPT, so a system injection would silently no-op).
+# Owner-gated: present only when the session holds the `location` scope AND the read
+# runs as a full owner; absent for a narrowed (non-location) session. Freshness-honest.
+
+from datetime import timedelta  # noqa: E402
+
+from jbrain.locations import FixPoint, LatestPlace, NearestFix  # noqa: E402
+from jbrain.locations.presence import _PRESENCE_FRAME  # noqa: E402
+
+
+class _FakeLocationRepo:
+    def __init__(self, *, near: NearestFix | None, place: LatestPlace | None) -> None:
+        self._near = near
+        self._place = place
+
+    async def device_activity(self, ctx):  # noqa: ANN001, ANN201
+        return {}
+
+    async def nearest_fix(self, ctx, *, subject_id, at, max_gap_seconds):  # noqa: ANN001, ANN201
+        return self._near
+
+    async def latest_place(self, ctx, *, subject_id):  # noqa: ANN001, ANN201
+        return self._place
+
+
+class _FakeDeviceRepo:
+    def __init__(self, subs: list[str]) -> None:
+        self._subs = subs
+
+    async def owner_device_subjects(self, ctx):  # noqa: ANN001, ANN201
+        return self._subs
+
+    async def list(self, ctx):  # noqa: ANN001, ANN201
+        return []
+
+
+def _wire_presence(client: TestClient, *, near, place, subs):  # noqa: ANN001, ANN202
+    client.app.state.location_repo = _FakeLocationRepo(near=near, place=place)  # type: ignore[attr-defined]
+    client.app.state.device_repo = _FakeDeviceRepo(subs)  # type: ignore[attr-defined]
+
+
+def _fresh_near() -> NearestFix:
+    captured = datetime.now(UTC) - timedelta(minutes=4)
+    return NearestFix(fix=FixPoint(captured, 40.0, -74.0, 10, 80), gap_seconds=240)
+
+
+def _stale_near() -> NearestFix:
+    captured = datetime.now(UTC) - timedelta(hours=3)
+    return NearestFix(fix=FixPoint(captured, 40.0, -74.0, 10, 80), gap_seconds=3 * 3600)
+
+
+def test_chat_prepends_presence_as_data_framed_user_message(
+    client: TestClient, repo: FakeAuthRepo, sessions_store: FakeAgentSessions
+) -> None:
+    login(client, repo)
+    # A location-scoped session → presence is injected.
+    sessions_store.add(AgentSessionInfo("sess-loc", "", "active", ("location",), (), NOW, NOW))
+    router, fake = _capturing_router()
+    client.app.state.llm_router = router  # type: ignore[attr-defined]
+    _wire_presence(client, near=_fresh_near(), place=LatestPlace("e", "Home", NOW), subs=["s1"])
+
+    resp = client.post("/api/chat", json={"session_id": "sess-loc", "message": "where am I?"})
+    assert resp.status_code == 200
+    msgs = fake.stream_calls[0]["messages"]
+    # It is a UserMessage in the conversation channel (data-framed), NOT a system change.
+    framed = [m for m in msgs if _PRESENCE_FRAME in getattr(m, "text", "")]
+    assert len(framed) == 1
+    assert type(framed[0]).__name__ == "UserMessage"
+    assert "currently at Home" in framed[0].text
+    # Prepended BEFORE the user's actual message.
+    texts = [getattr(m, "text", "") for m in msgs]
+    assert texts.index(framed[0].text) < texts.index("where am I?")
+
+
+def test_chat_presence_is_freshness_honest(
+    client: TestClient, repo: FakeAuthRepo, sessions_store: FakeAgentSessions
+) -> None:
+    login(client, repo)
+    sessions_store.add(AgentSessionInfo("sess-stale", "", "active", ("location",), (), NOW, NOW))
+    router, fake = _capturing_router()
+    client.app.state.llm_router = router  # type: ignore[attr-defined]
+    _wire_presence(client, near=_stale_near(), place=LatestPlace("e", "Office", NOW), subs=["s1"])
+
+    client.post("/api/chat", json={"session_id": "sess-stale", "message": "hi"})
+    joined = "\n".join(getattr(m, "text", "") for m in fake.stream_calls[0]["messages"])
+    # A stale fix reads "last known", never "currently at"/"here now".
+    assert "last known" in joined and "Office" in joined
+    assert "currently at" not in joined and "here now" not in joined
+
+
+def test_chat_presence_absent_for_a_narrowed_session(
+    client: TestClient, repo: FakeAuthRepo, sessions_store: FakeAgentSessions
+) -> None:
+    login(client, repo)
+    # A session WITHOUT the location scope → no presence line at all.
+    sessions_store.add(AgentSessionInfo("sess-gen", "", "active", ("general",), (), NOW, NOW))
+    router, fake = _capturing_router()
+    client.app.state.llm_router = router  # type: ignore[attr-defined]
+    _wire_presence(client, near=_fresh_near(), place=LatestPlace("e", "Home", NOW), subs=["s1"])
+
+    client.post("/api/chat", json={"session_id": "sess-gen", "message": "hi"})
+    joined = "\n".join(getattr(m, "text", "") for m in fake.stream_calls[0]["messages"])
+    assert _PRESENCE_FRAME not in joined
+
+
+def test_chat_presence_absent_when_no_fix(
+    client: TestClient, repo: FakeAuthRepo, sessions_store: FakeAgentSessions
+) -> None:
+    login(client, repo)
+    sessions_store.add(AgentSessionInfo("sess-nofix", "", "active", ("location",), (), NOW, NOW))
+    router, fake = _capturing_router()
+    client.app.state.llm_router = router  # type: ignore[attr-defined]
+    # No usable fix → nothing to report, no line injected.
+    _wire_presence(client, near=None, place=None, subs=["s1"])
+
+    client.post("/api/chat", json={"session_id": "sess-nofix", "message": "hi"})
+    joined = "\n".join(getattr(m, "text", "") for m in fake.stream_calls[0]["messages"])
+    assert _PRESENCE_FRAME not in joined
+
+
+def test_chat_presence_carries_no_coordinate(
+    client: TestClient, repo: FakeAuthRepo, sessions_store: FakeAgentSessions
+) -> None:
+    login(client, repo)
+    sessions_store.add(AgentSessionInfo("sess-coord", "", "active", ("location",), (), NOW, NOW))
+    router, fake = _capturing_router()
+    client.app.state.llm_router = router  # type: ignore[attr-defined]
+    near = NearestFix(
+        fix=FixPoint(datetime.now(UTC) - timedelta(minutes=2), 40.123456, -74.654321, 10, 80),
+        gap_seconds=120,
+    )
+    _wire_presence(client, near=near, place=LatestPlace("e", "Home", NOW), subs=["s1"])
+
+    client.post("/api/chat", json={"session_id": "sess-coord", "message": "hi"})
+    joined = "\n".join(getattr(m, "text", "") for m in fake.stream_calls[0]["messages"])
+    assert "40.123456" not in joined and "-74.654321" not in joined

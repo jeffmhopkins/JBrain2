@@ -10503,3 +10503,92 @@ input.ld-title {
 .loc-digest-owner span {
   color: var(--location);
 }
+
+/* ===== L7b — the app-open presence toast (corner, self-dismissing) ===== */
+/* A distinct presence toast (not the connectivity banner): bottom-anchored above
+   the nav, teal --location when fresh, amber --warn "last known" when stale.
+   Names + times only — no coordinate. */
+
+.presence-toast {
+  position: fixed;
+  left: 12px;
+  right: 12px;
+  bottom: calc(96px + env(safe-area-inset-bottom));
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-input);
+  padding: 11px 13px;
+  font-size: var(--fs-secondary);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  z-index: 60;
+  animation: presence-rise 0.2s ease-out;
+}
+
+@keyframes presence-rise {
+  from {
+    transform: translateY(18px);
+    opacity: 0;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
+}
+
+.presence-toast.fresh {
+  border-left: 3px solid var(--location);
+}
+
+.presence-toast.stale {
+  border-left: 3px solid var(--warn);
+  background: color-mix(in srgb, var(--warn) 13%, var(--surface-2));
+}
+
+.presence-toast-dot {
+  width: 9px;
+  height: 9px;
+  flex: 0 0 9px;
+  border-radius: 50%;
+}
+
+.presence-toast.fresh .presence-toast-dot {
+  background: var(--location);
+}
+
+.presence-toast.stale .presence-toast-dot {
+  background: var(--warn);
+}
+
+.presence-toast-text {
+  flex: 1;
+  min-width: 0;
+  line-height: 1.3;
+}
+
+.presence-toast-text b {
+  font-weight: 600;
+}
+
+.presence-toast-fresh {
+  display: block;
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+  margin-top: 1px;
+}
+
+.presence-toast-action {
+  font-size: var(--fs-secondary);
+  font-weight: 500;
+  color: var(--location);
+  background: none;
+  border: none;
+  padding: 4px 6px;
+  cursor: pointer;
+}
+
+.presence-toast.stale .presence-toast-action {
+  color: var(--warn);
+}
