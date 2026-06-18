@@ -448,3 +448,57 @@ stops *new* delivery; a hard kick of an idle subscriber needs a broker managemen
 action — settle in M3); FCM `google-services` Gradle plugin presence +
 `onNewToken`-vs-auth-readiness ordering + min Play Services floor + collapse-key
 cap (M5/M6).
+
+---
+
+## J. Future phase — quantified-self + usage collectors (post-M7)
+
+Discussed and deferred. Two **phone-side, polled/batched** collectors (a periodic
+worker, not a live stream) that reuse every JBrain360 rail — the transport, the
+go-auth identity, the shared ingest core, `device_context`, and the firewall
+domains. Owner-decided reach:
+
+- **Usage / screen-time → everyone (you + others).** The *same* collector runs on
+  every JBrain360 phone, person-attributed. Visibility falls out of RLS: the full
+  owner sees all, each person sees their own, and cross-person visibility is the
+  **M2 view-scope family group**. So the owner's own usage is quantified-self and
+  others' is monitored — one collector, one domain, RLS decides who sees what.
+- **Health → owner only.** Runs solely on the owner's phone; the owner is subject
+  AND viewer, so there is **no view-scope and no consent** — pure quantified-self.
+
+### J1. Health (Health Connect)
+On-box read via `androidx.health.connect` (steps, distance, heart rate, sleep,
+activity). **Granular per-metric** read permissions + the **background-read**
+permission (Android 14+/Health Connect) so it syncs without the app open;
+incremental **change-token** sync on a periodic WorkManager job. Lands in the
+shipped **`health` firewall domain** (Timescale fits the time-series). No off-box
+path — a wearable-cloud pull (Fitbit/Garmin) would be egress via the EgressGuard
+Proposal path and is out of scope.
+
+### J2. Usage / screen-time (UsageStatsManager)
+`UsageStatsManager` behind the **`PACKAGE_USAGE_STATS`** special-access permission
+— a **manual per-device grant** (Settings → Usage access, deep-linked in
+onboarding). **Not Accessibility** (that triggers the Play-Protect hard-block on a
+sideloaded app — a line we do not cross), so the depth is screen on/off,
+screen-time totals, and per-app foreground time. Lands in a **new low-sensitivity
+`usage` domain** (distinct from `health` — screen time isn't medical), which
+extends the same `viewer_may_see` view-scope the location domain uses.
+
+### J3. Shared modeling note
+Both are **person-attributed**, unlike location's **device-attribution** — so add a
+**device→person link** (this phone belongs to this person-subject) and attribute
+health/usage to the person. Each new domain table ships its RLS isolation test.
+
+### J4. Privacy (heightened: monitoring others)
+Usage-of-others is parental-control territory — a normal guardian use for minors,
+the documented abuse pattern for another adult. The owner is sole gatekeeper (T7),
+but the residual safeguards carry more weight per added data class: the
+Android-mandated tracking notification + the who-saw-whom `view_audit` remain the
+floor. `PACKAGE_USAGE_STATS` requiring a manual on-device grant is itself an
+inherent transparency checkpoint — it cannot be enabled remotely or silently.
+
+### J5. Roadmap
+- **M8a — Health (owner-only):** standalone; independent of view-scope, so it can
+  land any time after the location MVP.
+- **M8b — Usage (everyone):** depends on **M2** (view-scope/family group); follows
+  M2–M7. Adds the usage collector + the `usage` domain + the device→person link.
