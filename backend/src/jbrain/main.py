@@ -100,6 +100,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.auth_repo = SqlAuthRepo(maker)
         app.state.device_repo = SqlDeviceRepo(maker)
         app.state.location_repo = SqlLocationRepo(maker)
+        # The on-box geocoder (Phase 7 Wave 4): shared by the agent tools and the
+        # owner-only reverse-geocode read endpoint. Off-by-default at the deploy
+        # layer (the `geocoder` profile); reads fail closed when it isn't running.
+        app.state.geocoder = PhotonGeocoderClient(settings.geocoder_url)
         # Per-device ingest cap: 60 fixes/min sustained (burst 60). A flooding
         # device gets a 429 and backs off; normal move-mode never trips it.
         app.state.location_rate_limiter = TokenBucket(capacity=60, refill_per_sec=1.0)
@@ -194,7 +198,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             app.state.appointments_repo,
             app.state.wiki_read_store,
             build_wiki_write_handlers(app.state.notes_repo, app.state.job_queue, maker),
-            PhotonGeocoderClient(settings.geocoder_url),
+            app.state.geocoder,
             router=app.state.llm_router,
             settings=settings_store,
         )

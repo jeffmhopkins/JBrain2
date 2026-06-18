@@ -76,6 +76,7 @@ function deps(over: Partial<LocationDeps> = {}): LocationDeps {
     listPlaces: vi.fn(async () => [place()]),
     listFixes: vi.fn(async () => [fix({ latitude: 40.0 }), fix({ latitude: 40.001 })]),
     filePlaceNote: vi.fn(async () => {}),
+    reverseGeocode: vi.fn(async () => "12 Market St, Springfield"),
     ...over,
   };
 }
@@ -127,6 +128,15 @@ describe("LocationScreen", () => {
     render(<LocationScreen deps={d} />);
     fireEvent.click(screen.getByRole("tab", { name: "Map" }));
     expect(await screen.findByText(/no fixes in this range/i)).toBeInTheDocument();
+  });
+
+  it("captions the map with the latest fix's on-box address", async () => {
+    const d = deps();
+    render(<LocationScreen deps={d} />);
+    fireEvent.click(screen.getByRole("tab", { name: "Map" }));
+    expect(await screen.findByText(/12 Market St, Springfield/)).toBeInTheDocument();
+    // Reverse-geocodes the newest fix (last in the oldest-first list).
+    await waitFor(() => expect(d.reverseGeocode).toHaveBeenCalledWith(40.001, -74.0));
   });
 
   it("files a place note from the geofence editor", async () => {

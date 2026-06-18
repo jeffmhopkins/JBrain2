@@ -9955,3 +9955,11 @@ input.ld-title {
   flex: 1;
   min-width: 0;
 }
+
+/* --- Location map address caption (Phase 7 Wave 4c) --------------------- */
+.loc-map-address {
+  margin: 8px 0 0;
+  font-size: var(--fs-head);
+  color: var(--text-2);
+  text-align: center;
+}

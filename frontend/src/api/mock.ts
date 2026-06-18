@@ -2858,6 +2858,9 @@ export const mockFetch: typeof fetch = async (input, init) => {
   if (path === "/api/locations/timeline" && method === "GET") return json(MOCK_TIMELINE);
   if (path === "/api/locations/places" && method === "GET") return json(MOCK_PLACES);
   if (path === "/api/locations/fixes" && method === "GET") return json(mockTrail());
+  if (path === "/api/locations/geocode" && method === "GET") {
+    return json({ address: "12 Market St, Springfield" });
+  }
   if (path === "/api/devices" && method === "POST") {
     const label =
       (init?.body ? (JSON.parse(String(init.body)) as { label?: string }).label : undefined) ??

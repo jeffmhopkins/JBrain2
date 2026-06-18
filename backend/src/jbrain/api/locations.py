@@ -19,12 +19,14 @@ SSID/BSSID metadata, which is location-revealing and stays server-side.
 from datetime import UTC, datetime, timedelta
 from typing import cast
 
+import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from jbrain.api.deps import PrincipalDep, owner_only
 from jbrain.api.notes import ctx_for
 from jbrain.devices.repo import DeviceInfo, DeviceRepo
+from jbrain.geocode import GeocodeClient
 from jbrain.locations import (
     DeviceActivity,
     FixPoint,
@@ -49,6 +51,13 @@ def get_location_repo(request: Request) -> SqlLocationRepo:
 
 def get_device_repo(request: Request) -> DeviceRepo:
     return cast(DeviceRepo, request.app.state.device_repo)
+
+
+def get_geocoder(request: Request) -> GeocodeClient:
+    return cast(GeocodeClient, request.app.state.geocoder)
+
+
+log = structlog.get_logger()
 
 
 def _parse(ts: str | None) -> datetime | None:
@@ -205,3 +214,21 @@ async def list_places(request: Request, principal: PrincipalDep) -> list[PlaceOu
     is the derived mirror; the geofence editor edits a place note, never this."""
     rows = await get_location_repo(request).places(ctx_for(principal))
     return [PlaceOut.of(p) for p in rows]
+
+
+class AddressOut(BaseModel):
+    address: str | None
+
+
+@router.get("/geocode")
+async def reverse_geocode(request: Request, lat: float, lon: float) -> AddressOut:
+    """A coordinate's street address from the on-box geocoder, for the map caption.
+    Local-only (the Photon service, not an egress call); fails closed to `None` when
+    the geocoder isn't running (it is off by default) so the UI simply shows no
+    address rather than erroring."""
+    try:
+        result = await get_geocoder(request).reverse(lat, lon)
+    except Exception as exc:  # noqa: BLE001 - a geocoder outage is a missing address, not a 500
+        log.warning("locations.geocode_failed", error=repr(exc))
+        return AddressOut(address=None)
+    return AddressOut(address=result.label if result else None)
