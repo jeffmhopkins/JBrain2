@@ -12,6 +12,10 @@ the ACL check).
 
 OWNTRACKS_ROOT = "owntracks"
 
+# go-auth / mosquitto plugin ACL access levels.
+ACC_READ = 1
+ACC_SUBSCRIBE = 4
+
 
 def _own_prefix(username: str) -> str:
     # Trailing slash is load-bearing: it stops a prefix-confusion match where
@@ -34,3 +38,13 @@ def authorize_topic(username: str, topic: str) -> bool:
     if not username or not topic:
         return False
     return topic == f"{OWNTRACKS_ROOT}/{username}" or topic.startswith(_own_prefix(username))
+
+
+def authorize_ingest_subscribe(topic: str, acc: int) -> bool:
+    """The server-side ingest consumer's ACL: read/subscribe the whole `owntracks`
+    tree, never publish. It is a trusted internal subscriber (authenticated by a
+    service secret, not a device key), so it gets the broad read the per-device floor
+    forbids — but a write (`acc` other than read/subscribe) is always denied."""
+    if acc not in (ACC_READ, ACC_SUBSCRIBE):
+        return False
+    return topic == f"{OWNTRACKS_ROOT}/#" or topic.startswith(f"{OWNTRACKS_ROOT}/")

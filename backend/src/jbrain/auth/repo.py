@@ -52,6 +52,29 @@ class SqlAuthRepo:
                 return None
             return _principal_info(row)
 
+    async def find_active_device_principal_by_id(self, principal_id: str) -> PrincipalInfo | None:
+        """Resolve a device principal id (an MQTT topic's owner segment) to its
+        subject. The consumer trusts that segment because the broker ACL only lets a
+        device publish under its own id; this kind-filtered, revocation-filtered read
+        turns the id into the subject a fix is pinned to (and drops a malformed id)."""
+        try:
+            pid = uuid.UUID(principal_id)
+        except ValueError:
+            return None
+        async with scoped_session(self._maker, _LOGIN) as session:
+            row = (
+                await session.execute(
+                    select(Principal).where(
+                        Principal.id == pid,
+                        Principal.kind == "device_key",
+                        Principal.revoked_at.is_(None),
+                    )
+                )
+            ).scalar_one_or_none()
+            if row is None:
+                return None
+            return _principal_info(row)
+
     async def create_session(self, principal_id: str, token_hash: str, label: str) -> None:
         async with scoped_session(self._maker, _LOGIN) as session:
             session.add(

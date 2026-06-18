@@ -33,6 +33,10 @@ class AuthRepo(Protocol):
         self, key_hash: str
     ) -> PrincipalInfo | None: ...
 
+    async def find_active_device_principal_by_id(
+        self, principal_id: str
+    ) -> PrincipalInfo | None: ...
+
     async def create_session(self, principal_id: str, token_hash: str, label: str) -> None: ...
 
     async def find_principal_by_session_token_hash(

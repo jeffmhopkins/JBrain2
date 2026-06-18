@@ -98,3 +98,58 @@ def test_acl_allows_only_the_devices_own_namespace(client: tuple[TestClient, str
     assert acl("owntracks/someone-else/phone", 1) == 403  # foreign subject
     assert acl("owntracks/+/+", 1) == 403  # broad wildcard
     assert acl("#", 1) == 403
+
+
+# --- ingest service identity (M1) --------------------------------------------
+
+_DB = "postgresql+asyncpg://nobody@localhost:1/none"
+INGEST_USER = "jbrain-ingest"
+INGEST_SECRET = "s3cr3t-ingest"
+
+
+def test_ingest_identity_authenticates_and_reads_owntracks_readonly() -> None:
+    settings = Settings(
+        secure_cookies=False,
+        database_url=_DB,
+        mqtt_ingest_username=INGEST_USER,
+        mqtt_ingest_secret=INGEST_SECRET,
+    )
+    app = create_app(settings)
+    with TestClient(app) as c:
+        app.state.auth_repo = FakeAuthRepo()
+        # Auth: the right secret allows, a wrong one denies.
+        assert (
+            c.post(
+                "/internal/mqtt-auth", json={"username": INGEST_USER, "password": INGEST_SECRET}
+            ).status_code
+            == 200
+        )
+        assert (
+            c.post(
+                "/internal/mqtt-auth", json={"username": INGEST_USER, "password": "wrong"}
+            ).status_code
+            == 403
+        )
+
+        def acl(topic: str, acc: int) -> int:
+            return c.post(
+                "/internal/mqtt-acl", json={"username": INGEST_USER, "topic": topic, "acc": acc}
+            ).status_code
+
+        assert acl("owntracks/#", 4) == 200  # subscribe the whole tree
+        assert acl("owntracks/dad/phone", 1) == 200  # read any device's fixes
+        assert acl("owntracks/dad/phone", 2) == 403  # never publish
+        assert acl("system/#", 4) == 403  # only owntracks
+
+
+def test_ingest_identity_is_disabled_when_no_secret_is_set() -> None:
+    app = create_app(Settings(secure_cookies=False, database_url=_DB))  # secret == ""
+    with TestClient(app) as c:
+        app.state.auth_repo = FakeAuthRepo()
+        # With no secret the ingest username falls through to the device path → denied.
+        assert (
+            c.post(
+                "/internal/mqtt-auth", json={"username": INGEST_USER, "password": "anything"}
+            ).status_code
+            == 403
+        )

@@ -7,7 +7,7 @@ until view-scope (M2) widens it.
 
 import pytest
 
-from jbrain.mqtt.authz import authorize_topic
+from jbrain.mqtt.authz import authorize_ingest_subscribe, authorize_topic
 
 
 @pytest.mark.parametrize(
@@ -35,3 +35,18 @@ from jbrain.mqtt.authz import authorize_topic
 )
 def test_authorize_topic(username: str, topic: str, allowed: bool) -> None:
     assert authorize_topic(username, topic) is allowed
+
+
+@pytest.mark.parametrize(
+    ("topic", "acc", "allowed"),
+    [
+        ("owntracks/#", 4, True),  # subscribe the whole tree
+        ("owntracks/dad/phone", 1, True),  # read a device's fixes
+        ("owntracks/#", 2, False),  # the ingest consumer never publishes
+        ("owntracks/dad/phone", 2, False),
+        ("system/#", 4, False),  # only the owntracks tree
+        ("#", 4, False),
+    ],
+)
+def test_authorize_ingest_subscribe(topic: str, acc: int, allowed: bool) -> None:
+    assert authorize_ingest_subscribe(topic, acc) is allowed
