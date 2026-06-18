@@ -115,11 +115,29 @@ class TileService:
     async def tile(self, z: int, x: int, y: int) -> bytes | None:
         if not self._upstream or not valid_tile(z, x, y, self._max_zoom):
             return None
-        cached = await self._cache.get(z, x, y)
+        cached = await self._cache_get(z, x, y)
         if cached is not None:
             return cached
         data = await self._fetcher.fetch(self._upstream.format(z=z, x=x, y=y))
         if data is None:
             return None
-        await self._cache.put(z, x, y, data)
+        await self._cache_put(z, x, y, data)
         return data
+
+    async def _cache_get(self, z: int, x: int, y: int) -> bytes | None:
+        """A cache read that degrades to a miss. A broken cache (e.g. an
+        unreadable dir) must fall through to an upstream fetch, never 500."""
+        try:
+            return await self._cache.get(z, x, y)
+        except Exception as exc:  # noqa: BLE001 - a broken cache degrades to a fetch
+            log.warning("tiles.cache_get_failed", z=z, x=x, y=y, error=repr(exc))
+            return None
+
+    async def _cache_put(self, z: int, x: int, y: int, data: bytes) -> None:
+        """A cache write that degrades to a no-op. If the cache dir is read-only
+        or unwritable (e.g. a root-owned volume), the freshly fetched tile is
+        still served — caching is an optimisation, not a request precondition."""
+        try:
+            await self._cache.put(z, x, y, data)
+        except Exception as exc:  # noqa: BLE001 - failing to cache still serves the tile
+            log.warning("tiles.cache_put_failed", z=z, x=x, y=y, error=repr(exc))

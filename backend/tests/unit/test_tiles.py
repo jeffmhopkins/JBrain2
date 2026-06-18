@@ -66,3 +66,24 @@ async def test_upstream_failure_returns_none(tmp_path) -> None:  # noqa: ANN001
     assert await svc.tile(5, 1, 1) is None
     # A failed fetch is not cached, so a later success can still fill it.
     assert await FsTileCache(tmp_path).get(5, 1, 1) is None
+
+
+class BrokenCache:
+    """A cache whose disk I/O always fails — e.g. a root-owned volume the
+    non-root app can't write (the bug that blanked the basemap)."""
+
+    async def get(self, z: int, x: int, y: int) -> bytes | None:
+        raise PermissionError("cache dir unreadable")
+
+    async def put(self, z: int, x: int, y: int, data: bytes) -> None:
+        raise PermissionError("cache dir unwritable")
+
+
+async def test_unwritable_cache_still_serves_the_tile(tmp_path) -> None:  # noqa: ANN001
+    # A cache that can't read or write must degrade to a plain fetch, never 500.
+    fetcher = FakeFetcher(_PNG)
+    svc = TileService(
+        BrokenCache(), fetcher, upstream_template="https://up/{z}/{x}/{y}.png", max_zoom=19
+    )
+    assert await svc.tile(5, 1, 1) == _PNG
+    assert fetcher.calls == ["https://up/5/1/1.png"]
