@@ -16,7 +16,7 @@ import {
   api,
 } from "../api/client";
 import { Sheet } from "../components/Sheet";
-import { LocationMapTab } from "./LocationMapTab";
+import { LocationMapTab, type PlaceNoteInput } from "./LocationMapTab";
 
 type Tab = "devices" | "timeline" | "map";
 
@@ -34,6 +34,7 @@ export interface LocationDeps {
   listTimeline: () => Promise<TimelineEntry[]>;
   listPlaces: () => Promise<PlaceGeofence[]>;
   listFixes: (subjectId: string, since: string, until: string) => Promise<LocationFix[]>;
+  filePlaceNote: (place: PlaceNoteInput) => Promise<void>;
 }
 
 interface LocationScreenProps {
