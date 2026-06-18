@@ -44,9 +44,9 @@ interface LocationScreenProps {
 }
 
 export function LocationScreen({ deps }: LocationScreenProps) {
-  // Devices is the functional landing tab in 5b; Timeline becomes the default
-  // once its feed ships (per the chosen mock).
-  const [tab, setTab] = useState<Tab>("devices");
+  // The map is the landing tab — it's the surface the owner reaches for most;
+  // Devices/Timeline are a tap away.
+  const [tab, setTab] = useState<Tab>("map");
 
   return (
     <main className="screen-body location-screen">

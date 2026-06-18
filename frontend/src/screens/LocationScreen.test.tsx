@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   DeviceSummary,
   LocationFix,
@@ -11,10 +11,14 @@ import { placeNoteBody } from "./LocationMapTab";
 import { type LocationDeps, LocationScreen, relativeTime, sentence } from "./LocationScreen";
 
 // Leaflet needs a real browser layout engine; stub the map glue so the screen's
-// React behavior (controls, data fetch, overlays-data) is what's under test.
+// React behavior (controls, data fetch, overlays-data) is what's under test. The
+// shared `update` spy lets a test assert the state handed to the map.
+const { mapUpdate } = vi.hoisted(() => ({ mapUpdate: vi.fn() }));
 vi.mock("./leafletMap", () => ({
-  createLocationMap: () => ({ update: vi.fn(), destroy: vi.fn() }),
+  createLocationMap: () => ({ update: mapUpdate, destroy: vi.fn() }),
 }));
+
+beforeEach(() => mapUpdate.mockClear());
 
 function device(over: Partial<DeviceSummary> = {}): DeviceSummary {
   return {
@@ -88,8 +92,11 @@ function deps(over: Partial<LocationDeps> = {}): LocationDeps {
 }
 
 describe("LocationScreen", () => {
-  it("lands on Devices and renders a device card with its status", async () => {
+  it("lands on the Map, then shows a device card with its status on the Devices tab", async () => {
     render(<LocationScreen deps={deps()} />);
+    // The map is the landing tab.
+    await screen.findByLabelText("Location map");
+    fireEvent.click(screen.getByRole("tab", { name: "Devices" }));
     await screen.findByText("Jeff's phone");
     const meta = screen.getByText(/last seen/);
     expect(meta.textContent).toMatch(/72% battery/);
@@ -99,6 +106,7 @@ describe("LocationScreen", () => {
 
   it("shows the empty state when there are no devices", async () => {
     render(<LocationScreen deps={deps({ listDevices: vi.fn(async () => []) })} />);
+    fireEvent.click(screen.getByRole("tab", { name: "Devices" }));
     expect(await screen.findByText(/no devices yet/)).toBeInTheDocument();
   });
 
@@ -136,6 +144,22 @@ describe("LocationScreen", () => {
     expect(await screen.findByText(/no fixes in this range/i)).toBeInTheDocument();
   });
 
+  it("shows the heat spot-size control only in Heat mode and feeds it to the map", async () => {
+    render(<LocationScreen deps={deps()} />);
+    await screen.findByLabelText("Location map");
+    // The control is Heat-only.
+    expect(screen.queryByLabelText("Heat spot size")).toBeNull();
+    fireEvent.click(screen.getByRole("tab", { name: "Heat" }));
+    const slider = screen.getByLabelText("Heat spot size") as HTMLInputElement;
+    fireEvent.change(slider, { target: { value: "40" } });
+    expect(slider.value).toBe("40");
+    // The chosen radius reaches the map glue.
+    await waitFor(() => {
+      const last = mapUpdate.mock.calls.at(-1)?.[0];
+      expect(last).toMatchObject({ mode: "heat", heatRadius: 40 });
+    });
+  });
+
   it("captions the map with the latest fix's on-box address", async () => {
     const d = deps();
     render(<LocationScreen deps={d} />);
@@ -149,6 +173,7 @@ describe("LocationScreen", () => {
     const d = deps({ listPlaces: vi.fn(async () => []) });
     render(<LocationScreen deps={d} />);
     fireEvent.click(screen.getByRole("tab", { name: "Map" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Places" }));
     fireEvent.click(await screen.findByRole("button", { name: "＋ Add place" }));
 
     fireEvent.change(screen.getByLabelText("Place name"), { target: { value: "Home" } });
@@ -177,6 +202,7 @@ describe("LocationScreen", () => {
     });
     render(<LocationScreen deps={d} />);
     fireEvent.click(screen.getByRole("tab", { name: "Map" }));
+    fireEvent.click(await screen.findByRole("button", { name: /Places/ }));
     fireEvent.click(await screen.findByRole("button", { name: /Office/ }));
     expect((screen.getByLabelText("Place name") as HTMLInputElement).value).toBe("Office");
     expect((screen.getByLabelText("Latitude") as HTMLInputElement).value).toBe("41");
@@ -210,6 +236,7 @@ describe("LocationScreen", () => {
   it("provisions a device and reveals its key once with OwnTracks config", async () => {
     const d = deps({ listDevices: vi.fn(async () => []) });
     render(<LocationScreen deps={d} />);
+    fireEvent.click(screen.getByRole("tab", { name: "Devices" }));
     await screen.findByText("＋ Add device");
     fireEvent.click(screen.getByText("＋ Add device"));
 
@@ -227,6 +254,7 @@ describe("LocationScreen", () => {
   it("rotates a key and reveals the new one", async () => {
     const d = deps();
     render(<LocationScreen deps={d} />);
+    fireEvent.click(screen.getByRole("tab", { name: "Devices" }));
     await screen.findByText("Jeff's phone");
     fireEvent.click(screen.getByRole("button", { name: "Rotate key" }));
     await waitFor(() => expect(d.rotateDevice).toHaveBeenCalledWith("d1"));
@@ -236,6 +264,7 @@ describe("LocationScreen", () => {
   it("revokes only after a confirm", async () => {
     const d = deps();
     render(<LocationScreen deps={d} />);
+    fireEvent.click(screen.getByRole("tab", { name: "Devices" }));
     await screen.findByText("Jeff's phone");
     fireEvent.click(screen.getByRole("button", { name: "Revoke" }));
     // The confirm sheet — revoke fires only on its destructive button.
@@ -251,6 +280,7 @@ describe("LocationScreen", () => {
         deps={deps({ listDevices: vi.fn(async () => [device({ revoked: true })]) })}
       />,
     );
+    fireEvent.click(screen.getByRole("tab", { name: "Devices" }));
     await screen.findByText("Jeff's phone");
     expect(screen.getByText("revoked")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Rotate key" })).toBeNull();

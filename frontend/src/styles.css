@@ -9675,7 +9675,13 @@ input.ld-title {
 }
 
 /* --- Location screen (Phase 7 Wave 5b): Devices / Timeline / Map --------- */
-.location-screen .seg-row {
+/* A flex column so the Map tab can stretch its map to fill the viewport. */
+.location-screen {
+  display: flex;
+  flex-direction: column;
+}
+.location-screen > .seg-row {
+  flex: none;
   margin-bottom: 14px;
 }
 .loc-soon {
@@ -9823,15 +9829,59 @@ input.ld-title {
 }
 
 /* --- Location Map tab (Phase 7 Wave 5d) --------------------------------- */
+/* The map fills the tab; controls float on top so the basemap owns the screen. */
 .loc-map {
+  flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
-  gap: 12px;
 }
-.loc-map-controls {
+.loc-map-stage {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  border-radius: var(--r-card);
+  border: 1px solid var(--border);
+  overflow: hidden;
+  background: var(--surface);
+}
+.loc-map-canvas {
+  position: absolute;
+  inset: 0;
+}
+.loc-map-canvas .leaflet-container {
+  /* Leaflet reads tile/background from here until tiles paint. */
+  background: var(--surface);
+  font: inherit;
+  height: 100%;
+}
+
+/* Floating overlays over the map. Containers don't capture pointer events so the
+   map stays draggable; the controls inside re-enable them. */
+.loc-map-overlay {
+  position: absolute;
+  z-index: 1000;
+  pointer-events: none;
+}
+.loc-map-overlay > * {
+  pointer-events: auto;
+}
+.loc-map-overlay-top {
+  top: 10px;
+  left: 10px;
+  right: 10px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
+  padding: 10px;
+  border-radius: var(--r-card);
+  background: color-mix(in srgb, var(--surface) 86%, transparent);
+  border: 1px solid var(--border);
+  backdrop-filter: blur(6px);
+}
+.loc-map-overlay-top .seg-row {
+  margin: 0;
+  pointer-events: auto;
 }
 .loc-map-device,
 .loc-map-range input {
@@ -9850,25 +9900,66 @@ input.ld-title {
 }
 .loc-map-range input {
   flex: 1;
+  min-width: 0;
 }
 .loc-map-range-sep {
   color: var(--text-3);
 }
-/* The Leaflet map container + overlay colours (Leaflet paths take a className;
-   colours stay in CSS, tokens-only). */
-.loc-map-canvas {
-  width: 100%;
-  height: 320px;
-  border-radius: var(--r-card);
+.loc-map-heat-ctl {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: var(--fs-head);
+  color: var(--text-2);
+}
+.loc-map-heat-ctl input[type="range"] {
+  flex: 1;
+  accent-color: var(--steel);
+}
+
+/* The status line (latest address / fix notes) floats at the bottom-centre and
+   never blocks map drags. */
+.loc-map-overlay-bottom {
+  left: 10px;
+  right: 10px;
+  bottom: 10px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  pointer-events: none;
+}
+.loc-map-overlay-bottom > * {
+  pointer-events: none;
+  margin: 0;
+  padding: 4px 12px;
+  border-radius: var(--r-pill);
+  background: color-mix(in srgb, var(--surface) 86%, transparent);
   border: 1px solid var(--border);
-  overflow: hidden;
-  /* Leaflet reads tile/background from here until tiles paint. */
-  background: var(--surface);
+  backdrop-filter: blur(6px);
+  font-size: var(--fs-head);
 }
-.loc-map-canvas .leaflet-container {
-  background: var(--surface);
+.loc-map-note {
+  color: var(--text-2);
+  text-align: center;
+}
+.loc-map-places-btn {
+  position: absolute;
+  z-index: 1000;
+  left: 12px;
+  bottom: 12px;
   font: inherit;
+  font-size: var(--fs-head);
+  font-weight: 600;
+  color: var(--steel);
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill);
+  padding: 8px 16px;
+  cursor: pointer;
+  backdrop-filter: blur(6px);
 }
+
 .loc-lf-fence {
   fill: var(--steel-tint);
   stroke: var(--steel);
@@ -9878,10 +9969,6 @@ input.ld-title {
 .loc-lf-trail {
   stroke: var(--steel);
   stroke-width: 3;
-}
-.loc-lf-heat {
-  fill: var(--steel);
-  fill-opacity: 0.18;
 }
 .loc-lf-start {
   fill: var(--green);
@@ -9895,25 +9982,10 @@ input.ld-title {
   stroke: var(--bg);
   stroke-width: 2;
 }
-.loc-map-note {
-  text-align: center;
-}
 
 /* --- Location geofence editor (Phase 7 Wave 5d) ------------------------- */
-.loc-places {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-.loc-places-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  font-size: var(--fs-head);
-  color: var(--text-3);
-  font-weight: 600;
-}
 .loc-places-add {
+  align-self: flex-start;
   font: inherit;
   font-size: var(--fs-head);
   font-weight: 600;
@@ -9921,7 +9993,8 @@ input.ld-title {
   background: var(--steel-tint);
   border: none;
   border-radius: var(--r-pill);
-  padding: 4px 12px;
+  padding: 6px 14px;
+  margin-bottom: 4px;
   cursor: pointer;
 }
 .loc-places-list {
@@ -9964,8 +10037,6 @@ input.ld-title {
 
 /* --- Location map address caption (Phase 7 Wave 4c) --------------------- */
 .loc-map-address {
-  margin: 8px 0 0;
-  font-size: var(--fs-head);
   color: var(--text-2);
   text-align: center;
 }
