@@ -131,7 +131,9 @@ describe("LocationScreen", () => {
     // Switching modes is client-only (no refetch); changing the window refetches.
     fireEvent.click(screen.getByRole("tab", { name: "Heat" }));
     const before = (d.listFixes as ReturnType<typeof vi.fn>).mock.calls.length;
-    fireEvent.change(screen.getByLabelText("From date"), { target: { value: "2026-01-01" } });
+    fireEvent.change(screen.getByLabelText("From date"), {
+      target: { value: "2026-01-01T08:30" },
+    });
     await waitFor(() =>
       expect((d.listFixes as ReturnType<typeof vi.fn>).mock.calls.length).toBeGreaterThan(before),
     );

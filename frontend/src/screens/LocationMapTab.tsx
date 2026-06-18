@@ -50,18 +50,19 @@ type Meta =
 
 type Fixes = { phase: "loading" } | { phase: "error" } | { phase: "done"; fixes: LocationFix[] };
 
-function isoDay(offsetDays: number): string {
+// A local "YYYY-MM-DDTHH:mm" for a <input type="datetime-local">, `offsetDays`
+// from now (keeps the current time of day, so the window is a rolling span).
+function localDateTime(offsetDays: number): string {
   const d = new Date();
   d.setDate(d.getDate() + offsetDays);
-  return d.toISOString().slice(0, 10);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-// The picker's day strings become an inclusive [since, until) window: until is the
-// morning after the chosen end day, so the whole end day is covered.
+// The picker's local date-time strings become the [since, until) instant window.
+// `new Date(local)` reads them in the device's zone; toISOString hands the API UTC.
 function windowIso(since: string, until: string): { since: string; until: string } {
-  const end = new Date(`${until}T00:00:00`);
-  end.setDate(end.getDate() + 1);
-  return { since: `${since}T00:00:00`, until: end.toISOString() };
+  return { since: new Date(since).toISOString(), until: new Date(until).toISOString() };
 }
 
 export function LocationMapTab({ deps }: { deps: LocationDeps | undefined }) {
@@ -77,8 +78,8 @@ export function LocationMapTab({ deps }: { deps: LocationDeps | undefined }) {
   // The Heat view's per-point radius in px (the "spot size" slider). 25 reads as
   // dwell clusters at neighbourhood zoom without smearing the whole track.
   const [heatRadius, setHeatRadius] = useState(25);
-  const [since, setSince] = useState(() => isoDay(-DEFAULT_DAYS));
-  const [until, setUntil] = useState(() => isoDay(0));
+  const [since, setSince] = useState(() => localDateTime(-DEFAULT_DAYS));
+  const [until, setUntil] = useState(() => localDateTime(0));
   const [fixes, setFixes] = useState<Fixes>({ phase: "loading" });
   // The Places list lives in a bottom sheet so the map can fill the screen.
   const [placesOpen, setPlacesOpen] = useState(false);
@@ -189,7 +190,7 @@ export function LocationMapTab({ deps }: { deps: LocationDeps | undefined }) {
           </div>
           <div className="loc-map-range">
             <input
-              type="date"
+              type="datetime-local"
               aria-label="From date"
               value={since}
               max={until}
@@ -197,7 +198,7 @@ export function LocationMapTab({ deps }: { deps: LocationDeps | undefined }) {
             />
             <span className="loc-map-range-sep">→</span>
             <input
-              type="date"
+              type="datetime-local"
               aria-label="To date"
               value={until}
               min={since}
@@ -210,7 +211,7 @@ export function LocationMapTab({ deps }: { deps: LocationDeps | undefined }) {
               <input
                 id="loc-heat-radius"
                 type="range"
-                min={10}
+                min={2}
                 max={50}
                 step={1}
                 value={heatRadius}
