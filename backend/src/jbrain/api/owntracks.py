@@ -14,9 +14,11 @@ from typing import Annotated, Any, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from jbrain.api.deps import DeviceDep
 from jbrain.locations import LocationFix, SqlLocationRepo
+from jbrain.locations.geofence import detect_transitions
 from jbrain.locations.ratelimit import TokenBucket
 
 router = APIRouter()
@@ -35,8 +37,13 @@ def get_rate_limiter(request: Request) -> TokenBucket:
     return cast(TokenBucket, request.app.state.location_rate_limiter)
 
 
+def get_session_maker(request: Request) -> "async_sessionmaker[AsyncSession]":
+    return cast("async_sessionmaker[AsyncSession]", request.app.state.session_maker)
+
+
 LocationRepoDep = Annotated[SqlLocationRepo, Depends(get_location_repo)]
 RateLimiterDep = Annotated[TokenBucket, Depends(get_rate_limiter)]
+SessionMakerDep = Annotated["async_sessionmaker[AsyncSession]", Depends(get_session_maker)]
 
 
 class OwnTracksLocation(BaseModel):
@@ -78,6 +85,7 @@ async def owntracks(
     principal: DeviceDep,
     repo: LocationRepoDep,
     limiter: RateLimiterDep,
+    maker: SessionMakerDep,
 ) -> list[Any]:
     if not limiter.allow(principal.id):
         raise HTTPException(status_code=429, detail="rate limited")
@@ -93,5 +101,19 @@ async def owntracks(
     if fix.captured_at <= datetime.now(UTC) + MAX_FUTURE_SKEW:
         # The device subject is code-set from the authenticated principal, never
         # from the payload (L9). A dup (idempotent retry) is a no-op.
-        await repo.ingest_fix(principal_id=principal.id, subject_id=principal.subject_id, fix=fix)
+        inserted = await repo.ingest_fix(
+            principal_id=principal.id, subject_id=principal.subject_id, fix=fix
+        )
+        # Detect geofence crossings only on a genuinely new fix (a retry must not
+        # re-fire transitions). detect_transitions is best-effort internally.
+        if inserted:
+            await detect_transitions(
+                maker,
+                principal_id=principal.id,
+                subject_id=principal.subject_id,
+                captured_at=fix.captured_at,
+                latitude=fix.latitude,
+                longitude=fix.longitude,
+                accuracy_m=fix.accuracy_m,
+            )
     return []

@@ -186,6 +186,7 @@ def diff_pipeline(
     registry: ActionRegistry,
     *,
     trigger_id: str = "",
+    forward_keys: frozenset[str] | None = None,
 ) -> tuple[list[WouldEnqueue], list[str]]:
     """The jobs a pipeline's steps WOULD enqueue for an event, plus any resolution
     discrepancies. Each step names a registered action (E3) at the pinned version;
@@ -212,7 +213,8 @@ def diff_pipeline(
         # nothing (consolidate enqueues {}). Only FORWARD_KEYS cross from the event
         # into the job — the event's own metadata (item_id, the _shadow_enqueued
         # baseline) is never a job param. Step static params overlay the forward.
-        forwarded = {k: event.payload[k] for k in FORWARD_KEYS if k in event.payload}
+        keys = forward_keys if forward_keys is not None else FORWARD_KEYS
+        forwarded = {k: event.payload[k] for k in keys if k in event.payload}
         merged = {**forwarded, **step.params}
         would.append(
             WouldEnqueue(
@@ -538,7 +540,10 @@ async def resolve_event(
             )
         try:
             pipeline = await scheduler._load_pipeline(session, trigger.pipeline)
-            would, _ = diff_pipeline(event, pipeline, registry, trigger_id=trigger.trigger_id)
+            fk = frozenset(trigger.filter.forward_keys) or None
+            would, _ = diff_pipeline(
+                event, pipeline, registry, trigger_id=trigger.trigger_id, forward_keys=fk
+            )
         except (scheduler.ScheduleResolutionError, DispatchResolutionError) as exc:
             return ShadowDiff(
                 event_id=event.id, event_type=event.type, matches=False, error=repr(exc)

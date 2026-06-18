@@ -116,6 +116,26 @@ RECONCILE_UNEMBEDDED_NOTES_ACTION = ActionSpec(
     description="Embed notes whose chunks slipped through.",
 )
 
+# The geofence reconciler backstop (Phase 7 Wave 3c): the scheduled twin of the
+# inline detection at ingest. It rebuilds the place_geofence spatial mirror from
+# the graph and re-evaluates each device subject's latest fix, healing a dropped
+# projector hook or a dropped inline transition. Like the reconcilers above it is
+# in-code only (not in the app.actions seed); a migration seeds its schedule +
+# pipeline. Re-firing is idempotent (a fix already reflected in geofence_state
+# re-evaluates to no crossing), so a recurring tick never double-emits (E4). It
+# runs as the full owner — the only identity entitled to read every subject's
+# pinned track — never a device-stamped job (B3).
+GEOFENCE_SWEEP_ACTION = ActionSpec(
+    name="geofence_sweep",
+    version=1,
+    handler="geofence_sweep",
+    domain_optional=True,
+    mutating=True,
+    cost_class="cheap",
+    dedup_key_expr=None,
+    description="Rebuild geofence mirrors and re-detect missed transitions.",
+)
+
 # A monotonic UTC clock the tick reads through, so a test can inject a frozen one
 # and prove next_run_at advances deterministically (no real timer, N3).
 Clock = Callable[[], datetime]
@@ -385,5 +405,24 @@ def reconcile_unembedded_notes_handler(
 
     async def handler(_payload: dict[str, Any]) -> None:
         await queue.backfill_unembedded_notes(maker, queue.SYSTEM_CTX)
+
+    return handler
+
+
+def geofence_sweep_handler(
+    maker: async_sessionmaker[AsyncSession],
+) -> Callable[[dict[str, Any]], Awaitable[None]]:
+    """Wrap the geofence reconciler as a queue handler, fireable on a recurring
+    schedule + on demand from Ops. It takes no payload — the sweep finds its own
+    work (every Place's live geofence fact + every device subject's latest fix) —
+    and runs as the full owner inside `sweep_geofences` (the only identity entitled
+    to reconcile across every subject's pinned track, B3). Idempotent: a stream the
+    inline path already handled re-evaluates to no crossing, so re-firing emits
+    nothing extra (E4)."""
+
+    async def handler(_payload: dict[str, Any]) -> None:
+        from jbrain.locations.geofence import sweep_geofences
+
+        await sweep_geofences(maker)
 
     return handler

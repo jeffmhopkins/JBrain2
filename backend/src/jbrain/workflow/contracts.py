@@ -70,6 +70,12 @@ class TriggerFilter(BaseModel):
     # accept-side check, enforced by the dispatcher, not a widening.
     domains: list[Domain] = Field(default_factory=list)
     payload_equals: dict[str, Any] = Field(default_factory=dict)
+    # Which event-payload keys cross into the enqueued job payload. Empty = the
+    # dispatcher default ({"note_id"}), preserving the note pipelines. A trigger
+    # for a different event (e.g. location.geofence_transition) declares exactly
+    # the opaque ids it forwards — and deliberately NOT raw coordinates. Per
+    # trigger, so widening one event's forward set never leaks keys into another.
+    forward_keys: list[str] = Field(default_factory=list)
 
 
 class PipelineStep(BaseModel):
