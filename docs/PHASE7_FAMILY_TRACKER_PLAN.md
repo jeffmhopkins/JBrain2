@@ -54,13 +54,18 @@ isolation test (non-negotiable #3).
   `principals`. **No second credential store** (no dynsec client passwords, no new
   `pw_hash` column). Revocation flows through the existing `revoked_at` filter and
   kills both HTTP and MQTT access.
-- **T3 — Family-sees-family authz lives in Postgres RLS.** View-scope **extends
-  B3 inside the database**: the `location_fixes` read policy gains
+- **T3 — Family-sees-family authz lives in Postgres RLS.** Configuration is a
+  **single flat family group** *(owner decision)*: every member sees every other
+  member; non-members see nothing. The owner's only action is **add/remove a
+  member** — there is no per-pair setup. Under the hood this still **extends B3
+  inside the database**: the `location_fixes` read policy gains
   `OR app.viewer_may_see(current_setting('app.subject_id'), subject_id)`, backed
-  by the `view_scope` table. The broker ACL, the live fan-out filter, the history
-  query, and FCM routing are all **projections of this one RLS decision** — never
-  the authority. The base subject-pin policy is **never loosened**; a gateway/
-  broker bug therefore cannot leak cross-subject data the DB itself forbids.
+  by group membership (`view_scope`). The broker ACL, the live fan-out filter, the
+  history query, and FCM routing are all **projections of this one RLS decision** —
+  never the authority. The base subject-pin policy is **never loosened**; a
+  gateway/broker bug therefore cannot leak cross-subject data the DB itself
+  forbids. **The group is the security floor** — it keeps non-family out (a leaked
+  URL/credential sees nothing), not a config burden on the owner.
 - **T4 — Geofence-at-ingest moves to the MQTT consumer.** L5a (inline geofence
   detection under `device_context()` with the subject GUC set, emitting
   transitions into the Phase-5 workflow engine) runs **in the MQTT ingest
@@ -81,16 +86,18 @@ isolation test (non-negotiable #3).
   still learns poke metadata). Putting any location/subject/place field in an FCM
   payload is a true L1 egress and is **forbidden** — enforced by a test, not a
   convention.
-- **T7 — Owner is the sole authority over view-scope (no consent gate).**
-  *(Owner decision.)* The owner provisions all view-scope relationships
-  unilaterally at their discretion; there is **no affirmative-consent gate**. The
-  residual safeguards — kept **on by default** — are the **transparency surface**
-  (persistent "this device is tracked" notification, a "who can see me" view,
-  one-tap **Leave**) and the **who-saw-whom access audit** (`view_audit`, incl.
-  live + poke paths). Because both consent-gating (T7) **and** retention
-  (B-retention) are off, the breach/insider exposure surface is larger, so
-  **encryption-at-rest, the access audit, and prompt revocation (T5) are
-  mandatory compensating controls**, not optional.
+- **T7 — Owner is the sole authority; membership is owner-only.** *(Owner
+  decision.)* The owner adds/removes family members unilaterally; there is **no
+  affirmative-consent gate** and **no in-app self-Leave** (a member opts out only
+  by uninstalling, which surfaces as a device going offline). The residual
+  safeguards — kept **on by default** — are the **Android-mandated persistent
+  "tracking active" notification** (not optional; the OS requires it for
+  background location, so nobody is tracked invisibly) and the **who-saw-whom
+  access audit** (`view_audit`, server-side, incl. live + history + poke). Because
+  consent-gating, self-Leave, **and** retention are all off, the breach/insider
+  exposure surface is larger, so **encryption-at-rest, the access audit, and
+  prompt owner-initiated revocation (T5) are mandatory compensating controls**,
+  not optional.
 - **T8 — go-auth runs least-privilege.** go-auth's own DB role is RLS-enforced
   and subject-pin-aware (or reads only a purpose-built, pre-projected ACL table
   with no cross-subject inference). An isolation test proves go-auth's role cannot
@@ -141,9 +148,14 @@ message (or short TTL) so revocation is near-immediate, and the **live path writ
 `view_audit` too** (not just history).
 
 ### B5. History: **RLS-scoped Timescale queries** (Recorder dropped, T1)
-The history tab queries `location_fixes` through a `device_context`/view-scoped
-session; the DB enforces the subject-pin + view-scope. No `X-Limit` header
-discipline, no Recorder.
+The timeline tab queries `location_fixes` through a `device_context`/view-scoped
+session; the DB enforces the subject-pin + family-group scope. No `X-Limit`
+header discipline, no Recorder. **Member apps are history-capped at 30 days**
+*(owner decision)*: the member dashboard may only request the trailing 30-day
+window (enforced server-side, not client-trusted — an out-of-window request is
+clamped/rejected). The **owner has the full, uncapped history** (plus everything
+else in JBrain2). Same map / devices / timeline tabs; the member view simply
+doesn't go back as far.
 
 ### B6. Notifications: **MQTT-while-connected + FCM wake-from-Doze**, deduped
 - **MQTT** delivers live events to a foreground/connected viewer; the app builds
@@ -187,19 +199,27 @@ device_key`), `location_fixes`, `place_geofence`, `geofence_state`.
 ```
 pairing_code(code PK[160-bit], device_principal_id FK, subject_id, mode,
              expires_at[<=15m], redeemed_at, created_at)      -- one-time, TTL'd
-view_scope(viewer_device_principal_id FK, target_subject_id, target_device,
-           created_at, created_by[owner],
-           PK(viewer_device_principal_id, target_subject_id, target_device))
-                                  -- SOURCE OF TRUTH; owner-provisioned (no gate, T7)
+family_group(id PK, name, created_at)                         -- one group for v1
+view_scope(group_id FK, member_subject_id, member_device, joined_at,
+           added_by[owner], PK(group_id, member_subject_id, member_device))
+                              -- group MEMBERSHIP; owner-only add/remove (T3/T7)
 view_audit(id PK, viewer_principal_id, target_subject_id, path[live|history|poke],
            triggering_event_id, at)                          -- who-saw/was-poked-about-whom
 fcm_token(id PK, device_principal_id FK, token, platform, created_at,
           last_seen_at, revoked_at)                          -- bound to principal
 ```
 
+- **Flat-group model:** `view_scope` is **group membership**, not per-pair grants.
+  Two members of the same group may see each other; that *is* the policy. (The
+  table keeps the per-row shape so asymmetric scopes remain possible later without
+  a migration, but v1 configures exactly one mutual family group.)
 - **`app.viewer_may_see(viewer_subject, target_subject)`** SQL helper (SECURITY
-  DEFINER, reads `view_scope`) consulted by the extended `location_fixes` policy
-  (T3). Default deny.
+  DEFINER) = "both subjects share a `family_group`." Consulted by the extended
+  `location_fixes` policy (T3). Default deny.
+- **Member history cap (B5):** the member dashboard/API enforces a **30-day**
+  trailing window server-side; the owner is uncapped. Enforced in the query layer
+  on top of the RLS scope (a member request for older rows is clamped/rejected),
+  not trusted to the client.
 - **B3 extension** on `location_fixes` USING/WITH CHECK:
   `app.has_domain_scope('location') AND (app.is_full_owner()
    OR subject_id::text = current_setting('app.subject_id', true)
@@ -278,11 +298,13 @@ service-account bootstrap (non-negotiable #8).
 - **M6 — FCM.** `fcm_token` registry (+ RLS test); content-free poke sender;
   view-scope-aware routing; dedupe; on-poke fetch-then-local-notify. Gate:
   **no-PII-in-payload** test, routing test, revoke-kills-token test.
-- **M7 — Privacy surface + ops.** "Who can see me," one-tap Leave/revoke (kills
-  MQTT session + `cred_epoch` + tombstone), `view_audit` surfaced to targets,
-  **encryption at rest** (compensating control — no retention/no gate per T7),
-  Caddy L4 + SIGHUP-on-renewal hook, keystore backup/escrow runbook,
-  pin-rotation runbook.
+- **M7 — Owner controls + ops.** Owner-only **add/remove member** + **revoke**
+  (kills MQTT session + `cred_epoch` bump + membership tombstone); the **30-day
+  member history cap** (B5); `view_audit`; **encryption at rest** (compensating
+  control — no retention/gate/self-Leave per T7); Caddy L4 + SIGHUP-on-renewal
+  hook; keystore backup/escrow runbook; pin-rotation runbook. *(No in-app Leave
+  button; the Android-mandated tracking notification covers "you're being
+  tracked.")*
 - **v1.1 — UnifiedPush/ntfy** for de-Googled phones (additive sender behind the
   push-backend-agnostic interface).
 
@@ -304,10 +326,12 @@ last-seen (OEM-killer telemetry).
 3. **FCM flavor:** **Accept the `gms` flavor** (`firebase-messaging`, no Google
    Maps). `oss` stays pure (zero Google); UnifiedPush/ntfy deferred to **v1.1**
    for de-Googled phones. (B7.)
-4. **Consent:** **Owner is the sole gatekeeper — no consent gate.** Scopes are
-   provisioned unilaterally at owner discretion. Transparency surface (persistent
-   tracking notification, "who can see me," one-tap Leave) + `view_audit` kept on
-   by default as the residual safeguards. (T7.)
+4. **Membership & consent:** **Owner is the sole gatekeeper.** One **flat family
+   group** (everyone sees everyone); owner-only add/remove; **no consent gate** and
+   **no in-app self-Leave** (members opt out by uninstalling). The
+   Android-mandated tracking notification + `view_audit` are the residual
+   safeguards. (T3, T7.)
+   - **Member app history is capped at 30 days**; the owner is uncapped. (B5.)
 5. **Branding:** **App name = JBrain360.** New `applicationId` (e.g.
    `org.jbrain.jbrain360`) + custom name/icon to avoid collision with stock
    OwnTracks; ship the EPL-1.0 license + the source of modified files with each
@@ -321,10 +345,13 @@ testcontainers / external services faked / isolation test per new table)
 - **RLS isolation** per new table (`pairing_code`, `view_scope`, `view_audit`,
   `fcm_token`), incl. the target-scoped "who can see me" read and the go-auth
   least-privilege role (T8).
-- **View-scope enforcement, both paths:** live — device A (scope `{B}`) receives
-  B, receives **zero** for C (and the negative `publishClientReceive`/ACL-miss
-  case); history — `/track?subject=C` → **403**, C's rows never returned;
-  empty scope → empty (never "all").
+- **Family-group enforcement, both paths:** live — a member receives other
+  group members, receives **zero** for a non-member (and the negative
+  `publishClientReceive`/ACL-miss case); history — a request for a non-member →
+  **403**, their rows never returned; non-member device → sees nothing (never
+  "all").
+- **Member history cap:** a member request for fixes older than **30 days** is
+  clamped/rejected server-side; the owner (full) session is uncapped — both proven.
 - **Projection-equivalence to the RLS decision** (broker ACL ≡ history query ≡
   live filter ≡ `viewer_may_see`).
 - **Revocation:** kills live MQTT session within bound; `cred_epoch` bump → instant
@@ -333,10 +360,10 @@ testcontainers / external services faked / isolation test per new table)
   view-scope-aware routing; dedupe vs live; revoke-kills-token (fail-closed).
 - **Pairing abuse:** one-time (409 reuse), TTL (410), rate-limit (429),
   bound-device (403), redemption fails-closed (no orphan creds).
-- **Transparency/audit (residual safeguards, T7):** every live + history + poke
-  access writes a `view_audit` row; a target can read `view_scope`/audit rows
-  about itself ("who can see me"); one-tap Leave tombstones scope + drops the live
-  session. (No consent-gate test — owner is sole authority per T7.)
+- **Owner controls + audit (residual safeguards, T7):** every live + history +
+  poke access writes a `view_audit` row; **owner-only** add/remove member +
+  revoke tombstones membership and drops the live session within bound. (No
+  consent-gate and no self-Leave tests — owner is sole authority per T7.)
 - **L1:** family-view paths are the only new location egress; FCM send carries no
   domain data; broker public port rejects open subscribe.
 - **Client (instrumented):** Keystore cred never in JS/logs; WS upgrade Origin +
@@ -360,7 +387,7 @@ testcontainers / external services faked / isolation test per new table)
 | Self-signed keystore loss = no updates | redundant offline encrypted backup/escrow; CI-injected; runbook |
 | SPKI pin bricks stale installs on cert rotation | ship backup pin N releases ahead; rotation runbook; soft-fail min-version |
 | `remoteConfiguration=true` is a remote-control surface | restrict cmd-topic publish via go-auth ACL; audit every config push; `monitoring:2` flood-bounded |
-| Domestic-abuse / insider misuse (heightened: no consent gate + no retention, per owner T7) | residual safeguards mandatory — transparency surface (persistent tracking notification, "who can see me," one-tap Leave) + who-saw-whom `view_audit` (live + history + poke) + prompt revocation + encryption at rest |
+| Domestic-abuse / insider misuse (heightened: no consent gate, no self-Leave, no retention, per owner T7) | residual safeguards mandatory — Android-mandated persistent tracking notification + who-saw-whom `view_audit` (live + history + poke) + prompt owner-initiated revocation + encryption at rest + 30-day member history cap |
 
 ---
 
