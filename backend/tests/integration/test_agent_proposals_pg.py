@@ -18,6 +18,7 @@ from jbrain.agent.proposals import (
     ProposalRow,
     ProposalSpec,
 )
+from jbrain.agent.session import AgentSessionRepo
 from jbrain.auth import service
 from jbrain.auth.repo import SqlAuthRepo
 from jbrain.db.session import SessionContext, scoped_session
@@ -108,3 +109,41 @@ async def test_a_rejected_prerequisite_holds_its_dependent(maker: async_sessionm
     assert ran == []
     _, nodes = await repo.load(OWNER, prop_id)
     assert {n.id: n.status for n in nodes}[b] == "held"
+
+
+async def test_list_open_scopes_to_session_plus_session_less(maker: async_sessionmaker) -> None:
+    """The session-scoped inbox is a chat's own staged proposals plus the
+    session-less (background) ones — never another chat's."""
+    pid = await _owner_principal(maker)
+    repo = ProposalRepo(maker)
+    # Real chat sessions: proposals.session_id is FK-bound to agent_sessions, and
+    # agent_sessions.principal_id is FK-bound to principals — so create under a
+    # context carrying the real owner pid (OWNER's is a random uuid).
+    owner = SessionContext(principal_id=pid, principal_kind="owner")
+    sessions = AgentSessionRepo(maker)
+    chat_a = await sessions.create(owner, domain_scopes=["general"], title="A")
+    chat_b = await sessions.create(owner, domain_scopes=["general"], title="B")
+
+    def one(title: str, session_id: str | None) -> ProposalSpec:
+        return ProposalSpec(
+            kind="correction",
+            domain="general",
+            title=title,
+            nodes=[NodeSpec(str(uuid.uuid4()), "leaf", op="add_note", label=title)],
+            session_id=session_id,
+        )
+
+    sid_a, sid_b = chat_a.id, chat_b.id
+    await repo.stage(OWNER, principal_id=pid, spec=one("from chat A", sid_a))
+    await repo.stage(OWNER, principal_id=pid, spec=one("from chat B", sid_b))
+    await repo.stage(OWNER, principal_id=pid, spec=one("from nightly", None))
+
+    # Unscoped: the see-everything list carries all three (other tests in this
+    # file share the DB, so assert membership, not an exact set).
+    everything = {s.title for s in await repo.list_open(OWNER)}
+    assert {"from chat A", "from chat B", "from nightly"} <= everything
+
+    # Chat A: its own proposal + the session-less one, never chat B's.
+    chat_a = {s.title for s in await repo.list_open(OWNER, sid_a)}
+    assert "from chat A" in chat_a and "from nightly" in chat_a
+    assert "from chat B" not in chat_a

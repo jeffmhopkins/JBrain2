@@ -27,7 +27,7 @@ export interface FullBrainDeps {
   listSessions: () => Promise<AgentSession[]>;
   createSession: (body: SessionCreate) => Promise<AgentSession>;
   chat: (body: ChatRequest) => AsyncGenerator<ChatEvent>;
-  listProposals: () => Promise<ProposalSummary[]>;
+  listProposals: (sessionId?: string) => Promise<ProposalSummary[]>;
   getTranscript: (sessionId: string) => Promise<TranscriptTurn[]>;
   renameSession: (id: string, title: string) => Promise<void>;
   deleteSession: (id: string) => Promise<void>;
@@ -109,6 +109,8 @@ export function useFullBrain(enabled: boolean, deps: FullBrainDeps = LIVE): Full
   const [openProposal, setOpenProposal] = useState<string | null>(null);
   const [messages, setMessages] = useState<TranscriptMessage[]>([]);
   const [busy, setBusy] = useState(false);
+  // The open chat's id — the key the transcript and proposal inbox load against.
+  const activeId = active?.id ?? null;
 
   useEffect(() => {
     if (!enabled) return;
@@ -130,15 +132,17 @@ export function useFullBrain(enabled: boolean, deps: FullBrainDeps = LIVE): Full
     };
   }, [enabled, listSessions]);
 
-  // The review inbox. Reload it whenever the panel is opened and after each turn
-  // — the agent can stage a Proposal mid-conversation, so a once-on-mount fetch
-  // would leave the list stale (it'd read "Nothing staged"). Failures leave it
-  // empty.
+  // The review inbox, scoped to the open chat: its own staged proposals plus the
+  // session-less background ones. Keyed on `activeId` so switching chats reloads
+  // it (a proposal staged in one chat must not linger in another). Reload it
+  // whenever the panel is opened and after each turn too — the agent can stage a
+  // Proposal mid-conversation, so a once-on-mount fetch would leave the list stale
+  // (it'd read "Nothing staged"). Failures leave it empty.
   const reloadProposals = useCallback(() => {
-    listProposals()
+    listProposals(activeId ?? undefined)
       .then((all) => setProposals(all))
       .catch(() => {});
-  }, [listProposals]);
+  }, [listProposals, activeId]);
 
   // Refetch the session list and re-sync the open session by id (its title may
   // have just been auto-generated server-side; the id is unchanged so the
@@ -163,7 +167,6 @@ export function useFullBrain(enabled: boolean, deps: FullBrainDeps = LIVE): Full
   // Replay the active session's stored transcript on open/switch (keyed on id, so
   // a live turn's own setMessages never triggers a reload). A failure just leaves
   // the conversation empty.
-  const activeId = active?.id ?? null;
   useEffect(() => {
     if (!enabled || activeId === null) return;
     let stale = false;

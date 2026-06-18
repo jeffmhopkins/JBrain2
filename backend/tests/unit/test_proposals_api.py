@@ -17,6 +17,7 @@ class FakeProposals:
     def __init__(self) -> None:
         self.decided: list[tuple[str, bool]] = []
         self.enacted: list[str] = []
+        self.listed_session: str | None = None
         self._summary = ProposalSummary("p1", "correction", "staged", "health", "PCP is Dr. Lin", 1)
         self._proposal = ProposalRow("p1", "correction", "staged", "health", "PCP is Dr. Lin", None)
         self._nodes = [
@@ -32,7 +33,8 @@ class FakeProposals:
             )
         ]
 
-    async def list_open(self, ctx: object) -> list[ProposalSummary]:
+    async def list_open(self, ctx: object, session_id: str | None = None) -> list[ProposalSummary]:
+        self.listed_session = session_id
         return [self._summary]
 
     async def load(self, ctx: object, proposal_id: str):  # type: ignore[no-untyped-def]
@@ -90,6 +92,18 @@ def test_list_and_get_proposal(client: TestClient, repo: FakeAuthRepo) -> None:
     assert tree.json()["nodes"][0]["op"] == "add_note"
 
     assert client.get("/api/proposals/ghost").status_code == 404
+
+
+def test_list_forwards_session_scope(
+    client: TestClient, repo: FakeAuthRepo, proposals: FakeProposals
+) -> None:
+    login(client, repo)
+    # Unscoped list passes no session — the see-everything inbox.
+    assert client.get("/api/proposals").status_code == 200
+    assert proposals.listed_session is None
+    # A Full Brain chat scopes the inbox to its session id.
+    assert client.get("/api/proposals", params={"session_id": "s-42"}).status_code == 200
+    assert proposals.listed_session == "s-42"
 
 
 def test_decide_and_enact(client: TestClient, repo: FakeAuthRepo, proposals: FakeProposals) -> None:

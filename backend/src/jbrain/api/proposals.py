@@ -92,9 +92,14 @@ class EnactOut(BaseModel):
 
 
 @router.get("")
-async def list_proposals(request: Request, principal: OwnerDep) -> list[ProposalSummaryOut]:
+async def list_proposals(
+    request: Request, principal: OwnerDep, session_id: str | None = None
+) -> list[ProposalSummaryOut]:
+    # `session_id` scopes the inbox to a Full Brain chat: its own staged proposals
+    # plus the session-less background/system ones (so the owner never loses sight
+    # of nightly work). Omit it for the unscoped, see-everything list.
     repo = get_proposals(request)
-    summaries = await repo.list_open(ctx_for(principal))
+    summaries = await repo.list_open(ctx_for(principal), session_id)
     return [ProposalSummaryOut(**vars(s)) for s in summaries]
 
 

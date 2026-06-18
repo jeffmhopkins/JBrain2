@@ -209,6 +209,7 @@ def build_appointment_write_handlers(
             title=body[:_TITLE_LEN],
             nodes=[node],
             provenance={"source": "chat", "action": action},
+            session_id=ctx.agent_session_id,
         )
         prop_id = await proposals.stage(
             ctx.session, principal_id=ctx.session.principal_id, spec=spec

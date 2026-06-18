@@ -70,6 +70,7 @@ def build_proposal_handlers(proposals: ProposalRepo) -> dict[str, ToolHandler]:
             title=_label(correction),
             nodes=[node],
             provenance={"source": "chat"},
+            session_id=ctx.agent_session_id,
         )
         prop_id = await proposals.stage(
             ctx.session, principal_id=ctx.session.principal_id, spec=spec

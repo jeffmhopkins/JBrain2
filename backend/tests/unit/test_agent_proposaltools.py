@@ -39,6 +39,19 @@ async def test_propose_correction_stages_a_correction_proposal() -> None:
     assert spec.kind == "correction" and spec.domain == "health"
     assert spec.nodes[0].op == "add_note"
     assert spec.nodes[0].preview["body"] == "PCP is Dr. Lin"
+    # The proposal carries no chat session (this CTX has none) — a session-less
+    # proposal surfaces in every session's inbox.
+    assert spec.session_id is None
+
+
+async def test_propose_correction_ties_the_proposal_to_the_chat_session() -> None:
+    repo = FakeProposalRepo()
+    ctx = ToolContext(session=CTX.session, scopes=("health",), agent_session_id="sess-9")
+    await handler(repo)({"correction": "PCP is Dr. Lin", "domain": "health"}, ctx)
+    _, spec = repo.staged[0]
+    # The chat's session id rides onto the staged proposal, so the review inbox can
+    # scope it to that session.
+    assert spec.session_id == "sess-9"
 
 
 async def test_propose_correction_refuses_an_out_of_scope_domain() -> None:
