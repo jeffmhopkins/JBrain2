@@ -493,6 +493,7 @@ def test_build_registry_binds_the_shipped_sidecars() -> None:
         "propose_merge",
         "lookup_medication",
         "lookup_condition",
+        "propose_prompt_edit",
     }
     assert registry.names() == shipped
     # The connector tools are external (no domain restriction on visibility).
@@ -631,6 +632,11 @@ def test_sidecars_pinned_to_their_versions() -> None:
             "add_source_exclusion",
             1,
             "216ca56795bcb7484aa43b7d14b4bf970c717a463e3b8af71d77dfd2c13eccf8",
+        ),
+        "propose_prompt_edit.tool": (
+            "propose_prompt_edit",
+            1,
+            "b0d43cb16aa8fa9679c5b9ec6347e96a7876b62106dfa468f78d7516332fb13d",
         ),
     }
     # Every shipped sidecar must appear above — a new `.tool` cannot slip in

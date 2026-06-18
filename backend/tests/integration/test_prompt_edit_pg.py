@@ -12,6 +12,7 @@ from pathlib import Path
 
 import pytest
 from sqlalchemy import text
+from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
@@ -20,7 +21,7 @@ from jbrain.agent.proposals import ProposalRepo
 from jbrain.agent.selfedit import build_prompt_edit_spec, self_editable_targets
 from jbrain.auth import service
 from jbrain.auth.repo import SqlAuthRepo
-from jbrain.db.session import scoped_session
+from jbrain.db.session import SessionContext, scoped_session
 from tests.conftest import docker_available
 from tests.integration.test_rls import APP_PASSWORD, OWNER, database_url  # noqa: F401
 
@@ -167,6 +168,30 @@ async def test_crafted_body_preview_still_creates_no_note(maker: async_sessionma
     async with scoped_session(maker, OWNER) as session:
         note_count = (await session.execute(text("SELECT count(*) FROM app.notes"))).scalar()
     assert note_count == 0
+
+
+async def test_a_non_owner_principal_cannot_stage_a_prompt_edit(
+    maker: async_sessionmaker, editable_tree: Path
+) -> None:
+    """RLS isolation on the new staging path (#8/F7): a non-owner principal cannot
+    stage a behavior (prompt-edit) proposal — the proposals WITH CHECK is is_owner()
+    AND has_domain_scope, so a non-owner session is rejected at the DB, the firewall,
+    not a handler check."""
+    pid = await _owner_principal(maker)
+    repo = ProposalRepo(maker)
+    spec = build_prompt_edit_spec(
+        "session.title",
+        proposed_body="Title the chat in at most five words.",
+        proposed_version="v2",
+        rationale="cap length",
+        new_eval_fixture="<=5 words",
+        root=editable_tree,
+    )
+    non_owner = SessionContext(
+        principal_id=pid, principal_kind="capability_token", domain_scopes=("general",)
+    )
+    with pytest.raises(ProgrammingError):
+        await repo.stage(non_owner, principal_id=pid, spec=spec)
 
 
 async def test_self_editable_targets_finds_the_marked_prompt(editable_tree: Path) -> None:

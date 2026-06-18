@@ -3,6 +3,7 @@ name: session.title
 version: session-title-v1
 description: Title a Full Brain chat from its first exchange.
 strength: low
+self_editable: true
 config:
   max_tokens: 24
 ---

@@ -165,6 +165,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             app.state.appointments_repo,
             app.state.wiki_read_store,
             build_wiki_write_handlers(app.state.notes_repo, app.state.job_queue, maker),
+            router=app.state.llm_router,
+            settings=settings_store,
         )
         app.state.agent_sessions = AgentSessionRepo(maker)
         app.state.agent_runlog = AgentRunLog(maker)
