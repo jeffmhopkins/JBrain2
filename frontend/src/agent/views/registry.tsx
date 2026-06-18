@@ -480,7 +480,7 @@ function PlaceCard({ data }: ViewProps): ReactNode {
               })}
             </div>
           )}
-          {owner && <div className="loc-pc-owner">owner-only stats</div>}
+          {owner && stats.length > 0 && <div className="loc-pc-owner">owner-only stats</div>}
         </div>
       </div>
       {chips.length > 0 && (
