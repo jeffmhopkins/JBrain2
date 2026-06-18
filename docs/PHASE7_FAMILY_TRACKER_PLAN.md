@@ -98,10 +98,14 @@ isolation test (non-negotiable #3).
   exposure surface is larger, so **encryption-at-rest, the access audit, and
   prompt owner-initiated revocation (T5) are mandatory compensating controls**,
   not optional.
-- **T8 — go-auth runs least-privilege.** go-auth's own DB role is RLS-enforced
-  and subject-pin-aware (or reads only a purpose-built, pre-projected ACL table
-  with no cross-subject inference). An isolation test proves go-auth's role cannot
-  read another subject's `view_scope`/`location_fixes`.
+- **T8 — the MQTT auth/ACL endpoint runs least-privilege.** *(Updated by spike:
+  go-auth uses its HTTP backend, so it has NO database role — auth/ACL is decided
+  in our `/internal/mqtt-auth` + `/internal/mqtt-acl` endpoints.)* Those endpoints
+  evaluate under a dedicated, least-privilege RLS-scoped context (the existing
+  `login` auth-context for the credential lookup; a purpose-built scoped session
+  for the membership/ACL check) that reads only group membership and cannot infer
+  cross-subject location. An isolation test proves the ACL endpoint cannot be
+  driven to authorize a topic outside the caller's `view_scope`.
 
 ---
 
@@ -125,11 +129,17 @@ Postgres (Postgres holds device-key *hashes*, not broker passwords). go-auth's
 HTTP backend authenticates each MQTT connect against an internal
 `/internal/mqtt-auth` endpoint that reuses the shipped fail-closed device-key
 check against `principals` (SHA-256-hex equality, kind + `revoked_at` filter).
-Authz (topic ACL) is the same endpoint's superuser/acl checks, computed from
-`view_scope` under a least-privilege RLS role (T8). One cred store, the shipped
-L4 model reused verbatim, no reconciler invented to sync a dual store.
-*(dynsec `$CONTROL` kick is retained only as the force-disconnect mechanism for
-T5 revocation, not as the auth system.)*
+Authz (topic ACL) is the same service's `/internal/mqtt-acl` check, computed from
+`view_scope` membership under a least-privilege RLS session (T8). One cred store,
+the shipped L4 model reused verbatim, no reconciler invented to sync a dual store.
+**Spike-confirmed + pinned:** the Postgres backend *can't* compare a bare hex
+SHA-256, so the **HTTP backend** is the mechanism (it forwards `clientid` too).
+`mosquitto-go-auth` is archived (2025-06) and only the **Mosquitto 2.0.x** plugin
+ABI is evidenced → **pin Mosquitto 2.0.21 + go-auth final master by digest**; the
+plugin is a dumb forwarder, so all credential/ACL logic lives in our maintained
+endpoints. *(Force-disconnect on revoke (T5): go-auth ACL re-check with cache
+TTL→0 halts new delivery; a hard kick of an idle subscriber uses a broker
+management action — settled in M3.)*
 
 ### B3. View-scope: **a Postgres table that extends B3**, projected outward
 `view_scope` is the single writable source of truth (RLS-scoped). It is consulted
@@ -377,7 +387,8 @@ testcontainers / external services faked / isolation test per new table)
 | Risk | Mitigation |
 |---|---|
 | Live-path residual exposure (broker ACL is the async copy) | go-auth ACL cache TTL→0 on live; per-message scope re-check; force-disconnect on revoke; per-subject (not god) subscriptions |
-| go-auth role launders cross-subject reads | least-privilege RLS-pinned go-auth DB role + isolation test (T8) |
+| MQTT auth/ACL endpoint launders cross-subject reads (go-auth HTTP backend, no DB role) | least-privilege RLS-scoped `/internal/mqtt-acl` + isolation test (T8) |
+| Archived go-auth plugin breaks on a Mosquitto upgrade | pin Mosquitto 2.0.21 + go-auth final by digest; plugin is a dumb forwarder (logic in our endpoint); EMQX native-HTTP-auth is the escape hatch if needed |
 | Two stores of location truth | T1: Recorder dropped; `location_fixes` sole source; history via Timescale |
 | Second credential store / mislabeled "projection" | T2/B2: go-auth against `principals`; no dynsec passwords; no new hash column |
 | Geofence transitions silently stop on MQTT | T4: L5a moved into the MQTT consumer under `device_context()` |
@@ -391,14 +402,49 @@ testcontainers / external services faked / isolation test per new table)
 
 ---
 
-## I. Hands-on-verify before/within build
+## I. Verify-spike — RESOLVED (read against real source)
 
-OwnTracks fork: manifest `foregroundServiceType="location"` present; nav hook in
-`ui/base` for the WebView tab; config-import confirmation dialog (suppress for
-one-tap pairing); multi-filter `subTopic` parsing; exact `setConfiguration` cmd
-JSON the fork honors + that `remoteConfiguration=true` enables it; Paho version /
-reconnect behavior. Server: go-auth ↔ Mosquitto 2.x build + a custom SHA-256-hex
-equality query against `principals`; dynsec `$CONTROL` kick as the force-
-disconnect path; Caddy `layer4` SNI route for `:8883`; SIGHUP-on-renewal. FCM:
-`onNewToken` ordering vs app auth-readiness (queue/retry); minimum Play Services
-floor; collapse-key cap.
+A spike read the shipped JBrain2 auth code and the current `owntracks/android`
+source. Results:
+
+**Confirmed / settled:**
+- **MQTT auth = go-auth HTTP backend → our `/internal/mqtt-auth` endpoint** *(owner
+  decision: Mosquitto + go-auth, pinned)*. go-auth's Postgres backend cannot
+  compare a bare hex SHA-256, but its **HTTP backend** POSTs `{username, password,
+  clientid}` to our endpoint, where we run the **shipped** `hash_key()` (incl.
+  `normalize_key`) + `find_active_device_principal_by_key_hash()` and return
+  allow/deny. One credential store; the plugin holds **zero** credential logic
+  (dumb forwarder). ACL checks POST `{username, clientid, topic, acc}` to our
+  `/internal/mqtt-acl`, evaluated against `view_scope` under RLS. **Pin Mosquitto
+  2.0.21 + go-auth final master by digest** (go-auth archived 2025-06; only 2.0.x
+  ABI is evidenced — `dev-setup.sh` pins both).
+- **Ingest posture confirmed:** `device_context(principal_id, subject_id)` exists
+  verbatim (`db/session.py`) — `principal_kind="device_key"`, subject-pinned,
+  `domain_scopes=("location",)`. The MQTT consumer ingests under it; pairing mints
+  via `create_principal(kind="device_key", …)`.
+- **Remote mode switch:** `setConfiguration` cmd verified in source; `monitoring`
+  ∈ {-1 Quiet, 0 Manual, 1 Significant, 2 Move}; gated by `remoteConfiguration`
+  (**default false** → paired config ships it `true`) + `cmd` (default true).
+- **`subTopic` multi-filter:** supported (space-separated). **Config one-tap
+  pairing:** feasible by calling `saveConfiguration()` directly, bypassing
+  `LoadActivity`'s apply-button preview. **WebView:** none exists; add an Activity
+  + a `DrawerProvider.kt` drawer entry (nav is a drawer, `MapActivity` is the main
+  entry).
+- **MQTT TLS edge:** simplest is to **expose Mosquitto `:8883` directly** with its
+  own cert; nginx-`stream` `ssl_preread` is the rock-solid fallback; Caddy
+  `layer4` SNI works but needs a non-standard `xcaddy` build (deprioritized).
+
+**Corrections to earlier assumptions:**
+- **FGS type is `connectedDevice`, not `location`.** OwnTracks' `BackgroundService`
+  declares `foregroundServiceType="connectedDevice"` (+ `FOREGROUND_SERVICE_
+  CONNECTED_DEVICE`). We **inherit** this working choice (Play policy is moot —
+  we sideload). Any "must declare location FGS" assumption is dropped.
+- **`cmd`-topic restriction:** when `subTopic` is non-default, commands are only
+  accepted on `receivedCommandsTopic` — the paired config must align them.
+
+**Remaining build-time checks (not blockers):** Paho version / reconnect behavior;
+the force-disconnect-on-revoke mechanism (go-auth ACL re-check with cache TTL→0
+stops *new* delivery; a hard kick of an idle subscriber needs a broker management
+action — settle in M3); FCM `google-services` Gradle plugin presence +
+`onNewToken`-vs-auth-readiness ordering + min Play Services floor + collapse-key
+cap (M5/M6).
