@@ -86,6 +86,16 @@ def _info(p: FakePrincipal) -> PrincipalInfo:
 
 
 @dataclass
+class FakeViewScopeRepo:
+    """In-memory view-scope: the (viewer_subject, target_subject) pairs allowed to see."""
+
+    allowed: set[tuple[str, str]] = field(default_factory=set)
+
+    async def may_view(self, viewer_subject_id: str, target_subject_id: str) -> bool:
+        return bool(viewer_subject_id) and (viewer_subject_id, target_subject_id) in self.allowed
+
+
+@dataclass
 class FakeDeviceRepo:
     """In-memory DeviceRepo for unit-testing device provisioning without Postgres."""
 

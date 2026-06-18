@@ -27,7 +27,14 @@ from pydantic import BaseModel
 from jbrain.auth import service
 from jbrain.auth.service import AuthRepo
 from jbrain.config import Settings
-from jbrain.mqtt.authz import authorize_ingest_subscribe, authorize_topic
+from jbrain.locations.viewscope import ViewScopeRepo
+from jbrain.mqtt.authz import (
+    ACC_READ,
+    ACC_SUBSCRIBE,
+    authorize_ingest_subscribe,
+    authorize_topic,
+    topic_namespace_owner,
+)
 
 router = APIRouter()
 
@@ -43,8 +50,13 @@ def get_settings(request: Request) -> Settings:
     return cast(Settings, request.app.state.settings)
 
 
+def get_view_scope_repo(request: Request) -> ViewScopeRepo:
+    return cast(ViewScopeRepo, request.app.state.view_scope_repo)
+
+
 AuthRepoDep = Annotated[AuthRepo, Depends(get_auth_repo)]
 SettingsDep = Annotated[Settings, Depends(get_settings)]
+ViewScopeRepoDep = Annotated[ViewScopeRepo, Depends(get_view_scope_repo)]
 
 
 class AuthCheck(BaseModel):
@@ -81,11 +93,36 @@ async def mqtt_auth(body: AuthCheck, repo: AuthRepoDep, settings: SettingsDep) -
 
 
 @router.post("/mqtt-acl")
-async def mqtt_acl(body: AclCheck, settings: SettingsDep) -> Response:
+async def mqtt_acl(
+    body: AclCheck, settings: SettingsDep, repo: AuthRepoDep, scope: ViewScopeRepoDep
+) -> Response:
     """Authorize a publish/subscribe. `username` is trusted (bound at auth)."""
     if _is_ingest_identity(settings, body.username):
         ok = authorize_ingest_subscribe(body.topic, body.acc)
-    else:
-        # M0 floor: a device may touch only its own namespace (view-scope, M2).
-        ok = authorize_topic(body.username, body.topic)
-    return Response(status_code=_ALLOW if ok else _DENY)
+        return Response(status_code=_ALLOW if ok else _DENY)
+    # A device may always touch its OWN namespace; and may READ/subscribe a family
+    # group member's namespace — the live-path twin of the location_fixes view-scope
+    # policy. It may never publish into another's namespace (deny-by-default).
+    if authorize_topic(body.username, body.topic):
+        return Response(status_code=_ALLOW)
+    owner = topic_namespace_owner(body.topic)
+    if (
+        owner is not None
+        and owner != body.username
+        and body.acc in (ACC_READ, ACC_SUBSCRIBE)
+        and await _may_subscribe_member(repo, scope, viewer_pid=body.username, target_pid=owner)
+    ):
+        return Response(status_code=_ALLOW)
+    return Response(status_code=_DENY)
+
+
+async def _may_subscribe_member(
+    repo: AuthRepo, scope: ViewScopeRepo, *, viewer_pid: str, target_pid: str
+) -> bool:
+    """Resolve the viewer + target device principals to their subjects and ask the
+    view-scope whether they share a family group. Either id missing → deny."""
+    viewer = await repo.find_active_device_principal_by_id(viewer_pid)
+    target = await repo.find_active_device_principal_by_id(target_pid)
+    if viewer is None or target is None:
+        return False
+    return await scope.may_view(viewer.subject_id, target.subject_id)

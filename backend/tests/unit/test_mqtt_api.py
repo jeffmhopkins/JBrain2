@@ -6,6 +6,7 @@ fail-closed. The ACL then confines a device to its own namespace.
 """
 
 import asyncio
+import uuid
 from collections.abc import Iterator
 
 import pytest
@@ -14,7 +15,7 @@ from fastapi.testclient import TestClient
 from jbrain.auth import keys
 from jbrain.config import Settings
 from jbrain.main import create_app
-from tests.unit.fakes import FakeAuthRepo
+from tests.unit.fakes import FakeAuthRepo, FakeViewScopeRepo
 
 KEY = "jb1-AAAA-BBBB"
 
@@ -153,3 +154,37 @@ def test_ingest_identity_is_disabled_when_no_secret_is_set() -> None:
             ).status_code
             == 403
         )
+
+
+# --- ACL widening to family-group members (M2b) ------------------------------
+
+
+def test_acl_widens_to_group_members_on_read_only() -> None:
+    app = create_app(Settings(secure_cookies=False, database_url=_DB))
+    auth = FakeAuthRepo()
+    asyncio.run(auth.create_principal("device_key", keys.hash_key("ka"), "A", subject_id="sa"))
+    asyncio.run(auth.create_principal("device_key", keys.hash_key("kb"), "B", subject_id="sb"))
+    pid_a, pid_b = auth.principals[0].id, auth.principals[1].id
+    # A may see B (one-directional, to prove the check isn't symmetric by accident).
+    scope = FakeViewScopeRepo(allowed={("sa", "sb")})
+
+    with TestClient(app) as c:
+        app.state.auth_repo = auth
+        app.state.view_scope_repo = scope
+
+        def acl(user: str, topic: str, acc: int) -> int:
+            return c.post(
+                "/internal/mqtt-acl", json={"username": user, "topic": topic, "acc": acc}
+            ).status_code
+
+        # A subscribes to / reads B's namespace (a group member) → allowed.
+        assert acl(pid_a, f"owntracks/{pid_b}/+", 4) == 200
+        assert acl(pid_a, f"owntracks/{pid_b}/phone", 1) == 200
+        # A may NOT publish into B's namespace.
+        assert acl(pid_a, f"owntracks/{pid_b}/phone", 2) == 403
+        # A's own namespace still works (including publish).
+        assert acl(pid_a, f"owntracks/{pid_a}/phone", 2) == 200
+        # B is not granted to see A (the fake scope is one-directional).
+        assert acl(pid_b, f"owntracks/{pid_a}/+", 4) == 403
+        # An unknown principal's namespace → denied (no subject to resolve).
+        assert acl(pid_a, f"owntracks/{uuid.uuid4()}/+", 4) == 403
