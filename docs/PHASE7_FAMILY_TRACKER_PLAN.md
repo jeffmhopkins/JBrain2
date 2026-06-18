@@ -188,16 +188,25 @@ doesn't go back as far.
 - Keep **Eclipse Paho** for v1 (battle-tested in OwnTracks); Paho replacement is a
   tracked post-v1 risk.
 
-### B8. WebView auth: **Keystore cred → short single-use token → HttpOnly cookie**
+### B8. WebView auth: **Keystore cred → `/session/mint` → HttpOnly cookie**
 Device credential lives in the **Android Keystore** (hardware-backed,
-non-exportable), **never in JS**. On dashboard open, native does a
-challenge-response `/session/mint` (HMAC of a server nonce — long-lived secret
-never sent) → **≤5-min single-use audience-scoped token** → the **exact first
-load URL** Set-Cookies an **HttpOnly + Secure + SameSite=Strict** session cookie
-(carrying `cred_epoch`) and 302s into the SPA (because `loadUrl(headers)` only
-covers the first request). The WS upgrade authenticates the cookie **and** a
-strict Origin allow-list. The session is bound to the authenticated subject and
-its view-scope.
+non-exportable), **never in JS**. On dashboard open, native POSTs the device key
+to `/session/mint` **over TLS** — the *same* credential the device already
+presents on the MQTT / OwnTracks path, verified against the shipped kind-filtered
+device lookup (saltless SHA-256, `revoked_at IS NULL`) — and the response
+Set-Cookies an **HttpOnly + Secure + SameSite=Strict** session cookie bound to
+the authenticated subject and its view-scope. The WS upgrade authenticates the
+cookie **and** a strict Origin allow-list.
+
+> **Owner decision (2026-06-18): direct-key over TLS, not HMAC challenge-response.**
+> The original draft mooted an HMAC-of-nonce so the long-lived secret is *never
+> sent*, but the shipped `principals` table stores only a one-way saltless
+> SHA-256 hash — HMAC verification would require a *new* recoverable per-device
+> secret (extra column, encrypted at rest, rotation). The key already transits
+> TLS on the MQTT/OwnTracks path, so direct presentation adds no new exposure and
+> reuses `authenticate_device` verbatim. `cred_epoch`-carrying cookies + instant
+> revocation remain an M7 owner-controls concern; M4a mints a long-lived
+> device-principal session whose cookie is invalidated by revoking the principal.
 
 ---
 

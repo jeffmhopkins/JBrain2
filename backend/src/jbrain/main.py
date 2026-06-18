@@ -41,6 +41,7 @@ from jbrain.api import (
     proposals,
     runs,
     search,
+    session_bridge,
     sessions,
     tiles,
     wiki,
@@ -279,6 +280,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(proposals.router, prefix="/api")
     app.include_router(runs.router, prefix="/api")
     app.include_router(search.router, prefix="/api")
+    app.include_router(session_bridge.router, prefix="/api")
     app.include_router(sessions.router, prefix="/api")
     app.include_router(settings_api.router, prefix="/api")
     app.include_router(tiles.router, prefix="/api")
