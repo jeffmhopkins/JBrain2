@@ -22,6 +22,7 @@ from jbrain.wiki.actions import WIKI_SPECS
 from jbrain.workflow.evalaction import EVAL_RUN_SPEC
 from jbrain.workflow.registry import ACTION_SPECS, build_registry
 from jbrain.workflow.scheduler import (
+    GEOFENCE_SWEEP_ACTION,
     PURGE_ACTION,
     RECONCILE_PENDING_INTEGRATION_ACTION,
     RECONCILE_PENDING_NOTES_ACTION,
@@ -52,6 +53,7 @@ def _registry():  # noqa: ANN202
             RECONCILE_PENDING_NOTES_ACTION,
             RECONCILE_PENDING_INTEGRATION_ACTION,
             RECONCILE_UNEMBEDDED_NOTES_ACTION,
+            GEOFENCE_SWEEP_ACTION,
             EVAL_RUN_SPEC,
             *WIKI_SPECS,
         )
@@ -368,6 +370,27 @@ async def test_seeded_reconciler_sweeps_exist_and_are_fireable(maker: async_sess
     before = await _jobs_of_kind(maker, "reconcile_pending_notes")
     await fire_trigger(maker, _registry(), str(by_pipeline["reconcile_pending_notes"].id))
     assert await _jobs_of_kind(maker, "reconcile_pending_notes") == before + 1
+
+
+async def test_seeded_geofence_sweep_exists_and_is_fireable(maker: async_sessionmaker) -> None:
+    """Migration 0064 seeds the geofence reconciler as a recurring (900s), manual,
+    schedule-bound trigger. The pipeline must resolve through the in-code registry
+    (no DispatchResolutionError) and firing it enqueues a geofence_sweep job."""
+    async with scoped_session(maker, queue.SYSTEM_CTX) as s:
+        row = (
+            await s.execute(
+                text(
+                    "SELECT t.id, s.interval_seconds FROM app.triggers t"
+                    " JOIN app.schedules s ON s.id = t.on_schedule_id"
+                    " WHERE t.manual AND t.pipeline = 'geofence_sweep'"
+                )
+            )
+        ).one()
+    assert row.interval_seconds == 900
+    before = await _jobs_of_kind(maker, "geofence_sweep")
+    fired = await fire_trigger(maker, _registry(), str(row.id))
+    assert fired.pipeline == "geofence_sweep"
+    assert await _jobs_of_kind(maker, "geofence_sweep") == before + 1
 
 
 async def test_dropped_ingest_event_self_heals_and_is_idempotent(

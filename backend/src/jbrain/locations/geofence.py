@@ -143,47 +143,157 @@ async def _evaluate_and_persist(
     latitude: float,
     longitude: float,
 ) -> list[dict]:
-    transitions: list[dict] = []
     async with scoped_session(maker, device_context(principal_id, subject_id)) as session:
-        fences = (
+        return await _evaluate_on_session(
+            session,
+            subject_id=subject_id,
+            captured_at=captured_at,
+            latitude=latitude,
+            longitude=longitude,
+        )
+
+
+async def _evaluate_on_session(
+    session: AsyncSession,
+    *,
+    subject_id: str,
+    captured_at: datetime,
+    latitude: float,
+    longitude: float,
+) -> list[dict]:
+    """Evaluate the subject's fences against one fix on an already-open session,
+    advancing its `geofence_state` and returning the crossings. The session's RLS
+    decides what is visible: the inline path's `device_context` sees only its own
+    subject; the sweep's full-owner session sees every subject. The fence set is
+    not subject-pinned (a fence is a place, not a device), so the same query serves
+    both — only the per-subject state read/write is scoped by `subject_id`."""
+    transitions: list[dict] = []
+    fences = (
+        await session.execute(
+            _FENCES_SQL, {"lat": latitude, "lon": longitude, "buf": EXIT_BUFFER_M}
+        )
+    ).all()
+    if not fences:
+        return []
+    states = {
+        r.pgid: FenceState(r.state, r.confirming_fixes)
+        for r in (
             await session.execute(
-                _FENCES_SQL, {"lat": latitude, "lon": longitude, "buf": EXIT_BUFFER_M}
+                text(
+                    "SELECT place_geofence_id::text AS pgid, state, confirming_fixes"
+                    " FROM app.geofence_state WHERE subject_id::text = :sid"
+                ),
+                {"sid": subject_id},
             )
         ).all()
-        if not fences:
-            return []
-        states = {
-            r.pgid: FenceState(r.state, r.confirming_fixes)
-            for r in (
-                await session.execute(
-                    text(
-                        "SELECT place_geofence_id::text AS pgid, state, confirming_fixes"
-                        " FROM app.geofence_state WHERE subject_id::text = :sid"
-                    ),
-                    {"sid": subject_id},
-                )
-            ).all()
-        }
-        for fence in fences:
-            prev = states.get(fence.pgid, FenceState("unknown", 0))
-            new, transition = evaluate(prev, FenceObs(fence.inside, fence.inside_buffered))
-            await session.execute(
-                _UPSERT_STATE_SQL,
+    }
+    for fence in fences:
+        prev = states.get(fence.pgid, FenceState("unknown", 0))
+        new, transition = evaluate(prev, FenceObs(fence.inside, fence.inside_buffered))
+        await session.execute(
+            _UPSERT_STATE_SQL,
+            {
+                "sid": subject_id,
+                "pgid": fence.pgid,
+                "state": new.state,
+                "conf": new.confirming,
+                "ts": captured_at,
+                "since": captured_at if transition else None,
+            },
+        )
+        if transition:
+            transitions.append(
                 {
-                    "sid": subject_id,
-                    "pgid": fence.pgid,
-                    "state": new.state,
-                    "conf": new.confirming,
-                    "ts": captured_at,
-                    "since": captured_at if transition else None,
-                },
+                    "place_geofence_id": fence.pgid,
+                    "place_entity_id": fence.eid,
+                    "transition": transition,
+                }
             )
-            if transition:
-                transitions.append(
-                    {
-                        "place_geofence_id": fence.pgid,
-                        "place_entity_id": fence.eid,
-                        "transition": transition,
-                    }
-                )
     return transitions
+
+
+# The entities whose mirror is out of sync with the graph: a Place with a live
+# geofence fact but NO mirror row (a dropped projector apply) UNIONed with a mirror
+# row whose Place has no live fact (a dropped supersession). Deliberately the
+# SYMMETRIC DIFFERENCE, not every place: project_place_geofences is delete-then-
+# insert with a fresh id, and geofence_state cascades on the mirror id, so
+# re-deriving an *unchanged* row would wipe the subject's hysteresis state every
+# sweep. Matched (live AND mirrored) rows are left untouched — the inline projector
+# already refreshes a row whose geometry actually changed, on fact-apply.
+_MIRROR_DRIFT_IDS_SQL = text(
+    "WITH live AS ("
+    "  SELECT e.id FROM app.entities e JOIN app.facts f ON f.entity_id = e.id"
+    "  WHERE lower(e.kind) = 'place' AND f.predicate = 'geofence'"
+    "    AND f.status = 'active' AND f.valid_to IS NULL"
+    "), mirrored AS (SELECT place_entity_id AS id FROM app.place_geofence)"
+    " SELECT id FROM ("
+    "   (SELECT id FROM live EXCEPT SELECT id FROM mirrored)"
+    "   UNION (SELECT id FROM mirrored EXCEPT SELECT id FROM live)"
+    " ) AS drift"
+)
+
+# The latest fix per device subject, with the device principal that recorded it —
+# the sweep re-evaluates exactly this one point per subject. Under the full-owner
+# session every subject is visible; a NULL principal (no authenticated device)
+# cannot be stamped on an event and is skipped by the caller.
+_LATEST_FIX_SQL = text(
+    "SELECT DISTINCT ON (subject_id) subject_id::text AS sid, principal_id::text AS pid,"
+    "   latitude AS lat, longitude AS lon, captured_at, accuracy_m"
+    " FROM app.location_fixes"
+    " ORDER BY subject_id, captured_at DESC"
+)
+
+
+async def sweep_geofences(maker: async_sessionmaker[AsyncSession]) -> int:
+    """Scheduled full-owner reconciler backstop (Phase 7 Wave 3c). Two self-healing
+    passes the inline ingest path can drop a best-effort event on, run as the *full
+    owner* (never a device-stamped job that reaches into a subject's pinned track):
+
+      1. Reconcile the `place_geofence` spatial mirror against the graph — insert a
+         missing row, drop an orphaned one — so a dropped projector hook (apply or
+         supersession) cannot leave the mirror out of sync. Unchanged rows are left
+         alone so their cascaded `geofence_state` survives.
+      2. Re-evaluate each device subject's latest fix through the same hysteresis
+         evaluator the inline path uses, emitting any `location.geofence_transition`
+         a dropped inline detection missed. Idempotent: a fix already reflected in
+         `geofence_state` re-evaluates to no crossing, so a healthy stream emits
+         nothing. A low-accuracy latest fix is ignored, matching the inline gate.
+
+    Returns the number of transition events emitted (for logging/tests)."""
+    pending: list[tuple[str, str, datetime, dict]] = []
+    async with scoped_session(maker, wf_events.SYSTEM_CTX) as session:
+        from jbrain.analysis.geofence_projection import project_place_geofences
+
+        drifted = {row[0] for row in (await session.execute(_MIRROR_DRIFT_IDS_SQL)).all()}
+        await project_place_geofences(session, drifted)
+
+        for fix in (await session.execute(_LATEST_FIX_SQL)).all():
+            if fix.pid is None or (fix.accuracy_m is not None and fix.accuracy_m > ACCURACY_GATE_M):
+                continue
+            for t in await _evaluate_on_session(
+                session,
+                subject_id=fix.sid,
+                captured_at=fix.captured_at,
+                latitude=fix.lat,
+                longitude=fix.lon,
+            ):
+                pending.append((fix.sid, fix.pid, fix.captured_at, t))
+
+    # Emit after the state writes commit, mirroring the inline path (state under the
+    # scoped session, the event under SYSTEM_CTX stamped with the device principal).
+    for sid, pid, captured_at, t in pending:
+        await wf_events.emit_event(
+            maker,
+            wf_events.SYSTEM_CTX,
+            type=GEOFENCE_TRANSITION,
+            domain_code="location",
+            payload={
+                "subject_id": sid,
+                "place_geofence_id": t["place_geofence_id"],
+                "place_entity_id": t["place_entity_id"],
+                "transition": t["transition"],
+                "captured_at": captured_at.isoformat(),
+            },
+            principal_id=pid,
+        )
+    return len(pending)
