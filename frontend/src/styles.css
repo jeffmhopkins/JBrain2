@@ -9673,3 +9673,120 @@ input.ld-title {
   line-height: 1.35;
   margin-top: 1px;
 }
+
+/* --- Location screen (Phase 7 Wave 5b): Devices / Timeline / Map --------- */
+.location-screen .seg-row {
+  margin-bottom: 14px;
+}
+.loc-soon {
+  margin-top: 24px;
+  text-align: center;
+}
+.loc-card-list {
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
+}
+.loc-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
+  padding: 13px 15px;
+}
+.loc-card-revoked {
+  opacity: 0.55;
+}
+.loc-card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.loc-card-name {
+  font-weight: 600;
+  color: var(--text);
+}
+.loc-badge {
+  font-size: var(--fs-micro);
+  color: var(--danger);
+  background: var(--danger-tint);
+  border-radius: var(--r-pill);
+  padding: 2px 8px;
+}
+.loc-card-meta {
+  margin-top: 4px;
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+}
+.loc-card-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 11px;
+}
+.loc-card-actions button,
+.loc-sheet-actions button {
+  font: inherit;
+  font-weight: 600;
+  font-size: 14px;
+  padding: 8px 14px;
+  border-radius: 10px;
+  border: 1px solid transparent;
+  cursor: pointer;
+}
+.loc-card-actions .ghost,
+.loc-sheet-actions .ghost {
+  background: var(--surface-2);
+  color: var(--text-2);
+}
+.loc-card-actions .loc-danger {
+  color: var(--danger);
+}
+.loc-sheet-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 16px;
+}
+.loc-sheet-actions .primary {
+  background: var(--steel-tint);
+  color: var(--steel);
+}
+.loc-sheet-actions .primary:disabled {
+  opacity: 0.4;
+}
+.loc-sheet-note {
+  color: var(--text-2);
+  font-size: var(--fs-body);
+  margin: 10px 0;
+}
+.loc-sheet-warn {
+  color: var(--warn);
+  background: var(--amber-tint);
+  border-radius: var(--r-input);
+  padding: 10px 12px;
+  font-size: var(--fs-body);
+  margin: 4px 0 12px;
+}
+.loc-sheet-error {
+  color: var(--danger);
+  font-size: var(--fs-micro);
+  margin: 8px 0 0;
+}
+.loc-keyline {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 7px 0;
+  border-top: 1px solid var(--border);
+}
+.loc-keyline-label {
+  flex: none;
+  width: 84px;
+  color: var(--text-3);
+  font-size: var(--fs-micro);
+}
+.loc-keyline-value {
+  font-family: ui-monospace, monospace;
+  font-size: 13px;
+  color: var(--text);
+  word-break: break-all;
+}

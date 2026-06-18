@@ -15,6 +15,7 @@ import { type ComposeHandoff, HomeScreen } from "./screens/HomeScreen";
 import { LLMSettingsScreen } from "./screens/LLMSettingsScreen";
 import { ListDetailScreen } from "./screens/ListDetailScreen";
 import { ListsScreen } from "./screens/ListsScreen";
+import { LocationScreen } from "./screens/LocationScreen";
 import { LoginScreen } from "./screens/LoginScreen";
 import {
   NoteScreen,
@@ -48,6 +49,7 @@ type Card =
   | "lists"
   | "calendar"
   | "graph"
+  | "location"
   | "wiki";
 
 // Automations brings its own full-screen overlay (its own back bar + slide-in),
@@ -63,6 +65,7 @@ const SCREEN_TITLES: Record<Exclude<Card, "automations">, string> = {
   lists: "Lists",
   calendar: "Calendar",
   graph: "Map",
+  location: "Location",
   wiki: "Wiki",
 };
 
@@ -453,6 +456,8 @@ export function App() {
           {card === "graph" && <GraphScreen onOpenEntity={setEntityView} />}
           {/* Cards open the list detail layer; listsKey remounts on its close. */}
           {card === "lists" && <ListsScreen key={listsKey} onOpenList={setListView} />}
+          {/* Owner-only location surface: Devices / Timeline / Map. */}
+          {card === "location" && <LocationScreen />}
         </div>
       )}
 
