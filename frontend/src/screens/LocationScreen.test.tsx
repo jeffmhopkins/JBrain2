@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import type { DeviceSummary, ProvisionedDevice } from "../api/client";
-import { type LocationDeps, LocationScreen, relativeTime } from "./LocationScreen";
+import type { DeviceSummary, ProvisionedDevice, TimelineEntry } from "../api/client";
+import { type LocationDeps, LocationScreen, relativeTime, sentence } from "./LocationScreen";
 
 function device(over: Partial<DeviceSummary> = {}): DeviceSummary {
   return {
@@ -25,12 +25,24 @@ function provisioned(over: Partial<ProvisionedDevice> = {}): ProvisionedDevice {
   };
 }
 
+function entry(over: Partial<TimelineEntry> = {}): TimelineEntry {
+  return {
+    occurred_at: new Date(Date.now() - 35 * 60_000).toISOString(),
+    subject_id: "d1",
+    transition: "exit",
+    place_entity_id: "p1",
+    place_name: "Office",
+    ...over,
+  };
+}
+
 function deps(over: Partial<LocationDeps> = {}): LocationDeps {
   return {
     listDevices: vi.fn(async () => [device()]),
     provisionDevice: vi.fn(async () => provisioned()),
     rotateDevice: vi.fn(async () => "ROTATED-KEY-456"),
     revokeDevice: vi.fn(async () => {}),
+    listTimeline: vi.fn(async () => [entry()]),
     ...over,
   };
 }
@@ -50,12 +62,34 @@ describe("LocationScreen", () => {
     expect(await screen.findByText(/no devices yet/)).toBeInTheDocument();
   });
 
-  it("placeholders the unbuilt tabs", async () => {
+  it("placeholders the Map tab until its wave", async () => {
     render(<LocationScreen deps={deps()} />);
-    fireEvent.click(screen.getByRole("tab", { name: "Timeline" }));
-    expect(screen.getByText(/timeline feed arrives in a later wave/i)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("tab", { name: "Map" }));
     expect(screen.getByText(/map arrives in a later wave/i)).toBeInTheDocument();
+  });
+
+  it("renders the timeline as natural sentences naming the device", async () => {
+    const d = deps({
+      listTimeline: vi.fn(async () => [
+        entry({ subject_id: "d1", transition: "exit", place_name: "Office" }),
+        entry({ subject_id: "d2", transition: "enter", place_name: "Mom's house" }),
+      ]),
+      listDevices: vi.fn(async () => [
+        device({ id: "d1", label: "Jeff's phone" }),
+        device({ id: "d2", label: "Celine's phone" }),
+      ]),
+    });
+    render(<LocationScreen deps={d} />);
+    fireEvent.click(screen.getByRole("tab", { name: "Timeline" }));
+    expect(await screen.findByText("Jeff's phone left Office")).toBeInTheDocument();
+    expect(screen.getByText("Celine's phone arrived at Mom's house")).toBeInTheDocument();
+  });
+
+  it("shows the timeline empty state when there are no crossings", async () => {
+    const d = deps({ listTimeline: vi.fn(async () => []) });
+    render(<LocationScreen deps={d} />);
+    fireEvent.click(screen.getByRole("tab", { name: "Timeline" }));
+    expect(await screen.findByText(/no movement yet/i)).toBeInTheDocument();
   });
 
   it("provisions a device and reveals its key once with OwnTracks config", async () => {
@@ -105,6 +139,23 @@ describe("LocationScreen", () => {
     await screen.findByText("Jeff's phone");
     expect(screen.getByText("revoked")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Rotate key" })).toBeNull();
+  });
+});
+
+describe("sentence", () => {
+  const labels = new Map([["d1", "Jeff's phone"]]);
+  it("maps a crossing to a plain verb sentence", () => {
+    expect(sentence(entry({ transition: "exit", place_name: "Office" }), labels)).toBe(
+      "Jeff's phone left Office",
+    );
+    expect(sentence(entry({ transition: "enter", place_name: "Home" }), labels)).toBe(
+      "Jeff's phone arrived at Home",
+    );
+  });
+  it("falls back to a generic who when the device is unknown", () => {
+    expect(sentence(entry({ subject_id: "gone", transition: "enter" }), labels)).toBe(
+      "A device arrived at Office",
+    );
   });
 });
 

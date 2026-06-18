@@ -47,6 +47,16 @@ export interface ProvisionedDevice {
   key: string;
 }
 
+/** One geofence crossing for the Timeline feed (GET /api/locations/timeline).
+ * `subject_id` is the device; `transition` is "enter" | "exit". */
+export interface TimelineEntry {
+  occurred_at: string;
+  subject_id: string;
+  transition: string;
+  place_entity_id: string;
+  place_name: string;
+}
+
 export interface ContainerStatus {
   service: string;
   state: string;
@@ -1494,6 +1504,11 @@ export const api = {
   async listLocationDevices(): Promise<DeviceSummary[]> {
     const response = await request("/api/locations/devices");
     return (await response.json()) as DeviceSummary[];
+  },
+
+  async listLocationTimeline(): Promise<TimelineEntry[]> {
+    const response = await request("/api/locations/timeline");
+    return (await response.json()) as TimelineEntry[];
   },
 
   async provisionDevice(label: string): Promise<ProvisionedDevice> {

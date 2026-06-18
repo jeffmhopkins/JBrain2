@@ -2161,6 +2161,39 @@ const MOCK_DEVICES: MockDevice[] = [
 ];
 let mockDeviceSeq = 4;
 
+// Phase 7 location (Timeline tab): geofence crossings, newest first, keyed to the
+// mock device subjects so the feed resolves "<device> left/arrived at <place>".
+const MOCK_TIMELINE = [
+  {
+    occurred_at: new Date(Date.now() - 35 * 60_000).toISOString(),
+    subject_id: "dev-1",
+    transition: "exit",
+    place_entity_id: "place-office",
+    place_name: "Office",
+  },
+  {
+    occurred_at: new Date(Date.now() - 6 * 3_600_000).toISOString(),
+    subject_id: "dev-2",
+    transition: "enter",
+    place_entity_id: "place-mom",
+    place_name: "Mom's house",
+  },
+  {
+    occurred_at: new Date(Date.now() - 9 * 3_600_000).toISOString(),
+    subject_id: "dev-1",
+    transition: "enter",
+    place_entity_id: "place-office",
+    place_name: "Office",
+  },
+  {
+    occurred_at: new Date(Date.now() - 30 * 3_600_000).toISOString(),
+    subject_id: "dev-1",
+    transition: "exit",
+    place_entity_id: "place-home",
+    place_name: "Home",
+  },
+];
+
 export const mockFetch: typeof fetch = async (input, init) => {
   await sleep();
   const url = new URL(String(input instanceof Request ? input.url : input), "http://mock");
@@ -2778,6 +2811,7 @@ export const mockFetch: typeof fetch = async (input, init) => {
 
   // Phase 7 location: the owner's Devices tab read + key management.
   if (path === "/api/locations/devices" && method === "GET") return json(MOCK_DEVICES);
+  if (path === "/api/locations/timeline" && method === "GET") return json(MOCK_TIMELINE);
   if (path === "/api/devices" && method === "POST") {
     const label =
       (init?.body ? (JSON.parse(String(init.body)) as { label?: string }).label : undefined) ??

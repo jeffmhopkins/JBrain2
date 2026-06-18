@@ -9790,3 +9790,34 @@ input.ld-title {
   color: var(--text);
   word-break: break-all;
 }
+
+/* --- Location Timeline tab (Phase 7 Wave 5c) ---------------------------- */
+.loc-feed {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.loc-feed-head {
+  font-size: var(--fs-head);
+  color: var(--text-3);
+  font-weight: 600;
+  margin: 0 0 6px;
+}
+.loc-feed-row {
+  display: flex;
+  gap: 12px;
+  align-items: baseline;
+  padding: 6px 0;
+}
+.loc-feed-time {
+  flex: none;
+  width: 74px;
+  color: var(--text-3);
+  font-size: var(--fs-micro);
+  font-variant-numeric: tabular-nums;
+}
+.loc-feed-text {
+  color: var(--text);
+  font-size: var(--fs-body);
+  line-height: 1.35;
+}
