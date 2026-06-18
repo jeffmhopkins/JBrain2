@@ -126,6 +126,55 @@ def test_diff_pipeline_rejects_version_drift() -> None:
         dispatcher.diff_pipeline(_event(), bad, _registry())
 
 
+# --- forward_keys: per-trigger payload forwarding (Phase 7 Wave 3c / B8) -----
+
+
+def test_diff_pipeline_default_forward_keys_preserves_the_note_baseline() -> None:
+    # forward_keys=None falls back to the module FORWARD_KEYS ({"note_id"}), so the
+    # note pipelines' shadow baseline is untouched by the per-trigger mechanism.
+    ev = _event(payload={"note_id": "n-1", "extra": "ignored"})
+    would, _ = dispatcher.diff_pipeline(ev, _ingest_pipeline(), _registry(), forward_keys=None)
+    assert would[0].payload == {"note_id": "n-1"}
+
+
+def test_diff_pipeline_forward_keys_crosses_only_listed_keys_no_coord_leak() -> None:
+    # A geofence-transition trigger forwards opaque ids + the transition only —
+    # never the raw lat/lon the event also carries (B8 forward_keys_no_coord_leak).
+    ev = _event(
+        type="location.geofence_transition",
+        domain="location",
+        payload={
+            "subject_id": "s-1",
+            "place_geofence_id": "pg-1",
+            "place_entity_id": "e-1",
+            "transition": "enter",
+            "latitude": 40.0,
+            "longitude": -74.0,
+        },
+    )
+    fk = frozenset({"subject_id", "place_geofence_id", "place_entity_id", "transition"})
+    would, _ = dispatcher.diff_pipeline(ev, _ingest_pipeline(), _registry(), forward_keys=fk)
+    assert would[0].payload == {
+        "subject_id": "s-1",
+        "place_geofence_id": "pg-1",
+        "place_entity_id": "e-1",
+        "transition": "enter",
+    }
+    assert "latitude" not in would[0].payload
+    assert "longitude" not in would[0].payload
+
+
+def test_diff_pipeline_explicit_empty_forward_keys_forwards_nothing() -> None:
+    # The diff-layer contract: an explicit empty set crosses no event keys. (The
+    # resolve_event path maps an empty trigger list to None — the {"note_id"}
+    # default — via `or None`; this asserts the lower-level primitive.)
+    ev = _event(payload={"note_id": "n-1"})
+    would, _ = dispatcher.diff_pipeline(
+        ev, _ingest_pipeline(), _registry(), forward_keys=frozenset()
+    )
+    assert would[0].payload == {}
+
+
 # --- compute_diff: shadow equivalence (E7a) ---------------------------------
 
 

@@ -31,6 +31,7 @@ def _registry() -> ActionRegistry:
             scheduler.RECONCILE_PENDING_NOTES_ACTION,
             scheduler.RECONCILE_PENDING_INTEGRATION_ACTION,
             scheduler.RECONCILE_UNEMBEDDED_NOTES_ACTION,
+            scheduler.GEOFENCE_SWEEP_ACTION,
         )
     )
 
@@ -307,6 +308,33 @@ async def test_reconcile_unembedded_notes_handler_calls_the_unembedded_backfill(
     monkeypatch.setattr(scheduler.queue, "backfill_unembedded_notes", fake_backfill)
     sentinel = object()
     handler = scheduler.reconcile_unembedded_notes_handler(sentinel)  # type: ignore[arg-type]
+    await handler({})
+    assert calls == [sentinel]
+
+
+def test_geofence_sweep_action_resolves_in_the_composed_registry() -> None:
+    # The worker composes the geofence reconciler into its registry; the seeded
+    # pipeline names `geofence_sweep`, so it must resolve to its handler key (Wave 3c).
+    spec = _registry().get("geofence_sweep")
+    assert spec.version == 1
+    assert spec.handler == "geofence_sweep"
+    assert spec.cost_class == "cheap"
+
+
+async def test_geofence_sweep_handler_calls_the_sweep(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The handler is the geofence reconciler: it calls locations.geofence.sweep_geofences
+    # with the worker's maker and takes no payload.
+    calls: list[Any] = []
+
+    async def fake_sweep(maker: Any) -> int:
+        calls.append(maker)
+        return 0
+
+    import jbrain.locations.geofence as geofence
+
+    monkeypatch.setattr(geofence, "sweep_geofences", fake_sweep)
+    sentinel = object()
+    handler = scheduler.geofence_sweep_handler(sentinel)  # type: ignore[arg-type]
     await handler({})
     assert calls == [sentinel]
 

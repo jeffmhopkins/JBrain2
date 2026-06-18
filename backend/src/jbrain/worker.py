@@ -276,6 +276,12 @@ async def run() -> None:
         # a dropped embed_note enqueue no longer strands a note's chunks unembedded
         # until the next restart — it self-heals within minutes / on demand from Ops.
         "reconcile_unembedded_notes": scheduler.reconcile_unembedded_notes_handler(maker),
+        # The geofence reconciler backstop (Phase 7 Wave 3c): the scheduled twin of
+        # the inline detection at ingest. Rebuilds the place_geofence mirror from the
+        # graph and re-evaluates each subject's latest fix, healing a dropped
+        # projector hook or inline transition. In-code only (not the app.actions
+        # seed); a migration seeds its schedule + pipeline. Runs as the full owner.
+        "geofence_sweep": scheduler.geofence_sweep_handler(maker),
         # The opt-in self-improvement eval (Phase-5 Track H·A): runs the note.extract
         # suite through the LLM adapter behind the budget gate (fail-closed over the
         # kill-switch / daily token budget). The live scorer is built here off the
@@ -326,6 +332,7 @@ async def run() -> None:
             scheduler.RECONCILE_PENDING_NOTES_ACTION,
             scheduler.RECONCILE_PENDING_INTEGRATION_ACTION,
             scheduler.RECONCILE_UNEMBEDDED_NOTES_ACTION,
+            scheduler.GEOFENCE_SWEEP_ACTION,
             EVAL_RUN_SPEC,
             SKILL_DISTILL_SPEC,
             SKILL_SWEEP_SPEC,

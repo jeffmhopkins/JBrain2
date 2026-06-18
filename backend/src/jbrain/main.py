@@ -65,6 +65,7 @@ from jbrain.workflow.evalaction import EVAL_RUN_SPEC
 from jbrain.workflow.registry import ACTION_SPECS
 from jbrain.workflow.registry import build_registry as build_action_registry
 from jbrain.workflow.scheduler import (
+    GEOFENCE_SWEEP_ACTION,
     PURGE_ACTION,
     RECONCILE_PENDING_INTEGRATION_ACTION,
     RECONCILE_PENDING_NOTES_ACTION,
@@ -111,6 +112,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 RECONCILE_PENDING_NOTES_ACTION,
                 RECONCILE_PENDING_INTEGRATION_ACTION,
                 RECONCILE_UNEMBEDDED_NOTES_ACTION,
+                GEOFENCE_SWEEP_ACTION,
                 EVAL_RUN_SPEC,
                 *WIKI_SPECS,
             )

@@ -368,6 +368,9 @@ async def test_run_registers_all_job_handlers(
         "reconcile_pending_notes",
         "reconcile_pending_integration",
         "reconcile_unembedded_notes",
+        # The geofence reconciler backstop (Phase 7 Wave 3c) — in-code only, not in
+        # ACTION_SPECS / the app.actions seed; a migration seeds its schedule.
+        "geofence_sweep",
         # The opt-in self-improvement eval behind the budget gate (Phase-5 Track
         # H·A) — wired in-code, NOT in ACTION_SPECS / the app.actions seed.
         "eval_run",
