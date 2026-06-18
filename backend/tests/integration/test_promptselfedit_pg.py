@@ -1,27 +1,35 @@
 """The `prompt_self_edit` nightly action (Loop 4, Wave 3) against real Postgres: a
 cluster of owner-REJECTED proposals from one source drives a `prompt-edit` Proposal
-against that source's prompt — propose-only, owner-gated, budget-gated, cooldown-
-deduped. The drafting LLM is faked. Proves the durable owner-origin signal, the
-threshold, the cooldown, the kill-switch, and that an unmapped source is ignored.
+against that source's prompt — propose-only, owner-gated, budget-gated, high-water-
+deduped. The drafting LLM is faked and the discovery root is a synthetic tree (so the
+test is decoupled from the real prompt bodies). Proves the durable owner-origin signal,
+the threshold, the high-water re-fire guard, the bar, budget/kill refusal, the draft-
+failure spend charge, the unmapped-source exclusion, and RLS on the new query path.
 """
 
 import json
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
-from jbrain.agent.promptselfedit import PromptSelfEditAction
+from jbrain.agent.promptselfedit import PromptSelfEditAction, _rejection_count
 from jbrain.agent.proposals import ProposalRepo
 from jbrain.auth import service
 from jbrain.auth.repo import SqlAuthRepo
-from jbrain.db.session import scoped_session
+from jbrain.db.session import SessionContext, scoped_session
 from jbrain.llm.fake import FakeLlmClient
 from jbrain.llm.router import LlmRouter
-from jbrain.queue import PermanentJobError
-from jbrain.settings_store import SELF_IMPROVEMENT_KILL_SWITCH_KEY, SqlSettingsStore
+from jbrain.queue import SYSTEM_CTX, PermanentJobError
+from jbrain.settings_store import (
+    SELF_IMPROVEMENT_BUDGET_KEY,
+    SELF_IMPROVEMENT_KILL_SWITCH_KEY,
+    SqlSettingsStore,
+)
 from tests.conftest import docker_available
 from tests.integration.test_rls import APP_PASSWORD, OWNER, database_url  # noqa: F401
 
@@ -30,10 +38,9 @@ pytestmark = [
     pytest.mark.skipif(not docker_available(), reason="requires a Docker daemon"),
 ]
 
-# A valid draft of the (real) skill.distill prompt — the action reads the real body and
-# diffs against this. No URLs, so the lint passes; version bumped so the spec builds.
+# A valid draft of the synthetic skill.distill prompt — no URLs/markers, version bumped.
 _DRAFT = {
-    "proposed_body": "Distill only clearly reusable runs. Prefer fewer, higher-value playbooks.",
+    "proposed_body": "Distill only clearly reusable runs into short playbooks.",
     "proposed_version": "skill-distill-v2",
     "rationale": "Be more selective so the owner sees fewer low-value skill proposals.",
     "new_eval_fixture": "A one-off run with no reusable shape yields no skill.",
@@ -60,6 +67,19 @@ async def _isolate(database_url: str) -> AsyncIterator[None]:  # noqa: F811
             )
     finally:
         await admin.dispose()
+
+
+@pytest.fixture
+def editable_root(tmp_path: Path) -> Path:
+    """A synthetic package root with a self-editable `skill.distill` (no safety markers,
+    so the draft below isn't refused by the safety guard) — decouples the test from the
+    real prompt body."""
+    (tmp_path / "prompts").mkdir()
+    front = "name: skill.distill\nversion: skill-distill-v1\nstrength: high\nself_editable: true"
+    (tmp_path / "prompts" / "s.prompt").write_text(
+        f"---\n{front}\n---\nDistill runs into short reusable playbooks.\n", encoding="utf-8"
+    )
+    return tmp_path
 
 
 async def _owner_principal(maker: async_sessionmaker) -> str:
@@ -101,20 +121,24 @@ async def _rejected(maker: async_sessionmaker, pid: str, source: str, *, n: int)
             )
 
 
-def _action(maker: async_sessionmaker) -> PromptSelfEditAction:
-    fake = FakeLlmClient(responses=[json.dumps(_DRAFT)])
+def _action(
+    maker: async_sessionmaker, root: Path, *, response: str | None = None
+) -> PromptSelfEditAction:
+    fake = FakeLlmClient(responses=[response if response is not None else json.dumps(_DRAFT)])
     router = LlmRouter({"xai": fake}, {}, tiers={"high": ("xai", "m")})
     return PromptSelfEditAction(
-        maker, router=router, settings=SqlSettingsStore(maker), proposals=ProposalRepo(maker)
+        maker,
+        router=router,
+        settings=SqlSettingsStore(maker),
+        proposals=ProposalRepo(maker),
+        root=root,
     )
 
 
-async def _prompt_edits(maker: async_sessionmaker) -> list[tuple[str, dict]]:
+async def _prompt_edits(maker: async_sessionmaker) -> list[dict]:
     async with scoped_session(maker, OWNER) as session:
         props = (
-            await session.execute(
-                text("SELECT id, title FROM app.proposals WHERE kind = 'prompt-edit'")
-            )
+            await session.execute(text("SELECT id FROM app.proposals WHERE kind = 'prompt-edit'"))
         ).all()
         out = []
         for p in props:
@@ -124,51 +148,114 @@ async def _prompt_edits(maker: async_sessionmaker) -> list[tuple[str, dict]]:
                     {"p": str(p.id)},
                 )
             ).one()
-            out.append((p.title, dict(node.preview)))
+            out.append(dict(node.preview))
         return out
 
 
-async def test_a_rejection_cluster_drafts_a_prompt_edit(maker: async_sessionmaker) -> None:
+async def test_a_rejection_cluster_drafts_a_prompt_edit(
+    maker: async_sessionmaker, editable_root: Path
+) -> None:
     pid = await _owner_principal(maker)
     await _rejected(maker, pid, "skill_distill", n=3)  # at the threshold
-    await _action(maker).run({})
+    await _action(maker, editable_root).run({})
 
     edits = await _prompt_edits(maker)
     assert len(edits) == 1
-    _title, preview = edits[0]
-    assert preview["target_name"] == "skill.distill"  # the source's prompt, via the bar
-    assert preview["proposed_version"] == "skill-distill-v2"
-    assert preview["unified_diff"].startswith("--- a/")
+    assert edits[0]["target_name"] == "skill.distill"  # the source's prompt, via the bar
+    assert edits[0]["proposed_version"] == "skill-distill-v2"
+    assert edits[0]["unified_diff"].startswith("--- a/")
 
 
-async def test_below_threshold_does_nothing(maker: async_sessionmaker) -> None:
+async def test_below_threshold_does_nothing(maker: async_sessionmaker, editable_root: Path) -> None:
     pid = await _owner_principal(maker)
     await _rejected(maker, pid, "skill_distill", n=2)  # under the threshold of 3
-    await _action(maker).run({})
+    await _action(maker, editable_root).run({})
     assert await _prompt_edits(maker) == []
 
 
-async def test_cooldown_prevents_re_proposing(maker: async_sessionmaker) -> None:
+async def test_the_high_water_mark_prevents_a_stale_cluster_refiring(
+    maker: async_sessionmaker, editable_root: Path
+) -> None:
+    """Finding-2 fix: after a draft, the SAME rejections are below the high-water mark,
+    so a second run does not re-propose — only genuinely new rejections would."""
     pid = await _owner_principal(maker)
     await _rejected(maker, pid, "skill_distill", n=4)
-    await _action(maker).run({})
-    await _action(maker).run({})  # immediate second run is within the cooldown window
+    await _action(maker, editable_root).run({})
+    await _action(maker, editable_root).run({})  # nothing new since the mark
     assert len(await _prompt_edits(maker)) == 1
 
 
-async def test_an_unmapped_source_is_ignored(maker: async_sessionmaker) -> None:
-    """Rejections of proposals from a source NOT in the map (e.g. a manual or untrusted
-    origin) never trigger a self-edit — only the owner-origin mapped sources count."""
+async def test_a_source_whose_prompt_is_not_editable_is_skipped(
+    maker: async_sessionmaker, tmp_path: Path
+) -> None:
+    """The bar before spend: with a root where skill.distill is NOT self-editable, the
+    cluster is never even counted — no draft, no spend."""
+    (tmp_path / "prompts").mkdir()  # empty: no editable targets
     pid = await _owner_principal(maker)
-    await _rejected(maker, pid, "some_other_source", n=5)
-    await _action(maker).run({})
+    await _rejected(maker, pid, "skill_distill", n=5)
+    await _action(maker, tmp_path).run({})
+    assert await _prompt_edits(maker) == []
+    assert (
+        await SqlSettingsStore(maker).self_improvement_spent_today(
+            SYSTEM_CTX, day=datetime.now(UTC).strftime("%Y-%m-%d")
+        )
+        == 0
+    )
+
+
+async def test_an_untrusted_origin_source_is_ignored(
+    maker: async_sessionmaker, editable_root: Path
+) -> None:
+    """A rejected proposal whose provenance source is the chat origin (not one of the
+    owner-origin nightly sources) never triggers a self-edit (#10)."""
+    pid = await _owner_principal(maker)
+    await _rejected(maker, pid, "chat", n=5)
+    await _action(maker, editable_root).run({})
     assert await _prompt_edits(maker) == []
 
 
-async def test_the_kill_switch_refuses(maker: async_sessionmaker) -> None:
+async def test_a_failed_draft_charges_spend_but_stages_nothing(
+    maker: async_sessionmaker, editable_root: Path
+) -> None:
+    pid = await _owner_principal(maker)
+    await _rejected(maker, pid, "skill_distill", n=3)
+    await _action(maker, editable_root, response="not json at all").run({})
+    assert await _prompt_edits(maker) == []
+    spent = await SqlSettingsStore(maker).self_improvement_spent_today(
+        SYSTEM_CTX, day=datetime.now(UTC).strftime("%Y-%m-%d")
+    )
+    assert spent > 0  # the failed drafting call still charged the budget (#10)
+
+
+async def test_the_kill_switch_refuses(maker: async_sessionmaker, editable_root: Path) -> None:
     pid = await _owner_principal(maker)
     await _rejected(maker, pid, "skill_distill", n=3)
     await SqlSettingsStore(maker).upsert(OWNER, SELF_IMPROVEMENT_KILL_SWITCH_KEY, True)
     with pytest.raises(PermanentJobError):
-        await _action(maker).run({})
+        await _action(maker, editable_root).run({})
     assert await _prompt_edits(maker) == []
+
+
+async def test_an_exhausted_budget_refuses(maker: async_sessionmaker, editable_root: Path) -> None:
+    pid = await _owner_principal(maker)
+    await _rejected(maker, pid, "skill_distill", n=3)
+    # A budget below the per-run estimate -> the gate refuses before any draft.
+    await SqlSettingsStore(maker).upsert(OWNER, SELF_IMPROVEMENT_BUDGET_KEY, 1)
+    with pytest.raises(PermanentJobError):
+        await _action(maker, editable_root).run({})
+    assert await _prompt_edits(maker) == []
+
+
+async def test_rejection_count_is_owner_only_rls(
+    maker: async_sessionmaker, editable_root: Path
+) -> None:
+    """RLS on the new query path (#8): the rejection signal is owner-only — a non-owner
+    session sees zero, so it can neither read nor manufacture a cluster."""
+    pid = await _owner_principal(maker)
+    await _rejected(maker, pid, "skill_distill", n=3)
+    floor = datetime.fromtimestamp(0, UTC)
+    async with scoped_session(maker, OWNER) as session:
+        assert await _rejection_count(session, source="skill_distill", after=floor) == 3
+    non_owner = SessionContext(principal_kind="capability_token", domain_scopes=("general",))
+    async with scoped_session(maker, non_owner) as session:
+        assert await _rejection_count(session, source="skill_distill", after=floor) == 0

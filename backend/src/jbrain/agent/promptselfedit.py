@@ -13,9 +13,10 @@ Fail-closed and bounded:
   content — an untrusted note can't trigger a self-edit (#10);
 - the bar holds: it only ever drafts for a prompt that is in `self_editable_targets`
   (so the data-boundary / domain-classification prompts are untargetable, #12);
-- a per-prompt cooldown stops it re-nagging about the same prompt every night;
+- a per-prompt high-water mark counts only rejections NEWER than the last draft, so one
+  rejection cluster never re-fires a redundant draft;
 - every draft routes through the SAME `draft_prompt_edit` the owner tool uses, so the
-  lint (#9) + version-bump + bar gates can't drift between the two paths.
+  lint (#9) + safety-marker + version-bump + bar gates can't drift between the two paths.
 """
 
 from __future__ import annotations
@@ -49,11 +50,13 @@ _SOURCE_TO_PROMPT = {
     "correction_mine": "correction.mine",
 }
 
-_THRESHOLD = 3  # rejected proposals from one source within the window to trigger a draft
-_LOOKBACK_DAYS = 30  # only recent rejections count (a stale grudge shouldn't fire forever)
-_COOLDOWN_DAYS = 14  # don't re-propose an edit to the same prompt within this window
+_THRESHOLD = 3  # NEW rejected proposals from one source (since the last draft) to trigger
+_LOOKBACK_DAYS = 30  # never count rejections older than this (a stale grudge shouldn't fire)
 _PER_DRAFT_ESTIMATE = 8_000  # up-front budget estimate per editable source
-_COOLDOWN_KEY = "prompt_self_edit:cooldown"  # {prompt_name: iso_ts of last staged edit}
+# {prompt_name: iso_ts of the last staged edit} — a per-prompt HIGH-WATER MARK, not a
+# cooldown: the next run counts only rejections NEWER than this, so one rejection cluster
+# can never re-fire a redundant draft; only genuinely new rejections accrue to the next.
+_HWM_KEY = "prompt_self_edit:high_water"
 
 PROMPT_SELF_EDIT_SPEC = ActionSpec(
     name="prompt_self_edit",
@@ -67,26 +70,26 @@ PROMPT_SELF_EDIT_SPEC = ActionSpec(
 )
 
 
-async def _rejection_clusters(session: AsyncSession, *, sources: list[str], lookback_days: int):
-    """Count, per source, the recent proposals the owner REJECTED. A proposal's leaf is
-    set 'rejected' by the owner's decision (the proposal row itself stays 'staged'), so
-    a rejected leaf is the signal. Owner-origin by construction — these are the owner's
-    own decisions, never untrusted content (#10)."""
-    rows = (
-        await session.execute(
-            text(
-                "SELECT p.provenance->>'source' AS source, count(DISTINCT p.id) AS cnt"
-                " FROM app.proposals p"
-                " WHERE p.provenance->>'source' = ANY(:sources)"
-                "   AND p.created_at > now() - (:lookback * interval '1 day')"
-                "   AND EXISTS (SELECT 1 FROM app.proposal_nodes n"
-                "                 WHERE n.proposal_id = p.id AND n.status = 'rejected')"
-                " GROUP BY p.provenance->>'source'"
-            ),
-            {"sources": sources, "lookback": lookback_days},
-        )
-    ).all()
-    return {r.source: int(r.cnt) for r in rows}
+async def _rejection_count(session: AsyncSession, *, source: str, after: datetime) -> int:
+    """Count the proposals from `source` the owner REJECTED that were created after
+    `after` (the per-prompt high-water mark, floored to the lookback). A proposal's
+    leaf is set 'rejected' by the owner's decision (the proposal row itself stays
+    'staged'), so a rejected leaf is the signal. Owner-origin by construction — the
+    owner's own decisions, never untrusted content (#10)."""
+    return int(
+        (
+            await session.execute(
+                text(
+                    "SELECT count(DISTINCT p.id) FROM app.proposals p"
+                    " WHERE p.provenance->>'source' = :source"
+                    "   AND p.created_at > :after"
+                    "   AND EXISTS (SELECT 1 FROM app.proposal_nodes n"
+                    "                 WHERE n.proposal_id = p.id AND n.status = 'rejected')"
+                ),
+                {"source": source, "after": after},
+            )
+        ).scalar_one()
+    )
 
 
 async def _owner_principal_id(session: AsyncSession) -> str:
@@ -101,8 +104,9 @@ async def _owner_principal_id(session: AsyncSession) -> str:
 
 
 class PromptSelfEditAction:
-    """gate → count rejection clusters → for each editable, over-threshold, off-cooldown
-    source: draft a prompt-edit and stage it for the owner → charge + set cooldown."""
+    """gate → for each editable source, count rejections newer than its high-water mark
+    → over threshold: draft a prompt-edit, stage it for the owner, advance the mark →
+    charge spend."""
 
     def __init__(
         self,
@@ -135,52 +139,56 @@ class PromptSelfEditAction:
         if not decision.allowed:
             raise PermanentJobError(f"prompt_self_edit refused: {decision.reason}")
 
-        async with scoped_session(self._maker, self._ctx) as session:
-            clusters = await _rejection_clusters(
-                session, sources=sources, lookback_days=_LOOKBACK_DAYS
-            )
-            owner_pid = await _owner_principal_id(session) if clusters else ""
-
-        cooldown = dict(await self._settings.get(self._ctx, _COOLDOWN_KEY, {}) or {})
+        hwm = dict(await self._settings.get(self._ctx, _HWM_KEY, {}) or {})
         now = datetime.now(UTC)
+        floor = now - timedelta(days=_LOOKBACK_DAYS)
         spent = 0
-        for source, count in clusters.items():
-            if count < _THRESHOLD:
-                continue
-            prompt_name = _SOURCE_TO_PROMPT[source]
-            if _on_cooldown(cooldown.get(prompt_name), now):
-                continue
-            target = editable[prompt_name]
-            failure_mode = (
-                f"The owner rejected {count} of this prompt's proposals in the last"
-                f" {_LOOKBACK_DAYS} days — its output is being judged low-value. Revise the"
-                " prompt to be more selective and precise so it produces fewer, higher-quality"
-                " results, without weakening any existing rule."
-            )
-            outcome = await draft_prompt_edit(
-                self._router, target=target, failure_mode=failure_mode, root=self._root
-            )
-            spent += outcome.tokens
-            if outcome.spec is None:
-                log.warning("prompt_self_edit_draft_skipped", prompt=prompt_name, code=outcome.code)
-                continue
-            await self._proposals.stage(self._ctx, principal_id=owner_pid, spec=outcome.spec)
-            cooldown[prompt_name] = now.isoformat()
+        async with scoped_session(self._maker, self._ctx) as session:
+            owner_pid = await _owner_principal_id(session)
+            for source in sources:
+                prompt_name = _SOURCE_TO_PROMPT[source]
+                # Count only rejections NEWER than the last draft for this prompt (the
+                # high-water mark), floored to the lookback — so a stale cluster can't
+                # re-fire and only new owner rejections accrue toward the next draft.
+                after = max(floor, _parse_iso(hwm.get(prompt_name)) or floor)
+                count = await _rejection_count(session, source=source, after=after)
+                if count < _THRESHOLD:
+                    continue
+                failure_mode = (
+                    f"The owner rejected {count} of this prompt's proposals recently — its"
+                    " output is being judged low-value. Revise the prompt to be more selective"
+                    " and precise so it produces fewer, higher-quality results, without"
+                    " weakening any existing rule."
+                )
+                outcome = await draft_prompt_edit(
+                    self._router,
+                    target=editable[prompt_name],
+                    failure_mode=failure_mode,
+                    root=self._root,
+                )
+                spent += outcome.tokens
+                if outcome.spec is None:
+                    log.warning(
+                        "prompt_self_edit_draft_skipped", prompt=prompt_name, code=outcome.code
+                    )
+                    continue
+                await self._proposals.stage(self._ctx, principal_id=owner_pid, spec=outcome.spec)
+                hwm[prompt_name] = now.isoformat()  # advance the mark past this cluster
 
-        await self._settings.upsert(self._ctx, _COOLDOWN_KEY, cooldown)
+        await self._settings.upsert(self._ctx, _HWM_KEY, hwm)
         if spent:
             await self._gate.record_spend(self._ctx, tokens=spent)
 
 
-def _on_cooldown(last_iso: Any, now: datetime) -> bool:
-    """True if a prompt was last proposed within the cooldown window — don't re-nag."""
-    if not isinstance(last_iso, str):
-        return False
+def _parse_iso(value: Any) -> datetime | None:
+    """The stored high-water timestamp, or None if unset/corrupt (then the lookback
+    floor governs — fail-open to the bounded 30-day window, never unbounded)."""
+    if not isinstance(value, str):
+        return None
     try:
-        last = datetime.fromisoformat(last_iso)
+        return datetime.fromisoformat(value)
     except ValueError:
-        return False
-    return now - last < timedelta(days=_COOLDOWN_DAYS)
+        return None
 
 
 def prompt_self_edit_handler(maker: async_sessionmaker[AsyncSession], *, router: LlmRouter) -> Any:

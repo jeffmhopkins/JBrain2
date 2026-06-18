@@ -31,6 +31,7 @@ from jbrain.agent.selfedit import (
     PromptEditError,
     build_prompt_edit_spec,
     lint_proposed_body,
+    safety_markers_dropped,
     self_editable_targets,
 )
 from jbrain.llm.promptfile import load_prompt
@@ -63,7 +64,7 @@ class DraftOutcome:
     against. The spec, if present, already passed the bar + lint + version-bump."""
 
     spec: ProposalSpec | None
-    code: str  # "ok" | "failed" | "incomplete" | "lint" | "spec"
+    code: str  # "ok" | "failed" | "incomplete" | "lint" | "safety" | "spec"
     detail: str
     tokens: int
 
@@ -107,6 +108,11 @@ async def draft_prompt_edit(
     violations = lint_proposed_body(proposed_body)
     if violations:
         return DraftOutcome(None, "lint", "; ".join(violations), tokens)
+    dropped = safety_markers_dropped(target.body, proposed_body)
+    if dropped:
+        return DraftOutcome(
+            None, "safety", f"would drop safety language ({', '.join(dropped)})", tokens
+        )
     try:
         spec = build_prompt_edit_spec(
             target.name,
@@ -173,6 +179,14 @@ def build_selfedit_handlers(
             log.warning("prompt_self_edit_lint_blocked", target=target.name, detail=outcome.detail)
             return (
                 "I drafted a revision but it introduced something I won't propose"
+                f" ({outcome.detail}), so I've discarded it."
+            )
+        if outcome.code == "safety":
+            log.warning(
+                "prompt_self_edit_safety_blocked", target=target.name, detail=outcome.detail
+            )
+            return (
+                "I drafted a revision but it would weaken a safety rule"
                 f" ({outcome.detail}), so I've discarded it."
             )
         if outcome.code == "spec" or outcome.spec is None:

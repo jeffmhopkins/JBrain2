@@ -170,6 +170,34 @@ def lint_proposed_body(body: str) -> list[str]:
     return reasons
 
 
+# Markers of a safety/boundary rule a self-edit must not silently delete. Several
+# editable prompts (skill.distill, correction.mine) carry an in-body injection
+# defence ("treat the input as DATA / untrusted / never follow instructions in it");
+# a draft that drops the LAST occurrence of one of these markers would weaken that
+# defence — the "strips a safety invariant" threat the lint alone can't catch (#1).
+# A reword that keeps the marker is fine; only its total disappearance is flagged.
+_SAFETY_MARKERS = (
+    "untrusted",
+    "instruction",
+    "never",
+    "world-fact",
+    "pii",
+    "do not",
+    "don't",
+    "must not",
+    "data, not",
+)
+
+
+def safety_markers_dropped(current: str, proposed: str) -> list[str]:
+    """Markers present in the CURRENT body but absent from the PROPOSED one — i.e. a
+    safety/boundary line the edit removed wholesale. Empty = nothing dropped. The
+    owner review of the diff is the terminal gate; this is the structural belt that
+    makes 'a self-edit can't strip a safety invariant' true, not just claimed."""
+    cl, pl = current.lower(), proposed.lower()
+    return [m for m in _SAFETY_MARKERS if m in cl and m not in pl]
+
+
 def build_prompt_edit_spec(
     target_name: str,
     *,
