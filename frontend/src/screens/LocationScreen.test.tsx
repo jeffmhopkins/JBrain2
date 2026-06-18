@@ -7,6 +7,7 @@ import type {
   ProvisionedDevice,
   TimelineEntry,
 } from "../api/client";
+import { placeNoteBody } from "./LocationMapTab";
 import { type LocationDeps, LocationScreen, relativeTime, sentence } from "./LocationScreen";
 
 function device(over: Partial<DeviceSummary> = {}): DeviceSummary {
@@ -74,6 +75,7 @@ function deps(over: Partial<LocationDeps> = {}): LocationDeps {
     listTimeline: vi.fn(async () => [entry()]),
     listPlaces: vi.fn(async () => [place()]),
     listFixes: vi.fn(async () => [fix({ latitude: 40.0 }), fix({ latitude: 40.001 })]),
+    filePlaceNote: vi.fn(async () => {}),
     ...over,
   };
 }
@@ -125,6 +127,44 @@ describe("LocationScreen", () => {
     render(<LocationScreen deps={d} />);
     fireEvent.click(screen.getByRole("tab", { name: "Map" }));
     expect(await screen.findByText(/no fixes in this range/i)).toBeInTheDocument();
+  });
+
+  it("files a place note from the geofence editor", async () => {
+    const d = deps({ listPlaces: vi.fn(async () => []) });
+    render(<LocationScreen deps={d} />);
+    fireEvent.click(screen.getByRole("tab", { name: "Map" }));
+    fireEvent.click(await screen.findByRole("button", { name: "＋ Add place" }));
+
+    fireEvent.change(screen.getByLabelText("Place name"), { target: { value: "Home" } });
+    fireEvent.change(screen.getByLabelText("Latitude"), { target: { value: "40" } });
+    fireEvent.change(screen.getByLabelText("Longitude"), { target: { value: "-74" } });
+    fireEvent.change(screen.getByLabelText("Radius (meters)"), { target: { value: "150" } });
+    fireEvent.click(screen.getByRole("button", { name: "File place note" }));
+
+    await waitFor(() =>
+      expect(d.filePlaceNote).toHaveBeenCalledWith({
+        name: "Home",
+        lat: 40,
+        lon: -74,
+        radiusM: 150,
+      }),
+    );
+    // The confirmation makes the note-sourced flow explicit.
+    expect(await screen.findByText(/filed as a place note/i)).toBeInTheDocument();
+  });
+
+  it("prefills the editor when editing an existing place", async () => {
+    const d = deps({
+      listPlaces: vi.fn(async () => [
+        place({ name: "Office", center: { lat: 41, lon: -75 }, radius_m: 120 }),
+      ]),
+    });
+    render(<LocationScreen deps={d} />);
+    fireEvent.click(screen.getByRole("tab", { name: "Map" }));
+    fireEvent.click(await screen.findByRole("button", { name: /Office/ }));
+    expect((screen.getByLabelText("Place name") as HTMLInputElement).value).toBe("Office");
+    expect((screen.getByLabelText("Latitude") as HTMLInputElement).value).toBe("41");
+    expect((screen.getByLabelText("Radius (meters)") as HTMLInputElement).value).toBe("120");
   });
 
   it("renders the timeline as natural sentences naming the device", async () => {
@@ -215,6 +255,16 @@ describe("sentence", () => {
     expect(sentence(entry({ subject_id: "gone", transition: "enter" }), labels)).toBe(
       "A device arrived at Office",
     );
+  });
+});
+
+describe("placeNoteBody", () => {
+  it("states the circle geometry so the geofence predicate extracts cleanly", () => {
+    const body = placeNoteBody({ name: "Home", lat: 40, lon: -74, radiusM: 150 });
+    expect(body).toContain("Home");
+    expect(body).toContain("150 meters");
+    expect(body).toContain("latitude 40");
+    expect(body).toContain("longitude -74");
   });
 });
 

@@ -9892,3 +9892,66 @@ input.ld-title {
 .loc-map-note {
   text-align: center;
 }
+
+/* --- Location geofence editor (Phase 7 Wave 5d) ------------------------- */
+.loc-places {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.loc-places-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: var(--fs-head);
+  color: var(--text-3);
+  font-weight: 600;
+}
+.loc-places-add {
+  font: inherit;
+  font-size: var(--fs-head);
+  font-weight: 600;
+  color: var(--steel);
+  background: var(--steel-tint);
+  border: none;
+  border-radius: var(--r-pill);
+  padding: 4px 12px;
+  cursor: pointer;
+}
+.loc-places-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.loc-place-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-input);
+  padding: 9px 12px;
+  cursor: pointer;
+  text-align: left;
+}
+.loc-place-row:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.loc-place-name {
+  color: var(--text);
+  font-weight: 600;
+}
+.loc-place-meta {
+  color: var(--text-3);
+  font-size: var(--fs-micro);
+}
+.loc-editor-row {
+  display: flex;
+  gap: 8px;
+}
+.loc-editor-row input {
+  flex: 1;
+  min-width: 0;
+}
