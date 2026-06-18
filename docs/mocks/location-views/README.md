@@ -1,5 +1,14 @@
 # Location inline views — mock gate (Wave L3)
 
+> **CHOSEN (owner decision, GUI gate):** **Option B — Answer-first, map on
+> demand**, with the **`--teal` location-domain accent** (not the `--steel` the
+> mocks ship with). `option-b.html` is the binding spec for the L3 view work.
+> The accent switch makes location its own domain color: L3 must standardize the
+> teal location token in `DESIGN.md` and retheme the inline trail/fence/start/gap
+> markers to it (production's steel Leaflet classes stay for the existing
+> full-screen map unless separately re-decided). L3 also records the proxy-tile
+> carve-out in DESIGN.md (see the "DESIGN.md interpretation" note below).
+
 Three interactive directions for the **two new inline tool-views** the L3 wave
 introduces — `location_map` (#3) and `place_card` (#4) — per the PROCESS.md GUI
 gate. These are **not full screens**: they render *inside an agent chat bubble*,
