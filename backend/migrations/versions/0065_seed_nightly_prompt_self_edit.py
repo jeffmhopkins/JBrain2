@@ -20,8 +20,8 @@ Scheduling: nightly (86400s). `next_run_at` seeded to the next 04:00 UTC — an 
 the 03:00 eval run, after the graph/wiki sweeps — but inert while disabled. A fixed UUID
 makes the trigger addressable by the Ops/run-log surfaces across environments.
 
-Revision ID: 0064
-Revises: 0063
+Revision ID: 0065
+Revises: 0064
 Create Date: 2026-06-18
 """
 
@@ -29,8 +29,8 @@ import json
 
 from alembic import op
 
-revision = "0064"
-down_revision = "0063"
+revision = "0065"
+down_revision = "0064"
 branch_labels = None
 depends_on = None
 
