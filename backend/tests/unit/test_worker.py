@@ -379,6 +379,8 @@ async def test_run_registers_all_job_handlers(
         "predicate_review",
         # Loop 3b Tier-B correction mining — likewise in-code only.
         "correction_mine",
+        # Loop 4 Wave 3 prompt self-edit — likewise in-code only (a migration seeds it).
+        "prompt_self_edit",
         # The wiki builder (Phase-6 Wave C2a) — four in-code actions, likewise not
         # in ACTION_SPECS / the app.actions seed.
         "wiki_refresh",

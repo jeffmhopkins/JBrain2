@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from jbrain import queue
 from jbrain.agent.correctionmine import CORRECTION_MINE_SPEC, correction_mine_handler
 from jbrain.agent.predicatereview import PREDICATE_REVIEW_SPEC, predicate_review_handler
+from jbrain.agent.promptselfedit import PROMPT_SELF_EDIT_SPEC, prompt_self_edit_handler
 from jbrain.agent.skilldistill import SKILL_DISTILL_SPEC, skill_distill_handler
 from jbrain.agent.skillsweep import SKILL_SWEEP_SPEC, skill_sweep_handler
 from jbrain.analysis import purge
@@ -300,6 +301,10 @@ async def run() -> None:
         # Loop 3b Tier-B (correction mining): read ended chats for owner corrections of facts and
         # stage owner correction-note proposals (the LLM judges; budget-gated). In-code only.
         "correction_mine": correction_mine_handler(maker, router=router),
+        # Loop 4 Wave 3 (prompt self-edit): draft prompt-edit proposals for prompts whose
+        # proposals the owner keeps rejecting, budget-gated. In-code only (a migration seeds it,
+        # disabled by default). Propose-only — never applies a change (#6).
+        "prompt_self_edit": prompt_self_edit_handler(maker, router=router),
         # The wiki builder (Phase-6 Wave C2): dirty-bit-driven article build + reindex + prune.
         # In-code only (not in the app.actions seed); a migration seeds the schedules. The live
         # LLM rewriter (C2b) drives router.complete behind the grounding gate + wiki-build budget;
@@ -331,6 +336,7 @@ async def run() -> None:
             SKILL_SWEEP_SPEC,
             PREDICATE_REVIEW_SPEC,
             CORRECTION_MINE_SPEC,
+            PROMPT_SELF_EDIT_SPEC,
             *WIKI_SPECS,
         )
     )

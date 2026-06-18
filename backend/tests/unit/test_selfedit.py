@@ -113,6 +113,16 @@ def test_self_editable_and_drafter_prompts_are_digest_pinned() -> None:
             "prompt-self-edit-v1",
             "aff5e48f0fd955cf7ec195d5f2a77eaa1f6ecb01b016990ee9e691161c689091",
         ),
+        # Opted into self-edit in Loop 4 Wave 3 — so pinned too (the guard extends to
+        # every self-editable prompt).
+        "skill_distill.prompt": (
+            "skill-distill-v1",
+            "ddc2f092614dc24016ed97d6d1e7e972112304729eddddf92244caf9094a8308",
+        ),
+        "correction_mine.prompt": (
+            "correction-mine-v1",
+            "82aa013dcbb8a66cb8b2c37e30f14f5bf1f91b59124fc722f06f6877ced55c3e",
+        ),
     }
     for filename, expected in pins.items():
         pf = load_prompt(prompts / filename)

@@ -176,25 +176,38 @@ fix and stages a Proposal. This is the deterministic, no-false-positive spine.
   a scripted FakeLlm; barred/unknown target refusal; the injection suite at 100%; the
   structural lint; budget/kill-switch refusal; RLS. Unit + integration.
 
-### Wave 3 — Nightly correction-cluster trigger (autonomy, still owner-gated)
+### Wave 3 — Nightly rejection-cluster trigger (autonomy, still owner-gated)
 
-Unattended drafting that still terminates at an owner-approved Proposal.
+Unattended drafting that still terminates at an owner-approved Proposal. The trigger's
+**signal** is the one durable, owner-origin one that maps to an editable prompt: **proposals
+the owner has *rejected*, bucketed by the internal job (provenance `source`) that produced
+them.** When the owner keeps rejecting one source's proposals (e.g. `skill_distill`'s
+skill-promotions), that implicates the prompt behind them (`skill.distill`). The Loop-3b
+fact-correction signal was evaluated and **rejected**: it implicates `note.extract`, which
+is **barred** (#12), so it has no eligible target.
 
+- **Editable-set expansion (the enabling decision, owner-approved).** For the signal to be
+  usable the peripheral, owner-judged-via-proposals prompts `skill.distill` and
+  `correction.mine` are opted into `self_editable` (digest-pinned like all editable
+  prompts). The data/instruction-boundary and domain-classification prompts stay
+  **permanently barred** (#12) — the editable set never includes a firewall prompt.
 - **`prompt_self_edit` nightly action** (`ActionSpec`, `cost_class="expensive"`,
-  `mutating=False`, budget-gated): scans **correction/rejection clusters** (reuse Loop
-  3b's `correction_mine` substrate + proposal-rejection signal), buckets them by the
-  **self-editable** prompt whose output they critique, and when a cluster crosses a
-  threshold drafts a Proposal via Wave-2's path. **Untrusted-origin content never triggers
-  it** (non-neg #10); clusters sourced from untrusted content carry normal weight and are
-  drafted only inside the budgeted nightly job, never auto-staged from a single note.
-- **Disabled-by-default seed migration** (mirror `0047`): schedule `enabled=false`,
-  trigger `manual=true` (Ops-fireable without a restart). One-action pipeline.
+  `mutating=True`, budget-gated): counts recent rejected proposals per mapped source
+  (`_SOURCE_TO_PROMPT`), and for each editable source over a **threshold** and off a
+  per-prompt **cooldown**, drafts a Proposal via Wave-2's shared `draft_prompt_edit` (so the
+  bar + lint + version-bump gates are identical to the owner path). The signal is the
+  **owner's own rejection decisions** — owner-origin by construction, never untrusted
+  content (#10); an unmapped/other source is ignored, and a locked prompt is unreachable
+  (the bar runs before any spend).
+- **Disabled-by-default seed migration** (`0064`, mirror `0047`): schedule `enabled=false`,
+  trigger `manual=true` (Ops-fireable without a restart). One-action pipeline; in-code spec.
 - **Document the eval-gate-at-PR contract:** the attached fixture + the existing suite run
   in the applied branch's CI (the live scorer natively scores the modified prompt there) —
   no scorer-injection seam needed for the MVP.
-- **Tests:** cluster threshold + bucketing; untrusted-origin exclusion; disabled-by-default
-  + manual fire; budget/kill-switch; RLS + the autouse admin TRUNCATE fixture. Per-wave
-  red-team review (this wave adds autonomy + touches the firewall).
+- **Tests:** rejection-cluster threshold + bucketing to the right prompt; unmapped-source
+  exclusion; cooldown dedup; budget/kill-switch refusal; the seed disabled-by-default; the
+  autouse admin TRUNCATE fixture. Per-wave red-team review (this wave adds autonomy +
+  expands the editable set).
 
 ## Cross-cutting non-negotiables
 
