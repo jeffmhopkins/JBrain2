@@ -14,7 +14,10 @@ from jbrain.agent.session import AgentSessionRepo
 from jbrain.agent.skills import SkillService, SkillsRepo
 from jbrain.agent.transcript_store import AgentTranscript
 from jbrain.agent.wikiwritetools import build_wiki_write_handlers
+from jbrain.analysis.hygiene import ENTITY_HYGIENE_SPEC
+from jbrain.analysis.reembed import REEMBED_SPEC
 from jbrain.analysis.repo import SqlAnalysisRepo
+from jbrain.analysis.tagconsolidate import TAG_CONSOLIDATE_SPEC
 from jbrain.api import (
     agent,
     analysis,
@@ -115,6 +118,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 RECONCILE_UNEMBEDDED_NOTES_ACTION,
                 GEOFENCE_SWEEP_ACTION,
                 EVAL_RUN_SPEC,
+                # The Phase-6 hygiene sweeps, so their seeded manual triggers resolve from
+                # Ops (POST /ops/triggers/{id}/run -> registry.get) — emergency-fireable.
+                ENTITY_HYGIENE_SPEC,
+                REEMBED_SPEC,
+                TAG_CONSOLIDATE_SPEC,
                 *WIKI_SPECS,
             )
         )

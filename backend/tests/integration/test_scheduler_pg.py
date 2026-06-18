@@ -17,6 +17,9 @@ from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async
 from sqlalchemy.pool import NullPool
 
 from jbrain import queue
+from jbrain.analysis.hygiene import ENTITY_HYGIENE_SPEC
+from jbrain.analysis.reembed import REEMBED_SPEC
+from jbrain.analysis.tagconsolidate import TAG_CONSOLIDATE_SPEC
 from jbrain.db.session import scoped_session
 from jbrain.wiki.actions import WIKI_SPECS
 from jbrain.workflow.evalaction import EVAL_RUN_SPEC
@@ -55,6 +58,9 @@ def _registry():  # noqa: ANN202
             RECONCILE_UNEMBEDDED_NOTES_ACTION,
             GEOFENCE_SWEEP_ACTION,
             EVAL_RUN_SPEC,
+            ENTITY_HYGIENE_SPEC,
+            REEMBED_SPEC,
+            TAG_CONSOLIDATE_SPEC,
             *WIKI_SPECS,
         )
     )
@@ -298,6 +304,14 @@ async def test_seeded_nightly_sweeps_exist_and_are_fireable(maker: async_session
     before = await _jobs_of_kind(maker, "consolidate_predicates")
     await fire_trigger(maker, _registry(), str(trig))
     assert await _jobs_of_kind(maker, "consolidate_predicates") == before + 1
+
+    # And a Phase-6 hygiene sweep resolves + enqueues from its manual trigger — the guard
+    # that its in-code spec is composed into the registry Ops fires against (else the
+    # seeded manual trigger would raise ActionRegistryError on POST /ops/triggers/{id}/run).
+    eh = next(r.id for r in rows if r.pipeline == "nightly_entity_hygiene")
+    eh_before = await _jobs_of_kind(maker, "entity_hygiene")
+    await fire_trigger(maker, _registry(), str(eh))
+    assert await _jobs_of_kind(maker, "entity_hygiene") == eh_before + 1
 
 
 async def test_seeded_nightly_eval_exists_and_carries_its_run_params(
