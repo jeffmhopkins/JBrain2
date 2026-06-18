@@ -282,7 +282,7 @@ async def sweep_orphaned_entities(
     linked to its mention/fact is never deleted out from under it. Runs under SYSTEM_CTX;
     returns the count deleted. Idempotent — a second run finds nothing once the backlog
     clears."""
-    from datetime import timedelta, timezone
+    from datetime import UTC, timedelta
     from typing import cast
 
     from sqlalchemy.engine import CursorResult
@@ -290,7 +290,7 @@ async def sweep_orphaned_entities(
     from jbrain.db.session import scoped_session
     from jbrain.queue import SYSTEM_CTX
 
-    cutoff = datetime.now(timezone.utc) - timedelta(hours=min_age_hours)
+    cutoff = datetime.now(UTC) - timedelta(hours=min_age_hours)
     # Default SYSTEM_CTX (all domains); a narrowed ctx is firewalled by RLS to its scope,
     # so a domain-scoped sweep can only ever delete in-scope orphans (the firewall test).
     async with scoped_session(maker, ctx or SYSTEM_CTX) as session:
