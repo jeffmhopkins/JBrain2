@@ -314,9 +314,9 @@ export function App() {
   const subRef = useRef<HTMLDivElement | null>(null);
 
   function onSubTouchStart(event: TouchEvent) {
-    // The Map owns vertical drags (pan/pinch), so don't arm the down-swipe
-    // dismiss over it — use the back/bolt controls to leave instead.
-    if (card === "graph") {
+    // The graph and location Maps own vertical drags (pan/pinch), so don't arm
+    // the down-swipe dismiss over them — use the back/bolt controls to leave.
+    if (card === "graph" || card === "location") {
       swipeStart.current = null;
       return;
     }
