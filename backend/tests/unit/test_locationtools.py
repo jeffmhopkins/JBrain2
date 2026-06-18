@@ -15,7 +15,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from jbrain.agent.locationtools import build_location_handlers
-from jbrain.agent.loop import ToolContext
+from jbrain.agent.loop import ToolContext, ToolOutput
 from jbrain.db.session import SessionContext
 from jbrain.geocode import GeocodeResult
 from jbrain.locations import (
@@ -447,6 +447,7 @@ async def test_location_history_summarizes_and_attaches_a_map_view() -> None:
     out = await handlers["location_history"]({"hours": 6}, FULL_OWNER)
     # Prose leads (distance + fix count); a location_map view rides along.
     assert "covered" in out and "fixes" in out
+    assert isinstance(out, ToolOutput)
     assert out.view is not None
     assert out.view.view == "location_map"
     # Coordinates live ONLY in the view's leg points — never in the model text.
@@ -461,7 +462,8 @@ async def test_location_history_explains_a_gap_in_words() -> None:
     locations = FakeLocations(fixes=leg1 + leg2)
     out = await _handlers(locations=locations, devices=devices)["location_history"]({}, FULL_OWNER)
     assert "gap" in out and "legs" in out
-    assert len(out.view.data["legs"]) == 2  # type: ignore[union-attr]
+    assert isinstance(out, ToolOutput) and out.view is not None
+    assert len(out.view.data["legs"]) == 2
 
 
 async def test_location_history_empty_window_has_no_view() -> None:
@@ -470,6 +472,7 @@ async def test_location_history_empty_window_has_no_view() -> None:
         {}, FULL_OWNER
     )
     assert "no recorded location" in out
+    assert isinstance(out, ToolOutput)
     assert out.view is None  # nothing to draw → no empty map
 
 
@@ -509,6 +512,7 @@ async def test_location_history_flags_a_stale_trail_in_the_view() -> None:
     out = await _handlers(locations=FakeLocations(fixes=fixes), devices=devices)[
         "location_history"
     ]({}, FULL_OWNER)
+    assert isinstance(out, ToolOutput)
     assert out.view is not None
     assert out.view.data["freshness"] == "stale"
 
@@ -551,6 +555,7 @@ async def test_location_query_aggregates_battery_at_a_saved_place() -> None:
     call = loc.within_calls[0]
     assert call["center"] == (40.0, -105.0) and call["radius_m"] == 150.0
     assert "40.0" not in str(out) and "-105" not in str(out)
+    assert isinstance(out, ToolOutput)
     assert out.view is not None and out.view.view == "location_map"
 
 
@@ -571,6 +576,7 @@ async def test_location_query_no_fixes_in_window() -> None:
         {"place": "Home"}, FULL_OWNER
     )
     assert "No fixes recorded at Home" in out
+    assert isinstance(out, ToolOutput)
     assert out.view is None
 
 
