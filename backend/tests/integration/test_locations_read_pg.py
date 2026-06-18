@@ -16,7 +16,10 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
+from jbrain.agent.locationtools import build_location_handlers
+from jbrain.agent.loop import ToolContext
 from jbrain.analysis.device_binding import reconcile_device_bindings
+from jbrain.analysis.repo import SqlAnalysisRepo
 from jbrain.db.session import SessionContext, scoped_session
 from jbrain.devices.repo import SqlDeviceRepo
 from jbrain.locations import LocationToolRefusal, SqlLocationRepo
@@ -690,3 +693,102 @@ async def test_home_roster_refuses_narrowed_owner(maker: async_sessionmaker) -> 
     for ctx in (NARROWED_LOCATION, NARROWED_GENERAL):
         with pytest.raises(LocationToolRefusal):
             await repo.home_roster(ctx)
+
+
+# --- L2 read tools end-to-end: real handlers over real repos ------------------
+# These wire the actual where_is / where_was_i handlers over the real SQL repos,
+# proving the Person→operatedBy→Device→subject_id traversal (the P0 the fix closes)
+# end-to-end — not through a fake that bypasses it. The module-scoped DB is shared,
+# so every entity/place/coordinate here is unique and assertions filter rather than
+# match the whole table.
+
+
+async def _bind_entity_subject(
+    maker: async_sessionmaker, *, entity_id: str, subject_id: str
+) -> None:
+    """Set a Device entity's `subject_id` (the device subject) — the link the L1
+    reconciler writes on a name+operatedBy match. Done directly here for a controlled
+    fixture; `test_binding_*` already covers the reconciler producing this state."""
+    async with scoped_session(maker, OWNER) as session:
+        await session.execute(
+            text(
+                "UPDATE app.entities SET subject_id = cast(:s AS uuid) WHERE id = cast(:e AS uuid)"
+            ),
+            {"s": subject_id, "e": entity_id},
+        )
+
+
+async def _me_entity(maker: async_sessionmaker, *, name: str = "Me") -> str:
+    """The owner "Me" entity, hard-linked to a PERSON subject (kind!='device') exactly
+    as `analysis/entities.py` mints it. Its `subject_id` is a person subject — never a
+    track — so resolving the owner MUST hop Me→operatedBy→Device, which is the point."""
+    person_subject = str(uuid.uuid4())
+    async with scoped_session(maker, OWNER) as session:
+        await session.execute(
+            text("INSERT INTO app.subjects (id, display_name, kind) VALUES (:s, :n, 'person')"),
+            {"s": person_subject, "n": name},
+        )
+        return (
+            await session.execute(
+                text(
+                    "INSERT INTO app.entities (id, kind, canonical_name, domain_code, subject_id)"
+                    " VALUES (gen_random_uuid(), 'Person', :n, 'location', cast(:s AS uuid))"
+                    " RETURNING id::text"
+                ),
+                {"n": name, "s": person_subject},
+            )
+        ).scalar_one()
+
+
+def _tool_ctx() -> ToolContext:
+    return ToolContext(session=OWNER, scopes=())
+
+
+async def test_where_is_resolves_person_through_operated_by(maker: async_sessionmaker) -> None:
+    # A named PERSON ("Jeff") whose phone is bound via operatedBy. where_is MUST reach
+    # the DEVICE's track and report Jeff's place — proving Person→operatedBy→Device→
+    # subject_id→fixes, NOT the person's own subject_id (which would be "no position").
+    pid, sid = await _device(maker, "L2 Jeff iPhone subj")
+    person = await _entity(maker, kind="Person", name="L2 Jeff")
+    device_entity = await _entity(maker, kind="Device", name="L2 Jeff iPhone")
+    await _operated_by(maker, device_eid=device_entity, person_eid=person)
+    await _bind_entity_subject(maker, entity_id=device_entity, subject_id=sid)
+    place_eid = await _geofence_state(maker, sid=sid, place_geofence_name="L2 Jeff Office")
+    await _fix_at(maker, pid=pid, sid=sid, seconds=10)
+
+    handlers = build_location_handlers(
+        SqlLocationRepo(maker), SqlDeviceRepo(maker), SqlAnalysisRepo(maker)
+    )
+    out = await handlers["where_is"]({"subject": "L2 Jeff"}, _tool_ctx())
+    assert "L2 Jeff is at L2 Jeff Office" in out
+    assert "no known position" not in out
+    assert place_eid  # the geofenced place existed (sanity on the fixture)
+
+
+async def test_where_was_i_resolves_owner_through_operated_by(maker: async_sessionmaker) -> None:
+    # The owner ("Me") via the deterministic hard-link → operatedBy → device → fixes.
+    pid, sid = await _device(maker, "L2 Me iPhone subj")
+    me = await _me_entity(maker, name="Me")
+    device_entity = await _entity(maker, kind="Device", name="L2 Me iPhone")
+    await _operated_by(maker, device_eid=device_entity, person_eid=me)
+    await _bind_entity_subject(maker, entity_id=device_entity, subject_id=sid)
+    await _geofence_state(maker, sid=sid, place_geofence_name="L2 Me Home")
+    await _fix_at(maker, pid=pid, sid=sid, seconds=10)
+
+    handlers = build_location_handlers(
+        SqlLocationRepo(maker), SqlDeviceRepo(maker), SqlAnalysisRepo(maker)
+    )
+    out = await handlers["where_was_i"]({}, _tool_ctx())
+    assert "You is at L2 Me Home" in out
+    assert "isn't linked" not in out
+
+
+async def test_where_is_unlinked_person_reports_no_device(maker: async_sessionmaker) -> None:
+    # A Person with no operatedBy/device binding resolves to zero device subjects →
+    # the graceful "no linked device" answer, not a wrong-subject "no position".
+    await _entity(maker, kind="Person", name="L2 Unlinked Grandma")
+    handlers = build_location_handlers(
+        SqlLocationRepo(maker), SqlDeviceRepo(maker), SqlAnalysisRepo(maker)
+    )
+    out = await handlers["where_is"]({"subject": "L2 Unlinked Grandma"}, _tool_ctx())
+    assert "no linked device" in out

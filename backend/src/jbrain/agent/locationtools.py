@@ -115,26 +115,55 @@ def _place_phrase(place: LatestPlace | None, near: NearestFix | None) -> str:
 
 async def _resolve_subject(
     devices: SqlDeviceRepo, entities: EntityResolver, ctx: ToolContext, name: str
-) -> tuple[str | None, str | None, str]:
-    """Resolve a person/device NAME to a device subject id via the owner-set #1
-    binding (`subject_for_person` reads `entities.subject_id`). Returns
-    `(subject_id, matched_label, status)` where status is one of "ok", "none"
-    (no entity), "unlinked" (entity has no device binding), "ambiguous" (more than
-    one bound entity matched). Never LLM-set — this only reads the deterministic
-    binding back, RLS-scoped to the caller."""
+) -> tuple[list[str], str | None, str]:
+    """Resolve a person/device NAME to its device subject id(s) via the owner-set #1
+    binding. The binding lives only on Device entities: a Device entity carries an
+    `operatedBy`→Person fact, and the L1 reconciler sets `entities.subject_id` (a
+    device subject) on THAT Device — never on the Person. So resolution traverses
+    Person entity → `operatedBy` → Device entity → that Device's `subject_id`, and
+    also handles the Device being named directly (its own device `subject_id`); see
+    `SqlDeviceRepo.device_subjects_for_entity`.
+
+    Returns `(subject_ids, matched_label, status)` where status is one of "ok"
+    (>=1 device subject), "none" (no entity matched), "unlinked" (entities matched
+    but none reach a device subject). A name matching several owned devices is "ok"
+    with multiple ids — the caller picks the most-recently-seen one rather than
+    asking which. Never LLM-set — this only reads the deterministic binding back,
+    RLS-scoped to the caller. An EXACT canonical-name match (case-insensitive) wins
+    over looser substring rows when any exist, so naming a device precisely never
+    drags in unrelated substring hits."""
     rows = await entities.list_entities(ctx.session, name, None, 10)
     if not rows:
-        return None, None, "none"
-    bound: list[tuple[str, str]] = []
-    for r in rows:
-        sid = await devices.subject_for_person(ctx.session, str(r["id"]))
-        if sid is not None:
-            bound.append((sid, str(r["canonical_name"])))
-    if not bound:
-        return None, str(rows[0]["canonical_name"]), "unlinked"
-    if len({sid for sid, _ in bound}) > 1:
-        return None, None, "ambiguous"
-    return bound[0][0], bound[0][1], "ok"
+        return [], None, "none"
+    exact = [r for r in rows if str(r["canonical_name"]).lower() == name.lower()]
+    used = exact or rows
+    subs: list[str] = []
+    for r in used:
+        for sid in await devices.device_subjects_for_entity(ctx.session, str(r["id"])):
+            if sid not in subs:
+                subs.append(sid)
+    if not subs:
+        return [], str(used[0]["canonical_name"]), "unlinked"
+    return subs, str(used[0]["canonical_name"]), "ok"
+
+
+async def _self_subjects(devices: SqlDeviceRepo, ctx: ToolContext) -> list[str]:
+    """The owner's own device subjects, resolved DETERMINISTICALLY by the "Me"
+    hard-link → operated devices (never a fuzzy "Me" substring search)."""
+    return await devices.owner_device_subjects(ctx.session)
+
+
+async def _pick_latest(locations: SqlLocationRepo, ctx: ToolContext, subs: list[str]) -> str | None:
+    """When a person/owner has several devices, answer for the ACTIVE one: the
+    subject whose latest fix is newest. One subject returns itself; none returns
+    None; a subject with no recorded activity sorts lowest (None last)."""
+    if not subs:
+        return None
+    if len(subs) == 1:
+        return subs[0]
+    activity = await locations.device_activity(ctx.session)
+    floor = datetime.min.replace(tzinfo=UTC)
+    return max(subs, key=lambda s: (a.last_seen if (a := activity.get(s)) else None) or floor)
 
 
 def _format_where(
@@ -218,19 +247,19 @@ def build_location_handlers(
         name = str(arguments.get("subject", "")).strip()
         if not name:
             return ToolOutput("where_is needs a subject (a person or device name).")
-        sid, label, status = await _resolve_subject(devices, entities, ctx, name)
+        subs, label, status = await _resolve_subject(devices, entities, ctx, name)
         if status == "none":
             return ToolOutput(f"No person or device named '{name}' is in scope.")
         if status == "unlinked":
             return ToolOutput(f"'{label or name}' has no linked device, so I can't locate it.")
-        if status == "ambiguous":
-            return ToolOutput(f"'{name}' matches more than one linked device — which one?")
+        sid = await _pick_latest(locations, ctx, subs)
         return await _answer_where(label or name, sid, ctx)
 
     async def where_was_i_tool(arguments: dict, ctx: ToolContext) -> ToolOutput:
-        sid, label, status = await _resolve_subject(devices, entities, ctx, "Me")
-        if status != "ok" or sid is None:
+        subs = await _self_subjects(devices, ctx)
+        if not subs:
             return ToolOutput("Your own device isn't linked yet, so I can't locate you.")
+        sid = await _pick_latest(locations, ctx, subs)
         return await _answer_where("You", sid, ctx)
 
     async def _answer_where(label: str, sid: str | None, ctx: ToolContext) -> ToolOutput:
@@ -265,11 +294,13 @@ def build_location_handlers(
             max(1.0, float(arguments.get("radius_m", _NEARBY_DEFAULT_RADIUS_M))),
         )
         limit = min(_NEARBY_MAX_LIMIT, max(1, int(arguments.get("limit", _NEARBY_DEFAULT_LIMIT))))
-        # Center on the owner's own device (resolved to a subject; the position never
-        # surfaces — `nearby` reads it inside the query and returns names/distances).
-        sid, _label, status = await _resolve_subject(devices, entities, ctx, "Me")
-        if status != "ok" or sid is None:
+        # Center on the owner's own device (resolved deterministically to a device
+        # subject; the position never surfaces — `nearby` reads it inside the query
+        # and returns names/distances). With several owned devices, the active one.
+        subs = await _self_subjects(devices, ctx)
+        if not subs:
             return ToolOutput("Your own device isn't linked yet, so I can't find nearby places.")
+        sid = await _pick_latest(locations, ctx, subs)
         places = await locations.nearby(ctx.session, subject_id=sid, radius_m=radius, limit=limit)
         return ToolOutput(_format_nearby(places))
 

@@ -4,8 +4,11 @@ device_status (#10), home_status (#11), nearby_now (#12).
 Handler-level (no DB): the faked repos return shaped values; these assert the
 registration-time full-owner WRAPPER refuses every tool for a non-full-owner
 session BEFORE any read, plus field mapping, stale-fix flagging, and the
-ambiguous/unlinked subject paths. The wrapper raises `LocationToolRefusal` (which
-the loop surfaces as a safe error), so the refusal is proven by the raise."""
+unlinked / multiple-device subject paths. They also drive resolution through the
+real method surface (`device_subjects_for_entity` / `owner_device_subjects`), so the
+Person→operatedBy→Device traversal is exercised, not bypassed. The wrapper raises
+`LocationToolRefusal` (which the loop surfaces as a safe error), so the refusal is
+proven by the raise."""
 
 from datetime import UTC, datetime, timedelta
 
@@ -42,20 +45,30 @@ class _LinkedPerson:
 
 
 class FakeDevices:
-    """Stands in for SqlDeviceRepo: a name→entity→subject binding map and per-subject
-    linked-person labels."""
+    """Stands in for SqlDeviceRepo. Mirrors the REAL resolution path the fix added:
+
+    * `device_subjects_for_entity` maps an entity id → its reachable DEVICE subjects
+      (a Device named directly, or a Person who operates devices). This is the
+      traversal under test, so the fake never short-circuits it.
+    * `owner_device_subjects` is the deterministic "Me" hard-link → owned devices.
+    * `linked_person` labels a device subject (used by device_status only)."""
 
     def __init__(
         self,
         *,
-        subject_by_entity: dict[str, str | None] | None = None,
+        device_subjects_by_entity: dict[str, list[str]] | None = None,
+        owner_subjects: list[str] | None = None,
         linked: dict[str, str] | None = None,
     ) -> None:
-        self.subject_by_entity = subject_by_entity or {}
+        self.device_subjects_by_entity = device_subjects_by_entity or {}
+        self.owner_subjects = owner_subjects or []
         self.linked = linked or {}
 
-    async def subject_for_person(self, ctx, entity_id):  # noqa: ANN001
-        return self.subject_by_entity.get(entity_id)
+    async def device_subjects_for_entity(self, ctx, entity_id):  # noqa: ANN001
+        return list(self.device_subjects_by_entity.get(entity_id, []))
+
+    async def owner_device_subjects(self, ctx):  # noqa: ANN001
+        return list(self.owner_subjects)
 
     async def linked_person(self, ctx, subject_id):  # noqa: ANN001
         name = self.linked.get(subject_id)
@@ -88,8 +101,10 @@ class FakeLocations:
         self._roster = roster or []
         self._nearby = nearby or []
         self.nearby_calls: list[dict] = []
+        self.latest_subjects: list[str] = []
 
     async def latest_place(self, ctx, *, subject_id):  # noqa: ANN001
+        self.latest_subjects.append(subject_id)
         return self._latest
 
     async def nearest_fix(self, ctx, *, subject_id, at, max_gap_seconds):  # noqa: ANN001
@@ -150,7 +165,7 @@ async def test_every_tool_refuses_a_non_full_owner(tool: str, ctx: ToolContext) 
 
 
 async def test_where_is_reports_current_place_and_freshness() -> None:
-    devices = FakeDevices(subject_by_entity={"d1": "s1"})
+    devices = FakeDevices(device_subjects_by_entity={"d1": ["s1"]})
     entities = FakeEntities({"Phone": [_entity("d1", "Phone")]})
     locations = FakeLocations(
         latest=LatestPlace("p1", "Office", _NOW - timedelta(minutes=2)),
@@ -163,7 +178,7 @@ async def test_where_is_reports_current_place_and_freshness() -> None:
 
 
 async def test_where_is_flags_a_stale_fix() -> None:
-    devices = FakeDevices(subject_by_entity={"d1": "s1"})
+    devices = FakeDevices(device_subjects_by_entity={"d1": ["s1"]})
     entities = FakeEntities({"Phone": [_entity("d1", "Phone")]})
     # A fix from 2 hours ago, but the geofence still reports inside: must flag stale.
     locations = FakeLocations(
@@ -175,10 +190,26 @@ async def test_where_is_flags_a_stale_fix() -> None:
     assert "STALE" in out
 
 
+async def test_where_is_resolves_a_person_through_operated_by() -> None:
+    # A named PERSON whose device is bound via operatedBy: resolution must reach the
+    # DEVICE's subject (proving the Person→operatedBy→Device→subject_id traversal),
+    # not the person's own subject_id.
+    devices = FakeDevices(device_subjects_by_entity={"jeff": ["dev-1"]})
+    entities = FakeEntities({"Jeff": [_entity("jeff", "Jeff", kind="Person")]})
+    locations = FakeLocations(
+        latest=LatestPlace("p1", "Office", _NOW - timedelta(minutes=2)),
+        near=_near(_NOW - timedelta(minutes=1), 60.0),
+    )
+    handlers = _handlers(locations=locations, devices=devices, entities=entities)
+    out = await handlers["where_is"]({"subject": "Jeff"}, FULL_OWNER)
+    assert "Jeff is at Office" in out
+
+
 async def test_where_is_unlinked_subject_is_handled() -> None:
-    # The entity exists but has no device binding → graceful "no linked device".
+    # The entity exists but reaches NO device subject → graceful "no linked device".
     entities = FakeEntities({"Grandma": [_entity("p9", "Grandma", kind="Person")]})
-    handlers = _handlers(entities=entities, devices=FakeDevices(subject_by_entity={"p9": None}))
+    devices = FakeDevices(device_subjects_by_entity={"p9": []})
+    handlers = _handlers(entities=entities, devices=devices)
     out = await handlers["where_is"]({"subject": "Grandma"}, FULL_OWNER)
     assert "no linked device" in out
 
@@ -189,12 +220,39 @@ async def test_where_is_unknown_subject_is_handled() -> None:
     assert "No person or device named 'Nobody'" in out
 
 
-async def test_where_is_ambiguous_subject_asks() -> None:
-    devices = FakeDevices(subject_by_entity={"d1": "s1", "d2": "s2"})
+async def test_where_is_multiple_devices_answers_for_the_latest() -> None:
+    # A person with two bound devices: no "ambiguous" prompt — answer for the most
+    # recently seen one (the active device).
+    devices = FakeDevices(device_subjects_by_entity={"jeff": ["s-old", "s-new"]})
+    entities = FakeEntities({"Jeff": [_entity("jeff", "Jeff", kind="Person")]})
+    activity = {
+        "s-old": DeviceActivity("s-old", _NOW - timedelta(hours=5), 50, "wifi", 1),
+        "s-new": DeviceActivity("s-new", _NOW - timedelta(minutes=1), 50, "wifi", 1),
+    }
+    locations = FakeLocations(
+        latest=LatestPlace("p1", "Office", _NOW - timedelta(minutes=2)),
+        near=_near(_NOW - timedelta(minutes=1), 60.0),
+        activity=activity,
+    )
+    handlers = _handlers(locations=locations, devices=devices, entities=entities)
+    out = await handlers["where_is"]({"subject": "Jeff"}, FULL_OWNER)
+    assert "Jeff is at Office" in out
+    # The latest-seen subject drove the place/fix lookups.
+    assert locations.latest_subjects == ["s-new"]
+
+
+async def test_where_is_prefers_an_exact_name_match_over_substrings() -> None:
+    # An exact canonical-name hit must win over looser substring rows: only the
+    # exact entity's device subject is used.
+    devices = FakeDevices(device_subjects_by_entity={"d1": ["s-exact"], "d2": ["s-other"]})
     entities = FakeEntities({"Phone": [_entity("d1", "Phone"), _entity("d2", "Old Phone")]})
-    handlers = _handlers(devices=devices, entities=entities)
-    out = await handlers["where_is"]({"subject": "Phone"}, FULL_OWNER)
-    assert "more than one" in out
+    locations = FakeLocations(
+        latest=LatestPlace("p1", "Office", _NOW - timedelta(minutes=2)),
+        near=_near(_NOW - timedelta(minutes=1), 60.0),
+    )
+    handlers = _handlers(locations=locations, devices=devices, entities=entities)
+    await handlers["where_is"]({"subject": "Phone"}, FULL_OWNER)
+    assert locations.latest_subjects == ["s-exact"]
 
 
 async def test_where_is_needs_a_subject() -> None:
@@ -204,19 +262,37 @@ async def test_where_is_needs_a_subject() -> None:
 
 
 async def test_where_was_i_uses_the_owners_own_device() -> None:
-    devices = FakeDevices(subject_by_entity={"me": "s-me"})
-    entities = FakeEntities({"Me": [_entity("me", "Me", kind="Person")]})
+    # Self resolves deterministically via owner_device_subjects (the "Me" hard-link),
+    # NOT a "Me" name/substring search.
+    devices = FakeDevices(owner_subjects=["s-me"])
     locations = FakeLocations(
         latest=LatestPlace("p1", "Home", _NOW - timedelta(minutes=1)),
         near=_near(_NOW - timedelta(seconds=30), 30.0),
     )
-    handlers = _handlers(locations=locations, devices=devices, entities=entities)
+    handlers = _handlers(locations=locations, devices=devices)
     out = await handlers["where_was_i"]({}, FULL_OWNER)
     assert "You is at Home" in out  # label is "You"
+    assert locations.latest_subjects == ["s-me"]
+
+
+async def test_where_was_i_multiple_owned_devices_picks_latest() -> None:
+    devices = FakeDevices(owner_subjects=["s-old", "s-new"])
+    activity = {
+        "s-old": DeviceActivity("s-old", _NOW - timedelta(hours=2), 50, "wifi", 1),
+        "s-new": DeviceActivity("s-new", _NOW - timedelta(minutes=1), 50, "wifi", 1),
+    }
+    locations = FakeLocations(
+        latest=LatestPlace("p1", "Home", _NOW - timedelta(minutes=1)),
+        near=_near(_NOW - timedelta(seconds=30), 30.0),
+        activity=activity,
+    )
+    handlers = _handlers(locations=locations, devices=devices)
+    await handlers["where_was_i"]({}, FULL_OWNER)
+    assert locations.latest_subjects == ["s-new"]
 
 
 async def test_where_was_i_unlinked_owner_device() -> None:
-    handlers = _handlers(entities=FakeEntities({"Me": []}))
+    handlers = _handlers(devices=FakeDevices(owner_subjects=[]))
     out = await handlers["where_was_i"]({}, FULL_OWNER)
     assert "isn't linked" in out
 
@@ -276,12 +352,11 @@ async def test_home_status_empty() -> None:
 
 
 async def test_nearby_now_names_and_distances_only() -> None:
-    devices = FakeDevices(subject_by_entity={"me": "s-me"})
-    entities = FakeEntities({"Me": [_entity("me", "Me", kind="Person")]})
+    devices = FakeDevices(owner_subjects=["s-me"])
     locations = FakeLocations(
         nearby=[NearbyPlace("p1", "Cafe", 123.0), NearbyPlace("p2", "Gym", 980.0)]
     )
-    handlers = _handlers(locations=locations, devices=devices, entities=entities)
+    handlers = _handlers(locations=locations, devices=devices)
     out = await handlers["nearby_now"]({"radius_m": 1500, "limit": 5}, FULL_OWNER)
     assert "Cafe: 120 m" in out and "Gym: 980 m" in out
     # The owner's subject drove the query; no coordinate was passed as a center.
@@ -290,10 +365,9 @@ async def test_nearby_now_names_and_distances_only() -> None:
 
 
 async def test_nearby_now_clamps_radius_and_limit() -> None:
-    devices = FakeDevices(subject_by_entity={"me": "s-me"})
-    entities = FakeEntities({"Me": [_entity("me", "Me")]})
+    devices = FakeDevices(owner_subjects=["s-me"])
     locations = FakeLocations()
-    handlers = _handlers(locations=locations, devices=devices, entities=entities)
+    handlers = _handlers(locations=locations, devices=devices)
     await handlers["nearby_now"]({"radius_m": 10_000_000, "limit": 9999}, FULL_OWNER)
     call = locations.nearby_calls[0]
     assert call["radius_m"] == 50_000.0  # max radius
@@ -301,5 +375,5 @@ async def test_nearby_now_clamps_radius_and_limit() -> None:
 
 
 async def test_nearby_now_unlinked_owner_device() -> None:
-    out = await _handlers(entities=FakeEntities({"Me": []}))["nearby_now"]({}, FULL_OWNER)
+    out = await _handlers(devices=FakeDevices(owner_subjects=[]))["nearby_now"]({}, FULL_OWNER)
     assert "isn't linked" in out

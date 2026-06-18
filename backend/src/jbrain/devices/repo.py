@@ -7,6 +7,7 @@ revocation are owner-only: every method runs under the caller's owner
 are the enforcement — not application politeness.
 """
 
+import builtins
 import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -156,6 +157,72 @@ class SqlDeviceRepo:
                 )
             ).first()
         return row.sid if row is not None else None
+
+    async def device_subjects_for_entity(
+        self, ctx: SessionContext, entity_id: str
+    ) -> builtins.list[str]:
+        """Every device subject reachable from a named entity, covering BOTH the
+        entity itself being a Device bound directly (its `subject_id` is a device
+        subject) AND the entity being a Person who OPERATES devices (each operated
+        Device entity's `subject_id`). The binding is owner-set/deterministic — the
+        L1 reconciler sets `subject_id` only on Device entities carrying an
+        `operatedBy`→Person fact — so a Person's own `subject_id` is a person subject,
+        never a track; resolution must hop Person→operatedBy→Device→`subject_id`.
+        Returns distinct device subject ids, RLS-scoped."""
+        async with scoped_session(self._maker, ctx) as session:
+            rows = (
+                await session.execute(
+                    text(
+                        "SELECT DISTINCT sid FROM ("
+                        "  SELECT e.subject_id::text AS sid"
+                        "  FROM app.entities e JOIN app.subjects s ON s.id = e.subject_id"
+                        "  WHERE e.id = cast(:eid AS uuid) AND e.status != 'merged'"
+                        "    AND e.subject_id IS NOT NULL AND s.kind = 'device'"
+                        "  UNION"
+                        "  SELECT d.subject_id::text AS sid"
+                        "  FROM app.facts f"
+                        "  JOIN app.entities d ON d.id = f.entity_id"
+                        "  JOIN app.subjects s ON s.id = d.subject_id"
+                        "  WHERE f.object_entity_id = cast(:eid AS uuid)"
+                        "    AND f.predicate = 'operatedBy' AND f.kind = 'relationship'"
+                        "    AND f.status = 'active' AND f.assertion = 'asserted'"
+                        "    AND d.subject_id IS NOT NULL AND d.status != 'merged'"
+                        "    AND s.kind = 'device'"
+                        ") u"
+                    ),
+                    {"eid": entity_id},
+                )
+            ).all()
+        return [r.sid for r in rows]
+
+    async def owner_device_subjects(self, ctx: SessionContext) -> builtins.list[str]:
+        """The owner's own device subjects, resolved DETERMINISTICALLY via the "Me"
+        hard-link (`subject_id IS NOT NULL AND lower(canonical_name)='me'`, the same
+        anchor `analysis/entities.py::_find_me` uses) → the devices that "Me"
+        operates → their `subject_id`s. Never a fuzzy/substring match on "Me".
+        Returns distinct device subject ids, RLS-scoped."""
+        async with scoped_session(self._maker, ctx) as session:
+            rows = (
+                await session.execute(
+                    text(
+                        "WITH me AS ("
+                        "  SELECT id FROM app.entities"
+                        "  WHERE subject_id IS NOT NULL AND lower(canonical_name) = 'me'"
+                        "    AND status != 'merged' LIMIT 1"
+                        ")"
+                        " SELECT DISTINCT d.subject_id::text AS sid"
+                        " FROM app.facts f"
+                        " JOIN me ON f.object_entity_id = me.id"
+                        " JOIN app.entities d ON d.id = f.entity_id"
+                        " JOIN app.subjects s ON s.id = d.subject_id"
+                        " WHERE f.predicate = 'operatedBy' AND f.kind = 'relationship'"
+                        "   AND f.status = 'active' AND f.assertion = 'asserted'"
+                        "   AND d.subject_id IS NOT NULL AND d.status != 'merged'"
+                        "   AND s.kind = 'device'"
+                    )
+                )
+            ).all()
+        return [r.sid for r in rows]
 
     @staticmethod
     async def _is_device(session: AsyncSession, device_id: str) -> bool:
