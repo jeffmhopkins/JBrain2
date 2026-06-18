@@ -70,6 +70,7 @@ fi
 # unit tests and linters don't need Docker.
 HARNESS_IMAGE="timescale/timescaledb-ha:pg17"  # prod Postgres image, also used by the harness
 GEOCODER_IMAGE="docker.io/komoot/photon:latest"  # opt-in Phase 7 geocoder (compose `geocoder` profile)
+MQTT_IMAGE="${MQTT_IMAGE:-iegomez/mosquitto-go-auth:latest}"  # opt-in JBrain360 broker (`mqtt` profile); pin by digest for deploy
 
 if ! docker info >/dev/null 2>&1; then
   if command -v dockerd >/dev/null 2>&1 && sudo -n true 2>/dev/null; then
@@ -95,6 +96,14 @@ if docker info >/dev/null 2>&1; then
     log "pre-pulling $GEOCODER_IMAGE (opt-in geocoder profile)"
     for _ in 1 2 3; do docker pull "$GEOCODER_IMAGE" >/dev/null 2>&1 && break; sleep 10; done \
       || log "WARNING: could not pre-pull $GEOCODER_IMAGE — it will pull when the profile is enabled"
+  fi
+  # Pre-pull the opt-in MQTT broker image (JBrain360 M0, `mqtt` profile) so the
+  # secure spine isn't a cold pull; best-effort. CI never runs the profile (the
+  # auth/ACL endpoints are tested directly), so this is local/dev convenience only.
+  if ! docker image inspect "$MQTT_IMAGE" >/dev/null 2>&1; then
+    log "pre-pulling $MQTT_IMAGE (opt-in mqtt profile)"
+    for _ in 1 2 3; do docker pull "$MQTT_IMAGE" >/dev/null 2>&1 && break; sleep 10; done \
+      || log "WARNING: could not pre-pull $MQTT_IMAGE — it will pull when the profile is enabled"
   fi
 else
   log "WARNING: no docker daemon — testcontainers integration tests and the LLM" \
