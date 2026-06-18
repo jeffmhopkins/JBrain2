@@ -33,6 +33,8 @@ __all__ = [
     "Dwell",
     "TimelineEntry",
     "PlaceGeofence",
+    "NearbyPlace",
+    "RosterEntry",
     "SqlLocationRepo",
 ]
 
@@ -136,6 +138,32 @@ class PlaceGeofence:
     center: tuple[float, float] | None  # (lat, lon)
     radius_m: float | None
     polygon: list[tuple[float, float]] | None  # ring of (lat, lon)
+
+
+@dataclass(frozen=True)
+class NearbyPlace:
+    """A geofenced place within the queried radius of a center point, with the
+    great-circle `distance_m` to that center. Carries the name and distance only —
+    never the center or the fence coordinates (those stay server-side)."""
+
+    place_entity_id: str
+    name: str
+    distance_m: float
+
+
+@dataclass(frozen=True)
+class RosterEntry:
+    """One household subject's current presence: its display label, the place it is
+    currently inside (None when outside every fence), and `last_seen` (its latest
+    fix's time) so the caller can flag a stale fix and never report an old position
+    as "here now"."""
+
+    subject_id: str
+    subject_label: str
+    place_entity_id: str | None
+    place_name: str | None
+    since: datetime | None
+    last_seen: datetime | None
 
 
 class SqlLocationRepo:
@@ -425,6 +453,119 @@ class SqlLocationRepo:
                 center=(r.lat, r.lon) if r.lat is not None and r.lon is not None else None,
                 radius_m=r.radius_m,
                 polygon=_polygon_ring(r.polygon_geojson),
+            )
+            for r in rows
+        ]
+
+    async def nearby(
+        self,
+        ctx: SessionContext,
+        *,
+        subject_id: str | None = None,
+        center: tuple[float, float] | None = None,
+        radius_m: float,
+        limit: int,
+    ) -> list[NearbyPlace]:
+        """Geofenced places within `radius_m` of a center, nearest first (name +
+        distance only). The center is either an explicit `(lat, lon)` or, when only
+        `subject_id` is given, the subject's most recent fix — resolved INSIDE the
+        query so a coordinate never crosses the repo boundary into model-facing text.
+
+        Reads `place_geofence` (the fence names/geometry), which is WEAK RLS
+        (`has_domain_scope`, also satisfied by a device key and by a narrowed owner),
+        so this MUST gate on `require_full_owner` first — RLS will NOT fail it closed,
+        and the distance to a private fence is itself a leak. Bounded by `ST_DWithin`
+        and ordered by the `<->` KNN operator over the `place_geofence_center_idx`
+        GiST index; circular fences only (a fence stores center XOR polygon)."""
+        require_full_owner(ctx)
+        if center is None and subject_id is None:
+            return []
+        if center is not None:
+            origin = "ST_SetSRID(ST_MakePoint(:lon, :lat), 4326)::geography"
+            params: dict = {"lon": center[1], "lat": center[0]}
+        else:
+            # The subject's latest fix as the origin — subselected so no coordinate is
+            # ever returned to the caller; only the resulting distances are.
+            origin = (
+                "(SELECT geog FROM app.location_fixes"
+                "  WHERE subject_id = cast(:sid AS uuid)"
+                "  ORDER BY captured_at DESC LIMIT 1)"
+            )
+            params = {"sid": subject_id}
+        params.update({"radius": radius_m, "lim": limit})
+        async with scoped_session(self._maker, ctx) as session:
+            rows = (
+                await session.execute(
+                    text(
+                        "WITH o AS (SELECT " + origin + " AS g)"
+                        " SELECT pg.place_entity_id::text AS eid,"
+                        "   COALESCE(ent.canonical_name, pg.name) AS name,"
+                        "   ST_Distance(pg.center, o.g) AS distance_m"
+                        " FROM app.place_geofence pg"
+                        " CROSS JOIN o"
+                        " LEFT JOIN app.entities ent ON ent.id = pg.place_entity_id"
+                        " WHERE o.g IS NOT NULL AND pg.center IS NOT NULL AND pg.enabled"
+                        "   AND ST_DWithin(pg.center, o.g, :radius)"
+                        " ORDER BY pg.center <-> o.g LIMIT :lim"
+                    ),
+                    params,
+                )
+            ).all()
+        return [
+            NearbyPlace(
+                place_entity_id=r.eid,
+                name=r.name or "a place",
+                distance_m=float(r.distance_m),
+            )
+            for r in rows
+        ]
+
+    async def home_roster(self, ctx: SessionContext) -> list[RosterEntry]:
+        """Every device subject's current place + last-seen freshness, for the
+        household presence read. Resolves place NAMES through `place_geofence`/
+        `entities` (WEAK RLS), so it MUST gate on `require_full_owner` first — a
+        narrowed owner is refused, not handed presence rows. The current inside-fence
+        (most recently entered wins) is left-joined so an outside subject still
+        appears (place None); `last_seen` is its latest fix so the caller can flag a
+        stale fix rather than report an old position as "here now"."""
+        require_full_owner(ctx)
+        async with scoped_session(self._maker, ctx) as session:
+            rows = (
+                await session.execute(
+                    text(
+                        "WITH inside AS ("
+                        "  SELECT DISTINCT ON (gs.subject_id) gs.subject_id,"
+                        "    pg.place_entity_id,"
+                        "    COALESCE(ent.canonical_name, pg.name) AS place_name, gs.since"
+                        "  FROM app.geofence_state gs"
+                        "  JOIN app.place_geofence pg ON pg.id = gs.place_geofence_id"
+                        "  LEFT JOIN app.entities ent ON ent.id = pg.place_entity_id"
+                        "  WHERE gs.state = 'inside'"
+                        "  ORDER BY gs.subject_id, gs.since DESC NULLS LAST"
+                        "), seen AS ("
+                        "  SELECT DISTINCT ON (subject_id) subject_id, captured_at"
+                        "  FROM app.location_fixes ORDER BY subject_id, captured_at DESC"
+                        ")"
+                        " SELECT s.id::text AS sid, s.display_name AS label,"
+                        "   i.place_entity_id::text AS eid, i.place_name, i.since,"
+                        "   seen.captured_at AS last_seen"
+                        " FROM app.subjects s"
+                        " LEFT JOIN inside i ON i.subject_id = s.id"
+                        " LEFT JOIN seen ON seen.subject_id = s.id"
+                        " WHERE s.kind = 'device'"
+                        "   AND (i.subject_id IS NOT NULL OR seen.subject_id IS NOT NULL)"
+                        " ORDER BY s.display_name"
+                    )
+                )
+            ).all()
+        return [
+            RosterEntry(
+                subject_id=r.sid,
+                subject_label=r.label or "a device",
+                place_entity_id=r.eid,
+                place_name=r.place_name,
+                since=r.since,
+                last_seen=r.last_seen,
             )
             for r in rows
         ]

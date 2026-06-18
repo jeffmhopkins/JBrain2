@@ -569,3 +569,124 @@ async def test_linked_person_round_trip_and_unlinked(maker: async_sessionmaker) 
     repo = SqlDeviceRepo(maker)
     # Unlinked subject: no entity bound.
     assert await repo.linked_person(OWNER, sa) is None
+
+
+# --- L2 repo additions: nearby / home_roster --------------------------------
+
+
+async def _fix_at_coord(
+    maker: async_sessionmaker, *, pid: str, sid: str, lat: float, lon: float, minute: int = 0
+) -> None:
+    async with scoped_session(maker, OWNER) as session:
+        await session.execute(
+            text(
+                "INSERT INTO app.location_fixes"
+                " (subject_id, principal_id, captured_at, latitude, longitude)"
+                " VALUES (:s, :p, :ts, :lat, :lon)"
+            ),
+            {"s": sid, "p": pid, "ts": _BASE + timedelta(minutes=minute), "lat": lat, "lon": lon},
+        )
+
+
+async def _fence_at(
+    maker: async_sessionmaker, *, name: str, lat: float, lon: float, radius_m: int = 150
+) -> str:
+    """A Place entity + circular place_geofence at the given coordinate. Returns its
+    place entity id."""
+    async with scoped_session(maker, OWNER) as session:
+        eid = (
+            await session.execute(
+                text(
+                    "INSERT INTO app.entities (id, kind, canonical_name, domain_code)"
+                    " VALUES (gen_random_uuid(), 'Place', :n, 'location') RETURNING id::text"
+                ),
+                {"n": name},
+            )
+        ).scalar_one()
+        await session.execute(
+            text(
+                "INSERT INTO app.place_geofence"
+                " (place_entity_id, domain_code, name, center, radius_m)"
+                " VALUES (cast(:e AS uuid), 'location', :n,"
+                " ST_SetSRID(ST_MakePoint(:lon, :lat), 4326)::geography, :r)"
+            ),
+            {"e": eid, "n": name, "lat": lat, "lon": lon, "r": radius_m},
+        )
+    return eid
+
+
+async def test_nearby_orders_by_distance_within_radius(maker: async_sessionmaker) -> None:
+    # A subject far from _HOME (so other tests' _HOME fences don't intrude on the
+    # bounded radius), with two unique fences at known distances around it.
+    pa, sa = await _device(maker, "NearbyPhone")
+    base_lat, base_lon = 10.0, 20.0
+    await _fix_at_coord(maker, pid=pa, sid=sa, lat=base_lat, lon=base_lon)
+    await _fence_at(maker, name="NB_Near", lat=base_lat + 0.0013, lon=base_lon)  # ~145 m N
+    await _fence_at(maker, name="NB_Far", lat=base_lat + 0.01, lon=base_lon)  # ~1.1 km N
+    repo = SqlLocationRepo(maker)
+
+    # A 500 m radius sees only the near fence; a wide radius sees both, nearest first.
+    near_only = [
+        p
+        for p in await repo.nearby(OWNER, subject_id=sa, radius_m=500, limit=50)
+        if p.name.startswith("NB_")
+    ]
+    assert [p.name for p in near_only] == ["NB_Near"]
+    assert near_only[0].distance_m < 200
+
+    both = [
+        p
+        for p in await repo.nearby(OWNER, subject_id=sa, radius_m=5000, limit=50)
+        if p.name.startswith("NB_")
+    ]
+    assert [p.name for p in both] == ["NB_Near", "NB_Far"]
+    assert both[0].distance_m < both[1].distance_m
+
+
+async def test_nearby_accepts_an_explicit_center(maker: async_sessionmaker) -> None:
+    center = (12.0, 22.0)
+    await _fence_at(maker, name="EC_Cafe", lat=center[0], lon=center[1])
+    repo = SqlLocationRepo(maker)
+    rows = [
+        p
+        for p in await repo.nearby(OWNER, center=center, radius_m=300, limit=50)
+        if p.name.startswith("EC_")
+    ]
+    assert [p.name for p in rows] == ["EC_Cafe"]
+    assert rows[0].distance_m < 1.0
+
+
+async def test_nearby_refuses_narrowed_owner(maker: async_sessionmaker) -> None:
+    # place_geofence is WEAK RLS, so nearby() MUST refuse a narrowed/owner_scoped and a
+    # wrong-domain owner — RLS would otherwise hand them fence names + distances.
+    await _fence_at(maker, name="Cafe", lat=_HOME[0], lon=_HOME[1])
+    repo = SqlLocationRepo(maker)
+    for ctx in (NARROWED_LOCATION, NARROWED_GENERAL):
+        with pytest.raises(LocationToolRefusal):
+            await repo.nearby(ctx, center=_HOME, radius_m=300, limit=10)
+
+
+async def test_home_roster_reports_place_and_last_seen(maker: async_sessionmaker) -> None:
+    pa, sa = await _device(maker, "Phone")
+    pb, sb = await _device(maker, "Tablet")
+    # sa is inside "Office"; sb is outside every fence. Both have fixes (last-seen).
+    await _geofence_state(maker, sid=sa, place_geofence_name="Office", state="inside")
+    await _fix_at(maker, pid=pa, sid=sa, seconds=10)
+    await _fix_at(maker, pid=pb, sid=sb, seconds=20)
+    repo = SqlLocationRepo(maker)
+
+    roster = {e.subject_id: e for e in await repo.home_roster(OWNER)}
+    assert roster[sa].place_name == "Office"
+    assert roster[sa].last_seen == _BASE + timedelta(seconds=10)
+    assert roster[sb].place_name is None  # outside every fence
+    assert roster[sb].last_seen == _BASE + timedelta(seconds=20)
+
+
+async def test_home_roster_refuses_narrowed_owner(maker: async_sessionmaker) -> None:
+    # Resolves place NAMES via place_geofence (WEAK RLS) → MUST gate on full owner.
+    _, sa = await _device(maker, "Phone")
+    await _geofence_state(maker, sid=sa, place_geofence_name="Office", state="inside")
+    repo = SqlLocationRepo(maker)
+    for ctx in (NARROWED_LOCATION, NARROWED_GENERAL):
+        with pytest.raises(LocationToolRefusal):
+            await repo.home_roster(ctx)

@@ -466,6 +466,8 @@ def test_build_registry_binds_the_shipped_sidecars() -> None:
         object(),  # type: ignore[arg-type]  # wiki reader
         build_wiki_write_handlers(object(), object(), object()),  # type: ignore[arg-type]
         object(),  # type: ignore[arg-type]  # geocoder client
+        object(),  # type: ignore[arg-type]  # location repo
+        object(),  # type: ignore[arg-type]  # device repo
     )
     shipped = {
         "search",
@@ -497,13 +499,26 @@ def test_build_registry_binds_the_shipped_sidecars() -> None:
         "geocode_reverse",
         "geocode_forward",
         "propose_prompt_edit",
+        "where_is",
+        "where_was_i",
+        "device_status",
+        "home_status",
+        "nearby_now",
     }
     assert registry.names() == shipped
-    # The connector tools are external (no domain restriction). The geocode tools
-    # are location-domain, so a general-only scope doesn't see them; a location
-    # scope sees the full set.
-    geocode = {"geocode_reverse", "geocode_forward"}
-    assert {t.name for t in registry.schemas_for({"general"})} == shipped - geocode
+    # The connector tools are external (no domain restriction). The geocode and
+    # location read tools are location-domain, so a general-only scope doesn't see
+    # them; a location scope sees the full set.
+    location = {
+        "geocode_reverse",
+        "geocode_forward",
+        "where_is",
+        "where_was_i",
+        "device_status",
+        "home_status",
+        "nearby_now",
+    }
+    assert {t.name for t in registry.schemas_for({"general"})} == shipped - location
     assert {t.name for t in registry.schemas_for({"location"})} == shipped
 
 
@@ -654,6 +669,31 @@ def test_sidecars_pinned_to_their_versions() -> None:
             "geocode_forward",
             1,
             "e705abe592942eb4f39efafbdd8962e9a40a65836581c677cfca4897fadcc584",
+        ),
+        "where_is.tool": (
+            "where_is",
+            1,
+            "1e4352c4c38a7a5e3b26286b1a061e08c8d8922ef94927b22e7843dbcb5cc5ef",
+        ),
+        "where_was_i.tool": (
+            "where_was_i",
+            1,
+            "e87e5d2495c91cc6f9bbd50d1ed145810d0ac25da4fac7904a0a1aef7d03cea6",
+        ),
+        "device_status.tool": (
+            "device_status",
+            1,
+            "a01af27bdd492b70ce2ee74e0cd642599dd17a2aa48acd65e4131c1815d7db93",
+        ),
+        "home_status.tool": (
+            "home_status",
+            1,
+            "c08e4e0a3dcdaa6d798a36aaabd4ef1da3626145e13891d02f9dc074e6e1a916",
+        ),
+        "nearby_now.tool": (
+            "nearby_now",
+            1,
+            "e6f14ba96a43708b9a9b5ebe1d700200342bd2dc597ed325bf48433345b286fe",
         ),
     }
     # Every shipped sidecar must appear above — a new `.tool` cannot slip in
