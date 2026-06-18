@@ -88,7 +88,8 @@ echo "$MANIFEST" | docker run --rm -i -v "$MODELS_DIR:/models" python:3.11-slim 
   python - <<PY
 import json, subprocess, sys
 for m in json.load(sys.stdin):
-    dest = f"/models/{m[\"id\"]}"
+    mid = m["id"]
+    dest = f"/models/{mid}"
     includes = [m["gguf_include"]] + ([m["mmproj_include"]] if m["mmproj_include"] else [])
     args = ["hf", "download", m["hf_repo"], "--local-dir", dest]
     for inc in includes:
