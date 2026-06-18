@@ -5,6 +5,14 @@ mocked **together** in each option per the `docs/PROCESS.md` GUI gate. Pick one
 direction; the chosen mock becomes the binding spec for L7a + L7b and its
 rationale is recorded in `DESIGN.md` in the implementing PR.
 
+> **CHOSEN (owner decision, GUI gate):** **Option C — week timeline track +
+> corner presence toast**, with the digest **defaulting to the weekly period**
+> (the nightly⇄weekly toggle stays). L7a renders the digest as an inline
+> collapsible per-day place-track panel above the Map tab; L7b shows presence as
+> a self-dismissing corner toast on app/chat open. `option-c.html` is the binding
+> spec. The teal `--location` accent + amber stale tone carry over; record the
+> inline-digest-panel + presence-toast patterns in `DESIGN.md` in the build PR.
+
 - **L7a — Nightly/weekly digest** (#29): a **compute-on-read** rollup of recent
   place activity, rendered as a **pull artifact** in the Locations surface
   (`GET /api/locations/digest`, owner-only). Place **names + times only — no
