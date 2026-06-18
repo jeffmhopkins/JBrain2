@@ -16,8 +16,10 @@ RUN uv sync --frozen --no-dev
 ENV PATH="/app/.venv/bin:$PATH"
 
 RUN useradd --create-home appuser
-# Pre-own the blob mount point so the named volume inherits write access.
-RUN mkdir -p /data/blobs && chown appuser /data/blobs
+# Pre-own the mount points so the named volumes inherit write access. Without
+# this the volume mounts as root and the non-root app can't write — the tile
+# cache in particular would fail every write, blanking the location basemap.
+RUN mkdir -p /data/blobs /data/tiles && chown appuser /data/blobs /data/tiles
 USER appuser
 
 EXPOSE 8000
