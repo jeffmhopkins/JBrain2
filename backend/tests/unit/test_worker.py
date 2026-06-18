@@ -384,6 +384,10 @@ async def test_run_registers_all_job_handlers(
         "correction_mine",
         # Loop 4 Wave 3 prompt self-edit — likewise in-code only (a migration seeds it).
         "prompt_self_edit",
+        # Phase-6 hygiene sweeps — in-code only (a migration seeds the schedules).
+        "entity_hygiene",
+        "reembed_stale",
+        "tag_consolidate",
         # The wiki builder (Phase-6 Wave C2a) — four in-code actions, likewise not
         # in ACTION_SPECS / the app.actions seed.
         "wiki_refresh",

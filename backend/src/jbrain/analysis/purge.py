@@ -235,33 +235,69 @@ async def delete_review_items(
     await session.execute(stmt, params)
 
 
+def _orphan_conditions() -> list[Any]:
+    """The criteria for a provisional entity that no surviving knowledge references —
+    safe to hard-delete. Shared by the per-note purge (`_delete_orphaned_entities`)
+    and the periodic global sweep (`sweep_orphaned_entities`), so they can never
+    diverge: never an entity that is confirmed/subject-linked (the "Me" entity is
+    sacrosanct), still mentioned or cited by a surviving fact, held by a distinct_from
+    edge, or pointed at by a merge tombstone — that knowledge outlives any one note."""
+    tombstone = aliased(Entity)
+    return [
+        Entity.status == "provisional",
+        Entity.subject_id.is_(None),
+        ~select(EntityMention.id).where(EntityMention.entity_id == Entity.id).exists(),
+        ~select(Fact.id).where(Fact.entity_id == Entity.id).exists(),
+        ~select(Fact.id).where(Fact.object_entity_id == Entity.id).exists(),
+        ~select(EntityDistinction.id)
+        .where(
+            (EntityDistinction.entity_a == Entity.id) | (EntityDistinction.entity_b == Entity.id)
+        )
+        .exists(),
+        ~select(tombstone.id).where(tombstone.merged_into_id == Entity.id).exists(),
+    ]
+
+
 async def _delete_orphaned_entities(session: AsyncSession, candidates: set[uuid.UUID]) -> None:
     """Provisional entities that existed only because of this note vanish;
-    their aliases cascade. Never deleted: confirmed or subject-linked
-    entities (the "Me" entity is sacrosanct), merge tombstones (status
-    'merged' — un-merge needs them), anything still mentioned or cited by a
-    surviving fact, and anything held by a distinct_from edge or pointed at
-    by a tombstone — that knowledge outlives the note."""
+    their aliases cascade. Restricts the shared orphan criteria to this note's
+    candidate entities (`_orphan_conditions`)."""
     if not candidates:
         return
-    tombstone = aliased(Entity)
-    await session.execute(
-        delete(Entity).where(
-            Entity.id.in_(candidates),
-            Entity.status == "provisional",
-            Entity.subject_id.is_(None),
-            ~select(EntityMention.id).where(EntityMention.entity_id == Entity.id).exists(),
-            ~select(Fact.id).where(Fact.entity_id == Entity.id).exists(),
-            ~select(Fact.id).where(Fact.object_entity_id == Entity.id).exists(),
-            ~select(EntityDistinction.id)
-            .where(
-                (EntityDistinction.entity_a == Entity.id)
-                | (EntityDistinction.entity_b == Entity.id)
-            )
-            .exists(),
-            ~select(tombstone.id).where(tombstone.merged_into_id == Entity.id).exists(),
+    await session.execute(delete(Entity).where(Entity.id.in_(candidates), *_orphan_conditions()))
+
+
+async def sweep_orphaned_entities(
+    maker: async_sessionmaker[AsyncSession], *, min_age_hours: int = 1, ctx: Any = None
+) -> int:
+    """The periodic global orphan sweep (the `entity_hygiene` action): delete EVERY
+    provisional entity matching the shared orphan criteria, not only those tied to a
+    just-deleted note. Closes the gap where a fact retraction or supersession strands a
+    provisional entity (zero mentions/facts/edges) that the per-note purge never visits.
+
+    Unlike the per-note purge (which acts on a just-deleted note's candidates, never racing
+    live extraction), this runs corpus-wide and can fire — manually from Ops — *during* an
+    extraction. So it adds an **age guard**: only entities older than `min_age_hours` are
+    eligible, so a provisional entity an in-flight extraction just inserted but has not yet
+    linked to its mention/fact is never deleted out from under it. Runs under SYSTEM_CTX;
+    returns the count deleted. Idempotent — a second run finds nothing once the backlog
+    clears."""
+    from datetime import UTC, timedelta
+    from typing import cast
+
+    from sqlalchemy.engine import CursorResult
+
+    from jbrain.db.session import scoped_session
+    from jbrain.queue import SYSTEM_CTX
+
+    cutoff = datetime.now(UTC) - timedelta(hours=min_age_hours)
+    # Default SYSTEM_CTX (all domains); a narrowed ctx is firewalled by RLS to its scope,
+    # so a domain-scoped sweep can only ever delete in-scope orphans (the firewall test).
+    async with scoped_session(maker, ctx or SYSTEM_CTX) as session:
+        result = await session.execute(
+            delete(Entity).where(*_orphan_conditions(), Entity.created_at < cutoff)
         )
-    )
+    return cast("CursorResult[Any]", result).rowcount or 0
 
 
 async def backfill_deleted_note_artifacts(

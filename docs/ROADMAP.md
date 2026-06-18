@@ -188,10 +188,12 @@ them into the wiki broke one-PR-per-wave and hid the true size):
   deliverable on the roadmap. The propose-only MVP (the box is air-gapped from git;
   enact is record-only) stages a `prompt-edit` Proposal whose diff the owner applies
   as a real PR — the eval gate lives at that PR's CI, not pre-stage.
-- **Hygiene sweeps (not yet built)** — entity hygiene, summary re-embedding, tag
-  consolidation — built as engine actions, then given scheduled + emergency
-  triggers (the Phase-5 sweep pattern). Distinct from the wiki's own `wiki_reindex`
-  (which only re-embeds wiki summaries).
+- **Hygiene sweeps** (build plan: `docs/HYGIENE_SWEEPS_PLAN.md`) — entity hygiene
+  (`entity_hygiene`: delete provisional orphans stranded by retraction/supersession),
+  summary re-embedding (`reembed_stale`: re-embed stale-model skills/entities), tag
+  consolidation (`tag_consolidate`: fold drift tag spellings) — built as engine actions
+  on the Phase-5 sweep pattern, seeded disabled + Ops-fireable. Distinct from the wiki's
+  own `wiki_reindex` (which only re-embeds wiki summaries).
 
 ## Phase 7 — Outer ring — Planned
 
