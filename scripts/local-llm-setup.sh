@@ -82,12 +82,12 @@ mkdir -p "$MODELS_DIR"
 # Download weights with the official huggingface_hub CLI in a throwaway
 # container; only the --include globs from the manifest are pulled.
 say "Downloading weights into $MODELS_DIR (this can take a while)"
-echo "$MANIFEST" | docker run --rm -i -v "$MODELS_DIR:/models" python:3.11-slim bash -c '
+docker run --rm -e MANIFEST="$MANIFEST" -v "$MODELS_DIR:/models" python:3.11-slim bash -c '
   set -euo pipefail
   pip install --quiet -U "huggingface_hub[cli]"
   python - <<PY
-import json, subprocess, sys
-for m in json.load(sys.stdin):
+import json, os, subprocess
+for m in json.loads(os.environ["MANIFEST"]):
     mid = m["id"]
     dest = f"/models/{mid}"
     includes = [m["gguf_include"]] + ([m["mmproj_include"]] if m["mmproj_include"] else [])
