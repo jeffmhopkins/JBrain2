@@ -205,6 +205,25 @@ services:
       - geocoder_data:/photon/photon_data
     networks: [geocoder_net]
 
+  # OPT-IN MQTT broker (JBrain360 M0 secure spine): Mosquitto + mosquitto-go-auth
+  # in HTTP-backend mode, delegating every connect/publish/subscribe to the API's
+  # /internal/mqtt-* endpoints (it reuses the shipped device_key model; the plugin
+  # holds no credential logic). Guarded by the `mqtt` profile so a stock deploy
+  # never starts it. M0 runs a plain listener on the `internal` network ONLY — the
+  # device-facing TLS :8883 listener and the MQTT->location_fixes ingest consumer
+  # arrive in M1. PIN ${MQTT_IMAGE} by digest before any real deploy (go-auth is
+  # archived; only the Mosquitto 2.0.x plugin ABI is supported). The mounted conf
+  # path and the go-auth .so path inside the image are image-specific — verify
+  # against the pinned image.
+  mqtt:
+    profiles: [mqtt]
+    image: ${MQTT_IMAGE:-iegomez/mosquitto-go-auth:latest}
+    restart: unless-stopped
+    volumes:
+      - ./mosquitto/mosquitto.conf:/etc/mosquitto/mosquitto.conf:ro
+    networks: [internal]
+    depends_on: [api]
+
 networks:
   edge:
   internal:
