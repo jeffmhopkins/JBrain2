@@ -55,6 +55,7 @@ from jbrain.connectors.repo import SqlConnectorCache
 from jbrain.connectors.service import ConnectorService
 from jbrain.devices.repo import SqlDeviceRepo
 from jbrain.embed import TeiEmbedClient
+from jbrain.geocode import PhotonGeocoderClient
 from jbrain.lists.repo import SqlListsRepo
 from jbrain.llm import build_router
 from jbrain.locations import SqlLocationRepo
@@ -189,6 +190,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             app.state.appointments_repo,
             app.state.wiki_read_store,
             build_wiki_write_handlers(app.state.notes_repo, app.state.job_queue, maker),
+            PhotonGeocoderClient(settings.geocoder_url),
             router=app.state.llm_router,
             settings=settings_store,
         )

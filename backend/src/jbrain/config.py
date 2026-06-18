@@ -17,6 +17,11 @@ class Settings(BaseSettings):
     backups_dir: str = "/data/backups"
     embed_url: str = "http://embed:80"
     embed_model: str = "BAAI/bge-small-en-v1.5"
+    # The local Photon geocoder (Phase 7 Wave 4): an opt-in compose service on a
+    # no-egress network. Local reverse/forward geocoding hits this directly (not an
+    # egress connector); off by default at the deploy layer via the `geocoder`
+    # profile, so a stock deploy never runs it and these reads simply fail closed.
+    geocoder_url: str = "http://geocoder:2322"
     # Pinned, owner-configured base URLs for the egress connectors (#9). Free,
     # no-auth NLM services; the egress guard fills only typed slots, never a URL.
     rxnav_url: str = "https://rxnav.nlm.nih.gov"

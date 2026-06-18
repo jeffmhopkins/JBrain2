@@ -69,6 +69,7 @@ fi
 # (tests/conftest.py pgvector_container, scripts/llm-harness.sh). Never fatal:
 # unit tests and linters don't need Docker.
 HARNESS_IMAGE="timescale/timescaledb-ha:pg17"  # prod Postgres image, also used by the harness
+GEOCODER_IMAGE="docker.io/komoot/photon:latest"  # opt-in Phase 7 geocoder (compose `geocoder` profile)
 
 if ! docker info >/dev/null 2>&1; then
   if command -v dockerd >/dev/null 2>&1 && sudo -n true 2>/dev/null; then
@@ -86,6 +87,14 @@ if docker info >/dev/null 2>&1; then
     log "pre-pulling $HARNESS_IMAGE (harness + integration DB)"
     for _ in 1 2 3; do docker pull "$HARNESS_IMAGE" >/dev/null 2>&1 && break; sleep 10; done \
       || log "WARNING: could not pre-pull $HARNESS_IMAGE — it will pull on first use"
+  fi
+  # Pre-pull the opt-in Photon geocoder image (Phase 7 Wave 4, `geocoder` profile)
+  # so enabling it later isn't a cold pull; best-effort. CI never runs the profile
+  # (geocode HTTP is faked), so this is a convenience for local/dev only.
+  if ! docker image inspect "$GEOCODER_IMAGE" >/dev/null 2>&1; then
+    log "pre-pulling $GEOCODER_IMAGE (opt-in geocoder profile)"
+    for _ in 1 2 3; do docker pull "$GEOCODER_IMAGE" >/dev/null 2>&1 && break; sleep 10; done \
+      || log "WARNING: could not pre-pull $GEOCODER_IMAGE — it will pull when the profile is enabled"
   fi
 else
   log "WARNING: no docker daemon — testcontainers integration tests and the LLM" \
