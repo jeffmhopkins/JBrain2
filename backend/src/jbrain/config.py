@@ -22,6 +22,18 @@ class Settings(BaseSettings):
     # egress connector); off by default at the deploy layer via the `geocoder`
     # profile, so a stock deploy never runs it and these reads simply fail closed.
     geocoder_url: str = "http://geocoder:2322"
+
+    # Map basemap tiles, served through the server-side proxy/cache (api/tiles.py)
+    # so the phone fetches tiles only from this box, never a third-party tile host.
+    # A DELIBERATE relaxation of the location plan's L1 ("no tiles leave the box"):
+    # the server fetches-and-caches upstream tiles, so the upstream learns the
+    # coarse map areas the owner browses (tied to the server IP, never the device).
+    # Empty disables tiles entirely (the map falls back to the on-box schematic).
+    tile_upstream_url: str = "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
+    # Sent on every upstream tile fetch — OSM's tile policy requires an honest UA.
+    tile_user_agent: str = "JBrain2 self-hosted personal instance"
+    tile_cache_dir: str = "/data/tiles"
+    tile_max_zoom: int = 19
     # Pinned, owner-configured base URLs for the egress connectors (#9). Free,
     # no-auth NLM services; the egress guard fills only typed slots, never a URL.
     rxnav_url: str = "https://rxnav.nlm.nih.gov"
