@@ -62,11 +62,18 @@ Muted, desaturated pastels — never saturated/neon. Each has a `-tint`
 | `--amber` | `#C9A36A` | 13% alpha | Research mode (read-only), pending/in-progress, warnings |
 | `--rose` | `#CF8A8F` | 13% alpha | Medical domain, errors, destructive |
 | `--violet` | `#A493C9` | 13% alpha | Financial domain |
+| `--location` | `#6FB6B1` | 13% alpha | Location domain (teal) — map trail/fence/start, location tool-views |
 
 Semantic aliases: `--ok: var(--green)`, `--warn: var(--amber)`,
-`--danger: var(--rose)`, `--info: var(--steel)`. The location domain's color
-is assigned when Phase 7 lands (candidate: a teal, distinct from the five
-above).
+`--danger: var(--rose)`, `--info: var(--steel)`, `--location: #6FB6B1`. The
+location domain's color is **teal `--location` (`#6FB6B1`)** — settled by the
+L3 location-assistant GUI gate (owner chose Option B + the teal location accent;
+see `docs/mocks/location-views/README.md`). It is distinct from the five mode
+accents and shares the teal hue with the MedicalProcedure entity disc (a
+type-axis use, not a domain one — the two axes are independent). The inline
+location tool-views (`location_map`/`place_card`) and their Leaflet trail/fence/
+start markers ride this token (the steel `loc-lf-*` classes on the full-screen
+map are unchanged unless separately re-decided).
 
 **Mode/domain coding rule** (settled in the Phase 1 omnibox review):
 green=entry/save, amber=research/read-only, steel=full-brain/agent,
@@ -721,11 +728,23 @@ surface every view reuses). **MVP:** those three + `lab_plot` + the interactives
 `record_list`, `appointment_card`, `confirm_panel`. **Standard:** `entity_card`,
 `timeline`, `wiki_preview`, `med_card`, `txn_table`. **Refused** (anti-bloat, tied
 to invariants): no `form` (input flows through composer/sheets/review inbox), no
-`markdown`/`html`/`image`/`iframe` (I-9), no external **map tile ever** — location
-renders as text, or later a basemap-free PostGIS-derived-SVG `mini_map` with numeric
-path slots (never a tile, image, or model-authored SVG string), no free
+`markdown`/`html`/`image`/`iframe` (I-9), no external **map tile ever**, no free
 `button`/`link`, no generic `chart` kitchen-sink (purpose-built plots only), no
 dashboard/layout components.
+
+**Proxy-tile carve-out for the location domain (L3).** The "no external map tile
+ever" rule above was written when location had no on-box basemap; it is
+**superseded for the location domain** by the registered Leaflet tool-views
+`location_map` (#3) and `place_card` (#4). These are the *sanctioned* Leaflet
+tool-views: they render tiles only from the **on-box `/api/tiles` proxy**
+(`leafletMap.ts`), not an external host — so the exfiltration/I-9 concern that
+motivated the ban (a model-authored URL reaching a third-party host) does not
+apply. The invariants still bind: coordinates are **render-only** (lat/lon enter
+only the Leaflet layers via the map glue, never model-facing text or a view
+caption), a GPS gap is never bridged (the trail splits into separate polylines),
+and derived `place_card` stats are owner-gated. The data still comes from an
+RLS-scoped, full-owner-gated tool call. No other domain gets a tile view without
+its own decision.
 
 ## Wiki Talk board (settled in a three-way GUI review — reference mock: `docs/mocks/wiki-talk-b-topics.html`)
 

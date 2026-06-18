@@ -410,7 +410,7 @@ def build_registry(
             **build_merge_handlers(proposals, entities),
             **build_connector_handlers(connectors, proposals),
             **build_geocode_handlers(geocoder),
-            **build_location_handlers(locations, devices, entities),
+            **build_location_handlers(locations, devices, entities, geocoder),
             **build_wiki_handlers(wiki),
             **build_selfedit_handlers(proposals, router, settings),
             **wiki_write,

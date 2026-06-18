@@ -13,7 +13,7 @@ only ever to the owner — the UI's Devices / Timeline / Map tabs read here.
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 from sqlalchemy import text
@@ -21,6 +21,13 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from jbrain.db.session import SessionContext, device_context, scoped_session
 from jbrain.locations.access import LocationToolRefusal, require_full_owner
+
+# `fixes_within` clamps to these so one aggregate query can never scan an
+# unbounded window or sweep an absurd radius (a wide window is both a cost and a
+# leak vector). 31 days covers "last month" answers; 50 km bounds a place query.
+_FIXES_WITHIN_MAX_WINDOW = timedelta(days=31)
+_FIXES_WITHIN_MAX_RADIUS_M = 50_000.0
+_FIXES_WITHIN_MAX_LIMIT = 50_000
 
 __all__ = [
     "LocationToolRefusal",
@@ -251,6 +258,68 @@ class SqlLocationRepo:
                         " ORDER BY captured_at LIMIT :lim"
                     ),
                     {"sid": subject_id, "since": since, "until": until, "lim": limit},
+                )
+            ).all()
+        return [
+            FixPoint(
+                captured_at=r.captured_at,
+                latitude=r.latitude,
+                longitude=r.longitude,
+                accuracy_m=r.accuracy_m,
+                battery_pct=r.battery_pct,
+            )
+            for r in rows
+        ]
+
+    async def fixes_within(
+        self,
+        ctx: SessionContext,
+        *,
+        subject_id: str,
+        since: datetime,
+        until: datetime,
+        center: tuple[float, float] | None = None,
+        radius_m: float | None = None,
+        limit: int,
+    ) -> list[FixPoint]:
+        """A device's fixes in `[since, until)`, oldest first, optionally restricted
+        to those within `radius_m` of `center` ((lat, lon)). Powers `location_query`
+        ("battery at <place> last night"): the caller passes a place's fence center +
+        radius and aggregates the returned fixes.
+
+        Reads `location_fixes`, which is STRICT RLS (full owner OR the device's own
+        subject), so a narrowed session sees zero rows — RLS fails it closed, no
+        application guard needed. The window is CLAMPED to a max span (a too-wide
+        `since` is pulled forward) and the radius to a max, and `limit` is bounded,
+        so one call can never scan the whole hypertable. The spatial predicate uses
+        `ST_DWithin` over the GiST-indexed `geog` column; no coordinate crosses the
+        boundary except inside the returned `FixPoint`s (render-only)."""
+        # Clamp the window: pull `since` forward so the span never exceeds the max
+        # (an unbounded "since the beginning of time" becomes the last N days).
+        if until - since > _FIXES_WITHIN_MAX_WINDOW:
+            since = until - _FIXES_WITHIN_MAX_WINDOW
+        lim = max(1, min(_FIXES_WITHIN_MAX_LIMIT, limit))
+        params: dict = {"sid": subject_id, "since": since, "until": until, "lim": lim}
+        spatial = ""
+        if center is not None and radius_m is not None:
+            radius = max(1.0, min(_FIXES_WITHIN_MAX_RADIUS_M, radius_m))
+            params.update({"lat": center[0], "lon": center[1], "radius": radius})
+            spatial = (
+                " AND ST_DWithin(geog,"
+                " ST_SetSRID(ST_MakePoint(:lon, :lat), 4326)::geography, :radius)"
+            )
+        async with scoped_session(self._maker, ctx) as session:
+            rows = (
+                await session.execute(
+                    text(
+                        "SELECT captured_at, latitude, longitude, accuracy_m, battery_pct"
+                        " FROM app.location_fixes"
+                        " WHERE subject_id = cast(:sid AS uuid)"
+                        "   AND captured_at >= :since AND captured_at < :until"
+                        + spatial
+                        + " ORDER BY captured_at LIMIT :lim"
+                    ),
+                    params,
                 )
             ).all()
         return [
