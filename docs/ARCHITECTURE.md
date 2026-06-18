@@ -7,11 +7,14 @@ appointments), guided-intake share links, and Life360-style location tracking.
 
 ## System shape
 
-One Docker Compose stack on an Ubuntu host, reachable on a public domain.
+One Docker Compose stack on an Ubuntu host. Reachable either directly on a
+public domain (Caddy fetches Let's Encrypt; needs inbound 80/443) or, for a
+home box on a dynamic IP / behind CGNAT, via an opt-in Cloudflare Tunnel that
+dials out (no static IP or port-forwarding) — see `CLOUDFLARE_TUNNEL.md`.
 
 | Container | Technology | Role |
 |---|---|---|
-| `proxy` | Caddy | Auto-TLS, serves the built PWA, routes `/api` |
+| `proxy` | Caddy | Auto-TLS in direct mode, or plain HTTP behind the tunnel; serves the built PWA, routes `/api` |
 | `api` | Python / FastAPI | REST API, auth, CRUD, search, chat |
 | `worker` | Same image as `api` | Job-queue consumer: extraction, chunking, embedding, analysis, wiki builds |
 | `db` | TimescaleDB-HA (Postgres + Timescale + PostGIS; pgvector) | The single stateful service (see below) |
@@ -164,9 +167,10 @@ two. Rejecting a fact drafts a correction note.
 `install.sh` bootstraps a barebones Ubuntu host: installs Docker Engine +
 compose plugin and git, places the source tree at `/opt/jbrain2/src` (copied
 from the clone it runs from, or cloned fresh when piped), prompts for the
-domain and LLM API key(s), generates all internal secrets into `.env`,
-**builds the images from source**, and brings the stack up. No registry
-account is required — only public base images are pulled.
+domain, access mode (direct Let's Encrypt or Cloudflare Tunnel), and LLM API
+key(s), generates all internal secrets into `.env`, **builds the images from
+source**, and brings the stack up. No registry account is required — only
+public base images are pulled.
 
 ### Owner key
 
