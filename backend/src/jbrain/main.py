@@ -50,6 +50,7 @@ from jbrain.appointments.repo import SqlAppointmentsRepo
 from jbrain.auth.repo import SqlAuthRepo
 from jbrain.config import Settings, get_settings
 from jbrain.connectors.base import ConnectorRegistry
+from jbrain.connectors.geocoding import geocode_connectors
 from jbrain.connectors.medical import medical_connectors
 from jbrain.connectors.repo import SqlConnectorCache
 from jbrain.connectors.service import ConnectorService
@@ -176,7 +177,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # The egress chokepoint: a fixed allowlist of connectors, served only on an
         # approved egress Proposal (invariant #9).
         connector_registry = ConnectorRegistry(
-            medical_connectors(settings.rxnav_url, settings.medlineplus_url)
+            [
+                *medical_connectors(settings.rxnav_url, settings.medlineplus_url),
+                *geocode_connectors(settings.external_geocoder_url),
+            ]
         )
         app.state.connector_service = ConnectorService(connector_registry, SqlConnectorCache(maker))
         app.state.agent_registry = build_registry(

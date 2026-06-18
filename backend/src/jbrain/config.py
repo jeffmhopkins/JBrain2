@@ -26,6 +26,11 @@ class Settings(BaseSettings):
     # no-auth NLM services; the egress guard fills only typed slots, never a URL.
     rxnav_url: str = "https://rxnav.nlm.nih.gov"
     medlineplus_url: str = "https://connect.medlineplus.gov"
+    # The external reverse-geocoder fallback (Phase 7 Wave 4b), Nominatim-compatible.
+    # DEFAULT OFF: empty means the connector is never registered, so there is no
+    # off-box geocoding path at all. When set, a lookup still leaves the box only on
+    # an owner-approved egress Proposal (coordinates only — no free-text slot).
+    external_geocoder_url: str = ""
     # Cookies require HTTPS in production; tests and local dev run plain HTTP.
     secure_cookies: bool = True
 
