@@ -211,6 +211,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             app.state.wiki_read_store,
             build_wiki_write_handlers(app.state.notes_repo, app.state.job_queue, maker),
             app.state.geocoder,
+            app.state.location_repo,
+            app.state.device_repo,
             router=app.state.llm_router,
             settings=settings_store,
         )

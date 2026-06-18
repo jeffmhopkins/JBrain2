@@ -130,6 +130,8 @@ async def test_run_editor_turn_chip_only_when_lever_fires_with_empty_prose() -> 
         stub,
         build_wiki_write_handlers(notes, jobs, object()),  # type: ignore[arg-type]
         stub,  # geocoder client
+        stub,  # location repo
+        stub,  # device repo
     )
     router = LlmRouter(
         {

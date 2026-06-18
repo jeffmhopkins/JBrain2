@@ -365,6 +365,8 @@ def _editor_registry(maker: async_sessionmaker, jobs: _FakeJobs) -> ToolRegistry
         WikiReadStore(maker),
         build_wiki_write_handlers(notes, jobs, maker),  # type: ignore[arg-type]
         stub,  # geocoder client
+        stub,  # location repo
+        stub,  # device repo
     )
 
 
