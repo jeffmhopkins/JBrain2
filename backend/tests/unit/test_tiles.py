@@ -1,7 +1,6 @@
 """The basemap tile cache + cache-first service (location map proxy). The upstream
 HTTP fetch is faked — CI never reaches a real tile host."""
 
-
 from jbrain.tiles import FsTileCache, TileService, valid_tile
 
 _PNG = b"\x89PNG\r\n\x1a\n-fake-tile"
