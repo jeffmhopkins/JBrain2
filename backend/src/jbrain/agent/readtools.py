@@ -20,6 +20,7 @@ from jbrain.agent.appointmenttools import (
 )
 from jbrain.agent.connectortools import build_connector_handlers
 from jbrain.agent.contracts import EntityRef, NoteSource
+from jbrain.agent.geocodetools import build_geocode_handlers
 from jbrain.agent.listtools import build_list_handlers
 from jbrain.agent.loop import ToolContext, ToolHandler, ToolOutput
 from jbrain.agent.memory import MemoryService
@@ -33,6 +34,7 @@ from jbrain.analysis.relationships import predicate_candidates
 from jbrain.appointments.service import AppointmentsRepo
 from jbrain.connectors.base import ConnectorRegistry
 from jbrain.db.session import SessionContext
+from jbrain.geocode import GeocodeClient
 from jbrain.lists.service import ListsRepo
 from jbrain.notes.service import NoteInfo, NotesRepo
 from jbrain.search.service import (
@@ -378,6 +380,7 @@ def build_registry(
     appointments: AppointmentsRepo,
     wiki: WikiReader,
     wiki_write: dict[str, ToolHandler],
+    geocoder: GeocodeClient,
     router: "LlmRouter | None" = None,
     settings: "SqlSettingsStore | None" = None,
 ) -> ToolRegistry:
@@ -401,6 +404,7 @@ def build_registry(
             **build_proposal_handlers(proposals),
             **build_merge_handlers(proposals, entities),
             **build_connector_handlers(connectors, proposals),
+            **build_geocode_handlers(geocoder),
             **build_wiki_handlers(wiki),
             **build_selfedit_handlers(proposals, router, settings),
             **wiki_write,

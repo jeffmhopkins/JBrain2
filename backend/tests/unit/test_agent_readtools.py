@@ -465,6 +465,7 @@ def test_build_registry_binds_the_shipped_sidecars() -> None:
         object(),  # type: ignore[arg-type]
         object(),  # type: ignore[arg-type]  # wiki reader
         build_wiki_write_handlers(object(), object(), object()),  # type: ignore[arg-type]
+        object(),  # type: ignore[arg-type]  # geocoder client
     )
     shipped = {
         "search",
@@ -493,11 +494,17 @@ def test_build_registry_binds_the_shipped_sidecars() -> None:
         "propose_merge",
         "lookup_medication",
         "lookup_condition",
+        "geocode_reverse",
+        "geocode_forward",
         "propose_prompt_edit",
     }
     assert registry.names() == shipped
-    # The connector tools are external (no domain restriction on visibility).
-    assert {t.name for t in registry.schemas_for({"general"})} == shipped
+    # The connector tools are external (no domain restriction). The geocode tools
+    # are location-domain, so a general-only scope doesn't see them; a location
+    # scope sees the full set.
+    geocode = {"geocode_reverse", "geocode_forward"}
+    assert {t.name for t in registry.schemas_for({"general"})} == shipped - geocode
+    assert {t.name for t in registry.schemas_for({"location"})} == shipped
 
 
 def test_sidecars_pinned_to_their_versions() -> None:
@@ -637,6 +644,16 @@ def test_sidecars_pinned_to_their_versions() -> None:
             "propose_prompt_edit",
             1,
             "b0d43cb16aa8fa9679c5b9ec6347e96a7876b62106dfa468f78d7516332fb13d",
+        ),
+        "geocode_reverse.tool": (
+            "geocode_reverse",
+            1,
+            "e7478dc924b2e38f35609df78a7ed4c1b07b5a782f5e14068b126093584ba7e3",
+        ),
+        "geocode_forward.tool": (
+            "geocode_forward",
+            1,
+            "e705abe592942eb4f39efafbdd8962e9a40a65836581c677cfca4897fadcc584",
         ),
     }
     # Every shipped sidecar must appear above — a new `.tool` cannot slip in
