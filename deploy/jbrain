@@ -12,7 +12,13 @@ cd /opt/jbrain2
 # silently drop the `tools` profile.)
 PROFILE=()
 if [ -f .env ] && grep -q '^LOCAL_LLM_ENABLED=true' .env; then
-  PROFILE=(--profile local-llm)
+  PROFILE+=(--profile local-llm)
+fi
+# The opt-in Cloudflare Tunnel connector lives behind the `tunnel` profile. Keep
+# it in every routine command when enabled so the connector is started, stopped,
+# and restarted alongside the rest of the stack.
+if [ -f .env ] && grep -q '^TUNNEL_ENABLED=true' .env; then
+  PROFILE+=(--profile tunnel)
 fi
 
 usage() {
