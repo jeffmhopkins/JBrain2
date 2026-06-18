@@ -1,3 +1,4 @@
+import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -30,6 +31,7 @@ from jbrain.api import (
     devices,
     feed,
     health,
+    live,
     locations,
     mqtt,
     notes,
@@ -63,6 +65,7 @@ from jbrain.geocode import PhotonGeocoderClient
 from jbrain.lists.repo import SqlListsRepo
 from jbrain.llm import build_router
 from jbrain.locations import SqlLocationRepo
+from jbrain.locations.live import LiveBroadcaster, live_feeder
 from jbrain.locations.pairing import SqlPairingRepo
 from jbrain.locations.ratelimit import TokenBucket
 from jbrain.locations.viewscope import SqlViewScopeRepo
@@ -111,6 +114,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # Anti-brute-force on the unauthenticated redeem endpoint: ~10 attempts
         # burst per source IP, refilling 1 every 10s.
         app.state.pairing_rate_limiter = TokenBucket(capacity=10, refill_per_sec=0.1)
+        # The live feed's in-process fan-out, fed by an MQTT subscriber that runs
+        # only when the ingest identity is configured (same gate as the M1 consumer)
+        # — so a stock deploy / the tests never open a broker connection.
+        app.state.live_broadcaster = LiveBroadcaster()
+        live_task: asyncio.Task[None] | None = None
+        if settings.mqtt_ingest_secret:
+            live_task = asyncio.create_task(
+                live_feeder(settings, app.state.auth_repo, app.state.live_broadcaster)
+            )
         # The on-box geocoder (Phase 7 Wave 4): shared by the agent tools and the
         # owner-only reverse-geocode read endpoint. Off-by-default at the deploy
         # layer (the `geocoder` profile); reads fail closed when it isn't running.
@@ -239,6 +251,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.agent_transcript = AgentTranscript(maker)
         app.state.supervisor_client = httpx.AsyncClient(base_url=settings.supervisor_url)
         yield
+        if live_task is not None:
+            live_task.cancel()
         await app.state.supervisor_client.aclose()
         await engine.dispose()
 
@@ -254,6 +268,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(lists_api.router, prefix="/api")
     app.include_router(llm_settings_api.router, prefix="/api")
     app.include_router(locations.router, prefix="/api")
+    app.include_router(live.router, prefix="/api")
     # The MQTT broker's go-auth HTTP backend calls these on the internal network
     # only — NOT under /api (Caddy never routes /internal off-box).
     app.include_router(mqtt.router, prefix="/internal")
