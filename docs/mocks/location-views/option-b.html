@@ -1,0 +1,266 @@
+<!doctype html>
+<!--
+  L3 LOCATION INLINE VIEWS — OPTION B: "Answer-first, map on demand"
+  ==================================================================
+  Direction: the TEXT answer leads. location_map renders as a compact, static
+  thumbnail strip the owner taps to expand into a full interactive map (tap-to-
+  expand affordance). The gap is surfaced as a TEXT "segments" list (each leg is
+  a named row) so the split is legible even before you open the map. place_card
+  is a dense, one-row layout: a small square mini-map beside title/address/stats.
+
+  Tradeoffs:
+   + Compact — keeps the transcript readable; map is opt-in.
+   + The segment list explains the gap in words, not just geometry.
+   + Cheapest vertical footprint of the three.
+   - Less spatial-at-a-glance; you must tap to really see the path.
+   - The dense card trades breathing room for density.
+
+  Invariants honored:
+   - Coordinates are render-only (inside Leaflet only); segment rows name PLACES
+     and times, never lat/lon.
+   - Gap-aware: the segments list shows the two legs split by a "no signal" row;
+     the expanded map draws two separate polylines, never one across the gap.
+   - Owner-gated stats: the card's stat row is wrapped in an owner-only note.
+
+  Tiles: production uses the on-box /api/tiles proxy. This mock loads OSM tiles
+  from a CDN only so the expanded map pans/zooms standalone.
+-->
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Location inline views — B — Answer-first</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<style>
+  :root{
+    --bg:#0E0F11;--surface:#17181B;--surface-2:#1E2024;--border:#26282C;
+    --text:#E6E7E9;--text-2:#9A9DA3;--text-3:#5C5F66;
+    --steel:#7FA7C9;--green:#8FBC9A;--amber:#C9A36A;--rose:#CF8A8F;--violet:#A493C9;
+    --steel-tint:color-mix(in srgb,var(--steel) 13%,transparent);
+    --amber-tint:color-mix(in srgb,var(--amber) 13%,transparent);
+    --shadow:rgba(0,0,0,.45);
+  }
+  [data-theme="light"]{
+    --bg:#F7F7F5;--surface:#FFFFFF;--surface-2:#F0F0EE;--border:#E2E2DF;
+    --text:#1A1B1E;--text-2:#5C5F66;--text-3:#9A9DA3;--shadow:rgba(20,30,50,.12);
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  body{margin:0;background:#05070a;color:var(--text);
+    font:15px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    display:grid;place-items:center;min-height:100vh;padding:20px 0}
+  .phone{width:390px;height:824px;background:var(--bg);border-radius:30px;overflow:hidden;
+    position:relative;box-shadow:0 20px 60px var(--shadow);display:flex;flex-direction:column}
+  .topbar{height:56px;flex:0 0 56px;display:flex;align-items:center;gap:10px;padding:0 14px;
+    border-bottom:1px solid var(--border);background:var(--surface)}
+  .topbar .dot{width:8px;height:8px;border-radius:50%;background:var(--steel)}
+  .topbar .ttl{font-weight:700;font-size:18px;flex:1}
+  .topbar .ttl i{color:var(--steel);font-style:normal}
+  .icon-btn{width:36px;height:36px;display:grid;place-items:center;border-radius:9px;
+    color:var(--text-2);background:transparent;border:0;cursor:pointer}
+  .icon-btn:hover{background:var(--surface-2);color:var(--text)}
+  svg{width:20px;height:20px;stroke:currentColor;fill:none;stroke-width:1.7;
+    stroke-linecap:round;stroke-linejoin:round}
+  .opthead{padding:9px 14px;background:var(--steel-tint);border-bottom:1px solid var(--border);
+    font-size:11.5px;color:var(--text-2)}
+  .opthead b{color:var(--text);font-size:12.5px}
+  .scroll{overflow-y:auto;flex:1;padding:14px 12px 28px;display:flex;flex-direction:column;gap:14px}
+  .turn{display:flex;flex-direction:column;gap:8px}
+  .ask{align-self:flex-end;max-width:78%;background:var(--steel-tint);color:var(--text);
+    border:1px solid color-mix(in srgb,var(--steel) 30%,transparent);
+    border-radius:16px 16px 4px 16px;padding:9px 12px;font-size:14px}
+  .say{align-self:flex-start;max-width:92%;color:var(--text);font-size:14px;line-height:1.55}
+  .say .sub{color:var(--text-2)}
+  .agentrow{display:flex;align-items:center;gap:7px;font-size:11px;color:var(--text-3);
+    text-transform:uppercase;letter-spacing:.06em}
+  .agentrow .d{width:7px;height:7px;border-radius:50%;background:var(--steel)}
+  .tv{background:var(--surface);border:1px solid var(--border);border-radius:16px;overflow:hidden}
+  .tv-cap{display:flex;align-items:center;gap:7px;padding:9px 12px 6px;font-size:11px;
+    color:var(--text-3);text-transform:uppercase;letter-spacing:.05em}
+  .tv-cap .vi{color:var(--steel)}
+  /* ===== location_map: collapsed thumbnail → expandable ===== */
+  .thumbwrap{padding:0 12px 12px}
+  .thumb{position:relative;height:120px;border-radius:12px;overflow:hidden;cursor:pointer;
+    border:1px solid var(--border);background:var(--surface-2)}
+  .thumb .overlay{position:absolute;inset:0;z-index:500;display:flex;align-items:flex-end;
+    justify-content:space-between;padding:8px;
+    background:linear-gradient(to top,color-mix(in srgb,var(--bg) 70%,transparent),transparent 55%)}
+  .thumb .tap{font-size:12px;font-weight:500;color:var(--text);display:flex;align-items:center;gap:5px;
+    background:color-mix(in srgb,var(--bg) 70%,transparent);padding:4px 9px;border-radius:999px;
+    border:1px solid var(--border)}
+  .thumb .tap svg{width:13px;height:13px;color:var(--steel)}
+  .thumb .fresh{font-size:11px;color:var(--text-2);display:flex;align-items:center;gap:5px;
+    background:color-mix(in srgb,var(--bg) 70%,transparent);padding:4px 9px;border-radius:999px;border:1px solid var(--border)}
+  .thumb .fresh .fd{width:7px;height:7px;border-radius:50%;background:var(--amber)}
+  .leaflet-container{background:var(--surface-2);font:inherit}
+  .full{height:0;overflow:hidden;transition:height .18s ease-out}
+  .full.open{height:330px}
+  .full .map{height:330px}
+  /* segments list = text render of the gap-split trail */
+  .segs{padding:2px 12px 12px}
+  .seglabel{font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--text-3);margin:6px 2px 6px}
+  .seg{display:flex;gap:10px;padding:8px 2px;border-bottom:1px solid var(--border)}
+  .seg:last-child{border-bottom:0}
+  .seg .rail{width:14px;display:flex;flex-direction:column;align-items:center;padding-top:3px}
+  .seg .rail .knob{width:9px;height:9px;border-radius:50%;background:var(--steel);flex:0 0 9px}
+  .seg .rail .stem{width:2px;flex:1;background:var(--border);margin-top:2px}
+  .seg .body .t{font-size:13.5px;font-weight:500}
+  .seg .body .m{font-size:11.5px;color:var(--text-3);margin-top:1px}
+  .seg.gap .rail .knob{background:var(--amber)}
+  .seg.gap .body .t{color:var(--amber)}
+  .seg.gap .rail .stem{background:repeating-linear-gradient(var(--amber) 0 3px,transparent 3px 7px)}
+  /* ===== place_card: dense one-row ===== */
+  .pc{display:flex;gap:12px;padding:12px}
+  .pc-mini{flex:0 0 96px;height:96px;border-radius:12px;overflow:hidden;border:1px solid var(--border);background:var(--surface-2)}
+  .pc-mini .map{height:96px}
+  .pc-main{flex:1;min-width:0}
+  .pc-title{font-size:17px;font-weight:600;display:flex;align-items:center;gap:7px}
+  .pc-kind{width:20px;height:20px;border-radius:50%;display:grid;place-items:center;
+    background:color-mix(in srgb,var(--green) 16%,transparent);color:var(--green);flex:0 0 20px}
+  .pc-kind svg{width:12px;height:12px}
+  .pc-addr{font-size:12.5px;color:var(--text-2);margin-top:2px}
+  .pc-statline{display:flex;gap:14px;margin-top:9px}
+  .pc-statline .s .n{font-size:14px;font-weight:600}
+  .pc-statline .s .l{font-size:10px;color:var(--text-3);text-transform:uppercase;letter-spacing:.03em}
+  .owner{display:inline-flex;align-items:center;gap:5px;margin-top:8px;font-size:10.5px;color:var(--text-3)}
+  .owner svg{width:12px;height:12px;color:var(--steel)}
+  .chips{display:flex;flex-wrap:wrap;gap:6px;margin:10px 12px 4px}
+  .chip{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;padding:3px 9px;border-radius:999px;
+    background:var(--surface-2);border:1px solid var(--border);color:var(--text)}
+  .chip .cdisc{width:15px;height:15px;border-radius:50%;display:grid;place-items:center}
+  .chip .cdisc svg{width:9px;height:9px}
+  .chip.person .cdisc{background:color-mix(in srgb,var(--steel) 16%,transparent);color:var(--steel)}
+  .chip.org .cdisc{background:color-mix(in srgb,var(--violet) 16%,transparent);color:var(--violet)}
+  .chip.animal .cdisc{background:color-mix(in srgb,#A8BD7E 16%,transparent);color:#A8BD7E}
+  .chipnote{font-size:10.5px;color:var(--text-3);margin:0 12px 12px}
+</style>
+</head>
+<body>
+<div class="phone">
+  <div class="topbar">
+    <span class="dot"></span>
+    <div class="ttl">JBrain<i>.</i></div>
+    <button class="icon-btn" id="theme" title="Toggle theme"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4.5"/><path d="M12 2v2M12 20v2M4 12H2M22 12h-2M5 5l1.5 1.5M17.5 17.5L19 19M19 5l-1.5 1.5M6.5 17.5L5 19"/></svg></button>
+  </div>
+  <div class="opthead"><b>Option B — Answer-first, map on demand.</b> Prose leads; the map is a tap-to-expand thumbnail; the gap is spelled out as a segments list.</div>
+
+  <div class="scroll">
+
+    <!-- ===================== location_history → location_map ===================== -->
+    <div class="turn">
+      <div class="ask">map of me last week</div>
+    </div>
+    <div class="turn">
+      <div class="agentrow"><span class="d"></span>Full Brain</div>
+      <div class="say">You covered <b>~38 km</b> Mon Jun 9 – Sun Jun 15, mostly around Boulder.
+        <span class="sub">There's one gap — no signal overnight Thu→Fri (~7 h) — so the trail is two separate legs, not one continuous line.</span>
+      </div>
+
+      <div class="tv">
+        <div class="tv-cap"><span class="vi">●</span>location_map</div>
+        <div class="thumbwrap">
+          <div class="thumb" id="thumbB" onclick="expandB()">
+            <div class="map" id="mapB-thumb" style="height:120px"></div>
+            <div class="overlay">
+              <span class="fresh"><span class="fd"></span>last fix 41 min ago</span>
+              <span class="tap"><svg viewBox="0 0 24 24"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>tap to explore</span>
+            </div>
+          </div>
+        </div>
+        <div class="full" id="fullB"><div class="map" id="mapB-full"></div></div>
+        <div class="segs">
+          <div class="seglabel">2 legs · split at the gap</div>
+          <div class="seg"><div class="rail"><span class="knob"></span><span class="stem"></span></div>
+            <div class="body"><div class="t">Home → Office → Pearl St</div><div class="m">Mon 7:50a – Thu 9:10p · 22 km · 1,180 fixes</div></div></div>
+          <div class="seg gap"><div class="rail"><span class="knob"></span><span class="stem"></span></div>
+            <div class="body"><div class="t">No signal — route unknown</div><div class="m">Thu 9:10p – Fri 4:25a · ~7 h gap · not drawn across</div></div></div>
+          <div class="seg"><div class="rail"><span class="knob"></span></div>
+            <div class="body"><div class="t">Foothills loop → Home</div><div class="m">Fri 4:25a – Sun 6:40p · 16 km · 734 fixes</div></div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===================== place_card ===================== -->
+    <div class="turn">
+      <div class="ask">tell me about Home</div>
+    </div>
+    <div class="turn">
+      <div class="agentrow"><span class="d"></span>Full Brain</div>
+      <div class="say">Home is your most-visited place — last there 41 minutes ago.</div>
+
+      <div class="tv">
+        <div class="tv-cap"><span class="vi">●</span>place_card</div>
+        <div class="pc">
+          <div class="pc-mini"><div class="map" id="pcB"></div></div>
+          <div class="pc-main">
+            <div class="pc-title"><span class="pc-kind"><svg viewBox="0 0 24 24"><path d="M3 11l9-7 9 7M5 10v10h14V10"/></svg></span>Home</div>
+            <div class="pc-addr">1412 Linden Ave, Boulder, CO</div>
+            <div class="pc-statline">
+              <div class="s"><div class="n">41 min</div><div class="l">last seen</div></div>
+              <div class="s"><div class="n">214</div><div class="l">visits 90d</div></div>
+              <div class="s"><div class="n">11.2h</div><div class="l">avg/day</div></div>
+            </div>
+            <div class="owner"><svg viewBox="0 0 24 24"><path d="M12 1l9 4v6c0 5-3.8 9-9 11-5.2-2-9-6-9-11V5z"/></svg>owner-only stats</div>
+          </div>
+        </div>
+        <div class="chips">
+          <span class="chip person"><span class="cdisc"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="3.2"/><path d="M5 20c0-3.5 3-6 7-6s7 2.5 7 6"/></svg></span>Celine</span>
+          <span class="chip animal"><span class="cdisc"><svg viewBox="0 0 24 24"><circle cx="8" cy="11" r="2"/><circle cx="16" cy="11" r="2"/><path d="M6 16c0 2 2.5 3 6 3s6-1 6-3"/></svg></span>Maple</span>
+          <span class="chip org"><span class="cdisc"><svg viewBox="0 0 24 24"><path d="M4 21V8l8-5 8 5v13"/><path d="M9 21v-6h6v6"/></svg></span>HOA</span>
+        </div>
+        <div class="chipnote">From notes about Home — no invented neighbors.</div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+  const SEG1 = [
+    [40.0190,-105.2700],[40.0205,-105.2685],[40.0230,-105.2660],[40.0260,-105.2630],
+    [40.0288,-105.2602],[40.0150,-105.2520],[40.0090,-105.2480],[40.0050,-105.2440]
+  ];
+  const SEG2 = [
+    [40.0700,-105.2050],[40.0660,-105.2090],[40.0590,-105.2160],[40.0500,-105.2250],
+    [40.0420,-105.2360],[40.0330,-105.2480],[40.0250,-105.2600],[40.0190,-105.2700]
+  ];
+  const START = SEG1[0], LATEST = SEG2[SEG2.length-1], HOME = [40.0190,-105.2700];
+  const BOUNDS = L.latLngBounds([...SEG1,...SEG2]).pad(0.18);
+
+  function drawTrail(m,interactive){
+    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap'}).addTo(m);
+    L.polyline(SEG1,{color:'#7FA7C9',weight:3,opacity:.95}).addTo(m);   // leg 1
+    L.polyline(SEG2,{color:'#7FA7C9',weight:3,opacity:.95}).addTo(m);   // leg 2 — separate, no bridge
+    L.circleMarker(START,{radius:5,color:'#8FBC9A',weight:2,fillColor:'#8FBC9A',fillOpacity:1}).addTo(m);
+    L.circleMarker(LATEST,{radius:6,color:'#7FA7C9',weight:2,fillColor:'#7FA7C9',fillOpacity:1}).addTo(m);
+    L.circle(HOME,{radius:120,color:'#8FBC9A',weight:1.5,fillColor:'#8FBC9A',fillOpacity:.10,dashArray:'4 4'}).addTo(m);
+    m.fitBounds(BOUNDS);
+  }
+  // thumbnail: non-interactive preview
+  const thumb = L.map('mapB-thumb',{attributionControl:false,zoomControl:false,dragging:false,
+    scrollWheelZoom:false,doubleClickZoom:false,boxZoom:false,keyboard:false,tap:false});
+  drawTrail(thumb,false);
+
+  let fullMap=null;
+  function expandB(){
+    const full = document.getElementById('fullB');
+    full.classList.toggle('open');
+    if(full.classList.contains('open')){
+      if(!fullMap){ fullMap = L.map('mapB-full',{attributionControl:true}); drawTrail(fullMap,true); }
+      setTimeout(()=>{fullMap.invalidateSize();fullMap.fitBounds(BOUNDS);},200);
+    }
+  }
+
+  const pc = L.map('pcB',{attributionControl:false,zoomControl:false,dragging:false,
+    scrollWheelZoom:false,doubleClickZoom:false,tap:false}).setView(HOME,15);
+  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap'}).addTo(pc);
+  L.circle(HOME,{radius:110,color:'#8FBC9A',weight:1.5,fillColor:'#8FBC9A',fillOpacity:.16}).addTo(pc);
+  L.circleMarker(HOME,{radius:5,color:'#8FBC9A',weight:2,fillColor:'#8FBC9A',fillOpacity:1}).addTo(pc);
+
+  document.getElementById('theme').onclick = () => {
+    const h = document.documentElement;
+    h.dataset.theme = h.dataset.theme === 'dark' ? 'light' : 'dark';
+  };
+</script>
+</body>
+</html>
