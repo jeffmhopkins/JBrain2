@@ -35,6 +35,7 @@ export interface LocationDeps {
   listPlaces: () => Promise<PlaceGeofence[]>;
   listFixes: (subjectId: string, since: string, until: string) => Promise<LocationFix[]>;
   filePlaceNote: (place: PlaceNoteInput) => Promise<void>;
+  reverseGeocode: (lat: number, lon: number) => Promise<string | null>;
 }
 
 interface LocationScreenProps {

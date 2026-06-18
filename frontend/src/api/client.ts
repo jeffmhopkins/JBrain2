@@ -1548,6 +1548,12 @@ export const api = {
     return (await response.json()) as PlaceGeofence[];
   },
 
+  async reverseGeocode(lat: number, lon: number): Promise<string | null> {
+    const params = new URLSearchParams({ lat: String(lat), lon: String(lon) });
+    const response = await request(`/api/locations/geocode?${params}`);
+    return ((await response.json()) as { address: string | null }).address;
+  },
+
   async provisionDevice(label: string): Promise<ProvisionedDevice> {
     const response = await request("/api/devices", jsonInit("POST", { label }));
     return (await response.json()) as ProvisionedDevice;

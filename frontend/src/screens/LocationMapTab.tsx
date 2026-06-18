@@ -71,6 +71,7 @@ export function LocationMapTab({ deps }: { deps: LocationDeps | undefined }) {
   const listPlaces = deps?.listPlaces ?? api.listLocationPlaces;
   const listFixes = deps?.listFixes ?? api.listLocationFixes;
   const filePlaceNote = deps?.filePlaceNote ?? defaultFilePlaceNote;
+  const reverseGeocode = deps?.reverseGeocode ?? api.reverseGeocode;
 
   const [meta, setMeta] = useState<Meta>({ phase: "loading" });
   const [selected, setSelected] = useState<string>("");
@@ -81,6 +82,9 @@ export function LocationMapTab({ deps }: { deps: LocationDeps | undefined }) {
   // The geofence editor target: a blank form ("new") or an existing place to
   // file a correction note against.
   const [editing, setEditing] = useState<PlaceGeofence | "new" | null>(null);
+  // The latest fix's on-box street address (Wave 4c). Best-effort: stays null when
+  // the geocoder is off, so the caption simply doesn't render.
+  const [address, setAddress] = useState<string | null>(null);
 
   useEffect(() => {
     let stale = false;
@@ -114,6 +118,27 @@ export function LocationMapTab({ deps }: { deps: LocationDeps | undefined }) {
       stale = true;
     };
   }, [selected, since, until, listFixes]);
+
+  // Name the latest fix in plain words via the on-box geocoder (best-effort).
+  useEffect(() => {
+    const rows = fixes.phase === "done" ? fixes.fixes : [];
+    const latest = rows[rows.length - 1];
+    if (!latest) {
+      setAddress(null);
+      return;
+    }
+    let stale = false;
+    reverseGeocode(latest.latitude, latest.longitude)
+      .then((a) => {
+        if (!stale) setAddress(a);
+      })
+      .catch(() => {
+        if (!stale) setAddress(null);
+      });
+    return () => {
+      stale = true;
+    };
+  }, [fixes, reverseGeocode]);
 
   if (meta.phase === "loading") return <p className="analysis-quiet">loading map…</p>;
   if (meta.phase === "error") {
@@ -176,6 +201,12 @@ export function LocationMapTab({ deps }: { deps: LocationDeps | undefined }) {
       </div>
 
       <MapCanvas mode={mode} fixes={points} places={meta.places} />
+
+      {address && points.length > 0 && (
+        <p className="loc-map-address">
+          <span aria-hidden="true">📍</span> latest near {address}
+        </p>
+      )}
 
       {fixes.phase === "loading" && <p className="analysis-quiet loc-map-note">loading fixes…</p>}
       {fixes.phase === "error" && (
