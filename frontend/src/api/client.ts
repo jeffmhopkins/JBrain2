@@ -83,6 +83,68 @@ export interface PlaceGeofence {
   polygon: LatLon[] | null;
 }
 
+/** One bar on a day's place-track in the digest (L7a): a place name (null = a
+ * no-signal gap) and the fraction of the local day [0,1] it spans. Names + times
+ * only — there is no coordinate anywhere in the digest. */
+export interface PlaceSegment {
+  place_name: string | null;
+  start: number;
+  width: number;
+  entered_at: string;
+  exited_at: string;
+}
+
+/** One local civil day as a place-track: its segments, whether the owner was home
+ * for any part of it, and whether it carried any signal at all. */
+export interface DayTrack {
+  day: string;
+  segments: PlaceSegment[];
+  home: boolean;
+  has_data: boolean;
+}
+
+export interface PlaceSeen {
+  place_name: string;
+  first_seen: string;
+  last_seen: string;
+}
+
+export interface Trip {
+  place_name: string;
+  day: string;
+  entered_at: string;
+  exited_at: string;
+  seconds: number;
+}
+
+/** The owner's place digest (GET /api/locations/digest) — a compute-on-read rollup
+ * of recent place activity, names + times only. `period` is "week" (default) or
+ * "night". Owner-only; no coordinates. */
+export interface LocationDigest {
+  period: string;
+  since: string;
+  until: string;
+  timezone: string;
+  days: DayTrack[];
+  nights_home: number;
+  nights_total: number;
+  places_visited: number;
+  longest_trip: Trip | null;
+  seen: PlaceSeen[];
+  computed_at: string;
+}
+
+/** The owner's own current/last-known presence (GET /api/locations/presence) for
+ * the app-open toast. `present` false → no usable fix; `stale` flips it to the amber
+ * "last known" tone. Names + times only. */
+export interface LocationPresence {
+  present: boolean;
+  place_name: string | null;
+  last_seen: string | null;
+  age_seconds: number | null;
+  stale: boolean;
+}
+
 export interface ContainerStatus {
   service: string;
   state: string;
@@ -1551,6 +1613,19 @@ export const api = {
   async listLocationPlaces(): Promise<PlaceGeofence[]> {
     const response = await request("/api/locations/places");
     return (await response.json()) as PlaceGeofence[];
+  },
+
+  // The compute-on-read place digest (L7a): week (default) or night. Owner-only;
+  // names + times only, no coordinates. Recomputed each call — there is no feed.
+  async locationDigest(period: "week" | "night" = "week"): Promise<LocationDigest> {
+    const response = await request(`/api/locations/digest?period=${period}`);
+    return (await response.json()) as LocationDigest;
+  },
+
+  // The owner's own current/last-known presence (L7b) for the app-open toast.
+  async locationPresence(): Promise<LocationPresence> {
+    const response = await request("/api/locations/presence");
+    return (await response.json()) as LocationPresence;
   },
 
   async reverseGeocode(lat: number, lon: number): Promise<string | null> {
