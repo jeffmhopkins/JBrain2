@@ -6,12 +6,17 @@ import structlog
 from fastapi import FastAPI
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+from jbrain.agent.correctionmine import CORRECTION_MINE_SPEC
 from jbrain.agent.memory import MemoryRepo, MemoryService
+from jbrain.agent.predicatereview import PREDICATE_REVIEW_SPEC
+from jbrain.agent.promptselfedit import PROMPT_SELF_EDIT_SPEC
 from jbrain.agent.proposals import ProposalRepo
 from jbrain.agent.readtools import build_registry
 from jbrain.agent.runlog import AgentRunLog, RunLogReader
 from jbrain.agent.session import AgentSessionRepo
+from jbrain.agent.skilldistill import SKILL_DISTILL_SPEC
 from jbrain.agent.skills import SkillService, SkillsRepo
+from jbrain.agent.skillsweep import SKILL_SWEEP_SPEC
 from jbrain.agent.transcript_store import AgentTranscript
 from jbrain.agent.wikiwritetools import build_wiki_write_handlers
 from jbrain.analysis.hygiene import ENTITY_HYGIENE_SPEC
@@ -106,9 +111,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # pipeline through (workflow/scheduler.fire_trigger) and the Automations
         # surface renders the Catalog from. Mirrors the worker's composed registry
         # EXACTLY — the shipped six plus every in-code action (purge, the three
-        # reconcilers, the opt-in eval_run) — so any manual trigger fired from Ops
-        # resolves to the same handler the scheduler would, and the Catalog lists
-        # the full set the worker can run.
+        # reconcilers, the geofence sweep, the opt-in eval_run, the Loop 2-4
+        # self-improvement actions, the Phase-6 hygiene sweeps, and the wiki builder)
+        # — so any manual trigger fired from Ops resolves to the same handler the
+        # scheduler would (else registry.get raises ActionRegistryError), and the
+        # Catalog lists the full set the worker can run. Keep in lockstep with the
+        # worker's build_registry composition.
         action_registry = build_action_registry(
             (
                 *ACTION_SPECS,
@@ -118,6 +126,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 RECONCILE_UNEMBEDDED_NOTES_ACTION,
                 GEOFENCE_SWEEP_ACTION,
                 EVAL_RUN_SPEC,
+                # The Loop 2-4 self-improvement actions — seeded manual=true, so they
+                # must resolve from Ops too (they were worker-only before).
+                SKILL_DISTILL_SPEC,
+                SKILL_SWEEP_SPEC,
+                PREDICATE_REVIEW_SPEC,
+                CORRECTION_MINE_SPEC,
+                PROMPT_SELF_EDIT_SPEC,
                 # The Phase-6 hygiene sweeps, so their seeded manual triggers resolve from
                 # Ops (POST /ops/triggers/{id}/run -> registry.get) — emergency-fireable.
                 ENTITY_HYGIENE_SPEC,

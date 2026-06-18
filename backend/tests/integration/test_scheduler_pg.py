@@ -17,6 +17,11 @@ from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async
 from sqlalchemy.pool import NullPool
 
 from jbrain import queue
+from jbrain.agent.correctionmine import CORRECTION_MINE_SPEC
+from jbrain.agent.predicatereview import PREDICATE_REVIEW_SPEC
+from jbrain.agent.promptselfedit import PROMPT_SELF_EDIT_SPEC
+from jbrain.agent.skilldistill import SKILL_DISTILL_SPEC
+from jbrain.agent.skillsweep import SKILL_SWEEP_SPEC
 from jbrain.analysis.hygiene import ENTITY_HYGIENE_SPEC
 from jbrain.analysis.reembed import REEMBED_SPEC
 from jbrain.analysis.tagconsolidate import TAG_CONSOLIDATE_SPEC
@@ -58,6 +63,11 @@ def _registry():  # noqa: ANN202
             RECONCILE_UNEMBEDDED_NOTES_ACTION,
             GEOFENCE_SWEEP_ACTION,
             EVAL_RUN_SPEC,
+            SKILL_DISTILL_SPEC,
+            SKILL_SWEEP_SPEC,
+            PREDICATE_REVIEW_SPEC,
+            CORRECTION_MINE_SPEC,
+            PROMPT_SELF_EDIT_SPEC,
             ENTITY_HYGIENE_SPEC,
             REEMBED_SPEC,
             TAG_CONSOLIDATE_SPEC,
@@ -117,6 +127,11 @@ async def _jobs_of_kind(maker: async_sessionmaker, kind: str) -> int:
         return (
             await s.execute(text("SELECT count(*) FROM app.jobs WHERE kind = :k"), {"k": kind})
         ).scalar_one()
+
+
+async def _total_jobs(maker: async_sessionmaker) -> int:
+    async with scoped_session(maker, queue.SYSTEM_CTX) as s:
+        return (await s.execute(text("SELECT count(*) FROM app.jobs"))).scalar_one()
 
 
 async def _latest_payload_of_kind(maker: async_sessionmaker, kind: str) -> dict:
@@ -270,8 +285,10 @@ async def test_fire_trigger_require_manual_rejects_a_non_manual_trigger(
 
 
 async def test_seeded_nightly_sweeps_exist_and_are_fireable(maker: async_sessionmaker) -> None:
-    """Migration 0037 seeds the three nightly sweeps as manual, schedule-bound
-    triggers; each is fireable on demand (the emergency Ops control)."""
+    """The seed migrations register the nightly sweeps as manual, schedule-bound
+    triggers; EVERY one is fireable on demand (the emergency Ops control), and each
+    resolves against the worker-equivalent registry — the drift guard for the api/worker
+    action-registry lockstep."""
     async with scoped_session(maker, queue.SYSTEM_CTX) as s:
         rows = (
             await s.execute(
@@ -299,19 +316,16 @@ async def test_seeded_nightly_sweeps_exist_and_are_fireable(maker: async_session
         "nightly_reembed_stale",
         "nightly_tag_consolidate",
     }
-    # Fire the consolidate sweep on demand and confirm a job lands.
-    trig = next(r.id for r in rows if r.pipeline == "nightly_consolidate_predicates")
-    before = await _jobs_of_kind(maker, "consolidate_predicates")
-    await fire_trigger(maker, _registry(), str(trig))
-    assert await _jobs_of_kind(maker, "consolidate_predicates") == before + 1
-
-    # And a Phase-6 hygiene sweep resolves + enqueues from its manual trigger — the guard
-    # that its in-code spec is composed into the registry Ops fires against (else the
-    # seeded manual trigger would raise ActionRegistryError on POST /ops/triggers/{id}/run).
-    eh = next(r.id for r in rows if r.pipeline == "nightly_entity_hygiene")
-    eh_before = await _jobs_of_kind(maker, "entity_hygiene")
-    await fire_trigger(maker, _registry(), str(eh))
-    assert await _jobs_of_kind(maker, "entity_hygiene") == eh_before + 1
+    # EVERY seeded nightly trigger resolves + enqueues against the worker-equivalent
+    # registry Ops fires against — the lockstep guard that no in-code action is left out
+    # of the api/worker registry composition (else POST /ops/triggers/{id}/run would raise
+    # ActionRegistryError on registry.get). Firing a manual trigger works even while its
+    # schedule is disabled (the whole point of the emergency control).
+    registry = _registry()
+    before = await _total_jobs(maker)
+    for r in rows:
+        await fire_trigger(maker, registry, str(r.id))
+    assert await _total_jobs(maker) == before + len(rows)
 
 
 async def test_seeded_nightly_eval_exists_and_carries_its_run_params(
