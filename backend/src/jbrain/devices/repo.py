@@ -200,7 +200,13 @@ class SqlDeviceRepo:
         hard-link (`subject_id IS NOT NULL AND lower(canonical_name)='me'`, the same
         anchor `analysis/entities.py::_find_me` uses) → the devices that "Me"
         operates → their `subject_id`s. Never a fuzzy/substring match on "Me".
-        Returns distinct device subject ids, RLS-scoped."""
+        Returns distinct device subject ids, RLS-scoped.
+
+        No `LIMIT` on the "me" anchor: production has a single "Me", so the
+        `operatedBy` join + DISTINCT already yield that owner's devices. Pinning to
+        one arbitrary anchor row would be a no-op there but non-deterministic wherever
+        more than one "me" entity coexists (e.g. the module-scoped integration DB),
+        so we resolve devices operated by ANY "me" entity instead."""
         async with scoped_session(self._maker, ctx) as session:
             rows = (
                 await session.execute(
@@ -208,7 +214,7 @@ class SqlDeviceRepo:
                         "WITH me AS ("
                         "  SELECT id FROM app.entities"
                         "  WHERE subject_id IS NOT NULL AND lower(canonical_name) = 'me'"
-                        "    AND status != 'merged' LIMIT 1"
+                        "    AND status != 'merged'"
                         ")"
                         " SELECT DISTINCT d.subject_id::text AS sid"
                         " FROM app.facts f"
