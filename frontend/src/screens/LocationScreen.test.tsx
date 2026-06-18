@@ -1,6 +1,12 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import type { DeviceSummary, ProvisionedDevice, TimelineEntry } from "../api/client";
+import type {
+  DeviceSummary,
+  LocationFix,
+  PlaceGeofence,
+  ProvisionedDevice,
+  TimelineEntry,
+} from "../api/client";
 import { type LocationDeps, LocationScreen, relativeTime, sentence } from "./LocationScreen";
 
 function device(over: Partial<DeviceSummary> = {}): DeviceSummary {
@@ -36,6 +42,29 @@ function entry(over: Partial<TimelineEntry> = {}): TimelineEntry {
   };
 }
 
+function fix(over: Partial<LocationFix> = {}): LocationFix {
+  return {
+    captured_at: new Date(Date.now() - 60_000).toISOString(),
+    latitude: 40.0,
+    longitude: -74.0,
+    accuracy_m: 8,
+    battery_pct: 80,
+    ...over,
+  };
+}
+
+function place(over: Partial<PlaceGeofence> = {}): PlaceGeofence {
+  return {
+    place_entity_id: "p1",
+    name: "Office",
+    enabled: true,
+    center: { lat: 40.0, lon: -74.0 },
+    radius_m: 120,
+    polygon: null,
+    ...over,
+  };
+}
+
 function deps(over: Partial<LocationDeps> = {}): LocationDeps {
   return {
     listDevices: vi.fn(async () => [device()]),
@@ -43,6 +72,8 @@ function deps(over: Partial<LocationDeps> = {}): LocationDeps {
     rotateDevice: vi.fn(async () => "ROTATED-KEY-456"),
     revokeDevice: vi.fn(async () => {}),
     listTimeline: vi.fn(async () => [entry()]),
+    listPlaces: vi.fn(async () => [place()]),
+    listFixes: vi.fn(async () => [fix({ latitude: 40.0 }), fix({ latitude: 40.001 })]),
     ...over,
   };
 }
@@ -62,10 +93,38 @@ describe("LocationScreen", () => {
     expect(await screen.findByText(/no devices yet/)).toBeInTheDocument();
   });
 
-  it("placeholders the Map tab until its wave", async () => {
-    render(<LocationScreen deps={deps()} />);
+  it("draws the map for the selected device's fixes and date range", async () => {
+    const d = deps();
+    render(<LocationScreen deps={d} />);
     fireEvent.click(screen.getByRole("tab", { name: "Map" }));
-    expect(screen.getByText(/map arrives in a later wave/i)).toBeInTheDocument();
+    // The map fetches fixes for the device over the default window and renders.
+    expect(await screen.findByRole("img", { name: "Location map" })).toBeInTheDocument();
+    await waitFor(() => expect(d.listFixes).toHaveBeenCalled());
+    const call = (d.listFixes as ReturnType<typeof vi.fn>).mock.calls[0] ?? [];
+    const [subjectId, since, until] = call;
+    expect(subjectId).toBe("d1");
+    expect(since < until).toBe(true);
+  });
+
+  it("refetches when the map mode and dates change", async () => {
+    const d = deps();
+    render(<LocationScreen deps={d} />);
+    fireEvent.click(screen.getByRole("tab", { name: "Map" }));
+    await screen.findByRole("img", { name: "Location map" });
+    // Switching modes is client-only (no refetch); changing the window refetches.
+    fireEvent.click(screen.getByRole("tab", { name: "Heat" }));
+    const before = (d.listFixes as ReturnType<typeof vi.fn>).mock.calls.length;
+    fireEvent.change(screen.getByLabelText("From date"), { target: { value: "2026-01-01" } });
+    await waitFor(() =>
+      expect((d.listFixes as ReturnType<typeof vi.fn>).mock.calls.length).toBeGreaterThan(before),
+    );
+  });
+
+  it("shows the no-fixes note when the range is empty", async () => {
+    const d = deps({ listFixes: vi.fn(async () => []) });
+    render(<LocationScreen deps={d} />);
+    fireEvent.click(screen.getByRole("tab", { name: "Map" }));
+    expect(await screen.findByText(/no fixes in this range/i)).toBeInTheDocument();
   });
 
   it("renders the timeline as natural sentences naming the device", async () => {

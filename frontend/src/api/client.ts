@@ -57,6 +57,32 @@ export interface TimelineEntry {
   place_name: string;
 }
 
+/** One stored fix for the map (GET /api/locations/fixes), trimmed to what the
+ * map draws — never the raw OwnTracks metadata. */
+export interface LocationFix {
+  captured_at: string;
+  latitude: number;
+  longitude: number;
+  accuracy_m: number | null;
+  battery_pct: number | null;
+}
+
+export interface LatLon {
+  lat: number;
+  lon: number;
+}
+
+/** A geofenced place for the map overlay (GET /api/locations/places): a circle
+ * (center + radius_m) or a polygon (ring of points). */
+export interface PlaceGeofence {
+  place_entity_id: string;
+  name: string;
+  enabled: boolean;
+  center: LatLon | null;
+  radius_m: number | null;
+  polygon: LatLon[] | null;
+}
+
 export interface ContainerStatus {
   service: string;
   state: string;
@@ -1509,6 +1535,17 @@ export const api = {
   async listLocationTimeline(): Promise<TimelineEntry[]> {
     const response = await request("/api/locations/timeline");
     return (await response.json()) as TimelineEntry[];
+  },
+
+  async listLocationFixes(subjectId: string, since: string, until: string): Promise<LocationFix[]> {
+    const params = new URLSearchParams({ subject_id: subjectId, since, until });
+    const response = await request(`/api/locations/fixes?${params}`);
+    return (await response.json()) as LocationFix[];
+  },
+
+  async listLocationPlaces(): Promise<PlaceGeofence[]> {
+    const response = await request("/api/locations/places");
+    return (await response.json()) as PlaceGeofence[];
   },
 
   async provisionDevice(label: string): Promise<ProvisionedDevice> {

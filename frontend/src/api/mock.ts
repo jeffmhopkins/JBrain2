@@ -2194,6 +2194,50 @@ const MOCK_TIMELINE = [
   },
 ];
 
+// Phase 7 location (Map tab): fence circles + a synthetic trail near them, so the
+// self-rendered map previews Live / Trail / Heat without a backend.
+const MOCK_PLACES = [
+  {
+    place_entity_id: "place-office",
+    name: "Office",
+    enabled: true,
+    center: { lat: 40.001, lon: -74.001 },
+    radius_m: 120,
+    polygon: null,
+  },
+  {
+    place_entity_id: "place-home",
+    name: "Home",
+    enabled: true,
+    center: { lat: 39.997, lon: -74.004 },
+    radius_m: 90,
+    polygon: null,
+  },
+];
+
+function mockTrail(): {
+  captured_at: string;
+  latitude: number;
+  longitude: number;
+  accuracy_m: number | null;
+  battery_pct: number | null;
+}[] {
+  const out = [];
+  for (let i = 0; i < 40; i++) {
+    // A walk from Home toward Office, dwelling at the Office end (heat cluster).
+    const t = Math.min(1, i / 25);
+    const dwell = i > 25 ? (i - 25) * 0.0001 : 0;
+    out.push({
+      captured_at: new Date(Date.now() - (40 - i) * 6 * 60_000).toISOString(),
+      latitude: 39.997 + 0.004 * t + (Math.random() - 0.5) * 0.0002 + dwell,
+      longitude: -74.004 + 0.003 * t + (Math.random() - 0.5) * 0.0002,
+      accuracy_m: 8,
+      battery_pct: 80 - Math.floor(i / 4),
+    });
+  }
+  return out;
+}
+
 export const mockFetch: typeof fetch = async (input, init) => {
   await sleep();
   const url = new URL(String(input instanceof Request ? input.url : input), "http://mock");
@@ -2812,6 +2856,8 @@ export const mockFetch: typeof fetch = async (input, init) => {
   // Phase 7 location: the owner's Devices tab read + key management.
   if (path === "/api/locations/devices" && method === "GET") return json(MOCK_DEVICES);
   if (path === "/api/locations/timeline" && method === "GET") return json(MOCK_TIMELINE);
+  if (path === "/api/locations/places" && method === "GET") return json(MOCK_PLACES);
+  if (path === "/api/locations/fixes" && method === "GET") return json(mockTrail());
   if (path === "/api/devices" && method === "POST") {
     const label =
       (init?.body ? (JSON.parse(String(init.body)) as { label?: string }).label : undefined) ??

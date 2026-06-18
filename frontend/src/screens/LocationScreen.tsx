@@ -7,8 +7,16 @@
 // show a placeholder until then. The location domain stays on --steel.
 
 import { useEffect, useState } from "react";
-import { type DeviceSummary, type ProvisionedDevice, type TimelineEntry, api } from "../api/client";
+import {
+  type DeviceSummary,
+  type LocationFix,
+  type PlaceGeofence,
+  type ProvisionedDevice,
+  type TimelineEntry,
+  api,
+} from "../api/client";
 import { Sheet } from "../components/Sheet";
+import { LocationMapTab } from "./LocationMapTab";
 
 type Tab = "devices" | "timeline" | "map";
 
@@ -24,6 +32,8 @@ export interface LocationDeps {
   rotateDevice: (id: string) => Promise<string>;
   revokeDevice: (id: string) => Promise<void>;
   listTimeline: () => Promise<TimelineEntry[]>;
+  listPlaces: () => Promise<PlaceGeofence[]>;
+  listFixes: (subjectId: string, since: string, until: string) => Promise<LocationFix[]>;
 }
 
 interface LocationScreenProps {
@@ -55,13 +65,9 @@ export function LocationScreen({ deps }: LocationScreenProps) {
 
       {tab === "devices" && <DevicesTab deps={deps} />}
       {tab === "timeline" && <TimelineTab deps={deps} />}
-      {tab === "map" && <ComingSoon what="The map" />}
+      {tab === "map" && <LocationMapTab deps={deps} />}
     </main>
   );
-}
-
-function ComingSoon({ what }: { what: string }) {
-  return <p className="analysis-quiet loc-soon">{what} arrives in a later wave.</p>;
 }
 
 // --- Devices tab ----------------------------------------------------------
