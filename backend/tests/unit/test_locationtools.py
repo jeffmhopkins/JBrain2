@@ -14,8 +14,10 @@ from datetime import UTC, date, datetime, timedelta
 
 import pytest
 
+from jbrain.agent.contracts import ProposalRef
 from jbrain.agent.locationtools import build_location_handlers
 from jbrain.agent.loop import ToolContext, ToolOutput
+from jbrain.agent.proposals import ProposalSpec
 from jbrain.db.session import SessionContext
 from jbrain.geocode import GeocodeResult
 from jbrain.locations import (
@@ -33,6 +35,11 @@ from jbrain.locations import (
 # A full owner, a narrowed agent owner, and a non-owner — the three the wrapper
 # must distinguish (only the first is allowed).
 FULL_OWNER = ToolContext(session=SessionContext(principal_kind="owner"), scopes=())
+# A full owner WITH a principal id — `save_place` needs one to attribute the staged
+# Proposal; the read tools don't care.
+FULL_OWNER_PID = ToolContext(
+    session=SessionContext(principal_kind="owner", principal_id="p1"), scopes=()
+)
 NARROWED_OWNER = ToolContext(
     session=SessionContext(principal_kind="owner", owner_scoped=True), scopes=()
 )
@@ -189,12 +196,27 @@ class FakeGeocoder:
         return list(self._results[:limit])
 
 
-def _handlers(*, locations=None, devices=None, entities=None, geocoder=None):  # noqa: ANN001
+class FakeProposals:
+    """Stands in for the ProposalRepo slice `save_place` uses. Records what was
+    staged so a test can assert the staged spec (and that NOTHING was staged on a
+    refusal / failure path). There is NO write-to-graph / write-to-mirror surface
+    here on purpose: the tool's only sanctioned effect is staging a Proposal."""
+
+    def __init__(self) -> None:
+        self.staged: list[tuple[str, ProposalSpec]] = []
+
+    async def stage(self, ctx, *, principal_id, spec):  # noqa: ANN001
+        self.staged.append((principal_id, spec))
+        return "prop-1"
+
+
+def _handlers(*, locations=None, devices=None, entities=None, geocoder=None, proposals=None):  # noqa: ANN001
     return build_location_handlers(
         locations or FakeLocations(),  # type: ignore[arg-type]
         devices or FakeDevices(),  # type: ignore[arg-type]
         entities or FakeEntities(),  # type: ignore[arg-type]
         geocoder,  # type: ignore[arg-type]
+        proposals,  # type: ignore[arg-type]
     )
 
 
@@ -213,17 +235,21 @@ def _handlers(*, locations=None, devices=None, entities=None, geocoder=None):  #
         "location_query",
         "time_at_place",
         "find_when_at",
+        "save_place",
     ],
 )
 @pytest.mark.parametrize("ctx", [NARROWED_OWNER, NON_OWNER])
 async def test_every_tool_refuses_a_non_full_owner(tool: str, ctx: ToolContext) -> None:
     # The wrapper raises BEFORE the handler runs — proven both by the raise and by
-    # the repos never being touched (a fresh FakeLocations records no read call).
+    # the repos never being touched (a fresh FakeLocations records no read call), and
+    # (for save_place) the Proposal stager never staging anything for a non-owner.
     loc = FakeLocations()
-    handlers = _handlers(locations=loc)
+    props = FakeProposals()
+    handlers = _handlers(locations=loc, proposals=props)
     with pytest.raises(LocationToolRefusal):
-        await handlers[tool]({"subject": "Jeff", "place": "Home"}, ctx)
+        await handlers[tool]({"subject": "Jeff", "place": "Home", "name": "Home"}, ctx)
     assert loc.nearby_calls == [] and loc.within_calls == [] and loc.dwell_calls == []
+    assert props.staged == []  # the write tool stages NOTHING for a narrowed/non-owner
 
 
 # --- where_is / where_was_i (#5) ----------------------------------------------
@@ -917,3 +943,113 @@ async def test_find_when_at_unknown_subject() -> None:
 async def test_find_when_at_needs_a_place() -> None:
     out = await _handlers()["find_when_at"]({}, FULL_OWNER)
     assert "needs a place" in out
+
+
+# --- save_place (#13) — the only WRITE tool; stages a Proposal, never writes -----
+
+
+def _save_place_handlers(
+    props: FakeProposals, *, near: NearestFix | None = None, has_fix: bool = True
+):
+    """A save_place handler over a fresh owner with a linked device. By default it
+    has a recent fix (the happy path); pass `has_fix=False` for "no recent fix", or
+    `near` to control the exact fix (coordinates feed the staged note body)."""
+    fix = near if near is not None else (_near(_NOW, 0.0) if has_fix else None)
+    devices = FakeDevices(owner_subjects=["s1"])
+    locations = FakeLocations(near=fix)
+    return _handlers(locations=locations, devices=devices, proposals=props)["save_place"]
+
+
+async def test_save_place_stages_a_proposal_with_the_geofence_shape_and_no_direct_write() -> None:
+    # The load-bearing #7/#9 assertion: the tool STAGES a Proposal carrying an
+    # owner-approvable note body whose prose names the EXACT geofence shape the
+    # extractor must emit — and writes NOTHING to the graph / fact / mirror itself
+    # (the FakeProposals stager is the only effect surface, and it only stages).
+    props = FakeProposals()
+    near = NearestFix(
+        fix=FixPoint(
+            captured_at=_NOW,
+            latitude=40.123456,
+            longitude=-74.654321,
+            accuracy_m=None,
+            battery_pct=None,
+        ),
+        gap_seconds=0.0,
+    )
+    out = await _save_place_handlers(props, near=near)({"name": "Home"}, FULL_OWNER_PID)
+
+    assert isinstance(out, ToolOutput)
+    assert out.proposal == ProposalRef(proposal_id="prop-1", kind="knowledge")
+    principal_id, spec = props.staged[0]
+    assert principal_id == "p1"
+    # Staged as an existing proposal kind + the SHIPPED add_note executor op (no new
+    # migration, no new executor — the place is authored by the note re-entering).
+    assert spec.kind == "knowledge" and spec.domain == "location"
+    node = spec.nodes[0]
+    assert node.op == "add_note"
+    assert node.preview["domain"] == "location"
+    body = node.preview["body"]
+    # The body drives extraction toward the exact schema shape (Place + geofence with
+    # center latitude/longitude + radiusMeters) and carries the coordinates.
+    assert "Home" in body and "geofence" in body and "radiusMeters" in body
+    assert "latitude 40.123456" in body and "longitude -74.654321" in body
+
+
+async def test_save_place_keeps_coordinates_out_of_the_model_facing_reply() -> None:
+    # Coordinates live in the staged note body ONLY — never the prose the model sees.
+    props = FakeProposals()
+    near = NearestFix(
+        fix=FixPoint(
+            captured_at=_NOW,
+            latitude=12.345678,
+            longitude=98.765432,
+            accuracy_m=None,
+            battery_pct=None,
+        ),
+        gap_seconds=0.0,
+    )
+    out = await _save_place_handlers(props, near=near)({"name": "Gym"}, FULL_OWNER_PID)
+    assert "12.345678" not in out and "98.765432" not in out
+    assert "Staged" in out and "Gym" in out
+
+
+async def test_save_place_clamps_an_absurd_radius() -> None:
+    props = FakeProposals()
+    out = await _save_place_handlers(props)({"name": "Campus", "radius_m": 999_999}, FULL_OWNER_PID)
+    assert isinstance(out, ToolOutput)
+    # Clamped to the max fence size, both in the body and the reply.
+    body = props.staged[0][1].nodes[0].preview["body"]
+    assert "5000 meters" in body and "radiusMeters is 5000" in body
+
+
+async def test_save_place_refuses_without_a_recent_fix() -> None:
+    # A stale/unknown position must NOT fence the wrong spot — and stages nothing.
+    props = FakeProposals()
+    out = await _save_place_handlers(props, has_fix=False)({"name": "Home"}, FULL_OWNER_PID)
+    assert "recent enough fix" in out
+    assert props.staged == []
+
+
+async def test_save_place_refuses_when_the_owner_device_is_unlinked() -> None:
+    props = FakeProposals()
+    # No owner device subjects → can't anchor a place; stage nothing.
+    handlers = _handlers(devices=FakeDevices(owner_subjects=[]), proposals=props)
+    out = await handlers["save_place"]({"name": "Home"}, FULL_OWNER_PID)
+    assert "isn't linked" in out
+    assert props.staged == []
+
+
+async def test_save_place_needs_a_name() -> None:
+    props = FakeProposals()
+    out = await _save_place_handlers(props)({}, FULL_OWNER_PID)
+    assert "needs a name" in out
+    assert props.staged == []
+
+
+async def test_save_place_refuses_without_an_approval_channel() -> None:
+    # No proposal stager wired (or no owner principal) ⇒ no way to stage; never write.
+    devices = FakeDevices(owner_subjects=["s1"])
+    locations = FakeLocations(near=_near(_NOW, 0.0))
+    handlers = _handlers(locations=locations, devices=devices, proposals=None)
+    out = await handlers["save_place"]({"name": "Home"}, FULL_OWNER_PID)
+    assert "no approval channel" in out

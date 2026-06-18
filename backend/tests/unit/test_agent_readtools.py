@@ -508,6 +508,7 @@ def test_build_registry_binds_the_shipped_sidecars() -> None:
         "location_query",
         "time_at_place",
         "find_when_at",
+        "save_place",
     }
     assert registry.names() == shipped
     # The connector tools are external (no domain restriction). The geocode and
@@ -525,6 +526,7 @@ def test_build_registry_binds_the_shipped_sidecars() -> None:
         "location_query",
         "time_at_place",
         "find_when_at",
+        "save_place",
     }
     assert {t.name for t in registry.schemas_for({"general"})} == shipped - location
     assert {t.name for t in registry.schemas_for({"location"})} == shipped
@@ -722,6 +724,11 @@ def test_sidecars_pinned_to_their_versions() -> None:
             "find_when_at",
             1,
             "7e372556fb39944c622e6f7a11abe0be626d2d705a9e7a0259e3e976373c9fd8",
+        ),
+        "save_place.tool": (
+            "save_place",
+            1,
+            "138da8801602ddaf693328a47ac7edec65cd06f62d75180f5bd02c4426bb3a57",
         ),
     }
     # Every shipped sidecar must appear above — a new `.tool` cannot slip in

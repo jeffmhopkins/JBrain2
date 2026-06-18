@@ -16,14 +16,16 @@ model-facing text: where a position is needed (e.g. `nearby_now`) it is resolved
 inside the repo query and only the resulting place names + distances come back.
 """
 
+import uuid
 from datetime import UTC, date, datetime, timedelta
 from typing import Any, Protocol
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import structlog
 
-from jbrain.agent.contracts import ViewPayload
+from jbrain.agent.contracts import ProposalRef, ViewPayload
 from jbrain.agent.loop import ToolContext, ToolHandler, ToolOutput
+from jbrain.agent.proposals import NodeSpec, ProposalSpec
 from jbrain.db.session import SessionContext
 from jbrain.devices.repo import SqlDeviceRepo
 from jbrain.geocode import GeocodeClient
@@ -76,6 +78,19 @@ _NEARBY_MAX_LIMIT = 20
 _DWELL_DEFAULT_HOURS = 7 * 24.0
 _DWELL_MAX_HOURS = 366 * 24.0
 
+# `save_place` defaults / bounds. A fix must be at least this fresh to anchor a
+# new place — a stale "last known" position would fence the wrong spot. (Same
+# coarse-presence horizon the rest of the stack treats as "current".)
+_SAVE_PLACE_MAX_FIX_AGE_SECONDS = 30 * 60.0
+# Geofence radius bounds: a sane default for a building/home, clamped so a typo
+# can't fence a whole city (or a sub-meter point GPS noise drifts in and out of).
+_SAVE_PLACE_DEFAULT_RADIUS_M = 100.0
+_SAVE_PLACE_MIN_RADIUS_M = 10.0
+_SAVE_PLACE_MAX_RADIUS_M = 5_000.0
+# Proposal title cap (the chip label) — a long place name is truncated, not sliced
+# mid-word concern aside (a title is a label, the body carries the real content).
+_TITLE_LEN = 80
+
 
 class EntityResolver(Protocol):
     """The slice of the analysis repo `where_is` needs: name → candidate entities
@@ -89,6 +104,16 @@ class EntityResolver(Protocol):
         kind: str | None = None,
         limit: int = 200,
     ) -> list[dict[str, Any]]: ...
+
+
+class ProposalStager(Protocol):
+    """The slice of `ProposalRepo` `save_place` needs: stage an owner-approved
+    Proposal (it never writes citable truth). `save_place` is the only WRITE tool in
+    this module, and it is a write only in the sense `propose_correction` is — it
+    stages a place-note for the owner to approve, never touching the graph, a fact,
+    or the `place_geofence` mirror directly (#7)."""
+
+    async def stage(self, ctx: SessionContext, *, principal_id: str, spec: ProposalSpec) -> str: ...
 
 
 def _localize(dt: datetime, tz: str | None) -> datetime:
@@ -493,11 +518,42 @@ def _format_duration(seconds: float) -> str:
     return f"{mins}m"
 
 
+def _place_note_body(name: str, lat: float, lon: float, radius_m: float) -> str:
+    """The note body a `save_place` Proposal stages — a self-contained, prose
+    statement that DRIVES the normal extractor to mint a Place entity with a
+    `geofence` fact (notes are the sole source of truth, #7; there is no direct-fact
+    path). The owner reads and approves THIS text; on approval it re-enters as an
+    ordinary agent-authored note, extraction reads it, and the existing
+    `project_place_geofences` mirrors the resulting fact into `place_geofence`.
+
+    The coordinates live here ONLY — in the owner-approvable note body that becomes
+    the citable source — never in the model-facing tool reply. The body names the
+    schema shape the extractor must emit (a `geofence` predicate carrying
+    `center:{latitude,longitude}` + `radiusMeters`), stated as plain prose so a
+    re-extraction converges on the same structural-identity key. Coordinates are
+    rendered at ~6 dp (≈0.1 m) — enough to re-fence the exact spot, not more."""
+    return (
+        f"{name} is a saved place — a circular geofence centered at latitude"
+        f" {lat:.6f}, longitude {lon:.6f}, with a radius of {round(radius_m)} meters."
+        f' Record it as a Place named "{name}" with a geofence whose center is'
+        f" that latitude/longitude and whose radiusMeters is {round(radius_m)}."
+    )
+
+
+def _clamp_radius(arguments: dict) -> float:
+    """The owner-requested geofence radius, clamped to a sane fence size. A missing
+    or non-numeric value falls back to the default rather than failing the save."""
+    raw = arguments.get("radius_m")
+    radius = _SAVE_PLACE_DEFAULT_RADIUS_M if not isinstance(raw, (int, float)) else float(raw)
+    return max(_SAVE_PLACE_MIN_RADIUS_M, min(_SAVE_PLACE_MAX_RADIUS_M, radius))
+
+
 def build_location_handlers(
     locations: SqlLocationRepo,
     devices: SqlDeviceRepo,
     entities: EntityResolver,
     geocoder: GeocodeClient | None = None,
+    proposals: ProposalStager | None = None,
 ) -> dict[str, ToolHandler]:
     """The location read tools, each bound with the registration-time full-owner
     wrapper so a narrowed/`owner_scoped`/non-owner session is refused BEFORE any
@@ -764,6 +820,66 @@ def build_location_handlers(
             f" visit{'' if len(dwells) == 1 else 's'} since {_when(since, ctx.timezone)}."
         )
 
+    async def save_place_tool(arguments: dict, ctx: ToolContext) -> ToolOutput:
+        # The ONLY write tool here — and it is a write only as `propose_correction`
+        # is: it STAGES a place-note Proposal for the owner to approve, never
+        # touching the graph, a `geofence` fact, or the `place_geofence` mirror
+        # directly (#7). On approval the note re-enters ingestion via the existing
+        # `add_note` executor → extraction mints the Place + geofence fact →
+        # `project_place_geofences` mirrors it. No new write path exists here.
+        name = str(arguments.get("name", "")).strip()
+        if not name:
+            return ToolOutput("save_place needs a name for the place.")
+        if proposals is None or not ctx.session.principal_id:
+            # No stager wired (or no owner principal) ⇒ no way to stage a Proposal;
+            # refuse rather than pretend (and never write anything).
+            return ToolOutput("I can't stage a place right now — no approval channel is available.")
+        # Resolve the owner's CURRENT position from their own device, exactly as the
+        # read tools do (deterministic "Me" hard-link → active device). The fix's
+        # coordinates feed the staged note body ONLY — never the model-facing reply.
+        # No own device (subs empty ⇒ `_pick_latest` is None) ⇒ nothing to anchor.
+        sid = await _pick_latest(locations, ctx, await _self_subjects(devices, ctx))
+        if sid is None:
+            return ToolOutput("Your own device isn't linked yet, so I can't anchor a place here.")
+        now = datetime.now(UTC)
+        near = await locations.nearest_fix(
+            ctx.session, subject_id=sid, at=now, max_gap_seconds=_SAVE_PLACE_MAX_FIX_AGE_SECONDS
+        )
+        if near is None:
+            # No recent fix ⇒ fencing the last-known spot would save the wrong place.
+            return ToolOutput(
+                "I don't have a recent enough fix for your position, so I won't save a place"
+                " at a stale or unknown spot. Try again once your device has reported in."
+            )
+        radius = _clamp_radius(arguments)
+        body = _place_note_body(name, near.fix.latitude, near.fix.longitude, radius)
+        title = f"save place: {name}"[:_TITLE_LEN]
+        node = NodeSpec(
+            id=str(uuid.uuid4()),
+            type="leaf",
+            op="add_note",  # the SHIPPED agent-note executor — no new executor needed
+            label=title,
+            preview={"body": body, "domain": "location"},
+        )
+        spec = ProposalSpec(
+            kind="knowledge",  # an existing proposal kind — no migration (plan: zero migrations)
+            domain="location",
+            title=title,
+            nodes=[node],
+            provenance={"source": "chat", "tool": "save_place"},
+        )
+        prop_id = await proposals.stage(
+            ctx.session, principal_id=ctx.session.principal_id, spec=spec
+        )
+        # Coordinate-free reply: the place name + radius and a review chip — the
+        # position is in the staged note body the owner approves, not in this prose.
+        return ToolOutput(
+            f'Staged "{name}" (a ~{round(radius)} m fence around your current spot) for your'
+            " approval. I won't save it until you approve — it then becomes a place through the"
+            " normal note pipeline.",
+            proposal=ProposalRef(proposal_id=prop_id, kind="knowledge"),
+        )
+
     handlers: dict[str, ToolHandler] = {
         "where_is": where_is_tool,
         "where_was_i": where_was_i_tool,
@@ -774,6 +890,7 @@ def build_location_handlers(
         "location_query": location_query_tool,
         "time_at_place": time_at_place_tool,
         "find_when_at": find_when_at_tool,
+        "save_place": save_place_tool,
     }
     return {name: _owner_only(handler) for name, handler in handlers.items()}
 
