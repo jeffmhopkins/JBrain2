@@ -212,17 +212,24 @@ async def _evaluate_on_session(
     return transitions
 
 
-# The entities to re-derive the spatial mirror for: every Place with a live
-# geofence fact (re-projects a row a dropped hook never wrote) UNIONed with every
-# place that already has a mirror row (so a fact retracted while the supersession
-# hook was dropped still has its now-stale row removed). project_place_geofences
-# is delete-then-derive per entity, so the union heals drift in both directions.
-_MIRROR_ENTITY_IDS_SQL = text(
-    "SELECT e.id FROM app.entities e"
-    " JOIN app.facts f ON f.entity_id = e.id"
-    " WHERE lower(e.kind) = 'place' AND f.predicate = 'geofence'"
-    "   AND f.status = 'active' AND f.valid_to IS NULL"
-    " UNION SELECT place_entity_id FROM app.place_geofence"
+# The entities whose mirror is out of sync with the graph: a Place with a live
+# geofence fact but NO mirror row (a dropped projector apply) UNIONed with a mirror
+# row whose Place has no live fact (a dropped supersession). Deliberately the
+# SYMMETRIC DIFFERENCE, not every place: project_place_geofences is delete-then-
+# insert with a fresh id, and geofence_state cascades on the mirror id, so
+# re-deriving an *unchanged* row would wipe the subject's hysteresis state every
+# sweep. Matched (live AND mirrored) rows are left untouched — the inline projector
+# already refreshes a row whose geometry actually changed, on fact-apply.
+_MIRROR_DRIFT_IDS_SQL = text(
+    "WITH live AS ("
+    "  SELECT e.id FROM app.entities e JOIN app.facts f ON f.entity_id = e.id"
+    "  WHERE lower(e.kind) = 'place' AND f.predicate = 'geofence'"
+    "    AND f.status = 'active' AND f.valid_to IS NULL"
+    "), mirrored AS (SELECT place_entity_id AS id FROM app.place_geofence)"
+    " SELECT id FROM ("
+    "   (SELECT id FROM live EXCEPT SELECT id FROM mirrored)"
+    "   UNION (SELECT id FROM mirrored EXCEPT SELECT id FROM live)"
+    " ) AS drift"
 )
 
 # The latest fix per device subject, with the device principal that recorded it —
@@ -242,8 +249,10 @@ async def sweep_geofences(maker: async_sessionmaker[AsyncSession]) -> int:
     passes the inline ingest path can drop a best-effort event on, run as the *full
     owner* (never a device-stamped job that reaches into a subject's pinned track):
 
-      1. Rebuild the `place_geofence` spatial mirror from the graph, so a dropped
-         projector hook (apply or supersession) cannot leave the mirror drifted.
+      1. Reconcile the `place_geofence` spatial mirror against the graph — insert a
+         missing row, drop an orphaned one — so a dropped projector hook (apply or
+         supersession) cannot leave the mirror out of sync. Unchanged rows are left
+         alone so their cascaded `geofence_state` survives.
       2. Re-evaluate each device subject's latest fix through the same hysteresis
          evaluator the inline path uses, emitting any `location.geofence_transition`
          a dropped inline detection missed. Idempotent: a fix already reflected in
@@ -255,8 +264,8 @@ async def sweep_geofences(maker: async_sessionmaker[AsyncSession]) -> int:
     async with scoped_session(maker, wf_events.SYSTEM_CTX) as session:
         from jbrain.analysis.geofence_projection import project_place_geofences
 
-        entity_ids = {row[0] for row in (await session.execute(_MIRROR_ENTITY_IDS_SQL)).all()}
-        await project_place_geofences(session, entity_ids)
+        drifted = {row[0] for row in (await session.execute(_MIRROR_DRIFT_IDS_SQL)).all()}
+        await project_place_geofences(session, drifted)
 
         for fix in (await session.execute(_LATEST_FIX_SQL)).all():
             if fix.pid is None or (fix.accuracy_m is not None and fix.accuracy_m > ACCURACY_GATE_M):
