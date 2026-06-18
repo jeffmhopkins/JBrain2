@@ -1,4 +1,5 @@
-# JBrain2 — Phase 7+ Family Location Tracker (OwnTracks Fork + MQTT + View-Scope) — Hybrid Build Plan
+# JBrain2 — Phase 7+ Family Location Tracker — Hybrid Build Plan
+### App name: **JBrain360** (forked OwnTracks · MQTT · view-scope)
 
 > **Provenance.** Synthesized from three independent research sweeps (OwnTracks
 > fork internals; MQTT broker/server/ACL; Android-native/security), three
@@ -80,11 +81,16 @@ isolation test (non-negotiable #3).
   still learns poke metadata). Putting any location/subject/place field in an FCM
   payload is a true L1 egress and is **forbidden** — enforced by a test, not a
   convention.
-- **T7 — Two-sided, gating consent.** A subject must consent both to being
-  **viewed** and to **pokes about them**. Widening a viewer's scope to a **new
-  target subject requires that target's affirmative consent** (a gate, not a
-  notify-after). Scope changes within an already-consented relationship are
-  notify + audit.
+- **T7 — Owner is the sole authority over view-scope (no consent gate).**
+  *(Owner decision.)* The owner provisions all view-scope relationships
+  unilaterally at their discretion; there is **no affirmative-consent gate**. The
+  residual safeguards — kept **on by default** — are the **transparency surface**
+  (persistent "this device is tracked" notification, a "who can see me" view,
+  one-tap **Leave**) and the **who-saw-whom access audit** (`view_audit`, incl.
+  live + poke paths). Because both consent-gating (T7) **and** retention
+  (B-retention) are off, the breach/insider exposure surface is larger, so
+  **encryption-at-rest, the access audit, and prompt revocation (T5) are
+  mandatory compensating controls**, not optional.
 - **T8 — go-auth runs least-privilege.** go-auth's own DB role is RLS-enforced
   and subject-pin-aware (or reads only a purpose-built, pre-projected ACL table
   with no cross-subject inference). An isolation test proves go-auth's role cannot
@@ -99,9 +105,11 @@ The shipped phones ingest over **HTTP `/pub`** (OwnTracks HTTP mode, HTTP Basic)
 MQTT is **added**, not silently swapped. The MQTT broker feeds a **backend
 consumer** that calls the *existing* ingest path under `device_context()`, so
 `location_fixes`, L5a geofence detection, dedup (L6), and the workflow-engine
-emission are all preserved. **HTTP `/pub` is kept as a supported fallback** during
-a phased cutover (every shipped phone is HTTP-configured today); retirement is an
-owner decision (§F).
+emission are all preserved. **HTTP `/pub` is kept as a permanent supported
+fallback** *(owner decision)*: MQTT is primary, HTTP is a per-device fallback that
+survives a broker outage and gives easy rollback. Both transports share the one
+ingest core, so the marginal cost is only the thin transport edge — not a second
+copy of the sensitive logic.
 
 ### B2. Broker auth/ACL: **mosquitto-go-auth → JBrain2, NOT Dynamic Security**
 Unanimous red-team finding. dynsec would stand up a **second credential store**
@@ -180,9 +188,9 @@ device_key`), `location_fixes`, `place_geofence`, `geofence_state`.
 pairing_code(code PK[160-bit], device_principal_id FK, subject_id, mode,
              expires_at[<=15m], redeemed_at, created_at)      -- one-time, TTL'd
 view_scope(viewer_device_principal_id FK, target_subject_id, target_device,
-           consent_state, created_at,
+           created_at, created_by[owner],
            PK(viewer_device_principal_id, target_subject_id, target_device))
-                                                              -- SOURCE OF TRUTH
+                                  -- SOURCE OF TRUTH; owner-provisioned (no gate, T7)
 view_audit(id PK, viewer_principal_id, target_subject_id, path[live|history|poke],
            triggering_event_id, at)                          -- who-saw/was-poked-about-whom
 fcm_token(id PK, device_principal_id FK, token, platform, created_at,
@@ -202,9 +210,12 @@ fcm_token(id PK, device_principal_id FK, token, platform, created_at,
   rows where it is the target (powers "who can see me") via a distinct
   target-scoped policy; full owner reads all; everyone else zero.
 - **`fcm_token` RLS:** a device reads/writes only its own token rows.
-- Retention: a **Timescale `drop_chunks` policy** on `location_fixes` (T1 store);
-  scope of retention (whole hypertable vs MQTT-ingested rows only) is an owner
-  decision (§F) because it changes shipped Phase 7 behavior.
+- Retention: **no auto-purge** *(owner decision)* — all history is kept. Storage
+  is a non-issue at family scale (5 devices ≈ tens of MB to ~1.3 GB/yr
+  uncompressed, far less with Timescale columnar compression on cold chunks).
+  Because retention is therefore **not** a breach mitigation, the compensating
+  controls in T7 (encryption at rest, `view_audit`, prompt revocation) are
+  load-bearing.
 
 ---
 
@@ -268,32 +279,39 @@ service-account bootstrap (non-negotiable #8).
   view-scope-aware routing; dedupe; on-poke fetch-then-local-notify. Gate:
   **no-PII-in-payload** test, routing test, revoke-kills-token test.
 - **M7 — Privacy surface + ops.** "Who can see me," one-tap Leave/revoke (kills
-  MQTT session + `cred_epoch` + tombstone), two-sided consent gates, retention
-  policy, Caddy L4 + SIGHUP-on-renewal hook, keystore backup/escrow runbook,
+  MQTT session + `cred_epoch` + tombstone), `view_audit` surfaced to targets,
+  **encryption at rest** (compensating control — no retention/no gate per T7),
+  Caddy L4 + SIGHUP-on-renewal hook, keystore backup/escrow runbook,
   pin-rotation runbook.
 - **v1.1 — UnifiedPush/ntfy** for de-Googled phones (additive sender behind the
   push-backend-agnostic interface).
 
 Rollout: single owner test phone end-to-end → **one** family member at
-**self-only** scope → the consent conversation → owner requests a widen which
-**gates on the target's consent** → expand one device at a time, watching the
-who-saw-whom audit and per-device last-seen (OEM-killer telemetry).
+**self-only** scope → owner provisions scope at discretion (no gate, T7) →
+expand one device at a time, watching the who-saw-whom audit and per-device
+last-seen (OEM-killer telemetry).
 
 ---
 
-## F. Open decisions for the owner
+## F. Owner decisions — RESOLVED
 
-1. **Retire HTTP `/pub`, or keep both transports?** (Phased cutover recommended;
-   keep HTTP as fallback through M6.)
-2. **Retention scope:** does `drop_chunks` apply to the whole `location_fixes`
-   hypertable (changes shipped Phase 7 semantics) or only MQTT-ingested rows?
-   Pick N days.
-3. **Accept the `gms` (Play-Services-bearing) flavor for FCM?** (Recommended;
-   `oss` stays pure, UnifiedPush deferred to v1.1.)
-4. **Consent model:** confirm widening to a new target **gates** on target
-   consent (recommended for the abuse threat model) vs notify-after.
-5. **EPL-1.0 / branding:** rename `applicationId` + icon; ship license + modified
-   sources for distributed APKs.
+1. **Transport:** **Keep both permanently.** MQTT primary; HTTP `/pub` a permanent
+   per-device fallback (broker-outage insurance, easy rollback). Shared ingest
+   core → low marginal cost. (B1, T-transport.)
+2. **Retention:** **No auto-purge — keep everything.** Storage is a non-issue at
+   family scale. Retention is *not* a mitigation, so encryption-at-rest +
+   `view_audit` + prompt revocation are load-bearing. (C-retention, T7.)
+3. **FCM flavor:** **Accept the `gms` flavor** (`firebase-messaging`, no Google
+   Maps). `oss` stays pure (zero Google); UnifiedPush/ntfy deferred to **v1.1**
+   for de-Googled phones. (B7.)
+4. **Consent:** **Owner is the sole gatekeeper — no consent gate.** Scopes are
+   provisioned unilaterally at owner discretion. Transparency surface (persistent
+   tracking notification, "who can see me," one-tap Leave) + `view_audit` kept on
+   by default as the residual safeguards. (T7.)
+5. **Branding:** **App name = JBrain360.** New `applicationId` (e.g.
+   `org.jbrain.jbrain360`) + custom name/icon to avoid collision with stock
+   OwnTracks; ship the EPL-1.0 license + the source of modified files with each
+   distributed APK. (B7.)
 
 ---
 
@@ -315,8 +333,10 @@ testcontainers / external services faked / isolation test per new table)
   view-scope-aware routing; dedupe vs live; revoke-kills-token (fail-closed).
 - **Pairing abuse:** one-time (409 reuse), TTL (410), rate-limit (429),
   bound-device (403), redemption fails-closed (no orphan creds).
-- **Consent gate:** no poke / no view without the two-sided consent flag; new-
-  target widen blocked without target consent.
+- **Transparency/audit (residual safeguards, T7):** every live + history + poke
+  access writes a `view_audit` row; a target can read `view_scope`/audit rows
+  about itself ("who can see me"); one-tap Leave tombstones scope + drops the live
+  session. (No consent-gate test — owner is sole authority per T7.)
 - **L1:** family-view paths are the only new location egress; FCM send carries no
   domain data; broker public port rejects open subscribe.
 - **Client (instrumented):** Keystore cred never in JS/logs; WS upgrade Origin +
@@ -340,7 +360,7 @@ testcontainers / external services faked / isolation test per new table)
 | Self-signed keystore loss = no updates | redundant offline encrypted backup/escrow; CI-injected; runbook |
 | SPKI pin bricks stale installs on cert rotation | ship backup pin N releases ahead; rotation runbook; soft-fail min-version |
 | `remoteConfiguration=true` is a remote-control surface | restrict cmd-topic publish via go-auth ACL; audit every config push; `monitoring:2` flood-bounded |
-| Domestic-abuse / insider misuse | two-sided gating consent; self-only default; who-saw-whom audit (incl. live + poke); one-tap Leave; short retention |
+| Domestic-abuse / insider misuse (heightened: no consent gate + no retention, per owner T7) | residual safeguards mandatory — transparency surface (persistent tracking notification, "who can see me," one-tap Leave) + who-saw-whom `view_audit` (live + history + poke) + prompt revocation + encryption at rest |
 
 ---
 
