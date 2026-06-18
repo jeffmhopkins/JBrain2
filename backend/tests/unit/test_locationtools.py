@@ -757,6 +757,53 @@ async def test_time_at_place_reports_nights_away() -> None:
     assert "away from Home" in out and "by local calendar date" in out
 
 
+async def test_time_at_place_clamps_a_stay_that_began_before_the_window() -> None:
+    # A stay entered 7h ago but the window is only 2h: it overlaps the window by ~1h
+    # (its exit, 1h ago). The repo carries the stay's FULL length in `seconds`, so the
+    # handler must clamp to report time-IN-window (1h), not the 6h stay length.
+    devices = FakeDevices(owner_subjects=["s-me"])
+    now = datetime.now(UTC)
+    entered, exited = now - timedelta(hours=7), now - timedelta(hours=1)
+    dwells = [Dwell("p1", "Home", entered, exited, (exited - entered).total_seconds())]
+    loc = FakeLocations(places=[_place("Home")], dwells=dwells)
+    out = await _handlers(locations=loc, devices=devices)["time_at_place"](
+        {"place": "Home", "hours": 2}, FULL_OWNER
+    )
+    assert "spent 1h at Home" in out and "6h" not in out
+
+
+async def test_nights_away_denominator_matches_the_civil_grid() -> None:
+    # A 48h window straddling 3 LOCAL dates with no home dwells: the denominator must be
+    # the civil-date count (3) — the SAME grid `away` walks — so `away <= nights`. The
+    # old `(until - since).days` gave 2, yielding the incoherent "of 2 nights, 3 away".
+    from jbrain.agent.locationtools import _civil_nights, _nights_away
+
+    tz = ZoneInfo("America/New_York")
+    since = datetime(2026, 6, 1, 12, 0, tzinfo=tz).astimezone(UTC)
+    until = datetime(2026, 6, 3, 12, 0, tzinfo=tz).astimezone(UTC)
+    assert _civil_nights(since, until, tz) == 3
+    away = _nights_away([], since, until, tz)  # no home dwells → every night away
+    assert away == 3 and away <= _civil_nights(since, until, tz)
+
+
+async def test_nights_away_is_dst_safe_across_fall_back() -> None:
+    # Fall-back in US Eastern is 2026-11-01 (a 25-hour day). Home on Oct 31 and Nov 2,
+    # away on Nov 1 — civil-date iteration counts the long day exactly once, and the
+    # denominator agrees (3 dates: Oct 31, Nov 1, Nov 2).
+    from jbrain.agent.locationtools import _civil_nights, _home_dates, _nights_away
+
+    tz = ZoneInfo("America/New_York")
+    dwells = [
+        _eastern_dwell("p1", "Home", datetime(2026, 10, 31, 22, 0), datetime(2026, 10, 31, 23, 0)),
+        _eastern_dwell("p1", "Home", datetime(2026, 11, 2, 7, 0), datetime(2026, 11, 2, 8, 0)),
+    ]
+    since = datetime(2026, 10, 31, 0, 0, tzinfo=tz).astimezone(UTC)
+    until = datetime(2026, 11, 3, 0, 0, tzinfo=tz).astimezone(UTC)
+    assert _home_dates(dwells, tz) == {date(2026, 10, 31), date(2026, 11, 2)}
+    assert _nights_away(dwells, since, until, tz) == 1  # Nov 1
+    assert _civil_nights(since, until, tz) == 3
+
+
 async def test_time_at_place_ambiguous_name_asks() -> None:
     # Two saved places match "Mom" → the tool must ASK which, listing the candidates,
     # and MUST NOT run the dwell query (fail-closed resolution).

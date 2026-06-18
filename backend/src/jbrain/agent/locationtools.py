@@ -444,6 +444,31 @@ def _nights_away(dwells: list[Dwell], since: datetime, until: datetime, tz: Zone
     return away
 
 
+def _clamped_seconds(dwells: list[Dwell], since: datetime, until: datetime) -> float:
+    """Total dwell time WITHIN `[since, until)`: a stay that began before the window
+    (or ran past it) contributes only its overlap. The repo's `dwells` clamps only
+    the upper edge (an open stay → `until`) and drops stays that exited before
+    `since`, so a stay straddling `since` still carries its full pre-window length in
+    `seconds` — clamp here so the reported figure is time-in-window, not stay length."""
+    total = 0.0
+    for d in dwells:
+        start = max(d.entered_at, since)
+        end = min(d.exited_at, until)
+        if end > start:
+            total += (end - start).total_seconds()
+    return total
+
+
+def _civil_nights(since: datetime, until: datetime, tz: ZoneInfo) -> int:
+    """The number of LOCAL civil dates `[since, until)` spans — the denominator for
+    nights-away. It walks the SAME owner-calendar grid as `_nights_away` (first date
+    of `since` through the date of the last instant before `until`), so `away` can
+    never exceed `nights` even when the window isn't aligned to local midnight."""
+    first = _localize_date(since, tz)
+    last = _localize_date(until - timedelta(microseconds=1), tz)
+    return (last - first).days + 1
+
+
 def _zone(tz: str | None) -> ZoneInfo:
     """The owner's zone, defaulting to UTC when unknown/unset — so civil-date math
     never raises mid-answer (it degrades to UTC days, the same fallback the prose
@@ -681,7 +706,7 @@ def build_location_handlers(
             until=until,
         )
         tz = _zone(ctx.timezone)
-        total = sum(d.seconds for d in dwells)
+        total = _clamped_seconds(dwells, since, until)
         when_from = _when(since, ctx.timezone)
         if not dwells:
             return ToolOutput(f"No recorded time at {place.name} since {when_from}.")
@@ -693,7 +718,7 @@ def build_location_handlers(
         # only when explicitly asked — bucketed by the owner's LOCAL civil date.
         if arguments.get("nights_away"):
             away = _nights_away(dwells, since, until, tz)
-            nights = (until - since).days or 1
+            nights = _civil_nights(since, until, tz)
             lead += (
                 f" Of {nights} night{'' if nights == 1 else 's'}, {away} away from"
                 f" {place.name} (by local calendar date)."
