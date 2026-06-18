@@ -69,7 +69,10 @@ Prompts:
 - **"Enable self-hosted local models?"** → **N** for now (host tuning + reboot
   comes first; you'll enable them in Phase 6).
 
-✅ **Checkpoint:** `jbrain status` shows `api`/`db`/`proxy` healthy; site loads.
+✅ **Checkpoint:** `jbrain status` shows `api`/`db`/`proxy` healthy (plus
+`cloudflared` in tunnel mode). In direct mode the site loads as soon as DNS +
+Let's Encrypt resolve; in tunnel mode it loads once you've finished the
+Cloudflare side (`CLOUDFLARE_TUNNEL.md`).
 
 ## Phase 5 — Host tuning + reboot (#2)
 ```bash
