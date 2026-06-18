@@ -56,7 +56,7 @@ def _row(minute: int, transition: str, eid: str | None = "P1", name: str = "Offi
 
 def test_simple_enter_exit_pairs() -> None:
     until = _BASE + timedelta(hours=2)
-    dwells = pair_dwells([_row(0, "enter"), _row(30, "exit")], until=until)
+    dwells = pair_dwells([_row(0, "enter"), _row(30, "exit")], since=_BASE, until=until)
     assert dwells == [
         Dwell("P1", "Office", _BASE, _BASE + timedelta(minutes=30), 30 * 60.0),
     ]
@@ -64,20 +64,20 @@ def test_simple_enter_exit_pairs() -> None:
 
 def test_open_enter_clamps_to_until() -> None:
     until = _BASE + timedelta(minutes=45)
-    dwells = pair_dwells([_row(0, "enter")], until=until)
+    dwells = pair_dwells([_row(0, "enter")], since=_BASE, until=until)
     assert len(dwells) == 1
     assert dwells[0].exited_at == until and dwells[0].seconds == 45 * 60.0
 
 
 def test_orphan_exit_dropped() -> None:
     until = _BASE + timedelta(hours=2)
-    assert pair_dwells([_row(10, "exit")], until=until) == []
+    assert pair_dwells([_row(10, "exit")], since=_BASE, until=until) == []
 
 
 def test_non_positive_interval_dropped() -> None:
     until = _BASE + timedelta(hours=2)
     # exit at the same instant as enter: zero-length, no real stay.
-    assert pair_dwells([_row(5, "enter"), _row(5, "exit")], until=until) == []
+    assert pair_dwells([_row(5, "enter"), _row(5, "exit")], since=_BASE, until=until) == []
 
 
 def test_two_places_paired_independently() -> None:
@@ -88,7 +88,7 @@ def test_two_places_paired_independently() -> None:
         _row(20, "exit", "A", "Home"),
         _row(40, "exit", "B", "Gym"),
     ]
-    dwells = pair_dwells(rows, until=until)
+    dwells = pair_dwells(rows, since=_BASE, until=until)
     by_place = {d.place_entity_id: d for d in dwells}
     assert by_place["A"].seconds == 20 * 60.0
     assert by_place["B"].seconds == 30 * 60.0
@@ -97,7 +97,7 @@ def test_two_places_paired_independently() -> None:
 def test_duplicate_enter_does_not_shorten_stay() -> None:
     until = _BASE + timedelta(hours=2)
     rows = [_row(0, "enter"), _row(10, "enter"), _row(50, "exit")]
-    dwells = pair_dwells(rows, until=until)
+    dwells = pair_dwells(rows, since=_BASE, until=until)
     assert len(dwells) == 1
     assert dwells[0].entered_at == _BASE and dwells[0].seconds == 50 * 60.0
 
@@ -110,11 +110,32 @@ def test_dwells_sorted_by_entry() -> None:
         _row(90, "exit", "B", "Gym"),
         _row(30, "exit", "A", "Home"),
     ]
-    dwells = pair_dwells(rows, until=until)
+    dwells = pair_dwells(rows, since=_BASE, until=until)
     assert [d.place_entity_id for d in dwells] == ["A", "B"]
 
 
 def test_null_place_id_row_skipped() -> None:
     until = _BASE + timedelta(hours=2)
     rows = [_row(0, "enter", eid=None), _row(30, "exit", eid=None)]
-    assert pair_dwells(rows, until=until) == []
+    assert pair_dwells(rows, since=_BASE, until=until) == []
+
+
+def test_stay_entirely_before_window_is_dropped() -> None:
+    # The fetch has no lower bound (to pair in-progress stays), so a completed stay
+    # whose exit is at/before `since` must be dropped: it does not overlap the window.
+    since = _BASE + timedelta(hours=1)
+    until = since + timedelta(hours=1)
+    rows = [_row(0, "enter"), _row(30, "exit")]  # both before `since`
+    assert pair_dwells(rows, since=since, until=until) == []
+
+
+def test_stay_starting_before_window_but_exiting_inside_is_kept() -> None:
+    # An enter that predates `since` but exits inside the window overlaps it: keep the
+    # full paired stay (the enter must be fetched without a lower bound to pair it).
+    since = _BASE + timedelta(hours=1)
+    until = since + timedelta(hours=1)
+    rows = [_row(30, "enter"), _row(90, "exit")]  # enter before `since`, exit inside
+    dwells = pair_dwells(rows, since=since, until=until)
+    assert len(dwells) == 1
+    assert dwells[0].entered_at == _BASE + timedelta(minutes=30)
+    assert dwells[0].exited_at == _BASE + timedelta(minutes=90)

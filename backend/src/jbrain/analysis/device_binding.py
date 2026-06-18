@@ -50,6 +50,7 @@ async def reconcile_device_bindings(session: AsyncSession, entity_ids: set[uuid.
                 "     WHERE f.entity_id = e.id AND f.predicate = :op"
                 "       AND f.kind = 'relationship' AND f.status = 'active'"
                 "       AND f.assertion = 'asserted' AND f.object_entity_id IS NOT NULL"
+                "       AND f.note_id IS NOT NULL"
                 "   )"
             ),
             {"ids": [str(eid) for eid in entity_ids], "op": _OPERATED_BY},

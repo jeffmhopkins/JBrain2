@@ -32,7 +32,6 @@ predicates:
     range_type: person
     kind: relationship
     functional: true                     # one current operator; reassignment closes history
-    schema_org_ref: schema:provider
 
 # identifier.imei / .serial / .mac / .uuid (🔒) from ExternalIdentified — strong key.
 # owner is a Role edge (Related).

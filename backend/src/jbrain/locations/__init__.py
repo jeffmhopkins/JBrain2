@@ -323,7 +323,10 @@ class SqlLocationRepo:
         interval. `place_entity_id` optionally restricts to one place."""
         require_full_owner(ctx)
         clause = " AND e.payload->>'place_entity_id' = :eid" if place_entity_id else ""
-        params: dict = {"sid": subject_id, "since": since, "until": until}
+        # No lower bound on the fetch on purpose: an enter that predates `since` is
+        # needed to pair a stay already in progress at the window start. `_pair_dwells`
+        # drops the fully-historical pairs (those that also exited before `since`).
+        params: dict = {"sid": subject_id, "until": until}
         if place_entity_id:
             params["eid"] = place_entity_id
         async with scoped_session(self._maker, ctx) as session:
@@ -345,7 +348,7 @@ class SqlLocationRepo:
                     params,
                 )
             ).all()
-        return _pair_dwells(rows, until=until)
+        return _pair_dwells(rows, since=since, until=until)
 
     async def timeline(
         self, ctx: SessionContext, *, since: datetime, until: datetime, limit: int
@@ -427,20 +430,22 @@ class SqlLocationRepo:
         ]
 
 
-def _pair_dwells(rows: Sequence[Any], *, until: datetime) -> list[Dwell]:
+def _pair_dwells(rows: Sequence[Any], *, since: datetime, until: datetime) -> list[Dwell]:
     """Fold time-ordered transition rows into enter→exit Dwells, per place.
 
     A second `enter` for a place already open re-opens at the earlier enter (a
     duplicate/redundant enter never shortens the stay); an `exit` with no open
     enter for its place is dropped (an orphan); an enter still open at the end of
     the rows is clamped to `until`. Non-positive intervals (an exit at or before
-    its enter) are discarded — they describe no real stay."""
+    its enter) are discarded — they describe no real stay. A stay that ended at or
+    before `since` is dropped: the fetch has no lower bound (to pair in-progress
+    stays), so the window's low edge is enforced here on the paired result."""
     open_enter: dict[str, tuple[datetime, str]] = {}
     dwells: list[Dwell] = []
 
     def _emit(eid: str, name: str, entered: datetime, exited: datetime) -> None:
         seconds = (exited - entered).total_seconds()
-        if seconds > 0:
+        if seconds > 0 and exited > since:
             dwells.append(Dwell(eid, name, entered, exited, seconds))
 
     for row in rows:
