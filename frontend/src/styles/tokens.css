@@ -48,6 +48,12 @@
   --danger: var(--rose);
   --danger-tint: var(--rose-tint);
   --info: var(--steel);
+  /* The location domain's accent (the Phase-7 teal candidate, made binding by the
+     L3 GUI gate — Option B's inline trail/fence/start/gap markers ride this).
+     Shares the teal hue with the MedicalProcedure entity disc; this is the
+     domain-color name surfaces reference. See docs/DESIGN.md. */
+  --location: #6fb6b1;
+  --location-tint: rgba(111, 182, 177, 0.13);
 
   /* Type scale */
   /* Type scale = DESIGN.md px values × the user's font-scale setting

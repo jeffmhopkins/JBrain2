@@ -5,7 +5,7 @@
 // selects a registered component and fills its data-only slots. Adding a
 // component is a deliberate change here, like adding a tool.
 
-import { type ReactNode, useEffect, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import type { CitationRef, ViewPayload } from "../types";
 import {
   type LiveList,
@@ -15,6 +15,7 @@ import {
   subscribeLiveLists,
   toggleLiveItem,
 } from "./liveList";
+import { type InlineMapHandle, type TrailLegData, renderPlace, renderTrail } from "./locationMap";
 
 export interface ViewProps {
   data: Record<string, unknown>;
@@ -235,12 +236,277 @@ function CitationCard({ data, refs }: ViewProps): ReactNode {
   );
 }
 
+// --- location views (the first Leaflet-dependent tool-views) ----------------
+//
+// Coordinates are render-only: lat/lon enter only through the map glue
+// (`renderTrail`/`renderPlace`), never as text in the bubble. Times localize to
+// the payload's `timezone`; the gap is explained in words by the segments list
+// BEFORE the map is opened (DESIGN.md Option B answer-first).
+
+interface MapLeg extends TrailLegData {
+  fix_count: number;
+  started_at: string;
+  ended_at: string;
+  distance_m: number;
+}
+interface MapGap {
+  after_leg: number;
+  started_at: string;
+  ended_at: string;
+  seconds: number;
+}
+
+function asLegs(value: unknown): MapLeg[] {
+  if (!Array.isArray(value)) return [];
+  return value.map((leg) => {
+    const o = (leg ?? {}) as Record<string, unknown>;
+    const rawPoints = Array.isArray(o.points) ? o.points : [];
+    const points = rawPoints
+      .map((p) => (Array.isArray(p) ? [Number(p[0]), Number(p[1])] : [Number.NaN, Number.NaN]))
+      .filter((p): p is [number, number] => !Number.isNaN(p[0]) && !Number.isNaN(p[1]));
+    return {
+      points,
+      fix_count: Number(o.fix_count ?? 0),
+      started_at: String(o.started_at ?? ""),
+      ended_at: String(o.ended_at ?? ""),
+      distance_m: Number(o.distance_m ?? 0),
+    };
+  });
+}
+
+function asGaps(value: unknown): MapGap[] {
+  if (!Array.isArray(value)) return [];
+  return value.map((gap) => {
+    const o = (gap ?? {}) as Record<string, unknown>;
+    return {
+      after_leg: Number(o.after_leg ?? 0),
+      started_at: String(o.started_at ?? ""),
+      ended_at: String(o.ended_at ?? ""),
+      seconds: Number(o.seconds ?? 0),
+    };
+  });
+}
+
+function fmtTime(iso: string, tz: string | null): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  const opts: Intl.DateTimeFormatOptions = {
+    weekday: "short",
+    hour: "numeric",
+    minute: "2-digit",
+  };
+  if (tz) opts.timeZone = tz;
+  return d.toLocaleString(undefined, opts);
+}
+
+function fmtKm(m: number): string {
+  return `${(m / 1000).toFixed(1)} km`;
+}
+
+function fmtGap(seconds: number): string {
+  const h = seconds / 3600;
+  if (h >= 1) return `~${Math.round(h)} h gap`;
+  return `~${Math.round(seconds / 60)} min gap`;
+}
+
+/** location_map (#3) — Option B answer-first: a tap-to-expand map thumbnail with
+ * a text segments list naming each leg + the gap between them. Coordinates render
+ * only inside the Leaflet layers (via the mocked `renderTrail`); an empty window
+ * shows a "no trail" placeholder, never a blank map. */
+function LocationMap({ data }: ViewProps): ReactNode {
+  const tz = typeof data.timezone === "string" ? data.timezone : null;
+  // Memoize the parsed legs/gaps so they're stable identities the effects can
+  // depend on (the payload is immutable for the card's life; this just avoids a
+  // fresh array each render driving a redraw).
+  const legs = useMemo(() => asLegs(data.legs), [data.legs]);
+  const gaps = useMemo(() => asGaps(data.gaps), [data.gaps]);
+  const freshness = typeof data.freshness === "string" ? data.freshness : "";
+  const freshLabel = typeof data.fresh_label === "string" ? data.fresh_label : "";
+  const [open, setOpen] = useState(false);
+  const thumbRef = useRef<HTMLDivElement>(null);
+  const fullRef = useRef<HTMLDivElement>(null);
+
+  const hasTrail = legs.some((l) => l.points.length > 0);
+
+  // Draw the (static) thumbnail once the trail is present. The expanded map is
+  // drawn lazily when first opened so a collapsed card costs no second Leaflet.
+  useEffect(() => {
+    if (!hasTrail || !thumbRef.current) return;
+    const handle = renderTrail(thumbRef.current, legs, { interactive: false });
+    return () => handle.destroy();
+  }, [legs, hasTrail]);
+
+  useEffect(() => {
+    if (!open || !fullRef.current) return;
+    let handle: InlineMapHandle | null = renderTrail(fullRef.current, legs, { interactive: true });
+    // Leaflet mis-measures inside a just-expanded box; re-measure next frame.
+    const t = setTimeout(() => handle?.invalidate(), 60);
+    return () => {
+      clearTimeout(t);
+      handle?.destroy();
+      handle = null;
+    };
+  }, [open, legs]);
+
+  if (!hasTrail) {
+    return <div className="loc-map-empty">No location in this window.</div>;
+  }
+
+  // The segments list interleaves legs with the gaps that follow them, so the
+  // "no signal" row sits between the two legs it separates.
+  const rows: ReactNode[] = [];
+  legs.forEach((leg, i) => {
+    rows.push(
+      // Keyed on the leg's start time (stable + unique per leg); the ordinal in
+      // the title is display-only.
+      <div className="loc-seg" key={`leg-${leg.started_at}`}>
+        <span className="loc-seg-knob" />
+        <div>
+          <div className="loc-seg-title">
+            Leg {i + 1}
+            {leg.fix_count ? ` · ${leg.fix_count} fixes` : ""}
+          </div>
+          <div className="loc-seg-meta">
+            {fmtTime(leg.started_at, tz)} – {fmtTime(leg.ended_at, tz)} · {fmtKm(leg.distance_m)}
+          </div>
+        </div>
+      </div>,
+    );
+    const gap = gaps.find((g) => g.after_leg === i);
+    if (gap) {
+      rows.push(
+        <div className="loc-seg gap" key={`gap-${gap.started_at}`}>
+          <span className="loc-seg-knob" />
+          <div>
+            <div className="loc-seg-title">No signal — route unknown</div>
+            <div className="loc-seg-meta">
+              {fmtTime(gap.started_at, tz)} – {fmtTime(gap.ended_at, tz)} · {fmtGap(gap.seconds)} ·
+              not drawn across
+            </div>
+          </div>
+        </div>,
+      );
+    }
+  });
+
+  return (
+    <div className="loc-map">
+      <button
+        type="button"
+        className="loc-map-thumb"
+        aria-label={open ? "Collapse map" : "Expand map"}
+        onClick={() => setOpen((v) => !v)}
+      >
+        <div className="loc-map-canvas" ref={thumbRef} />
+        <div className="loc-map-overlay">
+          {freshLabel && (
+            <span className={`loc-map-pill ${freshness === "stale" ? "stale" : "fresh"}`}>
+              <span className="loc-map-dot" />
+              {freshLabel}
+            </span>
+          )}
+          <span className="loc-map-pill">{open ? "tap to collapse" : "tap to explore"}</span>
+        </div>
+      </button>
+      <div className={`loc-map-full${open ? " open" : ""}`}>
+        {open && <div className="loc-map-canvas" ref={fullRef} />}
+      </div>
+      <div className="loc-segs">
+        <div className="loc-segs-head">
+          {legs.length} leg{legs.length === 1 ? "" : "s"}
+          {gaps.length ? ` · split at ${gaps.length} gap${gaps.length === 1 ? "" : "s"}` : ""}
+        </div>
+        {rows}
+      </div>
+    </div>
+  );
+}
+
+interface PlaceChip {
+  label: string;
+  kind: string;
+}
+function asChips(value: unknown): PlaceChip[] {
+  if (!Array.isArray(value)) return [];
+  return value.map((c) => {
+    const o = (c ?? {}) as Record<string, unknown>;
+    return { label: String(o.label ?? ""), kind: String(o.kind ?? "thing") };
+  });
+}
+
+/** place_card (#4) — a dense one-row place dossier: a mini-map beside the
+ * title/address/stats. The address is a NAME, never coordinates (the centre
+ * reaches only the mocked `renderPlace`). Derived stats are OWNER-GATED: a
+ * payload without `owner: true` omits the whole stat block (a narrowed/non-owner
+ * session never sees visit counts). Entity chips are note-sourced. */
+function PlaceCard({ data }: ViewProps): ReactNode {
+  const mapRef = useRef<HTMLDivElement>(null);
+  const center = Array.isArray(data.center) ? data.center : null;
+  const lat = center ? Number(center[0]) : Number.NaN;
+  const lon = center ? Number(center[1]) : Number.NaN;
+  const hasCenter = !Number.isNaN(lat) && !Number.isNaN(lon);
+  const radius = typeof data.radius_m === "number" ? data.radius_m : null;
+  const owner = data.owner === true;
+  const stats = owner && Array.isArray(data.stats) ? data.stats : [];
+  const chips = asChips(data.chips);
+
+  useEffect(() => {
+    if (!hasCenter || !mapRef.current) return;
+    const handle = renderPlace(mapRef.current, [lat, lon], radius);
+    return () => handle.destroy();
+  }, [hasCenter, lat, lon, radius]);
+
+  return (
+    <div className="loc-pc-card">
+      <div className="loc-pc">
+        {hasCenter && <div className="loc-pc-mini" ref={mapRef} />}
+        <div className="loc-pc-main">
+          <div className="loc-pc-title">{String(data.name ?? "Place")}</div>
+          {typeof data.address === "string" && data.address && (
+            <div className="loc-pc-addr">{data.address}</div>
+          )}
+          {owner && stats.length > 0 && (
+            <div className="loc-pc-stats">
+              {stats.map((s) => {
+                const o = (s ?? {}) as Record<string, unknown>;
+                const label = String(o.label ?? "");
+                return (
+                  <div className="loc-pc-stat" key={label}>
+                    <div className="loc-pc-num">{String(o.value ?? "")}</div>
+                    <div className="loc-pc-lbl">{label}</div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          {owner && stats.length > 0 && <div className="loc-pc-owner">owner-only stats</div>}
+        </div>
+      </div>
+      {chips.length > 0 && (
+        <>
+          <div className="loc-pc-chips">
+            {chips.map((c) => (
+              <span className={`loc-pc-chip kind-${c.kind}`} key={`${c.kind}:${c.label}`}>
+                {c.label}
+              </span>
+            ))}
+          </div>
+          <div className="loc-pc-chipnote">From notes about this place.</div>
+        </>
+      )}
+    </div>
+  );
+}
+
 const REGISTRY: Record<string, (props: ViewProps) => ReactNode> = {
   stat_block: StatBlock,
   data_table: DataTable,
   citation_card: CitationCard,
   list_card: ListCard,
   appointment_card: AppointmentCard,
+  location_map: LocationMap,
+  place_card: PlaceCard,
 };
 
 export function isKnownView(name: string): boolean {

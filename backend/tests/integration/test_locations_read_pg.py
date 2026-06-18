@@ -792,3 +792,97 @@ async def test_where_is_unlinked_person_reports_no_device(maker: async_sessionma
     )
     out = await handlers["where_is"]({"subject": "L2 Unlinked Grandma"}, _tool_ctx())
     assert "no linked device" in out
+
+
+# --- fixes_within (L3) --------------------------------------------------------
+
+
+async def test_fixes_within_returns_window_oldest_first(maker: async_sessionmaker) -> None:
+    pa, sa = await _device(maker, "FW Phone")
+    for m in (0, 5, 10, 60):
+        await _fix_at(maker, pid=pa, sid=sa, seconds=m * 60)
+    repo = SqlLocationRepo(maker)
+    # A window covering the first three fixes (not the 60-min one).
+    fixes = await repo.fixes_within(
+        OWNER, subject_id=sa, since=_BASE, until=_BASE + timedelta(minutes=30), limit=100
+    )
+    assert [f.captured_at for f in fixes] == sorted(f.captured_at for f in fixes)
+    assert len(fixes) == 3
+
+
+async def test_fixes_within_is_fail_closed_for_a_narrowed_session(
+    maker: async_sessionmaker,
+) -> None:
+    # location_fixes is STRICT RLS: a narrowed (owner_scoped) or wrong-domain session
+    # sees zero rows — RLS fails it closed, no rows leak via the spatial query.
+    pa, sa = await _device(maker, "FW Narrowed Phone")
+    await _fix_at(maker, pid=pa, sid=sa, seconds=0)
+    repo = SqlLocationRepo(maker)
+    for ctx in (NARROWED_LOCATION, NARROWED_GENERAL):
+        assert (
+            await repo.fixes_within(
+                ctx, subject_id=sa, since=_BASE, until=_BASE + timedelta(hours=1), limit=100
+            )
+            == []
+        )
+
+
+async def test_fixes_within_clamps_an_overwide_window(maker: async_sessionmaker) -> None:
+    # A window wider than the 31-day max has `since` pulled forward, so an ancient fix
+    # outside the clamped window is excluded.
+    pa, sa = await _device(maker, "FW Clamp Phone")
+    until = _BASE + timedelta(days=60)
+    ancient = _BASE  # 60 days before `until` — outside the 31-day clamp
+    async with scoped_session(maker, OWNER) as session:
+        await session.execute(
+            text(
+                "INSERT INTO app.location_fixes"
+                " (subject_id, principal_id, captured_at, latitude, longitude)"
+                " VALUES (:s, :p, :ts, :lat, :lon)"
+            ),
+            {"s": sa, "p": pa, "ts": ancient, "lat": _HOME[0], "lon": _HOME[1]},
+        )
+        # A recent fix inside the clamped window.
+        await session.execute(
+            text(
+                "INSERT INTO app.location_fixes"
+                " (subject_id, principal_id, captured_at, latitude, longitude)"
+                " VALUES (:s, :p, :ts, :lat, :lon)"
+            ),
+            {
+                "s": sa,
+                "p": pa,
+                "ts": until - timedelta(days=1),
+                "lat": _HOME[0],
+                "lon": _HOME[1],
+            },
+        )
+    fixes = await SqlLocationRepo(maker).fixes_within(
+        OWNER, subject_id=sa, since=ancient - timedelta(days=1), until=until, limit=100
+    )
+    # Only the recent fix survives — the clamp excluded the 60-day-old one.
+    assert len(fixes) == 1
+    assert all(f.captured_at >= until - timedelta(days=31) for f in fixes)
+
+
+async def test_fixes_within_spatial_filter_keeps_only_fixes_near_center(
+    maker: async_sessionmaker,
+) -> None:
+    pa, sa = await _device(maker, "FW Spatial Phone")
+    base_lat, base_lon = 30.0, 40.0
+    # One fix at the center, one ~111 m N (inside 150 m), one ~1.1 km N (outside).
+    await _fix_at_coord(maker, pid=pa, sid=sa, lat=base_lat, lon=base_lon, minute=0)
+    await _fix_at_coord(maker, pid=pa, sid=sa, lat=base_lat + 0.0010, lon=base_lon, minute=1)
+    await _fix_at_coord(maker, pid=pa, sid=sa, lat=base_lat + 0.0100, lon=base_lon, minute=2)
+    repo = SqlLocationRepo(maker)
+    near = await repo.fixes_within(
+        OWNER,
+        subject_id=sa,
+        since=_BASE,
+        until=_BASE + timedelta(hours=1),
+        center=(base_lat, base_lon),
+        radius_m=150.0,
+        limit=100,
+    )
+    # Only the two fixes within 150 m of the center; the 1.1 km one is filtered out.
+    assert len(near) == 2
