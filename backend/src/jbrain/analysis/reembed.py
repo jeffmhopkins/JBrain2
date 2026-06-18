@@ -97,11 +97,13 @@ class ReembedAction:
         *,
         embedder: EmbedClient,
         embedding_model: str,
+        batch: int = _BATCH,
         ctx: Any = SYSTEM_CTX,
     ):
         self._maker = maker
         self._embedder = embedder
         self._model = embedding_model
+        self._batch = batch
         self._ctx = ctx
 
     async def run(self, _payload: dict[str, Any]) -> None:
@@ -113,7 +115,9 @@ class ReembedAction:
     async def _reembed_one(self, target: _Target) -> int:
         async with scoped_session(self._maker, self._ctx) as session:
             rows = (
-                await session.execute(text(target.select), {"model": self._model, "limit": _BATCH})
+                await session.execute(
+                    text(target.select), {"model": self._model, "limit": self._batch}
+                )
             ).all()
         if not rows:
             return 0

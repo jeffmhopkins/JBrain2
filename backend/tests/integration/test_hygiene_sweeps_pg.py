@@ -11,9 +11,13 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
+from jbrain.agent.session import read_context
 from jbrain.analysis.hygiene import entity_hygiene_handler
-from jbrain.analysis.reembed import reembed_handler
+from jbrain.analysis.purge import sweep_orphaned_entities
+from jbrain.analysis.reembed import ReembedAction, reembed_handler
 from jbrain.analysis.tagconsolidate import tag_consolidate_handler
+from jbrain.auth import service
+from jbrain.auth.repo import SqlAuthRepo
 from jbrain.db.session import scoped_session
 from tests.conftest import docker_available
 from tests.integration.test_rls import APP_PASSWORD, OWNER, database_url  # noqa: F401
@@ -54,17 +58,71 @@ async def _isolate(database_url: str) -> AsyncIterator[None]:  # noqa: F811
         await admin.dispose()
 
 
-async def _entity(maker: async_sessionmaker, *, status: str, subject: bool = False) -> str:
+async def _owner_principal(maker: async_sessionmaker) -> str:
+    await service.rotate_owner_key(SqlAuthRepo(maker))
+    async with scoped_session(maker, OWNER) as session:
+        pid = (
+            await session.execute(text("SELECT id FROM app.principals WHERE kind = 'owner'"))
+        ).scalar()
+    return str(pid)
+
+
+async def _entity(
+    maker: async_sessionmaker,
+    *,
+    status: str = "provisional",
+    subject: bool = False,
+    domain: str = "general",
+    age_hours: float = 2.0,
+) -> str:
+    """Insert an entity `age_hours` old (default 2h, past the sweep's 1h age guard)."""
     eid = str(uuid.uuid4())
     async with scoped_session(maker, OWNER) as session:
         await session.execute(
             text(
                 "INSERT INTO app.entities (id, kind, canonical_name, status, subject_id,"
-                " domain_code) VALUES (:id, 'person', 'X', :s, :subj, 'general')"
+                " domain_code, created_at)"
+                " VALUES (:id, 'person', 'X', :s, :subj, :d,"
+                "  now() - cast(:age AS double precision) * interval '1 hour')"
             ),
-            {"id": eid, "s": status, "subj": eid if subject else None},
+            {
+                "id": eid,
+                "s": status,
+                "subj": eid if subject else None,
+                "d": domain,
+                "age": age_hours,
+            },
         )
     return eid
+
+
+async def _note(maker: async_sessionmaker, *, domain: str = "general") -> str:
+    note = str(uuid.uuid4())
+    async with scoped_session(maker, OWNER) as session:
+        await session.execute(
+            text(
+                "INSERT INTO app.notes (id, client_id, domain_code, body)"
+                " VALUES (:id, :cid, :d, 'b')"
+            ),
+            {"id": note, "cid": uuid.uuid4().hex, "d": domain},
+        )
+    return note
+
+
+async def _fact_on(maker: async_sessionmaker, *, subject: str, obj: str | None = None) -> None:
+    """A fact citing `subject` as entity_id (and optionally `obj` as object_entity_id)."""
+    note = await _note(maker)
+    async with scoped_session(maker, OWNER) as session:
+        await session.execute(
+            text(
+                "INSERT INTO app.facts (id, entity_id, object_entity_id, predicate, qualifier,"
+                " kind, statement, value_json, assertion, reported_at, temporal_precision, status,"
+                " note_id, extractor, prompt_version, domain_code)"
+                " VALUES (:id, :e, :o, 'p', '', 'state', 's', NULL, 'asserted', now(), 'unknown',"
+                "  'asserted', :n, 'test', 'test-v1', 'general')"
+            ),
+            {"id": str(uuid.uuid4()), "e": subject, "o": obj, "n": note},
+        )
 
 
 async def _entity_ids(maker: async_sessionmaker) -> set[str]:
@@ -77,33 +135,33 @@ async def _entity_ids(maker: async_sessionmaker) -> set[str]:
 
 
 async def test_entity_hygiene_deletes_a_provisional_orphan(maker: async_sessionmaker) -> None:
-    orphan = await _entity(maker, status="provisional")
+    orphan = await _entity(maker)
     await entity_hygiene_handler(maker)({})
     assert orphan not in await _entity_ids(maker)
+
+
+async def test_entity_hygiene_age_guard_spares_a_fresh_orphan(maker: async_sessionmaker) -> None:
+    """A provisional orphan younger than the 1h guard is NOT deleted — so a manual sweep
+    can't delete an entity an in-flight extraction just inserted but not yet linked."""
+    fresh = await _entity(maker, age_hours=0.0)
+    await entity_hygiene_handler(maker)({})
+    assert fresh in await _entity_ids(maker)
 
 
 async def test_entity_hygiene_keeps_confirmed_and_subject_entities(
     maker: async_sessionmaker,
 ) -> None:
     confirmed = await _entity(maker, status="confirmed")
-    subject = await _entity(maker, status="provisional", subject=True)
+    subject = await _entity(maker, subject=True)
     await entity_hygiene_handler(maker)({})
     survivors = await _entity_ids(maker)
     assert confirmed in survivors and subject in survivors
 
 
 async def test_entity_hygiene_keeps_an_entity_with_a_mention(maker: async_sessionmaker) -> None:
-    """A provisional entity that a surviving mention references is NOT an orphan."""
-    eid = await _entity(maker, status="provisional")
+    eid = await _entity(maker)
+    note = await _note(maker)
     async with scoped_session(maker, OWNER) as session:
-        note = str(uuid.uuid4())
-        await session.execute(
-            text(
-                "INSERT INTO app.notes (id, client_id, domain_code, body)"
-                " VALUES (:id, :cid, 'general', 'b')"
-            ),
-            {"id": note, "cid": uuid.uuid4().hex},
-        )
         chunk = str(uuid.uuid4())
         await session.execute(
             text(
@@ -124,29 +182,84 @@ async def test_entity_hygiene_keeps_an_entity_with_a_mention(maker: async_sessio
     assert eid in await _entity_ids(maker)
 
 
+async def test_entity_hygiene_keeps_an_entity_cited_by_a_fact_as_subject_or_object(
+    maker: async_sessionmaker,
+) -> None:
+    """The two fact arms of the orphan criteria — the heart of the safety argument now that
+    the sweep runs corpus-wide: an entity a surviving fact references (either side) is kept."""
+    subj = await _entity(maker)
+    obj = await _entity(maker)
+    await _fact_on(maker, subject=subj, obj=obj)
+    await entity_hygiene_handler(maker)({})
+    survivors = await _entity_ids(maker)
+    assert subj in survivors and obj in survivors
+
+
+async def test_entity_hygiene_keeps_a_distinct_from_peer_and_a_merge_tombstone(
+    maker: async_sessionmaker,
+) -> None:
+    a = await _entity(maker)
+    b = await _entity(maker)
+    survivor = await _entity(maker, status="confirmed")
+    tomb = await _entity(maker)  # provisional, but a tombstone points at... no: tomb IS merged
+    async with scoped_session(maker, OWNER) as session:
+        # a/b held by a distinct_from edge (canonical order a<b enforced by the DB trigger).
+        lo, hi = sorted([a, b])
+        await session.execute(
+            text(
+                "INSERT INTO app.entity_distinctions (id, entity_a, entity_b, reason, domain_code)"
+                " VALUES (:id, :a, :b, 'distinct', 'general')"
+            ),
+            {"id": str(uuid.uuid4()), "a": lo, "b": hi},
+        )
+        # `tomb` is a merged tombstone pointing at the survivor — never deleted (un-merge needs it).
+        await session.execute(
+            text(
+                "UPDATE app.entities SET status = 'merged', merged_into_id = cast(:s AS uuid)"
+                " WHERE id = cast(:t AS uuid)"
+            ),
+            {"s": survivor, "t": tomb},
+        )
+    await entity_hygiene_handler(maker)({})
+    survivors = await _entity_ids(maker)
+    assert {a, b, survivor, tomb} <= survivors
+
+
 async def test_entity_hygiene_is_idempotent(maker: async_sessionmaker) -> None:
-    await _entity(maker, status="provisional")
+    await _entity(maker)
     await entity_hygiene_handler(maker)({})
     await entity_hygiene_handler(maker)({})  # second run finds nothing, no error
     assert await _entity_ids(maker) == set()
 
 
+async def test_entity_hygiene_is_domain_firewalled(maker: async_sessionmaker) -> None:
+    """RLS on the delete path: a health-narrowed sweep can only delete in-scope orphans —
+    a finance orphan is invisible to it and survives (CLAUDE.md #3, firewall in Postgres)."""
+    pid = await _owner_principal(maker)
+    health = await _entity(maker, domain="health")
+    finance = await _entity(maker, domain="finance")
+    await sweep_orphaned_entities(maker, ctx=read_context(pid, ("health",)))
+    survivors = await _entity_ids(maker)
+    assert health not in survivors and finance in survivors
+
+
 # --- reembed_stale --------------------------------------------------------
 
 
-async def _skill(maker: async_sessionmaker, *, model: str | None) -> str:
+async def _skill(maker: async_sessionmaker, *, model: str | None, domain: str = "general") -> str:
     sid = str(uuid.uuid4())
     async with scoped_session(maker, OWNER) as session:
         await session.execute(
             text(
                 "INSERT INTO app.skills (id, name, version, status, domain_code, body, description,"
                 " embedding, embedding_model)"
-                " VALUES (:id, :name, 1, 'active', 'general', 'do a thing', 'a skill',"
+                " VALUES (:id, :name, 1, 'active', :d, 'do a thing', 'a skill',"
                 "  cast(:emb AS vector), :model)"
             ),
             {
                 "id": sid,
                 "name": f"s-{sid[:8]}",
+                "d": domain,
                 "emb": "[" + ",".join(["0"] * 384) + "]",
                 "model": model,
             },
@@ -188,44 +301,63 @@ async def test_reembed_restamps_an_entity_with_a_summary_but_skips_a_null_summar
             {"id": with_summary},
         )
     await reembed_handler(maker, embedder=FakeEmbed(), embedding_model="test-model")({})
-    async with scoped_session(maker, OWNER) as session:
-        restamped = (
-            await session.execute(
-                text("SELECT embedding_model FROM app.entities WHERE id = cast(:id AS uuid)"),
-                {"id": with_summary},
-            )
-        ).scalar()
-        untouched = (
-            await session.execute(
-                text("SELECT embedding_model FROM app.entities WHERE id = cast(:id AS uuid)"),
-                {"id": no_summary},
-            )
-        ).scalar()
-    assert restamped == "test-model"
-    assert untouched is None  # a NULL-summary entity has nothing to embed — left alone
+
+    async def _model(eid: str) -> str | None:
+        async with scoped_session(maker, OWNER) as session:
+            return (
+                await session.execute(
+                    text("SELECT embedding_model FROM app.entities WHERE id = cast(:id AS uuid)"),
+                    {"id": eid},
+                )
+            ).scalar()
+
+    assert await _model(with_summary) == "test-model"
+    assert await _model(no_summary) is None  # NULL summary → nothing to embed → left alone
+
+
+async def test_reembed_converges_over_runs_with_a_small_batch(maker: async_sessionmaker) -> None:
+    """The per-run cap drains a backlog across runs and then no-ops (the convergence claim)."""
+    ids = [await _skill(maker, model="old-model") for _ in range(3)]
+    action = ReembedAction(maker, embedder=FakeEmbed(), embedding_model="test-model", batch=1)
+    await action.run({})  # 1 of 3
+    await action.run({})  # 2 of 3
+    still_stale = [s for s in ids if await _skill_model(maker, s) != "test-model"]
+    assert len(still_stale) == 1
+    await action.run({})  # 3 of 3
+    assert all([await _skill_model(maker, s) == "test-model" for s in ids])  # noqa: C419
+
+
+async def test_reembed_is_domain_firewalled(maker: async_sessionmaker) -> None:
+    """RLS on the embed-write path: a health-narrowed re-embed leaves a finance skill stale."""
+    pid = await _owner_principal(maker)
+    health = await _skill(maker, model="old", domain="health")
+    finance = await _skill(maker, model="old", domain="finance")
+    action = ReembedAction(
+        maker,
+        embedder=FakeEmbed(),
+        embedding_model="test-model",
+        ctx=read_context(pid, ("health",)),
+    )
+    await action.run({})
+    assert await _skill_model(maker, health) == "test-model"
+    assert await _skill_model(maker, finance) == "old"  # out of scope → untouched
 
 
 # --- tag_consolidate ------------------------------------------------------
 
 
 async def _note_with_tags(
-    maker: async_sessionmaker, tags: list[str], *, domain: str = "general"
+    maker: async_sessionmaker, tags: list[str] | None, *, domain: str = "general"
 ) -> str:
-    note = str(uuid.uuid4())
+    note = await _note(maker, domain=domain)
+    arr = "{" + ",".join(f'"{t}"' for t in tags) + "}" if tags is not None else "{}"
     async with scoped_session(maker, OWNER) as session:
-        await session.execute(
-            text(
-                "INSERT INTO app.notes (id, client_id, domain_code, body)"
-                " VALUES (:id, :cid, :d, 'b')"
-            ),
-            {"id": note, "cid": uuid.uuid4().hex, "d": domain},
-        )
         await session.execute(
             text(
                 "INSERT INTO app.note_analysis (note_id, title, tags, domain_code)"
                 " VALUES (:n, 't', cast(:tags AS text[]), :d)"
             ),
-            {"n": note, "tags": "{" + ",".join(f'"{t}"' for t in tags) + "}", "d": domain},
+            {"n": note, "tags": arr, "d": domain},
         )
     return note
 
@@ -238,7 +370,7 @@ async def _tags(maker: async_sessionmaker, note: str) -> list[str]:
                 {"n": note},
             )
         ).scalar()
-        return list(tags or [])
+        return list(tags if tags is not None else [])
 
 
 async def test_tag_consolidate_folds_case_and_whitespace_duplicates(
@@ -249,10 +381,24 @@ async def test_tag_consolidate_folds_case_and_whitespace_duplicates(
     assert await _tags(maker, note) == ["labs", "medication"]
 
 
-async def test_tag_consolidate_drops_empty_tags(maker: async_sessionmaker) -> None:
-    note = await _note_with_tags(maker, ["  ", "Care", "care"])
+async def test_tag_consolidate_drops_empty_and_whitespace_tags(maker: async_sessionmaker) -> None:
+    note = await _note_with_tags(maker, ["  ", "Care", "care", "   "])
     await tag_consolidate_handler(maker)({})
-    assert await _tags(maker, note) == ["care"]
+    assert await _tags(maker, note) == ["care"]  # empties dropped, NOT a NULL write
+
+
+async def test_tag_consolidate_collapses_all_whitespace_to_empty_array(
+    maker: async_sessionmaker,
+) -> None:
+    note = await _note_with_tags(maker, [" ", "\t"])
+    await tag_consolidate_handler(maker)({})
+    assert await _tags(maker, note) == []  # NOT NULL — the column forbids it
+
+
+async def test_tag_consolidate_leaves_an_empty_array_untouched(maker: async_sessionmaker) -> None:
+    note = await _note_with_tags(maker, [])
+    await tag_consolidate_handler(maker)({})
+    assert await _tags(maker, note) == []
 
 
 async def test_tag_consolidate_is_idempotent(maker: async_sessionmaker) -> None:

@@ -267,13 +267,22 @@ async def _delete_orphaned_entities(session: AsyncSession, candidates: set[uuid.
     await session.execute(delete(Entity).where(Entity.id.in_(candidates), *_orphan_conditions()))
 
 
-async def sweep_orphaned_entities(maker: async_sessionmaker[AsyncSession]) -> int:
+async def sweep_orphaned_entities(
+    maker: async_sessionmaker[AsyncSession], *, min_age_hours: int = 1, ctx: Any = None
+) -> int:
     """The periodic global orphan sweep (the `entity_hygiene` action): delete EVERY
     provisional entity matching the shared orphan criteria, not only those tied to a
     just-deleted note. Closes the gap where a fact retraction or supersession strands a
     provisional entity (zero mentions/facts/edges) that the per-note purge never visits.
-    Runs under SYSTEM_CTX; returns the count deleted. Idempotent — a second run finds
-    nothing once the backlog clears."""
+
+    Unlike the per-note purge (which acts on a just-deleted note's candidates, never racing
+    live extraction), this runs corpus-wide and can fire — manually from Ops — *during* an
+    extraction. So it adds an **age guard**: only entities older than `min_age_hours` are
+    eligible, so a provisional entity an in-flight extraction just inserted but has not yet
+    linked to its mention/fact is never deleted out from under it. Runs under SYSTEM_CTX;
+    returns the count deleted. Idempotent — a second run finds nothing once the backlog
+    clears."""
+    from datetime import timedelta, timezone
     from typing import cast
 
     from sqlalchemy.engine import CursorResult
@@ -281,8 +290,13 @@ async def sweep_orphaned_entities(maker: async_sessionmaker[AsyncSession]) -> in
     from jbrain.db.session import scoped_session
     from jbrain.queue import SYSTEM_CTX
 
-    async with scoped_session(maker, SYSTEM_CTX) as session:
-        result = await session.execute(delete(Entity).where(*_orphan_conditions()))
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=min_age_hours)
+    # Default SYSTEM_CTX (all domains); a narrowed ctx is firewalled by RLS to its scope,
+    # so a domain-scoped sweep can only ever delete in-scope orphans (the firewall test).
+    async with scoped_session(maker, ctx or SYSTEM_CTX) as session:
+        result = await session.execute(
+            delete(Entity).where(*_orphan_conditions(), Entity.created_at < cutoff)
+        )
     return cast("CursorResult[Any]", result).rowcount or 0
 
 
