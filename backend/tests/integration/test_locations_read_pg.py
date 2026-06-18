@@ -886,3 +886,87 @@ async def test_fixes_within_spatial_filter_keeps_only_fixes_near_center(
     )
     # Only the two fixes within 150 m of the center; the 1.1 km one is filtered out.
     assert len(near) == 2
+
+
+# --- L4 dwell/time tools end-to-end: time_at_place / find_when_at -------------
+# The real handlers over real repos, proving the owner's device resolves through
+# the deterministic binding and that dwells (WEAK-RLS `app.events`, full-owner
+# guarded) totals/last-visit come back under OWNER, refused for a narrowed session.
+
+
+async def _person_with_device(
+    maker: async_sessionmaker, *, person_name: str, label: str
+) -> tuple[str, str]:
+    """A named Person bound to a device subject via operatedBy + the entity
+    `subject_id` link, so the dwell tools resolve `subject=person_name` to a real
+    track. A NAMED person (not the shared "Me") keeps the module-scoped DB
+    deterministic — only this person's binding is in play. Returns `(pid, sid)`."""
+    pid, sid = await _device(maker, label)
+    person = await _entity(maker, kind="Person", name=person_name)
+    device_entity = await _entity(maker, kind="Device", name=f"{label} entity")
+    await _operated_by(maker, device_eid=device_entity, person_eid=person)
+    await _bind_entity_subject(maker, entity_id=device_entity, subject_id=sid)
+    return pid, sid
+
+
+async def test_time_at_place_totals_owner_dwells(maker: async_sessionmaker) -> None:
+    pid, sid = await _person_with_device(maker, person_name="L4 TAP Jeff", label="L4 TAP")
+    place_eid = await _fence_at(maker, name="L4 TAP Office", lat=50.0, lon=60.0)
+    # Two stays at the place: 30 min + 20 min = 50 min, 2 visits.
+    await _crossing(maker, pid=pid, sid=sid, eid=place_eid, transition="enter", minute=0)
+    await _crossing(maker, pid=pid, sid=sid, eid=place_eid, transition="exit", minute=30)
+    await _crossing(maker, pid=pid, sid=sid, eid=place_eid, transition="enter", minute=60)
+    await _crossing(maker, pid=pid, sid=sid, eid=place_eid, transition="exit", minute=80)
+
+    handlers = build_location_handlers(
+        SqlLocationRepo(maker), SqlDeviceRepo(maker), SqlAnalysisRepo(maker)
+    )
+    # A wide window so _BASE-relative stays fall inside the lookback.
+    out = await handlers["time_at_place"](
+        {"place": "L4 TAP Office", "subject": "L4 TAP Jeff", "hours": 24 * 365}, _tool_ctx()
+    )
+    assert "at L4 TAP Office" in out and "2 visits" in out
+    assert "50.0" not in str(out) and "60.0" not in str(out)
+
+
+async def test_find_when_at_reports_last_visit_owner(maker: async_sessionmaker) -> None:
+    pid, sid = await _person_with_device(maker, person_name="L4 FWA Jeff", label="L4 FWA")
+    place_eid = await _fence_at(maker, name="L4 FWA Gym", lat=51.0, lon=61.0)
+    await _crossing(maker, pid=pid, sid=sid, eid=place_eid, transition="enter", minute=0)
+    await _crossing(maker, pid=pid, sid=sid, eid=place_eid, transition="exit", minute=30)
+
+    handlers = build_location_handlers(
+        SqlLocationRepo(maker), SqlDeviceRepo(maker), SqlAnalysisRepo(maker)
+    )
+    out = await handlers["find_when_at"](
+        {"place": "L4 FWA Gym", "subject": "L4 FWA Jeff", "hours": 24 * 365}, _tool_ctx()
+    )
+    assert "last visited L4 FWA Gym" in out and "1 visit" in out
+
+
+async def test_find_when_at_no_visits_owner(maker: async_sessionmaker) -> None:
+    await _person_with_device(maker, person_name="L4 NV Jeff", label="L4 NV")
+    await _fence_at(maker, name="L4 NV Cafe", lat=52.0, lon=62.0)  # a fence, but no crossings
+    handlers = build_location_handlers(
+        SqlLocationRepo(maker), SqlDeviceRepo(maker), SqlAnalysisRepo(maker)
+    )
+    out = await handlers["find_when_at"](
+        {"place": "L4 NV Cafe", "subject": "L4 NV Jeff"}, _tool_ctx()
+    )
+    assert "No recorded visits to L4 NV Cafe" in out
+
+
+async def test_dwell_tools_refuse_a_narrowed_session(maker: async_sessionmaker) -> None:
+    # dwells reads WEAK-RLS app.events; the full-owner gate (wrapper) must refuse a
+    # narrowed/owner_scoped session for BOTH tools before any read.
+    pid, sid = await _person_with_device(maker, person_name="L4 REF Jeff", label="L4 REF")
+    place_eid = await _fence_at(maker, name="L4 REF Place", lat=53.0, lon=63.0)
+    await _crossing(maker, pid=pid, sid=sid, eid=place_eid, transition="enter", minute=0)
+    await _crossing(maker, pid=pid, sid=sid, eid=place_eid, transition="exit", minute=30)
+    handlers = build_location_handlers(
+        SqlLocationRepo(maker), SqlDeviceRepo(maker), SqlAnalysisRepo(maker)
+    )
+    narrowed = ToolContext(session=NARROWED_LOCATION, scopes=())
+    for tool in ("time_at_place", "find_when_at"):
+        with pytest.raises(LocationToolRefusal):
+            await handlers[tool]({"place": "L4 REF Place"}, narrowed)

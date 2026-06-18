@@ -16,7 +16,7 @@ model-facing text: where a position is needed (e.g. `nearby_now`) it is resolved
 inside the repo query and only the resulting place names + distances come back.
 """
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import Any, Protocol
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -29,6 +29,7 @@ from jbrain.devices.repo import SqlDeviceRepo
 from jbrain.geocode import GeocodeClient
 from jbrain.locations import (
     DeviceActivity,
+    Dwell,
     FixPoint,
     LatestPlace,
     NearbyPlace,
@@ -67,6 +68,13 @@ _NEARBY_DEFAULT_RADIUS_M = 1000.0
 _NEARBY_MAX_RADIUS_M = 50_000.0
 _NEARBY_DEFAULT_LIMIT = 5
 _NEARBY_MAX_LIMIT = 20
+
+# `time_at_place` / `find_when_at` lookback bounds. A wide-but-bounded default
+# (a week) suits "how much time at X / when was I last at Y"; the max matches the
+# repo dwell window the rest of the stack uses (~a year) so "this year" answers
+# work while one call can never sum an unbounded history.
+_DWELL_DEFAULT_HOURS = 7 * 24.0
+_DWELL_MAX_HOURS = 366 * 24.0
 
 
 class EntityResolver(Protocol):
@@ -364,6 +372,102 @@ def _match_fence(places: list[PlaceGeofence], name: str) -> PlaceGeofence | None
     return loose[0] if loose else None
 
 
+def _match_places(places: list[PlaceGeofence], name: str) -> list[PlaceGeofence]:
+    """The saved places (circle OR polygon) whose name matches `name`, applying the
+    same exact-then-substring precedence as `_match_fence` but returning ALL hits.
+    `time_at_place`/`find_when_at` resolve a place to its ENTITY (the dwell key), not
+    its geometry, so polygon-only fences count too — and the dwell tools must SEE
+    every candidate to fail closed on ambiguity rather than silently pick the first.
+
+    An exact (case-insensitive) name wins outright: a precisely named place never
+    drags in unrelated substring rows (so "Home" is unambiguous even when "Home
+    Office" exists). Only when no exact hit exists do substring matches stand — and
+    when several do, the caller ASKS which one rather than guessing."""
+    lowered = name.lower()
+    exact = [p for p in places if p.name.lower() == lowered]
+    if exact:
+        return exact
+    return [p for p in places if lowered in p.name.lower()]
+
+
+def _ambiguous_place_message(verb: str, candidates: list[PlaceGeofence]) -> str:
+    """The fail-closed clarifying prompt when a place name matches several saved
+    places: list the candidates by name and ASK which one — never pick. Names only.
+    Distinct names are listed once each (two fences sharing a name collapse, since
+    naming either resolves the same way)."""
+    names: list[str] = []
+    for c in candidates:
+        if c.name not in names:
+            names.append(c.name)
+    listed = ", ".join(f'"{n}"' for n in names)
+    return f"Several saved places match that — did you mean {listed}? {verb}"
+
+
+def _localize_date(dt: datetime, tz: ZoneInfo) -> date:
+    """The owner's LOCAL civil date for an instant — the bucket nights-away counts
+    by, so a stay is attributed to the calendar day the owner experienced, not the
+    UTC day. DST-safe by construction: `astimezone` applies the offset in effect at
+    `dt`, so a date never shifts because a fixed 24h was assumed across a transition."""
+    return dt.astimezone(tz).date()
+
+
+def _home_dates(dwells: list[Dwell], tz: ZoneInfo) -> set[date]:
+    """Every LOCAL civil date the owner was at home for any part of — derived by
+    walking each Home dwell day-by-day in the owner's zone. Iterating the civil
+    calendar (not `entered + n*24h`) is what makes this DST-safe: across a spring-
+    forward/fall-back the day still advances by one calendar date, never skipping or
+    repeating a day because an hour was added or removed. A night is "away" exactly
+    when its date is absent from this set."""
+    home: set[date] = set()
+    for d in dwells:
+        cur = _localize_date(d.entered_at, tz)
+        last = _localize_date(d.exited_at, tz)
+        while cur <= last:
+            home.add(cur)
+            cur += timedelta(days=1)
+    return home
+
+
+def _nights_away(dwells: list[Dwell], since: datetime, until: datetime, tz: ZoneInfo) -> int:
+    """Count the LOCAL civil dates across `[since, until)` on which NO Home dwell
+    falls — the nights the owner spent away. The day grid is the owner's calendar in
+    `tz` (DST-safe), and each date is checked against `_home_dates`; a date with any
+    home presence is "home", the rest are "away"."""
+    home = _home_dates(dwells, tz)
+    cur = _localize_date(since, tz)
+    last = _localize_date(until - timedelta(microseconds=1), tz)
+    away = 0
+    while cur <= last:
+        if cur not in home:
+            away += 1
+        cur += timedelta(days=1)
+    return away
+
+
+def _zone(tz: str | None) -> ZoneInfo:
+    """The owner's zone, defaulting to UTC when unknown/unset — so civil-date math
+    never raises mid-answer (it degrades to UTC days, the same fallback the prose
+    helpers use)."""
+    if tz is None:
+        return ZoneInfo("UTC")
+    try:
+        return ZoneInfo(tz)
+    except (ZoneInfoNotFoundError, ValueError):
+        return ZoneInfo("UTC")
+
+
+def _format_duration(seconds: float) -> str:
+    """A coarse human duration (hours + minutes, or minutes under an hour) — a
+    presence summary, never a precise coordinate-grade figure."""
+    total_min = round(seconds / 60)
+    hours, mins = divmod(total_min, 60)
+    if hours and mins:
+        return f"{hours}h {mins}m"
+    if hours:
+        return f"{hours}h"
+    return f"{mins}m"
+
+
 def build_location_handlers(
     locations: SqlLocationRepo,
     devices: SqlDeviceRepo,
@@ -519,6 +623,122 @@ def build_location_handlers(
         data.update(_freshness(data, now=now))
         return ToolOutput(text, view=_trail_view(data))
 
+    async def _resolve_dwell_subject(
+        arguments: dict, ctx: ToolContext
+    ) -> tuple[str | None, str, str | None]:
+        """Resolve the dwell tools' subject to an active device subject id, exactly as
+        `location_history` does: a named person/device via the owner-set binding, else
+        the owner's own device. Returns `(subject_id, label, refusal)` — `refusal` is
+        a ready prose answer (unknown/unlinked) the caller returns verbatim, leaving
+        `subject_id` None; otherwise `refusal` is None."""
+        name = str(arguments.get("subject", "")).strip()
+        if name and name.lower() not in ("me", "i", "you"):
+            subs, label, status = await _resolve_subject(devices, entities, ctx, name)
+            if status == "none":
+                return None, name, f"No person or device named '{name}' is in scope."
+            if status == "unlinked":
+                return None, label or name, f"'{label or name}' has no linked device for that."
+            label = label or name
+        else:
+            subs = await _self_subjects(devices, ctx)
+            label = "You"
+            if not subs:
+                return None, label, "Your own device isn't linked yet, so I can't answer that."
+        sid = await _pick_latest(locations, ctx, subs)
+        if sid is None:
+            return None, label, f"'{label}' has no linked device for that."
+        return sid, label, None
+
+    async def time_at_place_tool(arguments: dict, ctx: ToolContext) -> ToolOutput:
+        place_q = str(arguments.get("place", "")).strip()
+        if not place_q:
+            return ToolOutput("time_at_place needs a place name.")
+        now = datetime.now(UTC)
+        since, until = _window(
+            arguments, default_hours=_DWELL_DEFAULT_HOURS, max_hours=_DWELL_MAX_HOURS, now=now
+        )
+        # Resolve the place to its ENTITY (the dwell key) — fail closed on ambiguity:
+        # more than one saved place matching the name ASKS which, never guesses.
+        candidates = _match_places(await locations.places(ctx.session), place_q)
+        if not candidates:
+            return ToolOutput(f'No saved place named "{place_q}".')
+        if len(candidates) > 1:
+            return ToolOutput(
+                _ambiguous_place_message(
+                    "Ask again naming the exact place to total your time there.", candidates
+                )
+            )
+        place = candidates[0]
+        sid, label, refusal = await _resolve_dwell_subject(arguments, ctx)
+        if refusal is not None:
+            return ToolOutput(refusal)
+        assert sid is not None  # noqa: S101 - refusal is None ⇒ sid resolved
+        dwells = await locations.dwells(
+            ctx.session,
+            subject_id=sid,
+            place_entity_id=place.place_entity_id,
+            since=since,
+            until=until,
+        )
+        tz = _zone(ctx.timezone)
+        total = sum(d.seconds for d in dwells)
+        when_from = _when(since, ctx.timezone)
+        if not dwells:
+            return ToolOutput(f"No recorded time at {place.name} since {when_from}.")
+        lead = (
+            f"{label} spent {_format_duration(total)} at {place.name} across {len(dwells)}"
+            f" visit{'' if len(dwells) == 1 else 's'} since {when_from}."
+        )
+        # "Nights away" only makes sense for a home-style anchor, so it is reported
+        # only when explicitly asked — bucketed by the owner's LOCAL civil date.
+        if arguments.get("nights_away"):
+            away = _nights_away(dwells, since, until, tz)
+            nights = (until - since).days or 1
+            lead += (
+                f" Of {nights} night{'' if nights == 1 else 's'}, {away} away from"
+                f" {place.name} (by local calendar date)."
+            )
+        return ToolOutput(lead)
+
+    async def find_when_at_tool(arguments: dict, ctx: ToolContext) -> ToolOutput:
+        place_q = str(arguments.get("place", "")).strip()
+        if not place_q:
+            return ToolOutput("find_when_at needs a place name.")
+        now = datetime.now(UTC)
+        since, until = _window(
+            arguments, default_hours=_DWELL_MAX_HOURS, max_hours=_DWELL_MAX_HOURS, now=now
+        )
+        candidates = _match_places(await locations.places(ctx.session), place_q)
+        if not candidates:
+            return ToolOutput(f'No saved place named "{place_q}".')
+        if len(candidates) > 1:
+            return ToolOutput(
+                _ambiguous_place_message(
+                    "Ask again naming the exact place to find when you were there.", candidates
+                )
+            )
+        place = candidates[0]
+        sid, label, refusal = await _resolve_dwell_subject(arguments, ctx)
+        if refusal is not None:
+            return ToolOutput(refusal)
+        assert sid is not None  # noqa: S101 - refusal is None ⇒ sid resolved
+        dwells = await locations.dwells(
+            ctx.session,
+            subject_id=sid,
+            place_entity_id=place.place_entity_id,
+            since=since,
+            until=until,
+        )
+        if not dwells:
+            return ToolOutput(f"No recorded visits to {place.name} on record.")
+        # `dwells` come back entered-ascending; the last is the most recent visit.
+        last = dwells[-1]
+        last_when = _when(last.entered_at, ctx.timezone)
+        return ToolOutput(
+            f"{label} last visited {place.name} on {last_when} — {len(dwells)}"
+            f" visit{'' if len(dwells) == 1 else 's'} since {_when(since, ctx.timezone)}."
+        )
+
     handlers: dict[str, ToolHandler] = {
         "where_is": where_is_tool,
         "where_was_i": where_was_i_tool,
@@ -527,6 +747,8 @@ def build_location_handlers(
         "nearby_now": nearby_now_tool,
         "location_history": location_history_tool,
         "location_query": location_query_tool,
+        "time_at_place": time_at_place_tool,
+        "find_when_at": find_when_at_tool,
     }
     return {name: _owner_only(handler) for name, handler in handlers.items()}
 

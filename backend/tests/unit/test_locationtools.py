@@ -10,7 +10,7 @@ Person→operatedBy→Device traversal is exercised, not bypassed. The wrapper r
 `LocationToolRefusal` (which the loop surfaces as a safe error), so the refusal is
 proven by the raise."""
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 import pytest
 
@@ -20,6 +20,7 @@ from jbrain.db.session import SessionContext
 from jbrain.geocode import GeocodeResult
 from jbrain.locations import (
     DeviceActivity,
+    Dwell,
     FixPoint,
     LatestPlace,
     LocationToolRefusal,
@@ -98,6 +99,7 @@ class FakeLocations:
         nearby: list[NearbyPlace] | None = None,
         fixes: list[FixPoint] | None = None,
         places: list[PlaceGeofence] | None = None,
+        dwells: list[Dwell] | None = None,
     ) -> None:
         self._latest = latest
         self._near = near
@@ -106,9 +108,11 @@ class FakeLocations:
         self._nearby = nearby or []
         self._fixes = fixes or []
         self._places = places or []
+        self._dwells = dwells or []
         self.nearby_calls: list[dict] = []
         self.latest_subjects: list[str] = []
         self.within_calls: list[dict] = []
+        self.dwell_calls: list[dict] = []
 
     async def fixes_within(  # noqa: ANN001
         self, ctx, *, subject_id, since, until, center=None, radius_m=None, limit
@@ -127,6 +131,17 @@ class FakeLocations:
 
     async def places(self, ctx):  # noqa: ANN001
         return list(self._places)
+
+    async def dwells(self, ctx, *, subject_id, place_entity_id=None, since, until):  # noqa: ANN001
+        self.dwell_calls.append(
+            {
+                "subject_id": subject_id,
+                "place_entity_id": place_entity_id,
+                "since": since,
+                "until": until,
+            }
+        )
+        return [d for d in self._dwells if place_entity_id in (None, d.place_entity_id)]
 
     async def latest_place(self, ctx, *, subject_id):  # noqa: ANN001
         self.latest_subjects.append(subject_id)
@@ -196,6 +211,8 @@ def _handlers(*, locations=None, devices=None, entities=None, geocoder=None):  #
         "nearby_now",
         "location_history",
         "location_query",
+        "time_at_place",
+        "find_when_at",
     ],
 )
 @pytest.mark.parametrize("ctx", [NARROWED_OWNER, NON_OWNER])
@@ -206,7 +223,7 @@ async def test_every_tool_refuses_a_non_full_owner(tool: str, ctx: ToolContext) 
     handlers = _handlers(locations=loc)
     with pytest.raises(LocationToolRefusal):
         await handlers[tool]({"subject": "Jeff", "place": "Home"}, ctx)
-    assert loc.nearby_calls == [] and loc.within_calls == []
+    assert loc.nearby_calls == [] and loc.within_calls == [] and loc.dwell_calls == []
 
 
 # --- where_is / where_was_i (#5) ----------------------------------------------
@@ -616,4 +633,240 @@ async def test_location_query_clamps_the_radius() -> None:
 
 async def test_location_query_needs_a_place() -> None:
     out = await _handlers()["location_query"]({}, FULL_OWNER)
+    assert "needs a place" in out
+
+
+# --- time_at_place / nights-away (#8) -----------------------------------------
+
+from zoneinfo import ZoneInfo  # noqa: E402 - test-local, kept beside its users
+
+# A full owner whose display zone is US Eastern — the civil-date / DST tests bucket
+# in this zone, so a stay is attributed to the day the owner actually experienced.
+EASTERN = ToolContext(
+    session=SessionContext(principal_kind="owner"), scopes=(), timezone="America/New_York"
+)
+
+
+def _eastern_dwell(eid: str, name: str, local_start: datetime, local_end: datetime) -> Dwell:
+    """A Dwell whose entered/exited are the given LOCAL wall-clock times in Eastern,
+    converted to the UTC instants the repo would actually return."""
+    tz = ZoneInfo("America/New_York")
+    entered = local_start.replace(tzinfo=tz).astimezone(UTC)
+    exited = local_end.replace(tzinfo=tz).astimezone(UTC)
+    return Dwell(eid, name, entered, exited, (exited - entered).total_seconds())
+
+
+def _place(name: str = "Home", eid: str = "p1") -> PlaceGeofence:
+    return PlaceGeofence(
+        place_entity_id=eid,
+        name=name,
+        enabled=True,
+        center=(40.0, -105.0),
+        radius_m=150.0,
+        polygon=None,
+    )
+
+
+async def test_time_at_place_sums_dwells_and_counts_visits() -> None:
+    devices = FakeDevices(owner_subjects=["s-me"])
+    dwells = [
+        Dwell("p1", "Office", _NOW - timedelta(hours=5), _NOW - timedelta(hours=4), 3600.0),
+        Dwell("p1", "Office", _NOW - timedelta(hours=3), _NOW - timedelta(hours=1), 7200.0),
+    ]
+    loc = FakeLocations(places=[_place("Office")], dwells=dwells)
+    out = await _handlers(locations=loc, devices=devices)["time_at_place"](
+        {"place": "Office"}, FULL_OWNER
+    )
+    # 1h + 2h = 3h across 2 visits, named, coordinate-free.
+    assert "spent 3h at Office" in out and "2 visits" in out
+    assert "40.0" not in str(out) and "-105" not in str(out)
+    # The resolved place ENTITY drove the dwell query (not the name).
+    assert loc.dwell_calls[0]["place_entity_id"] == "p1"
+
+
+async def test_time_at_place_no_recorded_time() -> None:
+    devices = FakeDevices(owner_subjects=["s-me"])
+    loc = FakeLocations(places=[_place("Office")], dwells=[])
+    out = await _handlers(locations=loc, devices=devices)["time_at_place"](
+        {"place": "Office"}, FULL_OWNER
+    )
+    assert "No recorded time at Office" in out
+
+
+async def test_nights_away_buckets_by_local_civil_date() -> None:
+    # The pure civil-date math: Home only on local Jun 1 and Jun 3 (away the night of
+    # Jun 2). A window covering Jun 1–3 (local) must count exactly 1 night away — by
+    # LOCAL civil date, not UTC days (a late-evening Eastern stay is still "that day").
+    from jbrain.agent.locationtools import _home_dates, _nights_away
+
+    tz = ZoneInfo("America/New_York")
+    dwells = [
+        _eastern_dwell("p1", "Home", datetime(2026, 6, 1, 20, 0), datetime(2026, 6, 1, 23, 0)),
+        _eastern_dwell("p1", "Home", datetime(2026, 6, 3, 8, 0), datetime(2026, 6, 3, 9, 0)),
+    ]
+    since = datetime(2026, 6, 1, 0, 0, tzinfo=tz).astimezone(UTC)
+    until = datetime(2026, 6, 4, 0, 0, tzinfo=tz).astimezone(UTC)
+    assert _home_dates(dwells, tz) == {date(2026, 6, 1), date(2026, 6, 3)}
+    assert _nights_away(dwells, since, until, tz) == 1  # Jun 2
+
+
+async def test_nights_away_is_dst_safe_across_spring_forward() -> None:
+    # Spring-forward in US Eastern is 2026-03-08 (02:00 → 03:00, a 23-hour day). Home
+    # on local Mar 7 and Mar 9, away on the DST day Mar 8. A naive `entered + n*24h`
+    # walk would drift across the short day and mis-bucket it; civil-date iteration in
+    # the owner's zone advances by one CALENDAR date regardless, so away == 1.
+    from jbrain.agent.locationtools import _home_dates, _nights_away
+
+    tz = ZoneInfo("America/New_York")
+    dwells = [
+        _eastern_dwell("p1", "Home", datetime(2026, 3, 7, 22, 0), datetime(2026, 3, 7, 23, 30)),
+        _eastern_dwell("p1", "Home", datetime(2026, 3, 9, 7, 0), datetime(2026, 3, 9, 8, 0)),
+    ]
+    since = datetime(2026, 3, 7, 0, 0, tzinfo=tz).astimezone(UTC)
+    until = datetime(2026, 3, 10, 0, 0, tzinfo=tz).astimezone(UTC)
+    # A dwell that itself spans the DST night still maps to the two calendar dates it
+    # touches (never skipping Mar 8 because the day was only 23h).
+    spanning = [
+        _eastern_dwell("p1", "Home", datetime(2026, 3, 8, 1, 0), datetime(2026, 3, 9, 1, 0))
+    ]
+    assert _home_dates(spanning, tz) == {date(2026, 3, 8), date(2026, 3, 9)}
+    assert _home_dates(dwells, tz) == {date(2026, 3, 7), date(2026, 3, 9)}
+    assert _nights_away(dwells, since, until, tz) == 1  # Mar 8
+
+
+async def test_time_at_place_reports_nights_away() -> None:
+    # The handler surfaces nights-away when asked: a recent window where the owner was
+    # home only on the most recent local date, so the earlier nights count as away.
+    devices = FakeDevices(owner_subjects=["s-me"])
+    tz = ZoneInfo("America/New_York")
+    today_local = _NOW.astimezone(tz).date()
+    home_start = datetime.combine(today_local, datetime.min.time(), tz) + timedelta(hours=8)
+    dwells = [
+        Dwell(
+            "p1",
+            "Home",
+            home_start.astimezone(UTC),
+            (home_start + timedelta(hours=2)).astimezone(UTC),
+            7200.0,
+        )
+    ]
+    loc = FakeLocations(places=[_place("Home")], dwells=dwells)
+    out = await _handlers(locations=loc, devices=devices)["time_at_place"](
+        {"place": "Home", "nights_away": True, "hours": 48}, EASTERN
+    )
+    assert "away from Home" in out and "by local calendar date" in out
+
+
+async def test_time_at_place_ambiguous_name_asks() -> None:
+    # Two saved places match "Mom" → the tool must ASK which, listing the candidates,
+    # and MUST NOT run the dwell query (fail-closed resolution).
+    devices = FakeDevices(owner_subjects=["s-me"])
+    loc = FakeLocations(
+        places=[_place("Mom's House", "p1"), _place("Mom's Office", "p2")], dwells=[]
+    )
+    out = await _handlers(locations=loc, devices=devices)["time_at_place"](
+        {"place": "Mom"}, FULL_OWNER
+    )
+    assert "Several saved places match" in out
+    assert "Mom's House" in out and "Mom's Office" in out
+    assert loc.dwell_calls == []  # never resolved to one — never queried
+
+
+async def test_time_at_place_exact_name_beats_substrings() -> None:
+    # An exact hit ("Home") is unambiguous even when a substring sibling ("Home
+    # Office") exists — exact precedence prevents a spurious ambiguity prompt.
+    devices = FakeDevices(owner_subjects=["s-me"])
+    loc = FakeLocations(
+        places=[_place("Home", "p1"), _place("Home Office", "p2")],
+        dwells=[Dwell("p1", "Home", _NOW - timedelta(hours=2), _NOW - timedelta(hours=1), 3600.0)],
+    )
+    out = await _handlers(locations=loc, devices=devices)["time_at_place"](
+        {"place": "Home"}, FULL_OWNER
+    )
+    assert "spent 1h at Home" in out
+    assert loc.dwell_calls[0]["place_entity_id"] == "p1"
+
+
+async def test_time_at_place_unknown_place() -> None:
+    out = await _handlers(devices=FakeDevices(owner_subjects=["s-me"]))["time_at_place"](
+        {"place": "Atlantis"}, FULL_OWNER
+    )
+    assert 'No saved place named "Atlantis"' in out
+
+
+async def test_time_at_place_needs_a_place() -> None:
+    out = await _handlers()["time_at_place"]({}, FULL_OWNER)
+    assert "needs a place" in out
+
+
+async def test_time_at_place_unlinked_owner() -> None:
+    loc = FakeLocations(places=[_place("Home")])
+    out = await _handlers(locations=loc, devices=FakeDevices(owner_subjects=[]))["time_at_place"](
+        {"place": "Home"}, FULL_OWNER
+    )
+    assert "isn't linked" in out
+    assert loc.dwell_calls == []
+
+
+# --- find_when_at (#9) --------------------------------------------------------
+
+
+async def test_find_when_at_reports_last_visit_and_frequency() -> None:
+    devices = FakeDevices(owner_subjects=["s-me"])
+    dwells = [
+        Dwell("p1", "Gym", _NOW - timedelta(days=3), _NOW - timedelta(days=3, hours=-1), 3600.0),
+        Dwell("p1", "Gym", _NOW - timedelta(days=1), _NOW - timedelta(days=1, hours=-1), 3600.0),
+    ]
+    loc = FakeLocations(places=[_place("Gym")], dwells=dwells)
+    out = await _handlers(locations=loc, devices=devices)["find_when_at"](
+        {"place": "Gym"}, FULL_OWNER
+    )
+    assert "last visited Gym" in out and "2 visits" in out
+    assert "40.0" not in str(out) and "-105" not in str(out)
+
+
+async def test_find_when_at_never_visited() -> None:
+    devices = FakeDevices(owner_subjects=["s-me"])
+    loc = FakeLocations(places=[_place("Gym")], dwells=[])
+    out = await _handlers(locations=loc, devices=devices)["find_when_at"](
+        {"place": "Gym"}, FULL_OWNER
+    )
+    assert "No recorded visits to Gym" in out
+
+
+async def test_find_when_at_ambiguous_name_asks() -> None:
+    devices = FakeDevices(owner_subjects=["s-me"])
+    loc = FakeLocations(places=[_place("Cafe Roma", "p1"), _place("Cafe Luna", "p2")], dwells=[])
+    out = await _handlers(locations=loc, devices=devices)["find_when_at"](
+        {"place": "Cafe"}, FULL_OWNER
+    )
+    assert "Several saved places match" in out
+    assert "Cafe Roma" in out and "Cafe Luna" in out
+    assert loc.dwell_calls == []
+
+
+async def test_find_when_at_resolves_a_named_subject() -> None:
+    devices = FakeDevices(device_subjects_by_entity={"d1": ["s1"]})
+    entities = FakeEntities({"Phone": [_entity("d1", "Phone")]})
+    loc = FakeLocations(
+        places=[_place("Gym")],
+        dwells=[Dwell("p1", "Gym", _NOW - timedelta(days=1), _NOW, 3600.0)],
+    )
+    out = await _handlers(locations=loc, devices=devices, entities=entities)["find_when_at"](
+        {"place": "Gym", "subject": "Phone"}, FULL_OWNER
+    )
+    assert "Phone last visited Gym" in out
+    assert loc.dwell_calls[0]["subject_id"] == "s1"
+
+
+async def test_find_when_at_unknown_subject() -> None:
+    loc = FakeLocations(places=[_place("Gym")])
+    out = await _handlers(locations=loc, devices=FakeDevices(), entities=FakeEntities({}))[
+        "find_when_at"
+    ]({"place": "Gym", "subject": "Nobody"}, FULL_OWNER)
+    assert "No person or device named 'Nobody'" in out
+
+
+async def test_find_when_at_needs_a_place() -> None:
+    out = await _handlers()["find_when_at"]({}, FULL_OWNER)
     assert "needs a place" in out
