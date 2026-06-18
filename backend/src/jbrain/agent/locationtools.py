@@ -867,6 +867,7 @@ def build_location_handlers(
             title=title,
             nodes=[node],
             provenance={"source": "chat", "tool": "save_place"},
+            session_id=ctx.agent_session_id,
         )
         prop_id = await proposals.stage(
             ctx.session, principal_id=ctx.session.principal_id, spec=spec

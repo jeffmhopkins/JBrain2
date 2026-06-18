@@ -263,6 +263,7 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
                 conversation=conversation,
                 timezone=owner_tz,
                 buffer_retry=buffer_retry,
+                agent_session_id=session.id,
             ):
                 if event.type == "text_delta":
                     answer.append(event.text)

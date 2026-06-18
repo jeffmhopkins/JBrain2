@@ -79,6 +79,7 @@ def _handler(name: str, registry: ConnectorRegistry, proposals: ProposalRepo) ->
             title=f"{name} → {request.url}",
             nodes=[node],
             provenance={"source": "chat"},
+            session_id=ctx.agent_session_id,
         )
         prop_id = await proposals.stage(
             ctx.session, principal_id=ctx.session.principal_id, spec=spec

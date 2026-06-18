@@ -1500,8 +1500,13 @@ export const api = {
     yield* parseChatStream(response.body);
   },
 
-  async listProposals(): Promise<ProposalSummary[]> {
-    const response = await request("/api/proposals");
+  // `sessionId` scopes the review inbox to a Full Brain chat: its own staged
+  // proposals plus the session-less background ones. Omit it for the full list.
+  async listProposals(sessionId?: string): Promise<ProposalSummary[]> {
+    const path = sessionId
+      ? `/api/proposals?session_id=${encodeURIComponent(sessionId)}`
+      : "/api/proposals";
+    const response = await request(path);
     return (await response.json()) as ProposalSummary[];
   },
 

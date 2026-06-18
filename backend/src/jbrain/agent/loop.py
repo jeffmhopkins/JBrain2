@@ -103,11 +103,17 @@ class Guardrails:
 class ToolContext:
     """What a tool handler receives: the RLS scope its reads must run under, and
     the owner's IANA display timezone (None = UTC) so a tool can render times in
-    the owner's zone — its prose then agrees with the client-localized cards."""
+    the owner's zone — its prose then agrees with the client-localized cards.
+
+    `agent_session_id` is the chat session this turn belongs to, so a tool that
+    stages a Proposal can tie it to the session (the review inbox scopes by it).
+    None for non-chat callers (e.g. the wiki Editor) and background loops, which
+    stage session-less proposals that surface in every session's inbox."""
 
     session: SessionContext
     scopes: tuple[str, ...]
     timezone: str | None = None
+    agent_session_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -238,11 +244,14 @@ class AgentLoop:
         conversation: Sequence[LlmMessage],
         timezone: str | None = None,
         system: str | None = None,
+        agent_session_id: str | None = None,
     ) -> AgentResult:
         scopes = tuple(scopes)
         tools = self._registry.schemas_for(scopes)
         messages: list[LlmMessage] = list(conversation)
-        tool_ctx = ToolContext(session=session, scopes=scopes, timezone=timezone)
+        tool_ctx = ToolContext(
+            session=session, scopes=scopes, timezone=timezone, agent_session_id=agent_session_id
+        )
         # A caller can swap the system prompt (the wiki Editor uses its own persona); existing
         # callers pass nothing and keep the Full Brain prompt — fully backward-compatible.
         system_prompt = system or SYSTEM_PROMPT
@@ -300,6 +309,7 @@ class AgentLoop:
         conversation: Sequence[LlmMessage],
         timezone: str | None = None,
         buffer_retry: bool = False,
+        agent_session_id: str | None = None,
     ) -> AsyncIterator[ChatEvent]:
         """The streaming twin of `run`: the same turn loop and guardrails, but it
         yields ChatEvents as they happen — `text_delta` per streamed chunk,
@@ -324,13 +334,17 @@ class AgentLoop:
         improvement, capped at N=2) before the kept attempt's events stream. This
         trades the live token stream for a spinner while verification clears."""
         if buffer_retry:
-            async for ev in self._run_stream_buffered(session, scopes, conversation, timezone):
+            async for ev in self._run_stream_buffered(
+                session, scopes, conversation, timezone, agent_session_id
+            ):
                 yield ev
             return
         scopes = tuple(scopes)
         tools = self._registry.schemas_for(scopes)
         messages: list[LlmMessage] = list(conversation)
-        tool_ctx = ToolContext(session=session, scopes=scopes, timezone=timezone)
+        tool_ctx = ToolContext(
+            session=session, scopes=scopes, timezone=timezone, agent_session_id=agent_session_id
+        )
         cost = 0
         consecutive_errors = 0
         idx = 0
@@ -445,6 +459,7 @@ class AgentLoop:
         scopes: Sequence[str],
         conversation: Sequence[LlmMessage],
         timezone: str | None,
+        agent_session_id: str | None = None,
     ) -> AsyncIterator[ChatEvent]:
         """Mode (a): produce the turn non-streaming, run `reflect` (strict
         improvement, N=2 cap), then replay the kept attempt's buffered events as the
@@ -465,7 +480,9 @@ class AgentLoop:
             # ordinary per-turn budget, NOT the self-improvement budget.
             if budget[0] <= 0 and incumbent[0] is not None:
                 return incumbent[0]
-            turn = await self._produce_buffered(session, scopes, conversation, timezone, budget)
+            turn = await self._produce_buffered(
+                session, scopes, conversation, timezone, budget, agent_session_id
+            )
             corpus = _grounding_corpus(turn.sources, turn.entities)
             # Empty corpus → grounding is unverifiable, not failed: hand back a clean
             # pass so reflexion neither retries nor flags a turn it cannot judge.
@@ -514,6 +531,7 @@ class AgentLoop:
         conversation: Sequence[LlmMessage],
         timezone: str | None,
         budget: list[int],
+        agent_session_id: str | None = None,
     ) -> _BufferedTurn:
         """One full non-streaming produce-step for mode (a): run the turn loop to a
         terminal stop, buffering the ChatEvents it would have streamed (so a
@@ -521,7 +539,9 @@ class AgentLoop:
         `budget` so retries cannot overspend the per-turn guardrail."""
         tools = self._registry.schemas_for(scopes)
         messages: list[LlmMessage] = list(conversation)
-        tool_ctx = ToolContext(session=session, scopes=scopes, timezone=timezone)
+        tool_ctx = ToolContext(
+            session=session, scopes=scopes, timezone=timezone, agent_session_id=agent_session_id
+        )
         events: list[ChatEvent] = []
         answer_parts: list[str] = []
         sources: list[NoteSource] = []

@@ -178,6 +178,35 @@ describe("FullBrainSurface", () => {
     expect(getTranscript).toHaveBeenCalledTimes(1);
   });
 
+  it("scopes the review inbox to the active session", async () => {
+    const listProposals = vi.fn(async () => []);
+    render(<Harness d={deps({ listProposals })} />);
+    await waitFor(() => screen.getByLabelText("Conversation"));
+    // The inbox is the open chat's: its session id rides the request, so the
+    // panel shows that chat's staged proposals (+ the session-less background ones).
+    await waitFor(() => expect(listProposals).toHaveBeenCalledWith("s1"));
+  });
+
+  it("reloads the inbox scoped to the chat the owner switches to", async () => {
+    const listProposals = vi.fn(async () => []);
+    const listSessions = vi.fn(async () => [
+      session({ id: "s1", title: "First" }),
+      session({ id: "s2", title: "Second" }),
+    ]);
+    render(<Harness d={deps({ listSessions, listProposals })} />);
+    await waitFor(() => expect(listProposals).toHaveBeenCalledWith("s1"));
+
+    // Open the Chats panel (left swipe) and switch to the other chat.
+    const shell = document.querySelector(".fb-shell") as Element;
+    fireEvent.touchStart(shell, { touches: [{ clientX: 20, clientY: 200 }] });
+    fireEvent.touchMove(shell, { touches: [{ clientX: 140, clientY: 205 }] });
+    fireEvent.touchEnd(shell, { changedTouches: [{ clientX: 140, clientY: 205 }] });
+    fireEvent.click(screen.getByText("Second"));
+
+    // Switching chats re-scopes the inbox to the chat now open.
+    await waitFor(() => expect(listProposals).toHaveBeenCalledWith("s2"));
+  });
+
   it("refreshes the review inbox after a turn (a turn can stage a proposal)", async () => {
     const listProposals = vi.fn(async () => []);
     render(<Harness d={deps({ listProposals })} />);

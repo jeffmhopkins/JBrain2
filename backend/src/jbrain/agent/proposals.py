@@ -214,9 +214,21 @@ class ProposalRepo:
                 )
         return str(prop_id)
 
-    async def list_open(self, ctx: SessionContext) -> list[ProposalSummary]:
+    async def list_open(
+        self, ctx: SessionContext, session_id: str | None = None
+    ) -> list[ProposalSummary]:
         """Staged/approved proposals awaiting the owner — the review inbox, newest
-        first. RLS narrows to in-scope, owner-only proposals."""
+        first. RLS narrows to in-scope, owner-only proposals.
+
+        When `session_id` is given, the inbox is the Full Brain chat's: its own
+        chat-staged proposals plus the session-less (background/system) ones, which
+        belong to no chat and so surface in every session's inbox. Omit it for the
+        unscoped, see-everything list."""
+        scoped = (
+            " AND (p.session_id = cast(:sid AS uuid) OR p.session_id IS NULL)"
+            if session_id is not None
+            else ""
+        )
         async with scoped_session(self._maker, ctx) as session:
             rows = (
                 await session.execute(
@@ -225,8 +237,10 @@ class ProposalRepo:
                         " (SELECT count(*) FROM app.proposal_nodes n WHERE n.proposal_id = p.id)"
                         "   AS node_count"
                         " FROM app.proposals p WHERE p.status IN ('staged', 'approved')"
+                        f"{scoped}"
                         " ORDER BY p.created_at DESC"
-                    )
+                    ),
+                    {"sid": session_id},
                 )
             ).all()
         return [

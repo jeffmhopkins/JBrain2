@@ -78,6 +78,7 @@ def build_merge_handlers(proposals: ProposalRepo, entities: EntityReader) -> dic
             title=f"Merge “{name_a}” and “{name_b}”",
             nodes=[node],
             provenance={"source": "chat"},
+            session_id=ctx.agent_session_id,
         )
         prop_id = await proposals.stage(
             ctx.session, principal_id=ctx.session.principal_id, spec=spec
