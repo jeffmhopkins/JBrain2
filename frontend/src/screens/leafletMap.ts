@@ -6,6 +6,8 @@
 
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
+// Side-effect import: augments L with `heatLayer` (the gradient Heat view).
+import "leaflet.heat";
 import type { LocationFix, PlaceGeofence } from "../api/client";
 
 export type MapMode = "live" | "trail" | "heat";
@@ -14,6 +16,8 @@ export interface MapState {
   mode: MapMode;
   fixes: LocationFix[];
   places: PlaceGeofence[];
+  // Per-point heat radius in px (the "spot size" the Heat control tunes).
+  heatRadius: number;
 }
 
 export interface LocationMapHandle {
@@ -24,12 +28,23 @@ export interface LocationMapHandle {
 const TILE_URL = "/api/tiles/{z}/{x}/{y}.png";
 
 export function createLocationMap(container: HTMLElement): LocationMapHandle {
-  const map = L.map(container, { attributionControl: true }).setView([20, 0], 2);
+  // Zoom moves to the bottom-right so the floating control bar owns the top edge.
+  const map = L.map(container, {
+    attributionControl: true,
+    zoomControl: false,
+  }).setView([20, 0], 2);
+  L.control.zoom({ position: "bottomright" }).addTo(map);
   L.tileLayer(TILE_URL, {
     maxZoom: 19,
     attribution: "© OpenStreetMap contributors",
   }).addTo(map);
   let overlay = L.layerGroup().addTo(map);
+
+  // The map fills a flex container; Leaflet only re-measures on window resize, so
+  // a tab switch or rotation that resizes the container would otherwise leave it
+  // mis-sized (grey gutters). Re-measure whenever the container's box changes.
+  const resize = new ResizeObserver(() => map.invalidateSize());
+  resize.observe(container);
 
   function update(state: MapState): void {
     overlay.remove();
@@ -57,11 +72,18 @@ export function createLocationMap(container: HTMLElement): LocationMapHandle {
       if (track.length > 1) L.polyline(track, { className: "loc-lf-trail" }).addTo(overlay);
       L.circleMarker(first, { radius: 5, className: "loc-lf-start" }).addTo(overlay);
       L.circleMarker(last, { radius: 5, className: "loc-lf-end" }).addTo(overlay);
-    } else if (state.mode === "heat") {
-      // Overlapping translucent dots read as density — no extra heatmap dep.
-      for (const ll of track) {
-        L.circleMarker(ll, { radius: 9, stroke: false, className: "loc-lf-heat" }).addTo(overlay);
-      }
+    } else if (state.mode === "heat" && track.length > 0) {
+      // A real gradient heat layer: dwell density reads as the blue→red ramp,
+      // and the per-point radius is owner-tunable from the Heat control.
+      // A modest per-point intensity so transit reads cool and only repeated
+      // dwell at a spot builds up to the hot end of the ramp.
+      const pts = track.map((ll) => [ll.lat, ll.lng, 0.4] as [number, number, number]);
+      L.heatLayer(pts, {
+        radius: state.heatRadius,
+        blur: Math.round(state.heatRadius * 0.6),
+        maxZoom: 17,
+        minOpacity: 0.3,
+      }).addTo(overlay);
     } else if (state.mode === "live" && last) {
       L.circleMarker(last, { radius: 7, className: "loc-lf-live" })
         .bindTooltip("latest")
@@ -75,6 +97,9 @@ export function createLocationMap(container: HTMLElement): LocationMapHandle {
 
   return {
     update,
-    destroy: () => map.remove(),
+    destroy: () => {
+      resize.disconnect();
+      map.remove();
+    },
   };
 }
