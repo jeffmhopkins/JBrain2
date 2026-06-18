@@ -13,7 +13,7 @@ from fastapi.testclient import TestClient
 from jbrain.auth import service
 from jbrain.config import Settings
 from jbrain.devices.repo import DeviceInfo
-from jbrain.locations import DeviceActivity, FixPoint, TimelineEntry
+from jbrain.locations import DeviceActivity, FixPoint, PlaceGeofence, TimelineEntry
 from jbrain.main import create_app
 from tests.unit.fakes import FakeAuthRepo, FakeDeviceRepo
 
@@ -53,6 +53,26 @@ class FakeLocationRepo:
                 place_entity_id="ent-1",
                 place_name="Office",
             )
+        ]
+
+    async def places(self, ctx) -> list[PlaceGeofence]:  # noqa: ANN001
+        return [
+            PlaceGeofence(
+                place_entity_id="ent-1",
+                name="Office",
+                enabled=True,
+                center=(40.0, -74.0),
+                radius_m=150.0,
+                polygon=None,
+            ),
+            PlaceGeofence(
+                place_entity_id="ent-2",
+                name="Yard",
+                enabled=True,
+                center=None,
+                radius_m=None,
+                polygon=[(40.0, -74.0), (40.1, -74.0), (40.1, -73.9)],
+            ),
         ]
 
 
@@ -170,3 +190,18 @@ def test_timeline_maps_fields_and_defaults_window(
     assert data[0]["place_entity_id"] == "ent-1" and data[0]["subject_id"] == "sub-1"
     call = locs.timeline_calls[-1]
     assert (call["until"] - call["since"]).days == 30
+
+
+def test_places_returns_circle_and_polygon_geometry(client: TestClient, repo: FakeAuthRepo) -> None:
+    login(client, repo)
+    data = client.get("/api/locations/places").json()
+    circle = next(p for p in data if p["place_entity_id"] == "ent-1")
+    assert circle["center"] == {"lat": 40.0, "lon": -74.0} and circle["radius_m"] == 150.0
+    assert circle["polygon"] is None
+    poly = next(p for p in data if p["place_entity_id"] == "ent-2")
+    assert poly["center"] is None and poly["radius_m"] is None
+    assert poly["polygon"][0] == {"lat": 40.0, "lon": -74.0} and len(poly["polygon"]) == 3
+
+
+def test_places_requires_owner(client: TestClient) -> None:
+    assert client.get("/api/locations/places").status_code == 401

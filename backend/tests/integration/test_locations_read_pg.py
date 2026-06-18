@@ -131,6 +131,29 @@ async def _transition(
     return place
 
 
+async def _place_geofence(maker: async_sessionmaker, *, name: str, radius_m: int = 150) -> None:
+    """A Place entity + a circular place_geofence mirror row (owner-written)."""
+    async with scoped_session(maker, OWNER) as session:
+        eid = (
+            await session.execute(
+                text(
+                    "INSERT INTO app.entities (id, kind, canonical_name, domain_code)"
+                    " VALUES (gen_random_uuid(), 'Place', :n, 'location') RETURNING id"
+                ),
+                {"n": name},
+            )
+        ).scalar()
+        await session.execute(
+            text(
+                "INSERT INTO app.place_geofence"
+                " (place_entity_id, domain_code, name, center, radius_m)"
+                " VALUES (:e, 'location', :n,"
+                " ST_SetSRID(ST_MakePoint(:lon, :lat), 4326)::geography, :r)"
+            ),
+            {"e": eid, "n": name, "lat": _HOME[0], "lon": _HOME[1], "r": radius_m},
+        )
+
+
 async def test_owner_sees_every_device_activity(maker: async_sessionmaker) -> None:
     pa, sa = await _device(maker, "Phone")
     pb, sb = await _device(maker, "Tablet")
@@ -181,6 +204,16 @@ async def test_owner_timeline_resolves_place_name(maker: async_sessionmaker) -> 
     assert rows[0].subject_id == sa
 
 
+async def test_owner_reads_place_geofences(maker: async_sessionmaker) -> None:
+    await _place_geofence(maker, name="Home", radius_m=150)
+    places = await SqlLocationRepo(maker).places(OWNER)
+    home = next(p for p in places if p.name == "Home")
+    assert home.radius_m == 150.0 and home.polygon is None
+    assert home.center is not None
+    lat, lon = home.center
+    assert round(lat, 4) == 40.0 and round(lon, 4) == -74.0
+
+
 async def test_narrowed_owner_is_denied_the_subject_pinned_track(maker: async_sessionmaker) -> None:
     pa, sa = await _device(maker, "Phone")
     await _fix(maker, pid=pa, sid=sa, minute=0)
@@ -204,10 +237,11 @@ async def test_wrong_domain_scope_reads_nothing(maker: async_sessionmaker) -> No
     pa, sa = await _device(maker, "Phone")
     await _fix(maker, pid=pa, sid=sa, minute=0)
     await _transition(maker, pid=pa, sid=sa, place="Office", transition="enter")
+    await _place_geofence(maker, name="Home")
     repo = SqlLocationRepo(maker)
 
     # has_domain_scope('location') is false for a general-only session: zero rows
-    # across the fix-backed reads and the event-backed timeline.
+    # across the fix-backed reads, the event-backed timeline, and the fence mirror.
     assert await repo.device_activity(NARROWED_GENERAL) == {}
     assert (
         await repo.fixes(
@@ -225,3 +259,4 @@ async def test_wrong_domain_scope_reads_nothing(maker: async_sessionmaker) -> No
         )
         == []
     )
+    assert await repo.places(NARROWED_GENERAL) == []
