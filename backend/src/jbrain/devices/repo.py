@@ -30,6 +30,15 @@ class DeviceInfo:
     revoked: bool
 
 
+@dataclass(frozen=True)
+class LinkedPerson:
+    """The Person entity an operational device subject is bound to (via the owner-set
+    `entities.subject_id` link), identified by entity id and canonical name."""
+
+    entity_id: str
+    canonical_name: str
+
+
 class DeviceRepo(Protocol):
     async def provision(self, ctx: SessionContext, *, label: str, key_hash: str) -> DeviceInfo: ...
 
@@ -113,6 +122,40 @@ class SqlDeviceRepo:
                 return False
             await self._revoke_keys(session, device_id)
         return True
+
+    async def linked_person(self, ctx: SessionContext, subject_id: str) -> LinkedPerson | None:
+        """The graph entity bound to a device subject via `entities.subject_id`, or
+        None when the device is unlinked. The binding is owner-set and deterministic
+        (never LLM-chosen); this only reads it back, RLS-scoped to the caller."""
+        async with scoped_session(self._maker, ctx) as session:
+            row = (
+                await session.execute(
+                    text(
+                        "SELECT id::text AS eid, canonical_name FROM app.entities"
+                        " WHERE subject_id = cast(:sid AS uuid) AND status != 'merged' LIMIT 1"
+                    ),
+                    {"sid": subject_id},
+                )
+            ).first()
+        if row is None:
+            return None
+        return LinkedPerson(entity_id=row.eid, canonical_name=row.canonical_name)
+
+    async def subject_for_person(self, ctx: SessionContext, entity_id: str) -> str | None:
+        """The device subject id bound to a Person entity (the reverse of
+        `linked_person`), or None when the entity has no device link. RLS-scoped."""
+        async with scoped_session(self._maker, ctx) as session:
+            row = (
+                await session.execute(
+                    text(
+                        "SELECT subject_id::text AS sid FROM app.entities"
+                        " WHERE id = cast(:eid AS uuid) AND subject_id IS NOT NULL"
+                        "   AND status != 'merged'"
+                    ),
+                    {"eid": entity_id},
+                )
+            ).first()
+        return row.sid if row is not None else None
 
     @staticmethod
     async def _is_device(session: AsyncSession, device_id: str) -> bool:

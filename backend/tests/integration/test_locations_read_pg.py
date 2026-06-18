@@ -16,8 +16,10 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
+from jbrain.analysis.device_binding import reconcile_device_bindings
 from jbrain.db.session import SessionContext, scoped_session
-from jbrain.locations import SqlLocationRepo
+from jbrain.devices.repo import SqlDeviceRepo
+from jbrain.locations import LocationToolRefusal, SqlLocationRepo
 from tests.conftest import docker_available
 from tests.integration.test_rls import OWNER, database_url  # noqa: F401
 
@@ -154,6 +156,128 @@ async def _place_geofence(maker: async_sessionmaker, *, name: str, radius_m: int
         )
 
 
+async def _entity(maker: async_sessionmaker, *, kind: str, name: str) -> str:
+    async with scoped_session(maker, OWNER) as session:
+        return (
+            await session.execute(
+                text(
+                    "INSERT INTO app.entities (id, kind, canonical_name, domain_code)"
+                    " VALUES (gen_random_uuid(), :k, :n, 'location') RETURNING id::text"
+                ),
+                {"k": kind, "n": name},
+            )
+        ).scalar_one()
+
+
+async def _operated_by(maker: async_sessionmaker, *, device_eid: str, person_eid: str) -> None:
+    """An active asserted operatedBy relationship edge from the Device to the Person,
+    sourced from an owner note (facts.note_id is NOT NULL)."""
+    async with scoped_session(maker, OWNER) as session:
+        note_id = (
+            await session.execute(
+                text(
+                    "INSERT INTO app.notes (id, client_id, domain_code, body)"
+                    " VALUES (gen_random_uuid(), :cid, 'location', 'device note') RETURNING id"
+                ),
+                {"cid": f"opby-{device_eid}"},
+            )
+        ).scalar()
+        await session.execute(
+            text(
+                "INSERT INTO app.facts (id, entity_id, predicate, kind, assertion,"
+                "   status, object_entity_id, domain_code, statement, reported_at, note_id,"
+                "   extractor, prompt_version)"
+                " VALUES (gen_random_uuid(), cast(:d AS uuid), 'operatedBy', 'relationship',"
+                "   'asserted', 'active', cast(:p AS uuid), 'location', 'operated by', :ts, :nid,"
+                "   'test', 'v0')"
+            ),
+            {"d": device_eid, "p": person_eid, "ts": _BASE, "nid": str(note_id)},
+        )
+
+
+async def _geofence_state(
+    maker: async_sessionmaker, *, sid: str, place_geofence_name: str, state: str = "inside"
+) -> str:
+    """A place_geofence row + a geofence_state row pinning `sid` to it. Returns the
+    place entity id."""
+    async with scoped_session(maker, OWNER) as session:
+        eid = (
+            await session.execute(
+                text(
+                    "INSERT INTO app.entities (id, kind, canonical_name, domain_code)"
+                    " VALUES (gen_random_uuid(), 'Place', :n, 'location') RETURNING id"
+                ),
+                {"n": place_geofence_name},
+            )
+        ).scalar()
+        pgid = (
+            await session.execute(
+                text(
+                    "INSERT INTO app.place_geofence"
+                    " (place_entity_id, domain_code, name, center, radius_m)"
+                    " VALUES (:e, 'location', :n,"
+                    " ST_SetSRID(ST_MakePoint(:lon, :lat), 4326)::geography, 150)"
+                    " RETURNING id"
+                ),
+                {"e": eid, "n": place_geofence_name, "lat": _HOME[0], "lon": _HOME[1]},
+            )
+        ).scalar()
+        await session.execute(
+            text(
+                "INSERT INTO app.geofence_state"
+                " (subject_id, place_geofence_id, domain_code, state, since)"
+                " VALUES (:s, :pg, 'location', :st, :since)"
+            ),
+            {"s": sid, "pg": pgid, "st": state, "since": _BASE},
+        )
+    return str(eid)
+
+
+async def _crossing(
+    maker: async_sessionmaker,
+    *,
+    pid: str,
+    sid: str,
+    eid: str,
+    transition: str,
+    minute: int,
+) -> None:
+    """A location.geofence_transition event for an existing place entity at a minute
+    offset (the shape the detector emits), for dwell pairing."""
+    async with scoped_session(maker, OWNER) as session:
+        await session.execute(
+            text(
+                "INSERT INTO app.events (id, type, payload, domain_code, principal_id, occurred_at)"
+                " VALUES (gen_random_uuid(), 'location.geofence_transition',"
+                "   cast(:pl AS jsonb), 'location', :pr, :ts)"
+            ),
+            {
+                "pl": f'{{"subject_id": "{sid}", "place_entity_id": "{eid}",'
+                f' "transition": "{transition}"}}',
+                "pr": pid,
+                "ts": _BASE + timedelta(minutes=minute),
+            },
+        )
+
+
+async def _fix_at(maker: async_sessionmaker, *, pid: str, sid: str, seconds: int) -> None:
+    async with scoped_session(maker, OWNER) as session:
+        await session.execute(
+            text(
+                "INSERT INTO app.location_fixes"
+                " (subject_id, principal_id, captured_at, latitude, longitude)"
+                " VALUES (:s, :p, :ts, :lat, :lon)"
+            ),
+            {
+                "s": sid,
+                "p": pid,
+                "ts": _BASE + timedelta(seconds=seconds),
+                "lat": _HOME[0],
+                "lon": _HOME[1],
+            },
+        )
+
+
 async def test_owner_sees_every_device_activity(maker: async_sessionmaker) -> None:
     pa, sa = await _device(maker, "Phone")
     pb, sb = await _device(maker, "Tablet")
@@ -241,7 +365,7 @@ async def test_wrong_domain_scope_reads_nothing(maker: async_sessionmaker) -> No
     repo = SqlLocationRepo(maker)
 
     # has_domain_scope('location') is false for a general-only session: zero rows
-    # across the fix-backed reads, the event-backed timeline, and the fence mirror.
+    # across the fix-backed reads (RLS fails them closed).
     assert await repo.device_activity(NARROWED_GENERAL) == {}
     assert (
         await repo.fixes(
@@ -253,10 +377,195 @@ async def test_wrong_domain_scope_reads_nothing(maker: async_sessionmaker) -> No
         )
         == []
     )
-    assert (
+    # timeline()/places() read WEAK tables (app.events / place_geofence), which RLS
+    # does NOT fail-close for a narrowed owner — the full-owner gate is the barrier,
+    # so they REFUSE rather than return an empty (leak-closing) list.
+    with pytest.raises(LocationToolRefusal):
         await repo.timeline(
             NARROWED_GENERAL, since=_BASE, until=_BASE + timedelta(hours=1), limit=100
         )
-        == []
+    with pytest.raises(LocationToolRefusal):
+        await repo.places(NARROWED_GENERAL)
+
+
+# --- L1 read trio: nearest_fix / latest_place / dwells ----------------------
+
+
+async def test_nearest_fix_returns_closest_with_gap(maker: async_sessionmaker) -> None:
+    pa, sa = await _device(maker, "Phone")
+    await _fix_at(maker, pid=pa, sid=sa, seconds=0)
+    await _fix_at(maker, pid=pa, sid=sa, seconds=100)
+    repo = SqlLocationRepo(maker)
+
+    # at = +30s: the +0s fix (gap 30) beats the +100s fix (gap 70).
+    near = await repo.nearest_fix(
+        OWNER, subject_id=sa, at=_BASE + timedelta(seconds=30), max_gap_seconds=300
     )
-    assert await repo.places(NARROWED_GENERAL) == []
+    assert near is not None
+    assert near.fix.captured_at == _BASE and near.gap_seconds == 30.0
+
+
+async def test_nearest_fix_none_when_beyond_max_gap(maker: async_sessionmaker) -> None:
+    pa, sa = await _device(maker, "Phone")
+    await _fix_at(maker, pid=pa, sid=sa, seconds=0)
+    repo = SqlLocationRepo(maker)
+
+    # The only fix is 600s away; a 60s window excludes it.
+    assert (
+        await repo.nearest_fix(
+            OWNER, subject_id=sa, at=_BASE + timedelta(seconds=600), max_gap_seconds=60
+        )
+        is None
+    )
+
+
+async def test_nearest_fix_narrowed_owner_gets_none(maker: async_sessionmaker) -> None:
+    pa, sa = await _device(maker, "Phone")
+    await _fix_at(maker, pid=pa, sid=sa, seconds=0)
+    repo = SqlLocationRepo(maker)
+    # location_fixes is STRICT RLS: a narrowed owner is not is_full_owner(), so the
+    # subject pin denies every row — fail-closed by RLS, no app guard needed.
+    assert (
+        await repo.nearest_fix(NARROWED_LOCATION, subject_id=sa, at=_BASE, max_gap_seconds=300)
+        is None
+    )
+
+
+async def test_latest_place_resolves_current_place(maker: async_sessionmaker) -> None:
+    _, sa = await _device(maker, "Phone")
+    eid = await _geofence_state(maker, sid=sa, place_geofence_name="Office", state="inside")
+    repo = SqlLocationRepo(maker)
+
+    place = await repo.latest_place(OWNER, subject_id=sa)
+    assert place is not None
+    assert place.place_name == "Office" and place.place_entity_id == eid
+    assert place.since == _BASE
+
+
+async def test_latest_place_none_when_outside(maker: async_sessionmaker) -> None:
+    _, sa = await _device(maker, "Phone")
+    await _geofence_state(maker, sid=sa, place_geofence_name="Office", state="outside")
+    repo = SqlLocationRepo(maker)
+    assert await repo.latest_place(OWNER, subject_id=sa) is None
+
+
+async def test_latest_place_narrowed_owner_gets_none(maker: async_sessionmaker) -> None:
+    _, sa = await _device(maker, "Phone")
+    await _geofence_state(maker, sid=sa, place_geofence_name="Office", state="inside")
+    repo = SqlLocationRepo(maker)
+    # geofence_state is STRICT RLS: the subject pin denies the narrowed owner.
+    assert await repo.latest_place(NARROWED_LOCATION, subject_id=sa) is None
+
+
+async def test_dwells_pairs_and_filters_by_place(maker: async_sessionmaker) -> None:
+    pa, sa = await _device(maker, "Phone")
+    office = await _entity(maker, kind="Place", name="Office")
+    gym = await _entity(maker, kind="Place", name="Gym")
+    await _crossing(maker, pid=pa, sid=sa, eid=office, transition="enter", minute=0)
+    await _crossing(maker, pid=pa, sid=sa, eid=office, transition="exit", minute=30)
+    await _crossing(maker, pid=pa, sid=sa, eid=gym, transition="enter", minute=60)
+    await _crossing(maker, pid=pa, sid=sa, eid=gym, transition="exit", minute=90)
+    repo = SqlLocationRepo(maker)
+
+    window = (_BASE, _BASE + timedelta(hours=3))
+    every = await repo.dwells(OWNER, subject_id=sa, since=window[0], until=window[1])
+    assert {(d.place_name, d.seconds) for d in every} == {
+        ("Office", 30 * 60.0),
+        ("Gym", 30 * 60.0),
+    }
+    only_gym = await repo.dwells(
+        OWNER, subject_id=sa, place_entity_id=gym, since=window[0], until=window[1]
+    )
+    assert [d.place_name for d in only_gym] == ["Gym"]
+
+
+async def test_dwells_clamps_open_enter_to_until(maker: async_sessionmaker) -> None:
+    pa, sa = await _device(maker, "Phone")
+    office = await _entity(maker, kind="Place", name="Office")
+    await _crossing(maker, pid=pa, sid=sa, eid=office, transition="enter", minute=0)
+    until = _BASE + timedelta(minutes=45)
+    repo = SqlLocationRepo(maker)
+    dwells = await repo.dwells(OWNER, subject_id=sa, since=_BASE, until=until)
+    assert len(dwells) == 1 and dwells[0].exited_at == until
+
+
+async def test_dwells_refuses_narrowed_owner(maker: async_sessionmaker) -> None:
+    pa, sa = await _device(maker, "Phone")
+    # app.events is WEAK RLS, so dwells() MUST refuse a narrowed/owner_scoped session
+    # and a wrong-domain owner — RLS would otherwise hand them the rows.
+    repo = SqlLocationRepo(maker)
+    for ctx in (NARROWED_LOCATION, NARROWED_GENERAL):
+        with pytest.raises(LocationToolRefusal):
+            await repo.dwells(ctx, subject_id=sa, since=_BASE, until=_BASE + timedelta(hours=1))
+
+
+# --- L1 person⇄device binding (owner-only, deterministic) --------------------
+
+
+async def test_binding_links_device_with_operatedby_and_name_match(
+    maker: async_sessionmaker,
+) -> None:
+    _, sa = await _device(maker, "Jeff's iPhone")
+    person = await _entity(maker, kind="Person", name="Jeff")
+    device_entity = await _entity(maker, kind="Device", name="Jeff's iPhone")
+    await _operated_by(maker, device_eid=device_entity, person_eid=person)
+
+    async with scoped_session(maker, OWNER) as session:
+        bound = await reconcile_device_bindings(session, {uuid.UUID(device_entity)})
+    assert bound == 1
+
+    devices = SqlDeviceRepo(maker)
+    linked = await devices.linked_person(OWNER, sa)
+    assert linked is not None and linked.entity_id == device_entity
+    assert await devices.subject_for_person(OWNER, device_entity) == sa
+
+
+async def test_unbound_device_yields_zero_fixes(maker: async_sessionmaker) -> None:
+    # A Device entity with operatedBy but NO matching subject stays unlinked, and a
+    # Person→device→fix resolution through it finds nothing (fail-closed).
+    pa, sa = await _device(maker, "Some Other Phone")
+    await _fix_at(maker, pid=pa, sid=sa, seconds=0)
+    person = await _entity(maker, kind="Person", name="Jeff")
+    device_entity = await _entity(maker, kind="Device", name="Jeff's iPhone")  # no such subject
+    await _operated_by(maker, device_eid=device_entity, person_eid=person)
+
+    async with scoped_session(maker, OWNER) as session:
+        bound = await reconcile_device_bindings(session, {uuid.UUID(device_entity)})
+    assert bound == 0
+
+    devices = SqlDeviceRepo(maker)
+    assert await devices.subject_for_person(OWNER, device_entity) is None
+    # No subject → no track: a caller resolving Person→subject gets None and reads
+    # zero fixes (it never reaches a real subject's pinned rows).
+    repo = SqlLocationRepo(maker)
+    near = await repo.nearest_fix(
+        OWNER, subject_id="00000000-0000-0000-0000-000000000000", at=_BASE, max_gap_seconds=300
+    )
+    assert near is None
+
+
+async def test_binding_skips_when_subject_already_claimed(maker: async_sessionmaker) -> None:
+    # Two device entities both naming the same subject: the second cannot steal it.
+    _, sa = await _device(maker, "Shared Phone")
+    p1 = await _entity(maker, kind="Person", name="A")
+    p2 = await _entity(maker, kind="Person", name="B")
+    d1 = await _entity(maker, kind="Device", name="Shared Phone")
+    d2 = await _entity(maker, kind="Device", name="Shared Phone")
+    await _operated_by(maker, device_eid=d1, person_eid=p1)
+    await _operated_by(maker, device_eid=d2, person_eid=p2)
+
+    async with scoped_session(maker, OWNER) as session:
+        first = await reconcile_device_bindings(session, {uuid.UUID(d1)})
+        second = await reconcile_device_bindings(session, {uuid.UUID(d2)})
+    assert first == 1 and second == 0
+
+    devices = SqlDeviceRepo(maker)
+    assert await devices.subject_for_person(OWNER, d1) == sa
+    assert await devices.subject_for_person(OWNER, d2) is None
+
+
+async def test_linked_person_round_trip_and_unlinked(maker: async_sessionmaker) -> None:
+    _, sa = await _device(maker, "Phone")
+    repo = SqlDeviceRepo(maker)
+    # Unlinked subject: no entity bound.
+    assert await repo.linked_person(OWNER, sa) is None
