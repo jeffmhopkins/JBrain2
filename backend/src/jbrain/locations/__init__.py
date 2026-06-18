@@ -74,6 +74,20 @@ class TimelineEntry:
     place_name: str
 
 
+@dataclass(frozen=True)
+class PlaceGeofence:
+    """A geofenced place for the map overlay — the derived mirror's geometry, named
+    from its Place entity. A circle carries `center` + `radius_m`; a polygon carries
+    its `polygon` ring as [lat, lon] pairs (the other half is None)."""
+
+    place_entity_id: str
+    name: str
+    enabled: bool
+    center: tuple[float, float] | None  # (lat, lon)
+    radius_m: float | None
+    polygon: list[tuple[float, float]] | None  # ring of (lat, lon)
+
+
 class SqlLocationRepo:
     def __init__(self, maker: async_sessionmaker[AsyncSession]):
         self._maker = maker
@@ -210,6 +224,51 @@ class SqlLocationRepo:
             )
             for r in rows
         ]
+
+    async def places(self, ctx: SessionContext) -> list[PlaceGeofence]:
+        """Every geofenced place's geometry for the map overlay, named from its
+        Place entity. Reads the derived `place_geofence` mirror (the graph stays the
+        source of truth, #7); center/polygon come back as lat/lon via PostGIS so the
+        self-rendered map can project them without a geometry lib client-side."""
+        async with scoped_session(self._maker, ctx) as session:
+            rows = (
+                await session.execute(
+                    text(
+                        "SELECT pg.place_entity_id::text AS eid,"
+                        "   COALESCE(ent.canonical_name, pg.name) AS name, pg.enabled,"
+                        "   pg.radius_m,"
+                        "   ST_Y(pg.center::geometry) AS lat, ST_X(pg.center::geometry) AS lon,"
+                        "   ST_AsGeoJSON(pg.polygon::geometry) AS polygon_geojson"
+                        " FROM app.place_geofence pg"
+                        " LEFT JOIN app.entities ent ON ent.id = pg.place_entity_id"
+                        " ORDER BY name"
+                    )
+                )
+            ).all()
+        return [
+            PlaceGeofence(
+                place_entity_id=r.eid,
+                name=r.name or "Place",
+                enabled=r.enabled,
+                center=(r.lat, r.lon) if r.lat is not None and r.lon is not None else None,
+                radius_m=r.radius_m,
+                polygon=_polygon_ring(r.polygon_geojson),
+            )
+            for r in rows
+        ]
+
+
+def _polygon_ring(geojson: str | None) -> list[tuple[float, float]] | None:
+    """The outer ring of a PostGIS `ST_AsGeoJSON` Polygon as [lat, lon] pairs (it
+    encodes [lon, lat]); None when there is no polygon."""
+    if not geojson:
+        return None
+    import json
+
+    coords = json.loads(geojson).get("coordinates")
+    if not coords:
+        return None
+    return [(lat, lon) for lon, lat in coords[0]]
 
 
 def _params(principal_id: str, subject_id: str, fix: LocationFix) -> dict:

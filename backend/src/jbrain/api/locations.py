@@ -25,7 +25,13 @@ from pydantic import BaseModel
 from jbrain.api.deps import PrincipalDep, owner_only
 from jbrain.api.notes import ctx_for
 from jbrain.devices.repo import DeviceInfo, DeviceRepo
-from jbrain.locations import DeviceActivity, FixPoint, SqlLocationRepo, TimelineEntry
+from jbrain.locations import (
+    DeviceActivity,
+    FixPoint,
+    PlaceGeofence,
+    SqlLocationRepo,
+    TimelineEntry,
+)
 
 router = APIRouter(prefix="/locations", dependencies=[Depends(owner_only)])
 
@@ -118,6 +124,35 @@ class TimelineEntryOut(BaseModel):
         )
 
 
+class LatLon(BaseModel):
+    lat: float
+    lon: float
+
+
+class PlaceOut(BaseModel):
+    """A geofenced place for the map overlay: a circle (center + radius_m) or a
+    polygon (ring of points). The geometry is the derived mirror; the graph stays
+    the source of truth."""
+
+    place_entity_id: str
+    name: str
+    enabled: bool
+    center: LatLon | None
+    radius_m: float | None
+    polygon: list[LatLon] | None
+
+    @classmethod
+    def of(cls, p: PlaceGeofence) -> "PlaceOut":
+        return cls(
+            place_entity_id=p.place_entity_id,
+            name=p.name,
+            enabled=p.enabled,
+            center=LatLon(lat=p.center[0], lon=p.center[1]) if p.center else None,
+            radius_m=p.radius_m,
+            polygon=[LatLon(lat=lat, lon=lon) for lat, lon in p.polygon] if p.polygon else None,
+        )
+
+
 @router.get("/devices")
 async def list_devices(request: Request, principal: PrincipalDep) -> list[DeviceSummaryOut]:
     """Every provisioned device with its last-seen / battery / connection / fix
@@ -162,3 +197,11 @@ async def list_timeline(
         ctx_for(principal), since=start, until=end, limit=_TIMELINE_LIMIT
     )
     return [TimelineEntryOut.of(e) for e in rows]
+
+
+@router.get("/places")
+async def list_places(request: Request, principal: PrincipalDep) -> list[PlaceOut]:
+    """Every geofenced place's geometry, for the map's fence overlay. The geometry
+    is the derived mirror; the geofence editor edits a place note, never this."""
+    rows = await get_location_repo(request).places(ctx_for(principal))
+    return [PlaceOut.of(p) for p in rows]
