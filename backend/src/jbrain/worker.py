@@ -24,7 +24,10 @@ from jbrain.agent.skilldistill import SKILL_DISTILL_SPEC, skill_distill_handler
 from jbrain.agent.skillsweep import SKILL_SWEEP_SPEC, skill_sweep_handler
 from jbrain.analysis import purge
 from jbrain.analysis.consolidation import Consolidator
+from jbrain.analysis.hygiene import ENTITY_HYGIENE_SPEC, entity_hygiene_handler
 from jbrain.analysis.pipeline import AnalysisPipeline
+from jbrain.analysis.reembed import REEMBED_SPEC, reembed_handler
+from jbrain.analysis.tagconsolidate import TAG_CONSOLIDATE_SPEC, tag_consolidate_handler
 from jbrain.config import get_settings
 from jbrain.db.session import ScopeStampError, SessionContext, narrowed_context
 from jbrain.embed import NoteEmbedder, PredicateEmbedder, TeiEmbedClient
@@ -311,6 +314,15 @@ async def run() -> None:
         # proposals the owner keeps rejecting, budget-gated. In-code only (a migration seeds it,
         # disabled by default). Propose-only — never applies a change (#6).
         "prompt_self_edit": prompt_self_edit_handler(maker, router=router),
+        # Phase-6 hygiene sweeps (docs/HYGIENE_SWEEPS_PLAN.md): core-data maintenance, no LLM,
+        # in-code only (a migration seeds the schedules, disabled by default). entity_hygiene
+        # deletes provisional orphan entities; reembed_stale re-embeds stale-model skills/entities
+        # (local embed container); tag_consolidate folds drift tag spellings to canonical.
+        "entity_hygiene": entity_hygiene_handler(maker),
+        "reembed_stale": reembed_handler(
+            maker, embedder=TeiEmbedClient(settings.embed_url), embedding_model=settings.embed_model
+        ),
+        "tag_consolidate": tag_consolidate_handler(maker),
         # The wiki builder (Phase-6 Wave C2): dirty-bit-driven article build + reindex + prune.
         # In-code only (not in the app.actions seed); a migration seeds the schedules. The live
         # LLM rewriter (C2b) drives router.complete behind the grounding gate + wiki-build budget;
@@ -344,6 +356,9 @@ async def run() -> None:
             PREDICATE_REVIEW_SPEC,
             CORRECTION_MINE_SPEC,
             PROMPT_SELF_EDIT_SPEC,
+            ENTITY_HYGIENE_SPEC,
+            REEMBED_SPEC,
+            TAG_CONSOLIDATE_SPEC,
             *WIKI_SPECS,
         )
     )
