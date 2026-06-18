@@ -119,7 +119,7 @@ async def _fact_on(maker: async_sessionmaker, *, subject: str, obj: str | None =
                 " kind, statement, value_json, assertion, reported_at, temporal_precision, status,"
                 " note_id, extractor, prompt_version, domain_code)"
                 " VALUES (:id, :e, :o, 'p', '', 'state', 's', NULL, 'asserted', now(), 'unknown',"
-                "  'asserted', :n, 'test', 'test-v1', 'general')"
+                "  'active', :n, 'test', 'test-v1', 'general')"
             ),
             {"id": str(uuid.uuid4()), "e": subject, "o": obj, "n": note},
         )
@@ -165,8 +165,8 @@ async def test_entity_hygiene_keeps_an_entity_with_a_mention(maker: async_sessio
         chunk = str(uuid.uuid4())
         await session.execute(
             text(
-                "INSERT INTO app.chunks (id, note_id, domain_code, idx, kind, body, char_start,"
-                " char_end) VALUES (:id, :n, 'general', 0, 'paragraph', 'b', 0, 1)"
+                "INSERT INTO app.chunks (id, note_id, domain_code, granularity, seq, text)"
+                " VALUES (:id, :n, 'general', 'paragraph', 0, 'b')"
             ),
             {"id": chunk, "n": note},
         )
@@ -350,14 +350,14 @@ async def _note_with_tags(
     maker: async_sessionmaker, tags: list[str] | None, *, domain: str = "general"
 ) -> str:
     note = await _note(maker, domain=domain)
-    arr = "{" + ",".join(f'"{t}"' for t in tags) + "}" if tags is not None else "{}"
     async with scoped_session(maker, OWNER) as session:
         await session.execute(
             text(
                 "INSERT INTO app.note_analysis (note_id, title, tags, domain_code)"
                 " VALUES (:n, 't', cast(:tags AS text[]), :d)"
             ),
-            {"n": note, "tags": arr, "d": domain},
+            # asyncpg binds a text[] param from a Python list, not a '{…}' literal.
+            {"n": note, "tags": list(tags) if tags is not None else [], "d": domain},
         )
     return note
 
