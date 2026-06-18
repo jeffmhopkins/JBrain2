@@ -63,6 +63,7 @@ from jbrain.lists.repo import SqlListsRepo
 from jbrain.llm import build_router
 from jbrain.locations import SqlLocationRepo
 from jbrain.locations.ratelimit import TokenBucket
+from jbrain.locations.viewscope import SqlViewScopeRepo
 from jbrain.notes.repo import SqlNotesRepo
 from jbrain.queue import SYSTEM_CTX, PgJobQueue
 from jbrain.search.repo import SqlSearchRepo
@@ -103,6 +104,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.auth_repo = SqlAuthRepo(maker)
         app.state.device_repo = SqlDeviceRepo(maker)
         app.state.location_repo = SqlLocationRepo(maker)
+        app.state.view_scope_repo = SqlViewScopeRepo(maker)
         # The on-box geocoder (Phase 7 Wave 4): shared by the agent tools and the
         # owner-only reverse-geocode read endpoint. Off-by-default at the deploy
         # layer (the `geocoder` profile); reads fail closed when it isn't running.

@@ -40,6 +40,21 @@ def authorize_topic(username: str, topic: str) -> bool:
     return topic == f"{OWNTRACKS_ROOT}/{username}" or topic.startswith(_own_prefix(username))
 
 
+def topic_namespace_owner(topic: str) -> str | None:
+    """The owner segment of an `owntracks/<owner>/...` topic or subscribe filter, or
+    None if it isn't a single concrete owner namespace.
+
+    Used to widen a device's ACL to a *group member's* namespace: the owner segment
+    is that member's principal id, which the endpoint resolves to a subject and runs
+    the view-scope check on. A wildcard in the owner position (`owntracks/+/+`) or a
+    foreign root yields None — those are never group-member subscribes.
+    """
+    parts = topic.split("/")
+    if len(parts) >= 2 and parts[0] == OWNTRACKS_ROOT and parts[1] and parts[1] not in ("+", "#"):
+        return parts[1]
+    return None
+
+
 def authorize_ingest_subscribe(topic: str, acc: int) -> bool:
     """The server-side ingest consumer's ACL: read/subscribe the whole `owntracks`
     tree, never publish. It is a trusted internal subscriber (authenticated by a

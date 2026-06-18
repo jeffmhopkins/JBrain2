@@ -7,7 +7,7 @@ until view-scope (M2) widens it.
 
 import pytest
 
-from jbrain.mqtt.authz import authorize_ingest_subscribe, authorize_topic
+from jbrain.mqtt.authz import authorize_ingest_subscribe, authorize_topic, topic_namespace_owner
 
 
 @pytest.mark.parametrize(
@@ -50,3 +50,20 @@ def test_authorize_topic(username: str, topic: str, allowed: bool) -> None:
 )
 def test_authorize_ingest_subscribe(topic: str, acc: int, allowed: bool) -> None:
     assert authorize_ingest_subscribe(topic, acc) is allowed
+
+
+@pytest.mark.parametrize(
+    ("topic", "owner"),
+    [
+        ("owntracks/dad/phone", "dad"),
+        ("owntracks/dad/+", "dad"),  # a subscribe filter keeps a concrete owner
+        ("owntracks/dad", "dad"),
+        ("owntracks/+/+", None),  # wildcard owner is not a single namespace
+        ("owntracks/#", None),
+        ("owntracks//phone", None),
+        ("system/dad/phone", None),
+        ("dad", None),
+    ],
+)
+def test_topic_namespace_owner(topic: str, owner: str | None) -> None:
+    assert topic_namespace_owner(topic) == owner
