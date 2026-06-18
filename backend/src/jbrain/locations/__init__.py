@@ -200,6 +200,33 @@ class SqlLocationRepo:
             ).first()
         return inserted is not None
 
+    async def record_view(
+        self,
+        ctx: SessionContext,
+        *,
+        viewer_principal_id: str,
+        viewer_subject_id: str,
+        target_subject_id: str,
+        path: str,
+    ) -> None:
+        """Append a who-saw-whom row for a location view (JBrain360 M3a). Runs under
+        the viewer's ctx, so the view_audit WITH CHECK attributes the view correctly:
+        the owner may write any row; a device only one about its own subject."""
+        async with scoped_session(self._maker, ctx) as session:
+            await session.execute(
+                text(
+                    "INSERT INTO app.view_audit"
+                    " (viewer_principal_id, viewer_subject_id, target_subject_id, path)"
+                    " VALUES (:vp, :vs, :ts, :path)"
+                ),
+                {
+                    "vp": viewer_principal_id or None,
+                    "vs": viewer_subject_id or None,
+                    "ts": target_subject_id,
+                    "path": path,
+                },
+            )
+
     async def device_activity(self, ctx: SessionContext) -> dict[str, DeviceActivity]:
         """Per-device last-seen + latest battery/connection + total fix count, keyed
         by subject id. Runs under the owner ctx, so RLS shows every device's rows; a

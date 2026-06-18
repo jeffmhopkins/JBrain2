@@ -185,9 +185,21 @@ async def list_fixes(
     map's Trail/Heat modes render. The window defaults to the last day."""
     end = _parse(until) or datetime.now(UTC)
     start = _parse(since) or (end - _DEFAULT_FIXES_WINDOW)
-    rows = await get_location_repo(request).fixes(
-        ctx_for(principal), subject_id=subject_id, since=start, until=end, limit=_FIXES_LIMIT
-    )
+    repo = get_location_repo(request)
+    ctx = ctx_for(principal)
+    rows = await repo.fixes(ctx, subject_id=subject_id, since=start, until=end, limit=_FIXES_LIMIT)
+    # Who-saw-whom: record that this viewer read this subject's track (M3a). The
+    # audit is an append-only side-effect; a write failure must not break the read.
+    try:
+        await repo.record_view(
+            ctx,
+            viewer_principal_id=principal.id,
+            viewer_subject_id=principal.subject_id,
+            target_subject_id=subject_id,
+            path="history",
+        )
+    except Exception as exc:  # noqa: BLE001 - audit failure is logged, never a 500
+        log.warning("locations.audit_failed", error=repr(exc))
     return [FixPointOut.of(f) for f in rows]
 
 
