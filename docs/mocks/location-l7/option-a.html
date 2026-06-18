@@ -1,0 +1,251 @@
+<!doctype html>
+<!--
+  L7 LOCATION GUI GATE — OPTION A: "Narrative brief + top presence banner"
+  ========================================================================
+  Two surfaces, one mock:
+   1. L7a digest — a NARRATIVE PARAGRAPH brief. The digest reads like a short
+      written summary ("This week you slept home 5 of 7 nights…"), with a small
+      supporting stat strip beneath. It lives as its own DIGEST tab in the
+      Locations surface (Map · Timeline · Devices · Digest), with a nightly/
+      weekly segmented toggle and a manual "refresh" affordance (compute-on-read,
+      no stored feed).
+   2. L7b presence chip — a full-width TOP BANNER docked under the app top bar
+      when the app/chat opens. Fresh fix = teal "currently at" tone; stale fix =
+      amber "last known" tone. Dismissible with an ✕ (returns next app-open).
+
+  Direction & tradeoffs:
+   + Narrative reads instantly — the answer is a sentence, not a chart you parse.
+   + The top banner is the loudest, hardest-to-miss presence placement; the
+     amber stale variant is unmissable.
+   - A paragraph is the least scannable for "give me the number"; the stat strip
+     under it is the mitigation.
+   - A top banner costs vertical space at the very top of every app-open.
+
+  Invariants honored:
+   - Names + times only — NO coordinates anywhere in the digest or chip.
+   - Freshness-honest: the stale banner reads "last known", never "here now".
+   - Owner-only: an "owner-only · computed now" footnote on the digest.
+   - Compute-on-read: a refresh control, never a notification feed.
+  Lucide icons inlined as SVG; no network needed. Teal = --location (#6FB6B1).
+-->
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Location L7 — A — Narrative brief + top banner</title>
+<style>
+  :root{
+    --bg:#0E0F11;--surface:#17181B;--surface-2:#1E2024;--border:#26282C;
+    --text:#E6E7E9;--text-2:#9A9DA3;--text-3:#5C5F66;
+    --steel:#7FA7C9;--green:#8FBC9A;--amber:#C9A36A;--rose:#CF8A8F;
+    --location:#6FB6B1;
+    --location-tint:color-mix(in srgb,var(--location) 13%,transparent);
+    --amber-tint:color-mix(in srgb,var(--amber) 13%,transparent);
+    --green-tint:color-mix(in srgb,var(--green) 13%,transparent);
+    --shadow:rgba(0,0,0,.45);
+  }
+  [data-theme="light"]{
+    --bg:#F7F7F5;--surface:#FFFFFF;--surface-2:#F0F0EE;--border:#E2E2DF;
+    --text:#1A1B1E;--text-2:#5C5F66;--text-3:#9A9DA3;--shadow:rgba(20,30,50,.12);
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  body{margin:0;background:#05070a;color:var(--text);
+    font:15px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    display:grid;place-items:center;min-height:100vh;padding:20px 0}
+  .phone{width:390px;height:824px;background:var(--bg);border-radius:30px;overflow:hidden;
+    position:relative;box-shadow:0 20px 60px var(--shadow);display:flex;flex-direction:column}
+  .topbar{height:56px;flex:0 0 56px;display:flex;align-items:center;gap:10px;padding:0 14px;
+    border-bottom:1px solid var(--border);background:var(--surface)}
+  .topbar .dot{width:8px;height:8px;border-radius:50%;background:var(--location)}
+  .topbar .ttl{font-weight:700;font-size:18px;flex:1}
+  .topbar .ttl i{color:var(--location);font-style:normal}
+  .icon-btn{width:36px;height:36px;display:grid;place-items:center;border-radius:9px;
+    color:var(--text-2);background:transparent;border:0;cursor:pointer}
+  .icon-btn:hover{background:var(--surface-2);color:var(--text)}
+  svg{width:20px;height:20px;stroke:currentColor;fill:none;stroke-width:1.7;
+    stroke-linecap:round;stroke-linejoin:round}
+  .opthead{padding:9px 14px;background:var(--location-tint);border-bottom:1px solid var(--border);
+    font-size:11.5px;color:var(--text-2)}
+  .opthead b{color:var(--text);font-size:12.5px}
+
+  /* ===== L7b — top presence banner ===== */
+  .pbanner{display:flex;align-items:center;gap:10px;padding:10px 14px;
+    border-bottom:1px solid var(--border);font-size:13.5px;animation:slidein .18s ease-out}
+  @keyframes slidein{from{transform:translateY(-100%);opacity:0}to{transform:none;opacity:1}}
+  .pbanner.fresh{background:var(--location-tint);color:var(--text)}
+  .pbanner.stale{background:var(--amber-tint);color:var(--text)}
+  .pbanner .pdot{width:9px;height:9px;border-radius:50%;flex:0 0 9px}
+  .pbanner.fresh .pdot{background:var(--location)}
+  .pbanner.stale .pdot{background:var(--amber);box-shadow:0 0 0 3px color-mix(in srgb,var(--amber) 22%,transparent)}
+  .pbanner .ptxt{flex:1;line-height:1.35}
+  .pbanner .ptxt b{font-weight:600}
+  .pbanner .ptxt .pf{display:block;font-size:11px;color:var(--text-2);margin-top:1px}
+  .pbanner .px{width:26px;height:26px;border-radius:7px;display:grid;place-items:center;
+    color:var(--text-2);background:transparent;border:0;cursor:pointer}
+  .pbanner .px:hover{background:color-mix(in srgb,var(--text) 8%,transparent)}
+  .pbanner .px svg{width:15px;height:15px}
+
+  /* ===== Locations surface chrome ===== */
+  .seg-row{display:flex;border:1px solid var(--border);border-radius:14px;overflow:hidden;margin:12px}
+  .seg{flex:1;display:flex;align-items:center;justify-content:center;gap:6px;padding:.7em 0;
+    font-size:13px;font-weight:500;color:var(--text-2);background:transparent;border:0;cursor:pointer}
+  .seg+.seg{border-left:1px solid var(--border)}
+  .seg-on{color:var(--text);font-weight:600;background:var(--location-tint)}
+  .seg-on .si{color:var(--location)}
+  .si{display:inline-flex}.si svg{width:15px;height:15px}
+  .scroll{overflow-y:auto;flex:1;padding:0 12px 28px}
+
+  /* digest controls */
+  .digctl{display:flex;align-items:center;gap:8px;margin:4px 0 12px}
+  .toggle{display:flex;border:1px solid var(--border);border-radius:999px;overflow:hidden}
+  .toggle button{padding:6px 14px;font-size:12.5px;font-weight:500;color:var(--text-2);
+    background:transparent;border:0;cursor:pointer}
+  .toggle button.on{background:var(--location-tint);color:var(--text)}
+  .toggle button+button{border-left:1px solid var(--border)}
+  .refresh{margin-left:auto;display:inline-flex;align-items:center;gap:6px;font-size:12px;
+    color:var(--location);background:transparent;border:0;cursor:pointer}
+  .refresh svg{width:14px;height:14px}
+  .refresh.spin svg{animation:spin .7s linear}
+  @keyframes spin{to{transform:rotate(360deg)}}
+
+  /* narrative brief card */
+  .brief{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:16px}
+  .brief .eyebrow{font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--text-3);
+    display:flex;align-items:center;gap:6px;margin-bottom:10px}
+  .brief .eyebrow svg{width:13px;height:13px;color:var(--location)}
+  .brief p{margin:0 0 11px;font-size:15px;line-height:1.62;color:var(--text)}
+  .brief p:last-of-type{margin-bottom:0}
+  .brief p .k{color:var(--location);font-weight:600}
+  .brief p .pl{font-weight:600}
+  /* supporting stat strip */
+  .stripwrap{margin-top:14px;padding-top:14px;border-top:1px solid var(--border)}
+  .strip{display:flex;gap:0}
+  .strip .s{flex:1;text-align:center;padding:2px 4px}
+  .strip .s+.s{border-left:1px solid var(--border)}
+  .strip .s .n{font-size:19px;font-weight:600}
+  .strip .s .n small{font-size:11px;font-weight:500;color:var(--text-2)}
+  .strip .s .l{font-size:10px;color:var(--text-3);text-transform:uppercase;letter-spacing:.03em;margin-top:2px}
+  .owner{display:flex;align-items:center;gap:6px;margin-top:14px;font-size:11px;color:var(--text-3)}
+  .owner svg{width:13px;height:13px;color:var(--location)}
+
+  /* per-place first/last seen list */
+  .seen{background:var(--surface);border:1px solid var(--border);border-radius:16px;margin-top:12px;overflow:hidden}
+  .seen h4{margin:0;padding:12px 14px 8px;font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--text-3)}
+  .seenrow{display:flex;align-items:center;gap:10px;padding:10px 14px;border-top:1px solid var(--border)}
+  .seenrow .nm{font-size:14px;font-weight:500;flex:1}
+  .seenrow .nm small{display:block;font-size:11.5px;color:var(--text-2);font-weight:400;margin-top:1px}
+  .seenrow .ct{font-size:12px;color:var(--text-2);text-align:right}
+  .seenrow .ct small{display:block;color:var(--text-3);font-size:10.5px}
+</style>
+</head>
+<body>
+<div class="phone">
+  <div class="topbar">
+    <span class="dot"></span>
+    <div class="ttl">JBrain<i>.</i></div>
+    <button class="icon-btn" id="reopen" title="Re-open / toggle presence banner">
+      <svg viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 3v4h-4"/></svg></button>
+    <button class="icon-btn" id="theme" title="Toggle theme">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4.5"/><path d="M12 2v2M12 20v2M4 12H2M22 12h-2M5 5l1.5 1.5M17.5 17.5L19 19M19 5l-1.5 1.5M6.5 17.5L5 19"/></svg></button>
+  </div>
+
+  <div class="opthead"><b>Option A — Narrative brief + top presence banner.</b> The digest reads as a written paragraph; the app-open presence chip is a full-width banner under the top bar (teal fresh / amber "last known"). Top-right ↻ toggles fresh⇄stale; ✕ dismisses.</div>
+
+  <!-- L7b: presence banner (fresh by default; the ↻ toggles the stale variant for review) -->
+  <div class="pbanner fresh" id="pbanner">
+    <span class="pdot"></span>
+    <span class="ptxt"><b>Currently at: Home</b><span class="pf">fix 4 min ago · live</span></span>
+    <button class="px" id="pclose" title="Dismiss"><svg viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+  </div>
+
+  <!-- Locations surface -->
+  <div class="seg-row" role="tablist">
+    <button class="seg" role="tab"><span class="si"><svg viewBox="0 0 24 24"><path d="M9 3 3 6v15l6-3 6 3 6-3V3l-6 3-6-3Z"/><path d="M9 3v15M15 6v15"/></svg></span>Map</button>
+    <button class="seg" role="tab"><span class="si"><svg viewBox="0 0 24 24"><path d="M3 12h4l2 6 4-12 2 6h6"/></svg></span>Timeline</button>
+    <button class="seg" role="tab"><span class="si"><svg viewBox="0 0 24 24"><rect x="6" y="2" width="12" height="20" rx="2"/><path d="M11 18h2"/></svg></span>Devices</button>
+    <button class="seg seg-on" role="tab" aria-selected="true"><span class="si"><svg viewBox="0 0 24 24"><path d="M4 5h16M4 12h16M4 19h10"/></svg></span>Digest</button>
+  </div>
+
+  <div class="scroll">
+    <!-- L7a: digest controls -->
+    <div class="digctl">
+      <div class="toggle" id="period">
+        <button class="on" data-p="week">This week</button>
+        <button data-p="night">Last night</button>
+      </div>
+      <button class="refresh" id="refresh"><svg viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 3v4h-4"/></svg>refresh</button>
+    </div>
+
+    <!-- narrative brief -->
+    <div class="brief" id="brief">
+      <div class="eyebrow"><svg viewBox="0 0 24 24"><path d="M12 2 2 7l10 5 10-5-10-5Z"/><path d="M2 17l10 5 10-5M2 12l10 5 10-5"/></svg>Mon Jun 9 – Sun Jun 15</div>
+      <p>You slept <span class="k">home 5 of 7 nights</span> — away Tuesday and Saturday. Your weekdays anchored on the <span class="pl">Office</span>, where you spent the most waking time after Home.</p>
+      <p>Your <span class="k">longest trip</span> was <span class="pl">Saturday</span>: you left mid-morning, spent the day around <span class="pl">Pearl St</span> and the <span class="pl">Foothills</span>, and didn't settle back home until late.</p>
+      <p>One new place turned up this week — <span class="pl">Mom's house</span>, first seen Tuesday evening.</p>
+
+      <div class="stripwrap">
+        <div class="strip">
+          <div class="s"><div class="n">5<small>/7</small></div><div class="l">nights home</div></div>
+          <div class="s"><div class="n">31<small>h</small></div><div class="l">at office</div></div>
+          <div class="s"><div class="n">6</div><div class="l">places</div></div>
+          <div class="s"><div class="n">Sat</div><div class="l">longest trip</div></div>
+        </div>
+      </div>
+      <div class="owner"><svg viewBox="0 0 24 24"><path d="M12 1l9 4v6c0 5-3.8 9-9 11-5.2-2-9-6-9-11V5z"/></svg>owner-only · computed now from your place activity · no map data</div>
+    </div>
+
+    <!-- per-place first/last seen -->
+    <div class="seen">
+      <h4>First &amp; last seen this week</h4>
+      <div class="seenrow"><div class="nm">Home<small>most time · 92 h</small></div><div class="ct">Mon 7:12a<small>last: now</small></div></div>
+      <div class="seenrow"><div class="nm">Office<small>31 h across 4 days</small></div><div class="ct">Mon 8:50a<small>last: Fri 6:10p</small></div></div>
+      <div class="seenrow"><div class="nm">Pearl St<small>3 visits</small></div><div class="ct">Wed 12:30p<small>last: Sat 4:25p</small></div></div>
+      <div class="seenrow"><div class="nm">Mom's house<small>new this week</small></div><div class="ct">Tue 6:40p<small>last: Tue 9:55p</small></div></div>
+    </div>
+  </div>
+</div>
+
+<script>
+  // L7b banner: dismiss + reopen toggles fresh ⇄ stale to show both tones.
+  const banner = document.getElementById('pbanner');
+  let dismissed = false;
+  document.getElementById('pclose').onclick = () => { banner.style.display='none'; dismissed=true; };
+  document.getElementById('reopen').onclick = () => {
+    if (dismissed){ banner.style.display=''; dismissed=false; return; }
+    const stale = banner.classList.toggle('stale'); banner.classList.toggle('fresh', !stale);
+    banner.querySelector('.ptxt').innerHTML = stale
+      ? '<b>Last known: Office</b><span class="pf">3 h ago · may have moved</span>'
+      : '<b>Currently at: Home</b><span class="pf">fix 4 min ago · live</span>';
+  };
+
+  // L7a period toggle (week ⇄ last night) swaps the brief copy + strip.
+  const brief = document.getElementById('brief');
+  const WEEK = brief.innerHTML;
+  const NIGHT = `
+    <div class="eyebrow"><svg viewBox="0 0 24 24"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z"/></svg>Last night · Tue Jun 17</div>
+    <p>You spent the night <span class="k">at Home</span> — arrived <span class="pl">6:48p</span>, no crossings after <span class="pl">9:10p</span>.</p>
+    <p>Before that you were at the <span class="pl">Office</span> until late afternoon, with a short stop at <span class="pl">Pearl St</span> on the way home.</p>
+    <div class="stripwrap"><div class="strip">
+      <div class="s"><div class="n">Home</div><div class="l">slept at</div></div>
+      <div class="s"><div class="n">3</div><div class="l">places</div></div>
+      <div class="s"><div class="n">9:10<small>p</small></div><div class="l">settled</div></div>
+    </div></div>
+    <div class="owner"><svg viewBox="0 0 24 24"><path d="M12 1l9 4v6c0 5-3.8 9-9 11-5.2-2-9-6-9-11V5z"/></svg>owner-only · computed now from your place activity · no map data</div>`;
+  document.querySelectorAll('#period button').forEach(b => b.onclick = () => {
+    document.querySelectorAll('#period button').forEach(x => x.classList.remove('on'));
+    b.classList.add('on');
+    brief.innerHTML = b.dataset.p === 'night' ? NIGHT : WEEK;
+  });
+
+  // refresh: spin the icon (compute-on-read; nothing stored).
+  document.getElementById('refresh').onclick = function(){
+    this.classList.add('spin'); setTimeout(()=>this.classList.remove('spin'),700);
+  };
+
+  document.getElementById('theme').onclick = () => {
+    const h = document.documentElement;
+    h.dataset.theme = h.dataset.theme === 'dark' ? 'light' : 'dark';
+  };
+</script>
+</body>
+</html>

@@ -1,0 +1,289 @@
+<!doctype html>
+<!--
+  L7 LOCATION GUI GATE — OPTION B: "Stat-grid dashboard + inline presence pill"
+  ============================================================================
+  Two surfaces, one mock:
+   1. L7a digest — a STAT-GRID DASHBOARD. The digest is a 2-column grid of
+      glanceable stat cards (half-width cards, matching DESIGN.md's status-card
+      grid), one headline metric per card, with a small per-place table beneath.
+      Lives as its own DIGEST tab; a nightly/weekly segmented toggle sits at the
+      top; pull-to-refresh-style "updated just now · tap to recompute" line keeps
+      compute-on-read honest.
+   2. L7b presence chip — an INLINE PILL. On app/chat open, a compact pill is
+      prepended to the home transcript (it reads as the day's first row, like the
+      "older notes" pill). Fresh = teal pill "Currently at: Home"; stale = amber
+      pill "Last known: Office". Tapping the pill opens the Locations tab; it
+      auto-clears once you scroll/interact (no manual dismiss needed).
+
+  Direction & tradeoffs:
+   + Stat grid is the most scannable — every number has its own card, glance and go.
+   + The inline pill is the lightest-weight presence; it never steals a top banner
+     and sits in the natural reading flow.
+   - A grid has no narrative — it tells you the numbers but not the story.
+   - An inline pill is easier to miss than a banner (acceptable: presence is a
+     low-stakes glance, not an alert).
+
+  Invariants honored:
+   - Names + times only — NO coordinates in any card or the pill.
+   - Freshness-honest: stale pill reads "last known", never "here now".
+   - Owner-only footnote on the digest; pill renders the owner's own place only.
+   - Compute-on-read: "tap to recompute", never a stored notification feed.
+  Lucide icons inlined as SVG; no network needed. Teal = --location (#6FB6B1).
+-->
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Location L7 — B — Stat grid + inline pill</title>
+<style>
+  :root{
+    --bg:#0E0F11;--surface:#17181B;--surface-2:#1E2024;--border:#26282C;
+    --text:#E6E7E9;--text-2:#9A9DA3;--text-3:#5C5F66;
+    --steel:#7FA7C9;--green:#8FBC9A;--amber:#C9A36A;--rose:#CF8A8F;
+    --location:#6FB6B1;
+    --location-tint:color-mix(in srgb,var(--location) 13%,transparent);
+    --amber-tint:color-mix(in srgb,var(--amber) 13%,transparent);
+    --shadow:rgba(0,0,0,.45);
+  }
+  [data-theme="light"]{
+    --bg:#F7F7F5;--surface:#FFFFFF;--surface-2:#F0F0EE;--border:#E2E2DF;
+    --text:#1A1B1E;--text-2:#5C5F66;--text-3:#9A9DA3;--shadow:rgba(20,30,50,.12);
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  body{margin:0;background:#05070a;color:var(--text);
+    font:15px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    display:grid;place-items:center;min-height:100vh;padding:20px 0}
+  .phone{width:390px;height:824px;background:var(--bg);border-radius:30px;overflow:hidden;
+    position:relative;box-shadow:0 20px 60px var(--shadow);display:flex;flex-direction:column}
+  .topbar{height:56px;flex:0 0 56px;display:flex;align-items:center;gap:10px;padding:0 14px;
+    border-bottom:1px solid var(--border);background:var(--surface)}
+  .topbar .dot{width:8px;height:8px;border-radius:50%;background:var(--location)}
+  .topbar .ttl{font-weight:700;font-size:18px;flex:1}
+  .topbar .ttl i{color:var(--location);font-style:normal}
+  .icon-btn{width:36px;height:36px;display:grid;place-items:center;border-radius:9px;
+    color:var(--text-2);background:transparent;border:0;cursor:pointer}
+  .icon-btn:hover{background:var(--surface-2);color:var(--text)}
+  svg{width:20px;height:20px;stroke:currentColor;fill:none;stroke-width:1.7;
+    stroke-linecap:round;stroke-linejoin:round}
+  .opthead{padding:9px 14px;background:var(--location-tint);border-bottom:1px solid var(--border);
+    font-size:11.5px;color:var(--text-2)}
+  .opthead b{color:var(--text);font-size:12.5px}
+
+  /* view switcher (mock helper) */
+  .viewtabs{display:flex;border-bottom:1px solid var(--border);background:var(--surface)}
+  .viewtabs button{flex:1;padding:8px 0;font-size:11.5px;font-weight:500;color:var(--text-2);
+    background:transparent;border:0;cursor:pointer}
+  .viewtabs button.on{color:var(--location);box-shadow:inset 0 -2px 0 var(--location)}
+
+  .pane{flex:1;overflow-y:auto;display:none}
+  .pane.on{display:block}
+
+  /* ===== L7b — inline presence pill (in home transcript) ===== */
+  .home{padding:14px 12px 28px;display:flex;flex-direction:column;gap:12px}
+  .dayhdr{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--text-3);
+    text-align:center;margin:4px 0 2px}
+  .pill{align-self:center;display:inline-flex;align-items:center;gap:8px;padding:7px 13px;
+    border-radius:999px;font-size:12.5px;cursor:pointer;border:1px solid var(--border);
+    animation:pop .18s ease-out}
+  @keyframes pop{from{transform:scale(.96);opacity:0}to{transform:none;opacity:1}}
+  .pill.fresh{background:var(--location-tint);border-color:color-mix(in srgb,var(--location) 30%,transparent)}
+  .pill.stale{background:var(--amber-tint);border-color:color-mix(in srgb,var(--amber) 30%,transparent)}
+  .pill .pdot{width:8px;height:8px;border-radius:50%}
+  .pill.fresh .pdot{background:var(--location)}
+  .pill.stale .pdot{background:var(--amber)}
+  .pill b{font-weight:600}
+  .pill .pf{color:var(--text-2)}
+  .pill svg{width:13px;height:13px;color:var(--text-3)}
+  .bubble{align-self:flex-start;max-width:80%;background:var(--surface);border:1px solid var(--border);
+    border-radius:14px 14px 14px 4px;padding:10px 13px;font-size:14px;color:var(--text)}
+  .bubble.me{align-self:flex-end;background:var(--surface-2);border-radius:14px 14px 4px 14px}
+  .hint{text-align:center;font-size:11px;color:var(--text-3);margin-top:2px}
+
+  /* ===== Locations surface (Digest tab) ===== */
+  .seg-row{display:flex;border:1px solid var(--border);border-radius:14px;overflow:hidden;margin:12px}
+  .seg{flex:1;display:flex;align-items:center;justify-content:center;gap:6px;padding:.7em 0;
+    font-size:13px;font-weight:500;color:var(--text-2);background:transparent;border:0;cursor:pointer}
+  .seg+.seg{border-left:1px solid var(--border)}
+  .seg-on{color:var(--text);font-weight:600;background:var(--location-tint)}
+  .seg-on .si{color:var(--location)}
+  .si{display:inline-flex}.si svg{width:15px;height:15px}
+  .digbody{padding:0 12px 28px}
+
+  .digctl{display:flex;align-items:center;gap:8px;margin:0 0 12px}
+  .toggle{display:flex;border:1px solid var(--border);border-radius:999px;overflow:hidden}
+  .toggle button{padding:6px 14px;font-size:12.5px;font-weight:500;color:var(--text-2);
+    background:transparent;border:0;cursor:pointer}
+  .toggle button.on{background:var(--location-tint);color:var(--text)}
+  .toggle button+button{border-left:1px solid var(--border)}
+  .recompute{margin-left:auto;font-size:11.5px;color:var(--text-3);background:transparent;border:0;cursor:pointer}
+  .recompute b{color:var(--location)}
+
+  /* stat-grid: 2-col half-width cards */
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  .stat{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:14px}
+  .stat.span2{grid-column:1 / -1;display:flex;align-items:center;gap:14px}
+  .stat .ic{width:30px;height:30px;border-radius:9px;display:grid;place-items:center;
+    background:var(--location-tint);color:var(--location);flex:0 0 30px;margin-bottom:9px}
+  .stat.span2 .ic{margin-bottom:0}
+  .stat .ic svg{width:17px;height:17px}
+  .stat .big{font-size:24px;font-weight:600;line-height:1}
+  .stat .big small{font-size:13px;font-weight:500;color:var(--text-2)}
+  .stat .lab{font-size:11.5px;color:var(--text-2);margin-top:5px}
+  .stat .sub{font-size:11px;color:var(--text-3);margin-top:2px}
+  .stat.span2 .col{flex:1}
+
+  /* per-place table */
+  .tbl{background:var(--surface);border:1px solid var(--border);border-radius:16px;margin-top:12px;overflow:hidden}
+  .tbl h4{margin:0;padding:12px 14px 6px;font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--text-3)}
+  .trow{display:grid;grid-template-columns:1fr auto auto;align-items:center;gap:10px;
+    padding:10px 14px;border-top:1px solid var(--border);font-size:13px}
+  .trow .nm{font-weight:500}.trow .nm small{display:block;color:var(--text-3);font-size:10.5px;font-weight:400}
+  .trow .v{color:var(--text-2);font-size:12px;text-align:right;min-width:54px}
+  .trow .v small{display:block;color:var(--text-3);font-size:10px}
+  .trow.h{font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:var(--text-3);border-top:0;padding-bottom:4px}
+  .owner{display:flex;align-items:center;gap:6px;margin:14px 2px 0;font-size:11px;color:var(--text-3)}
+  .owner svg{width:13px;height:13px;color:var(--location)}
+</style>
+</head>
+<body>
+<div class="phone">
+  <div class="topbar">
+    <span class="dot"></span>
+    <div class="ttl">JBrain<i>.</i></div>
+    <button class="icon-btn" id="toneToggle" title="Toggle presence freshness">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></button>
+    <button class="icon-btn" id="theme" title="Toggle theme">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4.5"/><path d="M12 2v2M12 20v2M4 12H2M22 12h-2M5 5l1.5 1.5M17.5 17.5L19 19M19 5l-1.5 1.5M6.5 17.5L5 19"/></svg></button>
+  </div>
+
+  <div class="opthead"><b>Option B — Stat-grid dashboard + inline presence pill.</b> Digest is a 2-col grid of stat cards; the app-open chip is a pill prepended to the home transcript. Use the tabs to see both; ↻ (clock icon) flips fresh⇄stale.</div>
+
+  <!-- mock helper: switch between the two surfaces -->
+  <div class="viewtabs">
+    <button class="on" data-v="home">App open (Home + pill)</button>
+    <button data-v="dig">Locations · Digest</button>
+  </div>
+
+  <!-- ===== L7b: app-open home with inline presence pill ===== -->
+  <div class="pane on" id="pane-home">
+    <div class="home">
+      <div class="dayhdr">Today · Jun 18</div>
+      <div class="pill fresh" id="pill"><span class="pdot"></span><b>Currently at: Home</b><span class="pf">· fix 4 min ago</span>
+        <svg viewBox="0 0 24 24"><path d="M9 18l6-6-6-6"/></svg></div>
+      <div class="hint">app-open presence — tap to open Locations</div>
+      <div class="bubble me">remind me to water the plants tonight</div>
+      <div class="bubble">saved — reminder for tonight.</div>
+      <div class="bubble me">picked up groceries on the way home</div>
+      <div class="bubble">noted.</div>
+    </div>
+  </div>
+
+  <!-- ===== L7a: Locations · Digest tab ===== -->
+  <div class="pane" id="pane-dig">
+    <div class="seg-row" role="tablist">
+      <button class="seg" role="tab"><span class="si"><svg viewBox="0 0 24 24"><path d="M9 3 3 6v15l6-3 6 3 6-3V3l-6 3-6-3Z"/><path d="M9 3v15M15 6v15"/></svg></span>Map</button>
+      <button class="seg" role="tab"><span class="si"><svg viewBox="0 0 24 24"><path d="M3 12h4l2 6 4-12 2 6h6"/></svg></span>Timeline</button>
+      <button class="seg" role="tab"><span class="si"><svg viewBox="0 0 24 24"><rect x="6" y="2" width="12" height="20" rx="2"/><path d="M11 18h2"/></svg></span>Devices</button>
+      <button class="seg seg-on" role="tab" aria-selected="true"><span class="si"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg></span>Digest</button>
+    </div>
+
+    <div class="digbody">
+      <div class="digctl">
+        <div class="toggle" id="period">
+          <button class="on" data-p="week">This week</button>
+          <button data-p="night">Last night</button>
+        </div>
+        <button class="recompute" id="recompute">updated just now · <b>recompute</b></button>
+      </div>
+
+      <div class="grid" id="grid">
+        <div class="stat span2">
+          <div class="ic"><svg viewBox="0 0 24 24"><path d="M3 11l9-7 9 7M5 10v10h14V10"/></svg></div>
+          <div class="col"><div class="big">5<small> / 7 nights</small></div><div class="lab">slept at Home</div>
+            <div class="sub">away Tue &amp; Sat</div></div>
+        </div>
+        <div class="stat">
+          <div class="ic"><svg viewBox="0 0 24 24"><path d="M4 21V8l8-5 8 5v13"/><path d="M9 21v-6h6v6"/></svg></div>
+          <div class="big">31<small>h</small></div><div class="lab">at the Office</div><div class="sub">across 4 days</div>
+        </div>
+        <div class="stat">
+          <div class="ic"><svg viewBox="0 0 24 24"><path d="M3 12h18M12 3a15 15 0 0 1 0 18M12 3a15 15 0 0 0 0 18"/><circle cx="12" cy="12" r="9"/></svg></div>
+          <div class="big">6</div><div class="lab">places visited</div><div class="sub">1 new this week</div>
+        </div>
+        <div class="stat">
+          <div class="ic"><svg viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg></div>
+          <div class="big">Sat</div><div class="lab">longest trip</div><div class="sub">10:40a → 11:20p</div>
+        </div>
+        <div class="stat">
+          <div class="ic"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></div>
+          <div class="big">11.2<small>h</small></div><div class="lab">avg/day home</div><div class="sub">vs 9.8h last wk</div>
+        </div>
+      </div>
+
+      <div class="tbl">
+        <h4>First &amp; last seen</h4>
+        <div class="trow h"><span>place</span><span class="v">first</span><span class="v">last</span></div>
+        <div class="trow"><span class="nm">Home<small>92 h</small></span><span class="v">Mon<small>7:12a</small></span><span class="v">now<small>—</small></span></div>
+        <div class="trow"><span class="nm">Office<small>31 h</small></span><span class="v">Mon<small>8:50a</small></span><span class="v">Fri<small>6:10p</small></span></div>
+        <div class="trow"><span class="nm">Pearl St<small>3 visits</small></span><span class="v">Wed<small>12:30p</small></span><span class="v">Sat<small>4:25p</small></span></div>
+        <div class="trow"><span class="nm">Mom's house<small>new</small></span><span class="v">Tue<small>6:40p</small></span><span class="v">Tue<small>9:55p</small></span></div>
+      </div>
+
+      <div class="owner"><svg viewBox="0 0 24 24"><path d="M12 1l9 4v6c0 5-3.8 9-9 11-5.2-2-9-6-9-11V5z"/></svg>owner-only · computed on read · place names + times only</div>
+    </div>
+  </div>
+</div>
+
+<script>
+  // mock helper: surface switcher
+  document.querySelectorAll('.viewtabs button').forEach(b => b.onclick = () => {
+    document.querySelectorAll('.viewtabs button').forEach(x => x.classList.remove('on'));
+    b.classList.add('on');
+    document.getElementById('pane-home').classList.toggle('on', b.dataset.v==='home');
+    document.getElementById('pane-dig').classList.toggle('on', b.dataset.v==='dig');
+  });
+
+  // L7b pill: tap → would open Locations; here jumps to the Digest pane.
+  document.getElementById('pill').onclick = () =>
+    document.querySelector('.viewtabs button[data-v="dig"]').click();
+
+  // tone toggle: fresh ⇄ stale pill (honest freshness)
+  document.getElementById('toneToggle').onclick = () => {
+    const p = document.getElementById('pill');
+    const stale = p.classList.toggle('stale'); p.classList.toggle('fresh', !stale);
+    p.innerHTML = (stale
+      ? '<span class="pdot"></span><b>Last known: Office</b><span class="pf">· 3 h ago</span>'
+      : '<span class="pdot"></span><b>Currently at: Home</b><span class="pf">· fix 4 min ago</span>')
+      + '<svg viewBox="0 0 24 24"><path d="M9 18l6-6-6-6"/></svg>';
+    p.onclick = () => document.querySelector('.viewtabs button[data-v="dig"]').click();
+  };
+
+  // L7a period toggle (week ⇄ last night)
+  const grid = document.getElementById('grid');
+  const WEEK = grid.innerHTML;
+  const NIGHT = `
+    <div class="stat span2"><div class="ic"><svg viewBox="0 0 24 24"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z"/></svg></div>
+      <div class="col"><div class="big">Home</div><div class="lab">slept at</div><div class="sub">arrived 6:48p</div></div></div>
+    <div class="stat"><div class="ic"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></div>
+      <div class="big">9:10<small>p</small></div><div class="lab">settled in</div><div class="sub">no later crossings</div></div>
+    <div class="stat"><div class="ic"><svg viewBox="0 0 24 24"><path d="M3 12h18"/><circle cx="12" cy="12" r="9"/></svg></div>
+      <div class="big">3</div><div class="lab">places yesterday</div><div class="sub">Office · Pearl St · Home</div></div>`;
+  document.querySelectorAll('#period button').forEach(b => b.onclick = () => {
+    document.querySelectorAll('#period button').forEach(x => x.classList.remove('on'));
+    b.classList.add('on');
+    grid.innerHTML = b.dataset.p === 'night' ? NIGHT : WEEK;
+  });
+
+  // recompute: confirm compute-on-read
+  document.getElementById('recompute').onclick = function(){
+    this.innerHTML = 'recomputing…';
+    setTimeout(()=>{ this.innerHTML = 'updated just now · <b>recompute</b>'; }, 650);
+  };
+
+  document.getElementById('theme').onclick = () => {
+    const h = document.documentElement;
+    h.dataset.theme = h.dataset.theme === 'dark' ? 'light' : 'dark';
+  };
+</script>
+</body>
+</html>
