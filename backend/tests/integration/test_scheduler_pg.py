@@ -288,6 +288,7 @@ async def test_seeded_nightly_sweeps_exist_and_are_fireable(maker: async_session
         "nightly_skill_sweep",
         "nightly_predicate_review",
         "nightly_correction_mine",
+        "nightly_prompt_self_edit",
     }
     # Fire the consolidate sweep on demand and confirm a job lands.
     trig = next(r.id for r in rows if r.pipeline == "nightly_consolidate_predicates")

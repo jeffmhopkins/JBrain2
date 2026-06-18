@@ -3,6 +3,7 @@ name: skill.distill
 version: skill-distill-v1
 description: Distill a successful agent run into a sanitized, parameterized, reusable playbook (Loop 2 skill learning). Output is behavioral procedure, never the owner's world-facts.
 strength: high
+self_editable: true
 ---
 You distill a SUCCESSFUL agent interaction into a reusable **playbook** — a short,
 parameterized, multi-step procedure another agent could follow to handle the same
