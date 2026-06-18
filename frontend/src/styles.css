@@ -9821,3 +9821,74 @@ input.ld-title {
   font-size: var(--fs-body);
   line-height: 1.35;
 }
+
+/* --- Location Map tab (Phase 7 Wave 5d) --------------------------------- */
+.loc-map {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.loc-map-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.loc-map-device,
+.loc-map-range input {
+  font: inherit;
+  font-size: var(--fs-body);
+  color: var(--text);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-input);
+  padding: 8px 10px;
+}
+.loc-map-range {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.loc-map-range input {
+  flex: 1;
+}
+.loc-map-range-sep {
+  color: var(--text-3);
+}
+.loc-map-svg {
+  width: 100%;
+  height: auto;
+  border-radius: var(--r-card);
+  border: 1px solid var(--border);
+  display: block;
+}
+.loc-map-bg {
+  fill: var(--surface);
+}
+.loc-map-fence {
+  fill: var(--steel-tint);
+  stroke: var(--steel);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+}
+.loc-map-heat {
+  fill: var(--steel);
+}
+.loc-map-trail {
+  fill: none;
+  stroke: var(--steel);
+  stroke-width: 2;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+.loc-map-start {
+  fill: var(--green);
+}
+.loc-map-end,
+.loc-map-live {
+  fill: var(--steel);
+  stroke: var(--bg);
+  stroke-width: 2;
+}
+.loc-map-note {
+  text-align: center;
+}
