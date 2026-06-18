@@ -78,6 +78,7 @@ from jbrain.analysis.extraction import (
     ratchet_domain,
     recover_scalar_value,
 )
+from jbrain.analysis.geofence_projection import project_place_geofences
 from jbrain.analysis.graph_context import build_graph_context
 from jbrain.analysis.integrate import Integrator
 from jbrain.analysis.integrate_prompt import INTEGRATE_STRENGTH
@@ -969,6 +970,7 @@ class AnalysisPipeline:
         projected = {e.id for e in resolved.values() if e is not None}
         projected.update(r.entity_id for r in retracted)
         await project_appointments(session, projected)
+        await project_place_geofences(session, projected)
         return held_ids
 
     async def _sweep_stale_ambiguous(
