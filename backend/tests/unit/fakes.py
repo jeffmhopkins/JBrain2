@@ -4,11 +4,12 @@ import dataclasses
 import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from jbrain.auth.service import PrincipalInfo
 from jbrain.db.session import SessionContext
 from jbrain.devices.repo import DeviceInfo
+from jbrain.locations.pairing import CODE_TTL, RedeemedDevice
 
 
 @dataclass
@@ -93,6 +94,23 @@ class FakeViewScopeRepo:
 
     async def may_view(self, viewer_subject_id: str, target_subject_id: str) -> bool:
         return bool(viewer_subject_id) and (viewer_subject_id, target_subject_id) in self.allowed
+
+
+@dataclass
+class FakePairingRepo:
+    """In-memory pairing repo: records mints and redeems configured codes."""
+
+    minted: list[tuple[str, int]] = field(default_factory=list)  # (label, monitoring)
+    redeemable: dict[str, RedeemedDevice] = field(default_factory=dict)  # code -> device
+
+    async def mint_code(
+        self, ctx: SessionContext, *, label: str, monitoring: int, ttl: timedelta = CODE_TTL
+    ) -> tuple[str, datetime]:
+        self.minted.append((label, monitoring))
+        return "fake-code", datetime.now(UTC) + ttl
+
+    async def redeem(self, code: str) -> RedeemedDevice | None:
+        return self.redeemable.get(code)
 
 
 @dataclass

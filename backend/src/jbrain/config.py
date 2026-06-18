@@ -33,6 +33,12 @@ class Settings(BaseSettings):
     mqtt_broker_port: int = 1883
     mqtt_ingest_username: str = "jbrain-ingest"
     mqtt_ingest_secret: str = ""
+    # Device-facing broker coordinates returned in the OwnTracks pairing config (the
+    # public hostname/port a phone connects to). Empty host until a deploy sets it.
+    mqtt_public_host: str = ""
+    mqtt_public_port: int = 8883
+    # The dashboard URL the forked app's WebView loads; set when M4 lands.
+    dashboard_url: str = ""
 
     # Map basemap tiles, served through the server-side proxy/cache (api/tiles.py)
     # so the phone fetches tiles only from this box, never a third-party tile host.

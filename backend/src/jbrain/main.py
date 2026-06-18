@@ -35,6 +35,7 @@ from jbrain.api import (
     notes,
     ops,
     owntracks,
+    pairing,
     proposals,
     runs,
     search,
@@ -62,6 +63,7 @@ from jbrain.geocode import PhotonGeocoderClient
 from jbrain.lists.repo import SqlListsRepo
 from jbrain.llm import build_router
 from jbrain.locations import SqlLocationRepo
+from jbrain.locations.pairing import SqlPairingRepo
 from jbrain.locations.ratelimit import TokenBucket
 from jbrain.locations.viewscope import SqlViewScopeRepo
 from jbrain.notes.repo import SqlNotesRepo
@@ -105,6 +107,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.device_repo = SqlDeviceRepo(maker)
         app.state.location_repo = SqlLocationRepo(maker)
         app.state.view_scope_repo = SqlViewScopeRepo(maker)
+        app.state.pairing_repo = SqlPairingRepo(maker)
+        # Anti-brute-force on the unauthenticated redeem endpoint: ~10 attempts
+        # burst per source IP, refilling 1 every 10s.
+        app.state.pairing_rate_limiter = TokenBucket(capacity=10, refill_per_sec=0.1)
         # The on-box geocoder (Phase 7 Wave 4): shared by the agent tools and the
         # owner-only reverse-geocode read endpoint. Off-by-default at the deploy
         # layer (the `geocoder` profile); reads fail closed when it isn't running.
@@ -254,6 +260,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(notes.router, prefix="/api")
     app.include_router(ops.router, prefix="/api")
     app.include_router(owntracks.router, prefix="/api")
+    app.include_router(pairing.router, prefix="/api")
     app.include_router(proposals.router, prefix="/api")
     app.include_router(runs.router, prefix="/api")
     app.include_router(search.router, prefix="/api")
