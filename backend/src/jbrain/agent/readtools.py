@@ -8,7 +8,11 @@ sidecars (docs/archive/ASSISTANT_PLAN.md P4.4c).
 """
 
 from pathlib import Path
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
+
+if TYPE_CHECKING:
+    from jbrain.llm.router import LlmRouter
+    from jbrain.settings_store import SqlSettingsStore
 
 from jbrain.agent.appointmenttools import (
     build_appointment_handlers,
@@ -23,6 +27,7 @@ from jbrain.agent.memorytools import build_memory_handlers
 from jbrain.agent.mergetools import build_merge_handlers
 from jbrain.agent.proposals import ProposalRepo
 from jbrain.agent.proposaltools import build_proposal_handlers
+from jbrain.agent.selfedittools import build_selfedit_handlers
 from jbrain.agent.toolregistry import ToolRegistry, load_registry
 from jbrain.analysis.relationships import predicate_candidates
 from jbrain.appointments.service import AppointmentsRepo
@@ -373,6 +378,8 @@ def build_registry(
     appointments: AppointmentsRepo,
     wiki: WikiReader,
     wiki_write: dict[str, ToolHandler],
+    router: "LlmRouter | None" = None,
+    settings: "SqlSettingsStore | None" = None,
 ) -> ToolRegistry:
     """The agent's tool registry: every shipped sidecar bound to its handler — the
     read tools, the Tier-A memory tools, the list tools (which write the owner's
@@ -395,6 +402,7 @@ def build_registry(
             **build_merge_handlers(proposals, entities),
             **build_connector_handlers(connectors, proposals),
             **build_wiki_handlers(wiki),
+            **build_selfedit_handlers(proposals, router, settings),
             **wiki_write,
         },
     )
