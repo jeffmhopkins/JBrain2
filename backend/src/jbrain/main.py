@@ -22,6 +22,7 @@ from jbrain.api import (
     devices,
     feed,
     health,
+    locations,
     notes,
     ops,
     owntracks,
@@ -197,6 +198,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(feed.router, prefix="/api")
     app.include_router(lists_api.router, prefix="/api")
     app.include_router(llm_settings_api.router, prefix="/api")
+    app.include_router(locations.router, prefix="/api")
     app.include_router(notes.router, prefix="/api")
     app.include_router(ops.router, prefix="/api")
     app.include_router(owntracks.router, prefix="/api")

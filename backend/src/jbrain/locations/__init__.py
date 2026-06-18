@@ -4,6 +4,11 @@ Runs under `device_context` (a non-owner, subject-pinned session), so the
 location-fixes RLS subject pin is the barrier: a device can only insert fixes for
 its own subject. Inserts are idempotent on the natural key so OwnTracks retries
 (it resends the same fix until it gets a 200) never duplicate.
+
+The READ side (Phase 7 Wave 5) is the opposite: it runs under the caller's *full
+owner* `SessionContext`, where `app.is_full_owner()` lets the owner see every
+device's track. Those reads are the only place location data leaves the box, and
+only ever to the owner — the UI's Devices / Timeline / Map tabs read here.
 """
 
 from dataclasses import dataclass
@@ -12,7 +17,7 @@ from datetime import datetime
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from jbrain.db.session import device_context, scoped_session
+from jbrain.db.session import SessionContext, device_context, scoped_session
 
 
 @dataclass(frozen=True)
@@ -30,6 +35,43 @@ class LocationFix:
     connection: str | None = None
     tracker_id: str | None = None
     raw: dict | None = None
+
+
+@dataclass(frozen=True)
+class DeviceActivity:
+    """Per-device location aggregates for the Devices tab: when the device was last
+    heard from and the battery/connection it reported then, plus its total fix
+    count. Keyed by the device's subject id."""
+
+    subject_id: str
+    last_seen: datetime | None
+    battery_pct: int | None
+    connection: str | None
+    fix_count: int
+
+
+@dataclass(frozen=True)
+class FixPoint:
+    """One stored fix, trimmed to what the map renders (raw doubles, never the
+    `raw` jsonb or the SSID-revealing metadata)."""
+
+    captured_at: datetime
+    latitude: float
+    longitude: float
+    accuracy_m: float | None
+    battery_pct: int | None
+
+
+@dataclass(frozen=True)
+class TimelineEntry:
+    """One geofence crossing for the Timeline feed, with the place resolved to its
+    canonical name (the feed reads as "left/arrived at <place>")."""
+
+    occurred_at: datetime
+    subject_id: str
+    transition: str  # 'enter' | 'exit'
+    place_entity_id: str
+    place_name: str
 
 
 class SqlLocationRepo:
@@ -58,6 +100,116 @@ class SqlLocationRepo:
                 )
             ).first()
         return inserted is not None
+
+    async def device_activity(self, ctx: SessionContext) -> dict[str, DeviceActivity]:
+        """Per-device last-seen + latest battery/connection + total fix count, keyed
+        by subject id. Runs under the owner ctx, so RLS shows every device's rows; a
+        device with no fixes yet simply has no entry. The latest row per subject
+        rides the `(subject_id, captured_at DESC)` index via DISTINCT ON."""
+        async with scoped_session(self._maker, ctx) as session:
+            rows = (
+                await session.execute(
+                    text(
+                        "WITH latest AS ("
+                        "  SELECT DISTINCT ON (subject_id) subject_id, captured_at,"
+                        "    battery_pct, connection"
+                        "  FROM app.location_fixes ORDER BY subject_id, captured_at DESC"
+                        "), counts AS ("
+                        "  SELECT subject_id, count(*) AS fix_count"
+                        "  FROM app.location_fixes GROUP BY subject_id"
+                        ")"
+                        " SELECT l.subject_id::text AS sid, l.captured_at, l.battery_pct,"
+                        "   l.connection, c.fix_count"
+                        " FROM latest l JOIN counts c ON c.subject_id = l.subject_id"
+                    )
+                )
+            ).all()
+        return {
+            r.sid: DeviceActivity(
+                subject_id=r.sid,
+                last_seen=r.captured_at,
+                battery_pct=r.battery_pct,
+                connection=r.connection,
+                fix_count=r.fix_count,
+            )
+            for r in rows
+        }
+
+    async def fixes(
+        self,
+        ctx: SessionContext,
+        *,
+        subject_id: str,
+        since: datetime,
+        until: datetime,
+        limit: int,
+    ) -> list[FixPoint]:
+        """A device's fixes in `[since, until)`, oldest first (a drawable trail), via
+        the `(subject_id, captured_at DESC)` index. `limit` bounds an over-wide
+        window so one request can never stream the whole hypertable; the owner ctx +
+        RLS still scope the rows. The map's Trail/Heat modes read here."""
+        async with scoped_session(self._maker, ctx) as session:
+            rows = (
+                await session.execute(
+                    text(
+                        "SELECT captured_at, latitude, longitude, accuracy_m, battery_pct"
+                        " FROM app.location_fixes"
+                        " WHERE subject_id = cast(:sid AS uuid)"
+                        "   AND captured_at >= :since AND captured_at < :until"
+                        " ORDER BY captured_at LIMIT :lim"
+                    ),
+                    {"sid": subject_id, "since": since, "until": until, "lim": limit},
+                )
+            ).all()
+        return [
+            FixPoint(
+                captured_at=r.captured_at,
+                latitude=r.latitude,
+                longitude=r.longitude,
+                accuracy_m=r.accuracy_m,
+                battery_pct=r.battery_pct,
+            )
+            for r in rows
+        ]
+
+    async def timeline(
+        self, ctx: SessionContext, *, since: datetime, until: datetime, limit: int
+    ) -> list[TimelineEntry]:
+        """Geofence crossings in `[since, until)`, newest first, each resolved to its
+        place's canonical name. Reads `app.events` (the location-domain transition
+        the detector emits) joined to `app.entities` via the payload's
+        `place_entity_id`. A crossing whose place entity was since deleted falls back
+        to a generic label rather than vanishing from the audit."""
+        async with scoped_session(self._maker, ctx) as session:
+            rows = (
+                await session.execute(
+                    text(
+                        "SELECT e.occurred_at,"
+                        "   e.payload->>'subject_id' AS sid,"
+                        "   e.payload->>'transition' AS transition,"
+                        "   e.payload->>'place_entity_id' AS eid,"
+                        "   ent.canonical_name AS place_name"
+                        " FROM app.events e"
+                        " LEFT JOIN app.entities ent"
+                        "   ON ent.id = cast(e.payload->>'place_entity_id' AS uuid)"
+                        " WHERE e.type = 'location.geofence_transition'"
+                        "   AND e.domain_code = 'location'"
+                        "   AND e.occurred_at >= :since AND e.occurred_at < :until"
+                        " ORDER BY e.occurred_at DESC LIMIT :lim"
+                    ),
+                    {"since": since, "until": until, "lim": limit},
+                )
+            ).all()
+        return [
+            TimelineEntry(
+                occurred_at=r.occurred_at,
+                subject_id=r.sid,
+                transition=r.transition,
+                place_entity_id=r.eid,
+                place_name=r.place_name or "a place",
+            )
+            for r in rows
+        ]
 
 
 def _params(principal_id: str, subject_id: str, fix: LocationFix) -> dict:
