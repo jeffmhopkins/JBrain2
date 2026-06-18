@@ -57,6 +57,31 @@ ln -sf "$INSTALL_DIR/jbrain" /usr/local/bin/jbrain
 if [ ! -f .env ]; then
   say "First-time configuration"
   read -rp "Domain for this server (e.g. brain.example.com): " DOMAIN
+
+  # Access mode decides how the world reaches this box. Tunnel mode is the
+  # default because it needs no static IP, no port-forwarding, and survives
+  # CGNAT — the common home-network case. Direct mode is for a box that already
+  # has a public name resolving to it with inbound 80/443 open (Let's Encrypt).
+  echo
+  echo "How is this box reached on your network?"
+  echo "  1) Cloudflare Tunnel — recommended for home/dynamic-IP; no port-forwarding, works behind CGNAT"
+  echo "  2) Direct — this box has a public name + inbound 80/443 (Caddy gets Let's Encrypt)"
+  read -rp "Choose [1/2] (default 1): " ACCESS_CHOICE
+  if [ "${ACCESS_CHOICE:-1}" = "2" ]; then
+    SITE_ADDR="$DOMAIN"          # Caddy fetches Let's Encrypt; needs inbound 80/443.
+    TUNNEL_ENABLED=false
+    TUNNEL_TOKEN=""
+  else
+    SITE_ADDR="http://$DOMAIN"   # Cloudflare terminates TLS; Caddy serves plain HTTP.
+    TUNNEL_ENABLED=true
+    echo
+    echo "Cloudflare Tunnel token — create the tunnel under Cloudflare Zero Trust"
+    echo "(Networks > Tunnels > Create) and paste the token it shows (starts 'eyJ')."
+    echo "Leave blank to add CLOUDFLARE_TUNNEL_TOKEN to $INSTALL_DIR/.env later."
+    echo "Full walkthrough: docs/CLOUDFLARE_TUNNEL.md"
+    read -rp "Cloudflare Tunnel token: " TUNNEL_TOKEN
+  fi
+
   read -rp "Anthropic API key (blank to skip): " ANTHROPIC_KEY
   read -rp "xAI API key (blank to skip): " XAI_KEY
   # Self-hosted local models are off by default; offer them only on capable
@@ -66,6 +91,9 @@ if [ ! -f .env ]; then
 
   cat > .env <<EOF
 JBRAIN_DOMAIN=$DOMAIN
+JBRAIN_SITE_ADDR=$SITE_ADDR
+TUNNEL_ENABLED=$TUNNEL_ENABLED
+CLOUDFLARE_TUNNEL_TOKEN=$TUNNEL_TOKEN
 POSTGRES_PASSWORD=$(openssl rand -hex 32)
 APP_DB_PASSWORD=$(openssl rand -hex 32)
 SUPERVISOR_TOKEN=$(openssl rand -hex 32)
@@ -75,6 +103,14 @@ EOF
   chmod 600 .env
 else
   say "Existing .env found — keeping current configuration and secrets"
+fi
+
+# Bring up the opt-in tunnel connector when the operator chose it. Read from
+# .env (not COMPOSE_PROFILES) so the choice survives re-runs, mirroring how the
+# `jbrain` helper resolves profiles.
+PROFILE=()
+if grep -q '^TUNNEL_ENABLED=true' .env; then
+  PROFILE+=(--profile tunnel)
 fi
 
 say "Building images from source (a few minutes on first run)"
@@ -90,7 +126,7 @@ say "Running migrations"
 docker compose run --rm migrate
 
 say "Starting the stack"
-docker compose up -d
+docker compose "${PROFILE[@]}" up -d
 
 if [ ! -f .owner-initialized ]; then
   say "Generating your owner key"
@@ -109,5 +145,12 @@ cat > /etc/cron.d/jbrain-backup <<EOF
 30 3 * * * root $INSTALL_DIR/backup.sh >> $INSTALL_DIR/backups/backup.log 2>&1
 EOF
 
-say "Done. Open https://$(grep '^JBRAIN_DOMAIN=' .env | cut -d= -f2) and paste your owner key."
+DONE_DOMAIN="$(grep '^JBRAIN_DOMAIN=' .env | cut -d= -f2)"
+if grep -q '^TUNNEL_ENABLED=true' .env; then
+  say "Done. Finish the Cloudflare side (docs/CLOUDFLARE_TUNNEL.md): add a public"
+  say "hostname for $DONE_DOMAIN routing to http://proxy:80, then open"
+  say "https://$DONE_DOMAIN and paste your owner key."
+else
+  say "Done. Open https://$DONE_DOMAIN and paste your owner key."
+fi
 say "Manage with: jbrain status | restart | logs | reset-owner-key | update | backup | restore"

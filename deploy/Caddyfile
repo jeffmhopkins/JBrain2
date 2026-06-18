@@ -1,6 +1,12 @@
 # flush_interval -1 disables response buffering so SSE log streams arrive
 # line-by-line instead of in bursts.
-{$JBRAIN_DOMAIN} {
+#
+# JBRAIN_SITE_ADDR is the bare domain in direct mode (Caddy fetches a Let's
+# Encrypt cert — needs inbound 80/443), or "http://<domain>" in Cloudflare
+# Tunnel mode (Caddy serves plain HTTP on :80 and TLS terminates at
+# Cloudflare's edge; the tunnel reaches us here at http://proxy:80). It
+# defaults to JBRAIN_DOMAIN in compose, so pre-tunnel installs are unchanged.
+{$JBRAIN_SITE_ADDR} {
 	encode zstd gzip
 
 	handle /api/* {

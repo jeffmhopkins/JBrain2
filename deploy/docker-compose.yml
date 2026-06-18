@@ -16,12 +16,32 @@ services:
       - "443:443"
       - "443:443/udp"
     environment:
-      JBRAIN_DOMAIN: ${JBRAIN_DOMAIN}
+      # Direct mode: the bare domain (Caddy fetches Let's Encrypt). Tunnel mode:
+      # http://<domain> (plain HTTP behind Cloudflare). Defaults to JBRAIN_DOMAIN
+      # so installs that predate tunnel support keep their auto-TLS behaviour.
+      JBRAIN_SITE_ADDR: ${JBRAIN_SITE_ADDR:-${JBRAIN_DOMAIN}}
     volumes:
       - caddy_data:/data
       - caddy_config:/config
     networks: [edge]
     depends_on: [api]
+
+  # OPT-IN Cloudflare Tunnel: a dial-OUT connector that publishes the stack on
+  # your own domain with NO static IP, NO port-forwarding, and NO inbound
+  # reachability — it works behind CGNAT. Guarded by the `tunnel` profile so a
+  # stock deploy never starts it; install.sh flips TUNNEL_ENABLED on (and the
+  # `jbrain` helper adds --profile tunnel to match) when you choose tunnel mode.
+  # In tunnel mode Caddy serves plain HTTP (see JBRAIN_SITE_ADDR) and the
+  # connector reaches it at http://proxy:80 over the `edge` network; configure
+  # that origin and the public hostname in the Cloudflare dashboard. The token
+  # carries the tunnel's identity and routing — see docs/CLOUDFLARE_TUNNEL.md.
+  cloudflared:
+    profiles: [tunnel]
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    command: ["tunnel", "--no-autoupdate", "run", "--token", "${CLOUDFLARE_TUNNEL_TOKEN:-}"]
+    networks: [edge]
+    depends_on: [proxy]
 
   api:
     image: jbrain2-api:local

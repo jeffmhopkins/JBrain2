@@ -60,10 +60,11 @@ Installs Docker, clones to `/opt/jbrain2/src`, brings up the stack:
 curl -fsSL https://raw.githubusercontent.com/jeffmhopkins/JBrain2/main/deploy/install.sh | sudo bash
 ```
 Prompts:
-- **Domain** — a name that resolves to this box (Caddy fetches HTTPS via Let's
-  Encrypt). For a home/LAN box with no public domain, the easiest path is
-  **Tailscale** (`tailscale up`, use the MagicDNS name) or a real domain you
-  control; otherwise the Caddyfile needs a local/self-signed tweak.
+- **Domain** — the name you'll use to reach this box.
+- **Access mode** — **1) Cloudflare Tunnel** (default, recommended for a home box
+  on a dynamic IP / behind CGNAT: no static IP, no port-forwarding; full
+  walkthrough in `CLOUDFLARE_TUNNEL.md`) or **2) Direct** (the box has a public
+  name resolving to it with inbound 80/443 open, and Caddy fetches Let's Encrypt).
 - **Anthropic / xAI keys** — paste, or leave blank to run fully local.
 - **"Enable self-hosted local models?"** → **N** for now (host tuning + reboot
   comes first; you'll enable them in Phase 6).
