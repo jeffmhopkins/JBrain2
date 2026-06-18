@@ -38,6 +38,7 @@ from jbrain.api import (
     runs,
     search,
     sessions,
+    tiles,
     wiki,
 )
 from jbrain.api import (
@@ -67,6 +68,7 @@ from jbrain.search.repo import SqlSearchRepo
 from jbrain.search.service import SearchService
 from jbrain.settings_store import SqlSettingsStore
 from jbrain.storage import FsBackupShelf, FsBlobStore
+from jbrain.tiles import FsTileCache, HttpTileFetcher, TileService
 from jbrain.usage import SqlUsageRecorder
 from jbrain.wiki.actions import WIKI_SPECS
 from jbrain.wiki.readstore import WikiReadStore
@@ -104,6 +106,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # owner-only reverse-geocode read endpoint. Off-by-default at the deploy
         # layer (the `geocoder` profile); reads fail closed when it isn't running.
         app.state.geocoder = PhotonGeocoderClient(settings.geocoder_url)
+        # Server-side basemap tile proxy/cache: the map's Leaflet layer fetches
+        # tiles only from this box (api/tiles.py); the upstream is fetched once and
+        # cached. Empty upstream disables tiles (map falls back to the schematic).
+        app.state.tile_service = TileService(
+            FsTileCache(settings.tile_cache_dir),
+            HttpTileFetcher(settings.tile_user_agent),
+            upstream_template=settings.tile_upstream_url,
+            max_zoom=settings.tile_max_zoom,
+        )
         # Per-device ingest cap: 60 fixes/min sustained (burst 60). A flooding
         # device gets a 429 and backs off; normal move-mode never trips it.
         app.state.location_rate_limiter = TokenBucket(capacity=60, refill_per_sec=1.0)
@@ -240,6 +251,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(search.router, prefix="/api")
     app.include_router(sessions.router, prefix="/api")
     app.include_router(settings_api.router, prefix="/api")
+    app.include_router(tiles.router, prefix="/api")
     app.include_router(wiki.router, prefix="/api")
     return app
 

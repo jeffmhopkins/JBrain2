@@ -45,6 +45,9 @@ services:
       JBRAIN_LOCAL_MODELS: ${LOCAL_MODELS:-[]}
     volumes:
       - blobs:/data/blobs
+      # Server-side basemap tile cache (location map proxy) — public map data, so
+      # a plain named volume, kept out of backups.
+      - tiles:/data/tiles
       # Export downloads stream from here; import uploads land here for the
       # supervisor's one-shot to pick up. Host path, shared with backup.sh.
       - ./backups:/data/backups
@@ -217,3 +220,4 @@ volumes:
   caddy_config:
   embed_models:
   geocoder_data:
+  tiles:

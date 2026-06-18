@@ -392,6 +392,14 @@ decisions logged.
   never rendered/forwarded.
 - **Cross-subject isolation depth** is an owner decision (Wave 0); the plan ships
   the full RLS subject-pin by default.
+- **Basemap tiles relax L1** (owner-approved follow-on): the map uses Leaflet over
+  a **server-side tile proxy/cache** (`api/tiles.py`) instead of the original
+  self-rendered, no-tiles schematic. The phone fetches tiles only from this box;
+  the server fetches-and-caches upstream, so the upstream tile host learns the
+  **coarse map areas** the owner browses (slippy `z/x/y`, tied to the server IP —
+  never the device or a precise fix). Bounded and far better than the device
+  talking to a tile host directly, but a deliberate softening of "no tiles leave
+  the box." `tile_upstream_url=""` disables it and reverts to the schematic.
 
 ## F. Exit (ties to ROADMAP "phones report location continuously")
 A provisioned phone, configured with its per-device key over HTTP Basic, posts
