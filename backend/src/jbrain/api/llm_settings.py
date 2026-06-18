@@ -105,7 +105,11 @@ class TaskOverrideIn(BaseModel):
     # Validated against the live provider choices in update_llm_settings (an
     # unknown id 422s there) — the set is dynamic once local hosting is on.
     provider: str
-    reasoning_effort: ReasoningEffort
+    # Only reasoning-capable providers (grok) carry an effort; local models and
+    # Claude legitimately omit it (the screen sends just `{provider}`), and the
+    # handler drops it for non-grok anyway. Required-here would 422 every
+    # non-grok save before the handler runs.
+    reasoning_effort: ReasoningEffort | None = None
 
 
 class LlmSettingsPut(BaseModel):
@@ -210,7 +214,7 @@ async def update_llm_settings(
         # reasoning_effort is meaningful only for grok; drop it otherwise so the
         # stored shape stays clean and the router never misapplies it.
         if choice.provider == "grok":
-            entry["reasoning_effort"] = choice.reasoning_effort
+            entry["reasoning_effort"] = choice.reasoning_effort or REASONING_DEFAULT
         overrides[task] = entry
     await store.upsert(ctx, LLM_TASK_OVERRIDES_KEY, overrides)
     return await _snapshot(settings, store, ctx)
