@@ -46,6 +46,12 @@ class FakeAuthRepo:
                 return _info(p)
         return None
 
+    async def find_active_device_principal_by_id(self, principal_id: str) -> PrincipalInfo | None:
+        for p in self.principals:
+            if p.id == principal_id and p.kind == "device_key" and not p.revoked:
+                return _info(p)
+        return None
+
     async def create_session(self, principal_id: str, token_hash: str, label: str) -> None:
         self.sessions.append(FakeSession(principal_id, token_hash, label))
 

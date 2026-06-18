@@ -43,6 +43,10 @@ services:
       JBRAIN_LOCAL_LLM_ENABLED: ${LOCAL_LLM_ENABLED:-false}
       JBRAIN_LOCAL_LLM_URL: ${LOCAL_LLM_URL:-http://local-llm:8080/v1}
       JBRAIN_LOCAL_MODELS: ${LOCAL_MODELS:-[]}
+      # Shared secret for the MQTT ingest service identity (JBrain360 M1): the API
+      # validates it in /internal/mqtt-auth and the consumer connects with it. Empty
+      # disables the identity (fail-closed). Only meaningful with the `mqtt` profile.
+      JBRAIN_MQTT_INGEST_SECRET: ${MQTT_INGEST_SECRET:-}
     volumes:
       - blobs:/data/blobs
       # Server-side basemap tile cache (location map proxy) — public map data, so
@@ -223,6 +227,22 @@ services:
       - ./mosquitto/mosquitto.conf:/etc/mosquitto/mosquitto.conf:ro
     networks: [internal]
     depends_on: [api]
+
+  # The MQTT->location_fixes ingest consumer (JBrain360 M1): a server-side
+  # subscriber (the same api image) that streams published OwnTracks fixes into the
+  # shipped hypertable under device_context (geofence-at-ingest, L5a). Same opt-in
+  # `mqtt` profile; connects to the broker as the ingest identity. Fails closed when
+  # MQTT_INGEST_SECRET is unset (it logs and exits).
+  mqtt-ingest:
+    profiles: [mqtt]
+    image: jbrain2-api:local
+    restart: unless-stopped
+    command: ["python", "-m", "jbrain.mqtt_consumer"]
+    environment: *api_env
+    networks: [internal]
+    depends_on:
+      db:
+        condition: service_healthy
 
 networks:
   edge:

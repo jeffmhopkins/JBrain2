@@ -23,6 +23,17 @@ class Settings(BaseSettings):
     # profile, so a stock deploy never runs it and these reads simply fail closed.
     geocoder_url: str = "http://geocoder:2322"
 
+    # MQTT secure spine (JBrain360, opt-in `mqtt` compose profile). The broker
+    # (Mosquitto + go-auth) calls the API's /internal/mqtt-* endpoints; the ingest
+    # consumer connects to the broker as a server-side subscriber authenticated by
+    # `mqtt_ingest_secret` (a shared service secret, NOT a device key) and is granted
+    # read-only `owntracks/#`. Empty secret disables that identity (fail-closed: the
+    # endpoints reject it and the consumer does not start).
+    mqtt_broker_host: str = "mqtt"
+    mqtt_broker_port: int = 1883
+    mqtt_ingest_username: str = "jbrain-ingest"
+    mqtt_ingest_secret: str = ""
+
     # Map basemap tiles, served through the server-side proxy/cache (api/tiles.py)
     # so the phone fetches tiles only from this box, never a third-party tile host.
     # A DELIBERATE relaxation of the location plan's L1 ("no tiles leave the box"):
