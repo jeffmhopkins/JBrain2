@@ -87,8 +87,8 @@ _SAVE_PLACE_MAX_FIX_AGE_SECONDS = 30 * 60.0
 _SAVE_PLACE_DEFAULT_RADIUS_M = 100.0
 _SAVE_PLACE_MIN_RADIUS_M = 10.0
 _SAVE_PLACE_MAX_RADIUS_M = 5_000.0
-# Proposal title cap (the chip label) — a long place name is truncated, not sliced
-# mid-word concern aside (a title is a label, the body carries the real content).
+# Proposal title cap (the chip label): a long place name is hard-truncated. The title
+# is only a label — the note body carries the real content — so a mid-word cut is fine.
 _TITLE_LEN = 80
 
 
