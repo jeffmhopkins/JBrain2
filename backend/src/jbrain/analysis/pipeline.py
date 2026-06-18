@@ -33,6 +33,7 @@ from jbrain.analysis.canonical import (
     promote_if_corroborated,
     reproject_canonical_name,
 )
+from jbrain.analysis.device_binding import reconcile_device_bindings
 from jbrain.analysis.display import (
     ambiguous_display,
     collision_display,
@@ -971,6 +972,10 @@ class AnalysisPipeline:
         projected.update(r.entity_id for r in retracted)
         await project_appointments(session, projected)
         await project_place_geofences(session, projected)
+        # Bind any touched Device entity to its operational subject row (owner-set,
+        # deterministic, never LLM-chosen). Rides the same full-owner fact-apply
+        # path as the geofence projection so a device note links on apply.
+        await reconcile_device_bindings(session, projected)
         return held_ids
 
     async def _sweep_stale_ambiguous(

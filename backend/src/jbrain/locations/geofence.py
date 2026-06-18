@@ -262,10 +262,14 @@ async def sweep_geofences(maker: async_sessionmaker[AsyncSession]) -> int:
     Returns the number of transition events emitted (for logging/tests)."""
     pending: list[tuple[str, str, datetime, dict]] = []
     async with scoped_session(maker, wf_events.SYSTEM_CTX) as session:
+        from jbrain.analysis.device_binding import sweep_device_bindings
         from jbrain.analysis.geofence_projection import project_place_geofences
 
         drifted = {row[0] for row in (await session.execute(_MIRROR_DRIFT_IDS_SQL)).all()}
         await project_place_geofences(session, drifted)
+        # Backstop the owner-only person⇄device binding: link any device note whose
+        # fact-apply hook dropped the reconcile (same full-owner session as above).
+        await sweep_device_bindings(session)
 
         for fix in (await session.execute(_LATEST_FIX_SQL)).all():
             if fix.pid is None or (fix.accuracy_m is not None and fix.accuracy_m > ACCURACY_GATE_M):

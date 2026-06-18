@@ -11,13 +11,30 @@ device's track. Those reads are the only place location data leaves the box, and
 only ever to the owner — the UI's Devices / Timeline / Map tabs read here.
 """
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Any
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from jbrain.db.session import SessionContext, device_context, scoped_session
+from jbrain.locations.access import LocationToolRefusal, require_full_owner
+
+__all__ = [
+    "LocationToolRefusal",
+    "require_full_owner",
+    "LocationFix",
+    "DeviceActivity",
+    "FixPoint",
+    "NearestFix",
+    "LatestPlace",
+    "Dwell",
+    "TimelineEntry",
+    "PlaceGeofence",
+    "SqlLocationRepo",
+]
 
 
 @dataclass(frozen=True)
@@ -60,6 +77,39 @@ class FixPoint:
     longitude: float
     accuracy_m: float | None
     battery_pct: int | None
+
+
+@dataclass(frozen=True)
+class NearestFix:
+    """The fix closest in time to a requested instant, with the signed-magnitude
+    `gap_seconds` between them. Callers surface the gap so a stale fix is never
+    reported as the subject's current position."""
+
+    fix: FixPoint
+    gap_seconds: float
+
+
+@dataclass(frozen=True)
+class LatestPlace:
+    """The subject's current geofenced place, resolved to its Place entity's
+    canonical name, and when they entered it."""
+
+    place_entity_id: str
+    place_name: str
+    since: datetime | None
+
+
+@dataclass(frozen=True)
+class Dwell:
+    """One enter→exit stay at a place: the interval the subject was inside its
+    geofence. An open stay (no matching exit yet) is clamped to the query window's
+    end so `seconds` is always a finite, non-negative duration."""
+
+    place_entity_id: str
+    place_name: str
+    entered_at: datetime
+    exited_at: datetime
+    seconds: float
 
 
 @dataclass(frozen=True)
@@ -186,6 +236,120 @@ class SqlLocationRepo:
             for r in rows
         ]
 
+    async def nearest_fix(
+        self, ctx: SessionContext, *, subject_id: str, at: datetime, max_gap_seconds: float
+    ) -> NearestFix | None:
+        """The fix nearest in time to `at`, within `±max_gap_seconds`, or None.
+
+        Reads `location_fixes`, which is STRICT RLS (full owner OR the device's own
+        subject), so a narrowed session simply sees zero rows and gets None — no
+        application guard is needed, RLS fails it closed. Returning the gap lets the
+        caller refuse to report a far-off fix as the subject's current position. The
+        nearest row on either side rides the `(subject_id, captured_at DESC)` index
+        via two bounded one-row scans the planner merges."""
+        async with scoped_session(self._maker, ctx) as session:
+            row = (
+                await session.execute(
+                    text(
+                        "SELECT captured_at, latitude, longitude, accuracy_m, battery_pct,"
+                        "   abs(extract(epoch FROM (captured_at - :at))) AS gap"
+                        " FROM app.location_fixes"
+                        " WHERE subject_id = cast(:sid AS uuid)"
+                        "   AND captured_at >= :at - make_interval(secs => :gap)"
+                        "   AND captured_at <= :at + make_interval(secs => :gap)"
+                        " ORDER BY gap LIMIT 1"
+                    ),
+                    {"sid": subject_id, "at": at, "gap": max_gap_seconds},
+                )
+            ).first()
+        if row is None:
+            return None
+        return NearestFix(
+            fix=FixPoint(
+                captured_at=row.captured_at,
+                latitude=row.latitude,
+                longitude=row.longitude,
+                accuracy_m=row.accuracy_m,
+                battery_pct=row.battery_pct,
+            ),
+            gap_seconds=float(row.gap),
+        )
+
+    async def latest_place(self, ctx: SessionContext, *, subject_id: str) -> LatestPlace | None:
+        """The subject's CURRENT geofenced place (the one it is `inside`), resolved
+        to its Place entity's canonical name, or None when it is not inside any.
+
+        Reads `geofence_state` (STRICT RLS, same subject-pin as the fixes), so a
+        narrowed session sees zero rows and gets None — RLS fails it closed. Joins
+        through the geometry mirror to the Place entity for the name; the most
+        recently entered inside-fence wins when more than one overlaps."""
+        async with scoped_session(self._maker, ctx) as session:
+            row = (
+                await session.execute(
+                    text(
+                        "SELECT pg.place_entity_id::text AS eid,"
+                        "   COALESCE(ent.canonical_name, pg.name) AS name, gs.since"
+                        " FROM app.geofence_state gs"
+                        " JOIN app.place_geofence pg ON pg.id = gs.place_geofence_id"
+                        " LEFT JOIN app.entities ent ON ent.id = pg.place_entity_id"
+                        " WHERE gs.subject_id = cast(:sid AS uuid) AND gs.state = 'inside'"
+                        " ORDER BY gs.since DESC NULLS LAST LIMIT 1"
+                    ),
+                    {"sid": subject_id},
+                )
+            ).first()
+        if row is None:
+            return None
+        return LatestPlace(
+            place_entity_id=row.eid, place_name=row.name or "a place", since=row.since
+        )
+
+    async def dwells(
+        self,
+        ctx: SessionContext,
+        *,
+        subject_id: str,
+        place_entity_id: str | None = None,
+        since: datetime,
+        until: datetime,
+    ) -> list[Dwell]:
+        """The subject's enter→exit stays overlapping `[since, until)`, by pairing
+        `location.geofence_transition` events in time order.
+
+        Reads `app.events`, which is WEAK RLS (`has_domain_scope` only — a narrowed
+        owner still sees these rows), so this MUST gate on `require_full_owner`
+        first: RLS will NOT fail it closed. An enter still open at `until` is clamped
+        to `until`; an exit with no preceding enter is dropped, as is any non-positive
+        interval. `place_entity_id` optionally restricts to one place."""
+        require_full_owner(ctx)
+        clause = " AND e.payload->>'place_entity_id' = :eid" if place_entity_id else ""
+        # No lower bound on the fetch on purpose: an enter that predates `since` is
+        # needed to pair a stay already in progress at the window start. `_pair_dwells`
+        # drops the fully-historical pairs (those that also exited before `since`).
+        params: dict = {"sid": subject_id, "until": until}
+        if place_entity_id:
+            params["eid"] = place_entity_id
+        async with scoped_session(self._maker, ctx) as session:
+            rows = (
+                await session.execute(
+                    text(
+                        "SELECT e.occurred_at,"
+                        "   e.payload->>'transition' AS transition,"
+                        "   e.payload->>'place_entity_id' AS eid,"
+                        "   COALESCE(ent.canonical_name, 'a place') AS place_name"
+                        " FROM app.events e"
+                        " LEFT JOIN app.entities ent"
+                        "   ON ent.id = cast(e.payload->>'place_entity_id' AS uuid)"
+                        " WHERE e.type = 'location.geofence_transition'"
+                        "   AND e.domain_code = 'location'"
+                        "   AND e.payload->>'subject_id' = :sid"
+                        "   AND e.occurred_at < :until" + clause + " ORDER BY e.occurred_at"
+                    ),
+                    params,
+                )
+            ).all()
+        return _pair_dwells(rows, since=since, until=until)
+
     async def timeline(
         self, ctx: SessionContext, *, since: datetime, until: datetime, limit: int
     ) -> list[TimelineEntry]:
@@ -193,7 +357,11 @@ class SqlLocationRepo:
         place's canonical name. Reads `app.events` (the location-domain transition
         the detector emits) joined to `app.entities` via the payload's
         `place_entity_id`. A crossing whose place entity was since deleted falls back
-        to a generic label rather than vanishing from the audit."""
+        to a generic label rather than vanishing from the audit.
+
+        `app.events` is WEAK RLS (`has_domain_scope` only), so the full-owner gate
+        here is the real barrier — a narrowed owner is refused, not handed rows."""
+        require_full_owner(ctx)
         async with scoped_session(self._maker, ctx) as session:
             rows = (
                 await session.execute(
@@ -229,7 +397,11 @@ class SqlLocationRepo:
         """Every geofenced place's geometry for the map overlay, named from its
         Place entity. Reads the derived `place_geofence` mirror (the graph stays the
         source of truth, #7); center/polygon come back as lat/lon via PostGIS so the
-        self-rendered map can project them without a geometry lib client-side."""
+        self-rendered map can project them without a geometry lib client-side.
+
+        `place_geofence` READ is WEAK RLS (`has_domain_scope`, also satisfied by a
+        device key), so the full-owner gate here is the real barrier."""
+        require_full_owner(ctx)
         async with scoped_session(self._maker, ctx) as session:
             rows = (
                 await session.execute(
@@ -256,6 +428,41 @@ class SqlLocationRepo:
             )
             for r in rows
         ]
+
+
+def _pair_dwells(rows: Sequence[Any], *, since: datetime, until: datetime) -> list[Dwell]:
+    """Fold time-ordered transition rows into enter→exit Dwells, per place.
+
+    A second `enter` for a place already open re-opens at the earlier enter (a
+    duplicate/redundant enter never shortens the stay); an `exit` with no open
+    enter for its place is dropped (an orphan); an enter still open at the end of
+    the rows is clamped to `until`. Non-positive intervals (an exit at or before
+    its enter) are discarded — they describe no real stay. A stay that ended at or
+    before `since` is dropped: the fetch has no lower bound (to pair in-progress
+    stays), so the window's low edge is enforced here on the paired result."""
+    open_enter: dict[str, tuple[datetime, str]] = {}
+    dwells: list[Dwell] = []
+
+    def _emit(eid: str, name: str, entered: datetime, exited: datetime) -> None:
+        seconds = (exited - entered).total_seconds()
+        if seconds > 0 and exited > since:
+            dwells.append(Dwell(eid, name, entered, exited, seconds))
+
+    for row in rows:
+        eid = row.eid
+        if eid is None:
+            continue
+        if row.transition == "enter":
+            if eid not in open_enter:
+                open_enter[eid] = (row.occurred_at, row.place_name)
+        elif row.transition == "exit":
+            opened = open_enter.pop(eid, None)
+            if opened is not None:
+                _emit(eid, opened[1], opened[0], row.occurred_at)
+    for eid, (entered, name) in open_enter.items():
+        _emit(eid, name, entered, until)
+    dwells.sort(key=lambda d: d.entered_at)
+    return dwells
 
 
 def _polygon_ring(geojson: str | None) -> list[tuple[float, float]] | None:

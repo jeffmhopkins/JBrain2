@@ -27,6 +27,11 @@ predicates:
     range_type: place
     kind: state
     functional: true
+  - canonical_name: operatedBy          # the person who carries/operates this device
+    value_shape: ref
+    range_type: person
+    kind: relationship
+    functional: true                     # one current operator; reassignment closes history
 
 # identifier.imei / .serial / .mac / .uuid (🔒) from ExternalIdentified — strong key.
 # owner is a Role edge (Related).
