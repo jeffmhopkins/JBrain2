@@ -10,6 +10,12 @@ import type {
 import { placeNoteBody } from "./LocationMapTab";
 import { type LocationDeps, LocationScreen, relativeTime, sentence } from "./LocationScreen";
 
+// Leaflet needs a real browser layout engine; stub the map glue so the screen's
+// React behavior (controls, data fetch, overlays-data) is what's under test.
+vi.mock("./leafletMap", () => ({
+  createLocationMap: () => ({ update: vi.fn(), destroy: vi.fn() }),
+}));
+
 function device(over: Partial<DeviceSummary> = {}): DeviceSummary {
   return {
     id: "d1",
@@ -101,7 +107,7 @@ describe("LocationScreen", () => {
     render(<LocationScreen deps={d} />);
     fireEvent.click(screen.getByRole("tab", { name: "Map" }));
     // The map fetches fixes for the device over the default window and renders.
-    expect(await screen.findByRole("img", { name: "Location map" })).toBeInTheDocument();
+    expect(await screen.findByLabelText("Location map")).toBeInTheDocument();
     await waitFor(() => expect(d.listFixes).toHaveBeenCalled());
     const call = (d.listFixes as ReturnType<typeof vi.fn>).mock.calls[0] ?? [];
     const [subjectId, since, until] = call;
@@ -113,7 +119,7 @@ describe("LocationScreen", () => {
     const d = deps();
     render(<LocationScreen deps={d} />);
     fireEvent.click(screen.getByRole("tab", { name: "Map" }));
-    await screen.findByRole("img", { name: "Location map" });
+    await screen.findByLabelText("Location map");
     // Switching modes is client-only (no refetch); changing the window refetches.
     fireEvent.click(screen.getByRole("tab", { name: "Heat" }));
     const before = (d.listFixes as ReturnType<typeof vi.fn>).mock.calls.length;

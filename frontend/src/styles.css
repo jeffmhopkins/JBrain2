@@ -9854,38 +9854,44 @@ input.ld-title {
 .loc-map-range-sep {
   color: var(--text-3);
 }
-.loc-map-svg {
+/* The Leaflet map container + overlay colours (Leaflet paths take a className;
+   colours stay in CSS, tokens-only). */
+.loc-map-canvas {
   width: 100%;
-  height: auto;
+  height: 320px;
   border-radius: var(--r-card);
   border: 1px solid var(--border);
-  display: block;
+  overflow: hidden;
+  /* Leaflet reads tile/background from here until tiles paint. */
+  background: var(--surface);
 }
-.loc-map-bg {
-  fill: var(--surface);
+.loc-map-canvas .leaflet-container {
+  background: var(--surface);
+  font: inherit;
 }
-.loc-map-fence {
+.loc-lf-fence {
   fill: var(--steel-tint);
   stroke: var(--steel);
-  stroke-width: 1;
-  stroke-dasharray: 3 3;
+  stroke-width: 1.5;
+  stroke-dasharray: 4 3;
 }
-.loc-map-heat {
-  fill: var(--steel);
-}
-.loc-map-trail {
-  fill: none;
+.loc-lf-trail {
   stroke: var(--steel);
-  stroke-width: 2;
-  stroke-linejoin: round;
-  stroke-linecap: round;
+  stroke-width: 3;
 }
-.loc-map-start {
-  fill: var(--green);
-}
-.loc-map-end,
-.loc-map-live {
+.loc-lf-heat {
   fill: var(--steel);
+  fill-opacity: 0.18;
+}
+.loc-lf-start {
+  fill: var(--green);
+  fill-opacity: 1;
+  stroke: var(--bg);
+}
+.loc-lf-end,
+.loc-lf-live {
+  fill: var(--steel);
+  fill-opacity: 1;
   stroke: var(--bg);
   stroke-width: 2;
 }

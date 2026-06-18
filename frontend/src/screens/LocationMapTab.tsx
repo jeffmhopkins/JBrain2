@@ -1,14 +1,15 @@
-// The Map tab of the location surface: a self-rendered schematic map (no tile
-// servers, L1) with a date-range picker and three modes — Live (latest fix),
-// Trail (the path between two dates), and Heat (dwell density). Fences from the
-// derived mirror draw as context in every mode. Reads /api/locations/{devices,
-// places,fixes}; the geofence editor (writing a place note) lands in 5d-iii.
+// The Map tab of the location surface: a real Leaflet basemap (pan/zoom) over the
+// server-side tile proxy — tiles reach the phone only from this box (no tile host
+// sees the device). A date-range picker + three modes — Live (latest fix), Trail
+// (the path between two dates), Heat (dwell density). Fences from the derived
+// mirror draw as context. Reads /api/locations/{devices,places,fixes}; the geofence
+// editor files a place note (never the mirror). Leaflet is isolated in leafletMap.ts.
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { type DeviceSummary, type LocationFix, type PlaceGeofence, api } from "../api/client";
 import { Sheet } from "../components/Sheet";
 import type { LocationDeps } from "./LocationScreen";
-import { type Px, buildProjector, heatCells } from "./locationMap";
+import { type LocationMapHandle, createLocationMap } from "./leafletMap";
 
 type Mode = "live" | "trail" | "heat";
 
@@ -40,9 +41,6 @@ async function defaultFilePlaceNote(p: PlaceNoteInput): Promise<void> {
   });
 }
 
-const VIEW_W = 320;
-const VIEW_H = 320;
-const HEAT_CELL = 16;
 const DEFAULT_DAYS = 7;
 
 type Meta =
@@ -200,7 +198,7 @@ export function LocationMapTab({ deps }: { deps: LocationDeps | undefined }) {
         </div>
       </div>
 
-      <MapCanvas mode={mode} fixes={points} places={meta.places} />
+      <LeafletMap mode={mode} fixes={points} places={meta.places} />
 
       {address && points.length > 0 && (
         <p className="loc-map-address">
@@ -371,7 +369,7 @@ function PlaceEditor({
   );
 }
 
-function MapCanvas({
+function LeafletMap({
   mode,
   fixes,
   places,
@@ -380,84 +378,24 @@ function MapCanvas({
   fixes: LocationFix[];
   places: PlaceGeofence[];
 }) {
-  // Project over every drawable point so fixes and fences share one frame.
-  const all = [
-    ...fixes.map((f) => ({ lat: f.latitude, lon: f.longitude })),
-    ...places.flatMap((p) => [...(p.center ? [p.center] : []), ...(p.polygon ?? [])]),
-  ];
-  const { project, metersPerPixel } = buildProjector(all, VIEW_W, VIEW_H);
-  const fixPx = fixes.map((f) => project({ lat: f.latitude, lon: f.longitude }));
-  const first = fixPx[0];
-  const last = fixPx[fixPx.length - 1];
+  const ref = useRef<HTMLDivElement>(null);
+  const handle = useRef<LocationMapHandle | null>(null);
 
-  return (
-    <svg
-      className="loc-map-svg"
-      viewBox={`0 0 ${VIEW_W} ${VIEW_H}`}
-      role="img"
-      aria-label="Location map"
-      preserveAspectRatio="xMidYMid meet"
-    >
-      <rect x={0} y={0} width={VIEW_W} height={VIEW_H} className="loc-map-bg" />
+  // Create the map once the container is in the DOM; tear it down on unmount.
+  // (This component only mounts in the ready branch, so the container exists.)
+  useEffect(() => {
+    if (!ref.current) return;
+    handle.current = createLocationMap(ref.current);
+    return () => {
+      handle.current?.destroy();
+      handle.current = null;
+    };
+  }, []);
 
-      {/* Fences as context in every mode. */}
-      {places.map((p) => (
-        <Fence key={p.place_entity_id} place={p} project={project} mpp={metersPerPixel} />
-      ))}
+  // Redraw overlays whenever the data or mode changes.
+  useEffect(() => {
+    handle.current?.update({ mode, fixes, places });
+  }, [mode, fixes, places]);
 
-      {mode === "heat" &&
-        heatCells(fixPx, HEAT_CELL).map((c) => (
-          <rect
-            key={`${c.x},${c.y}`}
-            x={c.x}
-            y={c.y}
-            width={c.size}
-            height={c.size}
-            className="loc-map-heat"
-            // Floor the opacity so even a single-visit cell is visible.
-            fillOpacity={0.15 + 0.75 * c.weight}
-          />
-        ))}
-
-      {mode === "trail" && fixPx.length > 1 && (
-        <polyline className="loc-map-trail" points={fixPx.map((p) => `${p.x},${p.y}`).join(" ")} />
-      )}
-      {mode === "trail" && first && last && (
-        <>
-          <circle className="loc-map-start" cx={first.x} cy={first.y} r={4} />
-          <circle className="loc-map-end" cx={last.x} cy={last.y} r={4} />
-        </>
-      )}
-
-      {mode === "live" && last && <circle className="loc-map-live" cx={last.x} cy={last.y} r={6} />}
-    </svg>
-  );
-}
-
-function Fence({
-  place,
-  project,
-  mpp,
-}: {
-  place: PlaceGeofence;
-  project: (p: { lat: number; lon: number }) => Px;
-  mpp: number;
-}) {
-  if (place.polygon && place.polygon.length > 0) {
-    const pts = place.polygon.map((c) => project(c)).map((p) => `${p.x},${p.y}`);
-    return (
-      <polygon className="loc-map-fence" points={pts.join(" ")}>
-        <title>{place.name}</title>
-      </polygon>
-    );
-  }
-  if (place.center && place.radius_m !== null) {
-    const c = project(place.center);
-    return (
-      <circle className="loc-map-fence" cx={c.x} cy={c.y} r={Math.max(3, place.radius_m / mpp)}>
-        <title>{place.name}</title>
-      </circle>
-    );
-  }
-  return null;
+  return <div ref={ref} className="loc-map-canvas" aria-label="Location map" />;
 }
