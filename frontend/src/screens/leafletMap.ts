@@ -39,6 +39,9 @@ export function createLocationMap(container: HTMLElement): LocationMapHandle {
     attribution: "© OpenStreetMap contributors",
   }).addTo(map);
   let overlay = L.layerGroup().addTo(map);
+  // The data bounds last auto-fitted, so a redraw that doesn't change them leaves
+  // the owner's manual zoom/pan untouched.
+  let lastFit: L.LatLngBounds | null = null;
 
   // The map fills a flex container; Leaflet only re-measures on window resize, so
   // a tab switch or rotation that resizes the container would otherwise leave it
@@ -91,7 +94,14 @@ export function createLocationMap(container: HTMLElement): LocationMapHandle {
     }
 
     if (bounds.length > 0) {
-      map.fitBounds(L.latLngBounds(bounds).pad(0.2), { maxZoom: 16 });
+      // Auto-fit only when the framed area actually changes (new device, range,
+      // or fixes). A redraw from a control tweak — the heat spot-size slider, a
+      // mode switch — must keep the owner's current zoom/pan.
+      const next = L.latLngBounds(bounds).pad(0.2);
+      if (!lastFit || !lastFit.equals(next)) {
+        map.fitBounds(next, { maxZoom: 16 });
+        lastFit = next;
+      }
     }
   }
 
