@@ -50,7 +50,7 @@ async def _isolate(database_url: str) -> AsyncIterator[None]:  # noqa: F811
         async with admin.begin() as conn:
             await conn.execute(
                 text(
-                    "TRUNCATE app.entities, app.skills, app.notes, app.note_analysis"
+                    "TRUNCATE app.entities, app.skills, app.notes, app.note_analysis, app.subjects"
                     " RESTART IDENTITY CASCADE"
                 )
             )
@@ -78,6 +78,15 @@ async def _entity(
     """Insert an entity `age_hours` old (default 2h, past the sweep's 1h age guard)."""
     eid = str(uuid.uuid4())
     async with scoped_session(maker, OWNER) as session:
+        subj_id: str | None = None
+        if subject:
+            subj_id = str(uuid.uuid4())
+            await session.execute(
+                text(
+                    "INSERT INTO app.subjects (id, display_name, kind) VALUES (:id, 'Me', 'person')"
+                ),
+                {"id": subj_id},
+            )
         await session.execute(
             text(
                 "INSERT INTO app.entities (id, kind, canonical_name, status, subject_id,"
@@ -85,13 +94,7 @@ async def _entity(
                 " VALUES (:id, 'person', 'X', :s, :subj, :d,"
                 "  now() - cast(:age AS double precision) * interval '1 hour')"
             ),
-            {
-                "id": eid,
-                "s": status,
-                "subj": eid if subject else None,
-                "d": domain,
-                "age": age_hours,
-            },
+            {"id": eid, "s": status, "subj": subj_id, "d": domain, "age": age_hours},
         )
     return eid
 
@@ -174,7 +177,7 @@ async def test_entity_hygiene_keeps_an_entity_with_a_mention(maker: async_sessio
             text(
                 "INSERT INTO app.entity_mentions (id, entity_id, chunk_id, note_id, surface_text,"
                 " char_start, char_end, link_method, domain_code)"
-                " VALUES (:id, :e, :c, :n, 'X', 0, 1, 'exact', 'general')"
+                " VALUES (:id, :e, :c, :n, 'X', 0, 1, 'exact_alias', 'general')"
             ),
             {"id": str(uuid.uuid4()), "e": eid, "c": chunk, "n": note},
         )
