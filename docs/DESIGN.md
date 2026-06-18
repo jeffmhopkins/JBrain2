@@ -800,7 +800,7 @@ coordinate** (this is why neither needs a basemap):
   semantics via an `<output>` element). The toast reads `GET /api/locations/presence`
   (owner + full-owner gated). The SAME presence read also reaches the assistant — but
   as a **data-framed `UserMessage` prepended to the conversation** in
-  `api/agent.py::_conversation` (mirroring the Loop-2 skills block's data/instruction
+  `api/agent.py::chat` (mirroring the Loop-2 skills block's data/instruction
   boundary), **not** the system prompt and **not** the toast — owner-gated (present
   only for a location-scoped full-owner session), so a narrowed session gets neither.
 
