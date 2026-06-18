@@ -87,6 +87,24 @@ async def logout(repo: AuthRepo, token: str) -> None:
         await repo.revoke_session(keys.hash_token(token))
 
 
+async def mint_dashboard_session(repo: AuthRepo, device_key: str) -> str | None:
+    """Exchange a device key for a dashboard session token (the WebView cookie).
+
+    The member dashboard authenticates the *device*, not the owner: the key is
+    verified exactly like the MQTT / OwnTracks path — kind-filtered, saltless
+    SHA-256, `revoked_at IS NULL` — then a session token is minted bound to that
+    device principal (so the cookie carries the device's subject + view-scope).
+    An owner or capability key never resolves through the device lookup, so this
+    surface can mint a *member* session only, never owner authority (L4). Returns
+    None on an unknown / revoked / wrong-kind key (the caller 401s)."""
+    principal = await authenticate_device(repo, device_key)
+    if principal is None:
+        return None
+    token = keys.generate_session_token()
+    await repo.create_session(principal.id, keys.hash_token(token), principal.label)
+    return token
+
+
 async def rotate_owner_key(repo: AuthRepo) -> str:
     """Create (or replace) the owner principal; returns the new key exactly once.
 
