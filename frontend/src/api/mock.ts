@@ -2112,6 +2112,55 @@ function mockSearch(params: URLSearchParams): { degraded: boolean; results: Sear
   return { degraded, results };
 }
 
+// Phase 7 location (Devices tab): the device-summary states the tab must render
+// — a live device, an offline one (last fix hours ago, low battery), and a
+// revoked one (no key, never reported). Mutable so provision/rotate/revoke behave
+// in `dev:mock`.
+interface MockDevice {
+  id: string;
+  label: string;
+  created_at: string;
+  revoked: boolean;
+  last_seen: string | null;
+  battery_pct: number | null;
+  connection: string | null;
+  fix_count: number;
+}
+
+const MOCK_DEVICES: MockDevice[] = [
+  {
+    id: "dev-1",
+    label: "Jeff's phone",
+    created_at: "2026-05-01T00:00:00Z",
+    revoked: false,
+    last_seen: new Date(Date.now() - 4 * 60_000).toISOString(),
+    battery_pct: 76,
+    connection: "wifi",
+    fix_count: 4821,
+  },
+  {
+    id: "dev-2",
+    label: "Celine's phone",
+    created_at: "2026-05-03T00:00:00Z",
+    revoked: false,
+    last_seen: new Date(Date.now() - 9 * 3_600_000).toISOString(),
+    battery_pct: 18,
+    connection: "mobile",
+    fix_count: 2110,
+  },
+  {
+    id: "dev-3",
+    label: "Old tablet",
+    created_at: "2026-02-01T00:00:00Z",
+    revoked: true,
+    last_seen: null,
+    battery_pct: null,
+    connection: null,
+    fix_count: 0,
+  },
+];
+let mockDeviceSeq = 4;
+
 export const mockFetch: typeof fetch = async (input, init) => {
   await sleep();
   const url = new URL(String(input instanceof Request ? input.url : input), "http://mock");
@@ -2725,6 +2774,37 @@ export const mockFetch: typeof fetch = async (input, init) => {
       (_, i) => `${new Date().toISOString()} mock log line ${i + 1}`,
     );
     return new Response(lines.join("\n"), { status: 200 });
+  }
+
+  // Phase 7 location: the owner's Devices tab read + key management.
+  if (path === "/api/locations/devices" && method === "GET") return json(MOCK_DEVICES);
+  if (path === "/api/devices" && method === "POST") {
+    const label =
+      (init?.body ? (JSON.parse(String(init.body)) as { label?: string }).label : undefined) ??
+      "New device";
+    const id = `dev-${mockDeviceSeq++}`;
+    const created_at = new Date().toISOString();
+    MOCK_DEVICES.unshift({
+      id,
+      label,
+      created_at,
+      revoked: false,
+      last_seen: null,
+      battery_pct: null,
+      connection: null,
+      fix_count: 0,
+    });
+    return json({ device: { id, label, created_at, revoked: false }, key: `mock-${id}-key` }, 201);
+  }
+  const rotate = path.match(/^\/api\/devices\/([^/]+)\/rotate$/);
+  if (rotate && method === "POST") {
+    return json({ key: `mock-${decodeURIComponent(rotate[1] ?? "")}-rotated` });
+  }
+  const revoke = path.match(/^\/api\/devices\/([^/]+)\/revoke$/);
+  if (revoke && method === "POST") {
+    const target = MOCK_DEVICES.find((d) => d.id === decodeURIComponent(revoke[1] ?? ""));
+    if (target) target.revoked = true;
+    return new Response(null, { status: 204 });
   }
 
   return json({ detail: `mock: no route for ${method} ${path}` }, 404);

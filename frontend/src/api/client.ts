@@ -28,6 +28,25 @@ export interface Principal {
   label: string;
 }
 
+/** A provisioned device with its location activity (GET /api/locations/devices).
+ * `id` is the device's subject id; activity fields are null until its first fix. */
+export interface DeviceSummary {
+  id: string;
+  label: string;
+  created_at: string;
+  revoked: boolean;
+  last_seen: string | null;
+  battery_pct: number | null;
+  connection: string | null;
+  fix_count: number;
+}
+
+/** The provision/rotate response: the plaintext key is shown exactly once. */
+export interface ProvisionedDevice {
+  device: { id: string; label: string; created_at: string; revoked: boolean };
+  key: string;
+}
+
 export interface ContainerStatus {
   service: string;
   state: string;
@@ -1467,5 +1486,29 @@ export const api = {
       method: "POST",
     });
     return (await response.json()) as EnactResult;
+  },
+
+  // --- Location (Phase 7) — owner-only. The phones write via OwnTracks; these
+  // read the slice back and manage device keys. ---
+
+  async listLocationDevices(): Promise<DeviceSummary[]> {
+    const response = await request("/api/locations/devices");
+    return (await response.json()) as DeviceSummary[];
+  },
+
+  async provisionDevice(label: string): Promise<ProvisionedDevice> {
+    const response = await request("/api/devices", jsonInit("POST", { label }));
+    return (await response.json()) as ProvisionedDevice;
+  },
+
+  async rotateDevice(id: string): Promise<string> {
+    const response = await request(`/api/devices/${encodeURIComponent(id)}/rotate`, {
+      method: "POST",
+    });
+    return ((await response.json()) as { key: string }).key;
+  },
+
+  async revokeDevice(id: string): Promise<void> {
+    await request(`/api/devices/${encodeURIComponent(id)}/revoke`, { method: "POST" });
   },
 };

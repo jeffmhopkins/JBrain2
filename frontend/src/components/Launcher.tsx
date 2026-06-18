@@ -13,6 +13,7 @@ import {
   GaugeIcon,
   GraphIcon,
   ListIcon,
+  PinIcon,
   SearchIcon,
   SettingsIcon,
   UsersIcon,
@@ -31,6 +32,7 @@ export type LauncherTarget =
   | "lists"
   | "calendar"
   | "graph"
+  | "location"
   | "wiki";
 
 interface Tile {
@@ -56,6 +58,7 @@ const SECTIONS: Section[] = [
       { title: "Lists", icon: <ListIcon size={24} />, target: "lists" },
       { title: "Entities", icon: <UsersIcon size={24} />, target: "entities" },
       { title: "Map", icon: <GraphIcon size={24} />, target: "graph" },
+      { title: "Location", icon: <PinIcon size={24} />, target: "location" },
       { title: "Labs", icon: <FlaskIcon size={24} />, phase: "P7" },
     ],
   },
