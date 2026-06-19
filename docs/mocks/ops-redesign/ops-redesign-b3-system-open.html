@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Ops redesign — B3 · system open + data card</title>
+<title>Ops redesign — B3 · system open</title>
 <style>
   :root{
     --bg:#0e0f11; --surface:#17181b; --surface-2:#1e2024; --border:#26282c;
@@ -102,19 +102,6 @@
   .srow .rbtn{margin-top:10px;width:100%;font:inherit;font-size:var(--fs-micro);font-weight:600;cursor:pointer;
     border-radius:var(--r-input);padding:10px;border:1px solid transparent;background:var(--rose-tint);color:var(--rose)}
 
-  /* Data card */
-  .data{padding:4px 14px 14px}
-  .data .hint{font-size:var(--fs-micro);color:var(--text-3);line-height:1.5;margin:8px 0 12px}
-  .dataacts{display:flex;flex-direction:column;gap:8px}
-  .dbtn{width:100%;font:inherit;font-size:var(--fs-secondary);font-weight:600;cursor:pointer;text-align:left;
-    display:flex;align-items:center;gap:10px;border-radius:var(--r-input);padding:12px 14px;
-    border:1px solid var(--border);background:var(--surface-2);color:var(--text)}
-  .dbtn .di{color:var(--text-3);font-size:16px;width:18px;text-align:center}
-  .dbtn .dsub{margin-left:auto;font-size:var(--fs-micro);font-weight:400;color:var(--text-3)}
-  .dbtn.danger{border-color:transparent;background:var(--rose-tint);color:var(--rose)}
-  .dbtn.danger .di{color:var(--rose)}
-  .dbtn.armed{background:var(--rose-tint);color:var(--rose);border-color:transparent}
-
   #toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%) translateY(20px);
     background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r-pill);
     padding:10px 18px;font-size:var(--fs-micro);color:var(--text);opacity:0;pointer-events:none;
@@ -183,38 +170,10 @@
     <!-- service groups — collapsed -->
     <div id="groups"></div>
 
-    <!-- DATA card — collapsed; export / import / reset -->
-    <section class="card">
-      <button class="chead" onclick="toggle(this)">
-        <span class="cname">Data</span>
-        <span class="summary">backup · restore · reset</span>
-        <span class="caret">›</span>
-      </button>
-      <div class="cbody">
-        <div class="data">
-          <div class="dataacts">
-            <button class="dbtn" onclick="toast('Building export archive…')">
-              <span class="di">⭳</span>Export backup<span class="dsub">database + files → .jbrain.tar</span>
-            </button>
-            <button class="dbtn" onclick="toast('Pick a .jbrain.tar to import…')">
-              <span class="di">⭱</span>Import backup…<span class="dsub">replaces all data</span>
-            </button>
-            <button class="dbtn danger" id="resetBtn" onclick="armReset(this)">
-              <span class="di">⚠</span><span id="resetTxt">Reset DB</span><span class="dsub" id="resetSub">erases notes &amp; derived data</span>
-            </button>
-          </div>
-          <p class="hint">Export bundles the database + attachment files into one archive. Import
-            replaces everything and restarts the stack. Reset erases all notes and derived data
-            (a safety backup is taken first); auth, domains, and usage survive.</p>
-        </div>
-      </div>
-    </section>
-
     <p class="legend"><b>Mockup is interactive.</b> <b>B3</b> = B2 with <b>System expanded by
-      default</b> (collapse it if you like) and a collapsed <b>Data</b> card carrying
-      <b>Export · Import · Reset DB</b> (Reset uses a tap-again confirm). Service groups stay
-      collapsed; each service row still opens <b>its own log tail</b> with Follow + <b>Copy logs</b>;
-      <b>Server update</b> remains on the Load row.</p>
+      default</b> (collapse it if you like). Service groups stay collapsed; each service row opens
+      <b>its own log tail</b> with Follow + <b>Copy logs</b>; <b>Server update</b> remains on the
+      Load row. Data (export / import / reset) moves out to its own launcher screen.</p>
   </div>
 </div>
 <div id="toast"></div>
@@ -287,18 +246,6 @@ function copyLog(btn,svc){
     .then(()=>{},()=>{ const r=document.createRange();r.selectNodeContents(pre);
       const sel=getSelection();sel.removeAllRanges();sel.addRange(r);try{document.execCommand('copy');}catch(e){}sel.removeAllRanges();})
     .finally(()=>{ const n=text.split('\n').length; toast(`Copied ${svc} logs · ${n} lines`); });
-}
-function armReset(btn){
-  if(btn.dataset.armed!=="1"){btn.dataset.armed="1";btn.classList.add('armed');
-    document.getElementById('resetTxt').textContent="Tap again — erases ALL notes & data";
-    document.getElementById('resetSub').textContent="";
-    setTimeout(()=>{if(btn.dataset.armed==="1"){btn.dataset.armed="0";btn.classList.remove('armed');
-      document.getElementById('resetTxt').textContent="Reset DB";
-      document.getElementById('resetSub').textContent="erases notes & derived data";}},3000);return;}
-  btn.dataset.armed="0";btn.classList.remove('armed');
-  document.getElementById('resetTxt').textContent="Reset DB";
-  document.getElementById('resetSub').textContent="erases notes & derived data";
-  toast('Reset started — safety backup first, worker restarts');
 }
 function runUpdate(){const btn=document.getElementById('updBtn');
   if(btn.dataset.armed!=="1"){btn.dataset.armed="1";btn.classList.add('danger');btn.textContent="Tap again";
