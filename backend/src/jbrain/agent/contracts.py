@@ -22,12 +22,14 @@ PermissionClass = Literal["read", "mutate", "external", "sensitive", "web"]
 off-box internet reads (`web_search`, `web_fetch`) — jerv holds no knowledge-base
 tools, so there is nothing personal in its context to exfiltrate into a query
 (docs/ASSISTANT.md "Agent selection", the deliberate, owner-approved exception to
-invariant #9). The one non-internet member is `current_location`: an ON-BOX
-reverse-geocode of the live position the owner's app shared THIS turn — NOT egress,
-and NOT a read of the firewalled location domain (no saved places, no device stack) —
-placed in this class purely for its gate (owner-approved, jerv-only). A `web` tool is
-opt-in: the registry never offers it to an agent that did not explicitly allowlist
-it, so the Full Brain `curator` never gains web access or this location tool."""
+invariant #9). The one non-internet member is `current_location`: it names the live
+position the owner's app shared THIS turn — by default an OFFLINE nearest-city lookup
+(no egress, no read of the firewalled location domain: no saved places, no device
+stack), escalating to the owner-configured external reverse-geocoder ONLY for an
+explicitly requested street address (a direct lookup of just that coordinate). It is
+in this class purely for its gate (owner-approved, jerv-only). A `web` tool is opt-in:
+the registry never offers it to an agent that did not explicitly allowlist it, so the
+Full Brain `curator` never gains web access or this location tool."""
 
 PolicyOutcome = Literal["direct", "staged", "denied"]
 """What a session does with a tool of a given class: run it now, stage it as a

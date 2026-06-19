@@ -55,6 +55,7 @@ from jbrain.api import llm_settings as llm_settings_api
 from jbrain.api import settings as settings_api
 from jbrain.appointments.repo import SqlAppointmentsRepo
 from jbrain.auth.repo import SqlAuthRepo
+from jbrain.citygeocode import CityGeocoder
 from jbrain.config import Settings, get_settings
 from jbrain.connectors.base import ConnectorRegistry
 from jbrain.connectors.geocoding import geocode_connectors
@@ -63,7 +64,7 @@ from jbrain.connectors.repo import SqlConnectorCache
 from jbrain.connectors.service import ConnectorService
 from jbrain.devices.repo import SqlDeviceRepo
 from jbrain.embed import TeiEmbedClient
-from jbrain.geocode import PhotonGeocoderClient
+from jbrain.geocode import NominatimReverseClient, PhotonGeocoderClient
 from jbrain.lists.repo import SqlListsRepo
 from jbrain.llm import build_router
 from jbrain.llm.local_gateway import LocalGatewayClient
@@ -229,6 +230,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # The jerv chatbot's on-box internet tools — direct, sandboxed web access
         # (no owner data in context; docs/ASSISTANT.md "Agent selection").
         web_handlers = build_web_handlers(SearxngClient(settings.searxng_url), WebFetcher())
+        # jerv's location resolver: an offline nearest-city reverse geocoder (no RAM at
+        # rest, no egress), with the owner-configured external geocoder as the direct
+        # street-address fallback (default off when external_geocoder_url is unset).
+        app.state.city_geocoder = CityGeocoder()
+        external_reverse = NominatimReverseClient(settings.external_geocoder_url)
         app.state.agent_registry = build_registry(
             app.state.search_service,
             app.state.notes_repo,
@@ -244,6 +250,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             app.state.location_repo,
             app.state.device_repo,
             web_handlers,
+            app.state.city_geocoder,
+            external_reverse,
             router=app.state.llm_router,
             settings=settings_store,
         )

@@ -11,6 +11,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:
+    from jbrain.citygeocode import CityGeocoder
+    from jbrain.geocode import NominatimReverseClient
     from jbrain.llm.router import LlmRouter
     from jbrain.settings_store import SqlSettingsStore
 
@@ -389,6 +391,8 @@ def build_registry(
     locations: SqlLocationRepo,
     devices: SqlDeviceRepo,
     web_handlers: dict[str, ToolHandler],
+    city_geocoder: "CityGeocoder",
+    external_reverse: "NominatimReverseClient | None" = None,
     router: "LlmRouter | None" = None,
     settings: "SqlSettingsStore | None" = None,
 ) -> ToolRegistry:
@@ -418,9 +422,10 @@ def build_registry(
             **build_geocode_handlers(geocoder),
             **build_location_handlers(locations, devices, entities, geocoder, proposals),
             # jerv's owner-approved, jerv-only location read (a `web`-gated, opt-in
-            # tool, never offered to the curator). It reverse-geocodes the live PWA
-            # fix the turn carried — no saved-place or device-stack read.
-            **build_presence_handlers(geocoder),
+            # tool, never offered to the curator). It names the live PWA fix the turn
+            # carried via the offline city geocoder (no saved-place / device read),
+            # escalating to the external geocoder only for a requested street address.
+            **build_presence_handlers(city_geocoder, external_reverse),
             **build_wiki_handlers(wiki),
             **build_selfedit_handlers(proposals, router, settings),
             **wiki_write,

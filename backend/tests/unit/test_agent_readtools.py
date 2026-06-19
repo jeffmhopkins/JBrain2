@@ -471,6 +471,8 @@ def test_build_registry_binds_the_shipped_sidecars() -> None:
         object(),  # type: ignore[arg-type]  # location repo
         object(),  # type: ignore[arg-type]  # device repo
         build_web_handlers(SearxngClient(""), WebFetcher()),
+        object(),  # type: ignore[arg-type]  # city geocoder
+        object(),  # type: ignore[arg-type]  # external reverse geocoder
     )
     # The `web` (opt-in / jerv-only) permission class — never offered to the default
     # knowledge agent (allow=None) at any scope. current_location is on-box but rides
@@ -750,8 +752,8 @@ def test_sidecars_pinned_to_their_versions() -> None:
         ),
         "current_location.tool": (
             "current_location",
-            2,
-            "4d718d5de82c5b51e9dc732a79f51b16755014a4be90f7ba7f0cb76ac5bb89d8",
+            4,
+            "35695a101148e13b2cd66bec9a6516bfa7cf5efa4adb75ecd9cba221c729ca87",
         ),
         "web_search.tool": (
             "web_search",

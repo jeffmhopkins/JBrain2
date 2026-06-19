@@ -99,3 +99,49 @@ class PhotonGeocoderClient:
         layer — a free-text slot the ParamSpec allowlist can't constrain)."""
         features = await self._features("/api", {"q": query, "limit": limit})
         return [r for f in features if (r := _to_result(f)) is not None]
+
+
+class NominatimReverseClient:
+    """A DIRECT reverse-geocode against the owner-configured external geocoder — the
+    "specific street address" fallback for jerv's current_location (option 3). Unlike
+    the staged `geocode_external` connector (the curator's #9-chokepoint egress), this
+    runs directly, inside jerv's existing direct-egress sandbox: the only thing that
+    leaves the box is the coordinate the owner shared this turn, to the URL the owner
+    set. Default OFF — an empty `base_url` yields a client that never calls out.
+
+    Targets a Nominatim-compatible `/reverse` (jsonv2 → `display_name`); a Photon-style
+    GeoJSON response is also understood, mirroring the connector's parser."""
+
+    def __init__(self, base_url: str, transport: httpx.AsyncBaseTransport | None = None):
+        self._base_url = base_url
+        self._transport = transport
+
+    @property
+    def enabled(self) -> bool:
+        return bool(self._base_url)
+
+    async def reverse(self, latitude: float, longitude: float) -> str | None:
+        """The street address for a coordinate, or None (unconfigured, no hit, or an
+        outage) — a recoverable miss the caller degrades past, never a raised error."""
+        if not self._base_url:
+            return None
+        try:
+            async with httpx.AsyncClient(
+                base_url=self._base_url, timeout=_TIMEOUT, transport=self._transport
+            ) as client:
+                resp = await client.get(
+                    "/reverse", params={"format": "jsonv2", "lat": latitude, "lon": longitude}
+                )
+                resp.raise_for_status()
+                data = resp.json()
+        except (httpx.HTTPError, ValueError) as exc:
+            log.warning("geocode.external_reverse_failed", error=repr(exc))
+            return None
+        if isinstance(data, dict):
+            name = data.get("display_name")
+            if isinstance(name, str) and name.strip():
+                return name.strip()
+            features = data.get("features")
+            if isinstance(features, list) and features:
+                return format_address((features[0] or {}).get("properties") or {}) or None
+        return None
