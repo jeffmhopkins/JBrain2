@@ -155,6 +155,7 @@ export function LLMSettingsScreen() {
             prev
               ? {
                   ...prev,
+                  host_memory: fresh.host_memory,
                   local_models: prev.local_models.map((m) => ({
                     ...m,
                     loaded: fresh.local_models.find((f) => f.id === m.id)?.loaded ?? m.loaded,
@@ -312,6 +313,7 @@ export function LLMSettingsScreen() {
         onToggle={() => setLocalOpen((v) => !v)}
         hostingEnabled={settings.local_hosting_enabled}
         models={settings.local_models}
+        hostMemory={settings.host_memory}
         unloading={unloading}
         onUnload={unloadModel}
       />
@@ -500,6 +502,7 @@ function LocalModelsDrawer({
   onToggle,
   hostingEnabled,
   models,
+  hostMemory,
   unloading,
   onUnload,
 }: {
@@ -507,6 +510,7 @@ function LocalModelsDrawer({
   onToggle: () => void;
   hostingEnabled: boolean;
   models: LocalModelInfo[];
+  hostMemory: { total_gb: number; used_gb: number } | null;
   unloading: Set<string>;
   onUnload: (id: string) => void;
 }) {
@@ -539,6 +543,21 @@ function LocalModelsDrawer({
 
       {open && (
         <div className="llm-local-body">
+          {hostMemory && hostMemory.total_gb > 0 && (
+            <div className="llm-mem" aria-label="unified memory in use">
+              <div className="llm-mem-bar">
+                <i
+                  style={{
+                    width: `${Math.min(100, (hostMemory.used_gb / hostMemory.total_gb) * 100)}%`,
+                  }}
+                />
+              </div>
+              <div className="llm-mem-cap">
+                <span>{Math.round(hostMemory.used_gb)} GB used</span>
+                <span>{Math.round(hostMemory.total_gb)} GB total</span>
+              </div>
+            </div>
+          )}
           {!hostingEnabled && (
             <p className="llm-local-hint">
               Self-hosting is off. Provision on the server with{" "}

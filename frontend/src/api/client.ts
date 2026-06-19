@@ -220,6 +220,8 @@ export interface LlmSettings {
   tasks: LlmTask[];
   local_hosting_enabled: boolean;
   local_models: LocalModelInfo[];
+  /** Live unified-memory gauge for the drawer meter; null when hosting is off / off-Linux. */
+  host_memory: { total_gb: number; used_gb: number } | null;
 }
 
 /** One task's desired routing; reasoning_effort is sent only for grok. */

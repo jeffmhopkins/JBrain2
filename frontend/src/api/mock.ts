@@ -305,6 +305,7 @@ const LLM_SETTINGS: LlmSettings = {
       note: "Strongest open reasoning that still runs fast here.",
     },
   ],
+  host_memory: null,
 };
 
 // Apply one task patch like the backend would: grok keeps/sets a reasoning

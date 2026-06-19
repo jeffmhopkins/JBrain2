@@ -16,6 +16,7 @@ from jbrain.api.deps import PrincipalDep, SettingsDep
 from jbrain.api.notes import ctx_for
 from jbrain.config import Settings
 from jbrain.db.session import SessionContext
+from jbrain.host_metrics import read_memory_gb
 from jbrain.llm import local_catalog
 from jbrain.llm.errors import LlmError
 from jbrain.llm.local_gateway import LocalGatewayClient, LocalGatewayError
@@ -118,6 +119,14 @@ class LoadedModelsOut(BaseModel):
     reachable: bool
 
 
+class HostMemory(BaseModel):
+    """Unified-memory gauge for the drawer's meter (None off Linux). On Strix Halo
+    the iGPU shares system RAM, so this is the real headroom for loading models."""
+
+    total_gb: float
+    used_gb: float
+
+
 class LlmSettingsOut(BaseModel):
     providers: list[ProviderInfo]
     reasoning_efforts: list[str]
@@ -127,6 +136,8 @@ class LlmSettingsOut(BaseModel):
     # an operator can see what they could provision (via the install/CLI path).
     local_hosting_enabled: bool
     local_models: list[LocalModelInfo]
+    # Live host memory for the drawer meter; None when hosting is off or off-Linux.
+    host_memory: HostMemory | None = None
 
 
 class TaskOverrideIn(BaseModel):
@@ -195,7 +206,20 @@ async def _snapshot(
         local_models=[
             _local_model_info(settings, m, m.id in loaded) for m in local_catalog.CATALOG
         ],
+        host_memory=_host_memory(settings),
     )
+
+
+def _host_memory(settings: Settings) -> HostMemory | None:
+    """Live unified-memory reading — only when hosting is on (it drives the drawer
+    meter); None off-Linux or when /proc/meminfo can't be read."""
+    if not settings.local_llm_enabled:
+        return None
+    mem = read_memory_gb()
+    if mem is None:
+        return None
+    total, used = mem
+    return HostMemory(total_gb=total, used_gb=used)
 
 
 def _local_model_info(

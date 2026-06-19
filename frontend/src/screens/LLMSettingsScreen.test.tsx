@@ -54,6 +54,7 @@ function initialSettings(): LlmSettings {
         note: "",
       },
     ],
+    host_memory: null,
   };
 }
 
@@ -234,6 +235,7 @@ describe("LLMSettingsScreen", () => {
   it("shows loaded models and unloads them from memory", async () => {
     const s = initialSettings();
     s.local_hosting_enabled = true;
+    s.host_memory = { total_gb: 128, used_gb: 92 };
     s.local_models = [
       {
         id: "qwen3-vl-30b",
@@ -280,6 +282,9 @@ describe("LLMSettingsScreen", () => {
 
     // The resident model reads "loaded" and offers an Unload button.
     expect(await screen.findByText("loaded")).toBeInTheDocument();
+    // The live memory meter shows used/total.
+    expect(screen.getByText("92 GB used")).toBeInTheDocument();
+    expect(screen.getByText("128 GB total")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Unload" }));
 
     await waitFor(() => expect(calls).toHaveLength(1));

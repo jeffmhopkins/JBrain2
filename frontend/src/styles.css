@@ -927,6 +927,30 @@ h3 {
 .llm-local-body {
   padding: 0 16px 8px;
 }
+/* Live unified-memory meter (Strix Halo shares RAM with the iGPU) — fills
+   green→amber as it climbs so headroom for loading another model is visible. */
+.llm-mem {
+  margin: 2px 0 12px;
+}
+.llm-mem-bar {
+  height: 6px;
+  border-radius: var(--r-pill);
+  background: var(--surface-2);
+  overflow: hidden;
+}
+.llm-mem-bar > i {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, var(--green), var(--amber));
+  transition: width 0.5s ease;
+}
+.llm-mem-cap {
+  display: flex;
+  justify-content: space-between;
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+  margin-top: 4px;
+}
 .llm-local-hint {
   font-size: var(--fs-micro);
   color: var(--text-2);

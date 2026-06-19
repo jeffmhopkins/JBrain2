@@ -63,6 +63,8 @@ def test_get_defaults_grok_and_low_for_empty_store(
     body = c.get("/api/settings/llm").json()
     assert body["reasoning_efforts"] == ["none", "low", "medium", "high"]
     assert body["reasoning_default"] == "low"
+    # No memory meter when hosting is off.
+    assert body["host_memory"] is None
     # Local hosting is off by default — only the two cloud providers are offered.
     assert {p["id"] for p in body["providers"]} == {"grok", "claude"}
     grok = next(p for p in body["providers"] if p["id"] == "grok")
@@ -333,9 +335,14 @@ def test_loaded_status_reflects_the_gateway() -> None:
     # catalog id loaded and everything else idle.
     gw = FakeLocalGateway(running={"qwen3-vl-30b-a3b"})
     c, _ = _authed_client(_local_settings(), gw)
-    by_id = {m["id"]: m for m in c.get("/api/settings/llm").json()["local_models"]}
+    body = c.get("/api/settings/llm").json()
+    by_id = {m["id"]: m for m in body["local_models"]}
     assert by_id["qwen3-vl-30b"]["loaded"] is True
     assert by_id["gpt-oss-120b"]["loaded"] is False
+    # Memory meter is populated when hosting is on (Linux/CI); tolerate off-Linux.
+    mem = body["host_memory"]
+    if mem is not None:
+        assert mem["total_gb"] > 0 and mem["used_gb"] >= 0
 
 
 def test_loaded_status_is_false_when_gateway_unreachable() -> None:
