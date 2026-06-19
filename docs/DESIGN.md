@@ -765,6 +765,45 @@ enacts via the levers, posted as an `editor` post with an outcome chip. Reachabl
 **Discussion** affordance (the quick-fix correction sheet stays beside it until T2 unifies them). DoD
 fixtures: empty (Build-log only) / long-thread / pending-action / error / offline.
 
+## Locations surface (the owner's place views — Phase 7)
+
+The location domain's accent is the **`--location` teal (`#6FB6B1`)** (settled in L3);
+amber (`--warn`) carries the stale/"last known" tone (matching the GPS-gap marker).
+`LocationScreen` is a 3-tab segmented control (Map · Timeline · Devices) on `.seg-row`/
+`.seg-on`. Two L7 affordances sit on it, both **names + times only — never a
+coordinate** (this is why neither needs a basemap):
+
+- **Inline digest panel (L7a — chosen Option C, reference mock `docs/mocks/location-l7/
+  option-c.html`).** A **compute-on-read** place digest renders as a **collapsible
+  inline panel ABOVE the Map** inside the Map tab — *not* a fourth tab (Options A/B's
+  extra "Digest" segment was rejected). It is a **per-day place-track**: each local
+  civil day is a horizontal bar of named place-segments (home teal, other places
+  steel, a dashed amber "no signal" gap), with a headline summary (nights home, time
+  at a place, longest trip), a compact legend, a first/last-seen line, and an
+  owner-only footnote. It **defaults to the WEEKLY period**, with a nightly⇄weekly
+  pill toggle (nightly expands a single day's hour-track) and a "computed just now ↻"
+  recompute affordance that keeps it honestly compute-on-read (`GET
+  /api/locations/digest?period=week|night`, owner + full-owner gated — the digest reads
+  WEAK-RLS `app.events`/`place_geofence`, so the endpoint gate is the barrier, not RLS).
+  The panel is a regular surface element (not a modal): it follows the inline-expansion
+  paradigm, collapsed/expanded by its header.
+
+- **App-open presence toast (L7b — chosen Option C).** On app/chat open a small
+  **corner toast** rises bottom-anchored above the nav (the existing toast paradigm —
+  bottom-anchored, auto-dismiss, single action), showing the owner's OWN latest place.
+  It is **freshness-honest**: a fresh fix reads teal "Currently at <place>"; a stale
+  fix reads amber "Last known: <place> · N ago · may have moved", **never "here now"**.
+  It self-dismisses after a few seconds and carries one **"open"** action (jump to the
+  Locations surface); it is **absent entirely when there is no usable fix**. Names +
+  times only — no coordinate. This is a **distinct presence toast**, NOT the
+  connectivity status banner DESIGN reserves for sync state (it uses `role`/live-region
+  semantics via an `<output>` element). The toast reads `GET /api/locations/presence`
+  (owner + full-owner gated). The SAME presence read also reaches the assistant — but
+  as a **data-framed `UserMessage` prepended to the conversation** in
+  `api/agent.py::chat` (mirroring the Loop-2 skills block's data/instruction
+  boundary), **not** the system prompt and **not** the toast — owner-gated (present
+  only for a location-scoped full-owner session), so a narrowed session gets neither.
+
 ## Implementation rules
 
 1. Tokens live in one file (`frontend/src/styles/tokens.css`); components

@@ -9,6 +9,7 @@
 import { useEffect, useState } from "react";
 import {
   type DeviceSummary,
+  type LocationDigest,
   type LocationFix,
   type PlaceGeofence,
   type ProvisionedDevice,
@@ -16,6 +17,7 @@ import {
   api,
 } from "../api/client";
 import { Sheet } from "../components/Sheet";
+import { LocationDigestPanel } from "./LocationDigestPanel";
 import { LocationMapTab, type PlaceNoteInput } from "./LocationMapTab";
 
 type Tab = "devices" | "timeline" | "map";
@@ -36,6 +38,7 @@ export interface LocationDeps {
   listFixes: (subjectId: string, since: string, until: string) => Promise<LocationFix[]>;
   filePlaceNote: (place: PlaceNoteInput) => Promise<void>;
   reverseGeocode: (lat: number, lon: number) => Promise<string | null>;
+  loadDigest: (period: "week" | "night") => Promise<LocationDigest>;
 }
 
 interface LocationScreenProps {
@@ -67,7 +70,13 @@ export function LocationScreen({ deps }: LocationScreenProps) {
 
       {tab === "devices" && <DevicesTab deps={deps} />}
       {tab === "timeline" && <TimelineTab deps={deps} />}
-      {tab === "map" && <LocationMapTab deps={deps} />}
+      {tab === "map" && (
+        <>
+          {/* L7a: the place digest sits inline ABOVE the map (no extra tab). */}
+          <LocationDigestPanel deps={deps ? { loadDigest: deps.loadDigest } : undefined} />
+          <LocationMapTab deps={deps} />
+        </>
+      )}
     </main>
   );
 }

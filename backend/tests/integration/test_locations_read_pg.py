@@ -970,3 +970,101 @@ async def test_dwell_tools_refuse_a_narrowed_session(maker: async_sessionmaker) 
     for tool in ("time_at_place", "find_when_at"):
         with pytest.raises(LocationToolRefusal):
             await handlers[tool]({"place": "L4 REF Place"}, narrowed)
+
+
+# --- L7a: the digest compute over real dwells + the full-owner gate -----------
+# The digest is compute-on-read from the owner's dwells (WEAK-RLS app.events) + the
+# home place name (WEAK-RLS place_geofence). Both reads are full-owner gated; the
+# endpoint's barrier IS that gate, so a narrowed owner is REFUSED, not handed rows.
+
+
+async def test_digest_compute_over_real_dwells(maker: async_sessionmaker) -> None:
+    from datetime import timezone
+
+    from jbrain.locations.digest import compute_digest
+
+    pid, sid = await _device(maker, "L7 Digest Phone")
+    home = await _fence_at(maker, name="Home", lat=70.0, lon=80.0)
+    office = await _fence_at(maker, name="L7 Office", lat=70.1, lon=80.1)
+    # A home stay and an office stay, both within the digest window.
+    await _crossing(maker, pid=pid, sid=sid, eid=home, transition="enter", minute=0)
+    await _crossing(maker, pid=pid, sid=sid, eid=home, transition="exit", minute=120)
+    await _crossing(maker, pid=pid, sid=sid, eid=office, transition="enter", minute=180)
+    await _crossing(maker, pid=pid, sid=sid, eid=office, transition="exit", minute=600)
+    repo = SqlLocationRepo(maker)
+
+    since = _BASE - timedelta(hours=1)
+    until = _BASE + timedelta(hours=12)
+    dwells = await repo.dwells(OWNER, subject_id=sid, since=since, until=until)
+    digest = compute_digest(
+        dwells,
+        since=since,
+        until=until,
+        timezone="UTC",
+        home_name="Home",
+        period="week",
+        computed_at=until,
+    )
+    # The office stay (7h) is the longest non-home trip; Home is never a trip.
+    assert digest.longest_trip is not None
+    assert digest.longest_trip.place_name == "L7 Office"
+    assert digest.places_visited == 1  # Office; Home excluded
+    assert digest.nights_home >= 1
+    # Coordinate-free: the lat/lon used to build the fences never surface.
+    blob = repr(digest)
+    assert "70.0" not in blob and "80.0" not in blob
+    assert timezone  # silence the unused-import guard on some linters
+
+
+async def test_digest_reads_refuse_a_narrowed_owner(maker: async_sessionmaker) -> None:
+    # The digest's two weak-table reads — dwells (app.events) and places
+    # (place_geofence) — MUST refuse a narrowed/owner_scoped owner: RLS would
+    # otherwise hand them the rows. This is the endpoint's real barrier.
+    pid, sid = await _device(maker, "L7 Narrowed Phone")
+    await _fence_at(maker, name="L7 Narrowed Home", lat=71.0, lon=81.0)
+    repo = SqlLocationRepo(maker)
+    for ctx in (NARROWED_LOCATION, NARROWED_GENERAL):
+        with pytest.raises(LocationToolRefusal):
+            await repo.dwells(ctx, subject_id=sid, since=_BASE, until=_BASE + timedelta(hours=1))
+        with pytest.raises(LocationToolRefusal):
+            await repo.places(ctx)
+
+
+# --- L7b: the owner-presence read over real repos + the full-owner gate -------
+
+
+async def test_presence_read_resolves_owner_place(maker: async_sessionmaker) -> None:
+    from jbrain.locations.presence import read_owner_presence
+
+    pid, sid = await _device(maker, "L7 Presence iPhone subj")
+    me = await _me_entity(maker, name="Me")
+    device_entity = await _entity(maker, kind="Device", name="L7 Presence iPhone")
+    await _operated_by(maker, device_eid=device_entity, person_eid=me)
+    await _bind_entity_subject(maker, entity_id=device_entity, subject_id=sid)
+    await _geofence_state(maker, sid=sid, place_geofence_name="L7 Presence Home")
+    # A very recent fix so the presence reads fresh (relative to real now).
+    async with scoped_session(maker, OWNER) as session:
+        await session.execute(
+            text(
+                "INSERT INTO app.location_fixes"
+                " (subject_id, principal_id, captured_at, latitude, longitude)"
+                " VALUES (:s, :p, now(), :lat, :lon)"
+            ),
+            {"s": sid, "p": pid, "lat": _HOME[0], "lon": _HOME[1]},
+        )
+
+    presence = await read_owner_presence(SqlLocationRepo(maker), SqlDeviceRepo(maker), OWNER)
+    assert presence.present and presence.place_name == "L7 Presence Home"
+    assert not presence.stale
+
+
+async def test_presence_read_refuses_a_narrowed_owner(maker: async_sessionmaker) -> None:
+    from jbrain.locations.presence import read_owner_presence
+
+    # read_owner_presence calls require_full_owner FIRST — a narrowed owner is refused
+    # before any read (the gate the owner-only injection/endpoint rely on).
+    repo = SqlLocationRepo(maker)
+    devices = SqlDeviceRepo(maker)
+    for ctx in (NARROWED_LOCATION, NARROWED_GENERAL):
+        with pytest.raises(LocationToolRefusal):
+            await read_owner_presence(repo, devices, ctx)

@@ -1,0 +1,320 @@
+<!doctype html>
+<!--
+  L7 LOCATION GUI GATE — OPTION C: "Week timeline track + corner presence toast"
+  =============================================================================
+  Two surfaces, one mock:
+   1. L7a digest — a WEEK TIMELINE. Each day is a horizontal track of named
+      place-segments (Home / Office / out), so you SEE the shape of the week —
+      which nights were home, where the long Saturday went — with a headline
+      summary line on top and a compact legend. Lives as an inline panel ABOVE
+      the Map inside the Map tab (no extra tab; it's the first thing on the
+      Locations surface), collapsible. Nightly/weekly toggle expands a single day
+      into an hour track. A "computed just now ↻" line keeps it compute-on-read.
+   2. L7b presence chip — a CORNER TOAST. On app/chat open a small toast rises in
+      the bottom corner above the nav (matching DESIGN.md toasts), auto-dismiss
+      after a few seconds, single tap-action ("open"). Fresh = teal "currently
+      at"; stale = amber "last known". Honest freshness, never an alert.
+
+  Direction & tradeoffs:
+   + The timeline track is the only option that shows the *shape* of the week —
+     spatial-temporal at a glance, nights and trips are visible bars.
+   + A corner toast is the most lightweight, self-clearing presence (no chrome
+     left behind, matches the existing toast paradigm).
+   - The track is the densest to read and the hardest to fit many places into;
+     it leans on a small legend.
+   - A toast auto-dismisses, so a glance missed is a glance gone (re-openable
+     from the Map's live caption — presence is low-stakes, this is acceptable).
+
+  Invariants honored:
+   - Names + times only — NO coordinates in the track, legend, or toast.
+   - Freshness-honest: stale toast reads "last known", never "here now".
+   - Owner-only footnote; toast reads the owner's own latest place only.
+   - Compute-on-read: the panel recomputes on open / ↻, no stored feed.
+  Lucide icons inlined as SVG; no network needed. Teal = --location (#6FB6B1).
+-->
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Location L7 — C — Week timeline + corner toast</title>
+<style>
+  :root{
+    --bg:#0E0F11;--surface:#17181B;--surface-2:#1E2024;--border:#26282C;
+    --text:#E6E7E9;--text-2:#9A9DA3;--text-3:#5C5F66;
+    --steel:#7FA7C9;--green:#8FBC9A;--amber:#C9A36A;--rose:#CF8A8F;
+    --location:#6FB6B1;
+    --location-tint:color-mix(in srgb,var(--location) 13%,transparent);
+    --location-22:color-mix(in srgb,var(--location) 28%,transparent);
+    --amber-tint:color-mix(in srgb,var(--amber) 13%,transparent);
+    --steel-22:color-mix(in srgb,var(--steel) 30%,transparent);
+    --shadow:rgba(0,0,0,.45);
+  }
+  [data-theme="light"]{
+    --bg:#F7F7F5;--surface:#FFFFFF;--surface-2:#F0F0EE;--border:#E2E2DF;
+    --text:#1A1B1E;--text-2:#5C5F66;--text-3:#9A9DA3;--shadow:rgba(20,30,50,.12);
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  body{margin:0;background:#05070a;color:var(--text);
+    font:15px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    display:grid;place-items:center;min-height:100vh;padding:20px 0}
+  .phone{width:390px;height:824px;background:var(--bg);border-radius:30px;overflow:hidden;
+    position:relative;box-shadow:0 20px 60px var(--shadow);display:flex;flex-direction:column}
+  .topbar{height:56px;flex:0 0 56px;display:flex;align-items:center;gap:10px;padding:0 14px;
+    border-bottom:1px solid var(--border);background:var(--surface)}
+  .topbar .dot{width:8px;height:8px;border-radius:50%;background:var(--location)}
+  .topbar .ttl{font-weight:700;font-size:18px;flex:1}
+  .topbar .ttl i{color:var(--location);font-style:normal}
+  .icon-btn{width:36px;height:36px;display:grid;place-items:center;border-radius:9px;
+    color:var(--text-2);background:transparent;border:0;cursor:pointer}
+  .icon-btn:hover{background:var(--surface-2);color:var(--text)}
+  svg{width:20px;height:20px;stroke:currentColor;fill:none;stroke-width:1.7;
+    stroke-linecap:round;stroke-linejoin:round}
+  .opthead{padding:9px 14px;background:var(--location-tint);border-bottom:1px solid var(--border);
+    font-size:11.5px;color:var(--text-2)}
+  .opthead b{color:var(--text);font-size:12.5px}
+
+  .seg-row{display:flex;border:1px solid var(--border);border-radius:14px;overflow:hidden;margin:12px}
+  .seg{flex:1;display:flex;align-items:center;justify-content:center;gap:6px;padding:.7em 0;
+    font-size:13px;font-weight:500;color:var(--text-2);background:transparent;border:0;cursor:pointer}
+  .seg+.seg{border-left:1px solid var(--border)}
+  .seg-on{color:var(--text);font-weight:600;background:var(--location-tint)}
+  .seg-on .si{color:var(--location)}
+  .si{display:inline-flex}.si svg{width:15px;height:15px}
+  .scroll{overflow-y:auto;flex:1;padding:0 12px 28px;position:relative}
+
+  /* ===== L7a — collapsible digest panel above the map ===== */
+  .digest{background:var(--surface);border:1px solid var(--border);border-radius:16px;overflow:hidden;margin-bottom:12px}
+  .dhead{display:flex;align-items:center;gap:9px;padding:13px 14px;cursor:pointer}
+  .dhead .di{width:26px;height:26px;border-radius:8px;display:grid;place-items:center;
+    background:var(--location-tint);color:var(--location);flex:0 0 26px}
+  .dhead .di svg{width:15px;height:15px}
+  .dhead .ht{flex:1}
+  .dhead .ht .t{font-size:14px;font-weight:600}
+  .dhead .ht .s{font-size:11.5px;color:var(--text-2);margin-top:1px}
+  .dhead .chev{color:var(--text-3);transition:transform .18s ease-out}
+  .digest.collapsed .chev{transform:rotate(-90deg)}
+  .digest.collapsed .dbody{display:none}
+  .dbody{border-top:1px solid var(--border);padding:12px 14px 14px}
+
+  .digctl{display:flex;align-items:center;gap:8px;margin-bottom:14px}
+  .toggle{display:flex;border:1px solid var(--border);border-radius:999px;overflow:hidden}
+  .toggle button{padding:5px 13px;font-size:12px;font-weight:500;color:var(--text-2);
+    background:transparent;border:0;cursor:pointer}
+  .toggle button.on{background:var(--location-tint);color:var(--text)}
+  .toggle button+button{border-left:1px solid var(--border)}
+  .recompute{margin-left:auto;display:inline-flex;align-items:center;gap:5px;font-size:11px;color:var(--text-3);
+    background:transparent;border:0;cursor:pointer}
+  .recompute svg{width:12px;height:12px;color:var(--location)}
+  .recompute.spin svg{animation:spin .7s linear}
+  @keyframes spin{to{transform:rotate(360deg)}}
+
+  /* week track */
+  .legend{display:flex;gap:14px;margin-bottom:12px;font-size:10.5px;color:var(--text-2)}
+  .legend i{width:18px;height:8px;border-radius:3px;display:inline-block;margin-right:5px;vertical-align:middle}
+  .lg-home i{background:var(--location-22);border:1px solid var(--location)}
+  .lg-office i{background:var(--steel-22);border:1px solid var(--steel)}
+  .lg-out i{background:var(--surface-2);border:1px dashed var(--border)}
+  .lg-gap i{background:repeating-linear-gradient(90deg,var(--amber) 0 4px,transparent 4px 8px)}
+
+  .week{display:flex;flex-direction:column;gap:7px}
+  .drow{display:grid;grid-template-columns:30px 1fr;align-items:center;gap:9px}
+  .drow .dl{font-size:11px;color:var(--text-2);font-weight:500}
+  .drow.today .dl{color:var(--location);font-weight:700}
+  .track{height:18px;border-radius:6px;overflow:hidden;display:flex;background:var(--surface-2);
+    border:1px solid var(--border)}
+  .seg-b{height:100%}
+  .seg-b.home{background:var(--location-22)}
+  .seg-b.office{background:var(--steel-22)}
+  .seg-b.out{background:transparent}
+  .seg-b.gap{background:repeating-linear-gradient(90deg,color-mix(in srgb,var(--amber) 45%,transparent) 0 4px,transparent 4px 8px)}
+  .axis{display:grid;grid-template-columns:30px 1fr;gap:9px;margin-top:7px;font-size:9.5px;color:var(--text-3)}
+  .axis .marks{display:flex;justify-content:space-between}
+
+  .seenline{margin-top:14px;padding-top:12px;border-top:1px solid var(--border);font-size:12px;color:var(--text-2);line-height:1.6}
+  .seenline b{color:var(--text);font-weight:600}
+  .owner{display:flex;align-items:center;gap:6px;margin-top:12px;font-size:11px;color:var(--text-3)}
+  .owner svg{width:13px;height:13px;color:var(--location)}
+
+  /* faux map below the digest */
+  .fauxmap{height:230px;border:1px solid var(--border);border-radius:16px;
+    background:
+      radial-gradient(circle at 30% 40%, color-mix(in srgb,var(--location) 9%,transparent), transparent 40%),
+      repeating-linear-gradient(0deg, var(--surface-2) 0 1px, transparent 1px 26px),
+      repeating-linear-gradient(90deg, var(--surface-2) 0 1px, transparent 1px 26px),
+      var(--surface);
+    position:relative;display:grid;place-items:center;color:var(--text-3);font-size:12px}
+  .fauxmap .cap{position:absolute;left:10px;bottom:10px;display:inline-flex;align-items:center;gap:7px;
+    background:color-mix(in srgb,var(--bg) 72%,transparent);border:1px solid var(--border);
+    border-radius:999px;padding:5px 11px;font-size:11.5px;color:var(--text-2)}
+  .fauxmap .cap .cd{width:8px;height:8px;border-radius:50%;background:var(--location)}
+
+  /* ===== L7b — corner toast ===== */
+  .toast{position:absolute;left:12px;right:12px;bottom:16px;display:flex;align-items:center;gap:10px;
+    background:var(--surface-2);border:1px solid var(--border);border-radius:12px;padding:11px 13px;
+    box-shadow:0 8px 24px var(--shadow);font-size:13px;animation:rise .2s ease-out}
+  @keyframes rise{from{transform:translateY(18px);opacity:0}to{transform:none;opacity:1}}
+  .toast .tdot{width:9px;height:9px;border-radius:50%;flex:0 0 9px}
+  .toast.fresh{border-left:3px solid var(--location)}
+  .toast.fresh .tdot{background:var(--location)}
+  .toast.stale{border-left:3px solid var(--amber);background:var(--amber-tint)}
+  .toast.stale .tdot{background:var(--amber)}
+  .toast .tt{flex:1;line-height:1.3}
+  .toast .tt b{font-weight:600}
+  .toast .tt .tf{display:block;font-size:11px;color:var(--text-2);margin-top:1px}
+  .toast .ta{font-size:12.5px;font-weight:500;color:var(--location);background:transparent;border:0;cursor:pointer;padding:4px 6px}
+  .toast.stale .ta{color:var(--amber)}
+</style>
+</head>
+<body>
+<div class="phone">
+  <div class="topbar">
+    <span class="dot"></span>
+    <div class="ttl">JBrain<i>.</i></div>
+    <button class="icon-btn" id="showToast" title="Replay app-open toast">
+      <svg viewBox="0 0 24 24"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg></button>
+    <button class="icon-btn" id="theme" title="Toggle theme">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4.5"/><path d="M12 2v2M12 20v2M4 12H2M22 12h-2M5 5l1.5 1.5M17.5 17.5L19 19M19 5l-1.5 1.5M6.5 17.5L5 19"/></svg></button>
+  </div>
+
+  <div class="opthead"><b>Option C — Week timeline track + corner presence toast.</b> Digest is a per-day place-track inline above the map; the app-open chip is a self-dismissing corner toast (teal fresh / amber "last known"). The bell ↻ replays the toast (alternating tone).</div>
+
+  <div class="seg-row" role="tablist">
+    <button class="seg seg-on" role="tab" aria-selected="true"><span class="si"><svg viewBox="0 0 24 24"><path d="M9 3 3 6v15l6-3 6 3 6-3V3l-6 3-6-3Z"/><path d="M9 3v15M15 6v15"/></svg></span>Map</button>
+    <button class="seg" role="tab"><span class="si"><svg viewBox="0 0 24 24"><path d="M3 12h4l2 6 4-12 2 6h6"/></svg></span>Timeline</button>
+    <button class="seg" role="tab"><span class="si"><svg viewBox="0 0 24 24"><rect x="6" y="2" width="12" height="20" rx="2"/><path d="M11 18h2"/></svg></span>Devices</button>
+  </div>
+
+  <div class="scroll">
+    <!-- L7a: collapsible digest panel sitting atop the Map tab -->
+    <div class="digest" id="digest">
+      <div class="dhead" id="dhead">
+        <span class="di"><svg viewBox="0 0 24 24"><path d="M3 12h4l2 6 4-12 2 6h6"/></svg></span>
+        <span class="ht"><span class="t">Your week in places</span><span class="s" id="dsub">5 nights home · 31h at Office · longest trip Sat</span></span>
+        <span class="chev"><svg viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg></span>
+      </div>
+      <div class="dbody">
+        <div class="digctl">
+          <div class="toggle" id="period">
+            <button class="on" data-p="week">This week</button>
+            <button data-p="night">Last night</button>
+          </div>
+          <button class="recompute" id="recompute"><svg viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 3v4h-4"/></svg>computed just now</button>
+        </div>
+
+        <div id="trackArea">
+          <div class="legend">
+            <span class="lg-home"><i></i>Home</span>
+            <span class="lg-office"><i></i>Office</span>
+            <span class="lg-out"><i></i>out / other</span>
+            <span class="lg-gap"><i></i>no signal</span>
+          </div>
+          <div class="week">
+            <!-- each track = 24h; segment widths are % of the day -->
+            <div class="drow"><span class="dl">Mon</span><div class="track">
+              <div class="seg-b home" style="width:34%"></div><div class="seg-b out" style="width:4%"></div>
+              <div class="seg-b office" style="width:40%"></div><div class="seg-b out" style="width:4%"></div>
+              <div class="seg-b home" style="width:18%"></div></div></div>
+            <div class="drow"><span class="dl">Tue</span><div class="track">
+              <div class="seg-b home" style="width:30%"></div><div class="seg-b office" style="width:38%"></div>
+              <div class="seg-b out" style="width:14%"></div><div class="seg-b out" style="width:18%"></div></div></div>
+            <div class="drow"><span class="dl">Wed</span><div class="track">
+              <div class="seg-b home" style="width:34%"></div><div class="seg-b office" style="width:44%"></div>
+              <div class="seg-b out" style="width:6%"></div><div class="seg-b home" style="width:16%"></div></div></div>
+            <div class="drow"><span class="dl">Thu</span><div class="track">
+              <div class="seg-b home" style="width:33%"></div><div class="seg-b office" style="width:46%"></div>
+              <div class="seg-b gap" style="width:9%"></div><div class="seg-b home" style="width:12%"></div></div></div>
+            <div class="drow"><span class="dl">Fri</span><div class="track">
+              <div class="seg-b home" style="width:35%"></div><div class="seg-b office" style="width:40%"></div>
+              <div class="seg-b out" style="width:8%"></div><div class="seg-b home" style="width:17%"></div></div></div>
+            <div class="drow"><span class="dl">Sat</span><div class="track">
+              <div class="seg-b home" style="width:44%"></div><div class="seg-b out" style="width:50%"></div>
+              <div class="seg-b home" style="width:6%"></div></div></div>
+            <div class="drow today"><span class="dl">Sun</span><div class="track">
+              <div class="seg-b home" style="width:78%"></div><div class="seg-b out" style="width:14%"></div>
+              <div class="seg-b home" style="width:8%"></div></div></div>
+          </div>
+          <div class="axis"><span></span><div class="marks"><span>12a</span><span>6a</span><span>12p</span><span>6p</span><span>12a</span></div></div>
+
+          <div class="seenline">
+            Longest trip <b>Saturday</b> — out 10:40a–11:20p around Pearl St &amp; the Foothills.
+            New this week: <b>Mom's house</b> (first seen Tue 6:40p).
+          </div>
+        </div>
+
+        <div class="owner"><svg viewBox="0 0 24 24"><path d="M12 1l9 4v6c0 5-3.8 9-9 11-5.2-2-9-6-9-11V5z"/></svg>owner-only · computed on read · place names + times only</div>
+      </div>
+    </div>
+
+    <!-- the Map itself (faux) -->
+    <div class="fauxmap">map · pan / zoom
+      <span class="cap"><span class="cd"></span>last fix 4 min ago · near Home</span>
+    </div>
+  </div>
+
+  <!-- L7b: corner presence toast (app-open) -->
+  <div class="toast fresh" id="toast">
+    <span class="tdot"></span>
+    <span class="tt"><b>Currently at: Home</b><span class="tf">fix 4 min ago</span></span>
+    <button class="ta" id="toastAct">open</button>
+  </div>
+</div>
+
+<script>
+  // L7a: collapse / expand the digest panel
+  document.getElementById('dhead').onclick = () =>
+    document.getElementById('digest').classList.toggle('collapsed');
+
+  // L7a: week ⇄ last-night track
+  const area = document.getElementById('trackArea');
+  const WEEK = area.innerHTML;
+  const sub = document.getElementById('dsub');
+  const NIGHT = `
+    <div class="legend">
+      <span class="lg-home"><i></i>Home</span>
+      <span class="lg-office"><i></i>Office</span>
+      <span class="lg-out"><i></i>out / other</span>
+    </div>
+    <div class="week">
+      <div class="drow today"><span class="dl">Tue</span><div class="track">
+        <div class="seg-b office" style="width:30%"></div><div class="seg-b out" style="width:10%"></div>
+        <div class="seg-b out" style="width:12%"></div><div class="seg-b home" style="width:48%"></div></div></div>
+    </div>
+    <div class="axis"><span></span><div class="marks"><span>12p</span><span>3p</span><span>6p</span><span>9p</span><span>12a</span></div></div>
+    <div class="seenline">Settled at <b>Home</b> 6:48p; no crossings after 9:10p. Earlier: Office until 4:10p, a stop at <b>Pearl St</b>.</div>`;
+  document.querySelectorAll('#period button').forEach(b => b.onclick = (e) => {
+    e.stopPropagation();
+    document.querySelectorAll('#period button').forEach(x => x.classList.remove('on'));
+    b.classList.add('on');
+    const night = b.dataset.p === 'night';
+    area.innerHTML = night ? NIGHT : WEEK;
+    sub.textContent = night ? 'slept at Home · settled 9:10p · 3 places' : '5 nights home · 31h at Office · longest trip Sat';
+  });
+
+  // recompute spin (compute-on-read)
+  document.getElementById('recompute').onclick = function(e){
+    e.stopPropagation(); this.classList.add('spin'); setTimeout(()=>this.classList.remove('spin'),700);
+  };
+
+  // L7b: toast auto-dismiss + replay alternating tone
+  const toast = document.getElementById('toast');
+  let timer = setTimeout(()=>toast.style.display='none', 4200);
+  let staleNext = true;
+  function showToast(stale){
+    clearTimeout(timer);
+    toast.style.display='flex';
+    toast.classList.toggle('stale', stale); toast.classList.toggle('fresh', !stale);
+    toast.querySelector('.tt').innerHTML = stale
+      ? '<b>Last known: Office</b><span class="tf">3 h ago · may have moved</span>'
+      : '<b>Currently at: Home</b><span class="tf">fix 4 min ago</span>';
+    timer = setTimeout(()=>toast.style.display='none', 4200);
+  }
+  document.getElementById('showToast').onclick = () => { showToast(staleNext); staleNext = !staleNext; };
+  document.getElementById('toastAct').onclick = () => toast.style.display='none';
+
+  document.getElementById('theme').onclick = () => {
+    const h = document.documentElement;
+    h.dataset.theme = h.dataset.theme === 'dark' ? 'light' : 'dark';
+  };
+</script>
+</body>
+</html>

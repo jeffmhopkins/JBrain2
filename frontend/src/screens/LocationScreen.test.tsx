@@ -87,6 +87,19 @@ function deps(over: Partial<LocationDeps> = {}): LocationDeps {
     listFixes: vi.fn(async () => [fix({ latitude: 40.0 }), fix({ latitude: 40.001 })]),
     filePlaceNote: vi.fn(async () => {}),
     reverseGeocode: vi.fn(async () => "12 Market St, Springfield"),
+    loadDigest: vi.fn(async () => ({
+      period: "week",
+      since: "2026-06-11T12:00:00Z",
+      until: "2026-06-18T12:00:00Z",
+      timezone: "UTC",
+      days: [],
+      nights_home: 0,
+      nights_total: 7,
+      places_visited: 0,
+      longest_trip: null,
+      seen: [],
+      computed_at: "2026-06-18T12:00:00Z",
+    })),
     ...over,
   };
 }

@@ -10302,3 +10302,341 @@ input.ld-title {
   color: var(--text-2);
   text-align: center;
 }
+
+/* ===== L7a — the inline place-digest panel (above the Map) ===== */
+/* Option C — week timeline track. Teal = --location; amber = --warn for gaps.
+   Names + times only — no coordinate appears, so no basemap is needed. */
+
+.loc-digest {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
+  overflow: hidden;
+  margin-bottom: 12px;
+}
+
+.loc-digest-head {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 13px 14px;
+  background: none;
+  border: none;
+  text-align: left;
+  cursor: pointer;
+  color: var(--text);
+}
+
+.loc-digest-icon {
+  width: 26px;
+  height: 26px;
+  flex: 0 0 26px;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  background: var(--location-tint);
+  color: var(--location);
+  font-size: 13px;
+}
+
+.loc-digest-title {
+  flex: 1;
+  min-width: 0;
+}
+
+.loc-digest-t {
+  display: block;
+  font-size: var(--fs-body);
+  font-weight: 600;
+}
+
+.loc-digest-s {
+  display: block;
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+  margin-top: 1px;
+}
+
+.loc-digest-chev {
+  color: var(--text-3);
+  transition: transform 0.18s ease-out;
+}
+
+.loc-digest-collapsed .loc-digest-chev {
+  transform: rotate(-90deg);
+}
+
+.loc-digest-body {
+  border-top: 1px solid var(--border);
+  padding: 12px 14px 14px;
+}
+
+.loc-digest-ctl {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.loc-digest-toggle {
+  display: flex;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.loc-digest-toggle button {
+  padding: 5px 13px;
+  font-size: var(--fs-micro);
+  font-weight: 500;
+  color: var(--text-2);
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+
+.loc-digest-toggle button.on {
+  background: var(--location-tint);
+  color: var(--text);
+}
+
+.loc-digest-toggle button + button {
+  border-left: 1px solid var(--border);
+}
+
+.loc-digest-recompute {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+
+.loc-digest-recompute span {
+  color: var(--location);
+}
+
+.loc-digest-recompute.spin span {
+  animation: loc-digest-spin 0.7s linear;
+}
+
+@keyframes loc-digest-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.loc-digest-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 12px;
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+}
+
+.loc-digest-legend i {
+  width: 18px;
+  height: 8px;
+  border-radius: 3px;
+  display: inline-block;
+  margin-right: 5px;
+  vertical-align: middle;
+}
+
+.loc-digest-legend .lg-home i {
+  background: var(--location-tint);
+  border: 1px solid var(--location);
+}
+
+.loc-digest-legend .lg-place i {
+  background: rgba(127, 167, 201, 0.28);
+  border: 1px solid var(--steel);
+}
+
+.loc-digest-legend .lg-out i {
+  background: var(--surface-2);
+  border: 1px dashed var(--border);
+}
+
+.loc-digest-legend .lg-gap i {
+  background: repeating-linear-gradient(90deg, var(--warn) 0 4px, transparent 4px 8px);
+}
+
+.loc-digest-week {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.loc-digest-drow {
+  display: grid;
+  grid-template-columns: 32px 1fr;
+  align-items: center;
+  gap: 9px;
+}
+
+.loc-digest-dl {
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+  font-weight: 500;
+}
+
+.loc-digest-drow.today .loc-digest-dl {
+  color: var(--location);
+  font-weight: 700;
+}
+
+.loc-digest-track {
+  height: 18px;
+  border-radius: 6px;
+  overflow: hidden;
+  display: flex;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+}
+
+.loc-digest-seg {
+  height: 100%;
+}
+
+.loc-digest-seg.home {
+  background: var(--location-tint);
+}
+
+.loc-digest-seg.place {
+  background: rgba(127, 167, 201, 0.28);
+}
+
+.loc-digest-seg.out {
+  background: transparent;
+}
+
+.loc-digest-seg.gap {
+  background: repeating-linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--warn) 45%, transparent) 0 4px,
+    transparent 4px 8px
+  );
+}
+
+.loc-digest-seen {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+  font-size: var(--fs-secondary);
+  color: var(--text-2);
+  line-height: 1.6;
+}
+
+.loc-digest-seen b {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.loc-digest-owner {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 12px;
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+}
+
+.loc-digest-owner span {
+  color: var(--location);
+}
+
+/* ===== L7b — the app-open presence toast (corner, self-dismissing) ===== */
+/* A distinct presence toast (not the connectivity banner): bottom-anchored above
+   the nav, teal --location when fresh, amber --warn "last known" when stale.
+   Names + times only — no coordinate. */
+
+.presence-toast {
+  position: fixed;
+  left: 12px;
+  right: 12px;
+  bottom: calc(96px + env(safe-area-inset-bottom));
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-input);
+  padding: 11px 13px;
+  font-size: var(--fs-secondary);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  z-index: 60;
+  animation: presence-rise 0.2s ease-out;
+}
+
+@keyframes presence-rise {
+  from {
+    transform: translateY(18px);
+    opacity: 0;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
+}
+
+.presence-toast.fresh {
+  border-left: 3px solid var(--location);
+}
+
+.presence-toast.stale {
+  border-left: 3px solid var(--warn);
+  background: color-mix(in srgb, var(--warn) 13%, var(--surface-2));
+}
+
+.presence-toast-dot {
+  width: 9px;
+  height: 9px;
+  flex: 0 0 9px;
+  border-radius: 50%;
+}
+
+.presence-toast.fresh .presence-toast-dot {
+  background: var(--location);
+}
+
+.presence-toast.stale .presence-toast-dot {
+  background: var(--warn);
+}
+
+.presence-toast-text {
+  flex: 1;
+  min-width: 0;
+  line-height: 1.3;
+}
+
+.presence-toast-text b {
+  font-weight: 600;
+}
+
+.presence-toast-fresh {
+  display: block;
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+  margin-top: 1px;
+}
+
+.presence-toast-action {
+  font-size: var(--fs-secondary);
+  font-weight: 500;
+  color: var(--location);
+  background: none;
+  border: none;
+  padding: 4px 6px;
+  cursor: pointer;
+}
+
+.presence-toast.stale .presence-toast-action {
+  color: var(--warn);
+}
