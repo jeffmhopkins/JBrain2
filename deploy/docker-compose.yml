@@ -75,6 +75,11 @@ services:
       # Export downloads stream from here; import uploads land here for the
       # supervisor's one-shot to pick up. Host path, shared with backup.sh.
       - ./backups:/data/backups
+      # Read-only view of the provisioned local-model weights (same host dir the
+      # local-llm gateway serves) so the settings drawer can report each model's
+      # real on-disk footprint. Empty/absent on a stock deploy — the read fails
+      # closed to the catalog estimate.
+      - ./local-models:/data/local-models:ro
     networks: [edge, internal, geocoder_net]
     depends_on:
       db:

@@ -345,6 +345,29 @@ def test_loaded_status_reflects_the_gateway() -> None:
         assert mem["total_gb"] > 0 and mem["used_gb"] >= 0
 
 
+def test_disk_gb_reports_the_real_footprint_when_provisioned(tmp_path: Any) -> None:
+    # Lay down real weights for one provisioned model; the other isn't on disk.
+    qwen = tmp_path / "qwen3-vl-30b"
+    qwen.mkdir()
+    (qwen / "model.gguf").write_bytes(b"\0" * (2 * 1024**3))
+    settings = _cloud_settings(
+        local_llm_enabled=True,
+        local_models=["qwen3-vl-30b", "gpt-oss-120b"],
+        local_models_dir=str(tmp_path),
+    )
+    c, _ = _authed_client(settings)
+    by_id = {m["id"]: m for m in c.get("/api/settings/llm").json()["local_models"]}
+    # Measured from the GGUF on disk, not the catalog estimate.
+    assert by_id["qwen3-vl-30b"]["disk_gb"] == 2.0
+    # Not provisioned here → null, so the screen falls back to the estimate.
+    assert by_id["gpt-oss-120b"]["disk_gb"] is None
+
+
+def test_disk_gb_is_null_when_hosting_disabled() -> None:
+    c, _ = _authed_client(_cloud_settings())  # hosting off → never touch the disk
+    assert all(m["disk_gb"] is None for m in c.get("/api/settings/llm").json()["local_models"])
+
+
 def test_loaded_status_is_false_when_gateway_unreachable() -> None:
     # FakeLocalGateway with empty running stands in for an unreachable/cold gateway
     # — best-effort, the screen still renders with nothing loaded.

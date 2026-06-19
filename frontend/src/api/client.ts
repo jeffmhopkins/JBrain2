@@ -265,7 +265,10 @@ export interface LocalModelInfo {
   supports_tools: boolean;
   tiers: string[];
   quant: string;
+  /** Catalog's nominal download estimate — used for models not installed here. */
   size_gb: number;
+  /** Real measured weights size on disk, or null when the model isn't provisioned. */
+  disk_gb: number | null;
   note: string;
 }
 
