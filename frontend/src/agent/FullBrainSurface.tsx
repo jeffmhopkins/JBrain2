@@ -446,15 +446,17 @@ function ActivityLine({
   const bare = thinking && !hasAnswer;
 
   return (
-    // The line and its two disclosure bodies are one foot strip — a single flex child
-    // of the bubble, so a closed body adds no gap and the line stays tight to the card
-    // foot whether or not anything is open.
+    // The line and its disclosure share one foot strip — a single flex child of the
+    // bubble, so a closed body adds no gap and the line stays tight to the card foot.
+    // The two segments are a segmented control over ONE panel: selecting a chip swaps
+    // the panel's content (reasoning ⇄ steps), selecting the open chip closes it. With
+    // a single body the open height and bottom spacing are identical for either view.
     <div className={`fb-foot${bare ? " bare" : ""}`}>
       <div className="fb-activity">
         {hasReasoning && (
           <button
             type="button"
-            className={`fb-act-seg fb-act-think${open === "think" ? " open" : ""}${thinking ? " live" : ""}`}
+            className={`fb-act-chip fb-act-think${open === "think" ? " on" : ""}`}
             aria-expanded={open === "think"}
             onClick={() => setOpen((v) => (v === "think" ? null : "think"))}
           >
@@ -463,14 +465,12 @@ function ActivityLine({
               {thinking && <span className="fb-act-pulse" aria-hidden="true" />}
               {label}
             </span>
-            <CaretGlyph className="fb-act-caret" />
           </button>
         )}
-        {hasReasoning && tools.length > 0 && <span className="fb-act-div" aria-hidden="true" />}
         {tools.length > 0 && (
           <button
             type="button"
-            className={`fb-act-seg fb-act-work${open === "work" ? " open" : ""}`}
+            className={`fb-act-chip fb-act-work${open === "work" ? " on" : ""}`}
             aria-expanded={open === "work"}
             onClick={() => setOpen((v) => (v === "work" ? null : "work"))}
           >
@@ -482,28 +482,34 @@ function ActivityLine({
               {sourceCount > 0 && ` · ${sourceCount} source${sourceCount === 1 ? "" : "s"}`}
               {failCount > 0 && <span className="fb-worked-fail"> · {failCount} failed</span>}
             </span>
-            <CaretGlyph className="fb-act-caret" />
           </button>
         )}
         {copyText && <CopyButton text={copyText} />}
       </div>
-      {hasReasoning && (
-        <div className={`fb-act-body${open === "think" ? " open" : ""}`}>
+      {(hasReasoning || tools.length > 0) && (
+        <div className={`fb-act-body${open ? " open" : ""}`}>
           <div className="fb-act-inner">
-            <div className="fb-thinking-trace" ref={traceRef}>
-              {reasoning}
-            </div>
-          </div>
-        </div>
-      )}
-      {tools.length > 0 && (
-        <div className={`fb-act-body${open === "work" ? " open" : ""}`}>
-          <div className="fb-act-inner">
-            <div className="fb-steps">
-              {steps.map((s) => (
-                <StepRow key={s.id} step={s} onOpenNote={onOpenNote} onOpenEntity={onOpenEntity} />
-              ))}
-            </div>
+            {hasReasoning && (
+              <div className={`fb-act-view${open === "think" ? " show" : ""}`}>
+                <div className="fb-thinking-trace" ref={traceRef}>
+                  {reasoning}
+                </div>
+              </div>
+            )}
+            {tools.length > 0 && (
+              <div className={`fb-act-view${open === "work" ? " show" : ""}`}>
+                <div className="fb-steps">
+                  {steps.map((s) => (
+                    <StepRow
+                      key={s.id}
+                      step={s}
+                      onOpenNote={onOpenNote}
+                      onOpenEntity={onOpenEntity}
+                    />
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -511,9 +517,9 @@ function ActivityLine({
   );
 }
 
-// Copy the answer to the clipboard, pinned to the right of the activity line. An
-// icon-only tap target (the strip is already busy); it briefly swaps to a green check
-// then resets — the same confirmation pattern as the review trace.
+// Copy the answer to the clipboard, pinned to the right of the activity line: a glyph
+// plus a "Copy" label that briefly swaps to a green check + "Copied" then resets — the
+// same confirmation pattern as the review trace.
 function CopyButton({ text }: { text: string }): ReactNode {
   const [copied, setCopied] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -521,7 +527,7 @@ function CopyButton({ text }: { text: string }): ReactNode {
   return (
     <button
       type="button"
-      className={`fb-act-seg fb-act-copy${copied ? " done" : ""}`}
+      className={`fb-act-copy${copied ? " done" : ""}`}
       aria-label={copied ? "Copied" : "Copy response"}
       onClick={() => {
         void navigator.clipboard?.writeText(text);
@@ -531,6 +537,7 @@ function CopyButton({ text }: { text: string }): ReactNode {
       }}
     >
       {copied ? <CheckGlyph className="fb-act-ic" /> : <CopyGlyph className="fb-act-ic" />}
+      <span className="fb-act-copy-lab">{copied ? "Copied" : "Copy"}</span>
     </button>
   );
 }
@@ -836,15 +843,6 @@ function ChevronGlyph({ className }: { className: string }): ReactNode {
   return (
     <svg className={className} viewBox="0 0 24 24" aria-hidden="true">
       <path d="m9 6 6 6-6 6" />
-    </svg>
-  );
-}
-
-// A down-caret for the Worked disclosure — rotates 180° when the block is open.
-function CaretGlyph({ className }: { className: string }): ReactNode {
-  return (
-    <svg className={className} viewBox="0 0 24 24" aria-hidden="true">
-      <path d="m6 9 6 6 6-6" />
     </svg>
   );
 }
