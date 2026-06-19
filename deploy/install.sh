@@ -56,7 +56,10 @@ cp src/deploy/db-init/01-app-role.sh db-init/
 # the JSON format the web_search tool needs. Without this copy the bind source
 # is missing, Docker creates an empty dir in its place, SearXNG falls back to
 # its HTML-only defaults, and /search?format=json answers 403 — jerv then
-# reports web search as unavailable.
+# reports web search as unavailable. rm first: on a box already broken this way
+# the path is that Docker-made directory, and `cp file dir/` would drop the file
+# inside it rather than replace it, leaving the dir mount in place.
+rm -rf searxng/settings.yml
 cp src/deploy/searxng/settings.yml searxng/settings.yml
 chmod +x jbrain backup.sh restore.sh db-init/01-app-role.sh
 ln -sf "$INSTALL_DIR/jbrain" /usr/local/bin/jbrain
