@@ -290,6 +290,7 @@ const LLM_SETTINGS: LlmSettings = {
       tiers: ["vision", "low"],
       quant: "Q8_0",
       size_gb: 32,
+      disk_gb: null,
       note: "Vision + a capable cheap text model.",
     },
     {
@@ -302,6 +303,7 @@ const LLM_SETTINGS: LlmSettings = {
       tiers: ["high"],
       quant: "MXFP4",
       size_gb: 59,
+      disk_gb: null,
       note: "Strongest open reasoning that still runs fast here.",
     },
   ],

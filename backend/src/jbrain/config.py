@@ -103,6 +103,12 @@ class Settings(BaseSettings):
     # generic `local_llm_model` escape-hatch choice. Set by the install/update path
     # (JBRAIN_LOCAL_MODELS) alongside the downloaded weights.
     local_models: list[str] = []
+    # Read-only mount of the provisioned weights (scripts/local-llm-setup.sh's
+    # ./local-models), so the settings screen can report each model's REAL on-disk
+    # footprint instead of the catalog's nominal estimate. The API only stats files
+    # here — host/infra files, not application blobs, so the read sits outside the
+    # storage abstraction (same rationale as host_metrics' /proc read).
+    local_models_dir: str = "/data/local-models"
     # JSON object of per-task "provider:model" overrides, merged over the
     # adapter defaults — see jbrain.llm.router.TASK_DEFAULTS.
     llm_tasks: dict[str, str] = {}

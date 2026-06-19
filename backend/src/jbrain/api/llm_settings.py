@@ -17,7 +17,7 @@ from jbrain.api.notes import ctx_for
 from jbrain.config import Settings
 from jbrain.db.session import SessionContext
 from jbrain.host_metrics import read_memory_gb
-from jbrain.llm import local_catalog
+from jbrain.llm import local_catalog, local_weights
 from jbrain.llm.errors import LlmError
 from jbrain.llm.local_gateway import LocalGatewayClient, LocalGatewayError
 from jbrain.llm.providers import (
@@ -107,7 +107,13 @@ class LocalModelInfo(BaseModel):
     supports_tools: bool
     tiers: list[str]
     quant: str
+    # Catalog's nominal download estimate — always present, drives the un-provisioned
+    # rows the operator could still install.
     size_gb: float
+    # The REAL measured size of the provisioned weights on disk, or null when the
+    # model isn't on this box (so the drawer can show the true footprint for what's
+    # installed and the estimate for what isn't).
+    disk_gb: float | None
     note: str
 
 
@@ -210,6 +216,14 @@ async def _snapshot(
     )
 
 
+def _disk_gb(settings: Settings, model_id: str) -> float | None:
+    """Measured weights size for a provisioned model, or None when hosting is off
+    or the weights aren't on this box (the read is best-effort, like the meter)."""
+    if not settings.local_llm_enabled:
+        return None
+    return local_weights.weights_size_gb(settings.local_models_dir, model_id)
+
+
 def _host_memory(settings: Settings) -> HostMemory | None:
     """Live unified-memory reading — only when hosting is on (it drives the drawer
     meter); None off-Linux or when /proc/meminfo can't be read."""
@@ -236,6 +250,7 @@ def _local_model_info(
         tiers=list(m.tiers),
         quant=m.quant,
         size_gb=m.size_gb,
+        disk_gb=_disk_gb(settings, m.id),
         note=m.note,
     )
 
