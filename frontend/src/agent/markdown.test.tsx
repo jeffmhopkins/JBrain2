@@ -313,6 +313,58 @@ describe("Markdown", () => {
     expect(document.querySelector(".md-flag-fallback")).toBeNull();
   });
 
+  it("typesets inline $…$ math with KaTeX", () => {
+    const out = html("The mass-energy law is $E = mc^2$ in physics.");
+    // KaTeX emits its own .katex markup inside our .md-math span.
+    expect(out).toContain('class="md-math"');
+    expect(out).toContain("katex");
+    // The dollar delimiters are consumed (not leaked as literal text).
+    expect(document.body.textContent).not.toContain("$E = mc^2$");
+    // The surrounding prose still flows around the equation.
+    expect(document.body.textContent).toContain("The mass-energy law is");
+    expect(document.body.textContent).toContain("in physics.");
+  });
+
+  it("typesets inline \\(…\\) math with KaTeX", () => {
+    const out = html("Pythagoras: \\(a^2 + b^2 = c^2\\) holds.");
+    expect(out).toContain('class="md-math"');
+    expect(out).toContain("katex");
+    // The \(…\) delimiters are consumed, not shown verbatim.
+    expect(document.body.textContent).not.toContain("\\(");
+    expect(document.body.textContent).not.toContain("\\)");
+  });
+
+  it("renders $$…$$ as a centered display-math block", () => {
+    const out = html("The integral:\n\n$$\\int_0^1 x^2 \\, dx = \\tfrac{1}{3}$$\n\ndone.");
+    expect(out).toContain('class="md-math-wrap"');
+    expect(out).toContain("katex-display");
+    expect(document.body.textContent).toContain("done.");
+  });
+
+  it("renders \\[…\\] as a display-math block, including multi-line", () => {
+    const out = html("\\[\nx = \\frac{-b \\pm \\sqrt{b^2 - 4ac}}{2a}\n\\]");
+    expect(out).toContain('class="md-math-wrap"');
+    expect(out).toContain("katex-display");
+  });
+
+  it("does not treat currency like $5 and $10 as math", () => {
+    const out = html("It costs between $5 and $10 today.");
+    expect(out).not.toContain('class="md-math"');
+    expect(document.body.textContent).toContain("It costs between $5 and $10 today.");
+  });
+
+  it("leaves an unclosed $ as plain text (streamed partial answer)", () => {
+    const out = html("The cost is $5 and the formula $x = ");
+    expect(out).not.toContain('class="md-math"');
+    expect(document.body.textContent).toContain("$x =");
+  });
+
+  it("keeps a $ inside inline code literal (no math typesetting)", () => {
+    const out = html("Run `echo $PATH` to print it.");
+    expect(out).toContain('<code class="md-code">echo $PATH</code>');
+    expect(out).not.toContain('class="md-math"');
+  });
+
   it("prefers the longest entity label and respects word boundaries", () => {
     const onEntity = vi.fn();
     render(
