@@ -9,6 +9,12 @@ echo "[update] starting"
 ./backup.sh || echo "[update] backup skipped (stack not fully up?)"
 
 echo "[update] pulling latest main"
+# The pull runs as root inside the ephemeral updater container, but the
+# bind-mounted worktree is owned by the host operator's UID, so git's
+# dubious-ownership guard aborts ("detected dubious ownership"). Mark the
+# worktree safe for the container's root user — a host-side `safe.directory`
+# never reaches here, since root's container HOME carries no gitconfig.
+git config --global --add safe.directory "$PWD/src"
 git -C src pull --ff-only
 
 # Refresh host helper scripts from the updated tree (mv keeps any running
