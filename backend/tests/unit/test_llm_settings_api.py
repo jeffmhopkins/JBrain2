@@ -164,9 +164,7 @@ def test_put_rejects_a_keyless_cloud_provider() -> None:
     # grok has no key → not a valid choice → 422, nothing stored.
     c, store = _authed_client(_cloud_settings(xai_api_key=""))
     assert (
-        c.put(
-            "/api/settings/llm", json={"tasks": {"agent.turn": {"provider": "grok"}}}
-        ).status_code
+        c.put("/api/settings/llm", json={"tasks": {"agent.turn": {"provider": "grok"}}}).status_code
         == 422
     )
     assert "llm_task_overrides" not in store.values
