@@ -7,6 +7,7 @@ from jbrain.agent.agents import (
     AGENT_NAMES,
     AGENTS,
     DEFAULT_AGENT,
+    JERV_TOOLS,
     WEB_TOOLS,
     agent_for,
     is_agent,
@@ -36,10 +37,18 @@ def test_teacher_is_a_tool_less_socratic_tutor() -> None:
 
 
 def test_jerv_is_a_sandboxed_web_chatbot() -> None:
-    """jerv may call only the web tools and reads no owner data."""
+    """jerv may call the web tools plus the dataless clock, reads no knowledge base,
+    and is location_aware (owner opt-in: it receives coarse presence as context)."""
     jerv = AGENTS["jerv"]
-    assert jerv.tools == WEB_TOOLS == frozenset({"web_search", "web_fetch"})
+    assert jerv.tools == JERV_TOOLS == WEB_TOOLS | {"current_time"}
     assert jerv.reads_knowledge_base is False
+    assert jerv.location_aware is True
+
+
+def test_only_jerv_is_location_aware() -> None:
+    """The presence-without-scope opt-in is jerv's alone — curator stays scope-gated."""
+    assert AGENTS["curator"].location_aware is False
+    assert AGENTS["teacher"].location_aware is False
 
 
 def test_agent_for_falls_back_to_curator() -> None:
@@ -68,8 +77,8 @@ def test_persona_prompts_pinned_to_their_versions() -> None:
             "e457d7504be94746132de7cc0c7b50fa1567867b3573a64ddfe6030b45909b16",
         ),
         "jerv": (
-            "agent-jerv-v1",
-            "f8188c6db7cf2bef008a07c945256a6b89fa6bdaec82c55ec2dd137f3d2fe54c",
+            "agent-jerv-v2",
+            "7e61bf97c41320dc2767295b1879fa3d1cbb486a5378ee37dc0929f326308734",
         ),
     }
     assert set(pins) == AGENT_NAMES

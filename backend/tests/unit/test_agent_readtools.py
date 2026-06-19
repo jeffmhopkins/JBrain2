@@ -475,6 +475,7 @@ def test_build_registry_binds_the_shipped_sidecars() -> None:
     web = {"web_search", "web_fetch"}
     shipped = {
         "search",
+        "current_time",
         "read_wiki",
         "file_correction",
         "request_rebuild",
@@ -739,6 +740,11 @@ def test_sidecars_pinned_to_their_versions() -> None:
             1,
             "138da8801602ddaf693328a47ac7edec65cd06f62d75180f5bd02c4426bb3a57",
         ),
+        "current_time.tool": (
+            "current_time",
+            1,
+            "1139d8705fe31c1738afc01d13487a27626339de11b370cbafea4a446f35e02c",
+        ),
         "web_search.tool": (
             "web_search",
             1,
@@ -746,8 +752,8 @@ def test_sidecars_pinned_to_their_versions() -> None:
         ),
         "web_fetch.tool": (
             "web_fetch",
-            1,
-            "4724e686a73478221320c6cbddddb22682654566bd2eda261f8596cd5b158a6f",
+            2,
+            "126d4615631dcd528970f53d8cb96183982a89843daf462494c211240170b66e",
         ),
     }
     # Every shipped sidecar must appear above — a new `.tool` cannot slip in

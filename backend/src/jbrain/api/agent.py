@@ -25,6 +25,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from jbrain.agent.agents import agent_for
+from jbrain.agent.clock import now_block
 from jbrain.agent.loop import AgentLoop
 from jbrain.agent.memory import MemoryService
 from jbrain.agent.runlog import AgentRunLog
@@ -106,7 +107,11 @@ def get_device_repo(request: Request) -> SqlDeviceRepo:
 
 
 async def _presence_block(
-    request: Request, owner_ctx: SessionContext, session: AgentSessionInfo
+    request: Request,
+    owner_ctx: SessionContext,
+    session: AgentSessionInfo,
+    *,
+    location_aware: bool,
 ) -> str:
     """The data-framed owner-presence line to prepend to the conversation (L7b), or
     "" when none. Owner-GATED and freshness-honest, mirroring the skills block's
@@ -115,11 +120,11 @@ async def _presence_block(
     would silently no-op in streaming).
 
     Two gates make it absent for a narrowed/non-owner session: the session must hold
-    the `location` scope (a health-only chat gets nothing), and the read itself runs
-    under the FULL owner ctx through `read_owner_presence`, which calls
-    `require_full_owner`. Best-effort — a presence read failure never breaks a turn,
-    it just injects no line."""
-    if "location" not in session.domain_scopes:
+    the `location` scope OR run a `location_aware` agent (jerv, by owner opt-in — its
+    scope is always empty), and the read itself runs under the FULL owner ctx through
+    `read_owner_presence`, which calls `require_full_owner`. Best-effort — a presence
+    read failure never breaks a turn, it just injects no line."""
+    if "location" not in session.domain_scopes and not location_aware:
         return ""
     try:
         presence = await read_owner_presence(
@@ -293,16 +298,23 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
     # L7b: prepend the owner's coarse presence as a DATA-framed UserMessage, exactly
     # like the skills block above (same data/instruction boundary) — NOT the system
     # prompt (run_stream hardcodes SYSTEM_PROMPT, so a system injection would no-op in
-    # streaming). Owner-gated: absent unless the session holds the `location` scope,
-    # and the read runs under the FULL owner ctx (require_full_owner), so a narrowed
-    # session never gets a presence line. Names + times only, freshness-honest.
-    presence = await _presence_block(request, owner_ctx, session)
+    # streaming). Owner-gated: absent unless the session holds the `location` scope or
+    # runs a location_aware agent (jerv, by owner opt-in), and the read runs under the
+    # FULL owner ctx (require_full_owner). Names + times only, freshness-honest.
+    presence = await _presence_block(
+        request, owner_ctx, session, location_aware=profile.location_aware
+    )
     if presence:
         conversation = [UserMessage(text=presence), *conversation]
     # The owner's display zone so the agent's time prose matches the cards (which
     # the client localizes); None = UTC. Read on the owner ctx, not the narrowed
     # read ctx — a preference, not domain data.
     owner_tz = await get_settings_store(request).owner_timezone(owner_ctx)
+    # Every turn knows when it is: prepend the current date + local time as a DATA-
+    # framed UserMessage (same conversation-channel boundary as skills/presence), so
+    # any agent — including the sandboxed jerv — grounds "today"/"this week" without
+    # having to call a tool. The `current_time` tool covers fresh/other-zone reads.
+    conversation = [UserMessage(text=now_block(owner_tz)), *conversation]
     # Reflexion mode gate (Track R): default verify-and-annotate; this opts into
     # the buffer-then-retry path (off by default — a spinner-latency tradeoff).
     buffer_retry = await get_settings_store(request).reflexion_buffer_retry(owner_ctx)

@@ -18,6 +18,7 @@ from jbrain.agent.appointmenttools import (
     build_appointment_handlers,
     build_appointment_write_handlers,
 )
+from jbrain.agent.clock import build_clock_handlers
 from jbrain.agent.connectortools import build_connector_handlers
 from jbrain.agent.contracts import EntityRef, NoteSource
 from jbrain.agent.geocodetools import build_geocode_handlers
@@ -402,6 +403,9 @@ def build_registry(
         TOOLS_DIR,
         {
             **build_read_handlers(search, notes, entities),
+            # A clock read — no owner data, no domain — so every agent that holds it
+            # (the curator by default; jerv by allowlist) can ground time-relative talk.
+            **build_clock_handlers(),
             **build_entity_handlers(entities),
             **build_list_handlers(lists),
             **build_appointment_handlers(appointments),
