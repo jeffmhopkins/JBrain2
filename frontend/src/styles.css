@@ -5942,18 +5942,24 @@ button.small {
    single 28px row, each toggling its own body. The "thinking" segment auto-opens
    with a pulse while the model is live and collapses to "Thought for Ns" once the
    answer arrives; both bodies share the grid-rows open animation. */
+/* the foot strip wraps the line and its (closed-by-default) disclosure bodies into a
+   single flex child of the bubble. block flow inside means a collapsed body adds no
+   gap, so the line sits tight to the card foot in every state — open or closed — and
+   negative margins snug it to the answer above and the card's bottom padding below. */
+.fb-shell .fb-foot {
+  margin-top: -6px;
+  margin-bottom: -6px;
+}
+.fb-shell .fb-foot.bare {
+  /* leads a still-thinking bubble (no answer yet): flush to the top, no rule */
+  margin-top: 0;
+}
 .fb-shell .fb-activity {
   display: flex;
   align-items: center;
-  /* snug the strip to the answer above and flush to the card's foot so it reads as a
-     quiet meta line, not a second block — it now rides every settled answer. */
-  margin-top: -6px;
-  margin-bottom: -7px;
   border-top: 1px solid var(--border);
 }
-.fb-shell .fb-activity.bare {
-  /* leads a still-thinking bubble (no answer yet): no rule, flush to the top */
-  margin-top: 0;
+.fb-shell .fb-foot.bare .fb-activity {
   border-top: none;
 }
 .fb-shell .fb-act-seg {

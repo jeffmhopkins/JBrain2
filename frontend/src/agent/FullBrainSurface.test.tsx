@@ -351,6 +351,42 @@ describe("FullBrainSurface", () => {
     expect(screen.getByText("here you go")).toBeInTheDocument();
   });
 
+  it("switches between the Thinking and Worked bodies — only one open at a time", async () => {
+    // A settled turn that both reasoned and ran a tool. Tapping a segment opens its
+    // body and closes the other, so the foot strip reads as one switchable view.
+    async function* answer(): AsyncGenerator<ChatEvent> {
+      yield { type: "reasoning_delta", text: "let me check" };
+      yield { type: "tool_call", id: "c1", name: "search", arguments: {} };
+      yield { type: "tool_result", tool_call_id: "c1", ok: true, summary: "1 note" };
+      yield { type: "text_delta", text: "done." };
+      yield { type: "done", stop_reason: "end_turn" };
+    }
+    render(<Harness d={deps({ chat: answer })} />);
+    await waitFor(() => screen.getByLabelText("Conversation"));
+    fireEvent.change(screen.getByLabelText("Composer"), { target: { value: "go" } });
+    fireEvent.click(screen.getByRole("button", { name: "send" }));
+
+    // Both segments settle closed once the answer lands.
+    const thinking = await screen.findByRole("button", { name: /Thought/ });
+    const worked = screen.getByRole("button", { name: /Worked/ });
+    await waitFor(() => expect(thinking).toHaveAttribute("aria-expanded", "false"));
+    expect(worked).toHaveAttribute("aria-expanded", "false");
+
+    // Open Thinking, then Worked: the switch carries over — Thinking closes.
+    fireEvent.click(thinking);
+    expect(thinking).toHaveAttribute("aria-expanded", "true");
+    fireEvent.click(worked);
+    expect(worked).toHaveAttribute("aria-expanded", "true");
+    expect(thinking).toHaveAttribute("aria-expanded", "false");
+
+    // And back the other way, then a second tap on the open one closes it.
+    fireEvent.click(thinking);
+    expect(thinking).toHaveAttribute("aria-expanded", "true");
+    expect(worked).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(thinking);
+    expect(thinking).toHaveAttribute("aria-expanded", "false");
+  });
+
   it("replays a stored turn's reasoning as a collapsed Thinking disclosure", async () => {
     const getTranscript = vi.fn(async () => [
       { role: "user" as const, content: "why?", tools: [], reasoning: "" },
