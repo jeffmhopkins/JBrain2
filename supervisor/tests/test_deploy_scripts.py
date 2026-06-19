@@ -57,4 +57,5 @@ def test_update_marks_worktree_safe_before_pull() -> None:
     safe = next((i for i, ln in enumerate(lines) if "safe.directory" in ln), None)
     pull = next((i for i, ln in enumerate(lines) if "pull --ff-only" in ln), None)
     assert safe is not None, "update-inner.sh must mark the worktree safe.directory"
-    assert pull is not None and safe < pull, "safe.directory must be set before the pull"
+    assert pull is not None, "update-inner.sh must run the pull"
+    assert safe < pull, "safe.directory must be set before the pull"
