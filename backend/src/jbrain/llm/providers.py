@@ -63,21 +63,31 @@ def _local_choices(settings: Settings) -> tuple[ProviderChoice, ...]:
 
 
 def provider_choices(settings: Settings) -> tuple[ProviderChoice, ...]:
-    """The selectable providers in UI order: the two cloud providers always, then
-    any opt-in local models the operator has enabled."""
-    return (
-        ProviderChoice(
-            "grok", "Grok 4.3", "xai:grok-4.3", supports_reasoning=True, supports_vision=True
-        ),
-        ProviderChoice(
-            "claude",
-            "Claude Sonnet 4.6",
-            "anthropic:claude-sonnet-4-6",
-            supports_reasoning=False,
-            supports_vision=True,
-        ),
-        *_local_choices(settings),
-    )
+    """The selectable providers in UI order: each cloud provider only when its API
+    key is configured, then any opt-in local models the operator has enabled.
+
+    A keyless cloud provider is hidden — offering it would only let a task be
+    pinned to a model that fails at call time. A stored override to a now-keyless
+    provider still reverse-maps via id_for_spec, so the screen surfaces it as an
+    unavailable choice rather than crashing."""
+    cloud: list[ProviderChoice] = []
+    if settings.xai_api_key:
+        cloud.append(
+            ProviderChoice(
+                "grok", "Grok 4.3", "xai:grok-4.3", supports_reasoning=True, supports_vision=True
+            )
+        )
+    if settings.anthropic_api_key:
+        cloud.append(
+            ProviderChoice(
+                "claude",
+                "Claude Sonnet 4.6",
+                "anthropic:claude-sonnet-4-6",
+                supports_reasoning=False,
+                supports_vision=True,
+            )
+        )
+    return (*cloud, *_local_choices(settings))
 
 
 def _by_id(settings: Settings) -> Mapping[str, ProviderChoice]:

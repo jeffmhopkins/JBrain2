@@ -4,7 +4,7 @@ test_settings_pg."""
 
 import asyncio
 from collections.abc import Iterator
-from typing import cast
+from typing import Any, cast
 
 import pytest
 from fastapi.testclient import TestClient
@@ -16,11 +16,21 @@ from jbrain.main import create_app
 from tests.unit.fakes import FakeAuthRepo, FakeSettingsStore
 
 
+def _cloud_settings(**kw: Any) -> Settings:
+    """Settings with both cloud API keys present — the normal operating state.
+    provider_choices hides a keyless cloud provider, so tests that expect grok or
+    Claude to be offered must supply the keys (override with ``xai_api_key=""`` to
+    test the hidden case)."""
+    kw.setdefault("secure_cookies", False)
+    kw.setdefault("database_url", "postgresql+asyncpg://nobody@localhost:1/none")
+    kw.setdefault("xai_api_key", "test-xai")
+    kw.setdefault("anthropic_api_key", "test-anthropic")
+    return Settings(**kw)
+
+
 @pytest.fixture
 def client() -> Iterator[tuple[TestClient, FakeSettingsStore]]:
-    app = create_app(
-        Settings(secure_cookies=False, database_url="postgresql+asyncpg://nobody@localhost:1/none")
-    )
+    app = create_app(_cloud_settings())
     auth_repo = FakeAuthRepo()
     store = FakeSettingsStore()
     with TestClient(app) as test_client:
@@ -124,9 +134,7 @@ def _authed_client(settings: Settings) -> tuple[TestClient, FakeSettingsStore]:
 
 
 def test_local_models_offered_only_when_hosting_enabled() -> None:
-    settings = Settings(
-        secure_cookies=False,
-        database_url="postgresql+asyncpg://nobody@localhost:1/none",
+    settings = _cloud_settings(
         local_llm_enabled=True,
         local_models=["qwen3-vl-30b", "gpt-oss-120b"],
     )
@@ -137,6 +145,31 @@ def test_local_models_offered_only_when_hosting_enabled() -> None:
     assert providers["qwen3-vl-30b"]["supports_vision"] is True
     assert providers["gpt-oss-120b"]["supports_vision"] is False
     assert providers["qwen3-vl-30b"]["supports_reasoning"] is False
+
+
+def test_cloud_provider_hidden_without_its_api_key() -> None:
+    # No XAI key → grok is not offered; the Anthropic key is set → claude still is.
+    c, _ = _authed_client(_cloud_settings(xai_api_key=""))
+    assert {p["id"] for p in c.get("/api/settings/llm").json()["providers"]} == {"claude"}
+    # And the reverse.
+    c2, _ = _authed_client(_cloud_settings(anthropic_api_key=""))
+    assert {p["id"] for p in c2.get("/api/settings/llm").json()["providers"]} == {"grok"}
+    # Neither key, no local hosting → an empty provider list (the screen surfaces
+    # any stored override as unavailable rather than crashing).
+    c3, _ = _authed_client(_cloud_settings(xai_api_key="", anthropic_api_key=""))
+    assert c3.get("/api/settings/llm").json()["providers"] == []
+
+
+def test_put_rejects_a_keyless_cloud_provider() -> None:
+    # grok has no key → not a valid choice → 422, nothing stored.
+    c, store = _authed_client(_cloud_settings(xai_api_key=""))
+    assert (
+        c.put(
+            "/api/settings/llm", json={"tasks": {"agent.turn": {"provider": "grok"}}}
+        ).status_code
+        == 422
+    )
+    assert "llm_task_overrides" not in store.values
 
 
 def test_put_routes_a_task_to_an_enabled_local_model() -> None:
@@ -164,12 +197,7 @@ def test_put_accepts_non_grok_provider_without_reasoning_effort() -> None:
     # The screen sends just `{provider}` for non-reasoning providers (local
     # models, Claude) — no reasoning_effort. The request model must accept that;
     # requiring the field 422s every non-grok save before the handler runs.
-    settings = Settings(
-        secure_cookies=False,
-        database_url="postgresql+asyncpg://nobody@localhost:1/none",
-        local_llm_enabled=True,
-        local_models=["qwen3-vl-30b"],
-    )
+    settings = _cloud_settings(local_llm_enabled=True, local_models=["qwen3-vl-30b"])
     c, store = _authed_client(settings)
     # Local model with no effort (exactly the frontend's wire shape).
     resp = c.put("/api/settings/llm", json={"tasks": {"agent.turn": {"provider": "qwen3-vl-30b"}}})

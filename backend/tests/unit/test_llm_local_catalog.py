@@ -41,6 +41,10 @@ def test_manifest_is_json_with_provisioning_fields() -> None:
 
 
 def _settings(**kw: Any) -> Settings:
+    # Both cloud keys present — provider_choices hides a keyless cloud provider, so
+    # tests that expect grok/claude to be offered must supply the keys.
+    kw.setdefault("xai_api_key", "test-xai")
+    kw.setdefault("anthropic_api_key", "test-anthropic")
     return Settings(database_url="postgresql+asyncpg://nobody@localhost:1/none", **kw)
 
 
