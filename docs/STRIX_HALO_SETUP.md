@@ -15,10 +15,25 @@ automatically — every step is a deliberate command.
 - **Disable Secure Boot.** The mainline kernel you'll likely install (Phase 2)
   is unsigned and won't boot with Secure Boot on.
 - **Resizable BAR / "Above 4G decoding": Enabled.**
-- **GPU/UMA memory:** leave the *dedicated* allocation modest (Auto or the
-  smallest option). You do **not** carve out 96 GB here — the iGPU borrows the
-  shared pool dynamically via `amdgpu.gttsize` (Phase 5). A large fixed UMA just
-  wastes RAM.
+- **GPU/UMA memory:** set the iGPU to a **small fixed** dedicated allocation, not
+  `Auto`. The iGPU borrows the shared pool dynamically via `amdgpu.gttsize`
+  (Phase 5), so the carve-out only needs to be tiny.
+  - ⚠️ **Avoid `Auto`.** On a 128 GB box `Auto` (`UMA_AUTO`) silently carves out
+    ~50% of RAM (64 GB) as fixed VRAM — the OS then sees only 64 GB and the
+    ~91 GB resident set can't fit.
+  - On the AMI BIOS in the GMKtec EVO-X2 the control is **Advanced → GFX
+    Configuration**: set **`iGPU Configuration` = `UMA_SPECIFIED`** and
+    **`UMA Frame buffer Size` = `2G`** (the smallest offered). Other boards label
+    it "UMA Mode" / "UMA Frame Buffer Size" — same idea, pick the smallest.
+  - **Sanity check after Phase 5's reboot** that the carve-out is actually small
+    (the `Auto` trap is invisible until you look):
+    ```bash
+    free -h                                              # MemTotal ~125 GB (not ~64)
+    cat /sys/class/drm/card*/device/mem_info_vram_total  # ~2 GB carve-out (not 64 GiB)
+    cat /sys/class/drm/card*/device/mem_info_gtt_total   # ~124 GB — the pool models use
+    ```
+    A `vram_total` of ~64 GiB and `MemTotal` of ~64 GB means the iGPU is still on
+    `Auto`/a large fixed UMA — go back into BIOS and set the small carve-out.
 
 ## Phase 1 — Install Ubuntu
 - **Ubuntu 25.10** is the low-friction pick (newest Mesa/kernel for gfx1151).
