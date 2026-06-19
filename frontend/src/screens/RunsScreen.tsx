@@ -27,7 +27,7 @@ import {
   RefreshIcon,
   XIcon,
 } from "../components/icons";
-import { fmtTokens } from "./OpsScreen";
+import { fmtTokens } from "./aiUsage";
 
 /** 'error' is the stored failed state (migration 0016); the surface renders it
  * as the red "failed" tile/dot. This is the one place the mapping lives. */

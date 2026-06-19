@@ -218,7 +218,13 @@ when open — so a collapsed group never fetches its logs):
   tail** — the per-service viewer (Follow toggle = the SSE stream, scoped to
   that one service) plus a one-tap **Copy logs** (writes the tail to the
   clipboard; button reads "Copied" for 2s) and a Restart.
-- **AI usage** is the same `OpsCard`, collapsed by default.
+- **AI usage moved off Ops to the LLM Settings screen** (`AiUsageCard`,
+  `frontend/src/screens/aiUsage.tsx`): token spend belongs with the model
+  config that drives it. It is a self-fetching collapsible drawer in the
+  same register as the Local-models drawer — collapsed, its header shows the
+  month's `in · out · ~$` recap; expanded, the today/month totals and the
+  per-task breakdown. Telemetry still fails quietly (a missing/malformed
+  payload reads "no usage data yet", never an exception).
 
 Everything starts collapsed except System. Status colors stay paired with
 text (the dot's level is also the badge). Rejected rivals: A's one-screen
