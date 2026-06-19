@@ -5785,7 +5785,6 @@ button.small {
    `currentColor` is what makes those colors land. */
 .fb-shell .tw-ic,
 .fb-shell .tw-chev,
-.fb-shell .fb-act-caret,
 .fb-shell .fb-step-caret {
   fill: none;
   stroke: currentColor;
@@ -5937,15 +5936,13 @@ button.small {
 /* the inline "Worked" disclosure under an answer (docs/research/brain-tooluse-ux).
    A labelled 44px button expands the tool steps in place — no flip, no 3D, no
    swipe. The body animates open with a grid-rows ease so content stays in flow. */
-/* the one disclosure line at the foot of an assistant bubble: "Thinking" (violet,
-   the model's reasoning) and "Worked" (steel, its tool steps) as two segments on a
-   single 28px row, each toggling its own body. The "thinking" segment auto-opens
-   with a pulse while the model is live and collapses to "Thought for Ns" once the
-   answer arrives; both bodies share the grid-rows open animation. */
-/* the foot strip wraps the line and its (closed-by-default) disclosure bodies into a
-   single flex child of the bubble. block flow inside means a collapsed body adds no
-   gap, so the line sits tight to the card foot in every state — open or closed — and
-   negative margins snug it to the answer above and the card's bottom padding below. */
+/* the disclosure at the foot of an assistant bubble: "Thinking" (violet, the model's
+   reasoning) and "Worked" (steel, its tool steps) as two tinted chips that act as a
+   segmented control over ONE shared panel — selecting a chip swaps the panel's content
+   (reasoning ⇄ steps), selecting the open chip closes it. With a single body the open
+   height and bottom spacing match for either view. The whole strip is one flex child of
+   the bubble, so a closed panel adds no column gap and the line stays tight to the card
+   foot; negative margins snug it to the answer above and the card's padding below. */
 .fb-shell .fb-foot {
   margin-top: -6px;
   margin-bottom: -6px;
@@ -5957,31 +5954,47 @@ button.small {
 .fb-shell .fb-activity {
   display: flex;
   align-items: center;
+  gap: 7px;
+  flex-wrap: nowrap;
   border-top: 1px solid var(--border);
+  padding-top: 6px;
 }
 .fb-shell .fb-foot.bare .fb-activity {
   border-top: none;
+  padding-top: 2px;
 }
-.fb-shell .fb-act-seg {
+/* a chip — thinking and worked share this shape; selected chips tint to their register */
+.fb-shell .fb-act-chip {
   display: flex;
   align-items: center;
   gap: 6px;
-  min-height: 24px;
-  padding: 2px 8px;
+  min-height: 25px;
+  padding: 3px 9px;
+  border-radius: 999px;
   background: none;
-  border: none;
+  border: 1px solid transparent;
   font: inherit;
-  font-size: 11px;
+  font-size: 11.5px;
   font-weight: 500;
   color: var(--text-2);
   text-align: left;
   cursor: pointer;
+  transition: background 0.14s, border-color 0.14s, color 0.14s;
 }
-.fb-shell .fb-act-seg:first-child {
-  padding-left: 2px;
+.fb-shell .fb-act-think {
+  flex: none;
+}
+/* worked carries the longest text (steps · sources · failed); only its count shrinks
+   and ellipsizes, so the chips stay on one line and never collide into "ThougWorked" */
+.fb-shell .fb-act-work {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+.fb-shell .fb-act-chip:hover {
+  color: var(--text);
 }
 .fb-shell .fb-act-ic,
-.fb-shell .fb-act-seg .tw-ic {
+.fb-shell .fb-act-chip .tw-ic {
   width: 13px;
   height: 13px;
   flex: none;
@@ -5992,33 +6005,67 @@ button.small {
 .fb-shell .fb-act-work .tw-ic {
   color: var(--steel);
 }
-.fb-shell .fb-act-think.live {
+.fb-shell .fb-act-think.on {
+  background: var(--violet-tint);
+  border-color: rgba(164, 147, 201, 0.3);
   color: var(--violet);
 }
-/* the copy action: pushed to the far right of the strip; a brief green confirm. */
-.fb-shell .fb-act-copy {
-  margin-left: auto;
-}
-.fb-shell .fb-act-copy .fb-act-ic {
-  color: var(--text-3);
-}
-.fb-shell .fb-act-copy.done {
-  color: var(--green);
-}
-.fb-shell .fb-act-copy.done .fb-act-ic {
-  color: var(--green);
+.fb-shell .fb-act-work.on {
+  background: var(--steel-tint);
+  border-color: rgba(127, 167, 201, 0.3);
+  color: var(--steel);
 }
 .fb-shell .fb-act-lab {
   display: flex;
   align-items: center;
   gap: 7px;
+  flex: none;
 }
 .fb-shell .fb-act-count {
+  min-width: 0;
+  overflow: hidden;
   font-weight: 400;
   color: var(--text-3);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fb-shell .fb-act-work.on .fb-act-count {
+  color: var(--steel);
+  opacity: 0.75;
 }
 .fb-shell .fb-worked-fail {
   color: var(--rose);
+}
+/* the copy action: pinned to the far right; a glyph + "Copy" label, a brief green
+   confirm that swaps to a check + "Copied". */
+.fb-shell .fb-act-copy {
+  flex: none;
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 25px;
+  padding: 3px 8px;
+  border-radius: 8px;
+  background: none;
+  border: none;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-3);
+  cursor: pointer;
+}
+.fb-shell .fb-act-copy:hover {
+  color: var(--steel);
+}
+.fb-shell .fb-act-copy .fb-act-ic {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  color: currentColor;
+}
+.fb-shell .fb-act-copy.done {
+  color: var(--green);
 }
 .fb-shell .fb-act-pulse {
   width: 6px;
@@ -6039,22 +6086,6 @@ button.small {
     box-shadow: 0 0 0 0 rgba(164, 147, 201, 0);
   }
 }
-.fb-shell .fb-act-div {
-  width: 1px;
-  align-self: stretch;
-  margin: 6px 2px;
-  background: var(--border);
-}
-.fb-shell .fb-act-caret {
-  width: 13px;
-  height: 13px;
-  flex: none;
-  opacity: 0.7;
-  transition: transform 0.16s ease-out;
-}
-.fb-shell .fb-act-seg.open .fb-act-caret {
-  transform: rotate(180deg);
-}
 .fb-shell .fb-act-body {
   display: grid;
   grid-template-rows: 0fr;
@@ -6066,6 +6097,13 @@ button.small {
 .fb-shell .fb-act-inner {
   min-height: 0;
   overflow: hidden;
+}
+/* the single shared panel shows exactly one view (reasoning or steps) at a time */
+.fb-shell .fb-act-view {
+  display: none;
+}
+.fb-shell .fb-act-view.show {
+  display: block;
 }
 .fb-shell .fb-thinking-trace {
   margin: 2px 0 6px;
@@ -6298,8 +6336,8 @@ button.small {
 }
 @media (prefers-reduced-motion: reduce) {
   .fb-shell .fb-act-body,
+  .fb-shell .fb-act-chip,
   .fb-shell .fb-step-detail,
-  .fb-shell .fb-act-caret,
   .fb-shell .fb-step-caret {
     transition: none;
   }

@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>AI response foot · C · unified summary + inner tabs</title>
+<style>
+  :root{
+    --bg:#0e0f11; --surface:#17181b; --surface-2:#1e2024; --border:#26282c;
+    --text:#e6e7e9; --text-2:#9a9da3; --text-3:#5c5f66;
+    --steel:#7fa7c9; --green:#8fbc9a; --rose:#cf8a8f; --violet:#a493c9;
+    --steel-tint:rgba(127,167,201,.13); --rose-tint:rgba(207,138,143,.13);
+    --violet-tint:rgba(164,147,201,.13);
+    --font-mono:ui-monospace,"SF Mono","Cascadia Mono",Menlo,Consolas,monospace;
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+  body{background:#000;color:var(--text);display:flex;flex-direction:column;align-items:center;gap:14px;padding:22px 14px 60px;min-height:100vh;}
+  svg{fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;}
+
+  .caption{width:392px;max-width:94vw;padding:0 6px;color:var(--text-2);font-size:12.5px;line-height:1.55;}
+  .caption b{color:var(--text);font-weight:600;}
+  .caption .tag{display:inline-block;font-size:11px;padding:2px 9px;border-radius:999px;margin-bottom:6px;background:var(--green-tint,rgba(143,188,154,.13));color:var(--green);}
+
+  .phone{width:392px;max-width:94vw;height:760px;background:var(--bg);border:1px solid #2a2c30;border-radius:32px;overflow:hidden;position:relative;display:flex;flex-direction:column;}
+  .title{text-align:center;font-size:14px;font-weight:600;padding:14px 0 8px;flex:none;color:var(--text-2);}
+  .chat{flex:1;overflow-y:auto;padding:6px 16px 16px;display:flex;flex-direction:column;gap:10px;}
+
+  .bubble{padding:11px 14px;border-radius:16px;font-size:15px;line-height:1.45;}
+  .me{align-self:flex-end;max-width:82%;background:var(--steel-tint);border:1px solid rgba(127,167,201,.25);border-bottom-right-radius:5px;}
+  .ai{align-self:flex-start;width:100%;background:var(--surface);border:1px solid var(--border);border-bottom-left-radius:5px;display:flex;flex-direction:column;gap:8px;}
+  .ai p{margin:0;}
+  .ai b{font-weight:700;}
+  .ai table{border-collapse:collapse;font-size:12.5px;color:var(--text-2);}
+  .ai td{border:1px solid var(--border);padding:3px 8px;}
+  .ai td:first-child{color:var(--text);}
+
+  /* ── one summary button + copy on a single tight line; everything expands into ONE
+        panel with an inner segmented switch, so the collapsed footprint is minimal. */
+  .foot{margin-top:2px;}
+  .foot-line{display:flex;align-items:center;gap:4px;flex-wrap:nowrap;border-top:1px solid var(--border);padding-top:5px;}
+  .summary{
+    flex:1 1 auto;min-width:0;display:flex;align-items:center;gap:8px;
+    min-height:26px;padding:3px 6px 3px 2px;border-radius:8px;
+    background:none;border:none;font:inherit;color:var(--text-2);cursor:pointer;text-align:left;
+  }
+  .summary:hover{color:var(--text);}
+  .summary .ic{width:13px;height:13px;flex:none;}
+  .summary .ic-think{color:var(--violet);}
+  .summary .ic-work{color:var(--steel);}
+  .summary .sep{color:var(--text-3);}
+  .summary .lab{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .summary .caret{width:13px;height:13px;flex:none;margin-left:auto;opacity:.65;transition:transform .16s ease-out;}
+  .foot.open .summary .caret{transform:rotate(180deg);}
+  .pulse{width:6px;height:6px;border-radius:999px;background:var(--violet);flex:none;animation:pulse 1.1s ease-out infinite;}
+  .copy{flex:none;display:flex;align-items:center;justify-content:center;width:28px;height:26px;border-radius:8px;background:none;border:none;color:var(--text-3);cursor:pointer;}
+  .copy:hover{color:var(--steel);}
+  .copy.done{color:var(--green);}
+  .copy svg{width:15px;height:15px;}
+
+  .panel{display:grid;grid-template-rows:0fr;transition:grid-template-rows .18s ease-out;}
+  .foot.open .panel{grid-template-rows:1fr;}
+  .panel>.inner{min-height:0;overflow:hidden;}
+
+  /* inner segmented switch — pick which trace to read inside the one panel */
+  .switch{display:inline-flex;gap:2px;margin:8px 0 2px;padding:2px;background:var(--surface-2);border-radius:9px;}
+  .switch button{display:inline-flex;align-items:center;gap:6px;padding:4px 11px;min-height:28px;border:none;border-radius:7px;background:none;font:inherit;font-size:11.5px;font-weight:500;color:var(--text-2);cursor:pointer;}
+  .switch button .ic{width:12px;height:12px;}
+  .switch button[aria-selected="true"]{background:var(--surface);color:var(--text);box-shadow:0 1px 2px rgba(0,0,0,.3);}
+  .switch .sw-think[aria-selected="true"]{color:var(--violet);}
+  .switch .sw-work[aria-selected="true"]{color:var(--steel);}
+
+  .view{display:none;}
+  .view.show{display:block;}
+  .trace{margin:4px 0 2px;padding:9px 11px;max-height:170px;overflow:auto;background:var(--violet-tint);border-radius:10px;font:12.5px/1.5 var(--font-mono);color:var(--text-2);white-space:pre-wrap;}
+  .steps{display:flex;flex-direction:column;gap:2px;padding-top:4px;}
+  .step{border-radius:10px;}
+  .step.err{background:var(--rose-tint);}
+  .step-row{display:flex;align-items:center;gap:9px;width:100%;min-height:38px;padding:6px 8px;background:none;border:none;font:inherit;color:var(--text-2);cursor:pointer;text-align:left;}
+  .step-row .ic{width:15px;height:15px;flex:none;color:var(--steel);}
+  .step.err .step-row .ic{color:var(--rose);}
+  .step-row .lab{font-size:13px;flex:1;color:var(--text);}
+  .step-row .mark{width:7px;height:7px;border-radius:999px;flex:none;background:var(--green);}
+  .step-row .mark.bad{background:var(--rose);}
+  .step-row .cnt{font-size:11px;color:var(--text-3);}
+  .step-row .scaret{width:14px;height:14px;flex:none;color:var(--text-3);transition:transform .16s ease-out;}
+  .step.open .step-row .scaret{transform:rotate(90deg);}
+  .step-detail{display:grid;grid-template-rows:0fr;transition:grid-template-rows .16s ease-out;}
+  .step.open .step-detail{grid-template-rows:1fr;}
+  .step-detail>.di{min-height:0;overflow:hidden;padding:0 8px;}
+  .step.open .step-detail>.di{padding:2px 8px 10px;}
+  .reslab{font-size:11px;color:var(--text-3);letter-spacing:.04em;text-transform:uppercase;padding-left:24px;margin:4px 0 5px;}
+  .src{display:flex;align-items:center;gap:9px;width:100%;margin:0 0 6px 24px;padding:7px 10px;border:1px solid var(--border);border-radius:10px;background:var(--surface-2);font:inherit;text-align:left;cursor:pointer;}
+  .src .dot{width:7px;height:7px;border-radius:999px;flex:none;background:var(--steel);}
+  .src .tx{flex:1;font-size:12px;color:var(--text-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .restxt{padding-left:24px;font-size:12.5px;color:var(--text-2);line-height:1.5;}
+
+  @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(164,147,201,.5)}70%{box-shadow:0 0 0 7px rgba(164,147,201,0)}100%{box-shadow:0 0 0 0 rgba(164,147,201,0)}}
+  @media (prefers-reduced-motion:reduce){.panel,.step-detail,.summary .caret,.step-row .scaret{transition:none;}.pulse{animation:none;}}
+</style>
+</head>
+<body>
+  <div class="caption">
+    <span class="tag">C · Unified summary + inner tabs</span><br/>
+    The collapsed state is a <b>single tight line</b> — "Thought 4s · Worked 2 steps" + a caret, copy pinned right. It opens
+    <b>one</b> panel with an inner <b>Reasoning / Steps</b> switch, so the bottom is its tightest possible and there's only one
+    body to spread. <b>Tap the line, then flip the inner switch.</b>
+  </div>
+
+  <div class="phone">
+    <div class="title">Untitled session</div>
+    <div class="chat">
+      <div class="bubble me">Help me plan a kidney-friendly chili recipe. Keep it concise.</div>
+
+      <div class="bubble ai">
+        <p><b>Kidney-Friendly Chili</b> (≈ 8 servings) — low sodium, lower potassium, moderate protein.</p>
+        <table><tbody>
+          <tr><td>Sodium*</td><td>116 mg</td></tr>
+          <tr><td>Potassium*</td><td>450 mg</td></tr>
+          <tr><td>Phosphorus*</td><td>180 mg</td></tr>
+          <tr><td>Protein</td><td>20 g</td></tr>
+        </tbody></table>
+        <p>Use no-salt-added tomatoes, swap half the meat for extra-lean turkey, and rinse the beans well.</p>
+
+        <div class="foot" id="foot">
+          <div class="foot-line">
+            <button class="summary" aria-expanded="false">
+              <svg class="ic ic-think" viewBox="0 0 24 24"><path d="M9 3a4 4 0 0 0-3.9 5 3.5 3.5 0 0 0 .4 6.5V17a2 2 0 0 0 2 2h1"/><path d="M15 3a4 4 0 0 1 3.9 5 3.5 3.5 0 0 1-.4 6.5V17a2 2 0 0 1-2 2h-1"/><path d="M12 4v16"/></svg>
+              <span class="lab">Thought 4s <span class="sep">·</span> <svg class="ic ic-work" viewBox="0 0 24 24" style="display:inline-block;vertical-align:-2px"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M19.1 4.9 17 7M7 17l-2.1 2.1"/></svg> Worked 2 steps</span>
+              <svg class="caret" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg>
+            </button>
+            <button class="copy" aria-label="Copy response">
+              <svg class="i-copy" viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>
+              <svg class="i-check" viewBox="0 0 24 24" style="display:none"><path d="M5 13l4 4L19 7"/></svg>
+            </button>
+          </div>
+
+          <div class="panel"><div class="inner">
+            <div class="switch" role="tablist">
+              <button class="sw-think" role="tab" data-tab="think" aria-selected="true">
+                <svg class="ic" viewBox="0 0 24 24"><path d="M9 3a4 4 0 0 0-3.9 5 3.5 3.5 0 0 0 .4 6.5V17a2 2 0 0 0 2 2h1"/><path d="M15 3a4 4 0 0 1 3.9 5 3.5 3.5 0 0 1-.4 6.5V17a2 2 0 0 1-2 2h-1"/><path d="M12 4v16"/></svg>Reasoning
+              </button>
+              <button class="sw-work" role="tab" data-tab="work" aria-selected="false">
+                <svg class="ic" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M19.1 4.9 17 7M7 17l-2.1 2.1"/></svg>Steps<span class="cnt" style="color:var(--text-3);font-weight:400">&nbsp;2</span>
+              </button>
+            </div>
+            <div class="view show" data-view="think">
+              <div class="trace">The user wants a kidney-friendly chili. Constraints: low sodium, low potassium, moderate protein. Let me check their notes for diet limits before giving numbers — they may track a phosphorus cap. Search "kidney diet limits", then read the renal note for exact mg targets.</div>
+            </div>
+            <div class="view" data-view="work">
+              <div class="steps">
+                <div class="step">
+                  <button class="step-row" aria-expanded="false">
+                    <svg class="ic" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+                    <span class="lab">Searched your notes</span><span class="mark"></span><span class="cnt">1 result</span>
+                    <svg class="scaret" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></svg>
+                  </button>
+                  <div class="step-detail"><div class="di">
+                    <div class="reslab">result</div>
+                    <button class="src"><span class="dot"></span><span class="tx">Renal diet: Na &lt;2g, K &lt;2g, P &lt;1g/day</span></button>
+                  </div></div>
+                </div>
+                <div class="step">
+                  <button class="step-row" aria-expanded="false">
+                    <svg class="ic" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h6"/></svg>
+                    <span class="lab">Read a note</span><span class="mark"></span>
+                    <svg class="scaret" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></svg>
+                  </button>
+                  <div class="step-detail"><div class="di">
+                    <div class="reslab">result</div>
+                    <div class="restxt">Renal panel 2026-05: keep sodium under 2000 mg/day, potassium under 2000 mg, phosphorus under 1000 mg.</div>
+                  </div></div>
+                </div>
+              </div>
+            </div>
+          </div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+<script>
+  const $=(s,r=document)=>r.querySelector(s), $$=(s,r=document)=>[...r.querySelectorAll(s)];
+  const foot=$("#foot"), summary=$(".summary",foot);
+  summary.addEventListener("click",()=>{
+    const open=foot.classList.toggle("open");summary.setAttribute("aria-expanded",open);
+  });
+  $$(".switch button",foot).forEach(b=>b.addEventListener("click",()=>{
+    $$(".switch button",foot).forEach(x=>x.setAttribute("aria-selected","false"));
+    b.setAttribute("aria-selected","true");
+    $$(".view",foot).forEach(v=>v.classList.remove("show"));
+    $(`.view[data-view="${b.dataset.tab}"]`,foot).classList.add("show");
+  }));
+  $$(".step",foot).forEach(step=>{
+    const row=$(".step-row",step);
+    row.addEventListener("click",()=>{const open=step.classList.toggle("open");row.setAttribute("aria-expanded",open);});
+  });
+  const copy=$(".copy",foot);
+  copy.addEventListener("click",()=>{
+    navigator.clipboard&&navigator.clipboard.writeText("Kidney-Friendly Chili …").catch(()=>{});
+    copy.classList.add("done");$(".i-copy",copy).style.display="none";$(".i-check",copy).style.display="";
+    setTimeout(()=>{copy.classList.remove("done");$(".i-copy",copy).style.display="";$(".i-check",copy).style.display="none";},1400);
+  });
+</script>
+</body>
+</html>
