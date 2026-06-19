@@ -9,9 +9,10 @@
 # needs /dev/dri); a `rocm-*` tag enables the ROCm/rocWMMA path (faster on
 # gfx1151, but also needs /dev/kfd + seccomp=unconfined — see docker-compose.yml).
 #
-# Host prerequisites for gfx1151 (the image can't supply these):
-#   - kernel >= 6.18.4 (older has a gfx1151 stability bug)
-#   - avoid linux-firmware-20251125 (breaks ROCm on Strix Halo)
+# Host prerequisites for gfx1151 (the image can't supply these), per the kyuz0
+# toolbox guide:
+#   - kernel >= 6.18.9 (avoid < 6.18.4 — gfx1151 stability bug)
+#   - linux-firmware 20260110+ (avoid 20251125 — breaks ROCm on Strix Halo)
 #
 # SUPPLY CHAIN: this is a community image. Pin LOCAL_LLM_BASE to a digest
 # (kyuz0/amd-strix-halo-toolboxes@sha256:...) for a reproducible, trusted build
