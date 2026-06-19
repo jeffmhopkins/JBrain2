@@ -635,6 +635,37 @@ def test_chat_ignores_a_non_uuid_appointment_id(
     assert fake.stream_calls[0]["messages"][-1].text == "hi"
 
 
+def test_chat_high_reasoning_effort_widens_the_tool_step_cap(
+    client: TestClient,
+    repo: FakeAuthRepo,
+    sessions_store: FakeAgentSessions,
+    runlog: FakeRunLog,
+) -> None:
+    # agent.turn stored at high effort on a reasoning-capable model → the loop's step
+    # cap widens to 20. A model that always asks for a tool runs the full 20 steps.
+    login(client, repo)
+    sessions_store.add(AgentSessionInfo("sess-1", "", "active", ("general",), (), NOW, NOW))
+
+    async def search(arguments, ctx):  # type: ignore[no-untyped-def]
+        return "found"
+
+    async def loader() -> dict[str, dict[str, str]]:
+        return {"agent.turn": {"reasoning_effort": "high"}}
+
+    fake = FakeLlmClient(
+        turns=[LlmTurn("", (ToolCall("c", "search", {}),), "tool_use", LlmUsage(1, 1))]
+    )
+    client.app.state.agent_registry = registry_with_tool("search", search)  # type: ignore[attr-defined]
+    client.app.state.llm_router = LlmRouter(  # type: ignore[attr-defined]
+        {"xai": fake}, {"agent.turn": ("xai", "grok-4.3")}, overrides_loader=loader
+    )
+    resp = client.post("/api/chat", json={"session_id": "sess-1", "message": "dig deep"})
+    assert resp.status_code == 200
+    assert runlog.finished[-1]["stop_reason"] == "max_steps"
+    # The model was asked 20 times before the widened cap stopped it (10 by default).
+    assert len(fake.stream_calls) == 20
+
+
 def test_chat_model_failure_emits_error_done_and_marks_run_failed(
     client: TestClient,
     repo: FakeAuthRepo,

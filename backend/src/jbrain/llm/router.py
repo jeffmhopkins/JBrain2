@@ -205,6 +205,14 @@ class LlmRouter:
             reasoning_effort = None
         return provider, model, reasoning_effort
 
+    async def effective_reasoning_effort(
+        self, task: str, strength: str | None = None
+    ) -> str | None:
+        """The reasoning effort a `task` will actually run with after live overrides —
+        None when the resolved model isn't reasoning-capable. Lets a caller (e.g. the
+        agent loop) size its budget to how hard the model is set to think."""
+        return (await self._resolve_live(task, strength))[2]
+
     def spec(self, task: str, strength: str | None = None) -> tuple[str, str]:
         """The (provider, model) a task resolves to — callers stamp it as
         fact provenance (`extractor`) without touching provider clients. Pass the

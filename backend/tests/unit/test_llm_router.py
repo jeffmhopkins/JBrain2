@@ -259,6 +259,20 @@ async def test_reasoning_effort_dropped_when_override_routes_off_xai() -> None:
     assert anthropic.calls[0]["reasoning_effort"] is None
 
 
+async def test_effective_reasoning_effort_reports_the_live_effort() -> None:
+    # The accessor the agent loop uses to size its budget: the stored effort for a
+    # reasoning-capable task (xai default), None once the task routes off a reasoning
+    # model (Claude has no effort channel).
+    xai, anthropic = FakeLlmClient(["x"]), FakeLlmClient(["a"])
+    on = _override_router({"xai": xai}, {"note.extract": {"reasoning_effort": "high"}})
+    assert await on.effective_reasoning_effort("note.extract") == "high"
+    off = _override_router(
+        {"xai": xai, "anthropic": anthropic},
+        {"note.extract": {"spec": "anthropic:claude-x", "reasoning_effort": "high"}},
+    )
+    assert await off.effective_reasoning_effort("note.extract") is None
+
+
 async def test_reasoning_effort_reaches_a_reasoning_capable_local_model() -> None:
     # A stored effort on a `local:` spec for a reasoning model (gpt-oss) is honored —
     # llama.cpp serves gpt-oss with a harmony reasoning channel.

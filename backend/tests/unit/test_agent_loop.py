@@ -30,6 +30,7 @@ from jbrain.agent.loop import (
     JobRef,
     ToolContext,
     ToolOutput,
+    guardrails_for_effort,
 )
 from jbrain.agent.toolfile import ToolFile
 from jbrain.agent.toolregistry import RegisteredTool, ToolHandler, ToolRegistry
@@ -156,6 +157,18 @@ async def test_only_in_scope_tools_are_offered() -> None:
     )
     offered = {t.name for t in fake.converse_calls[0]["tools"]}
     assert offered == {"search"}  # the health tool was hidden from a general session
+
+
+def test_guardrails_for_effort_widens_the_step_cap() -> None:
+    # A model set to think harder earns a deeper tool budget; low/none/non-reasoning
+    # keep the default 10.
+    assert guardrails_for_effort("high").max_steps == 20
+    assert guardrails_for_effort("medium").max_steps == 15
+    assert guardrails_for_effort("low").max_steps == 10
+    assert guardrails_for_effort("none").max_steps == 10
+    assert guardrails_for_effort(None).max_steps == 10
+    # Only the step cap moves — cost/error caps are unchanged.
+    assert guardrails_for_effort("high").max_cost_tokens == Guardrails().max_cost_tokens
 
 
 async def test_max_steps_guardrail_stops_a_tool_loop() -> None:
