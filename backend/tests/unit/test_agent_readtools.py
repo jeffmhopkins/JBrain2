@@ -472,7 +472,10 @@ def test_build_registry_binds_the_shipped_sidecars() -> None:
         object(),  # type: ignore[arg-type]  # device repo
         build_web_handlers(SearxngClient(""), WebFetcher()),
     )
-    web = {"web_search", "web_fetch"}
+    # The `web` (opt-in / jerv-only) permission class — never offered to the default
+    # knowledge agent (allow=None) at any scope. current_location is on-box but rides
+    # this gate, so it sits with the web tools here.
+    web = {"web_search", "web_fetch", "current_location"}
     shipped = {
         "search",
         "current_time",
@@ -744,6 +747,11 @@ def test_sidecars_pinned_to_their_versions() -> None:
             "current_time",
             1,
             "1139d8705fe31c1738afc01d13487a27626339de11b370cbafea4a446f35e02c",
+        ),
+        "current_location.tool": (
+            "current_location",
+            1,
+            "921f335dd318a019adf0b3048f5da0ad89fb9450df913c33423538f9d9c60ff4",
         ),
         "web_search.tool": (
             "web_search",

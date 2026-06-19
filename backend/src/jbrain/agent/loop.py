@@ -314,6 +314,7 @@ class AgentLoop:
         agent_session_id: str | None = None,
         system: str | None = None,
         tools_allow: frozenset[str] | None = None,
+        general_knowledge_label: bool = True,
     ) -> AsyncIterator[ChatEvent]:
         """The streaming twin of `run`: the same turn loop and guardrails, but it
         yields ChatEvents as they happen — `text_delta` per streamed chunk,
@@ -339,7 +340,14 @@ class AgentLoop:
         trades the live token stream for a spinner while verification clears."""
         if buffer_retry:
             async for ev in self._run_stream_buffered(
-                session, scopes, conversation, timezone, agent_session_id, system, tools_allow
+                session,
+                scopes,
+                conversation,
+                timezone,
+                agent_session_id,
+                system,
+                tools_allow,
+                general_knowledge_label,
             ):
                 yield ev
             return
@@ -382,7 +390,12 @@ class AgentLoop:
                 # The adapter always closes a stream with an LlmTurn; guard the
                 # contract anyway rather than dereference None.
                 async for ev in self._finish(
-                    "end_turn", answer_parts, surfaced_sources, surfaced_entities, mutated
+                    "end_turn",
+                    answer_parts,
+                    surfaced_sources,
+                    surfaced_entities,
+                    mutated,
+                    general_knowledge_label,
                 ):
                     yield ev
                 return
@@ -398,13 +411,23 @@ class AgentLoop:
 
             if turn.stop_reason != "tool_use" or not turn.tool_calls:
                 async for ev in self._finish(
-                    "end_turn", answer_parts, surfaced_sources, surfaced_entities, mutated
+                    "end_turn",
+                    answer_parts,
+                    surfaced_sources,
+                    surfaced_entities,
+                    mutated,
+                    general_knowledge_label,
                 ):
                     yield ev
                 return
             if cost >= self._g.max_cost_tokens:
                 async for ev in self._finish(
-                    "budget", answer_parts, surfaced_sources, surfaced_entities, mutated
+                    "budget",
+                    answer_parts,
+                    surfaced_sources,
+                    surfaced_entities,
+                    mutated,
+                    general_knowledge_label,
                 ):
                     yield ev
                 return
@@ -452,12 +475,18 @@ class AgentLoop:
                     surfaced_sources,
                     surfaced_entities,
                     mutated,
+                    general_knowledge_label,
                 ):
                     yield ev
                 return
 
         async for ev in self._finish(
-            "max_steps", answer_parts, surfaced_sources, surfaced_entities, mutated
+            "max_steps",
+            answer_parts,
+            surfaced_sources,
+            surfaced_entities,
+            mutated,
+            general_knowledge_label,
         ):
             yield ev
 
@@ -470,6 +499,7 @@ class AgentLoop:
         agent_session_id: str | None = None,
         system: str | None = None,
         tools_allow: frozenset[str] | None = None,
+        general_knowledge_label: bool = True,
     ) -> AsyncIterator[ChatEvent]:
         """Mode (a): produce the turn non-streaming, run `reflect` (strict
         improvement, N=2 cap), then replay the kept attempt's buffered events as the
@@ -531,7 +561,10 @@ class AgentLoop:
         # substantive answer is the neutral general-knowledge label; a non-empty
         # corpus that a critique-worthy turn failed to ground is the amber verdict.
         if not corpus:
-            if has_substantive_claim(kept.answer):
+            # Only a knowledge-base agent gets the "from general knowledge — not your
+            # notes" label; for a non-KB agent (jerv, teacher) there are no notes to
+            # contrast with, so the provenance chip is meaningless and is suppressed.
+            if general_knowledge_label and has_substantive_claim(kept.answer):
                 yield GeneralKnowledgeEvent()
         elif not kept_verdict.passed and _buffered_critique_worthy(kept):
             yield VerdictEvent(
@@ -675,6 +708,7 @@ class AgentLoop:
         sources: list[NoteSource],
         entities: list[EntityRef],
         mutated: bool,
+        general_knowledge_label: bool = True,
     ) -> AsyncIterator[ChatEvent]:
         """Close the stream: emit the terminal `DoneEvent`, then exactly one of two
         mutually-exclusive tail annotations (or nothing). The answer the user saw
@@ -685,7 +719,9 @@ class AgentLoop:
           corpus) with a checkable claim, so we surface calm provenance ("not your
           notes"). This is independent of `critique_worthy` (such a turn is never
           critique-worthy, but we still label it). A greeting / acknowledgement (no
-          substantive claim) is left silent.
+          substantive claim) is left silent. Suppressed entirely when
+          `general_knowledge_label` is False — a non-KB agent (jerv, teacher) has no
+          notes to contrast with, so the provenance chip would be meaningless.
         - **Retrieval + a critique-worthy turn whose claim failed grounding →** the
           amber `VerdictEvent`. A non-empty corpus that grounds cleanly, or a turn
           that isn't critique-worthy, emits nothing.
@@ -697,8 +733,9 @@ class AgentLoop:
         if not corpus:
             # Empty corpus (no note snippets AND no entity texts) → grounding is
             # *unverifiable*, not ungrounded: never an amber flag. But a substantive
-            # answer here came purely from the model's own knowledge — label it.
-            if has_substantive_claim("".join(answer_parts)):
+            # answer here came purely from the model's own knowledge — label it, unless
+            # the agent has no notes to contrast with (a non-KB agent: jerv, teacher).
+            if general_knowledge_label and has_substantive_claim("".join(answer_parts)):
                 yield GeneralKnowledgeEvent()
             return
         if not critique_worthy(

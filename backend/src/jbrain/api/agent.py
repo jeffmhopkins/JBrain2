@@ -107,11 +107,7 @@ def get_device_repo(request: Request) -> SqlDeviceRepo:
 
 
 async def _presence_block(
-    request: Request,
-    owner_ctx: SessionContext,
-    session: AgentSessionInfo,
-    *,
-    location_aware: bool,
+    request: Request, owner_ctx: SessionContext, session: AgentSessionInfo
 ) -> str:
     """The data-framed owner-presence line to prepend to the conversation (L7b), or
     "" when none. Owner-GATED and freshness-honest, mirroring the skills block's
@@ -120,11 +116,12 @@ async def _presence_block(
     would silently no-op in streaming).
 
     Two gates make it absent for a narrowed/non-owner session: the session must hold
-    the `location` scope OR run a `location_aware` agent (jerv, by owner opt-in — its
-    scope is always empty), and the read itself runs under the FULL owner ctx through
-    `read_owner_presence`, which calls `require_full_owner`. Best-effort — a presence
-    read failure never breaks a turn, it just injects no line."""
-    if "location" not in session.domain_scopes and not location_aware:
+    the `location` scope (a health-only chat gets nothing), and the read itself runs
+    under the FULL owner ctx through `read_owner_presence`, which calls
+    `require_full_owner`. (jerv reaches location via its own `current_location` tool,
+    not this injection.) Best-effort — a presence read failure never breaks a turn,
+    it just injects no line."""
+    if "location" not in session.domain_scopes:
         return ""
     try:
         presence = await read_owner_presence(
@@ -298,12 +295,10 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
     # L7b: prepend the owner's coarse presence as a DATA-framed UserMessage, exactly
     # like the skills block above (same data/instruction boundary) — NOT the system
     # prompt (run_stream hardcodes SYSTEM_PROMPT, so a system injection would no-op in
-    # streaming). Owner-gated: absent unless the session holds the `location` scope or
-    # runs a location_aware agent (jerv, by owner opt-in), and the read runs under the
-    # FULL owner ctx (require_full_owner). Names + times only, freshness-honest.
-    presence = await _presence_block(
-        request, owner_ctx, session, location_aware=profile.location_aware
-    )
+    # streaming). Owner-gated: absent unless the session holds the `location` scope,
+    # and the read runs under the FULL owner ctx (require_full_owner), so a narrowed
+    # session never gets a presence line. Names + times only, freshness-honest.
+    presence = await _presence_block(request, owner_ctx, session)
     if presence:
         conversation = [UserMessage(text=presence), *conversation]
     # The owner's display zone so the agent's time prose matches the cards (which
@@ -337,6 +332,10 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
                 agent_session_id=session.id,
                 system=profile.prompt,
                 tools_allow=profile.tools,
+                # The "from general knowledge — not your notes" label only makes sense
+                # for an agent that reads notes; a non-KB agent (jerv, teacher) has
+                # none to contrast with, so suppress it.
+                general_knowledge_label=profile.reads_knowledge_base,
             ):
                 if event.type == "text_delta":
                     answer.append(event.text)

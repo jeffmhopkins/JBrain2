@@ -360,6 +360,23 @@ def test_chat_forwards_a_general_knowledge_label_after_done(
     assert "general_knowledge" not in transcript.recorded[-1]
 
 
+def test_chat_suppresses_general_knowledge_label_for_a_non_kb_agent(
+    client: TestClient, repo: FakeAuthRepo, sessions_store: FakeAgentSessions
+) -> None:
+    # jerv/teacher read no notes, so the "from general knowledge — not your notes"
+    # label is meaningless and must not be emitted, even on a substantive answer.
+    login(client, repo)
+    sessions_store.add(AgentSessionInfo("sess-j", "", "active", (), (), NOW, NOW, agent="jerv"))
+    client.app.state.llm_router = stream_router(  # type: ignore[attr-defined]
+        [LlmTurn("Mount Everest is the tallest mountain.", (), "end_turn", LlmUsage(1, 1))],
+        stream_chunks=[["Mount Everest is the tallest mountain."]],
+    )
+    resp = client.post("/api/chat", json={"session_id": "sess-j", "message": "tallest mountain?"})
+    events = sse_events(resp.text)
+    assert events[-1]["type"] == "done"
+    assert not any(e["type"] == "general_knowledge" for e in events)
+
+
 def test_chat_buffer_retry_gate_default_off_streams_live(
     client: TestClient, repo: FakeAuthRepo, sessions_store: FakeAgentSessions
 ) -> None:
@@ -805,7 +822,7 @@ def test_chat_runs_the_selected_agents_prompt_and_only_its_tools(
     assert {t.name for t in call["tools"]} == {"web_search", "web_fetch"}
     # Sandboxed: a non-KB agent never recalls skills, and the run carries its version.
     assert not skills.called
-    assert ("sess-j", "agent-jerv-v2") in client.app.state.agent_runlog.started  # type: ignore[attr-defined]
+    assert ("sess-j", "agent-jerv-v3") in client.app.state.agent_runlog.started  # type: ignore[attr-defined]
 
 
 def test_chat_curator_is_offered_no_web_tools(
@@ -1018,20 +1035,3 @@ def test_chat_datetime_block_honours_owner_timezone(
     client.post("/api/chat", json={"session_id": "sess-tz", "message": "hi"})
     joined = "\n".join(getattr(m, "text", "") for m in fake.stream_calls[0]["messages"])
     assert "(Asia/Tokyo)" in joined
-
-
-def test_chat_jerv_gets_presence_without_the_location_scope(
-    client: TestClient, repo: FakeAuthRepo, sessions_store: FakeAgentSessions
-) -> None:
-    """jerv is location_aware: even with an empty scope (the firewall, by design) the
-    owner opted it into the coarse presence line — the deliberate sandbox relaxation."""
-    login(client, repo)
-    sessions_store.add(AgentSessionInfo("sess-j", "", "active", (), (), NOW, NOW, agent="jerv"))
-    router, fake = _capturing_router()
-    client.app.state.llm_router = router  # type: ignore[attr-defined]
-    _wire_presence(client, near=_fresh_near(), place=LatestPlace("e", "Home", NOW), subs=["s1"])
-
-    resp = client.post("/api/chat", json={"session_id": "sess-j", "message": "what's nearby?"})
-    assert resp.status_code == 200
-    joined = "\n".join(getattr(m, "text", "") for m in fake.stream_calls[0]["messages"])
-    assert _PRESENCE_FRAME in joined and "currently at Home" in joined
