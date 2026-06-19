@@ -64,7 +64,7 @@ from jbrain.connectors.repo import SqlConnectorCache
 from jbrain.connectors.service import ConnectorService
 from jbrain.devices.repo import SqlDeviceRepo
 from jbrain.embed import TeiEmbedClient
-from jbrain.geocode import NominatimReverseClient, PhotonGeocoderClient
+from jbrain.geocode import NominatimReverseClient
 from jbrain.lists.repo import SqlListsRepo
 from jbrain.llm import build_router
 from jbrain.llm.local_gateway import LocalGatewayClient
@@ -128,10 +128,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             live_task = asyncio.create_task(
                 live_feeder(settings, app.state.auth_repo, app.state.live_broadcaster)
             )
-        # The on-box geocoder (Phase 7 Wave 4): shared by the agent tools and the
-        # owner-only reverse-geocode read endpoint. Off-by-default at the deploy
-        # layer (the `geocoder` profile); reads fail closed when it isn't running.
-        app.state.geocoder = PhotonGeocoderClient(settings.geocoder_url)
         # Server-side basemap tile proxy/cache: the map's Leaflet layer fetches
         # tiles only from this box (api/tiles.py); the upstream is fetched once and
         # cached. Empty upstream disables tiles (map falls back to the schematic).
@@ -230,9 +226,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # The jerv chatbot's on-box internet tools — direct, sandboxed web access
         # (no owner data in context; docs/ASSISTANT.md "Agent selection").
         web_handlers = build_web_handlers(SearxngClient(settings.searxng_url), WebFetcher())
-        # jerv's location resolver: an offline nearest-city reverse geocoder (no RAM at
-        # rest, no egress), with the owner-configured external geocoder as the direct
-        # street-address fallback (default off when external_geocoder_url is unset).
+        # The on-box geocoder: an offline nearest-city reverse lookup (no resident
+        # service, no RAM at rest, no egress) shared by the curator's geocode_reverse,
+        # the map's reverse-geocode endpoint, and jerv's current_location. The
+        # owner-configured external geocoder is the direct street-address fallback for
+        # jerv (default off when external_geocoder_url is unset).
         app.state.city_geocoder = CityGeocoder()
         external_reverse = NominatimReverseClient(settings.external_geocoder_url)
         app.state.agent_registry = build_registry(
@@ -246,7 +244,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             app.state.appointments_repo,
             app.state.wiki_read_store,
             build_wiki_write_handlers(app.state.notes_repo, app.state.job_queue, maker),
-            app.state.geocoder,
             app.state.location_repo,
             app.state.device_repo,
             web_handlers,

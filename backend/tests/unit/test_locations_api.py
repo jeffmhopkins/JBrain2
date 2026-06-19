@@ -11,9 +11,9 @@ import pytest
 from fastapi.testclient import TestClient
 
 from jbrain.auth import service
+from jbrain.citygeocode import CityHit
 from jbrain.config import Settings
 from jbrain.devices.repo import DeviceInfo
-from jbrain.geocode import GeocodeResult
 from jbrain.locations import DeviceActivity, FixPoint, PlaceGeofence, TimelineEntry
 from jbrain.main import create_app
 from tests.unit.fakes import FakeAuthRepo, FakeDeviceRepo
@@ -78,16 +78,15 @@ class FakeLocationRepo:
 
 
 class FakeGeocoder:
-    def __init__(self, result: GeocodeResult | None) -> None:
-        self.result = result
+    """Stub CityGeocoder: a sync `nearest` returning a fixed CityHit (or None)."""
+
+    def __init__(self, hit: CityHit | None) -> None:
+        self.hit = hit
         self.calls: list[tuple[float, float]] = []
 
-    async def reverse(self, latitude: float, longitude: float) -> GeocodeResult | None:
-        self.calls.append((latitude, longitude))
-        return self.result
-
-    async def forward(self, query: str, limit: int = 5):  # noqa: ANN201 - unused here
-        return []
+    def nearest(self, lat: float, lon: float) -> CityHit | None:
+        self.calls.append((lat, lon))
+        return self.hit
 
 
 @pytest.fixture
@@ -98,7 +97,7 @@ def repo() -> FakeAuthRepo:
 @pytest.fixture
 def geocoder() -> FakeGeocoder:
     return FakeGeocoder(
-        GeocodeResult(label="1 Main St, Townsville", latitude=40.0, longitude=-74.0)
+        CityHit(name="Townsville", region="New York", country="United States", distance_m=900.0)
     )
 
 
@@ -127,7 +126,7 @@ def client(
         app.state.auth_repo = repo
         app.state.device_repo = devices
         app.state.location_repo = locs
-        app.state.geocoder = geocoder
+        app.state.city_geocoder = geocoder
         yield test_client
 
 
@@ -237,7 +236,7 @@ def test_reverse_geocode_returns_the_address(
 ) -> None:
     login(client, repo)
     body = client.get("/api/locations/geocode", params={"lat": 40.0, "lon": -74.0}).json()
-    assert body == {"address": "1 Main St, Townsville"}
+    assert body == {"address": "Townsville, New York, United States"}
     assert geocoder.calls == [(40.0, -74.0)]
 
 
@@ -245,7 +244,7 @@ def test_reverse_geocode_fails_closed_to_null(
     client: TestClient, repo: FakeAuthRepo, geocoder: FakeGeocoder
 ) -> None:
     login(client, repo)
-    geocoder.result = None  # geocoder off / no hit → no address, not a 500
+    geocoder.hit = None  # no nearby place → no caption, not a 500
     body = client.get("/api/locations/geocode", params={"lat": 1.0, "lon": 2.0}).json()
     assert body == {"address": None}
 

@@ -1,6 +1,6 @@
 ---
 name: geocode_reverse
-version: 1
+version: 2
 permission: read
 domains: [location]
 params:
@@ -14,8 +14,8 @@ params:
       description: Longitude in decimal degrees.
   required: [latitude, longitude]
 ---
-Reverse-geocode a coordinate to a street address using the on-box geocoder. The
-lookup stays on the box (no off-box request, nothing staged for approval) and runs
-within this session's scope. Returns the nearest address as a single line, or a
-note that no address was found. Useful for naming where a location fix or geofence
-sits in plain words.
+Name a coordinate by its NEAREST city, using the on-box offline geocoder. The lookup
+stays on the box (no off-box request, nothing staged for approval) and runs within
+this session's scope. Returns the nearest city/region/country and roughly how far the
+coordinate is from it — city-level, not a street address — or a note that no populated
+place is near. Useful for naming where a location fix or geofence sits in plain words.

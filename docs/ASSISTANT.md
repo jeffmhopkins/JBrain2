@@ -380,18 +380,20 @@ The starter connectors:
 |---|---|---|---|---|
 | `lookup_medication` | NLM **RxNorm/RxNav** (+ openFDA/DailyMed) — free, no-auth | `{name}` or `{rxcui}` | ingredients, dose forms, interactions, label highlights | health |
 | `lookup_condition` | NLM **MedlinePlus Connect** / Clinical Tables (ICD-10/SNOMED/MeSH) | `{name}` or `{code:{system,value}}` | overview, typical management, source link | health |
-| `geocode_reverse` | **local/self-hosted** (Nominatim/Photon on-box) | `{lat,lon,accuracy?}` | `{address, components, confidence}` | location |
-| `geocode_forward` | **local/self-hosted** | `{query, near?}` | `{lat, lon, confidence}` | location |
+| `geocode_reverse` | **on-box, offline** (bundled GeoNames cities) | `{lat,lon}` | nearest city/region/country | location |
 
 **Geocoding is local-first by design.** A GPS fix or home address sent to an
 external geocoder leaks the owner's location to a third party — exactly what the
-location firewall exists to prevent. So geocoding runs against a **self-hosted
-geocoder container** (a regional OSM extract via Nominatim/Photon, mirroring the
-local `embed` container), and location data **never leaves the box**; an external
-geocoder is only an explicit, consented, logged fallback for out-of-extract queries.
-This is consistent with dossier G's no-external-map-**tile** rule — we still render
-no basemaps; geocoding only *resolves* coordinates ↔ addresses locally, which is what
-lets a `place_card` show a resolved address as text.
+location firewall exists to prevent. So reverse geocoding runs **entirely on-box and
+offline** against the bundled GeoNames cities (`jbrain.citygeocode`) — a nearest-city
+lookup with no resident service, no index, and **no egress** (it replaced the earlier
+opt-in Photon container). It resolves to a **city/region/country**, not a street; an
+external reverse-geocoder is only an explicit, consented fallback for a specific
+street address (the staged `geocode_external` connector, or jerv's direct
+owner-configured lookup). There is no on-box forward (address→coordinate) geocoder.
+This is consistent with dossier G's no-external-map-**tile** rule — we still render no
+basemaps; geocoding only *names* a coordinate locally, which is what lets a
+`place_card` show a resolved place as text.
 
 Medical/medicine lookups are **reference enrichment, not authority**: results are
 data the agent may cite to the owner with source attribution, never minted as facts

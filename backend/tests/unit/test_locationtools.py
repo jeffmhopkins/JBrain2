@@ -19,7 +19,6 @@ from jbrain.agent.locationtools import build_location_handlers
 from jbrain.agent.loop import ToolContext, ToolOutput
 from jbrain.agent.proposals import ProposalSpec
 from jbrain.db.session import SessionContext
-from jbrain.geocode import GeocodeResult
 from jbrain.locations import (
     DeviceActivity,
     Dwell,
@@ -183,19 +182,6 @@ def _near(captured_at: datetime, gap: float) -> NearestFix:
     )
 
 
-class FakeGeocoder:
-    def __init__(self, results: list[GeocodeResult] | None = None) -> None:
-        self._results = results or []
-        self.queries: list[str] = []
-
-    async def reverse(self, latitude, longitude):  # noqa: ANN001
-        return None
-
-    async def forward(self, query, limit=5):  # noqa: ANN001
-        self.queries.append(query)
-        return list(self._results[:limit])
-
-
 class FakeProposals:
     """Stands in for the ProposalRepo slice `save_place` uses. Records what was
     staged so a test can assert the staged spec (and that NOTHING was staged on a
@@ -210,12 +196,11 @@ class FakeProposals:
         return "prop-1"
 
 
-def _handlers(*, locations=None, devices=None, entities=None, geocoder=None, proposals=None):  # noqa: ANN001
+def _handlers(*, locations=None, devices=None, entities=None, proposals=None):  # noqa: ANN001
     return build_location_handlers(
         locations or FakeLocations(),  # type: ignore[arg-type]
         devices or FakeDevices(),  # type: ignore[arg-type]
         entities or FakeEntities(),  # type: ignore[arg-type]
-        geocoder,  # type: ignore[arg-type]
         proposals,  # type: ignore[arg-type]
     )
 
@@ -623,38 +608,14 @@ async def test_location_query_no_fixes_in_window() -> None:
     assert out.view is None
 
 
-async def test_location_query_falls_back_to_geocode_on_a_fence_miss() -> None:
-    # No saved fence matches → forward-geocode the text on-box (the same full-owner
-    # path geocode_forward uses); the geocoded center drives the spatial filter.
+async def test_location_query_reports_no_saved_place_on_a_fence_miss() -> None:
+    # There is no forward-geocode fallback: a place that isn't a saved fence is
+    # reported as such, never resolved to a center.
     devices = FakeDevices(owner_subjects=["s-me"])
-    geocoder = FakeGeocoder(
-        [GeocodeResult(label="123 Main St, Boulder", latitude=41.0, longitude=-106.0)]
-    )
-    loc = FakeLocations(fixes=[_fix(0, battery=90)], places=[])
-    out = await _handlers(locations=loc, devices=devices, geocoder=geocoder)["location_query"](
+    out = await _handlers(locations=FakeLocations(places=[]), devices=devices)["location_query"](
         {"place": "123 Main St"}, FULL_OWNER
     )
-    assert geocoder.queries == ["123 Main St"]
-    assert "123 Main St, Boulder" in out
-    assert loc.within_calls[0]["center"] == (41.0, -106.0)
-
-
-async def test_location_query_geocode_miss_is_reported() -> None:
-    devices = FakeDevices(owner_subjects=["s-me"])
-    out = await _handlers(
-        locations=FakeLocations(places=[]), devices=devices, geocoder=FakeGeocoder([])
-    )["location_query"]({"place": "Nowhere"}, FULL_OWNER)
-    assert "No saved place or address found" in out
-
-
-async def test_location_query_clamps_the_radius() -> None:
-    devices = FakeDevices(owner_subjects=["s-me"])
-    loc = FakeLocations(fixes=[_fix(0)], places=[])
-    geocoder = FakeGeocoder([GeocodeResult(label="X", latitude=1.0, longitude=2.0)])
-    await _handlers(locations=loc, devices=devices, geocoder=geocoder)["location_query"](
-        {"place": "X", "radius_m": 10_000_000}, FULL_OWNER
-    )
-    assert loc.within_calls[0]["radius_m"] == 50_000.0
+    assert 'No saved place named "123 Main St"' in out
 
 
 async def test_location_query_needs_a_place() -> None:

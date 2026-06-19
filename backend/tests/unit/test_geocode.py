@@ -1,17 +1,9 @@
-"""The Photon geocoder client + its address flattening (Phase 7 Wave 4). HTTP is
-faked with an httpx MockTransport — CI never runs a real Photon."""
+"""The external reverse-geocoder client + its address flattening (Phase 7 Wave 4b).
+HTTP is faked with an httpx MockTransport — CI never calls a real geocoder."""
 
 import httpx
 
-from jbrain.geocode import PhotonGeocoderClient, format_address
-
-
-def _feature(props: dict, lon: float, lat: float) -> dict:
-    return {"properties": props, "geometry": {"type": "Point", "coordinates": [lon, lat]}}
-
-
-def _fc(*features: dict) -> dict:
-    return {"type": "FeatureCollection", "features": list(features)}
+from jbrain.geocode import NominatimReverseClient, format_address
 
 
 def test_format_address_joins_populated_parts_in_order() -> None:
@@ -28,48 +20,44 @@ def test_format_address_joins_populated_parts_in_order() -> None:
 
 
 def test_format_address_drops_blanks_and_adjacent_repeats() -> None:
-    # Photon often echoes name == street; the dup collapses, blanks vanish.
+    # A feed often echoes name == street; the dup collapses, blanks vanish.
     assert format_address({"name": "Cafe", "street": "Cafe", "city": "Metropolis"}) == (
         "Cafe, Metropolis"
     )
     assert format_address({}) == ""
 
 
-async def test_reverse_returns_the_first_usable_feature() -> None:
+def test_external_reverse_disabled_when_unconfigured() -> None:
+    client = NominatimReverseClient("")
+    assert client.enabled is False
+
+
+async def test_external_reverse_returns_display_name() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.path == "/reverse"
         assert request.url.params["lat"] == "40.0"
-        return httpx.Response(
-            200, json=_fc(_feature({"name": "Home", "city": "Townsville"}, -74.0, 40.0))
-        )
+        return httpx.Response(200, json={"display_name": "10 Main St, Townsville, NY"})
 
-    client = PhotonGeocoderClient("http://geocoder", transport=httpx.MockTransport(handler))
-    result = await client.reverse(40.0, -74.0)
-    assert result is not None
-    assert result.label == "Home, Townsville"
-    assert (result.latitude, result.longitude) == (40.0, -74.0)
+    client = NominatimReverseClient("http://geo", transport=httpx.MockTransport(handler))
+    assert client.enabled is True
+    assert await client.reverse(40.0, -74.0) == "10 Main St, Townsville, NY"
 
 
-async def test_reverse_returns_none_when_no_hit() -> None:
-    client = PhotonGeocoderClient(
-        "http://geocoder",
-        transport=httpx.MockTransport(lambda _r: httpx.Response(200, json=_fc())),
+async def test_external_reverse_understands_geojson() -> None:
+    feature = {"properties": {"name": "Office", "city": "Metropolis"}}
+    client = NominatimReverseClient(
+        "http://geo",
+        transport=httpx.MockTransport(lambda _r: httpx.Response(200, json={"features": [feature]})),
     )
-    assert await client.reverse(0.0, 0.0) is None
+    assert await client.reverse(41.0, -75.0) == "Office, Metropolis"
 
 
-async def test_forward_returns_candidates() -> None:
-    def handler(request: httpx.Request) -> httpx.Response:
-        assert request.url.path == "/api"
-        assert request.url.params["q"] == "office"
-        return httpx.Response(
-            200,
-            json=_fc(
-                _feature({"name": "Office", "city": "Metropolis"}, -75.0, 41.0),
-                _feature({}, -76.0, 42.0),  # no usable label → skipped
-            ),
-        )
-
-    client = PhotonGeocoderClient("http://geocoder", transport=httpx.MockTransport(handler))
-    results = await client.forward("office")
-    assert [r.label for r in results] == ["Office, Metropolis"]
+async def test_external_reverse_none_on_error_or_miss() -> None:
+    boom = NominatimReverseClient(
+        "http://geo", transport=httpx.MockTransport(lambda _r: httpx.Response(502))
+    )
+    assert await boom.reverse(0.0, 0.0) is None
+    empty = NominatimReverseClient(
+        "http://geo", transport=httpx.MockTransport(lambda _r: httpx.Response(200, json={}))
+    )
+    assert await empty.reverse(0.0, 0.0) is None

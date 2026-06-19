@@ -366,10 +366,10 @@ def _editor_registry(maker: async_sessionmaker, jobs: _FakeJobs) -> ToolRegistry
         stub,  # appointments
         WikiReadStore(maker),
         build_wiki_write_handlers(notes, jobs, maker),  # type: ignore[arg-type]
-        stub,  # geocoder client
         stub,  # location repo
         stub,  # device repo
         build_web_handlers(SearxngClient(""), WebFetcher()),  # unused by the editor turn
+        stub,  # city geocoder
     )
 
 

@@ -1,18 +1,18 @@
-"""The local Photon geocoder client (Phase 7 Wave 4).
+"""The external reverse-geocoder client (Phase 7 Wave 4b).
 
-Mirrors `embed.TeiEmbedClient`: a thin httpx client over an opt-in compose service
-(`JBRAIN_GEOCODER_URL`) that runs on a no-egress internal network, so reverse and
-forward geocoding stay entirely on-box — they are *local reads*, never an egress
-connector (which is the separate, owner-approved external fallback). Photon is the
-cache; nothing is persisted in the DB for a local lookup.
+On-box reverse geocoding is the offline nearest-city lookup (`jbrain.citygeocode`);
+there is no resident geocoder service. The ONLY off-box geocoding path is the
+owner-configured external reverse-geocoder, reached two ways: the staged
+`geocode_external` connector (the curator's #9-chokepoint egress) and the direct
+`NominatimReverseClient` below (jerv's "specific street address" fallback, inside its
+direct-egress sandbox). Both are default OFF — empty `external_geocoder_url`.
 
-Photon speaks GeoJSON: `GET /reverse?lat=&lon=` and `GET /api?q=` each return a
-FeatureCollection whose feature `properties` carry the address parts. We flatten
-those to a single human address string and the feature's coordinates.
+A Nominatim-compatible `/reverse` (jsonv2 → `display_name`) is the target; a
+Photon-style GeoJSON response is also understood, so `format_address` is shared with
+the connector's parser.
 """
 
-from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Any
 
 import httpx
 import structlog
@@ -22,26 +22,11 @@ log = structlog.get_logger()
 _TIMEOUT = 10.0
 
 
-@dataclass(frozen=True)
-class GeocodeResult:
-    """One geocoder hit: a flattened address label and its coordinates."""
-
-    label: str
-    latitude: float
-    longitude: float
-
-
-class GeocodeClient(Protocol):
-    async def reverse(self, latitude: float, longitude: float) -> GeocodeResult | None: ...
-
-    async def forward(self, query: str, limit: int = 5) -> list[GeocodeResult]: ...
-
-
 def format_address(props: dict[str, Any]) -> str:
-    """A Photon feature's `properties` flattened to one address line. Photon keys:
-    name, housenumber, street, city, district, state, postcode, country. We keep
-    the populated parts in postal-ish order and drop the rest — empty in, empty
-    out, so the caller can treat "" as no usable address."""
+    """A geocoder feature's `properties` flattened to one address line (GeoJSON keys:
+    name, housenumber, street, city, district, state, postcode, country). We keep the
+    populated parts in postal-ish order and drop the rest — empty in, empty out, so the
+    caller can treat "" as no usable address."""
     house_street = " ".join(p for p in (props.get("housenumber"), props.get("street")) if p)
     parts = [
         props.get("name"),
@@ -51,7 +36,7 @@ def format_address(props: dict[str, Any]) -> str:
         props.get("postcode"),
         props.get("country"),
     ]
-    # De-duplicate adjacent repeats (Photon often echoes name == street) and drop blanks.
+    # De-duplicate adjacent repeats (a feed often echoes name == street) and drop blanks.
     out: list[str] = []
     for part in parts:
         if part and (not out or out[-1] != part):
@@ -59,55 +44,13 @@ def format_address(props: dict[str, Any]) -> str:
     return ", ".join(out)
 
 
-def _to_result(feature: dict[str, Any]) -> GeocodeResult | None:
-    coords = (feature.get("geometry") or {}).get("coordinates")
-    if not (isinstance(coords, list) and len(coords) == 2):
-        return None
-    label = format_address(feature.get("properties") or {})
-    if not label:
-        return None
-    lon, lat = coords
-    return GeocodeResult(label=label, latitude=float(lat), longitude=float(lon))
-
-
-class PhotonGeocoderClient:
-    def __init__(self, base_url: str, transport: httpx.AsyncBaseTransport | None = None):
-        self._base_url = base_url
-        self._transport = transport
-
-    async def _features(self, path: str, params: dict[str, Any]) -> list[dict[str, Any]]:
-        async with httpx.AsyncClient(
-            base_url=self._base_url, timeout=_TIMEOUT, transport=self._transport
-        ) as client:
-            resp = await client.get(path, params=params)
-            resp.raise_for_status()
-            data = resp.json()
-        features = data.get("features")
-        return features if isinstance(features, list) else []
-
-    async def reverse(self, latitude: float, longitude: float) -> GeocodeResult | None:
-        """The nearest address to a coordinate, or None when Photon has no hit."""
-        features = await self._features("/reverse", {"lat": latitude, "lon": longitude})
-        for feature in features:
-            result = _to_result(feature)
-            if result is not None:
-                return result
-        return None
-
-    async def forward(self, query: str, limit: int = 5) -> list[GeocodeResult]:
-        """Address/place candidates for a free-text query (owner-only at the tool
-        layer — a free-text slot the ParamSpec allowlist can't constrain)."""
-        features = await self._features("/api", {"q": query, "limit": limit})
-        return [r for f in features if (r := _to_result(f)) is not None]
-
-
 class NominatimReverseClient:
     """A DIRECT reverse-geocode against the owner-configured external geocoder — the
-    "specific street address" fallback for jerv's current_location (option 3). Unlike
-    the staged `geocode_external` connector (the curator's #9-chokepoint egress), this
-    runs directly, inside jerv's existing direct-egress sandbox: the only thing that
-    leaves the box is the coordinate the owner shared this turn, to the URL the owner
-    set. Default OFF — an empty `base_url` yields a client that never calls out.
+    "specific street address" fallback for jerv's current_location. Unlike the staged
+    `geocode_external` connector (the curator's #9-chokepoint egress), this runs
+    directly, inside jerv's existing direct-egress sandbox: the only thing that leaves
+    the box is the coordinate the owner shared this turn, to the URL the owner set.
+    Default OFF — an empty `base_url` yields a client that never calls out.
 
     Targets a Nominatim-compatible `/reverse` (jsonv2 → `display_name`); a Photon-style
     GeoJSON response is also understood, mirroring the connector's parser."""

@@ -80,7 +80,7 @@ services:
       # real on-disk footprint. Empty/absent on a stock deploy — the read fails
       # closed to the catalog estimate.
       - ./local-models:/data/local-models:ro
-    networks: [edge, internal, geocoder_net]
+    networks: [edge, internal]
     depends_on:
       db:
         condition: service_healthy
@@ -135,7 +135,7 @@ services:
     environment: *api_env
     volumes:
       - blobs:/data/blobs
-    networks: [internal, geocoder_net]
+    networks: [internal]
     depends_on:
       db:
         condition: service_healthy
@@ -220,23 +220,6 @@ services:
       - embed_models:/data
     networks: [internal]
 
-  # OPT-IN local geocoder (Phase 7 Wave 4): Photon, for on-box reverse/forward
-  # geocoding with NO off-box route. Guarded by the `geocoder` profile so a stock
-  # deploy never starts it (JBRAIN_GEOCODER_URL reads then fail closed). It holds a
-  # local OSM extract — owner-provisioned into the named volume — and sits ALONE on
-  # `geocoder_net` (internal: true), so even a compromised geocoder cannot reach the
-  # internet. api/worker also join `geocoder_net` to query it, while keeping their
-  # own egress via `internal`.
-  geocoder:
-    profiles: [geocoder]
-    image: ${GEOCODER_IMAGE:-docker.io/komoot/photon:latest}
-    restart: unless-stopped
-    # Cap it like embed so a heavy query can't starve Postgres on a 4GB host.
-    mem_limit: 1g
-    volumes:
-      - geocoder_data:/photon/photon_data
-    networks: [geocoder_net]
-
   # Self-hosted web search (docs/ASSISTANT.md "Agent selection"): a SearXNG
   # metasearch instance backing the jerv chatbot's web_search/web_fetch tools.
   # Part of the stock stack (no profile) so it comes up with every deploy and is
@@ -311,10 +294,6 @@ services:
 networks:
   edge:
   internal:
-  # No off-box route: the geocoder is reachable by api/worker but cannot itself
-  # reach the internet (defense-in-depth for the box's most location-revealing data).
-  geocoder_net:
-    internal: true
 
 volumes:
   blobs:
@@ -322,5 +301,4 @@ volumes:
   caddy_data:
   caddy_config:
   embed_models:
-  geocoder_data:
   tiles:

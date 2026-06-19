@@ -467,7 +467,6 @@ def test_build_registry_binds_the_shipped_sidecars() -> None:
         object(),  # type: ignore[arg-type]
         object(),  # type: ignore[arg-type]  # wiki reader
         build_wiki_write_handlers(object(), object(), object()),  # type: ignore[arg-type]
-        object(),  # type: ignore[arg-type]  # geocoder client
         object(),  # type: ignore[arg-type]  # location repo
         object(),  # type: ignore[arg-type]  # device repo
         build_web_handlers(SearxngClient(""), WebFetcher()),
@@ -507,7 +506,6 @@ def test_build_registry_binds_the_shipped_sidecars() -> None:
         "lookup_medication",
         "lookup_condition",
         "geocode_reverse",
-        "geocode_forward",
         "propose_prompt_edit",
         "where_is",
         "where_was_i",
@@ -527,7 +525,6 @@ def test_build_registry_binds_the_shipped_sidecars() -> None:
     # them; a location scope sees the full set.
     location = {
         "geocode_reverse",
-        "geocode_forward",
         "where_is",
         "where_was_i",
         "device_status",
@@ -687,13 +684,8 @@ def test_sidecars_pinned_to_their_versions() -> None:
         ),
         "geocode_reverse.tool": (
             "geocode_reverse",
-            1,
-            "e7478dc924b2e38f35609df78a7ed4c1b07b5a782f5e14068b126093584ba7e3",
-        ),
-        "geocode_forward.tool": (
-            "geocode_forward",
-            1,
-            "e705abe592942eb4f39efafbdd8962e9a40a65836581c677cfca4897fadcc584",
+            2,
+            "e6a3e9bd05accc6aa1e72ea4c12f165f9840873c39ba6b01cde5130db9c69ce6",
         ),
         "where_is.tool": (
             "where_is",

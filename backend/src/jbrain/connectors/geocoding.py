@@ -1,7 +1,8 @@
 """The external reverse-geocoder fallback connector (Phase 7 Wave 4b).
 
-The on-box Photon geocoder is the default; this is the owner-approved fallback for
-when a coordinate has no local hit. It is an ordinary egress Connector, so it
+The on-box offline city geocoder (`jbrain.citygeocode`) is the default; this is the
+owner-approved fallback for a specific street address. It is an ordinary egress
+Connector, so it
 inherits the whole #9 chokepoint: the tool stages an egress Proposal (never calls
 out), the guard admits only the typed `lat`/`lon` slots — there is NO free-text
 query slot, so a coordinate is all that can ever leave the box — and the result
