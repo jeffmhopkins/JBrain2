@@ -252,6 +252,35 @@ describe("HomeScreen mode scoping", () => {
     expect(document.querySelector(".panel.left.open")).toBeInTheDocument();
   });
 
+  it("shuttles the panels on an omnibox swipe but not on a chat-window swipe", async () => {
+    setup();
+    fireEvent.click(screen.getByRole("tab", { name: "Full Brain" }));
+    await waitFor(() => screen.getByLabelText("Conversation"));
+
+    // A swipe across the transcript itself is inert — it never opens a panel.
+    const shell = document.querySelector(".fb-shell") as Element;
+    fireEvent.touchStart(shell, { touches: [{ clientX: 20, clientY: 200 }] });
+    fireEvent.touchMove(shell, { touches: [{ clientX: 140, clientY: 205 }] });
+    fireEvent.touchEnd(shell, { changedTouches: [{ clientX: 140, clientY: 205 }] });
+    expect(document.querySelector(".panel.left.open")).not.toBeInTheDocument();
+
+    // The same rightward swipe on the omnibox pulls the Sessions panel in.
+    const box = document.querySelector(".omnibox") as Element;
+    fireEvent.touchStart(box, { touches: [{ clientX: 20, clientY: 40 }] });
+    fireEvent.touchEnd(box, { changedTouches: [{ clientX: 140, clientY: 44 }] });
+    expect(document.querySelector(".panel.left.open")).toBeInTheDocument();
+
+    // The opposite (leftward) swipe sends it back out.
+    fireEvent.touchStart(box, { touches: [{ clientX: 200, clientY: 40 }] });
+    fireEvent.touchEnd(box, { changedTouches: [{ clientX: 80, clientY: 44 }] });
+    expect(document.querySelector(".panel.left.open")).not.toBeInTheDocument();
+
+    // A leftward swipe from rest pulls the Proposals panel in from the right.
+    fireEvent.touchStart(box, { touches: [{ clientX: 200, clientY: 40 }] });
+    fireEvent.touchEnd(box, { changedTouches: [{ clientX: 80, clientY: 44 }] });
+    expect(document.querySelector(".panel.right.open")).toBeInTheDocument();
+  });
+
   it("a Full Brain send from the omnibox streams into the inline transcript", async () => {
     const deps = fbDeps();
     deps.chat = async function* () {

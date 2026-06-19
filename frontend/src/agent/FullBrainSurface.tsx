@@ -1,14 +1,15 @@
 // The Full Brain surface, rendered inline in the home page body: the streamed
 // transcript with the two lateral panels the mock specifies — Sessions slides in
 // from the left, Proposals from the right (docs/mocks/assistant-lateral-swipe.html).
-// A horizontal swipe is the in-context shortcut (right→Sessions, left→Proposals,
-// the opposite swipe sends the open panel back out); the header buttons do the
-// same for anyone who'd rather tap. The composer is the omnibox, not here — this
-// surface only reads `fb` and renders. An answer that used tools carries an inline
-// "Worked" disclosure (tap to expand in place); each step is itself a pulldown
-// showing its arguments, result, and raw payload (docs/research/brain-tooluse-ux).
+// The horizontal swipe that shuttles those panels lives on the omnibox (the
+// composer the home screen provides), so a drag across the transcript never
+// hijacks reading or text selection; the top-bar buttons open the panels by tap.
+// The composer is the omnibox, not here — this surface only reads `fb` and
+// renders. An answer that used tools carries an inline "Worked" disclosure (tap
+// to expand in place); each step is itself a pulldown showing its arguments,
+// result, and raw payload (docs/research/brain-tooluse-ux).
 
-import { type ReactNode, type TouchEvent, useEffect, useRef, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import { DOMAIN_COLOR } from "../notes/modes";
 import { ProposalTree } from "./ProposalTree";
 import { ProposalsPanel } from "./ProposalsPanel";
@@ -20,8 +21,6 @@ import type { ToolActivity, TranscriptMessage } from "./transcript";
 import type { ProposalRef } from "./types";
 import type { FullBrain } from "./useFullBrain";
 import { ToolView } from "./views/registry";
-
-const OPEN_PX = 56; // horizontal travel that commits a panel open or closed
 
 // A tool call can finish in a blink; pin its label for at least this long so the
 // "what it's doing" status is actually readable. A new tool inside the window
@@ -45,7 +44,6 @@ export function FullBrainSurface({
   onOpenEntity,
   onProposalEnacted,
 }: Props): ReactNode {
-  const drag = useRef<{ x: number; axis: "?" | "h" | "v" } | null>(null);
   const chatRef = useRef<HTMLElement>(null);
   const { panel, setPanel } = fb;
 
@@ -57,51 +55,10 @@ export function FullBrainSurface({
     if (el) el.scrollTop = el.scrollHeight;
   }, [fb.messages]);
 
-  function onTouchStart(e: TouchEvent): void {
-    const target = e.target as HTMLElement;
-    // Text fields opt out so typing/selection isn't hijacked; taps on the Worked
-    // disclosure and its step rows fall through (a tap never travels OPEN_PX), so
-    // the horizontal swipe keeps its single meaning — the lateral panels.
-    if (target.closest("textarea, input, select")) {
-      drag.current = null;
-      return;
-    }
-    const t = e.touches[0];
-    drag.current = t ? { x: t.clientX, axis: "?" } : null;
-  }
-
-  function onTouchMove(e: TouchEvent): void {
-    const d = drag.current;
-    const t = e.touches[0];
-    if (!d || !t) return;
-    if (d.axis === "?" && Math.abs(t.clientX - d.x) > 10) d.axis = "h";
-  }
-
-  function onTouchEnd(e: TouchEvent): void {
-    const d = drag.current;
-    drag.current = null;
-    const t = e.changedTouches[0];
-    if (!d || !t || d.axis !== "h") return;
-    const dx = t.clientX - d.x;
-    if (Math.abs(dx) < OPEN_PX) return;
-    if (panel === "none") {
-      setPanel(dx > 0 ? "sessions" : "proposals");
-    } else if (panel === "sessions" && dx < 0) {
-      setPanel("none"); // swipe it back out the way it came
-    } else if (panel === "proposals" && dx > 0) {
-      setPanel("none");
-    }
-  }
-
   // The session's name lives in the top bar (HomeScreen owns it); the panels are
-  // a swipe away — right for Sessions, left for Proposals.
+  // a swipe away on the omnibox — right for Sessions, left for Proposals.
   return (
-    <div
-      className="fb-shell"
-      onTouchStart={onTouchStart}
-      onTouchMove={onTouchMove}
-      onTouchEnd={onTouchEnd}
-    >
+    <div className="fb-shell">
       <div className="fullbrain">
         {fb.active ? (
           <main className="fb-chat" aria-label="Conversation" ref={chatRef}>

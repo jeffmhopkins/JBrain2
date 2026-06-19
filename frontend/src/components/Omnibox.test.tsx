@@ -92,6 +92,38 @@ describe("Omnibox", () => {
     });
   });
 
+  it("reports a committed horizontal swipe so the home screen can shuttle panels", () => {
+    const onLateralSwipe = vi.fn();
+    render(
+      <Omnibox
+        seg={{ row: "main", mode: "fullbrain" }}
+        onSegChange={vi.fn()}
+        onSend={vi.fn()}
+        onConversation={vi.fn()}
+        onOpenLauncher={vi.fn()}
+        onLateralSwipe={onLateralSwipe}
+      />,
+    );
+    const box = document.querySelector(".omnibox") as Element;
+
+    // A rightward drag past the commit threshold reports a positive dx.
+    fireEvent.touchStart(box, { touches: [{ clientX: 30, clientY: 40 }] });
+    fireEvent.touchEnd(box, { changedTouches: [{ clientX: 130, clientY: 44 }] });
+    expect(onLateralSwipe).toHaveBeenCalledTimes(1);
+    expect(onLateralSwipe.mock.calls[0]?.[0]).toBeGreaterThan(0);
+
+    // A leftward drag reports a negative dx.
+    fireEvent.touchStart(box, { touches: [{ clientX: 200, clientY: 40 }] });
+    fireEvent.touchEnd(box, { changedTouches: [{ clientX: 90, clientY: 44 }] });
+    expect(onLateralSwipe).toHaveBeenCalledTimes(2);
+    expect(onLateralSwipe.mock.calls[1]?.[0]).toBeLessThan(0);
+
+    // A short travel (a tap) leaves the panels be.
+    fireEvent.touchStart(box, { touches: [{ clientX: 100, clientY: 40 }] });
+    fireEvent.touchEnd(box, { changedTouches: [{ clientX: 110, clientY: 41 }] });
+    expect(onLateralSwipe).toHaveBeenCalledTimes(2);
+  });
+
   it("hands conversational sends off with the typed body instead of saving", () => {
     const onSend = vi.fn();
     const onConversation = vi.fn();
