@@ -63,8 +63,8 @@ def _fresh_near() -> NearestFix:
     return NearestFix(fix=FixPoint(captured, 40.0, -74.0, 10, 80), gap_seconds=180)
 
 
-def _tool(loc: _Loc, dev: _Dev):  # noqa: ANN202
-    return build_presence_handlers(loc, dev)["current_location"]  # type: ignore[arg-type]
+def _tool(loc: _Loc, dev: _Dev, geo: "_Geo | None" = None):  # noqa: ANN202
+    return build_presence_handlers(loc, dev, geo)["current_location"]  # type: ignore[arg-type]
 
 
 def _at_home() -> _Loc:
@@ -90,16 +90,14 @@ async def test_current_location_prefers_the_live_pwa_fix_reverse_geocoded() -> N
     # A turn carrying the PWA's live coords answers from them (on-box reverse-geocode),
     # never touching the OwnTracks device stack — coordinate-free output.
     geo = _Geo(GeocodeResult(label="Springfield, IL", latitude=39.8, longitude=-89.6))
-    tool = build_presence_handlers(_Loc(None, None), _Dev([]), geo)["current_location"]
-    out = await tool({}, _here_ctx(39.8, -89.6))
+    out = await _tool(_Loc(None, None), _Dev([]), geo)({}, _here_ctx(39.8, -89.6))
     assert "Springfield, IL" in out
     assert "39.8" not in out and "-89.6" not in out
 
 
 @pytest.mark.asyncio
 async def test_current_location_live_fix_geocoder_miss_stays_coordinate_free() -> None:
-    tool = build_presence_handlers(_Loc(None, None), _Dev([]), _Geo(None))["current_location"]
-    out = await tool({}, _here_ctx(39.8, -89.6))
+    out = await _tool(_Loc(None, None), _Dev([]), _Geo(None))({}, _here_ctx(39.8, -89.6))
     assert "couldn't resolve it to a place name" in out
     assert "39.8" not in out
 
@@ -107,8 +105,7 @@ async def test_current_location_live_fix_geocoder_miss_stays_coordinate_free() -
 @pytest.mark.asyncio
 async def test_current_location_without_a_live_fix_falls_back_to_the_device() -> None:
     # No live coords on the turn → the OwnTracks device presence read (the prior path).
-    tool = build_presence_handlers(_at_home(), _Dev(["s1"]), _Geo(None))["current_location"]
-    out = await tool({}, _jerv_ctx())
+    out = await _tool(_at_home(), _Dev(["s1"]), _Geo(None))({}, _jerv_ctx())
     assert "currently at Home" in out
 
 
