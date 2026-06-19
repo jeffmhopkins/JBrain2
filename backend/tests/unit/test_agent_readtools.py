@@ -19,12 +19,14 @@ from jbrain.agent.readtools import (
     format_wiki_article,
 )
 from jbrain.agent.toolfile import load_tool
+from jbrain.agent.webtools import build_web_handlers
 from jbrain.agent.wikiwritetools import build_wiki_write_handlers
 from jbrain.connectors.base import ConnectorRegistry
 from jbrain.connectors.medical import medical_connectors
 from jbrain.db.session import SessionContext
 from jbrain.notes.service import NoteInfo
 from jbrain.search.service import SearchResponse, SearchResult
+from jbrain.web import SearxngClient, WebFetcher
 
 CTX = ToolContext(session=SessionContext(principal_kind="owner"), scopes=("general",))
 
@@ -468,7 +470,9 @@ def test_build_registry_binds_the_shipped_sidecars() -> None:
         object(),  # type: ignore[arg-type]  # geocoder client
         object(),  # type: ignore[arg-type]  # location repo
         object(),  # type: ignore[arg-type]  # device repo
+        build_web_handlers(SearxngClient(""), WebFetcher()),
     )
+    web = {"web_search", "web_fetch"}
     shipped = {
         "search",
         "read_wiki",
@@ -509,6 +513,7 @@ def test_build_registry_binds_the_shipped_sidecars() -> None:
         "time_at_place",
         "find_when_at",
         "save_place",
+        *web,
     }
     assert registry.names() == shipped
     # The connector tools are external (no domain restriction). The geocode and
@@ -528,8 +533,12 @@ def test_build_registry_binds_the_shipped_sidecars() -> None:
         "find_when_at",
         "save_place",
     }
-    assert {t.name for t in registry.schemas_for({"general"})} == shipped - location
-    assert {t.name for t in registry.schemas_for({"location"})} == shipped
+    # The web tools are the opt-in `web` class: never offered to the default
+    # knowledge agent (allow=None), regardless of scope — only jerv allowlists them.
+    assert {t.name for t in registry.schemas_for({"general"})} == shipped - location - web
+    assert {t.name for t in registry.schemas_for({"location"})} == shipped - web
+    # jerv's allowlist surfaces exactly the web tools and nothing else.
+    assert {t.name for t in registry.schemas_for(set(), web)} == web
 
 
 def test_sidecars_pinned_to_their_versions() -> None:
@@ -729,6 +738,16 @@ def test_sidecars_pinned_to_their_versions() -> None:
             "save_place",
             1,
             "138da8801602ddaf693328a47ac7edec65cd06f62d75180f5bd02c4426bb3a57",
+        ),
+        "web_search.tool": (
+            "web_search",
+            1,
+            "3bcaeea6850405c7fcdba6320c7ca00a3ad0f5d495531c12c041eda081192cf8",
+        ),
+        "web_fetch.tool": (
+            "web_fetch",
+            1,
+            "4724e686a73478221320c6cbddddb22682654566bd2eda261f8596cd5b158a6f",
         ),
     }
     # Every shipped sidecar must appear above — a new `.tool` cannot slip in

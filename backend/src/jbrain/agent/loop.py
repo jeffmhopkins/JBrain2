@@ -245,9 +245,11 @@ class AgentLoop:
         timezone: str | None = None,
         system: str | None = None,
         agent_session_id: str | None = None,
+        tools_allow: frozenset[str] | None = None,
     ) -> AgentResult:
         scopes = tuple(scopes)
-        tools = self._registry.schemas_for(scopes)
+        tools = self._registry.schemas_for(scopes, tools_allow)
+        allowed = self._registry.allowed_names(scopes, tools_allow)
         messages: list[LlmMessage] = list(conversation)
         tool_ctx = ToolContext(
             session=session, scopes=scopes, timezone=timezone, agent_session_id=agent_session_id
@@ -286,7 +288,7 @@ class AgentLoop:
             results: list[ToolResult] = []
             any_error = False
             for call in turn.tool_calls:
-                dispatched = await self._dispatch(call, tool_ctx)
+                dispatched = await self._dispatch(call, tool_ctx, allowed)
                 results.append(dispatched.result)
                 any_error = any_error or dispatched.result.is_error
                 await self._record(
@@ -310,6 +312,8 @@ class AgentLoop:
         timezone: str | None = None,
         buffer_retry: bool = False,
         agent_session_id: str | None = None,
+        system: str | None = None,
+        tools_allow: frozenset[str] | None = None,
     ) -> AsyncIterator[ChatEvent]:
         """The streaming twin of `run`: the same turn loop and guardrails, but it
         yields ChatEvents as they happen — `text_delta` per streamed chunk,
@@ -335,12 +339,16 @@ class AgentLoop:
         trades the live token stream for a spinner while verification clears."""
         if buffer_retry:
             async for ev in self._run_stream_buffered(
-                session, scopes, conversation, timezone, agent_session_id
+                session, scopes, conversation, timezone, agent_session_id, system, tools_allow
             ):
                 yield ev
             return
         scopes = tuple(scopes)
-        tools = self._registry.schemas_for(scopes)
+        # The selected agent supplies its persona prompt and tool allowlist
+        # (docs/ASSISTANT.md "Agent selection"); the default is the Full Brain curator.
+        system_prompt = system or SYSTEM_PROMPT
+        tools = self._registry.schemas_for(scopes, tools_allow)
+        allowed = self._registry.allowed_names(scopes, tools_allow)
         messages: list[LlmMessage] = list(conversation)
         tool_ctx = ToolContext(
             session=session, scopes=scopes, timezone=timezone, agent_session_id=agent_session_id
@@ -359,7 +367,7 @@ class AgentLoop:
             turn: LlmTurn | None = None
             async for part in self._router.converse_stream(
                 self._task,
-                system=SYSTEM_PROMPT,
+                system=system_prompt,
                 messages=messages,
                 tools=tools,
                 strength=SYSTEM_STRENGTH,
@@ -406,7 +414,7 @@ class AgentLoop:
             any_error = False
             for call in turn.tool_calls:
                 yield ToolCallEvent(id=call.id, name=call.name, arguments=call.arguments)
-                dispatched = await self._dispatch(call, tool_ctx)
+                dispatched = await self._dispatch(call, tool_ctx, allowed)
                 results.append(dispatched.result)
                 any_error = any_error or dispatched.result.is_error
                 surfaced_sources.extend(dispatched.sources)
@@ -460,6 +468,8 @@ class AgentLoop:
         conversation: Sequence[LlmMessage],
         timezone: str | None,
         agent_session_id: str | None = None,
+        system: str | None = None,
+        tools_allow: frozenset[str] | None = None,
     ) -> AsyncIterator[ChatEvent]:
         """Mode (a): produce the turn non-streaming, run `reflect` (strict
         improvement, N=2 cap), then replay the kept attempt's buffered events as the
@@ -481,7 +491,14 @@ class AgentLoop:
             if budget[0] <= 0 and incumbent[0] is not None:
                 return incumbent[0]
             turn = await self._produce_buffered(
-                session, scopes, conversation, timezone, budget, agent_session_id
+                session,
+                scopes,
+                conversation,
+                timezone,
+                budget,
+                agent_session_id,
+                system,
+                tools_allow,
             )
             corpus = _grounding_corpus(turn.sources, turn.entities)
             # Empty corpus → grounding is unverifiable, not failed: hand back a clean
@@ -532,12 +549,16 @@ class AgentLoop:
         timezone: str | None,
         budget: list[int],
         agent_session_id: str | None = None,
+        system: str | None = None,
+        tools_allow: frozenset[str] | None = None,
     ) -> _BufferedTurn:
         """One full non-streaming produce-step for mode (a): run the turn loop to a
         terminal stop, buffering the ChatEvents it would have streamed (so a
         discarded retry never reaches the user). Shares the remaining cost cap in
         `budget` so retries cannot overspend the per-turn guardrail."""
-        tools = self._registry.schemas_for(scopes)
+        system_prompt = system or SYSTEM_PROMPT
+        tools = self._registry.schemas_for(scopes, tools_allow)
+        allowed = self._registry.allowed_names(scopes, tools_allow)
         messages: list[LlmMessage] = list(conversation)
         tool_ctx = ToolContext(
             session=session, scopes=scopes, timezone=timezone, agent_session_id=agent_session_id
@@ -553,7 +574,7 @@ class AgentLoop:
         for _step in range(self._g.max_steps):
             turn = await self._router.converse(
                 self._task,
-                system=SYSTEM_PROMPT,
+                system=system_prompt,
                 messages=messages,
                 tools=tools,
                 strength=SYSTEM_STRENGTH,
@@ -590,7 +611,7 @@ class AgentLoop:
             any_error = False
             for call in turn.tool_calls:
                 events.append(ToolCallEvent(id=call.id, name=call.name, arguments=call.arguments))
-                dispatched = await self._dispatch(call, tool_ctx)
+                dispatched = await self._dispatch(call, tool_ctx, allowed)
                 results.append(dispatched.result)
                 any_error = any_error or dispatched.result.is_error
                 sources.extend(dispatched.sources)
@@ -697,12 +718,18 @@ class AgentLoop:
                 ungrounded_claims=ungrounded_claims(claims, corpus),
             )
 
-    async def _dispatch(self, call: ToolCall, tool_ctx: ToolContext) -> _Dispatched:
-        if call.name not in self._registry:
-            # The model was only offered in-scope tools; an unknown name is a
-            # model slip — surface it as a recoverable error, not a crash.
+    async def _dispatch(
+        self, call: ToolCall, tool_ctx: ToolContext, allowed: frozenset[str]
+    ) -> _Dispatched:
+        if call.name not in allowed:
+            # The allowlist is the dispatch-time boundary, not just a visibility
+            # hint: a tool the agent was never offered — a model slip, or a name
+            # smuggled in by injected content — is REFUSED here, never run. This is
+            # what keeps a knowledge agent (curator) from ever reaching a `web` tool
+            # it wasn't granted, even if the model emits the call. Recoverable error,
+            # not a crash. `allowed` ⊆ registry, so this also covers unknown names.
             err = ToolResult(
-                tool_call_id=call.id, content=f"unknown tool: {call.name}", is_error=True
+                tool_call_id=call.id, content=f"tool not available: {call.name}", is_error=True
             )
             return _Dispatched(err, (), None, (), None, None)
         tool = self._registry.get(call.name)

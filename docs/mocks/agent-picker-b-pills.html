@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Agent picker B — Minimal pills</title>
+<style>
+  :root {
+    --bg:#0E0F11; --surface:#17181B; --surface-2:#1E2024; --border:#26282C;
+    --text:#E6E7E9; --text-2:#9A9DA3; --text-3:#5C5F66;
+    --steel:#7FA7C9; --green:#8FBC9A; --amber:#C9A36A; --rose:#CF8A8F; --violet:#A493C9;
+    --steel-tint:rgba(127,167,201,.13); --amber-tint:rgba(201,163,106,.13); --violet-tint:rgba(164,147,201,.13);
+  }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  body { margin:0; background:#000; font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    color:var(--text); display:flex; gap:28px; flex-wrap:wrap; justify-content:center; padding:28px; }
+  .label { text-align:center; color:var(--text-2); font-size:12px; margin:8px 0 0; }
+  .phone { width:390px; height:800px; background:var(--bg); border-radius:34px; overflow:hidden;
+    border:1px solid #2a2c30; position:relative; display:flex; flex-direction:column; }
+  .topbar { padding:14px 16px 10px; display:flex; align-items:center; justify-content:space-between;
+    border-bottom:1px solid var(--border); }
+  .topbar .t { font-size:18px; font-weight:500; }
+  .topbar .x { color:var(--text-3); font-size:22px; }
+  .body { padding:16px; overflow-y:auto; flex:1; }
+  .lead { color:var(--text-2); font-size:14px; line-height:1.4; margin:0 0 14px; }
+
+  .start { width:100%; border:none; border-radius:14px; padding:16px; font-size:17px; font-weight:600;
+    background:var(--steel); color:#10141a; display:flex; flex-direction:column; align-items:center; gap:3px;
+    cursor:pointer; }
+  .start .hint { font-weight:400; font-size:12px; opacity:.85; }
+
+  .or { text-align:center; color:var(--text-3); font-size:12px; margin:16px 0 10px; }
+  .pills { display:flex; gap:8px; overflow-x:auto; padding-bottom:4px; scrollbar-width:none; }
+  .pills::-webkit-scrollbar { display:none; }
+  .pill { flex:none; font-size:13px; padding:9px 15px; border-radius:999px; border:1px solid var(--border);
+    background:var(--surface-2); color:var(--text-2); cursor:pointer; white-space:nowrap;
+    display:inline-flex; align-items:center; gap:7px; }
+  .pill .dot { width:8px; height:8px; border-radius:999px; background:currentColor; opacity:.55; }
+  .pill[data-on="1"] { color:var(--text); }
+  .pill.curator[data-on="1"] { border-color:var(--steel); background:var(--steel-tint); }
+  .pill.teacher[data-on="1"] { border-color:var(--amber); background:var(--amber-tint); }
+  .pill.jerv[data-on="1"] { border-color:var(--violet); background:var(--violet-tint); }
+  .summary { font-size:13px; color:var(--text-2); margin:10px 2px 0; line-height:1.45; }
+  .summary b { color:var(--text); }
+
+  .title-in { width:100%; margin-top:16px; padding:13px; border-radius:12px; border:1px solid var(--border);
+    background:var(--surface-2); color:var(--text); font-size:15px; }
+  .title-in::placeholder { color:var(--text-3); }
+  .writes-note { margin:14px 2px 4px; font-size:12px; color:var(--text-3); line-height:1.45; }
+</style>
+</head>
+<body>
+<div>
+  <div class="phone">
+    <div class="topbar"><div class="t">New chat</div><div class="x">&times;</div></div>
+    <div class="body">
+      <p class="lead">Picks up where you left off — reads what your last chat read.</p>
+
+      <button class="start" onclick="go()">
+        <span id="start-main">Start</span>
+        <span class="hint" id="start-hint">Curator · reads everything</span>
+      </button>
+
+      <div class="or">agent</div>
+      <div class="pills" id="agents">
+        <button class="pill curator" data-agent="curator" data-on="1" onclick="pick('curator')"><span class="dot"></span>Curator</button>
+        <button class="pill teacher" data-agent="teacher" onclick="pick('teacher')"><span class="dot"></span>Teacher</button>
+        <button class="pill jerv" data-agent="jerv" onclick="pick('jerv')"><span class="dot"></span>Jerv</button>
+      </div>
+      <p class="summary" id="agent-summary"><b>Curator</b> — your Full Brain over your own notes.</p>
+
+      <div id="scope-block">
+        <div class="or">reads</div>
+        <div class="pills" id="presets">
+          <button class="pill curator" data-scope="everything" data-on="1" onclick="pickScope('everything')">Everything</button>
+          <button class="pill curator" data-scope="general" onclick="pickScope('general')">General</button>
+          <button class="pill curator" data-scope="medical" onclick="pickScope('medical')">Medical</button>
+          <button class="pill curator" data-scope="financial" onclick="pickScope('financial')">Financial</button>
+          <button class="pill curator" data-scope="custom" onclick="pickScope('custom')">Custom…</button>
+        </div>
+        <p class="summary" id="reads">Reads <b>everything</b> — all your notes.</p>
+      </div>
+
+      <input class="title-in" placeholder="Title (optional — auto-titled later)" />
+      <p class="writes-note" id="writes">Reads only. Anything the agent wants to change is
+        <b>staged as a Proposal</b> for your okay.</p>
+    </div>
+  </div>
+  <p class="label">B · Minimal pills (matches the existing scope-preset language)</p>
+</div>
+
+<script>
+  const SUM = {
+    curator:'<b>Curator</b> — your Full Brain over your own notes.',
+    teacher:'<b>Teacher</b> — a Socratic homework tutor. No tools, reads none of your data.',
+    jerv:'<b>Jerv</b> — a web chatbot. Searches the internet; can’t see your notes.'
+  };
+  const HINT = { curator:'Curator · reads everything', teacher:'Teacher · no data', jerv:'Jerv · reads the web' };
+  let agent='curator', scope='everything';
+  function pick(a){
+    agent=a;
+    document.querySelectorAll('#agents .pill').forEach(b=>b.dataset.on=b.dataset.agent===a?'1':'0');
+    document.getElementById('agent-summary').innerHTML=SUM[a];
+    document.getElementById('start-hint').textContent=HINT[a];
+    const kb=a==='curator';
+    document.getElementById('scope-block').style.display=kb?'block':'none';
+    document.getElementById('writes').style.display=kb?'block':'none';
+  }
+  function pickScope(s){
+    scope=s;
+    document.querySelectorAll('#presets .pill').forEach(b=>b.dataset.on=b.dataset.scope===s?'1':'0');
+    const map={everything:'everything — all your notes',general:'general notes',medical:'general + medical',financial:'general + financial',custom:'a custom set'};
+    document.getElementById('reads').innerHTML='Reads <b>'+map[s]+'</b>.';
+    document.getElementById('start-hint').textContent='Curator · reads '+(s==='everything'?'everything':map[s]);
+  }
+  function go(){ alert('POST /api/sessions\n{ agent: "'+agent+'", domain_scopes: '+(agent==='curator'?'[…]':'[]')+' }'); }
+</script>
+</body>
+</html>

@@ -10,9 +10,10 @@ not to the session list.
 from datetime import datetime
 from typing import Any, cast
 
-from fastapi import APIRouter, Depends, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
+from jbrain.agent.agents import AGENT_NAMES, DEFAULT_AGENT, is_agent
 from jbrain.agent.session import AgentSessionInfo, AgentSessionRepo
 from jbrain.agent.transcript_store import AgentTranscript
 from jbrain.api.deps import PrincipalDep, owner_only
@@ -35,12 +36,16 @@ class SessionCreate(BaseModel):
     domain_scopes: list[str] = Field(default_factory=list)
     subject_ids: list[str] = Field(default_factory=list)
     title: str = ""
+    # The selected agent persona (docs/ASSISTANT.md "Agent selection"); validated
+    # against the closed set before it is stored.
+    agent: str = DEFAULT_AGENT
 
 
 class SessionOut(BaseModel):
     id: str
     title: str
     status: str
+    agent: str
     domain_scopes: list[str]
     subject_ids: list[str]
     created_at: datetime
@@ -56,6 +61,7 @@ def session_out(info: AgentSessionInfo) -> SessionOut:
         id=info.id,
         title=info.title,
         status=info.status,
+        agent=info.agent,
         domain_scopes=list(info.domain_scopes),
         subject_ids=list(info.subject_ids),
         created_at=info.created_at,
@@ -70,12 +76,17 @@ def session_out(info: AgentSessionInfo) -> SessionOut:
 async def create_session(
     request: Request, principal: PrincipalDep, body: SessionCreate
 ) -> SessionOut:
+    if not is_agent(body.agent):
+        raise HTTPException(
+            status_code=422, detail=f"unknown agent: {body.agent!r} (one of {sorted(AGENT_NAMES)})"
+        )
     repo = get_agent_sessions(request)
     info = await repo.create(
         ctx_for(principal),
         domain_scopes=body.domain_scopes,
         subject_ids=body.subject_ids,
         title=body.title,
+        agent=body.agent,
     )
     return session_out(info)
 

@@ -1,0 +1,20 @@
+# SearXNG settings for the jerv chatbot's web search (docs/ASSISTANT.md "Agent
+# selection"). Opt-in `searxng` compose profile. The JSON format MUST be enabled
+# (the default ships HTML only) — the SearxngClient speaks /search?format=json.
+# The rate limiter is off because the only caller is the on-box API, not the public
+# internet. Set SEARXNG_SECRET in your .env before starting the profile.
+use_default_settings: true
+
+server:
+  # The official image's entrypoint replaces this placeholder with $SEARXNG_SECRET
+  # at boot (an in-place edit, so the bind mount must NOT be read-only). Set
+  # SEARXNG_SECRET in your .env before enabling the profile.
+  secret_key: "ultrasecretkey"
+  limiter: false
+  image_proxy: false
+
+search:
+  # JSON is required by the JBrain web_search tool; HTML stays for manual debugging.
+  formats:
+    - html
+    - json

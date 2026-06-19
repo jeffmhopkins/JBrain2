@@ -24,7 +24,8 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from jbrain.agent.loop import SYSTEM_VERSION, AgentLoop
+from jbrain.agent.agents import agent_for
+from jbrain.agent.loop import AgentLoop
 from jbrain.agent.memory import MemoryService
 from jbrain.agent.runlog import AgentRunLog
 from jbrain.agent.session import AgentSessionInfo, AgentSessionRepo, read_context
@@ -263,18 +264,26 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
     if session is None:
         raise HTTPException(status_code=404, detail="no such session")
 
+    # The session's selected agent (docs/ASSISTANT.md "Agent selection") sets the
+    # persona prompt, the tool allowlist, and whether the turn reads the knowledge
+    # base. A non-KB agent (teacher, jerv) runs with empty read scopes, so even a
+    # session that carries domains touches no owner data — the firewall, not a flag.
+    profile = agent_for(session.agent)
+    read_scopes = session.domain_scopes if profile.reads_knowledge_base else ()
+
     runlog = get_agent_runlog(request)
-    run_id = await runlog.start(owner_ctx, session_id=session.id, prompt_version=SYSTEM_VERSION)
+    run_id = await runlog.start(owner_ctx, session_id=session.id, prompt_version=profile.version)
     await sessions.touch(owner_ctx, session.id)
 
     tally = _RunTally(runlog.bound(owner_ctx, run_id))
     loop = AgentLoop(get_llm_router(request), get_agent_registry(request), recorder=tally)
-    read_ctx = read_context(principal.id, session.domain_scopes)
+    read_ctx = read_context(principal.id, read_scopes)
     conversation = _conversation(body)
     # Loop 2: surface matching active skills as a DATA-framed reference block in the conversation
     # channel (never the system prompt — the data/instruction boundary). Off by default until
     # distillation + owner promotion populate active skills; recall is RLS-scoped (in-scope only).
-    if await get_settings_store(request).skills_enabled(read_ctx):
+    # Only a knowledge-base agent recalls skills — a sandboxed chatbot never touches owner data.
+    if profile.reads_knowledge_base and await get_settings_store(request).skills_enabled(read_ctx):
         hits = await get_skill_service(request).recall(read_ctx, body.message)
         if hits:
             conversation = [UserMessage(text=format_skills(hits)), *conversation]
@@ -309,11 +318,13 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
         try:
             async for event in loop.run_stream(
                 session=read_ctx,
-                scopes=session.domain_scopes,
+                scopes=read_scopes,
                 conversation=conversation,
                 timezone=owner_tz,
                 buffer_retry=buffer_retry,
                 agent_session_id=session.id,
+                system=profile.prompt,
+                tools_allow=profile.tools,
             ):
                 if event.type == "text_delta":
                     answer.append(event.text)
@@ -349,7 +360,9 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
                 # NOT recorded — Loop 1 is ephemeral and writes nothing durable.
                 yield f"data: {event.model_dump_json()}\n\n".encode()
             if status == "done":
-                await _record_episode(request, read_ctx, session, run_id, body.message, answer)
+                # Episodic memory is owner-data: only a knowledge-base agent appends one.
+                if profile.reads_knowledge_base:
+                    await _record_episode(request, read_ctx, session, run_id, body.message, answer)
                 await _record_transcript(
                     request,
                     owner_ctx,

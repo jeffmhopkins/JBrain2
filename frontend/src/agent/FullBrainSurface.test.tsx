@@ -12,6 +12,7 @@ function session(over: Partial<AgentSession> = {}): AgentSession {
     id: "s1",
     title: "Recap",
     status: "active",
+    agent: "curator",
     domain_scopes: ["general"],
     subject_ids: [],
     created_at: "2026-06-12T00:00:00Z",

@@ -232,6 +232,27 @@ services:
       - geocoder_data:/photon/photon_data
     networks: [geocoder_net]
 
+  # OPT-IN self-hosted web search (docs/ASSISTANT.md "Agent selection"): a SearXNG
+  # metasearch instance backing the jerv chatbot's web_search/web_fetch tools.
+  # Guarded by the `searxng` profile so a stock deploy never starts it
+  # (JBRAIN_SEARXNG_URL reads then fail closed, like the geocoder). It needs its own
+  # egress to query upstream engines, so it sits on `internal` (api/worker reach it
+  # there at http://searxng:8080). Only jerv — which holds no knowledge-base tools
+  # and reads no owner data — can call it, so no personal context ever rides a query.
+  searxng:
+    profiles: [searxng]
+    image: ${SEARXNG_IMAGE:-docker.io/searxng/searxng:latest}
+    restart: unless-stopped
+    mem_limit: 512m
+    environment:
+      SEARXNG_BASE_URL: http://searxng:8080/
+      # SearXNG refuses to start without a secret; set SEARXNG_SECRET in your .env.
+      SEARXNG_SECRET: ${SEARXNG_SECRET:-}
+    volumes:
+      # Not read-only: the image injects $SEARXNG_SECRET into the placeholder at boot.
+      - ./searxng/settings.yml:/etc/searxng/settings.yml
+    networks: [internal]
+
   # OPT-IN MQTT broker (JBrain360 M0 secure spine): Mosquitto + mosquitto-go-auth
   # in HTTP-backend mode, delegating every connect/publish/subscribe to the API's
   # /internal/mqtt-* endpoints (it reuses the shipped device_key model; the plugin

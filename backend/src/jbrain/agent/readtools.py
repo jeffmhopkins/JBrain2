@@ -386,6 +386,7 @@ def build_registry(
     geocoder: GeocodeClient,
     locations: SqlLocationRepo,
     devices: SqlDeviceRepo,
+    web_handlers: dict[str, ToolHandler],
     router: "LlmRouter | None" = None,
     settings: "SqlSettingsStore | None" = None,
 ) -> ToolRegistry:
@@ -414,5 +415,7 @@ def build_registry(
             **build_wiki_handlers(wiki),
             **build_selfedit_handlers(proposals, router, settings),
             **wiki_write,
+            # The jerv chatbot's internet tools (`web` permission), opt-in per agent.
+            **web_handlers,
         },
     )

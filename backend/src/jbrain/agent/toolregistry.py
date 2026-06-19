@@ -93,15 +93,45 @@ class ToolRegistry:
         except KeyError:
             raise ToolRegistryError(f"unknown tool: {name!r}") from None
 
-    def schemas_for(self, scopes: Collection[str]) -> list[LlmTool]:
-        """The adapter tool definitions a session holding `scopes` may see —
-        visibility only; RLS at the DB layer is the boundary. Stable order so a
-        prompt's tool list does not churn between turns."""
+    def _admits(
+        self, tool: RegisteredTool, scopes: Collection[str], allow: Collection[str] | None
+    ) -> bool:
+        """Whether a session holding `scopes` under the agent's `allow` list may use
+        this tool. `allow=None` is the default knowledge agent (every in-scope tool
+        EXCEPT the opt-in `web` class); a collection names the exact tools the agent
+        may call (an empty collection = none). A `web` tool is admitted only when
+        explicitly allowlisted, so the Full Brain `curator` never gains arbitrary
+        internet access."""
+        if allow is not None and tool.name not in allow:
+            return False
+        # The web class is opt-in: never admitted to the default knowledge agent.
+        if allow is None and tool.spec.permission == "web":
+            return False
+        return _visible(tool.spec.domains, scopes)
+
+    def schemas_for(
+        self, scopes: Collection[str], allow: Collection[str] | None = None
+    ) -> list[LlmTool]:
+        """The adapter tool definitions a session may see — visibility only; RLS at
+        the DB layer is the boundary, and `allowed_names` is the dispatch-time gate.
+        Stable order so a prompt's tool list does not churn between turns."""
         return [
-            tool.as_llm_tool()
+            self._by_name[name].as_llm_tool()
             for name in sorted(self._by_name)
-            if _visible((tool := self._by_name[name]).spec.domains, scopes)
+            if self._admits(self._by_name[name], scopes, allow)
         ]
+
+    def allowed_names(
+        self, scopes: Collection[str], allow: Collection[str] | None = None
+    ) -> frozenset[str]:
+        """The names a session may actually call — the dispatch-time enforcement of
+        the same gate `schemas_for` applies to visibility. The loop checks a tool
+        call against THIS, so a model that names a tool it was never offered (a slip
+        or an injection) is refused, not run — the allowlist is a boundary, not a
+        hint (closes the `curator`-can't-reach-`web` invariant structurally)."""
+        return frozenset(
+            name for name, tool in self._by_name.items() if self._admits(tool, scopes, allow)
+        )
 
 
 def load_registry(tools_dir: Path, handlers: Mapping[str, ToolHandler]) -> ToolRegistry:

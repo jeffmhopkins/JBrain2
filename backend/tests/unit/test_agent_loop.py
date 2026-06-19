@@ -200,7 +200,59 @@ async def test_unknown_tool_is_a_recoverable_error() -> None:
     result = await run(AgentLoop(router, registry_with(make_tool("search", search))))
     assert result.text == "recovered"
     fed_back = fake.converse_calls[1]["messages"][-1].results[0]
-    assert fed_back.is_error and "unknown tool" in fed_back.content
+    assert fed_back.is_error and "tool not available" in fed_back.content
+
+
+async def test_a_tool_outside_the_allowlist_is_refused_at_dispatch() -> None:
+    """The allowlist is a dispatch-time boundary, not just visibility: a model that
+    names a registered tool it was NOT granted is refused, never run — so a
+    knowledge agent can't reach a web tool it wasn't allowlisted (the #9 guard)."""
+    calls: list[str] = []
+
+    async def web_handler(arguments: dict, ctx: ToolContext) -> str:
+        calls.append("ran")
+        return "should never run"
+
+    turns = [
+        LlmTurn("", (ToolCall("c1", "web_search", {}),), "tool_use", LlmUsage(1, 1)),
+        LlmTurn("done", (), "end_turn", LlmUsage(1, 1)),
+    ]
+    router, fake = router_with(turns)
+    registry = registry_with(
+        make_tool("search", search), make_tool("web_search", web_handler, permission="web")
+    )
+    # allow=None (the default knowledge agent) never admits the web tool.
+    result = await AgentLoop(router, registry).run(
+        session=OWNER, scopes=("general",), conversation=[UserMessage(text="hi")]
+    )
+    assert result.text == "done"
+    assert calls == []  # the handler never ran
+    fed_back = fake.converse_calls[1]["messages"][-1].results[0]
+    assert fed_back.is_error and "tool not available" in fed_back.content
+
+
+async def test_buffer_retry_path_honors_persona_prompt_and_allowlist() -> None:
+    """The buffered (reflexion) produce-step must use the selected agent's prompt
+    and tool allowlist, exactly like the live-stream path."""
+    router, fake = router_with([LlmTurn("a plain answer", (), "end_turn", LlmUsage(1, 1))])
+    registry = registry_with(
+        make_tool("search", search), make_tool("web_search", search, permission="web")
+    )
+    events = [
+        ev
+        async for ev in AgentLoop(router, registry).run_stream(
+            session=OWNER,
+            scopes=("general",),
+            conversation=[UserMessage(text="hi")],
+            buffer_retry=True,
+            system="PERSONA PROMPT",
+            tools_allow=frozenset({"web_search"}),
+        )
+    ]
+    assert any(e.type == "done" for e in events)
+    # The buffered path goes through converse (not converse_stream).
+    assert fake.converse_calls[0]["system"] == "PERSONA PROMPT"
+    assert {t.name for t in fake.converse_calls[0]["tools"]} == {"web_search"}
 
 
 # --- run_stream (streaming twin) --------------------------------------------

@@ -13,9 +13,17 @@ from pydantic import BaseModel, ConfigDict, Field
 
 # --- Tool permission classes & session policy ------------------------------
 
-PermissionClass = Literal["read", "mutate", "external", "sensitive"]
+PermissionClass = Literal["read", "mutate", "external", "sensitive", "web"]
 """How consequential a tool is; the session policy maps each class to an outcome
-(docs/ASSISTANT.md "Session capabilities")."""
+(docs/ASSISTANT.md "Session capabilities").
+
+`web` is the sandboxed internet class: an off-box read that runs DIRECTLY (no
+egress Proposal), reserved for the `jerv` chatbot agent, which holds no
+knowledge-base tools and reads no owner domain data — so there is nothing
+personal in its context to exfiltrate (docs/ASSISTANT.md "Agent selection", the
+deliberate, owner-approved exception to invariant #9). A `web` tool is opt-in:
+the registry never offers it to an agent that did not explicitly allowlist it,
+so the Full Brain `curator` never gains arbitrary web access."""
 
 PolicyOutcome = Literal["direct", "staged", "denied"]
 """What a session does with a tool of a given class: run it now, stage it as a
@@ -32,6 +40,9 @@ DEFAULT_OWNER_POLICY: dict[PermissionClass, PolicyOutcome] = {
     "mutate": "staged",
     "sensitive": "staged",
     "external": "staged",
+    # The sandboxed web class runs directly — the jerv chatbot's only egress, with
+    # no owner data in its context (docs/ASSISTANT.md "Agent selection").
+    "web": "direct",
 }
 
 # --- .tool sidecar frontmatter ---------------------------------------------

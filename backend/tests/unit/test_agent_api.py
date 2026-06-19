@@ -36,7 +36,7 @@ class FakeAgentSessions:
     def add(self, info: AgentSessionInfo) -> None:
         self._by_id[info.id] = info
 
-    async def create(self, ctx, *, domain_scopes, subject_ids=(), title=""):  # type: ignore[no-untyped-def]
+    async def create(self, ctx, *, domain_scopes, subject_ids=(), title="", agent="curator"):  # type: ignore[no-untyped-def]
         info = AgentSessionInfo(
             id=f"sess-{len(self._by_id) + 1}",
             title=title,
@@ -45,6 +45,7 @@ class FakeAgentSessions:
             subject_ids=tuple(subject_ids),
             created_at=NOW,
             last_active_at=NOW,
+            agent=agent,
         )
         self.add(info)
         return info
@@ -759,6 +760,65 @@ def test_chat_injects_data_framed_skills_when_enabled(
     joined = "\n".join(getattr(m, "text", "") for m in msgs)
     assert _SKILL_FRAME in joined and "## Playbook: Cite a fact" in joined
     assert skills.called
+
+
+def _web_registry() -> ToolRegistry:
+    """A registry holding only the two web tools, bound to inert handlers — enough
+    to assert which tools the endpoint offers a given agent."""
+    import jbrain.agent.readtools as readtools
+    from jbrain.agent.toolfile import load_tool
+    from jbrain.agent.webtools import build_web_handlers
+    from jbrain.web import SearxngClient, WebFetcher
+
+    handlers = build_web_handlers(SearxngClient(""), WebFetcher())
+    return ToolRegistry(
+        [
+            RegisteredTool(load_tool(readtools.TOOLS_DIR / f), handlers[n])
+            for n, f in (("web_search", "web_search.tool"), ("web_fetch", "web_fetch.tool"))
+        ]
+    )
+
+
+def test_chat_runs_the_selected_agents_prompt_and_only_its_tools(
+    client: TestClient, repo: FakeAuthRepo, sessions_store: FakeAgentSessions
+) -> None:
+    """A jerv session runs the jerv persona prompt with ONLY the web tools, reads
+    no owner data (empty scope, no skill recall), and stamps the jerv version."""
+    from jbrain.agent.agents import AGENTS
+
+    login(client, repo)
+    sessions_store.add(AgentSessionInfo("sess-j", "", "active", (), (), NOW, NOW, agent="jerv"))
+    router, fake = _capturing_router()
+    client.app.state.llm_router = router  # type: ignore[attr-defined]
+    client.app.state.agent_registry = _web_registry()  # type: ignore[attr-defined]
+    skills = _StubSkills([SkillHit("s1", "Cite", 1, "cite", "1. search", "general")])
+    client.app.state.skill_service = skills  # type: ignore[attr-defined]
+    client.app.state.settings_store.values["skills_enabled"] = True  # type: ignore[attr-defined]
+
+    resp = client.post("/api/chat", json={"session_id": "sess-j", "message": "hi"})
+    assert resp.status_code == 200
+    call = fake.stream_calls[0]
+    assert call["system"] == AGENTS["jerv"].prompt
+    assert {t.name for t in call["tools"]} == {"web_search", "web_fetch"}
+    # Sandboxed: a non-KB agent never recalls skills, and the run carries its version.
+    assert not skills.called
+    assert ("sess-j", "agent-jerv-v1") in client.app.state.agent_runlog.started  # type: ignore[attr-defined]
+
+
+def test_chat_curator_is_offered_no_web_tools(
+    client: TestClient, repo: FakeAuthRepo, sessions_store: FakeAgentSessions
+) -> None:
+    """The Full Brain curator (the default) never gains the opt-in web tools, even
+    though they're registered — the invariant-#9 guard for the main agent."""
+    login(client, repo)
+    sessions_store.add(AgentSessionInfo("sess-c", "", "active", ("general",), (), NOW, NOW))
+    router, fake = _capturing_router()
+    client.app.state.llm_router = router  # type: ignore[attr-defined]
+    client.app.state.agent_registry = _web_registry()  # type: ignore[attr-defined]
+
+    resp = client.post("/api/chat", json={"session_id": "sess-c", "message": "hi"})
+    assert resp.status_code == 200
+    assert fake.stream_calls[0]["tools"] == []
 
 
 def test_chat_skips_skills_when_disabled(

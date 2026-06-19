@@ -6,6 +6,7 @@ from typing import Any
 
 from jbrain.agent.readtools import build_registry
 from jbrain.agent.toolregistry import ToolRegistry
+from jbrain.agent.webtools import build_web_handlers
 from jbrain.agent.wikiwritetools import build_wiki_write_handlers
 from jbrain.connectors.base import ConnectorRegistry
 from jbrain.connectors.medical import medical_connectors
@@ -13,6 +14,7 @@ from jbrain.db.session import SessionContext
 from jbrain.llm.fake import FakeLlmClient
 from jbrain.llm.router import LlmRouter
 from jbrain.llm.types import AssistantMessage, LlmTurn, LlmUsage, ToolCall, UserMessage
+from jbrain.web import SearxngClient, WebFetcher
 from jbrain.wiki.editor import _conversation, _outcome, _ToolTally, run_editor_turn
 
 OWNER = SessionContext(principal_id="00000000-0000-0000-0000-000000000001", principal_kind="owner")
@@ -132,6 +134,7 @@ async def test_run_editor_turn_chip_only_when_lever_fires_with_empty_prose() -> 
         stub,  # geocoder client
         stub,  # location repo
         stub,  # device repo
+        build_web_handlers(SearxngClient(""), WebFetcher()),
     )
     router = LlmRouter(
         {

@@ -33,6 +33,10 @@ class AgentSession(Base):
     )
     title: Mapped[str] = mapped_column(Text, default="", server_default="")
     status: Mapped[str] = mapped_column(Text, default="active", server_default="active")
+    # The selected agent persona (docs/ASSISTANT.md "Agent selection"): which
+    # system prompt, tool allowlist, and knowledge-base access the session runs
+    # under. Defaults to the Full Brain curator; constrained by a DB CHECK.
+    agent: Mapped[str] = mapped_column(Text, default="curator", server_default="curator")
     # Selected read scope: domain codes and subject ids the session may read.
     domain_scopes: Mapped[list[str]] = mapped_column(ARRAY(Text))
     subject_ids: Mapped[list[uuid.UUID]] = mapped_column(

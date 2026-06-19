@@ -292,6 +292,52 @@ session is just the general case where the read dial is *selectable* and writes 
 *staged* rather than denied — so the whole subjects/principals/domains model
 (ARCHITECTURE.md) is one mechanism, not a special case per caller.
 
+### Agent selection — the persona chosen at session start
+
+Full Brain mode adds a **third dial** beside read-scope and write-policy: which
+**agent** the session runs as, chosen at session start (stored on the session row,
+migration 0070; default `curator`, so every pre-existing session keeps today's
+behaviour). An agent bundles three things the turn loop reads — the **system
+prompt** that frames it, the **tool allowlist** it may call, and whether it **reads
+the knowledge base** at all. The set is closed and code-defined
+(`jbrain.agent.agents`):
+
+- **`curator`** — the Full Brain personal agent (the original `agent.system`
+  prompt, unchanged): every in-scope knowledge tool, narrowed to the session's
+  selected domains via the RLS firewall. This is what the assistant was before
+  agent selection existed.
+- **`teacher`** — a Socratic homework tutor: **no tools, no retrieval.** It guides
+  the learner to their own answer by questioning and never reads owner data; its
+  prompt forbids handing over graded answers.
+- **`jerv`** — a sandboxed general-purpose web chatbot: **only** the internet tools
+  (`web_search`, `web_fetch`) and **no knowledge-base access** — it runs with empty
+  read scopes, recalls no skills, and writes no episodic memory, so it touches no
+  owner domain data.
+
+Tool gating layers on top of read-scope: the registry offers a tool only if the
+agent's allowlist admits it *and* the session holds its domain. The internet tools
+are a new **`web` permission class** that is **opt-in** — never offered to the
+default knowledge agent (so `curator` never gains arbitrary web access), only to an
+agent that explicitly allowlists it (`jerv`). The allowlist is enforced **at
+dispatch**, not just visibility: a tool the agent wasn't granted is refused even if
+the model names it (a slip or an injection), so the boundary is structural, not a
+prompt suggestion.
+
+**The web exception to #9, and why it's bounded.** `jerv`'s `web_search`/`web_fetch`
+run **directly**, not as staged egress Proposals — the deliberate, owner-approved
+relaxation of "every off-box call is staged" (#9) that makes a chatbot feel like a
+chatbot. The bound is the sandbox, not a promise: `jerv` holds no knowledge-base
+tools and reads no owner data, so there is **no personal context** to ride along
+into a query or a fetched URL. Search still goes through a **self-hosted SearXNG**
+instance (pinned base URL from config, query text only) — local-first like the
+on-box geocoder, so a search leaves the box only as far as SearXNG's own upstreams;
+`web_fetch` is the one genuinely outbound leg, size-capped and HTML-stripped, with
+an **SSRF guard** — it resolves the host and refuses any private/loopback/link-local
+target (and re-checks every redirect hop), so a model-supplied URL can't read the
+box's own internal services or the cloud metadata endpoint. The egress-Proposal
+connectors (below) remain the rule for every *other* agent and every off-box call
+that could carry owner data.
+
 ### External connectors (the egress chokepoint)
 
 Some tasks genuinely need outside reference data — what a medication is, what a
