@@ -8,7 +8,24 @@ import pytest
 from jbrain.agent.loop import ToolContext
 from jbrain.agent.presencetools import build_presence_handlers
 from jbrain.db.session import SessionContext
+from jbrain.geocode import GeocodeResult
 from jbrain.locations import FixPoint, LatestPlace, NearestFix
+
+
+class _Geo:
+    def __init__(self, result: GeocodeResult | None) -> None:
+        self._result = result
+
+    async def reverse(self, latitude, longitude):  # noqa: ANN001, ANN201
+        return self._result
+
+    async def forward(self, query, limit=5):  # noqa: ANN001, ANN201
+        return []
+
+
+def _here_ctx(lat: float, lon: float) -> ToolContext:
+    session = SessionContext(principal_id="own", principal_kind="owner", owner_scoped=True)
+    return ToolContext(session=session, scopes=(), here=(lat, lon))
 
 
 class _Loc:
@@ -46,8 +63,8 @@ def _fresh_near() -> NearestFix:
     return NearestFix(fix=FixPoint(captured, 40.0, -74.0, 10, 80), gap_seconds=180)
 
 
-def _tool(loc: _Loc, dev: _Dev):  # noqa: ANN202
-    return build_presence_handlers(loc, dev)["current_location"]  # type: ignore[arg-type]
+def _tool(loc: _Loc, dev: _Dev, geo: "_Geo | None" = None):  # noqa: ANN202
+    return build_presence_handlers(loc, dev, geo)["current_location"]  # type: ignore[arg-type]
 
 
 def _at_home() -> _Loc:
@@ -66,6 +83,30 @@ async def test_current_location_returns_the_owner_place_coordinate_free() -> Non
 async def test_current_location_reports_no_recent_fix() -> None:
     out = await _tool(_Loc(None, None), _Dev(["s1"]))({}, _jerv_ctx())
     assert "don't have a recent location fix" in out
+
+
+@pytest.mark.asyncio
+async def test_current_location_prefers_the_live_pwa_fix_reverse_geocoded() -> None:
+    # A turn carrying the PWA's live coords answers from them (on-box reverse-geocode),
+    # never touching the OwnTracks device stack — coordinate-free output.
+    geo = _Geo(GeocodeResult(label="Springfield, IL", latitude=39.8, longitude=-89.6))
+    out = await _tool(_Loc(None, None), _Dev([]), geo)({}, _here_ctx(39.8, -89.6))
+    assert "Springfield, IL" in out
+    assert "39.8" not in out and "-89.6" not in out
+
+
+@pytest.mark.asyncio
+async def test_current_location_live_fix_geocoder_miss_stays_coordinate_free() -> None:
+    out = await _tool(_Loc(None, None), _Dev([]), _Geo(None))({}, _here_ctx(39.8, -89.6))
+    assert "couldn't resolve it to a place name" in out
+    assert "39.8" not in out
+
+
+@pytest.mark.asyncio
+async def test_current_location_without_a_live_fix_falls_back_to_the_device() -> None:
+    # No live coords on the turn → the OwnTracks device presence read (the prior path).
+    out = await _tool(_at_home(), _Dev(["s1"]), _Geo(None))({}, _jerv_ctx())
+    assert "currently at Home" in out
 
 
 @pytest.mark.asyncio

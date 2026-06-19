@@ -5,6 +5,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../api/client";
+import { freshCoords } from "../location";
 import {
   type TranscriptMessage,
   applyEvent,
@@ -191,12 +192,16 @@ export function useFullBrain(enabled: boolean, deps: FullBrainDeps = LIVE): Full
     setBusy(true);
     const history = messages.map((m) => ({ role: m.role, content: m.text }));
     setMessages((ms) => [...ms, userMessage(text), streamingAssistant()]);
+    // Reuse the note-capture warm fix (only when capture is on and fresh) so the
+    // location tool can answer from the phone's current spot.
+    const coords = freshCoords();
     try {
       for await (const event of chat({
         session_id: active.id,
         message: text,
         history,
         ...(opts?.appointmentId ? { appointment_id: opts.appointmentId } : {}),
+        ...(coords ? { latitude: coords.latitude, longitude: coords.longitude } : {}),
       })) {
         setMessages((ms) => applyEvent(ms, event));
       }
