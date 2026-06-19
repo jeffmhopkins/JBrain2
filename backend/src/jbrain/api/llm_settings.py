@@ -25,6 +25,7 @@ from jbrain.llm.providers import (
     REASONING_EFFORTS,
     id_for_spec,
     provider_choices,
+    supports_reasoning,
 )
 from jbrain.llm.router import TASK_DEFAULTS, _split_spec
 from jbrain.settings_store import LLM_TASK_OVERRIDES_KEY, SqlSettingsStore
@@ -88,7 +89,8 @@ class TaskInfo(BaseModel):
     label: str
     # The effective provider id; falls back to the raw spec when it is off-menu.
     provider: str
-    # Effort only for grok; null for non-reasoning providers.
+    # Effort for a reasoning-capable provider (Grok or a local gpt-oss/GLM); null
+    # for non-reasoning providers.
     reasoning_effort: str | None
 
 
@@ -152,10 +154,10 @@ class TaskOverrideIn(BaseModel):
     # Validated against the live provider choices in update_llm_settings (an
     # unknown id 422s there) — the set is dynamic once local hosting is on.
     provider: str
-    # Only reasoning-capable providers (grok) carry an effort; local models and
-    # Claude legitimately omit it (the screen sends just `{provider}`), and the
-    # handler drops it for non-grok anyway. Required-here would 422 every
-    # non-grok save before the handler runs.
+    # Only reasoning-capable providers (Grok, local gpt-oss/GLM) carry an effort;
+    # Claude and non-reasoning local models legitimately omit it (the screen sends
+    # just `{provider}`), and the handler drops it for them anyway. Required-here
+    # would 422 every non-reasoning save before the handler runs.
     reasoning_effort: ReasoningEffort | None = None
 
 
@@ -183,7 +185,11 @@ def _effective(settings: Settings, task: str, overrides: dict[str, dict[str, str
         return TaskInfo(
             id=task, label=TASK_LABELS[task], provider=provider_label, reasoning_effort=None
         )
-    effort = entry.get("reasoning_effort") or REASONING_DEFAULT if provider_id == "grok" else None
+    effort = (
+        (entry.get("reasoning_effort") or REASONING_DEFAULT)
+        if supports_reasoning(settings, provider_id)
+        else None
+    )
     return TaskInfo(id=task, label=TASK_LABELS[task], provider=provider_id, reasoning_effort=effort)
 
 
@@ -316,9 +322,10 @@ async def update_llm_settings(
                 detail=f"{choice.provider} cannot serve vision task {task}",
             )
         entry: dict[str, str] = {"spec": picked.spec}
-        # reasoning_effort is meaningful only for grok; drop it otherwise so the
-        # stored shape stays clean and the router never misapplies it.
-        if choice.provider == "grok":
+        # reasoning_effort is meaningful only for a reasoning-capable provider (Grok
+        # or a local gpt-oss/GLM); drop it otherwise so the stored shape stays clean
+        # and the router never misapplies it to a model with no thinking channel.
+        if picked.supports_reasoning:
             entry["reasoning_effort"] = choice.reasoning_effort or REASONING_DEFAULT
         overrides[task] = entry
     await store.upsert(ctx, LLM_TASK_OVERRIDES_KEY, overrides)

@@ -224,6 +224,27 @@ def test_put_accepts_non_grok_provider_without_reasoning_effort() -> None:
     assert stored["agent.turn"] == {"spec": "xai:grok-4.3", "reasoning_effort": "low"}
 
 
+def test_put_persists_reasoning_effort_for_a_local_reasoning_model() -> None:
+    # A reasoning-capable local model (gpt-oss) must keep its effort end to end —
+    # stored, echoed in the effective task, and re-read — so the UI segment shows
+    # selected and the router can send it. (Regression: this was grok-only.)
+    settings = _cloud_settings(local_llm_enabled=True, local_models=["gpt-oss-120b"])
+    c, store = _authed_client(settings)
+    resp = c.put(
+        "/api/settings/llm",
+        json={"tasks": {"agent.turn": {"provider": "gpt-oss-120b", "reasoning_effort": "high"}}},
+    )
+    assert resp.status_code == 200, resp.text
+    tasks = {t["id"]: t for t in resp.json()["tasks"]}
+    assert tasks["agent.turn"]["provider"] == "gpt-oss-120b"
+    assert tasks["agent.turn"]["reasoning_effort"] == "high"
+    stored = cast(dict[str, object], store.values["llm_task_overrides"])
+    assert stored["agent.turn"] == {"spec": "local:gpt-oss-120b", "reasoning_effort": "high"}
+    # A fresh GET reflects the stored effort (the screen highlights the segment).
+    got = {t["id"]: t for t in c.get("/api/settings/llm").json()["tasks"]}
+    assert got["agent.turn"]["reasoning_effort"] == "high"
+
+
 def test_drawer_catalog_present_with_enabled_flags() -> None:
     # Off by default: the catalog still ships (so the drawer can show what's
     # available) but nothing is enabled.
