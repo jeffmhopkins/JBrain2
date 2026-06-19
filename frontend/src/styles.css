@@ -969,11 +969,17 @@ h3 {
   padding: 1px 6px;
   font-size: 0.92em;
 }
+/* Four fixed tracks — name | capability chips | action | state — so the chips,
+   the Unload button, and the loaded/idle label form clean vertical columns no
+   matter which rows are loaded. The chips never wrap and the action slot is
+   always present (empty when idle) so its column can't collapse and shift the
+   ones beside it. */
 .llm-local-row {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto 76px 52px;
   align-items: center;
-  gap: 10px;
-  padding: 10px 0;
+  gap: 12px;
+  padding: 12px 0;
   border-top: 1px solid var(--border);
 }
 .llm-local-name {
@@ -988,8 +994,13 @@ h3 {
 .llm-local-chips {
   display: flex;
   gap: 6px;
-  margin-left: auto;
-  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+/* Reserved track for the Unload control — kept in the DOM even when idle so the
+   state column to its right never moves between loaded and idle rows. */
+.llm-local-act {
+  display: flex;
+  justify-content: flex-end;
 }
 .llm-chip {
   font-size: var(--fs-micro);
@@ -1012,7 +1023,6 @@ h3 {
 .llm-local-state {
   font-size: var(--fs-micro);
   color: var(--text-3);
-  min-width: 56px;
   text-align: right;
 }
 .llm-local-state.on {
