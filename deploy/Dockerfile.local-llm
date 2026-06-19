@@ -27,12 +27,15 @@
 ARG LOCAL_LLM_BASE=docker.io/kyuz0/amd-strix-halo-toolboxes:vulkan-radv
 
 # Build llama-swap (pure-Go) in a throwaway stage so we don't need a toolchain
-# in the runtime image. Pinned for a reproducible build AND a known-good API:
-# the settings screen's loaded-state + unload buttons need the admin endpoints
-# (GET /running, POST /api/models/unload/{model}) that older builds lack.
+# in the runtime image. Pinned to a COMMIT, not a tag: llama-swap releases are
+# tagged `vNNN` (e.g. v228), which Go module versioning can't resolve (it wants
+# semver with a matching major-version import path), so `go install ...@v228`
+# fails with "no matching versions". This commit IS the v228 release and carries
+# the admin API (GET /running, POST /api/models/unload/{model}) the settings
+# screen's loaded-state + unload buttons need; older builds lack it.
 FROM golang:1.23-bookworm AS swap
 ENV GOTOOLCHAIN=auto
-ARG LLAMA_SWAP_VERSION=v228
+ARG LLAMA_SWAP_VERSION=a15e47922c3db3e24df75b2648acad5acafeda4b
 RUN GOBIN=/out go install "github.com/mostlygeek/llama-swap@${LLAMA_SWAP_VERSION}"
 
 FROM ${LOCAL_LLM_BASE}
