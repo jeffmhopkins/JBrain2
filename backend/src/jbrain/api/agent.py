@@ -68,6 +68,11 @@ class ChatRequest(BaseModel):
     # (read_appointment) instead of guessing by title — it never reaches the
     # persisted transcript, which records `message` verbatim.
     appointment_id: str | None = None
+    # The PWA's live geolocation for this turn — the same warm fix note sends attach
+    # (only when the owner's capture toggle is on). It lets the location tool answer
+    # from the phone's current position; turn-local, never persisted.
+    latitude: float | None = Field(default=None, ge=-90, le=90)
+    longitude: float | None = Field(default=None, ge=-180, le=180)
 
 
 def get_agent_sessions(request: Request) -> AgentSessionRepo:
@@ -313,6 +318,13 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
     # Reflexion mode gate (Track R): default verify-and-annotate; this opts into
     # the buffer-then-retry path (off by default — a spinner-latency tradeoff).
     buffer_retry = await get_settings_store(request).reflexion_buffer_retry(owner_ctx)
+    # The PWA's live position for this turn (both coords or nothing), reused by the
+    # location tool to answer from the phone's current spot — turn-local, not stored.
+    here = (
+        (body.latitude, body.longitude)
+        if body.latitude is not None and body.longitude is not None
+        else None
+    )
 
     async def events() -> AsyncIterator[bytes]:
         stop_reason = "error"
@@ -336,6 +348,7 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
                 # for an agent that reads notes; a non-KB agent (jerv, teacher) has
                 # none to contrast with, so suppress it.
                 general_knowledge_label=profile.reads_knowledge_base,
+                here=here,
             ):
                 if event.type == "text_delta":
                     answer.append(event.text)

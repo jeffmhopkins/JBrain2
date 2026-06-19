@@ -108,12 +108,18 @@ class ToolContext:
     `agent_session_id` is the chat session this turn belongs to, so a tool that
     stages a Proposal can tie it to the session (the review inbox scopes by it).
     None for non-chat callers (e.g. the wiki Editor) and background loops, which
-    stage session-less proposals that surface in every session's inbox."""
+    stage session-less proposals that surface in every session's inbox.
+
+    `here` is the owner's live (latitude, longitude) captured by the PWA this turn —
+    the same warm geolocation fix note sends attach — or None. It lets a location
+    tool answer from the phone's current position (foreground, mode-independent)
+    rather than only the OwnTracks device stack."""
 
     session: SessionContext
     scopes: tuple[str, ...]
     timezone: str | None = None
     agent_session_id: str | None = None
+    here: tuple[float, float] | None = None
 
 
 @dataclass(frozen=True)
@@ -315,6 +321,7 @@ class AgentLoop:
         system: str | None = None,
         tools_allow: frozenset[str] | None = None,
         general_knowledge_label: bool = True,
+        here: tuple[float, float] | None = None,
     ) -> AsyncIterator[ChatEvent]:
         """The streaming twin of `run`: the same turn loop and guardrails, but it
         yields ChatEvents as they happen — `text_delta` per streamed chunk,
@@ -348,6 +355,7 @@ class AgentLoop:
                 system,
                 tools_allow,
                 general_knowledge_label,
+                here,
             ):
                 yield ev
             return
@@ -359,7 +367,11 @@ class AgentLoop:
         allowed = self._registry.allowed_names(scopes, tools_allow)
         messages: list[LlmMessage] = list(conversation)
         tool_ctx = ToolContext(
-            session=session, scopes=scopes, timezone=timezone, agent_session_id=agent_session_id
+            session=session,
+            scopes=scopes,
+            timezone=timezone,
+            agent_session_id=agent_session_id,
+            here=here,
         )
         cost = 0
         consecutive_errors = 0
@@ -500,6 +512,7 @@ class AgentLoop:
         system: str | None = None,
         tools_allow: frozenset[str] | None = None,
         general_knowledge_label: bool = True,
+        here: tuple[float, float] | None = None,
     ) -> AsyncIterator[ChatEvent]:
         """Mode (a): produce the turn non-streaming, run `reflect` (strict
         improvement, N=2 cap), then replay the kept attempt's buffered events as the
@@ -529,6 +542,7 @@ class AgentLoop:
                 agent_session_id,
                 system,
                 tools_allow,
+                here,
             )
             corpus = _grounding_corpus(turn.sources, turn.entities)
             # Empty corpus → grounding is unverifiable, not failed: hand back a clean
@@ -584,6 +598,7 @@ class AgentLoop:
         agent_session_id: str | None = None,
         system: str | None = None,
         tools_allow: frozenset[str] | None = None,
+        here: tuple[float, float] | None = None,
     ) -> _BufferedTurn:
         """One full non-streaming produce-step for mode (a): run the turn loop to a
         terminal stop, buffering the ChatEvents it would have streamed (so a
@@ -594,7 +609,11 @@ class AgentLoop:
         allowed = self._registry.allowed_names(scopes, tools_allow)
         messages: list[LlmMessage] = list(conversation)
         tool_ctx = ToolContext(
-            session=session, scopes=scopes, timezone=timezone, agent_session_id=agent_session_id
+            session=session,
+            scopes=scopes,
+            timezone=timezone,
+            agent_session_id=agent_session_id,
+            here=here,
         )
         events: list[ChatEvent] = []
         answer_parts: list[str] = []

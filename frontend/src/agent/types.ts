@@ -179,6 +179,11 @@ export interface ChatRequest {
   /** An appointment the owner is asking about (a calendar handoff). The id lets
    * the agent resolve the exact appointment; it never enters the transcript. */
   appointment_id?: string;
+  /** The PWA's live position for this turn — the same warm geolocation fix note
+   * sends attach (only when capture is on). Lets the location tool answer from the
+   * phone's current spot; turn-local, never persisted. */
+  latitude?: number;
+  longitude?: number;
 }
 
 // --- Proposals (the review inbox; /api/proposals) ---

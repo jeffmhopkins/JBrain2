@@ -419,7 +419,8 @@ def build_registry(
             **build_location_handlers(locations, devices, entities, geocoder, proposals),
             # jerv's owner-approved, jerv-only coarse location read (a `web`-gated,
             # opt-in tool; on-box, coordinate-free — never offered to the curator).
-            **build_presence_handlers(locations, devices),
+            # The geocoder resolves a live PWA fix to a place name on-box.
+            **build_presence_handlers(locations, devices, geocoder),
             **build_wiki_handlers(wiki),
             **build_selfedit_handlers(proposals, router, settings),
             **wiki_write,

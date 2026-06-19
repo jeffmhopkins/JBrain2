@@ -18,6 +18,7 @@ import structlog
 from jbrain.agent.loop import ToolContext, ToolHandler
 from jbrain.db.session import SessionContext
 from jbrain.devices.repo import SqlDeviceRepo
+from jbrain.geocode import GeocodeClient
 from jbrain.locations import LocationToolRefusal, SqlLocationRepo
 from jbrain.locations.presence import presence_line, read_owner_presence
 
@@ -27,10 +28,25 @@ _UNAVAILABLE = "I can't check the owner's location in this session."
 
 
 def build_presence_handlers(
-    locations: SqlLocationRepo, devices: SqlDeviceRepo
+    locations: SqlLocationRepo, devices: SqlDeviceRepo, geocoder: GeocodeClient | None = None
 ) -> dict[str, ToolHandler]:
     async def current_location_tool(arguments: dict, ctx: ToolContext) -> str:
-        # jerv's tool session is owner_scoped (empty scopes), which require_full_owner
+        # Prefer the live fix the PWA captured this turn (the same warm geolocation
+        # note sends attach) — it's foreground and current, and works regardless of
+        # whether an OwnTracks device is reporting. Resolve it to a place name on-box
+        # (Photon, no egress) so the reply stays coordinate-free.
+        if ctx.here is not None and geocoder is not None:
+            lat, lon = ctx.here
+            try:
+                hit = await geocoder.reverse(lat, lon)
+            except Exception as exc:  # noqa: BLE001 - a geocoder hiccup is recoverable
+                log.warning("agent.current_location_geocode_failed", error=repr(exc))
+                hit = None
+            if hit is not None:
+                return f"The owner is currently near {hit.label}."
+            return "I have the owner's current position but couldn't resolve it to a place name."
+        # No live fix on the turn — fall back to the OwnTracks device stack. jerv's
+        # tool session is owner_scoped (empty scopes), which require_full_owner
         # refuses; reconstruct the FULL owner ctx from its principal so the presence
         # read clears that gate — the same privileged read the app-open presence does,
         # reachable only here (the `web`-gated jerv allowlist). Defensive: only an
