@@ -332,6 +332,10 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
                 agent_session_id=session.id,
                 system=profile.prompt,
                 tools_allow=profile.tools,
+                # The "from general knowledge — not your notes" label only makes sense
+                # for an agent that reads notes; a non-KB agent (jerv, teacher) has
+                # none to contrast with, so suppress it.
+                general_knowledge_label=profile.reads_knowledge_base,
             ):
                 if event.type == "text_delta":
                     answer.append(event.text)

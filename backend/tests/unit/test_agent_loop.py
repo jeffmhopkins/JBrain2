@@ -623,6 +623,28 @@ async def test_zero_retrieval_substantive_turn_labels_general_knowledge() -> Non
     assert sum(isinstance(e, GeneralKnowledgeEvent) for e in events) == 1
 
 
+async def test_general_knowledge_label_suppressed_for_a_non_kb_agent() -> None:
+    # The same zero-retrieval substantive turn, but with general_knowledge_label=False
+    # (a non-KB agent like jerv/teacher): no "not your notes" chip — there are no notes
+    # to contrast with — yet the answer still streams and `done` still closes the turn.
+    router, _ = stream_router_with(
+        [LlmTurn("Jeff is a short form of Jeffrey.", (), "end_turn", LlmUsage(1, 1))],
+        stream_chunks=[["Jeff is a short form of Jeffrey."]],
+    )
+    loop = AgentLoop(router, registry_with(make_tool("search", search)))
+    events = [
+        ev
+        async for ev in loop.run_stream(
+            session=OWNER,
+            scopes=("general",),
+            conversation=[UserMessage(text="what is jeff?")],
+            general_knowledge_label=False,
+        )
+    ]
+    assert isinstance(events[-1], DoneEvent)
+    assert not any(isinstance(e, GeneralKnowledgeEvent) for e in events)
+
+
 async def test_greeting_emits_no_general_knowledge_label() -> None:
     # A pure greeting (no substantive claim) retrieved nothing, but it carries no
     # checkable knowledge — so it stays silent: no label, no verdict.

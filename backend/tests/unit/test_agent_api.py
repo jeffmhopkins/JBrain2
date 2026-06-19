@@ -360,6 +360,23 @@ def test_chat_forwards_a_general_knowledge_label_after_done(
     assert "general_knowledge" not in transcript.recorded[-1]
 
 
+def test_chat_suppresses_general_knowledge_label_for_a_non_kb_agent(
+    client: TestClient, repo: FakeAuthRepo, sessions_store: FakeAgentSessions
+) -> None:
+    # jerv/teacher read no notes, so the "from general knowledge — not your notes"
+    # label is meaningless and must not be emitted, even on a substantive answer.
+    login(client, repo)
+    sessions_store.add(AgentSessionInfo("sess-j", "", "active", (), (), NOW, NOW, agent="jerv"))
+    client.app.state.llm_router = stream_router(  # type: ignore[attr-defined]
+        [LlmTurn("Mount Everest is the tallest mountain.", (), "end_turn", LlmUsage(1, 1))],
+        stream_chunks=[["Mount Everest is the tallest mountain."]],
+    )
+    resp = client.post("/api/chat", json={"session_id": "sess-j", "message": "tallest mountain?"})
+    events = sse_events(resp.text)
+    assert events[-1]["type"] == "done"
+    assert not any(e["type"] == "general_knowledge" for e in events)
+
+
 def test_chat_buffer_retry_gate_default_off_streams_live(
     client: TestClient, repo: FakeAuthRepo, sessions_store: FakeAgentSessions
 ) -> None:
