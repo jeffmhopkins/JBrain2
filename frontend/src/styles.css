@@ -6282,14 +6282,17 @@ button.small {
    revealed a whole block at a time (markdown.tsx gates the text to completed
    blocks). The wrapper is layout-neutral — the .md flex gap still spaces blocks —
    so a settled answer reads identically. While streaming, a newly-settled block
-   carries .in and sweeps in left-to-right: a soft-edged mask slides across, so the
-   finished line (including fully-typeset KaTeX) fades in directionally rather than
-   appearing word-by-word. Mask-position is animated (no @property dependency) so it
-   degrades to "instantly visible" wherever masks aren't supported. */
+   animates in per the user's chosen style (Settings → Response reveal): .sweep wipes
+   the whole line in, .cascade fades its words in left-to-right, and "instant" (no
+   modifier) just snaps it in. Math (including fully-typeset KaTeX) only ever appears
+   complete, so it never flickers half-rendered regardless of style. */
 .fb-shell .fb-reveal {
   min-width: 0;
 }
-.fb-shell .fb-reveal.in {
+/* Sweep: a soft-edged mask slides left-to-right. Mask-position is animated (no
+   @property dependency) so it degrades to "instantly visible" wherever masks
+   aren't supported. */
+.fb-shell .fb-reveal.sweep {
   -webkit-mask-image: linear-gradient(90deg, #000 60%, transparent);
   mask-image: linear-gradient(90deg, #000 60%, transparent);
   -webkit-mask-size: 300% 100%;
@@ -6309,11 +6312,32 @@ button.small {
     mask-position: 0% 0;
   }
 }
+/* Cascade: markdown.tsx wraps each word (and whole math renders) in a .w span with a
+   rising --i; they fade up in sequence, so the line assembles left-to-right. */
+.fb-shell .fb-reveal.cascade .w {
+  display: inline-block;
+  opacity: 0;
+  transform: translateY(4px);
+  animation: fb-word-cascade 360ms ease forwards;
+  animation-delay: calc(var(--i, 0) * 38ms);
+  will-change: opacity, transform;
+}
+@keyframes fb-word-cascade {
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
 @media (prefers-reduced-motion: reduce) {
-  .fb-shell .fb-reveal.in {
+  .fb-shell .fb-reveal.sweep {
     animation: none;
     -webkit-mask-image: none;
     mask-image: none;
+  }
+  .fb-shell .fb-reveal.cascade .w {
+    animation: none;
+    opacity: 1;
+    transform: none;
   }
 }
 .fb-shell .md-p {

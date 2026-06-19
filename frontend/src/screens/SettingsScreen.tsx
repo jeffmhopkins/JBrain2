@@ -3,6 +3,7 @@ import type { FeedConfig, ImageAnalysisMode } from "../api/client";
 import { api } from "../api/client";
 import { FONT_SCALES, type FontScale, getFontScale, setFontScale } from "../fontScale";
 import { isLocationCaptureEnabled, setLocationCaptureEnabled } from "../location";
+import { REVEAL_STYLES, type RevealStyle, getRevealStyle, setRevealStyle } from "../revealStyle";
 import { type ThemePref, getThemePref, setThemePref } from "../theme";
 
 const THEME_OPTIONS: { value: ThemePref; label: string }[] = [
@@ -16,6 +17,12 @@ const IMAGE_ANALYSIS_OPTIONS: { value: ImageAnalysisMode; label: string }[] = [
   { value: "full", label: "full analysis" },
 ];
 
+const REVEAL_LABEL: Record<RevealStyle, string> = {
+  instant: "Instant",
+  cascade: "Word cascade",
+  sweep: "Sweep",
+};
+
 interface SettingsScreenProps {
   deviceLabel: string;
   onLogout: () => void;
@@ -24,6 +31,7 @@ interface SettingsScreenProps {
 export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
   const [theme, setTheme] = useState<ThemePref>(getThemePref);
   const [fontScale, setScale] = useState<FontScale>(getFontScale);
+  const [reveal, setReveal] = useState<RevealStyle>(getRevealStyle);
   const [locationOn, setLocationOn] = useState<boolean>(isLocationCaptureEnabled);
   // Inline confirm per DESIGN.md — no window.confirm for destructive acts.
   const [confirmingLogout, setConfirmingLogout] = useState(false);
@@ -145,6 +153,31 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
               }}
             >
               {scale}%
+            </button>
+          ))}
+        </div>
+      </section>
+
+      <section className="settings-card">
+        <h2 className="settings-label">Response reveal</h2>
+        <p className="settings-meta">
+          how the assistant's answer appears as it streams. each finished line shows once it
+          completes — so math lands fully typeset, never mid-render. Instant snaps it in; Word
+          cascade fades the words in left-to-right; Sweep wipes each line in.
+        </p>
+        <div className="theme-picker" aria-label="Response reveal">
+          {REVEAL_STYLES.map((style) => (
+            <button
+              key={style}
+              type="button"
+              aria-pressed={reveal === style}
+              className={`seg${reveal === style ? " seg-on" : ""}`}
+              onClick={() => {
+                setRevealStyle(style);
+                setReveal(style);
+              }}
+            >
+              {REVEAL_LABEL[style]}
             </button>
           ))}
         </div>

@@ -1,6 +1,11 @@
 import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { setRevealStyle } from "../revealStyle";
 import { Markdown, readyMarkdown } from "./markdown";
+
+// The reveal style is read from localStorage at first render; isolate it so a test
+// that sets one style doesn't leak into the next (default is "sweep").
+beforeEach(() => localStorage.clear());
 
 function html(text: string): string {
   return render(<Markdown text={text} />).container.innerHTML;
@@ -408,15 +413,31 @@ describe("Markdown", () => {
     expect(screen.getAllByRole("button")).toHaveLength(1);
   });
 
-  it("wraps each block in a sweep-reveal element while streaming", () => {
+  it("wraps each block in a sweep-reveal element while streaming (the default style)", () => {
     const { container } = render(<Markdown text={"First block.\n\nSecond block."} streaming />);
-    const units = container.querySelectorAll(".fb-reveal.in");
-    expect(units).toHaveLength(2);
+    expect(container.querySelectorAll(".fb-reveal.sweep")).toHaveLength(2);
+  });
+
+  it("wraps words in delayed spans for the cascade reveal", () => {
+    setRevealStyle("cascade");
+    const { container } = render(<Markdown text={"First block.\n\nSecond block."} streaming />);
+    expect(container.querySelectorAll(".fb-reveal.cascade")).toHaveLength(2);
+    const words = container.querySelectorAll<HTMLElement>(".fb-reveal.cascade .w");
+    expect(words.length).toBeGreaterThan(0);
+    // Each word carries a rising stagger index so the line assembles left-to-right.
+    expect(words[0]?.style.getPropertyValue("--i")).toBe("0");
+  });
+
+  it("applies no animation modifier for the instant reveal", () => {
+    setRevealStyle("instant");
+    const { container } = render(<Markdown text={"First block.\n\nSecond block."} streaming />);
+    expect(container.querySelectorAll(".fb-reveal")).toHaveLength(2);
+    expect(container.querySelectorAll(".fb-reveal.sweep, .fb-reveal.cascade")).toHaveLength(0);
   });
 
   it("does not animate a settled (non-streaming) answer", () => {
     const { container } = render(<Markdown text={"First block.\n\nSecond block."} />);
-    expect(container.querySelectorAll(".fb-reveal.in")).toHaveLength(0);
+    expect(container.querySelectorAll(".fb-reveal.sweep, .fb-reveal.cascade")).toHaveLength(0);
     // The blocks are still wrapped — the reveal wrapper is layout-neutral.
     expect(container.querySelectorAll(".fb-reveal")).toHaveLength(2);
   });

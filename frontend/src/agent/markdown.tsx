@@ -19,8 +19,9 @@
 
 import katex from "katex";
 import "katex/dist/katex.min.css";
-import { type ReactNode, useMemo, useRef } from "react";
+import { type ReactNode, useCallback, useMemo, useRef } from "react";
 import { DOMAIN_COLOR } from "../notes/modes";
+import { type RevealStyle, getRevealStyle } from "../revealStyle";
 
 const MONTHS =
   "Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?";
@@ -729,6 +730,47 @@ function renderBlock(b: Block, key: string, ctx: Ctx): ReactNode {
   }
 }
 
+/** Word-cascade reveal: wrap each word of a freshly-revealed block in a delayed
+ * span so the line fades in left-to-right (styles.css `.fb-reveal.cascade .w`); a
+ * whole math render counts as one unit. Mutates the DOM once, post-mount — safe
+ * because a revealed block is frozen (only completed blocks are ever revealed), so
+ * its text never changes and React never reconciles against the spans we inject. */
+function cascadeWords(root: HTMLElement): void {
+  let i = 0;
+  for (const m of root.querySelectorAll<HTMLElement>(".md-math-block, .md-math")) {
+    m.classList.add("w");
+    m.style.setProperty("--i", String(i++));
+  }
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    acceptNode: (node) => {
+      // KaTeX renders its own text — leave it whole, only cascade prose words.
+      if (node.parentElement?.closest(".md-math-block, .md-math, .katex")) {
+        return NodeFilter.FILTER_REJECT;
+      }
+      return (node.nodeValue ?? "").trim() ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
+    },
+  });
+  const texts: Text[] = [];
+  while (walker.nextNode()) texts.push(walker.currentNode as Text);
+  for (const node of texts) {
+    const frag = document.createDocumentFragment();
+    // Keep the inter-word whitespace as plain text nodes so the line still wraps.
+    for (const tok of (node.nodeValue ?? "").split(/(\s+)/)) {
+      if (!tok) continue;
+      if (/^\s+$/.test(tok)) {
+        frag.appendChild(document.createTextNode(tok));
+        continue;
+      }
+      const w = document.createElement("span");
+      w.className = "w";
+      w.textContent = tok;
+      w.style.setProperty("--i", String(i++));
+      frag.appendChild(w);
+    }
+    node.parentNode?.replaceChild(frag, node);
+  }
+}
+
 export function Markdown({
   text,
   onCite,
@@ -769,13 +811,32 @@ export function Markdown({
   // bubble that *started* streaming — a replayed/settled transcript shows at once,
   // no fade — so this captures the first-render streaming state and holds it across
   // the settle (the final block, revealed when the turn settles, still animates).
-  const animate = useRef(streaming).current;
+  // Reveal style captured once: a bubble that *started* streaming animates with the
+  // user's chosen style; a replayed/settled transcript shows at once ("none"). Held
+  // across the settle, so the final block — revealed when the turn settles — still
+  // animates. "instant" reveals each finished block with no motion.
+  const reveal = useRef<RevealStyle | "none">(streaming ? getRevealStyle() : "none").current;
+  const revealClass =
+    reveal === "sweep"
+      ? "fb-reveal sweep"
+      : reveal === "cascade"
+        ? "fb-reveal cascade"
+        : "fb-reveal";
+  // Cascade wraps each word of a block in a delayed span once, post-mount (see
+  // cascadeWords). The callback identity is stable, so React never re-runs it on a
+  // later render — only a newly-mounted block's wrapper gets wrapped.
+  const cascadeRef = useCallback((el: HTMLDivElement | null) => {
+    if (el && !el.dataset.cascaded) {
+      el.dataset.cascaded = "1";
+      cascadeWords(el);
+    }
+  }, []);
   const rendered = blocks.map((b, i) => (
     // The streamed answer is append-only: a block's index is its stable identity, so
     // each block's wrapper mounts exactly once (and animates exactly once) — the
     // positional key is intentional and load-bearing for the reveal.
     // biome-ignore lint/suspicious/noArrayIndexKey: append-only blocks; stable identity
-    <div key={`b${i}`} className={animate ? "fb-reveal in" : "fb-reveal"}>
+    <div key={`b${i}`} className={revealClass} ref={reveal === "cascade" ? cascadeRef : undefined}>
       {renderBlock(b, `b${i}`, ctx)}
     </div>
   ));

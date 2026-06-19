@@ -71,6 +71,30 @@ describe("SettingsScreen capture location", () => {
   });
 });
 
+describe("SettingsScreen response reveal", () => {
+  it("defaults the pick to Sweep", () => {
+    setup();
+    const group = screen.getByLabelText("Response reveal");
+    expect(group.querySelector('[aria-pressed="true"]')).toHaveTextContent("Sweep");
+  });
+
+  it("persists a chosen reveal style across remounts via localStorage", () => {
+    setup();
+    fireEvent.click(screen.getByRole("button", { name: "Word cascade" }));
+    expect(localStorage.getItem("jbrain.revealStyle")).toBe("cascade");
+    expect(screen.getByRole("button", { name: "Word cascade" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+  });
+
+  it("offers an Instant (no motion) choice", () => {
+    setup();
+    fireEvent.click(screen.getByRole("button", { name: "Instant" }));
+    expect(localStorage.getItem("jbrain.revealStyle")).toBe("instant");
+  });
+});
+
 describe("SettingsScreen image analysis", () => {
   it("loads the server mode and marks it pressed (full is the default)", async () => {
     setup();
