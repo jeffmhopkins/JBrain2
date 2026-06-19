@@ -13,6 +13,7 @@ from jbrain.llm import (
     LlmTurn,
     LlmUsage,
     OpenAiCompatClient,
+    ReasoningChunk,
     TextChunk,
     ToolCall,
     UserMessage,
@@ -165,6 +166,36 @@ async def test_openai_stream_plain_text_handles_missing_usage_chunk() -> None:
     assert isinstance(final, LlmTurn)
     assert final.text == "hi there" and final.stop_reason == "end_turn"
     assert (final.usage.input_tokens, final.usage.output_tokens) == (0, 0)
+
+
+# A local gpt-oss/GLM stream interleaves harmony reasoning on `reasoning_content`
+# before the answer arrives on `content`.
+OPENAI_REASONING_STREAM = sse(
+    'data: {"choices":[{"delta":{"reasoning_content":"let me "},"finish_reason":null}]}',
+    'data: {"choices":[{"delta":{"reasoning_content":"think"},"finish_reason":null}]}',
+    'data: {"choices":[{"delta":{"content":"the answer"},"finish_reason":null}]}',
+    'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}',
+    "data: [DONE]",
+)
+
+
+async def test_openai_stream_surfaces_reasoning_then_text() -> None:
+    client = OpenAiCompatClient(
+        "http://localhost:11434/v1",
+        "",
+        provider="local",
+        transport=stream_transport(OPENAI_REASONING_STREAM),
+    )
+    parts = await collect(client, model="m", system="s", messages=[UserMessage(text="hi")])
+
+    # Reasoning slices arrive as their own chunks, ahead of the answer text.
+    assert [p.text for p in parts if isinstance(p, ReasoningChunk)] == ["let me ", "think"]
+    assert [p.text for p in parts if isinstance(p, TextChunk)] == ["the answer"]
+    final = parts[-1]
+    assert isinstance(final, LlmTurn)
+    # The final turn carries the answer and the joined reasoning trace.
+    assert final.text == "the answer"
+    assert final.reasoning == "let me think"
 
 
 # --- Retry / failure semantics ----------------------------------------------

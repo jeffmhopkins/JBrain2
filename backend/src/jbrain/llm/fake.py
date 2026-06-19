@@ -11,6 +11,7 @@ from jbrain.llm.types import (
     LlmTool,
     LlmTurn,
     LlmUsage,
+    ReasoningChunk,
     StreamPart,
     TextChunk,
     parse_json_payload,
@@ -116,6 +117,10 @@ class FakeLlmClient:
             if self._turns
             else LlmTurn(text="ok", tool_calls=(), stop_reason="end_turn", usage=LlmUsage(1, 1))
         )
+        # A reasoning turn streams its thinking trace ahead of the answer, mirroring
+        # the local gateway's `reasoning_content` channel.
+        if turn.reasoning:
+            yield ReasoningChunk(text=turn.reasoning)
         if self._stream_chunks:
             chunks = self._stream_chunks[min(idx, len(self._stream_chunks) - 1)]
         else:

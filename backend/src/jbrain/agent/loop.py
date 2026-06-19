@@ -22,6 +22,7 @@ from jbrain.agent.contracts import (
     JobEnqueuedEvent,
     NoteSource,
     ProposalRef,
+    ReasoningDelta,
     TextDelta,
     ToolCallEvent,
     ToolResultEvent,
@@ -49,6 +50,7 @@ from jbrain.llm import (
     LlmMessage,
     LlmRouter,
     LlmTurn,
+    ReasoningChunk,
     TextChunk,
     ToolCall,
     ToolResult,
@@ -396,6 +398,11 @@ class AgentLoop:
                     if part.text:
                         answer_parts.append(part.text)
                         yield TextDelta(text=part.text)
+                elif isinstance(part, ReasoningChunk):
+                    # The model's thinking trace — streamed to the PWA's "thinking"
+                    # disclosure, never added to the answer or the grounding corpus.
+                    if part.text:
+                        yield ReasoningDelta(text=part.text)
                 else:
                     turn = part
             if turn is None:
@@ -635,6 +642,10 @@ class AgentLoop:
             budget[0] -= spent
             await self._record(idx, "model", "converse", ok=True, cost_tokens=spent)
             idx += 1
+            if turn.reasoning:
+                # Buffered (non-streaming) twin of the live ReasoningChunk: replay the
+                # whole thinking trace before the answer. Never enters answer_parts.
+                events.append(ReasoningDelta(text=turn.reasoning))
             if turn.text:
                 answer_parts.append(turn.text)
                 events.append(TextDelta(text=turn.text))

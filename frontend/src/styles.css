@@ -5994,6 +5994,98 @@ button.small {
   min-height: 0;
   overflow: hidden;
 }
+
+/* the "Thinking" disclosure above an answer — the reasoning twin of "Worked",
+   in a violet register (DESIGN.md: violet = the model's own reasoning). Mirrors
+   the grid-rows open animation; auto-opens with a pulse while the model is still
+   thinking, then collapses to "Thought for Ns" once the answer streams. */
+.fb-shell .fb-thinking {
+  /* leads the bubble, so pull flush to the top and trim the gap to the answer */
+  margin: 0 0 2px;
+}
+.fb-shell .fb-thinking-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-height: 28px;
+  padding: 2px;
+  background: none;
+  border: none;
+  font: inherit;
+  color: var(--text-2);
+  text-align: left;
+  cursor: pointer;
+}
+.fb-shell .fb-thinking-ic {
+  width: 13px;
+  height: 13px;
+  flex: none;
+  color: var(--violet);
+}
+.fb-shell .fb-thinking-lab {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 11px;
+  font-weight: 500;
+}
+.fb-shell .fb-thinking.live .fb-thinking-lab {
+  color: var(--violet);
+}
+.fb-shell .fb-thinking-pulse {
+  width: 6px;
+  height: 6px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--violet);
+  animation: fb-think-pulse 1.1s ease-out infinite;
+}
+@keyframes fb-think-pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(164, 147, 201, 0.5);
+  }
+  70% {
+    box-shadow: 0 0 0 7px rgba(164, 147, 201, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(164, 147, 201, 0);
+  }
+}
+.fb-shell .fb-thinking-caret {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  margin-left: auto;
+  color: var(--violet);
+  transition: transform 0.16s ease-out;
+}
+.fb-shell .fb-thinking.open .fb-thinking-caret {
+  transform: rotate(180deg);
+}
+.fb-shell .fb-thinking-body {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 0.18s ease-out;
+}
+.fb-shell .fb-thinking.open .fb-thinking-body {
+  grid-template-rows: 1fr;
+}
+.fb-shell .fb-thinking-inner {
+  min-height: 0;
+  overflow: hidden;
+}
+.fb-shell .fb-thinking-trace {
+  margin: 4px 0 6px;
+  padding: 9px 11px;
+  max-height: 230px;
+  overflow: auto;
+  background: var(--violet-tint);
+  border-radius: 10px;
+  font: 12.5px / 1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--text-2);
+  white-space: pre-wrap;
+}
 .fb-shell .fb-steps {
   display: flex;
   flex-direction: column;
@@ -6216,10 +6308,13 @@ button.small {
   .fb-shell .fb-worked-body,
   .fb-shell .fb-step-detail,
   .fb-shell .fb-worked-caret,
-  .fb-shell .fb-step-caret {
+  .fb-shell .fb-step-caret,
+  .fb-shell .fb-thinking-body,
+  .fb-shell .fb-thinking-caret {
     transition: none;
   }
-  .fb-shell .fb-step-mark.live {
+  .fb-shell .fb-step-mark.live,
+  .fb-shell .fb-thinking-pulse {
     animation: none;
   }
 }

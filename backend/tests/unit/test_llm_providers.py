@@ -431,7 +431,11 @@ async def test_xai_converse_stream_includes_reasoning_effort() -> None:
     assert json.loads(seen[0].content)["reasoning_effort"] == "medium"
 
 
-async def test_local_never_sends_reasoning_effort_even_when_passed() -> None:
+async def test_local_forwards_reasoning_effort_router_gates_eligibility() -> None:
+    # The local gateway's reasoning models (gpt-oss/GLM) honor reasoning_effort, so
+    # the client applies whatever it's handed for `local`. The ROUTER decides whether
+    # an effort reaches a given model (only reasoning-capable ones); the client is the
+    # dumb conduit for both xai and local.
     seen: list[httpx.Request] = []
     client = OpenAiCompatClient(
         "http://localhost:11434/v1",
@@ -443,7 +447,20 @@ async def test_local_never_sends_reasoning_effort_even_when_passed() -> None:
     await client.converse(
         model="m", system="s", messages=[UserMessage(text="u")], reasoning_effort="high"
     )
-    assert all("reasoning_effort" not in json.loads(r.content) for r in seen)
+    assert all(json.loads(r.content)["reasoning_effort"] == "high" for r in seen)
+
+
+async def test_local_omits_reasoning_effort_when_none() -> None:
+    # No effort handed in (the default) → nothing on the wire, for any provider.
+    seen: list[httpx.Request] = []
+    client = OpenAiCompatClient(
+        "http://localhost:11434/v1",
+        "",
+        provider="local",
+        transport=capture_transport(seen, OPENAI_OK),
+    )
+    await client.complete(model="m", system="s", user_text="u")
+    assert "reasoning_effort" not in json.loads(seen[0].content)
 
 
 async def test_anthropic_ignores_reasoning_effort_kwarg() -> None:

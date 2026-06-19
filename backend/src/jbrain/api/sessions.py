@@ -150,6 +150,9 @@ class TurnOut(BaseModel):
     # Assistant turns carry the tool steps + their note sources for the "Worked"
     # block: [{id, name, ok, sources: [{note_id, domain, snippet}]}].
     tools: list[dict[str, Any]] = Field(default_factory=list)
+    # The assistant turn's reasoning trace (gpt-oss/GLM), for the "thinking"
+    # disclosure; "" for user turns and non-reasoning models.
+    reasoning: str = ""
 
 
 @router.get("/{session_id}/transcript")
@@ -158,4 +161,6 @@ async def session_transcript(
 ) -> list[TurnOut]:
     """Replay a session's stored conversation so reopening it shows the same chat."""
     turns = await get_agent_transcript(request).load(ctx_for(principal), session_id)
-    return [TurnOut(role=t.role, content=t.content, tools=t.tools) for t in turns]
+    return [
+        TurnOut(role=t.role, content=t.content, tools=t.tools, reasoning=t.reasoning) for t in turns
+    ]

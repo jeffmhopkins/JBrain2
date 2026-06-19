@@ -116,7 +116,9 @@ class FakeTranscript:
         self.recorded: list[dict] = []
         self.turns: dict[str, list[TurnRecord]] = {}
 
-    async def record_exchange(self, ctx, *, session_id, run_id, user_text, assistant_text, tools):  # type: ignore[no-untyped-def]
+    async def record_exchange(  # type: ignore[no-untyped-def]
+        self, ctx, *, session_id, run_id, user_text, assistant_text, tools, reasoning=""
+    ):
         self.recorded.append(
             {
                 "session_id": session_id,
@@ -124,6 +126,7 @@ class FakeTranscript:
                 "user": user_text,
                 "assistant": assistant_text,
                 "tools": list(tools),
+                "reasoning": reasoning,
             }
         )
 
@@ -262,8 +265,30 @@ def test_chat_persists_the_exchange_to_the_transcript(
             "user": "hello?",
             "assistant": "hi there",
             "tools": [],
+            "reasoning": "",
         }
     ]
+
+
+def test_chat_streams_and_persists_reasoning(
+    client: TestClient,
+    repo: FakeAuthRepo,
+    sessions_store: FakeAgentSessions,
+    transcript: FakeTranscript,
+) -> None:
+    login(client, repo)
+    sessions_store.add(AgentSessionInfo("sess-1", "", "active", ("general",), (), NOW, NOW))
+    client.app.state.llm_router = stream_router(  # type: ignore[attr-defined]
+        [LlmTurn("the answer", (), "end_turn", LlmUsage(1, 1), reasoning="let me think")],
+        stream_chunks=[["the answer"]],
+    )
+    resp = client.post("/api/chat", json={"session_id": "sess-1", "message": "why?"})
+    events = sse_events(resp.text)
+    # The reasoning crosses the wire as its own event, ahead of the answer text.
+    assert events[0] == {"type": "reasoning_delta", "text": "let me think"}
+    assert {"type": "text_delta", "text": "the answer"} in events
+    # And it is persisted on the assistant turn for replay.
+    assert transcript.recorded[0]["reasoning"] == "let me think"
 
 
 def test_chat_persists_tool_steps_with_sources(
@@ -518,6 +543,7 @@ def test_session_transcript_endpoint_replays_stored_turns(
                     "sources": [{"note_id": "n1", "domain": "general", "snippet": "born"}],
                 }
             ],
+            reasoning="checked the birthday note",
         ),
     ]
     resp = client.get("/api/sessions/sess-1/transcript")
@@ -526,6 +552,9 @@ def test_session_transcript_endpoint_replays_stored_turns(
     assert [t["role"] for t in data] == ["user", "assistant"]
     assert data[1]["content"] == "March 19, 1986."
     assert data[1]["tools"][0]["sources"][0]["note_id"] == "n1"
+    # The stored reasoning replays so the "thinking" disclosure reopens (collapsed).
+    assert data[1]["reasoning"] == "checked the birthday note"
+    assert data[0]["reasoning"] == ""
 
 
 def test_transcript_endpoint_requires_owner(client: TestClient) -> None:
@@ -822,7 +851,7 @@ def test_chat_runs_the_selected_agents_prompt_and_only_its_tools(
     assert {t.name for t in call["tools"]} == {"web_search", "web_fetch"}
     # Sandboxed: a non-KB agent never recalls skills, and the run carries its version.
     assert not skills.called
-    assert ("sess-j", "agent-jerv-v6") in client.app.state.agent_runlog.started  # type: ignore[attr-defined]
+    assert ("sess-j", "agent-jerv-v7") in client.app.state.agent_runlog.started  # type: ignore[attr-defined]
 
 
 def test_chat_curator_is_offered_no_web_tools(

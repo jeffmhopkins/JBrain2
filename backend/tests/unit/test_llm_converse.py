@@ -2,6 +2,8 @@
 scripted turns driving a multi-turn tool exchange (the only LLM the agent-loop
 tests will call)."""
 
+import httpx
+
 from jbrain.llm import (
     AssistantMessage,
     FakeLlmClient,
@@ -9,6 +11,7 @@ from jbrain.llm import (
     LlmTool,
     LlmTurn,
     LlmUsage,
+    OpenAiCompatClient,
     ToolCall,
     ToolResult,
     ToolResultMessage,
@@ -74,6 +77,33 @@ async def test_fake_scripts_a_tool_using_exchange() -> None:
 
     assert len(fake.converse_calls) == 2
     assert isinstance(fake.converse_calls[1]["messages"][-1], ToolResultMessage)
+
+
+async def test_converse_captures_reasoning_content() -> None:
+    # The local gateway returns the harmony reasoning on a `reasoning_content` field
+    # alongside the answer; the non-stream path surfaces it on the turn.
+    body = {
+        "choices": [
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": "the answer",
+                    "reasoning_content": "let me think",
+                },
+                "finish_reason": "stop",
+            }
+        ],
+        "usage": {"prompt_tokens": 4, "completion_tokens": 6},
+    }
+    client = OpenAiCompatClient(
+        "http://localhost:11434/v1",
+        "",
+        provider="local",
+        transport=httpx.MockTransport(lambda _req: httpx.Response(200, json=body)),
+    )
+    turn = await client.converse(model="m", system="s", messages=[UserMessage(text="u")])
+    assert turn.text == "the answer"
+    assert turn.reasoning == "let me think"
 
 
 async def test_fake_records_reasoning_effort() -> None:

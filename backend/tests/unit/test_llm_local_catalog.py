@@ -23,6 +23,16 @@ def test_catalog_entries_are_well_formed() -> None:
             assert m.supports_vision and m.mmproj_include is not None
 
 
+def test_reasoning_served_models_are_exactly_the_reasoning_capable_ones() -> None:
+    # The router's gating set is derived from the catalog flag; gpt-oss and GLM-Air
+    # are the reasoning models, the Qwen Instruct/VL and Llama variants are not.
+    expected = {m.served_model for m in local_catalog.CATALOG if m.supports_reasoning}
+    assert expected == local_catalog.REASONING_SERVED_MODELS
+    assert "gpt-oss-120b" in local_catalog.REASONING_SERVED_MODELS
+    assert "glm-4.5-air" in local_catalog.REASONING_SERVED_MODELS
+    assert "qwen3-30b-a3b" not in local_catalog.REASONING_SERVED_MODELS
+
+
 def test_recommended_set_is_the_two_resident_models() -> None:
     assert local_catalog.recommended_ids() == ("qwen3-vl-30b", "gpt-oss-120b")
 

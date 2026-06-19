@@ -251,6 +251,46 @@ describe("FullBrainSurface", () => {
     expect(worked).toHaveAttribute("aria-expanded", "false");
   });
 
+  it("streams reasoning into a Thinking disclosure, then collapses to a duration", async () => {
+    async function* answer(): AsyncGenerator<ChatEvent> {
+      yield { type: "reasoning_delta", text: "let me think about this" };
+      yield { type: "text_delta", text: "the answer" };
+      yield { type: "done", stop_reason: "end_turn" };
+    }
+    render(<Harness d={deps({ chat: answer })} />);
+    await waitFor(() => screen.getByLabelText("Conversation"));
+    fireEvent.change(screen.getByLabelText("Composer"), { target: { value: "why?" } });
+    fireEvent.click(screen.getByRole("button", { name: "send" }));
+
+    // The disclosure carries the trace; once the answer lands it settles to
+    // "Thought …" and collapses (the trace stays a tap away).
+    const thinking = await screen.findByRole("button", { name: /Thought/ });
+    await waitFor(() => expect(screen.getByText("the answer")).toBeInTheDocument());
+    expect(thinking).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(thinking);
+    expect(thinking).toHaveAttribute("aria-expanded", "true");
+    expect(document.querySelector(".fb-thinking-trace")?.textContent).toBe(
+      "let me think about this",
+    );
+  });
+
+  it("replays a stored turn's reasoning as a collapsed Thinking disclosure", async () => {
+    const getTranscript = vi.fn(async () => [
+      { role: "user" as const, content: "why?", tools: [], reasoning: "" },
+      {
+        role: "assistant" as const,
+        content: "the answer",
+        tools: [],
+        reasoning: "because of the note",
+      },
+    ]);
+    render(<Harness d={deps({ getTranscript })} />);
+    const thinking = await screen.findByRole("button", { name: /Thought/ });
+    expect(thinking).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(thinking);
+    expect(document.querySelector(".fb-thinking-trace")?.textContent).toBe("because of the note");
+  });
+
   it("expands the Worked disclosure to a step whose source card opens the cited note", async () => {
     const onOpenNote = vi.fn();
     async function* answer(): AsyncGenerator<ChatEvent> {

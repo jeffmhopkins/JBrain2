@@ -174,6 +174,7 @@ async def _record_transcript(
     question: str,
     answer_parts: list[str],
     tools: list[dict],
+    reasoning: str = "",
 ) -> None:
     """Persist the completed exchange so the session replays on reopen. Owner-only
     (the transcript is owner metadata) and best-effort — never breaks a turn."""
@@ -185,6 +186,7 @@ async def _record_transcript(
             user_text=question,
             assistant_text="".join(answer_parts),
             tools=tools,
+            reasoning=reasoning,
         )
 
 
@@ -330,6 +332,9 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
         stop_reason = "error"
         status = "error"
         answer: list[str] = []
+        # The model's reasoning trace (gpt-oss/GLM), accumulated for the transcript so
+        # the "thinking" disclosure replays collapsed on reopen.
+        reasoning: list[str] = []
         # Tool steps in call order, each gaining its sources when the result lands —
         # the assistant turn's "Worked" block, persisted with the transcript.
         steps: dict[str, dict] = {}
@@ -352,6 +357,8 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
             ):
                 if event.type == "text_delta":
                     answer.append(event.text)
+                elif event.type == "reasoning_delta":
+                    reasoning.append(event.text)
                 elif event.type == "tool_call":
                     steps[event.id] = {
                         "id": event.id,
@@ -395,6 +402,7 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
                     body.message,
                     answer,
                     [steps[i] for i in order],
+                    "".join(reasoning),
                 )
                 await _maybe_autotitle(request, owner_ctx, sessions, session, body.message, answer)
         except asyncio.CancelledError:

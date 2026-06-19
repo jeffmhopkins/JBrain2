@@ -123,12 +123,17 @@ StopReason = Literal["end_turn", "tool_use", "max_tokens"]
 @dataclass(frozen=True)
 class LlmTurn:
     """One assistant turn from a tool-aware completion: its text, the tool calls
-    it requested (empty unless `stop_reason == "tool_use"`), and usage."""
+    it requested (empty unless `stop_reason == "tool_use"`), and usage.
+
+    `reasoning` is the model's thinking trace when the provider emits one (gpt-oss /
+    GLM via the local gateway's `reasoning_content`); "" for providers that don't.
+    It is display/provenance only — never the answer, and never fed to grounding."""
 
     text: str
     tool_calls: Sequence[ToolCall]
     stop_reason: StopReason
     usage: LlmUsage
+    reasoning: str = ""
 
 
 @dataclass(frozen=True)
@@ -139,11 +144,21 @@ class TextChunk:
     text: str
 
 
-# A streamed turn is a sequence of incremental TextChunks followed by exactly one
-# final LlmTurn: text streams live, while tool calls are assembled whole (their
-# arguments arrive as fragments and are only valid once complete) and carried on
-# the closing turn alongside the full text, stop reason, and usage.
-StreamPart = TextChunk | LlmTurn
+@dataclass(frozen=True)
+class ReasoningChunk:
+    """One incremental slice of the model's streamed reasoning trace (the gpt-oss /
+    GLM `reasoning_content` channel). The loop forwards these as `reasoning_delta`
+    events so the "thinking" disclosure streams live; never part of the answer."""
+
+    text: str
+
+
+# A streamed turn is a sequence of incremental TextChunks (and, for a reasoning
+# model, ReasoningChunks) followed by exactly one final LlmTurn: text/reasoning
+# stream live, while tool calls are assembled whole (their arguments arrive as
+# fragments and are only valid once complete) and carried on the closing turn
+# alongside the full text, reasoning, stop reason, and usage.
+StreamPart = TextChunk | ReasoningChunk | LlmTurn
 
 
 class LlmClient(Protocol):

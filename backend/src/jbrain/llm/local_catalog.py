@@ -49,6 +49,11 @@ class LocalModel:
     quant: str
     size_gb: float
     note: str = ""
+    # Emits a `reasoning_content` channel and honors `reasoning_effort` (gpt-oss
+    # harmony reasoning / GLM thinking). Drives the settings effort control and lets
+    # the router send an effort to this model; default False (the Qwen Instruct
+    # variants and Llama here are non-thinking).
+    supports_reasoning: bool = False
 
     @property
     def spec(self) -> str:
@@ -86,6 +91,7 @@ CATALOG: tuple[LocalModel, ...] = (
         quant="MXFP4",
         size_gb=59.0,
         note="Strongest open reasoning that still runs fast here (~31 t/s).",
+        supports_reasoning=True,
     ),
     LocalModel(
         id="qwen3-next-80b-a3b",
@@ -117,6 +123,7 @@ CATALOG: tuple[LocalModel, ...] = (
         quant="Q4_K_M",
         size_gb=70.0,
         note="70B-class quality, MoE-fast; alternate high tier.",
+        supports_reasoning=True,
     ),
     LocalModel(
         id="qwen3-30b-a3b",
@@ -151,6 +158,13 @@ CATALOG: tuple[LocalModel, ...] = (
 )
 
 _BY_ID = {m.id: m for m in CATALOG}
+
+# Served-model names that emit reasoning + honor `reasoning_effort`. The router
+# consults this to decide whether a `local:<served_model>` call may carry an effort
+# (and the loop/UI surface the thinking trace only for these).
+REASONING_SERVED_MODELS: frozenset[str] = frozenset(
+    m.served_model for m in CATALOG if m.supports_reasoning
+)
 
 
 def get(model_id: str) -> LocalModel | None:
