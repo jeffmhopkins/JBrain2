@@ -4,7 +4,6 @@ import { api } from "../api/client";
 import { FONT_SCALES, type FontScale, getFontScale, setFontScale } from "../fontScale";
 import { isLocationCaptureEnabled, setLocationCaptureEnabled } from "../location";
 import { type ThemePref, getThemePref, setThemePref } from "../theme";
-import { TOKEN_RATES, type TokenRate, getTokenRate, setTokenRate } from "../tokenRate";
 
 const THEME_OPTIONS: { value: ThemePref; label: string }[] = [
   { value: "system", label: "System" },
@@ -25,7 +24,6 @@ interface SettingsScreenProps {
 export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
   const [theme, setTheme] = useState<ThemePref>(getThemePref);
   const [fontScale, setScale] = useState<FontScale>(getFontScale);
-  const [tokenRate, setRate] = useState<TokenRate>(getTokenRate);
   const [locationOn, setLocationOn] = useState<boolean>(isLocationCaptureEnabled);
   // Inline confirm per DESIGN.md — no window.confirm for destructive acts.
   const [confirmingLogout, setConfirmingLogout] = useState(false);
@@ -147,31 +145,6 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
               }}
             >
               {scale}%
-            </button>
-          ))}
-        </div>
-      </section>
-
-      <section className="settings-card">
-        <h2 className="settings-label">Response typing speed</h2>
-        <p className="settings-meta">
-          how fast the assistant's answer types out, in tokens per second — the reveal is paced
-          steadily so fast local models read as smooth typing rather than snapping in. Instant turns
-          pacing off; the full answer shows the moment it lands.
-        </p>
-        <div className="theme-picker" aria-label="Response typing speed">
-          {TOKEN_RATES.map((rate) => (
-            <button
-              key={rate}
-              type="button"
-              aria-pressed={tokenRate === rate}
-              className={`seg${tokenRate === rate ? " seg-on" : ""}`}
-              onClick={() => {
-                setTokenRate(rate);
-                setRate(rate);
-              }}
-            >
-              {rate === 0 ? "Instant" : `${rate}/s`}
             </button>
           ))}
         </div>

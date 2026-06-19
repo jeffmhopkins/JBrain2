@@ -301,7 +301,9 @@ describe("FullBrainSurface", () => {
       resolve = r;
     });
     async function* answer(): AsyncGenerator<ChatEvent> {
-      yield { type: "text_delta", text: "partial…" };
+      // A first block has settled (so the reveal shows it) while a second is still
+      // being written — the bubble is visibly streaming, so no copy affordance yet.
+      yield { type: "text_delta", text: "partial…\n\nstill writing" };
       await gate;
       yield { type: "done", stop_reason: "end_turn" };
     }

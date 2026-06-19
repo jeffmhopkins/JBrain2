@@ -1,6 +1,6 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import { Markdown } from "./markdown";
+import { Markdown, readyMarkdown } from "./markdown";
 
 function html(text: string): string {
   return render(<Markdown text={text} />).container.innerHTML;
@@ -406,5 +406,46 @@ describe("Markdown", () => {
     fireEvent.click(screen.getByRole("button", { name: "Celine Hopkins" }));
     expect(onEntity).toHaveBeenCalledWith("long");
     expect(screen.getAllByRole("button")).toHaveLength(1);
+  });
+
+  it("wraps each block in a sweep-reveal element while streaming", () => {
+    const { container } = render(<Markdown text={"First block.\n\nSecond block."} streaming />);
+    const units = container.querySelectorAll(".fb-reveal.in");
+    expect(units).toHaveLength(2);
+  });
+
+  it("does not animate a settled (non-streaming) answer", () => {
+    const { container } = render(<Markdown text={"First block.\n\nSecond block."} />);
+    expect(container.querySelectorAll(".fb-reveal.in")).toHaveLength(0);
+    // The blocks are still wrapped — the reveal wrapper is layout-neutral.
+    expect(container.querySelectorAll(".fb-reveal")).toHaveLength(2);
+  });
+});
+
+describe("readyMarkdown reveal gating", () => {
+  it("returns the full text once the turn settles", () => {
+    expect(readyMarkdown("done writing", false)).toBe("done writing");
+  });
+
+  it("holds back the still-in-progress trailing block while streaming", () => {
+    // The first paragraph has settled (a blank line closed it); the second is still
+    // being written, so only the first is ready to reveal.
+    expect(readyMarkdown("Para one.\n\nPara two in pro", true)).toBe("Para one.\n");
+  });
+
+  it("reveals nothing while the only block is still being written", () => {
+    expect(readyMarkdown("a single growing paragraph", true)).toBe("");
+  });
+
+  it("withholds a half-streamed display-math block (never shows raw \\frac)", () => {
+    // The closing $$ hasn't arrived: the whole formula is the trailing block, so the
+    // reveal holds it back rather than flashing raw LaTeX.
+    expect(readyMarkdown("Here it is:\n\n$$E_k = \\frac{p^2}{", true)).toBe("Here it is:\n");
+  });
+
+  it("reveals a completed display-math block once a later block follows it", () => {
+    const ready = readyMarkdown("$$E = mc^2$$\n\ntrailing prose", true);
+    expect(ready).toContain("$$E = mc^2$$");
+    expect(ready).not.toContain("trailing prose");
   });
 });

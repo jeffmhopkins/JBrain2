@@ -13,13 +13,12 @@ import { DOMAIN_COLOR } from "../notes/modes";
 import { ProposalTree } from "./ProposalTree";
 import { ProposalsPanel } from "./ProposalsPanel";
 import { SessionsPanel } from "./SessionsPanel";
-import { Markdown, type MdFlag, stripModelCitations } from "./markdown";
+import { Markdown, type MdFlag, readyMarkdown, stripModelCitations } from "./markdown";
 import { type AgentStatus, agentStatus } from "./status";
 import { type SourceRef, type ToolStep, toolStep } from "./toolSummary";
 import type { ToolActivity, TranscriptMessage } from "./transcript";
 import type { ProposalRef } from "./types";
 import type { FullBrain } from "./useFullBrain";
-import { usePacedText } from "./usePacedText";
 import { ToolView } from "./views/registry";
 
 const OPEN_PX = 56; // horizontal travel that commits a panel open or closed
@@ -266,20 +265,22 @@ function Bubble({
   // Which ungrounded-claim flag's reason note is open (one at a time). Declared
   // before the early returns so the hook order is stable across renders.
   const [openFlag, setOpenFlag] = useState<string | null>(null);
-  // Pace the *displayed* prose: a steady typewriter reveal while the turn streams,
-  // snapping to the full text once it settles. Only the Markdown text is paced —
-  // sources, entities, and flags below still read the full `message.text`, so they
-  // resolve correctly the moment the turn finishes.
-  const shownText = usePacedText(message.text, message.streaming);
+  // Reveal the prose a whole block at a time: `readyMarkdown` hands back everything
+  // up to the still-in-progress trailing block, so a line — or a complete `$$…$$`
+  // formula — only appears once finished, then sweeps in (see markdown.tsx /
+  // styles.css `.fb-reveal`). Once the turn settles, the full text shows. Only the
+  // Markdown text is gated this way — sources, entities, and flags below read the
+  // full `message.text`, so they resolve correctly the moment the turn finishes.
+  const revealed = readyMarkdown(message.text, message.streaming);
   if (message.role === "user") {
     return <div className="bubble me">{message.text}</div>;
   }
-  // While the turn is still streaming, hold the whole bubble until the answer
-  // text begins — tool calls alone shouldn't pop an empty Worked block ahead of
-  // any prose. EXCEPT a reasoning model: show the bubble as soon as thinking
-  // streams, so the "Thinking…" disclosure is live. The status line above the
-  // omnibox still carries "what it's doing" until the typed answer lands.
-  if (message.streaming && !message.text && !message.reasoning) {
+  // While the turn is still streaming, hold the whole bubble until a block of the
+  // answer is ready to reveal — tool calls alone (or a half-written first block)
+  // shouldn't pop an empty card ahead of any prose. EXCEPT a reasoning model: show
+  // the bubble as soon as thinking streams, so the "Thinking…" disclosure is live.
+  // The status line above the omnibox carries "what it's doing" until prose lands.
+  if (message.streaming && !revealed && !message.reasoning) {
     return null;
   }
   // A settled turn with nothing to show (no text, tools, views, or reasoning)
@@ -323,9 +324,9 @@ function Bubble({
   // The answer side: the prose, any tool-result views, and the proposal affordance.
   const answer = (
     <>
-      {message.text && (
+      {revealed && (
         <Markdown
-          text={shownText}
+          text={revealed}
           onCite={onCite}
           entities={entities}
           onEntity={onOpenEntity}

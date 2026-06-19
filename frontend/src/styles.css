@@ -6278,6 +6278,44 @@ button.small {
   gap: 8px;
   min-width: 0;
 }
+/* Streaming reveal: each markdown block is wrapped in a .fb-reveal so it can be
+   revealed a whole block at a time (markdown.tsx gates the text to completed
+   blocks). The wrapper is layout-neutral — the .md flex gap still spaces blocks —
+   so a settled answer reads identically. While streaming, a newly-settled block
+   carries .in and sweeps in left-to-right: a soft-edged mask slides across, so the
+   finished line (including fully-typeset KaTeX) fades in directionally rather than
+   appearing word-by-word. Mask-position is animated (no @property dependency) so it
+   degrades to "instantly visible" wherever masks aren't supported. */
+.fb-shell .fb-reveal {
+  min-width: 0;
+}
+.fb-shell .fb-reveal.in {
+  -webkit-mask-image: linear-gradient(90deg, #000 60%, transparent);
+  mask-image: linear-gradient(90deg, #000 60%, transparent);
+  -webkit-mask-size: 300% 100%;
+  mask-size: 300% 100%;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  animation: fb-line-sweep 750ms ease forwards;
+  will-change: mask-position;
+}
+@keyframes fb-line-sweep {
+  from {
+    -webkit-mask-position: 100% 0;
+    mask-position: 100% 0;
+  }
+  to {
+    -webkit-mask-position: 0% 0;
+    mask-position: 0% 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .fb-shell .fb-reveal.in {
+    animation: none;
+    -webkit-mask-image: none;
+    mask-image: none;
+  }
+}
 .fb-shell .md-p {
   margin: 0;
   line-height: 1.45;

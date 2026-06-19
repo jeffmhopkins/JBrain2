@@ -19,7 +19,7 @@
 
 import katex from "katex";
 import "katex/dist/katex.min.css";
-import { type ReactNode, useMemo } from "react";
+import { type ReactNode, useMemo, useRef } from "react";
 import { DOMAIN_COLOR } from "../notes/modes";
 
 const MONTHS =
@@ -506,18 +506,30 @@ const parseAlign = (c: string): Align => {
 const startsTable = (lines: string[], i: number): boolean =>
   (lines[i] ?? "").includes("|") && isDelimRow(lines[i + 1] ?? "");
 
-function parseBlocks(src: string): Block[] {
+/** Parse markdown into blocks, recording the source line each block starts on
+ * (`starts[k]`) alongside the normalized `lines` — so the streaming reveal can
+ * locate the boundary of the still-in-progress trailing block. `parseBlocks`
+ * keeps the block-only signature the renderer uses. */
+function parseDoc(src: string): { blocks: Block[]; starts: number[]; lines: string[] } {
   const lines = src.replace(/\r\n/g, "\n").split("\n");
   const blocks: Block[] = [];
+  const starts: number[] = [];
   let i = 0;
+  let start = 0;
+  // Each block records the line index it opened on (captured at the loop head).
+  const push = (b: Block): void => {
+    blocks.push(b);
+    starts.push(start);
+  };
   while (i < lines.length) {
+    start = i;
     const line = lines[i] ?? "";
     if (/^```/.test(line.trim())) {
       i++;
       const buf: string[] = [];
       while (i < lines.length && !/^```/.test((lines[i] ?? "").trim())) buf.push(lines[i++] ?? "");
       i++; // consume closing fence (or run off the end on a partial answer)
-      blocks.push({ kind: "code", code: buf.join("\n") });
+      push({ kind: "code", code: buf.join("\n") });
       continue;
     }
     if (line.trim() === "") {
@@ -531,7 +543,7 @@ function parseBlocks(src: string): Block[] {
       const onLine = after.indexOf(mathClose);
       if (onLine !== -1) {
         // `$$ … $$` all on one line.
-        blocks.push({ kind: "math", latex: after.slice(0, onLine) });
+        push({ kind: "math", latex: after.slice(0, onLine) });
         i++;
         continue;
       }
@@ -545,12 +557,12 @@ function parseBlocks(src: string): Block[] {
         buf.push(closeLine.slice(0, closeLine.indexOf(mathClose)));
         i++;
       }
-      blocks.push({ kind: "math", latex: buf.join("\n") });
+      push({ kind: "math", latex: buf.join("\n") });
       continue;
     }
     const h = /^(#{1,6})\s+(.*)$/.exec(line);
     if (h?.[1] && h[2] !== undefined) {
-      blocks.push({ kind: "h", level: h[1].length, text: h[2] });
+      push({ kind: "h", level: h[1].length, text: h[2] });
       i++;
       continue;
     }
@@ -558,21 +570,21 @@ function parseBlocks(src: string): Block[] {
       const buf: string[] = [];
       while (i < lines.length && /^>\s?/.test(lines[i] ?? ""))
         buf.push((lines[i++] ?? "").replace(/^>\s?/, ""));
-      blocks.push({ kind: "quote", text: buf.join(" ") });
+      push({ kind: "quote", text: buf.join(" ") });
       continue;
     }
     if (/^\s*[-*+]\s+/.test(line)) {
       const items: string[] = [];
       while (i < lines.length && /^\s*[-*+]\s+/.test(lines[i] ?? ""))
         items.push((lines[i++] ?? "").replace(/^\s*[-*+]\s+/, ""));
-      blocks.push({ kind: "ul", items });
+      push({ kind: "ul", items });
       continue;
     }
     if (/^\s*\d+\.\s+/.test(line)) {
       const items: string[] = [];
       while (i < lines.length && /^\s*\d+\.\s+/.test(lines[i] ?? ""))
         items.push((lines[i++] ?? "").replace(/^\s*\d+\.\s+/, ""));
-      blocks.push({ kind: "ol", items });
+      push({ kind: "ol", items });
       continue;
     }
     if (startsTable(lines, i)) {
@@ -589,7 +601,7 @@ function parseBlocks(src: string): Block[] {
         !isSpecial(lines[i] ?? "")
       )
         rows.push(splitCells(lines[i++] ?? ""));
-      blocks.push({ kind: "table", head, align, rows });
+      push({ kind: "table", head, align, rows });
       continue;
     }
     const buf: string[] = [];
@@ -600,9 +612,25 @@ function parseBlocks(src: string): Block[] {
       !startsTable(lines, i)
     )
       buf.push(lines[i++] ?? "");
-    blocks.push({ kind: "p", text: buf.join("\n") });
+    push({ kind: "p", text: buf.join("\n") });
   }
-  return blocks;
+  return { blocks, starts, lines };
+}
+
+const parseBlocks = (src: string): Block[] => parseDoc(src).blocks;
+
+/** The portion of a streamed answer that's safe to reveal: everything up to (but
+ * not including) the still-in-progress trailing block. Revealing whole blocks —
+ * rather than character-by-character — is what lets a `$$…$$` formula appear once,
+ * fully typeset, instead of churning through raw `\frac` as it streams. A settled
+ * turn (or one with a single in-progress block) returns the full text / nothing.
+ * The returned string is a true prefix, so re-parsing it yields the same leading
+ * blocks the full text would — each is stable and animates in exactly once. */
+export function readyMarkdown(text: string, streaming: boolean): string {
+  if (!streaming) return text;
+  const { blocks, starts, lines } = parseDoc(text.replace(/\r\n/g, "\n"));
+  if (blocks.length <= 1) return ""; // the only block is still being written
+  return lines.slice(0, starts[blocks.length - 1] ?? lines.length).join("\n");
 }
 
 function renderBlock(b: Block, key: string, ctx: Ctx): ReactNode {
@@ -735,7 +763,22 @@ export function Markdown({
   // decide which flags need an end-of-bubble fallback.
   const flagIndex = useMemo(() => buildFlagIndex(flags), [flags]);
   const ctx: Ctx = { onCite, onEntity, onFlag, openFlag, index, flags: flagIndex, streaming };
-  const rendered = blocks.map((b, i) => renderBlock(b, `b${i}`, ctx));
+  // Reveal cadence: each block is its own element, so as the streamed answer grows
+  // a newly-settled block mounts fresh and sweeps in left-to-right (styles.css
+  // `.fb-reveal.in`) while the already-shown blocks stay put. We only animate a
+  // bubble that *started* streaming — a replayed/settled transcript shows at once,
+  // no fade — so this captures the first-render streaming state and holds it across
+  // the settle (the final block, revealed when the turn settles, still animates).
+  const animate = useRef(streaming).current;
+  const rendered = blocks.map((b, i) => (
+    // The streamed answer is append-only: a block's index is its stable identity, so
+    // each block's wrapper mounts exactly once (and animates exactly once) — the
+    // positional key is intentional and load-bearing for the reveal.
+    // biome-ignore lint/suspicious/noArrayIndexKey: append-only blocks; stable identity
+    <div key={`b${i}`} className={animate ? "fb-reveal in" : "fb-reveal"}>
+      {renderBlock(b, `b${i}`, ctx)}
+    </div>
+  ));
   // Graceful fallback: any flagged claim the scanner couldn't anchor in the prose
   // (a markdown split, a reworded sentence) degrades to a single end-of-bubble
   // flag that opens the same note — never crash, never mis-anchor.
