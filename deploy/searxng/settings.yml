@@ -6,7 +6,10 @@
 use_default_settings: true
 
 server:
-  secret_key: "${SEARXNG_SECRET}"
+  # The official image's entrypoint replaces this placeholder with $SEARXNG_SECRET
+  # at boot (an in-place edit, so the bind mount must NOT be read-only). Set
+  # SEARXNG_SECRET in your .env before enabling the profile.
+  secret_key: "ultrasecretkey"
   limiter: false
   image_proxy: false
 

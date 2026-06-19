@@ -249,7 +249,8 @@ services:
       # SearXNG refuses to start without a secret; set SEARXNG_SECRET in your .env.
       SEARXNG_SECRET: ${SEARXNG_SECRET:-}
     volumes:
-      - ./searxng/settings.yml:/etc/searxng/settings.yml:ro
+      # Not read-only: the image injects $SEARXNG_SECRET into the placeholder at boot.
+      - ./searxng/settings.yml:/etc/searxng/settings.yml
     networks: [internal]
 
   # OPT-IN MQTT broker (JBrain360 M0 secure spine): Mosquitto + mosquitto-go-auth

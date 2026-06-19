@@ -249,6 +249,7 @@ class AgentLoop:
     ) -> AgentResult:
         scopes = tuple(scopes)
         tools = self._registry.schemas_for(scopes, tools_allow)
+        allowed = self._registry.allowed_names(scopes, tools_allow)
         messages: list[LlmMessage] = list(conversation)
         tool_ctx = ToolContext(
             session=session, scopes=scopes, timezone=timezone, agent_session_id=agent_session_id
@@ -287,7 +288,7 @@ class AgentLoop:
             results: list[ToolResult] = []
             any_error = False
             for call in turn.tool_calls:
-                dispatched = await self._dispatch(call, tool_ctx)
+                dispatched = await self._dispatch(call, tool_ctx, allowed)
                 results.append(dispatched.result)
                 any_error = any_error or dispatched.result.is_error
                 await self._record(
@@ -347,6 +348,7 @@ class AgentLoop:
         # (docs/ASSISTANT.md "Agent selection"); the default is the Full Brain curator.
         system_prompt = system or SYSTEM_PROMPT
         tools = self._registry.schemas_for(scopes, tools_allow)
+        allowed = self._registry.allowed_names(scopes, tools_allow)
         messages: list[LlmMessage] = list(conversation)
         tool_ctx = ToolContext(
             session=session, scopes=scopes, timezone=timezone, agent_session_id=agent_session_id
@@ -412,7 +414,7 @@ class AgentLoop:
             any_error = False
             for call in turn.tool_calls:
                 yield ToolCallEvent(id=call.id, name=call.name, arguments=call.arguments)
-                dispatched = await self._dispatch(call, tool_ctx)
+                dispatched = await self._dispatch(call, tool_ctx, allowed)
                 results.append(dispatched.result)
                 any_error = any_error or dispatched.result.is_error
                 surfaced_sources.extend(dispatched.sources)
@@ -556,6 +558,7 @@ class AgentLoop:
         `budget` so retries cannot overspend the per-turn guardrail."""
         system_prompt = system or SYSTEM_PROMPT
         tools = self._registry.schemas_for(scopes, tools_allow)
+        allowed = self._registry.allowed_names(scopes, tools_allow)
         messages: list[LlmMessage] = list(conversation)
         tool_ctx = ToolContext(
             session=session, scopes=scopes, timezone=timezone, agent_session_id=agent_session_id
@@ -608,7 +611,7 @@ class AgentLoop:
             any_error = False
             for call in turn.tool_calls:
                 events.append(ToolCallEvent(id=call.id, name=call.name, arguments=call.arguments))
-                dispatched = await self._dispatch(call, tool_ctx)
+                dispatched = await self._dispatch(call, tool_ctx, allowed)
                 results.append(dispatched.result)
                 any_error = any_error or dispatched.result.is_error
                 sources.extend(dispatched.sources)
@@ -715,12 +718,18 @@ class AgentLoop:
                 ungrounded_claims=ungrounded_claims(claims, corpus),
             )
 
-    async def _dispatch(self, call: ToolCall, tool_ctx: ToolContext) -> _Dispatched:
-        if call.name not in self._registry:
-            # The model was only offered in-scope tools; an unknown name is a
-            # model slip — surface it as a recoverable error, not a crash.
+    async def _dispatch(
+        self, call: ToolCall, tool_ctx: ToolContext, allowed: frozenset[str]
+    ) -> _Dispatched:
+        if call.name not in allowed:
+            # The allowlist is the dispatch-time boundary, not just a visibility
+            # hint: a tool the agent was never offered — a model slip, or a name
+            # smuggled in by injected content — is REFUSED here, never run. This is
+            # what keeps a knowledge agent (curator) from ever reaching a `web` tool
+            # it wasn't granted, even if the model emits the call. Recoverable error,
+            # not a crash. `allowed` ⊆ registry, so this also covers unknown names.
             err = ToolResult(
-                tool_call_id=call.id, content=f"unknown tool: {call.name}", is_error=True
+                tool_call_id=call.id, content=f"tool not available: {call.name}", is_error=True
             )
             return _Dispatched(err, (), None, (), None, None)
         tool = self._registry.get(call.name)

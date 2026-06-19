@@ -318,7 +318,10 @@ Tool gating layers on top of read-scope: the registry offers a tool only if the
 agent's allowlist admits it *and* the session holds its domain. The internet tools
 are a new **`web` permission class** that is **opt-in** — never offered to the
 default knowledge agent (so `curator` never gains arbitrary web access), only to an
-agent that explicitly allowlists it (`jerv`).
+agent that explicitly allowlists it (`jerv`). The allowlist is enforced **at
+dispatch**, not just visibility: a tool the agent wasn't granted is refused even if
+the model names it (a slip or an injection), so the boundary is structural, not a
+prompt suggestion.
 
 **The web exception to #9, and why it's bounded.** `jerv`'s `web_search`/`web_fetch`
 run **directly**, not as staged egress Proposals — the deliberate, owner-approved
@@ -328,9 +331,12 @@ tools and reads no owner data, so there is **no personal context** to ride along
 into a query or a fetched URL. Search still goes through a **self-hosted SearXNG**
 instance (pinned base URL from config, query text only) — local-first like the
 on-box geocoder, so a search leaves the box only as far as SearXNG's own upstreams;
-`web_fetch` is the one genuinely outbound leg, size-capped and HTML-stripped. The
-egress-Proposal connectors (below) remain the rule for every *other* agent and
-every off-box call that could carry owner data.
+`web_fetch` is the one genuinely outbound leg, size-capped and HTML-stripped, with
+an **SSRF guard** — it resolves the host and refuses any private/loopback/link-local
+target (and re-checks every redirect hop), so a model-supplied URL can't read the
+box's own internal services or the cloud metadata endpoint. The egress-Proposal
+connectors (below) remain the rule for every *other* agent and every off-box call
+that could carry owner data.
 
 ### External connectors (the egress chokepoint)
 

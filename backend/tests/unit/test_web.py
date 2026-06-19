@@ -101,6 +101,63 @@ async def test_fetch_http_error_raises() -> None:
         await WebFetcher(transport=httpx.MockTransport(handle)).fetch("https://x.example/missing")
 
 
+async def test_fetch_follows_a_redirect() -> None:
+    def handle(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/start":
+            return httpx.Response(301, headers={"location": "https://x.example/final"})
+        return httpx.Response(200, content=_HTML, headers={"content-type": "text/html"})
+
+    result = await WebFetcher(transport=httpx.MockTransport(handle)).fetch("https://x.example/start")
+    assert result.url == "https://x.example/final" and "Heading" in result.text
+
+
+async def test_fetch_refuses_a_redirect_loop() -> None:
+    def handle(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(302, headers={"location": "https://x.example/again"})
+
+    with pytest.raises(WebFetchError):
+        await WebFetcher(transport=httpx.MockTransport(handle)).fetch("https://x.example/again")
+
+
+# --- SSRF guard (the real-network host check, no transport) ----------------
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://127.0.0.1/x",  # loopback
+        "http://localhost/x",  # loopback by name
+        "http://10.0.0.1/x",  # private
+        "http://192.168.1.1/x",  # private
+        "http://169.254.169.254/latest/meta-data",  # link-local / cloud metadata
+        "http://[::1]/x",  # IPv6 loopback
+    ],
+)
+async def test_fetch_blocks_non_public_addresses(url: str) -> None:
+    """The model-supplied URL can't be pointed at the box's own internal services
+    (db, embed, searxng) or the cloud metadata endpoint — the SSRF guard."""
+    with pytest.raises(WebFetchError):
+        await WebFetcher().fetch(url)
+
+
+async def test_fetch_rejects_non_http_scheme_before_resolving() -> None:
+    with pytest.raises(WebFetchError):
+        await WebFetcher().fetch("file:///etc/passwd")
+
+
+def test_is_public_classifies_addresses() -> None:
+    import ipaddress
+
+    from jbrain.web.fetch import _is_public
+
+    assert _is_public(ipaddress.ip_address("8.8.8.8"))
+    assert not _is_public(ipaddress.ip_address("127.0.0.1"))
+    assert not _is_public(ipaddress.ip_address("10.0.0.1"))
+    assert not _is_public(ipaddress.ip_address("169.254.169.254"))
+    # An IPv4-mapped IPv6 private address must not slip through its v6 form.
+    assert not _is_public(ipaddress.ip_address("::ffff:10.0.0.1"))
+
+
 # --- web tool handlers -----------------------------------------------------
 
 
