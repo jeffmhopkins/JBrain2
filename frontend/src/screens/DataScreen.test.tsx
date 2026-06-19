@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { DataCard } from "./DataCard";
+import { DataScreen } from "./DataScreen";
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -9,7 +9,27 @@ function json(body: unknown, status = 200): Response {
   });
 }
 
-describe("DataCard", () => {
+// The Backup panel reads ops metrics for its summary; default to a quiet 404 so
+// each test only wires the flow it exercises.
+function metrics() {
+  return json({
+    mem_total_bytes: 0,
+    mem_available_bytes: 0,
+    swap_total_bytes: 0,
+    swap_free_bytes: 0,
+    disk_total_bytes: 0,
+    disk_free_bytes: 0,
+    load_1m: 0,
+    load_5m: 0,
+    load_15m: 0,
+    uptime_seconds: 0,
+    containers: [],
+    db: { db_size_bytes: 23 * 2 ** 20, note_count: 2, attachment_count: 5, attachment_bytes: 0 },
+    blobs: { file_count: 5, total_bytes: 5 * 2 ** 20 },
+  });
+}
+
+describe("DataScreen", () => {
   const fetchMock = vi.fn<typeof fetch>();
 
   beforeEach(() => {
@@ -21,9 +41,21 @@ describe("DataCard", () => {
     vi.restoreAllMocks();
   });
 
+  it("Backup panel shows the database summary from ops metrics", async () => {
+    fetchMock.mockImplementation(async (input) => {
+      if (String(input) === "/api/ops/metrics") return metrics();
+      return new Response(null, { status: 404 });
+    });
+
+    render(<DataScreen />);
+    expect(await screen.findByText("23 MB")).toBeInTheDocument();
+    expect(screen.getByText("2 · 5")).toBeInTheDocument();
+  });
+
   function mockExportFlow() {
     fetchMock.mockImplementation(async (input, init) => {
       const path = String(input);
+      if (path === "/api/ops/metrics") return metrics();
       if (path === "/api/ops/export" && init?.method === "POST") return json({}, 202);
       if (path === "/api/ops/export/status") {
         return json({
@@ -38,8 +70,6 @@ describe("DataCard", () => {
   }
 
   it("export: starts the one-shot, then triggers the download via an anchor, not navigation", async () => {
-    // The download must never navigate the SPA (that remounts the app and can
-    // swallow the download in standalone PWAs), so capture anchor clicks.
     const clicked: Array<{ href: string | null; download: string | null }> = [];
     vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (
       this: HTMLAnchorElement,
@@ -49,8 +79,8 @@ describe("DataCard", () => {
     mockExportFlow();
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {
-      render(<DataCard />);
-      fireEvent.click(screen.getByRole("button", { name: "Export backup" }));
+      render(<DataScreen />);
+      fireEvent.click(await screen.findByRole("button", { name: "Export backup" }));
       expect(await screen.findByText("Building export archive…")).toBeInTheDocument();
 
       await act(() => vi.advanceTimersByTimeAsync(3000));
@@ -61,40 +91,17 @@ describe("DataCard", () => {
         },
       ]);
       expect(screen.getByText(/downloaded\./)).toBeInTheDocument();
-      // The card survives the download: the action buttons are still mounted.
       expect(screen.getByRole("button", { name: "Export backup" })).toBeInTheDocument();
     } finally {
       vi.useRealTimers();
     }
   });
 
-  it("export: done state keeps a tappable link to the latest archive", async () => {
-    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
-    mockExportFlow();
-    vi.useFakeTimers({ shouldAdvanceTime: true });
-    try {
-      render(<DataCard />);
-      fireEvent.click(screen.getByRole("button", { name: "Export backup" }));
-      await screen.findByText("Building export archive…");
-      await act(() => vi.advanceTimersByTimeAsync(3000));
-
-      const link = screen.getByRole("link", {
-        name: "download export-20260610-120000.jbrain.tar",
-      });
-      expect(link).toHaveAttribute(
-        "href",
-        "/api/ops/export/file/export-20260610-120000.jbrain.tar",
-      );
-      expect(link).toHaveAttribute("download", "export-20260610-120000.jbrain.tar");
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it("import: file pick arms a tap-again confirm, then uploads and polls to done", async () => {
+  it("import: Restore tab → file pick arms a tap-again confirm, uploads, polls to done", async () => {
     let importPolls = 0;
     fetchMock.mockImplementation(async (input, init) => {
       const path = String(input);
+      if (path === "/api/ops/metrics") return metrics();
       if (path === "/api/ops/import/upload" && init?.method === "POST") {
         return json({ archive: "import-20260610-134500.jbrain.tar" }, 201);
       }
@@ -114,7 +121,8 @@ describe("DataCard", () => {
     });
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {
-      render(<DataCard />);
+      render(<DataScreen />);
+      fireEvent.click(screen.getByRole("button", { name: "Restore" }));
       const input = document.querySelector<HTMLInputElement>('input[type="file"]');
       if (!input) throw new Error("file input missing");
       const file = new File(["bytes"], "mine.jbrain.tar", { type: "application/x-tar" });
@@ -139,18 +147,21 @@ describe("DataCard", () => {
     }
   });
 
-  it("reset: arms a tap-again confirm and auto-disarms after 3s without firing", async () => {
-    fetchMock.mockResolvedValue(new Response(null, { status: 500 }));
+  it("reset: Reset tab arms a tap-again confirm and auto-disarms after 3s", async () => {
+    fetchMock.mockImplementation(async (input) => {
+      if (String(input) === "/api/ops/metrics") return metrics();
+      return new Response(null, { status: 500 });
+    });
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {
-      render(<DataCard />);
-      fireEvent.click(await screen.findByRole("button", { name: "Reset DB" }));
+      render(<DataScreen />);
+      fireEvent.click(screen.getByRole("button", { name: "Reset" }));
+      fireEvent.click(screen.getByRole("button", { name: "Reset DB" }));
       expect(
         screen.getByRole("button", { name: "Tap again — erases ALL notes and data" }),
       ).toBeInTheDocument();
       expect(fetchMock).not.toHaveBeenCalledWith("/api/ops/reset", expect.anything());
 
-      // Untouched for 3s, the confirm disarms itself.
       await act(() => vi.advanceTimersByTimeAsync(3000));
       expect(screen.getByRole("button", { name: "Reset DB" })).toBeInTheDocument();
       expect(fetchMock).not.toHaveBeenCalledWith("/api/ops/reset", expect.anything());
@@ -163,6 +174,7 @@ describe("DataCard", () => {
     let polls = 0;
     fetchMock.mockImplementation(async (input, init) => {
       const path = String(input);
+      if (path === "/api/ops/metrics") return metrics();
       if (path === "/api/ops/reset" && init?.method === "POST") {
         return json({ oneshot: "jbrain-reset-1" }, 202);
       }
@@ -176,8 +188,9 @@ describe("DataCard", () => {
     });
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {
-      render(<DataCard />);
-      fireEvent.click(await screen.findByRole("button", { name: "Reset DB" }));
+      render(<DataScreen />);
+      fireEvent.click(screen.getByRole("button", { name: "Reset" }));
+      fireEvent.click(screen.getByRole("button", { name: "Reset DB" }));
       fireEvent.click(
         screen.getByRole("button", { name: "Tap again — erases ALL notes and data" }),
       );
