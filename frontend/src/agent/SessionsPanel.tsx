@@ -645,7 +645,7 @@ function ScopeSheet({
       <p className="lead">{lead}</p>
 
       {withAgent && (
-        <div className="agent-opts" aria-label="Agent">
+        <div className="agent-opts">
           {AGENTS.map((a) => (
             <button
               type="button"

@@ -189,6 +189,57 @@ describe("SessionsPanel", () => {
     await waitFor(() => expect(onOpen).toHaveBeenCalledWith(created));
   });
 
+  it("the Teacher agent hides the scope dial and starts with no data", async () => {
+    const created = session({ id: "t", title: "", domain_scopes: [], agent: "teacher" });
+    const onCreate = vi.fn(async (_body: SessionCreate) => created);
+    render(
+      <SessionsPanel
+        sessions={[]}
+        onOpen={vi.fn()}
+        onCreate={onCreate}
+        onClose={vi.fn()}
+        onRename={vi.fn()}
+        onDelete={vi.fn()}
+        onArchive={vi.fn()}
+        onUnarchive={vi.fn()}
+        onRescope={vi.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByText("＋ New chat"));
+    fireEvent.click(screen.getByRole("button", { name: /Teacher/ }));
+    expect(screen.queryByRole("button", { name: "Everything" })).not.toBeInTheDocument();
+    expect(screen.getByText(/no access to your notes or data/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Start/ }));
+    await waitFor(() =>
+      expect(onCreate).toHaveBeenCalledWith({ domain_scopes: [], title: "", agent: "teacher" }),
+    );
+  });
+
+  it("switching back to Curator restores the scope dial and its selection", () => {
+    render(
+      <SessionsPanel
+        sessions={[]}
+        onOpen={vi.fn()}
+        onCreate={vi.fn()}
+        onClose={vi.fn()}
+        onRename={vi.fn()}
+        onDelete={vi.fn()}
+        onArchive={vi.fn()}
+        onUnarchive={vi.fn()}
+        onRescope={vi.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByText("＋ New chat"));
+    // Narrow Curator to Medical, then flip to Jerv (dial hidden) and back.
+    fireEvent.click(screen.getByRole("button", { name: "Medical" }));
+    fireEvent.click(screen.getByRole("button", { name: /Jerv/ }));
+    expect(screen.queryByRole("button", { name: "Medical" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Curator/ }));
+    // The dial is back and still on Medical — the scope selection wasn't lost.
+    expect(screen.getByRole("button", { name: "Medical" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: /Start/ })).toHaveTextContent("reads medical");
+  });
+
   it("Custom… reveals the per-domain grid and Start disables when nothing is picked", () => {
     render(
       <SessionsPanel
