@@ -143,6 +143,11 @@ for i, m in enumerate(models):
     gguf = resolve(m["id"], m["gguf_include"])
     cmd = [
         "llama-server", "--host", "127.0.0.1", "--port", str(port),
+        # A real context window: without -c, llama-server's small default overflows
+        # on vision inputs (an image is thousands of tokens), forcing constant
+        # context-shift churn that starves and slows generation. 32k fits these
+        # models and the box's unified memory has room for the KV cache.
+        "-c", "32768",
         "-m", f"/models/{m['id']}/{gguf}", "-ngl", "999",
     ]
     if m["mmproj_include"]:

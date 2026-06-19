@@ -355,7 +355,13 @@ def build_router(
     clients: dict[str, LlmClient] = {
         "anthropic": AnthropicClient(settings.anthropic_api_key, **extra),
         "xai": OpenAiCompatClient(XAI_BASE_URL, settings.xai_api_key, provider="xai", **extra),
-        "local": OpenAiCompatClient(settings.local_llm_url, "", provider="local", **extra),
+        "local": OpenAiCompatClient(
+            settings.local_llm_url,
+            "",
+            provider="local",
+            timeout=settings.local_llm_timeout,
+            **extra,
+        ),
     }
     return LlmRouter(
         clients,

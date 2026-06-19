@@ -80,6 +80,12 @@ class Settings(BaseSettings):
     # Future-GPU escape hatch: any OpenAI-compatible server (the llama-swap gateway
     # the local-llm profile runs, or an Ollama default).
     local_llm_url: str = "http://localhost:11434/v1"
+    # Local models on one box are far slower than the cloud APIs — a 30B+ doing a
+    # long OCR/extraction at a few dozen tok/s can run for minutes. The 120s cloud
+    # default would time out mid-generation and the job would retry-loop, never
+    # finishing. Give the local client a generous ceiling; queue backoff still
+    # covers a genuinely wedged server.
+    local_llm_timeout: float = 600.0
     # The model name the bare `local` provider spec resolves to (local:<model>)
     # when no curated catalog model is selected — the local server's served model.
     # A plain default so the spec is always concrete.
