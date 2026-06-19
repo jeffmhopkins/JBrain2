@@ -97,6 +97,40 @@ _HTML_LINKS = b"""<html><head><title>Repo</title></head><body>
 </body></html>"""
 
 
+_HTML_MD = b"""<html><head><title>Doc</title></head><body>
+<nav><a href="/skip">menu</a></nav>
+<h1>Title</h1>
+<p>Intro with a <a href="/page">link</a> and <strong>bold</strong>.</p>
+<ul><li>one</li><li>two</li></ul>
+<pre><code>def f():
+    return 1</code></pre>
+<footer>footer junk</footer>
+</body></html>"""
+
+
+async def test_fetch_renders_markdown_structure() -> None:
+    def handle(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=_HTML_MD, headers={"content-type": "text/html"})
+
+    md = (await WebFetcher(transport=httpx.MockTransport(handle)).fetch("https://x.example/doc")).text
+    assert "# Title" in md  # heading
+    assert "[link](https://x.example/page)" in md  # inline link, resolved to absolute
+    assert "**bold**" in md  # emphasis
+    assert "- one" in md and "- two" in md  # list items
+    # Fenced code block with indentation preserved (not whitespace-collapsed).
+    assert "```" in md and "def f():\n    return 1" in md
+
+
+async def test_fetch_drops_page_boilerplate() -> None:
+    def handle(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=_HTML_MD, headers={"content-type": "text/html"})
+
+    result = await WebFetcher(transport=httpx.MockTransport(handle)).fetch("https://x.example/doc")
+    # nav/footer subtrees are dropped — neither their text nor their links survive.
+    assert "menu" not in result.text and "footer junk" not in result.text
+    assert all("/skip" not in link for link in result.links)
+
+
 async def test_fetch_surfaces_links_resolved_to_absolute_urls() -> None:
     def handle(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, content=_HTML_LINKS, headers={"content-type": "text/html"})

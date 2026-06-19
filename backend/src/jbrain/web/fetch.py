@@ -2,14 +2,16 @@
 selection").
 
 This is the one genuinely outbound leg of the jerv sandbox: it GETs a
-model-supplied URL and returns the page's main text as plain prose the agent can
-read, PLUS the links the page points at (resolved to absolute URLs) so the agent
-can navigate — follow a link, a "next page", a file in a repository — by fetching
-one of them, not just read a single page. It is bounded deliberately — only the
-jerv agent (no knowledge-base access, no owner data in context) can reach it, the
-response and the link list are size-capped, and the extractor is a dependency-free
-HTML-to-text pass (scripts/styles dropped, whitespace collapsed) rather than a full
-browser. Non-HTML text bodies pass through; binary content is refused.
+model-supplied URL and returns the page's main content as clean **markdown**
+(headings, lists, emphasis, inline links, fenced code), PLUS the links the page
+points at (resolved to absolute URLs) so the agent can navigate — follow a link, a
+"next page", a file in a repository — by fetching one of them, not just read a
+single page. It is bounded deliberately — only the jerv agent (no knowledge-base
+access, no owner data in context) can reach it, the response and the link list are
+size-capped, and the extractor is a dependency-free HTML→markdown pass (scripts,
+styles, and page boilerplate — nav/header/footer/aside — dropped, whitespace
+collapsed outside code) rather than a full browser. Non-HTML text bodies pass
+through; binary content is refused.
 
 SSRF guard: the URL is model-supplied, and api/worker share an internal Docker
 network with Postgres, the embedder, SearXNG, and the MQTT auth endpoints — so a
@@ -39,10 +41,19 @@ _MAX_BYTES = 2_000_000  # cap the download; a page beyond this is truncated
 _MAX_CHARS = 20_000  # cap the extracted text handed to the model
 _MAX_LINKS = 40  # cap the links surfaced for navigation; a link-heavy page is trimmed
 _MAX_REDIRECTS = 4
-_DROP_TAGS = frozenset({"script", "style", "noscript", "template", "svg"})
-_BLOCK_TAGS = frozenset(
-    {"p", "br", "div", "li", "tr", "h1", "h2", "h3", "h4", "h5", "h6", "section", "article"}
+# Tags whose entire subtree is dropped: non-content (script/style/svg/…) plus the
+# page-boilerplate landmarks (nav/header/footer/aside) a readability pass would
+# strip. A cheap heuristic, not full main-content scoring, but it removes most menus
+# and chrome so the markdown is closer to the page's actual content.
+_DROP_TAGS = frozenset(
+    {"script", "style", "noscript", "template", "svg", "nav", "header", "footer", "aside"}
 )
+# Tags that just force a line break in the prose stream (their own markup carries no
+# markdown). Headings, list items, emphasis, links, and code are handled explicitly.
+_BLOCK_TAGS = frozenset({"p", "div", "tr", "section", "article"})
+_HEADINGS = frozenset({"h1", "h2", "h3", "h4", "h5", "h6"})
+# Inline emphasis → markdown markers (the same token opens and closes).
+_EMPHASIS = {"strong": "**", "b": "**", "em": "*", "i": "*"}
 
 
 class WebFetchError(RuntimeError):
@@ -61,59 +72,152 @@ class FetchResult:
     links: tuple[str, ...] = ()
 
 
-class _Extractor(HTMLParser):
-    """Collect visible text, dropping script/style and breaking on block tags so
-    the output reads as paragraphs rather than one run-on line — and gather `<a href>`
-    targets (raw, resolved to absolute URLs by the caller) so the agent can follow them."""
+def _normalize_prose(raw: str) -> str:
+    """Collapse a prose run's incidental HTML whitespace into tidy lines, keeping at
+    most one blank line between paragraphs (markdown ignores the rest)."""
+    lines = [" ".join(line.split()) for line in raw.splitlines()]
+    out: list[str] = []
+    for line in lines:
+        if line or (out and out[-1]):
+            out.append(line)
+    return "\n".join(out).strip()
 
-    def __init__(self) -> None:
+
+def _format_code(raw: str) -> str:
+    """A `<pre>` block as a fenced markdown code block, indentation preserved (only
+    trailing whitespace and surrounding blank lines trimmed) — the one place we do
+    NOT collapse whitespace, since it carries the code's meaning."""
+    code = "\n".join(line.rstrip() for line in raw.strip("\n").splitlines())
+    return f"```\n{code}\n```" if code.strip() else ""
+
+
+class _Extractor(HTMLParser):
+    """A dependency-free HTML→markdown pass: drop non-content/boilerplate subtrees,
+    render headings/lists/emphasis/links/code as markdown, and gather the page's
+    links (resolved to absolute http(s) URLs against `base`) so the agent can follow
+    them. Not a full DOM/readability engine — a pragmatic streaming heuristic."""
+
+    def __init__(self, base: str) -> None:
         super().__init__(convert_charrefs=True)
-        self._parts: list[str] = []
-        self._skip_depth = 0
+        self._base = base
+        self._out: list[str] = []  # finished blocks (prose + fenced code), in order
+        self._buf: list[str] = []  # the prose run being built, pre-normalization
+        self._code: list[str] = []  # raw text inside the current <pre>
+        self._skip_depth = 0  # >0 inside a dropped/boilerplate subtree
+        self._pre_depth = 0  # >0 inside a <pre> (verbatim, no markup)
         self._in_title = False
         self.title = ""
         self.hrefs: list[str] = []
+        self._link_href: str | None = None  # set while inside an <a>; its text buffers
+        self._link_buf: list[str] = []
+
+    def _flush_prose(self) -> None:
+        if text := _normalize_prose("".join(self._buf)):
+            self._out.append(text)
+        self._buf = []
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         if tag in _DROP_TAGS:
             self._skip_depth += 1
+            return
+        if self._skip_depth:
+            return
         if tag == "title":
             self._in_title = True
-        if tag == "a" and not self._skip_depth:
-            self.hrefs.extend(v for n, v in attrs if n == "href" and v)
-        if tag in _BLOCK_TAGS:
-            self._parts.append("\n")
+            return
+        if tag == "pre":
+            self._flush_prose()
+            self._pre_depth += 1
+            return
+        if self._pre_depth or self._link_href is not None:
+            # Inside <pre> (verbatim) or an <a> (text-only): ignore nested markup.
+            return
+        if tag == "a":
+            href = next((v for n, v in attrs if n == "href" and v), None)
+            if href:
+                self._link_href = href
+                self._link_buf = []
+            return
+        if tag in _HEADINGS:
+            self._buf.append("\n\n" + "#" * int(tag[1]) + " ")
+        elif tag == "li":
+            self._buf.append("\n- ")
+        elif tag == "code":
+            self._buf.append("`")
+        elif tag in _EMPHASIS:
+            self._buf.append(_EMPHASIS[tag])
+        elif tag == "br" or tag in _BLOCK_TAGS:
+            self._buf.append("\n")
 
     def handle_endtag(self, tag: str) -> None:
-        if tag in _DROP_TAGS and self._skip_depth:
-            self._skip_depth -= 1
+        if tag in _DROP_TAGS:
+            self._skip_depth = max(0, self._skip_depth - 1)
+            return
+        if self._skip_depth:
+            return
         if tag == "title":
             self._in_title = False
-        if tag in _BLOCK_TAGS:
-            self._parts.append("\n")
+            return
+        if tag == "pre":
+            if self._pre_depth:
+                self._pre_depth -= 1
+                if self._pre_depth == 0:
+                    if block := _format_code("".join(self._code)):
+                        self._out.append(block)
+                    self._code = []
+            return
+        if self._pre_depth:
+            return
+        if tag == "a" and self._link_href is not None:
+            self._close_link()
+            return
+        if self._link_href is not None:
+            return
+        if tag == "code" or tag in _EMPHASIS:
+            self._buf.append(_EMPHASIS.get(tag, "`"))
+        elif tag in _HEADINGS or tag in _BLOCK_TAGS:
+            self._buf.append("\n")
+
+    def _close_link(self) -> None:
+        """Emit the just-closed anchor as a markdown link, resolving its href to an
+        absolute http(s) URL (and recording it for the navigable link list). A
+        non-http(s) target (mailto:, javascript:) keeps only its text."""
+        text = " ".join("".join(self._link_buf).split())
+        absolute = urldefrag(urljoin(self._base, (self._link_href or "").strip()))[0]
+        self._link_href = None
+        self._link_buf = []
+        if urlparse(absolute).scheme in ("http", "https"):
+            self.hrefs.append(absolute)
+            self._buf.append(f"[{text}]({absolute})" if text else absolute)
+        elif text:
+            self._buf.append(text)
 
     def handle_data(self, data: str) -> None:
         if self._skip_depth:
             return
         if self._in_title:
             self.title += data
-        self._parts.append(data)
+            return
+        if self._pre_depth:
+            self._code.append(data)
+            return
+        if self._link_href is not None:
+            self._link_buf.append(data)
+            return
+        self._buf.append(data)
 
-    def text(self) -> str:
-        raw = "".join(self._parts)
-        # Collapse runs of blank lines and trailing spaces into tidy paragraphs.
-        lines = [" ".join(line.split()) for line in raw.splitlines()]
-        out: list[str] = []
-        for line in lines:
-            if line or (out and out[-1]):
-                out.append(line)
-        return "\n".join(out).strip()
+    def markdown(self) -> str:
+        self._flush_prose()
+        body = "\n\n".join(block for block in self._out if block)
+        while "\n\n\n" in body:
+            body = body.replace("\n\n\n", "\n\n")
+        return body.strip()
 
 
-def _extract(html: str) -> tuple[str, str, list[str]]:
-    parser = _Extractor()
+def _extract(html: str, *, base: str) -> tuple[str, str, list[str]]:
+    parser = _Extractor(base)
     parser.feed(html)
-    return parser.title.strip(), parser.text(), parser.hrefs
+    return parser.title.strip(), parser.markdown(), parser.hrefs
 
 
 def _collect_links(hrefs: list[str], *, base: str) -> tuple[str, ...]:
@@ -163,7 +267,7 @@ class WebFetcher:
             log.warning("web.fetch_failed", error=repr(exc))
             raise WebFetchError("that URL could not be fetched right now") from exc
         if "html" in content_type.lower():
-            title, text, hrefs = _extract(html)
+            title, text, hrefs = _extract(html, base=final_url)
             links = _collect_links(hrefs, base=final_url)
         else:
             title, text, links = "", html.strip(), ()

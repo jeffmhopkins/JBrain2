@@ -752,8 +752,8 @@ def test_sidecars_pinned_to_their_versions() -> None:
         ),
         "web_fetch.tool": (
             "web_fetch",
-            1,
-            "4724e686a73478221320c6cbddddb22682654566bd2eda261f8596cd5b158a6f",
+            2,
+            "126d4615631dcd528970f53d8cb96183982a89843daf462494c211240170b66e",
         ),
     }
     # Every shipped sidecar must appear above — a new `.tool` cannot slip in
