@@ -197,12 +197,20 @@ export interface LocalModelInfo {
   id: string;
   label: string;
   enabled: boolean;
+  /** Runtime state from the gateway (best-effort): resident in memory right now. */
+  loaded: boolean;
   supports_vision: boolean;
   supports_tools: boolean;
   tiers: string[];
   quant: string;
   size_gb: number;
   note: string;
+}
+
+/** Result of an unload: the catalog ids still resident, and whether the gateway answered. */
+export interface LoadedLocalModels {
+  loaded: string[];
+  reachable: boolean;
 }
 
 export interface LlmSettings {
@@ -1056,6 +1064,15 @@ export const api = {
   async updateLlmSettings(patch: LlmSettingsPatch): Promise<LlmSettings> {
     const response = await request("/api/settings/llm", jsonInit("PUT", patch));
     return (await response.json()) as LlmSettings;
+  },
+
+  /** Evict one local model from the gateway's memory; returns what's still resident. */
+  async unloadLocalModel(id: string): Promise<LoadedLocalModels> {
+    const response = await request(
+      `/api/settings/llm/local-models/${encodeURIComponent(id)}/unload`,
+      { method: "POST" },
+    );
+    return (await response.json()) as LoadedLocalModels;
   },
 
   // ----- Appointments ICS feed (a revocable, read-only subscribe URL) -----

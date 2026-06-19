@@ -13,7 +13,7 @@ from jbrain.auth import service as auth_service
 from jbrain.config import Settings
 from jbrain.llm.router import TASK_DEFAULTS
 from jbrain.main import create_app
-from tests.unit.fakes import FakeAuthRepo, FakeSettingsStore
+from tests.unit.fakes import FakeAuthRepo, FakeLocalGateway, FakeSettingsStore
 
 
 def _cloud_settings(**kw: Any) -> Settings:
@@ -36,6 +36,7 @@ def client() -> Iterator[tuple[TestClient, FakeSettingsStore]]:
     with TestClient(app) as test_client:
         app.state.auth_repo = auth_repo
         app.state.settings_store = store
+        app.state.local_gateway = FakeLocalGateway()
         key = asyncio.run(auth_service.rotate_owner_key(auth_repo))
         assert (
             test_client.post(
@@ -118,7 +119,9 @@ def test_put_rejects_unknown_task_provider_and_effort(
     assert "llm_task_overrides" not in store.values  # nothing leaked
 
 
-def _authed_client(settings: Settings) -> tuple[TestClient, FakeSettingsStore]:
+def _authed_client(
+    settings: Settings, gateway: FakeLocalGateway | None = None
+) -> tuple[TestClient, FakeSettingsStore]:
     """A logged-in client over the given settings (the fixture pins defaults)."""
     app = create_app(settings)
     store = FakeSettingsStore()
@@ -126,6 +129,7 @@ def _authed_client(settings: Settings) -> tuple[TestClient, FakeSettingsStore]:
     c.__enter__()
     app.state.auth_repo = FakeAuthRepo()
     app.state.settings_store = store
+    app.state.local_gateway = gateway or FakeLocalGateway()
     key = asyncio.run(auth_service.rotate_owner_key(app.state.auth_repo))
     assert (
         c.post("/api/auth/session", json={"owner_key": key, "device_label": "t"}).status_code == 204
@@ -318,3 +322,62 @@ def test_get_surfaces_a_pinned_local_model_after_hosting_disabled() -> None:
     tasks = {t["id"]: t for t in c2.get("/api/settings/llm").json()["tasks"]}
     assert tasks["vision.ocr"]["provider"] == "local"  # bare spec half, off-menu
     assert tasks["vision.ocr"]["reasoning_effort"] is None
+
+
+def _local_settings() -> Settings:
+    return _cloud_settings(local_llm_enabled=True, local_models=["qwen3-vl-30b", "gpt-oss-120b"])
+
+
+def test_loaded_status_reflects_the_gateway() -> None:
+    # The gateway reports qwen's served_model resident; the drawer marks that
+    # catalog id loaded and everything else idle.
+    gw = FakeLocalGateway(running={"qwen3-vl-30b-a3b"})
+    c, _ = _authed_client(_local_settings(), gw)
+    by_id = {m["id"]: m for m in c.get("/api/settings/llm").json()["local_models"]}
+    assert by_id["qwen3-vl-30b"]["loaded"] is True
+    assert by_id["gpt-oss-120b"]["loaded"] is False
+
+
+def test_loaded_status_is_false_when_gateway_unreachable() -> None:
+    # FakeLocalGateway with empty running stands in for an unreachable/cold gateway
+    # — best-effort, the screen still renders with nothing loaded.
+    c, _ = _authed_client(_local_settings(), FakeLocalGateway())
+    assert all(not m["loaded"] for m in c.get("/api/settings/llm").json()["local_models"])
+
+
+def test_unload_evicts_the_model_and_returns_remaining_loaded() -> None:
+    gw = FakeLocalGateway(running={"qwen3-vl-30b-a3b", "gpt-oss-120b"})
+    c, _ = _authed_client(_local_settings(), gw)
+    resp = c.post("/api/settings/llm/local-models/qwen3-vl-30b/unload")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["reachable"] is True
+    assert body["loaded"] == ["gpt-oss-120b"]  # qwen evicted
+    assert gw.unloaded == ["qwen3-vl-30b-a3b"]  # called with the served_model
+
+
+def test_unload_unknown_or_unprovisioned_model_404() -> None:
+    c, _ = _authed_client(_local_settings(), FakeLocalGateway())
+    # Not a catalog id at all.
+    assert c.post("/api/settings/llm/local-models/nope/unload").status_code == 404
+    # A real catalog id that wasn't provisioned in this install.
+    assert c.post("/api/settings/llm/local-models/llama-3.3-70b/unload").status_code == 404
+
+
+def test_unload_when_hosting_disabled_409() -> None:
+    c, _ = _authed_client(_cloud_settings())  # local hosting off
+    assert c.post("/api/settings/llm/local-models/qwen3-vl-30b/unload").status_code == 409
+
+
+def test_unload_surfaces_a_gateway_failure_as_502() -> None:
+    gw = FakeLocalGateway(running={"qwen3-vl-30b-a3b"}, fail_unload=True)
+    c, _ = _authed_client(_local_settings(), gw)
+    assert c.post("/api/settings/llm/local-models/qwen3-vl-30b/unload").status_code == 502
+
+
+def test_unload_requires_auth() -> None:
+    app = create_app(_local_settings())
+    with TestClient(app) as anon:
+        app.state.auth_repo = FakeAuthRepo()
+        app.state.local_gateway = FakeLocalGateway()
+        assert anon.post("/api/settings/llm/local-models/qwen3-vl-30b/unload").status_code == 401

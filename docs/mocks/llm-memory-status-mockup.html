@@ -1,0 +1,295 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>LLM Settings — memory status mockup</title>
+<style>
+  :root{
+    --bg:#0e0f11; --surface:#17181b; --surface-2:#1e2024; --border:#26282c;
+    --text:#e6e7e9; --text-2:#9a9da3; --text-3:#5c5f66;
+    --steel:#7fa7c9; --green:#8fbc9a; --amber:#c9a36a; --rose:#cf8a8f; --violet:#a493c9;
+    --steel-tint:rgba(127,167,201,.13); --green-tint:rgba(143,188,154,.13);
+    --amber-tint:rgba(201,163,106,.13); --rose-tint:rgba(207,138,143,.13); --violet-tint:rgba(164,147,201,.13);
+    --r-input:12px; --r-card:16px; --r-pill:999px;
+    --fs-micro:12px; --fs-secondary:14px; --fs-body:16px; --fs-title:18px; --fs-screen:22px;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:#000;color:var(--text);
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;-webkit-font-smoothing:antialiased}
+  .phone{max-width:430px;margin:0 auto;min-height:100vh;background:var(--bg);
+    border-left:1px solid #000;border-right:1px solid #000}
+  .statusbar{display:flex;justify-content:space-between;align-items:center;
+    padding:10px 18px 4px;font-size:13px;color:var(--text);font-weight:600}
+  .statusbar .right{display:flex;gap:7px;align-items:center;font-weight:500;opacity:.9}
+  .nav{display:flex;align-items:center;gap:12px;padding:10px 16px 6px}
+  .nav .title{font-size:var(--fs-screen);font-weight:600;letter-spacing:.2px}
+  .nav .sp{margin-left:auto}
+  .nav .dot{width:9px;height:9px;border-radius:50%;background:var(--green);
+    box-shadow:0 0 0 4px var(--green-tint)}
+  .nav .glyph{color:var(--text-2)}
+  .hr{height:1px;background:var(--border);margin:8px 16px 12px}
+  .body{padding:0 14px 40px}
+  .intro{color:var(--text-2);font-size:var(--fs-secondary);line-height:1.5;margin:0 2px 14px}
+
+  /* ---- Local models drawer ---- */
+  .llm-local{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-card);
+    margin-bottom:14px;overflow:hidden}
+  .llm-local-toggle{width:100%;display:flex;align-items:center;gap:10px;background:transparent;border:0;
+    padding:14px 16px;font:inherit;color:var(--text);cursor:pointer;text-align:left}
+  .llm-local-dot{width:9px;height:9px;border-radius:var(--r-pill);background:var(--text-3);flex:none}
+  .llm-local-dot.on{background:var(--green);box-shadow:0 0 0 4px var(--green-tint);
+    animation:pulse 2.4s ease-in-out infinite}
+  @keyframes pulse{0%,100%{box-shadow:0 0 0 4px var(--green-tint)}50%{box-shadow:0 0 0 7px transparent}}
+  .llm-local-title{font-weight:500}
+  .llm-local-summary{margin-left:auto;font-size:var(--fs-micro);color:var(--text-2);text-align:right}
+  .llm-local-summary b{color:var(--green);font-weight:600}
+  .caret{transition:transform .2s;color:var(--text-3);margin-left:10px}
+  .caret.open{transform:rotate(90deg)}
+  .llm-local-body{padding:0 16px 10px;display:none}
+  .llm-local-body.open{display:block}
+
+  .meter{height:6px;border-radius:var(--r-pill);background:var(--surface-2);overflow:hidden;margin:4px 0 12px}
+  .meter > i{display:block;height:100%;background:linear-gradient(90deg,var(--green),var(--amber));
+    transition:width .5s ease}
+  .meter-cap{display:flex;justify-content:space-between;font-size:var(--fs-micro);color:var(--text-3);margin-bottom:8px}
+
+  .row{display:flex;align-items:center;gap:10px;padding:12px 0;border-top:1px solid var(--border)}
+  .row .name{font-size:var(--fs-body);font-weight:500;color:var(--text-2)}
+  .row.loaded .name{color:var(--text)}
+  .row .meta{display:block;font-size:var(--fs-micro);color:var(--text-3);margin-top:2px}
+  .grow{flex:1;min-width:0}
+  .chips{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
+  .chip{font-size:var(--fs-micro);padding:2px 8px;border-radius:var(--r-pill);font-weight:500}
+  .chip.vision{color:var(--violet);background:var(--violet-tint)}
+  .chip.reason{color:var(--amber);background:var(--amber-tint)}
+  .chip.tools{color:var(--steel);background:var(--steel-tint)}
+
+  .runtime{display:flex;align-items:center;gap:8px;margin-top:8px;font-size:var(--fs-micro)}
+  .stat{display:inline-flex;align-items:center;gap:6px;color:var(--text-3)}
+  .stat .d{width:7px;height:7px;border-radius:50%;background:var(--text-3)}
+  .stat.loaded{color:var(--green)}
+  .stat.loaded .d{background:var(--green);box-shadow:0 0 0 3px var(--green-tint)}
+  .stat.loading{color:var(--amber)}
+  .stat.loading .d{background:var(--amber);animation:blink .8s steps(2) infinite}
+  @keyframes blink{50%{opacity:.25}}
+  .stat .res{color:var(--text-2)}
+
+  .btn{margin-left:auto;font:inherit;font-size:var(--fs-micro);font-weight:600;cursor:pointer;
+    border-radius:var(--r-pill);padding:6px 14px;border:1px solid var(--border);
+    background:transparent;color:var(--text-2);transition:.15s}
+  .btn:hover{border-color:var(--rose);color:var(--rose);background:var(--rose-tint)}
+  .btn.load:hover{border-color:var(--green);color:var(--green);background:var(--green-tint)}
+  .btn:disabled{opacity:.4;cursor:default}
+  .btn.ghost{border-color:transparent;color:var(--text-3)}
+  .availtag{margin-left:auto;font-size:var(--fs-micro);color:var(--text-3)}
+
+  .hint{font-size:var(--fs-micro);color:var(--text-3);line-height:1.5;margin:10px 2px 2px}
+  .hint code{background:var(--surface-2);border:1px solid var(--border);border-radius:6px;padding:1px 6px}
+
+  /* ---- Tier cards ---- */
+  .tier{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-card);
+    overflow:hidden;margin-bottom:14px}
+  .tier .head{padding:14px 16px;border-left:3px solid var(--acc)}
+  .tier.high{--acc:var(--rose);--tint:var(--rose-tint)}
+  .tier.light{--acc:var(--green);--tint:var(--green-tint)}
+  .tier.vision{--acc:var(--amber);--tint:var(--amber-tint)}
+  .tname{font-size:var(--fs-title);font-weight:500;display:flex;align-items:center;gap:8px}
+  .badge{font-size:var(--fs-micro);color:var(--text-2);background:var(--surface-2);
+    border-radius:var(--r-pill);padding:2px 8px}
+  .tdesc{color:var(--text-2);font-size:var(--fs-secondary);margin:4px 0 0}
+  .ftag{display:block;font-size:var(--fs-micro);color:var(--text-3);letter-spacing:.6px;
+    text-transform:uppercase;margin:14px 0 6px}
+  .sel{width:100%;appearance:none;background:var(--surface-2);border:1px solid var(--border);
+    border-radius:var(--r-input);color:var(--text);font:inherit;font-size:var(--fs-body);
+    padding:13px 40px 13px 14px;cursor:pointer;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' fill='none' stroke='%239a9da3' stroke-width='1.6'%3E%3Cpath d='M4 6l4 4 4-4'/%3E%3C/svg%3E");
+    background-repeat:no-repeat;background-position:right 14px center}
+  .selwrap{display:flex;align-items:center;gap:8px}
+  .modeldot{width:8px;height:8px;border-radius:50%;flex:none;background:var(--text-3)}
+  .modeldot.on{background:var(--green);box-shadow:0 0 0 3px var(--green-tint)}
+  .note{color:var(--text-3);font-size:var(--fs-micro);margin:8px 0 0}
+  .pto{display:flex;justify-content:space-between;align-items:center;padding:12px 16px;
+    border-top:1px solid var(--border);color:var(--text-2);font-size:var(--fs-secondary)}
+
+  /* toast */
+  #toast{position:fixed;left:50%;bottom:28px;transform:translateX(-50%) translateY(20px);
+    background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r-pill);
+    padding:10px 18px;font-size:var(--fs-micro);color:var(--text);opacity:0;pointer-events:none;
+    transition:.25s;box-shadow:0 8px 28px rgba(0,0,0,.5);max-width:90%}
+  #toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+  .legend{margin:18px 2px 0;font-size:var(--fs-micro);color:var(--text-3);line-height:1.6}
+</style>
+</head>
+<body>
+<div class="phone">
+  <div class="statusbar"><span>9:41</span>
+    <span class="right">📶 &nbsp;🔋 92%</span></div>
+  <div class="nav">
+    <span class="glyph">‹</span>
+    <span class="title">LLM Settings</span>
+    <span class="sp"></span>
+    <span class="dot" title="connected"></span>
+    <span class="glyph">⚡</span>
+  </div>
+  <div class="hr"></div>
+
+  <div class="body">
+    <p class="intro">Tasks are grouped by role. Set the provider and reasoning once per tier; expand a tier to fine-tune individual tasks.</p>
+
+    <!-- ===== Local models drawer (NEW: memory status + unload) ===== -->
+    <section class="llm-local">
+      <button class="llm-local-toggle" id="drawerToggle">
+        <span class="llm-local-dot on" id="hdrDot"></span>
+        <span class="llm-local-title">Local models</span>
+        <span class="llm-local-summary" id="hdrSummary"></span>
+        <span class="caret open" id="caret">›</span>
+      </button>
+      <div class="llm-local-body open" id="drawerBody">
+        <div class="meter"><i id="meterFill"></i></div>
+        <div class="meter-cap"><span id="meterText"></span><span>128 GB unified memory</span></div>
+        <div id="rows"></div>
+        <p class="hint">Loaded models stay resident until unloaded or the gateway restarts. Provision more with <code>jbrain enable-local-models</code>.</p>
+      </div>
+    </section>
+
+    <!-- ===== Tier cards ===== -->
+    <section class="tier high">
+      <div class="head">
+        <div class="tname">High-stakes reasoning <span class="badge">4 tasks</span></div>
+        <p class="tdesc">The hard judgment calls — worth deeper thinking.</p>
+        <span class="ftag">Provider</span>
+        <div class="selwrap"><span class="modeldot on" id="dot-high"></span>
+          <select class="sel" data-tier="high">
+            <option>GPT-OSS 120B · reasoning</option>
+            <option>Qwen3-VL 30B · vision</option>
+          </select></div>
+        <span class="ftag">Reasoning</span>
+        <p class="note">Local models take no reasoning level.</p>
+      </div>
+      <div class="pto">Per-task overrides <span>›</span></div>
+    </section>
+
+    <section class="tier light">
+      <div class="head">
+        <div class="tname">Lightweight <span class="badge">3 tasks</span></div>
+        <p class="tdesc">Cheap, frequent extraction &amp; one-shots.</p>
+        <span class="ftag">Provider</span>
+        <div class="selwrap"><span class="modeldot on" id="dot-light"></span>
+          <select class="sel" data-tier="light">
+            <option>Qwen3-VL 30B · vision</option>
+            <option>GPT-OSS 120B · reasoning</option>
+          </select></div>
+        <span class="ftag">Reasoning</span>
+        <p class="note">Local models take no reasoning level.</p>
+      </div>
+      <div class="pto">Per-task overrides <span>›</span></div>
+    </section>
+
+    <section class="tier vision">
+      <div class="head">
+        <div class="tname">Vision <span class="badge">2 tasks</span></div>
+        <p class="tdesc">Anything that reads or describes images.</p>
+        <span class="ftag">Provider</span>
+        <div class="selwrap"><span class="modeldot on" id="dot-vision"></span>
+          <select class="sel" data-tier="vision">
+            <option>Qwen3-VL 30B · vision</option>
+          </select></div>
+        <span class="ftag">Reasoning</span>
+        <p class="note">Local models take no reasoning level.</p>
+      </div>
+      <div class="pto">Per-task overrides <span>›</span></div>
+    </section>
+
+    <p class="legend"><b>Mockup is interactive:</b> tap a tier header drawer to collapse it, tap <b>Unload</b> to free a model from memory (watch the meter + summary update), and tap <b>Load</b> on an idle model to simulate a cold-load. The tier model-dots go grey when their model is unloaded.</p>
+  </div>
+</div>
+<div id="toast"></div>
+
+<script>
+const TOTAL_GB = 128;
+// served_model is what the gateway/tiers reference; resident is GB in memory when loaded.
+const models = [
+  {id:"qwen3-vl-30b", served:"Qwen3-VL 30B", meta:"Q8_0 · 32 GB", chips:[["vision","vision"],["tools","tools"]],
+   enabled:true, state:"loaded", resident:31.2, up:"14m", tiers:["light","vision"]},
+  {id:"gpt-oss-120b", served:"GPT-OSS 120B", meta:"MXFP4 · 63 GB", chips:[["reason","reasoning"],["tools","tools"]],
+   enabled:true, state:"loaded", resident:61.0, up:"3m", tiers:["high"]},
+  {id:"glm-4.5-air", served:"GLM 4.5 Air", meta:"Q6_K · 96 GB", chips:[["reason","reasoning"],["tools","tools"]],
+   enabled:false, state:"available", resident:0, tiers:[]},
+  {id:"qwen3-30b-a3b", served:"Qwen3 30B A3B", meta:"Q8_0 · 32 GB", chips:[["reason","reasoning"],["tools","tools"]],
+   enabled:false, state:"available", resident:0, tiers:[]},
+  {id:"llama-3.3-70b", served:"Llama 3.3 70B", meta:"Q5_K_M · 50 GB", chips:[["tools","tools"]],
+   enabled:false, state:"available", resident:0, tiers:[]},
+];
+
+const $ = s => document.querySelector(s);
+const rowsEl = $("#rows");
+
+function residentTotal(){ return models.filter(m=>m.state==="loaded").reduce((a,m)=>a+m.resident,0); }
+function loadedCount(){ return models.filter(m=>m.state==="loaded").length; }
+function enabledCount(){ return models.filter(m=>m.enabled).length; }
+
+function toast(msg){ const t=$("#toast"); t.textContent=msg; t.classList.add("show");
+  clearTimeout(t._t); t._t=setTimeout(()=>t.classList.remove("show"),2200); }
+
+function syncHeader(){
+  const res = residentTotal();
+  $("#hdrSummary").innerHTML = `${enabledCount()} of ${models.length} enabled &nbsp;·&nbsp; <b>${loadedCount()} loaded</b> &nbsp;·&nbsp; ${res.toFixed(0)} GB`;
+  $("#meterFill").style.width = (res/TOTAL_GB*100).toFixed(1)+"%";
+  $("#meterText").textContent = `${res.toFixed(1)} GB resident`;
+  $("#hdrDot").classList.toggle("on", loadedCount()>0);
+  // tier model-dots reflect whether the tier's selected model is loaded
+  models.forEach(m=>m.tiers.forEach(t=>{
+    const d=$("#dot-"+t); if(d) d.classList.toggle("on", m.state==="loaded");
+  }));
+}
+
+function statusHTML(m){
+  if(m.state==="loaded") return `<span class="stat loaded"><span class="d"></span>loaded</span><span class="res">${m.resident.toFixed(1)} GB · up ${m.up}</span>`;
+  if(m.state==="loading") return `<span class="stat loading"><span class="d"></span>loading…</span>`;
+  if(m.enabled) return `<span class="stat"><span class="d"></span>idle</span>`;
+  return ``;
+}
+function actionHTML(m){
+  if(m.state==="loaded") return `<button class="btn" data-act="unload" data-id="${m.id}">Unload</button>`;
+  if(m.state==="loading") return `<button class="btn ghost" disabled>…</button>`;
+  if(m.enabled) return `<button class="btn load" data-act="load" data-id="${m.id}">Load</button>`;
+  return `<span class="availtag">available</span>`;
+}
+
+function render(){
+  rowsEl.innerHTML = models.map(m=>`
+    <div class="row ${m.state}" data-id="${m.id}">
+      <div class="grow">
+        <span class="name">${m.served}</span>
+        <span class="meta">${m.meta}</span>
+        <div class="chips">${m.chips.map(c=>`<span class="chip ${c[0]}">${c[1]}</span>`).join("")}</div>
+        <div class="runtime">${statusHTML(m)}</div>
+      </div>
+      ${actionHTML(m)}
+    </div>`).join("");
+  syncHeader();
+}
+
+rowsEl.addEventListener("click", e=>{
+  const b = e.target.closest("button[data-act]"); if(!b) return;
+  const m = models.find(x=>x.id===b.dataset.id);
+  if(b.dataset.act==="unload"){
+    const freed=m.resident; m.state="idle"; m.resident=0; m.up=null;
+    render(); toast(`Unloaded ${m.served} · freed ${freed.toFixed(1)} GB`);
+  } else if(b.dataset.act==="load"){
+    m.state="loading"; render();
+    setTimeout(()=>{ m.state="loaded"; m.resident=parseFloat(m.meta.match(/([\d.]+) GB/)[1])*0.97; m.up="0m";
+      render(); toast(`Loaded ${m.served} into memory`); }, 1600);
+  }
+});
+
+$("#drawerToggle").addEventListener("click", ()=>{
+  $("#drawerBody").classList.toggle("open");
+  $("#caret").classList.toggle("open");
+});
+
+render();
+</script>
+</body>
+</html>

@@ -45,6 +45,7 @@ function initialSettings(): LlmSettings {
         id: "qwen3-vl-30b",
         label: "Qwen3-VL 30B",
         enabled: false,
+        loaded: false,
         supports_vision: true,
         supports_tools: true,
         tiers: ["vision", "low"],
@@ -183,6 +184,7 @@ describe("LLMSettingsScreen", () => {
         id: "qwen3-vl-30b",
         label: "Qwen3-VL 30B",
         enabled: true,
+        loaded: false,
         supports_vision: true,
         supports_tools: true,
         tiers: ["vision", "low"],
@@ -194,6 +196,7 @@ describe("LLMSettingsScreen", () => {
         id: "gpt-oss-120b",
         label: "GPT-OSS 120B",
         enabled: false,
+        loaded: false,
         supports_vision: false,
         supports_tools: true,
         tiers: ["high"],
@@ -219,13 +222,70 @@ describe("LLMSettingsScreen", () => {
     fireEvent.click(toggle);
 
     expect(await screen.findByText("Qwen3-VL 30B")).toBeInTheDocument();
-    // The enabled one reads "enabled"; the other reads "available".
-    expect(screen.getByText("enabled")).toBeInTheDocument();
+    // Enabled-but-not-resident reads "idle"; the unprovisioned one "available".
+    expect(screen.getByText("idle")).toBeInTheDocument();
     expect(screen.getByText("available")).toBeInTheDocument();
     // The text reasoner shows a reasoning chip, not a vision chip.
     const gpt = screen.getByText("GPT-OSS 120B").closest(".llm-local-row") as HTMLElement;
     expect(within(gpt).getByText("reasoning")).toBeInTheDocument();
     expect(within(gpt).queryByText("vision")).not.toBeInTheDocument();
+  });
+
+  it("shows loaded models and unloads them from memory", async () => {
+    const s = initialSettings();
+    s.local_hosting_enabled = true;
+    s.local_models = [
+      {
+        id: "qwen3-vl-30b",
+        label: "Qwen3-VL 30B",
+        enabled: true,
+        loaded: true,
+        supports_vision: true,
+        supports_tools: true,
+        tiers: ["vision", "low"],
+        quant: "Q8_0",
+        size_gb: 32,
+        note: "",
+      },
+    ];
+    const calls: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>(async (input, init) => {
+        const path = String(input);
+        const method = (init?.method ?? "GET").toUpperCase();
+        if (path === "/api/settings/llm" && method === "GET")
+          return new Response(JSON.stringify(s), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
+        if (path.endsWith("/local-models/qwen3-vl-30b/unload") && method === "POST") {
+          calls.push(path);
+          const m0 = s.local_models[0];
+          if (m0) m0.loaded = false;
+          return new Response(JSON.stringify({ loaded: [], reachable: true }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        throw new Error(`unexpected fetch: ${method} ${path}`);
+      }),
+    );
+    render(<LLMSettingsScreen />);
+
+    const toggle = await screen.findByRole("button", { name: /Local models/i });
+    // Summary surfaces runtime state alongside config state.
+    expect(toggle).toHaveTextContent("1 loaded · 32 GB");
+    fireEvent.click(toggle);
+
+    // The resident model reads "loaded" and offers an Unload button.
+    expect(await screen.findByText("loaded")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Unload" }));
+
+    await waitFor(() => expect(calls).toHaveLength(1));
+    // After unload it flips to idle and the button is gone.
+    expect(await screen.findByText("idle")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Unload" })).not.toBeInTheDocument();
   });
 
   it("points at the CLI when local hosting is off", async () => {

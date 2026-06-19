@@ -136,6 +136,65 @@ export function LLMSettingsScreen() {
   // Which tiers have their per-task overrides expanded.
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [localOpen, setLocalOpen] = useState(false);
+  // Catalog ids with an unload request in flight (button shows a pending state).
+  const [unloading, setUnloading] = useState<Set<string>>(new Set());
+
+  // Live runtime state: while the drawer is open and hosting is on, refresh the
+  // loaded flags every few seconds. Merge ONLY local_models so a poll can't
+  // clobber an in-flight provider/reasoning edit.
+  const hostingEnabled = settings?.local_hosting_enabled ?? false;
+  useEffect(() => {
+    if (!localOpen || !hostingEnabled) return;
+    let stop = false;
+    const tick = () =>
+      api
+        .getLlmSettings()
+        .then((fresh) => {
+          if (stop) return;
+          setSettings((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  local_models: prev.local_models.map((m) => ({
+                    ...m,
+                    loaded: fresh.local_models.find((f) => f.id === m.id)?.loaded ?? m.loaded,
+                  })),
+                }
+              : prev,
+          );
+        })
+        .catch(() => {});
+    const id = setInterval(tick, 4000);
+    return () => {
+      stop = true;
+      clearInterval(id);
+    };
+  }, [localOpen, hostingEnabled]);
+
+  function unloadModel(id: string) {
+    setUnloading((s) => new Set(s).add(id));
+    api
+      .unloadLocalModel(id)
+      .then((res) => {
+        const loaded = new Set(res.loaded);
+        setSettings((prev) =>
+          prev
+            ? {
+                ...prev,
+                local_models: prev.local_models.map((m) => ({ ...m, loaded: loaded.has(m.id) })),
+              }
+            : prev,
+        );
+      })
+      .catch(() => {})
+      .finally(() =>
+        setUnloading((s) => {
+          const next = new Set(s);
+          next.delete(id);
+          return next;
+        }),
+      );
+  }
   // Sequence token so an earlier PUT's response can't clobber a later one (and a
   // response after unmount is ignored).
   const putSeq = useRef(0);
@@ -253,6 +312,8 @@ export function LLMSettingsScreen() {
         onToggle={() => setLocalOpen((v) => !v)}
         hostingEnabled={settings.local_hosting_enabled}
         models={settings.local_models}
+        unloading={unloading}
+        onUnload={unloadModel}
       />
 
       {groups.map((group) => {
@@ -439,16 +500,24 @@ function LocalModelsDrawer({
   onToggle,
   hostingEnabled,
   models,
+  unloading,
+  onUnload,
 }: {
   open: boolean;
   onToggle: () => void;
   hostingEnabled: boolean;
   models: LocalModelInfo[];
+  unloading: Set<string>;
+  onUnload: (id: string) => void;
 }) {
   const enabledCount = models.filter((m) => m.enabled).length;
-  const summary = !hostingEnabled ? "off" : `${enabledCount} of ${models.length} enabled`;
-  // Spell out hosting state for screen readers — the dot is decorative and the
-  // one-word summary ("off") is ambiguous on its own.
+  const loaded = models.filter((m) => m.loaded);
+  const residentGb = loaded.reduce((sum, m) => sum + m.size_gb, 0);
+  // Config state (enabled) and runtime state (loaded) read side by side, with the
+  // memory actually resident — the operator's two questions in one line.
+  const summary = !hostingEnabled
+    ? "off"
+    : `${enabledCount} of ${models.length} enabled · ${loaded.length} loaded · ${Math.round(residentGb)} GB`;
   const ariaLabel = `Local models — ${hostingEnabled ? `hosting on, ${summary}` : "hosting off"}`;
 
   return (
@@ -478,11 +547,15 @@ function LocalModelsDrawer({
             </p>
           )}
           {models.map((m) => (
-            <div key={m.id} className={`llm-local-row${m.enabled ? " on" : ""}`}>
+            <div
+              key={m.id}
+              className={`llm-local-row${m.enabled ? " on" : ""}${m.loaded ? " loaded" : ""}`}
+            >
               <div className="llm-local-name">
                 {m.label}
                 <span className="llm-local-meta">
                   {m.quant} · {m.size_gb} GB
+                  {m.loaded ? ` · ${m.size_gb} GB resident` : ""}
                 </span>
               </div>
               <div className="llm-local-chips">
@@ -492,8 +565,18 @@ function LocalModelsDrawer({
                   </span>
                 ))}
               </div>
-              <span className={`llm-local-state${m.enabled ? " on" : ""}`}>
-                {m.enabled ? "enabled" : "available"}
+              {m.loaded ? (
+                <button
+                  type="button"
+                  className="llm-local-unload"
+                  disabled={unloading.has(m.id)}
+                  onClick={() => onUnload(m.id)}
+                >
+                  {unloading.has(m.id) ? "unloading…" : "Unload"}
+                </button>
+              ) : null}
+              <span className={`llm-local-state${m.loaded ? " on" : ""}`}>
+                {m.loaded ? "loaded" : m.enabled ? "idle" : "available"}
               </span>
             </div>
           ))}

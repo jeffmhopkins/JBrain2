@@ -65,6 +65,7 @@ from jbrain.embed import TeiEmbedClient
 from jbrain.geocode import PhotonGeocoderClient
 from jbrain.lists.repo import SqlListsRepo
 from jbrain.llm import build_router
+from jbrain.llm.local_gateway import LocalGatewayClient
 from jbrain.locations import SqlLocationRepo
 from jbrain.locations.live import LiveBroadcaster, live_feeder
 from jbrain.locations.pairing import SqlPairingRepo
@@ -192,6 +193,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.embed_client = TeiEmbedClient(settings.embed_url)
         settings_store = SqlSettingsStore(maker)
         app.state.settings_store = settings_store
+        # Admin client for the local-model gateway (runtime loaded-state + unload).
+        # Best-effort; the settings screen tolerates it being unreachable.
+        app.state.local_gateway = LocalGatewayClient(settings.local_llm_url)
         # Any API-side LLM call must flow through this router so its tokens
         # land in app.llm_usage like the worker's do. The overrides loader reads
         # the live per-task routing/reasoning settings (SYSTEM_CTX owner session)

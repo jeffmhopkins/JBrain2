@@ -983,11 +983,35 @@ h3 {
 .llm-local-state {
   font-size: var(--fs-micro);
   color: var(--text-3);
-  min-width: 64px;
+  min-width: 56px;
   text-align: right;
 }
 .llm-local-state.on {
   color: var(--green);
+}
+/* Unload: evict a resident model from the gateway's memory. Hairline pill that
+   tips to the danger accent on hover — destructive but reversible (it reloads on
+   next use). */
+.llm-local-unload {
+  font: inherit;
+  font-size: var(--fs-micro);
+  font-weight: 500;
+  cursor: pointer;
+  border-radius: var(--r-pill);
+  padding: 5px 12px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-2);
+  transition: 0.15s;
+}
+.llm-local-unload:hover:not(:disabled) {
+  border-color: var(--rose);
+  color: var(--rose);
+  background: var(--rose-tint);
+}
+.llm-local-unload:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 .llm-local-row.on .llm-local-name {
   color: var(--text);
