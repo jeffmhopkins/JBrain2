@@ -5655,6 +5655,9 @@ button.small {
 }
 .fb-shell .bubble.ai {
   align-self: flex-start;
+  /* The assistant answer (prose, code, tool views) may use the full column width;
+     only the owner's own bubble stays inset at the base 80%. */
+  max-width: 100%;
   background: var(--surface);
   border: 1px solid var(--border);
   border-bottom-left-radius: 5px;
