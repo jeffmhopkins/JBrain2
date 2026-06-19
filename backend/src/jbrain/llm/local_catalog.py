@@ -88,6 +88,22 @@ CATALOG: tuple[LocalModel, ...] = (
         note="Strongest open reasoning that still runs fast here (~31 t/s).",
     ),
     LocalModel(
+        id="qwen3-next-80b-a3b",
+        label="Qwen3-Next 80B · reasoning (alt)",
+        served_model="qwen3-next-80b-a3b",
+        tiers=("high",),
+        supports_vision=False,
+        supports_tools=True,
+        recommended=False,
+        hf_repo="unsloth/Qwen3-Next-80B-A3B-Instruct-GGUF",
+        gguf_include="*UD-Q4_K_XL*.gguf",
+        mmproj_include=None,
+        quant="UD-Q4_K_XL",
+        size_gb=46.1,
+        note="80B MoE, 3B active — ~59 t/s, fits resident beside gpt-oss-120b. "
+        "Hybrid-attention arch: confirm the gateway's llama.cpp build supports it.",
+    ),
+    LocalModel(
         id="glm-4.5-air",
         label="GLM-4.5 Air · reasoning (alt)",
         served_model="glm-4.5-air",
