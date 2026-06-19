@@ -160,6 +160,38 @@ def test_put_routes_a_task_to_an_enabled_local_model() -> None:
     assert stored["vision.ocr"] == {"spec": "local:qwen3-vl-30b-a3b"}
 
 
+def test_put_accepts_non_grok_provider_without_reasoning_effort() -> None:
+    # The screen sends just `{provider}` for non-reasoning providers (local
+    # models, Claude) — no reasoning_effort. The request model must accept that;
+    # requiring the field 422s every non-grok save before the handler runs.
+    settings = Settings(
+        secure_cookies=False,
+        database_url="postgresql+asyncpg://nobody@localhost:1/none",
+        local_llm_enabled=True,
+        local_models=["qwen3-vl-30b"],
+    )
+    c, store = _authed_client(settings)
+    # Local model with no effort (exactly the frontend's wire shape).
+    resp = c.put("/api/settings/llm", json={"tasks": {"agent.turn": {"provider": "qwen3-vl-30b"}}})
+    assert resp.status_code == 200, resp.text
+    stored = cast(dict[str, object], store.values["llm_task_overrides"])
+    assert stored["agent.turn"] == {"spec": "local:qwen3-vl-30b-a3b"}
+    # Claude with no effort persists too (the other non-grok provider).
+    assert (
+        c.put(
+            "/api/settings/llm", json={"tasks": {"note.extract": {"provider": "claude"}}}
+        ).status_code
+        == 200
+    )
+    # Grok with no effort falls back to the default rather than storing null.
+    assert (
+        c.put("/api/settings/llm", json={"tasks": {"agent.turn": {"provider": "grok"}}}).status_code
+        == 200
+    )
+    stored = cast(dict[str, object], store.values["llm_task_overrides"])
+    assert stored["agent.turn"] == {"spec": "xai:grok-4.3", "reasoning_effort": "low"}
+
+
 def test_drawer_catalog_present_with_enabled_flags() -> None:
     # Off by default: the catalog still ships (so the drawer can show what's
     # available) but nothing is enabled.

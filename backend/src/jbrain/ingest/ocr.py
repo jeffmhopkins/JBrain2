@@ -36,6 +36,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from jbrain import queue
 from jbrain.db.session import SessionContext, scoped_session
+from jbrain.ingest.imageprep import downscale_for_vision
 from jbrain.llm import LlmImage, LlmRouter
 from jbrain.llm.promptfile import load_prompt
 from jbrain.models.notes import Attachment, AttachmentExtract, Note
@@ -184,6 +185,9 @@ class OcrPipeline:
             return
 
         data = await self._blobs.get(sha256)
+        # Downscale oversized images so the vision model isn't handed thousands of
+        # image tokens (slow + context overflow — the OCR timeout/retry loop).
+        data, media_type = downscale_for_vision(data, media_type)
         image = LlmImage(media_type=media_type, data=base64.b64encode(data).decode("ascii"))
         rows: list[AttachmentExtract] = []
         if "ocr" in run_kinds:

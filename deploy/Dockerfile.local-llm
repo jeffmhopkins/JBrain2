@@ -20,6 +20,11 @@
 # This image is built only when the operator enables local hosting; it is never
 # part of the default stack.
 
+# Declared in the global scope (before the first FROM) so it is visible to the
+# runtime FROM below; an ARG declared after a FROM is scoped to that stage and
+# the later FROM would resolve it to blank.
+ARG LOCAL_LLM_BASE=docker.io/kyuz0/amd-strix-halo-toolboxes:vulkan-radv
+
 # Build llama-swap (pure-Go) in a throwaway stage so we don't need a toolchain
 # in the runtime image. PIN LLAMA_SWAP_VERSION to a tag (e.g. v167) for a
 # reproducible build.
@@ -28,7 +33,6 @@ ENV GOTOOLCHAIN=auto
 ARG LLAMA_SWAP_VERSION=latest
 RUN GOBIN=/out go install "github.com/mostlygeek/llama-swap@${LLAMA_SWAP_VERSION}"
 
-ARG LOCAL_LLM_BASE=docker.io/kyuz0/amd-strix-halo-toolboxes:vulkan-radv
 FROM ${LOCAL_LLM_BASE}
 
 # llama-swap is a static Go binary — drops in next to the image's llama-server
