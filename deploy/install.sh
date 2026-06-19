@@ -33,7 +33,7 @@ if ! command -v python3 >/dev/null 2>&1; then
 fi
 
 say "Setting up $INSTALL_DIR"
-mkdir -p "$INSTALL_DIR/backups" "$INSTALL_DIR/db-init"
+mkdir -p "$INSTALL_DIR/backups" "$INSTALL_DIR/db-init" "$INSTALL_DIR/searxng"
 
 if [ ! -d "$INSTALL_DIR/src/.git" ]; then
   if [ -n "$SRC_DIR" ] && [ -f "$SRC_DIR/install.sh" ] && [ -d "$SRC_DIR/../.git" ]; then
@@ -51,6 +51,13 @@ for f in docker-compose.yml jbrain backup.sh restore.sh; do
   cp "src/deploy/$f" "$f"
 done
 cp src/deploy/db-init/01-app-role.sh db-init/
+# The SearXNG settings live in a host file because compose bind-mounts it
+# writable (the image injects $SEARXNG_SECRET into it at boot) and it enables
+# the JSON format the web_search tool needs. Without this copy the bind source
+# is missing, Docker creates an empty dir in its place, SearXNG falls back to
+# its HTML-only defaults, and /search?format=json answers 403 — jerv then
+# reports web search as unavailable.
+cp src/deploy/searxng/settings.yml searxng/settings.yml
 chmod +x jbrain backup.sh restore.sh db-init/01-app-role.sh
 ln -sf "$INSTALL_DIR/jbrain" /usr/local/bin/jbrain
 
@@ -104,6 +111,13 @@ EOF
   chmod 600 .env
 else
   say "Existing .env found — keeping current configuration and secrets"
+  # Backfill SEARXNG_SECRET for installs that predate the web-search service:
+  # SearXNG refuses to start without one, which would leave web_search reporting
+  # the service as unavailable. Append only when absent so existing secrets stand.
+  if ! grep -q '^SEARXNG_SECRET=' .env; then
+    say "Adding SEARXNG_SECRET for web search"
+    printf 'SEARXNG_SECRET=%s\n' "$(openssl rand -hex 32)" >> .env
+  fi
 fi
 
 # Bring up the opt-in tunnel connector when the operator chose it. Read from
