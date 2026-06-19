@@ -32,6 +32,14 @@ describe("Launcher tile navigation", () => {
     fireEvent.click(screen.getByRole("button", { name: "Ops" }));
     expect(onNavigate).toHaveBeenCalledWith("ops");
   });
+
+  it("routes the Data card to its launcher screen", () => {
+    const onNavigate = vi.fn();
+    render(<Launcher open onClose={() => {}} onNavigate={onNavigate} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Data" }));
+    expect(onNavigate).toHaveBeenCalledWith("data");
+  });
 });
 
 // Any close — X/grab, swipe-down, Escape, or the platform back gesture — clears

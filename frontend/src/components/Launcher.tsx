@@ -9,6 +9,7 @@ import {
   BotIcon,
   CalendarIcon,
   CheckSquareIcon,
+  DatabaseIcon,
   FlaskIcon,
   GaugeIcon,
   GraphIcon,
@@ -24,6 +25,7 @@ import {
 export type LauncherTarget =
   | "ops"
   | "automations"
+  | "data"
   | "settings"
   | "llm-settings"
   | "search"
@@ -73,6 +75,7 @@ const SECTIONS: Section[] = [
     tiles: [
       { title: "Ops", icon: <GaugeIcon size={24} />, target: "ops" },
       { title: "Workflow", icon: <ZapIcon size={24} />, target: "automations" },
+      { title: "Data", icon: <DatabaseIcon size={24} />, target: "data" },
       { title: "Settings", icon: <SettingsIcon size={24} />, target: "settings" },
       { title: "LLM", icon: <BotIcon size={24} />, target: "llm-settings" },
     ],

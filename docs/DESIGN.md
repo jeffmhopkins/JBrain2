@@ -188,11 +188,28 @@ graph, facts, review items, analyses) and empties the blob volume while
 auth/identity, domains, and llm_usage telemetry survive; the worker
 restarts and success offers **Reload app**.
 Progress is phased text + the one-shot's log tail, matching the update
-card — no fake progress bars. **The Data card is leaving the Ops screen**
-(the Ops B3 redesign below): its behavior is unchanged but it becomes its
-own card-launcher destination. The `DataCard` component already lives
-standalone (`frontend/src/screens/DataCard.tsx`) ready to drop in; the
-launcher screen itself gets its own variant review before it ships.
+card — no fake progress bars. **The Data flows now live on their own
+card-launcher screen, not Ops** — see "Data screen" below; the behavior
+(one-shots, tap-again confirms, reload-on-done) is unchanged.
+
+**Data screen** (settled in a three-way review — reference mock
+`docs/mocks/data-screen/data-c-segmented-tasks.html`; rivals A "action
+list" and B "status dashboard"). The export / import / reset flows, lifted
+off the Ops screen in the B3 redesign, get their own **card-launcher
+destination** (a Data tile under SYSTEM; `DataScreen`). Chosen **C —
+segmented tasks**: a **Backup · Restore · Reset** segmented control shows
+**one focused task at a time**, the active segment taking that task's accent
+(backup = steel, restore = amber, reset = rose, via the shared `.seg-on`
+`--mode`/`--mode-tint`). Each panel is a guided surface — a task lead
+(icon + one-line intent), then either an at-a-glance **summary** (Backup
+shows live db size / notes·files / blob footprint from ops metrics; Reset
+lists what it erases vs. keeps) or **numbered steps** (Restore), then a
+single primary action. The destructive paths keep their settled
+confirmations: Restore arms a rose "Tap again — current data is
+overwritten"; Reset arms "Tap again — erases ALL notes and data" (3s
+auto-disarm). C won for putting the dangerous actions behind a deliberate
+tab rather than one long scroll of buttons (A) and for not leaning on a
+"last backup" freshness signal the backend doesn't track (B).
 
 **Ops screen — collapsible System + role groups (settled in a B-variant
 review; reference mock `docs/mocks/ops-redesign/ops-redesign-b3-system-open.html`,

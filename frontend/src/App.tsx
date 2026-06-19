@@ -9,6 +9,7 @@ import { useNoteActions } from "./notes/useNoteActions";
 import { type StreamAttachment, type StreamItem, useNotes } from "./notes/useNotes";
 import { AutomationsScreen } from "./screens/AutomationsScreen";
 import { CalendarScreen } from "./screens/CalendarScreen";
+import { DataScreen } from "./screens/DataScreen";
 import { EntityListScreen } from "./screens/EntityListScreen";
 import { EntityScreen } from "./screens/EntityScreen";
 import { GraphScreen } from "./screens/GraphScreen";
@@ -42,6 +43,7 @@ type Session =
 type Card =
   | "ops"
   | "automations"
+  | "data"
   | "settings"
   | "llm-settings"
   | "search"
@@ -58,6 +60,7 @@ type Card =
 // here. Every Card that uses the wrapper needs a title.
 const SCREEN_TITLES: Record<Exclude<Card, "automations">, string> = {
   ops: "Ops",
+  data: "Data",
   settings: "Settings",
   "llm-settings": "LLM Settings",
   search: "Search",
@@ -435,6 +438,7 @@ export function App() {
             <SettingsScreen deviceLabel={session.principal.label} onLogout={() => void logout()} />
           )}
           {card === "llm-settings" && <LLMSettingsScreen />}
+          {card === "data" && <DataScreen />}
           {card === "search" && (
             <SearchScreen onOpenResult={openNoteFromSearch} onOpenWiki={setWikiArticle} />
           )}
