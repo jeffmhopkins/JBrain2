@@ -105,7 +105,8 @@ PY
 # rest. Paths are the gateway-container view (./local-models is mounted at
 # /models). `${PORT}` is llama-swap's per-model upstream-port macro.
 say "Writing $MODELS_DIR/llama-swap.yaml"
-MANIFEST="$MANIFEST" MODELS_DIR="$MODELS_DIR" python3 <<'PY'
+MANIFEST="$MANIFEST" MODELS_DIR="$MODELS_DIR" \
+  LOCAL_LLM_RESIDENT_GROUP="${LOCAL_LLM_RESIDENT_GROUP:-}" python3 <<'PY'
 import glob, json, os, sys
 
 models = json.loads(os.environ["MANIFEST"])
@@ -161,12 +162,16 @@ for i, m in enumerate(models):
     lines.append("    cmd: >")
     lines.append("      " + " ".join(cmd))
 
-# llama-swap swaps models by default (one at a time). Keep the recommended set
-# loaded concurrently via a non-swapping group so the hot paths (vision + the
-# reasoner) never pay a cold-load on every task switch; non-recommended models
-# stay swappable. Only meaningful with >1 resident model, but harmless with one.
+# llama-swap swaps models by default (one at a time). A non-swapping group can
+# keep the recommended set loaded concurrently so hot paths (vision + reasoner)
+# skip the cold-load on each task switch — but co-residency is still under test,
+# so it is OFF by default: set LOCAL_LLM_RESIDENT_GROUP=1 to opt in. Without it,
+# every model stays swappable.
+resident_group = os.environ.get("LOCAL_LLM_RESIDENT_GROUP", "").strip().lower() in (
+    "1", "true", "yes", "on",
+)
 resident = [m["served_model"] for m in models if m.get("recommended")]
-if len(resident) > 1:
+if resident_group and len(resident) > 1:
     lines.append("groups:")
     lines.append("  resident:")
     lines.append("    swap: false")      # members run concurrently, never unload each other
@@ -176,7 +181,8 @@ if len(resident) > 1:
 
 with open(os.path.join(root, "llama-swap.yaml"), "w") as f:
     f.write("\n".join(lines) + "\n")
-print(f"resolved {len(models)} model(s); {len(resident)} kept resident")
+kept = len(resident) if (resident_group and len(resident) > 1) else 0
+print(f"resolved {len(models)} model(s); {kept} kept resident (all swappable otherwise)")
 PY
 
 # The gateway container must join the HOST's video/render group GIDs to open
