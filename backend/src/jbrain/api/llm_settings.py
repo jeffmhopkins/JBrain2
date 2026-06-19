@@ -16,8 +16,10 @@ from jbrain.api.deps import PrincipalDep, SettingsDep
 from jbrain.api.notes import ctx_for
 from jbrain.config import Settings
 from jbrain.db.session import SessionContext
+from jbrain.host_metrics import read_memory_gb
 from jbrain.llm import local_catalog
 from jbrain.llm.errors import LlmError
+from jbrain.llm.local_gateway import LocalGatewayClient, LocalGatewayError
 from jbrain.llm.providers import (
     REASONING_DEFAULT,
     REASONING_EFFORTS,
@@ -55,6 +57,24 @@ def get_settings_store(request: Request) -> SqlSettingsStore:
 SettingsStoreDep = Annotated[SqlSettingsStore, Depends(get_settings_store)]
 
 
+def get_local_gateway(request: Request) -> LocalGatewayClient:
+    return cast(LocalGatewayClient, request.app.state.local_gateway)
+
+
+LocalGatewayDep = Annotated[LocalGatewayClient, Depends(get_local_gateway)]
+
+# served_model (what the gateway reports/loads) ↔ catalog id (what the screen uses).
+_SERVED_TO_ID = {m.served_model: m.id for m in local_catalog.CATALOG}
+
+
+async def _loaded_ids(settings: Settings, gateway: LocalGatewayClient) -> set[str]:
+    """Catalog ids currently resident in the gateway. Empty when hosting is off or
+    the gateway is unreachable — runtime state never blocks the settings screen."""
+    if not settings.local_llm_enabled:
+        return set()
+    return {_SERVED_TO_ID[s] for s in await gateway.running() if s in _SERVED_TO_ID}
+
+
 class ProviderInfo(BaseModel):
     id: str
     label: str
@@ -80,12 +100,31 @@ class LocalModelInfo(BaseModel):
     id: str
     label: str
     enabled: bool
+    # Runtime state from the gateway (best-effort): True when resident in memory.
+    # Always False when hosting is off or the gateway can't be reached.
+    loaded: bool
     supports_vision: bool
     supports_tools: bool
     tiers: list[str]
     quant: str
     size_gb: float
     note: str
+
+
+class LoadedModelsOut(BaseModel):
+    """Result of an unload (and the shape the screen polls): the catalog ids still
+    resident, plus whether the gateway answered at all."""
+
+    loaded: list[str]
+    reachable: bool
+
+
+class HostMemory(BaseModel):
+    """Unified-memory gauge for the drawer's meter (None off Linux). On Strix Halo
+    the iGPU shares system RAM, so this is the real headroom for loading models."""
+
+    total_gb: float
+    used_gb: float
 
 
 class LlmSettingsOut(BaseModel):
@@ -97,6 +136,8 @@ class LlmSettingsOut(BaseModel):
     # an operator can see what they could provision (via the install/CLI path).
     local_hosting_enabled: bool
     local_models: list[LocalModelInfo]
+    # Live host memory for the drawer meter; None when hosting is off or off-Linux.
+    host_memory: HostMemory | None = None
 
 
 class TaskOverrideIn(BaseModel):
@@ -141,9 +182,13 @@ def _effective(settings: Settings, task: str, overrides: dict[str, dict[str, str
 
 
 async def _snapshot(
-    settings: Settings, store: SqlSettingsStore, ctx: SessionContext
+    settings: Settings,
+    store: SqlSettingsStore,
+    ctx: SessionContext,
+    gateway: LocalGatewayClient,
 ) -> LlmSettingsOut:
     overrides = await store.llm_task_overrides(ctx)
+    loaded = await _loaded_ids(settings, gateway)
     return LlmSettingsOut(
         providers=[
             ProviderInfo(
@@ -158,16 +203,34 @@ async def _snapshot(
         reasoning_default=REASONING_DEFAULT,
         tasks=[_effective(settings, task, overrides) for task in TASK_DEFAULTS],
         local_hosting_enabled=settings.local_llm_enabled,
-        local_models=[_local_model_info(settings, m) for m in local_catalog.CATALOG],
+        local_models=[
+            _local_model_info(settings, m, m.id in loaded) for m in local_catalog.CATALOG
+        ],
+        host_memory=_host_memory(settings),
     )
 
 
-def _local_model_info(settings: Settings, m: local_catalog.LocalModel) -> LocalModelInfo:
+def _host_memory(settings: Settings) -> HostMemory | None:
+    """Live unified-memory reading — only when hosting is on (it drives the drawer
+    meter); None off-Linux or when /proc/meminfo can't be read."""
+    if not settings.local_llm_enabled:
+        return None
+    mem = read_memory_gb()
+    if mem is None:
+        return None
+    total, used = mem
+    return HostMemory(total_gb=total, used_gb=used)
+
+
+def _local_model_info(
+    settings: Settings, m: local_catalog.LocalModel, loaded: bool
+) -> LocalModelInfo:
     enabled = settings.local_llm_enabled and m.id in settings.local_models
     return LocalModelInfo(
         id=m.id,
         label=m.label,
         enabled=enabled,
+        loaded=loaded,
         supports_vision=m.supports_vision,
         supports_tools=m.supports_tools,
         tiers=list(m.tiers),
@@ -179,9 +242,35 @@ def _local_model_info(settings: Settings, m: local_catalog.LocalModel) -> LocalM
 
 @router.get("/settings/llm")
 async def read_llm_settings(
-    principal: PrincipalDep, settings: SettingsDep, store: SettingsStoreDep
+    principal: PrincipalDep,
+    settings: SettingsDep,
+    store: SettingsStoreDep,
+    gateway: LocalGatewayDep,
 ) -> LlmSettingsOut:
-    return await _snapshot(settings, store, ctx_for(principal))
+    return await _snapshot(settings, store, ctx_for(principal), gateway)
+
+
+@router.post("/settings/llm/local-models/{model_id}/unload")
+async def unload_local_model(
+    model_id: str,
+    principal: PrincipalDep,
+    settings: SettingsDep,
+    gateway: LocalGatewayDep,
+) -> LoadedModelsOut:
+    """Evict one resident model from the gateway's memory. 404 for a model that
+    isn't a provisioned catalog id; 409 when hosting is off; 502 if the gateway
+    rejects or can't be reached."""
+    if not settings.local_llm_enabled:
+        raise HTTPException(status_code=409, detail="local hosting is not enabled")
+    model = local_catalog.get(model_id)
+    if model is None or model_id not in settings.local_models:
+        raise HTTPException(status_code=404, detail=f"unknown or unprovisioned model: {model_id}")
+    try:
+        await gateway.unload(model.served_model)
+    except LocalGatewayError as exc:
+        raise HTTPException(status_code=502, detail=f"gateway unload failed: {exc}") from exc
+    loaded = await _loaded_ids(settings, gateway)
+    return LoadedModelsOut(loaded=sorted(loaded), reachable=True)
 
 
 @router.put("/settings/llm")
@@ -190,6 +279,7 @@ async def update_llm_settings(
     principal: PrincipalDep,
     settings: SettingsDep,
     store: SettingsStoreDep,
+    gateway: LocalGatewayDep,
 ) -> LlmSettingsOut:
     ctx = ctx_for(principal)
     for task in body.tasks:
@@ -217,4 +307,4 @@ async def update_llm_settings(
             entry["reasoning_effort"] = choice.reasoning_effort or REASONING_DEFAULT
         overrides[task] = entry
     await store.upsert(ctx, LLM_TASK_OVERRIDES_KEY, overrides)
-    return await _snapshot(settings, store, ctx)
+    return await _snapshot(settings, store, ctx, gateway)

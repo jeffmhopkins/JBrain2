@@ -284,6 +284,7 @@ const LLM_SETTINGS: LlmSettings = {
       id: "qwen3-vl-30b",
       label: "Qwen3-VL 30B · vision",
       enabled: false,
+      loaded: false,
       supports_vision: true,
       supports_tools: true,
       tiers: ["vision", "low"],
@@ -295,6 +296,7 @@ const LLM_SETTINGS: LlmSettings = {
       id: "gpt-oss-120b",
       label: "GPT-OSS 120B · reasoning",
       enabled: false,
+      loaded: false,
       supports_vision: false,
       supports_tools: true,
       tiers: ["high"],
@@ -303,6 +305,7 @@ const LLM_SETTINGS: LlmSettings = {
       note: "Strongest open reasoning that still runs fast here.",
     },
   ],
+  host_memory: null,
 };
 
 // Apply one task patch like the backend would: grok keeps/sets a reasoning
@@ -2450,6 +2453,16 @@ export const mockFetch: typeof fetch = async (input, init) => {
     };
     for (const [taskId, patch] of Object.entries(body.tasks)) applyLlmPatch(taskId, patch);
     return json(LLM_SETTINGS);
+  }
+  const unloadMatch = path.match(/^\/api\/settings\/llm\/local-models\/(.+)\/unload$/);
+  if (unloadMatch && method === "POST") {
+    const id = decodeURIComponent(unloadMatch[1] ?? "");
+    const model = LLM_SETTINGS.local_models.find((m) => m.id === id);
+    if (model) model.loaded = false;
+    return json({
+      loaded: LLM_SETTINGS.local_models.filter((m) => m.loaded).map((m) => m.id),
+      reachable: true,
+    });
   }
 
   const blobMatch = path.match(/^\/api\/attachments\/([^/]+)$/);

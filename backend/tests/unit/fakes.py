@@ -197,3 +197,23 @@ class FakeSettingsStore:
             if sane:
                 clean[task] = sane
         return clean
+
+
+class FakeLocalGateway:
+    """In-memory stand-in for the llama-swap admin client (LocalGatewayClient)."""
+
+    def __init__(self, running: set[str] | None = None, *, fail_unload: bool = False) -> None:
+        self._running = set(running or ())
+        self.fail_unload = fail_unload
+        self.unloaded: list[str] = []
+
+    async def running(self) -> set[str]:
+        return set(self._running)
+
+    async def unload(self, served_model: str) -> None:
+        from jbrain.llm.local_gateway import LocalGatewayError
+
+        if self.fail_unload:
+            raise LocalGatewayError("simulated gateway failure")
+        self.unloaded.append(served_model)
+        self._running.discard(served_model)
