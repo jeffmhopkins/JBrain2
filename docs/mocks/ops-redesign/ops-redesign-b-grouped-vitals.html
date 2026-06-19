@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Ops redesign — B · grouped vitals</title>
+<style>
+  :root{
+    --bg:#0e0f11; --surface:#17181b; --surface-2:#1e2024; --border:#26282c;
+    --text:#e6e7e9; --text-2:#9a9da3; --text-3:#5c5f66;
+    --steel:#7fa7c9; --green:#8fbc9a; --amber:#c9a36a; --rose:#cf8a8f; --violet:#a493c9;
+    --steel-tint:rgba(127,167,201,.13); --green-tint:rgba(143,188,154,.13);
+    --amber-tint:rgba(201,163,106,.13); --rose-tint:rgba(207,138,143,.13); --violet-tint:rgba(164,147,201,.13);
+    --r-input:12px; --r-seg:14px; --r-card:16px; --r-pill:999px;
+    --fs-micro:12px; --fs-head:13px; --fs-secondary:14px; --fs-body:16px; --fs-title:18px; --fs-screen:22px;
+    --mono:ui-monospace,"SF Mono","Cascadia Mono",Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:#000;color:var(--text);
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;-webkit-font-smoothing:antialiased}
+  .phone{max-width:430px;margin:0 auto;min-height:100vh;background:var(--bg);
+    border-left:1px solid #000;border-right:1px solid #000}
+  .statusbar{display:flex;justify-content:space-between;align-items:center;
+    padding:10px 18px 4px;font-size:13px;color:var(--text);font-weight:600}
+  .statusbar .right{display:flex;gap:7px;align-items:center;font-weight:500;opacity:.9}
+  .nav{display:flex;align-items:center;gap:10px;padding:8px 16px 4px}
+  .nav .glyph{color:var(--text-2);font-size:20px}
+  .nav .title{font-size:var(--fs-screen);font-weight:600}
+  .nav .sp{margin-left:auto}
+  .nav .dot{width:9px;height:9px;border-radius:50%;background:var(--green);box-shadow:0 0 0 4px var(--green-tint)}
+  .body{padding:8px 14px 56px}
+
+  .toprow{display:flex;gap:8px;margin-bottom:12px}
+  .ibtn{flex:1;font:inherit;font-size:var(--fs-micro);font-weight:600;cursor:pointer;border-radius:var(--r-pill);
+    padding:9px 12px;border:1px solid var(--border);background:var(--surface-2);color:var(--text-2);transition:.15s}
+  .ibtn:hover{color:var(--text)}
+  .ibtn.danger{color:var(--rose);background:var(--rose-tint);border-color:transparent}
+
+  /* unified vitals card */
+  .vitals{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-card);
+    padding:6px 14px;margin-bottom:14px}
+  .vrow{display:flex;align-items:center;gap:12px;padding:12px 0;border-top:1px solid var(--border)}
+  .vrow:first-child{border-top:0}
+  .vrow .vk{width:74px;flex:none;font-size:var(--fs-secondary);font-weight:600}
+  .vrow .vmid{flex:1;min-width:0}
+  .vrow .vv{font-size:var(--fs-secondary);color:var(--text);font-variant-numeric:tabular-nums}
+  .vrow .vv small{color:var(--text-2)}
+  .vrow .sub{font-size:var(--fs-micro);color:var(--text-3);margin-top:3px}
+  .meter{height:6px;border-radius:var(--r-pill);background:var(--surface-2);overflow:hidden;margin-top:7px;max-width:180px}
+  .meter > i{display:block;height:100%;background:var(--green);transition:width .5s}
+  .meter.warn>i{background:var(--amber)} .meter.bad>i{background:var(--rose)}
+  .vrow .vend{margin-left:auto;text-align:right;font-size:var(--fs-micro);color:var(--text-2);flex:none}
+
+  /* server update embedded in the Load row */
+  .vrow.load{flex-wrap:wrap}
+  .updwrap{flex-basis:100%;margin-top:2px}
+  .updbar{display:flex;align-items:center;gap:8px;background:var(--surface-2);border:1px solid var(--border);
+    border-radius:var(--r-input);padding:10px 12px}
+  .updbar .d{width:8px;height:8px;border-radius:50%;background:var(--steel);box-shadow:0 0 0 3px var(--steel-tint);flex:none}
+  .updbar .ut{font-size:var(--fs-micro);color:var(--text-2)}
+  .updbar .ut b{color:var(--text);font-weight:600}
+  .updbtn{margin-left:auto;font:inherit;font-size:var(--fs-micro);font-weight:600;cursor:pointer;flex:none;
+    border-radius:var(--r-pill);padding:7px 14px;border:1px solid transparent;background:var(--steel-tint);color:var(--steel)}
+  .updbtn.danger{background:var(--rose-tint);color:var(--rose)}
+  .log{margin-top:9px;background:var(--bg);border:1px solid var(--border);border-radius:var(--r-input);
+    padding:10px;font-family:var(--mono);font-size:11px;color:var(--text-2);white-space:pre-wrap;
+    max-height:120px;overflow:auto;line-height:1.5;display:none}
+  .log.show{display:block}
+
+  /* collapsible service groups */
+  .group{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-card);
+    margin-bottom:12px;overflow:hidden}
+  .ghead{width:100%;display:flex;align-items:center;gap:10px;background:transparent;border:0;
+    padding:13px 14px;font:inherit;color:var(--text);cursor:pointer;text-align:left}
+  .ghead .gname{font-size:var(--fs-secondary);font-weight:600;text-transform:uppercase;letter-spacing:.06em}
+  .ghead .gcount{font-size:var(--fs-micro);color:var(--text-3)}
+  .ghead .gstate{margin-left:auto;display:flex;align-items:center;gap:6px;font-size:var(--fs-micro);color:var(--green)}
+  .ghead .gstate .d{width:7px;height:7px;border-radius:50%;background:var(--green);box-shadow:0 0 0 3px var(--green-tint)}
+  .ghead .caret{color:var(--text-3);transition:transform .2s;margin-left:2px}
+  .ghead.open .caret{transform:rotate(90deg)}
+  .glist{display:none} .glist.open{display:block}
+  .srow{display:flex;align-items:center;gap:10px;padding:11px 14px;border-top:1px solid var(--border)}
+  .srow .sdot{width:9px;height:9px;border-radius:50%;flex:none;background:var(--green);box-shadow:0 0 0 3px var(--green-tint)}
+  .srow.warn .sdot{background:var(--amber);box-shadow:0 0 0 3px var(--amber-tint)}
+  .srow .sinfo{flex:1;min-width:0}
+  .srow .snm{font-size:var(--fs-secondary);font-weight:600}
+  .srow .smeta{font-size:var(--fs-micro);color:var(--text-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px}
+  .srow .smem{font-size:var(--fs-micro);color:var(--text-2);font-variant-numeric:tabular-nums;flex:none}
+  .srow .rbtn{font:inherit;font-size:var(--fs-micro);font-weight:600;cursor:pointer;flex:none;
+    border-radius:var(--r-pill);padding:7px 13px;border:1px solid var(--border);background:transparent;color:var(--text-3);transition:.15s}
+  .srow .rbtn:hover{color:var(--rose);border-color:var(--rose);background:var(--rose-tint)}
+
+  #toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%) translateY(20px);
+    background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r-pill);
+    padding:10px 18px;font-size:var(--fs-micro);color:var(--text);opacity:0;pointer-events:none;
+    transition:.25s;box-shadow:0 8px 28px rgba(0,0,0,.5);max-width:90%;z-index:9}
+  #toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+  .legend{margin:20px 4px 0;font-size:var(--fs-micro);color:var(--text-3);line-height:1.6}
+  .legend b{color:var(--text-2)}
+</style>
+</head>
+<body>
+<div class="phone">
+  <div class="statusbar"><span>16:57</span><span class="right">📶 🔋 28%</span></div>
+  <div class="nav">
+    <span class="glyph">‹</span><span class="title">Ops</span>
+    <span class="sp"></span><span class="dot"></span><span class="glyph">⚡</span>
+  </div>
+
+  <div class="body">
+    <div class="toprow">
+      <button class="ibtn" onclick="toast('Opening Runs…')">Runs</button>
+      <button class="ibtn" onclick="toast('Refreshing…')">Refresh</button>
+      <button class="ibtn danger" onclick="toast('Restart all — confirm')">Restart all</button>
+    </div>
+
+    <!-- one unified vitals card; Load row carries the server-update affordance -->
+    <div class="vitals">
+      <div class="vrow">
+        <span class="vk">Memory</span>
+        <div class="vmid"><span class="vv">66.3 GB <small>/ 121.2 GB</small></span>
+          <div class="meter"><i style="width:55%"></i></div></div>
+        <span class="vend">swap 292 KB</span>
+      </div>
+      <div class="vrow">
+        <span class="vk">Disk</span>
+        <div class="vmid"><span class="vv">275.9 GB <small>/ 1875.7 GB</small></span>
+          <div class="meter"><i style="width:15%"></i></div></div>
+        <span class="vend">14% used</span>
+      </div>
+      <div class="vrow">
+        <span class="vk">Database</span>
+        <div class="vmid"><span class="vv">23 MB</span>
+          <div class="sub">2 notes · 5 files · 5 MB blobs</div></div>
+      </div>
+      <div class="vrow load">
+        <span class="vk">Load</span>
+        <div class="vmid"><span class="vv">0.55 · 0.64 · 0.62</span>
+          <div class="sub">up 5h 40m · kernel 6.18.5</div></div>
+        <span class="vend">healthy</span>
+        <div class="updwrap">
+          <div class="updbar">
+            <span class="d"></span>
+            <span class="ut"><b>Server update</b> — latest on <code>main</code></span>
+            <button class="updbtn" id="updBtn" onclick="runUpdate()">Update server</button>
+          </div>
+          <pre class="log" id="updLog"></pre>
+        </div>
+      </div>
+    </div>
+
+    <div id="groups"></div>
+
+    <p class="legend"><b>Mockup is interactive.</b> The four system metrics collapse into one
+      <b>vitals card</b>; the <b>Load</b> row carries the <b>Server update</b> bar inline (tap
+      <b>Update server</b> → arm → faked build log). Services are folded into <b>collapsible groups</b>
+      by role — Core / AI / Infra — each with a roll-up health dot, so eight (or eighty) services stay
+      one tidy screen. Tap a group header to expand/collapse; each service row has a quiet Restart.</p>
+  </div>
+</div>
+<div id="toast"></div>
+
+<script>
+const groups=[
+ {name:"Core",svcs:[
+   {nm:"api",img:"jbrain2-api:local · since 6/19 4:52 PM",mem:"87 MB",health:"healthy"},
+   {nm:"worker",img:"jbrain2-api:local · since 6/19 4:52 PM",mem:"72 MB"},
+   {nm:"supervisor",img:"jbrain2-supervisor:local · since 6/19 4:52 PM",mem:"50 MB",health:"healthy"},
+ ]},
+ {name:"AI",svcs:[
+   {nm:"local-llm",img:"jbrain2-local-llm:local · since 6/19 2:11 PM",mem:"2.6 GB"},
+   {nm:"embed",img:"hf/text-embeddings-inference · since 6/19 10:17 AM",mem:"454 MB"},
+ ]},
+ {name:"Infra",svcs:[
+   {nm:"proxy",img:"jbrain2-proxy:local · since 6/19 4:52 PM",mem:"20 MB"},
+   {nm:"searxng",img:"searxng/searxng:latest · since 6/19 10:17 AM",mem:"159 MB"},
+   {nm:"cloudflared",img:"cloudflare/cloudflared:latest · since 6/19 10:17 AM",mem:"46 MB"},
+ ]},
+];
+document.getElementById('groups').innerHTML=groups.map((g,gi)=>`
+ <section class="group">
+   <button class="ghead ${gi===0?'open':''}" onclick="this.classList.toggle('open');this.nextElementSibling.classList.toggle('open')">
+     <span class="gname">${g.name}</span><span class="gcount">${g.svcs.length} services</span>
+     <span class="gstate"><span class="d"></span>all up</span><span class="caret">›</span>
+   </button>
+   <div class="glist ${gi===0?'open':''}">
+     ${g.svcs.map(s=>`<div class="srow">
+        <span class="sdot"></span>
+        <div class="sinfo"><div class="snm">${s.nm}</div><div class="smeta">${s.img}</div></div>
+        <span class="smem">${s.mem}</span>
+        <button class="rbtn" onclick="toast('Restart ${s.nm}?')">Restart</button>
+      </div>`).join('')}
+   </div>
+ </section>`).join('');
+
+function runUpdate(){
+  const btn=document.getElementById('updBtn'), log=document.getElementById('updLog');
+  if(btn.dataset.armed!=="1"){btn.dataset.armed="1";btn.classList.add('danger');btn.textContent="Tap again";
+    setTimeout(()=>{if(btn.dataset.armed==="1"){btn.dataset.armed="0";btn.classList.remove('danger');btn.textContent="Update server";}},3000);return;}
+  btn.dataset.armed="0";btn.disabled=true;btn.textContent="Updating…";log.classList.add('show');
+  const lines=["[update] git fetch origin main","[update] rebuilding images…","[update] proxy ✓  api ✓  worker ✓","[update] restarting stack — app may blink","[update] done · v2026.06.19"];
+  let i=0;log.textContent="";const t=setInterval(()=>{log.textContent+=(i?"\n":"")+lines[i++];log.scrollTop=log.scrollHeight;
+    if(i>=lines.length){clearInterval(t);btn.disabled=false;btn.textContent="Reload app";btn.onclick=()=>toast('Reloading…');toast('Update complete');}},700);
+}
+function toast(m){const t=document.getElementById('toast');t.textContent=m;t.classList.add('show');clearTimeout(t._t);t._t=setTimeout(()=>t.classList.remove('show'),2200);}
+</script>
+</body>
+</html>

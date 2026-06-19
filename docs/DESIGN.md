@@ -188,7 +188,43 @@ graph, facts, review items, analyses) and empties the blob volume while
 auth/identity, domains, and llm_usage telemetry survive; the worker
 restarts and success offers **Reload app**.
 Progress is phased text + the one-shot's log tail, matching the update
-card — no fake progress bars.
+card — no fake progress bars. **The Data card is leaving the Ops screen**
+(the Ops B3 redesign below): its behavior is unchanged but it becomes its
+own card-launcher destination. The `DataCard` component already lives
+standalone (`frontend/src/screens/DataCard.tsx`) ready to drop in; the
+launcher screen itself gets its own variant review before it ships.
+
+**Ops screen — collapsible System + role groups (settled in a B-variant
+review; reference mock `docs/mocks/ops-redesign/ops-redesign-b3-system-open.html`,
+rivals A "status board" and C "health triage").** The flat full-width
+container list didn't scale past a handful of services, so the screen is now
+a stack of **collapsible cards** built on one shared disclosure shell
+(`OpsCard`: a header button with caret + `aria-expanded`, body mounted only
+when open — so a collapsed group never fetches its logs):
+
+- **System card** (the one section **expanded by default**): the four vitals
+  — Memory, Disk, Database, Load — as labeled rows; collapsed, its header
+  shows a one-line recap (`mem 55% · disk 14% · load 0.55 · up 5h 40m`).
+  **Server update lives on the Load row** (owner request — it's a system
+  concern, not a footer afterthought): a steel info bar with the
+  tap-again-to-confirm button, expanding to the running/done log exactly as
+  the old card.
+- **Service groups** — services are **grouped by role** (Core / AI / Infra,
+  frontend-only mapping; anything unrecognized falls into a trailing Other),
+  each a **collapsed** card whose header carries a count and a **roll-up
+  state** (green "all up" / amber "degraded" / rose "down", worst-wins over
+  its members). A service **row** shows a level dot, name, state/health
+  badges, image·since meta, and memory; tapping it expands **its own log
+  tail** — the per-service viewer (Follow toggle = the SSE stream, scoped to
+  that one service) plus a one-tap **Copy logs** (writes the tail to the
+  clipboard; button reads "Copied" for 2s) and a Restart.
+- **AI usage** is the same `OpsCard`, collapsed by default.
+
+Everything starts collapsed except System. Status colors stay paired with
+text (the dot's level is also the badge). Rejected rivals: A's one-screen
+tile board (status legible but logs/detail cramped) and C's health-triage
+bar + per-service sheet (the filter+sheet added navigation for a list that
+groups solve inline).
 
 **Calendar** — Day/Week/Month/List segments; month grid with hairline cell
 borders, out-of-month days in `--text-3`, today = accent ring around the day

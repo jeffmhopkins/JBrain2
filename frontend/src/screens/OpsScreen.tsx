@@ -1,14 +1,12 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import {
   ApiError,
   type ContainerStatus,
-  type ExportStatus,
   type LlmUsage,
   type OpsMetrics,
   type UpdateStatus,
   type UsageTotals,
   api,
-  exportFileUrl,
 } from "../api/client";
 import { RunsScreen } from "./RunsScreen";
 
@@ -34,111 +32,6 @@ function Meter({ used, total }: { used: number; total: number }) {
   );
 }
 
-function MetricsGrid({ metrics }: { metrics: OpsMetrics }) {
-  const memUsed = metrics.mem_total_bytes - metrics.mem_available_bytes;
-  const diskUsed = metrics.disk_total_bytes - metrics.disk_free_bytes;
-  const swapUsed = metrics.swap_total_bytes - metrics.swap_free_bytes;
-  return (
-    <ul className="container-list metrics-grid">
-      <li className="container-row">
-        <div className="container-main">
-          <span className="service-name">Memory</span>
-        </div>
-        <span className="metric-value">
-          {fmtBytes(memUsed)} / {fmtBytes(metrics.mem_total_bytes)}
-        </span>
-        <Meter used={memUsed} total={metrics.mem_total_bytes} />
-        {metrics.swap_total_bytes > 0 && (
-          <span className="container-meta muted">swap {fmtBytes(swapUsed)} used</span>
-        )}
-      </li>
-      <li className="container-row">
-        <div className="container-main">
-          <span className="service-name">Disk</span>
-        </div>
-        <span className="metric-value">
-          {fmtBytes(diskUsed)} / {fmtBytes(metrics.disk_total_bytes)}
-        </span>
-        <Meter used={diskUsed} total={metrics.disk_total_bytes} />
-      </li>
-      <li className="container-row">
-        <div className="container-main">
-          <span className="service-name">Database</span>
-        </div>
-        {metrics.db ? (
-          <>
-            <span className="metric-value">{fmtBytes(metrics.db.db_size_bytes)}</span>
-            <span className="container-meta muted">
-              {metrics.db.note_count} notes · {metrics.db.attachment_count} files
-              {metrics.blobs ? ` · ${fmtBytes(metrics.blobs.total_bytes)} blobs` : ""}
-            </span>
-          </>
-        ) : (
-          <span className="container-meta muted">unavailable</span>
-        )}
-      </li>
-      <li className="container-row">
-        <div className="container-main">
-          <span className="service-name">Load</span>
-        </div>
-        <span className="metric-value">
-          {metrics.load_1m.toFixed(2)} · {metrics.load_5m.toFixed(2)} ·{" "}
-          {metrics.load_15m.toFixed(2)}
-        </span>
-        <span className="container-meta muted">up {fmtUptime(metrics.uptime_seconds)}</span>
-      </li>
-    </ul>
-  );
-}
-
-export function fmtTokens(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1).replace(/\.0$/, "")}M`;
-  if (n >= 1000) return `${Math.round(n / 1000)}k`;
-  return String(n);
-}
-
-/** `41k in · 12k out · ~$0.08`; cost omitted when the price table has no
- * entry for the model — tokens only, never a guessed price. */
-function usageLine(totals: UsageTotals): string {
-  const parts = [`${fmtTokens(totals.input_tokens)} in`, `${fmtTokens(totals.output_tokens)} out`];
-  if (totals.cost_usd !== null) parts.push(`~$${totals.cost_usd.toFixed(2)}`);
-  return parts.join(" · ");
-}
-
-/** Ops "AI usage" card (docs/ANALYSIS.md "Token accounting"): live totals
- * from the adapter's llm_usage rows, priced at query time. */
-function UsageCard({ usage }: { usage: LlmUsage | null }) {
-  return (
-    <section className="ops-update usage-card">
-      <h3>AI usage</h3>
-      {usage === null ? (
-        <p className="muted data-hint">no usage data yet.</p>
-      ) : (
-        <>
-          <div className="usage-row">
-            <span className="usage-label">today</span>
-            <span className="usage-value">{usageLine(usage.today)}</span>
-          </div>
-          <div className="usage-row">
-            <span className="usage-label">this month</span>
-            <span className="usage-value">{usageLine(usage.month)}</span>
-          </div>
-          {usage.by_task.length > 0 && (
-            <div className="usage-tasks">
-              {usage.by_task.map((task) => (
-                <div key={task.task} className="usage-row usage-task-row">
-                  <span className="usage-label">{task.task}</span>
-                  <span className="usage-value">{usageLine(task)}</span>
-                </div>
-              ))}
-            </div>
-          )}
-        </>
-      )}
-    </section>
-  );
-}
-
 function errorMessage(err: unknown): string {
   return err instanceof ApiError ? err.message : "Request failed. Is the server reachable?";
 }
@@ -149,6 +42,92 @@ function badgeClass(value: string): string {
   return "badge warn";
 }
 
+// ===== Health levels — the roll-up that colors service dots and group state =====
+
+type Level = "ok" | "warn" | "bad";
+const LEVEL_RANK: Record<Level, number> = { ok: 0, warn: 1, bad: 2 };
+
+function svcLevel(c: ContainerStatus): Level {
+  if (c.state === "exited" || c.state === "dead") return "bad";
+  if (c.health === "unhealthy") return "bad";
+  if (c.health === "starting" || c.state === "restarting" || c.state === "created") return "warn";
+  if (c.state === "running") return c.health === null || c.health === "healthy" ? "ok" : "warn";
+  return "warn";
+}
+
+function worse(a: Level, b: Level): Level {
+  return LEVEL_RANK[b] > LEVEL_RANK[a] ? b : a;
+}
+
+/** Services are grouped by role so the list stays scannable as the stack
+ * grows (B3 redesign). Grouping is frontend-only — the backend status payload
+ * is flat; anything unrecognized falls into a trailing "Other" group. */
+const SERVICE_GROUPS: { label: string; services: string[] }[] = [
+  { label: "Core", services: ["api", "worker", "supervisor", "web", "db", "postgres"] },
+  { label: "AI", services: ["local-llm", "embed"] },
+  { label: "Infra", services: ["proxy", "searxng", "cloudflared"] },
+];
+
+function groupContainers(
+  containers: ContainerStatus[],
+): { label: string; items: ContainerStatus[] }[] {
+  const groups = SERVICE_GROUPS.map((g) => ({ label: g.label, items: [] as ContainerStatus[] }));
+  const other: ContainerStatus[] = [];
+  for (const c of containers) {
+    const group = groups.find((_, i) => SERVICE_GROUPS[i]?.services.includes(c.service));
+    if (group) group.items.push(c);
+    else other.push(c);
+  }
+  const result = groups.filter((g) => g.items.length > 0);
+  if (other.length > 0) result.push({ label: "Other", items: other });
+  return result;
+}
+
+// ===== Collapsible card — the shared disclosure shell for every Ops section =====
+
+/** `headerRight` shows in the header whether open or closed (group counts);
+ * `summaryCollapsed` shows only while collapsed (the System recap). The body
+ * is mounted only when open, so collapsed groups never fetch their logs. */
+function OpsCard({
+  title,
+  defaultOpen = false,
+  headerRight,
+  summaryCollapsed,
+  bodyClassName,
+  children,
+}: {
+  title: string;
+  defaultOpen?: boolean;
+  headerRight?: ReactNode;
+  summaryCollapsed?: ReactNode;
+  bodyClassName?: string;
+  children: ReactNode;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <section className="ops-card">
+      <button
+        type="button"
+        className={`ops-card-head${open ? " open" : ""}`}
+        aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}
+      >
+        <span className="ops-card-title">{title}</span>
+        <span className="ops-card-right">
+          {!open && summaryCollapsed}
+          {headerRight}
+        </span>
+        <span className="ops-card-caret">›</span>
+      </button>
+      {open && (
+        <div className={`ops-card-body${bodyClassName ? ` ${bodyClassName}` : ""}`}>{children}</div>
+      )}
+    </section>
+  );
+}
+
+// ===== Server update — folded into the System card's Load row (owner request) =====
+
 type UpdatePhase =
   | { step: "idle" }
   | { step: "confirm" }
@@ -157,7 +136,7 @@ type UpdatePhase =
 
 const UPDATE_POLL_MS = 3000;
 
-function UpdateCard() {
+function UpdateControl() {
   const [phase, setPhase] = useState<UpdatePhase>({ step: "idle" });
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -200,22 +179,35 @@ function UpdateCard() {
   }
 
   return (
-    <section className="ops-update">
-      <h3>Server update</h3>
+    <div className="ops-update-row">
       {phase.step === "idle" && (
-        <button type="button" onClick={() => setPhase({ step: "confirm" })}>
-          Update server
-        </button>
+        <div className="ops-update-bar">
+          <span className="ops-update-dot" />
+          <span className="ops-update-text">
+            <b>Server update</b> — latest on <code>main</code>
+          </span>
+          <button
+            type="button"
+            className="ops-update-btn"
+            onClick={() => setPhase({ step: "confirm" })}
+          >
+            Update server
+          </button>
+        </div>
       )}
       {phase.step === "confirm" && (
-        <button
-          type="button"
-          className="danger"
-          onClick={() => void start()}
-          onBlur={() => setPhase({ step: "idle" })}
-        >
-          Tap again to update — pulls latest main, rebuilds, restarts
-        </button>
+        <div className="ops-update-bar">
+          <span className="ops-update-dot" />
+          <span className="ops-update-text">pulls latest main, rebuilds, restarts</span>
+          <button
+            type="button"
+            className="ops-update-btn danger"
+            onClick={() => void start()}
+            onBlur={() => setPhase({ step: "idle" })}
+          >
+            Tap again to update
+          </button>
+        </div>
       )}
       {phase.step === "running" && (
         <>
@@ -236,318 +228,334 @@ function UpdateCard() {
           )}
         </>
       )}
-    </section>
+    </div>
   );
 }
 
-type ExportPhase =
-  | { step: "idle"; latest: string | null }
-  | { step: "running" }
-  | { step: "failed"; log: string };
+// ===== System card — the four vitals + the embedded server update =====
 
-/** Hand the export to the browser's download manager without navigating the
- * SPA. `location.assign()` navigates the app itself: the SPA remounts (the
- * Ops screen and the card's state vanish — "returns to the main screen") and
- * in standalone PWA display-mode the navigation can swallow the download
- * outright on mobile. A transient same-origin anchor + `download` leaves the
- * app untouched; the Content-Disposition: attachment response does the rest.
- * iOS home-screen web apps remain flaky even with this pattern (the click may
- * silently no-op or open an undismissable share/preview sheet — long-standing
- * WebKit limitation, e.g. webkit.org/b/167341), so the done state also keeps
- * a visible link to the same URL for a manual long-press/share fallback. */
-function triggerExportDownload(name: string) {
-  const a = document.createElement("a");
-  a.href = exportFileUrl(name);
-  a.download = name;
-  a.hidden = true;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-}
-
-type ImportPhase =
-  | { step: "idle" }
-  | { step: "picked"; file: File; armed: boolean }
-  | { step: "uploading" }
-  | { step: "running"; log: string; unreachable: boolean }
-  | { step: "done"; ok: boolean; log: string };
-
-type ResetPhase =
-  | { step: "idle"; armed: boolean }
-  | { step: "running"; log: string; unreachable: boolean }
-  | { step: "done"; ok: boolean; log: string };
-
-const DATA_POLL_MS = 3000;
-const RESET_DISARM_MS = 3000;
-
-/** Ops "Data" card (docs/DESIGN.md): export downloads one archive of the
- * database dump + attachment files; import replaces everything with an
- * uploaded archive via a supervisor one-shot that restarts the stack;
- * reset erases all content data (a testing convenience) while auth,
- * domains, and llm_usage survive — also a one-shot, since the api role
- * deliberately cannot TRUNCATE. */
-function DataCard() {
-  const [exportPhase, setExportPhase] = useState<ExportPhase>({ step: "idle", latest: null });
-  const [importPhase, setImportPhase] = useState<ImportPhase>({ step: "idle" });
-  const [resetPhase, setResetPhase] = useState<ResetPhase>({ step: "idle", armed: false });
-  const fileRef = useRef<HTMLInputElement>(null);
-  const timer = useRef<ReturnType<typeof setInterval> | null>(null);
-  const disarmTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const stopPolling = useCallback(() => {
-    if (timer.current !== null) clearInterval(timer.current);
-    timer.current = null;
-  }, []);
-  useEffect(() => stopPolling, [stopPolling]);
-  useEffect(
-    () => () => {
-      if (disarmTimer.current !== null) clearTimeout(disarmTimer.current);
-    },
-    [],
-  );
-
-  const pollExport = useCallback(async () => {
-    let status: ExportStatus;
-    try {
-      status = await api.opsExportStatus();
-    } catch {
-      return;
-    }
-    if (status.state !== "exited") return;
-    stopPolling();
-    if (status.exit_code === 0 && status.filename !== null) {
-      // The browser download carries the session cookie like any request.
-      triggerExportDownload(status.filename);
-      setExportPhase({ step: "idle", latest: status.filename });
-    } else {
-      setExportPhase({ step: "failed", log: status.log_tail });
-    }
-  }, [stopPolling]);
-
-  async function startExport() {
-    try {
-      await api.opsExportStart();
-    } catch {
-      setExportPhase({ step: "failed", log: "could not start — is another operation running?" });
-      return;
-    }
-    setExportPhase({ step: "running" });
-    timer.current = setInterval(() => void pollExport(), DATA_POLL_MS);
-  }
-
-  const pollImport = useCallback(async () => {
-    let status: UpdateStatus;
-    try {
-      status = await api.opsImportStatus();
-    } catch {
-      // api/worker stop mid-import; an unreachable api is the expected
-      // shape of progress, not an error.
-      setImportPhase((p) => (p.step === "running" ? { ...p, unreachable: true } : p));
-      return;
-    }
-    if (status.state === "running") {
-      setImportPhase({ step: "running", log: status.log_tail, unreachable: false });
-    } else if (status.state === "exited") {
-      stopPolling();
-      setImportPhase({ step: "done", ok: status.exit_code === 0, log: status.log_tail });
-    }
-  }, [stopPolling]);
-
-  async function startImport(file: File) {
-    setImportPhase({ step: "uploading" });
-    try {
-      const { archive } = await api.opsImportUpload(file);
-      await api.opsImportStart(archive);
-    } catch {
-      setImportPhase({ step: "done", ok: false, log: "upload or start failed" });
-      return;
-    }
-    setImportPhase({ step: "running", log: "[import] starting", unreachable: false });
-    timer.current = setInterval(() => void pollImport(), DATA_POLL_MS);
-  }
-
-  const pollReset = useCallback(async () => {
-    let status: UpdateStatus;
-    try {
-      status = await api.opsResetStatus();
-    } catch {
-      // The worker restarts mid-reset; the api stays up, but tolerate
-      // blips the same way import does.
-      setResetPhase((p) => (p.step === "running" ? { ...p, unreachable: true } : p));
-      return;
-    }
-    if (status.state === "running") {
-      setResetPhase({ step: "running", log: status.log_tail, unreachable: false });
-    } else if (status.state === "exited") {
-      stopPolling();
-      setResetPhase({ step: "done", ok: status.exit_code === 0, log: status.log_tail });
-    }
-  }, [stopPolling]);
-
-  async function startReset() {
-    try {
-      await api.opsResetStart();
-    } catch {
-      setResetPhase({
-        step: "done",
-        ok: false,
-        log: "could not start — is another operation running?",
-      });
-      return;
-    }
-    setResetPhase({ step: "running", log: "[reset] starting", unreachable: false });
-    timer.current = setInterval(() => void pollReset(), DATA_POLL_MS);
-  }
-
-  function tapReset() {
-    if (disarmTimer.current !== null) clearTimeout(disarmTimer.current);
-    disarmTimer.current = null;
-    if (resetPhase.step === "idle" && resetPhase.armed) {
-      void startReset();
-      return;
-    }
-    setResetPhase({ step: "idle", armed: true });
-    disarmTimer.current = setTimeout(
-      () => setResetPhase((p) => (p.step === "idle" ? { step: "idle", armed: false } : p)),
-      RESET_DISARM_MS,
+function SystemCard({ metrics }: { metrics: OpsMetrics | null }) {
+  let summary = "metrics unavailable";
+  if (metrics) {
+    const memPct = Math.round(
+      ((metrics.mem_total_bytes - metrics.mem_available_bytes) / metrics.mem_total_bytes) * 100,
     );
+    const diskPct = Math.round(
+      ((metrics.disk_total_bytes - metrics.disk_free_bytes) / metrics.disk_total_bytes) * 100,
+    );
+    summary = `mem ${memPct}% · disk ${diskPct}% · load ${metrics.load_1m.toFixed(2)} · up ${fmtUptime(metrics.uptime_seconds)}`;
+  }
+  return (
+    <OpsCard
+      title="System"
+      defaultOpen
+      summaryCollapsed={<span className="ops-card-summary">{summary}</span>}
+    >
+      {metrics === null ? (
+        <p className="muted ops-vrow-empty">metrics unavailable.</p>
+      ) : (
+        <SystemRows metrics={metrics} />
+      )}
+    </OpsCard>
+  );
+}
+
+function SystemRows({ metrics }: { metrics: OpsMetrics }) {
+  const memUsed = metrics.mem_total_bytes - metrics.mem_available_bytes;
+  const diskUsed = metrics.disk_total_bytes - metrics.disk_free_bytes;
+  const swapUsed = metrics.swap_total_bytes - metrics.swap_free_bytes;
+  return (
+    <>
+      <div className="ops-vrow">
+        <span className="ops-vk">Memory</span>
+        <div className="ops-vmid">
+          <span className="ops-vv">
+            {fmtBytes(memUsed)} <small>/ {fmtBytes(metrics.mem_total_bytes)}</small>
+          </span>
+          <Meter used={memUsed} total={metrics.mem_total_bytes} />
+        </div>
+        {metrics.swap_total_bytes > 0 && (
+          <span className="ops-vend">swap {fmtBytes(swapUsed)}</span>
+        )}
+      </div>
+      <div className="ops-vrow">
+        <span className="ops-vk">Disk</span>
+        <div className="ops-vmid">
+          <span className="ops-vv">
+            {fmtBytes(diskUsed)} <small>/ {fmtBytes(metrics.disk_total_bytes)}</small>
+          </span>
+          <Meter used={diskUsed} total={metrics.disk_total_bytes} />
+        </div>
+      </div>
+      <div className="ops-vrow">
+        <span className="ops-vk">Database</span>
+        <div className="ops-vmid">
+          {metrics.db ? (
+            <>
+              <span className="ops-vv">{fmtBytes(metrics.db.db_size_bytes)}</span>
+              <span className="ops-vsub">
+                {metrics.db.note_count} notes · {metrics.db.attachment_count} files
+                {metrics.blobs ? ` · ${fmtBytes(metrics.blobs.total_bytes)} blobs` : ""}
+              </span>
+            </>
+          ) : (
+            <span className="ops-vsub">unavailable</span>
+          )}
+        </div>
+      </div>
+      <div className="ops-vrow ops-vrow-load">
+        <div className="ops-vrow-line">
+          <span className="ops-vk">Load</span>
+          <div className="ops-vmid">
+            <span className="ops-vv">
+              {metrics.load_1m.toFixed(2)} · {metrics.load_5m.toFixed(2)} ·{" "}
+              {metrics.load_15m.toFixed(2)}
+            </span>
+            <span className="ops-vsub">up {fmtUptime(metrics.uptime_seconds)}</span>
+          </div>
+        </div>
+        <UpdateControl />
+      </div>
+    </>
+  );
+}
+
+// ===== Service group + row, each row carrying its own pullable log tail =====
+
+const LOG_TAIL = 200;
+
+function ServiceGroup({
+  group,
+  memByService,
+  onRestart,
+}: {
+  group: { label: string; items: ContainerStatus[] };
+  memByService: Map<string, number>;
+  onRestart: (service: string) => void;
+}) {
+  const level = group.items.reduce<Level>((w, c) => worse(w, svcLevel(c)), "ok");
+  const label = level === "ok" ? "all up" : level === "warn" ? "degraded" : "down";
+  return (
+    <OpsCard
+      title={group.label}
+      bodyClassName="ops-srows"
+      headerRight={
+        <>
+          <span className="ops-gcount">
+            {group.items.length} {group.items.length === 1 ? "service" : "services"}
+          </span>
+          <span className={`ops-gstate ops-gstate-${level}`}>
+            <span className="ops-gdot" />
+            {label}
+          </span>
+        </>
+      }
+    >
+      {group.items.map((c) => (
+        <ServiceRow
+          key={c.service}
+          c={c}
+          memBytes={memByService.get(c.service) ?? null}
+          onRestart={onRestart}
+        />
+      ))}
+    </OpsCard>
+  );
+}
+
+function ServiceRow({
+  c,
+  memBytes,
+  onRestart,
+}: {
+  c: ContainerStatus;
+  memBytes: number | null;
+  onRestart: (service: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="ops-srow">
+      <button
+        type="button"
+        className={`ops-shead${open ? " open" : ""}`}
+        aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}
+      >
+        <span className={`ops-sdot ops-sdot-${svcLevel(c)}`} />
+        <span className="ops-sinfo">
+          <span className="ops-sline">
+            <span className="ops-snm">{c.service}</span>
+            <span className={badgeClass(c.state)}>{c.state}</span>
+            {c.health && <span className={badgeClass(c.health)}>{c.health}</span>}
+          </span>
+          <span className="ops-smeta">
+            {c.image}
+            {c.started_at && ` · since ${new Date(c.started_at).toLocaleString()}`}
+          </span>
+        </span>
+        {memBytes !== null && <span className="ops-smem">{fmtBytes(memBytes)}</span>}
+        <span className="ops-scaret">›</span>
+      </button>
+      {open && <ServiceBody c={c} memBytes={memBytes} onRestart={onRestart} />}
+    </div>
+  );
+}
+
+function ServiceBody({
+  c,
+  memBytes,
+  onRestart,
+}: {
+  c: ContainerStatus;
+  memBytes: number | null;
+  onRestart: (service: string) => void;
+}) {
+  const [lines, setLines] = useState<string[] | null>(null);
+  const [follow, setFollow] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+  const logRef = useRef<HTMLPreElement>(null);
+
+  // Opening the row pulls this service's tail; the stream attaches only while
+  // Follow is on (the old shared LogViewer, now scoped to one service).
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .opsLogs(c.service, LOG_TAIL)
+      .then((text) => {
+        if (!cancelled) setLines(text.split("\n"));
+      })
+      .catch((err) => {
+        if (!cancelled) setError(errorMessage(err));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [c.service]);
+
+  useEffect(() => {
+    if (!follow) return;
+    const source = api.opsLogStream(c.service);
+    source.onmessage = (event: MessageEvent<string>) => {
+      setLines((prev) => [...(prev ?? []), event.data]);
+    };
+    source.onerror = () => setError("Log stream disconnected.");
+    return () => source.close();
+  }, [follow, c.service]);
+
+  // Auto-scroll so a followed log behaves like `tail -f`.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: re-run on every new line; the effect reads the DOM, not `lines`.
+  useEffect(() => {
+    const el = logRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [lines]);
+
+  async function copyLogs() {
+    const text = (lines ?? []).join("\n");
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // Clipboard blocked (insecure context / denied) — leave the button as-is.
+      setError("Couldn't copy — clipboard unavailable.");
+    }
   }
 
   return (
-    <section className="ops-update">
-      <h3>Data</h3>
-      {exportPhase.step !== "running" &&
-        importPhase.step === "idle" &&
-        resetPhase.step === "idle" && (
-          <div className="ops-actions">
-            <button type="button" onClick={() => void startExport()}>
-              Export backup
-            </button>
-            <button type="button" onClick={() => fileRef.current?.click()}>
-              Import backup…
-            </button>
-            <button
-              type="button"
-              className="danger"
-              onClick={tapReset}
-              onBlur={() => setResetPhase({ step: "idle", armed: false })}
-            >
-              {resetPhase.armed ? "Tap again — erases ALL notes and data" : "Reset DB"}
-            </button>
-          </div>
-        )}
-      {exportPhase.step === "idle" && exportPhase.latest !== null && (
-        <>
-          <p className="muted">{exportPhase.latest} downloaded.</p>
-          <a
-            className="export-link"
-            href={exportFileUrl(exportPhase.latest)}
-            download={exportPhase.latest}
-          >
-            download {exportPhase.latest}
-          </a>
-        </>
+    <div className="ops-sbody">
+      <div className="ops-kv">
+        <span>image</span>
+        <span>{c.image}</span>
+      </div>
+      {c.started_at && (
+        <div className="ops-kv">
+          <span>uptime since</span>
+          <span>{new Date(c.started_at).toLocaleString()}</span>
+        </div>
       )}
-      {exportPhase.step === "idle" &&
-        exportPhase.latest === null &&
-        importPhase.step === "idle" &&
-        resetPhase.step === "idle" && (
-          <p className="muted data-hint">
-            export bundles the database + attachment files into one archive; import replaces
-            everything with an archive and restarts the stack; reset erases all notes and derived
-            data (a safety backup is taken first).
-          </p>
-        )}
-      {exportPhase.step === "running" && <p className="muted">Building export archive…</p>}
-      {exportPhase.step === "failed" && (
-        <>
-          <p className="ops-error">Export failed — see log.</p>
-          <pre className="ops-update-log">{exportPhase.log}</pre>
-        </>
+      {memBytes !== null && (
+        <div className="ops-kv">
+          <span>memory</span>
+          <span>{fmtBytes(memBytes)}</span>
+        </div>
       )}
 
-      <input
-        ref={fileRef}
-        type="file"
-        accept=".tar,.jbrain.tar"
-        hidden
-        onChange={(e) => {
-          const file = e.target.files?.[0];
-          if (file) setImportPhase({ step: "picked", file, armed: false });
-          e.target.value = "";
-        }}
-      />
-      {importPhase.step === "picked" && (
-        <>
-          <p className="muted">
-            {importPhase.file.name} · {fmtBytes(importPhase.file.size)}
-          </p>
-          <button
-            type="button"
-            className="danger"
-            onClick={() => {
-              if (!importPhase.armed) {
-                setImportPhase({ ...importPhase, armed: true });
-                return;
-              }
-              void startImport(importPhase.file);
-            }}
-            onBlur={() => setImportPhase({ ...importPhase, armed: false })}
-          >
-            {importPhase.armed
-              ? "Tap again — current data is overwritten"
-              : "Import — replaces ALL current data"}
-          </button>
-          <p className="muted data-hint">
-            a safety backup of the current data is taken first; the stack restarts during import.
-          </p>
-        </>
+      <div className="ops-logbar">
+        <span className="ops-logtitle">Logs · {c.service}</span>
+        <label className="ops-follow">
+          <input type="checkbox" checked={follow} onChange={(e) => setFollow(e.target.checked)} />
+          Follow
+        </label>
+        <button
+          type="button"
+          className="ops-copy"
+          onClick={() => void copyLogs()}
+          disabled={lines === null}
+        >
+          {copied ? "Copied" : "Copy logs"}
+        </button>
+      </div>
+      {error && (
+        <p className="error" role="alert">
+          {error}
+        </p>
       )}
-      {importPhase.step === "uploading" && <p className="muted">Uploading archive…</p>}
-      {importPhase.step === "running" && (
+      <pre className="ops-log" ref={logRef} aria-label={`Logs for ${c.service}`}>
+        {lines === null ? "loading…" : lines.join("\n")}
+      </pre>
+
+      <button type="button" className="danger ops-srestart" onClick={() => onRestart(c.service)}>
+        Restart {c.service}
+      </button>
+    </div>
+  );
+}
+
+// ===== AI usage — a collapsible card (docs/ANALYSIS.md "Token accounting") =====
+
+export function fmtTokens(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1).replace(/\.0$/, "")}M`;
+  if (n >= 1000) return `${Math.round(n / 1000)}k`;
+  return String(n);
+}
+
+/** `41k in · 12k out · ~$0.08`; cost omitted when the price table has no
+ * entry for the model — tokens only, never a guessed price. */
+function usageLine(totals: UsageTotals): string {
+  const parts = [`${fmtTokens(totals.input_tokens)} in`, `${fmtTokens(totals.output_tokens)} out`];
+  if (totals.cost_usd !== null) parts.push(`~$${totals.cost_usd.toFixed(2)}`);
+  return parts.join(" · ");
+}
+
+function UsageCard({ usage }: { usage: LlmUsage | null }) {
+  return (
+    <OpsCard title="AI usage">
+      {usage === null ? (
+        <p className="muted data-hint">no usage data yet.</p>
+      ) : (
         <>
-          <p className="muted">
-            {importPhase.unreachable ? "Stack restarting — hold on…" : "Importing…"}
-          </p>
-          <pre className="ops-update-log">{importPhase.log}</pre>
-        </>
-      )}
-      {importPhase.step === "done" && (
-        <>
-          <p className={importPhase.ok ? "muted" : "ops-error"}>
-            {importPhase.ok ? "Import complete." : "Import failed — see log."}
-          </p>
-          <pre className="ops-update-log">{importPhase.log}</pre>
-          {importPhase.ok && (
-            <button type="button" onClick={() => window.location.reload()}>
-              Reload app
-            </button>
+          <div className="usage-row">
+            <span className="usage-label">today</span>
+            <span className="usage-value">{usageLine(usage.today)}</span>
+          </div>
+          <div className="usage-row">
+            <span className="usage-label">this month</span>
+            <span className="usage-value">{usageLine(usage.month)}</span>
+          </div>
+          {usage.by_task.length > 0 && (
+            <div className="usage-tasks">
+              {usage.by_task.map((task) => (
+                <div key={task.task} className="usage-row usage-task-row">
+                  <span className="usage-label">{task.task}</span>
+                  <span className="usage-value">{usageLine(task)}</span>
+                </div>
+              ))}
+            </div>
           )}
         </>
       )}
-      {resetPhase.step === "running" && (
-        <>
-          <p className="muted">
-            {resetPhase.unreachable ? "Worker restarting — hold on…" : "Resetting…"}
-          </p>
-          <pre className="ops-update-log">{resetPhase.log}</pre>
-        </>
-      )}
-      {resetPhase.step === "done" && (
-        <>
-          <p className={resetPhase.ok ? "muted" : "ops-error"}>
-            {resetPhase.ok ? "Reset complete." : "Reset failed — see log."}
-          </p>
-          <pre className="ops-update-log">{resetPhase.log}</pre>
-          {resetPhase.ok && (
-            // The stream and caches still hold pre-reset data; reload clears them.
-            <button type="button" onClick={() => window.location.reload()}>
-              Reload app
-            </button>
-          )}
-        </>
-      )}
-    </section>
+    </OpsCard>
   );
 }
 
@@ -583,19 +591,23 @@ export function OpsScreen() {
     void refresh();
   }, [refresh]);
 
-  async function restart(service: string) {
-    const target = service === "all" ? "ALL services" : service;
-    if (!window.confirm(`Restart ${target}?`)) return;
-    setError(null);
-    try {
-      await api.opsRestart(service);
-      await refresh();
-    } catch (err) {
-      setError(errorMessage(err));
-    }
-  }
+  const restart = useCallback(
+    async (service: string) => {
+      const target = service === "all" ? "ALL services" : service;
+      if (!window.confirm(`Restart ${target}?`)) return;
+      setError(null);
+      try {
+        await api.opsRestart(service);
+        await refresh();
+      } catch (err) {
+        setError(errorMessage(err));
+      }
+    },
+    [refresh],
+  );
 
-  const services = containers?.map((c) => c.service) ?? [];
+  const groups = groupContainers(containers ?? []);
+  const memByService = new Map((metrics?.containers ?? []).map((x) => [x.service, x.mem_bytes]));
 
   return (
     <section className="ops">
@@ -611,7 +623,7 @@ export function OpsScreen() {
           <button
             type="button"
             className="danger"
-            onClick={() => restart("all")}
+            onClick={() => void restart("all")}
             disabled={containers === null}
           >
             Restart all
@@ -625,127 +637,19 @@ export function OpsScreen() {
         </p>
       )}
 
-      {metrics !== null && <MetricsGrid metrics={metrics} />}
+      <SystemCard metrics={metrics} />
+
       {containers === null && !error ? (
         <p className="muted">Loading status…</p>
       ) : (
-        <ul className="container-list">
-          {containers?.map((c) => (
-            <li key={c.service} className="container-row">
-              <div className="container-main">
-                <span className="service-name">{c.service}</span>
-                <span className={badgeClass(c.state)}>{c.state}</span>
-                {c.health && <span className={badgeClass(c.health)}>{c.health}</span>}
-              </div>
-              <div className="container-meta">
-                <span className="muted">{c.image}</span>
-                {(() => {
-                  const m = metrics?.containers.find((x) => x.service === c.service);
-                  return m ? <span className="muted">{fmtBytes(m.mem_bytes)}</span> : null;
-                })()}
-                {c.started_at && (
-                  <span className="muted">since {new Date(c.started_at).toLocaleString()}</span>
-                )}
-              </div>
-              <button type="button" className="danger small" onClick={() => restart(c.service)}>
-                Restart
-              </button>
-            </li>
-          ))}
-        </ul>
+        groups.map((g) => (
+          <ServiceGroup key={g.label} group={g} memByService={memByService} onRestart={restart} />
+        ))
       )}
 
-      <LogViewer services={services} />
       <UsageCard usage={usage} />
-      <DataCard />
-      <UpdateCard />
 
       {showRuns && <RunsScreen onClose={() => setShowRuns(false)} />}
     </section>
-  );
-}
-
-const LOG_TAIL = 200;
-
-function LogViewer({ services }: { services: string[] }) {
-  const [service, setService] = useState("");
-  const [lines, setLines] = useState<string[]>([]);
-  const [follow, setFollow] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const logRef = useRef<HTMLPreElement>(null);
-
-  // Selecting a service loads its tail; deselecting stops following.
-  useEffect(() => {
-    setLines([]);
-    setError(null);
-    if (service === "") {
-      setFollow(false);
-      return;
-    }
-    let cancelled = false;
-    api
-      .opsLogs(service, LOG_TAIL)
-      .then((text) => {
-        if (!cancelled) setLines(text.split("\n"));
-      })
-      .catch((err) => {
-        if (!cancelled) setError(errorMessage(err));
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [service]);
-
-  useEffect(() => {
-    if (!follow || service === "") return;
-    const source = api.opsLogStream(service);
-    source.onmessage = (event: MessageEvent<string>) => {
-      setLines((prev) => [...prev, event.data]);
-    };
-    source.onerror = () => setError("Log stream disconnected.");
-    return () => source.close();
-  }, [follow, service]);
-
-  // Auto-scroll so followed logs behave like `tail -f`.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: re-run on every new line; the effect reads the DOM, not `lines`.
-  useEffect(() => {
-    const el = logRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
-  }, [lines]);
-
-  return (
-    <div className="log-viewer">
-      <h3>Logs</h3>
-      <div className="log-controls">
-        <label htmlFor="log-service">Service</label>
-        <select id="log-service" value={service} onChange={(e) => setService(e.target.value)}>
-          <option value="">— pick a service —</option>
-          {services.map((s) => (
-            <option key={s} value={s}>
-              {s}
-            </option>
-          ))}
-        </select>
-        <label className="follow-toggle">
-          <input
-            type="checkbox"
-            checked={follow}
-            disabled={service === ""}
-            onChange={(e) => setFollow(e.target.checked)}
-          />
-          Follow
-        </label>
-      </div>
-      {error && (
-        <p className="error" role="alert">
-          {error}
-        </p>
-      )}
-      {service !== "" && (
-        <pre className="log-output" ref={logRef} aria-label={`Logs for ${service}`}>
-          {lines.join("\n")}
-        </pre>
-      )}
-    </div>
   );
 }

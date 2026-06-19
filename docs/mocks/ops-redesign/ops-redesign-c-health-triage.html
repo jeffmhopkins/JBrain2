@@ -1,0 +1,240 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Ops redesign — C · health triage</title>
+<style>
+  :root{
+    --bg:#0e0f11; --surface:#17181b; --surface-2:#1e2024; --border:#26282c;
+    --text:#e6e7e9; --text-2:#9a9da3; --text-3:#5c5f66;
+    --steel:#7fa7c9; --green:#8fbc9a; --amber:#c9a36a; --rose:#cf8a8f; --violet:#a493c9;
+    --steel-tint:rgba(127,167,201,.13); --green-tint:rgba(143,188,154,.13);
+    --amber-tint:rgba(201,163,106,.13); --rose-tint:rgba(207,138,143,.13); --violet-tint:rgba(164,147,201,.13);
+    --r-input:12px; --r-seg:14px; --r-card:16px; --r-pill:999px;
+    --fs-micro:12px; --fs-head:13px; --fs-secondary:14px; --fs-body:16px; --fs-title:18px; --fs-screen:22px;
+    --mono:ui-monospace,"SF Mono","Cascadia Mono",Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:#000;color:var(--text);
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;-webkit-font-smoothing:antialiased}
+  .phone{max-width:430px;margin:0 auto;min-height:100vh;background:var(--bg);position:relative;overflow:hidden;
+    border-left:1px solid #000;border-right:1px solid #000}
+  .statusbar{display:flex;justify-content:space-between;align-items:center;
+    padding:10px 18px 4px;font-size:13px;color:var(--text);font-weight:600}
+  .statusbar .right{display:flex;gap:7px;align-items:center;font-weight:500;opacity:.9}
+  .nav{display:flex;align-items:center;gap:10px;padding:8px 16px 4px}
+  .nav .glyph{color:var(--text-2);font-size:20px}
+  .nav .title{font-size:var(--fs-screen);font-weight:600}
+  .nav .sp{margin-left:auto}
+  .nav .dot{width:9px;height:9px;border-radius:50%;background:var(--green);box-shadow:0 0 0 4px var(--green-tint)}
+  .body{padding:8px 14px 56px}
+
+  /* health bar (running / warn / down counts) */
+  .health{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-card);padding:14px;margin-bottom:12px}
+  .health .bar{height:10px;border-radius:var(--r-pill);background:var(--surface-2);overflow:hidden;display:flex}
+  .health .bar i{display:block;height:100%}
+  .health .bar .ok{background:var(--green)} .health .bar .wn{background:var(--amber)} .health .bar .dn{background:var(--rose)}
+  .health .counts{display:flex;gap:16px;margin-top:11px}
+  .health .ct{display:flex;align-items:center;gap:6px;font-size:var(--fs-micro);color:var(--text-2)}
+  .health .ct .d{width:8px;height:8px;border-radius:50%}
+  .health .ct.ok .d{background:var(--green)} .health .ct.wn .d{background:var(--amber)} .health .ct.dn .d{background:var(--rose)}
+  .health .ct b{color:var(--text);font-weight:600}
+  .health .ct.sp{margin-left:auto}
+  .health .ibtn{font:inherit;font-size:var(--fs-micro);font-weight:600;cursor:pointer;border-radius:var(--r-pill);
+    padding:6px 12px;border:1px solid var(--border);background:var(--surface-2);color:var(--text-2)}
+  .health .ibtn.danger{color:var(--rose);background:var(--rose-tint);border-color:transparent;margin-left:8px}
+
+  /* stat strip — Load stat expands to update */
+  .strip{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:6px}
+  .stat{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-card);padding:11px 10px;text-align:left}
+  .stat .sk{font-size:10px;color:var(--text-3);text-transform:uppercase;letter-spacing:.05em}
+  .stat .sv{font-size:var(--fs-secondary);font-weight:600;margin-top:4px;font-variant-numeric:tabular-nums}
+  .stat .sv small{color:var(--text-2);font-weight:400;font-size:10px;display:block;margin-top:2px}
+  .stat.load{cursor:pointer;border-color:var(--steel);position:relative}
+  .stat.load::after{content:"⌄";position:absolute;right:9px;top:8px;color:var(--steel)}
+  .stat.load.open::after{content:"⌃"}
+
+  .upd{background:var(--surface);border:1px solid var(--steel);border-radius:var(--r-card);
+    padding:13px;margin:8px 0 12px;display:none}
+  .upd.open{display:block}
+  .upd h3{margin:0 0 2px;font-size:var(--fs-secondary);font-weight:600;display:flex;align-items:center;gap:8px}
+  .upd h3 .d{width:8px;height:8px;border-radius:50%;background:var(--steel);box-shadow:0 0 0 3px var(--steel-tint)}
+  .upd p{margin:0;font-size:var(--fs-micro);color:var(--text-2);line-height:1.5}
+  .upd .updbtn{margin-top:10px;width:100%;font:inherit;font-size:var(--fs-secondary);font-weight:600;cursor:pointer;
+    border-radius:var(--r-input);padding:12px;border:1px solid transparent;background:var(--steel-tint);color:var(--steel)}
+  .upd .updbtn.danger{background:var(--rose-tint);color:var(--rose)}
+  .log{margin-top:10px;background:var(--bg);border:1px solid var(--border);border-radius:var(--r-input);
+    padding:10px;font-family:var(--mono);font-size:11px;color:var(--text-2);white-space:pre-wrap;
+    max-height:120px;overflow:auto;line-height:1.5;display:none}
+  .log.show{display:block}
+
+  /* filter segments */
+  .seg{display:flex;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r-seg);
+    padding:3px;margin:6px 0 12px}
+  .seg button{flex:1;font:inherit;font-size:var(--fs-micro);font-weight:600;cursor:pointer;border:0;background:transparent;
+    color:var(--text-2);padding:8px 4px;border-radius:11px}
+  .seg button.on{background:var(--steel-tint);color:var(--steel)}
+
+  /* dense service rows */
+  .svc{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-card);overflow:hidden}
+  .srow{display:flex;align-items:center;gap:11px;padding:12px 14px;border-top:1px solid var(--border);cursor:pointer}
+  .srow:first-child{border-top:0}
+  .srow .sdot{width:9px;height:9px;border-radius:50%;flex:none;background:var(--green);box-shadow:0 0 0 3px var(--green-tint)}
+  .srow.warn .sdot{background:var(--amber);box-shadow:0 0 0 3px var(--amber-tint)}
+  .srow .sinfo{flex:1;min-width:0}
+  .srow .snm{font-size:var(--fs-secondary);font-weight:600;display:flex;align-items:center;gap:7px}
+  .srow .tag{font-size:9px;color:var(--text-3);text-transform:uppercase;letter-spacing:.05em;
+    border:1px solid var(--border);border-radius:var(--r-pill);padding:1px 6px}
+  .srow .smeta{font-size:var(--fs-micro);color:var(--text-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:3px}
+  .srow .membar{width:46px;height:30px;flex:none;display:flex;align-items:flex-end;gap:2px}
+  .srow .membar i{flex:1;background:var(--text-3);border-radius:1px;opacity:.5}
+  .srow .smem{font-size:var(--fs-micro);color:var(--text-2);font-variant-numeric:tabular-nums;flex:none;width:52px;text-align:right}
+  .srow .chev{color:var(--text-3);flex:none}
+
+  /* detail sheet */
+  .scrim{position:absolute;inset:0;background:rgba(14,15,17,.6);opacity:0;pointer-events:none;transition:.2s;z-index:5}
+  .scrim.show{opacity:1;pointer-events:auto}
+  .sheet{position:absolute;left:0;right:0;bottom:0;background:var(--surface);border:1px solid var(--border);
+    border-radius:16px 16px 0 0;padding:8px 16px 24px;transform:translateY(100%);transition:transform .22s ease-out;z-index:6}
+  .sheet.show{transform:translateY(0)}
+  .sheet .handle{width:32px;height:4px;border-radius:2px;background:var(--text-3);margin:6px auto 12px}
+  .sheet h3{margin:0 0 2px;font-size:var(--fs-title);font-weight:600}
+  .sheet .sub{font-size:var(--fs-micro);color:var(--text-2);margin-bottom:12px}
+  .sheet .kv{display:flex;justify-content:space-between;font-size:var(--fs-secondary);padding:9px 0;border-top:1px solid var(--border)}
+  .sheet .kv span:first-child{color:var(--text-3)}
+  .sheet .row2{display:flex;gap:8px;margin-top:14px}
+  .sheet .row2 button{flex:1;font:inherit;font-size:var(--fs-secondary);font-weight:600;cursor:pointer;
+    border-radius:var(--r-input);padding:12px;border:1px solid var(--border);background:var(--surface-2);color:var(--text-2)}
+  .sheet .row2 button.danger{color:var(--rose);background:var(--rose-tint);border-color:transparent}
+
+  #toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%) translateY(20px);
+    background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r-pill);
+    padding:10px 18px;font-size:var(--fs-micro);color:var(--text);opacity:0;pointer-events:none;
+    transition:.25s;box-shadow:0 8px 28px rgba(0,0,0,.5);max-width:90%;z-index:9}
+  #toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+  .legend{margin:20px 4px 0;font-size:var(--fs-micro);color:var(--text-3);line-height:1.6}
+  .legend b{color:var(--text-2)}
+</style>
+</head>
+<body>
+<div class="phone">
+  <div class="statusbar"><span>16:57</span><span class="right">📶 🔋 28%</span></div>
+  <div class="nav">
+    <span class="glyph">‹</span><span class="title">Ops</span>
+    <span class="sp"></span><span class="dot"></span><span class="glyph">⚡</span>
+  </div>
+
+  <div class="body">
+    <!-- health-first triage -->
+    <div class="health">
+      <div class="bar"><i class="ok" style="width:100%"></i><i class="wn" style="width:0"></i><i class="dn" style="width:0"></i></div>
+      <div class="counts">
+        <span class="ct ok"><span class="d"></span><b>8</b> running</span>
+        <span class="ct wn"><span class="d"></span><b>0</b> degraded</span>
+        <span class="ct dn"><span class="d"></span><b>0</b> down</span>
+        <span class="ct sp"></span>
+        <button class="ibtn" onclick="toast('Refreshing…')">↻ Refresh</button>
+        <button class="ibtn danger" onclick="toast('Restart all — confirm')">Restart all</button>
+      </div>
+    </div>
+
+    <!-- 4-up stat strip; Load expands to reveal server update -->
+    <div class="strip">
+      <div class="stat"><div class="sk">Mem</div><div class="sv">55%<small>66/121G</small></div></div>
+      <div class="stat"><div class="sk">Disk</div><div class="sv">15%<small>276/1.8T</small></div></div>
+      <div class="stat"><div class="sk">DB</div><div class="sv">23M<small>2 notes</small></div></div>
+      <div class="stat load" id="loadStat" onclick="toggleUpd()"><div class="sk">Load</div><div class="sv">0.55<small>up 5h</small></div></div>
+    </div>
+
+    <div class="upd" id="upd">
+      <h3><span class="d"></span>Server update</h3>
+      <p>Update is grouped with system Load — pulls latest <code>main</code>, rebuilds, restarts.
+        The app blinks while containers cycle.</p>
+      <button class="updbtn" id="updBtn" onclick="runUpdate()">Update server</button>
+      <pre class="log" id="updLog"></pre>
+    </div>
+
+    <div class="seg" id="seg">
+      <button class="on" data-f="all">All 8</button>
+      <button data-f="core">Core</button>
+      <button data-f="ai">AI</button>
+      <button data-f="infra">Infra</button>
+    </div>
+
+    <div class="svc" id="svc"></div>
+
+    <p class="legend"><b>Mockup is interactive.</b> Health-first: a roll-up <b>running / degraded /
+      down</b> bar leads, then a 4-up stat strip — tap the steel-bordered <b>Load</b> stat to drop
+      down the <b>Server update</b> panel (grouped with Load, as asked). <b>Filter segments</b>
+      (All / Core / AI / Infra) thin the list; each service is a dense one-line row with a memory
+      sparkline. Tap a row to open its <b>detail sheet</b> (image, uptime, mem) with Logs · Restart.</p>
+  </div>
+
+  <!-- detail sheet -->
+  <div class="scrim" id="scrim" onclick="closeSheet()"></div>
+  <div class="sheet" id="sheet">
+    <div class="handle"></div>
+    <h3 id="shNm">service</h3>
+    <div class="sub" id="shSub">running · healthy</div>
+    <div class="kv"><span>image</span><span id="shImg"></span></div>
+    <div class="kv"><span>uptime since</span><span id="shSince"></span></div>
+    <div class="kv"><span>memory</span><span id="shMem"></span></div>
+    <div class="row2">
+      <button onclick="toast('Opening logs…')">Logs</button>
+      <button class="danger" onclick="toast('Restart — tap again')">Restart</button>
+    </div>
+  </div>
+</div>
+<div id="toast"></div>
+
+<script>
+const services=[
+ {nm:"api",img:"jbrain2-api:local",mem:"87 MB",bars:[3,4,3,5,4,3],grp:"core",since:"6/19 4:52 PM",health:"healthy"},
+ {nm:"worker",img:"jbrain2-api:local",mem:"72 MB",bars:[2,3,5,3,2,3],grp:"core",since:"6/19 4:52 PM",health:null},
+ {nm:"supervisor",img:"jbrain2-supervisor:local",mem:"50 MB",bars:[1,1,2,1,1,1],grp:"core",since:"6/19 4:52 PM",health:"healthy"},
+ {nm:"local-llm",img:"jbrain2-local-llm:local",mem:"2.6 GB",bars:[4,6,5,7,6,8],grp:"ai",since:"6/19 2:11 PM",health:null},
+ {nm:"embed",img:"hf/text-embeddings-inference",mem:"454 MB",bars:[3,4,4,3,5,4],grp:"ai",since:"6/19 10:17 AM",health:null},
+ {nm:"proxy",img:"jbrain2-proxy:local",mem:"20 MB",bars:[1,1,1,2,1,1],grp:"infra",since:"6/19 4:52 PM",health:null},
+ {nm:"searxng",img:"searxng/searxng:latest",mem:"159 MB",bars:[2,3,2,3,4,2],grp:"infra",since:"6/19 10:17 AM",health:null},
+ {nm:"cloudflared",img:"cloudflare/cloudflared:latest",mem:"46 MB",bars:[1,2,1,1,2,1],grp:"infra",since:"6/19 10:17 AM",health:null},
+];
+const svcEl=document.getElementById('svc');
+let filter="all";
+function render(){
+  const list=services.filter(s=>filter==="all"||s.grp===filter);
+  svcEl.innerHTML=list.map(s=>`
+   <div class="srow" onclick='openSheet(${JSON.stringify(s).replace(/'/g,"&#39;")})'>
+     <span class="sdot"></span>
+     <div class="sinfo">
+       <div class="snm">${s.nm} <span class="tag">${s.grp}</span></div>
+       <div class="smeta">${s.health?s.health+' · ':''}${s.img}</div>
+     </div>
+     <div class="membar">${s.bars.map(b=>`<i style="height:${b*11}%"></i>`).join('')}</div>
+     <span class="smem">${s.mem}</span>
+     <span class="chev">›</span>
+   </div>`).join('');
+}
+render();
+document.getElementById('seg').addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;
+  [...e.currentTarget.children].forEach(x=>x.classList.remove('on'));b.classList.add('on');filter=b.dataset.f;render();});
+
+function openSheet(s){document.getElementById('shNm').textContent=s.nm;
+  document.getElementById('shSub').textContent="running"+(s.health?" · "+s.health:"");
+  document.getElementById('shImg').textContent=s.img;document.getElementById('shSince').textContent=s.since;
+  document.getElementById('shMem').textContent=s.mem;
+  document.getElementById('scrim').classList.add('show');document.getElementById('sheet').classList.add('show');}
+function closeSheet(){document.getElementById('scrim').classList.remove('show');document.getElementById('sheet').classList.remove('show');}
+
+function toggleUpd(){document.getElementById('loadStat').classList.toggle('open');document.getElementById('upd').classList.toggle('open');}
+function runUpdate(){const btn=document.getElementById('updBtn'),log=document.getElementById('updLog');
+  if(btn.dataset.armed!=="1"){btn.dataset.armed="1";btn.classList.add('danger');btn.textContent="Tap again — rebuilds & restarts";
+    setTimeout(()=>{if(btn.dataset.armed==="1"){btn.dataset.armed="0";btn.classList.remove('danger');btn.textContent="Update server";}},3000);return;}
+  btn.dataset.armed="0";btn.disabled=true;btn.textContent="Updating…";log.classList.add('show');
+  const lines=["[update] git fetch origin main","[update] rebuilding images…","[update] proxy ✓  api ✓  worker ✓","[update] restarting stack — app may blink","[update] done · v2026.06.19"];
+  let i=0;log.textContent="";const t=setInterval(()=>{log.textContent+=(i?"\n":"")+lines[i++];log.scrollTop=log.scrollHeight;
+    if(i>=lines.length){clearInterval(t);btn.disabled=false;btn.textContent="Reload app";btn.onclick=()=>toast('Reloading…');toast('Update complete');}},700);}
+function toast(m){const t=document.getElementById('toast');t.textContent=m;t.classList.add('show');clearTimeout(t._t);t._t=setTimeout(()=>t.classList.remove('show'),2200);}
+</script>
+</body>
+</html>
