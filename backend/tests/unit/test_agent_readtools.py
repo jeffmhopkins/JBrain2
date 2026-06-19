@@ -750,8 +750,8 @@ def test_sidecars_pinned_to_their_versions() -> None:
         ),
         "current_location.tool": (
             "current_location",
-            1,
-            "921f335dd318a019adf0b3048f5da0ad89fb9450df913c33423538f9d9c60ff4",
+            2,
+            "4d718d5de82c5b51e9dc732a79f51b16755014a4be90f7ba7f0cb76ac5bb89d8",
         ),
         "web_search.tool": (
             "web_search",

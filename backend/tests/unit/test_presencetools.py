@@ -1,7 +1,5 @@
-"""jerv's owner-location tool: `current_location` — the `web`-gated, jerv-only
-on-box read that reconstructs the full owner ctx to clear require_full_owner."""
-
-from datetime import UTC, datetime, timedelta
+"""jerv's owner-location tool: `current_location` — a `web`-gated, jerv-only on-box
+reverse-geocode of the live PWA fix the turn carried (no saved-place / device read)."""
 
 import pytest
 
@@ -9,7 +7,6 @@ from jbrain.agent.loop import ToolContext
 from jbrain.agent.presencetools import build_presence_handlers
 from jbrain.db.session import SessionContext
 from jbrain.geocode import GeocodeResult
-from jbrain.locations import FixPoint, LatestPlace, NearestFix
 
 
 class _Geo:
@@ -28,90 +25,33 @@ def _here_ctx(lat: float, lon: float) -> ToolContext:
     return ToolContext(session=session, scopes=(), here=(lat, lon))
 
 
-class _Loc:
-    def __init__(self, near: NearestFix | None, place: LatestPlace | None) -> None:
-        self._near = near
-        self._place = place
-
-    async def device_activity(self, ctx):  # noqa: ANN001, ANN201
-        return {}
-
-    async def nearest_fix(self, ctx, *, subject_id, at, max_gap_seconds):  # noqa: ANN001, ANN201
-        return self._near
-
-    async def latest_place(self, ctx, *, subject_id):  # noqa: ANN001, ANN201
-        return self._place
+def _tool(geo: "_Geo | None" = None):  # noqa: ANN202
+    return build_presence_handlers(geo)["current_location"]  # type: ignore[arg-type]
 
 
-class _Dev:
-    def __init__(self, subs: list[str]) -> None:
-        self._subs = subs
+@pytest.mark.asyncio
+async def test_current_location_reverse_geocodes_the_live_fix_to_an_address() -> None:
+    geo = _Geo(GeocodeResult(label="221B Baker St, London", latitude=51.52, longitude=-0.16))
+    out = await _tool(geo)({}, _here_ctx(51.52, -0.16))
+    assert "221B Baker St, London" in out
 
-    async def owner_device_subjects(self, ctx):  # noqa: ANN001, ANN201
-        return self._subs
+
+@pytest.mark.asyncio
+async def test_current_location_returns_coordinates_when_the_geocoder_misses() -> None:
+    # No address resolved → the coordinate itself is an acceptable answer.
+    out = await _tool(_Geo(None))({}, _here_ctx(51.52, -0.16))
+    assert "51.52" in out and "-0.16" in out
 
 
-def _jerv_ctx() -> ToolContext:
-    # jerv's tool session is owner_scoped with empty scopes — the case the tool must
-    # clear by reconstructing a full owner ctx.
+@pytest.mark.asyncio
+async def test_current_location_returns_coordinates_with_no_geocoder() -> None:
+    out = await _tool(None)({}, _here_ctx(51.52000, -0.16000))
+    assert "51.52" in out and "-0.16" in out
+
+
+@pytest.mark.asyncio
+async def test_current_location_without_a_live_fix_asks_to_share() -> None:
+    # No coords on the turn → nothing to report; never reads the owner's location DB.
     session = SessionContext(principal_id="own", principal_kind="owner", owner_scoped=True)
-    return ToolContext(session=session, scopes=())
-
-
-def _fresh_near() -> NearestFix:
-    captured = datetime.now(UTC) - timedelta(minutes=3)
-    return NearestFix(fix=FixPoint(captured, 40.0, -74.0, 10, 80), gap_seconds=180)
-
-
-def _tool(loc: _Loc, dev: _Dev, geo: "_Geo | None" = None):  # noqa: ANN202
-    return build_presence_handlers(loc, dev, geo)["current_location"]  # type: ignore[arg-type]
-
-
-def _at_home() -> _Loc:
-    return _Loc(_fresh_near(), LatestPlace("e", "Home", datetime.now(UTC)))
-
-
-@pytest.mark.asyncio
-async def test_current_location_returns_the_owner_place_coordinate_free() -> None:
-    out = await _tool(_at_home(), _Dev(["s1"]))({}, _jerv_ctx())
-    assert "currently at Home" in out
-    # Never a coordinate.
-    assert "40.0" not in out and "-74.0" not in out
-
-
-@pytest.mark.asyncio
-async def test_current_location_reports_no_recent_fix() -> None:
-    out = await _tool(_Loc(None, None), _Dev(["s1"]))({}, _jerv_ctx())
-    assert "don't have a recent location fix" in out
-
-
-@pytest.mark.asyncio
-async def test_current_location_prefers_the_live_pwa_fix_reverse_geocoded() -> None:
-    # A turn carrying the PWA's live coords answers from them (on-box reverse-geocode),
-    # never touching the OwnTracks device stack — coordinate-free output.
-    geo = _Geo(GeocodeResult(label="Springfield, IL", latitude=39.8, longitude=-89.6))
-    out = await _tool(_Loc(None, None), _Dev([]), geo)({}, _here_ctx(39.8, -89.6))
-    assert "Springfield, IL" in out
-    assert "39.8" not in out and "-89.6" not in out
-
-
-@pytest.mark.asyncio
-async def test_current_location_live_fix_geocoder_miss_stays_coordinate_free() -> None:
-    out = await _tool(_Loc(None, None), _Dev([]), _Geo(None))({}, _here_ctx(39.8, -89.6))
-    assert "couldn't resolve it to a place name" in out
-    assert "39.8" not in out
-
-
-@pytest.mark.asyncio
-async def test_current_location_without_a_live_fix_falls_back_to_the_device() -> None:
-    # No live coords on the turn → the OwnTracks device presence read (the prior path).
-    out = await _tool(_at_home(), _Dev(["s1"]), _Geo(None))({}, _jerv_ctx())
-    assert "currently at Home" in out
-
-
-@pytest.mark.asyncio
-async def test_current_location_refuses_a_non_owner_principal() -> None:
-    session = SessionContext(principal_id="d", principal_kind="device_key")
-    ctx = ToolContext(session=session, scopes=())
-    out = await _tool(_at_home(), _Dev(["s1"]))({}, ctx)
-    assert out == "I can't check the owner's location in this session."
+    out = await _tool(_Geo(None))({}, ToolContext(session=session, scopes=()))
+    assert "share it" in out

@@ -822,7 +822,7 @@ def test_chat_runs_the_selected_agents_prompt_and_only_its_tools(
     assert {t.name for t in call["tools"]} == {"web_search", "web_fetch"}
     # Sandboxed: a non-KB agent never recalls skills, and the run carries its version.
     assert not skills.called
-    assert ("sess-j", "agent-jerv-v3") in client.app.state.agent_runlog.started  # type: ignore[attr-defined]
+    assert ("sess-j", "agent-jerv-v4") in client.app.state.agent_runlog.started  # type: ignore[attr-defined]
 
 
 def test_chat_curator_is_offered_no_web_tools(
