@@ -2189,6 +2189,10 @@ button.small {
   max-width: 430px;
   width: 100%;
   margin: 0 auto;
+  /* Bottom-anchored: tall content (e.g. the agent picker) would otherwise grow
+     off the top of the screen, so cap to the viewport and scroll inside. */
+  max-height: calc(100dvh - 24px);
+  overflow-y: auto;
   animation: launcher-in 150ms ease-out;
   outline: none;
 }
