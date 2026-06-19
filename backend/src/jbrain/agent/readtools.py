@@ -417,10 +417,10 @@ def build_registry(
             **build_connector_handlers(connectors, proposals),
             **build_geocode_handlers(geocoder),
             **build_location_handlers(locations, devices, entities, geocoder, proposals),
-            # jerv's owner-approved, jerv-only coarse location read (a `web`-gated,
-            # opt-in tool; on-box, coordinate-free — never offered to the curator).
-            # The geocoder resolves a live PWA fix to a place name on-box.
-            **build_presence_handlers(locations, devices, geocoder),
+            # jerv's owner-approved, jerv-only location read (a `web`-gated, opt-in
+            # tool, never offered to the curator). It reverse-geocodes the live PWA
+            # fix the turn carried — no saved-place or device-stack read.
+            **build_presence_handlers(geocoder),
             **build_wiki_handlers(wiki),
             **build_selfedit_handlers(proposals, router, settings),
             **wiki_write,
