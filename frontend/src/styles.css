@@ -6689,6 +6689,103 @@ button.small {
   font-size: 12px;
   color: var(--text-3);
 }
+
+/* Agent picker (new chat): one selectable card per agent — an accent-tinted
+   monogram, name + one-line description, and a check when chosen. Each agent owns
+   an accent (steel=curator/full-brain, amber=teacher, violet=jerv) per the DESIGN
+   mode/domain colour rule. */
+.sheet .agent-opts {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+.sheet .agent-opt {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  text-align: left;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  border-radius: 14px;
+  padding: 12px;
+  color: var(--text);
+}
+.sheet .agent-opt .agent-opt-ico {
+  flex: none;
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 15px;
+  font-weight: 600;
+  background: var(--surface-2);
+  color: var(--text-2);
+}
+.sheet .agent-opt .agent-opt-meta {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.sheet .agent-opt .agent-opt-t {
+  font-size: 15px;
+}
+.sheet .agent-opt .agent-opt-d {
+  font-size: 12px;
+  color: var(--text-3);
+  line-height: 1.35;
+}
+.sheet .agent-opt .agent-opt-check {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  border: 1.5px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  color: transparent;
+}
+.sheet .agent-opt.curator.on {
+  border-color: var(--steel);
+  background: var(--steel-tint);
+}
+.sheet .agent-opt.curator.on .agent-opt-ico,
+.sheet .agent-opt.curator.on .agent-opt-check {
+  background: var(--steel-tint);
+  color: var(--steel);
+}
+.sheet .agent-opt.teacher.on {
+  border-color: var(--amber);
+  background: var(--amber-tint);
+}
+.sheet .agent-opt.teacher.on .agent-opt-ico,
+.sheet .agent-opt.teacher.on .agent-opt-check {
+  background: var(--amber-tint);
+  color: var(--amber);
+}
+.sheet .agent-opt.jerv.on {
+  border-color: var(--violet);
+  background: var(--violet-tint);
+}
+.sheet .agent-opt.jerv.on .agent-opt-ico,
+.sheet .agent-opt.jerv.on .agent-opt-check {
+  background: var(--violet-tint);
+  color: var(--violet);
+}
+.sheet .reads-summary.agent-nodata {
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px dashed var(--border);
+  border-radius: 12px;
+  color: var(--text-2);
+}
+
 .sheet .start {
   width: 100%;
   margin-top: 14px;

@@ -140,6 +140,8 @@ export interface AgentSession {
   id: string;
   title: string;
   status: string;
+  /** The selected agent persona (curator | teacher | jerv); defaults to curator. */
+  agent: string;
   domain_scopes: string[];
   subject_ids: string[];
   created_at: string;
@@ -154,6 +156,8 @@ export interface SessionCreate {
   domain_scopes: string[];
   subject_ids?: string[];
   title?: string;
+  /** The selected agent persona; omitted defaults to curator on the server. */
+  agent?: string;
 }
 
 export interface ChatMessage {

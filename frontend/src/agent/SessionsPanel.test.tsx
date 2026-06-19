@@ -8,6 +8,7 @@ function session(over: Partial<AgentSession>): AgentSession {
     id: "s1",
     title: "Health wiki cleanup",
     status: "active",
+    agent: "curator",
     domain_scopes: ["health"],
     subject_ids: [],
     created_at: "2026-06-12T00:00:00Z",
@@ -146,7 +147,45 @@ describe("SessionsPanel", () => {
     fireEvent.click(screen.getByRole("button", { name: /Start/ }));
 
     await waitFor(() => expect(onCreate).toHaveBeenCalled());
-    expect(onCreate).toHaveBeenCalledWith({ domain_scopes: ["general", "health"], title: "labs" });
+    expect(onCreate).toHaveBeenCalledWith({
+      domain_scopes: ["general", "health"],
+      title: "labs",
+      agent: "curator",
+    });
+    await waitFor(() => expect(onOpen).toHaveBeenCalledWith(created));
+  });
+
+  it("a no-data agent (Jerv) hides the scope dial and starts with empty scopes", async () => {
+    const created = session({ id: "j", title: "", domain_scopes: [], agent: "jerv" });
+    const onCreate = vi.fn(async (_body: SessionCreate) => created);
+    const onOpen = vi.fn();
+    render(
+      <SessionsPanel
+        sessions={[]}
+        onOpen={onOpen}
+        onCreate={onCreate}
+        onClose={vi.fn()}
+        onRename={vi.fn()}
+        onDelete={vi.fn()}
+        onArchive={vi.fn()}
+        onUnarchive={vi.fn()}
+        onRescope={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByText("＋ New chat"));
+    // The default curator shows the scope dial.
+    expect(screen.getByRole("button", { name: "Everything" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /Jerv/ }));
+    // Jerv reads no owner data: the scope dial is gone, replaced by the caveat.
+    expect(screen.queryByRole("button", { name: "Everything" })).not.toBeInTheDocument();
+    expect(screen.getByText(/No access to your notes/i)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /Start/ }));
+    await waitFor(() =>
+      expect(onCreate).toHaveBeenCalledWith({ domain_scopes: [], title: "", agent: "jerv" }),
+    );
     await waitFor(() => expect(onOpen).toHaveBeenCalledWith(created));
   });
 

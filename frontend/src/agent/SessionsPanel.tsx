@@ -34,6 +34,43 @@ const PRESETS: { id: string; label: string; set: string[] | null }[] = [
   { id: "custom", label: "Custom…", set: null },
 ];
 
+// The selectable agents at session start (docs/ASSISTANT.md "Agent selection").
+// Only the curator reads the knowledge base; teacher and jerv read no owner data,
+// so the scope dial is hidden for them and the chat is created with empty scopes —
+// the firewall, not just a label. `note` is the caveat shown under a no-data agent.
+interface AgentChoice {
+  id: string;
+  label: string;
+  desc: string;
+  readsKb: boolean;
+  note: string;
+}
+const CURATOR_AGENT: AgentChoice = {
+  id: "curator",
+  label: "Curator",
+  desc: "Your Full Brain — searches your notes, facts, lists and appointments.",
+  readsKb: true,
+  note: "",
+};
+const AGENTS: AgentChoice[] = [
+  CURATOR_AGENT,
+  {
+    id: "teacher",
+    label: "Teacher",
+    desc: "A Socratic homework tutor — guides you to the answer instead of handing it over.",
+    readsKb: false,
+    note: "Teaches from this conversation only — no access to your notes or data.",
+  },
+  {
+    id: "jerv",
+    label: "Jerv",
+    desc: "A web chatbot — searches and reads the open internet to answer you.",
+    readsKb: false,
+    note: "Talks to the open web. No access to your notes or any of your data.",
+  },
+];
+const agentById = (id: string): AgentChoice => AGENTS.find((a) => a.id === id) ?? CURATOR_AGENT;
+
 // The CSS scope-chip class for a single domain code (display, not the wire code).
 const SCOPE_CLASS: Record<string, string> = {
   general: "general",
@@ -254,13 +291,18 @@ export function SessionsPanel({
       {picking && (
         <ScopeSheet
           sheetTitle="New chat"
-          lead="Picks up where you left off — reads what your last chat read. Choose a preset to change it; you can always narrow."
+          lead="Pick who you're talking to — your data access follows the agent."
           seed={readLastScope()}
           actionLabel="Start"
           withTitle
+          withAgent
           onClose={() => setPicking(false)}
-          onSubmit={async (scope, title) => {
-            const created = await onCreate({ domain_scopes: scope, title });
+          onSubmit={async (scope, title, agent) => {
+            const created = await onCreate({
+              domain_scopes: scope,
+              title,
+              ...(agent ? { agent } : {}),
+            });
             setPicking(false);
             onOpen(created);
           }}
@@ -534,6 +576,7 @@ function ScopeSheet({
   seed,
   actionLabel,
   withTitle = false,
+  withAgent = false,
   onClose,
   onSubmit,
 }: {
@@ -545,16 +588,29 @@ function ScopeSheet({
   actionLabel: string;
   /** Show the optional title field (new chat only). */
   withTitle?: boolean;
+  /** Show the agent picker (new chat only) — scope hides for a no-data agent. */
+  withAgent?: boolean;
   onClose: () => void;
-  onSubmit: (scope: string[], title: string) => void | Promise<void>;
+  onSubmit: (scope: string[], title: string, agent?: string) => void | Promise<void>;
 }): ReactNode {
   const [preset, setPreset] = useState<string>(() => scopeToPreset(seed));
   const [custom, setCustom] = useState<Set<string>>(() => new Set(seed));
   const [title, setTitle] = useState("");
+  const [agent, setAgent] = useState("curator");
 
+  const currentAgent = agentById(agent);
+  // A no-data agent (teacher/jerv) hides the scope dial and starts with empty
+  // scopes; the RLS firewall — not this UI — is what makes that real.
+  const showScope = !withAgent || currentAgent.readsKb;
   const scope =
     preset === "custom" ? [...custom] : (PRESETS.find((p) => p.id === preset)?.set ?? []);
   const summary = scopeKind(scope);
+  const canStart = showScope ? scope.length > 0 : true;
+  const startHint = !showScope
+    ? currentAgent.id === "jerv"
+      ? "reads the web, not your notes"
+      : "no data — a study tutor"
+    : `reads ${scope.length === 0 ? "nothing yet" : summary.label}`;
 
   function pick(id: string): void {
     // Entering Custom continues from whatever the pills currently read, so the
@@ -578,68 +634,98 @@ function ScopeSheet({
   }
 
   function submit(): void {
-    if (scope.length === 0) return;
-    writeLastScope(scope); // the chosen scope becomes the next chat's default
-    void onSubmit(scope, title.trim());
+    const effScope = showScope ? scope : [];
+    if (showScope && effScope.length === 0) return;
+    if (effScope.length) writeLastScope(effScope); // the chosen scope seeds the next chat
+    void onSubmit(effScope, title.trim(), withAgent ? agent : undefined);
   }
 
   return (
     <Sheet title={sheetTitle} onClose={onClose}>
       <p className="lead">{lead}</p>
 
-      <button type="button" className="start-big" disabled={scope.length === 0} onClick={submit}>
-        <span className="start-main">{actionLabel}</span>
-        <span className="start-hint">
-          reads {scope.length === 0 ? "nothing yet" : summary.label}
-        </span>
-      </button>
-
-      <div className="or">or choose a preset</div>
-      <div className="presets">
-        {PRESETS.map((p) => (
-          <button
-            type="button"
-            key={p.id}
-            className={`preset${preset === p.id ? " on" : ""}`}
-            aria-pressed={preset === p.id}
-            onClick={() => pick(p.id)}
-          >
-            {p.label}
-          </button>
-        ))}
-      </div>
-
-      <p className="reads-summary">
-        {scope.length === 0 ? (
-          <>
-            reads <b>nothing yet</b> — pick at least one source.
-          </>
-        ) : summary.cls === "everything" ? (
-          <>
-            reads <b>everything</b> — all your notes.
-          </>
-        ) : (
-          <>
-            reads <b>{summary.label}</b>.
-          </>
-        )}
-      </p>
-
-      {preset === "custom" && (
-        <div className="domain-opts">
-          {DOMAINS.map((d) => (
+      {withAgent && (
+        <div className="agent-opts" aria-label="Agent">
+          {AGENTS.map((a) => (
             <button
               type="button"
-              key={d.code}
-              className={`opt${custom.has(d.code) ? " on" : ""}`}
-              aria-pressed={custom.has(d.code)}
-              onClick={() => toggleDomain(d.code)}
+              key={a.id}
+              className={`agent-opt ${a.id}${agent === a.id ? " on" : ""}`}
+              aria-pressed={agent === a.id}
+              onClick={() => setAgent(a.id)}
             >
-              <span className="opt-t">{d.label}</span>
-              <span className="opt-d">{d.desc}</span>
+              <span className="agent-opt-ico" aria-hidden="true">
+                {a.label[0]}
+              </span>
+              <span className="agent-opt-meta">
+                <span className="agent-opt-t">{a.label}</span>
+                <span className="agent-opt-d">{a.desc}</span>
+              </span>
+              <span className="agent-opt-check" aria-hidden="true">
+                ✓
+              </span>
             </button>
           ))}
         </div>
+      )}
+
+      <button type="button" className="start-big" disabled={!canStart} onClick={submit}>
+        <span className="start-main">{actionLabel}</span>
+        <span className="start-hint">{startHint}</span>
+      </button>
+
+      {showScope ? (
+        <>
+          <div className="or">or choose a preset</div>
+          <div className="presets">
+            {PRESETS.map((p) => (
+              <button
+                type="button"
+                key={p.id}
+                className={`preset${preset === p.id ? " on" : ""}`}
+                aria-pressed={preset === p.id}
+                onClick={() => pick(p.id)}
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
+
+          <p className="reads-summary">
+            {scope.length === 0 ? (
+              <>
+                reads <b>nothing yet</b> — pick at least one source.
+              </>
+            ) : summary.cls === "everything" ? (
+              <>
+                reads <b>everything</b> — all your notes.
+              </>
+            ) : (
+              <>
+                reads <b>{summary.label}</b>.
+              </>
+            )}
+          </p>
+
+          {preset === "custom" && (
+            <div className="domain-opts">
+              {DOMAINS.map((d) => (
+                <button
+                  type="button"
+                  key={d.code}
+                  className={`opt${custom.has(d.code) ? " on" : ""}`}
+                  aria-pressed={custom.has(d.code)}
+                  onClick={() => toggleDomain(d.code)}
+                >
+                  <span className="opt-t">{d.label}</span>
+                  <span className="opt-d">{d.desc}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </>
+      ) : (
+        <p className="reads-summary agent-nodata">{currentAgent.note}</p>
       )}
 
       {withTitle && (
@@ -652,9 +738,12 @@ function ScopeSheet({
         />
       )}
 
-      <p className="writes-note">
-        Reads only. Anything the agent wants to change is <b>staged as a Proposal</b> for your okay.
-      </p>
+      {showScope && (
+        <p className="writes-note">
+          Reads only. Anything the agent wants to change is <b>staged as a Proposal</b> for your
+          okay.
+        </p>
+      )}
     </Sheet>
   );
 }
