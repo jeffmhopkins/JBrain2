@@ -71,6 +71,27 @@ describe("SettingsScreen capture location", () => {
   });
 });
 
+describe("SettingsScreen response typing speed", () => {
+  it("defaults the pick to 30/s", () => {
+    setup();
+    const group = screen.getByLabelText("Response typing speed");
+    expect(group.querySelector('[aria-pressed="true"]')).toHaveTextContent("30/s");
+  });
+
+  it("persists a chosen rate across remounts via localStorage", () => {
+    setup();
+    fireEvent.click(screen.getByRole("button", { name: "45/s" }));
+    expect(localStorage.getItem("jbrain.tokenRate")).toBe("45");
+    expect(screen.getByRole("button", { name: "45/s" })).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("offers Instant as a zero-rate (pacing off) choice", () => {
+    setup();
+    fireEvent.click(screen.getByRole("button", { name: "Instant" }));
+    expect(localStorage.getItem("jbrain.tokenRate")).toBe("0");
+  });
+});
+
 describe("SettingsScreen image analysis", () => {
   it("loads the server mode and marks it pressed (full is the default)", async () => {
     setup();
