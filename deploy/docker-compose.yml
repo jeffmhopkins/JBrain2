@@ -248,6 +248,13 @@ services:
       SEARXNG_BASE_URL: http://searxng:8080/
       # SearXNG refuses to start without a secret; set SEARXNG_SECRET in your .env.
       SEARXNG_SECRET: ${SEARXNG_SECRET:-}
+      # The image (now granian-based, post the uwsgi→granian migration) defaults to
+      # GRANIAN_HOST=:: — an IPv6 bind that crashes at boot on an IPv6-disabled Docker
+      # host ("Address family not supported"), leaving searxng:8080 unreachable so the
+      # jerv tool reports the service as unavailable. Pin an explicit IPv4 bind: the
+      # service publishes no host port and lives only on `internal`, so 0.0.0.0 is
+      # reachable by api/worker yet exposed to nothing else.
+      GRANIAN_HOST: 0.0.0.0
     volumes:
       # Not read-only: the image injects $SEARXNG_SECRET into the placeholder at boot.
       - ./searxng/settings.yml:/etc/searxng/settings.yml

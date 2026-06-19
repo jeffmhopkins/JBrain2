@@ -53,7 +53,14 @@ class SearxngClient:
                 resp = await client.get(f"{self._base_url}/search", params=params)
                 resp.raise_for_status()
                 body = resp.json()
+        except httpx.HTTPStatusError as exc:
+            # A reachable instance that refused the request — most often a 403 because
+            # the JSON format is not enabled (deploy/searxng/settings.yml must list it).
+            # Log the status so a config drift is diagnosable, not just "unavailable".
+            log.warning("web.search_failed", status=exc.response.status_code, error=repr(exc))
+            raise WebSearchError("the web search service is unavailable right now") from exc
         except (httpx.HTTPError, ValueError) as exc:
+            # Transport-level failure (unreachable / timeout) or a non-JSON body.
             log.warning("web.search_failed", error=repr(exc))
             raise WebSearchError("the web search service is unavailable right now") from exc
         rows = body.get("results") if isinstance(body, dict) else None
