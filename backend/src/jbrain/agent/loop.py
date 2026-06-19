@@ -245,9 +245,10 @@ class AgentLoop:
         timezone: str | None = None,
         system: str | None = None,
         agent_session_id: str | None = None,
+        tools_allow: frozenset[str] | None = None,
     ) -> AgentResult:
         scopes = tuple(scopes)
-        tools = self._registry.schemas_for(scopes)
+        tools = self._registry.schemas_for(scopes, tools_allow)
         messages: list[LlmMessage] = list(conversation)
         tool_ctx = ToolContext(
             session=session, scopes=scopes, timezone=timezone, agent_session_id=agent_session_id
@@ -310,6 +311,8 @@ class AgentLoop:
         timezone: str | None = None,
         buffer_retry: bool = False,
         agent_session_id: str | None = None,
+        system: str | None = None,
+        tools_allow: frozenset[str] | None = None,
     ) -> AsyncIterator[ChatEvent]:
         """The streaming twin of `run`: the same turn loop and guardrails, but it
         yields ChatEvents as they happen — `text_delta` per streamed chunk,
@@ -335,12 +338,15 @@ class AgentLoop:
         trades the live token stream for a spinner while verification clears."""
         if buffer_retry:
             async for ev in self._run_stream_buffered(
-                session, scopes, conversation, timezone, agent_session_id
+                session, scopes, conversation, timezone, agent_session_id, system, tools_allow
             ):
                 yield ev
             return
         scopes = tuple(scopes)
-        tools = self._registry.schemas_for(scopes)
+        # The selected agent supplies its persona prompt and tool allowlist
+        # (docs/ASSISTANT.md "Agent selection"); the default is the Full Brain curator.
+        system_prompt = system or SYSTEM_PROMPT
+        tools = self._registry.schemas_for(scopes, tools_allow)
         messages: list[LlmMessage] = list(conversation)
         tool_ctx = ToolContext(
             session=session, scopes=scopes, timezone=timezone, agent_session_id=agent_session_id
@@ -359,7 +365,7 @@ class AgentLoop:
             turn: LlmTurn | None = None
             async for part in self._router.converse_stream(
                 self._task,
-                system=SYSTEM_PROMPT,
+                system=system_prompt,
                 messages=messages,
                 tools=tools,
                 strength=SYSTEM_STRENGTH,
@@ -460,6 +466,8 @@ class AgentLoop:
         conversation: Sequence[LlmMessage],
         timezone: str | None,
         agent_session_id: str | None = None,
+        system: str | None = None,
+        tools_allow: frozenset[str] | None = None,
     ) -> AsyncIterator[ChatEvent]:
         """Mode (a): produce the turn non-streaming, run `reflect` (strict
         improvement, N=2 cap), then replay the kept attempt's buffered events as the
@@ -481,7 +489,14 @@ class AgentLoop:
             if budget[0] <= 0 and incumbent[0] is not None:
                 return incumbent[0]
             turn = await self._produce_buffered(
-                session, scopes, conversation, timezone, budget, agent_session_id
+                session,
+                scopes,
+                conversation,
+                timezone,
+                budget,
+                agent_session_id,
+                system,
+                tools_allow,
             )
             corpus = _grounding_corpus(turn.sources, turn.entities)
             # Empty corpus → grounding is unverifiable, not failed: hand back a clean
@@ -532,12 +547,15 @@ class AgentLoop:
         timezone: str | None,
         budget: list[int],
         agent_session_id: str | None = None,
+        system: str | None = None,
+        tools_allow: frozenset[str] | None = None,
     ) -> _BufferedTurn:
         """One full non-streaming produce-step for mode (a): run the turn loop to a
         terminal stop, buffering the ChatEvents it would have streamed (so a
         discarded retry never reaches the user). Shares the remaining cost cap in
         `budget` so retries cannot overspend the per-turn guardrail."""
-        tools = self._registry.schemas_for(scopes)
+        system_prompt = system or SYSTEM_PROMPT
+        tools = self._registry.schemas_for(scopes, tools_allow)
         messages: list[LlmMessage] = list(conversation)
         tool_ctx = ToolContext(
             session=session, scopes=scopes, timezone=timezone, agent_session_id=agent_session_id
@@ -553,7 +571,7 @@ class AgentLoop:
         for _step in range(self._g.max_steps):
             turn = await self._router.converse(
                 self._task,
-                system=SYSTEM_PROMPT,
+                system=system_prompt,
                 messages=messages,
                 tools=tools,
                 strength=SYSTEM_STRENGTH,

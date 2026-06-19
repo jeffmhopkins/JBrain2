@@ -93,15 +93,32 @@ class ToolRegistry:
         except KeyError:
             raise ToolRegistryError(f"unknown tool: {name!r}") from None
 
-    def schemas_for(self, scopes: Collection[str]) -> list[LlmTool]:
+    def schemas_for(
+        self, scopes: Collection[str], allow: Collection[str] | None = None
+    ) -> list[LlmTool]:
         """The adapter tool definitions a session holding `scopes` may see —
         visibility only; RLS at the DB layer is the boundary. Stable order so a
-        prompt's tool list does not churn between turns."""
-        return [
-            tool.as_llm_tool()
-            for name in sorted(self._by_name)
-            if _visible((tool := self._by_name[name]).spec.domains, scopes)
-        ]
+        prompt's tool list does not churn between turns.
+
+        `allow` is the selected agent's tool allowlist (docs/ASSISTANT.md "Agent
+        selection"): None means the default knowledge agent (every in-scope tool
+        EXCEPT the opt-in `web` class), and a collection names the exact tools the
+        agent may call (a tool-less agent passes an empty collection). A `web`
+        tool is offered only when explicitly allowlisted, so the Full Brain
+        `curator` (allow=None) never gains arbitrary internet access."""
+        out: list[LlmTool] = []
+        for name in sorted(self._by_name):
+            tool = self._by_name[name]
+            if allow is not None and name not in allow:
+                continue
+            # The web class is opt-in: never shown to the default knowledge agent,
+            # only to an agent that named it (jerv).
+            if allow is None and tool.spec.permission == "web":
+                continue
+            if not _visible(tool.spec.domains, scopes):
+                continue
+            out.append(tool.as_llm_tool())
+        return out
 
 
 def load_registry(tools_dir: Path, handlers: Mapping[str, ToolHandler]) -> ToolRegistry:

@@ -55,6 +55,13 @@ class Settings(BaseSettings):
     # no-auth NLM services; the egress guard fills only typed slots, never a URL.
     rxnav_url: str = "https://rxnav.nlm.nih.gov"
     medlineplus_url: str = "https://connect.medlineplus.gov"
+    # The self-hosted SearXNG metasearch instance backing the jerv chatbot's
+    # web_search/web_fetch tools (docs/ASSISTANT.md "Agent selection"). On-box, so
+    # a jerv search leaves the box only via SearXNG's own upstreams — the same
+    # local-first posture as the geocoder. Opt-in `searxng` compose profile; empty
+    # disables web search (the tool returns "not configured") but the sidecars
+    # still load so jerv always has its handlers.
+    searxng_url: str = "http://searxng:8080"
     # The external reverse-geocoder fallback (Phase 7 Wave 4b), Nominatim-compatible.
     # DEFAULT OFF: empty means the connector is never registered, so there is no
     # off-box geocoding path at all. When set, a lookup still leaves the box only on

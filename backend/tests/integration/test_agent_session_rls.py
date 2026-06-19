@@ -11,7 +11,7 @@ from collections.abc import AsyncIterator
 
 import pytest
 from sqlalchemy import text
-from sqlalchemy.exc import ProgrammingError
+from sqlalchemy.exc import IntegrityError, ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
@@ -120,6 +120,38 @@ async def _owner_ctx(maker: async_sessionmaker) -> SessionContext:
             await session.execute(text("SELECT id FROM app.principals WHERE kind = 'owner'"))
         ).scalar()
     return SessionContext(principal_id=str(pid), principal_kind="owner")
+
+
+async def test_agent_persona_round_trips_and_defaults_to_curator(
+    maker: async_sessionmaker,
+) -> None:
+    """Migration 0070: the selected agent persists and reads back; an unspecified
+    agent defaults to the Full Brain curator (backward-compatible)."""
+    owner = await _owner_ctx(maker)
+    repo = AgentSessionRepo(maker)
+
+    default = await repo.create(owner, domain_scopes=["general"], title="default")
+    assert default.agent == "curator"
+    assert (await repo.get(owner, default.id)).agent == "curator"  # type: ignore[union-attr]
+
+    chatbot = await repo.create(owner, domain_scopes=[], title="ask jerv", agent="jerv")
+    assert chatbot.agent == "jerv"
+    assert (await repo.get(owner, chatbot.id)).agent == "jerv"  # type: ignore[union-attr]
+
+
+async def test_agent_check_constraint_rejects_unknown_persona(maker: async_sessionmaker) -> None:
+    """The DB CHECK pins `agent` to the closed set, so a malformed value can never
+    reach the turn loop — defense in depth behind the API's validation."""
+    owner = await _owner_ctx(maker)
+    with pytest.raises((ProgrammingError, IntegrityError)):
+        async with scoped_session(maker, owner) as session:
+            await session.execute(
+                text(
+                    "INSERT INTO app.agent_sessions (id, principal_id, domain_scopes, agent)"
+                    " VALUES (gen_random_uuid(), :pid, '{}', 'rogue')"
+                ),
+                {"pid": owner.principal_id},
+            )
 
 
 async def test_rename_updates_the_title(maker: async_sessionmaker) -> None:

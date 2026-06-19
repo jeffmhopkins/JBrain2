@@ -19,6 +19,7 @@ from jbrain.agent.skilldistill import SKILL_DISTILL_SPEC
 from jbrain.agent.skills import SkillService, SkillsRepo
 from jbrain.agent.skillsweep import SKILL_SWEEP_SPEC
 from jbrain.agent.transcript_store import AgentTranscript
+from jbrain.agent.webtools import build_web_handlers
 from jbrain.agent.wikiwritetools import build_wiki_write_handlers
 from jbrain.analysis.hygiene import ENTITY_HYGIENE_SPEC
 from jbrain.analysis.reembed import REEMBED_SPEC
@@ -78,6 +79,7 @@ from jbrain.settings_store import SqlSettingsStore
 from jbrain.storage import FsBackupShelf, FsBlobStore
 from jbrain.tiles import FsTileCache, HttpTileFetcher, TileService
 from jbrain.usage import SqlUsageRecorder
+from jbrain.web import SearxngClient, WebFetcher
 from jbrain.wiki.actions import WIKI_SPECS
 from jbrain.wiki.readstore import WikiReadStore
 from jbrain.wiki.talkstore import WikiTalkStore
@@ -220,6 +222,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             ]
         )
         app.state.connector_service = ConnectorService(connector_registry, SqlConnectorCache(maker))
+        # The jerv chatbot's on-box internet tools — direct, sandboxed web access
+        # (no owner data in context; docs/ASSISTANT.md "Agent selection").
+        web_handlers = build_web_handlers(SearxngClient(settings.searxng_url), WebFetcher())
         app.state.agent_registry = build_registry(
             app.state.search_service,
             app.state.notes_repo,
@@ -234,6 +239,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             app.state.geocoder,
             app.state.location_repo,
             app.state.device_repo,
+            web_handlers,
             router=app.state.llm_router,
             settings=settings_store,
         )

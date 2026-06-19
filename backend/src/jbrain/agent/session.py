@@ -32,6 +32,9 @@ class AgentSessionInfo:
     subject_ids: tuple[str, ...]
     created_at: datetime
     last_active_at: datetime
+    # The selected agent persona (docs/ASSISTANT.md "Agent selection"). Defaulted so
+    # existing callers/tests that predate agent selection resolve to the curator.
+    agent: str = "curator"
     # List-view metadata (the Chats cards). Populated by `list`; the single-row
     # `get`/`create` paths leave them at their resting defaults — the chat
     # endpoint doesn't need them.
@@ -51,6 +54,7 @@ def _info(
         id=str(row.id),
         title=row.title,
         status=row.status,
+        agent=row.agent,
         domain_scopes=tuple(row.domain_scopes),
         subject_ids=tuple(str(s) for s in row.subject_ids),
         created_at=row.created_at,
@@ -98,11 +102,13 @@ class AgentSessionRepo:
         domain_scopes: Sequence[str],
         subject_ids: Sequence[str] = (),
         title: str = "",
+        agent: str = "curator",
     ) -> AgentSessionInfo:
         async with scoped_session(self._maker, ctx) as session:
             row = AgentSession(
                 principal_id=uuid.UUID(ctx.principal_id),
                 title=title,
+                agent=agent,
                 domain_scopes=list(domain_scopes),
                 subject_ids=[uuid.UUID(s) for s in subject_ids],
             )
