@@ -206,6 +206,18 @@ export function HomeScreen({
         }}
         busy={seg.mode === "fullbrain" && fb.busy}
         onOpenLauncher={onOpenLauncher}
+        // Full Brain only: a horizontal swipe across the omnibox shuttles the
+        // lateral panels (right→Sessions, left→Proposals; the opposite swipe
+        // sends the open one back). The transcript itself no longer swipes.
+        onLateralSwipe={
+          seg.mode === "fullbrain"
+            ? (dx) => {
+                if (fb.panel === "none") fb.setPanel(dx > 0 ? "sessions" : "proposals");
+                else if (fb.panel === "sessions" && dx < 0) fb.setPanel("none");
+                else if (fb.panel === "proposals" && dx > 0) fb.setPanel("none");
+              }
+            : undefined
+        }
         draft={pendingDraft}
         onConsumeDraft={clearDraft}
         apptRef={pendingAppt}

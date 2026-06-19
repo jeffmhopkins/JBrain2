@@ -58,6 +58,11 @@ function Harness({
       <button type="button" onClick={() => fb.send(text)}>
         send
       </button>
+      {/* The lateral-panel affordances the home screen provides (top bar tap and
+          the omnibox swipe live there); the surface itself no longer swipes. */}
+      <button type="button" onClick={() => fb.setPanel("sessions")}>
+        open-sessions
+      </button>
     </>
   );
 }
@@ -197,11 +202,8 @@ describe("FullBrainSurface", () => {
     render(<Harness d={deps({ listSessions, listProposals })} />);
     await waitFor(() => expect(listProposals).toHaveBeenCalledWith("s1"));
 
-    // Open the Chats panel (left swipe) and switch to the other chat.
-    const shell = document.querySelector(".fb-shell") as Element;
-    fireEvent.touchStart(shell, { touches: [{ clientX: 20, clientY: 200 }] });
-    fireEvent.touchMove(shell, { touches: [{ clientX: 140, clientY: 205 }] });
-    fireEvent.touchEnd(shell, { changedTouches: [{ clientX: 140, clientY: 205 }] });
+    // Open the Chats panel (home-screen affordance) and switch to the other chat.
+    fireEvent.click(screen.getByText("open-sessions"));
     fireEvent.click(screen.getByText("Second"));
 
     // Switching chats re-scopes the inbox to the chat now open.
@@ -953,31 +955,5 @@ describe("FullBrainSurface", () => {
     // closes behind it. (Its name surfaces in the top bar, tested at HomeScreen.)
     await waitFor(() => expect(screen.getByLabelText("Conversation")).toBeInTheDocument());
     expect(document.querySelector(".panel.left.open")).not.toBeInTheDocument();
-  });
-
-  it("swipes shuttle the panels in and the opposite swipe sends them back", async () => {
-    render(<Harness d={deps()} />);
-    await waitFor(() => screen.getByLabelText("Conversation"));
-    const shell = document.querySelector(".fb-shell") as Element;
-
-    fireEvent.touchStart(shell, { touches: [{ clientX: 20, clientY: 200 }] });
-    fireEvent.touchMove(shell, { touches: [{ clientX: 140, clientY: 205 }] });
-    fireEvent.touchEnd(shell, { changedTouches: [{ clientX: 140, clientY: 205 }] });
-    expect(document.querySelector(".panel.left.open")).toBeInTheDocument();
-
-    fireEvent.touchStart(shell, { touches: [{ clientX: 200, clientY: 200 }] });
-    fireEvent.touchMove(shell, { touches: [{ clientX: 80, clientY: 203 }] });
-    fireEvent.touchEnd(shell, { changedTouches: [{ clientX: 80, clientY: 203 }] });
-    expect(document.querySelector(".panel.left.open")).not.toBeInTheDocument();
-
-    fireEvent.touchStart(shell, { touches: [{ clientX: 300, clientY: 200 }] });
-    fireEvent.touchMove(shell, { touches: [{ clientX: 180, clientY: 203 }] });
-    fireEvent.touchEnd(shell, { changedTouches: [{ clientX: 180, clientY: 203 }] });
-    expect(document.querySelector(".panel.right.open")).toBeInTheDocument();
-
-    fireEvent.touchStart(shell, { touches: [{ clientX: 60, clientY: 200 }] });
-    fireEvent.touchMove(shell, { touches: [{ clientX: 200, clientY: 203 }] });
-    fireEvent.touchEnd(shell, { changedTouches: [{ clientX: 200, clientY: 203 }] });
-    expect(document.querySelector(".panel.right.open")).not.toBeInTheDocument();
   });
 });

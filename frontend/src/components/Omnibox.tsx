@@ -35,6 +35,7 @@ const MODE_ICON: Record<Mode, (p: { size?: number }) => ReactNode> = {
 };
 
 const SWIPE_UP_PX = 48;
+const PANEL_PX = 56; // horizontal travel that commits a Full Brain lateral panel
 
 interface OmniboxProps {
   /** Mode state is lifted so the home stream can scope itself to the mode. */
@@ -54,6 +55,11 @@ interface OmniboxProps {
    * area; its id rides the next Full Brain send so the agent resolves it. */
   apptRef?: AppointmentRef | null;
   onClearApptRef?: () => void;
+  /** Full Brain only: a committed horizontal swipe across the box shuttles the
+   * lateral panels (`dx` is the signed travel — right opens Sessions, left opens
+   * Proposals; the opposite swipe sends the open one back). Absent elsewhere, so
+   * the gesture is inert outside the conversation surface. */
+  onLateralSwipe?: ((dx: number) => void) | undefined;
 }
 
 export function Omnibox({
@@ -67,6 +73,7 @@ export function Omnibox({
   onConsumeDraft,
   apptRef,
   onClearApptRef,
+  onLateralSwipe,
 }: OmniboxProps) {
   const [text, setText] = useState("");
   const [files, setFiles] = useState<File[]>([]);
@@ -121,24 +128,30 @@ export function Omnibox({
     if (list) setFiles((prev) => [...prev, ...Array.from(list)]);
   }
 
-  // Swipe up anywhere on the box opens the card launcher. The textarea is
-  // included while it has no internal scroll (empty or short text — the
-  // common case and most of the box's surface); once content overflows, it
-  // owns its own touch scrolling again. Selects stay excluded.
+  // Two gestures share the box. Swipe up opens the card launcher; a horizontal
+  // swipe (Full Brain only) shuttles the lateral panels. The textarea joins both
+  // while it has no internal scroll (empty or short text — the common case and
+  // most of the box's surface); once content overflows it owns its own vertical
+  // scroll again, so we drop swipe-up there but keep the horizontal panel swipe
+  // (which never conflicts with vertical scrolling). Selects stay excluded.
   function onTouchStart(event: TouchEvent) {
     const target = event.target as HTMLElement;
     if (target.closest("select") !== null) {
-      touchStartY.current = null;
-      return;
-    }
-    const area = target.closest("textarea");
-    if (area !== null && area.scrollHeight > area.clientHeight) {
+      touchStartX.current = null;
       touchStartY.current = null;
       return;
     }
     const touch = event.touches[0];
-    touchStartY.current = touch?.clientY ?? null;
-    touchStartX.current = touch?.clientX ?? null;
+    if (touch === undefined) {
+      touchStartX.current = null;
+      touchStartY.current = null;
+      return;
+    }
+    touchStartX.current = touch.clientX;
+    const area = target.closest("textarea");
+    // Null Y opts the start out of swipe-up while keeping X for the panel swipe.
+    touchStartY.current =
+      area !== null && area.scrollHeight > area.clientHeight ? null : touch.clientY;
   }
 
   function onTouchMove(event: TouchEvent) {
@@ -147,11 +160,24 @@ export function Omnibox({
     if (startY === null || touch === undefined) return;
     const dy = startY - touch.clientY;
     const dx = Math.abs((touchStartX.current ?? touch.clientX) - touch.clientX);
-    // Clearly vertical and upward — don't fire on horizontal segment swipes.
+    // Clearly vertical and upward — don't fire on horizontal panel swipes.
     if (dy > SWIPE_UP_PX && dy > dx * 2) {
       touchStartY.current = null;
+      touchStartX.current = null;
       onOpenLauncher();
     }
+  }
+
+  function onTouchEnd(event: TouchEvent) {
+    const startX = touchStartX.current;
+    touchStartX.current = null;
+    touchStartY.current = null;
+    const touch = event.changedTouches[0];
+    if (startX === null || touch === undefined || onLateralSwipe === undefined) return;
+    const dx = touch.clientX - startX;
+    // A committed, clearly-horizontal drag shuttles the panels; a tap or a short
+    // travel leaves them be (so typing and segment taps are never hijacked).
+    if (Math.abs(dx) >= PANEL_PX) onLateralSwipe(dx);
   }
 
   const boxStyle = { "--mode": meta.color, "--mode-tint": meta.tint } as CSSProperties;
@@ -165,6 +191,7 @@ export function Omnibox({
         style={boxStyle}
         onTouchStart={onTouchStart}
         onTouchMove={onTouchMove}
+        onTouchEnd={onTouchEnd}
       >
         <div className="seg-row" role="tablist">
           {ROWS[seg.row].map((mode) => {
