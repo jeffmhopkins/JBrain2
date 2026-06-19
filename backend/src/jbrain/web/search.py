@@ -49,9 +49,7 @@ class SearxngClient:
             raise WebSearchError("web search is not configured on this instance")
         params = {"q": query, "format": "json"}
         try:
-            async with httpx.AsyncClient(
-                timeout=_TIMEOUT, transport=self._transport
-            ) as client:
+            async with httpx.AsyncClient(timeout=_TIMEOUT, transport=self._transport) as client:
                 resp = await client.get(f"{self._base_url}/search", params=params)
                 resp.raise_for_status()
                 body = resp.json()

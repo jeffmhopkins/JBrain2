@@ -107,7 +107,9 @@ async def test_fetch_follows_a_redirect() -> None:
             return httpx.Response(301, headers={"location": "https://x.example/final"})
         return httpx.Response(200, content=_HTML, headers={"content-type": "text/html"})
 
-    result = await WebFetcher(transport=httpx.MockTransport(handle)).fetch("https://x.example/start")
+    result = await WebFetcher(transport=httpx.MockTransport(handle)).fetch(
+        "https://x.example/start"
+    )
     assert result.url == "https://x.example/final" and "Heading" in result.text
 
 

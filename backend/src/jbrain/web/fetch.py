@@ -207,10 +207,4 @@ async def _read_capped(resp: httpx.Response) -> bytes:
 
 def _is_textual(content_type: str) -> bool:
     ct = content_type.lower()
-    return (
-        not ct
-        or ct.startswith("text/")
-        or "html" in ct
-        or "json" in ct
-        or "xml" in ct
-    )
+    return not ct or ct.startswith("text/") or "html" in ct or "json" in ct or "xml" in ct

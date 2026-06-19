@@ -72,9 +72,7 @@ def _profile(
 # prompt unchanged, so its persona and pinned version are exactly as before.
 AGENTS: dict[str, AgentProfile] = {
     "curator": _profile("curator", "system.prompt", tools=None, reads_knowledge_base=True),
-    "teacher": _profile(
-        "teacher", "teacher.prompt", tools=frozenset(), reads_knowledge_base=False
-    ),
+    "teacher": _profile("teacher", "teacher.prompt", tools=frozenset(), reads_knowledge_base=False),
     "jerv": _profile("jerv", "jerv.prompt", tools=WEB_TOOLS, reads_knowledge_base=False),
 }
 
