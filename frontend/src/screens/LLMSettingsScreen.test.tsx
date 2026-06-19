@@ -60,9 +60,10 @@ function initialSettings(): LlmSettings {
 }
 
 // A stateful stub: GET serves the fixture, PUT applies each task patch the way
-// the backend does (grok keeps reasoning, others null it) and echoes it back.
-function stubLlmFetch() {
-  const state = initialSettings();
+// the backend does (a reasoning-capable provider keeps reasoning, others null it)
+// and echoes it back.
+function stubLlmFetch(seed?: LlmSettings) {
+  const state = seed ?? initialSettings();
   const puts: { tasks: Record<string, { provider: string; reasoning_effort?: string }> }[] = [];
   const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
     const path = String(input);
@@ -74,12 +75,12 @@ function stubLlmFetch() {
         const task = state.tasks.find((t) => t.id === id);
         if (!task) continue;
         task.provider = patch.provider as typeof task.provider;
-        task.reasoning_effort =
-          patch.provider === "grok"
-            ? ((patch.reasoning_effort as typeof task.reasoning_effort) ??
-              task.reasoning_effort ??
-              "low")
-            : null;
+        const reasons = state.providers.find((p) => p.id === patch.provider)?.supports_reasoning;
+        task.reasoning_effort = reasons
+          ? ((patch.reasoning_effort as typeof task.reasoning_effort) ??
+            task.reasoning_effort ??
+            "low")
+          : null;
       }
     }
     return new Response(JSON.stringify(state), {
@@ -141,6 +142,51 @@ describe("LLMSettingsScreen", () => {
     await waitFor(() => expect(puts.length).toBeGreaterThan(0));
     const lastPatch = puts[puts.length - 1]?.tasks ?? {};
     expect(lastPatch["agent.turn"]).toEqual({ provider: "grok", reasoning_effort: "high" });
+  });
+
+  it("offers the reasoning control for a reasoning-capable local model", async () => {
+    // A task pinned to a local gpt-oss (supports_reasoning) shows the segments and
+    // sends the chosen level — the control is capability-driven, not grok-only.
+    const s = initialSettings();
+    s.providers = [
+      { id: "grok", label: "Grok 4.3", supports_reasoning: true, supports_vision: true },
+      {
+        id: "gpt-oss-120b",
+        label: "GPT-OSS 120B",
+        supports_reasoning: true,
+        supports_vision: false,
+      },
+      { id: "qwen3-30b", label: "Qwen3 30B", supports_reasoning: false, supports_vision: false },
+    ];
+    s.tasks = [
+      { id: "agent.turn", label: "Agent turn", provider: "gpt-oss-120b", reasoning_effort: "low" },
+    ];
+    const { puts } = stubLlmFetch(s);
+    render(<LLMSettingsScreen />);
+    const high = await group("High-stakes reasoning");
+    const reasoning = within(high).getByRole("group", { name: /High-stakes reasoning reasoning/i });
+
+    fireEvent.click(within(reasoning).getByRole("button", { name: "High" }));
+
+    await waitFor(() => expect(puts.length).toBeGreaterThan(0));
+    const lastPatch = puts[puts.length - 1]?.tasks ?? {};
+    expect(lastPatch["agent.turn"]).toEqual({ provider: "gpt-oss-120b", reasoning_effort: "high" });
+  });
+
+  it("drops the reasoning control for a non-reasoning local model", async () => {
+    const s = initialSettings();
+    s.providers = [
+      { id: "grok", label: "Grok 4.3", supports_reasoning: true, supports_vision: true },
+      { id: "qwen3-30b", label: "Qwen3 30B", supports_reasoning: false, supports_vision: false },
+    ];
+    s.tasks = [
+      { id: "agent.turn", label: "Agent turn", provider: "qwen3-30b", reasoning_effort: null },
+    ];
+    stubLlmFetch(s);
+    render(<LLMSettingsScreen />);
+    const high = await group("High-stakes reasoning");
+    expect(within(high).queryByRole("group", { name: /reasoning/i })).not.toBeInTheDocument();
+    expect(within(high).getByText("This model takes no reasoning level.")).toBeInTheDocument();
   });
 
   it("omits text-only local models from the Vision tier's choices", async () => {

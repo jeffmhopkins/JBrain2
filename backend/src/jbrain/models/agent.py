@@ -146,6 +146,8 @@ class AgentTurn(Base):
     role: Mapped[str] = mapped_column(Text)  # user | assistant
     content: Mapped[str] = mapped_column(Text)
     tools: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, default=list, server_default="[]")
+    # The model's reasoning trace for an assistant turn (gpt-oss/GLM); "" otherwise.
+    reasoning: Mapped[str] = mapped_column(Text, default="", server_default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 

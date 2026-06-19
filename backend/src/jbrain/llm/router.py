@@ -19,6 +19,7 @@ import httpx
 import structlog
 
 from jbrain.config import Settings
+from jbrain.llm import local_catalog
 from jbrain.llm.anthropic import AnthropicClient
 from jbrain.llm.errors import LlmBadResponseError, LlmError
 from jbrain.llm.openai_compat import OpenAiCompatClient
@@ -84,6 +85,15 @@ def _split_spec(label: str, spec: str) -> tuple[str, str]:
     if provider not in PROVIDERS:
         raise LlmError(f"unknown LLM provider for {label!r}: {provider!r}")
     return provider, model
+
+
+def _reasoning_capable(provider: str, model: str) -> bool:
+    """Whether (provider, model) honors `reasoning_effort` / emits a thinking trace:
+    xAI Grok, or a local reasoning model (gpt-oss/GLM). A stored effort is dropped
+    for anything else so a non-reasoning model never receives the param."""
+    return provider == "xai" or (
+        provider == "local" and model in local_catalog.REASONING_SERVED_MODELS
+    )
 
 
 def resolve_tasks(overrides: Mapping[str, str]) -> dict[str, tuple[str, str]]:
@@ -170,8 +180,9 @@ class LlmRouter:
         env pin, the strength tier, and the task default — because the settings
         screen is the operator's live control surface and must win over any
         deploy-time config. A stored `reasoning_effort` applies only when the
-        resolved provider is xai (the only provider that honors it). Malformed
-        stored entries are ignored: a bad saved setting must never break a call."""
+        resolved provider+model is reasoning-capable (xai Grok, or a local reasoning
+        model like gpt-oss/GLM); for anything else it is dropped. Malformed stored
+        entries are ignored: a bad saved setting must never break a call."""
         provider, model = self._resolve(task, strength)
         reasoning_effort: str | None = None
         if self._overrides_loader is not None:
@@ -189,10 +200,8 @@ class LlmRouter:
                         log.warning("llm.local_override_ignored", task=task, spec=spec)
                     else:
                         provider, model = sp, sm
-            effort = entry.get("reasoning_effort")
-            if effort is not None and provider == "xai":
-                reasoning_effort = effort
-        if provider != "xai":
+            reasoning_effort = entry.get("reasoning_effort")
+        if not _reasoning_capable(provider, model):
             reasoning_effort = None
         return provider, model, reasoning_effort
 

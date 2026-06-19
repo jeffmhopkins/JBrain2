@@ -24,6 +24,7 @@ class TurnRecord:
     role: str  # user | assistant
     content: str
     tools: list[dict[str, Any]] = field(default_factory=list)
+    reasoning: str = ""  # the assistant turn's thinking trace (gpt-oss/GLM); "" otherwise
 
 
 class AgentTranscript:
@@ -41,6 +42,7 @@ class AgentTranscript:
         user_text: str,
         assistant_text: str,
         tools: Sequence[dict[str, Any]],
+        reasoning: str = "",
     ) -> None:
         """Append the user turn then the assistant turn for one completed exchange."""
         sid = uuid.UUID(session_id)
@@ -56,6 +58,7 @@ class AgentTranscript:
                     role="assistant",
                     content=assistant_text,
                     tools=list(tools),
+                    reasoning=reasoning,
                 )
             )
 
@@ -68,4 +71,9 @@ class AgentTranscript:
                     .order_by(AgentTurn.seq)
                 )
             ).scalars()
-            return [TurnRecord(role=r.role, content=r.content, tools=list(r.tools)) for r in rows]
+            return [
+                TurnRecord(
+                    role=r.role, content=r.content, tools=list(r.tools), reasoning=r.reasoning
+                )
+                for r in rows
+            ]

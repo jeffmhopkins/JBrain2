@@ -158,6 +158,16 @@ class TextDelta(BaseModel):
     text: str
 
 
+class ReasoningDelta(BaseModel):
+    """One slice of the model's streamed reasoning trace (gpt-oss/GLM `reasoning_content`).
+    The PWA renders these into a collapsible "thinking" disclosure that streams live and
+    collapses to "Thought for Ns" once the answer begins. Display/provenance only — never
+    part of the answer, the grounding corpus, or exported output."""
+
+    type: Literal["reasoning_delta"] = "reasoning_delta"
+    text: str
+
+
 class ToolCallEvent(BaseModel):
     type: Literal["tool_call"] = "tool_call"
     id: str
@@ -238,6 +248,7 @@ class GeneralKnowledgeEvent(BaseModel):
 
 ChatEvent = Annotated[
     TextDelta
+    | ReasoningDelta
     | ToolCallEvent
     | ToolResultEvent
     | ToolViewEvent

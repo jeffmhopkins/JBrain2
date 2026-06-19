@@ -3,7 +3,16 @@ import { agentStatus } from "./status";
 import type { TranscriptMessage } from "./transcript";
 
 function asst(over: Partial<TranscriptMessage> = {}): TranscriptMessage {
-  return { role: "assistant", text: "", tools: [], views: [], streaming: true, ...over };
+  return {
+    role: "assistant",
+    text: "",
+    tools: [],
+    views: [],
+    streaming: true,
+    reasoning: "",
+    thinking: false,
+    ...over,
+  };
 }
 const USER: TranscriptMessage = {
   role: "user",
@@ -11,6 +20,8 @@ const USER: TranscriptMessage = {
   tools: [],
   views: [],
   streaming: false,
+  reasoning: "",
+  thinking: false,
 };
 
 describe("agentStatus", () => {

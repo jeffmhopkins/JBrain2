@@ -177,6 +177,13 @@ def test_build_router_marks_pinned_tasks_so_pins_beat_tiers() -> None:
 # --- live DB overrides (the settings screen) ---------------------------------
 
 
+def _loader(overrides: dict[str, dict[str, str]]):  # type: ignore[no-untyped-def]
+    async def load() -> dict[str, dict[str, str]]:
+        return overrides
+
+    return load
+
+
 def _override_router(
     clients: dict[str, FakeLlmClient], overrides: dict[str, dict[str, str]], *, pinned=frozenset()
 ) -> LlmRouter:
@@ -250,6 +257,38 @@ async def test_reasoning_effort_dropped_when_override_routes_off_xai() -> None:
     )
     await router.complete("note.extract", system="s", user_text="u")
     assert anthropic.calls[0]["reasoning_effort"] is None
+
+
+async def test_reasoning_effort_reaches_a_reasoning_capable_local_model() -> None:
+    # A stored effort on a `local:` spec for a reasoning model (gpt-oss) is honored —
+    # llama.cpp serves gpt-oss with a harmony reasoning channel.
+    local = FakeLlmClient(["l"])
+    router = LlmRouter(
+        {"local": local},
+        {"note.extract": ("xai", "grok-4.3")},
+        overrides_loader=_loader(
+            {"note.extract": {"spec": "local:gpt-oss-120b", "reasoning_effort": "high"}}
+        ),
+        local_enabled=True,
+    )
+    await router.complete("note.extract", system="s", user_text="u")
+    assert local.calls[0]["reasoning_effort"] == "high"
+
+
+async def test_reasoning_effort_dropped_for_a_non_reasoning_local_model() -> None:
+    # The same stored effort on a non-reasoning local model (a Qwen Instruct variant)
+    # is dropped — it would be meaningless (no thinking channel) on the wire.
+    local = FakeLlmClient(["l"])
+    router = LlmRouter(
+        {"local": local},
+        {"note.extract": ("xai", "grok-4.3")},
+        overrides_loader=_loader(
+            {"note.extract": {"spec": "local:qwen3-30b-a3b", "reasoning_effort": "high"}}
+        ),
+        local_enabled=True,
+    )
+    await router.complete("note.extract", system="s", user_text="u")
+    assert local.calls[0]["reasoning_effort"] is None
 
 
 async def test_bad_stored_spec_falls_back_without_crashing() -> None:

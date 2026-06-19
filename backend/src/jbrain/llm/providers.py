@@ -20,8 +20,8 @@ from dataclasses import dataclass
 from jbrain.config import Settings
 from jbrain.llm import local_catalog
 
-# Grok is the only reasoning-capable provider here; xAI's `reasoning_effort` has
-# no analogue for the local server, and Anthropic uses a separate thinking
+# Reasoning-capable providers honor `reasoning_effort`: xAI Grok, and the local
+# reasoning models (gpt-oss/GLM) via llama.cpp. Anthropic uses a separate thinking
 # mechanism that is out of scope for this control surface.
 REASONING_EFFORTS: tuple[str, ...] = ("none", "low", "medium", "high")
 # xAI's own default when the param is unset. The UI shows this for Grok tasks
@@ -56,7 +56,11 @@ def _local_choices(settings: Settings) -> tuple[ProviderChoice, ...]:
         )
     return tuple(
         ProviderChoice(
-            m.id, m.label, m.spec, supports_reasoning=False, supports_vision=m.supports_vision
+            m.id,
+            m.label,
+            m.spec,
+            supports_reasoning=m.supports_reasoning,
+            supports_vision=m.supports_vision,
         )
         for m in models
     )

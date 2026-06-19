@@ -48,6 +48,12 @@ export interface TranscriptMessage {
   views: ViewPayload[];
   streaming: boolean;
   stopReason?: string;
+  /** The model's reasoning trace (gpt-oss/GLM), accumulated from `reasoning_delta`
+   * and replayed from storage. Empty for non-reasoning turns. */
+  reasoning: string;
+  /** True while reasoning is streaming and the answer hasn't started — drives the
+   * live "Thinking…" state; flips false on the first answer token (or `done`). */
+  thinking: boolean;
   /** Reflexion's flag on this turn — absent until a `verdict` event lands. */
   verdict?: Verdict;
   /** Neutral provenance: the turn answered from the model's own knowledge with no
@@ -57,11 +63,27 @@ export interface TranscriptMessage {
 }
 
 export function userMessage(text: string): TranscriptMessage {
-  return { role: "user", text, tools: [], views: [], streaming: false };
+  return {
+    role: "user",
+    text,
+    tools: [],
+    views: [],
+    streaming: false,
+    reasoning: "",
+    thinking: false,
+  };
 }
 
 export function streamingAssistant(): TranscriptMessage {
-  return { role: "assistant", text: "", tools: [], views: [], streaming: true };
+  return {
+    role: "assistant",
+    text: "",
+    tools: [],
+    views: [],
+    streaming: true,
+    reasoning: "",
+    thinking: false,
+  };
 }
 
 /** Fold one ChatEvent into the transcript, updating the live assistant turn (the
@@ -73,6 +95,14 @@ export function applyEvent(messages: TranscriptMessage[], event: ChatEvent): Tra
   switch (event.type) {
     case "text_delta":
       next.text += event.text;
+      // The answer has begun — the thinking phase is over (collapse the disclosure).
+      next.thinking = false;
+      break;
+    case "reasoning_delta":
+      next.reasoning += event.text;
+      // Live "thinking" only until the answer's first token; later reasoning (a
+      // multi-step turn) appends to the trace without reopening the disclosure.
+      next.thinking = next.text === "";
       break;
     case "tool_call":
       next.tools = [
@@ -115,6 +145,8 @@ export function applyEvent(messages: TranscriptMessage[], event: ChatEvent): Tra
     case "done":
       next.streaming = false;
       next.stopReason = event.stop_reason;
+      // The turn settled — a reasoning-only turn (no answer text) stops thinking now.
+      next.thinking = false;
       break;
     case "verdict":
       // Rides after `done` (Loop 1's annotation). Attach it to the just-settled

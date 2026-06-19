@@ -110,11 +110,14 @@ function sharedProvider(tasks: LlmTask[]): GroupProvider {
   return first !== undefined && tasks.every((t) => t.provider === first) ? first : "mixed";
 }
 
-function sharedReasoning(tasks: LlmTask[]): GroupReasoning {
-  const grok = tasks.filter((t) => t.provider === "grok");
-  if (grok.length === 0) return "mixed";
-  const first = grok[0]?.reasoning_effort;
-  return first != null && grok.every((t) => t.reasoning_effort === first) ? first : "mixed";
+function sharedReasoning(
+  tasks: LlmTask[],
+  reasons: (provider: LlmProviderId) => boolean,
+): GroupReasoning {
+  const reasoning = tasks.filter((t) => reasons(t.provider));
+  if (reasoning.length === 0) return "mixed";
+  const first = reasoning[0]?.reasoning_effort;
+  return first != null && reasoning.every((t) => t.reasoning_effort === first) ? first : "mixed";
 }
 
 export function LLMSettingsScreen() {
@@ -228,7 +231,8 @@ export function LLMSettingsScreen() {
   const currentTasks = settings.tasks;
 
   // Apply a patch optimistically, then PUT only the touched tasks and reconcile
-  // from the response. A task on grok carries its reasoning; off grok it drops.
+  // from the response. A task on a reasoning-capable provider (Grok or a local
+  // gpt-oss/GLM) carries its reasoning level; off one it drops.
   function applyTasks(updates: Map<string, LlmTaskPatchLocal>) {
     setSettings((prev) => {
       if (prev === null) return prev;
@@ -238,10 +242,9 @@ export function LLMSettingsScreen() {
           const u = updates.get(t.id);
           if (!u) return t;
           const provider = u.provider ?? t.provider;
-          const effort =
-            provider === "grok"
-              ? (u.reasoning_effort ?? t.reasoning_effort ?? defaultEffort)
-              : null;
+          const effort = reasonOn(provider)
+            ? (u.reasoning_effort ?? t.reasoning_effort ?? defaultEffort)
+            : null;
           return { ...t, provider, reasoning_effort: effort };
         }),
       };
@@ -252,13 +255,12 @@ export function LLMSettingsScreen() {
     for (const [id, u] of updates) {
       const task = currentTasks.find((t) => t.id === id);
       const provider = u.provider ?? task?.provider ?? "grok";
-      wire[id] =
-        provider === "grok"
-          ? {
-              provider,
-              reasoning_effort: u.reasoning_effort ?? task?.reasoning_effort ?? defaultEffort,
-            }
-          : { provider };
+      wire[id] = reasonOn(provider)
+        ? {
+            provider,
+            reasoning_effort: u.reasoning_effort ?? task?.reasoning_effort ?? defaultEffort,
+          }
+        : { provider };
     }
     const seq = ++putSeq.current;
     void api
@@ -277,9 +279,9 @@ export function LLMSettingsScreen() {
 
   function setGroupReasoning(group: ResolvedGroup, effort: ReasoningEffort) {
     const updates = new Map<string, LlmTaskPatchLocal>();
-    // Only grok tasks carry a reasoning level; others are untouched.
+    // Only reasoning-capable tasks carry a level; others are untouched.
     for (const t of group.tasks) {
-      if (t.provider === "grok") updates.set(t.id, { reasoning_effort: effort });
+      if (reasonOn(t.provider)) updates.set(t.id, { reasoning_effort: effort });
     }
     applyTasks(updates);
   }
@@ -320,8 +322,8 @@ export function LLMSettingsScreen() {
 
       {groups.map((group) => {
         const provider = sharedProvider(group.tasks);
-        const reasoning = sharedReasoning(group.tasks);
-        const grokOn = provider !== "mixed" && reasonOn(provider);
+        const reasoning = sharedReasoning(group.tasks, reasonOn);
+        const reasoningOn = provider !== "mixed" && reasonOn(provider);
         const isOpen = expanded.has(group.key);
         const groupVision = group.accent === "vision";
         // The current provider may not be in the (filtered) option list — e.g. a
@@ -335,9 +337,9 @@ export function LLMSettingsScreen() {
         const naNote =
           provider === "claude"
             ? "Claude manages thinking on its own."
-            : grokOn || provider === "mixed"
+            : reasoningOn || provider === "mixed"
               ? null
-              : "Local models take no reasoning level.";
+              : "This model takes no reasoning level.";
 
         return (
           <section key={group.key} className={`llm-group llm-${group.accent}`}>
@@ -373,7 +375,7 @@ export function LLMSettingsScreen() {
               </select>
 
               <span className="llm-field-tag">Reasoning</span>
-              {grokOn ? (
+              {reasoningOn ? (
                 <fieldset className="seg-row llm-seg-row" aria-label={`${group.name} reasoning`}>
                   {efforts.map((effort) => (
                     <button
@@ -410,7 +412,7 @@ export function LLMSettingsScreen() {
               {isOpen && (
                 <div className="llm-members">
                   {group.tasks.map((task) => {
-                    const taskGrok = reasonOn(task.provider);
+                    const taskReasons = reasonOn(task.provider);
                     const taskOpts = providersFor(isVisionTask(task.id));
                     const taskMissing = !taskOpts.some((p) => p.id === task.provider);
                     return (
@@ -439,7 +441,7 @@ export function LLMSettingsScreen() {
                               </option>
                             ))}
                           </select>
-                          {taskGrok ? (
+                          {taskReasons ? (
                             <fieldset
                               className="seg-row llm-seg-row llm-member-seg"
                               aria-label={`${task.label} reasoning`}

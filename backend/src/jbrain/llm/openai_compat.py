@@ -24,6 +24,7 @@ from jbrain.llm.types import (
     LlmTool,
     LlmTurn,
     LlmUsage,
+    ReasoningChunk,
     StopReason,
     StreamPart,
     TextChunk,
@@ -162,9 +163,12 @@ class OpenAiCompatClient:
         return LlmResult(text=text, parsed=parsed, usage=usage)
 
     def _apply_reasoning(self, payload: dict[str, Any], reasoning_effort: str | None) -> None:
-        # `reasoning_effort` is an xAI Grok parameter; a local OpenAI-compatible
-        # server would reject the unknown field, so it is xai-only by design.
-        if reasoning_effort is not None and self.provider == "xai":
+        # `reasoning_effort` is honored by xAI Grok and by the local gateway's
+        # reasoning models (gpt-oss/GLM via llama.cpp). The ROUTER gates eligibility
+        # (it only sets an effort for a reasoning-capable provider+model), so the
+        # client applies whatever it's given for those two providers — a non-reasoning
+        # local model never reaches here with an effort set.
+        if reasoning_effort is not None and self.provider in ("xai", "local"):
             payload["reasoning_effort"] = reasoning_effort
 
     def _converse_payload(
@@ -233,6 +237,7 @@ class OpenAiCompatClient:
             choice = data["choices"][0]
             message = choice["message"]
             text = message.get("content") or ""
+            reasoning = message.get("reasoning_content") or ""
             tool_calls = tuple(self._tool_call(tc) for tc in message.get("tool_calls") or ())
             finish = choice.get("finish_reason", "stop")
         except (KeyError, IndexError, TypeError) as exc:
@@ -247,6 +252,7 @@ class OpenAiCompatClient:
             tool_calls=tool_calls,
             stop_reason=_OPENAI_STOP.get(finish, "end_turn"),
             usage=usage,
+            reasoning=reasoning,
         )
 
     def _tool_call(self, raw: dict[str, Any]) -> ToolCall:
@@ -294,6 +300,7 @@ class OpenAiCompatClient:
             sleep=self._sleep,
         )
         text_parts: list[str] = []
+        reasoning_parts: list[str] = []
         # Tool calls keyed by their stream index: id/name land on the first delta
         # for that index, argument fragments accumulate across later ones.
         calls_by_index: dict[int, dict[str, Any]] = {}
@@ -307,6 +314,13 @@ class OpenAiCompatClient:
                 output_tokens = int(usage_body.get("completion_tokens", output_tokens))
             for choice in event.get("choices") or ():
                 delta = choice.get("delta") or {}
+                # A reasoning model (gpt-oss/GLM via the local gateway) streams its
+                # thinking on a separate `reasoning_content` channel; surface it as a
+                # ReasoningChunk — never folded into the answer text.
+                reasoning = delta.get("reasoning_content")
+                if reasoning:
+                    reasoning_parts.append(reasoning)
+                    yield ReasoningChunk(text=reasoning)
                 content = delta.get("content")
                 if content:
                     text_parts.append(content)
@@ -322,6 +336,7 @@ class OpenAiCompatClient:
             tool_calls=tool_calls,
             stop_reason=stop,
             usage=LlmUsage(input_tokens=input_tokens, output_tokens=output_tokens),
+            reasoning="".join(reasoning_parts),
         )
 
     @staticmethod

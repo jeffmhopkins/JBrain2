@@ -238,7 +238,8 @@ export type ReasoningEffort = "none" | "low" | "medium" | "high";
 export interface LlmProvider {
   id: LlmProviderId;
   label: string;
-  /** Only grok exposes a reasoning level; the UI hides the control otherwise. */
+  /** Whether this provider/model honors a reasoning level (grok, or a local
+   * reasoning model like gpt-oss/GLM); the UI hides the control otherwise. */
   supports_reasoning: boolean;
   /** Vision tasks only offer vision-capable providers (cloud, or VL local models). */
   supports_vision: boolean;
@@ -289,7 +290,8 @@ export interface LlmSettings {
   host_memory: { total_gb: number; used_gb: number } | null;
 }
 
-/** One task's desired routing; reasoning_effort is sent only for grok. */
+/** One task's desired routing; reasoning_effort applies only to a reasoning-capable
+ * provider/model (grok, or a local gpt-oss/GLM) and is dropped otherwise. */
 export interface LlmTaskPatch {
   provider: LlmProviderId;
   reasoning_effort?: ReasoningEffort;

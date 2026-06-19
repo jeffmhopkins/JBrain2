@@ -42,6 +42,12 @@ export interface TextDelta {
   type: "text_delta";
   text: string;
 }
+/** A slice of the model's streamed reasoning trace (gpt-oss/GLM). Renders into the
+ * collapsible "thinking" disclosure; never part of the answer. */
+export interface ReasoningDelta {
+  type: "reasoning_delta";
+  text: string;
+}
 export interface ToolCallEvent {
   type: "tool_call";
   id: string;
@@ -105,6 +111,7 @@ export interface GeneralKnowledgeEvent {
 
 export type ChatEvent =
   | TextDelta
+  | ReasoningDelta
   | ToolCallEvent
   | ToolResultEvent
   | ToolViewEvent
@@ -132,6 +139,9 @@ export interface TranscriptTurn {
     /** A rich tool-result view (e.g. a list_card), persisted so it replays too. */
     view?: ViewPayload | null;
   }[];
+  /** The assistant turn's reasoning trace (gpt-oss/GLM), for the "thinking"
+   * disclosure; "" for user turns and non-reasoning models. */
+  reasoning?: string;
 }
 
 // --- Agent sessions (the capability record; /api/sessions) ---

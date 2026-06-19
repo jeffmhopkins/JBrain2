@@ -13,6 +13,7 @@ from jbrain.agent.contracts import (
     JobEnqueuedEvent,
     NoteSource,
     ProposalRef,
+    ReasoningDelta,
     TextDelta,
     ToolCallEvent,
     ToolResultEvent,
@@ -291,6 +292,20 @@ async def test_run_stream_streams_text_then_done() -> None:
         DoneEvent(stop_reason="end_turn"),
         GeneralKnowledgeEvent(),
     ]
+
+
+async def test_run_stream_emits_reasoning_before_answer() -> None:
+    # A reasoning-capable turn streams its thinking trace; the loop relays it as a
+    # ReasoningDelta ahead of the answer text, never folding it into the answer.
+    router, _ = stream_router_with(
+        [LlmTurn("the answer", (), "end_turn", LlmUsage(1, 1), reasoning="let me think")],
+        stream_chunks=[["the answer"]],
+    )
+    events = await collect(AgentLoop(router, registry_with(make_tool("search", search))))
+    assert events[0] == ReasoningDelta(text="let me think")
+    assert events[1] == TextDelta(text="the answer")
+    # The reasoning text never leaks into the answer deltas.
+    assert all(e.text != "let me think" for e in events if isinstance(e, TextDelta))
 
 
 async def test_run_stream_emits_tool_call_and_result_around_dispatch() -> None:
@@ -856,6 +871,17 @@ async def test_buffer_retry_zero_retrieval_substantive_turn_labels_general_knowl
     assert isinstance(events[-1], GeneralKnowledgeEvent)
     assert not any(isinstance(e, VerdictEvent) for e in events)
     assert len(fake.converse_calls) == 1  # produced once, no retry
+
+
+async def test_buffer_retry_replays_reasoning_of_the_kept_attempt() -> None:
+    # The buffered (non-streaming) path emits the kept turn's reasoning as a single
+    # ReasoningDelta ahead of the answer — the buffered twin of the live stream.
+    router, _ = stream_router_with(
+        [LlmTurn("the answer", (), "end_turn", LlmUsage(1, 1), reasoning="let me think")],
+    )
+    events = await collect_buffered(AgentLoop(router, registry_with(make_tool("search", search))))
+    assert events[0] == ReasoningDelta(text="let me think")
+    assert any(isinstance(e, TextDelta) and e.text == "the answer" for e in events)
 
 
 async def test_buffer_retry_replays_buffered_tool_events_of_the_kept_attempt() -> None:
