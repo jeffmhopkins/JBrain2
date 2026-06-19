@@ -101,6 +101,17 @@ class Guardrails:
     max_consecutive_tool_errors: int = 3
 
 
+# A model set to think harder earns a deeper tool budget: a longer ReAct chain (more
+# searches/reads) before the step cap stops it. low/none/non-reasoning keep the default.
+STEPS_BY_EFFORT: dict[str, int] = {"high": 20, "medium": 15}
+
+
+def guardrails_for_effort(effort: str | None) -> Guardrails:
+    """The loop's budget sized to the task's effective reasoning effort."""
+    steps = STEPS_BY_EFFORT.get(effort or "")
+    return Guardrails() if steps is None else Guardrails(max_steps=steps)
+
+
 @dataclass(frozen=True)
 class ToolContext:
     """What a tool handler receives: the RLS scope its reads must run under, and

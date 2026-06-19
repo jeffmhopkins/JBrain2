@@ -26,7 +26,7 @@ from pydantic import BaseModel, Field
 
 from jbrain.agent.agents import agent_for
 from jbrain.agent.clock import now_block
-from jbrain.agent.loop import AgentLoop
+from jbrain.agent.loop import AgentLoop, guardrails_for_effort
 from jbrain.agent.memory import MemoryService
 from jbrain.agent.runlog import AgentRunLog
 from jbrain.agent.session import AgentSessionInfo, AgentSessionRepo, read_context
@@ -285,7 +285,16 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
     await sessions.touch(owner_ctx, session.id)
 
     tally = _RunTally(runlog.bound(owner_ctx, run_id))
-    loop = AgentLoop(get_llm_router(request), get_agent_registry(request), recorder=tally)
+    # Size the tool budget to how hard the agent.turn model is set to think: a high/
+    # medium reasoning effort earns a deeper ReAct chain before the step cap stops it.
+    router = get_llm_router(request)
+    effort = await router.effective_reasoning_effort("agent.turn")
+    loop = AgentLoop(
+        router,
+        get_agent_registry(request),
+        recorder=tally,
+        guardrails=guardrails_for_effort(effort),
+    )
     read_ctx = read_context(principal.id, read_scopes)
     conversation = _conversation(body)
     # Loop 2: surface matching active skills as a DATA-framed reference block in the conversation
