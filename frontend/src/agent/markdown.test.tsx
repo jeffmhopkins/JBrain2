@@ -35,6 +35,64 @@ describe("Markdown", () => {
     expect(out).toContain('<pre class="md-pre"><code>code line</code></pre>');
   });
 
+  it("renders a GFM pipe table as a real table grid", () => {
+    const out = html(
+      "| Time | Temp | Notes |\n|------|------|-------|\n| 6 PM | 93 | Strongest rain |\n| 8 PM | 87 | Easing |",
+    );
+    expect(out).toContain('<table class="md-table">');
+    // Header cells live in a thead, body rows in a tbody.
+    expect(out).toContain("<thead>");
+    expect((out.match(/<th[ >]/g) ?? []).length).toBe(3);
+    expect((out.match(/<tbody>/g) ?? []).length).toBe(1);
+    expect((out.match(/<tr>/g) ?? []).length).toBe(3); // 1 header + 2 body
+    expect((out.match(/<td[ >]/g) ?? []).length).toBe(6); // 2 rows × 3 cols
+    expect(out).toContain("Strongest rain");
+    // The pipes are gone — no raw "| 6 PM |" leaking into prose.
+    expect(out).not.toContain("| 6 PM |");
+  });
+
+  it("parses tables without outer border pipes and applies column alignment", () => {
+    const out = html("a | b | c\n:--- | :--: | ---:\n1 | 2 | 3");
+    expect(out).toContain('<table class="md-table">');
+    expect(out).toContain("text-align: center");
+    expect(out).toContain("text-align: right");
+  });
+
+  it("pads short rows and drops overflow to the header's column count", () => {
+    const out = html("| A | B | C |\n|---|---|---|\n| only-one |\n| w | x | y | z |");
+    // Every body row renders exactly three cells regardless of how many it supplied.
+    expect((out.match(/<td[ >]/g) ?? []).length).toBe(6);
+    expect(out).toContain("only-one");
+    expect(out).not.toContain("z"); // the 4th cell of the over-long row is dropped
+  });
+
+  it("scans inline markup and entities inside table cells", () => {
+    const onEntity = vi.fn();
+    render(
+      <Markdown
+        text={"| Who | Note |\n|-----|------|\n| Celine | **busy** |"}
+        onEntity={onEntity}
+        entities={[{ entity_id: "e2", label: "Celine", domain: "health" }]}
+      />,
+    );
+    expect(document.querySelector(".md-table")).not.toBeNull();
+    expect(document.querySelector("td strong")?.textContent).toBe("busy");
+    fireEvent.click(screen.getByRole("button", { name: "Celine" }));
+    expect(onEntity).toHaveBeenCalledWith("e2");
+  });
+
+  it("starts a table even when prose precedes it with no blank line", () => {
+    const out = html("Here is the forecast:\n| Time | Temp |\n|------|------|\n| 6 PM | 93 |");
+    expect(out).toContain('<table class="md-table">');
+    expect(out).toContain("Here is the forecast:");
+  });
+
+  it("does not treat a horizontal-rule-like line as a table", () => {
+    // A pipe-free line followed by dashes is not a table (no header pipe).
+    const out = html("just prose\n---\nmore prose");
+    expect(out).not.toContain("<table");
+  });
+
   it("splits paragraphs and keeps soft breaks within one", () => {
     const out = html("line a\nline b\n\nsecond para");
     expect((out.match(/<p class="md-p">/g) ?? []).length).toBe(2);
