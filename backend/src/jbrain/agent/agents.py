@@ -9,14 +9,15 @@ call, and whether it reads the owner's knowledge base:
   tool, narrowed to the session's selected domains via the RLS firewall.
 - `teacher` — a Socratic homework tutor: no tools, no retrieval; it guides by
   questioning, grounded only in the conversation.
-- `jerv` — a sandboxed web chatbot: the internet tools (`web_search`, `web_fetch`)
-  plus the dataless `current_time`, and NO knowledge-base *tools* at all. Its web
-  calls run directly (the owner-approved exception to invariant #9). By owner opt-in
-  (`location_aware`) it also receives the owner's coarse, coordinate-free presence as
-  injected context — a deliberate, narrow relaxation of the empty-context sandbox so
-  jerv can answer "near me" / time-and-place questions; the presence line is
-  data-framed (never to be volunteered or sent to the web) and names only, never a
-  coordinate. jerv still calls no knowledge-base tool and reads no note/entity/list.
+- `jerv` — a sandboxed web chatbot: the internet tools (`web_search`, `web_fetch`),
+  the dataless `current_time`, and the owner-approved `current_location` (a `web`-
+  gated, jerv-only on-box read of the owner's coarse, coordinate-free presence), and
+  NO knowledge-base tools at all. Its web calls run directly (the owner-approved
+  exception to invariant #9). `current_location` is the deliberate, narrow relaxation
+  of the empty-context sandbox so jerv can answer "near me" / local questions — it
+  returns a place name only, never a coordinate, and jerv's prompt forbids
+  volunteering it or sending it to the web. jerv still calls no knowledge-base tool
+  and reads no note/entity/list/appointment.
 
 The set is closed and code-defined: a session's stored `agent` is validated
 against `AGENT_NAMES` before it is honoured.
@@ -33,10 +34,11 @@ _PROMPTS = Path(__file__).parent / "prompts"
 # agent opts in explicitly and the registry's web-tool gate has a single source.
 WEB_TOOLS = frozenset({"web_search", "web_fetch"})
 
-# jerv's full allowlist: the web tools plus the dataless clock read. `current_time`
-# is not a `web` tool, so it must be allowlisted explicitly (it would otherwise be a
-# default-knowledge tool jerv, with its closed allowlist, could not reach).
-JERV_TOOLS = WEB_TOOLS | frozenset({"current_time"})
+# jerv's full allowlist: the internet tools, the dataless clock read, and the
+# owner-approved coarse location read. `current_time` is allowlisted explicitly (a
+# default-knowledge tool jerv's closed allowlist could not otherwise reach);
+# `current_location` is a `web`-gated jerv-only tool (an on-box owner read, opt-in).
+JERV_TOOLS = WEB_TOOLS | frozenset({"current_time", "current_location"})
 
 DEFAULT_AGENT = "curator"
 
@@ -56,11 +58,6 @@ class AgentProfile:
     strength: str
     tools: frozenset[str] | None
     reads_knowledge_base: bool
-    # Whether this agent receives the owner's coarse, coordinate-free presence as
-    # injected context EVEN without the `location` session scope — an owner opt-in
-    # for an agent (jerv) the scope dial doesn't reach. A scope-carrying agent
-    # (curator) is location-gated as before; this flag only adds, never removes.
-    location_aware: bool = False
 
 
 def _profile(
@@ -69,7 +66,6 @@ def _profile(
     *,
     tools: frozenset[str] | None,
     reads_knowledge_base: bool,
-    location_aware: bool = False,
 ) -> AgentProfile:
     pf = load_prompt(_PROMPTS / filename)
     return AgentProfile(
@@ -79,7 +75,6 @@ def _profile(
         strength=pf.strength,
         tools=tools,
         reads_knowledge_base=reads_knowledge_base,
-        location_aware=location_aware,
     )
 
 
@@ -89,13 +84,7 @@ def _profile(
 AGENTS: dict[str, AgentProfile] = {
     "curator": _profile("curator", "system.prompt", tools=None, reads_knowledge_base=True),
     "teacher": _profile("teacher", "teacher.prompt", tools=frozenset(), reads_knowledge_base=False),
-    "jerv": _profile(
-        "jerv",
-        "jerv.prompt",
-        tools=JERV_TOOLS,
-        reads_knowledge_base=False,
-        location_aware=True,
-    ),
+    "jerv": _profile("jerv", "jerv.prompt", tools=JERV_TOOLS, reads_knowledge_base=False),
 }
 
 AGENT_NAMES = frozenset(AGENTS)

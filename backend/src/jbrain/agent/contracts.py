@@ -17,13 +17,16 @@ PermissionClass = Literal["read", "mutate", "external", "sensitive", "web"]
 """How consequential a tool is; the session policy maps each class to an outcome
 (docs/ASSISTANT.md "Session capabilities").
 
-`web` is the sandboxed internet class: an off-box read that runs DIRECTLY (no
-egress Proposal), reserved for the `jerv` chatbot agent, which holds no
-knowledge-base tools and reads no owner domain data — so there is nothing
-personal in its context to exfiltrate (docs/ASSISTANT.md "Agent selection", the
-deliberate, owner-approved exception to invariant #9). A `web` tool is opt-in:
-the registry never offers it to an agent that did not explicitly allowlist it,
-so the Full Brain `curator` never gains arbitrary web access."""
+`web` is the jerv sandbox's opt-in, direct-exec class: a tool that runs DIRECTLY
+(no egress Proposal) and is reserved for the `jerv` chatbot agent. Most members are
+off-box internet reads (`web_search`, `web_fetch`) — jerv holds no knowledge-base
+tools, so there is nothing personal in its context to exfiltrate into a query
+(docs/ASSISTANT.md "Agent selection", the deliberate, owner-approved exception to
+invariant #9). The one non-internet member is `current_location`: an ON-BOX read of
+the owner's coarse, coordinate-free presence — NOT egress — placed in this class
+purely for its gate (owner-approved, jerv-only). A `web` tool is opt-in: the registry
+never offers it to an agent that did not explicitly allowlist it, so the Full Brain
+`curator` never gains web access or this privileged location read."""
 
 PolicyOutcome = Literal["direct", "staged", "denied"]
 """What a session does with a tool of a given class: run it now, stage it as a

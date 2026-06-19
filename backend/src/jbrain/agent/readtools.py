@@ -28,6 +28,7 @@ from jbrain.agent.loop import ToolContext, ToolHandler, ToolOutput
 from jbrain.agent.memory import MemoryService
 from jbrain.agent.memorytools import build_memory_handlers
 from jbrain.agent.mergetools import build_merge_handlers
+from jbrain.agent.presencetools import build_presence_handlers
 from jbrain.agent.proposals import ProposalRepo
 from jbrain.agent.proposaltools import build_proposal_handlers
 from jbrain.agent.selfedittools import build_selfedit_handlers
@@ -416,6 +417,9 @@ def build_registry(
             **build_connector_handlers(connectors, proposals),
             **build_geocode_handlers(geocoder),
             **build_location_handlers(locations, devices, entities, geocoder, proposals),
+            # jerv's owner-approved, jerv-only coarse location read (a `web`-gated,
+            # opt-in tool; on-box, coordinate-free — never offered to the curator).
+            **build_presence_handlers(locations, devices),
             **build_wiki_handlers(wiki),
             **build_selfedit_handlers(proposals, router, settings),
             **wiki_write,

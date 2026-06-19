@@ -805,7 +805,7 @@ def test_chat_runs_the_selected_agents_prompt_and_only_its_tools(
     assert {t.name for t in call["tools"]} == {"web_search", "web_fetch"}
     # Sandboxed: a non-KB agent never recalls skills, and the run carries its version.
     assert not skills.called
-    assert ("sess-j", "agent-jerv-v2") in client.app.state.agent_runlog.started  # type: ignore[attr-defined]
+    assert ("sess-j", "agent-jerv-v3") in client.app.state.agent_runlog.started  # type: ignore[attr-defined]
 
 
 def test_chat_curator_is_offered_no_web_tools(
@@ -1018,20 +1018,3 @@ def test_chat_datetime_block_honours_owner_timezone(
     client.post("/api/chat", json={"session_id": "sess-tz", "message": "hi"})
     joined = "\n".join(getattr(m, "text", "") for m in fake.stream_calls[0]["messages"])
     assert "(Asia/Tokyo)" in joined
-
-
-def test_chat_jerv_gets_presence_without_the_location_scope(
-    client: TestClient, repo: FakeAuthRepo, sessions_store: FakeAgentSessions
-) -> None:
-    """jerv is location_aware: even with an empty scope (the firewall, by design) the
-    owner opted it into the coarse presence line — the deliberate sandbox relaxation."""
-    login(client, repo)
-    sessions_store.add(AgentSessionInfo("sess-j", "", "active", (), (), NOW, NOW, agent="jerv"))
-    router, fake = _capturing_router()
-    client.app.state.llm_router = router  # type: ignore[attr-defined]
-    _wire_presence(client, near=_fresh_near(), place=LatestPlace("e", "Home", NOW), subs=["s1"])
-
-    resp = client.post("/api/chat", json={"session_id": "sess-j", "message": "what's nearby?"})
-    assert resp.status_code == 200
-    joined = "\n".join(getattr(m, "text", "") for m in fake.stream_calls[0]["messages"])
-    assert _PRESENCE_FRAME in joined and "currently at Home" in joined

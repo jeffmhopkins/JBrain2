@@ -310,14 +310,14 @@ the knowledge base** at all. The set is closed and code-defined
   the learner to their own answer by questioning and never reads owner data; its
   prompt forbids handing over graded answers.
 - **`jerv`** — a sandboxed general-purpose web chatbot: the internet tools
-  (`web_search`, `web_fetch`) plus the dataless `current_time`, and **no
-  knowledge-base tools** — it runs with empty read scopes, recalls no skills, and
-  writes no episodic memory, so it calls no knowledge tool and reads no note, entity,
-  list, or appointment. Two narrow, **owner-approved** context inputs are the
-  exception: every turn is given the **current date/time** (ambient, non-personal),
-  and — because the owner opted jerv in (`location_aware`) — the owner's **coarse,
-  coordinate-free presence** (a place name + freshness), injected as a data-framed
-  line it must not volunteer or send to the web. See the sandbox bound below.
+  (`web_search`, `web_fetch`), the dataless `current_time`, and the owner-approved
+  `current_location`, and **no knowledge-base tools** — it runs with empty read
+  scopes, recalls no skills, and writes no episodic memory, so it calls no knowledge
+  tool and reads no note, entity, list, or appointment. Every turn is also given the
+  **current date/time** as ambient context (non-personal). `current_location` is the
+  one owner-approved exception: a `web`-gated, jerv-only on-box read of the owner's
+  **coarse, coordinate-free presence** (a place name + freshness), which jerv's prompt
+  forbids volunteering or sending to the web. See the sandbox bound below.
 
 Tool gating layers on top of read-scope: the registry offers a tool only if the
 agent's allowlist admits it *and* the session holds its domain. The internet tools
@@ -333,12 +333,11 @@ run **directly**, not as staged egress Proposals — the deliberate, owner-appro
 relaxation of "every off-box call is staged" (#9) that makes a chatbot feel like a
 chatbot. The bound is the sandbox, not a promise: `jerv` holds no knowledge-base
 tools, so there is almost no personal context to ride along into a query or a
-fetched URL. The one deliberate exception is the owner-opt-in **presence** line
-(`location_aware`) — a place name only, never a coordinate, carried under a
-data-frame that forbids volunteering it or putting it in a web query/URL, and jerv's
-prompt enforces the same rule; the owner accepted this narrow location-into-jerv flow
-when enabling it. The ambient date/time is non-personal. Search still goes through a
-**self-hosted SearXNG**
+fetched URL. The one deliberate exception is the **`current_location`** tool — a
+`web`-gated, jerv-only on-box read returning a place name only, never a coordinate,
+which jerv's prompt forbids volunteering or putting in a web query/URL; the owner
+accepted this narrow location-into-jerv flow when enabling it. The ambient date/time
+is non-personal. Search still goes through a **self-hosted SearXNG**
 instance (pinned base URL from config, query text only) — local-first like the
 on-box geocoder, so a search leaves the box only as far as SearXNG's own upstreams;
 `web_fetch` is the one genuinely outbound leg, size-capped and HTML-stripped, with
