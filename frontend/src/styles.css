@@ -1116,6 +1116,10 @@ h3 {
   margin: 0;
   padding: 0;
   min-width: 0;
+  /* Square the row: a selected end segment fills with a square inset ring, which
+     the rounded `.seg-row` corner + overflow:hidden would otherwise clip, leaving
+     the highlight looking cropped. Flush corners let the fill read whole. */
+  border-radius: 0;
 }
 
 /* Shown in place of the reasoning segments when the provider isn't grok. */
