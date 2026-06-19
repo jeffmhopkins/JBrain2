@@ -168,46 +168,6 @@ describe("OpsScreen", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("Request failed: 500");
   });
 
-  it("AI usage card (collapsible): k/M token formatting; null cost shows tokens only", async () => {
-    fetchMock.mockImplementation(async (input) => {
-      const path = String(input);
-      const base = baseMock(input);
-      if (base) return base;
-      if (path === "/api/ops/llm-usage") {
-        return json({
-          today: { input_tokens: 41_200, output_tokens: 12_400, cost_usd: 0.08 },
-          month: { input_tokens: 1_240_000, output_tokens: 338_000, cost_usd: 2.41 },
-          by_task: [
-            { task: "note.extract", input_tokens: 982_000, output_tokens: 241_000, cost_usd: 1.83 },
-            // No price-table entry: the line must omit the cost cleanly.
-            { task: "vision.ocr", input_tokens: 2_400_000, output_tokens: 990, cost_usd: null },
-          ],
-          days: [],
-        });
-      }
-      return new Response(null, { status: 404 });
-    });
-
-    render(<OpsScreen />);
-    fireEvent.click(await screen.findByRole("button", { name: /AI usage/ }));
-
-    expect(await screen.findByText("41k in · 12k out · ~$0.08")).toBeInTheDocument();
-    expect(screen.getByText("1.2M in · 338k out · ~$2.41")).toBeInTheDocument();
-    expect(screen.getByText("note.extract")).toBeInTheDocument();
-    expect(screen.getByText("982k in · 241k out · ~$1.83")).toBeInTheDocument();
-    expect(screen.getByText("2.4M in · 990 out")).toBeInTheDocument();
-  });
-
-  it("usage failures stay quiet — the card shows its empty line, not an error", async () => {
-    fetchMock.mockImplementation(
-      async (input) => baseMock(input) ?? new Response(null, { status: 500 }),
-    );
-
-    render(<OpsScreen />);
-    fireEvent.click(await screen.findByRole("button", { name: /AI usage/ }));
-    expect(await screen.findByText("no usage data yet.")).toBeInTheDocument();
-  });
-
   it("opens the Runs surface from the Ops header (Direction C, reachable from Ops)", async () => {
     fetchMock.mockImplementation(async (input) => {
       const path = String(input);

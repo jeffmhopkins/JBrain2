@@ -7,6 +7,7 @@ import type {
   ReasoningEffort,
 } from "../api/client";
 import { api } from "../api/client";
+import { AiUsageCard } from "./aiUsage";
 
 // Strategy C — tasks are tiered by role. The grouping lives in the frontend
 // (the wire is a flat task list); any task the API returns outside these
@@ -473,6 +474,8 @@ export function LLMSettingsScreen() {
           </section>
         );
       })}
+
+      <AiUsageCard />
     </main>
   );
 }

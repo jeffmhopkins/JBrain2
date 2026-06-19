@@ -59,6 +59,17 @@ function initialSettings(): LlmSettings {
   };
 }
 
+const USAGE = {
+  today: { input_tokens: 41_200, output_tokens: 12_400, cost_usd: 0.08 },
+  month: { input_tokens: 1_240_000, output_tokens: 338_000, cost_usd: 2.41 },
+  by_task: [
+    { task: "note.extract", input_tokens: 982_000, output_tokens: 241_000, cost_usd: 1.83 },
+    // No price-table entry: the line must omit the cost cleanly.
+    { task: "vision.ocr", input_tokens: 2_400_000, output_tokens: 990, cost_usd: null },
+  ],
+  days: [],
+};
+
 // A stateful stub: GET serves the fixture, PUT applies each task patch the way
 // the backend does (a reasoning-capable provider keeps reasoning, others null it)
 // and echoes it back.
@@ -67,6 +78,14 @@ function stubLlmFetch(seed?: LlmSettings) {
   const puts: { tasks: Record<string, { provider: string; reasoning_effort?: string }> }[] = [];
   const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
     const path = String(input);
+    // The AI-usage drawer self-fetches its telemetry; serve it so the stub
+    // doesn't throw on a path the screen now legitimately calls.
+    if (path === "/api/ops/llm-usage") {
+      return new Response(JSON.stringify(USAGE), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
     if (path !== "/api/settings/llm") throw new Error(`Unexpected fetch: ${path}`);
     if ((init?.method ?? "GET").toUpperCase() === "PUT") {
       const body = JSON.parse(String(init?.body)) as (typeof puts)[number];
@@ -430,5 +449,18 @@ describe("LLMSettingsScreen", () => {
         (within(high).getByLabelText(/High-stakes reasoning provider/i) as HTMLSelectElement).value,
       ).toBe("mixed"),
     );
+  });
+
+  it("AI usage drawer: expands to today/month and per-task spend, k/M + null cost", async () => {
+    render(<LLMSettingsScreen />);
+    fireEvent.click(await screen.findByRole("button", { name: /AI usage/i }));
+
+    expect(await screen.findByText("41k in · 12k out · ~$0.08")).toBeInTheDocument();
+    // The month line shows both in the collapsed-header summary and the row.
+    expect(screen.getAllByText("1.2M in · 338k out · ~$2.41").length).toBeGreaterThan(0);
+    expect(screen.getByText("note.extract")).toBeInTheDocument();
+    expect(screen.getByText("982k in · 241k out · ~$1.83")).toBeInTheDocument();
+    // vision.ocr has no price-table entry — tokens only, no guessed cost.
+    expect(screen.getByText("2.4M in · 990 out")).toBeInTheDocument();
   });
 });

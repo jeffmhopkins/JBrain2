@@ -5673,6 +5673,16 @@ button.small {
   white-space: nowrap;
 }
 
+/* AI-usage drawer body (LLM Settings): the today/month rows sit flush under the
+   toggle, so give them a little breathing room since the drawer body has no top
+   padding. */
+.llm-usage-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 6px;
+}
+
 .usage-tasks {
   display: flex;
   flex-direction: column;
