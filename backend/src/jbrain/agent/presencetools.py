@@ -25,18 +25,38 @@ from jbrain.locations.presence import presence_line, read_owner_presence
 log = structlog.get_logger()
 
 _UNAVAILABLE = "I can't check the owner's location in this session."
+# A live fix within this of a saved place reads as "at" it; out to the wider bound it
+# reads as "near" it (with the rounded distance). Beyond that, fall to the geocoder.
+_AT_PLACE_M = 120.0
+_NEAR_RADIUS_M = 1500.0
 
 
 def build_presence_handlers(
     locations: SqlLocationRepo, devices: SqlDeviceRepo, geocoder: GeocodeClient | None = None
 ) -> dict[str, ToolHandler]:
-    async def current_location_tool(arguments: dict, ctx: ToolContext) -> str:
-        # Prefer the live fix the PWA captured this turn (the same warm geolocation
-        # note sends attach) — it's foreground and current, and works regardless of
-        # whether an OwnTracks device is reporting. Resolve it to a place name on-box
-        # (Photon, no egress) so the reply stays coordinate-free.
-        if ctx.here is not None and geocoder is not None:
-            lat, lon = ctx.here
+    async def _from_live_fix(lat: float, lon: float, ctx: ToolContext) -> str:
+        """Name the owner's live PWA position without surfacing a coordinate, trying
+        the most meaningful sources first: a saved place near the point, then an
+        on-box reverse-geocode, then an honest 'have the position, can't name it'."""
+        pid = ctx.session.principal_id
+        if pid and ctx.session.principal_kind == "owner":
+            owner_ctx = SessionContext(principal_id=pid, principal_kind="owner")
+            try:
+                near = await locations.nearby(
+                    owner_ctx, center=(lat, lon), radius_m=_NEAR_RADIUS_M, limit=1
+                )
+            except Exception as exc:  # noqa: BLE001 - a location read hiccup is recoverable
+                log.warning("agent.current_location_nearby_failed", error=repr(exc))
+                near = []
+            if near:
+                place = near[0]
+                if place.distance_m <= _AT_PLACE_M:
+                    return f"The owner is at {place.name}."
+                return (
+                    f"The owner is near {place.name}"
+                    f" (about {round(place.distance_m / 10) * 10} m away)."
+                )
+        if geocoder is not None:
             try:
                 hit = await geocoder.reverse(lat, lon)
             except Exception as exc:  # noqa: BLE001 - a geocoder hiccup is recoverable
@@ -44,7 +64,16 @@ def build_presence_handlers(
                 hit = None
             if hit is not None:
                 return f"The owner is currently near {hit.label}."
-            return "I have the owner's current position but couldn't resolve it to a place name."
+        return (
+            "I have the owner's current position, but it isn't near any of their saved"
+            " places and I couldn't resolve it to an address right now."
+        )
+
+    async def current_location_tool(arguments: dict, ctx: ToolContext) -> str:
+        # Prefer the live fix the PWA captured this turn (the same warm geolocation
+        # note sends attach) — foreground, current, and independent of OwnTracks.
+        if ctx.here is not None:
+            return await _from_live_fix(ctx.here[0], ctx.here[1], ctx)
         # No live fix on the turn — fall back to the OwnTracks device stack. jerv's
         # tool session is owner_scoped (empty scopes), which require_full_owner
         # refuses; reconstruct the FULL owner ctx from its principal so the presence

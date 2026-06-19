@@ -9,7 +9,7 @@ from jbrain.agent.loop import ToolContext
 from jbrain.agent.presencetools import build_presence_handlers
 from jbrain.db.session import SessionContext
 from jbrain.geocode import GeocodeResult
-from jbrain.locations import FixPoint, LatestPlace, NearestFix
+from jbrain.locations import FixPoint, LatestPlace, NearbyPlace, NearestFix
 
 
 class _Geo:
@@ -29,9 +29,15 @@ def _here_ctx(lat: float, lon: float) -> ToolContext:
 
 
 class _Loc:
-    def __init__(self, near: NearestFix | None, place: LatestPlace | None) -> None:
+    def __init__(
+        self,
+        near: NearestFix | None,
+        place: LatestPlace | None,
+        nearby: list[NearbyPlace] | None = None,
+    ) -> None:
         self._near = near
         self._place = place
+        self._nearby = nearby or []
 
     async def device_activity(self, ctx):  # noqa: ANN001, ANN201
         return {}
@@ -41,6 +47,9 @@ class _Loc:
 
     async def latest_place(self, ctx, *, subject_id):  # noqa: ANN001, ANN201
         return self._place
+
+    async def nearby(self, ctx, *, subject_id=None, center=None, radius_m, limit):  # noqa: ANN001, ANN201
+        return self._nearby
 
 
 class _Dev:
@@ -86,9 +95,27 @@ async def test_current_location_reports_no_recent_fix() -> None:
 
 
 @pytest.mark.asyncio
-async def test_current_location_prefers_the_live_pwa_fix_reverse_geocoded() -> None:
-    # A turn carrying the PWA's live coords answers from them (on-box reverse-geocode),
-    # never touching the OwnTracks device stack — coordinate-free output.
+async def test_current_location_prefers_a_saved_place_near_the_live_fix() -> None:
+    # The most meaningful, geocoder-independent answer: a saved place near the live
+    # point, named with a rounded distance — never a coordinate.
+    loc = _Loc(None, None, nearby=[NearbyPlace(place_entity_id="p1", name="Home", distance_m=42.0)])
+    out = await _tool(loc, _Dev([]), _Geo(None))({}, _here_ctx(39.8, -89.6))
+    assert "at Home" in out
+    assert "39.8" not in out and "-89.6" not in out
+
+
+@pytest.mark.asyncio
+async def test_current_location_reports_a_nearby_saved_place_with_distance() -> None:
+    loc = _Loc(
+        None, None, nearby=[NearbyPlace(place_entity_id="p2", name="Office", distance_m=823.0)]
+    )
+    out = await _tool(loc, _Dev([]), _Geo(None))({}, _here_ctx(39.8, -89.6))
+    assert "near Office" in out and "820 m" in out
+
+
+@pytest.mark.asyncio
+async def test_current_location_falls_to_reverse_geocode_when_no_saved_place() -> None:
+    # No saved place near the live fix → on-box reverse-geocode to an address label.
     geo = _Geo(GeocodeResult(label="Springfield, IL", latitude=39.8, longitude=-89.6))
     out = await _tool(_Loc(None, None), _Dev([]), geo)({}, _here_ctx(39.8, -89.6))
     assert "Springfield, IL" in out
@@ -96,9 +123,9 @@ async def test_current_location_prefers_the_live_pwa_fix_reverse_geocoded() -> N
 
 
 @pytest.mark.asyncio
-async def test_current_location_live_fix_geocoder_miss_stays_coordinate_free() -> None:
+async def test_current_location_live_fix_no_place_and_no_geocoder_stays_honest() -> None:
     out = await _tool(_Loc(None, None), _Dev([]), _Geo(None))({}, _here_ctx(39.8, -89.6))
-    assert "couldn't resolve it to a place name" in out
+    assert "isn't near any of their saved places" in out
     assert "39.8" not in out
 
 
