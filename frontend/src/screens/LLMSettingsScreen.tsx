@@ -515,6 +515,10 @@ function LocalModelsDrawer({
   onUnload: (id: string) => void;
 }) {
   const enabledCount = models.filter((m) => m.enabled).length;
+  // The list is the operator's installed models only — un-provisioned catalog
+  // entries aren't on the box, so they'd be noise here (the summary's "of N" still
+  // says how many more the catalog offers).
+  const shown = models.filter((m) => m.enabled);
   const loaded = models.filter((m) => m.loaded);
   // A loaded model is provisioned, so disk_gb is its real footprint; fall back to
   // the catalog estimate only if the weights read came up empty.
@@ -567,17 +571,19 @@ function LocalModelsDrawer({
               the tiers above.
             </p>
           )}
-          {models.map((m) => {
+          {hostingEnabled && shown.length === 0 && (
+            <p className="llm-local-hint">
+              No models enabled yet — provision more with <code>jbrain enable-local-models</code>.
+            </p>
+          )}
+          {shown.map((m) => {
             // Real on-disk size when the model is provisioned here; otherwise the
             // catalog estimate, flagged with "~" so the screen never passes off a
             // guess as a measurement.
             const footprint = m.disk_gb ?? m.size_gb;
             const sizeText = `${m.disk_gb == null ? "~" : ""}${footprint} GB`;
             return (
-              <div
-                key={m.id}
-                className={`llm-local-row${m.enabled ? " on" : ""}${m.loaded ? " loaded" : ""}`}
-              >
+              <div key={m.id} className={`llm-local-row on${m.loaded ? " loaded" : ""}`}>
                 <div className="llm-local-name">
                   {m.label}
                   <span className="llm-local-meta">
@@ -603,7 +609,7 @@ function LocalModelsDrawer({
                   </button>
                 ) : null}
                 <span className={`llm-local-state${m.loaded ? " on" : ""}`}>
-                  {m.loaded ? "loaded" : m.enabled ? "idle" : "available"}
+                  {m.loaded ? "loaded" : "idle"}
                 </span>
               </div>
             );
