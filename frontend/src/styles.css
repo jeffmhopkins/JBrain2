@@ -5943,11 +5943,11 @@ button.small {
    height and bottom spacing match for either view. The whole strip is one flex child of
    the bubble, so a closed panel adds no column gap and the line stays tight to the card
    foot; negative margins snug it to the answer above and the card's padding below. */
-.fb-shell .fb-foot {
+.fb-shell .fb-act-foot {
   margin-top: -6px;
   margin-bottom: -6px;
 }
-.fb-shell .fb-foot.bare {
+.fb-shell .fb-act-foot.bare {
   /* leads a still-thinking bubble (no answer yet): flush to the top, no rule */
   margin-top: 0;
 }
@@ -5959,7 +5959,7 @@ button.small {
   border-top: 1px solid var(--border);
   padding-top: 6px;
 }
-.fb-shell .fb-foot.bare .fb-activity {
+.fb-shell .fb-act-foot.bare .fb-activity {
   border-top: none;
   padding-top: 2px;
 }

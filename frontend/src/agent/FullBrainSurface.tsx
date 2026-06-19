@@ -451,7 +451,7 @@ function ActivityLine({
     // The two segments are a segmented control over ONE panel: selecting a chip swaps
     // the panel's content (reasoning ⇄ steps), selecting the open chip closes it. With
     // a single body the open height and bottom spacing are identical for either view.
-    <div className={`fb-foot${bare ? " bare" : ""}`}>
+    <div className={`fb-act-foot${bare ? " bare" : ""}`}>
       <div className="fb-activity">
         {hasReasoning && (
           <button
