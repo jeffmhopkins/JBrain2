@@ -232,15 +232,16 @@ services:
       - geocoder_data:/photon/photon_data
     networks: [geocoder_net]
 
-  # OPT-IN self-hosted web search (docs/ASSISTANT.md "Agent selection"): a SearXNG
+  # Self-hosted web search (docs/ASSISTANT.md "Agent selection"): a SearXNG
   # metasearch instance backing the jerv chatbot's web_search/web_fetch tools.
-  # Guarded by the `searxng` profile so a stock deploy never starts it
-  # (JBRAIN_SEARXNG_URL reads then fail closed, like the geocoder). It needs its own
+  # Part of the stock stack (no profile) so it comes up with every deploy and is
+  # recreated by `jbrain update` — the deploy tooling has no per-service enable
+  # flag for it, and the api's JBRAIN_SEARXNG_URL points here by default, so a
+  # gated service would just leave jerv reporting "unavailable". It needs its own
   # egress to query upstream engines, so it sits on `internal` (api/worker reach it
   # there at http://searxng:8080). Only jerv — which holds no knowledge-base tools
   # and reads no owner data — can call it, so no personal context ever rides a query.
   searxng:
-    profiles: [searxng]
     image: ${SEARXNG_IMAGE:-docker.io/searxng/searxng:latest}
     restart: unless-stopped
     mem_limit: 512m

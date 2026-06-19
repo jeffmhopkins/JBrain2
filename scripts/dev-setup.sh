@@ -70,7 +70,7 @@ fi
 # unit tests and linters don't need Docker.
 HARNESS_IMAGE="timescale/timescaledb-ha:pg17"  # prod Postgres image, also used by the harness
 GEOCODER_IMAGE="docker.io/komoot/photon:latest"  # opt-in Phase 7 geocoder (compose `geocoder` profile)
-SEARXNG_IMAGE="${SEARXNG_IMAGE:-docker.io/searxng/searxng:latest}"  # opt-in jerv web search (`searxng` profile)
+SEARXNG_IMAGE="${SEARXNG_IMAGE:-docker.io/searxng/searxng:latest}"  # jerv web search (stock stack service)
 MQTT_IMAGE="${MQTT_IMAGE:-iegomez/mosquitto-go-auth:latest}"  # opt-in JBrain360 broker (`mqtt` profile); pin by digest for deploy
 
 if ! docker info >/dev/null 2>&1; then
@@ -98,13 +98,13 @@ if docker info >/dev/null 2>&1; then
     for _ in 1 2 3; do docker pull "$GEOCODER_IMAGE" >/dev/null 2>&1 && break; sleep 10; done \
       || log "WARNING: could not pre-pull $GEOCODER_IMAGE — it will pull when the profile is enabled"
   fi
-  # Pre-pull the opt-in SearXNG image (jerv web search, `searxng` profile) so
-  # enabling it later isn't a cold pull; best-effort. CI never runs the profile
-  # (web search/fetch are faked via MockTransport), so this is local/dev only.
+  # Pre-pull the SearXNG image (jerv web search) so a `jbrain up`/update isn't a
+  # cold pull; best-effort. CI never starts the service (web search/fetch are faked
+  # via MockTransport), so this is local/dev only.
   if ! docker image inspect "$SEARXNG_IMAGE" >/dev/null 2>&1; then
-    log "pre-pulling $SEARXNG_IMAGE (opt-in searxng profile)"
+    log "pre-pulling $SEARXNG_IMAGE (jerv web search)"
     for _ in 1 2 3; do docker pull "$SEARXNG_IMAGE" >/dev/null 2>&1 && break; sleep 10; done \
-      || log "WARNING: could not pre-pull $SEARXNG_IMAGE — it will pull when the profile is enabled"
+      || log "WARNING: could not pre-pull $SEARXNG_IMAGE — it will pull when the stack starts"
   fi
   # Pre-pull the opt-in MQTT broker image (JBrain360 M0, `mqtt` profile) so the
   # secure spine isn't a cold pull; best-effort. CI never runs the profile (the

@@ -58,9 +58,10 @@ class Settings(BaseSettings):
     # The self-hosted SearXNG metasearch instance backing the jerv chatbot's
     # web_search/web_fetch tools (docs/ASSISTANT.md "Agent selection"). On-box, so
     # a jerv search leaves the box only via SearXNG's own upstreams — the same
-    # local-first posture as the geocoder. Opt-in `searxng` compose profile; empty
-    # disables web search (the tool returns "not configured") but the sidecars
-    # still load so jerv always has its handlers.
+    # local-first posture as the geocoder. The compose service is part of the stock
+    # stack, so this default points at a running instance; empty disables web search
+    # (the tool returns "not configured") but the sidecars still load so jerv always
+    # has its handlers.
     searxng_url: str = "http://searxng:8080"
     # The external reverse-geocoder fallback (Phase 7 Wave 4b), Nominatim-compatible.
     # DEFAULT OFF: empty means the connector is never registered, so there is no
