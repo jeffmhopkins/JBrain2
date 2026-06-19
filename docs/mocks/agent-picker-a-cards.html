@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Agent picker A — Agent cards above scope</title>
+<style>
+  :root {
+    --bg:#0E0F11; --surface:#17181B; --surface-2:#1E2024; --border:#26282C;
+    --text:#E6E7E9; --text-2:#9A9DA3; --text-3:#5C5F66;
+    --steel:#7FA7C9; --green:#8FBC9A; --amber:#C9A36A; --rose:#CF8A8F; --violet:#A493C9;
+    --steel-tint:rgba(127,167,201,.13); --green-tint:rgba(143,188,154,.13);
+    --amber-tint:rgba(201,163,106,.13); --violet-tint:rgba(164,147,201,.13);
+  }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  body { margin:0; background:#000; font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    color:var(--text); display:flex; gap:28px; flex-wrap:wrap; justify-content:center; padding:28px; }
+  .label { text-align:center; color:var(--text-2); font-size:12px; margin:8px 0 0; }
+  .phone { width:390px; height:800px; background:var(--bg); border-radius:34px; overflow:hidden;
+    border:1px solid #2a2c30; position:relative; display:flex; flex-direction:column; }
+  .topbar { padding:14px 16px 10px; display:flex; align-items:center; justify-content:space-between;
+    border-bottom:1px solid var(--border); }
+  .topbar .t { font-size:18px; font-weight:500; }
+  .topbar .x { color:var(--text-3); font-size:22px; }
+  .body { padding:16px; overflow-y:auto; flex:1; }
+  .lead { color:var(--text-2); font-size:14px; line-height:1.4; margin:0 0 14px; }
+  .eyebrow { font-size:11px; letter-spacing:.06em; text-transform:uppercase; color:var(--text-3);
+    margin:18px 2px 8px; }
+
+  /* agent cards */
+  .agents { display:flex; flex-direction:column; gap:8px; }
+  .agent { display:flex; align-items:center; gap:12px; padding:13px; border:1px solid var(--border);
+    border-radius:14px; background:var(--surface-2); text-align:left; color:var(--text); cursor:pointer;
+    width:100%; }
+  .agent .ico { width:34px; height:34px; border-radius:9px; display:flex; align-items:center;
+    justify-content:center; font-size:17px; flex:none; }
+  .agent .meta { flex:1; min-width:0; }
+  .agent .t { font-size:15px; font-weight:500; }
+  .agent .d { font-size:12px; color:var(--text-3); margin-top:2px; line-height:1.35; }
+  .agent .check { width:22px; height:22px; border-radius:999px; border:1.5px solid var(--border);
+    display:flex; align-items:center; justify-content:center; color:transparent; flex:none; font-size:13px; }
+  .agent[data-on="1"] { border-color:rgba(127,167,201,.5); background:var(--steel-tint); }
+  .agent[data-on="1"] .check { background:var(--steel); border-color:var(--steel); color:#10141a; }
+
+  /* scope section */
+  .scope-wrap { margin-top:6px; }
+  .presets { display:flex; gap:8px; overflow-x:auto; padding-bottom:4px; scrollbar-width:none; }
+  .presets::-webkit-scrollbar { display:none; }
+  .preset { flex:none; font-size:13px; padding:9px 15px; border-radius:999px; border:1px solid var(--border);
+    background:var(--surface-2); color:var(--text-2); cursor:pointer; white-space:nowrap; }
+  .preset[data-on="1"] { border-color:var(--steel); color:var(--text); background:var(--steel-tint); }
+  .reads { font-size:13px; color:var(--text-2); margin:10px 2px 0; }
+  .reads b { color:var(--text); }
+  .nodata { margin-top:10px; padding:12px; border:1px dashed var(--border); border-radius:12px;
+    background:var(--surface); color:var(--text-2); font-size:13px; line-height:1.45; }
+
+  .title-in { width:100%; margin-top:16px; padding:13px; border-radius:12px; border:1px solid var(--border);
+    background:var(--surface-2); color:var(--text); font-size:15px; }
+  .title-in::placeholder { color:var(--text-3); }
+  .writes-note { margin:14px 2px 4px; font-size:12px; color:var(--text-3); line-height:1.45; }
+
+  .footer { padding:12px 16px 16px; border-top:1px solid var(--border); background:var(--bg); }
+  .start { width:100%; border:none; border-radius:14px; padding:15px; font-size:16px; font-weight:600;
+    background:var(--steel); color:#10141a; display:flex; flex-direction:column; align-items:center; gap:3px;
+    cursor:pointer; }
+  .start .hint { font-weight:400; font-size:12px; opacity:.85; }
+</style>
+</head>
+<body>
+<div>
+  <div class="phone">
+    <div class="topbar"><div class="t">New chat</div><div class="x">&times;</div></div>
+    <div class="body">
+      <p class="lead">Pick who you're talking to. Your data access follows the agent.</p>
+
+      <div class="eyebrow">Agent</div>
+      <div class="agents" id="agents">
+        <button class="agent" data-agent="curator" data-on="1" onclick="pick('curator')">
+          <span class="ico" style="background:var(--steel-tint);color:var(--steel)">🧠</span>
+          <span class="meta"><span class="t">Curator</span>
+            <span class="d">Your Full Brain — searches your notes, facts, lists & appointments.</span></span>
+          <span class="check">✓</span>
+        </button>
+        <button class="agent" data-agent="teacher" onclick="pick('teacher')">
+          <span class="ico" style="background:var(--amber-tint);color:var(--amber)">🎓</span>
+          <span class="meta"><span class="t">Teacher</span>
+            <span class="d">A Socratic tutor for homework — guides you to the answer. No tools, no data.</span></span>
+          <span class="check">✓</span>
+        </button>
+        <button class="agent" data-agent="jerv" onclick="pick('jerv')">
+          <span class="ico" style="background:var(--violet-tint);color:var(--violet)">🌐</span>
+          <span class="meta"><span class="t">Jerv</span>
+            <span class="d">A web chatbot — searches & reads the internet. No access to your notes.</span></span>
+          <span class="check">✓</span>
+        </button>
+      </div>
+
+      <div id="scope-section">
+        <div class="eyebrow">Reads</div>
+        <div class="scope-wrap">
+          <div class="presets" id="presets">
+            <button class="preset" data-scope="everything" data-on="1" onclick="pickScope('everything')">Everything</button>
+            <button class="preset" data-scope="general" onclick="pickScope('general')">General</button>
+            <button class="preset" data-scope="medical" onclick="pickScope('medical')">Medical</button>
+            <button class="preset" data-scope="financial" onclick="pickScope('financial')">Financial</button>
+            <button class="preset" data-scope="custom" onclick="pickScope('custom')">Custom…</button>
+          </div>
+          <p class="reads" id="reads">Reads <b>everything</b> — all your notes.</p>
+        </div>
+      </div>
+
+      <input class="title-in" placeholder="Title (optional — auto-titled later)" />
+      <p class="writes-note" id="writes">Reads only. Anything the agent wants to change is
+        <b>staged as a Proposal</b> for your okay.</p>
+    </div>
+    <div class="footer">
+      <button class="start" onclick="go()">
+        <span id="start-main">Start with Curator</span>
+        <span class="hint" id="start-hint">reads everything</span>
+      </button>
+    </div>
+  </div>
+  <p class="label">A · Agent cards first, scope below (adapts per agent)</p>
+</div>
+
+<script>
+  const ACCENT = { curator:'--steel', teacher:'--amber', jerv:'--violet' };
+  const HINT = { curator:'reads everything', teacher:'no data — a study tutor', jerv:'reads the web, not your notes' };
+  let agent='curator', scope='everything';
+  function pick(a){
+    agent=a;
+    document.querySelectorAll('#agents .agent').forEach(b=>b.dataset.on = b.dataset.agent===a?'1':'0');
+    const ac = getComputedStyle(document.documentElement).getPropertyValue(ACCENT[a]);
+    const start=document.querySelector('.start'); start.style.background=ac;
+    document.getElementById('start-main').textContent='Start with '+a[0].toUpperCase()+a.slice(1);
+    document.getElementById('start-hint').textContent=HINT[a];
+    const kb = a==='curator';
+    document.getElementById('scope-section').style.display = kb?'block':'none';
+    document.getElementById('writes').style.display = kb?'block':'none';
+  }
+  function pickScope(s){
+    scope=s;
+    document.querySelectorAll('#presets .preset').forEach(b=>b.dataset.on=b.dataset.scope===s?'1':'0');
+    const map={everything:'everything — all your notes',general:'general notes',medical:'general + medical',financial:'general + financial',custom:'a custom set'};
+    document.getElementById('reads').innerHTML='Reads <b>'+map[s]+'</b>.';
+    document.getElementById('start-hint').textContent='reads '+(s==='everything'?'everything':map[s]);
+  }
+  function go(){ alert('POST /api/sessions\n{ agent: "'+agent+'", domain_scopes: '+(agent==='curator'?JSON.stringify(scopeCodes()):'[]')+' }'); }
+  function scopeCodes(){ return ({everything:['general','health','finance','location'],general:['general'],medical:['general','health'],financial:['general','finance'],custom:['general']})[scope]; }
+</script>
+</body>
+</html>
