@@ -286,12 +286,13 @@ describe("FullBrainSurface", () => {
     fireEvent.change(screen.getByLabelText("Composer"), { target: { value: "how long?" } });
     fireEvent.click(screen.getByRole("button", { name: "send" }));
 
-    // A plain answer (no reasoning, no tools) still gets the copy affordance.
+    // A plain answer (no reasoning, no tools) still gets the icon-only copy affordance.
     const copy = await screen.findByRole("button", { name: "Copy response" });
     fireEvent.click(copy);
     // The copied text is the clean prose the owner read — the model citation is gone.
     expect(writeText).toHaveBeenCalledWith("The drive is ~15 min.");
-    expect(await screen.findByText("Copied ✓")).toBeInTheDocument();
+    // It confirms by flipping its accessible name (icon swaps to a check).
+    expect(await screen.findByRole("button", { name: "Copied" })).toBeInTheDocument();
   });
 
   it("does not offer copy while the answer is still streaming", async () => {
