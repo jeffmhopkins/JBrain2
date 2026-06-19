@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Data screen — B · status dashboard</title>
+<style>
+  :root{
+    --bg:#0e0f11; --surface:#17181b; --surface-2:#1e2024; --border:#26282c;
+    --text:#e6e7e9; --text-2:#9a9da3; --text-3:#5c5f66;
+    --steel:#7fa7c9; --green:#8fbc9a; --amber:#c9a36a; --rose:#cf8a8f; --violet:#a493c9;
+    --steel-tint:rgba(127,167,201,.13); --green-tint:rgba(143,188,154,.13);
+    --amber-tint:rgba(201,163,106,.13); --rose-tint:rgba(207,138,143,.13);
+    --r-input:12px; --r-card:16px; --r-pill:999px;
+    --fs-micro:12px; --fs-head:13px; --fs-secondary:14px; --fs-body:16px; --fs-title:18px; --fs-screen:22px;
+    --mono:ui-monospace,"SF Mono","Cascadia Mono",Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:#000;color:var(--text);
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;-webkit-font-smoothing:antialiased}
+  .phone{max-width:430px;margin:0 auto;min-height:100vh;background:var(--bg);
+    border-left:1px solid #000;border-right:1px solid #000}
+  .statusbar{display:flex;justify-content:space-between;align-items:center;
+    padding:10px 18px 4px;font-size:13px;color:var(--text);font-weight:600}
+  .statusbar .right{display:flex;gap:7px;align-items:center;font-weight:500;opacity:.9}
+  .nav{display:flex;align-items:center;gap:10px;padding:8px 16px 4px}
+  .nav .glyph{color:var(--text-2);font-size:20px}
+  .nav .title{font-size:var(--fs-screen);font-weight:600}
+  .nav .sp{margin-left:auto}
+  .nav .dot{width:9px;height:9px;border-radius:50%;background:var(--green);box-shadow:0 0 0 4px var(--green-tint)}
+  .body{padding:8px 16px 56px}
+
+  /* DB-at-a-glance hero */
+  .hero{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-card);padding:18px 16px;margin-bottom:14px}
+  .hero .lab{font-size:var(--fs-micro);text-transform:uppercase;letter-spacing:.06em;color:var(--text-3)}
+  .hero .size{font-size:30px;font-weight:600;margin:4px 0 2px;font-variant-numeric:tabular-nums}
+  .hero .size small{font-size:var(--fs-secondary);color:var(--text-2);font-weight:400}
+  .hero .counts{display:flex;gap:18px;margin-top:12px}
+  .hero .ct{font-size:var(--fs-micro);color:var(--text-2)}
+  .hero .ct b{display:block;font-size:var(--fs-body);color:var(--text);font-weight:600}
+  .hero .backup{margin-top:14px;padding-top:12px;border-top:1px solid var(--border);
+    display:flex;align-items:center;gap:8px;font-size:var(--fs-micro);color:var(--text-2)}
+  .hero .backup .d{width:7px;height:7px;border-radius:50%;background:var(--green);flex:none}
+  .hero .backup.stale .d{background:var(--amber)}
+
+  .sec{font-size:var(--fs-micro);text-transform:uppercase;letter-spacing:.08em;color:var(--text-3);margin:6px 2px 10px}
+  .sec.danger{color:var(--rose)}
+
+  .panel{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-card);padding:16px;margin-bottom:14px}
+  .panel.danger{border-color:color-mix(in srgb,var(--rose) 35%,var(--border))}
+  .btn{width:100%;font:inherit;font-size:var(--fs-secondary);font-weight:600;cursor:pointer;
+    border-radius:var(--r-input);padding:12px;border:1px solid transparent;background:var(--steel-tint);color:var(--steel)}
+  .btn.sec{background:var(--surface-2);color:var(--text-2);border-color:var(--border)}
+  .btn.amber{background:var(--amber-tint);color:var(--amber)}
+  .btn.danger{background:var(--rose-tint);color:var(--rose)}
+  .btn:disabled{opacity:.55;cursor:default}
+  .hint{font-size:var(--fs-micro);color:var(--text-3);line-height:1.5;margin:10px 0 0}
+
+  .recent{margin-top:14px}
+  .recent h4{font-size:var(--fs-micro);text-transform:uppercase;letter-spacing:.06em;color:var(--text-3);margin:0 0 8px;font-weight:500}
+  .rrow{display:flex;align-items:center;gap:10px;padding:9px 0;border-top:1px solid var(--border);font-size:var(--fs-micro)}
+  .rrow .rn{color:var(--text-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .rrow .rt{margin-left:auto;color:var(--text-3);flex:none}
+  .rrow a{color:var(--steel);text-decoration:none;flex:none}
+
+  .drow{display:flex;align-items:center;gap:12px}
+  .drow .di{width:34px;height:34px;flex:none;border-radius:10px;display:grid;place-items:center;font-size:16px}
+  .drow .di.imp{background:var(--amber-tint);color:var(--amber)} .drow .di.rst{background:var(--rose-tint);color:var(--rose)}
+  .drow .dt{flex:1;min-width:0}
+  .drow .dt b{font-size:var(--fs-secondary);font-weight:600}
+  .drow .dt span{display:block;font-size:var(--fs-micro);color:var(--text-3);margin-top:2px}
+  .drow .dgo{font:inherit;font-size:var(--fs-micro);font-weight:600;cursor:pointer;border-radius:var(--r-pill);
+    padding:8px 14px;border:1px solid var(--border);background:transparent;color:var(--text-2);flex:none}
+  .drow.imp .dgo:hover{color:var(--amber);border-color:var(--amber)}
+  .drow.rst .dgo:hover{color:var(--rose);border-color:var(--rose)}
+  .drow + .drow{margin-top:10px;padding-top:14px;border-top:1px solid var(--border)}
+
+  .status{margin-top:12px;font-size:var(--fs-micro);color:var(--text-2);display:flex;align-items:center;gap:8px}
+  .spin{width:12px;height:12px;border-radius:50%;border:2px solid var(--surface-2);border-top-color:var(--steel);animation:sp .7s linear infinite;flex:none}
+  @keyframes sp{to{transform:rotate(360deg)}}
+  .ok{color:var(--green)}
+  .legend{margin:20px 2px 0;font-size:var(--fs-micro);color:var(--text-3);line-height:1.6}
+  .legend b{color:var(--text-2)}
+
+  /* sheet for destructive flows */
+  .scrim{position:fixed;inset:0;background:rgba(14,15,17,.6);opacity:0;pointer-events:none;transition:.2s;z-index:5}
+  .scrim.show{opacity:1;pointer-events:auto}
+  .sheet{position:fixed;left:0;right:0;bottom:0;max-width:430px;margin:0 auto;background:var(--surface);
+    border:1px solid var(--border);border-radius:16px 16px 0 0;padding:8px 18px 26px;transform:translateY(100%);
+    transition:transform .22s ease-out;z-index:6}
+  .sheet.show{transform:translateY(0)}
+  .sheet .h{width:32px;height:4px;border-radius:2px;background:var(--text-3);margin:6px auto 14px}
+  .sheet h3{margin:0 0 4px;font-size:var(--fs-title)}
+  .sheet p{margin:0 0 14px;font-size:var(--fs-micro);color:var(--text-2);line-height:1.5}
+  .log{margin-top:10px;background:var(--bg);border:1px solid var(--border);border-radius:var(--r-input);
+    padding:10px;font-family:var(--mono);font-size:11px;color:var(--text-2);white-space:pre-wrap;max-height:120px;overflow:auto;line-height:1.5}
+</style>
+</head>
+<body>
+<div class="phone">
+  <div class="statusbar"><span>16:57</span><span class="right">📶 🔋 28%</span></div>
+  <div class="nav">
+    <span class="glyph">‹</span><span class="title">Data</span>
+    <span class="sp"></span><span class="dot"></span><span class="glyph">⚡</span>
+  </div>
+
+  <div class="body">
+    <div class="hero">
+      <div class="lab">Database</div>
+      <div class="size">23 MB</div>
+      <div class="counts">
+        <span class="ct"><b>2</b>notes</span>
+        <span class="ct"><b>5</b>files</span>
+        <span class="ct"><b>5 MB</b>blobs</span>
+      </div>
+      <div class="backup stale"><span class="d"></span>last backup 2 days ago · export-20260617-0900.jbrain.tar</div>
+    </div>
+
+    <div class="sec">Backup</div>
+    <section class="panel">
+      <button class="btn" id="expBtn" onclick="runExport()">Export backup now</button>
+      <p class="hint">Bundles the database + attachment files into one <code>.jbrain.tar</code> and downloads it here.</p>
+      <div id="expOut"></div>
+      <div class="recent">
+        <h4>Recent exports</h4>
+        <div class="rrow"><span class="rn">export-20260617-0900.jbrain.tar</span><span class="rt">2d</span><a href="#" onclick="return false">↓</a></div>
+        <div class="rrow"><span class="rn">export-20260610-2112.jbrain.tar</span><span class="rt">9d</span><a href="#" onclick="return false">↓</a></div>
+      </div>
+    </section>
+
+    <div class="sec danger">Danger zone — replaces or erases data</div>
+    <section class="panel danger">
+      <div class="drow imp">
+        <div class="di imp">⭱</div>
+        <div class="dt"><b>Import backup</b><span>replace everything with an archive</span></div>
+        <button class="dgo" onclick="openImport()">Import…</button>
+      </div>
+      <div class="drow rst">
+        <div class="di rst">⚠</div>
+        <div class="dt"><b>Reset database</b><span>erase all notes &amp; derived data</span></div>
+        <button class="dgo" onclick="openReset()">Reset…</button>
+      </div>
+    </section>
+
+    <p class="legend"><b>Mockup is interactive.</b> Direction <b>B — status dashboard</b>: leads with
+      the database at a glance (size, counts, <b>last-backup freshness</b> — amber when stale), then a
+      Backup panel with a recent-exports history. The two destructive actions live in a separate
+      <b>Danger zone</b> and open a confirm <b>sheet</b> (tap <b>Import…</b> / <b>Reset…</b>) rather
+      than firing inline — the weight of "replace/erase" gets a deliberate surface.</p>
+  </div>
+</div>
+
+<div class="scrim" id="scrim" onclick="closeSheet()"></div>
+<div class="sheet" id="sheet"><div class="h"></div><div id="sheetBody"></div></div>
+
+<script>
+const $=id=>document.getElementById(id);
+function ts(){const d=new Date();const p=n=>String(n).padStart(2,'0');
+  return `${d.getFullYear()}${p(d.getMonth()+1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;}
+
+function runExport(){
+  const btn=$('expBtn'), out=$('expOut'); btn.disabled=true; btn.textContent='Exporting…';
+  out.innerHTML='<div class="status"><span class="spin"></span>Building export archive…</div>';
+  setTimeout(()=>{ const name=`export-${ts()}.jbrain.tar`; btn.disabled=false; btn.textContent='Export backup now';
+    out.innerHTML=`<div class="status ok">✓ ${name} downloaded (24 MB)</div>`;
+  },1500);
+}
+
+function openSheet(html){ $('sheetBody').innerHTML=html; $('scrim').classList.add('show'); $('sheet').classList.add('show'); }
+function closeSheet(){ $('scrim').classList.remove('show'); $('sheet').classList.remove('show'); }
+
+function openImport(){
+  openSheet(`<h3>Import backup</h3>
+    <p>Replaces <b>all</b> current data with the chosen archive. A safety backup is taken first; the stack restarts.</p>
+    <button class="btn sec" id="impPick" onclick="impPick()">Choose a backup file…</button>
+    <div id="impOut"></div>`);
+}
+function impPick(){
+  $('impPick').outerHTML=`<div style="display:flex;align-items:center;gap:8px;background:var(--surface-2);border:1px solid var(--border);border-radius:12px;padding:10px 12px;font-size:12px;margin-bottom:10px"><span>📦</span><b>jbrain-backup-20260618.jbrain.tar</b><span style="margin-left:auto;color:var(--text-3)">24 MB</span></div>
+    <button class="btn danger" id="impGo" onclick="impGo()">Import — replaces ALL current data</button>`;
+}
+function impGo(){
+  const b=$('impGo');
+  if(b.dataset.a!=='1'){b.dataset.a='1';b.textContent='Tap again — current data is overwritten';
+    setTimeout(()=>{if(b.dataset.a==='1'){b.dataset.a='0';b.textContent='Import — replaces ALL current data';}},3000);return;}
+  b.disabled=true;b.textContent='Importing…';
+  const lines=['[import] safety backup taken','[import] restoring database…','[import] restarting stack','[import] complete'];
+  $('impOut').innerHTML='<div class="status"><span class="spin"></span>Stack restarting — hold on…</div><pre class="log" id="impLog"></pre>';
+  let i=0;const t=setInterval(()=>{const L=$('impLog');L.textContent+=(i?'\n':'')+lines[i++];L.scrollTop=L.scrollHeight;
+    if(i>=lines.length){clearInterval(t);$('impOut').innerHTML+='<div class="status ok">✓ Import complete.</div><button class="btn" onclick="alert(\'reload\')">Reload app</button>';}},600);
+}
+
+function openReset(){
+  openSheet(`<h3>Reset database</h3>
+    <p>Erases <b>all notes and derived data</b>. Auth, domains, and usage survive; a safety backup is taken first, then the worker restarts.</p>
+    <button class="btn danger" id="rstGo" onclick="rstGo()">Reset DB</button>
+    <div id="rstOut"></div>`);
+}
+function rstGo(){
+  const b=$('rstGo');
+  if(b.dataset.a!=='1'){b.dataset.a='1';b.textContent='Tap again — erases ALL notes & data';
+    setTimeout(()=>{if(b.dataset.a==='1'){b.dataset.a='0';b.textContent='Reset DB';}},3000);return;}
+  b.disabled=true;b.textContent='Resetting…';
+  const lines=['[reset] safety backup taken','[reset] truncating content tables…','[reset] worker restarting','[reset] complete'];
+  $('rstOut').innerHTML='<div class="status"><span class="spin"></span>Resetting…</div><pre class="log" id="rstLog"></pre>';
+  let i=0;const t=setInterval(()=>{const L=$('rstLog');L.textContent+=(i?'\n':'')+lines[i++];L.scrollTop=L.scrollHeight;
+    if(i>=lines.length){clearInterval(t);$('rstOut').innerHTML+='<div class="status ok">✓ Reset complete.</div><button class="btn" onclick="alert(\'reload\')">Reload app</button>';}},600);
+}
+</script>
+</body>
+</html>

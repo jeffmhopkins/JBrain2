@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Data screen — A · action list</title>
+<style>
+  :root{
+    --bg:#0e0f11; --surface:#17181b; --surface-2:#1e2024; --border:#26282c;
+    --text:#e6e7e9; --text-2:#9a9da3; --text-3:#5c5f66;
+    --steel:#7fa7c9; --green:#8fbc9a; --amber:#c9a36a; --rose:#cf8a8f; --violet:#a493c9;
+    --steel-tint:rgba(127,167,201,.13); --green-tint:rgba(143,188,154,.13);
+    --amber-tint:rgba(201,163,106,.13); --rose-tint:rgba(207,138,143,.13);
+    --r-input:12px; --r-card:16px; --r-pill:999px;
+    --fs-micro:12px; --fs-head:13px; --fs-secondary:14px; --fs-body:16px; --fs-title:18px; --fs-screen:22px;
+    --mono:ui-monospace,"SF Mono","Cascadia Mono",Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:#000;color:var(--text);
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;-webkit-font-smoothing:antialiased}
+  .phone{max-width:430px;margin:0 auto;min-height:100vh;background:var(--bg);
+    border-left:1px solid #000;border-right:1px solid #000}
+  .statusbar{display:flex;justify-content:space-between;align-items:center;
+    padding:10px 18px 4px;font-size:13px;color:var(--text);font-weight:600}
+  .statusbar .right{display:flex;gap:7px;align-items:center;font-weight:500;opacity:.9}
+  .nav{display:flex;align-items:center;gap:10px;padding:8px 16px 4px}
+  .nav .glyph{color:var(--text-2);font-size:20px}
+  .nav .title{font-size:var(--fs-screen);font-weight:600}
+  .nav .sp{margin-left:auto}
+  .nav .dot{width:9px;height:9px;border-radius:50%;background:var(--green);box-shadow:0 0 0 4px var(--green-tint)}
+  .body{padding:8px 16px 56px}
+  .intro{color:var(--text-2);font-size:var(--fs-secondary);line-height:1.5;margin:6px 2px 16px}
+
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-card);
+    padding:16px;margin-bottom:12px}
+  .card.danger{border-color:color-mix(in srgb,var(--rose) 40%,var(--border))}
+  .card-head{display:flex;align-items:flex-start;gap:12px}
+  .ic{width:38px;height:38px;flex:none;border-radius:11px;display:grid;place-items:center;font-size:18px;
+    background:var(--steel-tint);color:var(--steel)}
+  .ic.imp{background:var(--amber-tint);color:var(--amber)}
+  .ic.rst{background:var(--rose-tint);color:var(--rose)}
+  .ct{flex:1;min-width:0}
+  .ct h3{margin:0;font-size:var(--fs-title);font-weight:600}
+  .ct p{margin:4px 0 0;font-size:var(--fs-micro);color:var(--text-2);line-height:1.5}
+  .btn{margin-top:14px;width:100%;font:inherit;font-size:var(--fs-secondary);font-weight:600;cursor:pointer;
+    border-radius:var(--r-input);padding:12px;border:1px solid transparent;background:var(--steel-tint);color:var(--steel)}
+  .btn.sec{background:var(--surface-2);color:var(--text-2);border-color:var(--border)}
+  .btn.amber{background:var(--amber-tint);color:var(--amber)}
+  .btn.danger{background:var(--rose-tint);color:var(--rose)}
+  .btn:disabled{opacity:.55;cursor:default}
+  .filechip{margin-top:12px;display:flex;align-items:center;gap:8px;background:var(--surface-2);
+    border:1px solid var(--border);border-radius:var(--r-input);padding:10px 12px;font-size:var(--fs-micro)}
+  .filechip .fn{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .filechip .fs{color:var(--text-3);margin-left:auto;flex:none}
+  .status{margin-top:12px;font-size:var(--fs-micro);color:var(--text-2);display:flex;align-items:center;gap:8px}
+  .spin{width:12px;height:12px;border-radius:50%;border:2px solid var(--surface-2);border-top-color:var(--steel);
+    animation:sp .7s linear infinite;flex:none}
+  @keyframes sp{to{transform:rotate(360deg)}}
+  .log{margin-top:10px;background:var(--bg);border:1px solid var(--border);border-radius:var(--r-input);
+    padding:10px;font-family:var(--mono);font-size:11px;color:var(--text-2);white-space:pre-wrap;
+    max-height:120px;overflow:auto;line-height:1.5}
+  .dllink{margin-top:10px;display:inline-block;color:var(--steel);font-size:var(--fs-secondary);text-decoration:none;
+    word-break:break-all}
+  .ok{color:var(--green)} .err{color:var(--rose)}
+  .secsep{font-size:var(--fs-micro);text-transform:uppercase;letter-spacing:.08em;color:var(--text-3);
+    margin:18px 2px 10px;display:flex;align-items:center;gap:8px}
+  .secsep::after{content:"";flex:1;height:1px;background:var(--border)}
+  .legend{margin:20px 2px 0;font-size:var(--fs-micro);color:var(--text-3);line-height:1.6}
+  .legend b{color:var(--text-2)}
+</style>
+</head>
+<body>
+<div class="phone">
+  <div class="statusbar"><span>16:57</span><span class="right">📶 🔋 28%</span></div>
+  <div class="nav">
+    <span class="glyph">‹</span><span class="title">Data</span>
+    <span class="sp"></span><span class="dot"></span><span class="glyph">⚡</span>
+  </div>
+
+  <div class="body">
+    <p class="intro">Back up, restore, or reset your knowledge base. Backups bundle the database and
+      every attachment into one portable archive.</p>
+
+    <!-- EXPORT -->
+    <section class="card" id="exp">
+      <div class="card-head">
+        <div class="ic">⭳</div>
+        <div class="ct">
+          <h3>Export backup</h3>
+          <p>One <code>.jbrain.tar</code> with the database dump + attachment files. Downloads to this device.</p>
+        </div>
+      </div>
+      <button class="btn" id="expBtn" onclick="runExport()">Export backup</button>
+      <div id="expOut"></div>
+    </section>
+
+    <!-- IMPORT -->
+    <section class="card" id="imp">
+      <div class="card-head">
+        <div class="ic imp">⭱</div>
+        <div class="ct">
+          <h3>Import backup</h3>
+          <p>Replace everything with an archive. A safety backup is taken first; the stack restarts.</p>
+        </div>
+      </div>
+      <div id="impBody">
+        <button class="btn sec" id="impPick" onclick="pickFile()">Choose a backup file…</button>
+      </div>
+      <div id="impOut"></div>
+    </section>
+
+    <div class="secsep">Danger zone</div>
+
+    <!-- RESET -->
+    <section class="card danger" id="rst">
+      <div class="card-head">
+        <div class="ic rst">⚠</div>
+        <div class="ct">
+          <h3>Reset database</h3>
+          <p>Erase all notes and derived data. Auth, domains, and usage survive; a safety backup is taken first.</p>
+        </div>
+      </div>
+      <button class="btn danger" id="rstBtn" onclick="armReset()">Reset DB</button>
+      <div id="rstOut"></div>
+    </section>
+
+    <p class="legend"><b>Mockup is interactive.</b> Direction <b>A — action list</b>: three equal
+      action cards on one screen, the destructive <b>Reset</b> set apart under a Danger-zone rule.
+      Tap <b>Export</b> (watch it build → download link), <b>Choose a backup file</b> →
+      tap-again confirm → restart, and <b>Reset DB</b> → tap-again → reload. Each card reports its
+      own progress inline; nothing leaves this screen.</p>
+  </div>
+</div>
+
+<script>
+const $=id=>document.getElementById(id);
+function ts(){const d=new Date();const p=n=>String(n).padStart(2,'0');
+  return `${d.getFullYear()}${p(d.getMonth()+1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;}
+
+function runExport(){
+  const btn=$('expBtn'), out=$('expOut'); btn.disabled=true; btn.textContent='Exporting…';
+  out.innerHTML='<div class="status"><span class="spin"></span>Building export archive…</div>';
+  setTimeout(()=>{ const name=`export-${ts()}.jbrain.tar`;
+    btn.disabled=false; btn.textContent='Export again';
+    out.innerHTML=`<div class="status ok">✓ ${name} downloaded (24 MB)</div>
+      <a class="dllink" href="#" onclick="return false">download ${name}</a>`;
+  },1600);
+}
+
+function pickFile(){
+  $('impBody').innerHTML=`
+    <div class="filechip"><span>📦</span><span class="fn">jbrain-backup-20260618.jbrain.tar</span><span class="fs">24 MB</span></div>
+    <button class="btn danger" id="impConfirm" onclick="armImport()">Import — replaces ALL current data</button>`;
+}
+function armImport(){
+  const b=$('impConfirm');
+  if(b.dataset.a!=='1'){b.dataset.a='1';b.textContent='Tap again — current data is overwritten';
+    setTimeout(()=>{if(b.dataset.a==='1'){b.dataset.a='0';b.textContent='Import — replaces ALL current data';}},3000);return;}
+  b.disabled=true;b.textContent='Uploading…';
+  const out=$('impOut');
+  out.innerHTML='<div class="status"><span class="spin"></span>Uploading archive…</div>';
+  const lines=['[import] safety backup taken','[import] restoring database…','[import] restoring 5 files','[import] restarting stack — app may blink','[import] complete'];
+  let i=0; setTimeout(()=>{ out.innerHTML='<div class="status"><span class="spin"></span>Stack restarting — hold on…</div><pre class="log" id="impLog"></pre>';
+    const t=setInterval(()=>{ const L=$('impLog'); L.textContent+=(i?'\n':'')+lines[i++]; L.scrollTop=L.scrollHeight;
+      if(i>=lines.length){clearInterval(t);
+        out.innerHTML+='<div class="status ok">✓ Import complete.</div><button class="btn" onclick="alert(\'reload\')">Reload app</button>';}},600);
+  },900);
+}
+
+function armReset(){
+  const b=$('rstBtn');
+  if(b.dataset.a!=='1'){b.dataset.a='1';b.textContent='Tap again — erases ALL notes & data';
+    setTimeout(()=>{if(b.dataset.a==='1'){b.dataset.a='0';b.textContent='Reset DB';}},3000);return;}
+  b.disabled=true;b.textContent='Resetting…';
+  const out=$('rstOut'); const lines=['[reset] safety backup taken','[reset] truncating content tables…','[reset] emptying blob volume','[reset] worker restarting','[reset] complete'];
+  out.innerHTML='<div class="status"><span class="spin"></span>Resetting…</div><pre class="log" id="rstLog"></pre>';
+  let i=0; const t=setInterval(()=>{ const L=$('rstLog'); L.textContent+=(i?'\n':'')+lines[i++]; L.scrollTop=L.scrollHeight;
+    if(i>=lines.length){clearInterval(t);
+      out.innerHTML='<div class="status ok">✓ Reset complete.</div><button class="btn" onclick="alert(\'reload\')">Reload app</button>';}},600);
+}
+</script>
+</body>
+</html>
