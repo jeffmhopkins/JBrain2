@@ -33,3 +33,19 @@ def test_searxng_binds_ipv4() -> None:
     # Guards against the granian default :: (IPv6) bind, which crashes the
     # container on hosts without IPv6 and makes searxng:8080 unreachable.
     assert env.get("GRANIAN_HOST") == "0.0.0.0"
+
+
+def test_searxng_mounts_config_dir_not_settings_file() -> None:
+    # Bind the /etc/searxng DIRECTORY, never the settings.yml file alone. A
+    # single-file bind is a footgun: if the host file is missing when compose
+    # runs, Docker creates an empty directory there, the image entrypoint sees
+    # /etc/searxng/settings.yml as a directory, and the container crash-loops
+    # ("not a valid file"). A directory bind can only ever be a directory.
+    volumes = _spec()["services"]["searxng"]["volumes"]
+    assert "./searxng:/etc/searxng" in volumes, (
+        "searxng must bind the config directory so a missing host file cannot "
+        "make Docker create a settings.yml directory that crash-loops the image"
+    )
+    assert not any(v.endswith("/etc/searxng/settings.yml") for v in volumes), (
+        "a single-file settings.yml bind crash-loops when the host file is missing"
+    )
