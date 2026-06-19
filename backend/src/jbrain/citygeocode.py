@@ -7,9 +7,9 @@ data, and no egress: the cost is ~0 RAM at rest (the data loads lazily on first 
 and a few MB once warm. A lookup ranks by a cheap equirectangular proxy, then takes a
 single haversine on the winner, so a query is a few milliseconds.
 
-This is the low-footprint stand-in for the on-box Photon geocoder (which wants a
-resident Lucene engine + a multi-GB index). When a specific street address is needed,
-the caller falls back to the owner-configured external reverse-geocoder.
+This is the whole on-box geocoder: a low-footprint reverse lookup that needs no
+resident search engine and no multi-GB index. When a specific street address is
+needed, the caller falls back to the owner-configured external reverse-geocoder.
 """
 
 from __future__ import annotations
@@ -37,6 +37,11 @@ class CityHit:
     region: str
     country: str
     distance_m: float
+
+    @property
+    def label(self) -> str:
+        """The place as one line — "City, Region, Country" with the blanks dropped."""
+        return ", ".join(p for p in (self.name, self.region, self.country) if p)
 
 
 def _haversine_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
@@ -91,7 +96,10 @@ class CityGeocoder:
         best_i, best_d2 = -1, math.inf
         for i in range(len(lats)):
             dy = lats[i] - lat
-            dx = (lons[i] - lon) * coslat
+            # Wrap the longitude delta into [-180, 180] so a point near the
+            # antimeridian ranks its true neighbours, not the far side of the globe.
+            dlon = (lons[i] - lon + 180.0) % 360.0 - 180.0
+            dx = dlon * coslat
             d2 = dx * dx + dy * dy
             if d2 < best_d2:
                 best_d2, best_i = d2, i

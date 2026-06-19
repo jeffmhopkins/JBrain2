@@ -233,7 +233,6 @@ async def test_save_place_stages_then_approval_projects_place_geofence(
         SqlLocationRepo(maker),
         SqlDeviceRepo(maker),
         SqlAnalysisRepo(maker),
-        None,
         repo,
     )
 
@@ -307,7 +306,7 @@ async def test_save_place_refuses_a_narrowed_session_and_stages_nothing(
     )
     repo = ProposalRepo(maker)
     handlers = build_location_handlers(
-        SqlLocationRepo(maker), SqlDeviceRepo(maker), SqlAnalysisRepo(maker), None, repo
+        SqlLocationRepo(maker), SqlDeviceRepo(maker), SqlAnalysisRepo(maker), repo
     )
     with pytest.raises(LocationToolRefusal):
         await handlers["save_place"]({"name": _PLACE}, ToolContext(session=narrowed, scopes=()))

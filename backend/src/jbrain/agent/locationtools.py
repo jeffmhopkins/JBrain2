@@ -28,7 +28,6 @@ from jbrain.agent.loop import ToolContext, ToolHandler, ToolOutput
 from jbrain.agent.proposals import NodeSpec, ProposalSpec
 from jbrain.db.session import SessionContext
 from jbrain.devices.repo import SqlDeviceRepo
-from jbrain.geocode import GeocodeClient
 from jbrain.locations import (
     DeviceActivity,
     Dwell,
@@ -552,7 +551,6 @@ def build_location_handlers(
     locations: SqlLocationRepo,
     devices: SqlDeviceRepo,
     entities: EntityResolver,
-    geocoder: GeocodeClient | None = None,
     proposals: ProposalStager | None = None,
 ) -> dict[str, ToolHandler]:
     """The location read tools, each bound with the registration-time full-owner
@@ -667,22 +665,16 @@ def build_location_handlers(
         radius = max(
             1.0, min(_QUERY_MAX_RADIUS_M, float(arguments.get("radius_m", _QUERY_DEFAULT_RADIUS_M)))
         )
-        # Resolve the place to a center+radius: the saved-fence mirror first (a
-        # named place the owner already keeps), falling back to an on-box
-        # forward-geocode ONLY on a miss — the same full-owner path geocode_forward
-        # is gated by (no Proposal; Photon is a local read on a no-egress network).
+        # Resolve the place to a center+radius from the saved-fence mirror (a named
+        # place the owner already keeps). There is no forward-geocode fallback — a
+        # place that isn't a saved fence can't be resolved to a center.
         places = await locations.places(ctx.session)
         fence = _match_fence(places, place_q)
-        if fence is not None and fence.center is not None:
-            center = fence.center
-            fence_radius = fence.radius_m if fence.radius_m is not None else radius
-            place_name = fence.name
-        else:
-            resolved = await _geocode_center(geocoder, place_q)
-            if resolved is None:
-                return ToolOutput(f'No saved place or address found for "{place_q}".')
-            center, place_name = resolved
-            fence_radius = radius
+        if fence is None or fence.center is None:
+            return ToolOutput(f'No saved place named "{place_q}".')
+        center = fence.center
+        fence_radius = fence.radius_m if fence.radius_m is not None else radius
+        place_name = fence.name
         sid = await _pick_latest(locations, ctx, await _self_subjects(devices, ctx))
         if sid is None:
             return ToolOutput("Your own device isn't linked yet, so I can't answer that.")
@@ -894,25 +886,6 @@ def build_location_handlers(
         "save_place": save_place_tool,
     }
     return {name: _owner_only(handler) for name, handler in handlers.items()}
-
-
-async def _geocode_center(
-    geocoder: GeocodeClient | None, query: str
-) -> tuple[tuple[float, float], str] | None:
-    """On-box forward-geocode `query` to a (center, label), routed through the same
-    local-read path `geocode_forward` uses (Photon, no egress, no Proposal). None on
-    no geocoder, no hit, or an outage — the caller answers "no place found"."""
-    if geocoder is None:
-        return None
-    try:
-        results = await geocoder.forward(query, 1)
-    except Exception as exc:  # noqa: BLE001 - a geocoder outage is a recoverable observation
-        log.warning("location_query.geocode_failed", error=repr(exc))
-        return None
-    if not results:
-        return None
-    hit = results[0]
-    return (hit.latitude, hit.longitude), hit.label
 
 
 def _owner_only(handler: ToolHandler) -> ToolHandler:

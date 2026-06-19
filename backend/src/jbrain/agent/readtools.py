@@ -40,7 +40,6 @@ from jbrain.appointments.service import AppointmentsRepo
 from jbrain.connectors.base import ConnectorRegistry
 from jbrain.db.session import SessionContext
 from jbrain.devices.repo import SqlDeviceRepo
-from jbrain.geocode import GeocodeClient
 from jbrain.lists.service import ListsRepo
 from jbrain.locations import SqlLocationRepo
 from jbrain.notes.service import NoteInfo, NotesRepo
@@ -387,7 +386,6 @@ def build_registry(
     appointments: AppointmentsRepo,
     wiki: WikiReader,
     wiki_write: dict[str, ToolHandler],
-    geocoder: GeocodeClient,
     locations: SqlLocationRepo,
     devices: SqlDeviceRepo,
     web_handlers: dict[str, ToolHandler],
@@ -419,8 +417,8 @@ def build_registry(
             **build_proposal_handlers(proposals),
             **build_merge_handlers(proposals, entities),
             **build_connector_handlers(connectors, proposals),
-            **build_geocode_handlers(geocoder),
-            **build_location_handlers(locations, devices, entities, geocoder, proposals),
+            **build_geocode_handlers(city_geocoder),
+            **build_location_handlers(locations, devices, entities, proposals),
             # jerv's owner-approved, jerv-only location read (a `web`-gated, opt-in
             # tool, never offered to the curator). It names the live PWA fix the turn
             # carried via the offline city geocoder (no saved-place / device read),

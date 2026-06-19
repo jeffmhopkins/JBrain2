@@ -26,8 +26,8 @@ from pydantic import BaseModel
 from jbrain.api.deps import PrincipalDep, owner_only
 from jbrain.api.notes import ctx_for
 from jbrain.api.settings import get_settings_store
+from jbrain.citygeocode import CityGeocoder
 from jbrain.devices.repo import DeviceInfo, DeviceRepo, SqlDeviceRepo
-from jbrain.geocode import GeocodeClient
 from jbrain.locations import (
     DeviceActivity,
     Dwell,
@@ -69,8 +69,8 @@ def get_sql_device_repo(request: Request) -> SqlDeviceRepo:
     return cast(SqlDeviceRepo, request.app.state.device_repo)
 
 
-def get_geocoder(request: Request) -> GeocodeClient:
-    return cast(GeocodeClient, request.app.state.geocoder)
+def get_city_geocoder(request: Request) -> CityGeocoder:
+    return cast(CityGeocoder, request.app.state.city_geocoder)
 
 
 log = structlog.get_logger()
@@ -250,16 +250,15 @@ class AddressOut(BaseModel):
 
 @router.get("/geocode")
 async def reverse_geocode(request: Request, lat: float, lon: float) -> AddressOut:
-    """A coordinate's street address from the on-box geocoder, for the map caption.
-    Local-only (the Photon service, not an egress call); fails closed to `None` when
-    the geocoder isn't running (it is off by default) so the UI simply shows no
-    address rather than erroring."""
+    """A coordinate's nearest-city name from the on-box offline geocoder, for the map
+    caption. Local-only (no egress); fails closed to `None` on any error so the UI
+    simply shows no caption. City-level, not a street address."""
     try:
-        result = await get_geocoder(request).reverse(lat, lon)
-    except Exception as exc:  # noqa: BLE001 - a geocoder outage is a missing address, not a 500
+        hit = get_city_geocoder(request).nearest(lat, lon)
+    except Exception as exc:  # noqa: BLE001 - a geocoder hiccup is a missing caption, not a 500
         log.warning("locations.geocode_failed", error=repr(exc))
         return AddressOut(address=None)
-    return AddressOut(address=result.label if result else None)
+    return AddressOut(address=hit.label if hit else None)
 
 
 # ===== L7a — the nightly/weekly place digest (compute-on-read) =====

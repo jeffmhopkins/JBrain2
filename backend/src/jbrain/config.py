@@ -17,11 +17,6 @@ class Settings(BaseSettings):
     backups_dir: str = "/data/backups"
     embed_url: str = "http://embed:80"
     embed_model: str = "BAAI/bge-small-en-v1.5"
-    # The local Photon geocoder (Phase 7 Wave 4): an opt-in compose service on a
-    # no-egress network. Local reverse/forward geocoding hits this directly (not an
-    # egress connector); off by default at the deploy layer via the `geocoder`
-    # profile, so a stock deploy never runs it and these reads simply fail closed.
-    geocoder_url: str = "http://geocoder:2322"
 
     # MQTT secure spine (JBrain360, opt-in `mqtt` compose profile). The broker
     # (Mosquitto + go-auth) calls the API's /internal/mqtt-* endpoints; the ingest
