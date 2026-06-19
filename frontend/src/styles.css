@@ -2169,6 +2169,413 @@ button.small {
   background: var(--danger);
 }
 
+/* ===== Ops redesign (B3): collapsible System / service-group cards =====
+   docs/mocks/ops-redesign/ops-redesign-b3-system-open.html. Service status
+   stays scannable as the stack grows: one expanded System card (vitals +
+   the embedded Server update on the Load row) over collapsed role groups,
+   each service row carrying its own pullable log tail + Copy logs. */
+
+.ops-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
+  margin-bottom: 12px;
+  overflow: hidden;
+}
+
+.ops-card-head {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: transparent;
+  border: 0;
+  padding: 14px;
+  font: inherit;
+  color: var(--text);
+  text-align: left;
+}
+
+.ops-card-title {
+  font-size: var(--fs-secondary);
+  font-weight: 500;
+}
+
+.ops-card-right {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.ops-card-summary {
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ops-card-caret {
+  color: var(--text-3);
+  transition: transform 0.2s ease-out;
+  flex: none;
+}
+
+.ops-card-head.open .ops-card-caret {
+  transform: rotate(90deg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ops-card-caret {
+    transition: none;
+  }
+}
+
+.ops-card-body {
+  border-top: 1px solid var(--border);
+}
+
+/* Group roll-up state on the header */
+
+.ops-gcount {
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+}
+
+.ops-gstate {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fs-micro);
+}
+
+.ops-gstate .ops-gdot {
+  width: 7px;
+  height: 7px;
+  border-radius: var(--r-pill);
+}
+
+.ops-gstate-ok {
+  color: var(--ok);
+}
+.ops-gstate-ok .ops-gdot {
+  background: var(--ok);
+  box-shadow: 0 0 0 3px var(--green-tint);
+}
+.ops-gstate-warn {
+  color: var(--warn);
+}
+.ops-gstate-warn .ops-gdot {
+  background: var(--warn);
+  box-shadow: 0 0 0 3px var(--amber-tint);
+}
+.ops-gstate-bad {
+  color: var(--danger);
+}
+.ops-gstate-bad .ops-gdot {
+  background: var(--danger);
+  box-shadow: 0 0 0 3px var(--rose-tint);
+}
+
+/* System vitals rows */
+
+.ops-vrow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border-top: 1px solid var(--border);
+}
+
+.ops-card-body > .ops-vrow:first-child {
+  border-top: 0;
+}
+
+.ops-vrow-empty {
+  padding: 14px;
+  margin: 0;
+}
+
+.ops-vk {
+  width: 74px;
+  flex: none;
+  font-size: var(--fs-secondary);
+  font-weight: 500;
+}
+
+.ops-vmid {
+  flex: 1;
+  min-width: 0;
+}
+
+.ops-vv {
+  font-size: var(--fs-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.ops-vv small {
+  color: var(--text-2);
+}
+
+.ops-vmid .meter {
+  margin-top: 7px;
+  max-width: 180px;
+}
+
+.ops-vsub {
+  display: block;
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+  margin-top: 3px;
+}
+
+.ops-vend {
+  margin-left: auto;
+  flex: none;
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+}
+
+/* The Load row stacks its value line over the embedded Server update. */
+.ops-vrow-load {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+}
+
+.ops-vrow-line {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.ops-update-row {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.ops-update-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-input);
+  padding: 10px 12px;
+}
+
+.ops-update-dot {
+  width: 8px;
+  height: 8px;
+  flex: none;
+  border-radius: var(--r-pill);
+  background: var(--steel);
+  box-shadow: 0 0 0 3px var(--steel-tint);
+}
+
+.ops-update-text {
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+  min-width: 0;
+}
+
+.ops-update-text b {
+  color: var(--text);
+  font-weight: 500;
+}
+
+.ops-update-btn {
+  margin-left: auto;
+  flex: none;
+  font-size: var(--fs-micro);
+  font-weight: 500;
+  border-radius: var(--r-pill);
+  padding: 7px 14px;
+  border: 1px solid transparent;
+  background: var(--steel-tint);
+  color: var(--steel);
+}
+
+.ops-update-btn.danger {
+  background: var(--rose-tint);
+  color: var(--danger);
+}
+
+/* Service rows inside a group */
+
+.ops-srow {
+  border-top: 1px solid var(--border);
+}
+
+.ops-srows > .ops-srow:first-child {
+  border-top: 0;
+}
+
+.ops-shead {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  background: transparent;
+  border: 0;
+  padding: 11px 14px;
+  font: inherit;
+  color: var(--text);
+  text-align: left;
+}
+
+.ops-sdot {
+  width: 9px;
+  height: 9px;
+  flex: none;
+  border-radius: var(--r-pill);
+}
+.ops-sdot-ok {
+  background: var(--ok);
+  box-shadow: 0 0 0 3px var(--green-tint);
+}
+.ops-sdot-warn {
+  background: var(--warn);
+  box-shadow: 0 0 0 3px var(--amber-tint);
+}
+.ops-sdot-bad {
+  background: var(--danger);
+  box-shadow: 0 0 0 3px var(--rose-tint);
+}
+
+.ops-sinfo {
+  flex: 1;
+  min-width: 0;
+}
+
+.ops-sline {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+}
+
+.ops-snm {
+  font-size: var(--fs-secondary);
+  font-weight: 500;
+}
+
+.ops-smeta {
+  display: block;
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+  margin-top: 3px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ops-smem {
+  flex: none;
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.ops-scaret {
+  flex: none;
+  color: var(--text-3);
+  transition: transform 0.2s ease-out;
+}
+
+.ops-shead.open .ops-scaret {
+  transform: rotate(90deg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ops-scaret {
+    transition: none;
+  }
+}
+
+.ops-sbody {
+  padding: 0 14px 14px;
+}
+
+.ops-kv {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+  padding: 3px 0;
+}
+
+.ops-kv span:first-child {
+  color: var(--text-3);
+}
+
+/* Per-service log viewer */
+
+.ops-logbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 10px 0 6px;
+}
+
+.ops-logtitle {
+  font-size: var(--fs-micro);
+  font-weight: 500;
+  color: var(--text-2);
+}
+
+.ops-follow {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+  white-space: nowrap;
+}
+
+.ops-follow input {
+  width: auto;
+}
+
+.ops-copy {
+  flex: none;
+  font-size: var(--fs-micro);
+  font-weight: 500;
+  border-radius: var(--r-pill);
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text-2);
+}
+
+.ops-copy:disabled {
+  opacity: 0.5;
+}
+
+.ops-log {
+  margin: 0;
+  background: var(--surface-composer);
+  border: 1px solid var(--border);
+  border-radius: var(--r-input);
+  padding: 10px;
+  max-height: 30dvh;
+  overflow: auto;
+  font-size: var(--fs-micro);
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.ops-srestart {
+  width: 100%;
+  margin-top: 10px;
+}
+
 /* ===== Bottom sheet (shared modal shell) ===== */
 
 .sheet-scrim {

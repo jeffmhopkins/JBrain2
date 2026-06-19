@@ -66,6 +66,48 @@ const CONTAINERS: ContainerStatus[] = [
     started_at: null,
     image: "jbrain/worker:edge",
   },
+  {
+    service: "supervisor",
+    state: "running",
+    health: "healthy",
+    started_at: new Date(Date.now() - 36e5 * 5).toISOString(),
+    image: "jbrain/supervisor:edge",
+  },
+  {
+    service: "local-llm",
+    state: "running",
+    health: null,
+    started_at: new Date(Date.now() - 36e5 * 2).toISOString(),
+    image: "jbrain/local-llm:edge",
+  },
+  {
+    service: "embed",
+    state: "running",
+    health: null,
+    started_at: new Date(Date.now() - 36e5 * 6).toISOString(),
+    image: "ghcr.io/huggingface/text-embeddings-inference",
+  },
+  {
+    service: "proxy",
+    state: "running",
+    health: null,
+    started_at: new Date(Date.now() - 36e5 * 5).toISOString(),
+    image: "jbrain/proxy:edge",
+  },
+  {
+    service: "searxng",
+    state: "running",
+    health: null,
+    started_at: new Date(Date.now() - 36e5 * 6).toISOString(),
+    image: "docker.io/searxng/searxng:latest",
+  },
+  {
+    service: "cloudflared",
+    state: "running",
+    health: null,
+    started_at: new Date(Date.now() - 36e5 * 6).toISOString(),
+    image: "cloudflare/cloudflared:latest",
+  },
 ];
 
 // The Ops "Runs" surface (Direction C) fixtures: a running integration run, a
