@@ -5945,10 +5945,10 @@ button.small {
 .fb-shell .fb-activity {
   display: flex;
   align-items: center;
-  /* trim the gap to the answer above and pull flush to the card's foot so a
-     collapsed line leaves no tall dead zone */
-  margin-top: -2px;
-  margin-bottom: -8px;
+  /* snug the strip to the answer above and flush to the card's foot so it reads as a
+     quiet meta line, not a second block — it now rides every settled answer. */
+  margin-top: -6px;
+  margin-bottom: -7px;
   border-top: 1px solid var(--border);
 }
 .fb-shell .fb-activity.bare {
@@ -5960,7 +5960,7 @@ button.small {
   display: flex;
   align-items: center;
   gap: 6px;
-  min-height: 28px;
+  min-height: 24px;
   padding: 2px 8px;
   background: none;
   border: none;
