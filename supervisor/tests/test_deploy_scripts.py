@@ -66,6 +66,19 @@ def test_script_deploys_searxng_settings(name: str) -> None:
 
 
 @pytest.mark.parametrize("name", DEPLOY_SCRIPTS_THAT_LAY_DOWN_FILES)
+def test_script_clears_stale_searxng_settings_path(name: str) -> None:
+    # On a box already broken by the missing-file bug, the bind path is an empty
+    # directory Docker created. `cp file dir/` would drop the file *inside* that
+    # directory instead of replacing it, so the dir mount survives and SearXNG
+    # still crash-loops. The path must be removed before the copy so the box heals.
+    text = (DEPLOY / name).read_text()
+    assert "rm -rf searxng/settings.yml" in text, (
+        f"{name} must remove any stale searxng/settings.yml (a Docker-made "
+        f"directory on an already-broken box) before copying the file in"
+    )
+
+
+@pytest.mark.parametrize("name", DEPLOY_SCRIPTS_THAT_LAY_DOWN_FILES)
 def test_script_ensures_searxng_secret(name: str) -> None:
     # SearXNG refuses to start without a secret, so a stack that predates the
     # web-search service (no SEARXNG_SECRET in .env) must have one backfilled or
