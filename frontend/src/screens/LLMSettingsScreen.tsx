@@ -516,7 +516,9 @@ function LocalModelsDrawer({
 }) {
   const enabledCount = models.filter((m) => m.enabled).length;
   const loaded = models.filter((m) => m.loaded);
-  const residentGb = loaded.reduce((sum, m) => sum + m.size_gb, 0);
+  // A loaded model is provisioned, so disk_gb is its real footprint; fall back to
+  // the catalog estimate only if the weights read came up empty.
+  const residentGb = loaded.reduce((sum, m) => sum + (m.disk_gb ?? m.size_gb), 0);
   // Config state (enabled) and runtime state (loaded) read side by side, with the
   // memory actually resident — the operator's two questions in one line.
   const summary = !hostingEnabled
@@ -565,40 +567,47 @@ function LocalModelsDrawer({
               the tiers above.
             </p>
           )}
-          {models.map((m) => (
-            <div
-              key={m.id}
-              className={`llm-local-row${m.enabled ? " on" : ""}${m.loaded ? " loaded" : ""}`}
-            >
-              <div className="llm-local-name">
-                {m.label}
-                <span className="llm-local-meta">
-                  {m.quant} · {m.size_gb} GB
-                  {m.loaded ? ` · ${m.size_gb} GB resident` : ""}
+          {models.map((m) => {
+            // Real on-disk size when the model is provisioned here; otherwise the
+            // catalog estimate, flagged with "~" so the screen never passes off a
+            // guess as a measurement.
+            const footprint = m.disk_gb ?? m.size_gb;
+            const sizeText = `${m.disk_gb == null ? "~" : ""}${footprint} GB`;
+            return (
+              <div
+                key={m.id}
+                className={`llm-local-row${m.enabled ? " on" : ""}${m.loaded ? " loaded" : ""}`}
+              >
+                <div className="llm-local-name">
+                  {m.label}
+                  <span className="llm-local-meta">
+                    {m.quant} · {sizeText}
+                    {m.loaded ? ` · ${footprint} GB resident` : ""}
+                  </span>
+                </div>
+                <div className="llm-local-chips">
+                  {capabilityChips(m).map((c) => (
+                    <span key={c.key} className={`llm-chip llm-chip-${c.cls}`}>
+                      {c.label}
+                    </span>
+                  ))}
+                </div>
+                {m.loaded ? (
+                  <button
+                    type="button"
+                    className="llm-local-unload"
+                    disabled={unloading.has(m.id)}
+                    onClick={() => onUnload(m.id)}
+                  >
+                    {unloading.has(m.id) ? "unloading…" : "Unload"}
+                  </button>
+                ) : null}
+                <span className={`llm-local-state${m.loaded ? " on" : ""}`}>
+                  {m.loaded ? "loaded" : m.enabled ? "idle" : "available"}
                 </span>
               </div>
-              <div className="llm-local-chips">
-                {capabilityChips(m).map((c) => (
-                  <span key={c.key} className={`llm-chip llm-chip-${c.cls}`}>
-                    {c.label}
-                  </span>
-                ))}
-              </div>
-              {m.loaded ? (
-                <button
-                  type="button"
-                  className="llm-local-unload"
-                  disabled={unloading.has(m.id)}
-                  onClick={() => onUnload(m.id)}
-                >
-                  {unloading.has(m.id) ? "unloading…" : "Unload"}
-                </button>
-              ) : null}
-              <span className={`llm-local-state${m.loaded ? " on" : ""}`}>
-                {m.loaded ? "loaded" : m.enabled ? "idle" : "available"}
-              </span>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </section>

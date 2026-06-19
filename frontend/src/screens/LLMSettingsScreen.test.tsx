@@ -51,6 +51,7 @@ function initialSettings(): LlmSettings {
         tiers: ["vision", "low"],
         quant: "Q8_0",
         size_gb: 32,
+        disk_gb: null,
         note: "",
       },
     ],
@@ -191,6 +192,8 @@ describe("LLMSettingsScreen", () => {
         tiers: ["vision", "low"],
         quant: "Q8_0",
         size_gb: 32,
+        // Provisioned here: a real measured footprint that differs from the estimate.
+        disk_gb: 31.7,
         note: "",
       },
       {
@@ -203,6 +206,8 @@ describe("LLMSettingsScreen", () => {
         tiers: ["high"],
         quant: "MXFP4",
         size_gb: 59,
+        // Not installed on this box → estimate only.
+        disk_gb: null,
         note: "",
       },
     ];
@@ -230,6 +235,11 @@ describe("LLMSettingsScreen", () => {
     const gpt = screen.getByText("GPT-OSS 120B").closest(".llm-local-row") as HTMLElement;
     expect(within(gpt).getByText("reasoning")).toBeInTheDocument();
     expect(within(gpt).queryByText("vision")).not.toBeInTheDocument();
+    // Provisioned model shows its real measured footprint; the un-provisioned one
+    // shows the catalog estimate, flagged with "~".
+    const qwen = screen.getByText("Qwen3-VL 30B").closest(".llm-local-row") as HTMLElement;
+    expect(within(qwen).getByText(/Q8_0 · 31\.7 GB/)).toBeInTheDocument();
+    expect(within(gpt).getByText(/MXFP4 · ~59 GB/)).toBeInTheDocument();
   });
 
   it("shows loaded models and unloads them from memory", async () => {
@@ -247,6 +257,7 @@ describe("LLMSettingsScreen", () => {
         tiers: ["vision", "low"],
         quant: "Q8_0",
         size_gb: 32,
+        disk_gb: 32,
         note: "",
       },
     ];
