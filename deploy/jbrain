@@ -66,6 +66,7 @@ case "${1:-}" in
     # than the web-search service — without these jerv reports web search as
     # unavailable. See update-inner.sh for the full rationale.
     mkdir -p searxng
+    rm -rf searxng/settings.yml
     cp src/deploy/searxng/settings.yml searxng/settings.yml
     if ! grep -q '^SEARXNG_SECRET=' .env; then
       printf 'SEARXNG_SECRET=%s\n' "$(openssl rand -hex 32)" >> .env
