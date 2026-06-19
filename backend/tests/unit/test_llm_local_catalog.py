@@ -40,6 +40,16 @@ def test_manifest_is_json_with_provisioning_fields() -> None:
     assert entry["served_model"] == "qwen3-vl-30b-a3b"
 
 
+def test_qwen3_next_is_a_text_only_alt_high_tier() -> None:
+    m = local_catalog.get("qwen3-next-80b-a3b")
+    assert m is not None
+    assert m.tiers == ("high",)
+    assert not m.supports_vision and m.mmproj_include is None
+    # Alternate, not part of the default resident set the install prompt offers.
+    assert m.id not in local_catalog.recommended_ids()
+    assert m.spec == "local:qwen3-next-80b-a3b"
+
+
 def _settings(**kw: Any) -> Settings:
     # Both cloud keys present — provider_choices hides a keyless cloud provider, so
     # tests that expect grok/claude to be offered must supply the keys.

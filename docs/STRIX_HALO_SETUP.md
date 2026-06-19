@@ -97,9 +97,11 @@ sudo jbrain enable-local-models
 ```
 Builds the gateway (the community-maintained gfx1151 llama.cpp image +
 llama-swap), downloads the recommended set — **Qwen3-VL-30B-A3B Q8 (~32 GB)** +
-**gpt-oss-120b MXFP4 (~59 GB)**, ~91 GB total — generates the llama-swap config
-(with both models in a non-swapping **resident** group so they stay hot), and
-starts the gateway.
+**gpt-oss-120b MXFP4 (~59 GB)**, ~91 GB total — generates the llama-swap config,
+and starts the gateway. Models are **swappable** (loaded on demand, one at a
+time) by default while co-residency is still under test; to keep the recommended
+set hot concurrently, re-run with `LOCAL_LLM_RESIDENT_GROUP=1 sudo jbrain
+enable-local-models` (a non-swapping group; needs the memory headroom).
 
 ✅ **Checkpoint:** `jbrain status` shows `local-llm` running; `jbrain logs
 local-llm` shows llama-swap listening and the resident models loaded.
@@ -130,8 +132,9 @@ app and `jbrain logs`, not `curl localhost:8080`.
 ---
 
 ## Expected performance
-~31 tok/s on gpt-oss-120b, ~30–45 tok/s on Qwen3-VL; both stay resident (~91 GB)
-with headroom for context.
+~31 tok/s on gpt-oss-120b, ~30–45 tok/s on Qwen3-VL. By default each loads on
+demand (one at a time); with `LOCAL_LLM_RESIDENT_GROUP=1` the recommended set
+stays resident (~91 GB) with headroom for context.
 
 ## Switching to ROCm (optional, faster)
 The ROCm/rocWMMA path is often faster on gfx1151 and is the better route for
