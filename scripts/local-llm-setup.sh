@@ -148,6 +148,10 @@ for i, m in enumerate(models):
         # context-shift churn that starves and slows generation. 32k fits these
         # models and the box's unified memory has room for the KV cache.
         "-c", "32768",
+        # gfx1151 stability/perf flags from the kyuz0 toolbox guide: flash
+        # attention avoids crashes/slowdowns and --no-mmap prevents unified-memory
+        # paging stalls. -ngl 999 offloads every layer to the iGPU.
+        "-fa", "1", "--no-mmap",
         "-m", f"/models/{m['id']}/{gguf}", "-ngl", "999",
     ]
     if m["mmproj_include"]:

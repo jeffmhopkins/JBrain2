@@ -190,8 +190,11 @@ services:
     command: ["llama-swap", "--listen", ":8080", "--config", "/models/llama-swap.yaml"]
     devices:
       - /dev/dri:/dev/dri
-    # The Vulkan default needs only /dev/dri. The ROCm base additionally needs
-    # `- /dev/kfd:/dev/kfd` here and `security_opt: [seccomp:unconfined]`.
+    # seccomp=unconfined is what the kyuz0 toolbox guide runs for the Vulkan path
+    # too (not only ROCm) — it lists it as required for gfx1151 stability. The
+    # ROCm base additionally needs `- /dev/kfd:/dev/kfd` here.
+    security_opt:
+      - seccomp=unconfined
     # The container must join the HOST's video/render group GIDs to open
     # /dev/dri/renderD128 — group *names* rarely line up across host/container.
     # The setup script writes the numeric host GIDs; names are the fallback.
