@@ -1,6 +1,11 @@
 import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
-import { Markdown } from "./markdown";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { setRevealStyle } from "../revealStyle";
+import { Markdown, readyMarkdown } from "./markdown";
+
+// The reveal style is read from localStorage at first render; isolate it so a test
+// that sets one style doesn't leak into the next (default is "sweep").
+beforeEach(() => localStorage.clear());
 
 function html(text: string): string {
   return render(<Markdown text={text} />).container.innerHTML;
@@ -406,5 +411,62 @@ describe("Markdown", () => {
     fireEvent.click(screen.getByRole("button", { name: "Celine Hopkins" }));
     expect(onEntity).toHaveBeenCalledWith("long");
     expect(screen.getAllByRole("button")).toHaveLength(1);
+  });
+
+  it("wraps each block in a sweep-reveal element while streaming (the default style)", () => {
+    const { container } = render(<Markdown text={"First block.\n\nSecond block."} streaming />);
+    expect(container.querySelectorAll(".fb-reveal.sweep")).toHaveLength(2);
+  });
+
+  it("wraps words in delayed spans for the cascade reveal", () => {
+    setRevealStyle("cascade");
+    const { container } = render(<Markdown text={"First block.\n\nSecond block."} streaming />);
+    expect(container.querySelectorAll(".fb-reveal.cascade")).toHaveLength(2);
+    const words = container.querySelectorAll<HTMLElement>(".fb-reveal.cascade .w");
+    expect(words.length).toBeGreaterThan(0);
+    // Each word carries a rising stagger index so the line assembles left-to-right.
+    expect(words[0]?.style.getPropertyValue("--i")).toBe("0");
+  });
+
+  it("applies no animation modifier for the instant reveal", () => {
+    setRevealStyle("instant");
+    const { container } = render(<Markdown text={"First block.\n\nSecond block."} streaming />);
+    expect(container.querySelectorAll(".fb-reveal")).toHaveLength(2);
+    expect(container.querySelectorAll(".fb-reveal.sweep, .fb-reveal.cascade")).toHaveLength(0);
+  });
+
+  it("does not animate a settled (non-streaming) answer", () => {
+    const { container } = render(<Markdown text={"First block.\n\nSecond block."} />);
+    expect(container.querySelectorAll(".fb-reveal.sweep, .fb-reveal.cascade")).toHaveLength(0);
+    // The blocks are still wrapped — the reveal wrapper is layout-neutral.
+    expect(container.querySelectorAll(".fb-reveal")).toHaveLength(2);
+  });
+});
+
+describe("readyMarkdown reveal gating", () => {
+  it("returns the full text once the turn settles", () => {
+    expect(readyMarkdown("done writing", false)).toBe("done writing");
+  });
+
+  it("holds back the still-in-progress trailing block while streaming", () => {
+    // The first paragraph has settled (a blank line closed it); the second is still
+    // being written, so only the first is ready to reveal.
+    expect(readyMarkdown("Para one.\n\nPara two in pro", true)).toBe("Para one.\n");
+  });
+
+  it("reveals nothing while the only block is still being written", () => {
+    expect(readyMarkdown("a single growing paragraph", true)).toBe("");
+  });
+
+  it("withholds a half-streamed display-math block (never shows raw \\frac)", () => {
+    // The closing $$ hasn't arrived: the whole formula is the trailing block, so the
+    // reveal holds it back rather than flashing raw LaTeX.
+    expect(readyMarkdown("Here it is:\n\n$$E_k = \\frac{p^2}{", true)).toBe("Here it is:\n");
+  });
+
+  it("reveals a completed display-math block once a later block follows it", () => {
+    const ready = readyMarkdown("$$E = mc^2$$\n\ntrailing prose", true);
+    expect(ready).toContain("$$E = mc^2$$");
+    expect(ready).not.toContain("trailing prose");
   });
 });

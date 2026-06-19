@@ -3,8 +3,8 @@ import type { FeedConfig, ImageAnalysisMode } from "../api/client";
 import { api } from "../api/client";
 import { FONT_SCALES, type FontScale, getFontScale, setFontScale } from "../fontScale";
 import { isLocationCaptureEnabled, setLocationCaptureEnabled } from "../location";
+import { REVEAL_STYLES, type RevealStyle, getRevealStyle, setRevealStyle } from "../revealStyle";
 import { type ThemePref, getThemePref, setThemePref } from "../theme";
-import { TOKEN_RATES, type TokenRate, getTokenRate, setTokenRate } from "../tokenRate";
 
 const THEME_OPTIONS: { value: ThemePref; label: string }[] = [
   { value: "system", label: "System" },
@@ -17,6 +17,12 @@ const IMAGE_ANALYSIS_OPTIONS: { value: ImageAnalysisMode; label: string }[] = [
   { value: "full", label: "full analysis" },
 ];
 
+const REVEAL_LABEL: Record<RevealStyle, string> = {
+  instant: "Instant",
+  cascade: "Word cascade",
+  sweep: "Sweep",
+};
+
 interface SettingsScreenProps {
   deviceLabel: string;
   onLogout: () => void;
@@ -25,7 +31,7 @@ interface SettingsScreenProps {
 export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
   const [theme, setTheme] = useState<ThemePref>(getThemePref);
   const [fontScale, setScale] = useState<FontScale>(getFontScale);
-  const [tokenRate, setRate] = useState<TokenRate>(getTokenRate);
+  const [reveal, setReveal] = useState<RevealStyle>(getRevealStyle);
   const [locationOn, setLocationOn] = useState<boolean>(isLocationCaptureEnabled);
   // Inline confirm per DESIGN.md — no window.confirm for destructive acts.
   const [confirmingLogout, setConfirmingLogout] = useState(false);
@@ -153,25 +159,25 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
       </section>
 
       <section className="settings-card">
-        <h2 className="settings-label">Response typing speed</h2>
+        <h2 className="settings-label">Response reveal</h2>
         <p className="settings-meta">
-          how fast the assistant's answer types out, in tokens per second — the reveal is paced
-          steadily so fast local models read as smooth typing rather than snapping in. Instant turns
-          pacing off; the full answer shows the moment it lands.
+          how the assistant's answer appears as it streams. each finished line shows once it
+          completes — so math lands fully typeset, never mid-render. Instant snaps it in; Word
+          cascade fades the words in left-to-right; Sweep wipes each line in.
         </p>
-        <div className="theme-picker" aria-label="Response typing speed">
-          {TOKEN_RATES.map((rate) => (
+        <div className="theme-picker" aria-label="Response reveal">
+          {REVEAL_STYLES.map((style) => (
             <button
-              key={rate}
+              key={style}
               type="button"
-              aria-pressed={tokenRate === rate}
-              className={`seg${tokenRate === rate ? " seg-on" : ""}`}
+              aria-pressed={reveal === style}
+              className={`seg${reveal === style ? " seg-on" : ""}`}
               onClick={() => {
-                setTokenRate(rate);
-                setRate(rate);
+                setRevealStyle(style);
+                setReveal(style);
               }}
             >
-              {rate === 0 ? "Instant" : `${rate}/s`}
+              {REVEAL_LABEL[style]}
             </button>
           ))}
         </div>
