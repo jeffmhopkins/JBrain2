@@ -15,6 +15,7 @@ from sqlalchemy.pool import NullPool
 from jbrain.agent.readtools import build_registry
 from jbrain.agent.session import read_context
 from jbrain.agent.toolregistry import ToolRegistry
+from jbrain.agent.webtools import build_web_handlers
 from jbrain.agent.wikiwritetools import build_wiki_write_handlers
 from jbrain.auth import service
 from jbrain.auth.repo import SqlAuthRepo
@@ -25,6 +26,7 @@ from jbrain.llm.fake import FakeLlmClient
 from jbrain.llm.router import LlmRouter
 from jbrain.llm.types import LlmTurn, LlmUsage, ToolCall
 from jbrain.notes.repo import SqlNotesRepo
+from jbrain.web import SearxngClient, WebFetcher
 from jbrain.wiki.builder import StubRewriter, WikiBuilder
 from jbrain.wiki.editor import run_editor_turn
 from jbrain.wiki.readstore import WikiReadStore
@@ -367,6 +369,7 @@ def _editor_registry(maker: async_sessionmaker, jobs: _FakeJobs) -> ToolRegistry
         stub,  # geocoder client
         stub,  # location repo
         stub,  # device repo
+        build_web_handlers(SearxngClient(""), WebFetcher()),  # unused by the editor turn
     )
 
 
