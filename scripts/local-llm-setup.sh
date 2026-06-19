@@ -22,6 +22,22 @@ cd "$INSTALL_DIR"
 
 say() { printf '\n[local-llm] %s\n' "$*"; }
 
+# Serialize runs. Two concurrent provisions race on the same download dir + HF
+# lock and stack throwaway containers (a hang we hit in the wild: two stuck
+# downloaders fighting over one .lock). Hold an exclusive lock for the life of
+# the script; fail fast if another run already owns it.
+exec 9>"$INSTALL_DIR/.local-llm-setup.lock"
+if ! flock -n 9; then
+  echo "[local-llm] another enable-local-models run is already in progress — aborting." >&2
+  exit 1
+fi
+
+# Give the download container a stable name and force-remove it on ANY exit, so a
+# Ctrl+C can't strand it still holding the HF download lock for the next run.
+DOWNLOAD_CONTAINER="jbrain-local-llm-download"
+cleanup() { docker rm -f "$DOWNLOAD_CONTAINER" >/dev/null 2>&1 || true; }
+trap cleanup EXIT INT TERM
+
 [ -f .env ] || { echo "No .env in $INSTALL_DIR — run deploy/install.sh first." >&2; exit 1; }
 
 # python3 drives the JSON/config generation below; Ubuntu Server usually ships
@@ -82,7 +98,13 @@ mkdir -p "$MODELS_DIR"
 # Download weights with the official huggingface_hub CLI in a throwaway
 # container; only the --include globs from the manifest are pulled.
 say "Downloading weights into $MODELS_DIR (this can take a while)"
-docker run --rm -e MANIFEST="$MANIFEST" -v "$MODELS_DIR:/models" python:3.11-slim bash -c '
+# Allocate a TTY when we have one so huggingface_hub renders live per-file
+# percentage bars (size, speed, ETA); without a TTY it collapses to a terse
+# file counter. The named container is force-cleaned by the trap above.
+TTY_FLAG=""
+[ -t 1 ] && TTY_FLAG="-t"
+docker run --rm $TTY_FLAG --name "$DOWNLOAD_CONTAINER" \
+  -e MANIFEST="$MANIFEST" -v "$MODELS_DIR:/models" python:3.11-slim bash -c '
   set -euo pipefail
   pip install --quiet -U "huggingface_hub[cli]"
   python - <<PY
