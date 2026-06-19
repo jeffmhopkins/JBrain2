@@ -71,27 +71,24 @@ describe("SettingsScreen capture location", () => {
   });
 });
 
-describe("SettingsScreen response reveal", () => {
-  it("defaults the pick to Sweep", () => {
+describe("SettingsScreen response typing speed", () => {
+  it("defaults the pick to 30/s", () => {
     setup();
-    const group = screen.getByLabelText("Response reveal");
-    expect(group.querySelector('[aria-pressed="true"]')).toHaveTextContent("Sweep");
+    const group = screen.getByLabelText("Response typing speed");
+    expect(group.querySelector('[aria-pressed="true"]')).toHaveTextContent("30/s");
   });
 
-  it("persists a chosen reveal style across remounts via localStorage", () => {
+  it("persists a chosen rate across remounts via localStorage", () => {
     setup();
-    fireEvent.click(screen.getByRole("button", { name: "Word cascade" }));
-    expect(localStorage.getItem("jbrain.revealStyle")).toBe("cascade");
-    expect(screen.getByRole("button", { name: "Word cascade" })).toHaveAttribute(
-      "aria-pressed",
-      "true",
-    );
+    fireEvent.click(screen.getByRole("button", { name: "45/s" }));
+    expect(localStorage.getItem("jbrain.tokenRate")).toBe("45");
+    expect(screen.getByRole("button", { name: "45/s" })).toHaveAttribute("aria-pressed", "true");
   });
 
-  it("offers an Instant (no motion) choice", () => {
+  it("offers Instant as a zero-rate (pacing off) choice", () => {
     setup();
     fireEvent.click(screen.getByRole("button", { name: "Instant" }));
-    expect(localStorage.getItem("jbrain.revealStyle")).toBe("instant");
+    expect(localStorage.getItem("jbrain.tokenRate")).toBe("0");
   });
 });
 
