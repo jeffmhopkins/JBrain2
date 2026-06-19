@@ -25,6 +25,23 @@ done
 cp src/deploy/db-init/01-app-role.sh db-init/
 chmod +x jbrain backup.sh restore.sh db-init/01-app-role.sh
 
+# Refresh the SearXNG settings host file. Compose bind-mounts it writable (the
+# image injects $SEARXNG_SECRET at boot) and it enables the JSON format the
+# web_search tool needs. Deployments that predate this service have no such file,
+# so the bind source is missing, Docker mounts an empty dir over it, SearXNG
+# falls back to its HTML-only defaults, and /search?format=json answers 403 —
+# jerv then reports web search as unavailable.
+mkdir -p searxng
+cp src/deploy/searxng/settings.yml searxng/settings.yml
+
+# Backfill SEARXNG_SECRET for stacks updated from before the web-search service:
+# SearXNG refuses to start without one. busybox has no openssl, so derive the hex
+# from /dev/urandom. Append only when absent so an existing secret stands.
+if ! grep -q '^SEARXNG_SECRET=' .env; then
+  echo "[update] adding SEARXNG_SECRET for web search"
+  printf 'SEARXNG_SECRET=%s\n' "$(head -c 32 /dev/urandom | sha256sum | cut -d' ' -f1)" >> .env
+fi
+
 echo "[update] building images"
 docker compose build
 

@@ -61,6 +61,15 @@ case "${1:-}" in
     done
     cp src/deploy/db-init/01-app-role.sh db-init/
     chmod +x jbrain backup.sh restore.sh db-init/01-app-role.sh
+    # Refresh the SearXNG settings host file (writable bind mount; enables the
+    # JSON format web_search needs) and backfill its secret for stacks older
+    # than the web-search service — without these jerv reports web search as
+    # unavailable. See update-inner.sh for the full rationale.
+    mkdir -p searxng
+    cp src/deploy/searxng/settings.yml searxng/settings.yml
+    if ! grep -q '^SEARXNG_SECRET=' .env; then
+      printf 'SEARXNG_SECRET=%s\n' "$(openssl rand -hex 32)" >> .env
+    fi
     docker compose "${PROFILE[@]}" build
     docker compose run --rm migrate
     docker compose "${PROFILE[@]}" up -d
