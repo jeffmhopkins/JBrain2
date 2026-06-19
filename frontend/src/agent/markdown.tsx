@@ -30,7 +30,7 @@ const isIsoDate = (s: string): boolean => /^\d{4}-\d{2}-\d{2}$/.test(s);
 // sources, so they can't become tappable chips — strip them (with one leading space
 // if present) so the prose reads clean rather than leaking the raw token.
 const MODEL_CITATION = /[ \t]?(?:【[^】\n]*†[^】\n]*】|\[[^\]\n]*†[^\]\n]*\])/g;
-function stripModelCitations(text: string): string {
+export function stripModelCitations(text: string): string {
   return text.replace(MODEL_CITATION, "");
 }
 

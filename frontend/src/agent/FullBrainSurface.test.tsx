@@ -274,6 +274,47 @@ describe("FullBrainSurface", () => {
     );
   });
 
+  it("copies the settled answer (citations stripped) and confirms, even with no tools", async () => {
+    const writeText = vi.fn(() => Promise.resolve());
+    Object.assign(navigator, { clipboard: { writeText } });
+    async function* answer(): AsyncGenerator<ChatEvent> {
+      yield { type: "text_delta", text: "The drive is ~15 min 【13†L9-L13】." };
+      yield { type: "done", stop_reason: "end_turn" };
+    }
+    render(<Harness d={deps({ chat: answer })} />);
+    await waitFor(() => screen.getByLabelText("Conversation"));
+    fireEvent.change(screen.getByLabelText("Composer"), { target: { value: "how long?" } });
+    fireEvent.click(screen.getByRole("button", { name: "send" }));
+
+    // A plain answer (no reasoning, no tools) still gets the copy affordance.
+    const copy = await screen.findByRole("button", { name: "Copy response" });
+    fireEvent.click(copy);
+    // The copied text is the clean prose the owner read — the model citation is gone.
+    expect(writeText).toHaveBeenCalledWith("The drive is ~15 min.");
+    expect(await screen.findByText("Copied ✓")).toBeInTheDocument();
+  });
+
+  it("does not offer copy while the answer is still streaming", async () => {
+    let resolve: () => void = () => {};
+    const gate = new Promise<void>((r) => {
+      resolve = r;
+    });
+    async function* answer(): AsyncGenerator<ChatEvent> {
+      yield { type: "text_delta", text: "partial…" };
+      await gate;
+      yield { type: "done", stop_reason: "end_turn" };
+    }
+    render(<Harness d={deps({ chat: answer })} />);
+    await waitFor(() => screen.getByLabelText("Conversation"));
+    fireEvent.change(screen.getByLabelText("Composer"), { target: { value: "go" } });
+    fireEvent.click(screen.getByRole("button", { name: "send" }));
+
+    await waitFor(() => expect(screen.getByText("partial…")).toBeInTheDocument());
+    expect(screen.queryByRole("button", { name: "Copy response" })).not.toBeInTheDocument();
+    act(() => resolve());
+    await screen.findByRole("button", { name: "Copy response" });
+  });
+
   it("shows thinking and worked on one activity line, thinking through the tools", async () => {
     // A turn that reasons, runs a tool, then answers: both segments live on the
     // single foot line, and "Thinking…" persists across the tool call until the

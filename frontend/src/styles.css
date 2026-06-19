@@ -5989,6 +5989,19 @@ button.small {
 .fb-shell .fb-act-think.live {
   color: var(--violet);
 }
+/* the copy action: pushed to the far right of the strip; a brief green confirm. */
+.fb-shell .fb-act-copy {
+  margin-left: auto;
+}
+.fb-shell .fb-act-copy .fb-act-ic {
+  color: var(--text-3);
+}
+.fb-shell .fb-act-copy.done {
+  color: var(--green);
+}
+.fb-shell .fb-act-copy.done .fb-act-ic {
+  color: var(--green);
+}
 .fb-shell .fb-act-lab {
   display: flex;
   align-items: center;
