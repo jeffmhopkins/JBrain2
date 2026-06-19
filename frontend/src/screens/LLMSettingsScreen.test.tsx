@@ -178,7 +178,7 @@ describe("LLMSettingsScreen", () => {
     expect(Array.from(lightSelect.options).map((o) => o.value)).toContain("gpt-oss-120b");
   });
 
-  it("shows the local-models drawer with state and the enable command", async () => {
+  it("shows enabled models with state, chips, and footprint", async () => {
     const s = initialSettings();
     s.local_hosting_enabled = true;
     s.local_models = [
@@ -199,14 +199,14 @@ describe("LLMSettingsScreen", () => {
       {
         id: "gpt-oss-120b",
         label: "GPT-OSS 120B",
-        enabled: false,
+        enabled: true,
         loaded: false,
         supports_vision: false,
         supports_tools: true,
         tiers: ["high"],
         quant: "MXFP4",
         size_gb: 59,
-        // Not installed on this box → estimate only.
+        // Enabled but weights not yet on disk → falls back to the flagged estimate.
         disk_gb: null,
         note: "",
       },
@@ -224,22 +224,74 @@ describe("LLMSettingsScreen", () => {
     render(<LLMSettingsScreen />);
 
     const toggle = await screen.findByRole("button", { name: /Local models/i });
-    expect(toggle).toHaveTextContent("1 of 2 enabled");
+    expect(toggle).toHaveTextContent("2 of 2 enabled");
     fireEvent.click(toggle);
 
     expect(await screen.findByText("Qwen3-VL 30B")).toBeInTheDocument();
-    // Enabled-but-not-resident reads "idle"; the unprovisioned one "available".
-    expect(screen.getByText("idle")).toBeInTheDocument();
-    expect(screen.getByText("available")).toBeInTheDocument();
+    // Enabled-but-not-resident reads "idle" (both, here).
+    expect(screen.getAllByText("idle")).toHaveLength(2);
     // The text reasoner shows a reasoning chip, not a vision chip.
     const gpt = screen.getByText("GPT-OSS 120B").closest(".llm-local-row") as HTMLElement;
     expect(within(gpt).getByText("reasoning")).toBeInTheDocument();
     expect(within(gpt).queryByText("vision")).not.toBeInTheDocument();
-    // Provisioned model shows its real measured footprint; the un-provisioned one
+    // A provisioned model shows its real measured footprint; one still downloading
     // shows the catalog estimate, flagged with "~".
     const qwen = screen.getByText("Qwen3-VL 30B").closest(".llm-local-row") as HTMLElement;
     expect(within(qwen).getByText(/Q8_0 · 31\.7 GB/)).toBeInTheDocument();
     expect(within(gpt).getByText(/MXFP4 · ~59 GB/)).toBeInTheDocument();
+  });
+
+  it("hides catalog models that aren't provisioned on this box", async () => {
+    const s = initialSettings();
+    s.local_hosting_enabled = true;
+    s.local_models = [
+      {
+        id: "qwen3-vl-30b",
+        label: "Qwen3-VL 30B",
+        enabled: true,
+        loaded: false,
+        supports_vision: true,
+        supports_tools: true,
+        tiers: ["vision", "low"],
+        quant: "Q8_0",
+        size_gb: 32,
+        disk_gb: 31.7,
+        note: "",
+      },
+      {
+        id: "gpt-oss-120b",
+        label: "GPT-OSS 120B",
+        enabled: false,
+        loaded: false,
+        supports_vision: false,
+        supports_tools: true,
+        tiers: ["high"],
+        quant: "MXFP4",
+        size_gb: 59,
+        disk_gb: null,
+        note: "",
+      },
+    ];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>(
+        async () =>
+          new Response(JSON.stringify(s), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          }),
+      ),
+    );
+    render(<LLMSettingsScreen />);
+
+    const toggle = await screen.findByRole("button", { name: /Local models/i });
+    // The summary still counts the full catalog so "how many more could I install".
+    expect(toggle).toHaveTextContent("1 of 2 enabled");
+    fireEvent.click(toggle);
+
+    expect(await screen.findByText("Qwen3-VL 30B")).toBeInTheDocument();
+    // The un-provisioned model is absent from the list entirely.
+    expect(screen.queryByText("GPT-OSS 120B")).not.toBeInTheDocument();
   });
 
   it("shows loaded models and unloads them from memory", async () => {
