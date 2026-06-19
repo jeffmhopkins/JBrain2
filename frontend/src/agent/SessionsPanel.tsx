@@ -139,15 +139,14 @@ function writeLastScope(scope: string[]): void {
   }
 }
 
-// Group ended chats by recency off last_active_at; the live chat floats to its own
-// section so "you are here" reads at a glance.
+// The picker buckets chats into three segments — Today · Older · Archived — shown
+// one at a time so the list stays short. "Older" folds yesterday and everything
+// before it together (off last_active_at).
+type TabId = "today" | "older" | "archived";
 const startOfDay = (d: Date): number =>
   new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
-function dayBucket(iso: string, now: Date): "Today" | "Yesterday" | "Earlier" {
-  const days = Math.round((startOfDay(now) - startOfDay(new Date(iso))) / 86_400_000);
-  if (days <= 0) return "Today";
-  if (days === 1) return "Yesterday";
-  return "Earlier";
+function isToday(iso: string, now: Date): boolean {
+  return startOfDay(new Date(iso)) >= startOfDay(now);
 }
 
 // Above this many chats, the search field earns its place; below it, it's clutter.
@@ -181,8 +180,10 @@ export function SessionsPanel({
 }: Props): ReactNode {
   const [picking, setPicking] = useState(false);
   const [query, setQuery] = useState("");
-  const [showArchived, setShowArchived] = useState(false);
-  // The chat whose scope is being edited (its chip was tapped), or null.
+  // The segment the owner explicitly picked, or null to follow the data (so the
+  // picker never lands on an empty Today while chats load into Older/Archived).
+  const [tab, setTab] = useState<TabId | null>(null);
+  // The chat whose scope is being edited (rail "scope" tapped), or null.
   const [rescoping, setRescoping] = useState<AgentSession | null>(null);
   // One swipe rail open at a time (like the home stream).
   const [railId, setRailId] = useState<string | null>(null);
@@ -190,24 +191,34 @@ export function SessionsPanel({
   const q = query.trim().toLowerCase();
   const matches = (s: AgentSession): boolean =>
     q === "" || (s.title || "untitled chat").toLowerCase().includes(q);
-  // Archived chats are tucked behind a toggle; the live list never shows them.
-  const live = sessions.filter((s) => s.status !== "archived" && matches(s));
-  const archived = sessions.filter((s) => s.status === "archived" && matches(s));
 
-  // Newest-active first, then bucket by recency.
-  const ordered = [...live].sort(
-    (a, b) => Date.parse(b.last_active_at) - Date.parse(a.last_active_at),
-  );
+  // Newest-active first, then split into the three segments.
   const now = new Date();
-  const buckets: { label: string; rows: AgentSession[] }[] = [
-    { label: "Today", rows: [] },
-    { label: "Yesterday", rows: [] },
-    { label: "Earlier", rows: [] },
-  ];
+  const ordered = [...sessions]
+    .filter(matches)
+    .sort((a, b) => Date.parse(b.last_active_at) - Date.parse(a.last_active_at));
+  const groups: Record<TabId, AgentSession[]> = { today: [], older: [], archived: [] };
   for (const s of ordered) {
-    const b = buckets.find((x) => x.label === dayBucket(s.last_active_at, now));
-    b?.rows.push(s);
+    if (s.status === "archived") groups.archived.push(s);
+    else if (isToday(s.last_active_at, now)) groups.today.push(s);
+    else groups.older.push(s);
   }
+  const TAB_DEFS: { id: TabId; label: string }[] = [
+    { id: "today", label: "Today" },
+    { id: "older", label: "Older" },
+    { id: "archived", label: "Archived" },
+  ];
+  // Until the owner taps a segment, show the first non-empty one.
+  const effective: TabId =
+    tab ??
+    (groups.today.length
+      ? "today"
+      : groups.older.length
+        ? "older"
+        : groups.archived.length
+          ? "archived"
+          : "today");
+  const activeRows = groups[effective];
 
   const row = (s: AgentSession): ReactNode => (
     <SessionRow
@@ -234,10 +245,25 @@ export function SessionsPanel({
         <span className="ttl">Chats</span>
         <span className="sub">tap one, or start fresh</span>
       </div>
-      <div className="panel-body">
+      <div className="panel-top">
         <button type="button" className="row new-session" onClick={() => setPicking(true)}>
           ＋ New chat
         </button>
+
+        <div className="seg-row chat-seg" aria-label="Chat groups">
+          {TAB_DEFS.map((t) => (
+            <button
+              type="button"
+              key={t.id}
+              className={`seg${effective === t.id ? " seg-on" : ""}`}
+              aria-pressed={effective === t.id}
+              onClick={() => setTab(t.id)}
+            >
+              {t.label}
+              <span className="seg-n">{groups[t.id].length}</span>
+            </button>
+          ))}
+        </div>
 
         {sessions.length > SEARCH_THRESHOLD && (
           <div className="chat-search">
@@ -251,40 +277,23 @@ export function SessionsPanel({
             />
           </div>
         )}
+      </div>
 
-        {buckets.map((b) =>
-          b.rows.length > 0 ? (
-            <div key={b.label}>
-              <div className="sect">{b.label}</div>
-              {b.rows.map(row)}
-            </div>
-          ) : null,
-        )}
-
-        {archived.length > 0 && (
-          <>
-            <button
-              type="button"
-              className="archived-toggle"
-              aria-expanded={showArchived}
-              onClick={() => setShowArchived((v) => !v)}
-            >
-              {showArchived ? "Hide" : "Show"} {archived.length} archived
-            </button>
-            {showArchived && (
-              <div>
-                <div className="sect">Archived</div>
-                {archived.map(row)}
-              </div>
-            )}
-          </>
-        )}
-
-        {sessions.length === 0 && (
-          <div className="panel-empty">No chats yet — start one to ask about your brain.</div>
-        )}
-        {sessions.length > 0 && live.length === 0 && archived.length === 0 && (
-          <div className="panel-empty">No chats match “{query.trim()}”.</div>
+      <div className="panel-list">
+        {activeRows.length > 0 ? (
+          <div className="chat-group">{activeRows.map(row)}</div>
+        ) : (
+          <div className="panel-empty">
+            {sessions.length === 0
+              ? "No chats yet — start one to ask about your brain."
+              : q
+                ? `No chats match “${query.trim()}”.`
+                : effective === "today"
+                  ? "Nothing today — older chats are a tap away."
+                  : effective === "archived"
+                    ? "No archived chats."
+                    : "Nothing here yet."}
+          </div>
         )}
       </div>
 
@@ -425,7 +434,7 @@ function SessionRow({
   return (
     <div className="session-wrap">
       {!renaming && offset < 0 && (
-        <div className="session-rail rail-3">
+        <div className="session-rail rail-4">
           <button
             type="button"
             className="rail-btn rail-edit"
@@ -436,6 +445,17 @@ function SessionRow({
           >
             <PencilIcon size={18} />
             rename
+          </button>
+          <button
+            type="button"
+            className="rail-btn rail-scope"
+            onClick={() => {
+              onRailChange(false);
+              onEditScope(session);
+            }}
+          >
+            <ScopeGlyph />
+            scope
           </button>
           <button
             type="button"
@@ -476,7 +496,7 @@ function SessionRow({
         </div>
       )}
       <div
-        className={`row session-slide${active ? " live" : ""}`}
+        className={`session-slide${active ? " live" : ""}`}
         style={{ transform: `translateX(${offset}px)` }}
         onTouchStart={onTouchStart}
         onTouchMove={onTouchMove}
@@ -500,45 +520,47 @@ function SessionRow({
             }}
           />
         ) : (
-          <>
-            <button
-              type="button"
-              className="session-tap"
-              onClick={onTap}
-              aria-current={active ? "true" : undefined}
-            >
-              <div className="r-head">
-                {active && <span className="live-dot" aria-hidden="true" />}
-                {session.title || "Untitled chat"}
-              </div>
-              {session.preview ? <div className="r-sub">{session.preview}</div> : null}
-            </button>
-            <div className="c-foot">
-              {/* The scope chip is now a control: tap to re-scope after start. */}
-              <button
-                type="button"
-                className={`scope-chip ${scope.cls}`}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  if (railOpen) {
-                    onRailChange(false);
-                    return;
-                  }
-                  onEditScope(session);
-                }}
-              >
-                reads {scope.label}
-              </button>
+          // One compact line: a scope-tinted dot (green when this is the open chat),
+          // the title, then turns/staged. Preview and the scope chip moved off the
+          // row for density — scope lives behind the swipe rail's "scope" action.
+          <button
+            type="button"
+            className="session-tap"
+            onClick={onTap}
+            aria-current={active ? "true" : undefined}
+          >
+            <span
+              className={`dot ${active ? "live" : scope.cls}`}
+              title={active ? `open · reads ${scope.label}` : `reads ${scope.label}`}
+            />
+            <span className={`m-title${session.title ? "" : " untitled"}`}>
+              {session.title || "Untitled chat"}
+            </span>
+            <span className="m-meta">
+              {session.staged_count ? (
+                <span className="stat staged">{session.staged_count} staged</span>
+              ) : null}
               {session.turn_count ? (
                 <span className="r-turns">
                   {session.turn_count} turn{session.turn_count === 1 ? "" : "s"}
                 </span>
               ) : null}
-              {session.staged_count ? (
-                <span className="stat staged">{session.staged_count} staged</span>
-              ) : null}
-            </div>
-          </>
+            </span>
+            <svg
+              className="m-car"
+              width="15"
+              height="15"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.6"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M9 6l6 6-6 6" />
+            </svg>
+          </button>
         )}
       </div>
     </div>
@@ -563,6 +585,28 @@ function ArchiveGlyph(): ReactNode {
       <rect x="3" y="4" width="18" height="4" rx="1" />
       <path d="M5 8v11a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8" />
       <path d="M10 12h4" />
+    </svg>
+  );
+}
+
+// Sliders glyph for the rail's "scope" action — re-scoping is nudging a dial.
+function ScopeGlyph(): ReactNode {
+  return (
+    <svg
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.6"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M4 6h10M18 6h2M4 12h2M10 12h10M4 18h10M18 18h2" />
+      <circle cx="16" cy="6" r="2" />
+      <circle cx="8" cy="12" r="2" />
+      <circle cx="16" cy="18" r="2" />
     </svg>
   );
 }

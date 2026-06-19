@@ -21,7 +21,7 @@ function session(over: Partial<AgentSession>): AgentSession {
 beforeEach(() => localStorage.clear());
 
 describe("SessionsPanel", () => {
-  it("lists chats with their read-scope as a calm chip (calm domain labels)", () => {
+  it("lists chats with their read-scope as a tinted dot (calm domain labels)", () => {
     render(
       <SessionsPanel
         sessions={[
@@ -40,8 +40,9 @@ describe("SessionsPanel", () => {
     );
     expect(screen.getByText("Health wiki cleanup")).toBeInTheDocument();
     expect(screen.getByText("Recap")).toBeInTheDocument();
-    expect(screen.getByText("reads medical")).toBeInTheDocument();
-    expect(screen.getByText("reads financial")).toBeInTheDocument();
+    // Scope is the row's dot now — its label rides the title attribute.
+    expect(screen.getByTitle("reads medical")).toBeInTheDocument();
+    expect(screen.getByTitle("reads financial")).toBeInTheDocument();
   });
 
   it("opens a chat on tap", () => {
@@ -354,7 +355,7 @@ describe("SessionsPanel", () => {
     expect(onArchive).toHaveBeenCalledWith("s1");
   });
 
-  it("hides archived chats behind a toggle that reveals them and offers unarchive", () => {
+  it("keeps archived chats in their own segment with an unarchive rail", () => {
     const onUnarchive = vi.fn();
     render(
       <SessionsPanel
@@ -372,11 +373,11 @@ describe("SessionsPanel", () => {
         onRescope={vi.fn()}
       />,
     );
-    // The archived chat is tucked away; the live one shows.
+    // The archived chat lives in its own segment; the live one shows by default.
     expect(screen.getByText("Live chat")).toBeInTheDocument();
     expect(screen.queryByText("Old chat")).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: /1 archived/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Archived/ }));
     expect(screen.getByText("Old chat")).toBeInTheDocument();
 
     // Its rail offers unarchive, not archive.
@@ -389,10 +390,10 @@ describe("SessionsPanel", () => {
     expect(onUnarchive).toHaveBeenCalledWith("arch1");
   });
 
-  it("shows card metadata: preview, turn count, and a staged badge", () => {
+  it("shows the compact row's turn count and a staged badge", () => {
     render(
       <SessionsPanel
-        sessions={[session({ preview: "surfaced two open labs", turn_count: 14, staged_count: 1 })]}
+        sessions={[session({ turn_count: 14, staged_count: 1 })]}
         onOpen={vi.fn()}
         onCreate={vi.fn()}
         onClose={vi.fn()}
@@ -403,12 +404,11 @@ describe("SessionsPanel", () => {
         onRescope={vi.fn()}
       />,
     );
-    expect(screen.getByText("surfaced two open labs")).toBeInTheDocument();
     expect(screen.getByText("14 turns")).toBeInTheDocument();
     expect(screen.getByText("1 staged")).toBeInTheDocument();
   });
 
-  it("tapping the scope chip re-scopes the chat (and doesn't open it)", () => {
+  it("the rail's scope action re-scopes the chat (and doesn't open it)", () => {
     const onOpen = vi.fn();
     const onRescope = vi.fn();
     render(
@@ -424,8 +424,9 @@ describe("SessionsPanel", () => {
         onRescope={onRescope}
       />,
     );
-    // The chip opens the scope sheet, not the chat.
-    fireEvent.click(screen.getByRole("button", { name: /reads general/ }));
+    // Swipe to the rail, then scope opens the sheet — not the chat.
+    swipeOpen();
+    fireEvent.click(screen.getByRole("button", { name: /scope/ }));
     expect(onOpen).not.toHaveBeenCalled();
     // Widen to Medical and save.
     fireEvent.click(screen.getByRole("button", { name: "Medical" }));

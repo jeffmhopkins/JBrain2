@@ -723,6 +723,35 @@ session read-scope picker), `docs/mocks/assistant-proposals-view.html` (the
 tree-structured Proposals page with whole/subtree/leaf approval and dependency
 holds).
 
+**Chats picker — segmented buckets + compact rows (settled in a three-way density
+review; chosen **C — segmented micro rows** over A "expandable list" and B "swatch
+tiles"; reference mocks `docs/mocks/session-picker/{a-expandable-list,b-swatch-tiles,
+c-segmented-micro}.html`).** The tall chat cards (title + multi-line preview + a
+footer chip row) didn't scale, so the picker is now:
+
+- A **`Today · Older · Archived` segmented control** (the shared `.seg-row`/`.seg-on`,
+  steel `--mode`) with a per-segment **count pill**, showing **one bucket at a time**
+  so the list stays short. **Older** folds yesterday and everything before it (off
+  `last_active_at`); **Archived** replaces the old "Show N archived" disclosure as its
+  own segment. Until the owner taps a segment, the picker **follows the data** — it
+  shows the first non-empty bucket, so it never lands on an empty Today while chats
+  load into Older/Archived.
+- **Micro rows (~44px)** packed into one bordered card with hairline separators: a
+  **scope-tinted dot** (the domain color it reads — green when this is the open chat,
+  its `reads <scope>` label on the dot's `title`), the **title** (ellipsized), then
+  **turns / a staged badge**, and a trailing chevron. **The preview and the visible
+  scope chip are dropped** for density — the dot carries scope at a glance.
+- **New chat**, the segments, and the search field (shown once chats pass the
+  `SEARCH_THRESHOLD`) pin in a non-scrolling header; only the row list scrolls. Search
+  filters the rows and the count pills together.
+- The **swipe-left rail** keeps the home-note paradigm but now carries **four**
+  actions — **rename · scope · archive · delete** (`rail-4`, 48px each across the same
+  `RAIL_WIDTH`). **Re-scope moved onto the rail** (its own sliders glyph) since the
+  tappable scope chip left the row; rename still edits inline, delete still arms a
+  tap-again confirm. C won for the most aggressive vertical density with the
+  bucketing the owner asked for; A (tap-to-unfold preview) and B (two-line swatch
+  tiles + filter chips) are retained as the record.
+
 ## Surface paradigms (which container for which job)
 
 | Job | Paradigm |
