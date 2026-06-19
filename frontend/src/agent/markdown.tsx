@@ -11,7 +11,11 @@
 // span markup — with trust off (the default) it can't render \href/\includegraphics
 // or pass arbitrary HTML through — so injecting its output is safe. A delimiter is
 // only consumed when it's balanced, so an unclosed $… in a streamed partial answer
-// falls through to plain text rather than swallowing the rest of the bubble.
+// falls through to plain text rather than swallowing the rest of the bubble; and a
+// balanced-but-not-yet-complete formula (display math reveals its body before the
+// close) shows a subdued "building math render…" placeholder while `streaming`
+// rather than KaTeX's bright-red parse error, settling to the typeset math (or, if
+// still malformed, its raw source) once the turn finishes.
 
 import katex from "katex";
 import "katex/dist/katex.min.css";
@@ -47,30 +51,40 @@ export function stripModelCitations(text: string): string {
   return text.replace(MODEL_CITATION, "");
 }
 
-// Typeset a LaTeX fragment to KaTeX's own span markup. `throwOnError: false` makes
-// KaTeX render a malformed formula as a quiet error span (no throw), so a model's
-// stray macro never crashes the bubble; `strict: "ignore"` keeps unknown-command
-// warnings out of the console. The try/catch is a final backstop — degrade to the
-// raw source rather than blow up.
-function katexHtml(latex: string, displayMode: boolean): string {
+// Typeset a LaTeX fragment to KaTeX's own span markup, or null when it isn't valid
+// (yet). `throwOnError: true` makes KaTeX throw on a parse/build error instead of
+// emitting a bright-red error span — so a half-streamed formula ("\frac{a}{") reads
+// as "not ready" rather than as a loud mistake. `strict: "ignore"` keeps
+// unknown-command warnings out of the console.
+function katexHtml(latex: string, displayMode: boolean): string | null {
   try {
-    return katex.renderToString(latex, { displayMode, throwOnError: false, strict: "ignore" });
+    return katex.renderToString(latex, { displayMode, throwOnError: true, strict: "ignore" });
   } catch {
-    return "";
+    return null;
   }
 }
 
-/** A LaTeX fragment typeset with KaTeX — inline by default, display (centered,
- * own line) when `display`. The rendered markup is KaTeX's own (trust off), so the
- * innerHTML carries no injection surface. On a render failure it shows the raw
- * source so nothing silently vanishes. */
-function MathPart({ latex, display }: { latex: string; display?: boolean }): ReactNode {
+/** A LaTeX fragment typeset with KaTeX — inline by default, display (centered, own
+ * line) when `display`. The rendered markup is KaTeX's own (trust off), so the
+ * innerHTML carries no injection surface. When the LaTeX isn't valid yet: while the
+ * answer is still streaming it shows a subdued "building math render…" placeholder
+ * (the closing delimiter has arrived but the body is mid-token); once the turn has
+ * settled, a still-malformed formula degrades to its raw source rather than vanish
+ * or flash red. */
+function MathPart({
+  latex,
+  display,
+  streaming,
+}: { latex: string; display?: boolean; streaming?: boolean }): ReactNode {
   const trimmed = latex.trim();
   const html = useMemo(() => katexHtml(trimmed, display ?? false), [trimmed, display]);
-  if (!html) return display ? `$$${latex}$$` : `$${latex}$`;
-  const cls = display ? "md-math-block" : "md-math";
-  // biome-ignore lint/security/noDangerouslySetInnerHtml: KaTeX-generated markup, trust off — see file header
-  return <span className={cls} dangerouslySetInnerHTML={{ __html: html }} />;
+  if (html) {
+    const cls = display ? "md-math-block" : "md-math";
+    // biome-ignore lint/security/noDangerouslySetInnerHtml: KaTeX-generated markup, trust off — see file header
+    return <span className={cls} dangerouslySetInnerHTML={{ __html: html }} />;
+  }
+  if (streaming) return <span className="md-math-pending">building math render…</span>;
+  return display ? `$$${latex}$$` : `$${latex}$`;
 }
 
 function parseDate(raw: string): Date | null {
@@ -157,6 +171,9 @@ interface Ctx {
   openFlag?: string | null | undefined;
   index: EntityIndex;
   flags: FlagIndex;
+  /** The turn is still streaming — a not-yet-valid formula shows a placeholder
+   * instead of degrading to raw source. */
+  streaming: boolean;
 }
 
 const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -362,11 +379,11 @@ function inline(text: string, key: string, ctx: Ctx): ReactNode[] {
         </code>,
       );
     } else if (tok.startsWith("$$")) {
-      out.push(<MathPart key={k} latex={tok.slice(2, -2)} display />);
+      out.push(<MathPart key={k} latex={tok.slice(2, -2)} display streaming={ctx.streaming} />);
     } else if (tok.startsWith("$")) {
-      out.push(<MathPart key={k} latex={tok.slice(1, -1)} />);
+      out.push(<MathPart key={k} latex={tok.slice(1, -1)} streaming={ctx.streaming} />);
     } else if (tok.startsWith("\\(")) {
-      out.push(<MathPart key={k} latex={tok.slice(2, -2)} />);
+      out.push(<MathPart key={k} latex={tok.slice(2, -2)} streaming={ctx.streaming} />);
     } else if (tok.startsWith("**")) {
       out.push(<strong key={k}>{inline(tok.slice(2, -2), k, ctx)}</strong>);
     } else if (tok.startsWith("*")) {
@@ -627,7 +644,7 @@ function renderBlock(b: Block, key: string, ctx: Ctx): ReactNode {
       // the table treatment) rather than stretching the bubble.
       return (
         <div key={key} className="md-math-wrap">
-          <MathPart latex={b.latex} display />
+          <MathPart latex={b.latex} display streaming={ctx.streaming} />
         </div>
       );
     case "quote":
@@ -692,6 +709,7 @@ export function Markdown({
   flags = [],
   onFlag,
   openFlag,
+  streaming = false,
 }: {
   text: string;
   /** Tap handler for a `[^n]` source citation. */
@@ -707,13 +725,16 @@ export function Markdown({
   onFlag?: ((flagId: string) => void) | undefined;
   /** The id of the flag whose reason note is currently open. */
   openFlag?: string | null | undefined;
+  /** The turn is still streaming — a not-yet-complete formula shows a "building
+   * math render…" placeholder instead of its raw source. */
+  streaming?: boolean;
 }): ReactNode {
   const blocks = useMemo(() => parseBlocks(stripModelCitations(text)), [text]);
   const index = useMemo(() => buildIndex(entities), [entities]);
   // Fresh per render: `placed` is mutated as the blocks scan, then read below to
   // decide which flags need an end-of-bubble fallback.
   const flagIndex = useMemo(() => buildFlagIndex(flags), [flags]);
-  const ctx: Ctx = { onCite, onEntity, onFlag, openFlag, index, flags: flagIndex };
+  const ctx: Ctx = { onCite, onEntity, onFlag, openFlag, index, flags: flagIndex, streaming };
   const rendered = blocks.map((b, i) => renderBlock(b, `b${i}`, ctx));
   // Graceful fallback: any flagged claim the scanner couldn't anchor in the prose
   // (a markdown split, a reworded sentence) degrades to a single end-of-bubble

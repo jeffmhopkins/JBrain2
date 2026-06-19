@@ -5781,6 +5781,12 @@ button.small {
 .fb-shell .md-math-block {
   display: block;
 }
+/* A formula whose LaTeX hasn't fully streamed in yet — a quiet stand-in held until
+   the body completes, so the bubble never flashes KaTeX's red parse error. */
+.fb-shell .md-math-pending {
+  color: var(--text-3);
+  font-style: italic;
+}
 .fb-shell .md-link {
   color: var(--steel);
   text-decoration: underline;

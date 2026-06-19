@@ -332,6 +332,7 @@ function Bubble({
           flags={flags}
           onFlag={(id) => setOpenFlag((cur) => (cur === id ? null : id))}
           openFlag={openFlag}
+          streaming={message.streaming}
         />
       )}
       {message.views.map((v, i) => (
