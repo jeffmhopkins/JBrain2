@@ -5731,6 +5731,41 @@ button.small {
   border-left: 2px solid var(--border);
   color: var(--text-2);
 }
+/* A recognized pipe table — rendered as a real grid (models emit these as
+   ragged ASCII that never lines up; the renderer reflows them here). The wrapper
+   scrolls horizontally so a wide table stays inside the bubble on a phone. */
+.fb-shell .md-table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--r-input);
+}
+.fb-shell .md-table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 13px;
+  line-height: 1.4;
+}
+.fb-shell .md-table th,
+.fb-shell .md-table td {
+  padding: 6px 10px;
+  text-align: left;
+  vertical-align: top;
+  border-bottom: 1px solid var(--border);
+  border-right: 1px solid var(--border);
+}
+.fb-shell .md-table th:last-child,
+.fb-shell .md-table td:last-child {
+  border-right: none;
+}
+.fb-shell .md-table thead th {
+  background: var(--surface-2);
+  font-weight: 600;
+  color: var(--text-2);
+  white-space: nowrap;
+}
+.fb-shell .md-table tbody tr:last-child td {
+  border-bottom: none;
+}
 .fb-shell .md-link {
   color: var(--steel);
   text-decoration: underline;

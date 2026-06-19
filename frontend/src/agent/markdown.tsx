@@ -369,13 +369,18 @@ function paragraph(text: string, key: string, ctx: Ctx): ReactNode {
   );
 }
 
+/** A pipe-table column's alignment from its delimiter cell (`:--`/`--:`/`:-:`);
+ * null when unspecified (`---`) so the cell keeps the default left flow. */
+type Align = "left" | "right" | "center" | null;
+
 type Block =
   | { kind: "p"; text: string }
   | { kind: "h"; level: number; text: string }
   | { kind: "ul"; items: string[] }
   | { kind: "ol"; items: string[] }
   | { kind: "code"; code: string }
-  | { kind: "quote"; text: string };
+  | { kind: "quote"; text: string }
+  | { kind: "table"; head: string[]; align: Align[]; rows: string[][] };
 
 const isSpecial = (l: string): boolean =>
   /^(#{1,6})\s+/.test(l) ||
@@ -383,6 +388,50 @@ const isSpecial = (l: string): boolean =>
   /^>\s?/.test(l) ||
   /^\s*[-*+]\s+/.test(l) ||
   /^\s*\d+\.\s+/.test(l);
+
+/** Split one pipe-table row into trimmed cells: drop a single leading/trailing
+ * `|` border, then split on unescaped `|` (a `\|` is a literal pipe in a cell).
+ * Models emit tables both with and without the outer borders, so both parse. */
+function splitCells(line: string): string[] {
+  let s = line.trim();
+  if (s.startsWith("|")) s = s.slice(1);
+  if (s.endsWith("|") && !s.endsWith("\\|")) s = s.slice(0, -1);
+  const cells: string[] = [];
+  let cur = "";
+  for (let i = 0; i < s.length; i++) {
+    if (s[i] === "\\" && s[i + 1] === "|") {
+      cur += "|";
+      i++;
+    } else if (s[i] === "|") {
+      cells.push(cur);
+      cur = "";
+    } else {
+      cur += s[i];
+    }
+  }
+  cells.push(cur);
+  return cells.map((c) => c.trim());
+}
+
+/** A GFM delimiter row — every cell is dashes with optional alignment colons
+ * (`---`, `:--`, `--:`, `:-:`). This is what distinguishes a table header from an
+ * ordinary pipe-bearing line, so it gates table detection. */
+const isDelimRow = (l: string): boolean => {
+  if (!l.includes("-")) return false;
+  const cells = splitCells(l);
+  return cells.length > 0 && cells.every((c) => /^:?-+:?$/.test(c));
+};
+
+const parseAlign = (c: string): Align => {
+  const l = c.startsWith(":");
+  const r = c.endsWith(":");
+  return l && r ? "center" : r ? "right" : l ? "left" : null;
+};
+
+/** A pipe table starts where a header line (any line bearing a `|`) is followed
+ * by a delimiter row — checked so prose/paragraph accumulation yields to it. */
+const startsTable = (lines: string[], i: number): boolean =>
+  (lines[i] ?? "").includes("|") && isDelimRow(lines[i + 1] ?? "");
 
 function parseBlocks(src: string): Block[] {
   const lines = src.replace(/\r\n/g, "\n").split("\n");
@@ -429,8 +478,30 @@ function parseBlocks(src: string): Block[] {
       blocks.push({ kind: "ol", items });
       continue;
     }
+    if (startsTable(lines, i)) {
+      const head = splitCells(line);
+      const align = splitCells(lines[i + 1] ?? "").map(parseAlign);
+      i += 2;
+      const rows: string[][] = [];
+      // Body runs until a blank line, a different block, or a line with no pipe —
+      // so the table is bounded even on a streamed partial answer.
+      while (
+        i < lines.length &&
+        (lines[i] ?? "").trim() !== "" &&
+        (lines[i] ?? "").includes("|") &&
+        !isSpecial(lines[i] ?? "")
+      )
+        rows.push(splitCells(lines[i++] ?? ""));
+      blocks.push({ kind: "table", head, align, rows });
+      continue;
+    }
     const buf: string[] = [];
-    while (i < lines.length && (lines[i] ?? "").trim() !== "" && !isSpecial(lines[i] ?? ""))
+    while (
+      i < lines.length &&
+      (lines[i] ?? "").trim() !== "" &&
+      !isSpecial(lines[i] ?? "") &&
+      !startsTable(lines, i)
+    )
       buf.push(lines[i++] ?? "");
     blocks.push({ kind: "p", text: buf.join("\n") });
   }
@@ -477,6 +548,49 @@ function renderBlock(b: Block, key: string, ctx: Ctx): ReactNode {
           {inline(b.text, key, ctx)}
         </blockquote>
       );
+    case "table": {
+      const cols = b.head.length;
+      const at = (i: number): Align => b.align[i] ?? null;
+      return (
+        // Scroll wrapper: a wide table stays bounded on a narrow phone rather than
+        // stretching the bubble.
+        <div key={key} className="md-table-wrap">
+          <table className="md-table">
+            <thead>
+              <tr>
+                {b.head.map((c, i) => (
+                  <th
+                    // biome-ignore lint/suspicious/noArrayIndexKey: column order is stable
+                    key={`${key}-h${i}`}
+                    style={at(i) ? { textAlign: at(i) ?? undefined } : undefined}
+                  >
+                    {inline(c, `${key}-h${i}`, ctx)}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {b.rows.map((row, ri) => (
+                // biome-ignore lint/suspicious/noArrayIndexKey: row order is stable
+                <tr key={`${key}-r${ri}`}>
+                  {/* Render to the header's column count — pad short rows, drop
+                      overflow — so a ragged model row still aligns to the grid. */}
+                  {Array.from({ length: cols }, (_, ci) => (
+                    <td
+                      // biome-ignore lint/suspicious/noArrayIndexKey: column order is stable
+                      key={`${key}-r${ri}c${ci}`}
+                      style={at(ci) ? { textAlign: at(ci) ?? undefined } : undefined}
+                    >
+                      {inline(row[ci] ?? "", `${key}-r${ri}c${ci}`, ctx)}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      );
+    }
     default:
       return paragraph(b.text, key, ctx);
   }
