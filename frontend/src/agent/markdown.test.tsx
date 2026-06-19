@@ -359,6 +359,31 @@ describe("Markdown", () => {
     expect(document.body.textContent).toContain("$x =");
   });
 
+  it("shows a subdued placeholder for not-yet-complete display math while streaming", () => {
+    // The closing $$ has arrived but the body is mid-token (\frac wants two args) —
+    // while streaming this reads as "building", never KaTeX's red parse error.
+    const { container } = render(<Markdown text={"$$\\frac{a}{"} streaming />);
+    const pending = container.querySelector(".md-math-pending");
+    expect(pending).not.toBeNull();
+    expect(pending?.textContent).toBe("building math render…");
+    expect(container.querySelector(".katex-error")).toBeNull();
+  });
+
+  it("settles a still-malformed formula to its raw source (not a placeholder)", () => {
+    // Once the turn is done (not streaming), an unrenderable formula degrades to its
+    // raw source rather than holding the placeholder forever.
+    const { container } = render(<Markdown text={"$$\\frac{a}{"} />);
+    expect(container.querySelector(".md-math-pending")).toBeNull();
+    expect(container.querySelector(".katex-error")).toBeNull();
+    expect(document.body.textContent).toContain("\\frac{a}{");
+  });
+
+  it("typesets complete math normally even while streaming", () => {
+    const { container } = render(<Markdown text={"$E = mc^2$"} streaming />);
+    expect(container.querySelector(".md-math-pending")).toBeNull();
+    expect(container.querySelector(".katex")).not.toBeNull();
+  });
+
   it("keeps a $ inside inline code literal (no math typesetting)", () => {
     const out = html("Run `echo $PATH` to print it.");
     expect(out).toContain('<code class="md-code">echo $PATH</code>');
