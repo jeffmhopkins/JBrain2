@@ -5766,6 +5766,21 @@ button.small {
 .fb-shell .md-table tbody tr:last-child td {
   border-bottom: none;
 }
+/* KaTeX-typeset math. Inline math sits in the prose at the surrounding size;
+   display math is centered on its own line in a horizontally scrollable wrapper so
+   a wide equation stays bounded inside the bubble on a phone (mirrors the table
+   treatment). KaTeX ships its own font sizing, so we only set flow/scroll here. */
+.fb-shell .md-math {
+  font-size: 1.05em;
+}
+.fb-shell .md-math-wrap {
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 2px 0;
+}
+.fb-shell .md-math-block {
+  display: block;
+}
 .fb-shell .md-link {
   color: var(--steel);
   text-decoration: underline;

@@ -4,7 +4,17 @@
 // renders. Plain-text runs are additionally scanned for temporal tokens (explicit
 // dates) and rendered as quiet <time> chips with a normalized tooltip. The inline
 // scanner is the seam where entity/place/citation tokens slot in later.
+//
+// Math is the one exception to the no-innerHTML rule: models emit LaTeX shorthand
+// ($…$, \(…\) inline; $$…$$, \[…\] display) that reads as raw markup otherwise, so
+// we typeset it with KaTeX. KaTeX parses the LaTeX itself and emits only its own
+// span markup — with trust off (the default) it can't render \href/\includegraphics
+// or pass arbitrary HTML through — so injecting its output is safe. A delimiter is
+// only consumed when it's balanced, so an unclosed $… in a streamed partial answer
+// falls through to plain text rather than swallowing the rest of the bubble.
 
+import katex from "katex";
+import "katex/dist/katex.min.css";
 import { type ReactNode, useMemo } from "react";
 import { DOMAIN_COLOR } from "../notes/modes";
 
@@ -16,11 +26,14 @@ const DATE = new RegExp(
   `\\b(\\d{4}-\\d{2}-\\d{2}|(?:${MONTHS})\\.?\\s+\\d{1,2}(?:,)?\\s+\\d{4}|\\d{1,2}\\s+(?:${MONTHS})\\.?\\s+\\d{4}|(?:${MONTHS})\\.?\\s+\\d{4})\\b`,
   "gi",
 );
-// Inline markdown: code first (so ** inside code is literal), then bold, italic,
-// links, then `[^n]` source citations. Emphasis can't hug a space (avoids
-// "3 * 4 * 5").
+// Inline markdown: code first (so ** inside code is literal), then math (so * and
+// _ inside a formula stay literal), then bold, italic, links, then `[^n]` source
+// citations. Emphasis can't hug a space (avoids "3 * 4 * 5"). Inline math comes in
+// two delimiters: `$…$` (guarded so it doesn't fire on currency — not adjacent to a
+// digit, and content can't open/close on a space) and `\(…\)`; `$$…$$` is display
+// math that happened to land mid-line.
 const INLINE =
-  /(`[^`]+`)|(\*\*(?! )[^*\n]+(?<! )\*\*)|(\*(?! )[^*\n]+(?<! )\*)|(\[[^\]\n]+\]\([^)\n]+\))|(\[\^\d+\])/;
+  /(`[^`]+`)|(\$\$(?! )[^\n]+?(?<! )\$\$)|((?<!\d)\$(?![ $])[^$\n]+?(?<! )\$(?!\d))|(\\\([^\n]+?\\\))|(\*\*(?! )[^*\n]+(?<! )\*\*)|(\*(?! )[^*\n]+(?<! )\*)|(\[[^\]\n]+\]\([^)\n]+\))|(\[\^\d+\])/;
 
 const isIsoDate = (s: string): boolean => /^\d{4}-\d{2}-\d{2}$/.test(s);
 
@@ -32,6 +45,32 @@ const isIsoDate = (s: string): boolean => /^\d{4}-\d{2}-\d{2}$/.test(s);
 const MODEL_CITATION = /[ \t]?(?:【[^】\n]*†[^】\n]*】|\[[^\]\n]*†[^\]\n]*\])/g;
 export function stripModelCitations(text: string): string {
   return text.replace(MODEL_CITATION, "");
+}
+
+// Typeset a LaTeX fragment to KaTeX's own span markup. `throwOnError: false` makes
+// KaTeX render a malformed formula as a quiet error span (no throw), so a model's
+// stray macro never crashes the bubble; `strict: "ignore"` keeps unknown-command
+// warnings out of the console. The try/catch is a final backstop — degrade to the
+// raw source rather than blow up.
+function katexHtml(latex: string, displayMode: boolean): string {
+  try {
+    return katex.renderToString(latex, { displayMode, throwOnError: false, strict: "ignore" });
+  } catch {
+    return "";
+  }
+}
+
+/** A LaTeX fragment typeset with KaTeX — inline by default, display (centered,
+ * own line) when `display`. The rendered markup is KaTeX's own (trust off), so the
+ * innerHTML carries no injection surface. On a render failure it shows the raw
+ * source so nothing silently vanishes. */
+function MathPart({ latex, display }: { latex: string; display?: boolean }): ReactNode {
+  const trimmed = latex.trim();
+  const html = useMemo(() => katexHtml(trimmed, display ?? false), [trimmed, display]);
+  if (!html) return display ? `$$${latex}$$` : `$${latex}$`;
+  const cls = display ? "md-math-block" : "md-math";
+  // biome-ignore lint/security/noDangerouslySetInnerHtml: KaTeX-generated markup, trust off — see file header
+  return <span className={cls} dangerouslySetInnerHTML={{ __html: html }} />;
 }
 
 function parseDate(raw: string): Date | null {
@@ -322,6 +361,12 @@ function inline(text: string, key: string, ctx: Ctx): ReactNode[] {
           {tok.slice(1, -1)}
         </code>,
       );
+    } else if (tok.startsWith("$$")) {
+      out.push(<MathPart key={k} latex={tok.slice(2, -2)} display />);
+    } else if (tok.startsWith("$")) {
+      out.push(<MathPart key={k} latex={tok.slice(1, -1)} />);
+    } else if (tok.startsWith("\\(")) {
+      out.push(<MathPart key={k} latex={tok.slice(2, -2)} />);
     } else if (tok.startsWith("**")) {
       out.push(<strong key={k}>{inline(tok.slice(2, -2), k, ctx)}</strong>);
     } else if (tok.startsWith("*")) {
@@ -380,14 +425,25 @@ type Block =
   | { kind: "ol"; items: string[] }
   | { kind: "code"; code: string }
   | { kind: "quote"; text: string }
-  | { kind: "table"; head: string[]; align: Align[]; rows: string[][] };
+  | { kind: "table"; head: string[]; align: Align[]; rows: string[][] }
+  | { kind: "math"; latex: string };
+
+// A display-math fence opening a line: `$$` or `\[`. Returns its matching close
+// delimiter, or null when the line doesn't open one.
+const displayMathClose = (l: string): "$$" | "\\]" | null => {
+  const t = l.trim();
+  if (t.startsWith("$$")) return "$$";
+  if (t.startsWith("\\[")) return "\\]";
+  return null;
+};
 
 const isSpecial = (l: string): boolean =>
   /^(#{1,6})\s+/.test(l) ||
   /^```/.test(l.trim()) ||
   /^>\s?/.test(l) ||
   /^\s*[-*+]\s+/.test(l) ||
-  /^\s*\d+\.\s+/.test(l);
+  /^\s*\d+\.\s+/.test(l) ||
+  displayMathClose(l) !== null;
 
 /** Split one pipe-table row into trimmed cells: drop a single leading/trailing
  * `|` border, then split on unescaped `|` (a `\|` is a literal pipe in a cell).
@@ -449,6 +505,30 @@ function parseBlocks(src: string): Block[] {
     }
     if (line.trim() === "") {
       i++;
+      continue;
+    }
+    const mathClose = displayMathClose(line);
+    if (mathClose) {
+      const open = mathClose === "$$" ? "$$" : "\\[";
+      const after = line.trim().slice(open.length);
+      const onLine = after.indexOf(mathClose);
+      if (onLine !== -1) {
+        // `$$ … $$` all on one line.
+        blocks.push({ kind: "math", latex: after.slice(0, onLine) });
+        i++;
+        continue;
+      }
+      // Multi-line: collect until the line bearing the close fence (or run off the
+      // end on a streamed partial — render what we have so far).
+      const buf = [after];
+      i++;
+      while (i < lines.length && !(lines[i] ?? "").includes(mathClose)) buf.push(lines[i++] ?? "");
+      if (i < lines.length) {
+        const closeLine = lines[i] ?? "";
+        buf.push(closeLine.slice(0, closeLine.indexOf(mathClose)));
+        i++;
+      }
+      blocks.push({ kind: "math", latex: buf.join("\n") });
       continue;
     }
     const h = /^(#{1,6})\s+(.*)$/.exec(line);
@@ -541,6 +621,14 @@ function renderBlock(b: Block, key: string, ctx: Ctx): ReactNode {
         <pre key={key} className="md-pre">
           <code>{b.code}</code>
         </pre>
+      );
+    case "math":
+      // Scroll wrapper: a wide equation stays bounded on a narrow phone (mirrors
+      // the table treatment) rather than stretching the bubble.
+      return (
+        <div key={key} className="md-math-wrap">
+          <MathPart latex={b.latex} display />
+        </div>
       );
     case "quote":
       return (

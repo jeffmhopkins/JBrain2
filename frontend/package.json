@@ -16,6 +16,7 @@
     "icons": "node scripts/generate-icons.mjs"
   },
   "dependencies": {
+    "katex": "^0.16.47",
     "leaflet": "^1.9.4",
     "leaflet.heat": "^0.2.0",
     "react": "^18.3.1",
@@ -26,6 +27,7 @@
     "@testing-library/dom": "^10.4.0",
     "@testing-library/jest-dom": "^6.6.3",
     "@testing-library/react": "^16.1.0",
+    "@types/katex": "^0.16.8",
     "@types/leaflet": "^1.9.21",
     "@types/leaflet.heat": "^0.2.5",
     "@types/react": "^18.3.12",
