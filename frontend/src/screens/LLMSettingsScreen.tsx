@@ -603,16 +603,18 @@ function LocalModelsDrawer({
                     </span>
                   ))}
                 </div>
-                {m.loaded ? (
-                  <button
-                    type="button"
-                    className="llm-local-unload"
-                    disabled={unloading.has(m.id)}
-                    onClick={() => onUnload(m.id)}
-                  >
-                    {unloading.has(m.id) ? "unloading…" : "Unload"}
-                  </button>
-                ) : null}
+                <div className="llm-local-act">
+                  {m.loaded ? (
+                    <button
+                      type="button"
+                      className="llm-local-unload"
+                      disabled={unloading.has(m.id)}
+                      onClick={() => onUnload(m.id)}
+                    >
+                      {unloading.has(m.id) ? "unloading…" : "Unload"}
+                    </button>
+                  ) : null}
+                </div>
                 <span className={`llm-local-state${m.loaded ? " on" : ""}`}>
                   {m.loaded ? "loaded" : "idle"}
                 </span>
