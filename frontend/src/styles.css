@@ -5781,7 +5781,7 @@ button.small {
    `currentColor` is what makes those colors land. */
 .fb-shell .tw-ic,
 .fb-shell .tw-chev,
-.fb-shell .fb-worked-caret,
+.fb-shell .fb-act-caret,
 .fb-shell .fb-step-caret {
   fill: none;
   stroke: currentColor;
@@ -5933,107 +5933,71 @@ button.small {
 /* the inline "Worked" disclosure under an answer (docs/research/brain-tooluse-ux).
    A labelled 44px button expands the tool steps in place — no flip, no 3D, no
    swipe. The body animates open with a grid-rows ease so content stays in flow. */
-.fb-shell .fb-worked {
-  /* trim the gap to the answer above and pull the block flush to the card's foot
-     so a collapsed Worked line leaves no tall dead zone */
-  margin-top: -4px;
+/* the one disclosure line at the foot of an assistant bubble: "Thinking" (violet,
+   the model's reasoning) and "Worked" (steel, its tool steps) as two segments on a
+   single 28px row, each toggling its own body. The "thinking" segment auto-opens
+   with a pulse while the model is live and collapses to "Thought for Ns" once the
+   answer arrives; both bodies share the grid-rows open animation. */
+.fb-shell .fb-activity {
+  display: flex;
+  align-items: center;
+  /* trim the gap to the answer above and pull flush to the card's foot so a
+     collapsed line leaves no tall dead zone */
+  margin-top: -2px;
   margin-bottom: -8px;
   border-top: 1px solid var(--border);
 }
-.fb-shell .fb-worked-btn {
+.fb-shell .fb-activity.bare {
+  /* leads a still-thinking bubble (no answer yet): no rule, flush to the top */
+  margin-top: 0;
+  border-top: none;
+}
+.fb-shell .fb-act-seg {
   display: flex;
   align-items: center;
   gap: 6px;
-  width: 100%;
   min-height: 28px;
-  padding: 2px;
+  padding: 2px 8px;
   background: none;
   border: none;
   font: inherit;
+  font-size: 11px;
+  font-weight: 500;
   color: var(--text-2);
   text-align: left;
   cursor: pointer;
 }
-.fb-shell .fb-worked-btn .tw-ic {
-  width: 12px;
-  height: 12px;
+.fb-shell .fb-act-seg:first-child {
+  padding-left: 2px;
+}
+.fb-shell .fb-act-ic,
+.fb-shell .fb-act-seg .tw-ic {
+  width: 13px;
+  height: 13px;
   flex: none;
+}
+.fb-shell .fb-act-think .fb-act-ic {
+  color: var(--violet);
+}
+.fb-shell .fb-act-work .tw-ic {
   color: var(--steel);
 }
-.fb-shell .fb-worked-lab {
-  font-size: 11px;
-  font-weight: 500;
+.fb-shell .fb-act-think.live {
+  color: var(--violet);
 }
-.fb-shell .fb-worked-meta {
-  font-size: 10.5px;
-  color: var(--text-2);
+.fb-shell .fb-act-lab {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.fb-shell .fb-act-count {
+  font-weight: 400;
+  color: var(--text-3);
 }
 .fb-shell .fb-worked-fail {
   color: var(--rose);
 }
-.fb-shell .fb-worked-caret {
-  width: 14px;
-  height: 14px;
-  flex: none;
-  margin-left: auto;
-  color: var(--steel);
-  transition: transform 0.16s ease-out;
-}
-.fb-shell .fb-worked.open .fb-worked-caret {
-  transform: rotate(180deg);
-}
-.fb-shell .fb-worked-body {
-  display: grid;
-  grid-template-rows: 0fr;
-  transition: grid-template-rows 0.17s ease-out;
-}
-.fb-shell .fb-worked.open .fb-worked-body {
-  grid-template-rows: 1fr;
-}
-.fb-shell .fb-worked-inner {
-  min-height: 0;
-  overflow: hidden;
-}
-
-/* the "Thinking" disclosure above an answer — the reasoning twin of "Worked",
-   in a violet register (DESIGN.md: violet = the model's own reasoning). Mirrors
-   the grid-rows open animation; auto-opens with a pulse while the model is still
-   thinking, then collapses to "Thought for Ns" once the answer streams. */
-.fb-shell .fb-thinking {
-  /* leads the bubble, so pull flush to the top and trim the gap to the answer */
-  margin: 0 0 2px;
-}
-.fb-shell .fb-thinking-btn {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  width: 100%;
-  min-height: 28px;
-  padding: 2px;
-  background: none;
-  border: none;
-  font: inherit;
-  color: var(--text-2);
-  text-align: left;
-  cursor: pointer;
-}
-.fb-shell .fb-thinking-ic {
-  width: 13px;
-  height: 13px;
-  flex: none;
-  color: var(--violet);
-}
-.fb-shell .fb-thinking-lab {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  font-size: 11px;
-  font-weight: 500;
-}
-.fb-shell .fb-thinking.live .fb-thinking-lab {
-  color: var(--violet);
-}
-.fb-shell .fb-thinking-pulse {
+.fb-shell .fb-act-pulse {
   width: 6px;
   height: 6px;
   flex: none;
@@ -6052,33 +6016,38 @@ button.small {
     box-shadow: 0 0 0 0 rgba(164, 147, 201, 0);
   }
 }
-.fb-shell .fb-thinking-caret {
-  width: 14px;
-  height: 14px;
+.fb-shell .fb-act-div {
+  width: 1px;
+  align-self: stretch;
+  margin: 6px 2px;
+  background: var(--border);
+}
+.fb-shell .fb-act-caret {
+  width: 13px;
+  height: 13px;
   flex: none;
-  margin-left: auto;
-  color: var(--violet);
+  opacity: 0.7;
   transition: transform 0.16s ease-out;
 }
-.fb-shell .fb-thinking.open .fb-thinking-caret {
+.fb-shell .fb-act-seg.open .fb-act-caret {
   transform: rotate(180deg);
 }
-.fb-shell .fb-thinking-body {
+.fb-shell .fb-act-body {
   display: grid;
   grid-template-rows: 0fr;
   transition: grid-template-rows 0.18s ease-out;
 }
-.fb-shell .fb-thinking.open .fb-thinking-body {
+.fb-shell .fb-act-body.open {
   grid-template-rows: 1fr;
 }
-.fb-shell .fb-thinking-inner {
+.fb-shell .fb-act-inner {
   min-height: 0;
   overflow: hidden;
 }
 .fb-shell .fb-thinking-trace {
-  margin: 4px 0 6px;
+  margin: 2px 0 6px;
   padding: 9px 11px;
-  max-height: 230px;
+  max-height: 200px;
   overflow: auto;
   background: var(--violet-tint);
   border-radius: 10px;
@@ -6305,16 +6274,14 @@ button.small {
   margin: 0 4px;
 }
 @media (prefers-reduced-motion: reduce) {
-  .fb-shell .fb-worked-body,
+  .fb-shell .fb-act-body,
   .fb-shell .fb-step-detail,
-  .fb-shell .fb-worked-caret,
-  .fb-shell .fb-step-caret,
-  .fb-shell .fb-thinking-body,
-  .fb-shell .fb-thinking-caret {
+  .fb-shell .fb-act-caret,
+  .fb-shell .fb-step-caret {
     transition: none;
   }
   .fb-shell .fb-step-mark.live,
-  .fb-shell .fb-thinking-pulse {
+  .fb-shell .fb-act-pulse {
     animation: none;
   }
 }
