@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Session picker redesign — 3 directions</title>
+<style>
+  :root{--bg:#0E0F11;--surface:#17181B;--border:#26282C;--text:#E6E7E9;--text-2:#9A9DA3;--text-3:#5C5F66;--steel:#7FA7C9;font-family:system-ui,-apple-system,sans-serif;}
+  *{box-sizing:border-box;margin:0;padding:0;}
+  body{background:#000;color:var(--text);padding:24px;}
+  h1{font-size:20px;font-weight:600;margin-bottom:6px;}
+  p.lead{color:var(--text-2);font-size:14px;line-height:1.55;max-width:760px;margin-bottom:20px;}
+  .grid{display:flex;gap:16px;flex-wrap:wrap;}
+  iframe{width:404px;height:840px;border:none;border-radius:12px;background:#000;}
+  .col{display:flex;flex-direction:column;gap:8px;}
+  .col a{color:var(--steel);font-size:13px;text-decoration:none;}
+</style>
+</head>
+<body>
+  <h1>Session picker — Today / Older / Archived, denser rows</h1>
+  <p class="lead">Three interactive directions. <b>A</b> grouped list that expands a row in place;
+  <b>B</b> two-line swatch tiles with scope filters; <b>C</b> a segmented Today·Older·Archived switcher
+  with micro rows. Click into each phone to try the interactions; open the files directly for full screen.</p>
+  <div class="grid">
+    <div class="col"><a href="a-expandable-list.html" target="_blank">A · expandable list ↗</a><iframe src="a-expandable-list.html"></iframe></div>
+    <div class="col"><a href="b-swatch-tiles.html" target="_blank">B · swatch tiles ↗</a><iframe src="b-swatch-tiles.html"></iframe></div>
+    <div class="col"><a href="c-segmented-micro.html" target="_blank">C · segmented + micro rows ↗</a><iframe src="c-segmented-micro.html"></iframe></div>
+  </div>
+</body>
+</html>

@@ -1,0 +1,249 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Session picker A — expandable list</title>
+<style>
+  :root{
+    --bg:#0E0F11; --surface:#17181B; --surface-2:#1E2024; --border:#26282C;
+    --text:#E6E7E9; --text-2:#9A9DA3; --text-3:#5C5F66;
+    --steel:#7FA7C9; --green:#8FBC9A; --amber:#C9A36A; --rose:#CF8A8F; --violet:#A493C9;
+    --steel-tint:rgba(127,167,201,.13); --green-tint:rgba(143,188,154,.13);
+    --amber-tint:rgba(201,163,106,.13); --rose-tint:rgba(207,138,143,.13); --violet-tint:rgba(164,147,201,.13);
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+  body{background:#000;color:var(--text);display:flex;flex-direction:column;align-items:center;gap:14px;padding:18px 0 48px;min-height:100vh;}
+  .caption{max-width:392px;padding:0 18px;color:var(--text-2);font-size:13px;line-height:1.55;}
+  .caption b{color:var(--text);font-weight:500;}
+  .caption .tag{display:inline-block;background:var(--steel-tint);color:var(--steel);font-size:11px;padding:2px 8px;border-radius:999px;margin-bottom:6px;font-weight:500;}
+  svg{fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;}
+
+  .phone{width:390px;height:800px;background:var(--bg);border:1px solid #2a2c30;border-radius:34px;overflow:hidden;position:relative;display:flex;flex-direction:column;}
+  .panel-bar{height:56px;display:flex;align-items:center;gap:12px;padding:0 14px;border-bottom:1px solid var(--border);flex:none;}
+  .panel-bar .back{color:var(--text-2);background:none;border:none;}
+  .panel-bar .ttl{font-size:18px;font-weight:600;}
+  .panel-bar .sub{margin-left:auto;font-size:12px;color:var(--text-3);}
+  .body{flex:1;overflow-y:auto;padding:12px 16px 24px;display:flex;flex-direction:column;gap:6px;}
+
+  .newbtn{border:1px dashed var(--border);color:var(--steel);background:var(--surface);border-radius:14px;padding:13px;font-size:15px;font-weight:500;display:flex;align-items:center;justify-content:center;gap:8px;margin-bottom:4px;}
+
+  /* section header doubles as a collapse toggle (archived) */
+  .sect{display:flex;align-items:center;gap:8px;font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--text-3);margin:10px 2px 2px;background:none;border:none;width:100%;text-align:left;}
+  .sect .count{color:var(--text-3);letter-spacing:0;text-transform:none;font-size:12px;}
+  .sect .car{margin-left:auto;transition:transform .15s ease;}
+  .sect.closed .car{transform:rotate(-90deg);}
+
+  /* the dense default row: one line, ~44px tall */
+  .item{background:var(--surface);border:1px solid var(--border);border-radius:12px;overflow:hidden;}
+  .item.live{border-color:color-mix(in srgb, var(--green) 40%, var(--border));}
+  .item.open{border-color:color-mix(in srgb, var(--steel) 35%, var(--border));}
+  .head{display:flex;align-items:center;gap:10px;padding:0 12px;height:46px;background:none;border:none;width:100%;color:inherit;font:inherit;text-align:left;}
+  .dot{width:8px;height:8px;border-radius:999px;flex:none;background:var(--text-3);}
+  .dot.everything,.dot.general{background:var(--steel);}
+  .dot.medical{background:var(--rose);}
+  .dot.financial{background:var(--violet);}
+  .dot.location{background:var(--amber);}
+  .dot.live{background:var(--green);box-shadow:0 0 0 3px var(--green-tint);}
+  .ttl2{flex:1;min-width:0;font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .ttl2.untitled{color:var(--text-2);}
+  .meta{display:flex;align-items:center;gap:8px;flex:none;color:var(--text-3);font-size:12px;}
+  .turns{font-variant-numeric:tabular-nums;}
+  .staged{background:var(--steel-tint);color:var(--steel);font-size:11px;padding:2px 7px;border-radius:999px;}
+  .car-r{color:var(--text-3);transition:transform .15s ease;}
+  .item.open .car-r{transform:rotate(90deg);}
+
+  /* expansion: preview + scope + actions, revealed on tap */
+  .detail{display:none;padding:0 12px 11px 30px;flex-direction:column;gap:9px;}
+  .item.open .detail{display:flex;}
+  .prev{font-size:13px;color:var(--text-2);line-height:1.45;}
+  .drow{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+  .chip{font-size:11px;padding:4px 10px;border-radius:999px;background:var(--surface-2);color:var(--text-2);border:none;font-family:inherit;line-height:1;}
+  .chip.everything,.chip.general{background:var(--steel-tint);color:var(--steel);}
+  .chip.medical{background:var(--rose-tint);color:var(--rose);}
+  .chip.financial{background:var(--violet-tint);color:var(--violet);}
+  .chip.location{background:var(--amber-tint);color:var(--amber);}
+  .acts{margin-left:auto;display:flex;gap:4px;}
+  .act{width:32px;height:32px;border-radius:8px;border:1px solid var(--border);background:var(--surface-2);color:var(--text-2);display:flex;align-items:center;justify-content:center;}
+  .act.del{color:var(--rose);}
+  .empty{color:var(--text-2);font-size:13px;padding:8px 2px;line-height:1.5;}
+</style>
+</head>
+<body>
+  <div class="caption">
+    <span class="tag">Direction A · expandable list</span><br/>
+    Every chat collapses to a <b>single ~46px line</b> — scope dot, title, turns. Tap a row to
+    unfold its <b>preview, scope chip, and actions</b> in place. Density by default; detail on demand.
+    Groups are <b>Today · Older · Archived</b>; Archived is collapsed.
+  </div>
+
+  <div class="phone">
+    <div class="panel-bar">
+      <button class="back"><svg width="22" height="22" viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg></button>
+      <span class="ttl">Chats</span>
+      <span class="sub">tap one, or start fresh</span>
+    </div>
+    <div class="body" id="body">
+      <button class="newbtn">＋ New chat</button>
+
+      <div class="sect"><span>Today</span><span class="count">· 4</span></div>
+
+      <div class="item live">
+        <button class="head" onclick="tog(this)">
+          <span class="dot live"></span>
+          <span class="ttl2">Euro-rack module design</span>
+          <span class="meta"><span class="turns">1 turn</span></span>
+          <svg class="car-r" width="16" height="16" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>
+        </button>
+        <div class="detail">
+          <div class="prev">Designing an analog Euro-card (Euro-rack) module for the first time involves a lot of interdisciplinary decisions. Below is a practical chec…</div>
+          <div class="drow">
+            <button class="chip everything">reads everything</button>
+            <span class="meta" style="color:var(--green)">● you are here</span>
+            <span class="acts">
+              <span class="act"><svg width="15" height="15" viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg></span>
+              <span class="act"><svg width="15" height="15" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="4" rx="1"/><path d="M5 8v11a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8"/><path d="M10 12h4"/></svg></span>
+              <span class="act del"><svg width="15" height="15" viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m2 0v14a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V6"/></svg></span>
+            </span>
+          </div>
+        </div>
+      </div>
+
+      <div class="item">
+        <button class="head" onclick="tog(this)">
+          <span class="dot general"></span>
+          <span class="ttl2">Classic Southern biscuits &amp; gravy</span>
+          <span class="meta"><span class="turns">3 turns</span></span>
+          <svg class="car-r" width="16" height="16" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>
+        </button>
+        <div class="detail">
+          <div class="prev">## Classic Southern Biscuits &amp; Gravy ### Serves 4–6 people (about 8–10 biscuits, 2-3 cups gravy) — ## Part 1 – Fluffy Buttermilk Bisc…</div>
+          <div class="drow">
+            <button class="chip general">reads general</button>
+            <span class="acts">
+              <span class="act"><svg width="15" height="15" viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg></span>
+              <span class="act"><svg width="15" height="15" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="4" rx="1"/><path d="M5 8v11a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8"/><path d="M10 12h4"/></svg></span>
+              <span class="act del"><svg width="15" height="15" viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m2 0v14a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V6"/></svg></span>
+            </span>
+          </div>
+        </div>
+      </div>
+
+      <div class="item">
+        <button class="head" onclick="tog(this)">
+          <span class="dot general"></span>
+          <span class="ttl2 untitled">Untitled chat</span>
+          <span class="meta"><span class="staged">2 staged</span></span>
+          <svg class="car-r" width="16" height="16" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>
+        </button>
+        <div class="detail">
+          <div class="prev">No messages yet — reads nothing.</div>
+          <div class="drow">
+            <button class="chip">reads nothing</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="item">
+        <button class="head" onclick="tog(this)">
+          <span class="dot location"></span>
+          <span class="ttl2">Cocoa, FL — tonight's forecast</span>
+          <span class="meta"><span class="turns">2 turns</span></span>
+          <svg class="car-r" width="16" height="16" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>
+        </button>
+        <div class="detail">
+          <div class="prev">**Cocoa, FL – Tonight (June 19 2026)** | Time (local) | Temp °F | Conditions | Precip % | Notes | …</div>
+          <div class="drow">
+            <button class="chip location">reads location</button>
+            <span class="acts">
+              <span class="act"><svg width="15" height="15" viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg></span>
+              <span class="act"><svg width="15" height="15" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="4" rx="1"/><path d="M5 8v11a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8"/><path d="M10 12h4"/></svg></span>
+              <span class="act del"><svg width="15" height="15" viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m2 0v14a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V6"/></svg></span>
+            </span>
+          </div>
+        </div>
+      </div>
+
+      <div class="sect"><span>Older</span><span class="count">· 3</span></div>
+
+      <div class="item">
+        <button class="head" onclick="tog(this)">
+          <span class="dot medical"></span>
+          <span class="ttl2">Lab results — read &amp; explain</span>
+          <span class="meta"><span class="turns">8 turns</span></span>
+          <svg class="car-r" width="16" height="16" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>
+        </button>
+        <div class="detail">
+          <div class="prev">Walked through the June panel — A1c down to 5.6, LDL flat. No writes; read-only review.</div>
+          <div class="drow"><button class="chip medical">reads medical</button></div>
+        </div>
+      </div>
+      <div class="item">
+        <button class="head" onclick="tog(this)">
+          <span class="dot financial"></span>
+          <span class="ttl2">Roof quote — second opinion?</span>
+          <span class="meta"><span class="turns">6 turns</span></span>
+          <svg class="car-r" width="16" height="16" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>
+        </button>
+        <div class="detail">
+          <div class="prev">Compared the $4,200 quote against last year's invoices.</div>
+          <div class="drow"><button class="chip financial">reads financial</button></div>
+        </div>
+      </div>
+      <div class="item">
+        <button class="head" onclick="tog(this)">
+          <span class="dot general"></span>
+          <span class="ttl2 untitled">Untitled chat</span>
+          <span class="meta"><span class="turns">11 turns</span></span>
+          <svg class="car-r" width="16" height="16" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>
+        </button>
+        <div class="detail">
+          <div class="prev">General planning chat — groceries and errands brainstorm.</div>
+          <div class="drow"><button class="chip general">reads general</button></div>
+        </div>
+      </div>
+
+      <button class="sect closed" id="archSect" onclick="togArch()">
+        <span>Archived</span><span class="count">· 2</span>
+        <svg class="car" width="16" height="16" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>
+      </button>
+      <div id="archGroup" style="display:none;flex-direction:column;gap:6px;">
+        <div class="item">
+          <button class="head" onclick="tog(this)">
+            <span class="dot general"></span>
+            <span class="ttl2" style="color:var(--text-2)">Old vacation itinerary</span>
+            <span class="meta"><span class="turns">4 turns</span></span>
+            <svg class="car-r" width="16" height="16" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>
+          </button>
+          <div class="detail">
+            <div class="prev">Planned the spring trip — now archived.</div>
+            <div class="drow"><button class="chip general">reads general</button></div>
+          </div>
+        </div>
+        <div class="item">
+          <button class="head" onclick="tog(this)">
+            <span class="dot medical"></span>
+            <span class="ttl2" style="color:var(--text-2)">Dad's medication list</span>
+            <span class="meta"><span class="turns">5 turns</span></span>
+            <svg class="car-r" width="16" height="16" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>
+          </button>
+          <div class="detail">
+            <div class="prev">Read-only review of Dad's current meds.</div>
+            <div class="drow"><button class="chip medical">reads medical</button></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+<script>
+  function tog(btn){ btn.closest('.item').classList.toggle('open'); }
+  function togArch(){
+    const s=document.getElementById('archSect'), g=document.getElementById('archGroup');
+    s.classList.toggle('closed');
+    g.style.display = s.classList.contains('closed') ? 'none' : 'flex';
+  }
+</script>
+</body>
+</html>
