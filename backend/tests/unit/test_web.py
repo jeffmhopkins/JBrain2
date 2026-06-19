@@ -112,7 +112,9 @@ async def test_fetch_renders_markdown_structure() -> None:
     def handle(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, content=_HTML_MD, headers={"content-type": "text/html"})
 
-    md = (await WebFetcher(transport=httpx.MockTransport(handle)).fetch("https://x.example/doc")).text
+    md = (
+        await WebFetcher(transport=httpx.MockTransport(handle)).fetch("https://x.example/doc")
+    ).text
     assert "# Title" in md  # heading
     assert "[link](https://x.example/page)" in md  # inline link, resolved to absolute
     assert "**bold**" in md  # emphasis
