@@ -92,7 +92,7 @@ describe("FullBrainSurface", () => {
     await waitFor(() => expect(screen.getByText("remind me?")).toBeInTheDocument());
     expect(screen.getByText("Here is the recap.")).toBeInTheDocument();
     // The persisted tool sources rebuild the bubble's "Worked" disclosure.
-    expect(document.querySelector(".fb-worked-btn")?.textContent).toContain("1 source");
+    expect(document.querySelector(".fb-act-work")?.textContent).toContain("1 source");
     expect(getTranscript).toHaveBeenCalledWith("s1");
   });
 
@@ -272,6 +272,41 @@ describe("FullBrainSurface", () => {
     expect(document.querySelector(".fb-thinking-trace")?.textContent).toBe(
       "let me think about this",
     );
+  });
+
+  it("shows thinking and worked on one activity line, thinking through the tools", async () => {
+    // A turn that reasons, runs a tool, then answers: both segments live on the
+    // single foot line, and "Thinking…" persists across the tool call until the
+    // answer's first token actually arrives.
+    let resolveTool: () => void = () => {};
+    const toolGate = new Promise<void>((r) => {
+      resolveTool = r;
+    });
+    async function* answer(): AsyncGenerator<ChatEvent> {
+      yield { type: "reasoning_delta", text: "I should search first" };
+      yield { type: "tool_call", id: "c1", name: "search", arguments: {} };
+      yield { type: "tool_result", tool_call_id: "c1", ok: true, summary: "1 note" };
+      await toolGate; // hold before the answer so we can assert the live state
+      yield { type: "text_delta", text: "here you go" };
+      yield { type: "done", stop_reason: "end_turn" };
+    }
+    render(<Harness d={deps({ chat: answer })} />);
+    await waitFor(() => screen.getByLabelText("Conversation"));
+    fireEvent.change(screen.getByLabelText("Composer"), { target: { value: "what notes?" } });
+    fireEvent.click(screen.getByRole("button", { name: "send" }));
+
+    // Reasoning + a finished tool, but no answer yet → still "Thinking…", and the
+    // Worked segment is already on the same line.
+    const thinking = await screen.findByRole("button", { name: /Thinking…/ });
+    expect(screen.getByRole("button", { name: /Worked/ })).toBeInTheDocument();
+    expect(thinking.closest(".fb-activity")).toBe(
+      screen.getByRole("button", { name: /Worked/ }).closest(".fb-activity"),
+    );
+
+    // Let the answer arrive → thinking settles to "Thought …".
+    act(() => resolveTool());
+    await screen.findByRole("button", { name: /Thought/ });
+    expect(screen.getByText("here you go")).toBeInTheDocument();
   });
 
   it("replays a stored turn's reasoning as a collapsed Thinking disclosure", async () => {
@@ -590,7 +625,7 @@ describe("FullBrainSurface", () => {
     // step that resolved it, reached through the Worked drop-down.
     const chip = await screen.findByRole("button", { name: "Celine" });
     expect(chip).toHaveClass("entity-chip");
-    expect(chip.closest(".fb-worked")).not.toBeNull();
+    expect(chip.closest(".fb-act-body")).not.toBeNull();
     fireEvent.click(chip);
     expect(onOpenEntity).toHaveBeenCalledWith("e9");
     // The raw id stays out of sight behind the "raw result" rung.
