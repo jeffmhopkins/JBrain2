@@ -63,6 +63,13 @@ async def test_search_http_error_raises_web_search_error() -> None:
         await _searx(boom).search("q")
 
 
+async def test_search_forbidden_raises_web_search_error() -> None:
+    # A 403 is the tell-tale of a reachable instance with the JSON format disabled;
+    # it must surface as a recoverable WebSearchError, not crash the turn.
+    with pytest.raises(WebSearchError):
+        await _searx(lambda r: httpx.Response(403)).search("q")
+
+
 # --- WebFetcher ------------------------------------------------------------
 
 _HTML = b"""<html><head><title>Hi There</title><style>x{}</style></head>
