@@ -257,8 +257,15 @@ services:
       # reachable by api/worker yet exposed to nothing else.
       GRANIAN_HOST: 0.0.0.0
     volumes:
-      # Not read-only: the image injects $SEARXNG_SECRET into the placeholder at boot.
-      - ./searxng/settings.yml:/etc/searxng/settings.yml
+      # Mount the whole /etc/searxng DIRECTORY, never the settings.yml file alone.
+      # The image entrypoint runs check_directory on /etc/searxng and manages
+      # settings.yml inside it (creating from template + chowning to searxng). A
+      # single-file bind is a footgun: if the host file is missing the moment
+      # compose runs, Docker creates an empty DIRECTORY at that path, the
+      # entrypoint then sees settings.yml as a directory, and the container
+      # crash-loops ("not a valid file"). A directory bind can only ever be a
+      # directory, so a missing host dir just boots from the image template.
+      - ./searxng:/etc/searxng
     networks: [internal]
 
   # OPT-IN MQTT broker (JBrain360 M0 secure spine): Mosquitto + mosquitto-go-auth
