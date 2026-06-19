@@ -43,6 +43,12 @@ def build_web_handlers(search: SearxngClient, fetcher: WebFetcher) -> dict[str, 
         if not result.text:
             return f"That page ({url}) had no readable text."
         header = f"# {result.title}\n{result.url}\n\n" if result.title else f"{result.url}\n\n"
-        return header + result.text
+        body = header + result.text
+        if result.links:
+            # The page's outbound links, so the model can navigate by fetching one
+            # rather than stopping at this page (web_fetch any of them to follow it).
+            links = "\n".join(f"- {u}" for u in result.links)
+            body += f"\n\nLinks on this page (web_fetch any of these to follow it):\n{links}"
+        return body
 
     return {"web_search": web_search_tool, "web_fetch": web_fetch_tool}

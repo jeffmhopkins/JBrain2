@@ -3,11 +3,13 @@ selection").
 
 This is the one genuinely outbound leg of the jerv sandbox: it GETs a
 model-supplied URL and returns the page's main text as plain prose the agent can
-read. It is bounded deliberately — only the jerv agent (no knowledge-base access,
-no owner data in context) can reach it, the response is size-capped, and the
-extractor is a dependency-free HTML-to-text pass (scripts/styles dropped,
-whitespace collapsed) rather than a full browser. Non-HTML text bodies pass
-through; binary content is refused.
+read, PLUS the links the page points at (resolved to absolute URLs) so the agent
+can navigate — follow a link, a "next page", a file in a repository — by fetching
+one of them, not just read a single page. It is bounded deliberately — only the
+jerv agent (no knowledge-base access, no owner data in context) can reach it, the
+response and the link list are size-capped, and the extractor is a dependency-free
+HTML-to-text pass (scripts/styles dropped, whitespace collapsed) rather than a full
+browser. Non-HTML text bodies pass through; binary content is refused.
 
 SSRF guard: the URL is model-supplied, and api/worker share an internal Docker
 network with Postgres, the embedder, SearXNG, and the MQTT auth endpoints — so a
@@ -25,7 +27,7 @@ import ipaddress
 import socket
 from dataclasses import dataclass
 from html.parser import HTMLParser
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urldefrag, urljoin, urlparse
 
 import httpx
 import structlog
@@ -35,6 +37,7 @@ log = structlog.get_logger()
 _TIMEOUT = 20.0
 _MAX_BYTES = 2_000_000  # cap the download; a page beyond this is truncated
 _MAX_CHARS = 20_000  # cap the extracted text handed to the model
+_MAX_LINKS = 40  # cap the links surfaced for navigation; a link-heavy page is trimmed
 _MAX_REDIRECTS = 4
 _DROP_TAGS = frozenset({"script", "style", "noscript", "template", "svg"})
 _BLOCK_TAGS = frozenset(
@@ -52,11 +55,16 @@ class FetchResult:
     url: str
     title: str
     text: str
+    # The page's outbound links, resolved to absolute http(s) URLs, deduped and
+    # capped — what lets the agent navigate (fetch one to follow it) instead of being
+    # stuck on a single page. Empty for a non-HTML body.
+    links: tuple[str, ...] = ()
 
 
 class _Extractor(HTMLParser):
     """Collect visible text, dropping script/style and breaking on block tags so
-    the output reads as paragraphs rather than one run-on line."""
+    the output reads as paragraphs rather than one run-on line — and gather `<a href>`
+    targets (raw, resolved to absolute URLs by the caller) so the agent can follow them."""
 
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
@@ -64,12 +72,15 @@ class _Extractor(HTMLParser):
         self._skip_depth = 0
         self._in_title = False
         self.title = ""
+        self.hrefs: list[str] = []
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         if tag in _DROP_TAGS:
             self._skip_depth += 1
         if tag == "title":
             self._in_title = True
+        if tag == "a" and not self._skip_depth:
+            self.hrefs.extend(v for n, v in attrs if n == "href" and v)
         if tag in _BLOCK_TAGS:
             self._parts.append("\n")
 
@@ -99,10 +110,31 @@ class _Extractor(HTMLParser):
         return "\n".join(out).strip()
 
 
-def _extract(html: str) -> tuple[str, str]:
+def _extract(html: str) -> tuple[str, str, list[str]]:
     parser = _Extractor()
     parser.feed(html)
-    return parser.title.strip(), parser.text()
+    return parser.title.strip(), parser.text(), parser.hrefs
+
+
+def _collect_links(hrefs: list[str], *, base: str) -> tuple[str, ...]:
+    """Resolve raw hrefs against the page's final URL into absolute http(s) links,
+    dropping fragments, non-http(s) schemes (mailto:, javascript:, …), the page's own
+    URL, and duplicates — order preserved, capped at `_MAX_LINKS`. This is what turns
+    a single fetch into navigable browsing without a headless browser."""
+    base_clean = urldefrag(base)[0]
+    seen: set[str] = set()
+    out: list[str] = []
+    for href in hrefs:
+        absolute = urldefrag(urljoin(base, href.strip()))[0]
+        if urlparse(absolute).scheme not in ("http", "https"):
+            continue
+        if absolute == base_clean or absolute in seen:
+            continue
+        seen.add(absolute)
+        out.append(absolute)
+        if len(out) >= _MAX_LINKS:
+            break
+    return tuple(out)
 
 
 class WebFetcher:
@@ -130,8 +162,12 @@ class WebFetcher:
         except httpx.HTTPError as exc:
             log.warning("web.fetch_failed", error=repr(exc))
             raise WebFetchError("that URL could not be fetched right now") from exc
-        title, text = _extract(html) if "html" in content_type.lower() else ("", html.strip())
-        return FetchResult(url=final_url, title=title, text=text[:_MAX_CHARS])
+        if "html" in content_type.lower():
+            title, text, hrefs = _extract(html)
+            links = _collect_links(hrefs, base=final_url)
+        else:
+            title, text, links = "", html.strip(), ()
+        return FetchResult(url=final_url, title=title, text=text[:_MAX_CHARS], links=links)
 
     async def _get_following_safe_redirects(
         self, client: httpx.AsyncClient, url: str

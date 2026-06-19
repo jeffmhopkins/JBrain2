@@ -87,6 +87,43 @@ async def test_fetch_extracts_readable_text_and_title() -> None:
     assert "bad()" not in result.text and "x{}" not in result.text
 
 
+_HTML_LINKS = b"""<html><head><title>Repo</title></head><body>
+<a href="/jeffmhopkins/JBrain2/tree/main/backend">backend</a>
+<a href="docs">docs</a>
+<a href="https://other.example/page">elsewhere</a>
+<a href="https://x.example/repo#readme">self with fragment</a>
+<a href="mailto:nope@x.example">mail</a>
+<a href="/jeffmhopkins/JBrain2/tree/main/backend">dup backend</a>
+</body></html>"""
+
+
+async def test_fetch_surfaces_links_resolved_to_absolute_urls() -> None:
+    def handle(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=_HTML_LINKS, headers={"content-type": "text/html"})
+
+    result = await WebFetcher(transport=httpx.MockTransport(handle)).fetch("https://x.example/repo")
+    # Relative hrefs resolve against the page URL; an external link is kept verbatim;
+    # mailto: is dropped, the page's own URL (a bare fragment) is dropped, and the
+    # duplicate collapses — order preserved.
+    assert result.links == (
+        "https://x.example/jeffmhopkins/JBrain2/tree/main/backend",
+        "https://x.example/docs",
+        "https://other.example/page",
+    )
+
+
+async def test_web_fetch_tool_lists_links_for_navigation() -> None:
+    def handle(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=_HTML_LINKS, headers={"content-type": "text/html"})
+
+    handlers = build_web_handlers(
+        SearxngClient(""), WebFetcher(transport=httpx.MockTransport(handle))
+    )
+    out = await handlers["web_fetch"]({"url": "https://x.example/repo"}, CTX)
+    assert "Links on this page" in out
+    assert "https://x.example/docs" in out
+
+
 async def test_fetch_rejects_non_http_scheme() -> None:
     with pytest.raises(WebFetchError):
         await WebFetcher().fetch("ftp://x.example/file")

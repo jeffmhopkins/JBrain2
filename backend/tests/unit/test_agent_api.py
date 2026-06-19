@@ -12,6 +12,7 @@ from typing import cast
 import pytest
 from fastapi.testclient import TestClient
 
+from jbrain.agent.clock import _CLOCK_FRAME
 from jbrain.agent.contracts import EntityRef, NoteSource, ProposalRef, ToolSpec, ViewPayload
 from jbrain.agent.loop import ToolOutput
 from jbrain.agent.session import AgentSessionInfo
@@ -534,8 +535,10 @@ def test_chat_history_is_replayed_into_the_turn(
         },
     )
     assert resp.status_code == 200
-    # The loop received prior turns plus the new user message, in order.
-    sent = fake.stream_calls[0]["messages"]
+    # The loop received prior turns plus the new user message, in order — after the
+    # ambient date/time block that now leads every turn (filtered out here).
+    msgs = fake.stream_calls[0]["messages"]
+    sent = [m for m in msgs if _CLOCK_FRAME not in getattr(m, "text", "")]
     assert [type(m).__name__ for m in sent] == [
         "UserMessage",
         "AssistantMessage",
@@ -802,7 +805,7 @@ def test_chat_runs_the_selected_agents_prompt_and_only_its_tools(
     assert {t.name for t in call["tools"]} == {"web_search", "web_fetch"}
     # Sandboxed: a non-KB agent never recalls skills, and the run carries its version.
     assert not skills.called
-    assert ("sess-j", "agent-jerv-v1") in client.app.state.agent_runlog.started  # type: ignore[attr-defined]
+    assert ("sess-j", "agent-jerv-v2") in client.app.state.agent_runlog.started  # type: ignore[attr-defined]
 
 
 def test_chat_curator_is_offered_no_web_tools(
@@ -978,3 +981,57 @@ def test_chat_presence_carries_no_coordinate(
     client.post("/api/chat", json={"session_id": "sess-coord", "message": "hi"})
     joined = "\n".join(getattr(m, "text", "") for m in fake.stream_calls[0]["messages"])
     assert "40.123456" not in joined and "-74.654321" not in joined
+
+
+# --- the ambient date/time block + jerv's owner-opt-in presence --------------
+
+
+def test_chat_prepends_the_current_datetime_as_data_framed_user_message(
+    client: TestClient, repo: FakeAuthRepo, sessions_store: FakeAgentSessions
+) -> None:
+    login(client, repo)
+    sessions_store.add(AgentSessionInfo("sess-1", "", "active", ("general",), (), NOW, NOW))
+    router, fake = _capturing_router()
+    client.app.state.llm_router = router  # type: ignore[attr-defined]
+
+    resp = client.post("/api/chat", json={"session_id": "sess-1", "message": "what day is it?"})
+    assert resp.status_code == 200
+    msgs = fake.stream_calls[0]["messages"]
+    framed = [m for m in msgs if _CLOCK_FRAME in getattr(m, "text", "")]
+    # Exactly one, a UserMessage (conversation channel, not the system prompt),
+    # prepended before the owner's actual message.
+    assert len(framed) == 1
+    assert type(framed[0]).__name__ == "UserMessage"
+    texts = [getattr(m, "text", "") for m in msgs]
+    assert texts.index(framed[0].text) < texts.index("what day is it?")
+
+
+def test_chat_datetime_block_honours_owner_timezone(
+    client: TestClient, repo: FakeAuthRepo, sessions_store: FakeAgentSessions
+) -> None:
+    login(client, repo)
+    sessions_store.add(AgentSessionInfo("sess-tz", "", "active", ("general",), (), NOW, NOW))
+    router, fake = _capturing_router()
+    client.app.state.llm_router = router  # type: ignore[attr-defined]
+    client.app.state.settings_store.values["owner_timezone"] = "Asia/Tokyo"  # type: ignore[attr-defined]
+
+    client.post("/api/chat", json={"session_id": "sess-tz", "message": "hi"})
+    joined = "\n".join(getattr(m, "text", "") for m in fake.stream_calls[0]["messages"])
+    assert "(Asia/Tokyo)" in joined
+
+
+def test_chat_jerv_gets_presence_without_the_location_scope(
+    client: TestClient, repo: FakeAuthRepo, sessions_store: FakeAgentSessions
+) -> None:
+    """jerv is location_aware: even with an empty scope (the firewall, by design) the
+    owner opted it into the coarse presence line — the deliberate sandbox relaxation."""
+    login(client, repo)
+    sessions_store.add(AgentSessionInfo("sess-j", "", "active", (), (), NOW, NOW, agent="jerv"))
+    router, fake = _capturing_router()
+    client.app.state.llm_router = router  # type: ignore[attr-defined]
+    _wire_presence(client, near=_fresh_near(), place=LatestPlace("e", "Home", NOW), subs=["s1"])
+
+    resp = client.post("/api/chat", json={"session_id": "sess-j", "message": "what's nearby?"})
+    assert resp.status_code == 200
+    joined = "\n".join(getattr(m, "text", "") for m in fake.stream_calls[0]["messages"])
+    assert _PRESENCE_FRAME in joined and "currently at Home" in joined
