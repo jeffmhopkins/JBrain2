@@ -96,7 +96,10 @@ class CityGeocoder:
         best_i, best_d2 = -1, math.inf
         for i in range(len(lats)):
             dy = lats[i] - lat
-            dx = (lons[i] - lon) * coslat
+            # Wrap the longitude delta into [-180, 180] so a point near the
+            # antimeridian ranks its true neighbours, not the far side of the globe.
+            dlon = (lons[i] - lon + 180.0) % 360.0 - 180.0
+            dx = dlon * coslat
             d2 = dx * dx + dy * dy
             if d2 < best_d2:
                 best_d2, best_i = d2, i

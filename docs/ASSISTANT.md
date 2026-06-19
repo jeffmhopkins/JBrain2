@@ -369,8 +369,9 @@ permission class, gated by the **Proposal primitive**: an off-box call **stages 
 `egress` Proposal whose preview is the exact outbound payload** — the owner approves
 *what leaves the box* before it leaves, never an intent string, so the human is the
 final egress guard. The agent proposes the lookup; the call runs only on approval.
-An **on-box** connector (the local geocoder) egresses nothing, so it runs as a
-normal scoped tool — logged, not proposed. The owner may grant a **standing
+An **on-box** read that egresses nothing (the offline city geocoder,
+`jbrain.citygeocode`) runs as a normal scoped tool — logged, not proposed. The owner
+may grant a **standing
 approval** per connector to skip per-use prompts (a deliberate widening, like the
 read-scope dial) and may disable any connector outright.
 

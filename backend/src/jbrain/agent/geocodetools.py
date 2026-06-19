@@ -26,7 +26,8 @@ def build_geocode_handlers(city_geocoder: CityGeocoder) -> dict[str, ToolHandler
             return ToolOutput("the geocoder is unavailable right now.")
         if hit is None:
             return ToolOutput("No populated place is near that coordinate.")
-        km = round(hit.distance_m / 1000)
-        return ToolOutput(f"{hit.label} (nearest city, ~{km} km away)")
+        km = hit.distance_m / 1000
+        how_far = "right here" if km < 1 else f"~{round(km)} km away"
+        return ToolOutput(f"{hit.label} (nearest city, {how_far})")
 
     return {"geocode_reverse": geocode_reverse_tool}
