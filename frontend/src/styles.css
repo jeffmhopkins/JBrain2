@@ -892,6 +892,11 @@ h3 {
   border-radius: var(--r-card);
   margin-bottom: 12px;
   overflow: hidden;
+  /* Same hazard as .llm-group: .settings is the scroll container *and* a flex
+     column, so without this the drawer defaults to flex-shrink:1 and its
+     expanded body gets compressed and clipped by overflow:hidden. Pin natural
+     height; let the body scroll instead. */
+  flex: none;
 }
 .llm-local-toggle {
   width: 100%;
