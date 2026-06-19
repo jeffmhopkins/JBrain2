@@ -14,6 +14,7 @@ dependencies = [
     "structlog>=24.1",
     "python-multipart>=0.0.9",
     "pymupdf>=1.24",
+    "pillow>=10.4",
     "pyyaml>=6.0",
     "aiomqtt>=2.5.1",
 ]
