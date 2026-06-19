@@ -24,6 +24,16 @@ const INLINE =
 
 const isIsoDate = (s: string): boolean => /^\d{4}-\d{2}-\d{2}$/.test(s);
 
+// A browsing model (gpt-oss) emits source citations in its own notation —
+// 【13†L9-L13】 (fullwidth brackets, a † dagger, optional line span), sometimes in
+// ASCII [13†L9-L13]. They point at the model's internal browse state, not our note
+// sources, so they can't become tappable chips — strip them (with one leading space
+// if present) so the prose reads clean rather than leaking the raw token.
+const MODEL_CITATION = /[ \t]?(?:【[^】\n]*†[^】\n]*】|\[[^\]\n]*†[^\]\n]*\])/g;
+function stripModelCitations(text: string): string {
+  return text.replace(MODEL_CITATION, "");
+}
+
 function parseDate(raw: string): Date | null {
   const iso = isIsoDate(raw) ? `${raw}T00:00:00Z` : raw;
   const d = new Date(iso);
@@ -496,7 +506,7 @@ export function Markdown({
   /** The id of the flag whose reason note is currently open. */
   openFlag?: string | null | undefined;
 }): ReactNode {
-  const blocks = useMemo(() => parseBlocks(text), [text]);
+  const blocks = useMemo(() => parseBlocks(stripModelCitations(text)), [text]);
   const index = useMemo(() => buildIndex(entities), [entities]);
   // Fresh per render: `placed` is mutated as the blocks scan, then read below to
   // decide which flags need an end-of-bubble fallback.

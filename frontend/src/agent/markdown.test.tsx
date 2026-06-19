@@ -68,6 +68,29 @@ describe("Markdown", () => {
     expect(onCite).toHaveBeenCalledWith(2);
   });
 
+  it("strips a browsing model's 【N†…】 citations, keeping the prose clean", () => {
+    // gpt-oss emits fullwidth-bracket citations with a † dagger; they point at its
+    // own browse state and can't map to our chips, so they're removed (with the one
+    // leading space) rather than leaked as raw text.
+    const out = html("about 18 hours 27 minutes 【13†L9-L13】 under typical traffic.");
+    expect(out).toContain("18 hours 27 minutes under typical traffic.");
+    expect(out).not.toContain("†");
+    expect(out).not.toContain("13");
+  });
+
+  it("strips the ASCII [N†…] citation form and multiple in a row", () => {
+    const out = html("The drive is long [13†L9-L13][14†L1-L5] today.");
+    expect(out).toContain("The drive is long today.");
+    expect(out).not.toContain("†");
+  });
+
+  it("does not touch a real [^n] source citation (no dagger)", () => {
+    const onCite = vi.fn();
+    render(<Markdown text="You were born then.[^1]" onCite={onCite} />);
+    fireEvent.click(screen.getByRole("button", { name: "1" }));
+    expect(onCite).toHaveBeenCalledWith(1);
+  });
+
   it("linkifies an entity label in the prose and opens it on tap", () => {
     const onEntity = vi.fn();
     render(
