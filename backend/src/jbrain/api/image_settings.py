@@ -126,6 +126,20 @@ async def free_image_memory(settings: SettingsDep, gateway: GatewayDep) -> Image
     return await _snapshot(settings, gateway)
 
 
+@router.post("/interrupt", status_code=202)
+async def interrupt_image_render(settings: SettingsDep, gateway: GatewayDep) -> dict[str, str]:
+    """Stop the in-flight generation (the chat 'Stop render' control). 409 when
+    image hosting is off; 502 if ComfyUI rejects or can't be reached. The blocked
+    generate/edit tool then returns and the turn continues."""
+    if not (gateway and _enabled(settings)):
+        raise HTTPException(status_code=409, detail="image hosting is not enabled")
+    try:
+        await gateway.interrupt()
+    except ComfyUiGatewayError as exc:
+        raise HTTPException(status_code=502, detail=f"comfyui interrupt failed: {exc}") from exc
+    return {"status": "interrupted"}
+
+
 class ServiceActionOut(BaseModel):
     service: str
     action: str  # "start" | "stop"

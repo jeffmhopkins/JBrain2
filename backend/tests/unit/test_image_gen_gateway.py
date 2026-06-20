@@ -84,6 +84,22 @@ async def test_free_raises_on_gateway_failure() -> None:
         await _client(lambda r: httpx.Response(500)).free()
 
 
+async def test_interrupt_posts_to_interrupt() -> None:
+    seen: list[tuple[str, str]] = []
+
+    def handle(req: httpx.Request) -> httpx.Response:
+        seen.append((req.method, req.url.path))
+        return httpx.Response(200)
+
+    await _client(handle).interrupt()
+    assert seen == [("POST", "/interrupt")]
+
+
+async def test_interrupt_raises_on_gateway_failure() -> None:
+    with pytest.raises(ComfyUiGatewayError):
+        await _client(lambda r: httpx.Response(500)).interrupt()
+
+
 def test_parse_vram_tolerates_bad_shapes() -> None:
     assert _parse_vram(["not", "a", "dict"]) == (None, None)
     assert _parse_vram({"devices": "nope"}) == (None, None)

@@ -26,10 +26,14 @@ def _settings(**kw: Any) -> Settings:
 class _FakeGateway:
     """In-memory stand-in for ComfyUiGatewayClient."""
 
-    def __init__(self, status: GatewayStatus, *, fail_free: bool = False) -> None:
+    def __init__(
+        self, status: GatewayStatus, *, fail_free: bool = False, fail_interrupt: bool = False
+    ) -> None:
         self._status = status
         self.fail_free = fail_free
+        self.fail_interrupt = fail_interrupt
         self.freed = False
+        self.interrupted = False
 
     async def status(self) -> GatewayStatus:
         return self._status
@@ -38,6 +42,11 @@ class _FakeGateway:
         if self.fail_free:
             raise ComfyUiGatewayError("boom")
         self.freed = True
+
+    async def interrupt(self) -> None:
+        if self.fail_interrupt:
+            raise ComfyUiGatewayError("boom")
+        self.interrupted = True
 
 
 @pytest.fixture
@@ -161,3 +170,25 @@ def test_service_start_404_when_not_provisioned(client: tuple[TestClient, FastAP
 def test_service_start_409_when_disabled(client: tuple[TestClient, FastAPI]) -> None:
     test_client, _ = client
     assert test_client.post("/api/settings/image/service/start").status_code == 409
+
+
+def test_interrupt_calls_gateway(client: tuple[TestClient, FastAPI]) -> None:
+    test_client, app = client
+    gw = _FakeGateway(GatewayStatus(reachable=True))
+    _enable(app, gw, models=["qwen-image"])
+    resp = test_client.post("/api/settings/image/interrupt")
+    assert resp.status_code == 202 and resp.json() == {"status": "interrupted"}
+    assert gw.interrupted is True
+
+
+def test_interrupt_409_when_disabled(client: tuple[TestClient, FastAPI]) -> None:
+    test_client, _ = client
+    assert test_client.post("/api/settings/image/interrupt").status_code == 409
+
+
+def test_interrupt_502_on_gateway_error(client: tuple[TestClient, FastAPI]) -> None:
+    test_client, app = client
+    _enable(
+        app, _FakeGateway(GatewayStatus(reachable=True), fail_interrupt=True), models=["qwen-image"]
+    )
+    assert test_client.post("/api/settings/image/interrupt").status_code == 502

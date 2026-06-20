@@ -84,6 +84,20 @@ class ComfyUiGatewayClient:
         except httpx.HTTPError as exc:
             raise ComfyUiGatewayError(str(exc)) from exc
 
+    async def interrupt(self) -> None:
+        """Stop the currently-running generation (ComfyUI POST /interrupt). The box
+        runs one job at a time, so this unambiguously cancels the in-flight render;
+        the blocked generate/edit await then returns. Raises ComfyUiGatewayError on
+        any failure (an explicit operator stop, so a failure is surfaced)."""
+        try:
+            async with httpx.AsyncClient(
+                timeout=self._timeout, transport=self._transport
+            ) as client:
+                resp = await client.post(f"{self._root}/interrupt")
+                resp.raise_for_status()
+        except httpx.HTTPError as exc:
+            raise ComfyUiGatewayError(str(exc)) from exc
+
 
 def _parse_vram(payload: object) -> tuple[float | None, float | None]:
     """Sum vram_total / vram_free (bytes) across the devices /system_stats reports,
