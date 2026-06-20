@@ -25,6 +25,14 @@ import type {
 
 export type Panel = "none" | "sessions" | "proposals";
 
+/** Live context-window fill for the open chat, from the stream's `usage` events:
+ * `used` (the latest turn's prompt + output, the fullest the context has been) over
+ * the model's total `window`. Null until the first usage event of a session. */
+export interface ContextUsage {
+  used: number;
+  window: number;
+}
+
 /** Thrown when a chat-attachment upload fails mid-send: the turn is aborted
  * before anything lands in the transcript, so the composer can keep the typed
  * text and staged files for a retry (rather than losing them). */
@@ -68,7 +76,7 @@ function latestForMode(sessions: AgentSession[], mode: ConvMode): AgentSession |
 export interface FullBrainDeps {
   listSessions: () => Promise<AgentSession[]>;
   createSession: (body: SessionCreate) => Promise<AgentSession>;
-  chat: (body: ChatRequest) => AsyncGenerator<ChatEvent>;
+  chat: (body: ChatRequest, signal?: AbortSignal) => AsyncGenerator<ChatEvent>;
   listProposals: (sessionId?: string) => Promise<ProposalSummary[]>;
   getTranscript: (sessionId: string) => Promise<TranscriptTurn[]>;
   renameSession: (id: string, title: string) => Promise<void>;
@@ -140,6 +148,12 @@ export interface FullBrain {
   /** A turn can be sent only once a session (read scope) is chosen and no stream
    * is in flight. */
   canSend: boolean;
+  /** Live context-window fill for the open chat, or null before the first usage
+   * event — drives the composer's context-usage meter. */
+  usage: ContextUsage | null;
+  /** Abort the in-flight turn (the composer's Stop button). A no-op when idle; the
+   * partial answer streamed so far stays on screen, settled as "Stopped". */
+  stop: () => void;
   /** `appointmentId` rides a calendar handoff so the agent resolves that exact
    * appointment; the user bubble still shows only `text`. `files` are uploaded
    * first (in order) and ride the turn as attachments. */
@@ -184,6 +198,12 @@ export function useFullBrain(
   const [openProposal, setOpenProposal] = useState<string | null>(null);
   const [messages, setMessages] = useState<TranscriptMessage[]>([]);
   const [busy, setBusy] = useState(false);
+  // Live context-window fill from the stream's `usage` events; cleared when the
+  // open chat changes (a different session has its own context).
+  const [usage, setUsage] = useState<ContextUsage | null>(null);
+  // The in-flight turn's abort handle — the Stop button calls `.abort()`, which
+  // closes the SSE fetch and unwinds the run server-side. Null when idle.
+  const abortRef = useRef<AbortController | null>(null);
   // The agent model's vision capability, false until the check answers — the safe
   // default keeps the chat attach affordance hidden rather than offering one the
   // model would 415. It only ever flips true, so the paperclip appears once
@@ -305,6 +325,9 @@ export function useFullBrain(
   useEffect(() => {
     if (!enabled || activeId === null) return;
     let stale = false;
+    // A different chat has its own context — drop the prior meter until this one's
+    // first turn reports usage (token counts aren't part of the stored transcript).
+    setUsage(null);
     getTranscript(activeId)
       .then((turns) => {
         if (!stale) setMessages(turns.map(fromTurn));
@@ -350,21 +373,39 @@ export function useFullBrain(
     // Reuse the note-capture warm fix (only when capture is on and fresh) so the
     // location tool can answer from the phone's current spot.
     const coords = freshCoords();
+    const controller = new AbortController();
+    abortRef.current = controller;
     try {
-      for await (const event of chat({
-        session_id: active.id,
-        message: text,
-        history,
-        ...(opts?.appointmentId ? { appointment_id: opts.appointmentId } : {}),
-        ...(coords ? { latitude: coords.latitude, longitude: coords.longitude } : {}),
-        ...(attachmentIds.length ? { attachment_ids: attachmentIds } : {}),
-      })) {
-        setMessages((ms) => applyEvent(ms, event));
+      for await (const event of chat(
+        {
+          session_id: active.id,
+          message: text,
+          history,
+          ...(opts?.appointmentId ? { appointment_id: opts.appointmentId } : {}),
+          ...(coords ? { latitude: coords.latitude, longitude: coords.longitude } : {}),
+          ...(attachmentIds.length ? { attachment_ids: attachmentIds } : {}),
+        },
+        controller.signal,
+      )) {
+        // Usage rides the conversation, not a single bubble — track it apart from the
+        // transcript reducer so the meter reflects the whole context, not one turn.
+        if (event.type === "usage") {
+          setUsage({
+            used: event.input_tokens + event.output_tokens,
+            window: event.context_window,
+          });
+        } else {
+          setMessages((ms) => applyEvent(ms, event));
+        }
       }
       setMessages((ms) => (ms[ms.length - 1]?.streaming ? endStream(ms, "end_turn") : ms));
     } catch {
-      setMessages((ms) => endStream(ms, "error"));
+      // A Stop (abort) settles the partial answer calmly as "stopped"; any other
+      // failure is a genuine error. Either way the streamed text so far stays put.
+      const reason = controller.signal.aborted ? "stopped" : "error";
+      setMessages((ms) => endStream(ms, reason));
     } finally {
+      abortRef.current = null;
       setBusy(false);
       // The turn may have staged a Proposal — refresh the review inbox.
       reloadProposals();
@@ -373,6 +414,12 @@ export function useFullBrain(
       // (turn count, preview, staged count).
       reloadSessions();
     }
+  }
+
+  // Abort the in-flight turn. The `send` loop's catch sees `signal.aborted` and
+  // settles the partial bubble as "stopped"; `busy` clears in its finally.
+  function stop(): void {
+    abortRef.current?.abort();
   }
 
   async function create(body: SessionCreate): Promise<AgentSession> {
@@ -452,6 +499,8 @@ export function useFullBrain(
     messages,
     busy,
     canSend: !busy && active !== null,
+    usage,
+    stop,
     supportsVision,
     // Resolves true once the turn is under way (files uploaded, stream started),
     // false when an upload aborted the send — so the composer keeps its staged

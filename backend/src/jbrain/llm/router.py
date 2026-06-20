@@ -74,6 +74,21 @@ TIER_DEFAULTS: dict[str, str] = {
 
 PROVIDERS = ("anthropic", "xai", "local")
 
+# Context-window sizes (tokens) for the non-local models, keyed by served model
+# name — the denominator the PWA's context-usage meter divides by. Local windows
+# come from the catalog (the gateway's `-c`); these cover the cloud providers. A
+# model not listed falls back to DEFAULT_CONTEXT_WINDOW, an honest conservative
+# estimate rather than a wrong-but-precise one.
+DEFAULT_CONTEXT_WINDOW = 128_000
+CONTEXT_WINDOWS: dict[str, int] = {
+    # Anthropic Claude 4.x family.
+    "claude-opus-4-8": 200_000,
+    "claude-sonnet-4-6": 200_000,
+    "claude-haiku-4-5-20251001": 200_000,
+    # xAI Grok.
+    "grok-4.3": 256_000,
+}
+
 JSON_NUDGE = (
     "\n\nYour previous reply was not valid JSON."
     " Return only valid JSON matching the requested schema — no prose, no code fences."
@@ -206,6 +221,17 @@ class LlmRouter:
         if not _reasoning_capable(provider, model):
             reasoning_effort = None
         return provider, model, reasoning_effort
+
+    async def context_window(self, task: str, strength: str | None = None) -> int:
+        """The total context window (tokens) the `task` will actually run against
+        after live overrides — the denominator for the PWA's context-usage meter. A
+        local model's window comes from the catalog (the gateway's `-c`); a cloud
+        model's from CONTEXT_WINDOWS, falling back to a conservative default for an
+        unlisted model so the meter degrades gracefully rather than misreports."""
+        provider, model, _ = await self._resolve_live(task, strength)
+        if provider == "local":
+            return local_catalog.context_window(model)
+        return CONTEXT_WINDOWS.get(model, DEFAULT_CONTEXT_WINDOW)
 
     async def effective_reasoning_effort(
         self, task: str, strength: str | None = None

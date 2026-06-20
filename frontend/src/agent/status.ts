@@ -65,6 +65,9 @@ export function agentStatus(messages: TranscriptMessage[]): AgentStatus | null {
   }
 
   const stop = last.stopReason;
+  // A user-initiated Stop is calm (a "done" register), not the red error the
+  // guardrail/error reasons get.
+  if (stop === "stopped") return { kind: "done", label: "Stopped" };
   if (stop && STOP_LABELS[stop]) return { kind: "error", label: STOP_LABELS[stop] };
   // Clean finish — a quiet confirmation with how many tools it used.
   const used = last.tools.filter((t) => t.name !== "queued").length;

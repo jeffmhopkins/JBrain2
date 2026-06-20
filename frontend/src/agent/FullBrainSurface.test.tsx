@@ -67,6 +67,13 @@ function Harness({
       <button type="button" onClick={() => fb.send(text, files ? { files } : undefined)}>
         send
       </button>
+      {/* The composer affordances the home screen wires to the hook: Stop aborts the
+          live turn, and the context meter reads `fb.usage`. */}
+      <button type="button" onClick={() => fb.stop()}>
+        stop
+      </button>
+      <span data-testid="busy">{String(fb.busy)}</span>
+      <span data-testid="usage">{fb.usage ? `${fb.usage.used}/${fb.usage.window}` : "none"}</span>
       {/* The lateral-panel affordances the home screen provides (top bar tap and
           the omnibox swipe live there); the surface itself no longer swipes. */}
       <button type="button" onClick={() => fb.setPanel("sessions")}>
@@ -1056,5 +1063,78 @@ describe("FullBrainSurface", () => {
     // closes behind it. (Its name surfaces in the top bar, tested at HomeScreen.)
     await waitFor(() => expect(screen.getByLabelText("Conversation")).toBeInTheDocument());
     expect(document.querySelector(".panel.left.open")).not.toBeInTheDocument();
+  });
+
+  it("tracks live context usage from the stream's usage events", async () => {
+    async function* answer(): AsyncGenerator<ChatEvent> {
+      yield { type: "usage", input_tokens: 1000, output_tokens: 200, context_window: 32768 };
+      yield { type: "text_delta", text: "hi" };
+      // A later step reports a fuller context — the meter tracks the latest event.
+      yield { type: "usage", input_tokens: 4000, output_tokens: 96, context_window: 32768 };
+      yield { type: "done", stop_reason: "end_turn" };
+    }
+    render(<Harness d={deps({ chat: answer })} />);
+    await waitFor(() => screen.getByLabelText("Conversation"));
+    expect(screen.getByTestId("usage").textContent).toBe("none");
+
+    fireEvent.change(screen.getByLabelText("Composer"), { target: { value: "go" } });
+    fireEvent.click(screen.getByRole("button", { name: "send" }));
+
+    // The latest usage event wins (4000 + 96), against the model's window.
+    await waitFor(() => expect(screen.getByTestId("usage").textContent).toBe("4096/32768"));
+  });
+
+  it("clears the context meter when the open chat changes", async () => {
+    async function* answer(): AsyncGenerator<ChatEvent> {
+      yield { type: "usage", input_tokens: 500, output_tokens: 10, context_window: 32768 };
+      yield { type: "text_delta", text: "ok" };
+      yield { type: "done", stop_reason: "end_turn" };
+    }
+    const sessions = [
+      session({ id: "s1", title: "First" }),
+      session({ id: "s2", title: "Second" }),
+    ];
+    render(<Harness d={deps({ listSessions: vi.fn(async () => sessions), chat: answer })} />);
+    await waitFor(() => screen.getByLabelText("Conversation"));
+    fireEvent.change(screen.getByLabelText("Composer"), { target: { value: "go" } });
+    fireEvent.click(screen.getByRole("button", { name: "send" }));
+    await waitFor(() => expect(screen.getByTestId("usage").textContent).toBe("510/32768"));
+
+    // Switching to another chat drops the prior chat's meter (its context is its own).
+    fireEvent.click(screen.getByText("open-sessions"));
+    fireEvent.click(screen.getByText("Second"));
+    await waitFor(() => expect(screen.getByTestId("usage").textContent).toBe("none"));
+  });
+
+  it("Stop aborts the live turn and settles the partial answer calmly", async () => {
+    let aborted = false;
+    // A turn that streams a partial answer then hangs until its signal aborts —
+    // exactly what the real fetch generator does when the connection is cut.
+    async function* answer(_b: ChatRequest, signal?: AbortSignal): AsyncGenerator<ChatEvent> {
+      yield { type: "text_delta", text: "partial…" };
+      await new Promise<void>((_resolve, reject) => {
+        signal?.addEventListener("abort", () => {
+          aborted = true;
+          reject(new DOMException("aborted", "AbortError"));
+        });
+      });
+    }
+    render(<Harness d={deps({ chat: answer })} />);
+    await waitFor(() => screen.getByLabelText("Conversation"));
+    fireEvent.change(screen.getByLabelText("Composer"), { target: { value: "go" } });
+    fireEvent.click(screen.getByRole("button", { name: "send" }));
+
+    await waitFor(() => expect(screen.getByText("partial…")).toBeInTheDocument());
+    expect(screen.getByTestId("busy").textContent).toBe("true");
+
+    fireEvent.click(screen.getByRole("button", { name: "stop" }));
+
+    // The turn unwinds: the partial text stays, the status reads a calm "Stopped"
+    // (not an error), and the composer is free again.
+    await waitFor(() => expect(screen.getByTestId("busy").textContent).toBe("false"));
+    expect(aborted).toBe(true);
+    expect(screen.getByText("partial…")).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole("status").textContent).toContain("Stopped"));
+    expect(document.querySelector(".fb-status.err")).not.toBeInTheDocument();
   });
 });

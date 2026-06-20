@@ -14,6 +14,7 @@ from jbrain.agent.contracts import (
     TextDelta,
     ToolSpec,
     ToolViewEvent,
+    UsageEvent,
     ViewPayload,
 )
 
@@ -83,6 +84,11 @@ def test_chat_event_discriminates_on_type() -> None:
     )
     assert isinstance(view_event, ToolViewEvent)
     assert view_event.view.view == "lab_plot"
+    usage = adapter.validate_python(
+        {"type": "usage", "input_tokens": 1200, "output_tokens": 64, "context_window": 32768}
+    )
+    assert isinstance(usage, UsageEvent)
+    assert usage.input_tokens == 1200 and usage.context_window == 32768
 
 
 def test_chat_event_rejects_unknown_type() -> None:

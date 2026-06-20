@@ -84,6 +84,17 @@ export interface JobEnqueuedEvent {
   job_id: string;
   summary: string;
 }
+/** Live context-window accounting — rides after each model turn (every ReAct step)
+ * so the composer can show a "context used" meter. `input_tokens` is the prompt the
+ * model just consumed (the fullest the context has been this turn); `context_window`
+ * is the resolved model's total window (a local model's gateway `-c`). Display only,
+ * never persisted. */
+export interface UsageEvent {
+  type: "usage";
+  input_tokens: number;
+  output_tokens: number;
+  context_window: number;
+}
 export interface DoneEvent {
   type: "done";
   stop_reason: string;
@@ -116,6 +127,7 @@ export type ChatEvent =
   | ToolResultEvent
   | ToolViewEvent
   | JobEnqueuedEvent
+  | UsageEvent
   | DoneEvent
   | VerdictEvent
   | GeneralKnowledgeEvent;

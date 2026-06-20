@@ -168,9 +168,11 @@ for i, m in enumerate(models):
         "llama-server", "--host", "127.0.0.1", "--port", str(port),
         # A real context window: without -c, llama-server's small default overflows
         # on vision inputs (an image is thousands of tokens), forcing constant
-        # context-shift churn that starves and slows generation. 32k fits these
-        # models and the box's unified memory has room for the KV cache.
-        "-c", "32768",
+        # context-shift churn that starves and slows generation. The size is the
+        # catalog's `context_window` (32k fits these models and the box's unified
+        # memory has room for the KV cache) — the same value the router reports to
+        # the PWA's context-usage meter, so the two never drift.
+        "-c", str(m["context_window"]),
         # gfx1151 stability/perf flags from the kyuz0 toolbox guide: flash
         # attention avoids crashes/slowdowns and --no-mmap prevents unified-memory
         # paging stalls. -ngl 999 offloads every layer to the iGPU.

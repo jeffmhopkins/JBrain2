@@ -87,6 +87,14 @@ export const SendIcon = (p: IconProps) => (
   </Icon>
 );
 
+// A filled rounded square — the "stop the stream" affordance the send button
+// becomes while a turn is in flight (docs/DESIGN.md "Iconography").
+export const StopIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor" stroke="none" />
+  </Icon>
+);
+
 export const ChevronLeftIcon = (p: IconProps) => (
   <Icon {...p}>
     <path d="m15 18-6-6 6-6" />

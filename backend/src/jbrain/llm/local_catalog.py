@@ -54,6 +54,10 @@ class LocalModel:
     # the router send an effort to this model; default False (the Qwen Instruct
     # variants and Llama here are non-thinking).
     supports_reasoning: bool = False
+    # The context window the gateway serves this model with (llama-server's `-c`).
+    # The single source of truth: scripts/local-llm-setup.sh stamps this into the
+    # llama-swap config, and the router reports it to the PWA's context-usage meter.
+    context_window: int = 32768
 
     @property
     def spec(self) -> str:
@@ -167,8 +171,22 @@ REASONING_SERVED_MODELS: frozenset[str] = frozenset(
 )
 
 
+_BY_SERVED = {m.served_model: m for m in CATALOG}
+
+# Fallback window for a `local:<served_model>` spec we don't recognize (an operator
+# serving a model outside the catalog): the gateway's default `-c` for the set.
+DEFAULT_LOCAL_CONTEXT_WINDOW = 32768
+
+
 def get(model_id: str) -> LocalModel | None:
     return _BY_ID.get(model_id)
+
+
+def context_window(served_model: str) -> int:
+    """The context window a `local:<served_model>` runs with — the catalog value
+    when known, else the gateway's default. Drives the PWA's context-usage meter."""
+    model = _BY_SERVED.get(served_model)
+    return model.context_window if model else DEFAULT_LOCAL_CONTEXT_WINDOW
 
 
 def recommended_ids() -> tuple[str, ...]:

@@ -3,6 +3,7 @@ turn-loop driven by the fake adapter, no database. Asserts the loop's ChatEvents
 serialize as `data:`-framed SSE and that the run log is opened and closed."""
 
 import asyncio
+import contextlib
 import json
 from collections.abc import Iterator
 from dataclasses import replace
@@ -23,7 +24,7 @@ from jbrain.agent.toolregistry import RegisteredTool, ToolRegistry
 from jbrain.agent.transcript_store import TurnRecord
 from jbrain.auth import service
 from jbrain.config import Settings
-from jbrain.llm import FakeLlmClient, LlmClient, LlmRouter, LlmTurn, LlmUsage, ToolCall
+from jbrain.llm import FakeLlmClient, LlmClient, LlmRouter, LlmTurn, LlmUsage, TextChunk, ToolCall
 from jbrain.main import create_app
 from tests.unit.fakes import FakeAuthRepo, FakeSettingsStore
 
@@ -214,6 +215,15 @@ class BoomStreamClient:
         yield  # unreachable; makes this an async generator
 
 
+class CancelStreamClient:
+    """Streams a partial answer, then raises CancelledError — the server-side shape of
+    the owner tapping Stop (or a dropped connection) mid-answer."""
+
+    async def converse_stream(self, **_kw):  # type: ignore[no-untyped-def]
+        yield TextChunk(text="the drive is about ")
+        raise asyncio.CancelledError
+
+
 @pytest.fixture
 def client(
     repo: FakeAuthRepo,
@@ -280,9 +290,12 @@ def test_chat_streams_text_then_done(
     assert resp.headers["content-type"].startswith("text/event-stream")
 
     events = sse_events(resp.text)
+    # A `usage` event rides after the model turn (before `done`) so the PWA's context
+    # meter can read the prompt fill against the model's window (grok-4.3 here).
     assert events == [
         {"type": "text_delta", "text": "hi "},
         {"type": "text_delta", "text": "there"},
+        {"type": "usage", "input_tokens": 7, "output_tokens": 3, "context_window": 256_000},
         {"type": "done", "stop_reason": "end_turn"},
     ]
     # The run was opened, the session touched, and the run closed with its summary.
@@ -830,6 +843,30 @@ def test_chat_model_failure_emits_error_done_and_marks_run_failed(
     assert sse_events(resp.text)[-1] == {"type": "done", "stop_reason": "error"}
     assert runlog.finished[-1]["status"] == "error"
     assert runlog.finished[-1]["stop_reason"] == "error"
+
+
+def test_chat_persists_a_partial_answer_when_the_owner_stops(
+    client: TestClient,
+    repo: FakeAuthRepo,
+    sessions_store: FakeAgentSessions,
+    runlog: FakeRunLog,
+    transcript: FakeTranscript,
+) -> None:
+    login(client, repo)
+    sessions_store.add(AgentSessionInfo("sess-1", "", "active", ("general",), (), NOW, NOW))
+    client.app.state.llm_router = LlmRouter(  # type: ignore[attr-defined]
+        {"xai": cast(LlmClient, CancelStreamClient())}, {"agent.turn": ("xai", "grok-4.3")}
+    )
+    # The owner Stops (or the connection drops) after a partial answer streamed: the
+    # CancelledError unwinds the request, but the finally still persists what streamed.
+    with contextlib.suppress(BaseException):
+        client.post("/api/chat", json={"session_id": "sess-1", "message": "how far?"})
+    # The partial answer was recorded so reopening the chat replays what the owner saw.
+    assert transcript.recorded[-1]["user"] == "how far?"
+    assert transcript.recorded[-1]["assistant"] == "the drive is about "
+    # The run still closes as error/disconnected — a partial turn is not a clean `done`.
+    assert runlog.finished[-1]["status"] == "error"
+    assert runlog.finished[-1]["stop_reason"] == "disconnected"
 
 
 def test_create_and_list_sessions(

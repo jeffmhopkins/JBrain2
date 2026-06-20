@@ -212,6 +212,10 @@ export function HomeScreen({
           return ok;
         }}
         busy={conversational && fb.busy}
+        // Conversation surfaces only: the Stop button aborts the live turn, and the
+        // context meter shows how full the model's window is getting.
+        onStop={conversational ? fb.stop : undefined}
+        contextUsage={conversational ? fb.usage : null}
         onOpenLauncher={onOpenLauncher}
         labels={segLabels}
         // Conversation tabs only: a horizontal swipe across the omnibox shuttles

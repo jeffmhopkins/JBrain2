@@ -14,6 +14,7 @@ import {
 } from "react";
 import { attachmentKind } from "../agent/attachmentKind";
 import type { AppointmentRef } from "../agent/types";
+import type { ContextUsage } from "../agent/useFullBrain";
 import { MODES, type Mode, ROWS, type SegState, tapSegment } from "../notes/modes";
 import type { SendInput } from "../notes/useNotes";
 import {
@@ -26,6 +27,7 @@ import {
   PlusIcon,
   SearchIcon,
   SendIcon,
+  StopIcon,
 } from "./icons";
 
 const MODE_ICON: Record<Mode, (p: { size?: number }) => ReactNode> = {
@@ -50,8 +52,15 @@ interface OmniboxProps {
    * under way so the box can clear them; false (e.g. an upload failed) keeps them
    * staged for a retry. A void/undefined return is treated as success. */
   onConversation: (body: string, files: File[]) => undefined | Promise<boolean>;
-  /** A turn is streaming — block another send and dim the button. */
+  /** A turn is streaming — the send button becomes a Stop button (and another send
+   * is blocked). */
   busy?: boolean;
+  /** Abort the in-flight turn. When present and `busy`, the send button turns into a
+   * Stop button that calls this; absent outside the conversation surface. */
+  onStop?: (() => void) | undefined;
+  /** Live context-window fill for the open chat — rendered as a compact meter in the
+   * composer foot. Null/absent hides it (capture modes, or before the first turn). */
+  contextUsage?: ContextUsage | null;
   onOpenLauncher: () => void;
   /** Per-segment label overrides. The active research-mode tab reads "Teacher"
    * while a Teacher session is open, otherwise the mode's own label stands. */
@@ -83,6 +92,8 @@ export function Omnibox({
   onSend,
   onConversation,
   busy = false,
+  onStop,
+  contextUsage,
   onOpenLauncher,
   labels,
   draft,
@@ -317,6 +328,7 @@ export function Omnibox({
         <div className="composer-foot">
           <span className="mode-dot" />
           <span className="foot-text">{meta.footer}</span>
+          {contextUsage && <ContextMeter usage={contextUsage} />}
           <div className="foot-icons">
             {attachEnabled && (
               <button
@@ -328,15 +340,30 @@ export function Omnibox({
                 <ClipIcon size={24} />
               </button>
             )}
-            <button
-              type="button"
-              className="icon-btn send-btn"
-              aria-label="Send"
-              onClick={send}
-              disabled={busy || (text.trim() === "" && !(meta.domain === null && files.length > 0))}
-            >
-              <SendIcon size={24} />
-            </button>
+            {busy && onStop ? (
+              // While a turn streams the send button becomes Stop — one tap aborts
+              // the run (the partial answer above stays put, settled as "Stopped").
+              <button
+                type="button"
+                className="icon-btn stop-btn"
+                aria-label="Stop generating"
+                onClick={onStop}
+              >
+                <StopIcon size={24} />
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="icon-btn send-btn"
+                aria-label="Send"
+                onClick={send}
+                disabled={
+                  busy || (text.trim() === "" && !(meta.domain === null && files.length > 0))
+                }
+              >
+                <SendIcon size={24} />
+              </button>
+            )}
           </div>
         </div>
 
@@ -352,5 +379,36 @@ export function Omnibox({
         />
       </div>
     </div>
+  );
+}
+
+// A terse token count for the context meter: "850", "12.3k", "256k".
+function fmtTokens(n: number): string {
+  if (n < 1000) return String(n);
+  const k = n / 1000;
+  return `${k < 10 ? k.toFixed(1) : Math.round(k)}k`;
+}
+
+// The live context-usage meter in the composer foot: a thin fill bar plus
+// "used / window" and a percentage, so the owner can see how full the model's
+// context is getting (mainly the local models' 32k window). It tints toward the
+// warning hue as the window fills — calm until it actually matters.
+function ContextMeter({ usage }: { usage: ContextUsage }): ReactNode {
+  const frac = usage.window > 0 ? Math.min(usage.used / usage.window, 1) : 0;
+  const pct = Math.round(frac * 100);
+  const level = frac >= 0.9 ? "high" : frac >= 0.7 ? "mid" : "";
+  return (
+    <output
+      className={`ctx-meter${level ? ` ctx-${level}` : ""}`}
+      aria-label={`Context used: ${usage.used} of ${usage.window} tokens (${pct}%)`}
+      title={`${usage.used.toLocaleString()} / ${usage.window.toLocaleString()} tokens`}
+    >
+      <span className="ctx-bar" aria-hidden="true">
+        <span className="ctx-fill" style={{ width: `${pct}%` }} />
+      </span>
+      <span className="ctx-text">
+        {fmtTokens(usage.used)}/{fmtTokens(usage.window)} · {pct}%
+      </span>
+    </output>
   );
 }

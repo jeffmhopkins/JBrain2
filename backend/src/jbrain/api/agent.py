@@ -323,6 +323,11 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
     # medium reasoning effort earns a deeper ReAct chain before the step cap stops it.
     router = get_llm_router(request)
     effort = await router.effective_reasoning_effort("agent.turn")
+    # The resolved model's total context window — the denominator for the PWA's live
+    # context-usage meter (a local model's is the gateway's `-c`, mainly what this
+    # serves). Resolved once here and passed to the loop, which stamps it on each
+    # UsageEvent so the meter never has to know the route.
+    context_window = await router.context_window("agent.turn")
     loop = AgentLoop(
         router,
         get_agent_registry(request),
@@ -396,6 +401,10 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
         # the assistant turn's "Worked" block, persisted with the transcript.
         steps: dict[str, dict] = {}
         order: list[str] = []
+        # Whether the completed-turn record (the `done` path) already ran. A turn the
+        # owner Stops — or one a dropped connection cuts — never reaches `done`, so this
+        # stays False and the `finally` persists whatever partial answer streamed.
+        persisted = False
         try:
             async for event in loop.run_stream(
                 session=read_ctx,
@@ -411,6 +420,7 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
                 # none to contrast with, so suppress it.
                 general_knowledge_label=profile.reads_knowledge_base,
                 here=here,
+                context_window=context_window,
             ):
                 if event.type == "text_delta":
                     answer.append(event.text)
@@ -472,6 +482,7 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
                     "".join(reasoning),
                 )
                 await _maybe_autotitle(request, owner_ctx, sessions, session, body.message, answer)
+                persisted = True
         except asyncio.CancelledError:
             # The client disconnected mid-stream (closed the PWA, lost signal) — the turn never
             # completed, so it closes as `error` (the constraint-valid terminal; the runs table
@@ -484,6 +495,34 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
             log.warning("agent.chat_failed", run_id=run_id, error=repr(exc))
             yield b'data: {"type": "done", "stop_reason": "error"}\n\n'
         finally:
+            # A Stop (the owner aborts the fetch) or a dropped connection cuts the
+            # stream before `done`: if the model already streamed a partial answer (or
+            # ran tools), persist that partial turn so reopening the chat replays what
+            # the owner saw instead of losing it. Same shield+suppress as the run-log
+            # close below — the cancellation that got us here must not interrupt the
+            # write, and a write failure must not mask the outcome. Episodic memory and
+            # auto-titling stay on the `done` path only: a half-finished answer
+            # shouldn't seed the agent's recall or name the chat.
+            if (
+                not persisted
+                and stop_reason == "disconnected"
+                and ("".join(answer).strip() or order)
+            ):
+                with contextlib.suppress(Exception):
+                    await asyncio.shield(
+                        _record_transcript(
+                            request,
+                            owner_ctx,
+                            attachment_ctx,
+                            session,
+                            run_id,
+                            body.message,
+                            answer,
+                            [steps[i] for i in order],
+                            body.attachment_ids,
+                            "".join(reasoning),
+                        )
+                    )
             # Shield the closing UPDATE so a disconnect-driven cancellation can't
             # interrupt it and strand the run in 'running'; suppress so a write
             # failure never masks the real outcome (recording must not break a turn).

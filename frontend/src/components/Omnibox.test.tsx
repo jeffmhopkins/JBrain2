@@ -220,6 +220,75 @@ describe("Omnibox", () => {
     await waitFor(() => expect(screen.getByLabelText("Composer")).toHaveValue("read this"));
   });
 
+  it("turns the send button into Stop while a turn streams, and aborts on tap", () => {
+    const onStop = vi.fn();
+    render(
+      <Omnibox
+        seg={{ row: "main", mode: "fullbrain" }}
+        onSegChange={vi.fn()}
+        onSend={vi.fn()}
+        onConversation={vi.fn()}
+        onOpenLauncher={vi.fn()}
+        busy
+        onStop={onStop}
+      />,
+    );
+    // While busy the Send button is gone and a Stop button stands in its place.
+    expect(screen.queryByRole("button", { name: "Send" })).not.toBeInTheDocument();
+    const stop = screen.getByRole("button", { name: "Stop generating" });
+    expect(stop).not.toBeDisabled();
+    fireEvent.click(stop);
+    expect(onStop).toHaveBeenCalledTimes(1);
+  });
+
+  it("renders the live context-usage meter from the usage prop", () => {
+    render(
+      <Omnibox
+        seg={{ row: "main", mode: "fullbrain" }}
+        onSegChange={vi.fn()}
+        onSend={vi.fn()}
+        onConversation={vi.fn()}
+        onOpenLauncher={vi.fn()}
+        contextUsage={{ used: 8192, window: 32768 }}
+      />,
+    );
+    // 8192 / 32768 = 25%; the bar fills to match and the label reads compactly.
+    const meter = screen.getByRole("status", {
+      name: /Context used: 8192 of 32768 tokens \(25%\)/,
+    });
+    expect(meter).toHaveTextContent("8.2k/33k · 25%");
+    expect(meter.querySelector(".ctx-fill")).toHaveStyle({ width: "25%" });
+  });
+
+  it("warms the context meter toward warning as the window fills", () => {
+    const { rerender } = render(
+      <Omnibox
+        seg={{ row: "main", mode: "fullbrain" }}
+        onSegChange={vi.fn()}
+        onSend={vi.fn()}
+        onConversation={vi.fn()}
+        onOpenLauncher={vi.fn()}
+        contextUsage={{ used: 30000, window: 32768 }}
+      />,
+    );
+    // ~92% → the high/over-budget register.
+    expect(document.querySelector(".ctx-meter.ctx-high")).toBeInTheDocument();
+
+    rerender(
+      <Omnibox
+        seg={{ row: "main", mode: "fullbrain" }}
+        onSegChange={vi.fn()}
+        onSend={vi.fn()}
+        onConversation={vi.fn()}
+        onOpenLauncher={vi.fn()}
+        contextUsage={{ used: 25000, window: 32768 }}
+      />,
+    );
+    // ~76% → the mid register, not yet high.
+    expect(document.querySelector(".ctx-meter.ctx-mid")).toBeInTheDocument();
+    expect(document.querySelector(".ctx-meter.ctx-high")).not.toBeInTheDocument();
+  });
+
   it("allows a files-only conversational send (caption optional)", () => {
     const onConversation = vi.fn(() => Promise.resolve(true));
     render(
