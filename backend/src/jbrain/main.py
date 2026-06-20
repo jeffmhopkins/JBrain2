@@ -35,6 +35,7 @@ from jbrain.api import (
     family,
     feed,
     health,
+    images,
     live,
     locations,
     member,
@@ -79,6 +80,7 @@ from jbrain.locations.live import LiveBroadcaster, live_feeder
 from jbrain.locations.pairing import SqlPairingRepo
 from jbrain.locations.ratelimit import TokenBucket
 from jbrain.locations.viewscope import SqlViewScopeRepo
+from jbrain.models.images import GeneratedImageRepo
 from jbrain.notes.repo import SqlNotesRepo
 from jbrain.push import SqlFcmTokenRepo
 from jbrain.queue import SYSTEM_CTX, PgJobQueue
@@ -158,6 +160,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.lists_repo = SqlListsRepo(maker)
         app.state.appointments_repo = SqlAppointmentsRepo(maker)
         app.state.blob_store = FsBlobStore(settings.blob_dir)
+        app.state.generated_image_repo = GeneratedImageRepo()
         app.state.backup_shelf = FsBackupShelf(settings.backups_dir)
         app.state.job_queue = PgJobQueue(maker)
         # The action registry the emergency-trigger control resolves a sweep's
@@ -314,6 +317,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(devices.router, prefix="/api")
     app.include_router(family.router, prefix="/api")
     app.include_router(feed.router, prefix="/api")
+    app.include_router(images.generated_router, prefix="/api")
     app.include_router(lists_api.router, prefix="/api")
     app.include_router(llm_settings_api.router, prefix="/api")
     app.include_router(locations.router, prefix="/api")
