@@ -300,22 +300,22 @@
         {
           id: "qwen3-vl-30b", label: "Qwen3-VL 30B · vision", quant: "Q8_0",
           sizeGb: 32, chips: [["vision", "vision"], ["tools", "tools"]],
-          window: 32768, state: "loaded", kvGbPer128k: 6.0, color: "#8fbc9a",
+          window: 32768, state: "loaded", kvGbPer128k: 6.0, hsl: [28, 80, 58], // orange
         },
         {
           id: "gpt-oss-120b", label: "GPT-OSS 120B · reasoning", quant: "MXFP4",
           sizeGb: 59, chips: [["reason", "reasoning"], ["tools", "tools"]],
-          window: 131072, state: "loaded", kvGbPer128k: 4.5, color: "#7fa7c9",
+          window: 131072, state: "loaded", kvGbPer128k: 4.5, hsl: [46, 82, 60], // yellow
         },
         {
           id: "qwen3-30b-a3b", label: "Qwen3 30B · lightweight", quant: "Q4_K_M",
           sizeGb: 18, chips: [["tools", "tools"]],
-          window: 32768, state: "loaded", kvGbPer128k: 3.2, color: "#a493c9",
+          window: 32768, state: "loaded", kvGbPer128k: 3.2, hsl: [138, 45, 56], // green
         },
         {
           id: "qwen3-next-80b-a3b", label: "Qwen3-Next 80B · reasoning", quant: "UD-Q4_K_XL",
           sizeGb: 46, chips: [["reason", "reasoning"], ["tools", "tools"]],
-          window: 32768, state: "idle", kvGbPer128k: 5.0, color: "#c9a36a",
+          window: 32768, state: "idle", kvGbPer128k: 5.0, hsl: [165, 40, 52], // deep green
         },
       ];
       const barName = (m) => m.label.split(" ")[0]; // family name for the bar segment
@@ -438,10 +438,15 @@
           seg.title = `${m.label} — ${m.sizeGb} GB weights + ${kv} GB KV @ ${fmtK(
             m.window
           )} (${m.state})`;
-          const ctxShade = `color-mix(in srgb, ${m.color} 40%, #ffffff)`;
+          // Dual gradients: weights at base lightness, context lighter; each block
+          // sweeps the hue ±D for a bit of depth.
+          const [h, s, l] = m.hsl;
+          const D = 14;
+          const grad = (lt) =>
+            `linear-gradient(90deg, hsl(${h - D} ${s}% ${lt}%), hsl(${h + D} ${s}% ${lt}%))`;
           seg.innerHTML = `
-            <div class="mem2-w" style="background:${m.color};width:${(m.sizeGb / res) * 100}%"></div>
-            <div class="mem2-c" style="background:${ctxShade};width:${(kv / res) * 100}%"></div>
+            <div class="mem2-w" style="background:${grad(l)};width:${(m.sizeGb / res) * 100}%"></div>
+            <div class="mem2-c" style="background:${grad(Math.min(l + 18, 88))};width:${(kv / res) * 100}%"></div>
             <span class="mem2-label">${barName(m)} <span class="gb">${res.toFixed(0)}G</span></span>`;
           bar.appendChild(seg);
         }
