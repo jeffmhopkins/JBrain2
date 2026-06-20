@@ -12,6 +12,7 @@ from typing import cast
 import pytest
 from fastapi.testclient import TestClient
 
+from jbrain.agent.attachments import AttachmentInfo
 from jbrain.agent.clock import _CLOCK_FRAME
 from jbrain.agent.contracts import EntityRef, NoteSource, ProposalRef, ToolSpec, ViewPayload
 from jbrain.agent.loop import ToolOutput
@@ -129,9 +130,38 @@ class FakeTranscript:
                 "reasoning": reasoning,
             }
         )
+        # Hand back a user-turn id so the endpoint can bind the turn's attachments.
+        return f"turn-{len(self.recorded)}"
 
     async def load(self, ctx, session_id):  # type: ignore[no-untyped-def]
         return self.turns.get(session_id, [])
+
+
+class FakeChatBlobs:
+    """An in-memory blob store keyed by sha256, for the /chat attachment path."""
+
+    def __init__(self) -> None:
+        self.data: dict[str, bytes] = {}
+
+    async def get(self, sha256):  # type: ignore[no-untyped-def]
+        return self.data[sha256]
+
+
+class FakeChatAttachments:
+    """Just `get` (RLS modeled by membership) + `bind_to_turn`, recording binds."""
+
+    def __init__(self) -> None:
+        self.rows: dict[str, AttachmentInfo] = {}
+        self.bound: list[tuple[tuple[str, ...], list[str], str]] = []
+
+    def add(self, info: AttachmentInfo) -> None:
+        self.rows[info.id] = info
+
+    async def get(self, ctx, attachment_id):  # type: ignore[no-untyped-def]
+        return self.rows.get(attachment_id)
+
+    async def bind_to_turn(self, ctx, attachment_ids, turn_id):  # type: ignore[no-untyped-def]
+        self.bound.append((tuple(ctx.domain_scopes), list(attachment_ids), turn_id))
 
 
 def registry_with_tool(name, handler) -> ToolRegistry:  # type: ignore[no-untyped-def]
@@ -161,6 +191,16 @@ def transcript() -> FakeTranscript:
     return FakeTranscript()
 
 
+@pytest.fixture
+def chat_attachments() -> FakeChatAttachments:
+    return FakeChatAttachments()
+
+
+@pytest.fixture
+def chat_blobs() -> FakeChatBlobs:
+    return FakeChatBlobs()
+
+
 def stream_router(turns: list[LlmTurn], stream_chunks: list[list[str]]) -> LlmRouter:
     fake = FakeLlmClient(turns=turns, stream_chunks=stream_chunks)
     return LlmRouter({"xai": fake}, {"agent.turn": ("xai", "grok-4.3")})
@@ -180,6 +220,8 @@ def client(
     sessions_store: FakeAgentSessions,
     runlog: FakeRunLog,
     transcript: FakeTranscript,
+    chat_attachments: FakeChatAttachments,
+    chat_blobs: FakeChatBlobs,
 ) -> Iterator[TestClient]:
     settings = Settings(
         secure_cookies=False,
@@ -191,6 +233,8 @@ def client(
         app.state.agent_sessions = sessions_store
         app.state.agent_runlog = runlog
         app.state.agent_transcript = transcript
+        app.state.turn_attachments = chat_attachments
+        app.state.blob_store = chat_blobs
         app.state.agent_registry = ToolRegistry([])  # no tools: the model answers directly
         app.state.settings_store = FakeSettingsStore()  # /chat reads owner_timezone
         app.state.llm_router = stream_router(
@@ -626,6 +670,74 @@ def test_chat_history_is_replayed_into_the_turn(
         "UserMessage",
     ]
     assert sent[-1].text == "and the second?"
+
+
+def test_chat_attachments_ride_the_final_user_message(
+    client: TestClient,
+    repo: FakeAuthRepo,
+    sessions_store: FakeAgentSessions,
+    chat_attachments: FakeChatAttachments,
+    chat_blobs: FakeChatBlobs,
+) -> None:
+    import base64
+
+    login(client, repo)
+    sessions_store.add(AgentSessionInfo("sess-1", "", "active", ("health",), (), NOW, NOW))
+    router: LlmRouter = client.app.state.llm_router  # type: ignore[attr-defined]
+    fake = cast(FakeLlmClient, router._clients["xai"])
+    chat_blobs.data["sha-img"] = b"\x89PNGdata"
+    chat_blobs.data["sha-txt"] = b"some notes"
+    chat_attachments.add(AttachmentInfo("a1", "scan.png", "image/png", 8, "sha-img", "health"))
+    chat_attachments.add(AttachmentInfo("a2", "notes.txt", "text/plain", 10, "sha-txt", "health"))
+
+    resp = client.post(
+        "/api/chat",
+        json={"session_id": "sess-1", "message": "what is this?", "attachment_ids": ["a1", "a2"]},
+    )
+    assert resp.status_code == 200
+    # The FINAL user message carries the image and the appended text-file block.
+    final = fake.stream_calls[0]["messages"][-1]
+    assert type(final).__name__ == "UserMessage"
+    assert [im.media_type for im in final.images] == ["image/png"]
+    assert base64.b64decode(final.images[0].data) == b"\x89PNGdata"
+    assert "what is this?" in final.text
+    assert "[notes.txt]:" in final.text and "some notes" in final.text
+
+
+def test_chat_binds_attachments_to_the_user_turn(
+    client: TestClient,
+    repo: FakeAuthRepo,
+    sessions_store: FakeAgentSessions,
+    chat_attachments: FakeChatAttachments,
+    chat_blobs: FakeChatBlobs,
+) -> None:
+    login(client, repo)
+    sessions_store.add(AgentSessionInfo("sess-1", "", "active", ("health",), (), NOW, NOW))
+    chat_blobs.data["sha-img"] = b"img"
+    chat_attachments.add(AttachmentInfo("a1", "scan.png", "image/png", 3, "sha-img", "health"))
+
+    client.post(
+        "/api/chat",
+        json={"session_id": "sess-1", "message": "hi", "attachment_ids": ["a1"]},
+    )
+    # The ids were bound to the recorded USER turn, under the SESSION's narrowed scope.
+    assert chat_attachments.bound == [(("health",), ["a1"], "turn-1")]
+
+
+def test_chat_without_attachments_sends_no_images_and_binds_nothing(
+    client: TestClient,
+    repo: FakeAuthRepo,
+    sessions_store: FakeAgentSessions,
+    chat_attachments: FakeChatAttachments,
+) -> None:
+    login(client, repo)
+    sessions_store.add(AgentSessionInfo("sess-1", "", "active", ("general",), (), NOW, NOW))
+    router: LlmRouter = client.app.state.llm_router  # type: ignore[attr-defined]
+    fake = cast(FakeLlmClient, router._clients["xai"])
+
+    client.post("/api/chat", json={"session_id": "sess-1", "message": "hi"})
+    assert fake.stream_calls[0]["messages"][-1].images == ()
+    assert chat_attachments.bound == []
 
 
 def test_chat_appointment_id_rides_the_turn_not_the_transcript(

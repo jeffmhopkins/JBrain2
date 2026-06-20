@@ -15,6 +15,7 @@ from sqlalchemy.pool import NullPool
 
 from jbrain.agent.attachments import TurnAttachmentRepo, domain_for_session
 from jbrain.agent.session import AgentSessionRepo, read_context
+from jbrain.agent.transcript_store import AgentTranscript
 from jbrain.auth import service
 from jbrain.auth.repo import SqlAuthRepo
 from jbrain.db.session import SessionContext, scoped_session
@@ -152,6 +153,84 @@ async def test_list_for_session_only_returns_in_scope_rows(
     assert len(await repo.list_for_session(health, session_id)) == 1
     # A general-only read of the same session sees no health-scoped file.
     assert await repo.list_for_session(general, session_id) == []
+
+
+async def test_bind_to_turn_and_transcript_replay(
+    repo: TurnAttachmentRepo, sessions: AgentSessionRepo, maker: async_sessionmaker
+) -> None:
+    # A user turn's attachments bind to its AgentTurn row and replay on load.
+    pid = await _owner_principal(maker)
+    owner = SessionContext(principal_id=pid, principal_kind="owner")
+    health = read_context(pid, ("health",))
+    session_id = await _session(sessions, owner, ("health",))
+    att = await repo.add(
+        health,
+        session_id,
+        sha256="ee" * 32,
+        filename="scan.png",
+        media_type="image/png",
+        size_bytes=4,
+        domain_code="health",
+    )
+    transcript = AgentTranscript(maker, repo)
+    user_turn_id = await transcript.record_exchange(
+        owner,
+        session_id=session_id,
+        run_id=None,
+        user_text="what is this?",
+        assistant_text="a scan",
+        tools=[],
+    )
+    await repo.bind_to_turn(health, [att.id], user_turn_id)
+
+    # list_for_turns returns the bound row keyed by its user turn id.
+    by_turn = await repo.list_for_turns(health, [user_turn_id])
+    assert [a.id for a in by_turn[user_turn_id]] == [att.id]
+
+    # The transcript replays the file on the USER turn; the assistant turn carries none.
+    turns = await transcript.load(owner, session_id)
+    assert [t.role for t in turns] == ["user", "assistant"]
+    assert [a.filename for a in turns[0].attachments] == ["scan.png"]
+    assert turns[1].attachments == []
+
+
+async def test_turn_cannot_reference_an_out_of_scope_attachment(
+    repo: TurnAttachmentRepo, sessions: AgentSessionRepo, maker: async_sessionmaker
+) -> None:
+    # An attachment uploaded under one firewall cannot be bound to a turn through a
+    # session narrowed to a DIFFERENT scope: RLS makes the row invisible to the bind,
+    # so the UPDATE matches nothing and the turn never references the foreign file.
+    pid = await _owner_principal(maker)
+    owner = SessionContext(principal_id=pid, principal_kind="owner")
+    health = read_context(pid, ("health",))
+    general = read_context(pid, ("general",))
+    session_id = await _session(sessions, owner, ("health",))
+    att = await repo.add(
+        health,
+        session_id,
+        sha256="ff" * 32,
+        filename="labs.png",
+        media_type="image/png",
+        size_bytes=4,
+        domain_code="health",
+    )
+    transcript = AgentTranscript(maker, repo)
+    user_turn_id = await transcript.record_exchange(
+        owner,
+        session_id=session_id,
+        run_id=None,
+        user_text="smuggle?",
+        assistant_text="no",
+        tools=[],
+    )
+    # A general-scoped bind can't see the health-scoped row, so nothing is bound.
+    await repo.bind_to_turn(general, [att.id], user_turn_id)
+    assert await repo.list_for_turns(health, [user_turn_id]) == {}
+    # The health-scoped bind (the legitimate one) does attach it.
+    await repo.bind_to_turn(health, [att.id], user_turn_id)
+    assert [a.id for a in (await repo.list_for_turns(health, [user_turn_id]))[user_turn_id]] == [
+        att.id
+    ]
 
 
 def test_domain_for_session_rule() -> None:

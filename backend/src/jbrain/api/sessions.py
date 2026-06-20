@@ -144,6 +144,13 @@ async def delete_session(request: Request, principal: PrincipalDep, session_id: 
     return Response(status_code=204)
 
 
+class TurnAttachmentOut(BaseModel):
+    id: str
+    filename: str
+    media_type: str
+    size_bytes: int
+
+
 class TurnOut(BaseModel):
     role: str
     content: str
@@ -153,6 +160,9 @@ class TurnOut(BaseModel):
     # The assistant turn's reasoning trace (gpt-oss/GLM), for the "thinking"
     # disclosure; "" for user turns and non-reasoning models.
     reasoning: str = ""
+    # The chat files a USER turn carried (Stage-2 attachments), replayed as chips;
+    # always empty for an assistant turn.
+    attachments: list[TurnAttachmentOut] = Field(default_factory=list)
 
 
 @router.get("/{session_id}/transcript")
@@ -162,5 +172,20 @@ async def session_transcript(
     """Replay a session's stored conversation so reopening it shows the same chat."""
     turns = await get_agent_transcript(request).load(ctx_for(principal), session_id)
     return [
-        TurnOut(role=t.role, content=t.content, tools=t.tools, reasoning=t.reasoning) for t in turns
+        TurnOut(
+            role=t.role,
+            content=t.content,
+            tools=t.tools,
+            reasoning=t.reasoning,
+            attachments=[
+                TurnAttachmentOut(
+                    id=a.id,
+                    filename=a.filename,
+                    media_type=a.media_type,
+                    size_bytes=a.size_bytes,
+                )
+                for a in t.attachments
+            ],
+        )
+        for t in turns
     ]

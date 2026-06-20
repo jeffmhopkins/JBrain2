@@ -14,7 +14,11 @@ from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
-from jbrain.agent.attachments import TurnAttachmentRepo, domain_for_session
+from jbrain.agent.attachments import (
+    TurnAttachmentRepo,
+    domain_for_session,
+    is_allowed_media_type,
+)
 from jbrain.agent.session import AgentSessionRepo
 from jbrain.api.deps import PrincipalDep, SettingsDep, owner_only
 from jbrain.api.notes import MAX_ATTACHMENT_BYTES, ctx_for
@@ -71,6 +75,11 @@ async def upload_chat_attachment(
     sessions: AgentSessionsDep,
     blobs: BlobStoreDep,
 ) -> AttachmentOut:
+    media_type = file.content_type or "application/octet-stream"
+    # Only the conversion-allowlist types may be stored: anything else has no
+    # chat-send conversion path, so reject it at the door (shared allowlist).
+    if not is_allowed_media_type(media_type):
+        raise HTTPException(status_code=415, detail=f"unsupported media type: {media_type}")
     data = await file.read(MAX_ATTACHMENT_BYTES + 1)
     if len(data) > MAX_ATTACHMENT_BYTES:
         raise HTTPException(status_code=413, detail="attachment too large")
@@ -90,7 +99,7 @@ async def upload_chat_attachment(
         session_id,
         sha256=digest,
         filename=file.filename or "attachment",
-        media_type=file.content_type or "application/octet-stream",
+        media_type=media_type,
         size_bytes=len(data),
         domain_code=domain_code,
     )

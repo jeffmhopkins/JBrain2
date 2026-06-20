@@ -212,6 +212,33 @@ def test_capabilities_reflects_text_only_override(
     assert c.get("/api/chat/capabilities").json() == {"supports_vision": False}
 
 
+def test_upload_rejects_disallowed_media_type(
+    client: tuple[TestClient, FakeAgentSessions, FakeTurnAttachments, FakeSettingsStore],
+) -> None:
+    c, sessions, repo, _ = client
+    sid = sessions.add(("health",))
+    # An executable (or any type off the conversion allowlist) is refused with 415 and
+    # never stored — it would have no chat-send conversion path.
+    resp = c.post(
+        f"/api/sessions/{sid}/attachments",
+        files={"file": ("evil.exe", b"MZ\x90", "application/x-msdownload")},
+    )
+    assert resp.status_code == 415
+    assert repo.added == []  # nothing was written
+
+
+def test_upload_accepts_an_allowlisted_type(
+    client: tuple[TestClient, FakeAgentSessions, FakeTurnAttachments, FakeSettingsStore],
+) -> None:
+    c, sessions, _repo, _ = client
+    sid = sessions.add(("health",))
+    resp = c.post(
+        f"/api/sessions/{sid}/attachments",
+        files={"file": ("notes.md", b"# hi", "text/markdown")},
+    )
+    assert resp.status_code == 201
+
+
 def test_domain_for_session_helper() -> None:
     assert domain_for_session(("health",)) == "health"
     assert domain_for_session(()) == "general"

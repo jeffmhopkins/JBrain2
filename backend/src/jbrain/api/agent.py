@@ -16,7 +16,7 @@ never copied note bodies.
 import asyncio
 import contextlib
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from typing import Annotated, Literal, cast
 
 import structlog
@@ -25,6 +25,8 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from jbrain.agent.agents import agent_for
+from jbrain.agent.attachment_content import MAX_ATTACHMENTS_PER_TURN, build_attachment_content
+from jbrain.agent.attachments import TurnAttachmentRepo
 from jbrain.agent.clock import now_block
 from jbrain.agent.loop import AgentLoop, guardrails_for_effort
 from jbrain.agent.memory import MemoryService
@@ -40,9 +42,10 @@ from jbrain.api.settings import get_settings_store
 from jbrain.auth.service import PrincipalInfo
 from jbrain.db.session import SessionContext
 from jbrain.devices.repo import SqlDeviceRepo
-from jbrain.llm import AssistantMessage, LlmMessage, LlmRouter, UserMessage
+from jbrain.llm import AssistantMessage, LlmImage, LlmMessage, LlmRouter, UserMessage
 from jbrain.locations import LocationToolRefusal, SqlLocationRepo
 from jbrain.locations.presence import presence_block, read_owner_presence
+from jbrain.storage import BlobStore
 
 log = structlog.get_logger()
 
@@ -73,6 +76,11 @@ class ChatRequest(BaseModel):
     # from the phone's current position; turn-local, never persisted.
     latitude: float | None = Field(default=None, ge=-90, le=90)
     longitude: float | None = Field(default=None, ge=-180, le=180)
+    # Pre-uploaded chat files this turn references (Stage-2 attachments): the client
+    # uploads first, then sends the returned ids here. The conversion caps the count
+    # (MAX_ATTACHMENTS_PER_TURN) and binding follows the same truncation, so an
+    # over-cap list is handled gracefully (extra ids dropped) rather than 422'd.
+    attachment_ids: list[str] = Field(default_factory=list)
 
 
 def get_agent_sessions(request: Request) -> AgentSessionRepo:
@@ -101,6 +109,14 @@ def get_skill_service(request: Request) -> SkillService:
 
 def get_agent_transcript(request: Request) -> AgentTranscript:
     return cast(AgentTranscript, request.app.state.agent_transcript)
+
+
+def get_turn_attachments(request: Request) -> TurnAttachmentRepo:
+    return cast(TurnAttachmentRepo, request.app.state.turn_attachments)
+
+
+def get_blob_store(request: Request) -> BlobStore:
+    return cast(BlobStore, request.app.state.blob_store)
 
 
 def get_location_repo(request: Request) -> SqlLocationRepo:
@@ -169,17 +185,21 @@ async def _record_episode(
 async def _record_transcript(
     request: Request,
     owner_ctx: SessionContext,
+    attachment_ctx: SessionContext,
     session: AgentSessionInfo,
     run_id: str,
     question: str,
     answer_parts: list[str],
     tools: list[dict],
+    attachment_ids: list[str],
     reasoning: str = "",
 ) -> None:
-    """Persist the completed exchange so the session replays on reopen. Owner-only
-    (the transcript is owner metadata) and best-effort — never breaks a turn."""
+    """Persist the completed exchange so the session replays on reopen, then bind the
+    turn's attachments to its USER turn row. The transcript is owner metadata (owner
+    ctx); binding runs under the SESSION's narrowed ctx so RLS only ever stamps
+    in-scope rows. Best-effort — never breaks a turn."""
     with contextlib.suppress(Exception):
-        await get_agent_transcript(request).record_exchange(
+        user_turn_id = await get_agent_transcript(request).record_exchange(
             owner_ctx,
             session_id=session.id,
             run_id=run_id,
@@ -188,6 +208,10 @@ async def _record_transcript(
             tools=tools,
             reasoning=reasoning,
         )
+        if attachment_ids:
+            await get_turn_attachments(request).bind_to_turn(
+                attachment_ctx, attachment_ids[:MAX_ATTACHMENTS_PER_TURN], user_turn_id
+            )
 
 
 async def _maybe_autotitle(
@@ -238,12 +262,22 @@ def _model_message(body: ChatRequest) -> str:
     )
 
 
-def _conversation(body: ChatRequest) -> list[LlmMessage]:
+def _conversation(
+    body: ChatRequest, images: Sequence[LlmImage] = (), extra_text: str = ""
+) -> list[LlmMessage]:
+    """The conversation to feed the loop. The turn's attachments ride ONLY the FINAL
+    user message: its `images` carry the vision content and `extra_text` (PDF text +
+    decoded text files) is appended to the model-facing message. History stays text —
+    past images are deliberately NOT re-sent (they'd re-cost vision every turn), so an
+    attachment lives exactly one turn in the model context."""
     messages: list[LlmMessage] = [
         UserMessage(text=m.content) if m.role == "user" else AssistantMessage(text=m.content)
         for m in body.history
     ]
-    messages.append(UserMessage(text=_model_message(body)))
+    text = _model_message(body)
+    if extra_text:
+        text = f"{text}\n\n{extra_text}"
+    messages.append(UserMessage(text=text, images=tuple(images)))
     return messages
 
 
@@ -296,7 +330,20 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
         guardrails=guardrails_for_effort(effort),
     )
     read_ctx = read_context(principal.id, read_scopes)
-    conversation = _conversation(body)
+    # The turn's attachments are fetched under the SESSION's own scopes — not the
+    # agent's read_scopes (a non-KB agent has none, yet its files were uploaded under
+    # the session's narrowed firewall). This is the context an out-of-scope id can't
+    # be smuggled through: RLS makes a foreign-domain attachment read as missing, so
+    # it is silently skipped rather than reaching the turn (Decision: skip, not 4xx —
+    # a stray id must never break the conversation).
+    attachment_ctx = read_context(principal.id, session.domain_scopes)
+    images, attach_text = await build_attachment_content(
+        get_turn_attachments(request),
+        get_blob_store(request),
+        attachment_ctx,
+        body.attachment_ids,
+    )
+    conversation = _conversation(body, images, attach_text)
     # Loop 2: surface matching active skills as a DATA-framed reference block in the conversation
     # channel (never the system prompt — the data/instruction boundary). Off by default until
     # distillation + owner promotion populate active skills; recall is RLS-scoped (in-scope only).
@@ -414,11 +461,13 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
                 await _record_transcript(
                     request,
                     owner_ctx,
+                    attachment_ctx,
                     session,
                     run_id,
                     body.message,
                     answer,
                     [steps[i] for i in order],
+                    body.attachment_ids,
                     "".join(reasoning),
                 )
                 await _maybe_autotitle(request, owner_ctx, sessions, session, body.message, answer)
