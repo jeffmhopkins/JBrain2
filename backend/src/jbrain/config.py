@@ -93,6 +93,11 @@ class Settings(BaseSettings):
     # Future-GPU escape hatch: any OpenAI-compatible server (the llama-swap gateway
     # the local-llm profile runs, or an Ollama default).
     local_llm_url: str = "http://localhost:11434/v1"
+    # Host-managed localhost ComfyUI for jerv's image generation (Qwen-Image on the
+    # owner's Strix Halo box; docs/IMAGE_GEN_PLAN.md). EMPTY DISABLES the feature:
+    # main.py wires no client and (in Wave G2) the tools never reach the registry —
+    # graceful degrade, mirroring a provider hidden when unkeyed.
+    comfyui_url: str = ""
     # Local models on one box are far slower than the cloud APIs — a 30B+ doing a
     # long OCR/extraction at a few dozen tok/s can run for minutes. The 120s cloud
     # default would time out mid-generation and the job would retry-loop, never
