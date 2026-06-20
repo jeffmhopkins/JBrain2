@@ -12154,3 +12154,169 @@ input.ld-title {
   color: var(--text-3);
   margin-top: 12px;
 }
+
+/* --- JBrain360 member live map: Wave 3 (controls + last actions) -------- */
+/* The card head is now a button (tap to expand the last-actions timeline). */
+.lm-chead {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+}
+.lm-chev {
+  color: var(--text-3);
+  font-size: 16px;
+  transition: transform 0.18s;
+  flex: 0 0 auto;
+}
+.lm-card.open .lm-chev {
+  transform: rotate(180deg);
+}
+
+/* Floating Trail/Heat + day-range controls (single-person only). */
+.lm-ctrls {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: 150px;
+  z-index: 7;
+  border-radius: 14px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+.lm-seg {
+  display: flex;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 3px;
+}
+.lm-seg button {
+  flex: 1;
+  border: 0;
+  background: transparent;
+  color: var(--text-2);
+  font-size: var(--fs-secondary);
+  font-weight: 600;
+  padding: 7px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.lm-seg button.on {
+  background: var(--location);
+  color: #04100f;
+}
+.lm-range {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+}
+.lm-range-lbl {
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+  min-width: 78px;
+}
+.lm-range-lbl b {
+  color: var(--text);
+}
+.lm-range input {
+  flex: 1;
+  accent-color: var(--location);
+}
+
+/* Quick recent-action chips. */
+.lm-quick {
+  display: flex;
+  gap: 7px;
+  margin-top: 11px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.lm-quick::-webkit-scrollbar {
+  display: none;
+}
+.lm-qpill {
+  flex: 0 0 auto;
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 5px 10px;
+  white-space: nowrap;
+}
+.lm-qpill .in {
+  color: var(--green);
+}
+.lm-qpill .out {
+  color: var(--amber);
+}
+
+/* Expanded last-actions timeline. */
+.lm-more {
+  margin-top: 14px;
+  max-height: 40vh;
+  overflow-y: auto;
+}
+.lm-more-h {
+  font-size: var(--fs-micro);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-3);
+  font-weight: 700;
+  margin-bottom: 8px;
+}
+.lm-tl {
+  position: relative;
+  padding-left: 20px;
+}
+.lm-tl::before {
+  content: "";
+  position: absolute;
+  left: 5px;
+  top: 4px;
+  bottom: 6px;
+  width: 2px;
+  background: var(--border);
+}
+.lm-ev {
+  position: relative;
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  padding: 6px 0;
+}
+.lm-ev-mk {
+  position: absolute;
+  left: -18px;
+  top: 9px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 2px solid var(--bg);
+  background: var(--text-3);
+}
+.lm-ev.in .lm-ev-mk {
+  background: var(--green);
+}
+.lm-ev.out .lm-ev-mk {
+  background: var(--amber);
+}
+.lm-ev-t {
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+  flex: 0 0 60px;
+}
+.lm-ev-d {
+  font-size: var(--fs-secondary);
+  color: var(--text);
+}
+.lm-ev-day {
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+}
