@@ -22,7 +22,6 @@ import androidx.core.content.ContextCompat
 class DashboardActivity : Activity() {
     private lateinit var web: WebView
     private lateinit var launcher: SessionLauncher
-    private val base = BuildConfig.DASHBOARD_BASE
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -38,18 +37,18 @@ class DashboardActivity : Activity() {
             // The dashboard is https; never let an http subresource load into it.
             mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
         }
-        // Pin navigation to the dashboard origin; no JavaScript interface is added,
-        // so page script can never reach native APIs.
-        web.webViewClient = LockedWebViewClient(base)
+        // No JavaScript interface is registered, so page script can never reach
+        // native APIs. The navigation-origin lock is pinned per load (the paired
+        // server isn't known until launch).
         setContentView(web)
         launcher = SessionLauncher(KeystoreCredentialStore(this), SessionMinter())
         relaunch()
     }
 
-    /** Read the key, mint off the main thread, then apply on the UI thread. */
+    /** Read the paired server + key, mint off the main thread, apply on the UI thread. */
     private fun relaunch() {
         Thread {
-            val decision = launcher.launch(base)
+            val decision = launcher.launch()
             runOnUiThread { apply(decision) }
         }.start()
     }
@@ -57,6 +56,8 @@ class DashboardActivity : Activity() {
     private fun apply(decision: LaunchDecision) {
         when (decision) {
             is LaunchDecision.Load -> {
+                // Pin navigation to the paired dashboard's own origin before loading.
+                web.webViewClient = LockedWebViewClient(decision.url)
                 CookieManager.getInstance().apply {
                     setAcceptCookie(true)
                     setCookie(decision.url, decision.setCookie)

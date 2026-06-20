@@ -5,16 +5,20 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-private class FakeStore(initial: String?) : CredentialStore {
-    var key: String? = initial
-    var config: String? = if (initial == null) null else "{}"
+private class FakeStore(server: String?, initialKey: String?) : CredentialStore {
+    var server: String? = server
+    var key: String? = initialKey
+    var config: String? = if (initialKey == null) null else "{}"
+    override fun serverBase(): String? = server
     override fun deviceKey(): String? = key
     override fun owntracksConfig(): String? = config
-    override fun save(deviceKey: String, owntracksConfig: String) {
+    override fun save(serverBase: String, deviceKey: String, owntracksConfig: String) {
+        server = serverBase
         key = deviceKey
         config = owntracksConfig
     }
     override fun clear() {
+        server = null
         key = null
         config = null
     }
@@ -29,14 +33,22 @@ class SessionLauncherTest {
         })
 
     @Test
-    fun noStoredKeyRoutesToPairing() {
-        val decision = launcherWith(FakeStore(null), MintOutcome.Unauthorized).launch("https://h.example")
-        assertEquals(LaunchDecision.NeedsPairing, decision)
+    fun noStoredServerOrKeyRoutesToPairing() {
+        assertEquals(
+            LaunchDecision.NeedsPairing,
+            launcherWith(FakeStore(null, null), MintOutcome.Unauthorized).launch(),
+        )
+        // A key but no server (or vice versa) is still "not paired".
+        assertEquals(
+            LaunchDecision.NeedsPairing,
+            launcherWith(FakeStore(null, "k"), MintOutcome.Success("c")).launch(),
+        )
     }
 
     @Test
-    fun successLoadsTheDashWithTheCookie() {
-        val decision = launcherWith(FakeStore("k"), MintOutcome.Success("c=1")).launch("https://h.example")
+    fun successLoadsThePairedServersDash() {
+        val store = FakeStore("https://h.example", "k")
+        val decision = launcherWith(store, MintOutcome.Success("c=1")).launch()
         assertTrue(decision is LaunchDecision.Load)
         decision as LaunchDecision.Load
         assertEquals("https://h.example/dash", decision.url)
@@ -45,16 +57,17 @@ class SessionLauncherTest {
 
     @Test
     fun aRevokedKeyIsClearedAndRoutesToPairing() {
-        val store = FakeStore("stale-key")
-        val decision = launcherWith(store, MintOutcome.Unauthorized).launch("https://h.example")
+        val store = FakeStore("https://h.example", "stale-key")
+        val decision = launcherWith(store, MintOutcome.Unauthorized).launch()
         assertEquals(LaunchDecision.NeedsPairing, decision)
         assertNull(store.key) // self-healed: the dead key is gone
+        assertNull(store.server)
     }
 
     @Test
     fun aTransientFailureKeepsTheKeyForRetry() {
-        val store = FakeStore("good-key")
-        val decision = launcherWith(store, MintOutcome.Failed("timeout")).launch("https://h.example")
+        val store = FakeStore("https://h.example", "good-key")
+        val decision = launcherWith(store, MintOutcome.Failed("timeout")).launch()
         assertTrue(decision is LaunchDecision.Retry)
         assertEquals("good-key", store.key) // not unpaired on a blip
     }

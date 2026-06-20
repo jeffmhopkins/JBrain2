@@ -18,19 +18,26 @@ class KeystoreCredentialStore(context: Context) : CredentialStore {
         EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
     )
 
+    override fun serverBase(): String? = prefs.getString(SERVER, null)
+
     override fun deviceKey(): String? = prefs.getString(KEY, null)
 
     override fun owntracksConfig(): String? = prefs.getString(CONFIG, null)
 
-    override fun save(deviceKey: String, owntracksConfig: String) {
-        prefs.edit().putString(KEY, deviceKey).putString(CONFIG, owntracksConfig).apply()
+    override fun save(serverBase: String, deviceKey: String, owntracksConfig: String) {
+        prefs.edit()
+            .putString(SERVER, serverBase)
+            .putString(KEY, deviceKey)
+            .putString(CONFIG, owntracksConfig)
+            .apply()
     }
 
     override fun clear() {
-        prefs.edit().remove(KEY).remove(CONFIG).apply()
+        prefs.edit().remove(SERVER).remove(KEY).remove(CONFIG).apply()
     }
 
     private companion object {
+        const val SERVER = "server_base"
         const val KEY = "device_key"
         const val CONFIG = "owntracks_config"
     }
