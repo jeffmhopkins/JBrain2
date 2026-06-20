@@ -193,6 +193,11 @@ class ComfyUiImageGen:
         entry = body.get(prompt_id) if isinstance(body, dict) else None
         if not isinstance(entry, dict):
             return None  # not in history yet — still queued/running
+        # A node that errors mid-run leaves an error status and empty outputs;
+        # surface it now rather than polling out the whole timeout budget.
+        status = entry.get("status")
+        if isinstance(status, dict) and status.get("status_str") == "error":
+            raise ImageGenError(f"ComfyUI run failed: {status!r}")
         outputs = entry.get("outputs")
         if not isinstance(outputs, dict):
             return None
@@ -216,4 +221,6 @@ class ComfyUiImageGen:
             resp.raise_for_status()
         except httpx.HTTPError as exc:
             raise ImageGenError("could not fetch the generated image from ComfyUI") from exc
+        if not resp.content:
+            raise ImageGenError("ComfyUI returned an empty image body")
         return resp.content

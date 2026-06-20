@@ -147,6 +147,33 @@ async def test_submit_error_payload_raises_image_gen_error() -> None:
         await _client(handle).generate(GEN)
 
 
+async def test_runtime_error_status_fails_fast_not_timeout() -> None:
+    # A node that errors mid-run leaves status_str="error" + empty outputs; this
+    # must raise ImageGenError immediately, not poll out the whole timeout budget.
+    def handle(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/prompt":
+            return httpx.Response(200, json={"prompt_id": "abc123"})
+        return httpx.Response(
+            200,
+            json={"abc123": {"status": {"status_str": "error"}, "outputs": {}}},
+        )
+
+    with pytest.raises(ImageGenError):
+        await _client(handle).generate(GEN)
+
+
+async def test_empty_view_body_raises_image_gen_error() -> None:
+    def handle(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/prompt":
+            return httpx.Response(200, json={"prompt_id": "abc123"})
+        if request.url.path == "/history/abc123":
+            return httpx.Response(200, json=_HISTORY_DONE)
+        return httpx.Response(200, content=b"")
+
+    with pytest.raises(ImageGenError):
+        await _client(handle).generate(GEN)
+
+
 async def test_http_error_raises_image_gen_error() -> None:
     def handle(request: httpx.Request) -> httpx.Response:
         return httpx.Response(500)
