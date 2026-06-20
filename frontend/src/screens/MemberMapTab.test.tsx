@@ -29,6 +29,8 @@ function subject(over: Partial<MemberSubject> = {}): MemberSubject {
     last_seen: null,
     battery_pct: null,
     connection: null,
+    latitude: null,
+    longitude: null,
     ...over,
   };
 }

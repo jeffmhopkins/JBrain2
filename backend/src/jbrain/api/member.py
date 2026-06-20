@@ -58,6 +58,10 @@ class MemberSubjectOut(BaseModel):
     last_seen: str | None
     battery_pct: int | None
     connection: str | None
+    # The latest fix's coordinate (for the map pin); null until the first fix. Scoped
+    # to self + family group by the location_fixes RLS, exactly like last_seen.
+    latitude: float | None
+    longitude: float | None
 
     @classmethod
     def of(cls, m: MemberSubject) -> "MemberSubjectOut":
@@ -67,6 +71,8 @@ class MemberSubjectOut(BaseModel):
             last_seen=m.last_seen.isoformat() if m.last_seen else None,
             battery_pct=m.battery_pct,
             connection=m.connection,
+            latitude=m.latitude,
+            longitude=m.longitude,
         )
 
 
@@ -93,7 +99,25 @@ async def roster(request: Request, principal: MemberDep) -> list[MemberSubjectOu
     """The subjects this member may see (itself + its family group) with each one's
     label and latest activity — the map's device-picker + presence roster."""
     ctx = device_context(principal.id, principal.subject_id)
-    rows = await _repo(request).member_roster(ctx, viewer_subject_id=principal.subject_id)
+    repo = _repo(request)
+    rows = await repo.member_roster(ctx, viewer_subject_id=principal.subject_id)
+    # The roster now carries each visible subject's coordinate (the map pin), so it is
+    # a who-saw-whom location read (0069) — audit each OTHER subject whose position we
+    # surfaced (not the viewer's own pin, not a subject with no fix). Best-effort: an
+    # audit-write failure is logged, never a 500 on the read.
+    for m in rows:
+        if m.subject_id == principal.subject_id or m.latitude is None:
+            continue
+        try:
+            await repo.record_view(
+                ctx,
+                viewer_principal_id=principal.id,
+                viewer_subject_id=principal.subject_id,
+                target_subject_id=m.subject_id,
+                path="roster",
+            )
+        except Exception as exc:  # noqa: BLE001 - audit failure is logged, never a 500
+            log.warning("member.audit_failed", error=repr(exc))
     return [MemberSubjectOut.of(m) for m in rows]
 
 

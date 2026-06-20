@@ -176,15 +176,21 @@ class RosterEntry:
 
 @dataclass(frozen=True)
 class MemberSubject:
-    """One subject a member may see, for the dashboard device-picker + presence
-    roster: its label and latest activity. `last_seen` is None until the subject's
-    first fix lands (the subject still appears so the picker can list it)."""
+    """One subject a member may see, for the dashboard's map + presence roster: its
+    label and latest activity, including the latest fix's coordinate so the map can
+    pin everyone without a per-subject round-trip. `last_seen`/`latitude`/`longitude`
+    are None until the subject's first fix lands (the subject still appears so the
+    picker can list it). The coordinate is scoped exactly like `last_seen` — the
+    `location_fixes` RLS (0067) restricts the latest-fix join to self + family group,
+    so a non-visible subject's position can never surface here."""
 
     subject_id: str
     label: str
     last_seen: datetime | None
     battery_pct: int | None
     connection: str | None
+    latitude: float | None
+    longitude: float | None
 
 
 class SqlLocationRepo:
@@ -295,11 +301,12 @@ class SqlLocationRepo:
                         "  SELECT subject_id, display_name FROM app.visible_subjects(:viewer)"
                         "), latest AS ("
                         "  SELECT DISTINCT ON (subject_id) subject_id, captured_at,"
-                        "    battery_pct, connection"
+                        "    battery_pct, connection, latitude, longitude"
                         "  FROM app.location_fixes ORDER BY subject_id, captured_at DESC"
                         ")"
                         " SELECT v.subject_id::text AS sid, v.display_name AS label,"
-                        "   l.captured_at AS last_seen, l.battery_pct, l.connection"
+                        "   l.captured_at AS last_seen, l.battery_pct, l.connection,"
+                        "   l.latitude, l.longitude"
                         " FROM vis v LEFT JOIN latest l ON l.subject_id = v.subject_id"
                         " ORDER BY v.display_name"
                     ),
@@ -313,6 +320,8 @@ class SqlLocationRepo:
                 last_seen=r.last_seen,
                 battery_pct=r.battery_pct,
                 connection=r.connection,
+                latitude=r.latitude,
+                longitude=r.longitude,
             )
             for r in rows
         ]
