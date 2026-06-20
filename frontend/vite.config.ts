@@ -4,6 +4,17 @@ import { defineConfig } from "vite";
 import { VitePWA } from "vite-plugin-pwa";
 
 export default defineConfig({
+  // Two entries built into one /srv/www: the owner app (index.html) and the
+  // member dashboard (dash.html, served at /dash inside the forked app's
+  // WebView). Assets are shared and hash-named, so both pick up a new deploy.
+  build: {
+    rollupOptions: {
+      input: {
+        main: "index.html",
+        dash: "dash.html",
+      },
+    },
+  },
   plugins: [
     react(),
     VitePWA({

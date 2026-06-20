@@ -11576,3 +11576,43 @@ input.ld-title {
 .presence-toast.stale .presence-toast-action {
   color: var(--warn);
 }
+
+/* --- JBrain360 member dashboard (/dash) --------------------------------- */
+/* A standalone location-only surface in the forked app's WebView. Tokens only;
+   reuses .seg-row/.seg and .loc-card for tabs and roster cards. */
+.dash-frame {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 100dvh;
+  padding: max(env(safe-area-inset-top), 12px) 12px env(safe-area-inset-bottom);
+  background: var(--bg);
+  color: var(--text);
+}
+
+.dash-center {
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+}
+
+.dash-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.dash-title {
+  font-size: var(--fs-screen);
+  font-weight: 600;
+  color: var(--location);
+}
+
+.dash-quiet {
+  font-size: var(--fs-secondary);
+  color: var(--text-2);
+}
+
+.dash-pad {
+  padding: 16px 4px;
+}
