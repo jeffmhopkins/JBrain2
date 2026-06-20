@@ -35,3 +35,41 @@ jobs:
       # assembleDebug proves the APK builds; testDebugUnitTest runs the JVM unit
       # suite. On-device (emulator) tests need KVM and are out of CI scope.
       - run: ./gradlew assembleDebug testDebugUnitTest --no-daemon
+
+  # On main, rebuild the debug APK with the deployment's URL and publish it as the
+  # rolling `android-latest` pre-release asset, so it can be sideloaded from a stable
+  # URL without piling binaries into git history. Only after build/test passes.
+  publish-apk:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: android
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: android-actions/setup-android@v3
+      - working-directory: android
+        run: sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+      # Bake the deployment URL from the DASHBOARD_BASE repo variable (Settings →
+      # Secrets and variables → Actions → Variables). Unset → the placeholder, so
+      # the published APK only works once that variable is set.
+      - working-directory: android
+        run: ./gradlew assembleDebug -PdashboardBase="${{ vars.DASHBOARD_BASE }}" --no-daemon
+      - run: cp android/app/build/outputs/apk/debug/app-debug.apk jbrain360-debug.apk
+      # Create-or-update the `android-latest` pre-release and replace its asset, so
+      # the download URL is always
+      # …/releases/download/android-latest/jbrain360-debug.apk.
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: android-latest
+          name: JBrain360 debug APK (latest)
+          body: >
+            Auto-built from the latest main. Debug-signed; the dashboard URL is baked
+            from the DASHBOARD_BASE repo variable. Android 8.0+ — enable "install
+            unknown apps" to sideload.
+          prerelease: true
+          files: jbrain360-debug.apk
