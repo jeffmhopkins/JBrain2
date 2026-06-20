@@ -1,18 +1,21 @@
-"""The basemap tile proxy endpoint (owner-only).
+"""The basemap tile proxy endpoint (any authenticated session).
 
 The location map's Leaflet layer points here, so tiles reach the phone only from
-this box. Owner-gated: only the owner's session triggers an upstream fetch, and a
-miss/disabled/out-of-range request 404s so the map degrades to the schematic.
+this box — never a third-party tile host. Gated to a valid session (owner OR a
+member/device cookie) so the member dashboard's map renders too; the basemap is
+public OSM imagery, while the sensitive fixes stay RLS-scoped elsewhere. An
+anonymous request 401s; a miss/disabled/out-of-range request 404s so the map
+degrades to the schematic.
 """
 
 from typing import cast
 
 from fastapi import APIRouter, Depends, Request, Response
 
-from jbrain.api.deps import owner_only
+from jbrain.api.deps import current_principal
 from jbrain.tiles import TileService
 
-router = APIRouter(prefix="/tiles", dependencies=[Depends(owner_only)])
+router = APIRouter(prefix="/tiles", dependencies=[Depends(current_principal)])
 
 # Tiles are stable map data; let the browser + service worker hold them so a pan
 # back doesn't re-hit the proxy. 30 days, like a hashed asset but not immutable.
