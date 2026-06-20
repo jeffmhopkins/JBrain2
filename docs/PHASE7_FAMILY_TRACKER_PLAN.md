@@ -366,6 +366,13 @@ service-account bootstrap (non-negotiable #8).
   hook; keystore backup/escrow runbook; pin-rotation runbook. *(No in-app Leave
   button; the Android-mandated tracking notification covers "you're being
   tracked.")*
+  Sliced (the 30-day cap [M4b] + `view_audit` [M3a] already shipped): **M7a** owner
+  family-membership management — `SqlFamilyRepo` (get-or-create the v1 group,
+  add/remove/list members) + owner `GET/POST/DELETE /api/family/members`; no new
+  table (owner-only `view_scope` RLS is the barrier). Proven against PostGIS:
+  add→mutual `viewer_may_see`, remove→ends, writes owner-only, add idempotent ✓;
+  **M7b** member revoke (`cred_epoch` bump + MQTT-session kill + membership
+  tombstone); **M7c** encryption-at-rest + the Caddy/keystore/pin-rotation runbooks.
 - **v1.1 — UnifiedPush/ntfy** for de-Googled phones (additive sender behind the
   push-backend-agnostic interface).
 
