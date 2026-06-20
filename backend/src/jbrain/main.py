@@ -32,6 +32,7 @@ from jbrain.api import (
     auth,
     chat_attachments,
     devices,
+    family,
     feed,
     health,
     live,
@@ -67,6 +68,7 @@ from jbrain.connectors.repo import SqlConnectorCache
 from jbrain.connectors.service import ConnectorService
 from jbrain.devices.repo import SqlDeviceRepo
 from jbrain.embed import TeiEmbedClient
+from jbrain.family import SqlFamilyRepo
 from jbrain.geocode import NominatimReverseClient
 from jbrain.lists.repo import SqlListsRepo
 from jbrain.llm import build_router
@@ -121,6 +123,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.view_scope_repo = SqlViewScopeRepo(maker)
         app.state.pairing_repo = SqlPairingRepo(maker)
         app.state.fcm_token_repo = SqlFcmTokenRepo(maker)
+        app.state.family_repo = SqlFamilyRepo(maker)
         # The content-free poke notifier (M6). None until a Firebase project +
         # service-account credentials are configured (the FcmNotifier + its OAuth
         # token provider are wired at deploy / with the Android receiver); a None
@@ -294,6 +297,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(chat_attachments.router, prefix="/api")
     app.include_router(chat_attachments.capabilities_router, prefix="/api")
     app.include_router(devices.router, prefix="/api")
+    app.include_router(family.router, prefix="/api")
     app.include_router(feed.router, prefix="/api")
     app.include_router(lists_api.router, prefix="/api")
     app.include_router(llm_settings_api.router, prefix="/api")
