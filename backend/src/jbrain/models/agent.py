@@ -151,6 +151,35 @@ class AgentTurn(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class TurnAttachment(Base):
+    """A file attached to a chat turn (image/PDF/text). Linked to the SESSION at
+    upload (pre-upload, reference-by-id); `turn_id` is bound when the user turn is
+    recorded (Stage-2 Wave 2). A NEW table rather than reusing app.attachments,
+    whose `note_id` is NOT NULL. `domain_code` is the firewall scope, computed from
+    the session's scopes at upload (TurnAttachmentRepo.domain_for_session)."""
+
+    __tablename__ = "turn_attachments"
+    __table_args__ = {"schema": "app"}
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    session_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("app.agent_sessions.id", ondelete="CASCADE")
+    )
+    turn_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("app.agent_turns.id", ondelete="SET NULL"), nullable=True
+    )
+    domain_code: Mapped[str] = mapped_column(Text, ForeignKey("app.domains.code"))
+    sha256: Mapped[str] = mapped_column(Text)
+    filename: Mapped[str] = mapped_column(Text)
+    media_type: Mapped[str] = mapped_column(Text)
+    size_bytes: Mapped[int] = mapped_column(BigInteger)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    # Vision-cache flags mirroring note attachments; populated in Wave 2 when the
+    # OCR/caption pipeline lands for chat files.
+    has_extracts: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    has_description: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+
+
 class AgentMemory(Base):
     """Working/behavioral memory as rows rendered as MD (docs/ASSISTANT.md
     "Memory model"). Owner-only, domain-narrowed; behavioral tiers are
