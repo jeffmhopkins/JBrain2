@@ -25,6 +25,8 @@ function subject(over: Partial<MemberSubject> = {}): MemberSubject {
     last_seen: new Date(Date.now() - 5 * 60_000).toISOString(),
     battery_pct: 72,
     connection: "wifi",
+    latitude: 40.7128,
+    longitude: -74.006,
     ...over,
   };
 }

@@ -93,15 +93,18 @@ export interface PlaceGeofence {
   polygon: LatLon[] | null;
 }
 
-/** One subject a family member may see (GET /api/member/roster): its label and
- * latest activity, for the dashboard device-picker + presence roster. `last_seen`
- * is null until the subject's first fix. */
+/** One subject a family member may see (GET /api/member/roster): its label, latest
+ * activity, and the latest fix's coordinate so the map can pin everyone. `last_seen`
+ * / `latitude` / `longitude` are null until the subject's first fix. Scoped to self +
+ * family group by RLS. */
 export interface MemberSubject {
   subject_id: string;
   label: string;
   last_seen: string | null;
   battery_pct: number | null;
   connection: string | null;
+  latitude: number | null;
+  longitude: number | null;
 }
 
 /** One bar on a day's place-track in the digest (L7a): a place name (null = a

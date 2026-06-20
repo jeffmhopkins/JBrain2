@@ -52,15 +52,23 @@ async def _device(maker: async_sessionmaker, name: str) -> tuple[str, str]:
     return pid, sid
 
 
-async def _fix(maker: async_sessionmaker, pid: str, sid: str, when: datetime) -> None:
+async def _fix(
+    maker: async_sessionmaker,
+    pid: str,
+    sid: str,
+    when: datetime,
+    *,
+    lat: float = 40.0,
+    lon: float = -74.0,
+) -> None:
     async with scoped_session(maker, device_context(pid, sid)) as session:
         await session.execute(
             text(
                 "INSERT INTO app.location_fixes"
                 " (subject_id, principal_id, captured_at, latitude, longitude, battery_pct)"
-                " VALUES (:s, :p, :t, 40.0, -74.0, 55)"
+                " VALUES (:s, :p, :t, :lat, :lon, 55)"
             ),
-            {"s": sid, "p": pid, "t": when},
+            {"s": sid, "p": pid, "t": when, "lat": lat, "lon": lon},
         )
 
 
@@ -145,8 +153,65 @@ async def test_member_roster_lists_self_plus_group_with_labels(maker: async_sess
 
     assert set(by_id) == {sid_a, sid_b}  # Carol is invisible
     assert by_id[sid_a].label == "Alice" and by_id[sid_a].last_seen == WHEN
+    # Alice's latest coordinate rides along (for her map pin); Bob has no fix yet.
+    assert (by_id[sid_a].latitude, by_id[sid_a].longitude) == (40.0, -74.0)
     assert by_id[sid_b].label == "Bob" and by_id[sid_b].last_seen is None
+    assert by_id[sid_b].latitude is None and by_id[sid_b].longitude is None
     assert sid_c not in by_id
+
+
+async def test_member_roster_surfaces_group_coords_but_never_an_outsiders(
+    maker: async_sessionmaker,
+) -> None:
+    """Firewall: the latest-fix join is RLS-scoped to self + family group. A visible
+    group member's coordinate DOES surface (so the map can pin them); a non-visible
+    subject's coordinate can NEVER appear, even with a fresh fix."""
+    pid_a, sid_a = await _device(maker, "Alice")
+    pid_b, sid_b = await _device(maker, "Bob")
+    pid_c, sid_c = await _device(maker, "Carol")  # no shared group with Alice
+    await _fix(maker, pid_a, sid_a, WHEN, lat=40.0, lon=-74.0)
+    await _fix(maker, pid_b, sid_b, WHEN, lat=41.5, lon=-73.5)  # family member
+    await _fix(maker, pid_c, sid_c, WHEN, lat=12.34, lon=56.78)  # outsider's position
+    await _group(maker, [sid_a, sid_b])
+
+    repo = SqlLocationRepo(maker)
+    roster = await repo.member_roster(device_context(pid_a, sid_a), viewer_subject_id=sid_a)
+    by_id = {m.subject_id: m for m in roster}
+
+    assert set(by_id) == {sid_a, sid_b}  # Carol invisible
+    # Positive: a family member's latest coordinate is surfaced for their pin.
+    assert (by_id[sid_b].latitude, by_id[sid_b].longitude) == (41.5, -73.5)
+    # Negative: the outsider's coordinate never leaks through the latest-fix join.
+    assert (12.34, 56.78) not in {(m.latitude, m.longitude) for m in roster}
+
+
+async def test_roster_view_audit_path_is_accepted(maker: async_sessionmaker) -> None:
+    """The roster pin is now an audited location read under path='roster' (migration
+    0076). The path must satisfy the view_audit CHECK and the row must land under the
+    device's RLS WITH CHECK (viewer = self, target = a visible subject)."""
+    pid_a, sid_a = await _device(maker, "Alice")
+    pid_b, sid_b = await _device(maker, "Bob")
+    await _group(maker, [sid_a, sid_b])
+
+    repo = SqlLocationRepo(maker)
+    await repo.record_view(
+        device_context(pid_a, sid_a),
+        viewer_principal_id=pid_a,
+        viewer_subject_id=sid_a,
+        target_subject_id=sid_b,
+        path="roster",
+    )
+    async with scoped_session(maker, OWNER) as session:
+        n = (
+            await session.execute(
+                text(
+                    "SELECT count(*) FROM app.view_audit"
+                    " WHERE path = 'roster' AND viewer_subject_id = :v AND target_subject_id = :t"
+                ),
+                {"v": sid_a, "t": sid_b},
+            )
+        ).scalar()
+    assert n == 1
 
 
 async def test_member_positions_scoped_to_visible_subjects(maker: async_sessionmaker) -> None:

@@ -31,6 +31,8 @@ class FakeLocationRepo:
                 last_seen=NOW,
                 battery_pct=80,
                 connection="wifi",
+                latitude=40.7128,
+                longitude=-74.006,
             ),
             MemberSubject(
                 subject_id="subject-sib",
@@ -38,6 +40,17 @@ class FakeLocationRepo:
                 last_seen=None,
                 battery_pct=None,
                 connection=None,
+                latitude=None,
+                longitude=None,
+            ),
+            MemberSubject(
+                subject_id="subject-pal",
+                label="Pal",
+                last_seen=NOW,
+                battery_pct=60,
+                connection="cell",
+                latitude=41.0,
+                longitude=-73.0,
             ),
         ]
         self.fix_calls: list[dict] = []
@@ -159,11 +172,27 @@ def test_roster_lists_visible_subjects(client: TestClient, locs: FakeLocationRep
     _as_member(client)
     data = client.get("/api/member/roster").json()
     assert locs.viewer == SUBJECT
-    assert [r["subject_id"] for r in data] == [SUBJECT, "subject-sib"]
+    assert [r["subject_id"] for r in data] == [SUBJECT, "subject-sib", "subject-pal"]
     me = data[0]
     assert me["label"] == "Me" and me["last_seen"] == NOW.isoformat()
+    # The latest coordinate rides along so the map can pin everyone.
+    assert me["latitude"] == 40.7128 and me["longitude"] == -74.006
     sib = data[1]
     assert sib["last_seen"] is None and sib["battery_pct"] is None
+    # No fix yet → no coordinate (still listed).
+    assert sib["latitude"] is None and sib["longitude"] is None
+
+
+def test_roster_audits_each_surfaced_family_coordinate(
+    client: TestClient, locs: FakeLocationRepo
+) -> None:
+    _as_member(client)
+    assert client.get("/api/member/roster").status_code == 200
+    # The roster surfaces coordinates, so it is an audited location read — but only
+    # for OTHER subjects we actually pinned (not the viewer's own pin, not the no-fix
+    # sibling). So exactly one audit row: the family member with a coordinate.
+    audited = [(c["target_subject_id"], c["path"]) for c in locs.view_calls]
+    assert audited == [("subject-pal", "roster")]
 
 
 def test_positions_returns_trail_and_audits(client: TestClient, locs: FakeLocationRepo) -> None:
