@@ -361,8 +361,9 @@ describe("HomeScreen mode scoping", () => {
     fireEvent.touchEnd(shell, { changedTouches: [{ clientX: 140, clientY: 205 }] });
     expect(document.querySelector(".panel.left.open")).not.toBeInTheDocument();
 
-    // The same rightward swipe on the omnibox pulls the Sessions panel in.
-    const box = document.querySelector(".omnibox") as Element;
+    // The same rightward swipe on the omnibox's segment row pulls the Sessions
+    // panel in (gestures initiate from that row only, not the composer body).
+    const box = document.querySelector(".omnibox .seg-row") as Element;
     fireEvent.touchStart(box, { touches: [{ clientX: 20, clientY: 40 }] });
     fireEvent.touchEnd(box, { changedTouches: [{ clientX: 140, clientY: 44 }] });
     expect(document.querySelector(".panel.left.open")).toBeInTheDocument();
