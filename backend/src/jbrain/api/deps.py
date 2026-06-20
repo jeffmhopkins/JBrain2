@@ -44,6 +44,21 @@ async def owner_only(principal: PrincipalDep) -> PrincipalInfo:
 OwnerDep = Annotated[PrincipalInfo, Depends(owner_only)]
 
 
+async def member_only(principal: PrincipalDep) -> PrincipalInfo:
+    """A member dashboard session: a device-kind cookie minted by /session/mint.
+
+    403s anything that is not a device key (the owner uses the /locations surface;
+    a capability token has no dashboard). The device principal carries its subject,
+    which scopes every member read to its own + its family group via RLS."""
+    if principal.kind != "device_key":
+        raise HTTPException(status_code=403, detail="member access required")
+    return principal
+
+
+# A member-gated principal: the route 403s anything but a device-key cookie.
+MemberDep = Annotated[PrincipalInfo, Depends(member_only)]
+
+
 def _basic_password(authorization: str) -> str | None:
     """The password from an `Authorization: Basic` header, or None if malformed.
 

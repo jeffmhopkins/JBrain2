@@ -34,6 +34,7 @@ from jbrain.api import (
     health,
     live,
     locations,
+    member,
     mqtt,
     notes,
     ops,
@@ -285,6 +286,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(llm_settings_api.router, prefix="/api")
     app.include_router(locations.router, prefix="/api")
     app.include_router(live.router, prefix="/api")
+    app.include_router(member.router, prefix="/api")
     # The MQTT broker's go-auth HTTP backend calls these on the internal network
     # only — NOT under /api (Caddy never routes /internal off-box).
     app.include_router(mqtt.router, prefix="/internal")
