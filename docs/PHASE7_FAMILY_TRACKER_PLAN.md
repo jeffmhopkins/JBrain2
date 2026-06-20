@@ -379,7 +379,14 @@ service-account bootstrap (non-negotiable #8).
   session lookup's `revoked_at` filter, so no `cred_epoch` column is needed for
   revoke; `cred_epoch`'s distinct value (invalidating sessions on key *rotation*,
   where the principal stays active) is a separate refinement, deferred ✓;
-  **M7c** encryption-at-rest + the Caddy/keystore/pin-rotation runbooks.
+  **M7c** the operator runbook (`docs/OPERATIONS.md`): the member-revoke control,
+  the encryption-at-rest compensating control (encrypted data volume + backups, per
+  T7), the device Keystore key's backup/escrow posture (non-exportable → recovery is
+  re-pairing; the owner key is the root to back up), and SPKI pin-rotation
+  (key-stable renewals + the dual-pin app-update procedure) ✓. **M7 complete.**
+  *Phase-7 deferrals carried forward: the Android FCM receiver + the gms/oss flavor
+  split + background-location/doze OEM hardening (need a Firebase project + an
+  emulator), and the `cred_epoch` session-on-rotation refinement.*
 - **v1.1 — UnifiedPush/ntfy** for de-Googled phones (additive sender behind the
   push-backend-agnostic interface).
 
