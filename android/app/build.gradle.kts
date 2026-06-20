@@ -3,6 +3,14 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
+// The server base whose /dash the WebView loads. Set per build with
+// `-PdashboardBase=https://your-server` (the CI publish-apk job passes the
+// DASHBOARD_BASE repo variable); falls back to a placeholder so a bare
+// `assembleDebug` still compiles for tests.
+val dashboardBase =
+    (project.findProperty("dashboardBase") as String?)?.takeIf { it.isNotBlank() }
+        ?: "https://example.invalid"
+
 android {
     namespace = "com.jbrain.dashboard"
     compileSdk = 35
@@ -13,9 +21,7 @@ android {
         targetSdk = 35
         versionCode = 1
         versionName = "0.1.0"
-        // The server base whose /dash the WebView loads. A placeholder until a
-        // real build/deploy wires the deployment's host (M5b).
-        buildConfigField("String", "DASHBOARD_BASE", "\"https://example.invalid\"")
+        buildConfigField("String", "DASHBOARD_BASE", "\"$dashboardBase\"")
     }
 
     buildFeatures {
