@@ -2992,6 +2992,41 @@ export const mockFetch: typeof fetch = async (input, init) => {
     ]);
   }
   if (path === "/api/member/places" && method === "GET") return json(MOCK_PLACES);
+  if (path.startsWith("/api/member/positions") && method === "GET") return json(mockTrail());
+  if (path === "/api/member/timeline" && method === "GET") {
+    const now = Date.now();
+    const at = (minsAgo: number) => new Date(now - minsAgo * 60_000).toISOString();
+    return json([
+      {
+        occurred_at: at(8),
+        subject_id: "subj-me",
+        transition: "enter",
+        place_entity_id: "ent-home",
+        place_name: "Home",
+      },
+      {
+        occurred_at: at(95),
+        subject_id: "subj-me",
+        transition: "exit",
+        place_entity_id: "ent-work",
+        place_name: "Work",
+      },
+      {
+        occurred_at: at(540),
+        subject_id: "subj-me",
+        transition: "enter",
+        place_entity_id: "ent-work",
+        place_name: "Work",
+      },
+      {
+        occurred_at: at(40),
+        subject_id: "subj-sam",
+        transition: "enter",
+        place_entity_id: "ent-gym",
+        place_name: "Gym",
+      },
+    ]);
+  }
   if (path === "/api/locations/geocode" && method === "GET") {
     return json({ address: "12 Market St, Springfield" });
   }
