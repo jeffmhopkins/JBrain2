@@ -313,7 +313,9 @@ service-account bootstrap (non-negotiable #8).
   Sliced: **M4a** session mint (device key → member cookie) ✓; **M4b** member
   reads (positions + presence, RLS-scoped, 30-day cap) ✓; **M4c** per-place
   `place_share` opt-in → member shared-fence overlay + shared/visible-subject
-  timeline ✓; **M4d** the SPA itself + member live-WS + WebView lockdown (next).
+  timeline ✓; **M4d-1** member live-WS (owner+member on one socket, per-fix
+  view-scope filter, CSWSH Origin allow-list) ✓; **M4d-2** the SPA itself +
+  WebView lockdown (next).
 - **M5 — Forked APK.** `oss`+`gms` flavors; pairing screen (`MessageConfiguration`
   inject, `remoteConfiguration=true`); background-location + OEM walkthrough;
   FGS/boot hardening; remote mode switch (verify cmd JSON). Gate: instrumented
