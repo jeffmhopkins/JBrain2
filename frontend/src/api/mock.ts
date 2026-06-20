@@ -2875,6 +2875,7 @@ export const mockFetch: typeof fetch = async (input, init) => {
       load_5m: 0.31,
       load_15m: 0.2,
       uptime_seconds: 3 * 86400 + 7 * 3600,
+      gpu_busy_percent: 63,
       containers: CONTAINERS.map((c, i) => ({
         service: c.service,
         mem_bytes: (i + 1) * 90 * 2 ** 20,

@@ -21,12 +21,23 @@ function fmtUptime(seconds: number): string {
   return d > 0 ? `${d}d ${h}h` : `${h}h ${Math.floor((seconds % 3600) / 60)}m`;
 }
 
-function Meter({ used, total }: { used: number; total: number }) {
+// The gradient is anchored to the full track (an opaque overlay masks the unused
+// right portion), so a bar's color reflects ABSOLUTE load — green low, red only
+// near full — matching the LLM memory meter's look. `util` drops the red stop:
+// a pegged GPU during inference is healthy, not alarming.
+function Meter({
+  used,
+  total,
+  tone = "resource",
+}: {
+  used: number;
+  total: number;
+  tone?: "resource" | "util";
+}) {
   const pct = total > 0 ? Math.min(100, (used / total) * 100) : 0;
-  const level = pct > 92 ? "bad" : pct > 80 ? "warn" : "ok";
   return (
-    <div className="meter">
-      <div className={`meter-fill meter-${level}`} style={{ width: `${pct}%` }} />
+    <div className={`meter meter-${tone}`}>
+      <div className="meter-empty" style={{ width: `${100 - pct}%` }} />
     </div>
   );
 }
@@ -246,7 +257,9 @@ function SystemCard({ metrics }: { metrics: OpsMetrics | null }) {
     const diskPct = Math.round(
       ((metrics.disk_total_bytes - metrics.disk_free_bytes) / metrics.disk_total_bytes) * 100,
     );
-    summary = `mem ${memPct}% · disk ${diskPct}% · load ${metrics.load_1m.toFixed(2)} · up ${fmtUptime(metrics.uptime_seconds)}`;
+    const gpu =
+      metrics.gpu_busy_percent != null ? `gpu ${Math.round(metrics.gpu_busy_percent)}% · ` : "";
+    summary = `mem ${memPct}% · disk ${diskPct}% · ${gpu}load ${metrics.load_1m.toFixed(2)} · up ${fmtUptime(metrics.uptime_seconds)}`;
   }
   return (
     <OpsCard
@@ -290,6 +303,15 @@ function SystemRows({ metrics }: { metrics: OpsMetrics }) {
           <Meter used={diskUsed} total={metrics.disk_total_bytes} />
         </div>
       </div>
+      {metrics.gpu_busy_percent != null && (
+        <div className="ops-vrow">
+          <span className="ops-vk">GPU</span>
+          <div className="ops-vmid">
+            <span className="ops-vv">{Math.round(metrics.gpu_busy_percent)}%</span>
+            <Meter used={metrics.gpu_busy_percent} total={100} tone="util" />
+          </div>
+        </div>
+      )}
       <div className="ops-vrow">
         <span className="ops-vk">Database</span>
         <div className="ops-vmid">

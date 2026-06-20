@@ -40,6 +40,7 @@ const METRICS: OpsMetrics = {
   load_5m: 0.64,
   load_15m: 0.62,
   uptime_seconds: 5 * 3600 + 40 * 60,
+  gpu_busy_percent: 41,
   containers: [{ service: "api", mem_bytes: 87 * 2 ** 20 }],
   db: {
     db_size_bytes: 23 * 2 ** 20,
