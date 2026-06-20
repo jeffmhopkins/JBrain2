@@ -97,17 +97,27 @@
 
       .llm-mem { margin: 2px 0 14px; }
       .llm-mem-bar {
+        position: relative;
         height: 6px; border-radius: var(--r-pill);
         background: var(--surface-2); overflow: hidden;
       }
+      /* steel = RAM actually resident (loaded models) */
       .llm-mem-bar > i {
         display: block; height: 100%; background: var(--steel);
         transition: width 0.3s ease;
       }
+      /* amber = projected RAM of staged (proposed) models, not yet loaded */
+      .llm-mem-bar > .proposed {
+        position: absolute; top: 0; height: 100%; background: var(--amber);
+        opacity: 0.85; transition: width 0.3s ease, left 0.3s ease;
+      }
       .llm-mem-cap {
-        display: flex; justify-content: space-between;
+        display: flex; gap: 10px;
         font-size: var(--fs-micro); color: var(--text-3); margin-top: 5px;
       }
+      .llm-mem-cap .staged-note { color: var(--amber); }
+      .llm-mem-cap .total { margin-left: auto; }
+      .llm-mem-cap .over { color: var(--rose); }
 
       .llm-local-row {
         padding: 14px 0;
@@ -132,6 +142,7 @@
 
       .llm-local-state { font-size: var(--fs-micro); color: var(--text-3); }
       .llm-local-state.on { color: var(--green); }
+      .llm-local-state.staged { color: var(--amber); }
 
       .llm-local-unload {
         font: inherit; font-size: var(--fs-micro);
@@ -140,6 +151,7 @@
         padding: 3px 12px; cursor: pointer;
       }
       .llm-local-unload:hover:not(:disabled) { border-color: var(--rose); color: var(--rose); }
+      .llm-local-unload.stage:hover:not(:disabled) { border-color: var(--steel); color: var(--steel); }
       .llm-local-unload.load:hover:not(:disabled) { border-color: var(--green); color: var(--green); }
       .llm-local-unload:disabled { opacity: 0.5; cursor: default; }
 
@@ -221,10 +233,14 @@
         </button>
         <div class="llm-local-body" id="cardBody">
           <div class="llm-mem">
-            <div class="llm-mem-bar"><i id="memFill"></i></div>
+            <div class="llm-mem-bar">
+              <i id="memFill"></i>
+              <span class="proposed" id="memProposed" style="display:none"></span>
+            </div>
             <div class="llm-mem-cap">
               <span id="memUsed"></span>
-              <span id="memTotal"></span>
+              <span id="memStaged" class="staged-note"></span>
+              <span id="memTotal" class="total"></span>
             </div>
           </div>
           <div id="rows"></div>
@@ -245,11 +261,13 @@
       </div>
 
       <p class="note">
-        Interactions: <b>Unload</b> a loaded model to free its memory and unlock its
-        context control. While idle, tap a window — it's set immediately as the model's
-        configured <code>-c</code> (the KV-cache estimate updates live) and takes effect
-        the next time llama-swap launches <code>llama-server</code>. <b>Load</b> re-locks
-        the row at its configured window.
+        Lifecycle: <b>Stage → Load → Unload</b>. While <b>idle</b>, set the context window
+        (the configured <code>-c</code>), then <b>Stage</b> the model — its projected RAM
+        (weights + KV cache at that window) appears on the memory bar in
+        <b style="color:var(--amber)">amber</b>, so you can see whether the proposed set
+        fits before committing. Staged rows are still editable. <b>Load</b> makes it
+        resident (<b style="color:var(--steel)">steel</b>) and locks the window for the
+        running process; <b>Unload</b> frees it and reopens editing.
       </p>
     </div>
 
@@ -264,28 +282,30 @@
       // Model roster mirroring the catalog. kvGbPer128k anchors the KV-cache
       // estimate; gpt-oss is low thanks to alternating sliding-window attention,
       // the dense/vision models cost more.
+      // state: "idle" | "staged" | "loaded" — the stage→load→unload lifecycle.
       const models = [
         {
           id: "qwen3-vl-30b", label: "Qwen3-VL 30B · vision", quant: "Q8_0",
           sizeGb: 32, chips: [["vision", "vision"], ["tools", "tools"]],
-          window: 32768, loaded: true, kvGbPer128k: 6.0,
+          window: 32768, state: "loaded", kvGbPer128k: 6.0,
         },
         {
           id: "gpt-oss-120b", label: "GPT-OSS 120B · reasoning", quant: "MXFP4",
           sizeGb: 59, chips: [["reason", "reasoning"], ["tools", "tools"]],
-          window: 131072, loaded: true, kvGbPer128k: 4.5,
+          window: 131072, state: "loaded", kvGbPer128k: 4.5,
         },
         {
           id: "qwen3-30b-a3b", label: "Qwen3 30B · lightweight", quant: "Q4_K_M",
           sizeGb: 18, chips: [["tools", "tools"]],
-          window: 32768, loaded: false, kvGbPer128k: 3.2,
+          window: 32768, state: "idle", kvGbPer128k: 3.2,
         },
       ];
 
       const kvGb = (m, win) => +(m.kvGbPer128k * (win / 131072)).toFixed(2);
+      // weights + KV at the configured window — the footprint once resident.
       const residentGb = (m) => m.sizeGb + kvGb(m, m.window);
-      const memUsedGb = () =>
-        models.filter((m) => m.loaded).reduce((s, m) => s + residentGb(m), 0);
+      const sumGb = (state) =>
+        models.filter((m) => m.state === state).reduce((s, m) => s + residentGb(m), 0);
 
       function toast(html) {
         const t = document.getElementById("toast");
@@ -297,54 +317,94 @@
 
       function render() {
         const n = models.length;
-        const loaded = models.filter((m) => m.loaded);
-        const used = memUsedGb();
+        const loadedN = models.filter((m) => m.state === "loaded").length;
+        const stagedN = models.filter((m) => m.state === "staged").length;
+        const used = sumGb("loaded");
+        const staged = sumGb("staged");
+        const projected = used + staged;
+
         document.getElementById("summary").textContent =
-          `${n} of ${n} enabled · ${loaded.length} loaded · ${Math.round(used)} GB`;
-        document.getElementById("memFill").style.width =
-          Math.min(100, (used / HOST_TOTAL_GB) * 100) + "%";
+          `${n} of ${n} enabled · ${loadedN} loaded${
+            stagedN ? ` · ${stagedN} staged` : ""
+          } · ${Math.round(used)} GB`;
+
+        // Bar: steel = resident now; amber = projected staged RAM, drawn after it.
+        const usedPct = Math.min(100, (used / HOST_TOTAL_GB) * 100);
+        const stagedPct = Math.min(100 - usedPct, (staged / HOST_TOTAL_GB) * 100);
+        document.getElementById("memFill").style.width = usedPct + "%";
+        const prop = document.getElementById("memProposed");
+        if (staged > 0.05) {
+          prop.style.display = "block";
+          prop.style.left = usedPct + "%";
+          prop.style.width = stagedPct + "%";
+        } else {
+          prop.style.display = "none";
+        }
         document.getElementById("memUsed").textContent = `${Math.round(used)} GB used`;
+        const over = projected > HOST_TOTAL_GB;
+        document.getElementById("memStaged").textContent = staged
+          ? `+${Math.round(staged)} GB staged → ${Math.round(projected)} GB${over ? " ⚠ over" : ""}`
+          : "";
+        document.getElementById("memStaged").classList.toggle("over", over);
         document.getElementById("memTotal").textContent = `${HOST_TOTAL_GB} GB total`;
 
         const rows = document.getElementById("rows");
         rows.innerHTML = "";
         for (const m of models) {
           const win = m.window;
+          const editable = m.state !== "loaded"; // idle or staged
           const row = document.createElement("div");
           row.className = "llm-local-row";
 
-          const stateCls = m.loaded ? "llm-local-state on" : "llm-local-state";
-          const stateTxt = m.loaded ? "loaded" : "idle";
-          const actBtn = m.loaded
-            ? `<button class="llm-local-unload" data-act="unload" data-id="${m.id}">Unload</button>`
-            : `<button class="llm-local-unload load" data-act="load" data-id="${m.id}">Load</button>`;
+          const stateMeta = {
+            idle: ["llm-local-state", "idle"],
+            staged: ["llm-local-state staged", "staged"],
+            loaded: ["llm-local-state on", "loaded"],
+          }[m.state];
+          // Per-state actions: idle→Stage, staged→Load/Unstage, loaded→Unload.
+          const actBtns = {
+            idle: `<button class="llm-local-unload stage" data-act="stage" data-id="${m.id}">Stage</button>`,
+            staged:
+              `<button class="llm-local-unload load" data-act="load" data-id="${m.id}">Load</button>` +
+              `<button class="llm-local-unload" data-act="unstage" data-id="${m.id}">Unstage</button>`,
+            loaded: `<button class="llm-local-unload" data-act="unload" data-id="${m.id}">Unload</button>`,
+          }[m.state];
+
           const chips = m.chips
             .map(([cls, lbl]) => `<span class="llm-chip llm-chip-${cls}">${lbl}</span>`)
             .join("");
           const opts = WINDOWS.map(
             (w) => `<option value="${w}" ${w === win ? "selected" : ""}>${fmtK(w)}</option>`
           ).join("");
-          const ctxMeta = m.loaded
-            ? `<span class="ctx-hint">🔒 unload to change</span>`
-            : `<span class="ctx-meta">KV cache <b>~${kvGb(m, win)} GB</b> · used next load</span>`;
+
+          const metaRight = {
+            loaded: `<span class="ctx-hint">🔒 unload to change</span>`,
+            staged: `<span class="ctx-meta staged-note">staged <b>~${residentGb(m).toFixed(
+              1
+            )} GB</b> on load</span>`,
+            idle: `<span class="ctx-meta">KV cache <b>~${kvGb(m, win)} GB</b> · used next load</span>`,
+          }[m.state];
+
+          const footprint =
+            m.state === "loaded"
+              ? ` · ${residentGb(m).toFixed(1)} GB resident`
+              : "";
 
           row.innerHTML = `
             <div class="llm-local-head">
               <div class="llm-local-name">${m.label}
-                <span class="llm-local-meta">${m.quant} · ${m.sizeGb} GB${
-                  m.loaded ? ` · ${residentGb(m).toFixed(1)} GB resident` : ""
-                }</span>
+                <span class="llm-local-meta">${m.quant} · ${m.sizeGb} GB${footprint}</span>
               </div>
               <div class="llm-local-topright">
-                ${actBtn}
-                <span class="${stateCls}">${stateTxt}</span>
+                ${actBtns}
+                <span class="${stateMeta[0]}">${stateMeta[1]}</span>
               </div>
             </div>
             <div class="llm-local-chips">${chips}</div>
             <div class="ctx">
               <span class="ctx-label">context window</span>
-              <select class="ctx-select" data-id="${m.id}" ${m.loaded ? "disabled" : ""}>${opts}</select>
-              ${ctxMeta}
+              <select class="ctx-select" data-id="${m.id}" ${editable ? "" : "disabled"}>${opts}</select>
+              ${metaRight}
             </div>`;
           rows.appendChild(row);
         }
@@ -361,31 +421,44 @@
           `${(usedTok / 1000).toFixed(1)}k / ${fmtK(m.window)} · ${Math.round(pct)}%`;
       }
 
+      const shortName = (m) => m.label.split(" · ")[0];
+
       document.addEventListener("change", (e) => {
         const sel = e.target.closest(".ctx-select");
         if (sel && !sel.disabled) {
           const m = models.find((x) => x.id === sel.dataset.id);
           const w = +sel.value;
           if (w === m.window) return;
-          m.window = w; // idle model: no live process, so just set the configured -c
+          m.window = w; // not loaded: no live process, so just set the configured -c
           render();
-          toast(`${m.label.split(" · ")[0]} context set to <b>${fmtK(w)}</b> — used on next load`);
+          const tail = m.state === "staged" ? "staged for next load" : "used on next load";
+          toast(`${shortName(m)} context set to <b>${fmtK(w)}</b> — ${tail}`);
         }
       });
 
       document.addEventListener("click", (e) => {
         const actBtn = e.target.closest("[data-act]");
-        if (actBtn) {
-          const m = models.find((x) => x.id === actBtn.dataset.id);
-          if (actBtn.dataset.act === "unload") {
-            m.loaded = false;
-            toast(`Unloaded ${m.label.split(" · ")[0]} — context window now editable`);
-          } else {
-            m.loaded = true; // loads at its configured window, then locks
-            toast(`Loaded ${m.label.split(" · ")[0]} with <b>${fmtK(m.window)}</b> context`);
-          }
-          render();
+        if (!actBtn) return;
+        const m = models.find((x) => x.id === actBtn.dataset.id);
+        switch (actBtn.dataset.act) {
+          case "stage": // propose to load — projects RAM, still editable
+            m.state = "staged";
+            toast(`Staged ${shortName(m)} — ~${residentGb(m).toFixed(1)} GB projected on the bar`);
+            break;
+          case "unstage":
+            m.state = "idle";
+            toast(`Unstaged ${shortName(m)}`);
+            break;
+          case "load": // commit: RAM becomes resident, context locks
+            m.state = "loaded";
+            toast(`Loaded ${shortName(m)} with <b>${fmtK(m.window)}</b> context`);
+            break;
+          case "unload":
+            m.state = "idle";
+            toast(`Unloaded ${shortName(m)} — context window now editable`);
+            break;
         }
+        render();
       });
 
       document.getElementById("cardToggle").addEventListener("click", () => {
