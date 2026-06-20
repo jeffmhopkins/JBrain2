@@ -42,6 +42,7 @@ __all__ = [
     "PlaceGeofence",
     "NearbyPlace",
     "RosterEntry",
+    "MemberSubject",
     "SqlLocationRepo",
 ]
 
@@ -173,6 +174,19 @@ class RosterEntry:
     last_seen: datetime | None
 
 
+@dataclass(frozen=True)
+class MemberSubject:
+    """One subject a member may see, for the dashboard device-picker + presence
+    roster: its label and latest activity. `last_seen` is None until the subject's
+    first fix lands (the subject still appears so the picker can list it)."""
+
+    subject_id: str
+    label: str
+    last_seen: datetime | None
+    battery_pct: int | None
+    connection: str | None
+
+
 class SqlLocationRepo:
     def __init__(self, maker: async_sessionmaker[AsyncSession]):
         self._maker = maker
@@ -260,6 +274,48 @@ class SqlLocationRepo:
             )
             for r in rows
         }
+
+    async def member_roster(
+        self, ctx: SessionContext, *, viewer_subject_id: str
+    ) -> list[MemberSubject]:
+        """The subjects a member may see (itself + its family-group members) with
+        each one's label and latest activity — the dashboard device-picker + presence
+        roster (JBrain360 M4b). Runs under the member's `device_context`.
+
+        Labels resolve through `app.visible_subjects` (SECURITY DEFINER — core
+        `subjects` RLS would hide a group member's name); the latest activity reads
+        `location_fixes`, whose own RLS (0067) already scopes the rows to self +
+        group, so the join can never surface a subject the member may not see. A
+        visible subject with no fixes yet still appears (LEFT JOIN, null activity)."""
+        async with scoped_session(self._maker, ctx) as session:
+            rows = (
+                await session.execute(
+                    text(
+                        "WITH vis AS ("
+                        "  SELECT subject_id, display_name FROM app.visible_subjects(:viewer)"
+                        "), latest AS ("
+                        "  SELECT DISTINCT ON (subject_id) subject_id, captured_at,"
+                        "    battery_pct, connection"
+                        "  FROM app.location_fixes ORDER BY subject_id, captured_at DESC"
+                        ")"
+                        " SELECT v.subject_id::text AS sid, v.display_name AS label,"
+                        "   l.captured_at AS last_seen, l.battery_pct, l.connection"
+                        " FROM vis v LEFT JOIN latest l ON l.subject_id = v.subject_id"
+                        " ORDER BY v.display_name"
+                    ),
+                    {"viewer": viewer_subject_id},
+                )
+            ).all()
+        return [
+            MemberSubject(
+                subject_id=r.sid,
+                label=r.label or "a device",
+                last_seen=r.last_seen,
+                battery_pct=r.battery_pct,
+                connection=r.connection,
+            )
+            for r in rows
+        ]
 
     async def fixes(
         self,
