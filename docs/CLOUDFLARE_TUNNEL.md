@@ -94,3 +94,7 @@ then `sudo jbrain restart` (the helper picks up the `tunnel` profile from
 - **No ports exposed**: the connector needs only outbound 443 to Cloudflare. You
   do not (and should not) port-forward 80/443 on your router in tunnel mode.
 - The `cloudflared` image is pulled at runtime; nothing extra is built.
+- **The tunnel depends on the internet.** A WAN outage (even with the box and LAN
+  on battery) takes the tunnel down with it. To keep signing in from devices on
+  the same network during an outage, also enable LAN access — see
+  `docs/LOCAL_ACCESS.md`.

@@ -92,6 +92,37 @@ if [ ! -f .env ]; then
     read -rp "Cloudflare Tunnel token: " TUNNEL_TOKEN
   fi
 
+  # Local-network access (independent of the tunnel/internet): advertise the box
+  # over mDNS as <name>.local and have Caddy serve HTTPS for it from its internal
+  # CA, so you can sign in from any device on the same LAN even when the internet
+  # is down. The Secure session cookie needs HTTPS, which is why this serves real
+  # TLS locally rather than plain HTTP. See docs/LOCAL_ACCESS.md.
+  echo
+  echo "Local network access: reach this box at https://<name>.local from any"
+  echo "device on the same LAN, even if the internet / Cloudflare tunnel is down."
+  read -rp "Enable local network access (mDNS + local HTTPS)? [Y/n]: " LAN_CHOICE
+  if [ "${LAN_CHOICE:-Y}" != "n" ] && [ "${LAN_CHOICE:-Y}" != "N" ]; then
+    CURRENT_HOST="$(hostname)"
+    read -rp "Local hostname, advertised as <name>.local [$CURRENT_HOST]: " LAN_NAME
+    LAN_NAME="${LAN_NAME:-$CURRENT_HOST}"
+    if ! command -v avahi-daemon >/dev/null 2>&1; then
+      say "Installing avahi-daemon (mDNS responder for .local)"
+      apt-get update -qq && apt-get install -y -qq avahi-daemon
+    fi
+    # Avahi auto-advertises the system hostname's .local and tracks the box's IP
+    # across DHCP changes, so align the hostname rather than maintaining a
+    # separate IP-pinned alias.
+    if [ "$LAN_NAME" != "$CURRENT_HOST" ]; then
+      say "Setting hostname to $LAN_NAME so avahi advertises $LAN_NAME.local"
+      hostnamectl set-hostname "$LAN_NAME" 2>/dev/null \
+        || { say "Could not set hostname; advertising $CURRENT_HOST.local instead"; LAN_NAME="$CURRENT_HOST"; }
+    fi
+    systemctl enable --now avahi-daemon >/dev/null 2>&1 || true
+    LAN_ADDR="https://$LAN_NAME.local"
+  else
+    LAN_ADDR=""
+  fi
+
   read -rp "Anthropic API key (blank to skip): " ANTHROPIC_KEY
   read -rp "xAI API key (blank to skip): " XAI_KEY
   # Self-hosted local models are off by default; offer them only on capable
@@ -102,6 +133,7 @@ if [ ! -f .env ]; then
   cat > .env <<EOF
 JBRAIN_DOMAIN=$DOMAIN
 JBRAIN_SITE_ADDR=$SITE_ADDR
+JBRAIN_LAN_ADDR=$LAN_ADDR
 TUNNEL_ENABLED=$TUNNEL_ENABLED
 CLOUDFLARE_TUNNEL_TOKEN=$TUNNEL_TOKEN
 POSTGRES_PASSWORD=$(openssl rand -hex 32)
@@ -170,5 +202,10 @@ if grep -q '^TUNNEL_ENABLED=true' .env; then
   say "https://$DONE_DOMAIN and paste your owner key."
 else
   say "Done. Open https://$DONE_DOMAIN and paste your owner key."
+fi
+DONE_LAN="$(grep '^JBRAIN_LAN_ADDR=' .env | cut -d= -f2)"
+if [ -n "$DONE_LAN" ]; then
+  say "On the same network you can also use $DONE_LAN (trust the local"
+  say "certificate on first visit — see docs/LOCAL_ACCESS.md)."
 fi
 say "Manage with: jbrain status | restart | logs | reset-owner-key | update | backup | restore"
