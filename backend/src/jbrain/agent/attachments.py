@@ -59,6 +59,17 @@ def domain_for_session(domain_scopes: Sequence[str]) -> str:
     return domain_scopes[0] if len(domain_scopes) == 1 else DEFAULT_ATTACHMENT_DOMAIN
 
 
+def attachment_scopes(session_scopes: Sequence[str]) -> tuple[str, ...]:
+    """The RLS scopes a chat attachment is written/read under: the session's own
+    scopes PLUS the domain it gets stamped with (domain_for_session). For a SINGLE
+    scope this is just that scope unchanged (curator isolation intact — a finance
+    session still can't reach a health attachment). For ZERO scopes (Jerv/Teacher) or
+    MULTIPLE scopes the file is stamped 'general', so the read/write context must also
+    carry 'general' or the INSERT's WITH CHECK fails and the later read misses its own
+    file. SECURITY: this only ADDS the stamped domain, never a foreign one."""
+    return tuple({*session_scopes, domain_for_session(session_scopes)})
+
+
 @dataclass(frozen=True)
 class AttachmentInfo:
     id: str
@@ -97,13 +108,15 @@ class TurnAttachmentRepo:
     async def session_read_context(
         self, owner_ctx: SessionContext, session_id: str
     ) -> SessionContext | None:
-        """The narrowed RLS context a chat attachment is written/read under: the
-        owner narrowed to the session's selected scopes. None when the session is
-        not visible to `owner_ctx`."""
+        """The narrowed RLS context a chat attachment is written/read under: the owner
+        narrowed to the session's scopes PLUS the stamped domain (attachment_scopes).
+        The extra 'general' lets empty/multi-scope (Jerv/Teacher) sessions write and
+        read their own attachments; a single-scope session is unchanged. None when the
+        session is not visible to `owner_ctx`."""
         info = await self._sessions.get(owner_ctx, session_id)
         if info is None:
             return None
-        return read_context(owner_ctx.principal_id, info.domain_scopes)
+        return read_context(owner_ctx.principal_id, attachment_scopes(info.domain_scopes))
 
     async def add(
         self,

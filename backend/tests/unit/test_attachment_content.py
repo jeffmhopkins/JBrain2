@@ -13,6 +13,7 @@ import pymupdf
 from jbrain.agent.attachment_content import (
     MAX_ATTACHMENTS_PER_TURN,
     MAX_IMAGES_PER_TURN,
+    MAX_PDF_PAGE_PIXELS,
     MAX_PDF_PAGES,
     build_attachment_content,
 )
@@ -67,6 +68,35 @@ def make_pdf(*page_texts: str | None) -> bytes:
         if text is not None:
             page.insert_text((72, 72), text)
     return doc.tobytes()
+
+
+def make_oversized_pdf(text: str = "tiny but huge") -> bytes:
+    """A small PDF whose single page declares an enormous MediaBox — the rasterization
+    DoS vector: a few bytes that render to a multi-GB pixmap at the base zoom."""
+    doc = pymupdf.open()
+    page = doc.new_page(width=14400, height=14400)
+    page.insert_text((72, 72), text)
+    return doc.tobytes()
+
+
+def make_encrypted_pdf(text: str = "secret") -> bytes:
+    """A real password-protected PDF — load_page/get_text raise on it without the key."""
+    doc = pymupdf.open()
+    page = doc.new_page()
+    page.insert_text((72, 72), text)
+    return doc.tobytes(
+        encryption=pymupdf.PDF_ENCRYPT_AES_256,  # type: ignore[attr-defined]
+        owner_pw="owner-secret",
+        user_pw="user-secret",
+    )
+
+
+def _png_dimensions(png: bytes) -> tuple[int, int]:
+    """The decoded pixel (width, height) of a PNG — to assert the rendered pixmap was
+    bounded rather than trusting the byte length."""
+    with pymupdf.open(stream=png, filetype="png") as doc:
+        rect = doc.load_page(0).rect
+        return int(rect.width), int(rect.height)
 
 
 async def _build(repo: FakeRepo, blobs: FakeBlobs, ids: list[str]) -> tuple[list, str]:
@@ -173,3 +203,44 @@ async def test_pdf_page_cap_truncates_and_notes_it() -> None:
 async def test_empty_attachment_ids_returns_empty() -> None:
     images, text = await _build(FakeRepo(), FakeBlobs(), [])
     assert images == [] and text == ""
+
+
+async def test_oversized_mediabox_pdf_is_bounded() -> None:
+    # A small PDF with a 14400x14400-point MediaBox would render to a multi-GB pixmap
+    # at the base zoom; the per-page zoom floor keeps the decoded image within the
+    # pixel budget, while the page text still comes through.
+    repo, blobs = FakeRepo(), FakeBlobs()
+    blobs.put("sha-big-box", make_oversized_pdf("tiny but huge"))
+    aid = repo.add("application/pdf", "sha-big-box", filename="bomb.pdf")
+    images, text = await _build(repo, blobs, [aid])
+    assert len(images) == 1
+    width, height = _png_dimensions(base64.b64decode(images[0].data))
+    assert width * height <= MAX_PDF_PAGE_PIXELS
+    assert "tiny but huge" in text
+
+
+async def test_corrupt_pdf_is_skipped_not_crashed() -> None:
+    # Garbage bytes labeled application/pdf make pymupdf.open raise; the bad file is
+    # omitted while another valid attachment in the same call still converts — no crash.
+    repo, blobs = FakeRepo(), FakeBlobs()
+    blobs.put("sha-garbage", b"not a real pdf at all \x00\x01\x02")
+    blobs.put("sha-ok", b"\x89PNG-ok")
+    bad = repo.add("application/pdf", "sha-garbage", filename="broken.pdf")
+    good = repo.add("image/png", "sha-ok", filename="ok.png")
+    images, _text = await _build(repo, blobs, [bad, good])
+    # The corrupt PDF produced no images; the good image still made it through.
+    assert len(images) == 1
+    assert base64.b64decode(images[0].data) == b"\x89PNG-ok"
+
+
+async def test_encrypted_pdf_is_skipped_not_crashed() -> None:
+    # A password-protected PDF raises on page load/extract; it is skipped, and a valid
+    # sibling attachment in the same call still converts.
+    repo, blobs = FakeRepo(), FakeBlobs()
+    blobs.put("sha-enc", make_encrypted_pdf("secret"))
+    blobs.put("sha-txt", b"plain text survives")
+    bad = repo.add("application/pdf", "sha-enc", filename="locked.pdf")
+    good = repo.add("text/plain", "sha-txt", filename="notes.txt")
+    images, text = await _build(repo, blobs, [bad, good])
+    assert images == []  # nothing rendered from the encrypted file
+    assert "plain text survives" in text  # the sibling text file still converted

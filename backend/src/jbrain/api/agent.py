@@ -26,7 +26,7 @@ from pydantic import BaseModel, Field
 
 from jbrain.agent.agents import agent_for
 from jbrain.agent.attachment_content import MAX_ATTACHMENTS_PER_TURN, build_attachment_content
-from jbrain.agent.attachments import TurnAttachmentRepo
+from jbrain.agent.attachments import TurnAttachmentRepo, attachment_scopes
 from jbrain.agent.clock import now_block
 from jbrain.agent.loop import AgentLoop, guardrails_for_effort
 from jbrain.agent.memory import MemoryService
@@ -330,13 +330,14 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
         guardrails=guardrails_for_effort(effort),
     )
     read_ctx = read_context(principal.id, read_scopes)
-    # The turn's attachments are fetched under the SESSION's own scopes — not the
-    # agent's read_scopes (a non-KB agent has none, yet its files were uploaded under
-    # the session's narrowed firewall). This is the context an out-of-scope id can't
-    # be smuggled through: RLS makes a foreign-domain attachment read as missing, so
-    # it is silently skipped rather than reaching the turn (Decision: skip, not 4xx —
-    # a stray id must never break the conversation).
-    attachment_ctx = read_context(principal.id, session.domain_scopes)
+    # The turn's attachments are fetched under the SESSION's own scopes PLUS the domain
+    # they were stamped with (attachment_scopes) — not the agent's read_scopes (a non-KB
+    # agent has none) and not the bare session scopes (an empty/multi-scope session
+    # stamps 'general', so the bare scopes would miss its own files). This is the context
+    # an out-of-scope id can't be smuggled through: RLS makes a foreign-domain attachment
+    # read as missing, so it is silently skipped rather than reaching the turn (Decision:
+    # skip, not 4xx — a stray id must never break the conversation).
+    attachment_ctx = read_context(principal.id, attachment_scopes(session.domain_scopes))
     images, attach_text = await build_attachment_content(
         get_turn_attachments(request),
         get_blob_store(request),

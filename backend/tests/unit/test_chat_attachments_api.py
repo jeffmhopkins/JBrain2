@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from jbrain.agent.attachments import AttachmentInfo, domain_for_session
+from jbrain.agent.attachments import AttachmentInfo, attachment_scopes, domain_for_session
 from jbrain.agent.session import AgentSessionInfo, read_context
 from jbrain.auth import service as auth_service
 from jbrain.config import Settings
@@ -59,7 +59,10 @@ class FakeTurnAttachments:
         info = self.sessions.sessions.get(session_id)
         if info is None:
             return None
-        return read_context(owner_ctx.principal_id, info.domain_scopes)
+        # Mirror the real repo: the write/read context carries the session's scopes
+        # PLUS the stamped domain, so an empty/multi-scope session can reach its own
+        # 'general'-stamped files (see attachment_scopes).
+        return read_context(owner_ctx.principal_id, attachment_scopes(info.domain_scopes))
 
     async def add(
         self,
@@ -180,6 +183,11 @@ def test_multi_and_empty_scope_sessions_stamp_general(
     c.post(f"/api/sessions/{empty}/attachments", files={"file": ("b.txt", b"b", "text/plain")})
     assert repo.added[-2][1] == "general"  # multi-domain → general
     assert repo.added[-1][1] == "general"  # empty (Jerv/Teacher) → general
+    # The write ran under a context that INCLUDES 'general' (the stamped domain), or the
+    # real repo's INSERT WITH CHECK has_domain_scope('general') would 500. (The
+    # integration test exercises the actual RLS enforcement; here we prove the wiring.)
+    assert "general" in repo.added[-2][2]  # multi-scope ctx widened to reach 'general'
+    assert repo.added[-1][2] == ("general",)  # empty-scope ctx is exactly 'general'
 
 
 def test_chat_attachments_require_auth(tmp_path: Path) -> None:

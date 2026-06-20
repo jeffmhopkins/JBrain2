@@ -17,6 +17,8 @@ event loop via asyncio.to_thread.
 
 import asyncio
 import base64
+import logging
+import math
 from dataclasses import dataclass
 
 import pymupdf
@@ -25,6 +27,8 @@ from jbrain.agent.attachments import AttachmentInfo, TurnAttachmentRepo
 from jbrain.db.session import SessionContext
 from jbrain.llm import LlmImage
 from jbrain.storage import BlobStore
+
+_log = logging.getLogger(__name__)
 
 # How many attachment ids one turn may reference — a graceful cap mirrored by the
 # request validator. Keeps a turn from ballooning the context with dozens of files.
@@ -38,6 +42,11 @@ MAX_IMAGES_PER_TURN = 20
 # Pages render at this zoom (1.0 = 72 dpi); ~1.5x keeps text legible without bloating
 # the base64 payload.
 _PDF_RENDER_ZOOM = 1.5
+# The ceiling on a rendered page's pixel area (~4 MP). A malicious PDF can declare a
+# huge MediaBox (a 522-byte file → a 21600x21600 ≈ 2.7 GB pixmap) that the page-count
+# and byte caps don't bound; the per-page zoom is floored so the pixmap never exceeds
+# this budget (SECURITY: rasterization DoS).
+MAX_PDF_PAGE_PIXELS = 4_000_000
 
 
 @dataclass(frozen=True)
@@ -64,13 +73,12 @@ def _pdf_block(info: AttachmentInfo, data: bytes, image_budget: int) -> _Convert
     runs it via asyncio.to_thread."""
     images: list[LlmImage] = []
     text_blocks: list[str] = []
-    matrix = pymupdf.Matrix(_PDF_RENDER_ZOOM, _PDF_RENDER_ZOOM)
     with pymupdf.open(stream=data, filetype="pdf") as doc:
         page_cap = min(doc.page_count, MAX_PDF_PAGES)
         for number in range(1, page_cap + 1):
             page = doc.load_page(number - 1)
             if len(images) < image_budget:
-                png = page.get_pixmap(matrix=matrix).tobytes("png")
+                png = page.get_pixmap(matrix=_page_matrix(page)).tobytes("png")
                 images.append(LlmImage(media_type="image/png", data=_b64(png)))
             page_text = page.get_text("text").strip()  # type: ignore[no-untyped-call]
             if page_text:
@@ -80,6 +88,18 @@ def _pdf_block(info: AttachmentInfo, data: bytes, image_budget: int) -> _Convert
                 f"[{info.filename}]: showing the first {page_cap} of {doc.page_count} pages."
             )
     return _Converted(images=images, text_blocks=text_blocks)
+
+
+def _page_matrix(page: pymupdf.Page) -> pymupdf.Matrix:
+    """The render matrix for one page: the base zoom, floored so the rasterized pixel
+    area stays within MAX_PDF_PAGE_PIXELS. The zoom is only ever REDUCED — a normal
+    page renders at the base zoom; an oversized MediaBox is scaled down so it can't
+    blow up the pixmap (SECURITY: rasterization DoS). Pixels scale with zoom², so the
+    cap is sqrt(budget / area_in_points)."""
+    area_pt = max(page.rect.width * page.rect.height, 1.0)
+    zoom = min(_PDF_RENDER_ZOOM, math.sqrt(MAX_PDF_PAGE_PIXELS / area_pt))
+    zoom = max(zoom, 1e-3)  # keep it positive even for an absurdly large page
+    return pymupdf.Matrix(zoom, zoom)
 
 
 def _b64(data: bytes) -> str:
@@ -123,7 +143,17 @@ async def build_attachment_content(
         except FileNotFoundError:
             continue  # the row outlived its blob (rare) — skip rather than break the turn
         budget = MAX_IMAGES_PER_TURN - len(images)
-        converted = await asyncio.to_thread(_convert_one, info, data, budget)
+        try:
+            converted = await asyncio.to_thread(_convert_one, info, data, budget)
+        except Exception:
+            # A corrupt/encrypted/otherwise-unreadable file must not abort the turn or
+            # the other attachments (the docstring's "skipped rather than crashing").
+            # Same graceful path as a missing id, plus a minimal note so the model knows
+            # something was dropped. SECURITY/robustness: build runs BEFORE the stream's
+            # try/finally, so an unhandled raise here 500s the turn and dangles a run-log.
+            _log.warning("attachment %s could not be read; skipping", info.id, exc_info=True)
+            text_blocks.append(f"[{info.filename}]: could not be read.")
+            continue
         images.extend(converted.images[: MAX_IMAGES_PER_TURN - len(images)])
         text_blocks.extend(converted.text_blocks)
     extra_text = ("\n\n".join(text_blocks)).strip()
