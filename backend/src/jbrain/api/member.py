@@ -22,6 +22,7 @@ from jbrain.api.deps import MemberDep
 from jbrain.api.locations import PlaceOut, TimelineEntryOut
 from jbrain.db.session import device_context
 from jbrain.locations import FixPoint, MemberSubject, SqlLocationRepo
+from jbrain.push import SqlFcmTokenRepo
 
 router = APIRouter(prefix="/member")
 log = structlog.get_logger()
@@ -36,6 +37,10 @@ _TIMELINE_LIMIT = 500
 
 def _repo(request: Request) -> SqlLocationRepo:
     return cast(SqlLocationRepo, request.app.state.location_repo)
+
+
+def _fcm_repo(request: Request) -> SqlFcmTokenRepo:
+    return cast(SqlFcmTokenRepo, request.app.state.fcm_token_repo)
 
 
 def _parse(ts: str | None) -> datetime | None:
@@ -154,3 +159,24 @@ async def timeline(
         ctx, viewer_subject_id=principal.subject_id, since=start, until=end, limit=_TIMELINE_LIMIT
     )
     return [TimelineEntryOut.of(e) for e in rows]
+
+
+class FcmTokenIn(BaseModel):
+    token: str
+
+
+@router.put("/fcm-token", status_code=204)
+async def register_fcm_token(request: Request, principal: MemberDep, body: FcmTokenIn) -> None:
+    """Register/refresh this device's FCM token for content-free pokes (M6). RLS pins
+    the row to the device's own subject — a device can't register under another."""
+    ctx = device_context(principal.id, principal.subject_id)
+    await _fcm_repo(request).register(
+        ctx, principal_id=principal.id, subject_id=principal.subject_id, token=body.token
+    )
+
+
+@router.delete("/fcm-token", status_code=204)
+async def delete_fcm_token(request: Request, principal: MemberDep, body: FcmTokenIn) -> None:
+    """Drop this device's token (sign-out / push opt-out)."""
+    ctx = device_context(principal.id, principal.subject_id)
+    await _fcm_repo(request).delete(ctx, token=body.token)

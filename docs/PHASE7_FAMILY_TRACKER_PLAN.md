@@ -343,6 +343,13 @@ service-account bootstrap (non-negotiable #8).
 - **M6 — FCM.** `fcm_token` registry (+ RLS test); content-free poke sender;
   view-scope-aware routing; dedupe; on-poke fetch-then-local-notify. Gate:
   **no-PII-in-payload** test, routing test, revoke-kills-token test.
+  Sliced: **M6a** the `fcm_token` registry — migration 0075 (device-scoped RLS:
+  a device manages only its own token, owner/system reads all), `SqlFcmTokenRepo`
+  (register upsert / delete / active-only `tokens_for_subjects`), the member
+  PUT/DELETE `/fcm-token` endpoints, and the RLS isolation test incl.
+  revoke-drops-token ✓; **M6b** the content-free poke sender + view-scope routing
+  + dedupe + the no-PII gate; **M6c** the Android FCM receiver (gms) →
+  fetch-then-local-notify.
 - **M7 — Owner controls + ops.** Owner-only **add/remove member** + **revoke**
   (kills MQTT session + `cred_epoch` bump + membership tombstone); the **30-day
   member history cap** (B5); `view_audit`; **encryption at rest** (compensating
