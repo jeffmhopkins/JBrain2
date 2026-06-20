@@ -1,42 +1,27 @@
-// The family member's dashboard (JBrain360 M4d) — a standalone, location-only
-// surface served at /dash and loaded inside the forked app's WebView. The device
-// key lives in the Android Keystore and is exchanged for the session cookie
-// natively (POST /api/session/mint), so this app never holds it: it probes the
-// cookie's principal, and a member (device-key) session unlocks the Devices /
-// Timeline / Map tabs scoped to its own + its family group.
+// The family member's dashboard (JBrain360) — a standalone, location-only surface
+// served at /dash and loaded inside the forked app's WebView. The device key lives
+// in the Android Keystore and is exchanged for the session cookie natively (POST
+// /api/session/mint), so this app never holds it: it probes the cookie's principal,
+// and a member (device-key) session unlocks a full-screen live map scoped to its own
+// + its family group.
 //
-// M4d-2a ships the shell, the session gate, and the Devices (presence) tab;
-// Timeline and Map land in 2b/2c. Location domain stays on --location (teal).
+// Wave 2 (docs/PHASE7_APP_MAP_PLAN.md) ships the full-screen map shell: the floating
+// person switcher, current-location pins, and the bottom status/roster card. Trail /
+// heat / the 1–7 day range / the last-actions timeline land in Wave 3. Reference
+// mock: docs/mocks/app-live-map.html. Location domain stays on --location (teal).
 
-import { useEffect, useState } from "react";
-import {
-  type LocationFix,
-  type MemberSubject,
-  type PlaceGeofence,
-  type Principal,
-  type TimelineEntry,
-  api,
-} from "../api/client";
-import { MemberMapTab } from "./MemberMapTab";
-
-type Tab = "devices" | "timeline" | "map";
-
-const TAB_LABEL: Record<Tab, string> = {
-  devices: "Devices",
-  timeline: "Timeline",
-  map: "Map",
-};
+import { useEffect, useMemo, useRef, useState } from "react";
+import { type MemberSubject, type PlaceGeofence, type Principal, api } from "../api/client";
+import { type LocationMapHandle, type MapPin, createLocationMap } from "./leafletMap";
 
 export interface MemberDeps {
   /** Resolve the session cookie's principal; rejects (401) when unauthenticated. */
   probe: () => Promise<Principal>;
   listRoster: () => Promise<MemberSubject[]>;
-  listTimeline: () => Promise<TimelineEntry[]>;
-  listPositions: (subjectId: string, since: string, until: string) => Promise<LocationFix[]>;
   listPlaces: () => Promise<PlaceGeofence[]>;
 }
 
-type Gate = { phase: "probing" } | { phase: "locked" } | { phase: "ready"; label: string };
+type Gate = { phase: "probing" } | { phase: "locked" } | { phase: "ready" };
 
 interface MemberDashboardProps {
   /** Injectable for tests; defaults to the live API client. */
@@ -46,16 +31,15 @@ interface MemberDashboardProps {
 export function MemberDashboard({ deps }: MemberDashboardProps) {
   const probe = deps?.probe ?? api.me;
   const [gate, setGate] = useState<Gate>({ phase: "probing" });
-  const [tab, setTab] = useState<Tab>("devices");
 
   useEffect(() => {
     let stale = false;
     probe()
       .then((p) => {
         if (stale) return;
-        // Only a device-key cookie is a member session; an owner (or anything
-        // else) belongs on the main app, not here.
-        setGate(p.kind === "device_key" ? { phase: "ready", label: p.label } : { phase: "locked" });
+        // Only a device-key cookie is a member session; an owner (or anything else)
+        // belongs on the main app, not here.
+        setGate(p.kind === "device_key" ? { phase: "ready" } : { phase: "locked" });
       })
       .catch(() => {
         if (!stale) setGate({ phase: "locked" });
@@ -75,191 +59,251 @@ export function MemberDashboard({ deps }: MemberDashboardProps) {
       </main>
     );
   }
-
-  return (
-    <main className="dash-frame">
-      <header className="dash-head">
-        <span className="dash-title">JBrain360</span>
-        <span className="dash-quiet">{gate.label}</span>
-      </header>
-      <div className="seg-row" role="tablist" aria-label="Dashboard views">
-        {(Object.keys(TAB_LABEL) as Tab[]).map((t) => (
-          <button
-            key={t}
-            type="button"
-            role="tab"
-            aria-selected={tab === t}
-            className={`seg${tab === t ? " seg-on" : ""}`}
-            onClick={() => setTab(t)}
-          >
-            {TAB_LABEL[t]}
-          </button>
-        ))}
-      </div>
-
-      {tab === "devices" && <DevicesTab deps={deps} />}
-      {tab === "timeline" && <TimelineTab deps={deps} />}
-      {tab === "map" && <MemberMapTab deps={deps} />}
-    </main>
-  );
+  return <LiveMap deps={deps} />;
 }
 
-// --- Devices (presence) tab -----------------------------------------------
+// --- the full-screen live map ---------------------------------------------
 
-type State = { phase: "loading" } | { phase: "error" } | { phase: "done"; roster: MemberSubject[] };
+// "all" shows everyone's current pins; a subject id focuses one person.
+type Selection = "all" | string;
 
-function DevicesTab({ deps }: { deps: MemberDeps | undefined }) {
-  const list = deps?.listRoster ?? api.memberRoster;
-  const [state, setState] = useState<State>({ phase: "loading" });
+const PIN_PALETTE = 6; // loc-pin-c0..c5
+const STALE_MS = 10 * 60_000; // a fix older than this reads as "stale", not "live"
 
-  useEffect(() => {
-    let stale = false;
-    list()
-      .then((roster) => {
-        if (!stale) setState({ phase: "done", roster });
-      })
-      .catch(() => {
-        if (!stale) setState({ phase: "error" });
-      });
-    return () => {
-      stale = true;
-    };
-  }, [list]);
-
-  if (state.phase === "loading") {
-    return <p className="dash-quiet dash-pad">loading…</p>;
-  }
-  if (state.phase === "error") {
-    return <p className="dash-quiet dash-pad">couldn't load the roster — check the connection.</p>;
-  }
-  if (state.roster.length === 0) {
-    return <p className="dash-quiet dash-pad">no one to show yet.</p>;
-  }
-  return (
-    <div className="loc-card-list">
-      {state.roster.map((m) => (
-        <article key={m.subject_id} className="loc-card">
-          <div className="loc-card-head">{m.label}</div>
-          <div className="loc-card-meta">
-            <span>{lastSeen(m.last_seen)}</span>
-            {m.battery_pct !== null && <span>· {m.battery_pct}%</span>}
-            {m.connection && <span>· {m.connection}</span>}
-          </div>
-        </article>
-      ))}
-    </div>
-  );
+function paletteClass(index: number): string {
+  return `loc-pin-c${index % PIN_PALETTE}`;
 }
 
-// --- Timeline tab ----------------------------------------------------------
+function isLive(iso: string | null): boolean {
+  return iso !== null && Date.now() - new Date(iso).getTime() < STALE_MS;
+}
 
-type FeedState =
-  | { phase: "loading" }
-  | { phase: "error" }
-  | { phase: "done"; entries: TimelineEntry[]; labels: Map<string, string> };
-
-function TimelineTab({ deps }: { deps: MemberDeps | undefined }) {
-  const listTimeline = deps?.listTimeline ?? api.memberTimeline;
+function LiveMap({ deps }: { deps: MemberDeps | undefined }) {
   const listRoster = deps?.listRoster ?? api.memberRoster;
-  const [state, setState] = useState<FeedState>({ phase: "loading" });
+  const listPlaces = deps?.listPlaces ?? api.memberPlaces;
 
+  const [roster, setRoster] = useState<MemberSubject[] | null>(null);
+  const [places, setPlaces] = useState<PlaceGeofence[]>([]);
+  const [failed, setFailed] = useState(false);
+  const [sel, setSel] = useState<Selection>("all");
+
+  const canvas = useRef<HTMLDivElement>(null);
+  const handle = useRef<LocationMapHandle | null>(null);
+
+  // Create the Leaflet map once; a pin tap follows through to the switcher.
+  useEffect(() => {
+    if (!canvas.current) return;
+    const h = createLocationMap(canvas.current, (id) => setSel(id));
+    handle.current = h;
+    return () => {
+      h.destroy();
+      handle.current = null;
+    };
+  }, []);
+
+  // Load the roster (which now carries each visible subject's coordinate) + the
+  // shared fences.
   useEffect(() => {
     let stale = false;
-    // The feed names the subject (the "who"), so it joins the crossings to the
-    // roster for labels — subject ids never read as sentences. Only shared-place
-    // crossings for visible subjects come back (the server filters; M4c).
-    Promise.all([listTimeline(), listRoster()])
-      .then(([entries, roster]) => {
+    Promise.all([listRoster(), listPlaces()])
+      .then(([r, p]) => {
         if (stale) return;
-        const labels = new Map(roster.map((m) => [m.subject_id, m.label]));
-        setState({ phase: "done", entries, labels });
+        setRoster(r);
+        setPlaces(p);
       })
       .catch(() => {
-        if (!stale) setState({ phase: "error" });
+        if (!stale) setFailed(true);
       });
     return () => {
       stale = true;
     };
-  }, [listTimeline, listRoster]);
+  }, [listRoster, listPlaces]);
 
-  if (state.phase === "loading") {
-    return <p className="dash-quiet dash-pad">loading timeline…</p>;
+  // Each visible subject gets a stable colour by roster order.
+  const colorOf = useMemo(() => {
+    const m = new Map<string, string>();
+    (roster ?? []).forEach((s, i) => m.set(s.subject_id, paletteClass(i)));
+    return m;
+  }, [roster]);
+
+  // Drive the map's pins from the roster + selection: Everyone shows all located
+  // people, a single selection shows just that person (so the map recenters on them).
+  useEffect(() => {
+    const h = handle.current;
+    if (!h || !roster) return;
+    const located = roster.filter((s) => s.latitude !== null && s.longitude !== null);
+    const shown = sel === "all" ? located : located.filter((s) => s.subject_id === sel);
+    const pins: MapPin[] = shown.map((s) => ({
+      subjectId: s.subject_id,
+      lat: s.latitude as number,
+      lon: s.longitude as number,
+      label: s.label,
+      colorClass: colorOf.get(s.subject_id) ?? "loc-pin-c0",
+      live: isLive(s.last_seen),
+      selected: s.subject_id === sel,
+    }));
+    h.update({ mode: "live", fixes: [], heatRadius: 25, places, pins });
+  }, [roster, places, sel, colorOf]);
+
+  return (
+    <div className="livemap">
+      <div className="livemap-canvas" ref={canvas} data-testid="map-canvas" />
+      <PeopleSwitcher roster={roster} sel={sel} colorOf={colorOf} failed={failed} onPick={setSel} />
+      <PersonCard roster={roster} sel={sel} colorOf={colorOf} onPick={setSel} />
+    </div>
+  );
+}
+
+// --- floating person switcher ---------------------------------------------
+
+function PeopleSwitcher({
+  roster,
+  sel,
+  colorOf,
+  failed,
+  onPick,
+}: {
+  roster: MemberSubject[] | null;
+  sel: Selection;
+  colorOf: Map<string, string>;
+  failed: boolean;
+  onPick: (s: Selection) => void;
+}) {
+  if (failed) {
+    return <div className="lm-people lm-float lm-people-quiet">couldn't load the family</div>;
   }
-  if (state.phase === "error") {
-    return (
-      <p className="dash-quiet dash-pad">couldn't load the timeline — check the connection.</p>
-    );
-  }
-  if (state.entries.length === 0) {
-    return (
-      <p className="dash-quiet dash-pad">
-        no movement yet — arrivals and departures at shared places show here.
-      </p>
-    );
+  if (!roster) {
+    return <div className="lm-people lm-float lm-people-quiet">loading…</div>;
   }
   return (
-    <div className="loc-feed">
-      {groupByDay(state.entries).map((g) => (
-        <section key={g.day} className="loc-feed-day">
-          <h3 className="loc-feed-head">{g.day}</h3>
-          {g.entries.map((e, i) => (
-            <div key={`${e.occurred_at}-${e.subject_id}-${i}`} className="loc-feed-row">
-              <span className="loc-feed-time">{timeOfDay(e.occurred_at)}</span>
-              <span className="loc-feed-text">{sentence(e, state.labels)}</span>
-            </div>
-          ))}
-        </section>
+    <div className="lm-people lm-float" role="tablist" aria-label="Family">
+      <button
+        type="button"
+        role="tab"
+        aria-selected={sel === "all"}
+        className={`lm-chip${sel === "all" ? " on" : ""}`}
+        onClick={() => onPick("all")}
+      >
+        <span className="lm-av lm-av-all" aria-hidden>
+          ◎
+        </span>
+        <span className="lm-chip-nm">Everyone</span>
+      </button>
+      {roster.map((m) => (
+        <button
+          key={m.subject_id}
+          type="button"
+          role="tab"
+          aria-selected={sel === m.subject_id}
+          className={`lm-chip${sel === m.subject_id ? " on" : ""}`}
+          onClick={() => onPick(m.subject_id)}
+        >
+          <span className={`lm-av ${colorOf.get(m.subject_id) ?? "loc-pin-c0"}`}>
+            {(m.label[0] ?? "?").toUpperCase()}
+            <span className={`lm-pres ${isLive(m.last_seen) ? "live" : "stale"}`} aria-hidden />
+          </span>
+          <span className="lm-chip-nm">{m.label}</span>
+        </button>
       ))}
     </div>
   );
 }
 
-/** A crossing as a plain sentence: "Bob arrived at Home" / "Bob left Home". The
- * verb carries the meaning — no color codes. */
-export function sentence(e: TimelineEntry, labels: Map<string, string>): string {
-  const who = labels.get(e.subject_id) ?? "Someone";
-  const verb = e.transition === "enter" ? "arrived at" : "left";
-  return `${who} ${verb} ${e.place_name}`;
-}
+// --- floating bottom card -------------------------------------------------
 
-function timeOfDay(iso: string): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "";
-  return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-}
-
-function groupByDay(entries: TimelineEntry[]): { day: string; entries: TimelineEntry[] }[] {
-  // Entries arrive newest-first; consecutive same-day rows fold under one header.
-  const groups: { day: string; entries: TimelineEntry[] }[] = [];
-  for (const e of entries) {
-    const day = dayLabel(e.occurred_at);
-    const last = groups[groups.length - 1];
-    if (last && last.day === day) last.entries.push(e);
-    else groups.push({ day, entries: [e] });
+function PersonCard({
+  roster,
+  sel,
+  colorOf,
+  onPick,
+}: {
+  roster: MemberSubject[] | null;
+  sel: Selection;
+  colorOf: Map<string, string>;
+  onPick: (s: Selection) => void;
+}) {
+  if (!roster) return null;
+  if (roster.length === 0) {
+    return <div className="lm-card lm-float lm-card-quiet">no one to show yet.</div>;
   }
-  return groups;
-}
 
-function dayLabel(iso: string): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "Unknown";
-  const today = new Date();
-  const yesterday = new Date(today);
-  yesterday.setDate(today.getDate() - 1);
-  if (sameDay(d, today)) return "Today";
-  if (sameDay(d, yesterday)) return "Yesterday";
-  return d.toLocaleDateString([], { weekday: "long", month: "short", day: "numeric" });
-}
+  if (sel === "all") {
+    return (
+      <div className="lm-card lm-float">
+        <div className="lm-card-h">Everyone · {roster.length}</div>
+        <div className="lm-roster">
+          {roster.map((m) => (
+            <button
+              type="button"
+              key={m.subject_id}
+              className="lm-row"
+              onClick={() => onPick(m.subject_id)}
+            >
+              <span className={`lm-av sm ${colorOf.get(m.subject_id) ?? "loc-pin-c0"}`}>
+                {(m.label[0] ?? "?").toUpperCase()}
+              </span>
+              <span className="lm-row-main">
+                <span className="lm-row-nm">{m.label}</span>
+                <span className="lm-row-sub">
+                  <PresenceDot live={isLive(m.last_seen)} /> {presence(m)}
+                </span>
+              </span>
+              <Battery pct={m.battery_pct} />
+            </button>
+          ))}
+        </div>
+        <PrivacyLine />
+      </div>
+    );
+  }
 
-function sameDay(a: Date, b: Date): boolean {
+  const m = roster.find((s) => s.subject_id === sel);
+  if (!m) return null;
   return (
-    a.getFullYear() === b.getFullYear() &&
-    a.getMonth() === b.getMonth() &&
-    a.getDate() === b.getDate()
+    <div className="lm-card lm-float">
+      <div className="lm-chead">
+        <span className={`lm-av ${colorOf.get(m.subject_id) ?? "loc-pin-c0"}`}>
+          {(m.label[0] ?? "?").toUpperCase()}
+        </span>
+        <span className="lm-chead-main">
+          <span className="lm-chead-nm">{m.label}</span>
+          <span className="lm-chead-st">
+            <PresenceDot live={isLive(m.last_seen)} /> {presence(m)}
+          </span>
+        </span>
+        <Battery pct={m.battery_pct} />
+      </div>
+      <PrivacyLine />
+    </div>
   );
 }
 
-/** A compact "last fix" relative time for the roster (never an exact position —
+function presence(m: MemberSubject): string {
+  if (!m.last_seen) return "no fixes yet";
+  return `${isLive(m.last_seen) ? "Live" : "Last seen"} · ${lastSeen(m.last_seen)}`;
+}
+
+function PresenceDot({ live }: { live: boolean }) {
+  return <span className={`lm-dot ${live ? "live" : "stale"}`} aria-hidden />;
+}
+
+function Battery({ pct }: { pct: number | null }) {
+  if (pct === null) return null;
+  return (
+    <span className="lm-batt" title={`battery ${pct}%`}>
+      <span className="lm-batt-cell">
+        <span className={`lm-batt-fill${pct < 25 ? " low" : ""}`} style={{ width: `${pct}%` }} />
+      </span>
+      {pct}%
+    </span>
+  );
+}
+
+function PrivacyLine() {
+  return <div className="lm-priv">Family-only · history stays on your box</div>;
+}
+
+/** A compact "last fix" relative time for the roster/card (never an exact position —
  * just freshness, so a stale dot is never read as "here now"). */
 export function lastSeen(iso: string | null): string {
   if (!iso) return "no fixes yet";

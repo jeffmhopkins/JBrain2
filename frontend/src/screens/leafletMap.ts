@@ -12,12 +12,27 @@ import type { LocationFix, PlaceGeofence } from "../api/client";
 
 export type MapMode = "live" | "trail" | "heat";
 
+/** A person's current-location pin (the member map's switcher targets). Colour is a
+ * palette class (`loc-pin-c*`) so it stays tokens-only; the initial is drawn in the
+ * teardrop. */
+export interface MapPin {
+  subjectId: string;
+  lat: number;
+  lon: number;
+  label: string;
+  colorClass: string;
+  live: boolean;
+  selected: boolean;
+}
+
 export interface MapState {
   mode: MapMode;
   fixes: LocationFix[];
   places: PlaceGeofence[];
   // Per-point heat radius in px (the "spot size" the Heat control tunes).
   heatRadius: number;
+  // Current-location pins (member map). Absent on the owner map — additive.
+  pins?: MapPin[];
 }
 
 export interface LocationMapHandle {
@@ -27,7 +42,19 @@ export interface LocationMapHandle {
 
 const TILE_URL = "/api/tiles/{z}/{x}/{y}.png";
 
-export function createLocationMap(container: HTMLElement): LocationMapHandle {
+function escapeHtml(s: string): string {
+  return s.replace(
+    /[&<>"']/g,
+    (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c] ?? c,
+  );
+}
+
+/** `onSelect` fires when a person pin is tapped, so the switcher can follow a tap on
+ * the map. */
+export function createLocationMap(
+  container: HTMLElement,
+  onSelect?: (subjectId: string) => void,
+): LocationMapHandle {
   // Zoom moves to the bottom-right so the floating control bar owns the top edge.
   const map = L.map(container, {
     attributionControl: true,
@@ -67,6 +94,28 @@ export function createLocationMap(container: HTMLElement): LocationMapHandle {
         L.polygon(ring, { className: "loc-lf-fence" }).bindTooltip(place.name).addTo(overlay);
         bounds.push(...ring);
       }
+    }
+
+    // Current-location pins (member map): a coloured teardrop per visible person.
+    for (const pin of state.pins ?? []) {
+      const c = L.latLng(pin.lat, pin.lon);
+      const cls = [
+        "loc-pin",
+        pin.colorClass,
+        pin.live ? "is-live" : "is-stale",
+        pin.selected ? "is-sel" : "",
+      ].join(" ");
+      const icon = L.divIcon({
+        className: "loc-pin-wrap",
+        html: `<div class="${cls}"><span class="loc-pin-head"><b>${escapeHtml(
+          (pin.label[0] ?? "?").toUpperCase(),
+        )}</b></span></div>`,
+        iconSize: [30, 38],
+        iconAnchor: [15, 38],
+      });
+      const marker = L.marker(c, { icon, title: pin.label }).addTo(overlay);
+      if (onSelect) marker.on("click", () => onSelect(pin.subjectId));
+      bounds.push(c);
     }
 
     const first = track[0];

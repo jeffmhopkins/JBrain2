@@ -11859,3 +11859,298 @@ input.ld-title {
   padding: 10px 12px;
   border-radius: var(--r-input);
 }
+
+/* --- JBrain360 member live map (full-screen, floating chrome) ----------- */
+.livemap {
+  position: fixed;
+  inset: 0;
+  background: var(--bg);
+}
+.livemap-canvas {
+  position: absolute;
+  inset: 0;
+}
+/* Leaflet defaults to its own font/bg; pull it onto our tokens. */
+.leaflet-container {
+  background: var(--surface-2);
+  font: inherit;
+}
+
+/* Person palette — tokens only; --pc is shared by the avatar and the map pin. */
+.loc-pin-c0 {
+  --pc: var(--steel);
+}
+.loc-pin-c1 {
+  --pc: var(--rose);
+}
+.loc-pin-c2 {
+  --pc: var(--violet);
+}
+.loc-pin-c3 {
+  --pc: var(--location);
+}
+.loc-pin-c4 {
+  --pc: var(--green);
+}
+.loc-pin-c5 {
+  --pc: var(--amber);
+}
+
+/* Frosted floating panels. */
+.lm-float {
+  background: color-mix(in srgb, var(--surface) 80%, transparent);
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
+  border: 1px solid var(--border);
+  box-shadow: 0 6px 22px var(--scrim);
+}
+
+/* Map pin — a coloured teardrop with an upright initial. */
+.loc-pin-wrap {
+  background: none;
+  border: 0;
+}
+.loc-pin {
+  position: relative;
+  width: 30px;
+}
+.loc-pin-head {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  margin: 0 auto;
+  border-radius: 50% 50% 50% 0;
+  transform: rotate(-45deg);
+  background: var(--pc);
+  border: 2px solid var(--bg);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.45);
+}
+.loc-pin-head b {
+  transform: rotate(45deg);
+  color: #0c1012;
+  font-weight: 700;
+  font-size: 12px;
+}
+.loc-pin.is-stale .loc-pin-head {
+  opacity: 0.7;
+}
+.loc-pin.is-sel .loc-pin-head {
+  width: 32px;
+  height: 32px;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--pc) 45%, transparent);
+}
+
+/* Person switcher (floating top). */
+.lm-people {
+  position: absolute;
+  top: max(env(safe-area-inset-top), 10px);
+  left: 10px;
+  right: 10px;
+  z-index: 8;
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding: 8px;
+  border-radius: 16px;
+  scrollbar-width: none;
+}
+.lm-people::-webkit-scrollbar {
+  display: none;
+}
+.lm-people-quiet {
+  font-size: var(--fs-secondary);
+  color: var(--text-2);
+  padding: 12px;
+}
+.lm-chip {
+  flex: 0 0 auto;
+  width: 56px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  padding: 0;
+}
+.lm-av {
+  position: relative;
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: var(--pc);
+  color: #0c1012;
+  font-weight: 700;
+  font-size: 15px;
+  border: 2px solid transparent;
+  transition: transform 0.12s;
+}
+.lm-av.sm {
+  width: 34px;
+  height: 34px;
+  font-size: 13px;
+  flex: 0 0 34px;
+}
+.lm-av-all {
+  --pc: var(--surface-2);
+  color: var(--text-2);
+  border-color: var(--border);
+}
+.lm-chip.on .lm-av {
+  border-color: var(--text);
+  transform: scale(1.06);
+}
+.lm-pres {
+  position: absolute;
+  right: -1px;
+  bottom: -1px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 2px solid var(--bg);
+}
+.lm-pres.live {
+  background: var(--green);
+}
+.lm-pres.stale {
+  background: var(--amber);
+}
+.lm-chip-nm {
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+  max-width: 56px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lm-chip.on .lm-chip-nm {
+  color: var(--text);
+  font-weight: 600;
+}
+
+/* Bottom person/roster card (floating). */
+.lm-card {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 8;
+  border-top-left-radius: 20px;
+  border-top-right-radius: 20px;
+  border-top: 1px solid var(--border);
+  padding: 14px 16px calc(16px + env(safe-area-inset-bottom));
+}
+.lm-card-quiet {
+  font-size: var(--fs-secondary);
+  color: var(--text-2);
+}
+.lm-card-h {
+  font-size: var(--fs-secondary);
+  font-weight: 600;
+  color: var(--text-2);
+  margin-bottom: 6px;
+}
+.lm-chead {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.lm-chead-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.lm-chead-nm {
+  font-size: var(--fs-body);
+  font-weight: 600;
+}
+.lm-chead-st {
+  font-size: var(--fs-secondary);
+  color: var(--text-2);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.lm-roster {
+  display: flex;
+  flex-direction: column;
+}
+.lm-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 2px;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+  width: 100%;
+}
+.lm-row:last-of-type {
+  border-bottom: 0;
+}
+.lm-row-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.lm-row-nm {
+  font-size: var(--fs-secondary);
+  font-weight: 600;
+}
+.lm-row-sub {
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.lm-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: 0 0 8px;
+}
+.lm-dot.live {
+  background: var(--green);
+}
+.lm-dot.stale {
+  background: var(--amber);
+}
+.lm-batt {
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+.lm-batt-cell {
+  width: 22px;
+  height: 11px;
+  border: 1px solid var(--text-3);
+  border-radius: 3px;
+  padding: 1px;
+}
+.lm-batt-fill {
+  display: block;
+  height: 100%;
+  border-radius: 1px;
+  background: var(--green);
+}
+.lm-batt-fill.low {
+  background: var(--amber);
+}
+.lm-priv {
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+  margin-top: 12px;
+}
