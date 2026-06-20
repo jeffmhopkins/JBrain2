@@ -65,6 +65,12 @@ SYSTEM_PROMPT: str = _SYSTEM.render()
 SYSTEM_VERSION: str = _SYSTEM.version
 SYSTEM_STRENGTH: str = _SYSTEM.strength
 
+# Per-turn generation budget. A local reasoning model (gpt-oss/GLM) bills its
+# thinking trace against this cap before any answer or tool call, so the budget
+# must leave headroom for the trace on top of the visible turn — the default 4096
+# risked truncating a long answer mid-stream. Applies per ReAct step, not per chain.
+TURN_MAX_TOKENS: int = 8192
+
 
 def _grounding_corpus(sources: Sequence[NoteSource], entities: Sequence[EntityRef]) -> list[str]:
     """The texts a claim may ground against: note snippets PLUS each retrieved
@@ -286,6 +292,7 @@ class AgentLoop:
                 system=system_prompt,
                 messages=messages,
                 tools=tools,
+                max_tokens=TURN_MAX_TOKENS,
                 strength=SYSTEM_STRENGTH,
             )
             cost += turn.usage.input_tokens + turn.usage.output_tokens
@@ -403,6 +410,7 @@ class AgentLoop:
                 system=system_prompt,
                 messages=messages,
                 tools=tools,
+                max_tokens=TURN_MAX_TOKENS,
                 strength=SYSTEM_STRENGTH,
             ):
                 if isinstance(part, TextChunk):
@@ -647,6 +655,7 @@ class AgentLoop:
                 system=system_prompt,
                 messages=messages,
                 tools=tools,
+                max_tokens=TURN_MAX_TOKENS,
                 strength=SYSTEM_STRENGTH,
             )
             spent = turn.usage.input_tokens + turn.usage.output_tokens

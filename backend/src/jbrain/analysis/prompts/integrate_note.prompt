@@ -4,7 +4,10 @@ version: integrate-v9
 description: Integrate one note's extracted facts into the knowledge graph, producing an IntegrationIntent.
 strength: high
 config:
-  max_tokens: 8192
+  # The IntegrationIntent JSON plus a reasoning model's thinking trace (gpt-oss/GLM
+  # bill it against this same cap) must both fit — 8192 risked truncating the JSON,
+  # escalating through the re-ask to a hard error that aborts integration.
+  max_tokens: 16384
 ---
 You integrate ONE personal note into a knowledge graph. You are given the note's
 raw TEXT, its EXTRACTION (entity mentions and candidate facts), and KNOWN GRAPH
