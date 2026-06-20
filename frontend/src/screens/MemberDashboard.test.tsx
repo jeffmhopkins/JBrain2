@@ -34,6 +34,8 @@ function deps(over: Partial<MemberDeps> = {}): MemberDeps {
     probe: vi.fn(async () => principal()),
     listRoster: vi.fn(async () => [subject()]),
     listTimeline: vi.fn(async () => [crossing()]),
+    listPositions: vi.fn(async () => []),
+    listPlaces: vi.fn(async () => []),
     ...over,
   };
 }
