@@ -154,6 +154,9 @@ const SEARCH_THRESHOLD = 6;
 
 interface Props {
   sessions: AgentSession[];
+  /** The agents a new chat may use here — the tab's group (Research offers Jerv +
+   * Teacher; Full Brain only Curator). Omitted = all three (legacy/standalone). */
+  agentOptions?: readonly string[];
   /** The chat currently open in the surface, marked "you are here". */
   activeId?: string | null;
   onOpen: (session: AgentSession) => void;
@@ -168,6 +171,7 @@ interface Props {
 
 export function SessionsPanel({
   sessions,
+  agentOptions = ["curator", "teacher", "jerv"],
   activeId,
   onOpen,
   onCreate,
@@ -178,6 +182,11 @@ export function SessionsPanel({
   onUnarchive,
   onRescope,
 }: Props): ReactNode {
+  // The new-chat agents in the order they're offered — the first is the default,
+  // so Research seeds Jerv and Full Brain seeds Curator.
+  const newAgents = agentOptions
+    .map((id) => AGENTS.find((a) => a.id === id))
+    .filter((a): a is AgentChoice => a !== undefined);
   const [picking, setPicking] = useState(false);
   const [query, setQuery] = useState("");
   // The segment the owner explicitly picked, or null to follow the data (so the
@@ -304,7 +313,7 @@ export function SessionsPanel({
           seed={readLastScope()}
           actionLabel="Start"
           withTitle
-          withAgent
+          agents={newAgents}
           onClose={() => setPicking(false)}
           onSubmit={async (scope, title, agent) => {
             const created = await onCreate({
@@ -620,7 +629,7 @@ function ScopeSheet({
   seed,
   actionLabel,
   withTitle = false,
-  withAgent = false,
+  agents = [],
   onClose,
   onSubmit,
 }: {
@@ -632,20 +641,25 @@ function ScopeSheet({
   actionLabel: string;
   /** Show the optional title field (new chat only). */
   withTitle?: boolean;
-  /** Show the agent picker (new chat only) — scope hides for a no-data agent. */
-  withAgent?: boolean;
+  /** The agents this chat may use; the first is the seeded default. Empty means
+   * no agent choice (re-scoping). A single agent rides the payload without a
+   * picker; two or more show the picker — and a no-data agent hides the scope dial. */
+  agents?: AgentChoice[];
   onClose: () => void;
   onSubmit: (scope: string[], title: string, agent?: string) => void | Promise<void>;
 }): ReactNode {
   const [preset, setPreset] = useState<string>(() => scopeToPreset(seed));
   const [custom, setCustom] = useState<Set<string>>(() => new Set(seed));
   const [title, setTitle] = useState("");
-  const [agent, setAgent] = useState("curator");
+  const [agent, setAgent] = useState(agents[0]?.id ?? "curator");
 
+  // One agent rides the payload silently; two or more earn the picker.
+  const includeAgent = agents.length > 0;
+  const showAgentPicker = agents.length > 1;
   const currentAgent = agentById(agent);
   // A no-data agent (teacher/jerv) hides the scope dial and starts with empty
   // scopes; the RLS firewall — not this UI — is what makes that real.
-  const showScope = !withAgent || currentAgent.readsKb;
+  const showScope = !includeAgent || currentAgent.readsKb;
   const scope =
     preset === "custom" ? [...custom] : (PRESETS.find((p) => p.id === preset)?.set ?? []);
   const summary = scopeKind(scope);
@@ -681,16 +695,16 @@ function ScopeSheet({
     const effScope = showScope ? scope : [];
     if (showScope && effScope.length === 0) return;
     if (effScope.length) writeLastScope(effScope); // the chosen scope seeds the next chat
-    void onSubmit(effScope, title.trim(), withAgent ? agent : undefined);
+    void onSubmit(effScope, title.trim(), includeAgent ? agent : undefined);
   }
 
   return (
     <Sheet title={sheetTitle} onClose={onClose}>
       <p className="lead">{lead}</p>
 
-      {withAgent && (
+      {showAgentPicker && (
         <div className="agent-opts">
-          {AGENTS.map((a) => (
+          {agents.map((a) => (
             <button
               type="button"
               key={a.id}

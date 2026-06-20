@@ -190,6 +190,58 @@ describe("SessionsPanel", () => {
     await waitFor(() => expect(onOpen).toHaveBeenCalledWith(created));
   });
 
+  it("scopes the picker to the tab's agents — Research offers Jerv + Teacher, defaulting Jerv", async () => {
+    const created = session({ id: "j", title: "", domain_scopes: [], agent: "jerv" });
+    const onCreate = vi.fn(async (_body: SessionCreate) => created);
+    render(
+      <SessionsPanel
+        sessions={[]}
+        agentOptions={["jerv", "teacher"]}
+        onOpen={vi.fn()}
+        onCreate={onCreate}
+        onClose={vi.fn()}
+        onRename={vi.fn()}
+        onDelete={vi.fn()}
+        onArchive={vi.fn()}
+        onUnarchive={vi.fn()}
+        onRescope={vi.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByText("＋ New chat"));
+    // Curator is not on offer here; Jerv and Teacher are. The seed is Jerv (no
+    // scope dial), so Start fires straight away with empty scopes.
+    expect(screen.queryByRole("button", { name: /Curator/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Jerv/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Teacher/ })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Everything" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Start/ }));
+    await waitFor(() =>
+      expect(onCreate).toHaveBeenCalledWith({ domain_scopes: [], title: "", agent: "jerv" }),
+    );
+  });
+
+  it("a single-agent tab (Full Brain → Curator) shows the scope dial and no picker", () => {
+    render(
+      <SessionsPanel
+        sessions={[]}
+        agentOptions={["curator"]}
+        onOpen={vi.fn()}
+        onCreate={vi.fn()}
+        onClose={vi.fn()}
+        onRename={vi.fn()}
+        onDelete={vi.fn()}
+        onArchive={vi.fn()}
+        onUnarchive={vi.fn()}
+        onRescope={vi.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByText("＋ New chat"));
+    // Only Curator is possible, so the agent picker is hidden; the scope dial stays.
+    expect(screen.queryByRole("button", { name: /Jerv/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Teacher/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Start/ })).toHaveTextContent("reads everything");
+  });
+
   it("the Teacher agent hides the scope dial and starts with no data", async () => {
     const created = session({ id: "t", title: "", domain_scopes: [], agent: "teacher" });
     const onCreate = vi.fn(async (_body: SessionCreate) => created);

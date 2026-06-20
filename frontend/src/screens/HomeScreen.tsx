@@ -1,18 +1,15 @@
-import { type CSSProperties, useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { FullBrainSurface } from "../agent/FullBrainSurface";
 import type { AppointmentRef } from "../agent/types";
 import { type FullBrainDeps, useFullBrain } from "../agent/useFullBrain";
 import { Omnibox } from "../components/Omnibox";
 import { Stream } from "../components/Stream";
 import { TopBar } from "../components/TopBar";
-import { MODES, type SegState } from "../notes/modes";
+import type { SegState } from "../notes/modes";
 import type { NoteActions } from "../notes/useNoteActions";
 import type { NotesController, StreamItem } from "../notes/useNotes";
 
 const TOAST_MS = 4000;
-// The calendar's agent handoff is owner-only and may read every domain, so a
-// session it auto-starts spans all of them (no scope picker for the owner).
-const ALL_DOMAINS = ["general", "health", "finance", "location"];
 
 /** A calendar → Full Brain handoff: the prose that seeds the composer plus the
  * appointment it's about (the agent resolves the id; the owner sees the pill). */
@@ -63,50 +60,49 @@ export function HomeScreen({
   // The appointment a calendar handoff is about — shown as a composer pill and
   // sent with the next turn so the agent resolves it (not by title).
   const [pendingAppt, setPendingAppt] = useState<AppointmentRef | null>(null);
-  const composingRef = useRef(false);
   const [toast, setToast] = useState<Toast | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // A compose handoff (the calendar's reschedule/cancel/ask) flips to Full Brain
-  // and hands the prompt to the omnibox; the owner reviews and sends it.
+  // and hands the prompt to the omnibox; the owner reviews and sends it. The
+  // surface auto-opens (or starts) a Curator chat to send into.
   useEffect(() => {
     if (compose) {
       setSeg({ row: "main", mode: "fullbrain" });
       setPendingDraft(compose.text);
       setPendingAppt(compose.appt ?? null);
-      composingRef.current = true;
       onComposeConsumed?.();
     }
   }, [compose, onComposeConsumed]);
   const clearDraft = useCallback(() => setPendingDraft(""), []);
   const clearAppt = useCallback(() => setPendingAppt(null), []);
+  // Research and Full Brain are both conversation surfaces, integral to the home
+  // page: the transcript and its lateral panels render in the body while the
+  // omnibox below acts as the composer. The controller only works while a
+  // conversation tab is on screen, and auto-opens that tab's last chat (or starts
+  // a fresh one) on entry.
+  const convMode = seg.mode === "research" || seg.mode === "fullbrain" ? seg.mode : null;
+  const fb = useFullBrain(convMode, fbDeps, true);
+
+  // Re-clicking the conversation tab you're already on starts a fresh chat (a new
+  // Jerv in Research, a full-domain Curator in Full Brain); reuse handles empties.
+  // Kept in a ref so the segment handler stays stable without going stale.
+  const segRef = useRef(seg);
+  segRef.current = seg;
   // The appointment pill belongs to a Full Brain turn; drop it if the owner
   // navigates to another mode so it can't leak into an unrelated send. (A mode
   // switch the handoff itself drives uses setSeg directly, keeping the pill.)
-  const changeSeg = useCallback((next: SegState) => {
-    if (next.mode !== "fullbrain") setPendingAppt(null);
-    setSeg(next);
-  }, []);
-  // Full Brain is integral to the home page: the transcript and its lateral
-  // panels render in the body while the omnibox below acts as its composer. The
-  // controller only does work while the mode is on screen.
-  const fb = useFullBrain(seg.mode === "fullbrain", fbDeps);
-
-  // The handoff needs a session to send into. If Full Brain loaded with none
-  // (it would otherwise drop the owner on the scope picker), start an all-domains
-  // session so the seeded request is ready to send.
-  useEffect(() => {
-    if (!composingRef.current || seg.mode !== "fullbrain") return;
-    if (fb.active) {
-      composingRef.current = false;
-    } else if (fb.panel === "sessions") {
-      composingRef.current = false;
-      void fb
-        .create({ domain_scopes: ALL_DOMAINS })
-        .then(fb.open)
-        .catch(() => {});
-    }
-  }, [seg.mode, fb.active, fb.panel, fb.create, fb.open]);
+  const changeSeg = useCallback(
+    (next: SegState) => {
+      if (next.mode !== "fullbrain") setPendingAppt(null);
+      const reclick =
+        (next.mode === "research" || next.mode === "fullbrain") &&
+        next.mode === segRef.current.mode;
+      if (reclick) fb.startFresh();
+      setSeg(next);
+    },
+    [fb.startFresh],
+  );
 
   function showToast(message: string, action?: Toast["action"]) {
     if (toastTimer.current) clearTimeout(toastTimer.current);
@@ -126,25 +122,34 @@ export function HomeScreen({
     [],
   );
 
-  // Research / Full Brain scope the stream area to that mode's conversation
-  // list — empty until Phase 4 ships conversations.
+  // Research and Full Brain are conversation surfaces; everything else is capture.
   const conversational = seg.mode === "research" || seg.mode === "fullbrain";
-  const meta = MODES[seg.mode];
 
-  // In Full Brain the session's name owns the top bar (a tap reopens the list),
-  // so the transcript starts right under it; other modes keep the wordmark.
-  const fbSession =
-    seg.mode === "fullbrain"
-      ? {
-          title: fb.active ? fb.active.title || "Untitled session" : "Full Brain",
-          onOpen: () => fb.setPanel("sessions"),
-        }
-      : undefined;
+  // The Research tab reads "Teacher" while a Teacher chat is open — still the
+  // research slot, just renamed; every other tab keeps the mode's own label.
+  const segLabels =
+    seg.mode === "research" && fb.active?.agent === "teacher" ? { research: "Teacher" } : undefined;
+
+  // In a conversation tab the open chat's name owns the top bar (a tap reopens the
+  // list), so the transcript starts right under it; other modes keep the wordmark.
+  // The empty fallback names the tab, and a Teacher chat reads "Teacher".
+  const convTitleFallback =
+    seg.mode === "research"
+      ? fb.active?.agent === "teacher"
+        ? "Teacher"
+        : "Research"
+      : "Full Brain";
+  const fbSession = conversational
+    ? {
+        title: fb.active ? fb.active.title || convTitleFallback : convTitleFallback,
+        onOpen: () => fb.setPanel("sessions"),
+      }
+    : undefined;
 
   return (
     <>
       <TopBar syncStatus={notes.syncStatus} onBolt={onOpenLauncher} session={fbSession} />
-      {seg.mode === "fullbrain" ? (
+      {conversational ? (
         <FullBrainSurface
           fb={fb}
           onOpenNote={onOpenNoteById}
@@ -153,15 +158,6 @@ export function HomeScreen({
           // now so it's already there when the owner flips back to entry mode.
           onProposalEnacted={() => void notes.refresh()}
         />
-      ) : conversational ? (
-        <main className="stream conv-area">
-          <p
-            className="conv-empty"
-            style={{ "--mode": meta.color, "--mode-tint": meta.tint } as CSSProperties}
-          >
-            conversations arrive in Phase 4 — typing starts one then
-          </p>
-        </main>
       ) : (
         <Stream
           items={notes.items}
@@ -197,20 +193,22 @@ export function HomeScreen({
         onSegChange={changeSeg}
         onSend={(input) => void notes.send(input)}
         onConversation={(body) => {
-          // The omnibox is Full Brain's composer: a send streams into the
-          // transcript above. Research's read-only surface is still Phase 4.
-          if (seg.mode === "fullbrain") {
+          // The omnibox is the conversation surface's composer: a send streams
+          // into the transcript above (Research → Jerv/Teacher, Full Brain →
+          // Curator). The appointment pill only rides a Full Brain handoff.
+          if (conversational) {
             fb.send(body, pendingAppt ? { appointmentId: pendingAppt.id } : undefined);
             setPendingAppt(null);
-          } else showToast("Conversations arrive in Phase 4");
+          }
         }}
-        busy={seg.mode === "fullbrain" && fb.busy}
+        busy={conversational && fb.busy}
         onOpenLauncher={onOpenLauncher}
-        // Full Brain only: a horizontal swipe across the omnibox shuttles the
-        // lateral panels (right→Sessions, left→Proposals; the opposite swipe
+        labels={segLabels}
+        // Conversation tabs only: a horizontal swipe across the omnibox shuttles
+        // the lateral panels (right→Sessions, left→Proposals; the opposite swipe
         // sends the open one back). The transcript itself no longer swipes.
         onLateralSwipe={
-          seg.mode === "fullbrain"
+          conversational
             ? (dx) => {
                 if (fb.panel === "none") fb.setPanel(dx > 0 ? "sessions" : "proposals");
                 else if (fb.panel === "sessions" && dx < 0) fb.setPanel("none");
