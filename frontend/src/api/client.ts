@@ -180,6 +180,8 @@ export interface OpsMetrics {
   load_5m: number;
   load_15m: number;
   uptime_seconds: number;
+  /** iGPU/dGPU utilization 0-100, or null when the host exposes no GPU telemetry. */
+  gpu_busy_percent: number | null;
   containers: { service: string; mem_bytes: number }[];
   db: {
     db_size_bytes: number;

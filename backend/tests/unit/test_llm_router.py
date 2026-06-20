@@ -273,6 +273,36 @@ async def test_effective_reasoning_effort_reports_the_live_effort() -> None:
     assert await off.effective_reasoning_effort("note.extract") is None
 
 
+async def test_effective_spec_follows_a_live_override_unlike_spec() -> None:
+    # Provenance regression: `spec()` sees only static config, so it reported the
+    # default route (and stamped the wrong model) even after the operator re-routed a
+    # task in Settings. `effective_spec()` folds the live override in, matching the
+    # model `complete` actually calls.
+    xai, local = FakeLlmClient(["x"]), FakeLlmClient(["l"])
+    router = LlmRouter(
+        {"xai": xai, "local": local},
+        {"vision.ocr": ("xai", "grok-4.3")},
+        overrides_loader=_loader({"vision.ocr": {"spec": "local:qwen3-vl-30b-a3b"}}),
+        local_enabled=True,
+    )
+    assert router.spec("vision.ocr") == ("xai", "grok-4.3")  # static default, override-blind
+    assert await router.effective_spec("vision.ocr") == ("local", "qwen3-vl-30b-a3b")
+
+
+async def test_effective_spec_ignores_an_unservable_local_override() -> None:
+    # Same fail-safe as the call path: a stored `local:` route is dropped when local
+    # hosting is off, so the stamp falls back to the resolvable default rather than
+    # naming a model that can't run.
+    xai = FakeLlmClient(["x"])
+    router = LlmRouter(
+        {"xai": xai},
+        {"vision.ocr": ("xai", "grok-4.3")},
+        overrides_loader=_loader({"vision.ocr": {"spec": "local:qwen3-vl-30b-a3b"}}),
+        local_enabled=False,
+    )
+    assert await router.effective_spec("vision.ocr") == ("xai", "grok-4.3")
+
+
 async def test_reasoning_effort_reaches_a_reasoning_capable_local_model() -> None:
     # A stored effort on a `local:` spec for a reasoning model (gpt-oss) is honored —
     # llama.cpp serves gpt-oss with a harmony reasoning channel.

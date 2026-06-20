@@ -2166,28 +2166,31 @@ button.small {
   font-weight: 500;
 }
 
+/* Track carries the gradient; .meter-empty masks the unfilled right so the color
+   at the fill edge tracks ABSOLUTE load (like the LLM memory meter). `resource`
+   escalates green->amber->red as it fills; `util` stays green->amber (a pegged
+   GPU under load is healthy). */
 .meter {
+  position: relative;
   height: 6px;
   border-radius: var(--r-pill);
-  background: var(--surface-2);
   overflow: hidden;
 }
 
-.meter-fill {
-  height: 100%;
-  border-radius: var(--r-pill);
+.meter-resource {
+  background: linear-gradient(90deg, var(--green), var(--amber) 70%, var(--danger));
 }
 
-.meter-ok {
-  background: var(--ok);
+.meter-util {
+  background: linear-gradient(90deg, var(--green), var(--amber));
 }
 
-.meter-warn {
-  background: var(--warn);
-}
-
-.meter-bad {
-  background: var(--danger);
+.meter-empty {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  background: var(--surface-2);
 }
 
 /* ===== Ops redesign (B3): collapsible System / service-group cards =====

@@ -1,8 +1,10 @@
-"""Host-level metrics, read from /proc and statvfs.
+"""Host-level metrics, read from /proc, /sys and statvfs.
 
 These reflect the HOST, not the container: /proc/meminfo, /proc/loadavg and
-/proc/uptime are not namespaced, and / sits on the host's root filesystem
-via overlayfs. Paths are injectable for tests.
+/proc/uptime are not namespaced, / sits on the host's root filesystem via
+overlayfs, and Docker mounts the host's /sys read-only (so the amdgpu driver's
+load attribute is readable without /dev/dri — that device is only needed to
+USE the GPU, not to read its telemetry). Paths are injectable for tests.
 """
 
 from __future__ import annotations
@@ -24,6 +26,9 @@ class HostMetrics:
     load_5m: float
     load_15m: float
     uptime_seconds: int
+    # iGPU/dGPU utilization, 0-100, or None when no amdgpu busy attribute is
+    # present (non-AMD box, no GPU, or /sys not exposed) — the card omits the row.
+    gpu_busy_percent: float | None = None
 
 
 def _meminfo_kb(text: str) -> dict[str, int]:
@@ -38,7 +43,34 @@ def _meminfo_kb(text: str) -> dict[str, int]:
     return values
 
 
-def read_host_metrics(proc: Path = Path("/proc"), disk_path: str = "/") -> HostMetrics:
+def read_gpu_busy_percent(drm: Path = Path("/sys/class/drm")) -> float | None:
+    """Highest amdgpu `gpu_busy_percent` across DRM cards, or None if unreadable.
+
+    The driver exposes a 0-100 instantaneous-load gauge at
+    /sys/class/drm/card*/device/gpu_busy_percent. We take the max over cards so a
+    single iGPU is reported regardless of its card index; any unreadable or
+    malformed card is skipped, and None (not 0) means "no GPU telemetry here" so
+    the caller can drop the row rather than imply an idle GPU."""
+    best: float | None = None
+    try:
+        cards = sorted(drm.glob("card*/device/gpu_busy_percent"))
+    except OSError:
+        return None
+    for path in cards:
+        try:
+            value = float(path.read_text().strip())
+        except (OSError, ValueError):
+            continue
+        if best is None or value > best:
+            best = value
+    return best
+
+
+def read_host_metrics(
+    proc: Path = Path("/proc"),
+    disk_path: str = "/",
+    drm: Path = Path("/sys/class/drm"),
+) -> HostMetrics:
     mem = _meminfo_kb((proc / "meminfo").read_text())
     load_parts = (proc / "loadavg").read_text().split()
     uptime = float((proc / "uptime").read_text().split()[0])
@@ -54,4 +86,5 @@ def read_host_metrics(proc: Path = Path("/proc"), disk_path: str = "/") -> HostM
         load_5m=float(load_parts[1]),
         load_15m=float(load_parts[2]),
         uptime_seconds=int(uptime),
+        gpu_busy_percent=read_gpu_busy_percent(drm),
     )

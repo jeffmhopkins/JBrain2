@@ -350,7 +350,7 @@ class AnalysisPipeline:
             intent, compute_signals(intent, [c.text for c in chunks]), correction=correction
         )
 
-        provider, model = self._router.spec("integrate.note", INTEGRATE_STRENGTH)
+        provider, model = await self._router.effective_spec("integrate.note", INTEGRATE_STRENGTH)
         async with scoped_session(self._maker, SYSTEM_CTX) as session:
             resolved = await self.apply_intent(
                 session,
