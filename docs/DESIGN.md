@@ -892,6 +892,39 @@ coordinate** (this is why neither needs a basemap):
   boundary), **not** the system prompt and **not** the toast — owner-gated (present
   only for a location-scoped full-owner session), so a narrowed session gets neither.
 
+## JBrain360 app — member live-map surface (Phase 7, owner-approved)
+
+The **member dashboard** (`/dash`, served into the Android app's WebView) is a
+**full-screen live map with floating glass chrome** — reference mock
+`docs/mocks/app-live-map.html` (owner-approved directly; the three-way GUI gate was
+waived by explicit owner choice of this direction). It replaces the earlier
+Devices/Timeline/Map tab shell: the map is the whole surface; everything else floats
+over it on `backdrop-filter` panels. Location domain stays **`--location` teal**;
+live = `--green`, stale = `--amber`.
+
+The floating elements, all owner-/family-scoped (never a scoped link — L8):
+
+- **Person switcher (top).** A horizontally-scrollable row of avatar chips —
+  **Everyone** + each family member — each with a green/amber **live/stale** presence
+  dot. Selecting a person recenters the map on them and swaps the overlay + card;
+  tapping their pin selects them too. Everyone mode shows all current pins (no
+  trail/heat) and turns the card into a tappable roster.
+- **Current location.** A pulsing, person-colored map pin with a name label.
+- **Trail / Heat toggle.** **Trail** draws the recent path (fading points, brightest
+  at "now"); **Heat** renders dwell density (leaflet.heat) — hottest where the person
+  lingers (home/work). Both are computed client-side from the same fixes.
+- **1–7 day range.** A slider; more days → longer trail / denser heat, and it filters
+  the activity list. The real basemap is **Leaflet over the same-origin `/api/tiles`
+  proxy** (no third-party tile host — tiles never leave the box; cf. the owner map).
+- **"Last actions" card (bottom).** The selected person's current status + battery and
+  a row of quick recent-action chips; **tap to expand** into a Today / Yesterday /
+  N-days-ago timeline of arrived/left geofence transitions (names + times only).
+
+The surface honours the firewall: a member session sees only **its own subject + its
+family group** (RLS `viewer_may_see`/`view_scope`), the basemap is self-hosted, and
+the card/timeline are **names + times only — never a raw coordinate in prose**. Build
+plan + wave breakdown: `docs/PHASE7_APP_MAP_PLAN.md`.
+
 ## Implementation rules
 
 1. Tokens live in one file (`frontend/src/styles/tokens.css`); components
