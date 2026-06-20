@@ -11735,3 +11735,27 @@ input.ld-title {
 .dash-pad {
   padding: 16px 4px;
 }
+
+/* --- JBrain360 pair-a-phone (owner) ------------------------------------- */
+.loc-qr {
+  display: flex;
+  justify-content: center;
+  padding: 16px 0;
+}
+/* The QR stays literal black-on-white with a quiet zone so it scans regardless
+   of app theme — these are not themeable tokens by design. */
+.loc-qr svg {
+  background: #ffffff;
+  padding: 12px;
+  border-radius: var(--r-card);
+}
+
+.loc-pair-payload {
+  display: block;
+  word-break: break-all;
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+  background: var(--surface-2);
+  padding: 10px 12px;
+  border-radius: var(--r-input);
+}

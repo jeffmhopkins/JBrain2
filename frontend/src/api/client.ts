@@ -48,6 +48,15 @@ export interface ProvisionedDevice {
   key: string;
 }
 
+/** A minted pairing code (POST /api/pairing/codes). `payload` is the self-contained
+ * string the phone scans/pastes — it embeds the server URL + the code, so the app
+ * needs nothing configured. `code` is the human-readable form; `expires_at` its TTL. */
+export interface PairingCode {
+  code: string;
+  expires_at: string;
+  payload: string;
+}
+
 /** One geofence crossing for the Timeline feed (GET /api/locations/timeline).
  * `subject_id` is the device; `transition` is "enter" | "exit". */
 export interface TimelineEntry {
@@ -1706,6 +1715,13 @@ export const api = {
   async provisionDevice(label: string): Promise<ProvisionedDevice> {
     const response = await request("/api/devices", jsonInit("POST", { label }));
     return (await response.json()) as ProvisionedDevice;
+  },
+
+  // Mint a one-time pairing code for the JBrain360 app. The returned `payload`
+  // embeds the server URL, so the phone needs nothing configured — paste/scan it.
+  async mintPairingCode(label: string, monitoring = 1): Promise<PairingCode> {
+    const response = await request("/api/pairing/codes", jsonInit("POST", { label, monitoring }));
+    return (await response.json()) as PairingCode;
   },
 
   async rotateDevice(id: string): Promise<string> {
