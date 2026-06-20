@@ -325,8 +325,11 @@ service-account bootstrap (non-negotiable #8).
   (`DashboardActivity`) loading the server's `/dash`, a unit-tested `DashboardConfig`
   URL helper, the Gradle build + a CI `android` job (SDK setup → `assembleDebug` +
   JVM unit tests; on-device/emulator tests need KVM, out of CI scope) ✓; **M5b**
-  Keystore key-gen + native `/session/mint` → injected cookie; **M5c** pairing-code
-  redeem screen; **M5d** WebView lockdown hardening + the OwnTracks location engine.
+  native `/session/mint` → injected cookie: a MockWebServer-tested `SessionMinter`,
+  a Keystore-backed `CredentialStore` (EncryptedSharedPreferences), and a
+  `SessionLauncher` that reads the key → mints → loads /dash, self-healing a revoked
+  key to pairing ✓; **M5c** pairing-code redeem screen; **M5d** WebView lockdown
+  hardening + the OwnTracks location engine.
 - **M6 — FCM.** `fcm_token` registry (+ RLS test); content-free poke sender;
   view-scope-aware routing; dedupe; on-poke fetch-then-local-notify. Gate:
   **no-PII-in-payload** test, routing test, revoke-kills-token test.
