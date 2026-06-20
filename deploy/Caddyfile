@@ -6,7 +6,10 @@
 # Tunnel mode (Caddy serves plain HTTP on :80 and TLS terminates at
 # Cloudflare's edge; the tunnel reaches us here at http://proxy:80). It
 # defaults to JBRAIN_DOMAIN in compose, so pre-tunnel installs are unchanged.
-{$JBRAIN_SITE_ADDR} {
+
+# Shared app handlers, imported by every site below (the public site and the
+# optional LAN site) so they serve the identical app from one definition.
+(app) {
 	encode zstd gzip
 
 	handle /api/* {
@@ -38,3 +41,15 @@
 		file_server
 	}
 }
+
+{$JBRAIN_SITE_ADDR} {
+	import app
+}
+
+# Optional LAN site: when JBRAIN_LAN_ADDR is set (e.g. https://jbrain.local) the
+# proxy entrypoint writes a site block here that serves the same app over HTTPS
+# from Caddy's internal CA. This makes the Secure session cookie work on the
+# local network even when the Cloudflare tunnel / internet is down. Unset -> no
+# file is written, so this glob matches nothing and only the public site runs.
+# See docs/LOCAL_ACCESS.md.
+import /etc/caddy/lan/*.caddy

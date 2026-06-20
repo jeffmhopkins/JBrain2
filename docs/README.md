@@ -37,6 +37,7 @@ Phase-5 build record is `archive/PHASE5_COMPLETION_PLAN.md`.
 | `OPERATIONS.md` | JBrain360 operator runbook: revoking a member, the encryption-at-rest compensating control, and rotating the device Keystore key + the server's pinned cert (SPKI). |
 | `STRIX_HALO_SETUP.md` | End-to-end runbook for self-hosting the optional local models on an AMD Strix Halo (Ryzen AI Max+ 395) box: distro → kernel → Vulkan → install → routing. |
 | `CLOUDFLARE_TUNNEL.md` | Reaching a home-network box from outside via Cloudflare Tunnel — the dynamic-IP / CGNAT path: no static IP, no port-forwarding, TLS at Cloudflare's edge. |
+| `LOCAL_ACCESS.md` | Signing in on the LAN when the internet/tunnel is down: mDNS `<name>.local` + Caddy local HTTPS (internal CA) so the Secure session cookie works locally. |
 | `mocks/` | Interactive HTML UI mockups. `DESIGN.md` cites these as the **binding spec** for reviewed surfaces — a living reference, not throwaway prototypes. |
 
 ## Active plan
