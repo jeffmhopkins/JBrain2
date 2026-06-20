@@ -47,7 +47,11 @@ class MemBlobStore:
         return digest
 
     async def get(self, sha256: str) -> bytes:
-        return self._blobs[sha256]
+        try:
+            return self._blobs[sha256]
+        except KeyError as exc:
+            # Match the real BlobStore contract: an absent blob raises FileNotFoundError.
+            raise FileNotFoundError(sha256) from exc
 
     def path_for(self, sha256: str) -> Path:
         return Path(sha256)
@@ -200,6 +204,29 @@ async def test_edit_by_attachment_id_records_source(maker: async_sessionmaker) -
             )
         ).scalar()
     assert edit_source == source_sha
+
+
+async def test_edit_orphan_source_blob_is_clean_error(maker: async_sessionmaker) -> None:
+    """A generated row that outlives its blob (orphan) must yield a clean tool-error string,
+    never a raw FileNotFoundError exposing the blob path to the model."""
+    owner = await _owner(maker)
+    fake = FakeImageGen()
+    sessions = AgentSessionRepo(maker)
+    attachments = TurnAttachmentRepo(maker, sessions)
+    blobs = MemBlobStore()
+    handlers = build_image_handlers(fake, blobs, GeneratedImageRepo(), attachments, maker)
+
+    gen = await handlers["generate_image"]({"prompt": "a cat"}, _ctx(owner))
+    assert isinstance(gen, ToolOutput) and gen.view is not None
+    source_id = gen.view.data["image_id"]
+    blobs._blobs.clear()  # evict the blob; the row now points at nothing
+
+    out = await handlers["edit_image"](
+        {"prompt": "make it blue", "source_image_id": source_id}, _ctx(owner)
+    )
+    assert isinstance(out, str) and not isinstance(out, ToolOutput)
+    assert "no longer available" in out.lower()  # clean message, no path/stack leaked
+    assert fake.last_edit is None  # the image model was never driven
 
 
 @pytest.mark.parametrize(

@@ -153,7 +153,10 @@ def build_image_handlers(
                 row = await repo.get(session, image_id)
             if row is None:
                 return "No generated image with that id is in this chat."
-            return await blob_store.get(row.blob_sha256), row.blob_sha256
+            try:
+                return await blob_store.get(row.blob_sha256), row.blob_sha256
+            except FileNotFoundError:
+                return "That source image is no longer available."
         # A chat attachment is DOMAIN-scoped (stamped 'general' for a jerv session), so it
         # is read under the attachment context (the session's scopes + that stamped domain),
         # not jerv's empty read scopes — the same widening the chat turn uses to load
@@ -166,7 +169,10 @@ def build_image_handlers(
         info = await attachments.get(att_ctx, attachment_id)
         if info is None:
             return "No attached image with that id is in this chat."
-        return await blob_store.get(info.sha256), info.sha256
+        try:
+            return await blob_store.get(info.sha256), info.sha256
+        except FileNotFoundError:
+            return "That source image is no longer available."
 
     async def edit_image_tool(arguments: dict, ctx: ToolContext) -> str:
         prompt = str(arguments.get("prompt", "")).strip()

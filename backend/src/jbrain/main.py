@@ -270,7 +270,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             image_handlers = build_image_handlers(
                 app.state.image_gen,
                 app.state.blob_store,
-                GeneratedImageRepo(),
+                app.state.generated_image_repo,
                 app.state.turn_attachments,
                 maker,
             )
