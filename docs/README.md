@@ -48,6 +48,12 @@ Phase-5 build record is `archive/PHASE5_COMPLETION_PLAN.md`.
   revision storage are settled; remaining gates are the UI mock round and a cross-stream
   citation/delta-feed contract with the entity-graph rebuild. Most of the phase is gated
   on that rebuild; only the article/index shell + UI are parallel-safe now.
+- `IMAGE_GEN_PLAN.md` — the **chat image-generation** build plan (in progress): jerv's
+  `generate_image` / `edit_image` tools driving a host-managed localhost ComfyUI
+  (Qwen-Image-2512 / Qwen-Image-Edit) on the Strix Halo box, results stored as owner-only
+  chat artifacts (never notes, never RAG). Waves G1 (backend foundation + RLS table) and G2
+  (tools + by-id serving) shipped; G3 (the chat view, after the GUI mock gate — chosen
+  mock C) is in progress.
 
 ## Archive (history, not active)
 

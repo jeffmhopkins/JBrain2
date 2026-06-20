@@ -41,9 +41,16 @@ images are inline SVG `data:` URIs standing in for the by-id production source
 
 ## Decision
 
-**Pending owner choice.** Once chosen, the selection + rationale land in
-`docs/DESIGN.md` (the `generated_image` tool-view entry, per the GUI gate), the
-chosen layout becomes the binding spec for the `GeneratedImage` component and its
-`.tv-genimg-*` classes in `frontend/src/agent/views/registry.tsx`, and the two
-rejected mocks remain in this directory as the record. (B and C subsume A's
-generate layout, so a B/C choice still defines the generate-only rendering.)
+**Chosen: C — edit-aware before/after** (`genimage-c-edit-aware.html`). It is the
+**binding spec** for the `GeneratedImage` component and its `.tv-genimg-*` classes
+in `frontend/src/agent/views/registry.tsx`: a *generate* renders like A (sized
+image, `kind` badge, dimensions·model caption); an *edit* renders the
+source→result link as a draggable swipe-compare with a Before/After/Compare
+toggle, pulling the "before" image from the owner-gated
+`/api/images/generated/${image_id}/source` route. C won because **`edit_image` is
+in scope**, so the source→result provenance must be legible — A and B render an
+edit no differently from a fresh generate. **A** (result-only) and **B**
+(result + a collapsed prompt/seed/Regenerate disclosure) are retained in this
+directory as the record (C subsumes A's generate-only layout, so this choice also
+fixes the generate rendering). The selection + rationale also land in
+`docs/DESIGN.md` (the `generated_image` tool-view entry, per the GUI gate).

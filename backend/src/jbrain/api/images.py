@@ -82,3 +82,25 @@ async def serve_generated_image(image_id: str, owner: OwnerDep, request: Request
     return FileResponse(
         path, media_type=sniff_path(path), headers={"X-Content-Type-Options": "nosniff"}
     )
+
+
+# A static `/source` suffix under the same `{image_id}` path. FastAPI matches the more specific
+# route first, so this never shadows (nor is shadowed by) the bare `/{image_id}` serve route above.
+@generated_router.get("/{image_id}/source")
+async def serve_generated_image_source(
+    image_id: str, owner: OwnerDep, request: Request
+) -> FileResponse:
+    """Serve an *edit's* source ("before") image by the edit's id — the chat view's before/after.
+    Owner-gated and RLS-scoped exactly like the result route. A non-edit generation has no source
+    (`source_sha256` is NULL), so a generate row — like a missing row or a vanished blob — is a 404,
+    never a 403. The media type is sniffed from the bytes; a stored type is never trusted."""
+    repo = _get_generated_repo(request)
+    blobs = _get_blob_store(request)
+    async with scoped_session(_get_session_maker(request), ctx_for(owner)) as session:
+        row: GeneratedImage | None = await repo.get(session, image_id)
+    if row is None or row.source_sha256 is None or not await blobs.exists(row.source_sha256):
+        raise HTTPException(status_code=404, detail="generated image source not found")
+    path = blobs.path_for(row.source_sha256)
+    return FileResponse(
+        path, media_type=sniff_path(path), headers={"X-Content-Type-Options": "nosniff"}
+    )
