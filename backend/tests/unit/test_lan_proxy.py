@@ -25,6 +25,7 @@ def _load_avahi_alias():
     # Module-level imports avoid dbus/gi (those live inside main()), so the pure
     # wire-format encoder loads without the host bindings present.
     spec = importlib.util.spec_from_file_location("avahi_alias", _AVAHI_ALIAS)
+    assert spec and spec.loader
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
