@@ -121,6 +121,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.view_scope_repo = SqlViewScopeRepo(maker)
         app.state.pairing_repo = SqlPairingRepo(maker)
         app.state.fcm_token_repo = SqlFcmTokenRepo(maker)
+        # The content-free poke notifier (M6). None until a Firebase project +
+        # service-account credentials are configured (the FcmNotifier + its OAuth
+        # token provider are wired at deploy / with the Android receiver); a None
+        # notifier makes every crossing's poke a no-op.
+        app.state.push_notifier = None
         # Anti-brute-force on the unauthenticated redeem endpoint: ~10 attempts
         # burst per source IP, refilling 1 every 10s.
         app.state.pairing_rate_limiter = TokenBucket(capacity=10, refill_per_sec=0.1)

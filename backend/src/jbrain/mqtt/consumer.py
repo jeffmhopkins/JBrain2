@@ -11,6 +11,7 @@ exactly as on the HTTP path). `handle_message` is the unit; `run` is the thin lo
 
 import asyncio
 import json
+from typing import TYPE_CHECKING
 
 import aiomqtt
 import structlog
@@ -20,6 +21,9 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from jbrain.auth.service import AuthRepo
 from jbrain.config import Settings
 from jbrain.locations.ingest import LocationSink, ingest_location, is_location_message
+
+if TYPE_CHECKING:
+    from jbrain.push import PushNotifier
 
 log = structlog.get_logger()
 
@@ -47,6 +51,7 @@ async def handle_message(
     *,
     topic: str,
     payload: bytes,
+    notifier: "PushNotifier | None" = None,
 ) -> bool:
     """Process one broker message; return True iff a new fix was stored.
 
@@ -69,7 +74,12 @@ async def handle_message(
         return False  # transition / waypoint / lwt / card: not ours to store
     try:
         return await ingest_location(
-            sink, maker, principal_id=principal.id, subject_id=principal.subject_id, body=body
+            sink,
+            maker,
+            principal_id=principal.id,
+            subject_id=principal.subject_id,
+            body=body,
+            notifier=notifier,
         )
     except ValidationError:
         log.warning("mqtt.ingest.invalid_location", topic=topic)
@@ -81,6 +91,7 @@ async def run(
     auth_repo: AuthRepo,
     sink: LocationSink,
     maker: "async_sessionmaker[AsyncSession]",
+    notifier: "PushNotifier | None" = None,
 ) -> None:  # pragma: no cover - operational loop, exercised at deploy not in CI
     """Connect, subscribe `owntracks/#`, and dispatch each message; reconnect on
     broker errors. The consumer authenticates as the ingest service identity."""
@@ -99,7 +110,12 @@ async def run(
                     payload = raw if isinstance(raw, bytes | bytearray) else b""
                     try:
                         await handle_message(
-                            auth_repo, sink, maker, topic=str(message.topic), payload=bytes(payload)
+                            auth_repo,
+                            sink,
+                            maker,
+                            topic=str(message.topic),
+                            payload=bytes(payload),
+                            notifier=notifier,
                         )
                     except Exception as exc:  # noqa: BLE001 - one bad message must not wedge the loop
                         log.warning("mqtt.ingest.message_error", error=repr(exc))

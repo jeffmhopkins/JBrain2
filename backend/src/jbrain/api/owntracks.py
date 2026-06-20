@@ -55,9 +55,15 @@ async def owntracks(
         return []  # transition / waypoints / anything else: ack and ignore
     try:
         # The device subject is code-set from the authenticated principal, never
-        # the payload (L9); a dup (idempotent retry) is a no-op.
+        # the payload (L9); a dup (idempotent retry) is a no-op. A crossing fires a
+        # content-free poke when FCM is configured (app.state.push_notifier, M6).
         await ingest_location(
-            repo, maker, principal_id=principal.id, subject_id=principal.subject_id, body=body
+            repo,
+            maker,
+            principal_id=principal.id,
+            subject_id=principal.subject_id,
+            body=body,
+            notifier=getattr(request.app.state, "push_notifier", None),
         )
     except ValidationError as exc:
         raise HTTPException(status_code=422, detail="invalid location") from exc

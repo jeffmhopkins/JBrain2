@@ -351,8 +351,14 @@ service-account bootstrap (non-negotiable #8).
   a PII-free `fcm_message` (data-only, no `notification` block) + `FcmNotifier`
   (HTTP v1, per-token, survives a bad token) + `NullNotifier`, and a `PushRouter`
   that pokes `visible_subjects(X)`-minus-X's active de-duped tokens. Gates: no-PII
-  payload, co-members-only routing, revoke-drops-out ✓; **M6c** wire the trigger
-  into `detect_transitions` + the Android FCM receiver (gms) → fetch-then-local-notify.
+  payload, co-members-only routing, revoke-drops-out ✓; **M6c-backend** the live
+  trigger — `detect_transitions`/`ingest_location` thread an optional notifier (HTTP
+  + MQTT paths), so a confirmed crossing fires one content-free poke to the family
+  group; `app.state.push_notifier` is None until FCM creds are configured at deploy.
+  Proven against PostGIS (a crossing pokes co-members; None notifier is a safe
+  no-op) ✓. **M6 server-side complete.** *Deferred to Android hardening:* the FCM
+  receiver (gms flavor + Firebase project) → fetch-then-local-notify, and wiring
+  `FcmNotifier` + its service-account OAuth provider at deploy.
 - **M7 — Owner controls + ops.** Owner-only **add/remove member** + **revoke**
   (kills MQTT session + `cred_epoch` bump + membership tombstone); the **30-day
   member history cap** (B5); `view_audit`; **encryption at rest** (compensating

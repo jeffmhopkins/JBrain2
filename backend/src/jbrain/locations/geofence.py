@@ -23,6 +23,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from jbrain.db.session import device_context, scoped_session
+from jbrain.push import PushNotifier, PushRouter, SqlFcmTokenRepo
 from jbrain.workflow import events as wf_events
 
 log = structlog.get_logger()
@@ -98,10 +99,15 @@ async def detect_transitions(
     latitude: float,
     longitude: float,
     accuracy_m: float | None = None,
+    notifier: PushNotifier | None = None,
 ) -> list[dict]:
     """Update geofence state for this fix and emit a transition event per crossing.
     Returns the transitions (for logging/tests). Best-effort: a detection error
-    never propagates to break ingest (the fix is already durably stored)."""
+    never propagates to break ingest (the fix is already durably stored).
+
+    When a `notifier` is configured (FCM is set up), a crossing also fires one
+    content-free poke to the subject's family group (M6) — best-effort, off the
+    same fix, never breaking ingest."""
     if accuracy_m is not None and accuracy_m > ACCURACY_GATE_M:
         return []
     try:
@@ -131,6 +137,10 @@ async def detect_transitions(
             },
             principal_id=principal_id,
         )
+    # One content-free poke per crossing batch — the payload says nothing about
+    # where, so a single wake-up is enough for the family group to fetch + render.
+    if notifier is not None and transitions:
+        await PushRouter(maker, SqlFcmTokenRepo(maker)).poke_viewers_of(notifier, subject_id)
     return transitions
 
 
