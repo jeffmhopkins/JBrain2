@@ -296,26 +296,37 @@
       // the dense/vision models cost more.
       // state: "idle" | "staged" | "loaded" — the stage→load→unload lifecycle.
       // color: this model's hue on the memory bar (weights solid, KV a lighter tint).
+      // Positional palette: a segment's color comes from its slot on the bar
+      // (1st green, 2nd yellow, 3rd orange, …), not from the model identity — so
+      // colors stay stable by position as models load/unload.
+      const PALETTE = [
+        [138, 34, 58], // 1 green
+        [46, 50, 63], //  2 yellow
+        [28, 48, 62], //  3 orange
+        [14, 50, 60], //  4 deep orange
+      ];
+      const slotHsl = (i) => PALETTE[i % PALETTE.length];
+
       const models = [
         {
           id: "qwen3-vl-30b", label: "Qwen3-VL 30B · vision", quant: "Q8_0",
           sizeGb: 32, chips: [["vision", "vision"], ["tools", "tools"]],
-          window: 32768, state: "loaded", kvGbPer128k: 6.0, hsl: [138, 34, 58], // green
+          window: 32768, state: "loaded", kvGbPer128k: 6.0,
         },
         {
           id: "gpt-oss-120b", label: "GPT-OSS 120B · reasoning", quant: "MXFP4",
           sizeGb: 59, chips: [["reason", "reasoning"], ["tools", "tools"]],
-          window: 131072, state: "loaded", kvGbPer128k: 4.5, hsl: [46, 50, 63], // yellow
+          window: 131072, state: "loaded", kvGbPer128k: 4.5,
         },
         {
           id: "qwen3-30b-a3b", label: "Qwen3 30B · lightweight", quant: "Q4_K_M",
           sizeGb: 18, chips: [["tools", "tools"]],
-          window: 32768, state: "loaded", kvGbPer128k: 3.2, hsl: [28, 48, 62], // orange
+          window: 32768, state: "loaded", kvGbPer128k: 3.2,
         },
         {
           id: "qwen3-next-80b-a3b", label: "Qwen3-Next 80B · reasoning", quant: "UD-Q4_K_XL",
           sizeGb: 46, chips: [["reason", "reasoning"], ["tools", "tools"]],
-          window: 32768, state: "idle", kvGbPer128k: 5.0, hsl: [14, 50, 60], // deep orange
+          window: 32768, state: "idle", kvGbPer128k: 5.0,
         },
       ];
       const barName = (m) => m.label.split(" ")[0]; // family name for the bar segment
@@ -429,7 +440,7 @@
           ...models.filter((m) => m.state === "loaded"),
           ...models.filter((m) => m.state === "staged"),
         ];
-        for (const m of ordered) {
+        ordered.forEach((m, i) => {
           const kv = kvGb(m, m.window);
           const res = m.sizeGb + kv;
           const seg = document.createElement("div");
@@ -438,9 +449,9 @@
           seg.title = `${m.label} — ${m.sizeGb} GB weights + ${kv} GB KV @ ${fmtK(
             m.window
           )} (${m.state})`;
-          // Dual gradients: weights at base lightness, context lighter; each block
-          // sweeps the hue ±D for a bit of depth.
-          const [h, s, l] = m.hsl;
+          // Color by slot, not model: weights at base lightness, context lighter;
+          // each block sweeps the hue ±D for a bit of depth.
+          const [h, s, l] = slotHsl(i);
           const D = 14;
           const grad = (lt) =>
             `linear-gradient(90deg, hsl(${h - D} ${s}% ${lt}%), hsl(${h + D} ${s}% ${lt}%))`;
@@ -449,7 +460,7 @@
             <div class="mem2-c" style="background:${grad(Math.min(l + 18, 88))};width:${(kv / res) * 100}%"></div>
             <span class="mem2-label">${barName(m)} <span class="gb">${res.toFixed(0)}G</span></span>`;
           bar.appendChild(seg);
-        }
+        });
       }
 
       // Agent-chat meter uses gpt-oss-120b's window as denominator.
