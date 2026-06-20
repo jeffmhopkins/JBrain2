@@ -8375,6 +8375,140 @@ button.small {
   margin-top: 8px;
 }
 
+/* generated_image — the image-gen tool-view (docs/mocks/genimage-c-edit-aware).
+   A generate renders a single sized image; an edit renders a swipe before/after
+   plus a Compare/Before/After toggle. Tokens only; the frame's aspect-ratio is
+   set inline from the payload's width/height to avoid layout shift. */
+.fb-shell .tv-genimg {
+  overflow: hidden;
+}
+.fb-shell .tv-genimg-frame {
+  position: relative;
+  display: block;
+  width: 100%;
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--surface);
+}
+.fb-shell .tv-genimg-img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+.fb-shell .tv-genimg-cap {
+  font-size: 11.5px;
+  color: var(--text-3);
+  padding: 7px 2px 1px;
+}
+.fb-shell .tv-genimg-kind {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  font-size: 10.5px;
+  font-weight: 600;
+  padding: 3px 8px;
+  border-radius: var(--r-pill);
+  backdrop-filter: blur(3px);
+}
+.fb-shell .tv-genimg-kind.kind-generate {
+  background: color-mix(in srgb, var(--violet) 22%, var(--surface));
+  color: var(--violet);
+  border: 1px solid color-mix(in srgb, var(--violet) 34%, transparent);
+}
+.fb-shell .tv-genimg-kind.kind-edit {
+  background: color-mix(in srgb, var(--amber) 22%, var(--surface));
+  color: var(--amber);
+  border: 1px solid color-mix(in srgb, var(--amber) 34%, transparent);
+}
+
+/* edit: the swipe-compare. The "after" layer is clipped to the wipe position
+   (--pos), set by the drag handler / toggle on the .tv-genimg-cmp element. */
+.fb-shell .tv-genimg-cmp {
+  position: relative;
+  width: 100%;
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--surface);
+  touch-action: none;
+  user-select: none;
+  cursor: ew-resize;
+}
+.fb-shell .tv-genimg-cmp .tv-genimg-img {
+  pointer-events: none;
+}
+.fb-shell .tv-genimg-after {
+  position: absolute;
+  inset: 0;
+  clip-path: inset(0 0 0 var(--pos, 50%));
+}
+.fb-shell .tv-genimg-lbl {
+  position: absolute;
+  bottom: 8px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  padding: 2px 7px;
+  border-radius: var(--r-pill);
+  background: color-mix(in srgb, var(--bg) 62%, transparent);
+  color: var(--text-2);
+  backdrop-filter: blur(3px);
+}
+.fb-shell .tv-genimg-lbl.b {
+  left: 8px;
+}
+.fb-shell .tv-genimg-lbl.a {
+  right: 8px;
+}
+.fb-shell .tv-genimg-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: var(--pos, 50%);
+  width: 2px;
+  transform: translateX(-1px);
+  background: var(--steel);
+}
+.fb-shell .tv-genimg-grip {
+  position: absolute;
+  top: 50%;
+  left: var(--pos, 50%);
+  transform: translate(-50%, -50%);
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--steel);
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--bg) 70%, transparent);
+}
+.fb-shell .tv-genimg-acts {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 7px 2px 1px;
+}
+.fb-shell .tv-genimg-acts .tv-genimg-cap {
+  margin-right: auto;
+  padding: 0;
+}
+.fb-shell .tv-genimg-seg {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill);
+  overflow: hidden;
+}
+.fb-shell .tv-genimg-seg button {
+  font: inherit;
+  font-size: 11px;
+  padding: 5px 11px;
+  border: 0;
+  background: transparent;
+  color: var(--text-3);
+  cursor: pointer;
+}
+.fb-shell .tv-genimg-seg button.on {
+  background: var(--steel-tint);
+  color: var(--steel);
+}
+
 /* Proposal tree (the review-inbox detail; docs/ASSISTANT.md "Staging & approval") */
 .fb-shell .proposal-tree {
   flex: 1;

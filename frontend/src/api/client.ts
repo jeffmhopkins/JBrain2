@@ -1059,6 +1059,51 @@ export function exportFileUrl(name: string): string {
   return `/api/ops/export/file/${encodeURIComponent(name)}`;
 }
 
+// Offline stand-ins for the generated-image bytes: an `<img src>` never flows
+// through `request()`/`mockFetch`, so in mock dev the by-id URLs would 404. The
+// url helpers below swap in these inline-SVG data: URIs when MOCK_MODE is on,
+// keyed by the same ids the mock fixture serves — never used in real builds.
+// (These hex are placeholder image *content*, not theme styling.)
+const svgDataUri = (svg: string): string => `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
+
+const MOCK_GENIMG: Record<string, string> = {
+  "mock-genimg-lighthouse": svgDataUri(
+    `<svg xmlns='http://www.w3.org/2000/svg' width='768' height='1024'>
+      <defs><linearGradient id='g' x1='0' y1='0' x2='0' y2='1'>
+        <stop offset='0' stop-color='#7a6a9a'/><stop offset='.55' stop-color='#c98a8f'/>
+        <stop offset='1' stop-color='#e9c79a'/></linearGradient></defs>
+      <rect width='768' height='1024' fill='url(#g)'/>
+      <rect x='600' y='760' width='40' height='180' rx='6' fill='#f4ead2'/>
+      <circle cx='620' cy='745' r='26' fill='#ffe9b0'/>
+      <circle cx='200' cy='180' r='90' fill='#ffe9b0' opacity='.55'/></svg>`,
+  ),
+  "mock-genimg-lighthouse-stormy": svgDataUri(
+    `<svg xmlns='http://www.w3.org/2000/svg' width='768' height='1024'>
+      <defs><linearGradient id='g' x1='0' y1='0' x2='0' y2='1'>
+        <stop offset='0' stop-color='#2b3242'/><stop offset='.6' stop-color='#3a4a5e'/>
+        <stop offset='1' stop-color='#5a4b66'/></linearGradient></defs>
+      <rect width='768' height='1024' fill='url(#g)'/>
+      <polygon points='620,745 540,1024 700,1024' fill='#ffe9b0' opacity='.5'/>
+      <rect x='600' y='760' width='40' height='180' rx='6' fill='#dcd2c0'/>
+      <circle cx='620' cy='745' r='26' fill='#ffe9b0'/></svg>`,
+  ),
+};
+
+/** Source URL for the served result of a generated image (data-only contract:
+ * the tool-view payload carries only `image_id`; the component builds this). */
+export function generatedImageUrl(id: string): string {
+  if (MOCK_MODE && MOCK_GENIMG[id]) return MOCK_GENIMG[id];
+  return `/api/images/generated/${encodeURIComponent(id)}`;
+}
+
+/** Source ("before") URL for an edit: the original bytes the edit started from,
+ * resolved by the same id on the backend. */
+export function generatedImageSourceUrl(id: string): string {
+  if (MOCK_MODE && MOCK_GENIMG["mock-genimg-lighthouse"] && id === "mock-genimg-lighthouse-stormy")
+    return MOCK_GENIMG["mock-genimg-lighthouse"];
+  return `/api/images/generated/${encodeURIComponent(id)}/source`;
+}
+
 export const api = {
   async login(ownerKey: string, deviceLabel: string): Promise<void> {
     await request(

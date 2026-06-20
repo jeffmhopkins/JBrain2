@@ -146,6 +146,44 @@ app and `jbrain logs`, not `curl localhost:8080`.
 
 ---
 
+## Image generation — ComfyUI + Qwen-Image (optional, opt-in)
+Powers jerv's `generate_image` / `edit_image` tools (`docs/IMAGE_GEN_PLAN.md`):
+text→image via **Qwen-Image-2512** and image→image via **Qwen-Image-Edit**,
+served by a **host-managed ComfyUI** the same gfx1151 box runs. Like the local
+LLM gateway, this is **opt-in and host-managed** — JBrain2 does **not**
+containerize ComfyUI, ships no new backend dependency for it, and only ever
+**POSTs a workflow graph** to it over HTTP. Leave `JBRAIN_COMFYUI_URL` unset to
+keep the feature (and both tools) off.
+
+Prereqs are the same gfx1151 floor as the rest of this runbook: **kernel ≥
+6.18.4** (Phase 2) and a working GPU stack — Qwen-Image diffusion is stable on
+gfx1151 only on that kernel, and the **ROCm** path (Phase 5 host tuning + the
+ROCm base, "Switching to ROCm" below) is the validated route for these image
+workflows.
+
+- **Run ComfyUI from the kyuz0 toolbox.** The same community
+  `kyuz0/amd-strix-halo-toolboxes` family used for the LLM gateway includes a
+  ComfyUI image with the ROCm/gfx1151 runtime preinstalled. Launch it on the host
+  and load the Qwen-Image-2512 + Qwen-Image-Edit checkpoints (full bf16, ~60 GB
+  budget at full precision; Apache-2.0, ungated).
+- **Bind it to localhost only.** ComfyUI listens on its own port (default
+  `8188`); keep it bound to the loopback interface — it is an on-box service, no
+  egress, no public port (mirrors the LLM gateway's no-published-port stance).
+- **Point JBrain2 at it.** Set `JBRAIN_COMFYUI_URL` to that bound URL (e.g.
+  `http://127.0.0.1:8188`). Empty disables image-gen; set enables it, and the
+  Settings screen then shows the image-gen row.
+- **JBrain2 owns the graph, not the model.** The backend POSTs the workflow JSON
+  in `backend/src/jbrain/image_gen/workflows/` (`qwen_image.json`,
+  `qwen_image_edit.json`) to ComfyUI, filling typed slots (prompt, seed, steps,
+  dims, and — for edit — the uploaded input image). Keep these graphs matched to
+  the node IDs ComfyUI exposes for the loaded checkpoints.
+
+✅ **Checkpoint:** with `JBRAIN_COMFYUI_URL` set, ask jerv to generate an image;
+the result streams back inline in the chat turn (a chat-only artifact — never a
+note, never RAG-indexed). Watch ComfyUI's own host logs for the submitted graph.
+
+---
+
 ## Expected performance
 ~31 tok/s on gpt-oss-120b, ~30–45 tok/s on Qwen3-VL. By default each loads on
 demand (one at a time); with `LOCAL_LLM_RESIDENT_GROUP=1` the recommended set

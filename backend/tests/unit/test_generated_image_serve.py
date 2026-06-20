@@ -52,14 +52,19 @@ class _FakeSessionMaker:
 class StubGeneratedRepo:
     """Just `get`, keyed by id (the session is ignored — the real RLS firewall is integration-
     tested). `rows` maps image_id -> blob_sha256; an unknown id returns None like an out-of-scope
-    row would under RLS."""
+    row would under RLS. `sources` carries the optional edit source sha (NULL for a generate)."""
 
     def __init__(self) -> None:
         self.rows: dict[str, str] = {}
+        self.sources: dict[str, str] = {}
 
     async def get(self, session: Any, image_id: str) -> Any | None:
         sha = self.rows.get(image_id)
-        return None if sha is None else SimpleNamespace(id=image_id, blob_sha256=sha)
+        if sha is None:
+            return None
+        return SimpleNamespace(
+            id=image_id, blob_sha256=sha, source_sha256=self.sources.get(image_id)
+        )
 
 
 def _make_app(tmp_path: Path) -> tuple[FastAPI, StubGeneratedRepo, FsBlobStore]:
@@ -142,3 +147,65 @@ def test_missing_blob_is_404(api: tuple[TestClient, StubGeneratedRepo, FsBlobSto
     client, repo, _ = api
     repo.rows["img-1"] = "0" * 64
     assert client.get("/api/images/generated/img-1").status_code == 404
+
+
+def test_source_requires_auth(tmp_path: Path) -> None:
+    app, _, _ = _make_app(tmp_path)
+    with TestClient(app) as anon:
+        app.state.auth_repo = FakeAuthRepo()
+        assert anon.get("/api/images/generated/img-1/source").status_code == 401
+
+
+def test_source_is_owner_only(api: tuple[TestClient, StubGeneratedRepo, FsBlobStore]) -> None:
+    # A non-owner (capability) principal is refused at the OwnerDep gate before any lookup.
+    client, repo, blobs = api
+    repo.rows["edit-1"] = asyncio.run(blobs.put(PNG))
+    repo.sources["edit-1"] = asyncio.run(blobs.put(JPEG))
+    app = cast(FastAPI, client.app)
+    app.dependency_overrides[current_principal] = lambda: PrincipalInfo(
+        id="cap-1", kind="capability_token", label="agent"
+    )
+    try:
+        assert client.get("/api/images/generated/edit-1/source").status_code == 403
+    finally:
+        app.dependency_overrides.pop(current_principal, None)
+
+
+def test_owner_get_source_serves_source_bytes(
+    api: tuple[TestClient, StubGeneratedRepo, FsBlobStore],
+) -> None:
+    # An edit row: /source streams the SOURCE ("before") blob with its own sniffed type — the
+    # result blob is PNG, the source is JPEG, so a mix-up would be visible in both fields.
+    client, repo, blobs = api
+    repo.rows["edit-1"] = asyncio.run(blobs.put(PNG))
+    repo.sources["edit-1"] = asyncio.run(blobs.put(JPEG))
+
+    src = client.get("/api/images/generated/edit-1/source")
+    assert src.status_code == 200
+    assert src.headers["content-type"] == "image/jpeg"
+    assert src.content == JPEG
+
+
+def test_source_404_when_generate_has_no_source(
+    api: tuple[TestClient, StubGeneratedRepo, FsBlobStore],
+) -> None:
+    # A generate row has source_sha256 = NULL → no "before" image → a clean 404.
+    client, repo, blobs = api
+    repo.rows["gen-1"] = asyncio.run(blobs.put(PNG))
+    assert client.get("/api/images/generated/gen-1/source").status_code == 404
+
+
+def test_source_404_unknown_id(api: tuple[TestClient, StubGeneratedRepo, FsBlobStore]) -> None:
+    # An out-of-scope/missing row is hidden by RLS, so the handler sees None → a clean 404.
+    client, _, _ = api
+    assert client.get("/api/images/generated/ghost/source").status_code == 404
+
+
+def test_source_404_when_source_blob_missing(
+    api: tuple[TestClient, StubGeneratedRepo, FsBlobStore],
+) -> None:
+    # The row records a source sha whose bytes are gone → 404, not 500.
+    client, repo, blobs = api
+    repo.rows["edit-1"] = asyncio.run(blobs.put(PNG))
+    repo.sources["edit-1"] = "0" * 64
+    assert client.get("/api/images/generated/edit-1/source").status_code == 404

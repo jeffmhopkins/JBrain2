@@ -368,6 +368,18 @@ describe("mock API", () => {
     expect((await call("/api/attachments/att-nope/extracts")).status).toBe(404);
   });
 
+  it("serves generated-image bytes by id, and an edit's /source, else 404", async () => {
+    // The result image (by id) and the edit's "before" source both round-trip.
+    const result = await call("/api/images/generated/mock-genimg-lighthouse-stormy");
+    expect(result.status).toBe(200);
+    expect(result.headers.get("Content-Type")).toBe("image/png");
+    const source = await call("/api/images/generated/mock-genimg-lighthouse/source");
+    expect(source.status).toBe(200);
+    expect(source.headers.get("Content-Type")).toBe("image/png");
+    // An unknown id is a clean 404, never a blank image.
+    expect((await call("/api/images/generated/img-nope")).status).toBe(404);
+  });
+
   it("round-trips the image-analysis setting with strict validation", async () => {
     const before = (await (await call("/api/settings")).json()) as AppSettings;
     expect(before.image_analysis_mode).toBe("full"); // the decided default

@@ -131,4 +131,15 @@ fi
 # path (web/CI containers have no GPU). Mentioned here per the dev-setup
 # single-source-of-truth rule; deliberately a no-op in dev.
 
+# --- Image generation / ComfyUI (opt-in, HOST-managed, NOT bootstrapped here) ---
+# jerv's generate_image/edit_image tools drive a host-managed ComfyUI running
+# Qwen-Image-2512 / Qwen-Image-Edit on a gfx1151 box (docs/STRIX_HALO_SETUP.md,
+# "Image generation"). Like the local LLM gateway it is HOST-MANAGED: JBrain2 does
+# NOT containerize ComfyUI and adds NO new backend dependency for it — the backend
+# only POSTs a workflow graph over HTTP. Point the app at it with the env var
+#   JBRAIN_COMFYUI_URL=http://127.0.0.1:8188   # the box's localhost ComfyUI
+# Empty (the default) disables the feature and hides both tools — so this is a
+# no-op in dev/CI (no GPU). Mentioned here per the dev-setup single-source-of-truth
+# rule (CLAUDE.md rule #8).
+
 log "done"
