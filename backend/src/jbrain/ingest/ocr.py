@@ -206,7 +206,7 @@ class OcrPipeline:
                     filename=filename,
                     kind="ocr",
                     text=ocr.text,
-                    tool=":".join(self._router.spec("vision.ocr", OCR_STRENGTH)),
+                    tool=":".join(await self._router.effective_spec("vision.ocr", OCR_STRENGTH)),
                 )
             )
         if "caption" in run_kinds:
@@ -225,7 +225,9 @@ class OcrPipeline:
                     filename=filename,
                     kind="caption",
                     text=description.text,
-                    tool=":".join(self._router.spec("vision.caption", DESCRIPTION_STRENGTH)),
+                    tool=":".join(
+                        await self._router.effective_spec("vision.caption", DESCRIPTION_STRENGTH)
+                    ),
                 )
             )
 
