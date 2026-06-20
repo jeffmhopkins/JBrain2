@@ -328,7 +328,10 @@ service-account bootstrap (non-negotiable #8).
   native `/session/mint` → injected cookie: a MockWebServer-tested `SessionMinter`,
   a Keystore-backed `CredentialStore` (EncryptedSharedPreferences), and a
   `SessionLauncher` that reads the key → mints → loads /dash, self-healing a revoked
-  key to pairing ✓; **M5c** pairing-code redeem screen; **M5d** WebView lockdown
+  key to pairing ✓; **M5c** pairing-code redeem: a MockWebServer-tested
+  `PairingClient` (redeem → device key = OwnTracks config `password` + the config),
+  a `PairingCoordinator` that persists both, and a native `PairingActivity` the
+  launcher routes to and re-launches from once paired ✓; **M5d** WebView lockdown
   hardening + the OwnTracks location engine.
 - **M6 — FCM.** `fcm_token` registry (+ RLS test); content-free poke sender;
   view-scope-aware routing; dedupe; on-poke fetch-then-local-notify. Gate:

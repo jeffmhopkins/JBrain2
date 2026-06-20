@@ -1,15 +1,21 @@
 package com.jbrain.dashboard
 
-/** The device key at rest. The key is the credential the app exchanges for a
- * session (it never reaches page JavaScript), so the implementation keeps it in
- * the Android Keystore-backed encrypted store. An interface so the mint/launch
+/** The paired device's secrets at rest. The device key (exchanged for a session,
+ * never reaching page JavaScript) and the one-time OwnTracks config (the location
+ * engine's broker credentials, M5d) are both captured at pairing and kept in the
+ * Android Keystore-backed encrypted store. An interface so the pairing + launch
  * flow is unit-testable with an in-memory fake. */
 interface CredentialStore {
     /** The stored device key, or null when the device is not yet paired. */
     fun deviceKey(): String?
 
-    fun save(deviceKey: String)
+    /** The stored OwnTracks configuration JSON, or null when not yet paired. */
+    fun owntracksConfig(): String?
 
-    /** Drop the key (on an Unauthorized mint — the key was revoked). */
+    /** Persist the pairing result: the device key + the one-time OwnTracks config
+     * (the pairing code is single-use, so the config must be captured now). */
+    fun save(deviceKey: String, owntracksConfig: String)
+
+    /** Drop the stored secrets (on an Unauthorized mint — the key was revoked). */
     fun clear()
 }
