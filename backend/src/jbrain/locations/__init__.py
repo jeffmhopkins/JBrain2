@@ -609,6 +609,112 @@ class SqlLocationRepo:
             for r in rows
         ]
 
+    async def member_places(self, ctx: SessionContext) -> list[PlaceGeofence]:
+        """The SHARED geofences only, for a member's map overlay (JBrain360 M4c).
+
+        Runs under the member's `device_context`. The owner-only opt-in is the
+        `place_share` join (a row = the owner shared this place); `place_geofence`'s
+        own RLS additionally limits a device to subject-less / own-subject fences, so
+        an un-shared or owner-private fence never reaches a member. Names come from
+        `place_geofence` (a device cannot read `entities`), so no fence the owner did
+        not share is ever named to a member."""
+        async with scoped_session(self._maker, ctx) as session:
+            rows = (
+                await session.execute(
+                    text(
+                        "SELECT pg.place_entity_id::text AS eid,"
+                        "   NULLIF(pg.name, '') AS name, pg.enabled, pg.radius_m,"
+                        "   ST_Y(pg.center::geometry) AS lat, ST_X(pg.center::geometry) AS lon,"
+                        "   ST_AsGeoJSON(pg.polygon::geometry) AS polygon_geojson"
+                        " FROM app.place_geofence pg"
+                        " JOIN app.place_share ps ON ps.place_entity_id = pg.place_entity_id"
+                        " ORDER BY name"
+                    )
+                )
+            ).all()
+        return [
+            PlaceGeofence(
+                place_entity_id=r.eid,
+                name=r.name or "Place",
+                enabled=r.enabled,
+                center=(r.lat, r.lon) if r.lat is not None and r.lon is not None else None,
+                radius_m=r.radius_m,
+                polygon=_polygon_ring(r.polygon_geojson),
+            )
+            for r in rows
+        ]
+
+    async def member_timeline(
+        self,
+        ctx: SessionContext,
+        *,
+        viewer_subject_id: str,
+        since: datetime,
+        until: datetime,
+        limit: int,
+    ) -> list[TimelineEntry]:
+        """A member's timeline: geofence crossings at SHARED places for the subjects
+        the member may see (JBrain360 M4c). `app.events` is weak RLS (a device can
+        read every location event), so the firewall here is the SQL itself: the
+        `place_share` join admits only owner-shared places, and the subject predicate
+        (own subject OR `viewer_may_see`) admits only the member's own + family-group
+        crossings. The place name comes from `place_geofence` (device-readable for a
+        shared subject-less fence), never `entities`."""
+        async with scoped_session(self._maker, ctx) as session:
+            rows = (
+                await session.execute(
+                    text(
+                        "SELECT e.occurred_at,"
+                        "   e.payload->>'subject_id' AS sid,"
+                        "   e.payload->>'transition' AS transition,"
+                        "   e.payload->>'place_entity_id' AS eid,"
+                        "   pg.name AS place_name"
+                        " FROM app.events e"
+                        " JOIN app.place_share ps"
+                        "   ON ps.place_entity_id = cast(e.payload->>'place_entity_id' AS uuid)"
+                        " JOIN app.place_geofence pg ON pg.place_entity_id = ps.place_entity_id"
+                        " WHERE e.type = 'location.geofence_transition'"
+                        "   AND e.domain_code = 'location'"
+                        "   AND e.occurred_at >= :since AND e.occurred_at < :until"
+                        "   AND (e.payload->>'subject_id' = :viewer"
+                        "        OR app.viewer_may_see(:viewer, e.payload->>'subject_id'))"
+                        " ORDER BY e.occurred_at DESC LIMIT :lim"
+                    ),
+                    {"viewer": viewer_subject_id, "since": since, "until": until, "lim": limit},
+                )
+            ).all()
+        return [
+            TimelineEntry(
+                occurred_at=r.occurred_at,
+                subject_id=r.sid,
+                transition=r.transition,
+                place_entity_id=r.eid,
+                place_name=r.place_name or "a place",
+            )
+            for r in rows
+        ]
+
+    async def set_place_shared(
+        self, ctx: SessionContext, *, place_entity_id: str, shared: bool
+    ) -> None:
+        """Toggle a place's member-visibility (owner only — `place_share` write RLS
+        is full-owner). Sharing inserts the opt-in row (idempotent); un-sharing
+        deletes it, so the place drops out of every member's overlay + timeline."""
+        async with scoped_session(self._maker, ctx) as session:
+            if shared:
+                await session.execute(
+                    text(
+                        "INSERT INTO app.place_share (place_entity_id) VALUES (cast(:eid AS uuid))"
+                        " ON CONFLICT (place_entity_id) DO NOTHING"
+                    ),
+                    {"eid": place_entity_id},
+                )
+            else:
+                await session.execute(
+                    text("DELETE FROM app.place_share WHERE place_entity_id = cast(:eid AS uuid)"),
+                    {"eid": place_entity_id},
+                )
+
     async def nearby(
         self,
         ctx: SessionContext,

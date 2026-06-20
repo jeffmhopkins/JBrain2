@@ -19,6 +19,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from jbrain.api.deps import MemberDep
+from jbrain.api.locations import PlaceOut, TimelineEntryOut
 from jbrain.db.session import device_context
 from jbrain.locations import FixPoint, MemberSubject, SqlLocationRepo
 
@@ -30,6 +31,7 @@ log = structlog.get_logger()
 # side so a crafted `since` can never reach older history.
 _MEMBER_HISTORY_CAP = timedelta(days=30)
 _FIXES_LIMIT = 20_000
+_TIMELINE_LIMIT = 500
 
 
 def _repo(request: Request) -> SqlLocationRepo:
@@ -122,3 +124,33 @@ async def positions(
     except Exception as exc:  # noqa: BLE001 - audit failure is logged, never a 500
         log.warning("member.audit_failed", error=repr(exc))
     return [FixPointOut.of(f) for f in rows]
+
+
+@router.get("/places")
+async def places(request: Request, principal: MemberDep) -> list[PlaceOut]:
+    """The owner-shared geofences only, for the member map's fence overlay. An
+    un-shared (or owner-private) fence is never named to a member (M4c)."""
+    ctx = device_context(principal.id, principal.subject_id)
+    rows = await _repo(request).member_places(ctx)
+    return [PlaceOut.of(p) for p in rows]
+
+
+@router.get("/timeline")
+async def timeline(
+    request: Request,
+    principal: MemberDep,
+    since: str | None = None,
+    until: str | None = None,
+) -> list[TimelineEntryOut]:
+    """The member's 'arrived/left <place>' feed, newest first — crossings at SHARED
+    places for the subjects this member may see. Clamped to the 30-day cap."""
+    end = _parse(until) or datetime.now(UTC)
+    floor = datetime.now(UTC) - _MEMBER_HISTORY_CAP
+    start = _parse(since) or floor
+    if start < floor:
+        start = floor
+    ctx = device_context(principal.id, principal.subject_id)
+    rows = await _repo(request).member_timeline(
+        ctx, viewer_subject_id=principal.subject_id, since=start, until=end, limit=_TIMELINE_LIMIT
+    )
+    return [TimelineEntryOut.of(e) for e in rows]
