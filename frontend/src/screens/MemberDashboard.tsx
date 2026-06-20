@@ -9,7 +9,7 @@
 // Timeline and Map land in 2b/2c. Location domain stays on --location (teal).
 
 import { useEffect, useState } from "react";
-import { type MemberSubject, type Principal, api } from "../api/client";
+import { type MemberSubject, type Principal, type TimelineEntry, api } from "../api/client";
 
 type Tab = "devices" | "timeline" | "map";
 
@@ -23,6 +23,7 @@ export interface MemberDeps {
   /** Resolve the session cookie's principal; rejects (401) when unauthenticated. */
   probe: () => Promise<Principal>;
   listRoster: () => Promise<MemberSubject[]>;
+  listTimeline: () => Promise<TimelineEntry[]>;
 }
 
 type Gate = { phase: "probing" } | { phase: "locked" } | { phase: "ready"; label: string };
@@ -87,7 +88,7 @@ export function MemberDashboard({ deps }: MemberDashboardProps) {
       </div>
 
       {tab === "devices" && <DevicesTab deps={deps} />}
-      {tab === "timeline" && <p className="dash-quiet dash-pad">timeline arrives in M4d-2b.</p>}
+      {tab === "timeline" && <TimelineTab deps={deps} />}
       {tab === "map" && <p className="dash-quiet dash-pad">map arrives in M4d-2c.</p>}
     </main>
   );
@@ -137,6 +138,114 @@ function DevicesTab({ deps }: { deps: MemberDeps | undefined }) {
         </article>
       ))}
     </div>
+  );
+}
+
+// --- Timeline tab ----------------------------------------------------------
+
+type FeedState =
+  | { phase: "loading" }
+  | { phase: "error" }
+  | { phase: "done"; entries: TimelineEntry[]; labels: Map<string, string> };
+
+function TimelineTab({ deps }: { deps: MemberDeps | undefined }) {
+  const listTimeline = deps?.listTimeline ?? api.memberTimeline;
+  const listRoster = deps?.listRoster ?? api.memberRoster;
+  const [state, setState] = useState<FeedState>({ phase: "loading" });
+
+  useEffect(() => {
+    let stale = false;
+    // The feed names the subject (the "who"), so it joins the crossings to the
+    // roster for labels — subject ids never read as sentences. Only shared-place
+    // crossings for visible subjects come back (the server filters; M4c).
+    Promise.all([listTimeline(), listRoster()])
+      .then(([entries, roster]) => {
+        if (stale) return;
+        const labels = new Map(roster.map((m) => [m.subject_id, m.label]));
+        setState({ phase: "done", entries, labels });
+      })
+      .catch(() => {
+        if (!stale) setState({ phase: "error" });
+      });
+    return () => {
+      stale = true;
+    };
+  }, [listTimeline, listRoster]);
+
+  if (state.phase === "loading") {
+    return <p className="dash-quiet dash-pad">loading timeline…</p>;
+  }
+  if (state.phase === "error") {
+    return (
+      <p className="dash-quiet dash-pad">couldn't load the timeline — check the connection.</p>
+    );
+  }
+  if (state.entries.length === 0) {
+    return (
+      <p className="dash-quiet dash-pad">
+        no movement yet — arrivals and departures at shared places show here.
+      </p>
+    );
+  }
+  return (
+    <div className="loc-feed">
+      {groupByDay(state.entries).map((g) => (
+        <section key={g.day} className="loc-feed-day">
+          <h3 className="loc-feed-head">{g.day}</h3>
+          {g.entries.map((e, i) => (
+            <div key={`${e.occurred_at}-${e.subject_id}-${i}`} className="loc-feed-row">
+              <span className="loc-feed-time">{timeOfDay(e.occurred_at)}</span>
+              <span className="loc-feed-text">{sentence(e, state.labels)}</span>
+            </div>
+          ))}
+        </section>
+      ))}
+    </div>
+  );
+}
+
+/** A crossing as a plain sentence: "Bob arrived at Home" / "Bob left Home". The
+ * verb carries the meaning — no color codes. */
+export function sentence(e: TimelineEntry, labels: Map<string, string>): string {
+  const who = labels.get(e.subject_id) ?? "Someone";
+  const verb = e.transition === "enter" ? "arrived at" : "left";
+  return `${who} ${verb} ${e.place_name}`;
+}
+
+function timeOfDay(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+}
+
+function groupByDay(entries: TimelineEntry[]): { day: string; entries: TimelineEntry[] }[] {
+  // Entries arrive newest-first; consecutive same-day rows fold under one header.
+  const groups: { day: string; entries: TimelineEntry[] }[] = [];
+  for (const e of entries) {
+    const day = dayLabel(e.occurred_at);
+    const last = groups[groups.length - 1];
+    if (last && last.day === day) last.entries.push(e);
+    else groups.push({ day, entries: [e] });
+  }
+  return groups;
+}
+
+function dayLabel(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "Unknown";
+  const today = new Date();
+  const yesterday = new Date(today);
+  yesterday.setDate(today.getDate() - 1);
+  if (sameDay(d, today)) return "Today";
+  if (sameDay(d, yesterday)) return "Yesterday";
+  return d.toLocaleDateString([], { weekday: "long", month: "short", day: "numeric" });
+}
+
+function sameDay(a: Date, b: Date): boolean {
+  return (
+    a.getFullYear() === b.getFullYear() &&
+    a.getMonth() === b.getMonth() &&
+    a.getDate() === b.getDate()
   );
 }
 

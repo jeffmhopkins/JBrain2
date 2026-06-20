@@ -1,10 +1,21 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { MemberSubject, Principal } from "../api/client";
-import { MemberDashboard, type MemberDeps, lastSeen } from "./MemberDashboard";
+import type { MemberSubject, Principal, TimelineEntry } from "../api/client";
+import { MemberDashboard, type MemberDeps, lastSeen, sentence } from "./MemberDashboard";
 
 function principal(over: Partial<Principal> = {}): Principal {
   return { principal_id: "p1", kind: "device_key", label: "Alice", ...over };
+}
+
+function crossing(over: Partial<TimelineEntry> = {}): TimelineEntry {
+  return {
+    occurred_at: new Date().toISOString(),
+    subject_id: "s1",
+    transition: "enter",
+    place_entity_id: "e1",
+    place_name: "Home",
+    ...over,
+  };
 }
 
 function subject(over: Partial<MemberSubject> = {}): MemberSubject {
@@ -22,6 +33,7 @@ function deps(over: Partial<MemberDeps> = {}): MemberDeps {
   return {
     probe: vi.fn(async () => principal()),
     listRoster: vi.fn(async () => [subject()]),
+    listTimeline: vi.fn(async () => [crossing()]),
     ...over,
   };
 }
@@ -57,15 +69,44 @@ describe("MemberDashboard", () => {
     await screen.findByText(/not signed in/);
   });
 
-  it("switches to the Timeline tab", async () => {
-    render(<MemberDashboard deps={deps()} />);
+  it("renders the timeline with subject labels joined from the roster", async () => {
+    render(
+      <MemberDashboard
+        deps={deps({
+          listRoster: vi.fn(async () => [subject({ subject_id: "s1", label: "Bob" })]),
+          listTimeline: vi.fn(async () => [
+            crossing({ subject_id: "s1", transition: "enter", place_name: "Home" }),
+          ]),
+        })}
+      />,
+    );
     fireEvent.click(await screen.findByRole("tab", { name: "Timeline" }));
-    expect(await screen.findByText(/timeline arrives/)).toBeInTheDocument();
+    expect(await screen.findByText("Bob arrived at Home")).toBeInTheDocument();
+  });
+
+  it("shows an empty timeline state", async () => {
+    render(<MemberDashboard deps={deps({ listTimeline: vi.fn(async () => []) })} />);
+    fireEvent.click(await screen.findByRole("tab", { name: "Timeline" }));
+    expect(await screen.findByText(/no movement yet/)).toBeInTheDocument();
   });
 
   it("shows an empty roster state", async () => {
     render(<MemberDashboard deps={deps({ listRoster: vi.fn(async () => []) })} />);
     expect(await screen.findByText(/no one to show yet/)).toBeInTheDocument();
+  });
+});
+
+describe("sentence", () => {
+  it("reads as a plain arrival/departure with the subject's label", () => {
+    const labels = new Map([["s1", "Bob"]]);
+    expect(
+      sentence(crossing({ subject_id: "s1", transition: "enter", place_name: "Home" }), labels),
+    ).toBe("Bob arrived at Home");
+    expect(
+      sentence(crossing({ subject_id: "s1", transition: "exit", place_name: "Home" }), labels),
+    ).toBe("Bob left Home");
+    // An unknown subject never renders a raw id.
+    expect(sentence(crossing({ subject_id: "ghost" }), labels)).toMatch(/^Someone /);
   });
 });
 
