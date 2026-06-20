@@ -117,12 +117,12 @@ fi
 # Mentioned here per the dev-setup single-source-of-truth rule; a no-op in dev.
 
 # --- Local-network access / mDNS (production host only, NOT bootstrapped here) ---
-# Opt-in LAN access (docs/LOCAL_ACCESS.md) installs avahi-daemon on the deploy
-# host (deploy/install.sh) so the box answers as <name>.local; Caddy then serves
-# local HTTPS via its internal CA. That is a production-host concern with no dev
-# equivalent — the proxy entrypoint renders the LAN site from JBRAIN_LAN_ADDR at
-# container start. Mentioned here per the dev-setup single-source-of-truth rule;
-# a no-op in dev.
+# LAN access (docs/LOCAL_ACCESS.md, on by default) installs avahi-daemon +
+# python3-dbus + python3-gi on the deploy host (deploy/lan-setup.sh) so the box
+# answers as jbrain.local via a CNAME alias; Caddy serves local HTTPS via its
+# internal CA. That is a production-host concern with no dev equivalent — the
+# proxy entrypoint renders the LAN site from JBRAIN_LAN_ADDR at container start.
+# Mentioned here per the dev-setup single-source-of-truth rule; a no-op in dev.
 
 # --- Local model hosting (opt-in, NOT bootstrapped here) ---
 # Self-hosted models (Settings → LLM, AMD Strix Halo class box) are provisioned

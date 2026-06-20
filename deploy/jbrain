@@ -30,6 +30,7 @@ Usage: jbrain <command>
   logs [svc]       follow logs (default: all services)
   reset-owner-key  revoke the owner key and print a new one
   update           pull latest source, rebuild, migrate, restart
+  enable-lan       set up LAN access (mDNS + jbrain.local alias) on this host
   enable-local-models [ids...]  provision + enable self-hosted local models
   strix-halo-host-setup [args]  one-time AMD Strix Halo host prep (kernel/udev)
   backup           run a backup now
@@ -71,6 +72,16 @@ case "${1:-}" in
     if ! grep -q '^SEARXNG_SECRET=' .env; then
       printf 'SEARXNG_SECRET=%s\n' "$(openssl rand -hex 32)" >> .env
     fi
+    # Turn LAN access on for installs that predate it, then (re)provision the
+    # host mDNS + alias from the freshly pulled source. Best-effort: a setup
+    # failure must not abort an update.
+    if ! grep -q '^JBRAIN_LAN_ADDR=' .env; then
+      printf 'JBRAIN_LAN_ADDR=%s\n' "https://jbrain.local" >> .env
+    fi
+    if grep -q '^JBRAIN_LAN_ADDR=https' .env; then
+      JBRAIN_INSTALL_DIR=/opt/jbrain2 bash /opt/jbrain2/src/deploy/lan-setup.sh \
+        || echo "LAN setup skipped (run 'jbrain enable-lan' to retry)"
+    fi
     docker compose "${PROFILE[@]}" build
     docker compose run --rm migrate
     docker compose "${PROFILE[@]}" up -d
@@ -78,6 +89,12 @@ case "${1:-}" in
     # so disk use stays bounded without losing build speed.
     docker image prune -f
     docker builder prune -f --keep-storage 10GB >/dev/null 2>&1 || true
+    ;;
+  enable-lan)
+    # Host half of LAN access: mDNS responder + the CNAME alias that resolves
+    # JBRAIN_LAN_ADDR (jbrain.local). The Caddy HTTPS site is already on by
+    # default in compose; this makes the name resolvable on the network.
+    JBRAIN_INSTALL_DIR=/opt/jbrain2 bash /opt/jbrain2/src/deploy/lan-setup.sh
     ;;
   enable-local-models)
     shift
