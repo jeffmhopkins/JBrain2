@@ -52,6 +52,9 @@ def _owner_ctx(owner: PrincipalInfo) -> SessionContext:
 class MintRequest(BaseModel):
     label: str = Field(min_length=1, max_length=128)
     monitoring: int = Field(default=1, ge=_MIN_MODE, le=_MAX_MODE)
+    # When set, the code RE-PAIRS this existing device (rotating its key on redeem)
+    # instead of provisioning a new one. The device's current name wins over `label`.
+    device_id: str | None = Field(default=None, max_length=64)
 
 
 class MintOut(BaseModel):
@@ -94,7 +97,10 @@ async def mint_code(
     settings: SettingsDep,
 ) -> MintOut:
     code, expires_at = await repo.mint_code(
-        _owner_ctx(owner), label=body.label, monitoring=body.monitoring
+        _owner_ctx(owner),
+        label=body.label,
+        monitoring=body.monitoring,
+        subject_id=body.device_id,
     )
     payload = build_pairing_payload(_public_base(request, settings), code)
     return MintOut(code=code, expires_at=expires_at, payload=payload)

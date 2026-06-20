@@ -857,7 +857,7 @@ fixtures: empty (Build-log only) / long-thread / pending-action / error / offlin
 
 The location domain's accent is the **`--location` teal (`#6FB6B1`)** (settled in L3);
 amber (`--warn`) carries the stale/"last known" tone (matching the GPS-gap marker).
-`LocationScreen` is a 3-tab segmented control (Map · Timeline · Devices) on `.seg-row`/
+`LocationScreen` is a 3-tab segmented control (Map · Timeline · Phones) on `.seg-row`/
 `.seg-on`. Two L7 affordances sit on it, both **names + times only — never a
 coordinate** (this is why neither needs a basemap):
 
@@ -891,6 +891,43 @@ coordinate** (this is why neither needs a basemap):
   `api/agent.py::chat` (mirroring the Loop-2 skills block's data/instruction
   boundary), **not** the system prompt and **not** the toast — owner-gated (present
   only for a location-scoped full-owner session), so a narrowed session gets neither.
+
+### Phones tab — paired-phone management (settled in a three-way review; chosen **B — swipe rail** over A "family roster + device-hub sheet" and C "inline accordion + credential strip"; reference mocks `docs/mocks/phone-management/{a-family-roster,b-swipe-rail,c-inline-accordion}.html`)
+
+The location surface is **phones only** — the manual "Add device (OwnTracks)" path
+is retired (a JBrain360 phone never pastes a key). The old Devices tab had two
+gaps: no way to **roll the pairing token** once a phone was paired, and a
+**"Rotate key" that couldn't reach a paired phone** (a phone receives credentials
+only by redeeming a pairing code). The redesign collapses both into one action and
+renames the tab **Phones**:
+
+- **Layout:** an **Active / Revoked** filter (count pills, `--steel`) over a
+  **swipe-left rail** list — the settled home-note / chats paradigm (`notes/swipe.ts`
+  `RAIL_WIDTH`, the shared `.rail-btn`/`.rail-edit`/`.rail-delete`/`.rail-armed`).
+  Active rows carry **re-pair · rename · revoke · delete** (`rail-4`, 48px each);
+  a revoked row carries **restore · delete** (`rail-2`, 96px each). **Tapping a
+  closed row also opens its rail**, so the actions are reachable without the gesture
+  (the gesture-is-never-the-only-way rule). One rail open at a time.
+- **Re-pair (the unifying fix):** "roll the token" and "rotate the key" for a phone
+  are **one action** — mint a fresh one-time code **bound to the existing device**
+  (`POST /api/pairing/codes` with `device_id`); on redemption the device's key
+  **rotates in place** (old key revoked, new minted) while its identity + history
+  stay attached, with **no lockout window** (the old key works until the phone
+  redeems). The same flow **restores a revoked phone**. The code rides the device's
+  **current** name. Backend: `pairing_code.subject_id` + a re-pair-aware
+  `app.redeem_pairing_code` (migration 0077).
+- **Rename** edits the label inline on the row (`POST /api/devices/{id}/rename`,
+  the active key principal's label follows). **Revoke** suspends the key (history
+  kept); **delete** hard-removes the phone + its history
+  (`DELETE /api/devices/{id}`, cascading fixes/geofence state). Both destructive
+  actions arm a **tap-again confirm** on the rail button, disarmed when the rail
+  closes. Re-pair / new-pair show the QR via the existing `PairCodeSheet`.
+
+B won for the most aggressive vertical density and muscle-memory reuse of the
+existing swipe rail; A (a per-phone management sheet grouped by family member) and
+C (an inline accordion led by a credential-lifecycle strip) are retained as the
+record. **Family-member grouping is deferred** — it needs the device→Person graph
+link surfaced in the device list payload, out of scope for this round.
 
 ## JBrain360 app — member live-map surface (Phase 7, owner-approved)
 

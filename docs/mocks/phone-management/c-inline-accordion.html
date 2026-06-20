@@ -1,0 +1,302 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Phones — C — inline accordion</title>
+<style>
+  :root{
+    --bg:#0e0f11;--surface:#17181b;--surface-2:#1e2024;--border:#26282c;
+    --text:#e6e7e9;--text-2:#9a9da3;--text-3:#5c5f66;--scrim:rgba(14,15,17,.6);
+    --steel:#7fa7c9;--green:#8fbc9a;--amber:#c9a36a;--rose:#cf8a8f;--violet:#a493c9;
+    --teal:#6fb6b1;--shadow:rgba(0,0,0,.45);
+  }
+  [data-theme="light"]{
+    --bg:#f7f7f5;--surface:#fff;--surface-2:#f0f0ee;--border:#e2e2df;
+    --text:#1a1b1e;--text-2:#5c5f66;--text-3:#9a9da3;--scrim:rgba(247,247,245,.6);
+    --teal:#3a8f8a;--shadow:rgba(20,30,50,.12);
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  body{margin:0;background:#05070a;font:15px/1.5 system-ui,-apple-system,sans-serif;display:grid;place-items:center;min-height:100vh;color:var(--text);padding:24px}
+  .phone{width:390px;height:820px;background:var(--bg);border-radius:30px;overflow:hidden;position:relative;box-shadow:0 20px 60px var(--shadow);display:flex;flex-direction:column}
+  .topbar{height:56px;flex:0 0 56px;display:flex;align-items:center;gap:10px;padding:0 12px;border-bottom:1px solid var(--border);background:var(--surface)}
+  .topbar .ttl{font-weight:600;font-size:16px;flex:1}
+  .icon-btn{width:36px;height:36px;display:grid;place-items:center;border-radius:9px;color:var(--text-2);background:transparent;border:0;cursor:pointer}
+  .icon-btn:hover{background:var(--surface-2);color:var(--text)}
+  svg{width:20px;height:20px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+  .seg{display:flex;gap:4px;margin:12px 14px 0;background:var(--surface-2);border-radius:14px;padding:4px}
+  .seg button{flex:1;border:0;background:transparent;color:var(--text-2);font-size:13px;font-weight:600;padding:8px 0;border-radius:10px;cursor:pointer}
+  .seg button.on{background:color-mix(in srgb,var(--teal) 16%,transparent);color:var(--text)}
+  .scroll{overflow-y:auto;padding:12px 14px 96px;flex:1}
+  .pair-cta{width:100%;display:flex;align-items:center;justify-content:center;gap:8px;background:color-mix(in srgb,var(--teal) 14%,transparent);
+    border:1px solid color-mix(in srgb,var(--teal) 30%,transparent);color:var(--teal);font-size:15px;font-weight:600;border-radius:14px;padding:13px;cursor:pointer;margin-bottom:14px}
+  .pair-cta svg{width:18px;height:18px}
+  /* accordion card */
+  .pcard{background:var(--surface);border:1px solid var(--border);border-radius:14px;margin-bottom:10px;overflow:hidden}
+  .pcard.open{border-color:color-mix(in srgb,var(--teal) 38%,transparent)}
+  .head{display:flex;align-items:center;gap:11px;padding:12px 13px;cursor:pointer}
+  .disc{width:36px;height:36px;border-radius:10px;display:grid;place-items:center;flex:0 0 36px;background:color-mix(in srgb,var(--teal) 16%,transparent);color:var(--teal)}
+  .disc.muted{background:var(--surface-2);color:var(--text-3)}
+  .disc svg{width:18px;height:18px}
+  .grow{flex:1;min-width:0}
+  .nm{font-size:15px;font-weight:600;display:flex;align-items:center;gap:7px}
+  .who{font-size:11px;color:var(--text-3);font-weight:400}
+  .sub{font-size:12px;color:var(--text-2);margin-top:2px;display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+  .live{display:inline-flex;align-items:center;gap:4px;color:var(--green)}
+  .live .b{width:6px;height:6px;border-radius:50%;background:var(--green)}
+  .stale{color:var(--amber)}.stale .b{background:var(--amber)}
+  .pend{color:var(--steel)}.pend .b{background:var(--steel)}
+  .chip{font-size:10.5px;padding:2px 7px;border-radius:999px;background:var(--surface-2);color:var(--text-3);border:1px solid var(--border)}
+  .badge{font-size:10px;padding:2px 7px;border-radius:999px;font-weight:600}
+  .badge.rose{background:color-mix(in srgb,var(--rose) 16%,transparent);color:var(--rose)}
+  .badge.amber{background:color-mix(in srgb,var(--amber) 16%,transparent);color:var(--amber)}
+  .caret{color:var(--text-3);transition:transform .15s}
+  .pcard.open .caret{transform:rotate(180deg)}
+  /* body */
+  .body{display:none;border-top:1px solid var(--border);padding:13px}
+  .pcard.open .body{display:block}
+  /* credential lifecycle strip */
+  .cred{display:flex;align-items:center;gap:9px;background:var(--surface-2);border:1px solid var(--border);border-radius:11px;padding:10px 12px;margin-bottom:13px}
+  .cred .ck{width:30px;height:30px;border-radius:8px;display:grid;place-items:center;flex:0 0 30px;background:color-mix(in srgb,var(--green) 15%,transparent);color:var(--green)}
+  .cred .ck svg{width:16px;height:16px}
+  .cred.warn .ck{background:color-mix(in srgb,var(--amber) 15%,transparent);color:var(--amber)}
+  .cred.bad .ck{background:color-mix(in srgb,var(--rose) 15%,transparent);color:var(--rose)}
+  .cred .ct{flex:1;font-size:12.5px}
+  .cred .ct b{display:block;font-size:13px;font-weight:600}
+  .cred .ct small{color:var(--text-2)}
+  /* action grid */
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:9px}
+  .act{display:flex;align-items:center;gap:9px;background:var(--surface-2);border:1px solid var(--border);border-radius:11px;padding:11px;cursor:pointer;color:var(--text);font-size:13.5px;font-weight:600}
+  .act:hover{border-color:color-mix(in srgb,var(--teal) 38%,transparent)}
+  .act svg{width:17px;height:17px;flex:0 0 17px;color:var(--teal)}
+  .act.span2{grid-column:1 / -1}
+  .act.rep{background:color-mix(in srgb,var(--teal) 12%,transparent);border-color:color-mix(in srgb,var(--teal) 30%,transparent);color:var(--teal)}
+  .act.rep svg{color:var(--teal)}
+  .act.warn svg{color:var(--amber)}.act.warn{color:var(--amber)}
+  .act.danger svg{color:var(--rose)}.act.danger{color:var(--rose)}
+  .act.confirm{background:color-mix(in srgb,var(--rose) 16%,transparent);border-color:var(--rose);color:var(--rose);justify-content:center;font-size:12px}
+  /* inline rename */
+  .rename{display:none;gap:8px;margin-top:11px}
+  .rename.on{display:flex}
+  .rename input{flex:1;background:var(--bg);border:1px solid var(--teal);border-radius:10px;padding:9px 11px;color:var(--text);font-size:15px;outline:none}
+  .rename .ok{background:var(--teal);color:#04100f;border:0;border-radius:10px;padding:9px 13px;font-weight:600;cursor:pointer}
+  /* inline QR (roll code) */
+  .roll{display:none;margin-top:13px;border-top:1px dashed var(--border);padding-top:13px;text-align:center}
+  .roll.on{display:block}
+  .roll .lead{font-size:12px;color:var(--text-2);margin:0 0 11px;text-align:left}
+  .qr{width:172px;height:172px;background:#fff;border-radius:12px;padding:10px;display:grid;grid-template-columns:repeat(21,1fr);gap:0;margin:0 auto 10px}
+  .qr i{background:#000}
+  .payload{font-family:ui-monospace,Menlo,monospace;font-size:10.5px;background:var(--bg);border:1px dashed color-mix(in srgb,var(--teal) 45%,transparent);border-radius:10px;padding:9px;color:var(--text-2);word-break:break-all;margin-bottom:8px;text-align:left}
+  .once{font-size:11px;color:var(--amber);display:flex;gap:6px;align-items:flex-start;justify-content:center;margin-bottom:11px}
+  .once svg{width:13px;height:13px;flex:0 0 13px;margin-top:1px;color:var(--amber)}
+  .roll-btns{display:flex;gap:8px}
+  .roll-btns button{flex:1;border-radius:10px;padding:10px;font-size:13px;font-weight:600;cursor:pointer;border:1px solid var(--border)}
+  .roll-btns .pri{background:var(--teal);color:#04100f;border:0}
+  .roll-btns .gh{background:var(--surface-2);color:var(--text)}
+  /* sheet (new pair) */
+  .scrim{position:absolute;inset:0;background:var(--scrim);opacity:0;pointer-events:none;transition:opacity .15s;z-index:5}
+  .scrim.on{opacity:1;pointer-events:auto}
+  .sheet{position:absolute;left:0;right:0;bottom:0;background:var(--surface);border-top-left-radius:22px;border-top-right-radius:22px;border-top:1px solid var(--border);
+    transform:translateY(100%);transition:transform .18s ease-out;padding:8px 18px calc(20px + env(safe-area-inset-bottom));max-height:92%;overflow-y:auto;z-index:6}
+  .sheet.on{transform:translateY(0)}
+  .grab{width:36px;height:4px;border-radius:2px;background:var(--border);margin:6px auto 14px}
+  .sheet h3{margin:0 0 3px;font-size:18px}
+  .sheet .lead{font-size:13px;color:var(--text-2);margin:0 0 16px}
+  .qr-wrap{display:grid;place-items:center;margin:4px 0 12px}
+  .qr.big{width:200px;height:200px;padding:12px}
+  .fld{display:block;font-size:12px;color:var(--text-2);margin:0 0 6px}
+  .inp{width:100%;background:var(--surface-2);border:1px solid var(--border);border-radius:12px;padding:11px 13px;color:var(--text);font-size:16px;outline:none;margin-bottom:14px}
+  .inp:focus{border-color:var(--teal);box-shadow:0 0 0 2px color-mix(in srgb,var(--teal) 35%,transparent)}
+  .btn{width:100%;border:0;border-radius:12px;padding:13px;font-size:15px;font-weight:600;cursor:pointer}
+  .btn.pri{background:var(--teal);color:#04100f}
+  .btn.ghost{background:var(--surface-2);color:var(--text);border:1px solid var(--border);margin-top:9px}
+  .hidden{display:none}
+</style>
+</head>
+<body>
+<div class="phone">
+  <div class="topbar">
+    <button class="icon-btn"><svg viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg></button>
+    <div class="ttl">Phones</div>
+    <button class="icon-btn" id="theme" title="Theme"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4.5"/><path d="M12 2v2M12 20v2M4 12H2M22 12h-2M5 5l1.5 1.5M17.5 17.5L19 19M19 5l-1.5 1.5M6.5 17.5L5 19"/></svg></button>
+  </div>
+
+  <div class="seg">
+    <button>Map</button>
+    <button>Timeline</button>
+    <button class="on">Phones</button>
+  </div>
+
+  <div class="scroll">
+    <button class="pair-cta" onclick="openPair()"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>Pair a phone</button>
+
+    <!-- Jeff's Phone (live, key fresh) -->
+    <div class="pcard">
+      <div class="head" onclick="toggle(this)">
+        <div class="disc"><svg viewBox="0 0 24 24"><rect x="6" y="2" width="12" height="20" rx="3"/><path d="M11 18h2"/></svg></div>
+        <div class="grow">
+          <div class="nm">Jeff’s Phone <span class="who">· you</span></div>
+          <div class="sub"><span class="live"><span class="b"></span>live · 14m ago</span><span class="chip">2 fixes</span></div>
+        </div>
+        <span class="caret"><svg viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg></span>
+      </div>
+      <div class="body">
+        <div class="cred"><div class="ck"><svg viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="10" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg></div><div class="ct"><b>Key active</b><small>paired via JBrain360 · rolled just now</small></div></div>
+        <div class="grid">
+          <button class="act rep span2" onclick="roll(this)"><svg viewBox="0 0 24 24"><path d="M21 2v6h-6"/><path d="M3 12a9 9 0 0115-6.7L21 8"/><path d="M3 22v-6h6"/><path d="M21 12a9 9 0 01-15 6.7L3 16"/></svg>Roll code / re-pair</button>
+          <button class="act" onclick="rename(this)"><svg viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4z"/></svg>Rename</button>
+          <button class="act warn" onclick="armC(this,'revoke')"><svg viewBox="0 0 24 24"><path d="M18.36 6.64A9 9 0 1 1 5.64 6.64"/><path d="M12 2v10"/></svg>Revoke</button>
+          <button class="act danger span2" onclick="armC(this,'delete')"><svg viewBox="0 0 24 24"><path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m1 0v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6"/></svg>Delete phone &amp; history</button>
+        </div>
+        <div class="rename"><input value="Jeff’s Phone" /><button class="ok" onclick="saveName(this)">Save</button></div>
+        <div class="roll">
+          <p class="lead">Open JBrain360 on the phone and scan. The current key works until the phone redeems — then it rotates. Use this for a new phone, a reinstall, or to roll a key you’re unsure of.</p>
+          <div class="qr"></div>
+          <div class="payload">jb360://pair/eyJ2IjoxLCJ1IjoiaHR0cHM6Ly9q…</div>
+          <div class="once"><svg viewBox="0 0 24 24"><path d="M12 9v4M12 17h.01"/><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg>One-time code · expires in 15 min.</div>
+          <div class="roll-btns"><button class="gh" onclick="regen(this)">New code</button><button class="pri" onclick="roll(this)">Done</button></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Celine's Pixel (stale, key aging) -->
+    <div class="pcard">
+      <div class="head" onclick="toggle(this)">
+        <div class="disc"><svg viewBox="0 0 24 24"><rect x="6" y="2" width="12" height="20" rx="3"/><path d="M11 18h2"/></svg></div>
+        <div class="grow">
+          <div class="nm">Celine’s Pixel <span class="who">· Celine</span></div>
+          <div class="sub"><span class="stale"><span class="b"></span>2h ago</span><span class="chip">mobile</span><span class="chip">31%</span></div>
+        </div>
+        <span class="caret"><svg viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg></span>
+      </div>
+      <div class="body">
+        <div class="cred"><div class="ck"><svg viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="10" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg></div><div class="ct"><b>Key active</b><small>paired via JBrain360 · rolled 41d ago</small></div></div>
+        <div class="grid">
+          <button class="act rep span2" onclick="roll(this)"><svg viewBox="0 0 24 24"><path d="M21 2v6h-6"/><path d="M3 12a9 9 0 0115-6.7L21 8"/><path d="M3 22v-6h6"/><path d="M21 12a9 9 0 01-15 6.7L3 16"/></svg>Roll code / re-pair</button>
+          <button class="act" onclick="rename(this)"><svg viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4z"/></svg>Rename</button>
+          <button class="act warn" onclick="armC(this,'revoke')"><svg viewBox="0 0 24 24"><path d="M18.36 6.64A9 9 0 1 1 5.64 6.64"/><path d="M12 2v10"/></svg>Revoke</button>
+          <button class="act danger span2" onclick="armC(this,'delete')"><svg viewBox="0 0 24 24"><path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m1 0v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6"/></svg>Delete phone &amp; history</button>
+        </div>
+        <div class="rename"><input value="Celine’s Pixel" /><button class="ok" onclick="saveName(this)">Save</button></div>
+        <div class="roll">
+          <p class="lead">Open JBrain360 on the phone and scan. The current key works until the phone redeems — then it rotates.</p>
+          <div class="qr"></div>
+          <div class="payload">jb360://pair/eyJ2IjoxLCJ1IjoiaHR0cHM6Ly9q…</div>
+          <div class="once"><svg viewBox="0 0 24 24"><path d="M12 9v4M12 17h.01"/><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg>One-time code · expires in 15 min.</div>
+          <div class="roll-btns"><button class="gh" onclick="regen(this)">New code</button><button class="pri" onclick="roll(this)">Done</button></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Leo pending (code unredeemed) -->
+    <div class="pcard">
+      <div class="head" onclick="toggle(this)">
+        <div class="disc"><svg viewBox="0 0 24 24"><rect x="6" y="2" width="12" height="20" rx="3"/><path d="M11 18h2"/></svg></div>
+        <div class="grow">
+          <div class="nm">Leo’s phone <span class="who">· Kids</span> <span class="badge amber">pairing</span></div>
+          <div class="sub"><span class="pend"><span class="b"></span>code sent · awaiting first fix</span></div>
+        </div>
+        <span class="caret"><svg viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg></span>
+      </div>
+      <div class="body">
+        <div class="cred warn"><div class="ck"><svg viewBox="0 0 24 24"><path d="M12 8v4l3 3"/><circle cx="12" cy="12" r="9"/></svg></div><div class="ct"><b>Waiting to pair</b><small>code unredeemed · expires in 11 min</small></div></div>
+        <div class="grid">
+          <button class="act rep span2" onclick="roll(this)"><svg viewBox="0 0 24 24"><path d="M21 2v6h-6"/><path d="M3 12a9 9 0 0115-6.7L21 8"/><path d="M3 22v-6h6"/><path d="M21 12a9 9 0 01-15 6.7L3 16"/></svg>Show / resend code</button>
+          <button class="act" onclick="rename(this)"><svg viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4z"/></svg>Rename</button>
+          <button class="act danger" onclick="armC(this,'delete')"><svg viewBox="0 0 24 24"><path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m1 0v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6"/></svg>Cancel</button>
+        </div>
+        <div class="rename"><input value="Leo’s phone" /><button class="ok" onclick="saveName(this)">Save</button></div>
+        <div class="roll">
+          <p class="lead">Open JBrain360 on Leo’s phone and scan this code.</p>
+          <div class="qr"></div>
+          <div class="payload">jb360://pair/eyJ2IjoxLCJ1IjoiaHR0cHM6Ly9q…</div>
+          <div class="once"><svg viewBox="0 0 24 24"><path d="M12 9v4M12 17h.01"/><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg>One-time code · expires in 11 min.</div>
+          <div class="roll-btns"><button class="gh" onclick="regen(this)">New code</button><button class="pri" onclick="roll(this)">Done</button></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Revoked (key disabled) -->
+    <div class="pcard">
+      <div class="head" onclick="toggle(this)" style="opacity:.7">
+        <div class="disc muted"><svg viewBox="0 0 24 24"><rect x="6" y="2" width="12" height="20" rx="3"/><path d="M11 18h2"/></svg></div>
+        <div class="grow">
+          <div class="nm" style="color:var(--text-2)">Jeff’s Phone <span class="badge rose">revoked</span></div>
+          <div class="sub">last seen 2h ago · 79 fixes</div>
+        </div>
+        <span class="caret"><svg viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg></span>
+      </div>
+      <div class="body">
+        <div class="cred bad"><div class="ck"><svg viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="10" rx="2"/><path d="M7 11V7a5 5 0 019.9-1"/></svg></div><div class="ct"><b>Key disabled</b><small>revoked — re-pair to bring it back</small></div></div>
+        <div class="grid">
+          <button class="act rep span2" onclick="roll(this)"><svg viewBox="0 0 24 24"><path d="M21 2v6h-6"/><path d="M3 12a9 9 0 0115-6.7L21 8"/><path d="M3 22v-6h6"/><path d="M21 12a9 9 0 01-15 6.7L3 16"/></svg>Re-pair to restore</button>
+          <button class="act danger span2" onclick="armC(this,'delete')"><svg viewBox="0 0 24 24"><path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m1 0v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6"/></svg>Delete phone &amp; history</button>
+        </div>
+        <div class="roll">
+          <p class="lead">Re-pairing restores this phone with a fresh key — its history stays attached.</p>
+          <div class="qr"></div>
+          <div class="payload">jb360://pair/eyJ2IjoxLCJ1IjoiaHR0cHM6Ly9q…</div>
+          <div class="once"><svg viewBox="0 0 24 24"><path d="M12 9v4M12 17h.01"/><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg>One-time code · expires in 15 min.</div>
+          <div class="roll-btns"><button class="gh" onclick="regen(this)">New code</button><button class="pri" onclick="roll(this)">Done</button></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- scrim + new-pair sheet -->
+  <div class="scrim" id="scrim" onclick="closeAll()"></div>
+  <div class="sheet" id="sheet-pair">
+    <div class="grab"></div>
+    <div id="pair-form">
+      <h3>Pair a phone</h3>
+      <p class="lead">Names a new phone, then shows a one-time code. Open JBrain360 on that phone and scan — no setup needed.</p>
+      <label class="fld">Phone name</label><input class="inp" placeholder="e.g. Mia’s iPhone" />
+      <label class="fld">Belongs to</label>
+      <select class="inp"><option>Jeff (you)</option><option>Celine</option><option>Kids</option><option>+ New person…</option></select>
+      <button class="btn pri" onclick="pairToQR()">Create code</button>
+      <button class="btn ghost" onclick="closeAll()">Cancel</button>
+    </div>
+    <div id="pair-qr" class="hidden">
+      <h3>Scan to pair</h3>
+      <p class="lead">In JBrain360, scan this — it carries the server, so the phone needs no setup.</p>
+      <div class="qr-wrap"><div class="qr big" id="np-qr"></div></div>
+      <div class="payload">jb360://pair/eyJ2IjoxLCJ1IjoiaHR0cHM6Ly9q…</div>
+      <div class="once"><svg viewBox="0 0 24 24"><path d="M12 9v4M12 17h.01"/><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg>One-time code · expires in 15 min.</div>
+      <button class="btn pri" onclick="closeAll()">Done</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  const h=document.documentElement;
+  document.getElementById('theme').onclick=()=>h.dataset.theme=h.dataset.theme==='dark'?'light':'dark';
+  function fillQR(el){el.innerHTML='';for(let i=0;i<441;i++){const c=document.createElement('i');const r=Math.floor(i/21),col=i%21;const finder=(r<7&&col<7)||(r<7&&col>13)||(r>13&&col<7);const on=finder?((r%6===0||col%6===0)||(r>1&&r<5&&col>1&&col<5)):Math.random()>0.5;if(!on)c.style.background='transparent';el.appendChild(c);}}
+
+  function toggle(head){
+    const card=head.closest('.pcard');
+    const wasOpen=card.classList.contains('open');
+    document.querySelectorAll('.pcard.open').forEach(c=>{c.classList.remove('open');reset(c);});
+    if(!wasOpen)card.classList.add('open');
+  }
+  function reset(card){card.querySelectorAll('.rename,.roll').forEach(x=>x.classList.remove('on'));card.querySelectorAll('.act.confirm').forEach(restoreAct);}
+  function rename(btn){const card=btn.closest('.pcard');card.querySelector('.roll').classList.remove('on');const r=card.querySelector('.rename');r.classList.toggle('on');if(r.classList.contains('on'))setTimeout(()=>r.querySelector('input').focus(),40);}
+  function saveName(btn){const card=btn.closest('.pcard');card.querySelector('.nm').childNodes[0].nodeValue=card.querySelector('.rename input').value+' ';card.querySelector('.rename').classList.remove('on');}
+  function roll(btn){const card=btn.closest('.pcard');card.querySelector('.rename').classList.remove('on');const r=card.querySelector('.roll');const willOpen=!r.classList.contains('on');r.classList.toggle('on');if(willOpen)fillQR(r.querySelector('.qr'));}
+  function regen(btn){fillQR(btn.closest('.roll').querySelector('.qr'));}
+
+  function armC(btn,kind){
+    const orig=btn.innerHTML, cls=btn.className;
+    btn.classList.add('confirm');
+    btn.innerHTML='Tap again to '+kind;
+    btn.dataset.orig=orig;btn.dataset.cls=cls;
+    btn.onclick=()=>{btn.closest('.pcard').style.display='none';};
+    setTimeout(()=>{if(btn.classList.contains('confirm'))restoreAct(btn);},3000);
+  }
+  function restoreAct(btn){if(!btn.dataset.orig)return;btn.className=btn.dataset.cls;btn.innerHTML=btn.dataset.orig;btn.onclick=()=>armC(btn,btn.className.includes('danger')?'delete':'revoke');}
+
+  function openPair(){document.getElementById('pair-form').classList.remove('hidden');document.getElementById('pair-qr').classList.add('hidden');document.getElementById('scrim').classList.add('on');document.getElementById('sheet-pair').classList.add('on');}
+  function pairToQR(){document.getElementById('pair-form').classList.add('hidden');document.getElementById('pair-qr').classList.remove('hidden');fillQR(document.getElementById('np-qr'));}
+  function closeAll(){document.getElementById('scrim').classList.remove('on');document.querySelectorAll('.sheet').forEach(s=>s.classList.remove('on'));}
+</script>
+</body>
+</html>

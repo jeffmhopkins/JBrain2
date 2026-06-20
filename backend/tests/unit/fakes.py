@@ -101,12 +101,20 @@ class FakePairingRepo:
     """In-memory pairing repo: records mints and redeems configured codes."""
 
     minted: list[tuple[str, int]] = field(default_factory=list)  # (label, monitoring)
+    targets: list[str | None] = field(default_factory=list)  # per-mint re-pair subject_id
     redeemable: dict[str, RedeemedDevice] = field(default_factory=dict)  # code -> device
 
     async def mint_code(
-        self, ctx: SessionContext, *, label: str, monitoring: int, ttl: timedelta = CODE_TTL
+        self,
+        ctx: SessionContext,
+        *,
+        label: str,
+        monitoring: int,
+        subject_id: str | None = None,
+        ttl: timedelta = CODE_TTL,
     ) -> tuple[str, datetime]:
         self.minted.append((label, monitoring))
+        self.targets.append(subject_id)
         return "fake-code", datetime.now(UTC) + ttl
 
     async def redeem(self, code: str) -> RedeemedDevice | None:
@@ -141,6 +149,21 @@ class FakeDeviceRepo:
         for i, d in enumerate(self.devices):
             if d.id == device_id:
                 self.devices[i] = dataclasses.replace(d, revoked=True)
+                self.key_hashes.pop(device_id, None)
+                return True
+        return False
+
+    async def rename(self, ctx: SessionContext, device_id: str, label: str) -> bool:
+        for i, d in enumerate(self.devices):
+            if d.id == device_id:
+                self.devices[i] = dataclasses.replace(d, label=label)
+                return True
+        return False
+
+    async def delete(self, ctx: SessionContext, device_id: str) -> bool:
+        for i, d in enumerate(self.devices):
+            if d.id == device_id:
+                del self.devices[i]
                 self.key_hashes.pop(device_id, None)
                 return True
         return False

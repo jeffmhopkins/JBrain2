@@ -1,41 +1,44 @@
-// The owner's location surface — Devices / Timeline / Map tabs
-// (docs/mocks/location-chosen-combined.html). Owner-eyes only: the phones write
-// fixes via OwnTracks; this reads the slice back and manages per-device keys.
+// The owner's location surface — Phones / Timeline / Map tabs. Owner-eyes only:
+// the family's phones write fixes via the JBrain360 app; this reads the slice
+// back and manages the paired phones.
 //
-// Wave 5b ships the Devices tab (provision / rotate / revoke, with last-seen /
-// battery / connection / fix count); Timeline and Map land in later waves and
-// show a placeholder until then. The location domain stays on --steel.
+// The Phones tab (docs/mocks/phone-management/b-swipe-rail.html) is a swipe-rail
+// list with an Active / Revoked filter: swipe a phone left for re-pair · rename ·
+// revoke · delete. "Re-pair" rolls a fresh pairing code (rotating the phone's key
+// when it redeems) — the only way to rotate a paired phone's credential. The
+// location domain stays on --steel.
 
 import { QRCodeSVG } from "qrcode.react";
-import { useEffect, useState } from "react";
+import { type TouchEvent, useEffect, useRef, useState } from "react";
 import {
   type DeviceSummary,
   type LocationDigest,
   type LocationFix,
   type PairingCode,
   type PlaceGeofence,
-  type ProvisionedDevice,
   type TimelineEntry,
   api,
 } from "../api/client";
 import { Sheet } from "../components/Sheet";
+import { PencilIcon, RefreshIcon, TrashIcon, XIcon } from "../components/icons";
+import { type Drag, RAIL_WIDTH, beginDrag, endDrag, moveDrag } from "../notes/swipe";
 import { LocationDigestPanel } from "./LocationDigestPanel";
 import { LocationMapTab, type PlaceNoteInput } from "./LocationMapTab";
 
 type Tab = "devices" | "timeline" | "map";
 
 const TAB_LABEL: Record<Tab, string> = {
-  devices: "Devices",
+  devices: "Phones",
   timeline: "Timeline",
   map: "Map",
 };
 
 export interface LocationDeps {
   listDevices: () => Promise<DeviceSummary[]>;
-  provisionDevice: (label: string) => Promise<ProvisionedDevice>;
-  mintPairingCode: (label: string) => Promise<PairingCode>;
-  rotateDevice: (id: string) => Promise<string>;
+  mintPairingCode: (label: string, monitoring?: number, deviceId?: string) => Promise<PairingCode>;
+  renameDevice: (id: string, label: string) => Promise<void>;
   revokeDevice: (id: string) => Promise<void>;
+  deleteDevice: (id: string) => Promise<void>;
   listTimeline: () => Promise<TimelineEntry[]>;
   listPlaces: () => Promise<PlaceGeofence[]>;
   listFixes: (subjectId: string, since: string, until: string) => Promise<LocationFix[]>;
@@ -84,29 +87,28 @@ export function LocationScreen({ deps }: LocationScreenProps) {
   );
 }
 
-// --- Devices tab ----------------------------------------------------------
+// --- Phones tab -----------------------------------------------------------
 
 type State =
   | { phase: "loading" }
   | { phase: "error" }
   | { phase: "done"; devices: DeviceSummary[] };
 
-// A flow that reveals a freshly minted key exactly once (provision or rotate).
-type KeyReveal = { label: string; key: string };
+type DeviceFilter = "active" | "revoked";
 
 function DevicesTab({ deps }: { deps: LocationDeps | undefined }) {
   const list = deps?.listDevices ?? api.listLocationDevices;
-  const provision = deps?.provisionDevice ?? api.provisionDevice;
   const mintCode = deps?.mintPairingCode ?? api.mintPairingCode;
-  const rotate = deps?.rotateDevice ?? api.rotateDevice;
+  const rename = deps?.renameDevice ?? api.renameDevice;
   const revoke = deps?.revokeDevice ?? api.revokeDevice;
+  const remove = deps?.deleteDevice ?? api.deleteDevice;
 
   const [state, setState] = useState<State>({ phase: "loading" });
-  const [adding, setAdding] = useState(false);
+  const [filter, setFilter] = useState<DeviceFilter>("active");
   const [pairing, setPairing] = useState(false);
   const [pairCode, setPairCode] = useState<PairingCode | null>(null);
-  const [reveal, setReveal] = useState<KeyReveal | null>(null);
-  const [confirmRevoke, setConfirmRevoke] = useState<DeviceSummary | null>(null);
+  // Only one row's swipe rail is open at a time.
+  const [openRailId, setOpenRailId] = useState<string | null>(null);
 
   async function refresh(): Promise<void> {
     try {
@@ -130,61 +132,99 @@ function DevicesTab({ deps }: { deps: LocationDeps | undefined }) {
     };
   }, [list]);
 
-  async function doRotate(d: DeviceSummary): Promise<void> {
-    const key = await rotate(d.id);
-    setReveal({ label: d.label, key });
+  // Re-pair / restore: mint a code BOUND to this phone — redeeming it rotates the
+  // phone's key in place. This is the one credential-rotation path for a phone.
+  async function doRepair(d: DeviceSummary): Promise<void> {
+    setOpenRailId(null);
+    setPairCode(await mintCode(d.label, 1, d.id));
+    await refresh();
+  }
+  async function doRename(id: string, label: string): Promise<void> {
+    await rename(id, label);
+    await refresh();
+  }
+  async function doRevoke(id: string): Promise<void> {
+    await revoke(id);
+    await refresh();
+  }
+  async function doDelete(id: string): Promise<void> {
+    await remove(id);
     await refresh();
   }
 
-  async function doRevoke(d: DeviceSummary): Promise<void> {
-    await revoke(d.id);
-    setConfirmRevoke(null);
-    await refresh();
-  }
+  const devices = state.phase === "done" ? state.devices : [];
+  const active = devices.filter((d) => !d.revoked);
+  const revoked = devices.filter((d) => d.revoked);
+  const shown = filter === "active" ? active : revoked;
 
   return (
     <>
       <button type="button" className="list-new" onClick={() => setPairing(true)}>
         ＋ Pair a phone
       </button>
-      <button type="button" className="list-new" onClick={() => setAdding(true)}>
-        ＋ Add device (OwnTracks)
-      </button>
 
-      {state.phase === "loading" && <p className="analysis-quiet">loading devices…</p>}
+      {state.phase === "loading" && <p className="analysis-quiet">loading phones…</p>}
       {state.phase === "error" && (
-        <p className="analysis-quiet">couldn't load devices — check the connection.</p>
-      )}
-      {state.phase === "done" && state.devices.length === 0 && (
-        <p className="analysis-quiet">no devices yet — add one to start tracking a phone.</p>
+        <p className="analysis-quiet">couldn't load phones — check the connection.</p>
       )}
 
-      {state.phase === "done" && state.devices.length > 0 && (
-        <div className="loc-card-list">
-          {state.devices.map((d) => (
-            <DeviceCard
-              key={d.id}
-              device={d}
-              onRotate={() => void doRotate(d)}
-              onRevoke={() => setConfirmRevoke(d)}
-            />
-          ))}
-        </div>
+      {state.phase === "done" && devices.length === 0 && (
+        <p className="analysis-quiet">no phones yet — pair one to start tracking.</p>
       )}
 
-      {adding && (
-        <AddDeviceSheet
-          provision={provision}
-          onClose={() => setAdding(false)}
-          onProvisioned={(r) => {
-            setAdding(false);
-            setReveal(r);
-            void refresh();
-          }}
-        />
-      )}
+      {state.phase === "done" && devices.length > 0 && (
+        <>
+          <div className="loc-filter" role="tablist" aria-label="Phone status">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={filter === "active"}
+              className={`loc-filter-chip${filter === "active" ? " on" : ""}`}
+              onClick={() => {
+                setFilter("active");
+                setOpenRailId(null);
+              }}
+            >
+              Active <span className="loc-filter-count">{active.length}</span>
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={filter === "revoked"}
+              className={`loc-filter-chip${filter === "revoked" ? " on" : ""}`}
+              onClick={() => {
+                setFilter("revoked");
+                setOpenRailId(null);
+              }}
+            >
+              Revoked <span className="loc-filter-count">{revoked.length}</span>
+            </button>
+          </div>
 
-      {reveal && <KeyRevealSheet reveal={reveal} onClose={() => setReveal(null)} />}
+          <p className="loc-swipe-hint">Swipe a phone left for actions.</p>
+
+          {shown.length === 0 ? (
+            <p className="analysis-quiet">
+              {filter === "active" ? "no active phones." : "no revoked phones."}
+            </p>
+          ) : (
+            <div className="loc-phone-list">
+              {shown.map((d) => (
+                <PhoneRow
+                  key={d.id}
+                  device={d}
+                  railOpen={openRailId === d.id}
+                  onRailChange={(open) => setOpenRailId(open ? d.id : null)}
+                  onRepair={() => void doRepair(d)}
+                  onRename={(label) => void doRename(d.id, label)}
+                  onRevoke={() => void doRevoke(d.id)}
+                  onDelete={() => void doDelete(d.id)}
+                />
+              ))}
+            </div>
+          )}
+        </>
+      )}
 
       {pairing && (
         <PairPhoneSheet
@@ -193,153 +233,206 @@ function DevicesTab({ deps }: { deps: LocationDeps | undefined }) {
           onCreated={(c) => {
             setPairing(false);
             setPairCode(c);
+            void refresh();
           }}
         />
       )}
 
       {pairCode && <PairCodeSheet code={pairCode} onClose={() => setPairCode(null)} />}
-
-      {confirmRevoke && (
-        <Sheet title={`Revoke ${confirmRevoke.label}?`} onClose={() => setConfirmRevoke(null)}>
-          <p className="loc-sheet-note">
-            Its key stops working immediately — the phone can no longer post fixes. Stored history
-            is kept. You can add it back later with a new key.
-          </p>
-          <div className="loc-sheet-actions">
-            <button type="button" className="ghost" onClick={() => setConfirmRevoke(null)}>
-              Cancel
-            </button>
-            <button
-              type="button"
-              className="btn-destructive"
-              onClick={() => void doRevoke(confirmRevoke)}
-            >
-              Revoke
-            </button>
-          </div>
-        </Sheet>
-      )}
     </>
   );
 }
 
-function DeviceCard({
+// One phone as a swipe-left rail row (reuses the home-note / chats swipe paradigm
+// and its rail buttons). Tapping a closed row also opens the rail, so the actions
+// are reachable without the gesture. Active rows carry re-pair · rename · revoke ·
+// delete; a revoked row carries only restore · delete.
+function PhoneRow({
   device,
-  onRotate,
+  railOpen,
+  onRailChange,
+  onRepair,
+  onRename,
   onRevoke,
+  onDelete,
 }: {
   device: DeviceSummary;
-  onRotate: () => void;
+  railOpen: boolean;
+  onRailChange: (open: boolean) => void;
+  onRepair: () => void;
+  onRename: (label: string) => void;
   onRevoke: () => void;
+  onDelete: () => void;
 }) {
-  return (
-    <div className={`loc-card${device.revoked ? " loc-card-revoked" : ""}`}>
-      <div className="loc-card-head">
-        <span className="loc-card-name">{device.label}</span>
-        {device.revoked && <span className="loc-badge">revoked</span>}
-      </div>
-      <div className="loc-card-meta">{deviceStatus(device)}</div>
-      <div className="loc-card-actions">
-        {!device.revoked && (
-          <button type="button" className="ghost" onClick={onRotate}>
-            Rotate key
-          </button>
-        )}
-        {!device.revoked && (
-          <button type="button" className="ghost loc-danger" onClick={onRevoke}>
-            Revoke
-          </button>
-        )}
-      </div>
-    </div>
-  );
-}
+  const [drag, setDrag] = useState<Drag | null>(null);
+  const dragged = useRef(false);
+  const renameRef = useRef<HTMLInputElement>(null);
+  const [arming, setArming] = useState<"revoke" | "delete" | null>(null);
+  const [renaming, setRenaming] = useState(false);
+  const [draft, setDraft] = useState(device.label);
 
-function AddDeviceSheet({
-  provision,
-  onClose,
-  onProvisioned,
-}: {
-  provision: (label: string) => Promise<ProvisionedDevice>;
-  onClose: () => void;
-  onProvisioned: (reveal: KeyReveal) => void;
-}) {
-  const [label, setLabel] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [failed, setFailed] = useState(false);
+  // Closing the rail disarms any pending tap-again confirm.
+  useEffect(() => {
+    if (!railOpen) setArming(null);
+  }, [railOpen]);
+  useEffect(() => {
+    if (renaming) renameRef.current?.focus();
+  }, [renaming]);
 
-  async function submit(): Promise<void> {
-    const l = label.trim();
-    if (!l || busy) return;
-    setBusy(true);
-    setFailed(false);
-    try {
-      const provisioned = await provision(l);
-      onProvisioned({ label: l, key: provisioned.key });
-    } catch {
-      setFailed(true);
-      setBusy(false);
+  const dragging = drag !== null && drag.axis === "h";
+  const offset = renaming ? 0 : dragging ? drag.offset : railOpen ? -RAIL_WIDTH : 0;
+
+  function onTouchStart(event: TouchEvent): void {
+    if (renaming) return;
+    event.stopPropagation();
+    dragged.current = false;
+    const t = event.touches[0];
+    if (t) setDrag(beginDrag(t.clientX, t.clientY, railOpen));
+  }
+  function onTouchMove(event: TouchEvent): void {
+    if (drag === null) return;
+    event.stopPropagation();
+    const t = event.touches[0];
+    if (!t) return;
+    const next = moveDrag(drag, t.clientX, t.clientY);
+    if (next.axis === "v") {
+      setDrag(null);
+      return;
     }
+    setDrag(next);
+  }
+  function onTouchEnd(event: TouchEvent): void {
+    if (drag === null) return;
+    event.stopPropagation();
+    if (drag.axis === "h") {
+      dragged.current = true;
+      onRailChange(endDrag(drag));
+    }
+    setDrag(null);
+  }
+
+  function onTap(): void {
+    if (dragged.current) {
+      dragged.current = false;
+      return;
+    }
+    onRailChange(!railOpen);
+  }
+
+  function submitRename(): void {
+    const label = draft.trim();
+    setRenaming(false);
+    onRailChange(false);
+    if (label && label !== device.label) onRename(label);
   }
 
   return (
-    <Sheet title="Add device" onClose={onClose}>
-      <input
-        // biome-ignore lint/a11y/noAutofocus: a deliberately-summoned sheet form
-        autoFocus
-        aria-label="Device name"
-        placeholder="device name (e.g. Jeff's phone)…"
-        value={label}
-        onChange={(e) => setLabel(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === "Enter") void submit();
-        }}
-      />
-      {failed && <p className="loc-sheet-error">couldn't add the device — try again.</p>}
-      <div className="loc-sheet-actions">
-        <button type="button" className="ghost" onClick={onClose}>
-          Cancel
-        </button>
-        <button
-          type="button"
-          className="primary"
-          disabled={!label.trim() || busy}
-          onClick={() => void submit()}
-        >
-          {busy ? "Adding…" : "Add device"}
-        </button>
+    <div className={`loc-phone-wrap${device.revoked ? " loc-phone-revoked" : ""}`}>
+      {!renaming && offset < 0 && (
+        <div className={`loc-phone-rail ${device.revoked ? "rail-2" : "rail-4"}`}>
+          <button
+            type="button"
+            className="rail-btn rail-repair"
+            onClick={() => {
+              onRailChange(false);
+              onRepair();
+            }}
+          >
+            <RefreshIcon size={18} />
+            {device.revoked ? "restore" : "re-pair"}
+          </button>
+          {!device.revoked && (
+            <button
+              type="button"
+              className="rail-btn rail-edit"
+              onClick={() => {
+                setDraft(device.label);
+                setRenaming(true);
+              }}
+            >
+              <PencilIcon size={18} />
+              rename
+            </button>
+          )}
+          {!device.revoked && (
+            <button
+              type="button"
+              className={`rail-btn rail-revoke${arming === "revoke" ? " rail-armed" : ""}`}
+              onClick={() => {
+                if (arming !== "revoke") {
+                  setArming("revoke");
+                  return;
+                }
+                onRailChange(false);
+                onRevoke();
+              }}
+            >
+              {arming === "revoke" ? (
+                "tap again"
+              ) : (
+                <>
+                  <XIcon size={18} />
+                  revoke
+                </>
+              )}
+            </button>
+          )}
+          <button
+            type="button"
+            className={`rail-btn rail-delete${arming === "delete" ? " rail-armed" : ""}`}
+            onClick={() => {
+              if (arming !== "delete") {
+                setArming("delete");
+                return;
+              }
+              onRailChange(false);
+              onDelete();
+            }}
+          >
+            {arming === "delete" ? (
+              "tap again"
+            ) : (
+              <>
+                <TrashIcon size={18} />
+                delete
+              </>
+            )}
+          </button>
+        </div>
+      )}
+      <div
+        className="loc-phone-slide"
+        style={{ transform: `translateX(${offset}px)` }}
+        onTouchStart={onTouchStart}
+        onTouchMove={onTouchMove}
+        onTouchEnd={onTouchEnd}
+      >
+        {renaming ? (
+          <input
+            ref={renameRef}
+            className="loc-phone-rename"
+            aria-label="Phone name"
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onBlur={submitRename}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") submitRename();
+              if (e.key === "Escape") {
+                setRenaming(false);
+                onRailChange(false);
+              }
+            }}
+          />
+        ) : (
+          <button type="button" className="loc-phone-face" onClick={onTap}>
+            <span className="loc-phone-name">
+              {device.label}
+              {device.revoked && <span className="loc-badge">revoked</span>}
+            </span>
+            <span className="loc-phone-meta">{deviceStatus(device)}</span>
+          </button>
+        )}
       </div>
-    </Sheet>
-  );
-}
-
-function KeyRevealSheet({ reveal, onClose }: { reveal: KeyReveal; onClose: () => void }) {
-  const url = `${window.location.origin}/api/owntracks`;
-  return (
-    <Sheet title={`Key for ${reveal.label}`} onClose={onClose}>
-      <p className="loc-sheet-warn">
-        Shown once. Copy it into OwnTracks now — it can't be retrieved again. If you lose it, rotate
-        the key.
-      </p>
-      <KeyLine label="Key" value={reveal.key} />
-      <p className="loc-sheet-note">Configure OwnTracks in HTTP mode:</p>
-      <KeyLine label="URL" value={url} />
-      <KeyLine label="Username" value="any (ignored)" />
-      <KeyLine label="Password" value={reveal.key} />
-      <div className="loc-sheet-actions">
-        <button type="button" className="primary" onClick={onClose}>
-          Done
-        </button>
-      </div>
-    </Sheet>
-  );
-}
-
-function KeyLine({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="loc-keyline">
-      <span className="loc-keyline-label">{label}</span>
-      <code className="loc-keyline-value">{value}</code>
     </div>
   );
 }

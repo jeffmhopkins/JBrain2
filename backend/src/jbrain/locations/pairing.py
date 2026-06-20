@@ -89,7 +89,13 @@ def build_owntracks_config(
 
 class PairingRepo(Protocol):
     async def mint_code(
-        self, ctx: SessionContext, *, label: str, monitoring: int, ttl: timedelta = ...
+        self,
+        ctx: SessionContext,
+        *,
+        label: str,
+        monitoring: int,
+        subject_id: str | None = None,
+        ttl: timedelta = ...,
     ) -> tuple[str, datetime]: ...
 
     async def redeem(self, code: str) -> RedeemedDevice | None: ...
@@ -100,18 +106,26 @@ class SqlPairingRepo:
         self._maker = maker
 
     async def mint_code(
-        self, ctx: SessionContext, *, label: str, monitoring: int, ttl: timedelta = CODE_TTL
+        self,
+        ctx: SessionContext,
+        *,
+        label: str,
+        monitoring: int,
+        subject_id: str | None = None,
+        ttl: timedelta = CODE_TTL,
     ) -> tuple[str, datetime]:
-        """Owner-only: create a one-time code for a device-to-be. Returns (code, expiry)."""
+        """Owner-only: create a one-time code. With `subject_id` it targets an
+        EXISTING device (re-pair) — redemption rotates that device's key in place;
+        without it the code provisions a fresh device. Returns (code, expiry)."""
         code = generate_pairing_code()
         expires_at = datetime.now(UTC) + ttl
         async with scoped_session(self._maker, ctx) as session:
             await session.execute(
                 text(
-                    "INSERT INTO app.pairing_code (code, label, monitoring, expires_at)"
-                    " VALUES (:c, :l, :m, :e)"
+                    "INSERT INTO app.pairing_code (code, label, monitoring, subject_id, expires_at)"
+                    " VALUES (:c, :l, :m, :s, :e)"
                 ),
-                {"c": code, "l": label, "m": monitoring, "e": expires_at},
+                {"c": code, "l": label, "m": monitoring, "s": subject_id, "e": expires_at},
             )
         return code, expires_at
 

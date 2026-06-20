@@ -47,3 +47,15 @@ async def revoke_device(repo: DeviceRepo, ctx: SessionContext, device_id: str) -
     if not _valid_id(device_id):
         return False
     return await repo.revoke(ctx, device_id)
+
+
+async def rename_device(repo: DeviceRepo, ctx: SessionContext, device_id: str, label: str) -> bool:
+    if not _valid_id(device_id):
+        return False
+    return await repo.rename(ctx, device_id, label)
+
+
+async def delete_device(repo: DeviceRepo, ctx: SessionContext, device_id: str) -> bool:
+    if not _valid_id(device_id):
+        return False
+    return await repo.delete(ctx, device_id)
