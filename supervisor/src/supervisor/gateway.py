@@ -34,9 +34,9 @@ UPDATE_COMMAND = (
     "apk add --no-cache git >/dev/null 2>&1 && exec sh src/deploy/update-inner.sh"
 )
 EXPORT_COMMAND = "exec sh src/deploy/export-inner.sh"
-# Reset lives here, not in the api: TRUNCATE needs table ownership and RLS
-# does not bind it, so the api's least-privilege role cannot erase data —
-# only a supervisor one-shot running superuser psql can.
+# Reset lives here, not in the api: dropping and re-migrating the schema needs
+# the superuser role, which RLS does not bind, so the api's least-privilege role
+# cannot do it — only a supervisor one-shot running superuser psql + alembic can.
 RESET_COMMAND = "exec sh src/deploy/reset-inner.sh"
 
 # Docker reports this zero-value timestamp for containers that never started.
