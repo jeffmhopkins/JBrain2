@@ -9,7 +9,15 @@
 // Timeline and Map land in 2b/2c. Location domain stays on --location (teal).
 
 import { useEffect, useState } from "react";
-import { type MemberSubject, type Principal, type TimelineEntry, api } from "../api/client";
+import {
+  type LocationFix,
+  type MemberSubject,
+  type PlaceGeofence,
+  type Principal,
+  type TimelineEntry,
+  api,
+} from "../api/client";
+import { MemberMapTab } from "./MemberMapTab";
 
 type Tab = "devices" | "timeline" | "map";
 
@@ -24,6 +32,8 @@ export interface MemberDeps {
   probe: () => Promise<Principal>;
   listRoster: () => Promise<MemberSubject[]>;
   listTimeline: () => Promise<TimelineEntry[]>;
+  listPositions: (subjectId: string, since: string, until: string) => Promise<LocationFix[]>;
+  listPlaces: () => Promise<PlaceGeofence[]>;
 }
 
 type Gate = { phase: "probing" } | { phase: "locked" } | { phase: "ready"; label: string };
@@ -89,7 +99,7 @@ export function MemberDashboard({ deps }: MemberDashboardProps) {
 
       {tab === "devices" && <DevicesTab deps={deps} />}
       {tab === "timeline" && <TimelineTab deps={deps} />}
-      {tab === "map" && <p className="dash-quiet dash-pad">map arrives in M4d-2c.</p>}
+      {tab === "map" && <MemberMapTab deps={deps} />}
     </main>
   );
 }

@@ -314,8 +314,9 @@ service-account bootstrap (non-negotiable #8).
   reads (positions + presence, RLS-scoped, 30-day cap) ✓; **M4c** per-place
   `place_share` opt-in → member shared-fence overlay + shared/visible-subject
   timeline ✓; **M4d-1** member live-WS (owner+member on one socket, per-fix
-  view-scope filter, CSWSH Origin allow-list) ✓; **M4d-2** the SPA itself +
-  WebView lockdown (next).
+  view-scope filter, CSWSH Origin allow-list) ✓; **M4d-2** the member SPA at /dash
+  — separate Vite entry, session gate (B8 cookie, key stays native), Devices /
+  Timeline / Map (Leaflet trail + shared fences + live WS) ✓. **M4 complete.**
 - **M5 — Forked APK.** `oss`+`gms` flavors; pairing screen (`MessageConfiguration`
   inject, `remoteConfiguration=true`); background-location + OEM walkthrough;
   FGS/boot hardening; remote mode switch (verify cmd JSON). Gate: instrumented
