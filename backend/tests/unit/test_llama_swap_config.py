@@ -51,9 +51,7 @@ def test_render_stamps_default_windows_and_resolves_files(tmp_path: Path) -> Non
 
 def test_render_applies_a_per_model_window_override(tmp_path: Path) -> None:
     _lay_down(tmp_path)
-    text = llama_swap_config.render(
-        _manifest(), str(tmp_path), windows={"gpt-oss-120b": 65536}
-    )
+    text = llama_swap_config.render(_manifest(), str(tmp_path), windows={"gpt-oss-120b": 65536})
     assert "-c 65536" in text  # overridden
     assert "-c 32768" in text  # qwen keeps its default
     assert "-c 131072" not in text

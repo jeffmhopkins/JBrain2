@@ -74,13 +74,23 @@ def render(
         gguf = resolve_weight(root, model_id, str(m["gguf_include"]))
         window = windows.get(model_id, int(m["context_window"]))
         cmd = [
-            "llama-server", "--host", "127.0.0.1", "--port", str(port),
+            "llama-server",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            str(port),
             # The context window. Must match what the router reports to the meter.
-            "-c", str(window),
+            "-c",
+            str(window),
             # gfx1151 stability/perf flags: flash attention + --no-mmap; -ngl 999
             # offloads every layer to the iGPU.
-            "-fa", "1", "--no-mmap",
-            "-m", f"/models/{model_id}/{gguf}", "-ngl", "999",
+            "-fa",
+            "1",
+            "--no-mmap",
+            "-m",
+            f"/models/{model_id}/{gguf}",
+            "-ngl",
+            "999",
         ]
         mmproj = m.get("mmproj_include")
         if mmproj:
