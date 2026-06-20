@@ -34,6 +34,16 @@ class Settings(BaseSettings):
     mqtt_public_port: int = 8883
     # The dashboard URL the forked app's WebView loads; set when M4 lands.
     dashboard_url: str = ""
+    # The Origins allowed to open the live WebSocket (CSWSH defense, plan B8): a
+    # comma-separated allow-list. A browser always sends `Origin` on the WS
+    # handshake, so a cross-site page on a victim's machine is rejected. Empty =
+    # unset (dev / native clients that send no Origin); when set, a present Origin
+    # MUST match. See `allowed_ws_origins`.
+    dashboard_allowed_origins: str = ""
+
+    @property
+    def allowed_ws_origins(self) -> frozenset[str]:
+        return frozenset(o.strip() for o in self.dashboard_allowed_origins.split(",") if o.strip())
 
     # Map basemap tiles, served through the server-side proxy/cache (api/tiles.py)
     # so the phone fetches tiles only from this box, never a third-party tile host.
