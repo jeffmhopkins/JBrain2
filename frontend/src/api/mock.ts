@@ -2937,6 +2937,15 @@ export const mockFetch: typeof fetch = async (input, init) => {
     });
     return json({ device: { id, label, created_at, revoked: false }, key: `mock-${id}-key` }, 201);
   }
+  if (path === "/api/pairing/codes" && method === "POST") {
+    const code = `mock-code-${mockDeviceSeq++}`;
+    // The payload mirrors the backend: base64url(JSON {v,u,c}) embedding the server.
+    const payload = btoa(JSON.stringify({ v: 1, u: window.location.origin, c: code }))
+      .replace(/\+/g, "-")
+      .replace(/\//g, "_")
+      .replace(/=+$/, "");
+    return json({ code, expires_at: new Date(Date.now() + 3_600_000).toISOString(), payload }, 201);
+  }
   const rotate = path.match(/^\/api\/devices\/([^/]+)\/rotate$/);
   if (rotate && method === "POST") {
     return json({ key: `mock-${decodeURIComponent(rotate[1] ?? "")}-rotated` });

@@ -80,6 +80,11 @@ function deps(over: Partial<LocationDeps> = {}): LocationDeps {
   return {
     listDevices: vi.fn(async () => [device()]),
     provisionDevice: vi.fn(async () => provisioned()),
+    mintPairingCode: vi.fn(async () => ({
+      code: "CODE-1",
+      expires_at: "2026-06-20T13:00:00Z",
+      payload: "cGF5bG9hZA",
+    })),
     rotateDevice: vi.fn(async () => "ROTATED-KEY-456"),
     revokeDevice: vi.fn(async () => {}),
     listTimeline: vi.fn(async () => [entry()]),
@@ -252,8 +257,8 @@ describe("LocationScreen", () => {
     const d = deps({ listDevices: vi.fn(async () => []) });
     render(<LocationScreen deps={d} />);
     fireEvent.click(screen.getByRole("tab", { name: "Devices" }));
-    await screen.findByText("＋ Add device");
-    fireEvent.click(screen.getByText("＋ Add device"));
+    await screen.findByText("＋ Add device (OwnTracks)");
+    fireEvent.click(screen.getByText("＋ Add device (OwnTracks)"));
 
     fireEvent.change(screen.getByLabelText("Device name"), { target: { value: "Tablet" } });
     fireEvent.click(screen.getByRole("button", { name: "Add device" }));
@@ -264,6 +269,22 @@ describe("LocationScreen", () => {
     expect((await screen.findAllByText("SECRET-KEY-123")).length).toBeGreaterThan(0);
     expect(screen.getByText(/api\/owntracks/)).toBeInTheDocument();
     expect(screen.getByText(/shown once/i)).toBeInTheDocument();
+  });
+
+  it("mints a pairing code and shows the payload to scan or copy", async () => {
+    const d = deps({ listDevices: vi.fn(async () => []) });
+    render(<LocationScreen deps={d} />);
+    fireEvent.click(screen.getByRole("tab", { name: "Devices" }));
+    await screen.findByText("＋ Pair a phone");
+    fireEvent.click(screen.getByText("＋ Pair a phone"));
+
+    fireEvent.change(screen.getByLabelText("Phone name"), { target: { value: "Jeff's phone" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create code" }));
+
+    await waitFor(() => expect(d.mintPairingCode).toHaveBeenCalledWith("Jeff's phone"));
+    // The self-contained payload is shown for the app to scan/paste.
+    expect(await screen.findByText("cGF5bG9hZA")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Copy code" })).toBeInTheDocument();
   });
 
   it("rotates a key and reveals the new one", async () => {

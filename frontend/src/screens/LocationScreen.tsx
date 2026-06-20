@@ -6,11 +6,13 @@
 // battery / connection / fix count); Timeline and Map land in later waves and
 // show a placeholder until then. The location domain stays on --steel.
 
+import { QRCodeSVG } from "qrcode.react";
 import { useEffect, useState } from "react";
 import {
   type DeviceSummary,
   type LocationDigest,
   type LocationFix,
+  type PairingCode,
   type PlaceGeofence,
   type ProvisionedDevice,
   type TimelineEntry,
@@ -31,6 +33,7 @@ const TAB_LABEL: Record<Tab, string> = {
 export interface LocationDeps {
   listDevices: () => Promise<DeviceSummary[]>;
   provisionDevice: (label: string) => Promise<ProvisionedDevice>;
+  mintPairingCode: (label: string) => Promise<PairingCode>;
   rotateDevice: (id: string) => Promise<string>;
   revokeDevice: (id: string) => Promise<void>;
   listTimeline: () => Promise<TimelineEntry[]>;
@@ -94,11 +97,14 @@ type KeyReveal = { label: string; key: string };
 function DevicesTab({ deps }: { deps: LocationDeps | undefined }) {
   const list = deps?.listDevices ?? api.listLocationDevices;
   const provision = deps?.provisionDevice ?? api.provisionDevice;
+  const mintCode = deps?.mintPairingCode ?? api.mintPairingCode;
   const rotate = deps?.rotateDevice ?? api.rotateDevice;
   const revoke = deps?.revokeDevice ?? api.revokeDevice;
 
   const [state, setState] = useState<State>({ phase: "loading" });
   const [adding, setAdding] = useState(false);
+  const [pairing, setPairing] = useState(false);
+  const [pairCode, setPairCode] = useState<PairingCode | null>(null);
   const [reveal, setReveal] = useState<KeyReveal | null>(null);
   const [confirmRevoke, setConfirmRevoke] = useState<DeviceSummary | null>(null);
 
@@ -138,8 +144,11 @@ function DevicesTab({ deps }: { deps: LocationDeps | undefined }) {
 
   return (
     <>
+      <button type="button" className="list-new" onClick={() => setPairing(true)}>
+        ＋ Pair a phone
+      </button>
       <button type="button" className="list-new" onClick={() => setAdding(true)}>
-        ＋ Add device
+        ＋ Add device (OwnTracks)
       </button>
 
       {state.phase === "loading" && <p className="analysis-quiet">loading devices…</p>}
@@ -176,6 +185,19 @@ function DevicesTab({ deps }: { deps: LocationDeps | undefined }) {
       )}
 
       {reveal && <KeyRevealSheet reveal={reveal} onClose={() => setReveal(null)} />}
+
+      {pairing && (
+        <PairPhoneSheet
+          mintCode={mintCode}
+          onClose={() => setPairing(false)}
+          onCreated={(c) => {
+            setPairing(false);
+            setPairCode(c);
+          }}
+        />
+      )}
+
+      {pairCode && <PairCodeSheet code={pairCode} onClose={() => setPairCode(null)} />}
 
       {confirmRevoke && (
         <Sheet title={`Revoke ${confirmRevoke.label}?`} onClose={() => setConfirmRevoke(null)}>
@@ -319,6 +341,101 @@ function KeyLine({ label, value }: { label: string; value: string }) {
       <span className="loc-keyline-label">{label}</span>
       <code className="loc-keyline-value">{value}</code>
     </div>
+  );
+}
+
+// --- Pair a phone (JBrain360 app) -----------------------------------------
+
+function PairPhoneSheet({
+  mintCode,
+  onClose,
+  onCreated,
+}: {
+  mintCode: (label: string) => Promise<PairingCode>;
+  onClose: () => void;
+  onCreated: (code: PairingCode) => void;
+}) {
+  const [label, setLabel] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [failed, setFailed] = useState(false);
+
+  async function submit(): Promise<void> {
+    const l = label.trim();
+    if (!l || busy) return;
+    setBusy(true);
+    setFailed(false);
+    try {
+      onCreated(await mintCode(l));
+    } catch {
+      setFailed(true);
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Sheet title="Pair a phone" onClose={onClose}>
+      <p className="loc-sheet-note">
+        Creates a one-time code for the JBrain360 app. Open the app on the phone and scan or paste
+        it — no setup needed.
+      </p>
+      <input
+        // biome-ignore lint/a11y/noAutofocus: a deliberately-summoned sheet form
+        autoFocus
+        aria-label="Phone name"
+        placeholder="phone name (e.g. Jeff's phone)…"
+        value={label}
+        onChange={(e) => setLabel(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") void submit();
+        }}
+      />
+      {failed && <p className="loc-sheet-error">couldn't create the code — try again.</p>}
+      <div className="loc-sheet-actions">
+        <button type="button" className="ghost" onClick={onClose}>
+          Cancel
+        </button>
+        <button
+          type="button"
+          className="primary"
+          disabled={!label.trim() || busy}
+          onClick={() => void submit()}
+        >
+          {busy ? "Creating…" : "Create code"}
+        </button>
+      </div>
+    </Sheet>
+  );
+}
+
+function PairCodeSheet({ code, onClose }: { code: PairingCode; onClose: () => void }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <Sheet title="Scan to pair" onClose={onClose}>
+      <p className="loc-sheet-note">
+        In the JBrain360 app, scan this code — or copy it and paste. It carries the server, so the
+        phone needs no setup. One-time use.
+      </p>
+      {/* QR must stay high-contrast black-on-white to scan in any theme. */}
+      <div className="loc-qr">
+        <QRCodeSVG value={code.payload} size={208} bgColor="#ffffff" fgColor="#000000" />
+      </div>
+      <code className="loc-pair-payload">{code.payload}</code>
+      <div className="loc-sheet-actions">
+        <button
+          type="button"
+          className="ghost"
+          onClick={() => {
+            void navigator.clipboard?.writeText(code.payload);
+            setCopied(true);
+          }}
+        >
+          {copied ? "Copied" : "Copy code"}
+        </button>
+        <button type="button" className="primary" onClick={onClose}>
+          Done
+        </button>
+      </div>
+    </Sheet>
   );
 }
 
