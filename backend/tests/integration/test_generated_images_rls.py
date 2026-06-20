@@ -78,6 +78,13 @@ async def test_non_owner_sees_no_rows_and_cannot_insert(maker: async_sessionmake
     owner = await _owner(maker)
     repo = GeneratedImageRepo()
 
+    # Baseline so the assertions are independent of rows other tests left in the
+    # shared module DB (the non-owner count is absolute — RLS hides every row).
+    async with scoped_session(maker, owner) as session:
+        baseline = (
+            await session.execute(text("SELECT count(*) FROM app.generated_images"))
+        ).scalar()
+
     async with scoped_session(maker, owner) as session:
         await repo.insert(
             session,
@@ -113,12 +120,12 @@ async def test_non_owner_sees_no_rows_and_cannot_insert(maker: async_sessionmake
                 seed=1,
             )
 
-    # The failed write left nothing behind.
+    # The failed write left nothing behind: only the one owner row was added.
     async with scoped_session(maker, owner) as session:
         owner_count = (
             await session.execute(text("SELECT count(*) FROM app.generated_images"))
         ).scalar()
-    assert owner_count == 1
+    assert owner_count == baseline + 1
 
 
 async def test_rows_are_immutable_no_update_grant(maker: async_sessionmaker) -> None:
