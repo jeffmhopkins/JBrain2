@@ -114,6 +114,13 @@ const OCR_8_LINES = [
   "budget: tbd",
 ].join("\n");
 
+function setVisibility(state: "visible" | "hidden") {
+  act(() => {
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: state });
+    document.dispatchEvent(new Event("visibilitychange"));
+  });
+}
+
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
@@ -351,6 +358,26 @@ describe("AnalysisTab states", () => {
     expect(screen.getByText("Whiteboard decisions — re-read")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "re-run analysis" })).toBeEnabled();
     await waitFor(() => expect(document.querySelectorAll(".stage-done")).toHaveLength(2));
+  });
+
+  it("the gated poller goes silent while backgrounded, and resumes on return", async () => {
+    setVisibility("hidden");
+    const stub = stubApi({ analysis: NOT_ANALYZED, extracts: {} });
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    renderTab({ attachments: [IMG_PENDING] });
+
+    const analysisGets = () =>
+      stub.fetchMock.mock.calls.filter(([url]) => String(url) === "/api/notes/n1/analysis").length;
+
+    // The one-shot mount load fires regardless; the 3s poll tick must not, while hidden.
+    await waitFor(() => expect(analysisGets()).toBe(1));
+    await act(() => vi.advanceTimersByTimeAsync(3000 * 3));
+    expect(analysisGets()).toBe(1);
+
+    // Back in the foreground, the poll resumes hitting the endpoint.
+    setVisibility("visible");
+    await act(() => vi.advanceTimersByTimeAsync(3000));
+    expect(analysisGets()).toBeGreaterThan(1);
   });
 });
 

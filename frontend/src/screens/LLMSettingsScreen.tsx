@@ -7,6 +7,7 @@ import type {
   ReasoningEffort,
 } from "../api/client";
 import { api } from "../api/client";
+import { useForeground } from "../visibility";
 import { AiUsageCard } from "./aiUsage";
 
 // Strategy C — tasks are tiered by role. The grouping lives in the frontend
@@ -145,10 +146,12 @@ export function LLMSettingsScreen() {
 
   // Live runtime state: while the drawer is open and hosting is on, refresh the
   // loaded flags every few seconds. Merge ONLY local_models so a poll can't
-  // clobber an in-flight provider/reasoning edit.
+  // clobber an in-flight provider/reasoning edit. A backgrounded app suspends
+  // the poll (re-runs with an immediate tick on return).
   const hostingEnabled = settings?.local_hosting_enabled ?? false;
+  const foreground = useForeground();
   useEffect(() => {
-    if (!localOpen || !hostingEnabled) return;
+    if (!localOpen || !hostingEnabled || !foreground) return;
     let stop = false;
     const tick = () =>
       api
@@ -174,7 +177,7 @@ export function LLMSettingsScreen() {
       stop = true;
       clearInterval(id);
     };
-  }, [localOpen, hostingEnabled]);
+  }, [localOpen, hostingEnabled, foreground]);
 
   function unloadModel(id: string) {
     setUnloading((s) => new Set(s).add(id));

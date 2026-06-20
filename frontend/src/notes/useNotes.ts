@@ -172,6 +172,17 @@ export function useNotes(enabled: boolean, visible: boolean, store?: OutboxStore
     setPending((await outbox.all()).map(pendingItem));
   }, [outbox]);
 
+  // Flush-only (no list read) for the off-screen retry below: drain the outbox
+  // and refresh the pending rows, nothing more.
+  const flushPending = useCallback(async () => {
+    try {
+      await flushOutbox(outbox);
+    } catch {
+      // Transient — a later tick, a reconnect, or a return to the stream retries.
+    }
+    setPending((await outbox.all()).map(pendingItem));
+  }, [outbox]);
+
   // Any server note still mid-pipeline drives the faster cadence; flipping it
   // re-arms the interval below (and runs an immediate sync, so an enacted or
   // freshly-settled note reflects at once rather than on the next slow tick).
@@ -192,16 +203,27 @@ export function useNotes(enabled: boolean, visible: boolean, store?: OutboxStore
     return () => clearInterval(interval);
   }, [enabled, sync, anyInFlight, foreground, visible]);
 
-  // The outbox still flushes on reconnect from anywhere in the app — a note
-  // composed on, say, Settings goes out without waiting for a return to the
-  // stream. It's event-driven (no steady-state load) and stays silent while the
-  // PWA is hidden.
+  // The outbox flushes on reconnect from anywhere in the app — a note composed
+  // on, say, Settings goes out the moment the network returns. Event-driven (no
+  // steady-state load) and silent while the PWA is hidden.
   useEffect(() => {
     if (!enabled || !foreground) return;
     const onOnline = () => void sync();
     window.addEventListener("online", onOnline);
     return () => window.removeEventListener("online", onOnline);
   }, [enabled, sync, foreground]);
+
+  // Off-screen the list poll is suspended, so a note left queued by a transient
+  // flush failure (no network transition to fire "online") would otherwise wait
+  // for a return to the stream. A flush-only retry covers exactly that window:
+  // it arms only while notes are actually pending, drains and disarms itself,
+  // and stays silent while hidden — restoring the queue's self-healing without
+  // resuming any read load.
+  useEffect(() => {
+    if (!enabled || !foreground || visible || pending.length === 0) return;
+    const id = setInterval(() => void flushPending(), IDLE_INTERVAL_MS);
+    return () => clearInterval(id);
+  }, [enabled, foreground, visible, pending.length, flushPending]);
 
   const send = useCallback(
     async (input: SendInput) => {

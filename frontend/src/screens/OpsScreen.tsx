@@ -6,7 +6,7 @@ import {
   type UpdateStatus,
   api,
 } from "../api/client";
-import { useForegroundRef } from "../visibility";
+import { useForeground, useForegroundRef } from "../visibility";
 import { RunsScreen } from "./RunsScreen";
 
 function fmtBytes(n: number): string {
@@ -418,6 +418,11 @@ function ServiceBody({
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const logRef = useRef<HTMLPreElement>(null);
+  // A `tail -f` SSE relay never terminates on its own, so a backgrounded app
+  // would hold it (and its upstream) open indefinitely. Close it while hidden
+  // and re-open on return — the followed log resumes from "now" (lines emitted
+  // while hidden aren't replayed), which is fine for a live debug tail.
+  const foreground = useForeground();
 
   // Opening the row pulls this service's tail; the stream attaches only while
   // Follow is on (the old shared LogViewer, now scoped to one service).
@@ -437,14 +442,14 @@ function ServiceBody({
   }, [c.service]);
 
   useEffect(() => {
-    if (!follow) return;
+    if (!follow || !foreground) return;
     const source = api.opsLogStream(c.service);
     source.onmessage = (event: MessageEvent<string>) => {
       setLines((prev) => [...(prev ?? []), event.data]);
     };
     source.onerror = () => setError("Log stream disconnected.");
     return () => source.close();
-  }, [follow, c.service]);
+  }, [follow, c.service, foreground]);
 
   // Auto-scroll so a followed log behaves like `tail -f`.
   // biome-ignore lint/correctness/useExhaustiveDependencies: re-run on every new line; the effect reads the DOM, not `lines`.
