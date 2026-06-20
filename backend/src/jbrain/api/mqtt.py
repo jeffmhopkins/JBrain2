@@ -100,6 +100,11 @@ async def mqtt_acl(
     if _is_ingest_identity(settings, body.username):
         ok = authorize_ingest_subscribe(body.topic, body.acc)
         return Response(status_code=_ALLOW if ok else _DENY)
+    # Revocation re-check: the ACL runs on every publish/subscribe, so denying a
+    # device whose key was revoked disconnects an already-connected session within
+    # bound (M7b "kills MQTT session") — auth alone only gates the NEXT connect.
+    if await repo.find_active_device_principal_by_id(body.username) is None:
+        return Response(status_code=_DENY)
     # A device may always touch its OWN namespace; and may READ/subscribe a family
     # group member's namespace — the live-path twin of the location_fixes view-scope
     # policy. It may never publish into another's namespace (deny-by-default).

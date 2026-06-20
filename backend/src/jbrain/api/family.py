@@ -15,6 +15,8 @@ from pydantic import BaseModel
 from jbrain.api.deps import OwnerDep
 from jbrain.auth.service import PrincipalInfo
 from jbrain.db.session import SessionContext
+from jbrain.devices import service as device_service
+from jbrain.devices.repo import DeviceRepo
 from jbrain.family import FamilyMember, SqlFamilyRepo
 
 router = APIRouter(prefix="/family")
@@ -24,7 +26,12 @@ def get_family_repo(request: Request) -> SqlFamilyRepo:
     return cast(SqlFamilyRepo, request.app.state.family_repo)
 
 
+def get_device_repo(request: Request) -> DeviceRepo:
+    return cast(DeviceRepo, request.app.state.device_repo)
+
+
 FamilyRepoDep = Annotated[SqlFamilyRepo, Depends(get_family_repo)]
+DeviceRepoDep = Annotated[DeviceRepo, Depends(get_device_repo)]
 
 
 def _owner_ctx(owner: PrincipalInfo) -> SessionContext:
@@ -61,3 +68,18 @@ async def add_member(owner: OwnerDep, repo: FamilyRepoDep, body: AddMemberReques
 async def remove_member(owner: OwnerDep, repo: FamilyRepoDep, subject_id: str) -> None:
     """Remove a subject from the family — its family-sees-family read path ends."""
     await repo.remove_member(_owner_ctx(owner), subject_id)
+
+
+@router.post("/members/{subject_id}/revoke", status_code=204)
+async def revoke_member(
+    owner: OwnerDep, repo: FamilyRepoDep, device_repo: DeviceRepoDep, subject_id: str
+) -> None:
+    """Fully revoke a member: tombstone its device key AND drop it from the family.
+
+    Tombstoning the principal kills both surfaces at once — the dashboard cookie's
+    session lookup filters `revoked_at`, so it 401s instantly, and the MQTT auth +
+    per-publish ACL re-check deny the device, dropping its live session within
+    bound. Removing it from the family ends the mutual view-scope read path."""
+    ctx = _owner_ctx(owner)
+    await device_service.revoke_device(device_repo, ctx, subject_id)
+    await repo.remove_member(ctx, subject_id)
