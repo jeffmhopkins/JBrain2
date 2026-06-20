@@ -7,6 +7,7 @@ import structlog
 from fastapi import FastAPI
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+from jbrain.agent.attachments import TurnAttachmentRepo
 from jbrain.agent.correctionmine import CORRECTION_MINE_SPEC
 from jbrain.agent.memory import MemoryRepo, MemoryService
 from jbrain.agent.predicatereview import PREDICATE_REVIEW_SPEC
@@ -29,6 +30,7 @@ from jbrain.api import (
     agent,
     analysis,
     auth,
+    chat_attachments,
     devices,
     feed,
     health,
@@ -254,6 +256,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             settings=settings_store,
         )
         app.state.agent_sessions = AgentSessionRepo(maker)
+        app.state.turn_attachments = TurnAttachmentRepo(maker, app.state.agent_sessions)
         app.state.agent_runlog = AgentRunLog(maker)
         app.state.run_reader = RunLogReader(maker)
         # The Automations operator surface: projects the live trigger/schedule/
@@ -280,6 +283,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(analysis.router, prefix="/api")
     app.include_router(appointments_api.router, prefix="/api")
     app.include_router(auth.router, prefix="/api")
+    app.include_router(chat_attachments.sessions_router, prefix="/api")
+    app.include_router(chat_attachments.router, prefix="/api")
+    app.include_router(chat_attachments.capabilities_router, prefix="/api")
     app.include_router(devices.router, prefix="/api")
     app.include_router(feed.router, prefix="/api")
     app.include_router(lists_api.router, prefix="/api")

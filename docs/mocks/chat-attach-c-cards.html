@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Chat attach C — Preview cards</title>
+<style>
+  :root {
+    --bg:#0E0F11; --surface:#17181B; --surface-2:#1E2024; --border:#26282C;
+    --text:#E6E7E9; --text-2:#9A9DA3; --text-3:#5C5F66;
+    --steel:#7FA7C9; --green:#8FBC9A; --amber:#C9A36A; --rose:#CF8A8F; --violet:#A493C9;
+    --steel-tint:rgba(127,167,201,.13); --green-tint:rgba(143,188,154,.13);
+    --amber-tint:rgba(201,163,106,.13); --rose-tint:rgba(207,138,143,.13); --violet-tint:rgba(164,147,201,.13);
+  }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  body { margin:0; background:#000; font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    color:var(--text); display:flex; gap:28px; flex-wrap:wrap; justify-content:center; padding:28px; }
+  .label { text-align:center; color:var(--text-2); font-size:12px; margin:8px 0 0; max-width:390px; line-height:1.4; }
+  .phone { width:390px; height:820px; background:var(--bg); border-radius:34px; overflow:hidden;
+    border:1px solid #2a2c30; position:relative; display:flex; flex-direction:column; }
+  .topbar { padding:14px 16px 10px; display:flex; align-items:center; justify-content:space-between;
+    border-bottom:1px solid var(--border); }
+  .topbar .t { font-size:17px; font-weight:500; }
+  .topbar .dot { width:8px; height:8px; border-radius:99px; background:var(--steel); }
+  .chat { flex:1; overflow-y:auto; padding:16px; display:flex; flex-direction:column; gap:14px; }
+  .bubble { max-width:84%; padding:11px 13px; border-radius:15px; font-size:14px; line-height:1.45; }
+  .me { align-self:flex-end; background:var(--steel-tint); border:1px solid rgba(127,167,201,.3); border-bottom-right-radius:5px; }
+  .ai { align-self:flex-start; background:var(--surface-2); border:1px solid var(--border); border-bottom-left-radius:5px; }
+
+  /* C: rich preview cards in the user bubble */
+  .att-cards { display:flex; flex-direction:column; gap:7px; margin-bottom:8px; }
+  .card { display:flex; align-items:center; gap:10px; padding:8px; border-radius:11px; background:var(--surface);
+    border:1px solid var(--border); cursor:pointer; }
+  .card .pv { width:44px; height:44px; border-radius:8px; flex:none; display:flex; align-items:center; justify-content:center; font-size:20px; }
+  .card .pv.img { background:linear-gradient(135deg,#3a4a5e,#5a7390); }
+  .card .pv.pdf { background:var(--rose-tint); color:var(--rose); }
+  .card .pv.txt { background:var(--green-tint); color:var(--green); }
+  .card .cm { flex:1; min-width:0; }
+  .card .cn { font-size:13px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .card .cd { font-size:11px; color:var(--text-3); margin-top:2px; }
+  .card .cv { color:var(--text-3); font-size:18px; flex:none; }
+
+  /* composer */
+  .dock { border-top:1px solid var(--border); background:var(--bg); padding:10px 12px 14px; }
+  .omnibox { background:var(--surface); border:1px solid var(--border); border-radius:18px; padding:10px 12px; }
+  .seg-row { display:flex; gap:6px; margin-bottom:9px; }
+  .seg { flex:1; font-size:12px; padding:7px; border-radius:10px; border:1px solid var(--border); background:var(--surface-2);
+    color:var(--text-2); text-align:center; cursor:pointer; }
+  .seg.on { border-color:var(--steel); color:var(--text); background:var(--steel-tint); }
+  .staged { display:flex; flex-direction:column; gap:7px; padding:2px 0 9px; }
+  .staged:empty { display:none; }
+  .scard { display:flex; align-items:center; gap:10px; padding:8px; border-radius:11px; background:var(--surface-2);
+    border:1px solid var(--border); }
+  .scard .pv { width:42px; height:42px; border-radius:8px; flex:none; display:flex; align-items:center; justify-content:center; font-size:19px; }
+  .scard .pv.img { background:linear-gradient(135deg,#3a4a5e,#5a7390); }
+  .scard .pv.pdf { background:var(--rose-tint); color:var(--rose); }
+  .scard .pv.txt { background:var(--green-tint); color:var(--green); }
+  .scard .cm { flex:1; min-width:0; } .scard .cn { font-size:13px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .scard .cd { font-size:11px; color:var(--text-3); margin-top:2px; }
+  .scard .rm { width:26px; height:26px; border-radius:8px; border:1px solid var(--border); background:var(--surface);
+    color:var(--text-3); font-size:15px; cursor:pointer; flex:none; }
+  textarea { width:100%; border:none; background:transparent; color:var(--text); font-size:15px; resize:none; outline:none;
+    font-family:inherit; min-height:24px; }
+  .foot { display:flex; align-items:center; gap:8px; margin-top:8px; }
+  .foot .ft { flex:1; font-size:11px; color:var(--text-3); }
+  .icon-btn { width:38px; height:38px; border-radius:11px; border:1px solid var(--border); background:var(--surface-2);
+    color:var(--text-2); font-size:18px; cursor:pointer; display:flex; align-items:center; justify-content:center; }
+  .send { background:var(--steel); color:#10141a; border:none; }
+  .hidden { display:none !important; }
+  .vis-hint { font-size:11px; color:var(--text-3); padding:2px 2px 8px; line-height:1.4; }
+  .vis-hint b { color:var(--amber); }
+  .toggle { display:flex; align-items:center; gap:7px; justify-content:center; margin:10px 0 0; font-size:12px; color:var(--text-2); }
+  .toggle button { font-size:11px; padding:5px 10px; border-radius:99px; border:1px solid var(--border);
+    background:var(--surface-2); color:var(--text-2); cursor:pointer; }
+  .toggle button.on { border-color:var(--green); color:var(--text); background:var(--green-tint); }
+  /* lightbox */
+  .lb { position:absolute; inset:0; background:rgba(0,0,0,.8); display:none; align-items:center; justify-content:center; padding:30px; }
+  .lb.open { display:flex; }
+  .lb .img { width:100%; height:340px; border-radius:14px; background:linear-gradient(135deg,#3a4a5e,#5a7390); }
+  .lb .cl { position:absolute; top:16px; right:18px; color:#fff; font-size:26px; cursor:pointer; }
+</style>
+</head>
+<body>
+<div>
+  <div class="phone">
+    <div class="topbar"><div class="t">Lab results recap</div><div class="dot"></div></div>
+    <div class="chat" id="chat">
+      <div class="bubble ai">Sure — drop the report in and I'll read it against your last panel.</div>
+      <div class="bubble me">
+        <div class="att-cards">
+          <div class="card" onclick="lb()"><div class="pv img">🖼️</div><div class="cm"><div class="cn">scan-front.jpg</div><div class="cd">Image · 1.2 MB</div></div><div class="cv">⤢</div></div>
+          <div class="card"><div class="pv pdf">📄</div><div class="cm"><div class="cn">panel-2026-06.pdf</div><div class="cd">PDF · 3 pages · 240 KB</div></div><div class="cv">›</div></div>
+        </div>
+        Here's the new bloodwork — how does my LDL compare?
+      </div>
+      <div class="bubble ai">Your LDL is 118 mg/dL, down from 141 on the March panel — a 16% drop.[^1]</div>
+    </div>
+
+    <div class="dock">
+      <div class="omnibox">
+        <div class="seg-row">
+          <div class="seg">Entry</div>
+          <div class="seg">Research</div>
+          <div class="seg on">Full Brain</div>
+        </div>
+        <div class="staged" id="staged"></div>
+        <textarea id="ta" placeholder="Talk it out — full tool access…"></textarea>
+        <div class="vis-hint hidden" id="visHint">This model can't read images — <b>attachments are off</b>. Switch the agent's model to a vision one in Settings.</div>
+        <div class="foot">
+          <span class="ft">Full tool access.</span>
+          <button class="icon-btn" id="clip" onclick="addFile()" title="Attach">📎</button>
+          <button class="icon-btn send" onclick="send()" title="Send">➤</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="lb" id="lb"><span class="cl" onclick="lbc()">&times;</span><div class="img"></div></div>
+  </div>
+  <div class="toggle">
+    Model vision:
+    <button id="von" class="on" onclick="setVision(true)">capable</button>
+    <button id="voff" onclick="setVision(false)">not capable</button>
+  </div>
+  <p class="label">C · <b>Preview cards.</b> Each file is a roomy card — preview + name + type/size/pages — stacked in the composer and the transcript. Images open a lightbox; PDFs/text are tappable. Richest and most informative; takes the most vertical space.</p>
+</div>
+
+<script>
+  const TYPES = [
+    { cls:'img', ic:'🖼️', name:'scan-front.jpg', desc:'Image · 1.2 MB' },
+    { cls:'pdf', ic:'📄', name:'panel-2026-06.pdf', desc:'PDF · 3 pages · 240 KB' },
+    { cls:'txt', ic:'📃', name:'notes.txt', desc:'Text · 4 KB' },
+  ];
+  let staged = [], n = 0;
+  function render(){
+    document.getElementById('staged').innerHTML = staged.map((t,i)=>`
+      <div class="scard"><div class="pv ${t.cls}">${t.ic}</div>
+        <div class="cm"><div class="cn">${t.name}</div><div class="cd">${t.desc}</div></div>
+        <button class="rm" onclick="rm(${i})">&times;</button></div>`).join('');
+  }
+  function addFile(){ staged.push(TYPES[n++ % 3]); render(); }
+  function rm(i){ staged.splice(i,1); render(); }
+  function send(){
+    const txt = document.getElementById('ta').value.trim();
+    if(!txt && !staged.length) return;
+    const cards = staged.length ? '<div class="att-cards">'+staged.map(t=>
+      '<div class="card"'+(t.cls==='img'?' onclick="lb()"':'')+'><div class="pv '+t.cls+'">'+t.ic+'</div>'
+      +'<div class="cm"><div class="cn">'+t.name+'</div><div class="cd">'+t.desc+'</div></div>'
+      +'<div class="cv">'+(t.cls==='img'?'⤢':'›')+'</div></div>'
+    ).join('')+'</div>' : '';
+    const b=document.createElement('div'); b.className='bubble me'; b.innerHTML=cards+(txt||'');
+    document.getElementById('chat').appendChild(b);
+    staged=[]; render(); document.getElementById('ta').value=''; document.getElementById('chat').scrollTop=9e9;
+  }
+  function setVision(on){
+    document.getElementById('von').classList.toggle('on',on);
+    document.getElementById('voff').classList.toggle('on',!on);
+    document.getElementById('clip').classList.toggle('hidden',!on);
+    document.getElementById('visHint').classList.toggle('hidden',on);
+    if(!on){ staged=[]; render(); }
+  }
+  function lb(){ document.getElementById('lb').classList.add('open'); }
+  function lbc(){ document.getElementById('lb').classList.remove('open'); }
+</script>
+</body>
+</html>
