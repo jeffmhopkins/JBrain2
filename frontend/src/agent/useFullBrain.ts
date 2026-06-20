@@ -15,6 +15,7 @@ import {
 } from "./transcript";
 import type {
   AgentSession,
+  ChatAttachment,
   ChatEvent,
   ChatRequest,
   ProposalSummary,
@@ -23,6 +24,16 @@ import type {
 } from "./types";
 
 export type Panel = "none" | "sessions" | "proposals";
+
+/** Thrown when a chat-attachment upload fails mid-send: the turn is aborted
+ * before anything lands in the transcript, so the composer can keep the typed
+ * text and staged files for a retry (rather than losing them). */
+export class AttachmentUploadError extends Error {
+  constructor() {
+    super("chat attachment upload failed");
+    this.name = "AttachmentUploadError";
+  }
+}
 
 /** The two conversation tabs and the agents each owns. Full Brain is the Curator
  * (your knowledge base, full domain access); Research is Jerv (web) or Teacher
@@ -65,6 +76,8 @@ export interface FullBrainDeps {
   archiveSession: (id: string) => Promise<void>;
   unarchiveSession: (id: string) => Promise<void>;
   rescopeSession: (id: string, domainScopes: string[]) => Promise<void>;
+  uploadChatAttachment: (sessionId: string, file: File) => Promise<ChatAttachment>;
+  getChatCapabilities: () => Promise<{ supports_vision: boolean }>;
 }
 
 const LIVE: FullBrainDeps = {
@@ -78,6 +91,8 @@ const LIVE: FullBrainDeps = {
   archiveSession: api.archiveSession,
   unarchiveSession: api.unarchiveSession,
   rescopeSession: api.rescopeSession,
+  uploadChatAttachment: api.uploadChatAttachment,
+  getChatCapabilities: api.getChatCapabilities,
 };
 
 /** Map a persisted turn back into a transcript message — assistant turns rebuild
@@ -102,6 +117,8 @@ function fromTurn(t: TranscriptTurn): TranscriptMessage {
     streaming: false,
     reasoning: t.reasoning ?? "",
     thinking: false,
+    // The owner's attached files (user turns only) replay as bubble chips.
+    ...(t.attachments?.length ? { attachments: t.attachments } : {}),
   };
 }
 
@@ -124,8 +141,14 @@ export interface FullBrain {
    * is in flight. */
   canSend: boolean;
   /** `appointmentId` rides a calendar handoff so the agent resolves that exact
-   * appointment; the user bubble still shows only `text`. */
-  send: (text: string, opts?: { appointmentId?: string }) => void;
+   * appointment; the user bubble still shows only `text`. `files` are uploaded
+   * first (in order) and ride the turn as attachments. */
+  send: (text: string, opts?: { appointmentId?: string; files?: File[] }) => Promise<boolean>;
+  /** Whether the agent's model can accept images — gates the chat attach
+   * affordance. Defaults to false until the capability check answers (the safe
+   * default: never offer an attach the model would reject; the paperclip simply
+   * appears once vision is confirmed). */
+  supportsVision: boolean;
   create: (body: SessionCreate) => Promise<AgentSession>;
   /** Re-clicking the active tab: start a new chat with that mode's default agent.
    * Reuses the open chat if it's already an empty one of that same agent, so a
@@ -151,7 +174,7 @@ export function useFullBrain(
 ): FullBrain {
   const { listSessions, createSession, chat, listProposals, getTranscript } = deps;
   const { renameSession, deleteSession, archiveSession, unarchiveSession } = deps;
-  const { rescopeSession } = deps;
+  const { rescopeSession, uploadChatAttachment, getChatCapabilities } = deps;
   const enabled = mode !== null;
   const [sessions, setSessions] = useState<AgentSession[]>([]);
   const [loaded, setLoaded] = useState(false);
@@ -161,6 +184,11 @@ export function useFullBrain(
   const [openProposal, setOpenProposal] = useState<string | null>(null);
   const [messages, setMessages] = useState<TranscriptMessage[]>([]);
   const [busy, setBusy] = useState(false);
+  // The agent model's vision capability, false until the check answers — the safe
+  // default keeps the chat attach affordance hidden rather than offering one the
+  // model would 415. It only ever flips true, so the paperclip appears once
+  // vision is confirmed and never flashes a broken state on first paint.
+  const [supportsVision, setSupportsVision] = useState(false);
   // The open chat's id — the key the transcript and proposal inbox load against.
   const activeId = active?.id ?? null;
   // Read in the resolve effect without making it a dependency (which would re-fire
@@ -175,6 +203,22 @@ export function useFullBrain(
   const visibleSessions = mode
     ? sessions.filter((s) => MODE_AGENTS[mode].includes(s.agent))
     : sessions;
+
+  // Probe the agent model's vision capability once the surface comes on screen —
+  // it gates the chat attach affordance. A failed check leaves it false (attach
+  // stays hidden), the safe default.
+  useEffect(() => {
+    if (!enabled) return;
+    let stale = false;
+    getChatCapabilities()
+      .then((c) => {
+        if (!stale) setSupportsVision(c.supports_vision);
+      })
+      .catch(() => {});
+    return () => {
+      stale = true;
+    };
+  }, [enabled, getChatCapabilities]);
 
   // Load the chat list once the surface comes on screen (the whole list, across
   // agents; the resolve effect narrows it to the mode).
@@ -271,17 +315,38 @@ export function useFullBrain(
     };
   }, [enabled, activeId, getTranscript]);
 
-  async function send(textRaw: string, opts?: { appointmentId?: string }): Promise<void> {
+  async function send(
+    textRaw: string,
+    opts?: { appointmentId?: string; files?: File[] },
+  ): Promise<void> {
     const text = textRaw.trim();
-    if (!text || busy) return;
+    const files = opts?.files ?? [];
+    if ((!text && files.length === 0) || busy) return;
     // No scope yet — surface the picker rather than chatting against nothing.
     if (!active) {
       setPanel("sessions");
       return;
     }
     setBusy(true);
+    // Upload any staged files first (in order), so their ids ride the turn and the
+    // chips render immediately on the user bubble. An upload failure aborts the
+    // send WITHOUT touching the transcript — the omnibox keeps the typed text and
+    // staged files so the owner can retry; nothing half-sent lands in the chat.
+    let attachments: ChatAttachment[] = [];
+    if (files.length > 0) {
+      try {
+        attachments = [];
+        for (const file of files) {
+          attachments.push(await uploadChatAttachment(active.id, file));
+        }
+      } catch {
+        setBusy(false);
+        throw new AttachmentUploadError();
+      }
+    }
+    const attachmentIds = attachments.map((a) => a.id);
     const history = messages.map((m) => ({ role: m.role, content: m.text }));
-    setMessages((ms) => [...ms, userMessage(text), streamingAssistant()]);
+    setMessages((ms) => [...ms, userMessage(text, attachments), streamingAssistant()]);
     // Reuse the note-capture warm fix (only when capture is on and fresh) so the
     // location tool can answer from the phone's current spot.
     const coords = freshCoords();
@@ -292,6 +357,7 @@ export function useFullBrain(
         history,
         ...(opts?.appointmentId ? { appointment_id: opts.appointmentId } : {}),
         ...(coords ? { latitude: coords.latitude, longitude: coords.longitude } : {}),
+        ...(attachmentIds.length ? { attachment_ids: attachmentIds } : {}),
       })) {
         setMessages((ms) => applyEvent(ms, event));
       }
@@ -386,7 +452,18 @@ export function useFullBrain(
     messages,
     busy,
     canSend: !busy && active !== null,
-    send: (text, opts) => void send(text, opts),
+    supportsVision,
+    // Resolves true once the turn is under way (files uploaded, stream started),
+    // false when an upload aborted the send — so the composer keeps its staged
+    // files for a retry instead of clearing them.
+    send: (text, opts) =>
+      send(text, opts).then(
+        () => true,
+        (err) => {
+          if (err instanceof AttachmentUploadError) return false;
+          return true; // a stream error already settled the bubble; nothing to keep
+        },
+      ),
     create,
     startFresh,
     open,

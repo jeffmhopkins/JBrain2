@@ -11,6 +11,11 @@ import type { NotesController, StreamItem } from "../notes/useNotes";
 
 const TOAST_MS = 4000;
 
+// Shown in place of the chat paperclip when the agent's model can't read images
+// (docs/mocks/chat-attach-b-chips.html).
+const ATTACH_VISION_OFF_HINT =
+  "This model can't read images — attachments are off. Switch the agent's model to a vision one in Settings.";
+
 /** A calendar → Full Brain handoff: the prose that seeds the composer plus the
  * appointment it's about (the agent resolves the id; the owner sees the pill). */
 export interface ComposeHandoff {
@@ -192,14 +197,19 @@ export function HomeScreen({
         seg={seg}
         onSegChange={changeSeg}
         onSend={(input) => void notes.send(input)}
-        onConversation={(body) => {
+        onConversation={(body, files) => {
           // The omnibox is the conversation surface's composer: a send streams
           // into the transcript above (Research → Jerv/Teacher, Full Brain →
-          // Curator). The appointment pill only rides a Full Brain handoff.
-          if (conversational) {
-            fb.send(body, pendingAppt ? { appointmentId: pendingAppt.id } : undefined);
-            setPendingAppt(null);
-          }
+          // Curator). The appointment pill only rides a Full Brain handoff; staged
+          // files ride as chat attachments. The pill is dropped once a send is
+          // under way, but the box keeps the files itself until the send confirms.
+          if (!conversational) return Promise.resolve(false);
+          const ok = fb.send(body, {
+            ...(pendingAppt ? { appointmentId: pendingAppt.id } : {}),
+            ...(files.length ? { files } : {}),
+          });
+          setPendingAppt(null);
+          return ok;
         }}
         busy={conversational && fb.busy}
         onOpenLauncher={onOpenLauncher}
@@ -220,6 +230,11 @@ export function HomeScreen({
         onConsumeDraft={clearDraft}
         apptRef={pendingAppt}
         onClearApptRef={clearAppt}
+        // Capture modes always keep their attach (note attachments). A conversation
+        // mode offers it only when the agent's model is vision-capable; otherwise the
+        // paperclip is hidden and the muted hint stands in (mock B).
+        attachEnabled={!conversational || fb.supportsVision}
+        attachHint={ATTACH_VISION_OFF_HINT}
       />
       {toast && (
         <output className="toast">

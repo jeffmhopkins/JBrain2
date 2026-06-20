@@ -35,6 +35,13 @@ function deps(over: Partial<FullBrainDeps> = {}): FullBrainDeps {
     archiveSession: vi.fn(async () => {}),
     unarchiveSession: vi.fn(async () => {}),
     rescopeSession: vi.fn(async () => {}),
+    uploadChatAttachment: vi.fn(async (_sid: string, file: File) => ({
+      id: `att-${file.name}`,
+      filename: file.name,
+      media_type: file.type,
+      size_bytes: file.size,
+    })),
+    getChatCapabilities: vi.fn(async () => ({ supports_vision: true })),
     ...over,
   };
 }
@@ -44,10 +51,12 @@ function Harness({
   d,
   onOpenNote,
   onOpenEntity,
+  files,
 }: {
   d: FullBrainDeps;
   onOpenNote?: (id: string) => void;
   onOpenEntity?: (id: string) => void;
+  files?: File[];
 }) {
   const fb = useFullBrain("fullbrain", d);
   const [text, setText] = useState("");
@@ -55,7 +64,7 @@ function Harness({
     <>
       <FullBrainSurface fb={fb} onOpenNote={onOpenNote} onOpenEntity={onOpenEntity} />
       <input aria-label="Composer" value={text} onChange={(e) => setText(e.target.value)} />
-      <button type="button" onClick={() => fb.send(text)}>
+      <button type="button" onClick={() => fb.send(text, files ? { files } : undefined)}>
         send
       </button>
       {/* The lateral-panel affordances the home screen provides (top bar tap and
@@ -962,6 +971,74 @@ describe("FullBrainSurface", () => {
     fireEvent.click(screen.getByRole("button", { name: "send" }));
     expect(chat).not.toHaveBeenCalled();
     expect(document.querySelector(".panel.left.open")).toBeInTheDocument();
+  });
+
+  it("uploads staged files, sends their ids, and chips them on the user bubble", async () => {
+    const calls: ChatRequest[] = [];
+    const uploadChatAttachment = vi.fn(async (_sid: string, file: File) => ({
+      id: `att-${file.name}`,
+      filename: file.name,
+      media_type: file.type,
+      size_bytes: file.size,
+    }));
+    async function* answer(body: ChatRequest): AsyncGenerator<ChatEvent> {
+      calls.push(body);
+      yield { type: "text_delta", text: "read it" };
+      yield { type: "done", stop_reason: "end_turn" };
+    }
+    const file = new File(["x"], "scan.png", { type: "image/png" });
+    render(<Harness d={deps({ chat: answer, uploadChatAttachment })} files={[file]} />);
+    await waitFor(() => screen.getByLabelText("Conversation"));
+
+    fireEvent.change(screen.getByLabelText("Composer"), { target: { value: "what is this?" } });
+    fireEvent.click(screen.getByRole("button", { name: "send" }));
+
+    // The file uploaded to the active session, and its id rode the chat body.
+    await waitFor(() => expect(uploadChatAttachment).toHaveBeenCalledWith("s1", file));
+    await waitFor(() => expect(calls).toHaveLength(1));
+    expect(calls[0]?.attachment_ids).toEqual(["att-scan.png"]);
+
+    // The user bubble chips the attachment above the message text.
+    expect(await screen.findByText("scan.png")).toBeInTheDocument();
+    expect(document.querySelector(".bubble.me .att-chip")).not.toBeNull();
+  });
+
+  it("replays persisted user-turn attachments as bubble chips", async () => {
+    const getTranscript = vi.fn(
+      async (): Promise<TranscriptTurn[]> => [
+        {
+          role: "user",
+          content: "how does my LDL compare?",
+          tools: [],
+          attachments: [
+            { id: "a1", filename: "panel.pdf", media_type: "application/pdf", size_bytes: 2048 },
+          ],
+        },
+        { role: "assistant", content: "Your LDL is down 16%.", tools: [] },
+      ],
+    );
+    render(<Harness d={deps({ getTranscript })} />);
+    await waitFor(() => screen.getByLabelText("Conversation"));
+    expect(await screen.findByText("panel.pdf")).toBeInTheDocument();
+    expect(document.querySelector(".bubble.me .att-pdf")).not.toBeNull();
+  });
+
+  it("keeps the typed turn out of the transcript when an attachment upload fails", async () => {
+    const chat = vi.fn(noChat);
+    const uploadChatAttachment = vi.fn(async () => {
+      throw new Error("415");
+    });
+    const file = new File(["x"], "bad.bin", { type: "application/octet-stream" });
+    render(<Harness d={deps({ chat, uploadChatAttachment })} files={[file]} />);
+    await waitFor(() => screen.getByLabelText("Conversation"));
+
+    fireEvent.change(screen.getByLabelText("Composer"), { target: { value: "read this" } });
+    fireEvent.click(screen.getByRole("button", { name: "send" }));
+
+    // The upload failed before the turn started — no user bubble, no chat call.
+    await waitFor(() => expect(uploadChatAttachment).toHaveBeenCalled());
+    expect(chat).not.toHaveBeenCalled();
+    expect(screen.queryByText("read this")).not.toBeInTheDocument();
   });
 
   it("creating a session from the picker opens its chat", async () => {

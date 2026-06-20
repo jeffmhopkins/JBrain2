@@ -4,7 +4,7 @@
 // tool calls/results become activity rows and tool_view payloads collect for the
 // component registry.
 
-import type { ChatEvent, EntityRef, ProposalRef, ViewPayload } from "./types";
+import type { ChatAttachment, ChatEvent, EntityRef, ProposalRef, ViewPayload } from "./types";
 
 /** A source note a tool surfaced, ready for a card: id to open, domain for the
  * dot, text for the line. */
@@ -60,9 +60,12 @@ export interface TranscriptMessage {
    * retrieval — set when a `general_knowledge` event lands (mutually exclusive with
    * `verdict`). Drives the calm "not your notes" footer chip. */
   generalKnowledge?: boolean;
+  /** Files the owner attached to this (user) turn — rendered as compact chips
+   * inside the bubble, above the text. Empty/absent on assistant turns. */
+  attachments?: ChatAttachment[];
 }
 
-export function userMessage(text: string): TranscriptMessage {
+export function userMessage(text: string, attachments?: ChatAttachment[]): TranscriptMessage {
   return {
     role: "user",
     text,
@@ -71,6 +74,7 @@ export function userMessage(text: string): TranscriptMessage {
     streaming: false,
     reasoning: "",
     thinking: false,
+    ...(attachments?.length ? { attachments } : {}),
   };
 }
 

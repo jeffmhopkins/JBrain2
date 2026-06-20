@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 import type { SegState } from "../notes/modes";
@@ -131,7 +131,89 @@ describe("Omnibox", () => {
     fireEvent.click(screen.getByRole("tab", { name: "Research" }));
     fireEvent.change(screen.getByLabelText("Composer"), { target: { value: "what did I note?" } });
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
-    expect(onConversation).toHaveBeenCalledWith("what did I note?");
+    expect(onConversation).toHaveBeenCalledWith("what did I note?", []);
     expect(onSend).not.toHaveBeenCalled();
+  });
+
+  it("hides the chat paperclip and shows the muted hint when attach is off", () => {
+    render(
+      <Omnibox
+        seg={{ row: "main", mode: "fullbrain" }}
+        onSegChange={vi.fn()}
+        onSend={vi.fn()}
+        onConversation={vi.fn()}
+        onOpenLauncher={vi.fn()}
+        attachEnabled={false}
+        attachHint="This model can't read images — attachments are off."
+      />,
+    );
+    expect(screen.queryByRole("button", { name: "Attach files" })).not.toBeInTheDocument();
+    expect(screen.getByText(/This model can't read images/)).toBeInTheDocument();
+  });
+
+  it("always shows the paperclip for capture modes (note attachments, not chat)", () => {
+    render(
+      <Omnibox
+        seg={{ row: "main", mode: "entry" }}
+        onSegChange={vi.fn()}
+        onSend={vi.fn()}
+        onConversation={vi.fn()}
+        onOpenLauncher={vi.fn()}
+        // Even with attach off, a capture mode keeps its paperclip — HomeScreen
+        // only turns it off for a vision-less conversation mode.
+        attachEnabled
+      />,
+    );
+    expect(screen.getByRole("button", { name: "Attach files" })).toBeInTheDocument();
+    expect(screen.queryByText(/can't read images/)).not.toBeInTheDocument();
+  });
+
+  it("forwards staged files on a conversational send, then clears them", async () => {
+    const onConversation = vi.fn(() => Promise.resolve(true));
+    render(
+      <Omnibox
+        seg={{ row: "main", mode: "fullbrain" }}
+        onSegChange={vi.fn()}
+        onSend={vi.fn()}
+        onConversation={onConversation}
+        onOpenLauncher={vi.fn()}
+      />,
+    );
+    const file = new File(["hi"], "scan.png", { type: "image/png" });
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+    fireEvent.change(input, { target: { files: [file] } });
+    // The staged chip shows before the send.
+    expect(screen.getByRole("button", { name: "Remove scan.png" })).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("Composer"), { target: { value: "read this" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    expect(onConversation).toHaveBeenCalledWith("read this", [file]);
+    // A confirmed send clears the staged chip.
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: "Remove scan.png" })).not.toBeInTheDocument(),
+    );
+  });
+
+  it("keeps staged files when the conversational send reports a failure", async () => {
+    const onConversation = vi.fn(() => Promise.resolve(false));
+    render(
+      <Omnibox
+        seg={{ row: "main", mode: "fullbrain" }}
+        onSegChange={vi.fn()}
+        onSend={vi.fn()}
+        onConversation={onConversation}
+        onOpenLauncher={vi.fn()}
+      />,
+    );
+    const file = new File(["hi"], "doc.pdf", { type: "application/pdf" });
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+    fireEvent.change(input, { target: { files: [file] } });
+    fireEvent.change(screen.getByLabelText("Composer"), { target: { value: "read this" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    // An upload failure keeps the file staged so the owner can retry.
+    await waitFor(() => expect(onConversation).toHaveBeenCalled());
+    expect(screen.getByRole("button", { name: "Remove doc.pdf" })).toBeInTheDocument();
   });
 });

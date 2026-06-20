@@ -39,6 +39,13 @@ function fbDeps(): FullBrainDeps {
     archiveSession: vi.fn(async () => {}),
     unarchiveSession: vi.fn(async () => {}),
     rescopeSession: vi.fn(async () => {}),
+    uploadChatAttachment: vi.fn(async (_sid: string, file: File) => ({
+      id: `att-${file.name}`,
+      filename: file.name,
+      media_type: file.type,
+      size_bytes: file.size,
+    })),
+    getChatCapabilities: vi.fn(async () => ({ supports_vision: true })),
   };
 }
 
@@ -369,6 +376,52 @@ describe("HomeScreen mode scoping", () => {
     fireEvent.touchStart(box, { touches: [{ clientX: 200, clientY: 40 }] });
     fireEvent.touchEnd(box, { changedTouches: [{ clientX: 80, clientY: 44 }] });
     expect(document.querySelector(".panel.right.open")).toBeInTheDocument();
+  });
+
+  it("gates the chat paperclip on the model's vision capability", async () => {
+    // Vision off: the conversation composer hides the paperclip and shows the hint.
+    const offDeps = {
+      ...fbDeps(),
+      getChatCapabilities: vi.fn(async () => ({ supports_vision: false })),
+    };
+    const { unmount } = render(
+      <HomeScreen
+        notes={fakeController()}
+        actions={fakeActions()}
+        onOpenNote={vi.fn()}
+        onOpenSearch={vi.fn()}
+        onOpenLauncher={vi.fn()}
+        fbDeps={offDeps}
+      />,
+    );
+    fireEvent.click(screen.getByRole("tab", { name: "Full Brain" }));
+    await waitFor(() => screen.getByLabelText("Conversation"));
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: "Attach files" })).not.toBeInTheDocument(),
+    );
+    expect(screen.getByText(/This model can't read images/)).toBeInTheDocument();
+    unmount();
+
+    // Vision on: the paperclip is offered, no hint.
+    const onDeps = {
+      ...fbDeps(),
+      getChatCapabilities: vi.fn(async () => ({ supports_vision: true })),
+    };
+    render(
+      <HomeScreen
+        notes={fakeController()}
+        actions={fakeActions()}
+        onOpenNote={vi.fn()}
+        onOpenSearch={vi.fn()}
+        onOpenLauncher={vi.fn()}
+        fbDeps={onDeps}
+      />,
+    );
+    fireEvent.click(screen.getByRole("tab", { name: "Full Brain" }));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Attach files" })).toBeInTheDocument(),
+    );
+    expect(screen.queryByText(/This model can't read images/)).not.toBeInTheDocument();
   });
 
   it("a Full Brain send from the omnibox streams into the inline transcript", async () => {
