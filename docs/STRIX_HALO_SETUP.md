@@ -147,40 +147,47 @@ app and `jbrain logs`, not `curl localhost:8080`.
 ---
 
 ## Image generation — ComfyUI + Qwen-Image (optional, opt-in)
-Powers jerv's `generate_image` / `edit_image` tools (`docs/IMAGE_GEN_PLAN.md`):
-text→image via **Qwen-Image-2512** and image→image via **Qwen-Image-Edit**,
-served by a **host-managed ComfyUI** the same gfx1151 box runs. Like the local
-LLM gateway, this is **opt-in and host-managed** — JBrain2 does **not**
-containerize ComfyUI, ships no new backend dependency for it, and only ever
-**POSTs a workflow graph** to it over HTTP. Leave `JBRAIN_COMFYUI_URL` unset to
-keep the feature (and both tools) off.
+Powers jerv's `generate_image` / `edit_image` tools
+(`docs/IMAGE_GEN_SERVICE_PLAN.md`): text→image via **Qwen-Image** (fp8) and
+image→image via **Qwen-Image-Edit**, served by a **ROCm ComfyUI JBrain manages
+as a compose service** — the sibling of the local-LLM gateway. Like that
+gateway, it is **opt-in**: a stock deploy never starts it, and JBrain only ever
+**POSTs a workflow graph** to it over HTTP (no new backend dependency). Leave it
+unprovisioned to keep the feature (and both tools) off.
 
 Prereqs are the same gfx1151 floor as the rest of this runbook: **kernel ≥
-6.18.4** (Phase 2) and a working GPU stack — Qwen-Image diffusion is stable on
-gfx1151 only on that kernel, and the **ROCm** path (Phase 5 host tuning + the
-ROCm base, "Switching to ROCm" below) is the validated route for these image
-workflows.
+6.18.4** (Phase 2) and a working GPU stack. Unlike the Vulkan LLM path, ComfyUI's
+**ROCm** stack needs **both** `/dev/kfd` and `/dev/dri` and
+`HSA_OVERRIDE_GFX_VERSION=11.5.1` (the `comfyui` compose service sets this) so
+ROCm treats the iGPU as gfx1151 — without it the stack silently CPU-falls-back.
 
-- **Run ComfyUI from the kyuz0 toolbox.** The same community
-  `kyuz0/amd-strix-halo-toolboxes` family used for the LLM gateway includes a
-  ComfyUI image with the ROCm/gfx1151 runtime preinstalled. Launch it on the host
-  and load the Qwen-Image-2512 + Qwen-Image-Edit checkpoints (full bf16, ~60 GB
-  budget at full precision; Apache-2.0, ungated).
-- **Bind it to localhost only.** ComfyUI listens on its own port (default
-  `8188`); keep it bound to the loopback interface — it is an on-box service, no
-  egress, no public port (mirrors the LLM gateway's no-published-port stance).
-- **Point JBrain2 at it.** Set `JBRAIN_COMFYUI_URL` to that bound URL (e.g.
-  `http://127.0.0.1:8188`). Empty disables image-gen; set enables it, and the
-  Settings screen then shows the image-gen row.
-- **JBrain2 owns the graph, not the model.** The backend POSTs the workflow JSON
-  in `backend/src/jbrain/image_gen/workflows/` (`qwen_image.json`,
-  `qwen_image_edit.json`) to ComfyUI, filling typed slots (prompt, seed, steps,
-  dims, and — for edit — the uploaded input image). Keep these graphs matched to
-  the node IDs ComfyUI exposes for the loaded checkpoints.
+**One command provisions and enables it:**
+```bash
+sudo bash scripts/comfyui-setup.sh            # the recommended set (Qwen-Image)
+sudo bash scripts/comfyui-setup.sh qwen-image # or explicit catalog ids
+```
+The script (the sibling of `local-llm-setup.sh`) downloads the weight files named
+by the catalog (`jbrain.image_gen.catalog`) into `./comfyui-models/<subdir>`,
+writes `JBRAIN_COMFYUI_*` into `.env`, and starts the `comfyui` profile. The api
+reaches the service at `http://comfyui:8188` over the internal network — **no
+published host port**, mirroring the LLM gateway. The model catalog is the single
+source of truth for repos/filenames; add a model by adding a catalog entry, not by
+editing the script.
 
-✅ **Checkpoint:** with `JBRAIN_COMFYUI_URL` set, ask jerv to generate an image;
-the result streams back inline in the chat turn (a chat-only artifact — never a
-note, never RAG-indexed). Watch ComfyUI's own host logs for the submitted graph.
+- **Validated on-box.** A 1328×1328, 20-step Qwen-Image renders in **~3.5 min**
+  on the iGPU from **fp8** weights (~20 GB resident; the footprint barely moves
+  during generation, so it coexists predictably with a local LLM in unified
+  memory). The `qwen-image-edit` model ships **non-recommended** — its graph is
+  wired but its bf16 weights await an on-box download+run.
+- **JBrain owns the graph, not the model.** The backend POSTs the workflow JSON in
+  `backend/src/jbrain/image_gen/workflows/` (`qwen_image.json`,
+  `qwen_image_edit.json` — the real graphs exported from this box), filling typed
+  slots (prompt, seed, steps, dims, and — for edit — the uploaded input image).
+
+✅ **Checkpoint:** after `comfyui-setup.sh`, ask jerv to generate an image; the
+result streams back inline in the chat turn (a chat-only artifact — never a note,
+never RAG-indexed). Watch the `comfyui` service logs (`docker compose logs
+comfyui`) for the submitted graph.
 
 ---
 

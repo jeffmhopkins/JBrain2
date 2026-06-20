@@ -74,6 +74,12 @@ services:
       # regeneration (after a context-window edit) reproduces the same llama-swap
       # group the setup script wrote.
       JBRAIN_LOCAL_LLM_RESIDENT_GROUP: ${LOCAL_LLM_RESIDENT_GROUP:-false}
+      # On-box image generation — OFF unless the operator opted in at install. When
+      # enabled, points at the `comfyui` gateway (below) and lists the provisioned
+      # catalog ids the settings screen may offer. Empty URL = feature off.
+      JBRAIN_COMFYUI_URL: ${COMFYUI_URL:-}
+      JBRAIN_COMFYUI_ENABLED: ${COMFYUI_ENABLED:-false}
+      JBRAIN_COMFYUI_MODELS: ${COMFYUI_MODELS:-[]}
       # Shared secret for the MQTT ingest service identity (JBrain360 M1): the API
       # validates it in /internal/mqtt-auth and the consumer connects with it. Empty
       # disables the identity (fail-closed). Only meaningful with the `mqtt` profile.
@@ -92,6 +98,9 @@ services:
       # (atomically), which the gateway hot-reloads via --watch-config. Empty/absent
       # on a stock deploy — the read fails closed to the catalog estimate.
       - ./local-models:/data/local-models
+      # Read-only view of the provisioned image weights so the settings drawer can
+      # report each image model's real on-disk footprint (the shared RAM meter).
+      - ./comfyui-models:/data/comfyui-models:ro
     networks: [edge, internal]
     depends_on:
       db:
@@ -223,6 +232,35 @@ services:
       - "${RENDER_GID:-render}"
     volumes:
       - ./local-models:/models:ro
+    networks: [internal]
+
+  # OPT-IN on-box image generation: a ROCm ComfyUI serving Qwen-Image, the sibling
+  # of the local-llm gateway. Guarded by the `comfyui` compose profile so it NEVER
+  # starts on a stock deploy — `scripts/comfyui-setup.sh` provisions the weights and
+  # flips the profile on. Validated on a Strix Halo (gfx1151) box: unlike the
+  # Vulkan local-llm path, ComfyUI's ROCm stack needs BOTH /dev/kfd and /dev/dri,
+  # and HSA_OVERRIDE_GFX_VERSION so ROCm treats the iGPU as gfx1151 (without it the
+  # stack CPU-falls-back). The api reaches it at http://comfyui:8188 (internal
+  # only, no host port). Weights bind-mount read-only from the host.
+  comfyui:
+    profiles: [comfyui]
+    image: ${COMFYUI_IMAGE:-docker.io/kyuz0/amd-strix-halo-comfyui:latest}
+    restart: unless-stopped
+    command: ["python", "/opt/ComfyUI/main.py", "--listen", "0.0.0.0", "--port", "8188"]
+    devices:
+      - /dev/kfd:/dev/kfd
+      - /dev/dri:/dev/dri
+    security_opt:
+      - seccomp=unconfined
+    environment:
+      HSA_OVERRIDE_GFX_VERSION: "11.5.1"
+    # Join the HOST's video/render GIDs to open /dev/dri/renderD128 — the setup
+    # script writes the numeric host GIDs (shared with the local-llm gateway).
+    group_add:
+      - "${VIDEO_GID:-video}"
+      - "${RENDER_GID:-render}"
+    volumes:
+      - ./comfyui-models:/opt/ComfyUI/models:ro
     networks: [internal]
 
   embed:

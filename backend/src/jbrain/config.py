@@ -93,11 +93,24 @@ class Settings(BaseSettings):
     # Future-GPU escape hatch: any OpenAI-compatible server (the llama-swap gateway
     # the local-llm profile runs, or an Ollama default).
     local_llm_url: str = "http://localhost:11434/v1"
-    # Host-managed localhost ComfyUI for jerv's image generation (Qwen-Image on the
-    # owner's Strix Halo box; docs/IMAGE_GEN_PLAN.md). EMPTY DISABLES the feature:
-    # main.py wires no client and (in Wave G2) the tools never reach the registry —
-    # graceful degrade, mirroring a provider hidden when unkeyed.
+    # OPT-IN on-box image generation: a ComfyUI service (Qwen-Image on the owner's
+    # Strix Halo box) JBrain manages through the `comfyui` compose profile, the
+    # sibling of the local-llm gateway (docs/IMAGE_GEN_SERVICE_PLAN.md). EMPTY URL
+    # DISABLES the feature: main.py wires no client and the tools never reach the
+    # registry — graceful degrade, mirroring a provider hidden when unkeyed. The URL
+    # is the functional gate; `comfyui_enabled` mirrors the install-time choice for
+    # parity with local_llm_enabled. scripts/comfyui-setup.sh sets both.
     comfyui_url: str = ""
+    comfyui_enabled: bool = False
+    # Catalog ids (jbrain.image_gen.catalog) the operator has provisioned and wants
+    # offered in settings (Wave G5/G6). Set by the setup path alongside the weights.
+    comfyui_models: list[str] = []
+    # Read-only mount of the provisioned image weights (scripts/comfyui-setup.sh's
+    # ./comfyui-models), so the settings screen can report each model's real on-disk
+    # footprint for the shared RAM meter. The API only stats files here — host/infra
+    # files, not application blobs, so the read sits outside the storage abstraction
+    # (same rationale as local_models_dir / host_metrics' /proc read).
+    comfyui_models_dir: str = "/data/comfyui-models"
     # Local models on one box are far slower than the cloud APIs — a 30B+ doing a
     # long OCR/extraction at a few dozen tok/s can run for minutes. The 120s cloud
     # default would time out mid-generation and the job would retry-loop, never
