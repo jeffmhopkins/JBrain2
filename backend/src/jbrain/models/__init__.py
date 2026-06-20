@@ -10,6 +10,7 @@ from jbrain.models.analysis import (
     TemporalToken,
 )
 from jbrain.models.core import Base, DeviceSession, Domain, Principal, Subject
+from jbrain.models.images import GeneratedImage
 from jbrain.models.location import GeofenceState, LocationFix, PlaceGeofence
 from jbrain.models.telemetry import LlmUsage
 from jbrain.models.wiki import (
@@ -43,6 +44,7 @@ __all__ = [
     "EvalRun",
     "Event",
     "Fact",
+    "GeneratedImage",
     "GeofenceState",
     "LlmUsage",
     "LocationFix",
