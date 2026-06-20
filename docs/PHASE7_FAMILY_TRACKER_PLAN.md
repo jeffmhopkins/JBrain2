@@ -347,9 +347,12 @@ service-account bootstrap (non-negotiable #8).
   a device manages only its own token, owner/system reads all), `SqlFcmTokenRepo`
   (register upsert / delete / active-only `tokens_for_subjects`), the member
   PUT/DELETE `/fcm-token` endpoints, and the RLS isolation test incl.
-  revoke-drops-token ✓; **M6b** the content-free poke sender + view-scope routing
-  + dedupe + the no-PII gate; **M6c** the Android FCM receiver (gms) →
-  fetch-then-local-notify.
+  revoke-drops-token ✓; **M6b** the content-free poke sender + view-scope routing:
+  a PII-free `fcm_message` (data-only, no `notification` block) + `FcmNotifier`
+  (HTTP v1, per-token, survives a bad token) + `NullNotifier`, and a `PushRouter`
+  that pokes `visible_subjects(X)`-minus-X's active de-duped tokens. Gates: no-PII
+  payload, co-members-only routing, revoke-drops-out ✓; **M6c** wire the trigger
+  into `detect_transitions` + the Android FCM receiver (gms) → fetch-then-local-notify.
 - **M7 — Owner controls + ops.** Owner-only **add/remove member** + **revoke**
   (kills MQTT session + `cred_epoch` bump + membership tombstone); the **30-day
   member history cap** (B5); `view_audit`; **encryption at rest** (compensating
