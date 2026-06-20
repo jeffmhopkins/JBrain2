@@ -306,7 +306,14 @@ export function RunsScreen({ onClose }: RunsScreenProps) {
   }
 
   return (
-    <section className="runs-screen">
+    // Runs can mount inside Ops's `.subscreen`, whose down-swipe dismiss
+    // (App.tsx) would otherwise bubble through and climb out from under this
+    // overlay. Swallow touch events here so that gesture never arms over Runs.
+    <section
+      className="runs-screen"
+      onTouchStart={(e) => e.stopPropagation()}
+      onTouchMove={(e) => e.stopPropagation()}
+    >
       <header className="runs-bar">
         <button type="button" className="icon-btn" onClick={onClose} aria-label="Back to Ops">
           <ChevronLeftIcon size={22} />
