@@ -84,4 +84,9 @@ describe("agentStatus", () => {
     });
     expect(stop("error")).toEqual({ kind: "error", label: "Something went wrong" });
   });
+
+  it("reads a user-initiated Stop as calm (a done register), not an error", () => {
+    const s = agentStatus([USER, asst({ streaming: false, stopReason: "stopped" })]);
+    expect(s).toEqual({ kind: "done", label: "Stopped" });
+  });
 });

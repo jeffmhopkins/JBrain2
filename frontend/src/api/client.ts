@@ -1619,8 +1619,14 @@ export const api = {
   // POST /api/chat streams the agent turn as SSE; the body is a ReadableStream
   // (EventSource is GET-only and can't carry a request body). Yields each parsed
   // ChatEvent so the caller renders text/tool activity live.
-  async *chat(body: ChatRequest): AsyncGenerator<ChatEvent> {
-    const response = await request("/api/chat", jsonInit("POST", body));
+  async *chat(body: ChatRequest, signal?: AbortSignal): AsyncGenerator<ChatEvent> {
+    // `signal` lets the composer's Stop button abort the turn: aborting the fetch
+    // closes the SSE connection, which the backend sees as a client disconnect and
+    // unwinds the run cleanly (applies to every provider, not just local models).
+    const response = await request("/api/chat", {
+      ...jsonInit("POST", body),
+      ...(signal ? { signal } : {}),
+    });
     if (!response.body) return;
     yield* parseChatStream(response.body);
   },

@@ -19,6 +19,7 @@ from jbrain.agent.contracts import (
     ToolResultEvent,
     ToolSpec,
     ToolViewEvent,
+    UsageEvent,
     VerdictEvent,
     ViewPayload,
 )
@@ -288,6 +289,40 @@ async def collect(
             session=OWNER, scopes=scopes, conversation=[UserMessage(text=message)]
         )
     ]
+
+
+async def test_run_stream_emits_usage_when_a_context_window_is_given() -> None:
+    # With a context window, each model turn rides a UsageEvent the PWA's meter
+    # reads — here a two-step turn emits one per step, carrying that step's prompt
+    # (the context-fill numerator) and the window denominator.
+    turns = [
+        LlmTurn("checking", (ToolCall("c1", "search", {}),), "tool_use", LlmUsage(1000, 50)),
+        LlmTurn("done", (), "end_turn", LlmUsage(1800, 20)),
+    ]
+    router, _ = stream_router_with(turns)
+    loop = AgentLoop(router, registry_with(make_tool("search", search)))
+    events = [
+        event
+        async for event in loop.run_stream(
+            session=OWNER,
+            scopes=("general",),
+            conversation=[UserMessage(text="what do I know?")],
+            context_window=32768,
+        )
+    ]
+    usage = [e for e in events if isinstance(e, UsageEvent)]
+    assert usage == [
+        UsageEvent(input_tokens=1000, output_tokens=50, context_window=32768),
+        UsageEvent(input_tokens=1800, output_tokens=20, context_window=32768),
+    ]
+
+
+async def test_run_stream_omits_usage_without_a_context_window() -> None:
+    # The default (no window): the stream is byte-for-byte what it was before — no
+    # UsageEvent — so existing callers/tests are untouched.
+    loop = AgentLoop(router_with([])[0], registry_with(make_tool("search", search)))
+    events = await collect(loop)
+    assert not any(isinstance(e, UsageEvent) for e in events)
 
 
 async def test_run_stream_streams_text_then_done() -> None:

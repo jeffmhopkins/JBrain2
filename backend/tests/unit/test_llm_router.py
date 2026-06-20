@@ -13,7 +13,7 @@ from jbrain.llm import (
     LlmRouter,
     build_router,
 )
-from jbrain.llm.router import JSON_NUDGE
+from jbrain.llm.router import CONTEXT_WINDOWS, DEFAULT_CONTEXT_WINDOW, JSON_NUDGE
 
 SCHEMA = {"type": "object", "properties": {"ok": {"type": "boolean"}}}
 
@@ -239,6 +239,33 @@ async def test_stale_local_override_ignored_when_hosting_disabled() -> None:
     )
     await router2.complete("note.extract", system="s", user_text="u")
     assert local2.calls and not xai2.calls
+
+
+async def test_context_window_for_a_cloud_model_reads_the_table() -> None:
+    # A task resolving to a known cloud model reports that model's window (the
+    # meter's denominator); grok-4.3 is in the table.
+    router = LlmRouter({"xai": FakeLlmClient()}, {"agent.turn": ("xai", "grok-4.3")})
+    assert await router.context_window("agent.turn") == CONTEXT_WINDOWS["grok-4.3"]
+
+
+async def test_context_window_falls_back_for_an_unlisted_model() -> None:
+    # An unlisted model degrades to the conservative default rather than misreport.
+    router = LlmRouter({"anthropic": FakeLlmClient()}, {"agent.turn": ("anthropic", "claude-x")})
+    assert await router.context_window("agent.turn") == DEFAULT_CONTEXT_WINDOW
+
+
+async def test_context_window_for_a_local_model_reads_the_catalog() -> None:
+    # A live local override points the meter at the gateway's `-c` from the catalog.
+    async def load() -> dict[str, dict[str, str]]:
+        return {"agent.turn": {"spec": "local:gpt-oss-120b"}}
+
+    router = LlmRouter(
+        {"xai": FakeLlmClient(), "local": FakeLlmClient()},
+        {"agent.turn": ("xai", "grok-4.3")},
+        overrides_loader=load,
+        local_enabled=True,
+    )
+    assert await router.context_window("agent.turn") == 32768
 
 
 async def test_stored_reasoning_effort_reaches_xai_client() -> None:

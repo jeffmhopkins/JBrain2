@@ -323,6 +323,11 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
     # medium reasoning effort earns a deeper ReAct chain before the step cap stops it.
     router = get_llm_router(request)
     effort = await router.effective_reasoning_effort("agent.turn")
+    # The resolved model's total context window — the denominator for the PWA's live
+    # context-usage meter (a local model's is the gateway's `-c`, mainly what this
+    # serves). Resolved once here and passed to the loop, which stamps it on each
+    # UsageEvent so the meter never has to know the route.
+    context_window = await router.context_window("agent.turn")
     loop = AgentLoop(
         router,
         get_agent_registry(request),
@@ -411,6 +416,7 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
                 # none to contrast with, so suppress it.
                 general_knowledge_label=profile.reads_knowledge_base,
                 here=here,
+                context_window=context_window,
             ):
                 if event.type == "text_delta":
                     answer.append(event.text)

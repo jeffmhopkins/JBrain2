@@ -203,6 +203,22 @@ class JobEnqueuedEvent(BaseModel):
     summary: str
 
 
+class UsageEvent(BaseModel):
+    """Live context-window accounting, emitted after each model turn (every ReAct
+    step) so the PWA can show a "context used" meter that updates as the turn's
+    tool chain — and the conversation — grows. `input_tokens` is the prompt the
+    model just consumed (the whole conversation + tools fed in this step), so the
+    latest event reflects the fullest the context has been; `output_tokens` is what
+    that step generated. `context_window` is the resolved model's total window (for
+    a local model the gateway's configured `-c`), the meter's denominator. Display
+    only — never persisted, never part of the answer."""
+
+    type: Literal["usage"] = "usage"
+    input_tokens: int
+    output_tokens: int
+    context_window: int
+
+
 class DoneEvent(BaseModel):
     type: Literal["done"] = "done"
     stop_reason: str
@@ -253,6 +269,7 @@ ChatEvent = Annotated[
     | ToolResultEvent
     | ToolViewEvent
     | JobEnqueuedEvent
+    | UsageEvent
     | DoneEvent
     | VerdictEvent
     | GeneralKnowledgeEvent,

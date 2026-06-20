@@ -280,9 +280,12 @@ def test_chat_streams_text_then_done(
     assert resp.headers["content-type"].startswith("text/event-stream")
 
     events = sse_events(resp.text)
+    # A `usage` event rides after the model turn (before `done`) so the PWA's context
+    # meter can read the prompt fill against the model's window (grok-4.3 here).
     assert events == [
         {"type": "text_delta", "text": "hi "},
         {"type": "text_delta", "text": "there"},
+        {"type": "usage", "input_tokens": 7, "output_tokens": 3, "context_window": 256_000},
         {"type": "done", "stop_reason": "end_turn"},
     ]
     # The run was opened, the session touched, and the run closed with its summary.

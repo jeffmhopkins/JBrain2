@@ -654,6 +654,67 @@ h3 {
   color: var(--mode);
 }
 
+/* The send button turns into Stop while a turn streams — the amber "this is live,
+   interrupt it" register rather than the calm mode accent. */
+.stop-btn {
+  color: var(--amber);
+}
+
+/* The live context-usage meter in the composer foot: a thin fill bar + a terse
+   "used/window · %%". Sits between the footer text and the action icons, muted
+   until the window actually fills. */
+.ctx-meter {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  flex: none;
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The foot-icons row already claims `margin-left: auto`; with the meter present it
+   sits right after the meter (which took the auto margin), so reset its own. */
+.ctx-meter + .foot-icons {
+  margin-left: 14px;
+}
+
+.ctx-bar {
+  width: 40px;
+  height: 4px;
+  border-radius: var(--r-pill);
+  background: var(--surface-2);
+  overflow: hidden;
+  flex: none;
+}
+
+.ctx-fill {
+  display: block;
+  height: 100%;
+  border-radius: var(--r-pill);
+  background: var(--steel);
+  transition: width 200ms ease-out;
+}
+
+.ctx-text {
+  white-space: nowrap;
+}
+
+/* Past ~70% the meter warms to amber; past ~90% it goes full warning, so a context
+   about to overflow reads at a glance without nagging earlier. */
+.ctx-meter.ctx-mid .ctx-fill {
+  background: var(--amber);
+}
+
+.ctx-meter.ctx-high {
+  color: var(--amber);
+}
+
+.ctx-meter.ctx-high .ctx-fill {
+  background: var(--danger);
+}
+
 /* ===== Toast ===== */
 
 .toast {

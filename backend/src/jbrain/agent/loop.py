@@ -27,6 +27,7 @@ from jbrain.agent.contracts import (
     ToolCallEvent,
     ToolResultEvent,
     ToolViewEvent,
+    UsageEvent,
     VerdictEvent,
     ViewPayload,
 )
@@ -343,6 +344,7 @@ class AgentLoop:
         tools_allow: frozenset[str] | None = None,
         general_knowledge_label: bool = True,
         here: tuple[float, float] | None = None,
+        context_window: int | None = None,
     ) -> AsyncIterator[ChatEvent]:
         """The streaming twin of `run`: the same turn loop and guardrails, but it
         yields ChatEvents as they happen — `text_delta` per streamed chunk,
@@ -365,7 +367,11 @@ class AgentLoop:
         critique-worthy turn to buffer-then-retry: the turn is produced
         non-streaming, the verifiers run, and `reflect` may re-produce (strict
         improvement, capped at N=2) before the kept attempt's events stream. This
-        trades the live token stream for a spinner while verification clears."""
+        trades the live token stream for a spinner while verification clears.
+
+        `context_window`, when given, drives a `UsageEvent` emitted after each model
+        turn so the PWA can show a live context-usage meter (None suppresses it, so a
+        caller/test that doesn't care gets the byte-for-byte stream it always had)."""
         if buffer_retry:
             async for ev in self._run_stream_buffered(
                 session,
@@ -377,6 +383,7 @@ class AgentLoop:
                 tools_allow,
                 general_knowledge_label,
                 here,
+                context_window,
             ):
                 yield ev
             return
@@ -447,6 +454,15 @@ class AgentLoop:
                 cost_tokens=turn.usage.input_tokens + turn.usage.output_tokens,
             )
             idx += 1
+            # Live context accounting: this step's prompt is the fullest the context
+            # has been, so the PWA's meter tracks the latest UsageEvent. Suppressed
+            # when the caller gave no window (tests, non-/chat callers).
+            if context_window is not None:
+                yield UsageEvent(
+                    input_tokens=turn.usage.input_tokens,
+                    output_tokens=turn.usage.output_tokens,
+                    context_window=context_window,
+                )
 
             if turn.stop_reason != "tool_use" or not turn.tool_calls:
                 async for ev in self._finish(
@@ -540,6 +556,7 @@ class AgentLoop:
         tools_allow: frozenset[str] | None = None,
         general_knowledge_label: bool = True,
         here: tuple[float, float] | None = None,
+        context_window: int | None = None,
     ) -> AsyncIterator[ChatEvent]:
         """Mode (a): produce the turn non-streaming, run `reflect` (strict
         improvement, N=2 cap), then replay the kept attempt's buffered events as the
@@ -570,6 +587,7 @@ class AgentLoop:
                 system,
                 tools_allow,
                 here,
+                context_window,
             )
             corpus = _grounding_corpus(turn.sources, turn.entities)
             # Empty corpus → grounding is unverifiable, not failed: hand back a clean
@@ -626,6 +644,7 @@ class AgentLoop:
         system: str | None = None,
         tools_allow: frozenset[str] | None = None,
         here: tuple[float, float] | None = None,
+        context_window: int | None = None,
     ) -> _BufferedTurn:
         """One full non-streaming produce-step for mode (a): run the turn loop to a
         terminal stop, buffering the ChatEvents it would have streamed (so a
@@ -663,6 +682,14 @@ class AgentLoop:
             budget[0] -= spent
             await self._record(idx, "model", "converse", ok=True, cost_tokens=spent)
             idx += 1
+            if context_window is not None:
+                events.append(
+                    UsageEvent(
+                        input_tokens=turn.usage.input_tokens,
+                        output_tokens=turn.usage.output_tokens,
+                        context_window=context_window,
+                    )
+                )
             if turn.reasoning:
                 # Buffered (non-streaming) twin of the live ReasoningChunk: replay the
                 # whole thinking trace before the answer. Never enters answer_parts.

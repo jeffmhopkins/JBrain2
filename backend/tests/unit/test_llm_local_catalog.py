@@ -37,6 +37,19 @@ def test_recommended_set_is_the_two_resident_models() -> None:
     assert local_catalog.recommended_ids() == ("qwen3-vl-30b", "gpt-oss-120b")
 
 
+def test_context_window_reads_the_catalog_then_falls_back() -> None:
+    # Every catalog model serves the gateway's window (the same value the setup
+    # script stamps into the llama-swap config and the meter divides by).
+    for m in local_catalog.CATALOG:
+        assert local_catalog.context_window(m.served_model) == m.context_window == 32768
+    # An unknown served name (a model outside the catalog) gets the safe default.
+    assert (
+        local_catalog.context_window("mystery-model")
+        == local_catalog.DEFAULT_LOCAL_CONTEXT_WINDOW
+        == 32768
+    )
+
+
 def test_selected_keeps_catalog_order_and_drops_unknown() -> None:
     got = local_catalog.selected(["gpt-oss-120b", "nope", "qwen3-vl-30b"])
     assert [m.id for m in got] == ["qwen3-vl-30b", "gpt-oss-120b"]
