@@ -119,4 +119,25 @@ describe("RunsScreen", () => {
     fireEvent.click(screen.getByLabelText("Back to Ops"));
     expect(onClose).toHaveBeenCalled();
   });
+
+  it("swallows touch events so the parent's down-swipe dismiss never arms", async () => {
+    // Mounted inside Ops's subscreen, App's down-swipe handler would otherwise
+    // receive these and climb out from under the overlay.
+    const onParentTouchStart = vi.fn();
+    const onParentTouchMove = vi.fn();
+    vi.spyOn(api, "runs").mockResolvedValue(RUNS);
+    vi.spyOn(api, "run").mockResolvedValue(DETAIL);
+    vi.spyOn(api, "sweepTriggers").mockResolvedValue(SWEEPS);
+    render(
+      // Stands in for App's swipe-armed subscreen wrapper.
+      <div onTouchStart={onParentTouchStart} onTouchMove={onParentTouchMove}>
+        <RunsScreen onClose={vi.fn()} />
+      </div>,
+    );
+    const surface = (await screen.findByText("Runs")).closest(".runs-screen");
+    fireEvent.touchStart(surface as HTMLElement, { touches: [{ clientX: 0, clientY: 0 }] });
+    fireEvent.touchMove(surface as HTMLElement, { touches: [{ clientX: 0, clientY: 200 }] });
+    expect(onParentTouchStart).not.toHaveBeenCalled();
+    expect(onParentTouchMove).not.toHaveBeenCalled();
+  });
 });
