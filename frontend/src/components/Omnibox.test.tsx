@@ -212,8 +212,31 @@ describe("Omnibox", () => {
     fireEvent.change(screen.getByLabelText("Composer"), { target: { value: "read this" } });
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
 
-    // An upload failure keeps the file staged so the owner can retry.
+    // An upload failure keeps BOTH the file staged AND the typed text so the
+    // owner can retry without re-typing.
     await waitFor(() => expect(onConversation).toHaveBeenCalled());
     expect(screen.getByRole("button", { name: "Remove doc.pdf" })).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByLabelText("Composer")).toHaveValue("read this"));
+  });
+
+  it("allows a files-only conversational send (caption optional)", () => {
+    const onConversation = vi.fn(() => Promise.resolve(true));
+    render(
+      <Omnibox
+        seg={{ row: "main", mode: "fullbrain" }}
+        onSegChange={vi.fn()}
+        onSend={vi.fn()}
+        onConversation={onConversation}
+        onOpenLauncher={vi.fn()}
+      />,
+    );
+    const file = new File(["hi"], "scan.png", { type: "image/png" });
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+    fireEvent.change(input, { target: { files: [file] } });
+    // No caption typed — Send is enabled because a file is staged.
+    const sendBtn = screen.getByRole("button", { name: "Send" });
+    expect(sendBtn).not.toBeDisabled();
+    fireEvent.click(sendBtn);
+    expect(onConversation).toHaveBeenCalledWith("", [file]);
   });
 });

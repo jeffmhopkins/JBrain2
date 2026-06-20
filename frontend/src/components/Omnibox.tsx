@@ -129,24 +129,30 @@ export function Omnibox({
   const destination = meta.dest ? (destinations[seg.mode] ?? meta.dest.options[0] ?? null) : null;
 
   function send() {
+    if (busy) return;
     const body = text.trim();
-    if (body === "" || busy) return;
     if (meta.domain === null) {
       // Research / Full Brain hand off to the conversation surface, staged files
-      // riding along as chat attachments. Clear the text now; clear the files only
-      // once the send is confirmed under way (an upload failure keeps them staged).
+      // riding along as chat attachments. A files-only turn is allowed (caption
+      // optional). Clear the composer only once the send is confirmed under way —
+      // an upload failure keeps BOTH the text and the files staged for a retry.
+      if (body === "" && files.length === 0) return;
       const staged = files;
       const result = onConversation(body, staged);
-      setText("");
       if (result instanceof Promise) {
         void result.then((ok) => {
-          if (ok) setFiles((cur) => cur.filter((f) => !staged.includes(f)));
+          if (ok) {
+            setText("");
+            setFiles((cur) => cur.filter((f) => !staged.includes(f)));
+          }
         });
       } else {
+        setText("");
         setFiles([]);
       }
       return;
     }
+    if (body === "") return;
     onSend({ domain: meta.domain, destination, body, files });
     setText("");
     setFiles([]);
@@ -338,7 +344,7 @@ export function Omnibox({
               className="icon-btn send-btn"
               aria-label="Send"
               onClick={send}
-              disabled={text.trim() === "" || busy}
+              disabled={busy || (text.trim() === "" && !(meta.domain === null && files.length > 0))}
             >
               <SendIcon size={24} />
             </button>
