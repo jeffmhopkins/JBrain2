@@ -34,11 +34,17 @@ _PROMPTS = Path(__file__).parent / "prompts"
 # agent opts in explicitly and the registry's web-tool gate has a single source.
 WEB_TOOLS = frozenset({"web_search", "web_fetch"})
 
-# jerv's full allowlist: the internet tools, the dataless clock read, and the
-# owner-approved coarse location read. `current_time` is allowlisted explicitly (a
-# default-knowledge tool jerv's closed allowlist could not otherwise reach);
-# `current_location` is a `web`-gated jerv-only tool (an on-box owner read, opt-in).
-JERV_TOOLS = WEB_TOOLS | frozenset({"current_time", "current_location"})
+# jerv's full allowlist: the internet tools, the dataless clock read, the
+# owner-approved coarse location read, and the local image-generation tools.
+# `current_time` is allowlisted explicitly (a default-knowledge tool jerv's closed
+# allowlist could not otherwise reach); `current_location` and `generate_image`/
+# `edit_image` are `web`-gated jerv-only tools (on-box, no egress, opt-in — the image
+# tools drive the localhost ComfyUI, docs/IMAGE_GEN_PLAN.md). The image tools are
+# absent from the registry when ComfyUI is unconfigured, so allowlisting them here is
+# harmless on a box without image generation.
+JERV_TOOLS = WEB_TOOLS | frozenset(
+    {"current_time", "current_location", "generate_image", "edit_image"}
+)
 
 DEFAULT_AGENT = "curator"
 

@@ -53,6 +53,10 @@ from jbrain.search.service import (
 TOOLS_DIR = Path(__file__).parent / "tools"
 _DEFAULT_LIMIT = 8
 
+# The image-gen sidecars are optional: dropped from the registry when no ComfyUI is
+# configured (no handlers passed), so an unconfigured box silently lacks the feature.
+IMAGE_TOOL_NAMES = frozenset({"generate_image", "edit_image"})
+
 
 class EntityReader(Protocol):
     """The slice of the analysis repo the read/entity tools need — the entity-page
@@ -393,6 +397,7 @@ def build_registry(
     external_reverse: "NominatimReverseClient | None" = None,
     router: "LlmRouter | None" = None,
     settings: "SqlSettingsStore | None" = None,
+    image_handlers: dict[str, ToolHandler] | None = None,
 ) -> ToolRegistry:
     """The agent's tool registry: every shipped sidecar bound to its handler — the
     read tools, the Tier-A memory tools, the list tools (which write the owner's
@@ -400,6 +405,9 @@ def build_registry(
     projection), propose_correction and propose_merge (which stage a Proposal,
     never write), and the egress connector tools (which stage an egress Proposal,
     never call out).
+    `image_handlers` is jerv's local image-gen tools, present only when a ComfyUI is
+    configured; when absent the `generate_image`/`edit_image` sidecars are dropped
+    (graceful degrade, docs/IMAGE_GEN_PLAN.md).
     Fails at startup if a sidecar and handler don't match exactly, so a new .tool
     can never ship unwired."""
     return load_registry(
@@ -429,5 +437,9 @@ def build_registry(
             **wiki_write,
             # The jerv chatbot's internet tools (`web` permission), opt-in per agent.
             **web_handlers,
+            # jerv's local image-gen tools (`web`-gated, on-box), present only when a
+            # ComfyUI is configured; otherwise their sidecars are dropped below.
+            **(image_handlers or {}),
         },
+        optional=IMAGE_TOOL_NAMES,
     )
