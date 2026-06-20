@@ -1,0 +1,422 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Local models · context window mockup</title>
+    <style>
+      /* Tokens lifted from frontend/src/styles/tokens.css so the mockup reads
+         like the real settings screen. Dark is default; the toggle flips theme. */
+      :root {
+        color-scheme: dark;
+        --bg: #0e0f11;
+        --surface: #17181b;
+        --surface-2: #1e2024;
+        --border: #26282c;
+        --text: #e6e7e9;
+        --text-2: #9a9da3;
+        --text-3: #5c5f66;
+        --steel: #7fa7c9;
+        --steel-tint: rgba(127, 167, 201, 0.13);
+        --green: #8fbc9a;
+        --green-tint: rgba(143, 188, 154, 0.13);
+        --amber: #c9a36a;
+        --amber-tint: rgba(201, 163, 106, 0.13);
+        --rose: #cf8a8f;
+        --violet: #a493c9;
+        --violet-tint: rgba(164, 147, 201, 0.13);
+        --accent: var(--steel);
+        --r-card: 12px;
+        --r-pill: 999px;
+        --fs-body: 14px;
+        --fs-micro: 12px;
+      }
+      [data-theme="light"] {
+        color-scheme: light;
+        --bg: #f7f7f5;
+        --surface: #ffffff;
+        --surface-2: #f0f0ee;
+        --border: #e2e2df;
+        --text: #1a1b1e;
+        --text-2: #5c5f66;
+        --text-3: #9a9da3;
+      }
+
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        font: var(--fs-body) / 1.45 -apple-system, BlinkMacSystemFont, "Segoe UI",
+          Roboto, Helvetica, Arial, sans-serif;
+        -webkit-font-smoothing: antialiased;
+        padding: 32px 16px 64px;
+      }
+      .wrap { max-width: 560px; margin: 0 auto; }
+      .page-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 4px; }
+      .page-head h1 { font-size: 18px; font-weight: 600; margin: 0; }
+      .page-head .tag {
+        font-size: var(--fs-micro); color: var(--text-3);
+        border: 1px solid var(--border); border-radius: var(--r-pill);
+        padding: 1px 8px;
+      }
+      .lede { color: var(--text-2); font-size: var(--fs-micro); margin: 0 0 20px; }
+      .theme-btn {
+        float: right; font: inherit; font-size: var(--fs-micro);
+        background: var(--surface-2); color: var(--text-2);
+        border: 1px solid var(--border); border-radius: var(--r-pill);
+        padding: 3px 12px; cursor: pointer;
+      }
+
+      /* --- The card (mirrors .llm-local) --- */
+      .llm-local {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: var(--r-card);
+        overflow: hidden;
+      }
+      .llm-local-toggle {
+        width: 100%; display: flex; align-items: center; gap: 10px;
+        padding: 14px 16px; background: none; border: none; cursor: pointer;
+        color: var(--text); font: inherit; text-align: left;
+      }
+      .llm-local-dot {
+        width: 9px; height: 9px; border-radius: 50%; background: var(--text-3);
+        flex: none;
+      }
+      .llm-local-dot.on {
+        background: var(--green);
+        box-shadow: 0 0 0 4px color-mix(in srgb, var(--green) 18%, transparent);
+      }
+      .llm-local-title { font-weight: 500; }
+      .llm-local-summary { margin-left: auto; font-size: var(--fs-micro); color: var(--text-2); }
+      .llm-exp-caret { color: var(--text-3); transition: transform 0.15s; }
+      .llm-exp-open { transform: rotate(90deg); }
+
+      .llm-local-body { padding: 0 16px 12px; }
+
+      .llm-mem { margin: 2px 0 14px; }
+      .llm-mem-bar {
+        height: 6px; border-radius: var(--r-pill);
+        background: var(--surface-2); overflow: hidden;
+      }
+      .llm-mem-bar > i {
+        display: block; height: 100%; background: var(--steel);
+        transition: width 0.3s ease;
+      }
+      .llm-mem-cap {
+        display: flex; justify-content: space-between;
+        font-size: var(--fs-micro); color: var(--text-3); margin-top: 5px;
+      }
+
+      .llm-local-row {
+        padding: 14px 0;
+        border-top: 1px solid var(--border);
+      }
+      /* top line: name+meta on the left, action + state on the right */
+      .llm-local-head {
+        display: flex; align-items: flex-start; gap: 12px;
+      }
+      .llm-local-name { font-size: var(--fs-body); font-weight: 500; min-width: 0; flex: 1; }
+      .llm-local-meta { display: block; font-size: var(--fs-micro); color: var(--text-2); font-weight: 400; margin-top: 1px; }
+      .llm-local-topright { display: flex; align-items: center; gap: 10px; flex: none; }
+
+      .llm-local-chips { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+      .llm-chip {
+        font-size: var(--fs-micro); padding: 2px 8px; border-radius: var(--r-pill);
+        line-height: 1.4;
+      }
+      .llm-chip-vision { color: var(--violet); background: var(--violet-tint); }
+      .llm-chip-reason { color: var(--amber); background: var(--amber-tint); }
+      .llm-chip-tools  { color: var(--steel); background: var(--steel-tint); }
+
+      .llm-local-state { font-size: var(--fs-micro); color: var(--text-3); }
+      .llm-local-state.on { color: var(--green); }
+
+      .llm-local-unload {
+        font: inherit; font-size: var(--fs-micro);
+        background: var(--surface-2); color: var(--text-2);
+        border: 1px solid var(--border); border-radius: var(--r-pill);
+        padding: 3px 12px; cursor: pointer;
+      }
+      .llm-local-unload:hover:not(:disabled) { border-color: var(--rose); color: var(--rose); }
+      .llm-local-unload.load:hover:not(:disabled) { border-color: var(--green); color: var(--green); }
+      .llm-local-unload:disabled { opacity: 0.5; cursor: default; }
+
+      /* --- The new bit: context-window control, stacked so nothing clips --- */
+      .ctx {
+        margin-top: 10px;
+        background: var(--surface-2);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 10px 12px;
+      }
+      .ctx.locked { opacity: 0.7; }
+      /* row 1: label (left) + live KV / hint (right) */
+      .ctx-head {
+        display: flex; align-items: baseline; justify-content: space-between;
+        gap: 12px; margin-bottom: 8px;
+      }
+      .ctx-label {
+        font-size: var(--fs-micro); color: var(--text-2);
+        display: inline-flex; align-items: center; gap: 5px;
+      }
+      .ctx-lock { font-size: 11px; }
+      .ctx-meta { font-size: var(--fs-micro); color: var(--text-3); text-align: right; }
+      .ctx-meta b { color: var(--text-2); font-weight: 600; }
+      .ctx-hint { font-size: var(--fs-micro); color: var(--text-3); }
+      /* row 2: full-width segmented control, equal buttons that fill the card */
+      .ctx-seg {
+        display: flex; width: 100%;
+        border: 1px solid var(--border); border-radius: var(--r-pill);
+        overflow: hidden; background: var(--bg);
+      }
+      .ctx-seg button {
+        flex: 1; font: inherit; font-size: var(--fs-micro);
+        background: none; color: var(--text-2); border: none;
+        padding: 7px 0; cursor: pointer; border-right: 1px solid var(--border);
+        text-align: center;
+      }
+      .ctx-seg button:last-child { border-right: none; }
+      .ctx-seg button.sel { background: var(--steel-tint); color: var(--steel); font-weight: 600; }
+      .ctx-seg button:disabled { cursor: default; color: var(--text-3); }
+
+      /* --- agent-chat meter preview (ties to the PWA context meter) --- */
+      .meter-card {
+        margin-top: 22px; background: var(--surface);
+        border: 1px solid var(--border); border-radius: var(--r-card);
+        padding: 14px 16px;
+      }
+      .meter-card h2 { font-size: var(--fs-micro); text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-3); margin: 0 0 10px; font-weight: 600; }
+      .meter-row { display: flex; align-items: center; gap: 10px; font-size: var(--fs-micro); color: var(--text-2); }
+      .meter-bar { flex: 1; height: 6px; border-radius: var(--r-pill); background: var(--surface-2); overflow: hidden; }
+      .meter-bar > i { display: block; height: 100%; background: var(--green); transition: width 0.3s ease; }
+      .meter-val { font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+      /* toast */
+      .toast {
+        position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%) translateY(20px);
+        background: var(--surface-2); border: 1px solid var(--border);
+        color: var(--text); border-radius: var(--r-pill);
+        padding: 9px 18px; font-size: var(--fs-micro);
+        box-shadow: 0 8px 30px rgba(0, 0, 0, 0.4);
+        opacity: 0; pointer-events: none; transition: opacity 0.2s, transform 0.2s;
+        max-width: 90vw;
+      }
+      .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+      .toast b { color: var(--steel); }
+
+      .note { margin-top: 18px; font-size: var(--fs-micro); color: var(--text-3); line-height: 1.6; }
+      .note code { background: var(--surface-2); border: 1px solid var(--border); border-radius: 4px; padding: 0 4px; }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <button class="theme-btn" id="themeBtn">light theme</button>
+      <div class="page-head">
+        <h1>Local models</h1>
+        <span class="tag">mockup</span>
+      </div>
+      <p class="lede">
+        Per-model context window, editable while a model is <b>idle</b>. Loaded models
+        are locked (their <code>-c</code> is fixed for the running process) — unload to change.
+      </p>
+
+      <section class="llm-local">
+        <button class="llm-local-toggle" id="cardToggle" aria-expanded="true">
+          <span class="llm-local-dot on"></span>
+          <span class="llm-local-title">Local models</span>
+          <span class="llm-local-summary" id="summary"></span>
+          <span class="llm-exp-caret llm-exp-open">›</span>
+        </button>
+        <div class="llm-local-body" id="cardBody">
+          <div class="llm-mem">
+            <div class="llm-mem-bar"><i id="memFill"></i></div>
+            <div class="llm-mem-cap">
+              <span id="memUsed"></span>
+              <span id="memTotal"></span>
+            </div>
+          </div>
+          <div id="rows"></div>
+        </div>
+      </section>
+
+      <div class="meter-card">
+        <h2>Agent chat · context meter (preview)</h2>
+        <div class="meter-row">
+          <span>gpt-oss-120b</span>
+          <span class="meter-bar"><i id="meterFill"></i></span>
+          <span class="meter-val" id="meterVal"></span>
+        </div>
+        <p class="note" style="margin-top:10px">
+          The meter's denominator is the model's window — change it above and this
+          tracks it, because both read the same persisted value (no drift).
+        </p>
+      </div>
+
+      <p class="note">
+        Interactions: <b>Unload</b> a loaded model to free its memory and unlock its
+        context control. While idle, tap a window — it's set immediately as the model's
+        configured <code>-c</code> (the KV-cache estimate updates live) and takes effect
+        the next time llama-swap launches <code>llama-server</code>. <b>Load</b> re-locks
+        the row at its configured window.
+      </p>
+    </div>
+
+    <div class="toast" id="toast"></div>
+
+    <script>
+      // Host box (Strix-Halo-class unified memory).
+      const HOST_TOTAL_GB = 128;
+      const WINDOWS = [16384, 32768, 65536, 131072];
+      const fmtK = (n) => (n % 1024 === 0 ? n / 1024 + "k" : Math.round(n / 1000) + "k");
+
+      // Model roster mirroring the catalog. kvGbPer128k anchors the KV-cache
+      // estimate; gpt-oss is low thanks to alternating sliding-window attention,
+      // the dense/vision models cost more.
+      const models = [
+        {
+          id: "qwen3-vl-30b", label: "Qwen3-VL 30B · vision", quant: "Q8_0",
+          sizeGb: 32, chips: [["vision", "vision"], ["tools", "tools"]],
+          window: 32768, loaded: true, kvGbPer128k: 6.0,
+        },
+        {
+          id: "gpt-oss-120b", label: "GPT-OSS 120B · reasoning", quant: "MXFP4",
+          sizeGb: 59, chips: [["reason", "reasoning"], ["tools", "tools"]],
+          window: 131072, loaded: true, kvGbPer128k: 4.5,
+        },
+        {
+          id: "qwen3-30b-a3b", label: "Qwen3 30B · lightweight", quant: "Q4_K_M",
+          sizeGb: 18, chips: [["tools", "tools"]],
+          window: 32768, loaded: false, kvGbPer128k: 3.2,
+        },
+      ];
+
+      const kvGb = (m, win) => +(m.kvGbPer128k * (win / 131072)).toFixed(2);
+      const residentGb = (m) => m.sizeGb + kvGb(m, m.window);
+      const memUsedGb = () =>
+        models.filter((m) => m.loaded).reduce((s, m) => s + residentGb(m), 0);
+
+      function toast(html) {
+        const t = document.getElementById("toast");
+        t.innerHTML = html;
+        t.classList.add("show");
+        clearTimeout(t._t);
+        t._t = setTimeout(() => t.classList.remove("show"), 2600);
+      }
+
+      function render() {
+        const n = models.length;
+        const loaded = models.filter((m) => m.loaded);
+        const used = memUsedGb();
+        document.getElementById("summary").textContent =
+          `${n} of ${n} enabled · ${loaded.length} loaded · ${Math.round(used)} GB`;
+        document.getElementById("memFill").style.width =
+          Math.min(100, (used / HOST_TOTAL_GB) * 100) + "%";
+        document.getElementById("memUsed").textContent = `${Math.round(used)} GB used`;
+        document.getElementById("memTotal").textContent = `${HOST_TOTAL_GB} GB total`;
+
+        const rows = document.getElementById("rows");
+        rows.innerHTML = "";
+        for (const m of models) {
+          const win = m.window;
+          const row = document.createElement("div");
+          row.className = "llm-local-row";
+
+          const stateCls = m.loaded ? "llm-local-state on" : "llm-local-state";
+          const stateTxt = m.loaded ? "loaded" : "idle";
+          const actBtn = m.loaded
+            ? `<button class="llm-local-unload" data-act="unload" data-id="${m.id}">Unload</button>`
+            : `<button class="llm-local-unload load" data-act="load" data-id="${m.id}">Load</button>`;
+          const chips = m.chips
+            .map(([cls, lbl]) => `<span class="llm-chip llm-chip-${cls}">${lbl}</span>`)
+            .join("");
+          const seg = WINDOWS.map(
+            (w) =>
+              `<button data-win="${w}" data-id="${m.id}" class="${w === win ? "sel" : ""}" ${
+                m.loaded ? "disabled" : ""
+              }>${fmtK(w)}</button>`
+          ).join("");
+          const ctxMeta = m.loaded
+            ? `<span class="ctx-hint">🔒 unload to change</span>`
+            : `<span class="ctx-meta">KV cache <b>~${kvGb(m, win)} GB</b> · used next load</span>`;
+
+          row.innerHTML = `
+            <div class="llm-local-head">
+              <div class="llm-local-name">${m.label}
+                <span class="llm-local-meta">${m.quant} · ${m.sizeGb} GB${
+                  m.loaded ? ` · ${residentGb(m).toFixed(1)} GB resident` : ""
+                }</span>
+              </div>
+              <div class="llm-local-topright">
+                ${actBtn}
+                <span class="${stateCls}">${stateTxt}</span>
+              </div>
+            </div>
+            <div class="llm-local-chips">${chips}</div>
+            <div class="ctx ${m.loaded ? "locked" : ""}">
+              <div class="ctx-head">
+                <span class="ctx-label">context window · <b style="color:var(--text)">${fmtK(win)}</b></span>
+                ${ctxMeta}
+              </div>
+              <div class="ctx-seg">${seg}</div>
+            </div>`;
+          rows.appendChild(row);
+        }
+        renderMeter();
+      }
+
+      // Agent-chat meter uses gpt-oss-120b's window as denominator.
+      function renderMeter() {
+        const m = models.find((x) => x.id === "gpt-oss-120b");
+        const usedTok = 24000; // pretend the current conversation is ~24k tokens
+        const pct = Math.min(100, (usedTok / m.window) * 100);
+        document.getElementById("meterFill").style.width = pct + "%";
+        document.getElementById("meterVal").textContent =
+          `${(usedTok / 1000).toFixed(1)}k / ${fmtK(m.window)} · ${Math.round(pct)}%`;
+      }
+
+      document.addEventListener("click", (e) => {
+        const winBtn = e.target.closest("[data-win]");
+        if (winBtn && !winBtn.disabled) {
+          const m = models.find((x) => x.id === winBtn.dataset.id);
+          const w = +winBtn.dataset.win;
+          if (w === m.window) return;
+          m.window = w; // idle model: no live process, so just set the configured -c
+          render();
+          toast(`${m.label.split(" · ")[0]} context set to <b>${fmtK(w)}</b> — used on next load`);
+          return;
+        }
+        const actBtn = e.target.closest("[data-act]");
+        if (actBtn) {
+          const m = models.find((x) => x.id === actBtn.dataset.id);
+          if (actBtn.dataset.act === "unload") {
+            m.loaded = false;
+            toast(`Unloaded ${m.label.split(" · ")[0]} — context window now editable`);
+          } else {
+            m.loaded = true; // loads at its configured window, then locks
+            toast(`Loaded ${m.label.split(" · ")[0]} with <b>${fmtK(m.window)}</b> context`);
+          }
+          render();
+        }
+      });
+
+      document.getElementById("cardToggle").addEventListener("click", () => {
+        const b = document.getElementById("cardBody");
+        const caret = document.querySelector(".llm-exp-caret");
+        const hidden = b.style.display === "none";
+        b.style.display = hidden ? "block" : "none";
+        caret.classList.toggle("llm-exp-open", hidden);
+      });
+
+      document.getElementById("themeBtn").addEventListener("click", (e) => {
+        const root = document.documentElement;
+        const light = root.getAttribute("data-theme") === "light";
+        root.setAttribute("data-theme", light ? "dark" : "light");
+        e.target.textContent = light ? "light theme" : "dark theme";
+      });
+
+      render();
+    </script>
+  </body>
+</html>
