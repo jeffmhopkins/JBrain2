@@ -1,9 +1,20 @@
 """The basemap tile cache + cache-first service (location map proxy). The upstream
 HTTP fetch is faked — CI never reaches a real tile host."""
 
-from jbrain.tiles import FsTileCache, TileService, valid_tile
+from jbrain.tiles import FsTileCache, TileService, tile_cache_namespace, valid_tile
 
 _PNG = b"\x89PNG\r\n\x1a\n-fake-tile"
+
+
+def test_tile_cache_namespace_is_stable_and_per_upstream() -> None:
+    osm = "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
+    carto = "https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png"
+    # Stable for a given upstream, distinct across styles (so a switch re-fetches),
+    # and a short filesystem-safe slug.
+    assert tile_cache_namespace(osm) == tile_cache_namespace(osm)
+    assert tile_cache_namespace(osm) != tile_cache_namespace(carto)
+    key = tile_cache_namespace(carto)
+    assert len(key) == 8 and key.isalnum()
 
 
 def test_valid_tile_bounds() -> None:

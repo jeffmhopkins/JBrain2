@@ -63,7 +63,7 @@ export function createLocationMap(
   L.control.zoom({ position: "bottomright" }).addTo(map);
   L.tileLayer(TILE_URL, {
     maxZoom: 19,
-    attribution: "© OpenStreetMap contributors",
+    attribution: "© OpenStreetMap contributors © CARTO",
   }).addTo(map);
   let overlay = L.layerGroup().addTo(map);
   // The data bounds last auto-fitted, so a redraw that doesn't change them leaves
