@@ -101,6 +101,23 @@ def test_acl_allows_only_the_devices_own_namespace(client: tuple[TestClient, str
     assert acl("#", 1) == 403
 
 
+def test_acl_denies_a_revoked_device_on_its_own_namespace() -> None:
+    """The per-publish ACL re-check kills a revoked device's live session within
+    bound — even on its OWN namespace, which auth had previously allowed (M7b)."""
+    settings = Settings(
+        secure_cookies=False, database_url="postgresql+asyncpg://nobody@localhost:1/none"
+    )
+    app = create_app(settings)
+    repo, pid = _make(revoked=True)
+    with TestClient(app) as c:
+        app.state.auth_repo = repo
+        r = c.post(
+            "/internal/mqtt-acl",
+            json={"username": pid, "clientid": pid, "topic": f"owntracks/{pid}/phone", "acc": 2},
+        )
+        assert r.status_code == 403
+
+
 # --- ingest service identity (M1) --------------------------------------------
 
 _DB = "postgresql+asyncpg://nobody@localhost:1/none"

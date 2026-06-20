@@ -371,8 +371,15 @@ service-account bootstrap (non-negotiable #8).
   add/remove/list members) + owner `GET/POST/DELETE /api/family/members`; no new
   table (owner-only `view_scope` RLS is the barrier). Proven against PostGIS:
   add→mutual `viewer_may_see`, remove→ends, writes owner-only, add idempotent ✓;
-  **M7b** member revoke (`cred_epoch` bump + MQTT-session kill + membership
-  tombstone); **M7c** encryption-at-rest + the Caddy/keystore/pin-rotation runbooks.
+  **M7b** member revoke — the per-publish MQTT ACL now re-checks revocation (a
+  revoked device is denied even on its own namespace, killing the live session
+  within bound, not just at the next connect), and owner `POST
+  /api/family/members/{id}/revoke` tombstones the device principal AND drops it
+  from the family. The instant dashboard-cookie 401 already falls out of the
+  session lookup's `revoked_at` filter, so no `cred_epoch` column is needed for
+  revoke; `cred_epoch`'s distinct value (invalidating sessions on key *rotation*,
+  where the principal stays active) is a separate refinement, deferred ✓;
+  **M7c** encryption-at-rest + the Caddy/keystore/pin-rotation runbooks.
 - **v1.1 — UnifiedPush/ntfy** for de-Googled phones (additive sender behind the
   push-backend-agnostic interface).
 

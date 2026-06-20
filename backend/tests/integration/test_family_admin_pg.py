@@ -94,3 +94,48 @@ async def test_add_member_is_idempotent(maker: async_sessionmaker) -> None:
     await repo.add_member(OWNER, cara)
     await repo.add_member(OWNER, cara)  # second add is a no-op, not a duplicate/error
     assert len([m for m in await repo.members(OWNER) if m.subject_id == cara]) == 1
+
+
+async def _device(maker: async_sessionmaker, subject_id: str) -> str:
+    pid = str(uuid.uuid4())
+    async with scoped_session(maker, OWNER) as session:
+        await session.execute(
+            text(
+                "INSERT INTO app.principals (id, kind, subject_id, key_hash)"
+                " VALUES (:p, 'device_key', :s, :k)"
+            ),
+            {"p": pid, "s": subject_id, "k": uuid.uuid4().hex},
+        )
+    return pid
+
+
+async def test_member_revoke_tombstones_the_device_and_drops_the_family(
+    maker: async_sessionmaker,
+) -> None:
+    from jbrain.devices.repo import SqlDeviceRepo
+    from jbrain.devices.service import revoke_device
+
+    alice = await _subject(maker, "Alice")
+    bob = await _subject(maker, "Bob")
+    pid_bob = await _device(maker, bob)
+    repo = SqlFamilyRepo(maker)
+    await repo.add_member(OWNER, alice)
+    await repo.add_member(OWNER, bob)
+    assert await _may_see(maker, alice, bob) is True
+
+    # Revoke Bob the member: tombstone the device principal + drop from family.
+    await revoke_device(SqlDeviceRepo(maker), OWNER, bob)
+    await repo.remove_member(OWNER, bob)
+
+    # The principal is tombstoned (its dashboard cookie 401s, its MQTT auth/ACL deny)…
+    async with scoped_session(maker, OWNER) as session:
+        revoked_at = (
+            await session.execute(
+                text("SELECT revoked_at FROM app.principals WHERE id = cast(:p AS uuid)"),
+                {"p": pid_bob},
+            )
+        ).scalar()
+    assert revoked_at is not None
+    # …and the family read path is gone.
+    assert await _may_see(maker, alice, bob) is False
+    assert bob not in {m.subject_id for m in await repo.members(OWNER)}
