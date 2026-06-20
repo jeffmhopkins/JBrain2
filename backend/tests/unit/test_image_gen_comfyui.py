@@ -87,7 +87,7 @@ async def test_edit_uploads_source_then_renders() -> None:
             uploaded.append(request.content)
             return httpx.Response(200, json={"name": "input.png", "subfolder": "", "type": "input"})
         if request.url.path == "/prompt":
-            referenced["image"] = json.loads(request.content)["prompt"]["8"]["inputs"]["image"]
+            referenced["image"] = json.loads(request.content)["prompt"]["41"]["inputs"]["image"]
             return httpx.Response(200, json={"prompt_id": "abc123"})
         if request.url.path == "/history/abc123":
             return httpx.Response(200, json=_HISTORY_DONE)
