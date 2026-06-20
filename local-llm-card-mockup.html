@@ -132,13 +132,6 @@
       .mem2-cap .staged-note { color: var(--amber); }
       .mem2-cap .total { margin-left: auto; }
       .mem2-cap .over { color: var(--rose); }
-      /* legend */
-      .mem2-legend { display: flex; gap: 14px; font-size: 11px; color: var(--text-3); margin-top: 6px; }
-      .mem2-legend span { display: inline-flex; align-items: center; gap: 5px; }
-      .mem2-legend i { width: 12px; height: 10px; border-radius: 2px; display: inline-block; }
-      .mem2-legend .sw-w { background: var(--text-2); }
-      .mem2-legend .sw-c { background: color-mix(in srgb, var(--text-2) 40%, #ffffff); }
-      .mem2-legend .sw-s { background: repeating-linear-gradient(45deg, var(--text-2) 0 3px, transparent 3px 6px); }
 
       .llm-local-row {
         padding: 14px 0;
@@ -260,11 +253,6 @@
               <span id="memStaged" class="staged-note"></span>
               <span id="memTotal" class="total"></span>
             </div>
-            <div class="mem2-legend">
-              <span><i class="sw-w"></i>weights</span>
-              <span><i class="sw-c"></i>context (KV)</span>
-              <span><i class="sw-s"></i>staged</span>
-            </div>
           </div>
           <div id="rows"></div>
         </div>
@@ -322,7 +310,7 @@
         {
           id: "qwen3-30b-a3b", label: "Qwen3 30B · lightweight", quant: "Q4_K_M",
           sizeGb: 18, chips: [["tools", "tools"]],
-          window: 32768, state: "idle", kvGbPer128k: 3.2, color: "#a493c9",
+          window: 32768, state: "idle", kvGbPer128k: 3.2, color: "#6fb6b1",
         },
       ];
       const barName = (m) => m.label.split(" ")[0]; // family name for the bar segment
