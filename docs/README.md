@@ -34,6 +34,7 @@ Phase-5 build record is `archive/PHASE5_COMPLETION_PLAN.md`.
 | `entity.md` | The entity & soft-schema model: predicates, facets, names, relationships, resolution. |
 | `PREDICATE_CANONICALIZATION.md` | Embedding-assisted predicate registry + typed value shapes (core shipped; self-improvement loop deferred). |
 | `ASSISTANT.md` | The self-improving agent design — the Phase-4 core (shipped) plus the deferred loops 2–4 (Phases 5–7). |
+| `PERF_IDLE.md` | Where the stack spends CPU at rest (poll loops, healthchecks, DB bgworkers), the tuning levers, the `idle-cpu-bench.sh` measurement method, and bigger strategies (LISTEN/NOTIFY, etc.). |
 | `STRIX_HALO_SETUP.md` | End-to-end runbook for self-hosting the optional local models on an AMD Strix Halo (Ryzen AI Max+ 395) box: distro → kernel → Vulkan → install → routing. |
 | `CLOUDFLARE_TUNNEL.md` | Reaching a home-network box from outside via Cloudflare Tunnel — the dynamic-IP / CGNAT path: no static IP, no port-forwarding, TLS at Cloudflare's edge. |
 | `mocks/` | Interactive HTML UI mockups. `DESIGN.md` cites these as the **binding spec** for reviewed surfaces — a living reference, not throwaway prototypes. |

@@ -49,7 +49,14 @@ from jbrain.workflow.runlog import PipelineRunLog
 
 log = structlog.get_logger()
 
+# The base idle poll. The busy path never sleeps (a processed job `continue`s and
+# re-claims immediately), so this only governs how often a RESTING worker re-queries
+# an empty queue. To stop a permanently-idle box re-querying ~30×/min, the idle
+# sleep backs off geometrically from this base up to MAX_IDLE_SECONDS, then resets
+# to the base the instant a job lands — so a burst still drains at full speed and
+# only the first job after a long idle waits up to the cap.
 POLL_SECONDS = 2.0
+MAX_IDLE_SECONDS = 8.0
 HEARTBEAT_SECONDS = 60
 
 # A handler runs one job. The six shipped kinds take only the payload (they manage
@@ -161,6 +168,10 @@ async def run_loop(
     last_heartbeat = 0.0
     last_tick = 0.0
     last_dispatch = 0.0
+    # Grows while the queue stays idle (capped), resets to POLL_SECONDS on work.
+    # The cap stays below scheduler.TICK_SECONDS so a backed-off wake still evaluates
+    # the due-schedule tick within its cadence.
+    idle_sleep = POLL_SECONDS
     # The run-log writer the dispatcher uses when LIVE: one pipeline run per
     # dispatched event (§8). Built once off the same maker (owner-scoped writes).
     run_log = PipelineRunLog(maker)
@@ -216,12 +227,14 @@ async def run_loop(
                     predicate_sync_jobs=predicate_syncs,
                 )
             if await process_one(maker, handlers):
+                idle_sleep = POLL_SECONDS  # work found — return to the fast cadence
                 continue
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001 - survive DB blips, like the old heartbeat
             log.warning("worker.loop_error", error=repr(exc))
-        await asyncio.sleep(POLL_SECONDS)
+        await asyncio.sleep(idle_sleep)
+        idle_sleep = min(idle_sleep * 2, MAX_IDLE_SECONDS)
 
 
 async def run() -> None:

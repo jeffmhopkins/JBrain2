@@ -87,7 +87,12 @@ services:
     healthcheck:
       # Slim image has no curl; stdlib does the job.
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/healthz')"]
-      interval: 30s
+      # 60s at rest (up from 30s): nothing gates boot on the api being `healthy`
+      # (proxy/mqtt-ingest use a plain depends_on), so a slower liveness probe only
+      # trims one python-process spawn per minute with no startup cost.
+      interval: 60s
+      start_period: 20s
+      start_interval: 3s
       timeout: 5s
       retries: 3
 
@@ -155,7 +160,14 @@ services:
     networks: [internal]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U jbrain -d jbrain"]
-      interval: 10s
+      # A 30s resting interval (down from 10s) cuts the idle pg_isready process
+      # spawns to a third; `start_interval` keeps boot fast — dependents wait on
+      # `service_healthy`, so checks run every 2s during the start window and a
+      # success flips healthy immediately, then settle to 30s. (start_interval
+      # needs Docker Engine 25+; an older engine ignores it and just uses interval.)
+      interval: 30s
+      start_period: 30s
+      start_interval: 2s
       timeout: 5s
       retries: 10
 

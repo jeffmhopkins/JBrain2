@@ -315,6 +315,30 @@ async def test_run_loop_backfills_once_then_polls(monkeypatch: pytest.MonkeyPatc
     assert fake.predicate_sync_backfills == 1
 
 
+async def test_run_loop_idle_sleep_backs_off_and_resets_on_work(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # One job, then an idle queue forever: the first iteration runs the job and
+    # `continue`s without sleeping, so every recorded sleep is an idle one — they
+    # must grow geometrically from POLL_SECONDS and saturate at MAX_IDLE_SECONDS.
+    install(monkeypatch, FakeQueue([job()]))
+
+    async def handler(payload: dict[str, Any]) -> None:
+        pass
+
+    durations: list[float] = []
+
+    async def fake_sleep(seconds: float) -> None:
+        durations.append(seconds)
+        if len(durations) >= 4:
+            raise asyncio.CancelledError
+
+    monkeypatch.setattr(worker.asyncio, "sleep", fake_sleep)
+    with pytest.raises(asyncio.CancelledError):
+        await worker.run_loop(None, {"ingest_note": handler})  # type: ignore[arg-type]
+    assert durations == [2.0, 4.0, 8.0, 8.0]  # base 2 → ×2 → capped at 8
+
+
 async def test_run_loop_survives_transient_errors_and_retries_backfill(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
