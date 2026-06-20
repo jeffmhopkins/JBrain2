@@ -11869,6 +11869,11 @@ input.ld-title {
 .livemap-canvas {
   position: absolute;
   inset: 0;
+  /* Leaflet gives its tile/control panes high internal z-indexes (up to ~1000).
+     A stacking context here keeps them contained below the floating chrome
+     (.lm-people / .lm-card / .lm-ctrls at z 7–8) instead of painting over it. */
+  z-index: 0;
+  isolation: isolate;
 }
 /* Leaflet defaults to its own font/bg; pull it onto our tokens. */
 .leaflet-container {
