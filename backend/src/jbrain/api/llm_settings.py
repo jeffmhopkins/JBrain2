@@ -7,8 +7,10 @@ so this endpoint is the live control surface — no restart. Owner-only is
 implicit pre-P7; the store's RLS enforces it regardless.
 """
 
+from dataclasses import asdict
 from typing import Annotated, Literal, cast
 
+import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, ConfigDict
 
@@ -17,7 +19,7 @@ from jbrain.api.notes import ctx_for
 from jbrain.config import Settings
 from jbrain.db.session import SessionContext
 from jbrain.host_metrics import read_memory_gb
-from jbrain.llm import local_catalog, local_weights
+from jbrain.llm import llama_swap_config, local_catalog, local_weights
 from jbrain.llm.errors import LlmError
 from jbrain.llm.local_gateway import LocalGatewayClient, LocalGatewayError
 from jbrain.llm.providers import (
@@ -29,6 +31,8 @@ from jbrain.llm.providers import (
 )
 from jbrain.llm.router import TASK_DEFAULTS, _split_spec
 from jbrain.settings_store import LLM_TASK_OVERRIDES_KEY, SqlSettingsStore
+
+log = structlog.get_logger()
 
 router = APIRouter()
 
@@ -117,6 +121,19 @@ class LocalModelInfo(BaseModel):
     # installed and the estimate for what isn't).
     disk_gb: float | None
     note: str
+    # The model's catalog default context window — the gateway's `-c` absent an
+    # override, and the ceiling the drawer caps the size picker at.
+    context_window: int
+    # The operator's per-model override (tokens), or null to use the default. Drives
+    # the size picker's current value; editable only while the model is idle.
+    context_window_override: int | None
+    # Whether the operator has STAGED this model (intent to keep it served/warm) —
+    # the middle state of the stage→load→unload lifecycle.
+    staged: bool
+    # Estimated KV-cache size (GB) at the EFFECTIVE window (override or default) —
+    # the context portion of the model's memory-bar segment. An estimate, not a
+    # measurement (see local_catalog.kv_gb_per_128k).
+    kv_gb: float
 
 
 class LoadedModelsOut(BaseModel):
@@ -200,6 +217,8 @@ async def _snapshot(
     gateway: LocalGatewayClient,
 ) -> LlmSettingsOut:
     overrides = await store.llm_task_overrides(ctx)
+    windows = await store.llm_local_context_windows(ctx)
+    staged = set(await store.llm_local_staged(ctx))
     loaded = await _loaded_ids(settings, gateway)
     return LlmSettingsOut(
         providers=[
@@ -216,7 +235,8 @@ async def _snapshot(
         tasks=[_effective(settings, task, overrides) for task in TASK_DEFAULTS],
         local_hosting_enabled=settings.local_llm_enabled,
         local_models=[
-            _local_model_info(settings, m, m.id in loaded) for m in local_catalog.CATALOG
+            _local_model_info(settings, m, m.id in loaded, windows, m.id in staged)
+            for m in local_catalog.CATALOG
         ],
         host_memory=_host_memory(settings),
     )
@@ -243,9 +263,16 @@ def _host_memory(settings: Settings) -> HostMemory | None:
 
 
 def _local_model_info(
-    settings: Settings, m: local_catalog.LocalModel, loaded: bool
+    settings: Settings,
+    m: local_catalog.LocalModel,
+    loaded: bool,
+    windows: dict[str, int],
+    staged: bool,
 ) -> LocalModelInfo:
     enabled = settings.local_llm_enabled and m.id in settings.local_models
+    override = windows.get(m.id)
+    effective_window = override if override is not None else m.context_window
+    kv_gb = round(m.kv_gb_per_128k * effective_window / 131072, 2)
     return LocalModelInfo(
         id=m.id,
         label=m.label,
@@ -258,7 +285,53 @@ def _local_model_info(
         size_gb=m.size_gb,
         disk_gb=_disk_gb(settings, m.id),
         note=m.note,
+        context_window=m.context_window,
+        context_window_override=override,
+        staged=staged,
+        kv_gb=kv_gb,
     )
+
+
+def _require_provisioned(settings: Settings, model_id: str) -> local_catalog.LocalModel:
+    """The catalog model for `model_id`, or raise: 409 when hosting is off, 404 when
+    the id isn't a provisioned catalog model. The gate for every per-model action."""
+    if not settings.local_llm_enabled:
+        raise HTTPException(status_code=409, detail="local hosting is not enabled")
+    model = local_catalog.get(model_id)
+    if model is None or model_id not in settings.local_models:
+        raise HTTPException(status_code=404, detail=f"unknown or unprovisioned model: {model_id}")
+    return model
+
+
+def _try_regenerate(settings: Settings, windows: dict[str, int]) -> None:
+    """Re-stamp llama-swap.yaml with the current per-model windows so the gateway
+    (run with --watch-config) reloads each model at its configured `-c`. Best-effort:
+    the override is already persisted (so the meter is correct), and the weights dir
+    may not be writable/complete in every deploy — a regen failure only delays the
+    gateway catching up, it must never fail the operator's edit."""
+    try:
+        manifest = [asdict(m) for m in local_catalog.selected(settings.local_models)]
+        llama_swap_config.write(
+            settings.local_models_dir,
+            manifest,
+            windows=windows,
+            resident_group=settings.local_llm_resident_group,
+        )
+    except Exception as exc:  # noqa: BLE001 — best-effort; the override is saved either way
+        log.warning("llm_settings.gateway_config_regen_failed", error=str(exc))
+
+
+async def _unload_if_loaded(
+    settings: Settings, gateway: LocalGatewayClient, model: local_catalog.LocalModel
+) -> None:
+    """Evict `model` if resident so its next request reloads at the new `-c` (a
+    running llama-server can't resize its KV cache live). Best-effort: a gateway
+    that's down just means the stale process lingers until it's next swapped."""
+    try:
+        if model.served_model in await gateway.running():
+            await gateway.unload(model.served_model)
+    except LocalGatewayError as exc:
+        log.warning("llm_settings.reload_unload_failed", model=model.id, error=str(exc))
 
 
 @router.get("/settings/llm")
@@ -281,17 +354,102 @@ async def unload_local_model(
     """Evict one resident model from the gateway's memory. 404 for a model that
     isn't a provisioned catalog id; 409 when hosting is off; 502 if the gateway
     rejects or can't be reached."""
-    if not settings.local_llm_enabled:
-        raise HTTPException(status_code=409, detail="local hosting is not enabled")
-    model = local_catalog.get(model_id)
-    if model is None or model_id not in settings.local_models:
-        raise HTTPException(status_code=404, detail=f"unknown or unprovisioned model: {model_id}")
+    model = _require_provisioned(settings, model_id)
     try:
         await gateway.unload(model.served_model)
     except LocalGatewayError as exc:
         raise HTTPException(status_code=502, detail=f"gateway unload failed: {exc}") from exc
     loaded = await _loaded_ids(settings, gateway)
     return LoadedModelsOut(loaded=sorted(loaded), reachable=True)
+
+
+@router.post("/settings/llm/local-models/{model_id}/load")
+async def load_local_model(
+    model_id: str,
+    principal: PrincipalDep,
+    settings: SettingsDep,
+    gateway: LocalGatewayDep,
+) -> LoadedModelsOut:
+    """Make the gateway load one model into memory (a warm-up probe — llama-swap
+    loads on first request). 404 for an unprovisioned id; 409 when hosting is off;
+    502 if the gateway rejects or can't be reached."""
+    model = _require_provisioned(settings, model_id)
+    try:
+        await gateway.load(model.served_model)
+    except LocalGatewayError as exc:
+        raise HTTPException(status_code=502, detail=f"gateway load failed: {exc}") from exc
+    loaded = await _loaded_ids(settings, gateway)
+    return LoadedModelsOut(loaded=sorted(loaded), reachable=True)
+
+
+class ContextWindowIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    # null clears the override (revert to the catalog default); else 1..catalog-max.
+    context_window: int | None = None
+
+
+@router.put("/settings/llm/local-models/{model_id}/context-window")
+async def set_local_context_window(
+    model_id: str,
+    body: ContextWindowIn,
+    principal: PrincipalDep,
+    settings: SettingsDep,
+    store: SettingsStoreDep,
+    gateway: LocalGatewayDep,
+) -> LlmSettingsOut:
+    """Set (or clear, with null) one model's context window. 409 when hosting is
+    off; 404 for an unprovisioned id; 422 for a window outside 1..catalog-max.
+    Persists the override (so the meter updates at once), re-stamps the gateway
+    config, and unloads the model if resident so its next request reloads at the
+    new `-c` — a running process can't resize its KV cache live."""
+    model = _require_provisioned(settings, model_id)
+    if body.context_window is not None and not (1 <= body.context_window <= model.context_window):
+        raise HTTPException(
+            status_code=422, detail=f"context window must be 1..{model.context_window}"
+        )
+    ctx = ctx_for(principal)
+    windows = await store.set_llm_local_context_window(
+        ctx, model_id=model_id, window=body.context_window
+    )
+    _try_regenerate(settings, windows)
+    await _unload_if_loaded(settings, gateway, model)
+    return await _snapshot(settings, store, ctx, gateway)
+
+
+@router.post("/settings/llm/local-models/{model_id}/stage")
+async def stage_local_model(
+    model_id: str,
+    principal: PrincipalDep,
+    settings: SettingsDep,
+    store: SettingsStoreDep,
+    gateway: LocalGatewayDep,
+) -> LlmSettingsOut:
+    """Mark a model staged (intent to keep it served/warm). 404/409 as above. Pure
+    settings write — no gateway action, so it can't fail on an unreachable gateway."""
+    _require_provisioned(settings, model_id)
+    ctx = ctx_for(principal)
+    staged = await store.llm_local_staged(ctx)
+    if model_id not in staged:
+        staged.append(model_id)
+        await store.set_llm_local_staged(ctx, staged)
+    return await _snapshot(settings, store, ctx, gateway)
+
+
+@router.delete("/settings/llm/local-models/{model_id}/stage")
+async def unstage_local_model(
+    model_id: str,
+    principal: PrincipalDep,
+    settings: SettingsDep,
+    store: SettingsStoreDep,
+    gateway: LocalGatewayDep,
+) -> LlmSettingsOut:
+    """Clear a model's staged flag. 404/409 as above."""
+    _require_provisioned(settings, model_id)
+    ctx = ctx_for(principal)
+    staged = [s for s in await store.llm_local_staged(ctx) if s != model_id]
+    await store.set_llm_local_staged(ctx, staged)
+    return await _snapshot(settings, store, ctx, gateway)
 
 
 @router.put("/settings/llm")

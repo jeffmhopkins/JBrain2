@@ -1,7 +1,27 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { LlmSettings } from "../api/client";
+import type { LlmSettings, LocalModelInfo } from "../api/client";
 import { LLMSettingsScreen } from "./LLMSettingsScreen";
+
+// Build a LocalModelInfo with sensible defaults; tests override what they assert on.
+function lm(over: Partial<LocalModelInfo> & Pick<LocalModelInfo, "id" | "label">): LocalModelInfo {
+  return {
+    enabled: false,
+    loaded: false,
+    supports_vision: false,
+    supports_tools: true,
+    tiers: [],
+    quant: "Q8_0",
+    size_gb: 0,
+    disk_gb: null,
+    note: "",
+    context_window: 32768,
+    context_window_override: null,
+    staged: false,
+    kv_gb: 0,
+    ...over,
+  };
+}
 
 function initialSettings(): LlmSettings {
   return {
@@ -41,19 +61,13 @@ function initialSettings(): LlmSettings {
     ],
     local_hosting_enabled: false,
     local_models: [
-      {
+      lm({
         id: "qwen3-vl-30b",
         label: "Qwen3-VL 30B",
-        enabled: false,
-        loaded: false,
         supports_vision: true,
-        supports_tools: true,
         tiers: ["vision", "low"],
-        quant: "Q8_0",
         size_gb: 32,
-        disk_gb: null,
-        note: "",
-      },
+      }),
     ],
     host_memory: null,
   };
@@ -247,34 +261,25 @@ describe("LLMSettingsScreen", () => {
     const s = initialSettings();
     s.local_hosting_enabled = true;
     s.local_models = [
-      {
+      lm({
         id: "qwen3-vl-30b",
         label: "Qwen3-VL 30B",
         enabled: true,
-        loaded: false,
         supports_vision: true,
-        supports_tools: true,
         tiers: ["vision", "low"],
-        quant: "Q8_0",
         size_gb: 32,
         // Provisioned here: a real measured footprint that differs from the estimate.
         disk_gb: 31.7,
-        note: "",
-      },
-      {
+      }),
+      lm({
         id: "gpt-oss-120b",
         label: "GPT-OSS 120B",
         enabled: true,
-        loaded: false,
-        supports_vision: false,
-        supports_tools: true,
         tiers: ["high"],
         quant: "MXFP4",
         size_gb: 59,
         // Enabled but weights not yet on disk → falls back to the flagged estimate.
-        disk_gb: null,
-        note: "",
-      },
+      }),
     ];
     vi.stubGlobal(
       "fetch",
@@ -310,32 +315,23 @@ describe("LLMSettingsScreen", () => {
     const s = initialSettings();
     s.local_hosting_enabled = true;
     s.local_models = [
-      {
+      lm({
         id: "qwen3-vl-30b",
         label: "Qwen3-VL 30B",
         enabled: true,
-        loaded: false,
         supports_vision: true,
-        supports_tools: true,
         tiers: ["vision", "low"],
-        quant: "Q8_0",
         size_gb: 32,
         disk_gb: 31.7,
-        note: "",
-      },
-      {
+      }),
+      lm({
         id: "gpt-oss-120b",
         label: "GPT-OSS 120B",
         enabled: false,
-        loaded: false,
-        supports_vision: false,
-        supports_tools: true,
         tiers: ["high"],
         quant: "MXFP4",
         size_gb: 59,
-        disk_gb: null,
-        note: "",
-      },
+      }),
     ];
     vi.stubGlobal(
       "fetch",
@@ -364,19 +360,17 @@ describe("LLMSettingsScreen", () => {
     s.local_hosting_enabled = true;
     s.host_memory = { total_gb: 128, used_gb: 92 };
     s.local_models = [
-      {
+      lm({
         id: "qwen3-vl-30b",
         label: "Qwen3-VL 30B",
         enabled: true,
         loaded: true,
         supports_vision: true,
-        supports_tools: true,
         tiers: ["vision", "low"],
-        quant: "Q8_0",
         size_gb: 32,
         disk_gb: 32,
-        note: "",
-      },
+        kv_gb: 2,
+      }),
     ];
     const calls: string[] = [];
     vi.stubGlobal(
@@ -404,14 +398,14 @@ describe("LLMSettingsScreen", () => {
     render(<LLMSettingsScreen />);
 
     const toggle = await screen.findByRole("button", { name: /Local models/i });
-    // Summary surfaces runtime state alongside config state.
-    expect(toggle).toHaveTextContent("1 loaded · 32 GB");
+    // Summary surfaces runtime state with the resident footprint (weights + KV).
+    expect(toggle).toHaveTextContent("1 loaded · 34 GB");
     fireEvent.click(toggle);
 
     // The resident model reads "loaded" and offers an Unload button.
     expect(await screen.findByText("loaded")).toBeInTheDocument();
-    // The live memory meter shows used/total.
-    expect(screen.getByText("92 GB used")).toBeInTheDocument();
+    // The memory map sums the resident model's footprint (32 weights + 2 KV).
+    expect(screen.getByText("34 GB used")).toBeInTheDocument();
     expect(screen.getByText("128 GB total")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Unload" }));
 
@@ -419,6 +413,138 @@ describe("LLMSettingsScreen", () => {
     // After unload it flips to idle and the button is gone.
     expect(await screen.findByText("idle")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Unload" })).not.toBeInTheDocument();
+  });
+
+  it("stages then loads a model through the lifecycle", async () => {
+    const s = initialSettings();
+    s.local_hosting_enabled = true;
+    s.host_memory = { total_gb: 128, used_gb: 0 };
+    s.local_models = [
+      lm({
+        id: "qwen3-vl-30b",
+        label: "Qwen3-VL 30B",
+        enabled: true,
+        size_gb: 32,
+        disk_gb: 32,
+        kv_gb: 1,
+      }),
+    ];
+    const calls: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>(async (input, init) => {
+        const path = String(input);
+        const method = (init?.method ?? "GET").toUpperCase();
+        if (path === "/api/settings/llm" && method === "GET")
+          return new Response(JSON.stringify(s), { status: 200 });
+        if (path.endsWith("/stage") && method === "POST") {
+          calls.push(`stage ${path}`);
+          const m0 = s.local_models[0];
+          if (m0) m0.staged = true;
+          return new Response(JSON.stringify(s), { status: 200 });
+        }
+        if (path.endsWith("/load") && method === "POST") {
+          calls.push(`load ${path}`);
+          const m0 = s.local_models[0];
+          if (m0) {
+            m0.loaded = true;
+            m0.staged = false;
+          }
+          return new Response(JSON.stringify({ loaded: ["qwen3-vl-30b"], reachable: true }), {
+            status: 200,
+          });
+        }
+        throw new Error(`unexpected fetch: ${method} ${path}`);
+      }),
+    );
+    render(<LLMSettingsScreen />);
+    fireEvent.click(await screen.findByRole("button", { name: /Local models/i }));
+
+    // Idle → Stage.
+    expect(await screen.findByText("idle")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Stage" }));
+    // Staged → a Load button appears.
+    expect(await screen.findByText("staged")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Load" }));
+    // Loaded → reads loaded, offers Unload.
+    expect(await screen.findByText("loaded")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Unload" })).toBeInTheDocument();
+    expect(calls.some((c) => c.includes("stage"))).toBe(true);
+    expect(calls.some((c) => c.includes("load"))).toBe(true);
+  });
+
+  it("edits an idle model's context window via the dropdown", async () => {
+    const s = initialSettings();
+    s.local_hosting_enabled = true;
+    s.host_memory = { total_gb: 128, used_gb: 0 };
+    s.local_models = [
+      lm({
+        id: "gpt-oss-120b",
+        label: "GPT-OSS 120B",
+        enabled: true,
+        tiers: ["high"],
+        quant: "MXFP4",
+        size_gb: 59,
+        disk_gb: 59,
+        context_window: 131072,
+        kv_gb: 4.5,
+      }),
+    ];
+    let putBody: { context_window: number | null } | null = null;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>(async (input, init) => {
+        const path = String(input);
+        const method = (init?.method ?? "GET").toUpperCase();
+        if (path === "/api/settings/llm" && method === "GET")
+          return new Response(JSON.stringify(s), { status: 200 });
+        if (path.endsWith("/context-window") && method === "PUT") {
+          putBody = JSON.parse(String(init?.body));
+          const m0 = s.local_models[0];
+          if (m0) m0.context_window_override = putBody?.context_window ?? null;
+          return new Response(JSON.stringify(s), { status: 200 });
+        }
+        throw new Error(`unexpected fetch: ${method} ${path}`);
+      }),
+    );
+    render(<LLMSettingsScreen />);
+    fireEvent.click(await screen.findByRole("button", { name: /Local models/i }));
+
+    const select = (await screen.findByLabelText("context window")) as HTMLSelectElement;
+    // Defaults to the catalog window (128k) and offers the capped choices.
+    expect(select.value).toBe("131072");
+    fireEvent.change(select, { target: { value: "65536" } });
+    await waitFor(() => expect(putBody).toEqual({ context_window: 65536 }));
+  });
+
+  it("locks the context window while a model is loaded", async () => {
+    const s = initialSettings();
+    s.local_hosting_enabled = true;
+    s.host_memory = { total_gb: 128, used_gb: 0 };
+    s.local_models = [
+      lm({
+        id: "gpt-oss-120b",
+        label: "GPT-OSS 120B",
+        enabled: true,
+        loaded: true,
+        tiers: ["high"],
+        quant: "MXFP4",
+        size_gb: 59,
+        disk_gb: 59,
+        context_window: 131072,
+        kv_gb: 4.5,
+      }),
+    ];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>(async () => new Response(JSON.stringify(s), { status: 200 })),
+    );
+    render(<LLMSettingsScreen />);
+    fireEvent.click(await screen.findByRole("button", { name: /Local models/i }));
+
+    const select = (await screen.findByLabelText("context window")) as HTMLSelectElement;
+    expect(select.disabled).toBe(true);
+    expect(screen.getByText(/unload to change/)).toBeInTheDocument();
   });
 
   it("points at the CLI when local hosting is off", async () => {

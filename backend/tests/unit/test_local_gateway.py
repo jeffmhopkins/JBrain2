@@ -54,6 +54,23 @@ async def test_unload_raises_on_gateway_failure() -> None:
         await _client(lambda r: httpx.Response(500)).unload("a")
 
 
+async def test_load_probes_the_upstream_health_path() -> None:
+    seen: list[tuple[str, str]] = []
+
+    def handle(req: httpx.Request) -> httpx.Response:
+        seen.append((req.method, req.url.path))
+        return httpx.Response(200)
+
+    await _client(handle).load("qwen3-vl-30b-a3b")
+    # A GET to the upstream proxy makes llama-swap load the model (no completion).
+    assert seen == [("GET", "/upstream/qwen3-vl-30b-a3b/health")]
+
+
+async def test_load_raises_on_gateway_failure() -> None:
+    with pytest.raises(LocalGatewayError):
+        await _client(lambda r: httpx.Response(503)).load("a")
+
+
 def test_parse_running_tolerates_messy_shapes() -> None:
     assert _parse_running({"models": ["x", {"id": "y"}, {"name": "z"}, 5, {}]}) == {"x", "y", "z"}
     assert _parse_running("garbage") == set()

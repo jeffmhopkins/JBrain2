@@ -432,3 +432,143 @@ def test_unload_requires_auth() -> None:
         app.state.auth_repo = FakeAuthRepo()
         app.state.local_gateway = FakeLocalGateway()
         assert anon.post("/api/settings/llm/local-models/qwen3-vl-30b/unload").status_code == 401
+
+
+def test_drawer_reports_context_window_and_staged_fields() -> None:
+    # Defaults: each model reports its catalog window, no override, not staged.
+    c, _ = _authed_client(_local_settings())
+    by_id = {m["id"]: m for m in c.get("/api/settings/llm").json()["local_models"]}
+    assert by_id["gpt-oss-120b"]["context_window"] == 131072  # the model's native window
+    assert by_id["qwen3-vl-30b"]["context_window"] == 32768  # catalog default
+    assert all(m["context_window_override"] is None for m in by_id.values())
+    assert all(m["staged"] is False for m in by_id.values())
+
+
+def test_set_context_window_round_trips_override() -> None:
+    c, store = _authed_client(_local_settings())
+    resp = c.put(
+        "/api/settings/llm/local-models/gpt-oss-120b/context-window",
+        json={"context_window": 65536},
+    )
+    assert resp.status_code == 200, resp.text
+    by_id = {m["id"]: m for m in resp.json()["local_models"]}
+    assert by_id["gpt-oss-120b"]["context_window_override"] == 65536
+    assert by_id["gpt-oss-120b"]["context_window"] == 131072  # the max is unchanged
+    assert store.values["llm_local_context_windows"] == {"gpt-oss-120b": 65536}
+    # Clearing with null reverts to the catalog default.
+    resp = c.put(
+        "/api/settings/llm/local-models/gpt-oss-120b/context-window",
+        json={"context_window": None},
+    )
+    assert resp.status_code == 200
+    by_id = {m["id"]: m for m in resp.json()["local_models"]}
+    assert by_id["gpt-oss-120b"]["context_window_override"] is None
+    assert store.values["llm_local_context_windows"] == {}
+
+
+def test_set_context_window_rejects_a_window_over_the_models_max() -> None:
+    c, store = _authed_client(_local_settings())
+    # gpt-oss native max is 131072.
+    assert (
+        c.put(
+            "/api/settings/llm/local-models/gpt-oss-120b/context-window",
+            json={"context_window": 262144},
+        ).status_code
+        == 422
+    )
+    # qwen's catalog window is 32768 — 64k exceeds it.
+    assert (
+        c.put(
+            "/api/settings/llm/local-models/qwen3-vl-30b/context-window",
+            json={"context_window": 65536},
+        ).status_code
+        == 422
+    )
+    # Zero/negative are rejected too.
+    assert (
+        c.put(
+            "/api/settings/llm/local-models/gpt-oss-120b/context-window",
+            json={"context_window": 0},
+        ).status_code
+        == 422
+    )
+    assert "llm_local_context_windows" not in store.values  # nothing leaked
+
+
+def test_set_context_window_404_and_409() -> None:
+    c, _ = _authed_client(_local_settings())
+    assert (
+        c.put(
+            "/api/settings/llm/local-models/nope/context-window",
+            json={"context_window": 16384},
+        ).status_code
+        == 404
+    )
+    # hosting off → 409
+    c2, _ = _authed_client(_cloud_settings())
+    assert (
+        c2.put(
+            "/api/settings/llm/local-models/gpt-oss-120b/context-window",
+            json={"context_window": 16384},
+        ).status_code
+        == 409
+    )
+
+
+def test_set_context_window_unloads_a_resident_model() -> None:
+    # A new -c only applies on reload, so editing a loaded model's window evicts it
+    # (its next request reloads at the new size).
+    gw = FakeLocalGateway(running={"gpt-oss-120b"})
+    c, _ = _authed_client(_local_settings(), gw)
+    resp = c.put(
+        "/api/settings/llm/local-models/gpt-oss-120b/context-window",
+        json={"context_window": 65536},
+    )
+    assert resp.status_code == 200
+    assert gw.unloaded == ["gpt-oss-120b"]  # evicted so it reloads at 64k
+
+
+def test_stage_and_unstage_toggle_the_flag() -> None:
+    c, store = _authed_client(_local_settings())
+    resp = c.post("/api/settings/llm/local-models/qwen3-vl-30b/stage")
+    assert resp.status_code == 200, resp.text
+    by_id = {m["id"]: m for m in resp.json()["local_models"]}
+    assert by_id["qwen3-vl-30b"]["staged"] is True
+    assert by_id["gpt-oss-120b"]["staged"] is False
+    assert store.values["llm_local_staged"] == ["qwen3-vl-30b"]
+    # Staging again is idempotent (no duplicate).
+    c.post("/api/settings/llm/local-models/qwen3-vl-30b/stage")
+    assert store.values["llm_local_staged"] == ["qwen3-vl-30b"]
+    # Unstage clears it.
+    resp = c.delete("/api/settings/llm/local-models/qwen3-vl-30b/stage")
+    assert {m["id"]: m for m in resp.json()["local_models"]}["qwen3-vl-30b"]["staged"] is False
+    assert store.values["llm_local_staged"] == []
+
+
+def test_stage_404_and_409() -> None:
+    c, _ = _authed_client(_local_settings())
+    assert c.post("/api/settings/llm/local-models/nope/stage").status_code == 404
+    c2, _ = _authed_client(_cloud_settings())
+    assert c2.post("/api/settings/llm/local-models/gpt-oss-120b/stage").status_code == 409
+
+
+def test_load_makes_the_model_resident() -> None:
+    gw = FakeLocalGateway()
+    c, _ = _authed_client(_local_settings(), gw)
+    resp = c.post("/api/settings/llm/local-models/qwen3-vl-30b/load")
+    assert resp.status_code == 200, resp.text
+    assert gw.loaded == ["qwen3-vl-30b-a3b"]  # called with the served_model
+    assert resp.json()["loaded"] == ["qwen3-vl-30b"]
+
+
+def test_load_surfaces_a_gateway_failure_as_502() -> None:
+    gw = FakeLocalGateway(fail_load=True)
+    c, _ = _authed_client(_local_settings(), gw)
+    assert c.post("/api/settings/llm/local-models/qwen3-vl-30b/load").status_code == 502
+
+
+def test_load_404_and_409() -> None:
+    c, _ = _authed_client(_local_settings())
+    assert c.post("/api/settings/llm/local-models/nope/load").status_code == 404
+    c2, _ = _authed_client(_cloud_settings())
+    assert c2.post("/api/settings/llm/local-models/gpt-oss-120b/load").status_code == 409

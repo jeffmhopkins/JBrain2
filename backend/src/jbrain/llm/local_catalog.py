@@ -58,6 +58,11 @@ class LocalModel:
     # The single source of truth: scripts/local-llm-setup.sh stamps this into the
     # llama-swap config, and the router reports it to the PWA's context-usage meter.
     context_window: int = 32768
+    # Rough KV-cache size (GB) at the model's full 131072-token window — an ESTIMATE
+    # (not a measurement) the settings drawer's memory bar uses to size the context
+    # portion of each model's segment, scaled linearly by the configured window.
+    # gpt-oss is low (alternating sliding-window attention); dense models are higher.
+    kv_gb_per_128k: float = 0.0
 
     @property
     def spec(self) -> str:
@@ -80,6 +85,7 @@ CATALOG: tuple[LocalModel, ...] = (
         quant="Q8_0",
         size_gb=32.0,
         note="Vision + a capable cheap text model; Q8 preserves OCR fidelity.",
+        kv_gb_per_128k=6.0,
     ),
     LocalModel(
         id="gpt-oss-120b",
@@ -96,6 +102,11 @@ CATALOG: tuple[LocalModel, ...] = (
         size_gb=59.0,
         note="Strongest open reasoning that still runs fast here (~31 t/s).",
         supports_reasoning=True,
+        # The model's full native window. Its alternating sliding-window attention
+        # keeps the f16 KV cache modest (~half the layers grow with context), so
+        # 128k fits the box's unified memory beside the MXFP4 weights.
+        context_window=131072,
+        kv_gb_per_128k=4.5,
     ),
     LocalModel(
         id="qwen3-next-80b-a3b",
@@ -112,6 +123,7 @@ CATALOG: tuple[LocalModel, ...] = (
         size_gb=46.1,
         note="80B MoE, 3B active — ~59 t/s, fits resident beside gpt-oss-120b. "
         "Hybrid-attention arch: confirm the gateway's llama.cpp build supports it.",
+        kv_gb_per_128k=5.0,
     ),
     LocalModel(
         id="glm-4.5-air",
@@ -128,6 +140,7 @@ CATALOG: tuple[LocalModel, ...] = (
         size_gb=70.0,
         note="70B-class quality, MoE-fast; alternate high tier.",
         supports_reasoning=True,
+        kv_gb_per_128k=5.0,
     ),
     LocalModel(
         id="qwen3-30b-a3b",
@@ -143,6 +156,7 @@ CATALOG: tuple[LocalModel, ...] = (
         quant="Q4_K_M",
         size_gb=18.0,
         note="Snappy text-only one-shots; swap-in for the low tier.",
+        kv_gb_per_128k=3.2,
     ),
     LocalModel(
         id="llama-3.3-70b",
@@ -158,6 +172,7 @@ CATALOG: tuple[LocalModel, ...] = (
         quant="Q4_K_M",
         size_gb=40.0,
         note="Dense 70B — high quality but only ~5 t/s here; batch use only.",
+        kv_gb_per_128k=8.0,
     ),
 )
 
@@ -187,6 +202,14 @@ def context_window(served_model: str) -> int:
     when known, else the gateway's default. Drives the PWA's context-usage meter."""
     model = _BY_SERVED.get(served_model)
     return model.context_window if model else DEFAULT_LOCAL_CONTEXT_WINDOW
+
+
+def id_for_served(served_model: str) -> str | None:
+    """Catalog id for a served-model name (the gateway loads/reports served names,
+    but per-model settings — overrides, staging — key off the catalog id), or None
+    for a served name outside the catalog."""
+    model = _BY_SERVED.get(served_model)
+    return model.id if model else None
 
 
 def recommended_ids() -> tuple[str, ...]:

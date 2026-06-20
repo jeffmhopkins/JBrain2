@@ -56,6 +56,19 @@ VALUE_SHAPE_ENFORCE_DEFAULT = True
 LLM_TASK_OVERRIDES_KEY = "llm_task_overrides"
 _VALID_REASONING_EFFORTS = ("none", "low", "medium", "high")
 
+# Per-model context window (tokens) the operator has overridden for a local catalog
+# model, keyed by catalog id. An absent id uses the catalog default
+# (local_catalog.LocalModel.context_window). DB-backed and read live so the meter
+# and the regenerated llama-swap `-c` track without a redeploy. Defensive on read:
+# a non-int / non-positive / bool value is dropped — a junk value must never read
+# as a window.
+LLM_LOCAL_CONTEXT_WINDOWS_KEY = "llm_local_context_windows"
+# Catalog ids the operator has STAGED — the intent layer of the stage→load→unload
+# lifecycle: a model the operator wants the gateway to serve (and that the bar
+# projects RAM for) but that isn't necessarily resident yet. A list of catalog ids;
+# non-string and duplicate entries are dropped on read (order preserved).
+LLM_LOCAL_STAGED_KEY = "llm_local_staged"
+
 # The owner's IANA display timezone (e.g. "America/New_York"). Absent = UTC.
 # Server-rendered times — the agent's appointment prose — localize to it so they
 # agree with the cards the client localizes to the browser zone; the frontend
@@ -368,4 +381,63 @@ class SqlSettingsStore:
                 sane["reasoning_effort"] = effort
             if sane:
                 clean[task] = sane
+        return clean
+
+    async def llm_local_context_windows(self, ctx: SessionContext) -> dict[str, int]:
+        """Per-model context-window overrides, keyed by catalog id, sanitized.
+
+        Defensive on read — this feeds both the context meter and the regenerated
+        gateway `-c`, so a non-dict store, or any entry whose value isn't a positive
+        int (bool excluded), is dropped rather than trusted as a window."""
+        raw = await self.get(ctx, LLM_LOCAL_CONTEXT_WINDOWS_KEY, {})
+        if not isinstance(raw, dict):
+            return {}
+        clean: dict[str, int] = {}
+        for mid, win in raw.items():
+            if (
+                isinstance(mid, str)
+                and isinstance(win, int)
+                and not isinstance(win, bool)
+                and win > 0
+            ):
+                clean[mid] = win
+        return clean
+
+    async def set_llm_local_context_window(
+        self, ctx: SessionContext, *, model_id: str, window: int | None
+    ) -> dict[str, int]:
+        """Set (window is a positive int) or clear (window is None) one model's
+        override; returns the sanitized map. Read-modify-write on the single row.
+        Bounds/validity are the API's job — the store stays a dumb sanitizer."""
+        current = await self.llm_local_context_windows(ctx)
+        if window is None:
+            current.pop(model_id, None)
+        else:
+            current[model_id] = window
+        await self.upsert(ctx, LLM_LOCAL_CONTEXT_WINDOWS_KEY, current)
+        return current
+
+    async def llm_local_staged(self, ctx: SessionContext) -> list[str]:
+        """Catalog ids the operator has staged, sanitized: a non-list store, or
+        non-string / duplicate entries, are dropped (first-seen order preserved)."""
+        raw = await self.get(ctx, LLM_LOCAL_STAGED_KEY, [])
+        if not isinstance(raw, list):
+            return []
+        seen: set[str] = set()
+        out: list[str] = []
+        for mid in raw:
+            if isinstance(mid, str) and mid not in seen:
+                seen.add(mid)
+                out.append(mid)
+        return out
+
+    async def set_llm_local_staged(self, ctx: SessionContext, ids: list[str]) -> list[str]:
+        """Replace the staged set with `ids` (sanitized like the reader); returns it."""
+        seen: set[str] = set()
+        clean: list[str] = []
+        for mid in ids:
+            if isinstance(mid, str) and mid not in seen:
+                seen.add(mid)
+                clean.append(mid)
+        await self.upsert(ctx, LLM_LOCAL_STAGED_KEY, clean)
         return clean

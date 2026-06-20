@@ -294,6 +294,15 @@ export interface LocalModelInfo {
   /** Real measured weights size on disk, or null when the model isn't provisioned. */
   disk_gb: number | null;
   note: string;
+  /** The model's catalog default context window — the gateway's `-c` absent an
+   * override, and the ceiling the size picker caps at. */
+  context_window: number;
+  /** The operator's per-model override (tokens), or null to use the default. */
+  context_window_override: number | null;
+  /** Whether the operator has staged this model (the middle lifecycle state). */
+  staged: boolean;
+  /** Estimated KV-cache GB at the effective window — the context portion of the bar. */
+  kv_gb: number;
 }
 
 /** Result of an unload: the catalog ids still resident, and whether the gateway answered. */
@@ -1170,6 +1179,33 @@ export const api = {
       { method: "POST" },
     );
     return (await response.json()) as LoadedLocalModels;
+  },
+
+  /** Warm one local model into memory; returns what's resident after. */
+  async loadLocalModel(id: string): Promise<LoadedLocalModels> {
+    const response = await request(
+      `/api/settings/llm/local-models/${encodeURIComponent(id)}/load`,
+      { method: "POST" },
+    );
+    return (await response.json()) as LoadedLocalModels;
+  },
+
+  /** Set (or clear, with null) one model's context window; returns the full snapshot. */
+  async setLocalContextWindow(id: string, window: number | null): Promise<LlmSettings> {
+    const response = await request(
+      `/api/settings/llm/local-models/${encodeURIComponent(id)}/context-window`,
+      jsonInit("PUT", { context_window: window }),
+    );
+    return (await response.json()) as LlmSettings;
+  },
+
+  /** Stage / unstage one model (intent to keep it served); returns the full snapshot. */
+  async stageLocalModel(id: string, on: boolean): Promise<LlmSettings> {
+    const response = await request(
+      `/api/settings/llm/local-models/${encodeURIComponent(id)}/stage`,
+      { method: on ? "POST" : "DELETE" },
+    );
+    return (await response.json()) as LlmSettings;
   },
 
   // ----- Appointments ICS feed (a revocable, read-only subscribe URL) -----

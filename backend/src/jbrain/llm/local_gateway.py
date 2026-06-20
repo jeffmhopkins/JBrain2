@@ -5,6 +5,10 @@ speaks llama-swap's admin HTTP API to report and control which models are
 resident in memory:
   - GET  /running                      → models currently loaded
   - POST /api/models/unload/{model}    → unload one model
+  - GET  /upstream/{model}/health      → proxy a request, which makes the gateway
+                                         load the model (llama-swap has no explicit
+                                         load endpoint; loading is request-driven,
+                                         so a cheap health probe is the warm-up)
 
 Best-effort by design. The settings screen must render even when the gateway is
 down, still cold, or too old to expose these endpoints, so `running()` swallows
@@ -24,7 +28,7 @@ log = structlog.get_logger()
 
 
 class LocalGatewayError(Exception):
-    """An unload call the gateway rejected or couldn't be reached for."""
+    """A load/unload call the gateway rejected or couldn't be reached for."""
 
 
 class LocalGatewayClient:
@@ -60,6 +64,20 @@ class LocalGatewayClient:
                 timeout=self._timeout, transport=self._transport
             ) as client:
                 resp = await client.post(f"{self._root}/api/models/unload/{served_model}")
+                resp.raise_for_status()
+        except httpx.HTTPError as exc:
+            raise LocalGatewayError(str(exc)) from exc
+
+    async def load(self, served_model: str) -> None:
+        """Make the gateway load `served_model` into memory by proxying a cheap
+        health probe to its upstream (llama-swap loads a model on first request).
+        Raises LocalGatewayError on any failure. Uses a generous timeout because a
+        cold load reads tens of GB of weights before the probe returns."""
+        try:
+            async with httpx.AsyncClient(
+                timeout=max(self._timeout, 120.0), transport=self._transport
+            ) as client:
+                resp = await client.get(f"{self._root}/upstream/{served_model}/health")
                 resp.raise_for_status()
         except httpx.HTTPError as exc:
             raise LocalGatewayError(str(exc)) from exc
