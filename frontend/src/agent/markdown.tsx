@@ -20,6 +20,7 @@
 import katex from "katex";
 import "katex/dist/katex.min.css";
 import { type ReactNode, useMemo } from "react";
+import { PlaceIcon } from "../components/icons";
 import { DOMAIN_COLOR } from "../notes/modes";
 
 const MONTHS =
@@ -123,6 +124,98 @@ function withTemporal(text: string, key: string): ReactNode[] {
     last = at + m[0].length;
   }
   if (last < text.length) out.push(text.slice(last));
+  return out;
+}
+
+// A place worth a map pin: a US postal address or a raw GPS pair, each rendered
+// with a small place glyph after it that deep-links to Google Maps. The scanner
+// runs ahead of entity/temporal scanning so a multi-word address stays one unit
+// (a city name that is also an entity doesn't fragment it).
+
+// A Google Maps deep link — opens the native app on mobile, the web map elsewhere.
+// The `search` endpoint takes a free-text address or a bare "lat,lng" pair equally.
+const mapsUrl = (query: string): string =>
+  `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}`;
+
+// US states gate address detection to a real locality (a bare "Foo 12345" is not
+// an address). Matched case-sensitively — Titlecase names, uppercase codes — so a
+// lowercase prose word ("in", "or") can't masquerade as a 2-letter code.
+const STATE_NAMES =
+  "Alabama|Alaska|Arizona|Arkansas|California|Colorado|Connecticut|Delaware|Florida|Georgia|Hawaii|Idaho|Illinois|Indiana|Iowa|Kansas|Kentucky|Louisiana|Maine|Maryland|Massachusetts|Michigan|Minnesota|Mississippi|Missouri|Montana|Nebraska|Nevada|New Hampshire|New Jersey|New Mexico|New York|North Carolina|North Dakota|Ohio|Oklahoma|Oregon|Pennsylvania|Rhode Island|South Carolina|South Dakota|Tennessee|Texas|Utah|Vermont|Virginia|Washington|West Virginia|Wisconsin|Wyoming|District of Columbia";
+const STATE_CODES =
+  "AL|AK|AZ|AR|CA|CO|CT|DE|FL|GA|HI|ID|IL|IN|IA|KS|KY|LA|ME|MD|MA|MI|MN|MS|MO|MT|NE|NV|NH|NJ|NM|NY|NC|ND|OH|OK|OR|PA|RI|SC|SD|TN|TX|UT|VT|VA|WA|WV|WI|WY|DC";
+const COUNTRY = "(?:\\s*,\\s*(?:USA|U\\.S\\.A\\.|United States))?";
+// A US postal tail: up to a few comma-separated leads, then State + ZIP (+ZIP4 and
+// country, both optional). A full state name may stand alone, but a 2-letter code
+// must follow a comma (the "City, ST 12345" shape) — that comma is what keeps a
+// stray uppercase word from reading as a code.
+const ADDR_SRC = `(?:(?:[^,\\n]+,\\s*){0,3}(?:${STATE_NAMES})|(?:[^,\\n]+,\\s*){1,3}(?:${STATE_CODES}))\\.?\\s+\\d{5}(?:-\\d{4})?${COUNTRY}`;
+
+// A decimal lat/lng pair. To stay clear of prose number-lists and prices, a plain
+// comma'd pair must carry a minus on one side (40.71, -74.01) and fractional
+// digits on both; an all-positive pair instead needs the N/S + E/W hemisphere form
+// (34.05° N, 118.24° W). Ranges are validated after the match.
+const GPS_SRC =
+  "(?<![\\w.])(?:-\\d{1,2}\\.\\d+\\s*,\\s*[-+]?\\d{1,3}\\.\\d+|[-+]?\\d{1,2}\\.\\d+\\s*,\\s*-\\d{1,3}\\.\\d+|\\d{1,2}(?:\\.\\d+)?\\s*°?\\s*[NSns]\\s*,?\\s*\\d{1,3}(?:\\.\\d+)?\\s*°?\\s*[EWew])(?!\\w)(?!\\.\\d)";
+
+const PLACE = new RegExp(`(?<gps>${GPS_SRC})|(?<addr>${ADDR_SRC})`, "g");
+
+/** A "lat,lng" map query from a matched coordinate run, or null when the numbers
+ * fall outside the lat/lng ranges — so a false positive degrades back to prose. */
+function gpsQuery(raw: string): string | null {
+  const [latMag, lngMag] = raw.match(/\d{1,3}(?:\.\d+)?/g) ?? [];
+  if (latMag === undefined || lngMag === undefined) return null;
+  let lat = Number.parseFloat(latMag);
+  let lng = Number.parseFloat(lngMag);
+  const [latHemi, lngHemi] = raw.match(/[NSEWnsew]/g) ?? [];
+  if (latHemi && lngHemi) {
+    if (/[Ss]/.test(latHemi)) lat = -lat;
+    if (/[Ww]/.test(lngHemi)) lng = -lng;
+  } else {
+    if (/^\s*-/.test(raw)) lat = -lat;
+    if (/,\s*-/.test(raw)) lng = -lng;
+  }
+  if (lat < -90 || lat > 90 || lng < -180 || lng > 180) return null;
+  return `${lat},${lng}`;
+}
+
+/** The map-pin affordance placed just after an address/coordinate — taps through
+ * to Google Maps in a new tab. */
+function PlaceLink({ query }: { query: string }): ReactNode {
+  return (
+    <a
+      className="md-place"
+      href={mapsUrl(query)}
+      target="_blank"
+      rel="noreferrer noopener"
+      aria-label="Open in Google Maps"
+      title="Open in Google Maps"
+    >
+      <PlaceIcon size={13} />
+    </a>
+  );
+}
+
+/** Split a plain run on map-linkable places, appending a pin after each. The
+ * non-place gaps — and each place's own text — still scan for entities and dates,
+ * so a city inside an address keeps its entity link. */
+function scanPlaces(text: string, key: string, ctx: Ctx): ReactNode[] {
+  const out: ReactNode[] = [];
+  let last = 0;
+  let i = 0;
+  for (const m of text.matchAll(PLACE)) {
+    const at = m.index ?? 0;
+    const raw = m[0];
+    const query = m.groups?.gps ? gpsQuery(raw) : raw.replace(/\s+/g, " ").trim();
+    if (!query) continue; // a coordinate that failed range validation — leave as prose
+    if (at > last) out.push(...scanEntities(text.slice(last, at), `${key}-pg${i}`, ctx));
+    out.push(...scanEntities(raw, `${key}-pt${i}`, ctx));
+    out.push(<PlaceLink key={`${key}-pl${i}`} query={query} />);
+    last = at + raw.length;
+    i++;
+  }
+  if (out.length === 0) return scanEntities(text, key, ctx);
+  if (last < text.length) out.push(...scanEntities(text.slice(last), `${key}-pg${i}`, ctx));
   return out;
 }
 
@@ -305,14 +398,14 @@ function scanPlain(text: string, key: string, ctx: Ctx): ReactNode[] {
       const leftOk = at === 0 || /[.!?]['")\]]?\s+$/.test(before) || /\n\s*$/.test(before);
       const rightOk = after === "" || /^['")\]]?\s*[.!?]/.test(after) || /^\s*\n/.test(after);
       if (!flag || !leftOk || !rightOk) continue; // not a clean sentence match — scan as prose
-      if (at > last) out.push(...scanEntities(text.slice(last, at), `${key}-g${i}`, ctx));
+      if (at > last) out.push(...scanPlaces(text.slice(last, at), `${key}-g${i}`, ctx));
       // Mark the flagged TEXT (subtle amber), not just the trailing ⚠ — so the
       // reader sees *which* prose is unverified. The interior still scans for
-      // entity/temporal tokens; the end-of-bubble fallback (below) carries only its
-      // flag, never this highlight.
+      // place/entity/temporal tokens; the end-of-bubble fallback (below) carries
+      // only its flag, never this highlight.
       out.push(
         <span key={`${key}-cm${i}`} className="md-claim">
-          {scanEntities(m[0], `${key}-c${i}`, ctx)}
+          {scanPlaces(m[0], `${key}-c${i}`, ctx)}
         </span>,
       );
       ctx.flags.placed.add(flag.id);
@@ -320,10 +413,10 @@ function scanPlain(text: string, key: string, ctx: Ctx): ReactNode[] {
       i++;
       last = at + m[0].length;
     }
-    if (last < text.length) out.push(...scanEntities(text.slice(last), `${key}-g${i}`, ctx));
+    if (last < text.length) out.push(...scanPlaces(text.slice(last), `${key}-g${i}`, ctx));
     if (out.length) return out;
   }
-  return scanEntities(text, key, ctx);
+  return scanPlaces(text, key, ctx);
 }
 
 /** The entity/temporal half of a plain run — split out so the flag scanner can

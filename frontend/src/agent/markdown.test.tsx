@@ -174,6 +174,65 @@ describe("Markdown", () => {
     expect(onCite).toHaveBeenCalledWith(1);
   });
 
+  it("places a Google Maps pin after a US postal address", () => {
+    const out = html("The farm's address is P.O. Box 2782, Clanton, Alabama 35046, USA today.");
+    const pin = document.querySelector("a.md-place");
+    expect(pin).not.toBeNull();
+    expect(pin?.getAttribute("aria-label")).toBe("Open in Google Maps");
+    const href = pin?.getAttribute("href") ?? "";
+    expect(href.startsWith("https://www.google.com/maps/search/?api=1&query=")).toBe(true);
+    // The whole address (whitespace-collapsed) is the map query.
+    expect(decodeURIComponent(href)).toContain("P.O. Box 2782, Clanton, Alabama 35046, USA");
+    // The address text still reads as prose around the pin, and the pin opens
+    // externally.
+    expect(document.body.textContent).toContain("Clanton, Alabama 35046");
+    expect(pin?.getAttribute("target")).toBe("_blank");
+    expect(pin?.getAttribute("rel")).toBe("noreferrer noopener");
+    expect(out).toContain('class="md-place"');
+  });
+
+  it("places a pin from a bare 'City, ST 12345' code form", () => {
+    const out = html("Mailing: Clanton, AL 35046.");
+    expect(out).toContain('class="md-place"');
+    expect(
+      decodeURIComponent(document.querySelector("a.md-place")?.getAttribute("href") ?? ""),
+    ).toContain("Clanton, AL 35046");
+  });
+
+  it("links a signed decimal GPS pair to its lat,lng query", () => {
+    const out = html("HQ is at 40.7128, -74.0060 near the river.");
+    const pin = document.querySelector("a.md-place");
+    expect(pin).not.toBeNull();
+    const href = decodeURIComponent(pin?.getAttribute("href") ?? "");
+    expect(href).toContain("query=40.7128,-74.006");
+    // The surrounding prose still flows.
+    expect(document.body.textContent).toContain("near the river.");
+    expect(out).toContain("40.7128, -74.0060");
+  });
+
+  it("links a hemisphere GPS pair (N/S, E/W) with correct signs", () => {
+    const href = decodeURIComponent(
+      render(<Markdown text="Site: 34.0522° N, 118.2437° W." />)
+        .container.querySelector("a.md-place")
+        ?.getAttribute("href") ?? "",
+    );
+    // S/W hemispheres become negative; N stays positive.
+    expect(href).toContain("query=34.0522,-118.2437");
+  });
+
+  it("does not pin a plain decimal list, a price pair, or an out-of-range pair", () => {
+    // No minus and no hemisphere — a number list, not a coordinate.
+    expect(html("scores were 5.50, 10.25 overall")).not.toContain("md-place");
+    // Currency stays untouched.
+    expect(html("It costs between $5 and $10 today.")).not.toContain("md-place");
+    // A signed pair whose latitude exceeds 90° is rejected.
+    expect(html("readings of -95.5, 200.4 logged")).not.toContain("md-place");
+  });
+
+  it("does not pin a state name without a ZIP", () => {
+    expect(html("She moved to Alabama last spring.")).not.toContain("md-place");
+  });
+
   it("linkifies an entity label in the prose and opens it on tap", () => {
     const onEntity = vi.fn();
     render(
