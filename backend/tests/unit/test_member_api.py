@@ -13,7 +13,7 @@ from fastapi.testclient import TestClient
 
 from jbrain.auth import keys, service
 from jbrain.config import Settings
-from jbrain.locations import FixPoint, MemberSubject
+from jbrain.locations import FixPoint, MemberSubject, PlaceGeofence, TimelineEntry
 from jbrain.main import create_app
 from tests.unit.fakes import FakeAuthRepo, FakePrincipal
 
@@ -42,6 +42,7 @@ class FakeLocationRepo:
         ]
         self.fix_calls: list[dict] = []
         self.view_calls: list[dict] = []
+        self.timeline_calls: list[dict] = []
 
     async def member_roster(self, ctx, *, viewer_subject_id):  # noqa: ANN001
         self.viewer = viewer_subject_id
@@ -63,6 +64,30 @@ class FakeLocationRepo:
 
     async def record_view(self, ctx, **kwargs):  # noqa: ANN001, ANN003
         self.view_calls.append(kwargs)
+
+    async def member_places(self, ctx):  # noqa: ANN001
+        return [
+            PlaceGeofence(
+                place_entity_id="ent-home",
+                name="Home",
+                enabled=True,
+                center=(40.0, -74.0),
+                radius_m=120.0,
+                polygon=None,
+            )
+        ]
+
+    async def member_timeline(self, ctx, *, viewer_subject_id, since, until, limit):  # noqa: ANN001
+        self.timeline_calls.append({"viewer": viewer_subject_id, "since": since, "until": until})
+        return [
+            TimelineEntry(
+                occurred_at=NOW,
+                subject_id=SUBJECT,
+                transition="enter",
+                place_entity_id="ent-home",
+                place_name="Home",
+            )
+        ]
 
 
 @pytest.fixture
@@ -152,3 +177,25 @@ def test_positions_audit_failure_does_not_500(client: TestClient, locs: FakeLoca
     _as_member(client)
     resp = client.get("/api/member/positions", params={"subject_id": SUBJECT})
     assert resp.status_code == 200
+
+
+def test_places_returns_shared_overlay(client: TestClient) -> None:
+    _as_member(client)
+    data = client.get("/api/member/places").json()
+    assert [p["name"] for p in data] == ["Home"]
+    assert data[0]["center"] == {"lat": 40.0, "lon": -74.0}
+
+
+def test_timeline_passes_viewer_and_clamps_cap(client: TestClient, locs: FakeLocationRepo) -> None:
+    _as_member(client)
+    data = client.get("/api/member/timeline", params={"since": "2020-01-01T00:00:00+00:00"}).json()
+    assert data[0]["transition"] == "enter" and data[0]["place_name"] == "Home"
+    call = locs.timeline_calls[0]
+    assert call["viewer"] == SUBJECT
+    floor = datetime.now(UTC) - timedelta(days=30)
+    assert call["since"] >= floor - timedelta(seconds=5)  # 30-day cap clamps the year request
+
+
+def test_member_places_and_timeline_require_member_cookie(client: TestClient) -> None:
+    assert client.get("/api/member/places").status_code == 401
+    assert client.get("/api/member/timeline").status_code == 401

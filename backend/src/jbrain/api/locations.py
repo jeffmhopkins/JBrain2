@@ -244,6 +244,22 @@ async def list_places(request: Request, principal: PrincipalDep) -> list[PlaceOu
     return [PlaceOut.of(p) for p in rows]
 
 
+class ShareRequest(BaseModel):
+    shared: bool
+
+
+@router.put("/places/{place_entity_id}/share", status_code=204)
+async def set_place_share(
+    request: Request, principal: PrincipalDep, place_entity_id: str, body: ShareRequest
+) -> None:
+    """Toggle whether a geofenced place is shared with family members (M4c). Owner
+    only (the router gate + the `place_share` write RLS). Sharing surfaces the
+    place's name + fence in members' overlay/timeline; un-sharing removes it."""
+    await get_location_repo(request).set_place_shared(
+        ctx_for(principal), place_entity_id=place_entity_id, shared=body.shared
+    )
+
+
 class AddressOut(BaseModel):
     address: str | None
 
