@@ -1,4 +1,5 @@
-"""The basemap tile proxy endpoint: owner-only, PNG on a hit, 404 on a miss."""
+"""The basemap tile proxy endpoint: any authenticated session (owner or member),
+PNG on a hit, 404 on a miss, 401 when anonymous."""
 
 import asyncio
 from collections.abc import Iterator
@@ -6,12 +7,13 @@ from collections.abc import Iterator
 import pytest
 from fastapi.testclient import TestClient
 
-from jbrain.auth import service
+from jbrain.auth import keys, service
 from jbrain.config import Settings
 from jbrain.main import create_app
-from tests.unit.fakes import FakeAuthRepo
+from tests.unit.fakes import FakeAuthRepo, FakePrincipal
 
 _PNG = b"\x89PNG\r\n\x1a\n-fake"
+_DEVICE_KEY = "jb1-device-key"
 
 
 class FakeTileService:
@@ -51,8 +53,34 @@ def login(client: TestClient, repo: FakeAuthRepo) -> None:
     assert client.post("/api/auth/session", json={"owner_key": key}).status_code == 204
 
 
-def test_tiles_require_owner(client: TestClient) -> None:
+def login_member(client: TestClient, repo: FakeAuthRepo) -> None:
+    repo.principals.append(
+        FakePrincipal(
+            id="dev-1",
+            kind="device_key",
+            key_hash=keys.hash_key(_DEVICE_KEY),
+            label="Phone",
+            subject_id="subj-1",
+        )
+    )
+    assert client.post("/api/session/mint", json={"device_key": _DEVICE_KEY}).status_code == 204
+
+
+def test_tiles_require_a_session(client: TestClient) -> None:
+    # Anonymous (no cookie) is rejected — no upstream fetch for the unauthenticated.
     assert client.get("/api/tiles/5/1/1.png").status_code == 401
+
+
+def test_a_member_session_can_load_tiles(
+    client: TestClient, repo: FakeAuthRepo, tiles: FakeTileService
+) -> None:
+    # The JBrain360 app authenticates as a device/member, not the owner — its map
+    # must render too (regression: the proxy used to be owner-only).
+    login_member(client, repo)
+    resp = client.get("/api/tiles/5/1/1.png")
+    assert resp.status_code == 200
+    assert resp.content == _PNG
+    assert tiles.calls == [(5, 1, 1)]
 
 
 def test_tile_hit_returns_png(
