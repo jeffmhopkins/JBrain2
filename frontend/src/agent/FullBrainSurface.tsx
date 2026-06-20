@@ -594,6 +594,18 @@ function ProposalChip({
   );
 }
 
+// The one argument worth showing on a web-tool's collapsed row: the url it
+// fetched, the query it searched. Other tools carry their detail in the
+// expanded step (or a source card), so the row stays a clean label.
+function inlineArg(step: ToolStep): string | undefined {
+  const args = step.args;
+  if (!args) return undefined;
+  const key = step.name === "web_fetch" ? "url" : step.name === "web_search" ? "query" : undefined;
+  if (!key) return undefined;
+  const v = args[key];
+  return typeof v === "string" && v.trim() ? v.trim() : undefined;
+}
+
 // One tool step, itself a pulldown: tap the row to reveal its arguments-in and
 // result-out; a failed step opens by default with its error text. Search/read
 // steps that surfaced source cards also offer a "raw result" rung for the
@@ -624,17 +636,26 @@ function StepRow({
   // not parade, so the links are the result and the ids hide behind "raw".
   const rawText = hasSources || hasEntities ? summary : undefined;
   const mark = isErr ? "bad" : step.ok === undefined ? "live" : "";
+  // The web tools carry their target inline on the row — the fetched url, the
+  // searched query — so the call reads at a glance without expanding it. It
+  // truncates with an ellipsis rather than wrapping (no overflow on a phone).
+  const inline = inlineArg(step);
 
   return (
     <div className={`fb-step${isErr ? " err" : ""}${open ? " open" : ""}`}>
       <button
         type="button"
-        className="fb-step-row"
+        className={`fb-step-row${inline ? " has-arg" : ""}`}
         aria-expanded={open}
         onClick={() => setOpen((o) => !o)}
       >
         <StepGlyph name={step.name} />
         <span className="fb-step-lab">{step.label}</span>
+        {inline && (
+          <span className="fb-step-arg" title={inline}>
+            {inline}
+          </span>
+        )}
         <span className={`fb-step-mark ${mark}`} aria-hidden="true" />
         {step.name === "search" && (
           <span className="fb-step-cnt">

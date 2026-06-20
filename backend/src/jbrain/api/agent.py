@@ -374,12 +374,20 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
                         "name": event.name,
                         "ok": None,
                         "sources": [],
+                        # Persist the call's arguments so an expanded step replays what it
+                        # ran on reopen — the web tools' url/query especially, which carry
+                        # no NoteSource to stand in for them. Empty args stay omitted (noise).
+                        **({"args": event.arguments} if event.arguments else {}),
                     }
                     order.append(event.id)
                 elif event.type == "tool_result":
                     step = steps.get(event.tool_call_id)
                     if step is not None:
                         step["ok"] = event.ok
+                        # The verbatim result text, so a step's result rung replays on
+                        # reopen — for a sourceless tool (the web tools) it is the only
+                        # content the bubble can show.
+                        step["summary"] = event.summary
                         step["sources"] = [s.model_dump() for s in event.sources]
                         # Persist the staged-proposal and resolved-entity chips too,
                         # so the bubble replays in full on reopen (not just sources).
