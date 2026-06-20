@@ -61,6 +61,25 @@ jobs:
       - run: npm run test
       - run: npm run build
 
+  android:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: android
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: android-actions/setup-android@v3
+      # platform-35 + build-tools the app compiles against; setup-android accepts
+      # the licenses so this is a no-op when the runner already has them.
+      - run: sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+      # assembleDebug proves the APK builds; testDebugUnitTest runs the JVM unit
+      # suite. On-device (emulator) tests need KVM and are out of CI scope.
+      - run: ./gradlew assembleDebug testDebugUnitTest --no-daemon
+
   images:
     # stable channel = release tags; edge channel = every green main build.
     if: github.event_name == 'push'
