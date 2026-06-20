@@ -9,6 +9,8 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from jbrain.agent.attachments import TurnAttachmentRepo
 from jbrain.agent.correctionmine import CORRECTION_MINE_SPEC
+from jbrain.agent.imagegentools import build_image_handlers
+from jbrain.agent.loop import ToolHandler
 from jbrain.agent.memory import MemoryRepo, MemoryService
 from jbrain.agent.predicatereview import PREDICATE_REVIEW_SPEC
 from jbrain.agent.promptselfedit import PROMPT_SELF_EDIT_SPEC
@@ -251,6 +253,29 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # jerv (default off when external_geocoder_url is unset).
         app.state.city_geocoder = CityGeocoder()
         external_reverse = NominatimReverseClient(settings.external_geocoder_url)
+        # Built before the registry: edit_image resolves a chat attachment's bytes
+        # through the same TurnAttachmentRepo, so it must exist first.
+        app.state.agent_sessions = AgentSessionRepo(maker)
+        app.state.turn_attachments = TurnAttachmentRepo(maker, app.state.agent_sessions)
+        # jerv's local image generator (docs/IMAGE_GEN_PLAN.md). Wired only when a
+        # host-managed ComfyUI is configured; None otherwise, so an unconfigured box
+        # silently lacks the feature — the registry then drops the image sidecars. The
+        # client is dedicated because ComfyUI's long generations want their own timeout
+        # budget, set inside ComfyUiImageGen.
+        image_gen_client: httpx.AsyncClient | None = None
+        image_handlers: dict[str, ToolHandler] = {}
+        if settings.comfyui_url:
+            image_gen_client = httpx.AsyncClient()
+            app.state.image_gen = ComfyUiImageGen(settings.comfyui_url, image_gen_client)
+            image_handlers = build_image_handlers(
+                app.state.image_gen,
+                app.state.blob_store,
+                GeneratedImageRepo(),
+                app.state.turn_attachments,
+                maker,
+            )
+        else:
+            app.state.image_gen = None
         app.state.agent_registry = build_registry(
             app.state.search_service,
             app.state.notes_repo,
@@ -269,9 +294,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             external_reverse,
             router=app.state.llm_router,
             settings=settings_store,
+            image_handlers=image_handlers,
         )
-        app.state.agent_sessions = AgentSessionRepo(maker)
-        app.state.turn_attachments = TurnAttachmentRepo(maker, app.state.agent_sessions)
         app.state.agent_runlog = AgentRunLog(maker)
         app.state.run_reader = RunLogReader(maker)
         # The Automations operator surface: projects the live trigger/schedule/
@@ -285,17 +309,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
         app.state.agent_transcript = AgentTranscript(maker, app.state.turn_attachments)
         app.state.supervisor_client = httpx.AsyncClient(base_url=settings.supervisor_url)
-        # jerv's local image generator (docs/IMAGE_GEN_PLAN.md). Wired only when a
-        # host-managed ComfyUI is configured; None otherwise, so an unconfigured box
-        # silently lacks the feature (Wave G2 omits the tools when this is None). The
-        # client is dedicated because ComfyUI's long generations want their own timeout
-        # budget, set inside ComfyUiImageGen.
-        image_gen_client: httpx.AsyncClient | None = None
-        if settings.comfyui_url:
-            image_gen_client = httpx.AsyncClient()
-            app.state.image_gen = ComfyUiImageGen(settings.comfyui_url, image_gen_client)
-        else:
-            app.state.image_gen = None
         yield
         if live_task is not None:
             live_task.cancel()
