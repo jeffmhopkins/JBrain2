@@ -55,7 +55,9 @@ TASK_DEFAULTS: dict[str, str] = {
     # tier — it owns the hard decisions the deterministic core then validates.
     "integrate.note": "xai:grok-4.3",
     # Auto-titling a chat from its first exchange — a cheap one-shot summary; the
-    # prompt declares the `low` tier, this default is just the operator-override hook.
+    # prompt declares the `low` tier (a reasoning model, so its prompt budgets
+    # tokens for the thinking trace, not just the title). This default is just the
+    # operator-override hook.
     "session.title": "xai:grok-4.3",
 }
 

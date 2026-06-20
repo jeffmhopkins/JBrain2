@@ -4,7 +4,10 @@ version: note-extract-v20
 description: Extract facts, entities, and temporal references from one personal note.
 strength: high
 config:
-  max_tokens: 8192
+  # The large extraction JSON plus a reasoning model's thinking trace (gpt-oss/GLM
+  # bill it against this same cap) must both fit — 8192 risked truncating the JSON
+  # on a long note, escalating through the re-ask to a hard error and losing facts.
+  max_tokens: 16384
   max_facts: 40
   min_facts: 12
 input:
