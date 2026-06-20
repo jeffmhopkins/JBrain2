@@ -4,6 +4,7 @@
 
 import { type ReactNode, type TouchEvent, useEffect, useRef, useState } from "react";
 import { api } from "../api/client";
+import { useForeground } from "../visibility";
 import {
   BookIcon,
   BotIcon,
@@ -91,24 +92,30 @@ const REVIEW_POLL_MS = 10_000;
 
 interface LauncherProps {
   open: boolean;
+  /** False while a card is stacked over the launcher: it stays mounted (for the
+   * reveal beneath the card) but is off-screen, so the badge poll pauses. */
+  active?: boolean;
   onClose: () => void;
   onNavigate: (target: LauncherTarget) => void;
 }
 
-export function Launcher({ open, onClose, onNavigate }: LauncherProps) {
+export function Launcher({ open, active = true, onClose, onNavigate }: LauncherProps) {
   // Stay mounted through the exit animation, then unmount.
   const [closing, setClosing] = useState(false);
   const panelRef = useRef<HTMLElement>(null);
   const touchStartY = useRef<number | null>(null);
   const wasOpen = useRef(open);
   // A live count drives the Review tile badge: an immediate fetch on open, then
-  // a poll and a refresh whenever the tab regains focus, so it stays current
-  // while the launcher sits open (including beneath the Review card). Failures
-  // just leave the badge at its last value.
+  // a poll while the launcher is the surface on screen. Failures just leave the
+  // badge at its last value.
   const [reviewCount, setReviewCount] = useState<number | null>(null);
+  // Two gates quiet the poll: a backgrounded PWA, and a launcher buried under a
+  // card. Returning to either re-runs this effect — an immediate refetch, then
+  // re-arm — so the badge is current the moment the menu is back on screen.
+  const foreground = useForeground();
 
   useEffect(() => {
-    if (!open) return;
+    if (!open || !active || !foreground) return;
     let stale = false;
     const refresh = () =>
       api
@@ -119,16 +126,11 @@ export function Launcher({ open, onClose, onNavigate }: LauncherProps) {
         .catch(() => {});
     refresh();
     const interval = setInterval(refresh, REVIEW_POLL_MS);
-    const onVisible = () => {
-      if (document.visibilityState === "visible") refresh();
-    };
-    document.addEventListener("visibilitychange", onVisible);
     return () => {
       stale = true;
       clearInterval(interval);
-      document.removeEventListener("visibilitychange", onVisible);
     };
-  }, [open]);
+  }, [open, active, foreground]);
 
   // The retreat is driven by `open` going false — from the X/grab, swipe-down,
   // Escape, OR the platform back gesture (App clears launcherOpen). Closing this

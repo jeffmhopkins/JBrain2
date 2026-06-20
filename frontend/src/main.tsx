@@ -5,6 +5,7 @@ import { App } from "./App";
 import { initFontScale } from "./fontScale";
 import { initLocationCapture } from "./location";
 import { initTheme } from "./theme";
+import { isForeground } from "./visibility";
 import "./styles/tokens.css";
 import "./styles.css";
 
@@ -16,13 +17,17 @@ initFontScale();
 initLocationCapture();
 
 // autoUpdate handles relaunches; the hourly check covers a PWA left open for
-// days, so it still converges on the latest deploy without a restart.
+// days, so it still converges on the latest deploy without a restart. A
+// backgrounded app skips the check — it reaches the server the next hour it is
+// foreground, so a hidden tab never wakes to hit the server.
 const UPDATE_CHECK_MS = 60 * 60 * 1000;
 registerSW({
   immediate: true,
   onRegisteredSW(_url, registration) {
     if (registration) {
-      setInterval(() => void registration.update(), UPDATE_CHECK_MS);
+      setInterval(() => {
+        if (isForeground()) void registration.update();
+      }, UPDATE_CHECK_MS);
     }
   },
 });

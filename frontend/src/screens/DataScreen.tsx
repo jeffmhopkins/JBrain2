@@ -7,6 +7,7 @@ import {
   exportFileUrl,
 } from "../api/client";
 import { DatabaseIcon, RefreshIcon } from "../components/icons";
+import { useForegroundRef } from "../visibility";
 
 /** The Data launcher screen (docs/DESIGN.md "Data screen"): export / import /
  * reset as one focused task at a time behind a Backup · Restore · Reset
@@ -74,6 +75,9 @@ export function DataScreen() {
   const fileRef = useRef<HTMLInputElement>(null);
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
   const disarmTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // A backgrounded app stops polling these long-running ops; the server keeps
+  // working and the next foreground tick reconciles. See src/visibility.ts.
+  const foregroundRef = useForegroundRef();
 
   const stopPolling = useCallback(() => {
     if (timer.current !== null) clearInterval(timer.current);
@@ -105,6 +109,7 @@ export function DataScreen() {
   }, []);
 
   const pollExport = useCallback(async () => {
+    if (!foregroundRef.current) return;
     let status: ExportStatus;
     try {
       status = await api.opsExportStatus();
@@ -119,7 +124,7 @@ export function DataScreen() {
     } else {
       setExportPhase({ step: "failed", log: status.log_tail });
     }
-  }, [stopPolling]);
+  }, [stopPolling, foregroundRef]);
 
   async function startExport() {
     try {
@@ -133,6 +138,7 @@ export function DataScreen() {
   }
 
   const pollImport = useCallback(async () => {
+    if (!foregroundRef.current) return;
     let status: UpdateStatus;
     try {
       status = await api.opsImportStatus();
@@ -146,7 +152,7 @@ export function DataScreen() {
       stopPolling();
       setImportPhase({ step: "done", ok: status.exit_code === 0, log: status.log_tail });
     }
-  }, [stopPolling]);
+  }, [stopPolling, foregroundRef]);
 
   async function startImport(file: File) {
     setImportPhase({ step: "uploading" });
@@ -162,6 +168,7 @@ export function DataScreen() {
   }
 
   const pollReset = useCallback(async () => {
+    if (!foregroundRef.current) return;
     let status: UpdateStatus;
     try {
       status = await api.opsResetStatus();
@@ -175,7 +182,7 @@ export function DataScreen() {
       stopPolling();
       setResetPhase({ step: "done", ok: status.exit_code === 0, log: status.log_tail });
     }
-  }, [stopPolling]);
+  }, [stopPolling, foregroundRef]);
 
   async function startReset() {
     try {

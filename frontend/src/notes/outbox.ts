@@ -1,8 +1,9 @@
 // Offline outbox: notes are written here first (with any attachment Blobs),
 // appear in the stream as "pending sync", and are flushed to the server on
-// start / online / send / a 30s interval. POST /api/notes is idempotent on
-// client_id, so a flush interrupted after the POST simply re-sends and gets
-// the same note back.
+// send, on reconnect, while the stream is the visible screen, and — when a note
+// is left queued off-screen — by a flush-only retry that runs while anything is
+// pending (see useNotes). POST /api/notes is idempotent on client_id, so a
+// flush interrupted after the POST simply re-sends and gets the same note back.
 
 import { ApiError, api } from "../api/client";
 

@@ -12,6 +12,7 @@ import { dedupeTokens, edgePath, fmtConfidence, fmtTemporal } from "../analysis/
 import { type AnalysisEntity, type FactOut, type NoteAnalysis, api } from "../api/client";
 import { awaitingImageCount } from "../notes/lifecycle";
 import type { StreamAttachment } from "../notes/useNotes";
+import { useForegroundRef } from "../visibility";
 import {
   ImageExpansion,
   type ImageExtractsApi,
@@ -356,6 +357,9 @@ export function AnalysisTab({
   // pre-run value, swap the fresh analysis in, and refetch the extracts so
   // the stage marks settle too. Unmount (incl. tab switch) clears it.
   const pollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+  // A backgrounded app holds its place but sends nothing: the tick below skips
+  // the request while hidden and resumes once the app is foreground again.
+  const foregroundRef = useForegroundRef();
   const stopPolling = useCallback(() => {
     if (pollTimer.current !== null) clearInterval(pollTimer.current);
     pollTimer.current = null;
@@ -367,6 +371,7 @@ export function AnalysisTab({
       if (noteId === null) return;
       stopPolling();
       pollTimer.current = setInterval(() => {
+        if (!foregroundRef.current) return;
         api
           .noteAnalysis(noteId)
           .then((fresh) => {
@@ -379,7 +384,7 @@ export function AnalysisTab({
           .catch(() => {}); // transient failure — the next tick retries
       }, POLL_MS);
     },
-    [noteId, stopPolling, refreshExtracts],
+    [noteId, stopPolling, refreshExtracts, foregroundRef],
   );
 
   const analysis = state.phase === "done" ? state.analysis : null;

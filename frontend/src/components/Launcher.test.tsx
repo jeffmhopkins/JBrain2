@@ -135,6 +135,29 @@ describe("Launcher review badge (live count)", () => {
     expect(screen.queryByText(/^\d+$/)).toBeNull();
   });
 
+  it("does not poll while a card is stacked over it (active=false)", async () => {
+    const fetchMock = vi.fn(() => queueOf(1));
+    vi.stubGlobal("fetch", fetchMock);
+    // Open but covered by a card: mounted for the reveal beneath, but off-screen.
+    render(<Launcher open active={false} onClose={noop} onNavigate={noop} />);
+    await flush();
+    await tick(30_000);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("resumes polling when the card closes and it's back on screen", async () => {
+    const fetchMock = vi.fn(() => queueOf(1));
+    vi.stubGlobal("fetch", fetchMock);
+    const { rerender } = render(<Launcher open active={false} onClose={noop} onNavigate={noop} />);
+    await flush();
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    rerender(<Launcher open active={true} onClose={noop} onNavigate={noop} />);
+    await flush();
+    expect(screen.getByText("1")).toBeInTheDocument();
+    expect(fetchMock.mock.calls.length).toBeGreaterThan(0);
+  });
+
   it("stops polling once closed", async () => {
     const fetchMock = vi.fn(() => queueOf(1));
     vi.stubGlobal("fetch", fetchMock);
