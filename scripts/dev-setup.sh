@@ -110,6 +110,12 @@ else
       "harness will be skipped; unit tests and linters are unaffected"
 fi
 
+# --- Android app build (opt-in, NOT bootstrapped here) ---
+# The JBrain360 app (android/) builds against the Android SDK — ~1 GB of
+# downloads a web/CI container never needs — so it is provisioned separately by
+# android/setup-android-sdk.sh, and CI's `android` job sets up its own SDK.
+# Mentioned here per the dev-setup single-source-of-truth rule; a no-op in dev.
+
 # --- Local model hosting (opt-in, NOT bootstrapped here) ---
 # Self-hosted models (Settings → LLM, AMD Strix Halo class box) are provisioned
 # separately by scripts/local-llm-setup.sh: it downloads tens of GB of weights
