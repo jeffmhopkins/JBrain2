@@ -2081,6 +2081,14 @@ const TRANSPARENT_PNG = Uint8Array.from(
   (c) => c.charCodeAt(0),
 );
 
+// Seeded generated-image ids the GET /api/images/generated route serves (Wave
+// G3). The chat's data: URI placeholders (client.ts MOCK_GENIMG) share these ids
+// so a generate card and an edit card both render — and round-trip — offline.
+const GENERATED_IMAGES = new Set<string>([
+  "mock-genimg-lighthouse",
+  "mock-genimg-lighthouse-stormy",
+]);
+
 const VALID_DOMAINS = new Set(["general", "health", "finance", "location"]);
 
 // Fake passage search over the note fixtures: substring match per term, a
@@ -2565,6 +2573,20 @@ export const mockFetch: typeof fetch = async (input, init) => {
     const blob = attachmentBlobs.get(decodeURIComponent(blobMatch[1] ?? ""));
     if (!blob) return json({ detail: "unknown attachment" }, 404);
     return new Response(blob, { status: 200, headers: { "Content-Type": blob.type } });
+  }
+
+  // Generated-image bytes (Wave G3): the image-gen tool's result, by id, plus an
+  // edit's `/source` ("before"). The real backend serves owner-only bytes; here
+  // any seeded id round-trips a placeholder PNG (the in-chat <img> uses a data:
+  // URI helper, since an <img src> never flows through mockFetch). 404 unknown.
+  const genImgMatch = path.match(/^\/api\/images\/generated\/([^/]+)(\/source)?$/);
+  if (genImgMatch && method === "GET") {
+    const imgId = decodeURIComponent(genImgMatch[1] ?? "");
+    if (!GENERATED_IMAGES.has(imgId)) return json({ detail: "image not found" }, 404);
+    return new Response(TRANSPARENT_PNG, {
+      status: 200,
+      headers: { "Content-Type": "image/png" },
+    });
   }
 
   {

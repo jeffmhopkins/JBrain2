@@ -1,4 +1,4 @@
-import { fireEvent, render, waitFor } from "@testing-library/react";
+import { createEvent, fireEvent, render, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { type ListOut, api } from "../../api/client";
 import type { ViewPayload } from "../types";
@@ -175,6 +175,110 @@ describe("ToolView registry", () => {
     expect(getByText("tentative")).toHaveClass("flag-tentative");
   });
 
+  it("renders a generate generated_image with the by-id src and sizing", () => {
+    const { container } = render(
+      <ToolView
+        payload={payload({
+          view: "generated_image",
+          data: {
+            image_id: "img_7fa1",
+            kind: "generate",
+            prompt: "A watercolor lighthouse at dusk",
+            width: 768,
+            height: 1024,
+            model: "qwen-image",
+          },
+        })}
+      />,
+    );
+    const img = container.querySelector("img") as HTMLImageElement;
+    // Data-only: the component BUILDS the src from image_id (no model URL).
+    expect(img.getAttribute("src")).toBe("/api/images/generated/img_7fa1");
+    expect(img).toHaveAttribute("alt", "A watercolor lighthouse at dusk");
+    // Sized from width/height to avoid layout shift.
+    expect(img).toHaveAttribute("width", "768");
+    expect(img).toHaveAttribute("height", "1024");
+    const frame = container.querySelector(".tv-genimg-frame") as HTMLElement;
+    expect(frame.style.aspectRatio).toBe("768 / 1024");
+    // A generate has no before/after compare.
+    expect(container.querySelector(".tv-genimg-cmp")).toBeNull();
+  });
+
+  it("renders an edit generated_image as a before/after compare with the source src", () => {
+    const { container, getByText } = render(
+      <ToolView
+        payload={payload({
+          view: "generated_image",
+          data: {
+            image_id: "img_9c30",
+            kind: "edit",
+            prompt: "Make the sky stormy",
+            width: 768,
+            height: 1024,
+            model: "qwen-image-edit",
+          },
+        })}
+      />,
+    );
+    const imgs = [...container.querySelectorAll("img")] as HTMLImageElement[];
+    const srcs = imgs.map((i) => i.getAttribute("src"));
+    // Before = the source bytes resolved by id; after = the result, both by id.
+    expect(srcs).toContain("/api/images/generated/img_9c30/source");
+    expect(srcs).toContain("/api/images/generated/img_9c30");
+    expect(getByText("BEFORE")).toBeInTheDocument();
+    expect(getByText("AFTER")).toBeInTheDocument();
+    expect(getByText("768 × 1024 · qwen-image-edit")).toBeInTheDocument();
+  });
+
+  it("the edit toggle pins the wipe to an edge (Before/After/Compare)", () => {
+    const { container, getByText } = render(
+      <ToolView
+        payload={payload({
+          view: "generated_image",
+          data: { image_id: "img_9c30", kind: "edit", width: 768, height: 1024 },
+        })}
+      />,
+    );
+    const cmp = container.querySelector(".tv-genimg-cmp") as HTMLElement;
+    // Compare is the default (the wipe sits at the midpoint).
+    expect(cmp.style.getPropertyValue("--pos")).toBe("50%");
+    fireEvent.click(getByText("Before"));
+    expect(cmp.style.getPropertyValue("--pos")).toBe("100%");
+    expect(getByText("Before")).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(getByText("After"));
+    expect(cmp.style.getPropertyValue("--pos")).toBe("0%");
+    fireEvent.click(getByText("Compare"));
+    expect(cmp.style.getPropertyValue("--pos")).toBe("50%");
+  });
+
+  it("dragging the compare moves the wipe (pointer events)", () => {
+    const { container } = render(
+      <ToolView
+        payload={payload({
+          view: "generated_image",
+          data: { image_id: "img_9c30", kind: "edit", width: 768, height: 1024 },
+        })}
+      />,
+    );
+    const cmp = container.querySelector(".tv-genimg-cmp") as HTMLElement;
+    // jsdom has no layout, so stub the measured rect the drag handler reads.
+    cmp.getBoundingClientRect = () =>
+      ({ left: 0, width: 200, top: 0, height: 200, right: 200, bottom: 200 }) as DOMRect;
+    cmp.setPointerCapture = () => {};
+    // jsdom's synthetic PointerEvent drops clientX from the init dict, so build
+    // each event and define the coordinate the drag handler reads on it.
+    function pointer(make: (el: Element) => Event, clientX: number): void {
+      const ev = make(cmp);
+      Object.defineProperty(ev, "clientX", { value: clientX });
+      fireEvent(cmp, ev);
+    }
+    pointer((el) => createEvent.pointerDown(el, { pointerId: 1 }), 50);
+    // 50 / 200 → 25%.
+    expect(cmp.style.getPropertyValue("--pos")).toBe("25%");
+    pointer((el) => createEvent.pointerMove(el, { pointerId: 1 }), 150);
+    expect(cmp.style.getPropertyValue("--pos")).toBe("75%");
+  });
+
   it("tolerates missing/extra slots without crashing", () => {
     const { container } = render(<ToolView payload={payload({ view: "data_table" })} />);
     expect(container.querySelector("table")).toBeInTheDocument();
@@ -186,5 +290,13 @@ describe("ToolView registry", () => {
     const bare = render(<ToolView payload={payload({ view: "appointment_card" })} />);
     expect(bare.getByText("Appointment")).toBeInTheDocument();
     expect(bare.getByText("confirmed")).toHaveClass("flag-confirmed");
+    // A generated_image with no slots still renders an image (a square frame, a
+    // default alt) and defaults to the generate layout, no crash.
+    const img = render(<ToolView payload={payload({ view: "generated_image" })} />);
+    const el = img.container.querySelector("img") as HTMLImageElement;
+    expect(el).toHaveAttribute("alt", "Generated image");
+    expect((img.container.querySelector(".tv-genimg-frame") as HTMLElement).style.aspectRatio).toBe(
+      "512 / 512",
+    );
   });
 });
