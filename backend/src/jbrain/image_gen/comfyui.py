@@ -29,7 +29,11 @@ import structlog
 
 log = structlog.get_logger()
 
-DEFAULT_TIMEOUT = 120.0
+# A 1328x1328 20-step Qwen-Image takes ~3.5 min on the Strix Halo iGPU, and the
+# first call also pays a one-time model load; budget generously so a real run
+# never times out mid-render. The poll loop returns as soon as the image lands,
+# so a large ceiling costs nothing on fast runs.
+DEFAULT_TIMEOUT = 600.0
 DEFAULT_POLL_INTERVAL = 1.5
 
 # The workflow templates and, per template, the node ids the driver fills. The
