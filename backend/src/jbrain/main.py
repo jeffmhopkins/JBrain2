@@ -70,6 +70,7 @@ from jbrain.devices.repo import SqlDeviceRepo
 from jbrain.embed import TeiEmbedClient
 from jbrain.family import SqlFamilyRepo
 from jbrain.geocode import NominatimReverseClient
+from jbrain.image_gen.comfyui import ComfyUiImageGen
 from jbrain.lists.repo import SqlListsRepo
 from jbrain.llm import build_router
 from jbrain.llm.local_gateway import LocalGatewayClient
@@ -281,10 +282,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
         app.state.agent_transcript = AgentTranscript(maker, app.state.turn_attachments)
         app.state.supervisor_client = httpx.AsyncClient(base_url=settings.supervisor_url)
+        # jerv's local image generator (docs/IMAGE_GEN_PLAN.md). Wired only when a
+        # host-managed ComfyUI is configured; None otherwise, so an unconfigured box
+        # silently lacks the feature (Wave G2 omits the tools when this is None). The
+        # client is dedicated because ComfyUI's long generations want their own timeout
+        # budget, set inside ComfyUiImageGen.
+        image_gen_client: httpx.AsyncClient | None = None
+        if settings.comfyui_url:
+            image_gen_client = httpx.AsyncClient()
+            app.state.image_gen = ComfyUiImageGen(settings.comfyui_url, image_gen_client)
+        else:
+            app.state.image_gen = None
         yield
         if live_task is not None:
             live_task.cancel()
         await app.state.supervisor_client.aclose()
+        if image_gen_client is not None:
+            await image_gen_client.aclose()
         await engine.dispose()
 
     app = FastAPI(title="JBrain", lifespan=lifespan)
