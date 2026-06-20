@@ -83,6 +83,17 @@ export interface PlaceGeofence {
   polygon: LatLon[] | null;
 }
 
+/** One subject a family member may see (GET /api/member/roster): its label and
+ * latest activity, for the dashboard device-picker + presence roster. `last_seen`
+ * is null until the subject's first fix. */
+export interface MemberSubject {
+  subject_id: string;
+  label: string;
+  last_seen: string | null;
+  battery_pct: number | null;
+  connection: string | null;
+}
+
 /** One bar on a day's place-track in the digest (L7a): a place name (null = a
  * no-signal gap) and the fraction of the local day [0,1] it spans. Names + times
  * only — there is no coordinate anywhere in the digest. */
@@ -1672,5 +1683,31 @@ export const api = {
 
   async revokeDevice(id: string): Promise<void> {
     await request(`/api/devices/${encodeURIComponent(id)}/revoke`, { method: "POST" });
+  },
+
+  // --- Member dashboard (JBrain360): the device-cookie-scoped family surface.
+  // The device key lives in the Android Keystore and is exchanged for the session
+  // cookie natively (POST /api/session/mint), so the web app never holds it — it
+  // only reads back what the cookie's subject + family group may see.
+
+  async memberRoster(): Promise<MemberSubject[]> {
+    const response = await request("/api/member/roster");
+    return (await response.json()) as MemberSubject[];
+  },
+
+  async memberPositions(subjectId: string, since: string, until: string): Promise<LocationFix[]> {
+    const params = new URLSearchParams({ subject_id: subjectId, since, until });
+    const response = await request(`/api/member/positions?${params}`);
+    return (await response.json()) as LocationFix[];
+  },
+
+  async memberPlaces(): Promise<PlaceGeofence[]> {
+    const response = await request("/api/member/places");
+    return (await response.json()) as PlaceGeofence[];
+  },
+
+  async memberTimeline(): Promise<TimelineEntry[]> {
+    const response = await request("/api/member/timeline");
+    return (await response.json()) as TimelineEntry[];
   },
 };

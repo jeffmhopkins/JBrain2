@@ -17,6 +17,14 @@
 
 	handle {
 		root * /srv/www
+
+		# The member dashboard (JBrain360) is a second SPA entry served at /dash
+		# (loaded inside the forked app's WebView). It has no client-side router,
+		# so /dash and /dash/ both resolve to its built entry; its hash-named
+		# assets are shared with the owner app under /assets/.
+		@dash path /dash /dash/
+		rewrite @dash /dash.html
+
 		try_files {path} /index.html
 
 		# The PWA's update entrypoints must always revalidate, while Vite's
