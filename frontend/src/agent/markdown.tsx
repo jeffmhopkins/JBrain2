@@ -32,12 +32,13 @@ const DATE = new RegExp(
 );
 // Inline markdown: code first (so ** inside code is literal), then math (so * and
 // _ inside a formula stay literal), then bold, italic, links, then `[^n]` source
-// citations. Emphasis can't hug a space (avoids "3 * 4 * 5"). Inline math comes in
-// two delimiters: `$…$` (guarded so it doesn't fire on currency — not adjacent to a
-// digit, and content can't open/close on a space) and `\(…\)`; `$$…$$` is display
-// math that happened to land mid-line.
+// citations, then a browsing model's bare-URL citation (【https://…】). Emphasis
+// can't hug a space (avoids "3 * 4 * 5"). Inline math comes in two delimiters: `$…$`
+// (guarded so it doesn't fire on currency — not adjacent to a digit, and content
+// can't open/close on a space) and `\(…\)`; `$$…$$` is display math that happened to
+// land mid-line.
 const INLINE =
-  /(`[^`]+`)|(\$\$(?! )[^\n]+?(?<! )\$\$)|((?<!\d)\$(?![ $])[^$\n]+?(?<! )\$(?!\d))|(\\\([^\n]+?\\\))|(\*\*(?! )[^*\n]+(?<! )\*\*)|(\*(?! )[^*\n]+(?<! )\*)|(\[[^\]\n]+\]\([^)\n]+\))|(\[\^\d+\])/;
+  /(`[^`]+`)|(\$\$(?! )[^\n]+?(?<! )\$\$)|((?<!\d)\$(?![ $])[^$\n]+?(?<! )\$(?!\d))|(\\\([^\n]+?\\\))|(\*\*(?! )[^*\n]+(?<! )\*\*)|(\*(?! )[^*\n]+(?<! )\*)|(\[[^\]\n]+\]\([^)\n]+\))|(\[\^\d+\])|(【\s*https?:\/\/[^】\n]+】)/;
 
 const isIsoDate = (s: string): boolean => /^\d{4}-\d{2}-\d{2}$/.test(s);
 
@@ -397,6 +398,18 @@ function inline(text: string, key: string, ctx: Ctx): ReactNode[] {
             {num}
           </button>
         </sup>,
+      );
+    } else if (tok.startsWith("【")) {
+      // A browsing model wraps a bare source URL in its fullwidth citation
+      // brackets (【https://…】) with no dagger. The dagger form (【N†…】) is its
+      // internal browse cursor and gets stripped upstream, but a plain URL is a
+      // real, followable external source — surface it as a tappable link (brackets
+      // dropped) rather than leaking the raw token as prose.
+      const url = tok.slice(1, -1).trim();
+      out.push(
+        <a key={k} className="md-link" href={url} target="_blank" rel="noreferrer noopener">
+          {url}
+        </a>,
       );
     } else {
       const lm = /^\[([^\]]+)\]\(([^)]+)\)$/.exec(tok);

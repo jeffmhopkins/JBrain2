@@ -142,6 +142,31 @@ describe("Markdown", () => {
     expect(out).not.toContain("†");
   });
 
+  it("linkifies a browsing model's bare-URL citation 【https://…】 (no dagger)", () => {
+    // gpt-oss sometimes wraps a real source URL in its fullwidth citation brackets
+    // with no dagger — unlike the 【N†…】 cursor form, this points at a followable
+    // page, so it becomes a tappable link (brackets dropped) rather than leaking.
+    const out = html("contact page: 【https://www.coghillfarm.com/contact】 for details.");
+    expect(out).toContain(
+      '<a class="md-link" href="https://www.coghillfarm.com/contact" target="_blank" rel="noreferrer noopener">https://www.coghillfarm.com/contact</a>',
+    );
+    // The fullwidth brackets are consumed — not leaked into the prose.
+    expect(document.body.textContent).not.toContain("【");
+    expect(document.body.textContent).not.toContain("】");
+    // The surrounding prose still flows around the link.
+    expect(document.body.textContent).toContain("contact page:");
+    expect(document.body.textContent).toContain("for details.");
+  });
+
+  it("still strips the 【N†…】 cursor citation and never linkifies it", () => {
+    // The dagger form must keep its existing strip behavior even now that a sibling
+    // bare-URL form linkifies — a cursor citation is not a followable link.
+    const out = html("about 18 hours 【13†L9-L13】 away.");
+    expect(out).not.toContain("<a");
+    expect(out).not.toContain("†");
+    expect(out).not.toContain("【");
+  });
+
   it("does not touch a real [^n] source citation (no dagger)", () => {
     const onCite = vi.fn();
     render(<Markdown text="You were born then.[^1]" onCite={onCite} />);
