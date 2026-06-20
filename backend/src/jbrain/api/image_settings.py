@@ -12,6 +12,7 @@ because ComfyUI loads a model on the generation that needs it, not on command.
 
 from typing import Annotated, cast
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
@@ -19,6 +20,9 @@ from jbrain.api.deps import SettingsDep, owner_only
 from jbrain.config import Settings
 from jbrain.image_gen import catalog, weights
 from jbrain.image_gen.gateway import ComfyUiGatewayClient, ComfyUiGatewayError
+
+# The compose service name this surface controls (the `comfyui` profile service).
+COMFYUI_SERVICE = "comfyui"
 
 router = APIRouter(prefix="/settings/image", dependencies=[Depends(owner_only)])
 
@@ -120,3 +124,43 @@ async def free_image_memory(settings: SettingsDep, gateway: GatewayDep) -> Image
     except ComfyUiGatewayError as exc:
         raise HTTPException(status_code=502, detail=f"comfyui free failed: {exc}") from exc
     return await _snapshot(settings, gateway)
+
+
+class ServiceActionOut(BaseModel):
+    service: str
+    action: str  # "start" | "stop"
+
+
+def _supervisor(request: Request) -> httpx.AsyncClient:
+    return cast(httpx.AsyncClient, request.app.state.supervisor_client)
+
+
+def _sup_headers(settings: Settings) -> dict[str, str]:
+    return {"Authorization": f"Bearer {settings.supervisor_token}"}
+
+
+async def _toggle_service(request: Request, settings: Settings, action: str) -> ServiceActionOut:
+    """Proxy a start/stop of the comfyui compose service to the supervisor (the
+    only holder of the Docker socket). 409 when image hosting is off; 404 when the
+    service was never provisioned (no container to toggle)."""
+    if not _enabled(settings):
+        raise HTTPException(status_code=409, detail="image hosting is not enabled")
+    resp = await _supervisor(request).post(
+        f"/{action}", json={"service": COMFYUI_SERVICE}, headers=_sup_headers(settings)
+    )
+    if resp.status_code == 404:
+        raise HTTPException(status_code=404, detail="comfyui service is not provisioned")
+    resp.raise_for_status()
+    return ServiceActionOut(service=COMFYUI_SERVICE, action=action)
+
+
+@router.post("/service/start", status_code=202)
+async def start_image_service(request: Request, settings: SettingsDep) -> ServiceActionOut:
+    """Start the (provisioned, stopped) ComfyUI service via the supervisor."""
+    return await _toggle_service(request, settings, "start")
+
+
+@router.post("/service/stop", status_code=202)
+async def stop_image_service(request: Request, settings: SettingsDep) -> ServiceActionOut:
+    """Stop the ComfyUI service via the supervisor (frees its memory by halting it)."""
+    return await _toggle_service(request, settings, "stop")

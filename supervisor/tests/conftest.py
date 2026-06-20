@@ -35,6 +35,8 @@ class FakeGateway:
         self.containers = containers
         self.log_lines = logs or {}
         self.restarted: list[str] = []
+        self.started: list[str] = []
+        self.stopped: list[str] = []
         self.log_requests: list[tuple[str, int]] = []
         self.updater_running = False
         self.updates_started: list[str] = []
@@ -48,6 +50,14 @@ class FakeGateway:
     def restart(self, service: str) -> None:
         self._check(service)
         self.restarted.append(service)
+
+    def start(self, service: str) -> None:
+        self._check(service)
+        self.started.append(service)
+
+    def stop(self, service: str) -> None:
+        self._check(service)
+        self.stopped.append(service)
 
     def logs(self, service: str, tail: int) -> str:
         self._check(service)

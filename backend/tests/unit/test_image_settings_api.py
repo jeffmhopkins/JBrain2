@@ -5,6 +5,7 @@ import asyncio
 from collections.abc import Iterator
 from typing import Any
 
+import httpx
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -118,3 +119,45 @@ def test_free_502_on_gateway_error(client: tuple[TestClient, FastAPI]) -> None:
     test_client, app = client
     _enable(app, _FakeGateway(GatewayStatus(reachable=True), fail_free=True), models=["qwen-image"])
     assert test_client.post("/api/settings/image/free").status_code == 502
+
+
+def _install_supervisor(app: FastAPI, status_code: int, seen: list[tuple[str, Any]]) -> None:
+    """Replace the supervisor proxy client with one that records the call and
+    returns `status_code` (so start/stop can be driven without a real supervisor)."""
+
+    def handle(req: httpx.Request) -> httpx.Response:
+        import json
+
+        seen.append((req.url.path, json.loads(req.content)))
+        return httpx.Response(status_code, json={})
+
+    app.state.supervisor_client = httpx.AsyncClient(
+        base_url="http://supervisor:9000", transport=httpx.MockTransport(handle)
+    )
+
+
+@pytest.mark.parametrize("action", ["start", "stop"])
+def test_service_toggle_proxies_to_supervisor(
+    client: tuple[TestClient, FastAPI], action: str
+) -> None:
+    test_client, app = client
+    _enable(app, _FakeGateway(GatewayStatus(reachable=True)), models=["qwen-image"])
+    seen: list[tuple[str, Any]] = []
+    _install_supervisor(app, 202, seen)
+    resp = test_client.post(f"/api/settings/image/service/{action}")
+    assert resp.status_code == 202
+    assert resp.json() == {"service": "comfyui", "action": action}
+    # Proxied to the matching supervisor command for the comfyui service.
+    assert seen == [(f"/{action}", {"service": "comfyui"})]
+
+
+def test_service_start_404_when_not_provisioned(client: tuple[TestClient, FastAPI]) -> None:
+    test_client, app = client
+    _enable(app, _FakeGateway(GatewayStatus(reachable=False)), models=["qwen-image"])
+    _install_supervisor(app, 404, [])
+    assert test_client.post("/api/settings/image/service/start").status_code == 404
+
+
+def test_service_start_409_when_disabled(client: tuple[TestClient, FastAPI]) -> None:
+    test_client, _ = client
+    assert test_client.post("/api/settings/image/service/start").status_code == 409
