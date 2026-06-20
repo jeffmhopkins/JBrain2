@@ -95,29 +95,50 @@
 
       .llm-local-body { padding: 0 16px 12px; }
 
-      .llm-mem { margin: 2px 0 14px; }
-      .llm-mem-bar {
-        position: relative;
-        height: 6px; border-radius: var(--r-pill);
-        background: var(--surface-2); overflow: hidden;
+      .llm-mem { margin: 4px 0 16px; }
+      /* Thick stacked bar: one colored segment per loaded/staged model, sized to
+         its RAM. Inside a segment, the weights block is the model's solid color
+         and the context (KV) block a lighter shade of the same hue. */
+      .mem2 {
+        display: flex; height: 28px; width: 100%;
+        background: var(--surface-2);
+        border: 1px solid var(--border); border-radius: 8px;
+        overflow: hidden;
       }
-      /* steel = RAM actually resident (loaded models) */
-      .llm-mem-bar > i {
-        display: block; height: 100%; background: var(--steel);
+      .mem2-seg {
+        height: 100%; display: flex; position: relative; overflow: hidden;
         transition: width 0.3s ease;
       }
-      /* amber = projected RAM of staged (proposed) models, not yet loaded */
-      .llm-mem-bar > .proposed {
-        position: absolute; top: 0; height: 100%; background: var(--amber);
-        opacity: 0.85; transition: width 0.3s ease, left 0.3s ease;
+      .mem2-seg + .mem2-seg { box-shadow: -1px 0 0 var(--bg); }
+      .mem2-w, .mem2-c { height: 100%; transition: width 0.3s ease; }
+      /* staged = proposed, not yet resident: hatch overlay marks it apart */
+      .mem2-seg.staged::after {
+        content: ""; position: absolute; inset: 0; pointer-events: none;
+        background: repeating-linear-gradient(
+          45deg, rgba(0, 0, 0, 0.22) 0 4px, transparent 4px 8px);
       }
-      .llm-mem-cap {
-        display: flex; gap: 10px;
-        font-size: var(--fs-micro); color: var(--text-3); margin-top: 5px;
+      .mem2-label {
+        position: absolute; left: 8px; right: 4px; top: 0; bottom: 0;
+        display: flex; align-items: center; gap: 5px;
+        font-size: 11px; font-weight: 600; white-space: nowrap; overflow: hidden;
+        color: #0d1016; text-shadow: 0 1px 0 rgba(255, 255, 255, 0.18);
+        pointer-events: none;
       }
-      .llm-mem-cap .staged-note { color: var(--amber); }
-      .llm-mem-cap .total { margin-left: auto; }
-      .llm-mem-cap .over { color: var(--rose); }
+      .mem2-label .gb { font-weight: 500; opacity: 0.78; }
+      .mem2-cap {
+        display: flex; gap: 12px; flex-wrap: wrap;
+        font-size: var(--fs-micro); color: var(--text-3); margin-top: 8px;
+      }
+      .mem2-cap .staged-note { color: var(--amber); }
+      .mem2-cap .total { margin-left: auto; }
+      .mem2-cap .over { color: var(--rose); }
+      /* legend */
+      .mem2-legend { display: flex; gap: 14px; font-size: 11px; color: var(--text-3); margin-top: 6px; }
+      .mem2-legend span { display: inline-flex; align-items: center; gap: 5px; }
+      .mem2-legend i { width: 12px; height: 10px; border-radius: 2px; display: inline-block; }
+      .mem2-legend .sw-w { background: var(--text-2); }
+      .mem2-legend .sw-c { background: color-mix(in srgb, var(--text-2) 40%, #ffffff); }
+      .mem2-legend .sw-s { background: repeating-linear-gradient(45deg, var(--text-2) 0 3px, transparent 3px 6px); }
 
       .llm-local-row {
         padding: 14px 0;
@@ -233,14 +254,16 @@
         </button>
         <div class="llm-local-body" id="cardBody">
           <div class="llm-mem">
-            <div class="llm-mem-bar">
-              <i id="memFill"></i>
-              <span class="proposed" id="memProposed" style="display:none"></span>
-            </div>
-            <div class="llm-mem-cap">
+            <div class="mem2" id="memBar"></div>
+            <div class="mem2-cap">
               <span id="memUsed"></span>
               <span id="memStaged" class="staged-note"></span>
               <span id="memTotal" class="total"></span>
+            </div>
+            <div class="mem2-legend">
+              <span><i class="sw-w"></i>weights</span>
+              <span><i class="sw-c"></i>context (KV)</span>
+              <span><i class="sw-s"></i>staged</span>
             </div>
           </div>
           <div id="rows"></div>
@@ -261,13 +284,14 @@
       </div>
 
       <p class="note">
-        Lifecycle: <b>Stage → Load → Unload</b>. While <b>idle</b>, set the context window
-        (the configured <code>-c</code>), then <b>Stage</b> the model — its projected RAM
-        (weights + KV cache at that window) appears on the memory bar in
-        <b style="color:var(--amber)">amber</b>, so you can see whether the proposed set
-        fits before committing. Staged rows are still editable. <b>Load</b> makes it
-        resident (<b style="color:var(--steel)">steel</b>) and locks the window for the
-        running process; <b>Unload</b> frees it and reopens editing.
+        Lifecycle: <b>Stage → Load → Unload</b>. Each model owns a color on the memory
+        bar; within its segment the solid block is <b>weights</b> and the lighter block
+        is <b>context (KV cache)</b> at the chosen window. While <b>idle</b>, set the
+        context window (the configured <code>-c</code>), then <b>Stage</b> the model — its
+        segment appears <b>hatched</b> (proposed, not yet resident) so you can see whether
+        the set fits the 128 GB host before committing; the context block grows/shrinks
+        live as you change the window. <b>Load</b> makes it resident (hatch removed) and
+        locks the window for the running process; <b>Unload</b> frees it and reopens editing.
       </p>
     </div>
 
@@ -283,23 +307,25 @@
       // estimate; gpt-oss is low thanks to alternating sliding-window attention,
       // the dense/vision models cost more.
       // state: "idle" | "staged" | "loaded" — the stage→load→unload lifecycle.
+      // color: this model's hue on the memory bar (weights solid, KV a lighter tint).
       const models = [
         {
           id: "qwen3-vl-30b", label: "Qwen3-VL 30B · vision", quant: "Q8_0",
           sizeGb: 32, chips: [["vision", "vision"], ["tools", "tools"]],
-          window: 32768, state: "loaded", kvGbPer128k: 6.0,
+          window: 32768, state: "loaded", kvGbPer128k: 6.0, color: "#a493c9",
         },
         {
           id: "gpt-oss-120b", label: "GPT-OSS 120B · reasoning", quant: "MXFP4",
           sizeGb: 59, chips: [["reason", "reasoning"], ["tools", "tools"]],
-          window: 131072, state: "loaded", kvGbPer128k: 4.5,
+          window: 131072, state: "loaded", kvGbPer128k: 4.5, color: "#7fa7c9",
         },
         {
           id: "qwen3-30b-a3b", label: "Qwen3 30B · lightweight", quant: "Q4_K_M",
           sizeGb: 18, chips: [["tools", "tools"]],
-          window: 32768, state: "idle", kvGbPer128k: 3.2,
+          window: 32768, state: "idle", kvGbPer128k: 3.2, color: "#8fbc9a",
         },
       ];
+      const barName = (m) => m.label.split(" ")[0]; // family name for the bar segment
 
       const kvGb = (m, win) => +(m.kvGbPer128k * (win / 131072)).toFixed(2);
       // weights + KV at the configured window — the footprint once resident.
@@ -328,18 +354,7 @@
             stagedN ? ` · ${stagedN} staged` : ""
           } · ${Math.round(used)} GB`;
 
-        // Bar: steel = resident now; amber = projected staged RAM, drawn after it.
-        const usedPct = Math.min(100, (used / HOST_TOTAL_GB) * 100);
-        const stagedPct = Math.min(100 - usedPct, (staged / HOST_TOTAL_GB) * 100);
-        document.getElementById("memFill").style.width = usedPct + "%";
-        const prop = document.getElementById("memProposed");
-        if (staged > 0.05) {
-          prop.style.display = "block";
-          prop.style.left = usedPct + "%";
-          prop.style.width = stagedPct + "%";
-        } else {
-          prop.style.display = "none";
-        }
+        renderBar();
         document.getElementById("memUsed").textContent = `${Math.round(used)} GB used`;
         const over = projected > HOST_TOTAL_GB;
         document.getElementById("memStaged").textContent = staged
@@ -409,6 +424,34 @@
           rows.appendChild(row);
         }
         renderMeter();
+      }
+
+      // Stacked memory bar: loaded segments first (resident), then staged
+      // (proposed). Each segment is the model's color, split into a solid weights
+      // block and a lighter context (KV) block, sized to GB of the 128 GB host.
+      function renderBar() {
+        const bar = document.getElementById("memBar");
+        bar.innerHTML = "";
+        const ordered = [
+          ...models.filter((m) => m.state === "loaded"),
+          ...models.filter((m) => m.state === "staged"),
+        ];
+        for (const m of ordered) {
+          const kv = kvGb(m, m.window);
+          const res = m.sizeGb + kv;
+          const seg = document.createElement("div");
+          seg.className = "mem2-seg" + (m.state === "staged" ? " staged" : "");
+          seg.style.width = (res / HOST_TOTAL_GB) * 100 + "%";
+          seg.title = `${m.label} — ${m.sizeGb} GB weights + ${kv} GB KV @ ${fmtK(
+            m.window
+          )} (${m.state})`;
+          const ctxShade = `color-mix(in srgb, ${m.color} 40%, #ffffff)`;
+          seg.innerHTML = `
+            <div class="mem2-w" style="background:${m.color};width:${(m.sizeGb / res) * 100}%"></div>
+            <div class="mem2-c" style="background:${ctxShade};width:${(kv / res) * 100}%"></div>
+            <span class="mem2-label">${barName(m)} <span class="gb">${res.toFixed(0)}G</span></span>`;
+          bar.appendChild(seg);
+        }
       }
 
       // Agent-chat meter uses gpt-oss-120b's window as denominator.
