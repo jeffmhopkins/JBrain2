@@ -71,10 +71,11 @@ async def test_generate_fills_prompt_seed_steps_and_dims() -> None:
 
     await _client(handle).generate(GEN)
     wf = seen["wf"]
-    assert wf["2"]["inputs"]["text"] == "a cat"
-    assert wf["5"]["inputs"]["seed"] == 42
-    assert wf["5"]["inputs"]["steps"] == 12
-    assert wf["4"]["inputs"]["width"] == 768 and wf["4"]["inputs"]["height"] == 512
+    # Node ids match the on-box-validated Qwen-Image graph (see comfyui.py bindings).
+    assert wf["6"]["inputs"]["text"] == "a cat"
+    assert wf["3"]["inputs"]["seed"] == 42
+    assert wf["3"]["inputs"]["steps"] == 12
+    assert wf["58"]["inputs"]["width"] == 768 and wf["58"]["inputs"]["height"] == 512
 
 
 async def test_edit_uploads_source_then_renders() -> None:

@@ -32,15 +32,34 @@ log = structlog.get_logger()
 DEFAULT_TIMEOUT = 120.0
 DEFAULT_POLL_INTERVAL = 1.5
 
-# The workflow templates and the node ids / input keys the client fills. These
-# mirror the JSON in workflows/ and are the host-validated seam (see module docs).
+# The workflow templates and, per template, the node ids the driver fills. The
+# gen and edit graphs are *different* ComfyUI graphs, so the bindings are
+# per-template, not global. These mirror the JSON in workflows/ and are the
+# host-validated seam (see module docs): the gen binding matches the Qwen-Image
+# graph exported from the Strix Halo box.
 _GEN_TEMPLATE = "qwen_image.json"
 _EDIT_TEMPLATE = "qwen_image_edit.json"
-# Positive-prompt CLIPTextEncode node; "2" is the negative, left untouched.
-_PROMPT_NODE = "2"
-_SAMPLER_NODE = "5"
-_LATENT_NODE = "4"  # EmptyLatentImage (generate only)
-_INPUT_IMAGE_NODE = "8"  # LoadImage (edit only)
+
+
+@dataclass(frozen=True)
+class _Binding:
+    """Which node ids in a template hold the slots the driver overwrites.
+
+    `latent` is generate-only (the edit graph derives its latent from the
+    uploaded source); `input_image` is edit-only (the LoadImage node)."""
+
+    prompt: str  # positive CLIPTextEncode — the negative node is left untouched
+    sampler: str  # KSampler — holds seed + steps
+    latent: str | None = None  # Empty*LatentImage — width/height (generate only)
+    input_image: str | None = None  # LoadImage — server-side name (edit only)
+
+
+# Qwen-Image text->image, validated on the Strix Halo box: prompt=6, KSampler=3,
+# EmptySD3LatentImage=58 (the loaders + ModelSamplingAuraFlow are left as authored).
+_GEN_BINDING = _Binding(prompt="6", sampler="3", latent="58")
+# Qwen-Image-Edit image->image — placeholder ids, awaiting its own on-box export.
+_EDIT_BINDING = _Binding(prompt="2", sampler="5", input_image="8")
+
 _PROMPT_KEY = "text"
 _INPUT_IMAGE_KEY = "image"
 
@@ -119,23 +138,30 @@ class ComfyUiImageGen:
 
     async def generate(self, spec: GenSpec) -> bytes:
         workflow = _load_template(_GEN_TEMPLATE)
-        self._fill_common(workflow, spec)
-        workflow[_LATENT_NODE]["inputs"]["width"] = spec.width
-        workflow[_LATENT_NODE]["inputs"]["height"] = spec.height
+        self._fill_common(workflow, spec, _GEN_BINDING)
+        latent_node = _GEN_BINDING.latent
+        assert latent_node is not None  # the gen graph always carries a latent node
+        latent = workflow[latent_node]["inputs"]
+        latent["width"] = spec.width
+        latent["height"] = spec.height
         prompt_id = await self._submit(workflow)
         return await self._await(prompt_id)
 
     async def edit(self, spec: EditSpec, source: bytes) -> bytes:
         server_name = await self._upload_input(source)
         workflow = _load_template(_EDIT_TEMPLATE)
-        self._fill_common(workflow, spec)
-        workflow[_INPUT_IMAGE_NODE]["inputs"][_INPUT_IMAGE_KEY] = server_name
+        self._fill_common(workflow, spec, _EDIT_BINDING)
+        image_node = _EDIT_BINDING.input_image
+        assert image_node is not None  # the edit graph always carries a LoadImage node
+        workflow[image_node]["inputs"][_INPUT_IMAGE_KEY] = server_name
         prompt_id = await self._submit(workflow)
         return await self._await(prompt_id)
 
-    def _fill_common(self, workflow: dict[str, Any], spec: GenSpec | EditSpec) -> None:
-        workflow[_PROMPT_NODE]["inputs"][_PROMPT_KEY] = spec.prompt
-        sampler = workflow[_SAMPLER_NODE]["inputs"]
+    def _fill_common(
+        self, workflow: dict[str, Any], spec: GenSpec | EditSpec, binding: _Binding
+    ) -> None:
+        workflow[binding.prompt]["inputs"][_PROMPT_KEY] = spec.prompt
+        sampler = workflow[binding.sampler]["inputs"]
         sampler["seed"] = spec.seed
         sampler["steps"] = spec.steps
 
