@@ -608,6 +608,17 @@ h3 {
   flex: none;
 }
 
+/* The muted line that replaces the chat paperclip when the agent's model can't
+   read images (docs/mocks/chat-attach-b-chips.html). */
+.vis-hint {
+  margin: 0;
+  padding: 4px 6px 0;
+  font-size: var(--fs-micro);
+  line-height: 1.4;
+  color: var(--text-3);
+  flex: none;
+}
+
 .composer-foot {
   display: flex;
   align-items: center;
@@ -6257,6 +6268,50 @@ button.small {
   background: var(--steel-tint);
   border: 1px solid var(--steel-tint);
   border-bottom-right-radius: 5px;
+}
+
+/* Compact attachment chips inside a user bubble (docs/mocks/chat-attach-b-chips.html):
+   a tidy row above the message text, the same language as the composer's staged chips. */
+.att-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 7px;
+}
+.att-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 170px;
+  padding: 5px 9px;
+  border-radius: var(--r-input);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text-2);
+  font-size: var(--fs-micro);
+  text-decoration: none;
+}
+.att-chip svg {
+  flex: none;
+}
+.att-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.att-meta {
+  flex: none;
+  color: var(--text-3);
+}
+/* Type-tinted icon: image steel, pdf rose, text green. Shared by bubble + composer. */
+.att-img svg {
+  color: var(--steel);
+}
+.att-pdf svg {
+  color: var(--rose);
+}
+.att-txt svg {
+  color: var(--green);
 }
 .fb-shell .bubble.ai {
   align-self: flex-start;

@@ -145,6 +145,9 @@ export interface TranscriptTurn {
   /** The assistant turn's reasoning trace (gpt-oss/GLM), for the "thinking"
    * disclosure; "" for user turns and non-reasoning models. */
   reasoning?: string;
+  /** Files the owner attached to a user turn, replayed as chips inside the
+   * bubble. Present (and possibly empty) on user turns; absent on assistant ones. */
+  attachments?: ChatAttachment[];
 }
 
 // --- Agent sessions (the capability record; /api/sessions) ---
@@ -178,6 +181,15 @@ export interface ChatMessage {
   content: string;
 }
 
+/** A file the owner attached to a chat turn (POST /api/sessions/{id}/attachments).
+ * Rendered as a compact chip in the composer and inside the user bubble. */
+export interface ChatAttachment {
+  id: string;
+  filename: string;
+  media_type: string;
+  size_bytes: number;
+}
+
 /** A calendar → Full Brain handoff's appointment: the title the owner sees on
  * the composer pill, the id the agent resolves (read_appointment). */
 export interface AppointmentRef {
@@ -197,6 +209,9 @@ export interface ChatRequest {
    * phone's current spot; turn-local, never persisted. */
   latitude?: number;
   longitude?: number;
+  /** Ids of files the owner attached this turn (uploaded ahead of the send). The
+   * agent reads their extracts/vision; the bubble shows them as chips. */
+  attachment_ids?: string[];
 }
 
 // --- Proposals (the review inbox; /api/proposals) ---

@@ -12,13 +12,16 @@ import {
   useRef,
   useState,
 } from "react";
+import { attachmentKind } from "../agent/attachmentKind";
 import type { AppointmentRef } from "../agent/types";
 import { MODES, type Mode, ROWS, type SegState, tapSegment } from "../notes/modes";
 import type { SendInput } from "../notes/useNotes";
 import {
   BotIcon,
   ClipIcon,
+  FileIcon,
   FinancialIcon,
+  ImageIcon,
   MedicalIcon,
   PlusIcon,
   SearchIcon,
@@ -42,8 +45,11 @@ interface OmniboxProps {
   onSegChange: (seg: SegState) => void;
   /** Non-null = the box is PATCHing an existing note instead of capturing. */
   onSend: (input: SendInput) => void;
-  /** Full Brain routes the typed body to the live transcript; Research toasts. */
-  onConversation: (body: string) => void;
+  /** Full Brain routes the typed body to the live transcript; Research toasts.
+   * Staged files ride along (chat attachments). Resolves true once the send is
+   * under way so the box can clear them; false (e.g. an upload failed) keeps them
+   * staged for a retry. A void/undefined return is treated as success. */
+  onConversation: (body: string, files: File[]) => undefined | Promise<boolean>;
   /** A turn is streaming — block another send and dim the button. */
   busy?: boolean;
   onOpenLauncher: () => void;
@@ -62,6 +68,13 @@ interface OmniboxProps {
    * Proposals; the opposite swipe sends the open one back). Absent elsewhere, so
    * the gesture is inert outside the conversation surface. */
   onLateralSwipe?: ((dx: number) => void) | undefined;
+  /** Whether the attach paperclip is offered. Capture modes always allow it (note
+   * attachments). A conversation mode allows it only when the agent's model is
+   * vision-capable; with vision off the paperclip is hidden and `attachHint`
+   * stands in its place (docs/mocks/chat-attach-b-chips.html). Defaults to true. */
+  attachEnabled?: boolean;
+  /** The muted line shown in place of a hidden chat paperclip (vision off). */
+  attachHint?: string | undefined;
 }
 
 export function Omnibox({
@@ -77,6 +90,8 @@ export function Omnibox({
   apptRef,
   onClearApptRef,
   onLateralSwipe,
+  attachEnabled = true,
+  attachHint,
 }: OmniboxProps) {
   const [text, setText] = useState("");
   const [files, setFiles] = useState<File[]>([]);
@@ -114,14 +129,30 @@ export function Omnibox({
   const destination = meta.dest ? (destinations[seg.mode] ?? meta.dest.options[0] ?? null) : null;
 
   function send() {
+    if (busy) return;
     const body = text.trim();
-    if (body === "" || busy) return;
     if (meta.domain === null) {
-      // Research / Full Brain hand off to the conversation surface.
-      onConversation(body);
-      setText("");
+      // Research / Full Brain hand off to the conversation surface, staged files
+      // riding along as chat attachments. A files-only turn is allowed (caption
+      // optional). Clear the composer only once the send is confirmed under way —
+      // an upload failure keeps BOTH the text and the files staged for a retry.
+      if (body === "" && files.length === 0) return;
+      const staged = files;
+      const result = onConversation(body, staged);
+      if (result instanceof Promise) {
+        void result.then((ok) => {
+          if (ok) {
+            setText("");
+            setFiles((cur) => cur.filter((f) => !staged.includes(f)));
+          }
+        });
+      } else {
+        setText("");
+        setFiles([]);
+      }
       return;
     }
+    if (body === "") return;
     onSend({ domain: meta.domain, destination, body, files });
     setText("");
     setFiles([]);
@@ -272,38 +303,48 @@ export function Omnibox({
 
         {files.length > 0 && (
           <div className="staged-files">
-            {files.map((file, index) => (
-              <button
-                key={`${file.name}-${index}`}
-                type="button"
-                className="chip chip-staged"
-                onClick={() => setFiles((prev) => prev.filter((_, i) => i !== index))}
-                aria-label={`Remove ${file.name}`}
-              >
-                <ClipIcon size={12} /> {file.name} ×
-              </button>
-            ))}
+            {files.map((file, index) => {
+              const kind = attachmentKind(file.type);
+              const FileGlyph = kind === "img" ? ImageIcon : FileIcon;
+              return (
+                <button
+                  key={`${file.name}-${index}`}
+                  type="button"
+                  className={`chip chip-staged att-${kind}`}
+                  onClick={() => setFiles((prev) => prev.filter((_, i) => i !== index))}
+                  aria-label={`Remove ${file.name}`}
+                >
+                  <FileGlyph size={12} /> {file.name} ×
+                </button>
+              );
+            })}
           </div>
         )}
+
+        {/* Vision off on a conversation mode: no paperclip, the muted hint stands
+            in its place (capture modes always keep their attach). */}
+        {!attachEnabled && attachHint && <p className="vis-hint">{attachHint}</p>}
 
         <div className="composer-foot">
           <span className="mode-dot" />
           <span className="foot-text">{meta.footer}</span>
           <div className="foot-icons">
-            <button
-              type="button"
-              className="icon-btn"
-              aria-label="Attach files"
-              onClick={() => fileInputRef.current?.click()}
-            >
-              <ClipIcon size={24} />
-            </button>
+            {attachEnabled && (
+              <button
+                type="button"
+                className="icon-btn"
+                aria-label="Attach files"
+                onClick={() => fileInputRef.current?.click()}
+              >
+                <ClipIcon size={24} />
+              </button>
+            )}
             <button
               type="button"
               className="icon-btn send-btn"
               aria-label="Send"
               onClick={send}
-              disabled={text.trim() === "" || busy}
+              disabled={busy || (text.trim() === "" && !(meta.domain === null && files.length > 0))}
             >
               <SendIcon size={24} />
             </button>

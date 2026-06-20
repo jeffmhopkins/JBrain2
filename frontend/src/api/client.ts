@@ -12,6 +12,7 @@
 import { parseChatStream } from "../agent/chat";
 import type {
   AgentSession,
+  ChatAttachment,
   ChatEvent,
   ChatRequest,
   Decision,
@@ -1026,6 +1027,11 @@ export function attachmentUrl(id: string): string {
   return `/api/attachments/${encodeURIComponent(id)}`;
 }
 
+/** Download URL for a chat attachment (distinct from a note attachment's path). */
+export function chatAttachmentUrl(id: string): string {
+  return `/api/chat-attachments/${encodeURIComponent(id)}`;
+}
+
 export function exportFileUrl(name: string): string {
   return `/api/ops/export/file/${encodeURIComponent(name)}`;
 }
@@ -1558,6 +1564,26 @@ export const api = {
   async createSession(body: SessionCreate): Promise<AgentSession> {
     const response = await request("/api/sessions", jsonInit("POST", body));
     return (await response.json()) as AgentSession;
+  },
+
+  // Stage one file for a chat turn (multipart). The server runs the allowlist
+  // (415 on a rejected type) and returns the row the bubble chips against; the
+  // id then rides the next /api/chat send as attachment_ids.
+  async uploadChatAttachment(sessionId: string, file: File): Promise<ChatAttachment> {
+    const form = new FormData();
+    form.append("file", file, file.name);
+    const response = await request(`/api/sessions/${encodeURIComponent(sessionId)}/attachments`, {
+      method: "POST",
+      body: form,
+    });
+    return (await response.json()) as ChatAttachment;
+  },
+
+  // Whether the model serving agent.turn can accept images — gates the chat
+  // attach affordance (hidden, with a hint, when vision is off).
+  async getChatCapabilities(): Promise<{ supports_vision: boolean }> {
+    const response = await request("/api/chat/capabilities");
+    return (await response.json()) as { supports_vision: boolean };
   },
 
   async getTranscript(sessionId: string): Promise<TranscriptTurn[]> {

@@ -10,15 +10,18 @@
 // result, and raw payload (docs/research/brain-tooluse-ux).
 
 import { type ReactNode, useEffect, useRef, useState } from "react";
+import { chatAttachmentUrl } from "../api/client";
+import { FileIcon, ImageIcon } from "../components/icons";
 import { DOMAIN_COLOR } from "../notes/modes";
 import { ProposalTree } from "./ProposalTree";
 import { ProposalsPanel } from "./ProposalsPanel";
 import { SessionsPanel } from "./SessionsPanel";
+import { attachmentKind } from "./attachmentKind";
 import { Markdown, type MdFlag, stripModelCitations } from "./markdown";
 import { type AgentStatus, agentStatus } from "./status";
 import { type SourceRef, type ToolStep, toolStep } from "./toolSummary";
 import type { ToolActivity, TranscriptMessage } from "./transcript";
-import type { ProposalRef } from "./types";
+import type { ChatAttachment, ProposalRef } from "./types";
 import type { FullBrain } from "./useFullBrain";
 import { usePacedText } from "./usePacedText";
 import { ToolView } from "./views/registry";
@@ -131,6 +134,35 @@ export function FullBrainSurface({
   );
 }
 
+// A compact attachment chip inside a user bubble (mock B): a type-tinted icon, the
+// filename (ellipsized), and a size meta. Tapping it downloads the file. The accent
+// class matches the composer's staged chips so the two read identically.
+function AttachmentChip({ att }: { att: ChatAttachment }): ReactNode {
+  const kind = attachmentKind(att.media_type);
+  const Icon = kind === "img" ? ImageIcon : FileIcon;
+  return (
+    <a
+      className={`att-chip att-${kind}`}
+      href={chatAttachmentUrl(att.id)}
+      target="_blank"
+      rel="noreferrer"
+      title={att.filename}
+    >
+      <Icon size={13} />
+      <span className="att-name">{att.filename}</span>
+      <span className="att-meta">{prettySize(att.size_bytes)}</span>
+    </a>
+  );
+}
+
+// A terse human size for a chip's meta (the mock's "·3p" page hint isn't on the
+// wire; the byte size is the calm stand-in).
+function prettySize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 // The B-direction status line (docs/mocks/assistant-ai-status-*.html): a quiet
 // pulsing dot and a label that shimmers steel while the agent is live, then
 // settles; a clean finish auto-hides after a beat, errors stay put. A tool's
@@ -230,7 +262,19 @@ function Bubble({
   // resolve correctly the moment the turn finishes.
   const shownText = usePacedText(message.text, message.streaming);
   if (message.role === "user") {
-    return <div className="bubble me">{message.text}</div>;
+    const attachments = message.attachments ?? [];
+    return (
+      <div className="bubble me">
+        {attachments.length > 0 && (
+          <div className="att-chips">
+            {attachments.map((att) => (
+              <AttachmentChip key={att.id} att={att} />
+            ))}
+          </div>
+        )}
+        {message.text}
+      </div>
+    );
   }
   // While the turn is still streaming, hold the whole bubble until the answer
   // text begins — tool calls alone shouldn't pop an empty Worked block ahead of
