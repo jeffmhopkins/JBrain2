@@ -20,7 +20,9 @@ class SessionLauncher(
     private val store: CredentialStore,
     private val minter: Minter,
 ) {
-    fun launch(serverBase: String): LaunchDecision {
+    fun launch(): LaunchDecision {
+        // The server + key both come from pairing; either missing → not paired.
+        val serverBase = store.serverBase() ?: return LaunchDecision.NeedsPairing
         val key = store.deviceKey() ?: return LaunchDecision.NeedsPairing
         return when (val outcome = minter.mint(serverBase, key)) {
             is MintOutcome.Success ->

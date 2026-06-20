@@ -54,11 +54,10 @@ jobs:
       - uses: android-actions/setup-android@v3
       - working-directory: android
         run: sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
-      # Bake the deployment URL from the DASHBOARD_BASE repo variable (Settings →
-      # Secrets and variables → Actions → Variables). Unset → the placeholder, so
-      # the published APK only works once that variable is set.
+      # One universal APK — no server URL baked in; the app learns it from the
+      # pairing payload, so there is nothing to configure per deploy.
       - working-directory: android
-        run: ./gradlew assembleDebug -PdashboardBase="${{ vars.DASHBOARD_BASE }}" --no-daemon
+        run: ./gradlew assembleDebug --no-daemon
       - run: cp android/app/build/outputs/apk/debug/app-debug.apk jbrain360-debug.apk
       # Create-or-update the `android-latest` pre-release and replace its asset, so
       # the download URL is always

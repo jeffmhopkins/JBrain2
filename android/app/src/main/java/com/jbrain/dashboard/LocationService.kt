@@ -24,7 +24,6 @@ import androidx.core.content.getSystemService
 class LocationService : Service(), LocationListener {
     private val publisher = LocationPublisher()
     private lateinit var store: CredentialStore
-    private val base = BuildConfig.DASHBOARD_BASE
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -53,6 +52,8 @@ class LocationService : Service(), LocationListener {
     }
 
     override fun onLocationChanged(location: Location) {
+        // Both the paired server and the key come from pairing; either gone → idle.
+        val base = store.serverBase() ?: return
         val key = store.deviceKey() ?: return
         val report = LocationReport(
             lat = location.latitude,

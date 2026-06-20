@@ -29,7 +29,7 @@ class PairingActivity : Activity() {
             text = "Pair this device"
             textSize = 22f
         }
-        val input = EditText(this).apply { hint = "Pairing code" }
+        val input = EditText(this).apply { hint = "Paste your pairing code" }
         val button = Button(this).apply { text = "Pair" }
         val status = TextView(this).apply { setPadding(0, gap / 2, 0, 0) }
         val wide = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT)
@@ -41,11 +41,13 @@ class PairingActivity : Activity() {
 
         val coordinator = PairingCoordinator(KeystoreCredentialStore(this), PairingClient())
         button.setOnClickListener {
-            val code = input.text.toString()
+            val payload = input.text.toString()
             button.isEnabled = false
             status.text = "Pairing…"
             Thread {
-                val result = coordinator.pair(BuildConfig.DASHBOARD_BASE, code)
+                // The pasted/scanned string is the self-contained payload (server +
+                // code); the coordinator parses it and learns the server from it.
+                val result = coordinator.pair(payload)
                 runOnUiThread {
                     button.isEnabled = true
                     when (result) {
