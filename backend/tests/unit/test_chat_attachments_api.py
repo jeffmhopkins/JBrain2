@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from jbrain.agent.attachments import AttachmentInfo, domain_for_session
+from jbrain.agent.attachments import AttachmentInfo, attachment_scopes, domain_for_session
 from jbrain.agent.session import AgentSessionInfo, read_context
 from jbrain.auth import service as auth_service
 from jbrain.config import Settings
@@ -59,7 +59,10 @@ class FakeTurnAttachments:
         info = self.sessions.sessions.get(session_id)
         if info is None:
             return None
-        return read_context(owner_ctx.principal_id, info.domain_scopes)
+        # Mirror the real repo: the write/read context carries the session's scopes
+        # PLUS the stamped domain, so an empty/multi-scope session can reach its own
+        # 'general'-stamped files (see attachment_scopes).
+        return read_context(owner_ctx.principal_id, attachment_scopes(info.domain_scopes))
 
     async def add(
         self,
@@ -180,6 +183,11 @@ def test_multi_and_empty_scope_sessions_stamp_general(
     c.post(f"/api/sessions/{empty}/attachments", files={"file": ("b.txt", b"b", "text/plain")})
     assert repo.added[-2][1] == "general"  # multi-domain → general
     assert repo.added[-1][1] == "general"  # empty (Jerv/Teacher) → general
+    # The write ran under a context that INCLUDES 'general' (the stamped domain), or the
+    # real repo's INSERT WITH CHECK has_domain_scope('general') would 500. (The
+    # integration test exercises the actual RLS enforcement; here we prove the wiring.)
+    assert "general" in repo.added[-2][2]  # multi-scope ctx widened to reach 'general'
+    assert repo.added[-1][2] == ("general",)  # empty-scope ctx is exactly 'general'
 
 
 def test_chat_attachments_require_auth(tmp_path: Path) -> None:
@@ -210,6 +218,33 @@ def test_capabilities_reflects_text_only_override(
     # A stored override to a text-only local model flips the flag off.
     store.values["llm_task_overrides"] = {"agent.turn": {"spec": "local:text-only-model"}}
     assert c.get("/api/chat/capabilities").json() == {"supports_vision": False}
+
+
+def test_upload_rejects_disallowed_media_type(
+    client: tuple[TestClient, FakeAgentSessions, FakeTurnAttachments, FakeSettingsStore],
+) -> None:
+    c, sessions, repo, _ = client
+    sid = sessions.add(("health",))
+    # An executable (or any type off the conversion allowlist) is refused with 415 and
+    # never stored — it would have no chat-send conversion path.
+    resp = c.post(
+        f"/api/sessions/{sid}/attachments",
+        files={"file": ("evil.exe", b"MZ\x90", "application/x-msdownload")},
+    )
+    assert resp.status_code == 415
+    assert repo.added == []  # nothing was written
+
+
+def test_upload_accepts_an_allowlisted_type(
+    client: tuple[TestClient, FakeAgentSessions, FakeTurnAttachments, FakeSettingsStore],
+) -> None:
+    c, sessions, _repo, _ = client
+    sid = sessions.add(("health",))
+    resp = c.post(
+        f"/api/sessions/{sid}/attachments",
+        files={"file": ("notes.md", b"# hi", "text/markdown")},
+    )
+    assert resp.status_code == 201
 
 
 def test_domain_for_session_helper() -> None:

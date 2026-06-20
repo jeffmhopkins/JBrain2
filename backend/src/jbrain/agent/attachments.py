@@ -10,7 +10,7 @@ import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from jbrain.agent.session import AgentSessionRepo, read_context
@@ -22,6 +22,32 @@ from jbrain.models.agent import TurnAttachment
 # stamp its file with one privileged domain (which would over- or under-expose it).
 DEFAULT_ATTACHMENT_DOMAIN = "general"
 
+# The media types a chat attachment may carry — the SINGLE source of truth shared by
+# the upload endpoint (which rejects anything else with 415) and the LLM-content
+# conversion (attachment_content.py), so the two can never drift. Vision-readable
+# images, PDFs (rasterized + text-extracted), and the plain-text families the model
+# reads inline. Anything not here has no conversion path, so it must not be stored.
+ALLOWED_MEDIA_TYPES: frozenset[str] = frozenset(
+    {
+        "image/png",
+        "image/jpeg",
+        "image/webp",
+        "image/gif",
+        "application/pdf",
+        "text/plain",
+        "text/markdown",
+        "text/csv",
+        "application/json",
+    }
+)
+
+
+def is_allowed_media_type(media_type: str) -> bool:
+    """Whether a chat attachment of this media type may be stored. The upload
+    endpoint rejects the rest with 415 (an out-of-allowlist file would have no
+    conversion path on the chat-send side anyway)."""
+    return media_type in ALLOWED_MEDIA_TYPES
+
 
 def domain_for_session(domain_scopes: Sequence[str]) -> str:
     """The firewall domain a chat attachment is stamped with, from its session's
@@ -31,6 +57,17 @@ def domain_for_session(domain_scopes: Sequence[str]) -> str:
     shared scope rather than guessing one. SECURITY-relevant: this domain decides
     which later sessions can read the file via has_domain_scope RLS."""
     return domain_scopes[0] if len(domain_scopes) == 1 else DEFAULT_ATTACHMENT_DOMAIN
+
+
+def attachment_scopes(session_scopes: Sequence[str]) -> tuple[str, ...]:
+    """The RLS scopes a chat attachment is written/read under: the session's own
+    scopes PLUS the domain it gets stamped with (domain_for_session). For a SINGLE
+    scope this is just that scope unchanged (curator isolation intact — a finance
+    session still can't reach a health attachment). For ZERO scopes (Jerv/Teacher) or
+    MULTIPLE scopes the file is stamped 'general', so the read/write context must also
+    carry 'general' or the INSERT's WITH CHECK fails and the later read misses its own
+    file. SECURITY: this only ADDS the stamped domain, never a foreign one."""
+    return tuple({*session_scopes, domain_for_session(session_scopes)})
 
 
 @dataclass(frozen=True)
@@ -71,13 +108,15 @@ class TurnAttachmentRepo:
     async def session_read_context(
         self, owner_ctx: SessionContext, session_id: str
     ) -> SessionContext | None:
-        """The narrowed RLS context a chat attachment is written/read under: the
-        owner narrowed to the session's selected scopes. None when the session is
-        not visible to `owner_ctx`."""
+        """The narrowed RLS context a chat attachment is written/read under: the owner
+        narrowed to the session's scopes PLUS the stamped domain (attachment_scopes).
+        The extra 'general' lets empty/multi-scope (Jerv/Teacher) sessions write and
+        read their own attachments; a single-scope session is unchanged. None when the
+        session is not visible to `owner_ctx`."""
         info = await self._sessions.get(owner_ctx, session_id)
         if info is None:
             return None
-        return read_context(owner_ctx.principal_id, info.domain_scopes)
+        return read_context(owner_ctx.principal_id, attachment_scopes(info.domain_scopes))
 
     async def add(
         self,
@@ -141,9 +180,44 @@ class TurnAttachmentRepo:
             )
             return [_info(r) for r in rows]
 
+    async def list_for_turns(
+        self, ctx: SessionContext, turn_ids: Sequence[str]
+    ) -> dict[str, list[AttachmentInfo]]:
+        """The attachments bound to each of `turn_ids`, keyed by turn id — for
+        transcript replay (one round-trip for the whole transcript). RLS-scoped, so a
+        turn's out-of-scope attachment never appears; turns with none are absent from
+        the map. Ordered by upload time within a turn for a stable replay."""
+        if not turn_ids:
+            return {}
+        async with scoped_session(self._maker, ctx) as session:
+            rows = (
+                (
+                    await session.execute(
+                        select(TurnAttachment)
+                        .where(TurnAttachment.turn_id.in_([uuid.UUID(t) for t in turn_ids]))
+                        .order_by(TurnAttachment.created_at)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+        by_turn: dict[str, list[AttachmentInfo]] = {}
+        for row in rows:
+            by_turn.setdefault(str(row.turn_id), []).append(_info(row))
+        return by_turn
+
     async def bind_to_turn(
         self, ctx: SessionContext, attachment_ids: Sequence[str], turn_id: str
     ) -> None:
-        """Wave 2: bind pre-uploaded attachments to the user turn that references
-        them, once that turn is recorded. Stubbed now (no chat-send path yet)."""
-        raise NotImplementedError("turn binding lands in Stage-2 Wave 2")
+        """Bind pre-uploaded attachments to the user turn that referenced them, once
+        that turn is recorded (pre-upload, reference-by-id). Runs under the session's
+        narrowed context, so RLS physically restricts the UPDATE to in-scope rows — an
+        id outside the session's firewall simply isn't matched, never bound."""
+        if not attachment_ids:
+            return
+        async with scoped_session(self._maker, ctx) as session:
+            await session.execute(
+                update(TurnAttachment)
+                .where(TurnAttachment.id.in_([uuid.UUID(a) for a in attachment_ids]))
+                .values(turn_id=uuid.UUID(turn_id))
+            )

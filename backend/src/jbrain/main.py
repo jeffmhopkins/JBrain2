@@ -268,7 +268,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             action_registry,
             frozenset(spec.name for spec in ACTION_SPECS),
         )
-        app.state.agent_transcript = AgentTranscript(maker)
+        app.state.agent_transcript = AgentTranscript(maker, app.state.turn_attachments)
         app.state.supervisor_client = httpx.AsyncClient(base_url=settings.supervisor_url)
         yield
         if live_task is not None:
