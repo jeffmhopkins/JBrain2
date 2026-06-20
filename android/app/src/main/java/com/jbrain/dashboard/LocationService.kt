@@ -10,20 +10,27 @@ import android.location.Location
 import android.location.LocationListener
 import android.location.LocationManager
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import androidx.core.content.getSystemService
 
 /** A foreground service that publishes the phone's location to `/api/owntracks`.
  *
  * Minimal by design (framework LocationManager — no Play Services), posting to the
- * OwnTracks-compatible ingest the backend already runs. It reads the device key
- * from the Keystore store, stops cleanly if unpaired, and clears the key + stops if
- * the server reports it revoked. Reliability across aggressive OEMs (doze, battery
- * killing) is a deliberate later hardening pass.
+ * OwnTracks-compatible ingest the backend already runs. Precise fixes come from
+ * GPS_PROVIDER (fine location). Moving: a fix at most every 30 s and only after
+ * 25 m of travel (the distance filter keeps a parked phone quiet). Stationary: a
+ * heartbeat forces one fresh fix at least every 15 min so the map never goes stale.
+ * It reads the device key from the Keystore store, stops cleanly if unpaired, and
+ * clears the key + stops if the server reports it revoked. Reliability across
+ * aggressive OEMs (doze, battery killing) is a deliberate later hardening pass.
  */
 class LocationService : Service(), LocationListener {
     private val publisher = LocationPublisher()
     private lateinit var store: CredentialStore
+    private val heartbeat = Handler(Looper.getMainLooper())
+    private val forceFix = Runnable { requestSingleFix() }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -45,13 +52,19 @@ class LocationService : Service(), LocationListener {
                 MIN_DISTANCE_M,
                 this,
             )
+            // Guarantee a fix within the heartbeat even if the phone is parked from
+            // the start (movement updates would otherwise never fire).
+            armHeartbeat()
         } catch (e: SecurityException) {
-            stopSelf() // the location permission isn't granted
+            stopSelf() // precise location isn't granted
         }
         return START_STICKY
     }
 
     override fun onLocationChanged(location: Location) {
+        // A fix arrived (movement update or forced heartbeat) — reset the 15-min
+        // watchdog so it only fires after a genuine gap with no fixes.
+        armHeartbeat()
         // Both the paired server and the key come from pairing; either gone → idle.
         val base = store.serverBase() ?: return
         val key = store.deviceKey() ?: return
@@ -69,7 +82,32 @@ class LocationService : Service(), LocationListener {
         }.start()
     }
 
+    /** Re-arm the stationary watchdog: if no fix lands within HEARTBEAT_MS, force one. */
+    private fun armHeartbeat() {
+        heartbeat.removeCallbacks(forceFix)
+        heartbeat.postDelayed(forceFix, HEARTBEAT_MS)
+    }
+
+    /** Force one fresh precise fix so a parked phone still reports within the
+     * heartbeat window (the 25 m distance filter otherwise suppresses every update).
+     * The fix lands in onLocationChanged, which re-arms the watchdog; we re-arm here
+     * too so an indoor no-fix still retries next window. */
+    @Suppress("DEPRECATION") // requestSingleUpdate; getCurrentLocation is API 30 > minSdk 26
+    private fun requestSingleFix() {
+        try {
+            getSystemService<LocationManager>()?.requestSingleUpdate(
+                LocationManager.GPS_PROVIDER,
+                this,
+                Looper.getMainLooper(),
+            )
+        } catch (e: SecurityException) {
+            stopSelf()
+        }
+        armHeartbeat()
+    }
+
     override fun onDestroy() {
+        heartbeat.removeCallbacks(forceFix)
         try {
             getSystemService<LocationManager>()?.removeUpdates(this)
         } catch (e: SecurityException) {
@@ -99,5 +137,7 @@ class LocationService : Service(), LocationListener {
         const val NOTIF_ID = 1
         const val MIN_INTERVAL_MS = 30_000L
         const val MIN_DISTANCE_M = 25f
+        // Stationary heartbeat: at least one fix every 15 min even when parked.
+        const val HEARTBEAT_MS = 15 * 60 * 1000L
     }
 }

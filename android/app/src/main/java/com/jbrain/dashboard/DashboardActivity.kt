@@ -87,7 +87,15 @@ class DashboardActivity : Activity() {
         if (hasFineLocation()) {
             startService(Intent(this, LocationService::class.java))
         } else {
-            requestPermissions(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION), REQ_LOCATION)
+            // Request fine + coarse together so Android 12+ shows the precise/approximate
+            // toggle; we only start once *fine* (precise) is actually granted.
+            requestPermissions(
+                arrayOf(
+                    Manifest.permission.ACCESS_FINE_LOCATION,
+                    Manifest.permission.ACCESS_COARSE_LOCATION,
+                ),
+                REQ_LOCATION,
+            )
         }
     }
 
@@ -101,7 +109,9 @@ class DashboardActivity : Activity() {
         grantResults: IntArray,
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode == REQ_LOCATION && grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) {
+        // Start only on *precise* (fine): if the user picked "Approximate", don't
+        // run on coarse — the map needs precise fixes.
+        if (requestCode == REQ_LOCATION && hasFineLocation()) {
             startService(Intent(this, LocationService::class.java))
         }
     }
