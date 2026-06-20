@@ -1,5 +1,7 @@
 """Pairing config builder + the mint/redeem endpoints (fakes, no Postgres)."""
 
+import base64
+import json
 from typing import cast
 
 from fastapi import FastAPI
@@ -8,12 +10,21 @@ from fastapi.testclient import TestClient
 from jbrain.api.deps import current_principal
 from jbrain.auth.service import PrincipalInfo
 from jbrain.config import Settings
-from jbrain.locations.pairing import RedeemedDevice, build_owntracks_config, generate_pairing_code
+from jbrain.locations.pairing import (
+    RedeemedDevice,
+    build_owntracks_config,
+    build_pairing_payload,
+    generate_pairing_code,
+)
 from jbrain.locations.ratelimit import TokenBucket
 from jbrain.main import create_app
 from tests.unit.fakes import FakePairingRepo
 
 _DB = "postgresql+asyncpg://nobody@localhost:1/none"
+
+
+def _decode_payload(payload: str) -> dict:
+    return json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
 
 
 # --- config builder + code generation ---------------------------------------
@@ -38,6 +49,14 @@ def test_generate_pairing_code_is_unique_and_high_entropy() -> None:
     codes = {generate_pairing_code() for _ in range(200)}
     assert len(codes) == 200
     assert all(len(c) >= 20 for c in codes)
+
+
+def test_build_pairing_payload_embeds_the_server_and_code() -> None:
+    payload = build_pairing_payload("https://hopkinsbrain.com/", "CODE-123")
+    decoded = _decode_payload(payload)
+    assert decoded == {"v": 1, "u": "https://hopkinsbrain.com", "c": "CODE-123"}
+    # Opaque + QR-safe: base64url, no padding.
+    assert "=" not in payload and "+" not in payload and "/" not in payload
 
 
 # --- endpoints ---------------------------------------------------------------
@@ -71,6 +90,23 @@ def test_mint_is_owner_only() -> None:
             assert pairing.minted == [("Mom", 2)]
         finally:
             cast(FastAPI, c.app).dependency_overrides.clear()
+
+
+def test_mint_returns_an_embeddable_payload_with_the_server_url() -> None:
+    app = create_app(
+        Settings(secure_cookies=False, database_url=_DB, dashboard_url="https://hopkinsbrain.com")
+    )
+    with TestClient(app) as c:
+        app.state.pairing_repo = FakePairingRepo()
+        cast(FastAPI, c.app).dependency_overrides[current_principal] = _owner
+        try:
+            body = c.post("/api/pairing/codes", json={"label": "Phone"}).json()
+        finally:
+            cast(FastAPI, c.app).dependency_overrides.clear()
+    # The single payload string carries the server + the code the app redeems.
+    decoded = _decode_payload(body["payload"])
+    assert decoded["u"] == "https://hopkinsbrain.com"
+    assert decoded["c"] == body["code"]
 
 
 def test_redeem_returns_config_for_a_valid_code_and_400_otherwise() -> None:

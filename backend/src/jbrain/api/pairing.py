@@ -15,7 +15,11 @@ from jbrain.api.deps import OwnerDep
 from jbrain.auth.service import PrincipalInfo
 from jbrain.config import Settings
 from jbrain.db.session import SessionContext
-from jbrain.locations.pairing import PairingRepo, build_owntracks_config
+from jbrain.locations.pairing import (
+    PairingRepo,
+    build_owntracks_config,
+    build_pairing_payload,
+)
 from jbrain.locations.ratelimit import TokenBucket
 
 router = APIRouter()
@@ -53,6 +57,9 @@ class MintRequest(BaseModel):
 class MintOut(BaseModel):
     code: str
     expires_at: datetime
+    # The self-contained string to share (copy or QR): embeds the server URL + the
+    # code, so the app needs nothing baked in — it pulls the server from this.
+    payload: str
 
 
 class RedeemRequest(BaseModel):
@@ -64,12 +71,33 @@ class RedeemOut(BaseModel):
     dashboard_url: str
 
 
+def _public_base(request: Request, settings: Settings) -> str:
+    """The server's public base URL to embed in the pairing payload. The configured
+    `dashboard_url` is the source of truth; if unset, fall back to the origin the
+    owner's browser actually hit (it minted from the real public host)."""
+    if settings.dashboard_url:
+        return settings.dashboard_url.rstrip("/")
+    origin = request.headers.get("origin")
+    if origin:
+        return origin.rstrip("/")
+    host = request.headers.get("host", request.url.netloc)
+    proto = request.headers.get("x-forwarded-proto", request.url.scheme)
+    return f"{proto}://{host}".rstrip("/")
+
+
 @router.post("/pairing/codes", status_code=201)
-async def mint_code(body: MintRequest, owner: OwnerDep, repo: PairingRepoDep) -> MintOut:
+async def mint_code(
+    body: MintRequest,
+    request: Request,
+    owner: OwnerDep,
+    repo: PairingRepoDep,
+    settings: SettingsDep,
+) -> MintOut:
     code, expires_at = await repo.mint_code(
         _owner_ctx(owner), label=body.label, monitoring=body.monitoring
     )
-    return MintOut(code=code, expires_at=expires_at)
+    payload = build_pairing_payload(_public_base(request, settings), code)
+    return MintOut(code=code, expires_at=expires_at, payload=payload)
 
 
 @router.post("/pairing/redeem")
