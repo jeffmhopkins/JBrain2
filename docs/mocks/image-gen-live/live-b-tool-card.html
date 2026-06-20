@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Live image gen — B · tool-activity card</title>
+<style>
+  :root{
+    --bg:#0e0f11; --surface:#17181b; --surface-2:#1e2024; --border:#26282c;
+    --text:#e6e7e9; --text-2:#9a9da3; --text-3:#5c5f66;
+    --steel:#7fa7c9; --steel-tint:rgba(127,167,201,.13); --green:#8fbc9a; --amber:#c9a36a; --rose:#cf8a8f;
+    --r-card:16px; --r-input:12px;
+    font-size:15px;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    display:flex;justify-content:center;padding:32px 16px}
+  .col{width:100%;max-width:440px}
+  .variant{font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--text-3);margin:0 0 4px}
+  h1{font-size:18px;margin:0 0 2px}
+  .sub{color:var(--text-2);font-size:13px;margin:0 0 22px}
+  .turn{margin-bottom:18px}
+  .who{font-size:12px;color:var(--text-3);margin:0 0 6px}
+  .bubble{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:11px 13px;font-size:14px;line-height:1.45}
+  .bubble.me{background:var(--surface-2)}
+
+  /* the tool-activity card — generation framed as visible "tool work" */
+  .tool{border:1px solid var(--border);border-radius:var(--r-card);background:var(--surface);
+    overflow:hidden}
+  .tool-head{display:flex;align-items:center;gap:9px;padding:10px 12px;border-bottom:1px solid var(--border)}
+  .spark{width:18px;height:18px;border-radius:5px;background:var(--steel-tint);
+    display:grid;place-items:center;color:var(--steel);font-size:11px;flex:none}
+  .spark.spin{animation:pulse 1.1s infinite}
+  @keyframes pulse{50%{opacity:.4}}
+  .tname{font-size:13px;font-weight:600}
+  .tname .muted{color:var(--text-3);font-weight:400}
+  .tstate{margin-left:auto;font-size:11px;color:var(--steel);font-variant-numeric:tabular-nums}
+  .tool.done .tstate{color:var(--green)}
+  .tool.stopped .tstate{color:var(--rose)}
+
+  .tbody{display:flex;gap:12px;padding:12px}
+  .thumb{width:96px;height:96px;border-radius:10px;overflow:hidden;flex:none;border:1px solid var(--border);position:relative;background:#0a0b0d}
+  .thumb .frame{position:absolute;inset:0;
+    background:
+      radial-gradient(60% 50% at 50% 45%, rgba(255,150,60,.9), rgba(255,90,30,.25) 40%, transparent 70%),
+      radial-gradient(40% 40% at 22% 70%, rgba(120,200,255,.5), transparent 70%),
+      linear-gradient(160deg,#0d1420,#0a0b0d 70%);
+    filter:blur(12px) brightness(.7);transform:scale(1.1);transition:filter .5s,transform .5s}
+  .tool.done .thumb .frame{filter:none;transform:none}
+  .tool.stopped .thumb .frame{filter:blur(10px) brightness(.45)}
+  .tmeta{flex:1;min-width:0;display:flex;flex-direction:column}
+  .prompt{font-size:13px;line-height:1.4;color:var(--text);margin:0 0 2px;
+    display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+  .sub2{font-size:11px;color:var(--text-3);margin:0 0 auto}
+  .progress{margin-top:9px}
+  .ptop{display:flex;justify-content:space-between;font-size:11px;color:var(--text-2);margin-bottom:5px;font-variant-numeric:tabular-nums}
+  .track{height:6px;border-radius:3px;background:var(--surface-2);overflow:hidden}
+  .track i{display:block;height:100%;width:0;background:var(--amber);transition:width .5s ease}
+  .tool.done .track i{background:var(--green)}
+  .ticks{display:flex;justify-content:space-between;margin-top:4px}
+  .ticks span{font-size:9px;color:var(--text-3)}
+  .tfoot{display:flex;padding:0 12px 12px}
+  .stop{margin-left:auto;display:flex;align-items:center;gap:6px;background:var(--surface-2);
+    border:1px solid var(--border);color:var(--text-2);border-radius:999px;padding:5px 13px;font-size:12px;cursor:pointer}
+  .stop:hover{background:var(--rose);color:#1a1112;border-color:transparent}
+  .stop .sq{width:8px;height:8px;border-radius:2px;background:currentColor}
+  .tool.done .tfoot,.tool.stopped .tfoot{display:none}
+  .doneline{padding:0 12px 12px;font-size:12px;color:var(--text-2)}
+  .doneline.stop{color:var(--rose)}
+
+  .controls{display:flex;gap:8px;margin-top:26px;border-top:1px solid var(--border);padding-top:16px}
+  button.demo{background:var(--surface-2);border:1px solid var(--border);color:var(--text);border-radius:var(--r-input);padding:8px 14px;font-size:13px;cursor:pointer}
+  button.demo:hover{border-color:var(--steel)}
+  .note{font-size:12px;color:var(--text-3);margin-top:14px;line-height:1.5}
+</style>
+</head>
+<body>
+<div class="col">
+  <p class="variant">Variant B</p>
+  <h1>Tool-activity card</h1>
+  <p class="sub">Generation reads as visible “tool work”, consistent with other tool calls: a preview thumbnail, a labelled progress track with 25/50/75/100 ticks, and a Stop.</p>
+
+  <div class="turn"><p class="who">you</p><div class="bubble me">make a cyberpunk CPU with electric arcs</div></div>
+  <div class="turn"><p class="who">jerv</p><div class="bubble">On it — generating now.</div></div>
+
+  <div class="tool" id="tool">
+    <div class="tool-head">
+      <span class="spark spin" id="spark">✦</span>
+      <span class="tname">generate_image <span class="muted">· Qwen-Image</span></span>
+      <span class="tstate" id="tstate">25% · step 5/20</span>
+    </div>
+    <div class="tbody">
+      <div class="thumb"><div class="frame" id="frame"></div></div>
+      <div class="tmeta">
+        <p class="prompt">cyberpunk CPU on a motherboard, electric arcs, dramatic lighting</p>
+        <p class="sub2">1328×1328 · seed 30425473</p>
+        <div class="progress">
+          <div class="ptop"><span>generating…</span><span id="ptopr">5 / 20 steps</span></div>
+          <div class="track"><i id="fill"></i></div>
+          <div class="ticks"><span>25</span><span>50</span><span>75</span><span>100</span></div>
+        </div>
+      </div>
+    </div>
+    <div class="tfoot"><button class="stop" id="stopBtn"><span class="sq"></span>Stop render</button></div>
+  </div>
+
+  <div class="controls">
+    <button class="demo" onclick="run()">▶ Simulate render</button>
+    <button class="demo" onclick="reset()">↺ Reset</button>
+  </div>
+  <p class="note">Frames + step counts arrive over the chat SSE as a <code>tool_progress</code> event. Stop calls ComfyUI <code>/interrupt</code> and the card collapses to a “stopped” line; the turn continues.</p>
+</div>
+
+<script>
+  const tool=document.getElementById('tool'),frame=document.getElementById('frame'),fill=document.getElementById('fill');
+  const tstate=document.getElementById('tstate'),ptopr=document.getElementById('ptopr'),spark=document.getElementById('spark');
+  let timer=null,stopped=false;
+  const STAGES=[{p:25,s:5,blur:10},{p:50,s:10,blur:6},{p:75,s:15,blur:3},{p:100,s:20,blur:0}];
+  function reset(){clearTimeout(timer);stopped=false;tool.className='tool';frame.style.filter='blur(12px) brightness(.7)';frame.style.transform='scale(1.1)';fill.style.width='0';tstate.textContent='starting…';ptopr.textContent='0 / 20 steps';spark.classList.add('spin');tool.querySelector('.tfoot')&&(tool.querySelector('.tfoot').style.display='');
+    const old=tool.querySelector('.doneline');if(old)old.remove();}
+  function run(){reset();let i=0;const tick=()=>{if(stopped)return;const st=STAGES[i];frame.style.filter=`blur(${st.blur}px) brightness(${.7+.3*(st.p/100)})`;frame.style.transform=`scale(${1.1-0.1*(st.p/100)})`;fill.style.width=st.p+'%';tstate.textContent=`${st.p}% · step ${st.s}/20`;ptopr.textContent=`${st.s} / 20 steps`;if(st.p===100){tool.classList.add('done');spark.classList.remove('spin');spark.textContent='✓';tstate.textContent='done';const d=document.createElement('div');d.className='doneline';d.textContent='Generated a 1328×1328 image — shown above.';tool.appendChild(d);}i++;if(i<STAGES.length)timer=setTimeout(tick,950);};timer=setTimeout(tick,500);}
+  document.getElementById('stopBtn').onclick=()=>{stopped=true;clearTimeout(timer);tool.classList.add('stopped');spark.classList.remove('spin');spark.textContent='✕';tstate.textContent='stopped';const d=document.createElement('div');d.className='doneline stop';d.textContent='Render stopped — nothing saved.';tool.appendChild(d);};
+  run();
+</script>
+</body>
+</html>
