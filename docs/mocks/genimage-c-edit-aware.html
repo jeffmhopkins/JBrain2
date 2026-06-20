@@ -1,0 +1,206 @@
+<!doctype html>
+<!--
+  Wave G3 — generated_image chat-view mock · VARIANT C — "edit-aware before/after"
+  ============================================================================
+  Handles BOTH kinds the tool can emit:
+    • kind="generate" → renders like A/B (single sized image + meta).
+    • kind="edit"     → renders the source→result relationship as a swipe
+                        compare (drag the handle to wipe between before/after),
+                        because edit_image is in scope (G2). A toggle also flips
+                        between the two stills for accessibility.
+  The transcript shows ONE generate card AND ONE edit card in context.
+
+  Tokens-only (docs/DESIGN.md): all colors are var() from the app token set
+  (frontend/src/styles/tokens.css). Card frame matches the live `.tool-view`.
+
+  Data-only slots received: {image_id, kind, prompt, width, height, model}. For
+  an edit, the component also resolves the SOURCE image by id (G2 records
+  source_sha256) and builds BOTH srcs as `/api/images/generated/${id}`; the
+  inline SVG data: URIs are offline stand-ins. No model-authored URLs/markup.
+-->
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Generated image — C — edit-aware before/after</title>
+<style>
+  :root {
+    --bg:#0e0f11; --surface:#17181b; --surface-2:#1e2024; --border:#26282c;
+    --text:#e6e7e9; --text-2:#9a9da3; --text-3:#5c5f66; --surface-composer:#141518;
+    --steel:#7fa7c9; --steel-tint:rgba(127,167,201,.13);
+    --green:#8fbc9a; --green-tint:rgba(143,188,154,.13);
+    --amber:#c9a36a; --amber-tint:rgba(201,163,106,.13);
+    --violet:#a493c9; --violet-tint:rgba(164,147,201,.13);
+    --accent:var(--steel);
+    --r-card:16px; --r-input:12px; --r-pill:999px;
+  }
+  [data-theme="light"]{
+    --bg:#f7f7f5; --surface:#fff; --surface-2:#f0f0ee; --border:#e2e2df;
+    --text:#1a1b1e; --text-2:#5c5f66; --text-3:#9a9da3; --surface-composer:#fff;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  body{margin:0;background:#000;color:var(--text);
+    font:15px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    display:flex;flex-wrap:wrap;gap:28px;justify-content:center;padding:28px}
+  .phone{width:390px;height:820px;background:var(--bg);border-radius:34px;overflow:hidden;
+    border:1px solid var(--border);display:flex;flex-direction:column}
+  .topbar{flex:0 0 auto;height:56px;display:flex;align-items:center;gap:10px;padding:0 14px;
+    border-bottom:1px solid var(--border);background:var(--surface)}
+  .topbar .t{font-size:17px;font-weight:600;flex:1}
+  .topbar .t small{display:block;font-size:11px;font-weight:400;color:var(--text-3)}
+  .icon-btn{width:36px;height:36px;display:grid;place-items:center;border-radius:9px;
+    color:var(--text-2);background:transparent;border:0;cursor:pointer}
+  .icon-btn:hover{background:var(--surface-2);color:var(--text)}
+  svg{width:20px;height:20px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+  .chat{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:14px}
+  .bubble{max-width:82%;padding:11px 13px;border-radius:15px;font-size:14px;line-height:1.45}
+  .me{align-self:flex-end;background:var(--steel-tint);border:1px solid color-mix(in srgb,var(--steel) 30%,transparent);border-bottom-right-radius:5px}
+  .ai{align-self:flex-start;background:var(--surface-2);border:1px solid var(--border);border-bottom-left-radius:5px}
+
+  .tv-genimg{align-self:flex-start;max-width:88%;border:1px solid var(--border);
+    border-radius:var(--r-input);background:var(--surface-2);padding:6px;overflow:hidden}
+  .tv-genimg-frame{position:relative;border-radius:10px;overflow:hidden;background:var(--surface);display:block;width:100%}
+  .tv-genimg-img{display:block;width:100%;height:auto}
+  .tv-genimg-kind{position:absolute;top:8px;left:8px;display:inline-flex;align-items:center;gap:4px;
+    font-size:10.5px;font-weight:600;padding:3px 8px;border-radius:var(--r-pill);backdrop-filter:blur(3px)}
+  .tv-genimg-kind svg{width:12px;height:12px}
+  .kind-generate{background:color-mix(in srgb,var(--violet) 22%,var(--surface));color:var(--violet);
+    border:1px solid color-mix(in srgb,var(--violet) 34%,transparent)}
+  .kind-edit{background:color-mix(in srgb,var(--amber) 22%,var(--surface));color:var(--amber);
+    border:1px solid color-mix(in srgb,var(--amber) 34%,transparent)}
+  .tv-genimg-cap{display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--text-3);padding:7px 6px 3px}
+  .tv-genimg-cap b{color:var(--text-2);font-weight:600}
+  .tv-genimg-cap .dot{width:3px;height:3px;border-radius:50%;background:var(--text-3);flex:0 0 auto}
+
+  /* edit: swipe-compare before/after */
+  .cmp{position:relative;border-radius:10px;overflow:hidden;background:var(--surface);
+    touch-action:none;user-select:none;cursor:ew-resize}
+  .cmp img{display:block;width:100%;height:auto;pointer-events:none}
+  /* the "after" layer is clipped to the slider position */
+  .cmp .after{position:absolute;inset:0;clip-path:inset(0 0 0 var(--pos,50%))}
+  .cmp .lbl{position:absolute;bottom:8px;font-size:10px;font-weight:600;letter-spacing:.04em;
+    padding:2px 7px;border-radius:var(--r-pill);background:color-mix(in srgb,var(--bg) 62%,transparent);
+    color:var(--text-2);backdrop-filter:blur(3px)}
+  .cmp .lbl.b{left:8px}.cmp .lbl.a{right:8px}
+  .cmp .handle{position:absolute;top:0;bottom:0;left:var(--pos,50%);width:2px;
+    background:color-mix(in srgb,var(--steel) 80%,#fff);transform:translateX(-1px)}
+  .cmp .grip{position:absolute;top:50%;left:var(--pos,50%);transform:translate(-50%,-50%);
+    width:32px;height:32px;border-radius:50%;background:var(--steel);color:#10141a;
+    display:grid;place-items:center;box-shadow:0 2px 8px color-mix(in srgb,var(--bg) 70%,transparent)}
+  .cmp .grip svg{width:18px;height:18px;stroke:#10141a;stroke-width:2.2}
+  .cmp .kind-edit{top:8px;left:8px}
+
+  .tv-genimg-acts{display:flex;gap:8px;padding:7px 4px 3px;align-items:center}
+  .tv-genimg-acts .cap{font-size:11.5px;color:var(--text-3);margin-right:auto}
+  .tv-genimg-acts .cap b{color:var(--text-2);font-weight:600}
+  .seg{display:inline-flex;border:1px solid var(--border);border-radius:var(--r-pill);overflow:hidden}
+  .seg button{font-size:11px;padding:5px 11px;border:0;background:transparent;color:var(--text-3);cursor:pointer}
+  .seg button.on{background:var(--steel-tint);color:var(--steel)}
+
+  .composer{flex:0 0 auto;display:flex;gap:8px;align-items:center;
+    padding:10px 12px calc(10px + env(safe-area-inset-bottom));
+    border-top:1px solid var(--border);background:var(--surface-composer)}
+  .composer input{flex:1;background:var(--surface-2);border:1px solid var(--border);
+    border-radius:var(--r-pill);padding:10px 14px;color:var(--text);font-size:14px;outline:none}
+  .composer .send{width:40px;height:40px;border-radius:50%;border:0;background:var(--accent);
+    color:#10141a;display:grid;place-items:center;cursor:pointer;flex:0 0 40px}
+  .composer .send svg{stroke:#10141a}
+  .label{text-align:center;color:var(--text-2);font-size:12px;max-width:390px;line-height:1.45;margin:4px auto}
+  .label b{color:var(--text)}
+</style>
+</head>
+<body>
+<div>
+  <div class="phone">
+    <div class="topbar">
+      <button class="icon-btn"><svg viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg></button>
+      <div class="t">jerv<small>image</small></div>
+      <button class="icon-btn" id="theme" title="Toggle theme">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4.5"/><path d="M12 2v2M12 20v2M4 12H2M22 12h-2M5 5l1.5 1.5M17.5 17.5L19 19M19 5l-1.5 1.5M6.5 17.5L5 19"/></svg>
+      </button>
+    </div>
+
+    <div class="chat" id="chat">
+      <div class="bubble me">A watercolor lighthouse at dusk, tall and narrow.</div>
+      <div class="bubble ai">Here you go.</div>
+
+      <!-- generated_image · kind=generate → renders like A -->
+      <div class="tv-genimg">
+        <div class="tv-genimg-frame" style="aspect-ratio:768/1024">
+          <!-- prod: src="/api/images/generated/img_7fa1" -->
+          <img class="tv-genimg-img" alt="watercolor lighthouse at dusk" src="data:image/svg+xml;utf8,&lt;svg xmlns='http://www.w3.org/2000/svg' width='768' height='1024'&gt;&lt;defs&gt;&lt;linearGradient id='g1' x1='0' y1='0' x2='0' y2='1'&gt;&lt;stop offset='0' stop-color='%237a6a9a'/&gt;&lt;stop offset='0.55' stop-color='%23c98a8f'/&gt;&lt;stop offset='1' stop-color='%23e9c79a'/&gt;&lt;/linearGradient&gt;&lt;/defs&gt;&lt;rect width='768' height='1024' fill='url(%23g1)'/&gt;&lt;rect x='600' y='760' width='40' height='180' rx='6' fill='%23f4ead2'/&gt;&lt;rect x='600' y='760' width='40' height='44' fill='%23cf8a8f'/&gt;&lt;circle cx='620' cy='745' r='26' fill='%23ffe9b0'/&gt;&lt;circle cx='200' cy='180' r='90' fill='%23ffe9b0' opacity='0.55'/&gt;&lt;rect y='930' width='768' height='94' fill='%233a4a5e' opacity='0.45'/&gt;&lt;/svg&gt;" />
+          <span class="tv-genimg-kind kind-generate"><svg viewBox="0 0 24 24"><path d="M12 3v18M3 12h18"/></svg>generated</span>
+        </div>
+        <div class="tv-genimg-cap"><b>768 × 1024</b><span class="dot"></span>qwen-image</div>
+      </div>
+
+      <div class="bubble me">Now make the sky stormy and add a beam of light from the top.</div>
+      <div class="bubble ai">Edited it — drag the handle to compare.</div>
+
+      <!-- generated_image · kind=edit → before/after swipe (source resolved by id) -->
+      <div class="tv-genimg">
+        <div class="cmp" id="cmp" style="aspect-ratio:768/1024">
+          <!-- before = source image (prod: /api/images/generated/img_7fa1) -->
+          <img class="before" alt="before edit" src="data:image/svg+xml;utf8,&lt;svg xmlns='http://www.w3.org/2000/svg' width='768' height='1024'&gt;&lt;defs&gt;&lt;linearGradient id='gb' x1='0' y1='0' x2='0' y2='1'&gt;&lt;stop offset='0' stop-color='%237a6a9a'/&gt;&lt;stop offset='0.55' stop-color='%23c98a8f'/&gt;&lt;stop offset='1' stop-color='%23e9c79a'/&gt;&lt;/linearGradient&gt;&lt;/defs&gt;&lt;rect width='768' height='1024' fill='url(%23gb)'/&gt;&lt;rect x='600' y='760' width='40' height='180' rx='6' fill='%23f4ead2'/&gt;&lt;rect x='600' y='760' width='40' height='44' fill='%23cf8a8f'/&gt;&lt;circle cx='620' cy='745' r='26' fill='%23ffe9b0'/&gt;&lt;circle cx='200' cy='180' r='90' fill='%23ffe9b0' opacity='0.55'/&gt;&lt;/svg&gt;" />
+          <div class="after" id="after">
+            <!-- after = result image (prod: /api/images/generated/img_9c30) -->
+            <img alt="after edit" src="data:image/svg+xml;utf8,&lt;svg xmlns='http://www.w3.org/2000/svg' width='768' height='1024'&gt;&lt;defs&gt;&lt;linearGradient id='ga' x1='0' y1='0' x2='0' y2='1'&gt;&lt;stop offset='0' stop-color='%232b3242'/&gt;&lt;stop offset='0.6' stop-color='%233a4a5e'/&gt;&lt;stop offset='1' stop-color='%235a4b66'/&gt;&lt;/linearGradient&gt;&lt;/defs&gt;&lt;rect width='768' height='1024' fill='url(%23ga)'/&gt;&lt;polygon points='620,745 540,1024 700,1024' fill='%23ffe9b0' opacity='0.5'/&gt;&lt;rect x='600' y='760' width='40' height='180' rx='6' fill='%23dcd2c0'/&gt;&lt;rect x='600' y='760' width='40' height='44' fill='%23cf8a8f'/&gt;&lt;circle cx='620' cy='745' r='26' fill='%23ffe9b0'/&gt;&lt;rect width='768' height='220' fill='%23161922' opacity='0.55'/&gt;&lt;/svg&gt;" />
+          </div>
+          <span class="tv-genimg-kind kind-edit"><svg viewBox="0 0 24 24"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>edited</span>
+          <span class="lbl b">BEFORE</span>
+          <span class="lbl a">AFTER</span>
+          <div class="handle"></div>
+          <div class="grip"><svg viewBox="0 0 24 24"><path d="M8 7l-4 5 4 5M16 7l4 5-4 5"/></svg></div>
+        </div>
+        <div class="tv-genimg-acts">
+          <span class="cap"><b>768 × 1024</b> · qwen-image-edit</span>
+          <div class="seg" id="seg">
+            <button class="on" onclick="setView('cmp',this)">Compare</button>
+            <button onclick="setView('before',this)">Before</button>
+            <button onclick="setView('after',this)">After</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="bubble me">Perfect.</div>
+    </div>
+
+    <div class="composer">
+      <input id="inp" placeholder="Describe or edit an image…" />
+      <button class="send" onclick="send()"><svg viewBox="0 0 24 24"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4z"/></svg></button>
+    </div>
+  </div>
+  <p class="label">C · <b>Edit-aware before/after.</b> A <i>generate</i> renders like A; an <i>edit</i> shows the source→result link as a draggable swipe compare (plus a Before/After/Compare toggle). Makes what changed legible — the only variant that handles <code>kind="edit"</code>.</p>
+</div>
+<script>
+  document.getElementById('theme').onclick=()=>{const h=document.documentElement;
+    h.dataset.theme=h.dataset.theme==='light'?'dark':'light'};
+
+  // swipe-compare drag
+  const cmp=document.getElementById('cmp');
+  function setPos(clientX){const r=cmp.getBoundingClientRect();
+    let p=(clientX-r.left)/r.width*100;p=Math.max(0,Math.min(100,p));
+    cmp.style.setProperty('--pos',p+'%');}
+  let drag=false;
+  cmp.addEventListener('pointerdown',e=>{drag=true;cmp.setPointerCapture(e.pointerId);setPos(e.clientX);});
+  cmp.addEventListener('pointermove',e=>{if(drag)setPos(e.clientX);});
+  cmp.addEventListener('pointerup',()=>{drag=false;});
+  cmp.addEventListener('pointercancel',()=>{drag=false;});
+
+  // Before/After/Compare toggle — pins the wipe to an edge, or restores drag.
+  function setView(mode,btn){
+    document.querySelectorAll('#seg button').forEach(b=>b.classList.remove('on'));
+    btn.classList.add('on');
+    if(mode==='before')cmp.style.setProperty('--pos','100%');
+    else if(mode==='after')cmp.style.setProperty('--pos','0%');
+    else cmp.style.setProperty('--pos','50%');
+  }
+
+  function send(){const i=document.getElementById('inp');if(!i.value.trim())return;
+    const c=document.getElementById('chat');
+    const b=document.createElement('div');b.className='bubble me';b.textContent=i.value;
+    c.appendChild(b);i.value='';c.scrollTop=9e9;}
+  document.getElementById('inp').addEventListener('keydown',e=>{if(e.key==='Enter')send()});
+</script>
+</body>
+</html>

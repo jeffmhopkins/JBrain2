@@ -1,0 +1,182 @@
+<!doctype html>
+<!--
+  Wave G3 — generated_image chat-view mock · VARIANT B — "result + disclosure"
+  ============================================================================
+  The rendered image plus a collapsible detail strip: tap "Details" to reveal
+  prompt, model, seed, and dimensions, with a "Regenerate" affordance. Collapsed
+  by default so the transcript stays clean; expand on demand.
+
+  Tokens-only (docs/DESIGN.md): all colors are var() from the app token set
+  (frontend/src/styles/tokens.css). Card frame matches the live `.tool-view`.
+
+  Data-only slots received: {image_id, kind, prompt, width, height, model}.
+  (seed shown here is part of the same data payload's meta.) PRODUCTION builds
+  the <img src> as `/api/images/generated/${image_id}`; the inline SVG data: URI
+  is an offline stand-in. No model-authored URLs/markup (DESIGN.md tool views).
+-->
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Generated image — B — result + disclosure</title>
+<style>
+  :root {
+    --bg:#0e0f11; --surface:#17181b; --surface-2:#1e2024; --border:#26282c;
+    --text:#e6e7e9; --text-2:#9a9da3; --text-3:#5c5f66; --surface-composer:#141518;
+    --steel:#7fa7c9; --steel-tint:rgba(127,167,201,.13);
+    --green:#8fbc9a; --green-tint:rgba(143,188,154,.13);
+    --amber:#c9a36a; --amber-tint:rgba(201,163,106,.13);
+    --violet:#a493c9; --violet-tint:rgba(164,147,201,.13);
+    --accent:var(--steel);
+    --r-card:16px; --r-input:12px; --r-pill:999px;
+    --font-mono:ui-monospace,"SF Mono","Cascadia Mono",Menlo,Consolas,monospace;
+  }
+  [data-theme="light"]{
+    --bg:#f7f7f5; --surface:#fff; --surface-2:#f0f0ee; --border:#e2e2df;
+    --text:#1a1b1e; --text-2:#5c5f66; --text-3:#9a9da3; --surface-composer:#fff;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  body{margin:0;background:#000;color:var(--text);
+    font:15px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    display:flex;flex-wrap:wrap;gap:28px;justify-content:center;padding:28px}
+  .phone{width:390px;height:820px;background:var(--bg);border-radius:34px;overflow:hidden;
+    border:1px solid var(--border);display:flex;flex-direction:column}
+  .topbar{flex:0 0 auto;height:56px;display:flex;align-items:center;gap:10px;padding:0 14px;
+    border-bottom:1px solid var(--border);background:var(--surface)}
+  .topbar .t{font-size:17px;font-weight:600;flex:1}
+  .topbar .t small{display:block;font-size:11px;font-weight:400;color:var(--text-3)}
+  .icon-btn{width:36px;height:36px;display:grid;place-items:center;border-radius:9px;
+    color:var(--text-2);background:transparent;border:0;cursor:pointer}
+  .icon-btn:hover{background:var(--surface-2);color:var(--text)}
+  svg{width:20px;height:20px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+  .chat{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:14px}
+  .bubble{max-width:82%;padding:11px 13px;border-radius:15px;font-size:14px;line-height:1.45}
+  .me{align-self:flex-end;background:var(--steel-tint);border:1px solid color-mix(in srgb,var(--steel) 30%,transparent);border-bottom-right-radius:5px}
+  .ai{align-self:flex-start;background:var(--surface-2);border:1px solid var(--border);border-bottom-left-radius:5px}
+
+  .tv-genimg{align-self:flex-start;max-width:88%;border:1px solid var(--border);
+    border-radius:var(--r-input);background:var(--surface-2);padding:6px;overflow:hidden}
+  .tv-genimg-frame{position:relative;border-radius:10px;overflow:hidden;background:var(--surface);display:block;width:100%}
+  .tv-genimg-img{display:block;width:100%;height:auto}
+  .tv-genimg-kind{position:absolute;top:8px;left:8px;display:inline-flex;align-items:center;gap:4px;
+    font-size:10.5px;font-weight:600;padding:3px 8px;border-radius:var(--r-pill);
+    background:color-mix(in srgb,var(--violet) 22%,var(--surface));color:var(--violet);
+    border:1px solid color-mix(in srgb,var(--violet) 34%,transparent);backdrop-filter:blur(3px)}
+  .tv-genimg-kind svg{width:12px;height:12px}
+
+  /* disclosure toggle row */
+  .tv-genimg-bar{display:flex;align-items:center;gap:8px;padding:7px 6px 3px}
+  .tv-genimg-dim{font-size:11.5px;color:var(--text-3);margin-right:auto}
+  .tv-genimg-dim b{color:var(--text-2);font-weight:600}
+  .tv-genimg-toggle{display:inline-flex;align-items:center;gap:5px;font-size:12px;cursor:pointer;
+    color:var(--text-2);background:transparent;border:0;padding:4px 6px;border-radius:8px}
+  .tv-genimg-toggle:hover{color:var(--text);background:var(--surface)}
+  .tv-genimg-toggle .chev{transition:transform .2s ease}
+  .tv-genimg.open .tv-genimg-toggle .chev{transform:rotate(180deg)}
+
+  /* collapsible detail strip */
+  .tv-genimg-detail{display:grid;grid-template-rows:0fr;transition:grid-template-rows .22s ease;
+    margin:0 0 2px}
+  .tv-genimg.open .tv-genimg-detail{grid-template-rows:1fr}
+  .tv-genimg-detail > div{overflow:hidden}
+  .tv-genimg-meta{margin:4px 4px 0;border-top:1px solid var(--border);padding-top:8px;
+    display:flex;flex-direction:column;gap:7px}
+  .meta-row{display:flex;font-size:12px;line-height:1.4}
+  .meta-row .k{flex:0 0 64px;color:var(--text-3)}
+  .meta-row .v{color:var(--text-2);flex:1;word-break:break-word}
+  .meta-row .v.mono{font-family:var(--font-mono);font-size:11px}
+  .tv-genimg-prompt{font-size:12.5px;color:var(--text-2);line-height:1.45;
+    background:var(--surface);border-radius:9px;padding:8px 9px;margin:2px 4px 0}
+  .tv-genimg-acts{display:flex;gap:8px;padding:8px 4px 4px}
+  .act-btn{display:inline-flex;align-items:center;gap:5px;font-size:12px;font-weight:500;cursor:pointer;
+    border-radius:var(--r-pill);padding:6px 12px;border:1px solid var(--border);
+    background:var(--surface);color:var(--text-2)}
+  .act-btn:hover{color:var(--text);border-color:var(--steel)}
+  .act-btn.primary{background:var(--steel-tint);color:var(--steel);
+    border-color:color-mix(in srgb,var(--steel) 34%,transparent)}
+  .act-btn svg{width:14px;height:14px}
+
+  .composer{flex:0 0 auto;display:flex;gap:8px;align-items:center;
+    padding:10px 12px calc(10px + env(safe-area-inset-bottom));
+    border-top:1px solid var(--border);background:var(--surface-composer)}
+  .composer input{flex:1;background:var(--surface-2);border:1px solid var(--border);
+    border-radius:var(--r-pill);padding:10px 14px;color:var(--text);font-size:14px;outline:none}
+  .composer .send{width:40px;height:40px;border-radius:50%;border:0;background:var(--accent);
+    color:#10141a;display:grid;place-items:center;cursor:pointer;flex:0 0 40px}
+  .composer .send svg{stroke:#10141a}
+  .label{text-align:center;color:var(--text-2);font-size:12px;max-width:390px;line-height:1.45;margin:4px auto}
+  .label b{color:var(--text)}
+</style>
+</head>
+<body>
+<div>
+  <div class="phone">
+    <div class="topbar">
+      <button class="icon-btn"><svg viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg></button>
+      <div class="t">jerv<small>image</small></div>
+      <button class="icon-btn" id="theme" title="Toggle theme">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4.5"/><path d="M12 2v2M12 20v2M4 12H2M22 12h-2M5 5l1.5 1.5M17.5 17.5L19 19M19 5l-1.5 1.5M6.5 17.5L5 19"/></svg>
+      </button>
+    </div>
+
+    <div class="chat" id="chat">
+      <div class="bubble me">A watercolor lighthouse at dusk, tall and narrow.</div>
+      <div class="bubble ai">Here you go — tap <b>Details</b> for the prompt and seed, or regenerate.</div>
+
+      <!-- generated_image · kind=generate -->
+      <div class="tv-genimg" id="card">
+        <div class="tv-genimg-frame" style="aspect-ratio:768/1024">
+          <!-- prod: src="/api/images/generated/img_7fa1" -->
+          <img class="tv-genimg-img" alt="watercolor lighthouse at dusk" src="data:image/svg+xml;utf8,&lt;svg xmlns='http://www.w3.org/2000/svg' width='768' height='1024'&gt;&lt;defs&gt;&lt;linearGradient id='g' x1='0' y1='0' x2='0' y2='1'&gt;&lt;stop offset='0' stop-color='%237a6a9a'/&gt;&lt;stop offset='0.55' stop-color='%23c98a8f'/&gt;&lt;stop offset='1' stop-color='%23e9c79a'/&gt;&lt;/linearGradient&gt;&lt;/defs&gt;&lt;rect width='768' height='1024' fill='url(%23g)'/&gt;&lt;rect x='600' y='760' width='40' height='180' rx='6' fill='%23f4ead2'/&gt;&lt;rect x='600' y='760' width='40' height='44' fill='%23cf8a8f'/&gt;&lt;circle cx='620' cy='745' r='26' fill='%23ffe9b0'/&gt;&lt;circle cx='200' cy='180' r='90' fill='%23ffe9b0' opacity='0.55'/&gt;&lt;rect y='930' width='768' height='94' fill='%233a4a5e' opacity='0.45'/&gt;&lt;/svg&gt;" />
+          <span class="tv-genimg-kind"><svg viewBox="0 0 24 24"><path d="M12 3v18M3 12h18"/></svg>generated</span>
+        </div>
+
+        <div class="tv-genimg-bar">
+          <span class="tv-genimg-dim"><b>768 × 1024</b> · qwen-image</span>
+          <button class="tv-genimg-toggle" onclick="toggle()" aria-expanded="false">
+            Details
+            <svg class="chev" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>
+          </button>
+        </div>
+
+        <div class="tv-genimg-detail">
+          <div>
+            <div class="tv-genimg-prompt">watercolor of a lighthouse at dusk, tall and narrow, soft wet-on-wet washes, muted violet-to-amber sky</div>
+            <div class="tv-genimg-meta">
+              <div class="meta-row"><span class="k">Model</span><span class="v">qwen-image</span></div>
+              <div class="meta-row"><span class="k">Seed</span><span class="v mono">418827305</span></div>
+              <div class="meta-row"><span class="k">Size</span><span class="v">768 × 1024 (3:4)</span></div>
+            </div>
+            <div class="tv-genimg-acts">
+              <button class="act-btn primary" onclick="this.textContent='Regenerating…'">
+                <svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7M3 4v5h5"/></svg>Regenerate
+              </button>
+              <button class="act-btn"><svg viewBox="0 0 24 24"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg>Save</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="bubble me">Nice — what seed was that?</div>
+    </div>
+
+    <div class="composer">
+      <input id="inp" placeholder="Describe an image…" />
+      <button class="send" onclick="send()"><svg viewBox="0 0 24 24"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4z"/></svg></button>
+    </div>
+  </div>
+  <p class="label">B · <b>Result + disclosure.</b> Clean by default; tap <b>Details</b> to expand the prompt, model, seed, and dimensions plus a <b>Regenerate</b> affordance. Keeps reproducibility one tap away without cluttering the scroll.</p>
+</div>
+<script>
+  document.getElementById('theme').onclick=()=>{const h=document.documentElement;
+    h.dataset.theme=h.dataset.theme==='light'?'dark':'light'};
+  function toggle(){const c=document.getElementById('card');const open=c.classList.toggle('open');
+    c.querySelector('.tv-genimg-toggle').setAttribute('aria-expanded',open);}
+  function send(){const i=document.getElementById('inp');if(!i.value.trim())return;
+    const c=document.getElementById('chat');
+    const b=document.createElement('div');b.className='bubble me';b.textContent=i.value;
+    c.appendChild(b);i.value='';c.scrollTop=9e9;}
+  document.getElementById('inp').addEventListener('keydown',e=>{if(e.key==='Enter')send()});
+</script>
+</body>
+</html>
