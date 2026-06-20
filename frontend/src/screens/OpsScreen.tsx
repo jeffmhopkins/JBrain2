@@ -6,6 +6,7 @@ import {
   type UpdateStatus,
   api,
 } from "../api/client";
+import { useForegroundRef } from "../visibility";
 import { RunsScreen } from "./RunsScreen";
 
 function fmtBytes(n: number): string {
@@ -137,6 +138,9 @@ const UPDATE_POLL_MS = 3000;
 function UpdateControl() {
   const [phase, setPhase] = useState<UpdatePhase>({ step: "idle" });
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
+  // While the app is backgrounded the status poll goes silent; the server-side
+  // update runs on regardless, and the next foreground tick picks it back up.
+  const foregroundRef = useForegroundRef();
 
   const stopPolling = useCallback(() => {
     if (timer.current !== null) clearInterval(timer.current);
@@ -145,6 +149,7 @@ function UpdateControl() {
   useEffect(() => stopPolling, [stopPolling]);
 
   const poll = useCallback(async () => {
+    if (!foregroundRef.current) return;
     let status: UpdateStatus;
     try {
       status = await api.opsUpdateStatus();
@@ -160,7 +165,7 @@ function UpdateControl() {
       stopPolling();
       setPhase({ step: "done", ok: status.exit_code === 0, log: status.log_tail });
     }
-  }, [stopPolling]);
+  }, [stopPolling, foregroundRef]);
 
   async function start() {
     try {

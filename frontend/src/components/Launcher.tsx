@@ -4,6 +4,7 @@
 
 import { type ReactNode, type TouchEvent, useEffect, useRef, useState } from "react";
 import { api } from "../api/client";
+import { useForeground } from "../visibility";
 import {
   BookIcon,
   BotIcon,
@@ -102,13 +103,15 @@ export function Launcher({ open, onClose, onNavigate }: LauncherProps) {
   const touchStartY = useRef<number | null>(null);
   const wasOpen = useRef(open);
   // A live count drives the Review tile badge: an immediate fetch on open, then
-  // a poll and a refresh whenever the tab regains focus, so it stays current
-  // while the launcher sits open (including beneath the Review card). Failures
-  // just leave the badge at its last value.
+  // a poll while the launcher sits open (including beneath the Review card).
+  // Failures just leave the badge at its last value.
   const [reviewCount, setReviewCount] = useState<number | null>(null);
+  // Backgrounding the app suspends the poll; returning to the foreground re-runs
+  // this effect, which refetches at once and re-arms — so a hidden app is quiet.
+  const foreground = useForeground();
 
   useEffect(() => {
-    if (!open) return;
+    if (!open || !foreground) return;
     let stale = false;
     const refresh = () =>
       api
@@ -119,16 +122,11 @@ export function Launcher({ open, onClose, onNavigate }: LauncherProps) {
         .catch(() => {});
     refresh();
     const interval = setInterval(refresh, REVIEW_POLL_MS);
-    const onVisible = () => {
-      if (document.visibilityState === "visible") refresh();
-    };
-    document.addEventListener("visibilitychange", onVisible);
     return () => {
       stale = true;
       clearInterval(interval);
-      document.removeEventListener("visibilitychange", onVisible);
     };
-  }, [open]);
+  }, [open, foreground]);
 
   // The retreat is driven by `open` going false — from the X/grab, swipe-down,
   // Escape, OR the platform back gesture (App clears launcherOpen). Closing this

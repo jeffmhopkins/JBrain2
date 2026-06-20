@@ -5,6 +5,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { type AttachmentOut, type NoteOut, type NoteUpdate, api } from "../api/client";
 import { freshCoords } from "../location";
+import { useForeground } from "../visibility";
 import { lifecycleChip } from "./lifecycle";
 import { type OutboxStore, type PendingNote, createIdbStore, flushOutbox } from "./outbox";
 
@@ -176,8 +177,12 @@ export function useNotes(enabled: boolean, store?: OutboxStore): NotesController
   // freshly-settled note reflects at once rather than on the next slow tick).
   const anyInFlight = useMemo(() => serverItems.some(inFlight), [serverItems]);
 
+  // A backgrounded PWA must not poll the server; suspending while hidden and
+  // catching up the instant it returns to the foreground is the whole point.
+  const foreground = useForeground();
+
   useEffect(() => {
-    if (!enabled) return;
+    if (!enabled || !foreground) return;
     void sync();
     const onOnline = () => void sync();
     window.addEventListener("online", onOnline);
@@ -187,7 +192,7 @@ export function useNotes(enabled: boolean, store?: OutboxStore): NotesController
       window.removeEventListener("online", onOnline);
       clearInterval(interval);
     };
-  }, [enabled, sync, anyInFlight]);
+  }, [enabled, sync, anyInFlight, foreground]);
 
   const send = useCallback(
     async (input: SendInput) => {
