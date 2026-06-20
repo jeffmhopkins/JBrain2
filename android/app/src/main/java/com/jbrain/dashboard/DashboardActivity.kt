@@ -1,12 +1,15 @@
 package com.jbrain.dashboard
 
+import android.Manifest
 import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.os.Bundle
 import android.webkit.CookieManager
 import android.webkit.WebSettings
 import android.webkit.WebView
+import androidx.core.content.ContextCompat
 
 /** Hosts the member dashboard SPA (served at /dash) in a locked-down WebView.
  *
@@ -59,6 +62,8 @@ class DashboardActivity : Activity() {
                     setCookie(decision.url, decision.setCookie)
                 }
                 web.loadUrl(decision.url)
+                // Paired + authenticated: begin sharing this phone's location.
+                ensureLocationSharing()
             }
             LaunchDecision.NeedsPairing ->
                 startActivityForResult(Intent(this, PairingActivity::class.java), REQ_PAIR)
@@ -74,11 +79,38 @@ class DashboardActivity : Activity() {
         if (requestCode == REQ_PAIR && resultCode == RESULT_OK) relaunch() else if (requestCode == REQ_PAIR) finish()
     }
 
+    /** Start the location-publishing service once we have foreground-location
+     * permission; otherwise request it and start on grant. Background-location +
+     * the doze/OEM hardening are a later pass. */
+    private fun ensureLocationSharing() {
+        if (hasFineLocation()) {
+            startService(Intent(this, LocationService::class.java))
+        } else {
+            requestPermissions(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION), REQ_LOCATION)
+        }
+    }
+
+    private fun hasFineLocation(): Boolean =
+        ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) ==
+            PackageManager.PERMISSION_GRANTED
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray,
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == REQ_LOCATION && grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) {
+            startService(Intent(this, LocationService::class.java))
+        }
+    }
+
     private fun WebView.loadDataMessage(text: String) {
         loadData("<body style='font-family:sans-serif;padding:2rem'>$text</body>", "text/html", "utf-8")
     }
 
     private companion object {
         const val REQ_PAIR = 1
+        const val REQ_LOCATION = 2
     }
 }

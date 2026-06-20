@@ -334,8 +334,12 @@ service-account bootstrap (non-negotiable #8).
   launcher routes to and re-launches from once paired ✓; **M5d-1** WebView lockdown
   hardening — a JVM-tested same-origin `NavigationPolicy` + `LockedWebViewClient`
   that refuses any off-origin navigation, plus mixed-content NEVER_ALLOW, file-URL
-  access off, and no JS bridge ✓; **M5d-2** the OwnTracks location-publishing engine
-  (off the stored config) — pending the fork-vs-minimal-publisher call.
+  access off, and no JS bridge ✓; **M5d-2** location publishing (owner chose the
+  minimal-publisher path over forking OwnTracks): a JVM-tested `LocationReport`
+  (OwnTracks `_type:location` encode) + `LocationPublisher` (POST `/api/owntracks`,
+  device key as Basic password, 401→clear, 429→back off) and a framework
+  `LocationService` (foreground, LocationManager) the dashboard starts after auth;
+  doze/aggressive-OEM reliability is a deferred hardening pass ✓. **M5 complete.**
 - **M6 — FCM.** `fcm_token` registry (+ RLS test); content-free poke sender;
   view-scope-aware routing; dedupe; on-poke fetch-then-local-notify. Gate:
   **no-PII-in-payload** test, routing test, revoke-kills-token test.
