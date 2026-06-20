@@ -5,10 +5,11 @@
 // and a member (device-key) session unlocks a full-screen live map scoped to its own
 // + its family group.
 //
-// Wave 2 (docs/PHASE7_APP_MAP_PLAN.md) ships the full-screen map shell: the floating
-// person switcher, current-location pins, and the bottom status/roster card. Trail /
-// heat / the 1–7 day range / the last-actions timeline land in Wave 3. Reference
-// mock: docs/mocks/app-live-map.html. Location domain stays on --location (teal).
+// Reference mock: docs/mocks/app-live-map-v2.html. The map is the whole surface; a
+// floating switcher selects a person (centering the map on them), and the bottom is a
+// slim persistent bar with two pull-up sheets, one at a time: Details (the person's
+// last-actions timeline / the roster) and History (Trail/Heat over a drag-both-ends
+// time window). Location domain stays on --location (teal); names + times only.
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -76,9 +77,16 @@ export function MemberDashboard({ deps }: MemberDashboardProps) {
 
 // "all" shows everyone's current pins; a subject id focuses one person.
 type Selection = "all" | string;
+// Which bottom sheet is pulled up (null = collapsed, map-first).
+type Sheet = null | "details" | "history";
+// The time window as two slider positions 0..100 (0 = MAX_DAYS ago, 100 = now).
+type Win = { from: number; to: number };
 
 const PIN_PALETTE = 6; // loc-pin-c0..c5
 const STALE_MS = 10 * 60_000; // a fix older than this reads as "stale", not "live"
+const HEAT_RADIUS = 22; // px per-point heat spot — a sensible fixed value for the app
+const MAX_DAYS = 7; // the window's full span (now → 7 days ago)
+const DEFAULT_WIN: Win = { from: 57, to: 100 }; // ≈ last 3 days
 
 function paletteClass(index: number): string {
   return `loc-pin-c${index % PIN_PALETTE}`;
@@ -88,13 +96,25 @@ function isLive(iso: string | null): boolean {
   return iso !== null && Date.now() - new Date(iso).getTime() < STALE_MS;
 }
 
-const HEAT_RADIUS = 22; // px per-point heat spot — a sensible fixed value for the app
-const MAX_DAYS = 7;
+/** A window position (0..100) to an absolute epoch-ms, anchored at the call's "now". */
+function posToMs(p: number, now: number): number {
+  return now - ((100 - p) / 100) * MAX_DAYS * 86_400_000;
+}
 
-function windowIso(days: number): { since: string; until: string } {
-  const until = new Date();
-  const since = new Date(until.getTime() - days * 86_400_000);
-  return { since: since.toISOString(), until: until.toISOString() };
+function winToMs(win: Win): { sinceMs: number; untilMs: number } {
+  const now = Date.now();
+  return {
+    sinceMs: posToMs(Math.min(win.from, win.to), now),
+    untilMs: posToMs(Math.max(win.from, win.to), now),
+  };
+}
+
+/** A window position as a relative label ("now" / "3h ago" / "5d ago"). */
+function fmtPos(p: number): string {
+  const d = ((100 - p) / 100) * MAX_DAYS;
+  if (d < 0.04) return "now";
+  if (d < 1) return `${Math.round(d * 24)}h ago`;
+  return `${d < 3 ? d.toFixed(1) : Math.round(d)}d ago`;
 }
 
 function LiveMap({ deps }: { deps: MemberDeps | undefined }) {
@@ -110,13 +130,15 @@ function LiveMap({ deps }: { deps: MemberDeps | undefined }) {
   const [failed, setFailed] = useState(false);
   const [sel, setSel] = useState<Selection>("all");
   const [mode, setMode] = useState<Exclude<MapMode, "live">>("trail");
-  const [days, setDays] = useState(3);
-  const [cardOpen, setCardOpen] = useState(false);
+  const [win, setWin] = useState<Win>(DEFAULT_WIN);
+  const [sheet, setSheet] = useState<Sheet>(null);
 
   const canvas = useRef<HTMLDivElement>(null);
   const handle = useRef<LocationMapHandle | null>(null);
   const selRef = useRef<Selection>(sel);
   selRef.current = sel;
+  const rosterRef = useRef<MemberSubject[] | null>(roster);
+  rosterRef.current = roster;
 
   // Create the Leaflet map once; a pin tap follows through to the switcher.
   useEffect(() => {
@@ -130,7 +152,7 @@ function LiveMap({ deps }: { deps: MemberDeps | undefined }) {
   }, []);
 
   // Roster (with each subject's latest coordinate) + shared fences + the transition
-  // feed (the last-actions card filters it per person).
+  // feed (the Details sheet filters it per person + window).
   useEffect(() => {
     let stale = false;
     Promise.all([listRoster(), listPlaces(), listTimeline()])
@@ -182,15 +204,15 @@ function LiveMap({ deps }: { deps: MemberDeps | undefined }) {
     return () => live.close();
   }, []);
 
-  // The focused person's trail over the chosen range (Everyone → no trail).
+  // The focused person's trail over the time window (Everyone → no trail).
   useEffect(() => {
     if (sel === "all") {
       setTrail([]);
       return;
     }
     let stale = false;
-    const { since, until } = windowIso(days);
-    listPositions(sel, since, until)
+    const { sinceMs, untilMs } = winToMs(win);
+    listPositions(sel, new Date(sinceMs).toISOString(), new Date(untilMs).toISOString())
       .then((fixes) => {
         if (!stale) setTrail(fixes);
       })
@@ -200,11 +222,20 @@ function LiveMap({ deps }: { deps: MemberDeps | undefined }) {
     return () => {
       stale = true;
     };
-  }, [sel, days, listPositions]);
+  }, [sel, win, listPositions]);
 
-  // Collapse the expanded card whenever the focus changes.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: collapse on focus change
-  useEffect(() => setCardOpen(false), [sel]);
+  // Selecting a person recenters the map on them (their current pin at select time).
+  useEffect(() => {
+    if (sel === "all") return;
+    const p = rosterRef.current?.find((s) => s.subject_id === sel);
+    if (p?.latitude != null && p?.longitude != null)
+      handle.current?.centerOn(p.latitude, p.longitude);
+  }, [sel]);
+
+  // History has no meaning for Everyone — collapse it on the way there.
+  useEffect(() => {
+    if (sel === "all") setSheet((s) => (s === "history" ? null : s));
+  }, [sel]);
 
   // Each visible subject gets a stable colour by roster order.
   const colorOf = useMemo(() => {
@@ -213,8 +244,8 @@ function LiveMap({ deps }: { deps: MemberDeps | undefined }) {
     return m;
   }, [roster]);
 
-  // Drive the map: Everyone → all current pins (no trail); a focus → that person's
-  // pin plus their trail or heat over the range.
+  // Drive the map: Everyone → all current pins (auto-fit); a focus → that person's
+  // pin plus their trail/heat, with the view owned by centerOn (no auto-fit).
   useEffect(() => {
     const h = handle.current;
     if (!h || !roster) return;
@@ -235,75 +266,36 @@ function LiveMap({ deps }: { deps: MemberDeps | undefined }) {
       heatRadius: HEAT_RADIUS,
       places,
       pins,
+      autoFit: sel === "all",
     });
   }, [roster, places, sel, colorOf, mode, trail]);
+
+  const toggleSheet = (which: Exclude<Sheet, null>) =>
+    setSheet((s) => (s === which ? null : which));
 
   return (
     <div className="livemap">
       <div className="livemap-canvas" ref={canvas} data-testid="map-canvas" />
       <PeopleSwitcher roster={roster} sel={sel} colorOf={colorOf} failed={failed} onPick={setSel} />
-      {sel !== "all" && <MapControls mode={mode} days={days} onMode={setMode} onDays={setDays} />}
-      <PersonCard
+      <DetailsSheet
+        open={sheet === "details"}
         roster={roster}
         sel={sel}
         colorOf={colorOf}
-        onPick={setSel}
         timeline={timeline}
-        days={days}
-        open={cardOpen}
-        onToggle={() => setCardOpen((o) => !o)}
+        win={win}
+        onPick={setSel}
+        onClose={() => setSheet(null)}
       />
-    </div>
-  );
-}
-
-// --- floating mode + range controls (single-person only) ------------------
-
-function MapControls({
-  mode,
-  days,
-  onMode,
-  onDays,
-}: {
-  mode: Exclude<MapMode, "live">;
-  days: number;
-  onMode: (m: Exclude<MapMode, "live">) => void;
-  onDays: (d: number) => void;
-}) {
-  return (
-    <div className="lm-ctrls lm-float">
-      {/* biome-ignore lint/a11y/useSemanticElements: a 2-button toggle group; a <fieldset> is overkill */}
-      <div className="lm-seg" role="group" aria-label="Overlay">
-        <button
-          type="button"
-          className={mode === "trail" ? "on" : ""}
-          aria-pressed={mode === "trail"}
-          onClick={() => onMode("trail")}
-        >
-          Trail
-        </button>
-        <button
-          type="button"
-          className={mode === "heat" ? "on" : ""}
-          aria-pressed={mode === "heat"}
-          onClick={() => onMode("heat")}
-        >
-          Heat
-        </button>
-      </div>
-      <label className="lm-range">
-        <span className="lm-range-lbl">
-          Last <b>{days}</b> day{days > 1 ? "s" : ""}
-        </span>
-        <input
-          type="range"
-          min={1}
-          max={MAX_DAYS}
-          value={days}
-          aria-label="Days of history"
-          onChange={(e) => onDays(Number(e.target.value))}
-        />
-      </label>
+      <HistorySheet
+        open={sheet === "history"}
+        mode={mode}
+        win={win}
+        onMode={setMode}
+        onWin={setWin}
+        onClose={() => setSheet(null)}
+      />
+      <DockBar roster={roster} sel={sel} colorOf={colorOf} sheet={sheet} onToggle={toggleSheet} />
     </div>
   );
 }
@@ -363,137 +355,306 @@ function PeopleSwitcher({
   );
 }
 
-// --- floating bottom card -------------------------------------------------
+// --- bottom dock: a persistent bar + two pull-up sheets -------------------
 
-function PersonCard({
+function DockBar({
   roster,
   sel,
   colorOf,
-  onPick,
-  timeline,
-  days,
-  open,
+  sheet,
   onToggle,
 }: {
   roster: MemberSubject[] | null;
   sel: Selection;
   colorOf: Map<string, string>;
-  onPick: (s: Selection) => void;
-  timeline: TimelineEntry[];
-  days: number;
-  open: boolean;
-  onToggle: () => void;
+  sheet: Sheet;
+  onToggle: (which: Exclude<Sheet, null>) => void;
 }) {
   if (!roster) return null;
   if (roster.length === 0) {
-    return <div className="lm-card lm-float lm-card-quiet">no one to show yet.</div>;
+    return <div className="lm-bar lm-float lm-bar-quiet">no one to show yet.</div>;
   }
-
-  if (sel === "all") {
-    return (
-      <div className="lm-card lm-float">
-        <div className="lm-card-h">Everyone · {roster.length}</div>
-        <div className="lm-roster">
-          {roster.map((m) => (
-            <button
-              type="button"
-              key={m.subject_id}
-              className="lm-row"
-              onClick={() => onPick(m.subject_id)}
-            >
-              <span className={`lm-av sm ${colorOf.get(m.subject_id) ?? "loc-pin-c0"}`}>
-                {(m.label[0] ?? "?").toUpperCase()}
-              </span>
-              <span className="lm-row-main">
-                <span className="lm-row-nm">{m.label}</span>
-                <span className="lm-row-sub">
-                  <PresenceDot live={isLive(m.last_seen)} /> {presence(m)}
-                </span>
-              </span>
-              <Battery pct={m.battery_pct} />
-            </button>
-          ))}
-        </div>
-        <PrivacyLine />
-      </div>
-    );
-  }
-
-  const m = roster.find((s) => s.subject_id === sel);
-  if (!m) return null;
-  const actions = recentActions(timeline, m.subject_id, days);
+  const everyone = sel === "all";
+  const m = everyone ? null : roster.find((s) => s.subject_id === sel);
   return (
-    <div className={`lm-card lm-float${open ? " open" : ""}`}>
-      <button type="button" className="lm-chead" onClick={onToggle} aria-expanded={open}>
-        <span className={`lm-av ${colorOf.get(m.subject_id) ?? "loc-pin-c0"}`}>
-          {(m.label[0] ?? "?").toUpperCase()}
-        </span>
-        <span className="lm-chead-main">
-          <span className="lm-chead-nm">{m.label}</span>
-          <span className="lm-chead-st">
-            <PresenceDot live={isLive(m.last_seen)} /> {presence(m)}
-          </span>
-        </span>
-        <Battery pct={m.battery_pct} />
-        <span className="lm-chev" aria-hidden>
-          ⌃
-        </span>
-      </button>
-      {actions.length > 0 && (
-        <div className="lm-quick">
-          {actions.slice(0, 4).map((e, i) => (
-            <span key={`${e.occurred_at}-${i}`} className="lm-qpill">
-              <span className={e.transition === "enter" ? "in" : "out"}>●</span>{" "}
-              {timeOfDay(e.occurred_at)} {actionText(e)}
+    <div className="lm-bar lm-float">
+      <div className="lm-bar-who">
+        {everyone ? (
+          <>
+            <span className="lm-av lm-av-all sm" aria-hidden>
+              ◎
             </span>
-          ))}
-        </div>
-      )}
-      {open && (
-        <div className="lm-more">
-          <div className="lm-more-h">
-            Recent activity · last {days} day{days > 1 ? "s" : ""}
-          </div>
-          {actions.length === 0 ? (
-            <div className="lm-card-quiet">no arrivals or departures yet.</div>
-          ) : (
-            <div className="lm-tl">
-              {groupActionsByDay(actions).map((g) => (
-                <section key={g.day}>
-                  {g.rows.map((e, i) => (
-                    <div
-                      key={`${e.occurred_at}-${i}`}
-                      className={`lm-ev ${e.transition === "enter" ? "in" : "out"}`}
-                    >
-                      <span className="lm-ev-mk" aria-hidden />
-                      <span className="lm-ev-t">{timeOfDay(e.occurred_at)}</span>
-                      <span className="lm-ev-d">
-                        {actionText(e)}
-                        {i === 0 && <span className="lm-ev-day"> · {g.day}</span>}
-                      </span>
-                    </div>
-                  ))}
-                </section>
-              ))}
-            </div>
-          )}
-        </div>
+            <span className="lm-bar-txt">
+              <span className="lm-bar-nm">Everyone</span>
+              <span className="lm-bar-sub">{roster.length} family members</span>
+            </span>
+          </>
+        ) : m ? (
+          <>
+            <span className={`lm-av sm ${colorOf.get(m.subject_id) ?? "loc-pin-c0"}`}>
+              {(m.label[0] ?? "?").toUpperCase()}
+            </span>
+            <span className="lm-bar-txt">
+              <span className="lm-bar-nm">{m.label}</span>
+              <span className="lm-bar-sub">
+                <PresenceDot live={isLive(m.last_seen)} /> {presence(m)}
+              </span>
+            </span>
+          </>
+        ) : null}
+      </div>
+      <button
+        type="button"
+        className={`lm-pull${sheet === "details" ? " on" : ""}`}
+        aria-expanded={sheet === "details"}
+        onClick={() => onToggle("details")}
+      >
+        <PullChevron />
+        Details
+      </button>
+      <button
+        type="button"
+        className={`lm-pull${sheet === "history" ? " on" : ""}`}
+        aria-expanded={sheet === "history"}
+        disabled={everyone}
+        onClick={() => onToggle("history")}
+      >
+        <PullChevron />
+        History
+      </button>
+    </div>
+  );
+}
+
+function DetailsSheet({
+  open,
+  roster,
+  sel,
+  colorOf,
+  timeline,
+  win,
+  onPick,
+  onClose,
+}: {
+  open: boolean;
+  roster: MemberSubject[] | null;
+  sel: Selection;
+  colorOf: Map<string, string>;
+  timeline: TimelineEntry[];
+  win: Win;
+  onPick: (s: Selection) => void;
+  onClose: () => void;
+}) {
+  if (!roster) return null;
+  return (
+    <div className={`lm-sheet lm-float${open ? " open" : ""}`} aria-hidden={!open}>
+      <button type="button" className="lm-grab" aria-label="Collapse" onClick={onClose} />
+      {sel === "all" ? (
+        <RosterList roster={roster} colorOf={colorOf} onPick={onPick} />
+      ) : (
+        <PersonActivity roster={roster} sel={sel} timeline={timeline} win={win} />
       )}
       <PrivacyLine />
     </div>
   );
 }
 
-/** The selected person's recent geofence crossings (newest first), within the chosen
- * day range — names + times only, never a coordinate. */
-function recentActions(
-  timeline: TimelineEntry[],
-  subjectId: string,
-  days: number,
-): TimelineEntry[] {
-  const floor = Date.now() - days * 86_400_000;
+function RosterList({
+  roster,
+  colorOf,
+  onPick,
+}: {
+  roster: MemberSubject[];
+  colorOf: Map<string, string>;
+  onPick: (s: Selection) => void;
+}) {
+  return (
+    <>
+      <div className="lm-sec-h">Everyone · {roster.length}</div>
+      <div className="lm-roster">
+        {roster.map((m) => (
+          <button
+            type="button"
+            key={m.subject_id}
+            className="lm-row"
+            onClick={() => onPick(m.subject_id)}
+          >
+            <span className={`lm-av sm ${colorOf.get(m.subject_id) ?? "loc-pin-c0"}`}>
+              {(m.label[0] ?? "?").toUpperCase()}
+            </span>
+            <span className="lm-row-main">
+              <span className="lm-row-nm">{m.label}</span>
+              <span className="lm-row-sub">
+                <PresenceDot live={isLive(m.last_seen)} /> {presence(m)}
+              </span>
+            </span>
+            <Battery pct={m.battery_pct} />
+          </button>
+        ))}
+      </div>
+    </>
+  );
+}
+
+function PersonActivity({
+  roster,
+  sel,
+  timeline,
+  win,
+}: {
+  roster: MemberSubject[];
+  sel: Selection;
+  timeline: TimelineEntry[];
+  win: Win;
+}) {
+  const m = roster.find((s) => s.subject_id === sel);
+  if (!m) return null;
+  const actions = recentActions(timeline, m.subject_id, win);
+  return (
+    <>
+      <div className="lm-sec-h">{m.label} · recent activity</div>
+      {actions.length === 0 ? (
+        <div className="lm-card-quiet">no arrivals or departures in this window.</div>
+      ) : (
+        <div className="lm-tl">
+          {groupActionsByDay(actions).map((g) => (
+            <section key={g.day}>
+              {g.rows.map((e, i) => (
+                <div
+                  key={`${e.occurred_at}-${i}`}
+                  className={`lm-ev ${e.transition === "enter" ? "in" : "out"}`}
+                >
+                  <span className="lm-ev-mk" aria-hidden />
+                  <span className="lm-ev-t">{timeOfDay(e.occurred_at)}</span>
+                  <span className="lm-ev-d">
+                    {actionText(e)}
+                    {i === 0 && <span className="lm-ev-day"> · {g.day}</span>}
+                  </span>
+                </div>
+              ))}
+            </section>
+          ))}
+        </div>
+      )}
+    </>
+  );
+}
+
+function HistorySheet({
+  open,
+  mode,
+  win,
+  onMode,
+  onWin,
+  onClose,
+}: {
+  open: boolean;
+  mode: Exclude<MapMode, "live">;
+  win: Win;
+  onMode: (m: Exclude<MapMode, "live">) => void;
+  onWin: (w: Win) => void;
+  onClose: () => void;
+}) {
+  return (
+    <div className={`lm-sheet lm-float${open ? " open" : ""}`} aria-hidden={!open}>
+      <button type="button" className="lm-grab" aria-label="Collapse" onClick={onClose} />
+      <div className="lm-sec-h">Show</div>
+      <div className="lm-seg">
+        <button
+          type="button"
+          className={mode === "trail" ? "on" : ""}
+          aria-pressed={mode === "trail"}
+          onClick={() => onMode("trail")}
+        >
+          Trail
+        </button>
+        <button
+          type="button"
+          className={mode === "heat" ? "on" : ""}
+          aria-pressed={mode === "heat"}
+          onClick={() => onMode("heat")}
+        >
+          Heat
+        </button>
+      </div>
+      <div className="lm-sec-h">Time window</div>
+      <TimeWindow win={win} onWin={onWin} />
+      <div className="lm-priv">Family-only · names + times only, never a coordinate.</div>
+    </div>
+  );
+}
+
+function TimeWindow({ win, onWin }: { win: Win; onWin: (w: Win) => void }) {
+  const lo = Math.min(win.from, win.to);
+  const hi = Math.max(win.from, win.to);
+  return (
+    <div className="lm-win">
+      <div className="lm-winlbl">
+        <span>
+          From <b>{fmtPos(lo)}</b>
+        </span>
+        <span>
+          to <b>{fmtPos(hi)}</b>
+        </span>
+      </div>
+      <div className="lm-range">
+        <div className="lm-range-track" />
+        <div className="lm-range-fill" style={{ left: `${lo}%`, width: `${hi - lo}%` }} />
+        <input
+          type="range"
+          min={0}
+          max={100}
+          value={win.from}
+          aria-label="Window start"
+          onChange={(e) => onWin({ ...win, from: Number(e.target.value) })}
+        />
+        <input
+          type="range"
+          min={0}
+          max={100}
+          value={win.to}
+          aria-label="Window end"
+          onChange={(e) => onWin({ ...win, to: Number(e.target.value) })}
+        />
+      </div>
+      <div className="lm-ticks">
+        <span>7d</span>
+        <span>5d</span>
+        <span>3d</span>
+        <span>1d</span>
+        <span>now</span>
+      </div>
+    </div>
+  );
+}
+
+function PullChevron() {
+  return (
+    <svg className="lm-pull-ic" viewBox="0 0 24 24" aria-hidden="true" role="img">
+      <title>expand</title>
+      <path
+        d="M6 15l6-6 6 6"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
+// --- last-actions helpers --------------------------------------------------
+
+/** The selected person's geofence crossings within the time window (newest first) —
+ * names + times only, never a coordinate. */
+function recentActions(timeline: TimelineEntry[], subjectId: string, win: Win): TimelineEntry[] {
+  const { sinceMs, untilMs } = winToMs(win);
   return timeline
-    .filter((e) => e.subject_id === subjectId && new Date(e.occurred_at).getTime() >= floor)
+    .filter((e) => {
+      if (e.subject_id !== subjectId) return false;
+      const t = new Date(e.occurred_at).getTime();
+      return t >= sinceMs && t <= untilMs;
+    })
     .sort((a, b) => new Date(b.occurred_at).getTime() - new Date(a.occurred_at).getTime());
 }
 
@@ -558,7 +719,7 @@ function PrivacyLine() {
   return <div className="lm-priv">Family-only · history stays on your box</div>;
 }
 
-/** A compact "last fix" relative time for the roster/card (never an exact position —
+/** A compact "last fix" relative time for the roster/bar (never an exact position —
  * just freshness, so a stale dot is never read as "here now"). */
 export function lastSeen(iso: string | null): string {
   if (!iso) return "no fixes yet";

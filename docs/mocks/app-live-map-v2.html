@@ -1,0 +1,282 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>JBrain360 — app live map v2 (collapsible dock + time window)</title>
+<style>
+  :root{
+    --bg:#0e0f11;--surface:#17181b;--surface-2:#1e2024;--border:#26282c;
+    --text:#e6e7e9;--text-2:#9a9da3;--text-3:#5c5f66;--scrim:rgba(14,15,17,.55);
+    --green:#8fbc9a;--amber:#c9a36a;--location:#6fb6b1;
+    --grid:#191b1f;--road:#23262c;--park:#15211a;--water:#13232a;
+    --float:rgba(22,24,28,.74);
+    --p0:#7fa7c9;--p1:#cf8a8f;--p2:#a493c9;--p3:#6fb6b1;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  body{margin:0;background:#05070a;color:var(--text);
+    font:15px/1.5 system-ui,-apple-system,sans-serif;display:grid;place-items:center;min-height:100vh}
+  .phone{width:390px;height:800px;background:var(--bg);border-radius:32px;overflow:hidden;
+    position:relative;box-shadow:0 24px 70px rgba(0,0,0,.5)}
+  svg.ic{width:20px;height:20px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+
+  /* dark schematic basemap (stands in for CARTO Dark Matter) */
+  .mapwrap{position:absolute;inset:0;overflow:hidden}
+  .map{position:absolute;width:560px;height:560px;left:-85px;top:120px;transition:transform .45s ease;
+    background:
+      repeating-linear-gradient(0deg,transparent 0 31px,var(--grid) 31px 32px),
+      repeating-linear-gradient(90deg,transparent 0 31px,var(--grid) 31px 32px),
+      var(--bg)}
+  .road{position:absolute;background:var(--road);border-radius:3px}
+  .park{position:absolute;background:var(--park);border-radius:45% 55% 50% 45%}
+  .water{position:absolute;background:var(--water)}
+  .pin{position:absolute;transform:translate(-50%,-100%);cursor:pointer;z-index:4}
+  .pin .head{width:26px;height:26px;border-radius:50% 50% 50% 0;transform:rotate(-45deg);margin:0 auto;
+    border:2px solid var(--bg);box-shadow:0 3px 8px rgba(0,0,0,.6);display:grid;place-items:center}
+  .pin .head b{transform:rotate(45deg);color:#0c1012;font-size:12px;font-weight:700}
+  .pin.sel .head{width:30px;height:30px;box-shadow:0 0 0 4px color-mix(in srgb,var(--pc) 40%,transparent)}
+  .pin .lbl{font-size:10px;font-weight:600;background:var(--float);border:1px solid var(--border);
+    border-radius:6px;padding:1px 6px;margin:4px auto 0;display:table;backdrop-filter:blur(6px)}
+  .trail{position:absolute;inset:0;pointer-events:none}
+
+  .float{background:var(--float);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);
+    border:1px solid var(--border);box-shadow:0 6px 22px var(--scrim)}
+
+  .status{position:absolute;top:0;left:0;right:0;height:30px;display:flex;align-items:center;
+    justify-content:space-between;padding:0 20px;font-size:13px;font-weight:600;z-index:9;pointer-events:none}
+
+  /* person switcher */
+  .people{position:absolute;top:38px;left:10px;right:10px;z-index:8;display:flex;gap:8px;
+    overflow-x:auto;padding:8px;border-radius:16px;scrollbar-width:none}
+  .people::-webkit-scrollbar{display:none}
+  .chip{flex:0 0 auto;width:56px;display:flex;flex-direction:column;align-items:center;gap:4px;
+    border:0;background:transparent;cursor:pointer;padding:0}
+  .av{position:relative;width:42px;height:42px;border-radius:50%;display:grid;place-items:center;
+    background:var(--pc);color:#0c1012;font-weight:700;font-size:15px;border:2px solid transparent;transition:transform .12s}
+  .chip.on .av{border-color:var(--text);transform:scale(1.06)}
+  .av-all{--pc:var(--surface-2);color:var(--text-2);border:1px solid var(--border)}
+  .pres{position:absolute;right:-1px;bottom:-1px;width:12px;height:12px;border-radius:50%;border:2px solid var(--bg)}
+  .pres.live{background:var(--green)}.pres.stale{background:var(--amber)}
+  .chip-nm{font-size:11px;color:var(--text-2);max-width:56px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .chip.on .chip-nm{color:var(--text);font-weight:600}
+
+  /* ---- bottom: two pull-up sheets + a persistent collapsed bar ---- */
+  /* Sheets/bar are positioned against the phone frame so their heights resolve
+     against the full frame, not a tiny wrapper. */
+  .sheet{border-top-left-radius:22px;border-top-right-radius:22px;border-top:1px solid var(--border);
+    position:absolute;left:0;right:0;bottom:0;z-index:9;transform:translateY(100%);
+    transition:transform .26s cubic-bezier(.3,.7,.3,1);padding:6px 16px 22px;max-height:74%;overflow-y:auto}
+  .sheet.open{transform:translateY(0)}
+  .grab{width:38px;height:4px;border-radius:2px;background:var(--border);margin:8px auto 10px;cursor:grab}
+
+  /* the always-visible collapsed bar */
+  .bar{position:absolute;left:0;right:0;bottom:0;z-index:8;display:flex;align-items:stretch;gap:8px;
+    padding:8px;border-radius:18px 18px 0 0;border-bottom:0}
+  .bar .who{flex:1;display:flex;align-items:center;gap:10px;min-width:0;padding:4px 6px}
+  .bar .who .av{width:34px;height:34px;font-size:13px;flex:0 0 34px}
+  .bar .who .nm{font-size:14px;font-weight:600}
+  .bar .who .sub{font-size:11.5px;color:var(--text-2);display:flex;gap:5px;align-items:center}
+  .pull{flex:0 0 auto;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;
+    width:74px;border:0;border-radius:13px;background:var(--surface-2);color:var(--text-2);cursor:pointer;font-size:11px;font-weight:600}
+  .pull svg{width:15px;height:15px}
+  .pull.on{background:var(--location);color:#04100f}.pull.on svg{stroke:#04100f}
+  .pull[disabled]{opacity:.4;pointer-events:none}
+
+  .dot{width:8px;height:8px;border-radius:50%;flex:0 0 8px}
+  .dot.live{background:var(--green)}.dot.stale{background:var(--amber)}
+
+  /* Details sheet */
+  .sec-h{font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--text-3);font-weight:700;margin:6px 2px 8px}
+  .tl{position:relative;padding-left:20px}
+  .tl::before{content:"";position:absolute;left:5px;top:4px;bottom:6px;width:2px;background:var(--border)}
+  .ev{position:relative;display:flex;gap:10px;align-items:baseline;padding:6px 0}
+  .ev .mk{position:absolute;left:-18px;top:9px;width:10px;height:10px;border-radius:50%;border:2px solid var(--bg);background:var(--text-3)}
+  .ev.in .mk{background:var(--green)}.ev.out .mk{background:var(--amber)}
+  .ev .t{font-size:11px;color:var(--text-3);flex:0 0 58px;font-variant-numeric:tabular-nums}
+  .ev .d{font-size:14px}
+  .roster .row{display:flex;align-items:center;gap:11px;padding:9px 2px;border-bottom:1px solid var(--border);cursor:pointer}
+  .roster .row:last-child{border-bottom:0}
+
+  /* History sheet */
+  .seg{display:flex;background:var(--surface-2);border:1px solid var(--border);border-radius:11px;padding:3px;margin:4px 0 16px}
+  .seg button{flex:1;border:0;background:transparent;color:var(--text-2);font-size:13px;font-weight:600;padding:8px;border-radius:8px;cursor:pointer}
+  .seg button.on{background:var(--location);color:#04100f}
+  .winlbl{display:flex;justify-content:space-between;font-size:12px;color:var(--text-2);margin-bottom:4px}
+  .winlbl b{color:var(--text)}
+  /* dual-thumb range */
+  .range{position:relative;height:34px}
+  .range .track{position:absolute;left:0;right:0;top:15px;height:4px;border-radius:2px;background:var(--surface-2)}
+  .range .fill{position:absolute;top:15px;height:4px;border-radius:2px;background:var(--location)}
+  .range input{position:absolute;left:0;right:0;top:6px;width:100%;height:22px;margin:0;background:none;
+    pointer-events:none;-webkit-appearance:none;appearance:none}
+  .range input::-webkit-slider-thumb{-webkit-appearance:none;pointer-events:auto;width:20px;height:20px;border-radius:50%;
+    background:var(--location);border:3px solid var(--bg);box-shadow:0 1px 4px rgba(0,0,0,.5);cursor:grab}
+  .range input::-moz-range-thumb{pointer-events:auto;width:20px;height:20px;border-radius:50%;
+    background:var(--location);border:3px solid var(--bg);cursor:grab}
+  .ticks{display:flex;justify-content:space-between;font-size:10px;color:var(--text-3);margin-top:2px}
+  .priv{font-size:11px;color:var(--text-3);margin-top:14px}
+</style>
+</head>
+<body>
+<div class="phone">
+  <div class="mapwrap">
+    <div class="map" id="map">
+      <div class="water" style="left:0;top:300px;width:90px;height:300px;transform:rotate(20deg);border-radius:40px"></div>
+      <div class="park" style="left:230px;top:250px;width:150px;height:120px"></div>
+      <div class="road" style="left:0;top:210px;right:0;height:12px"></div>
+      <div class="road" style="left:0;top:430px;right:0;height:10px"></div>
+      <div class="road" style="left:180px;top:0;bottom:0;width:11px"></div>
+      <div class="road" style="left:380px;top:0;bottom:0;width:10px"></div>
+      <svg class="trail" id="trail" viewBox="0 0 560 560" preserveAspectRatio="none"></svg>
+      <div id="pins"></div>
+    </div>
+  </div>
+
+  <div class="status"><span>10:39</span><span>JBrain360 · 34%</span></div>
+  <div class="people float" id="people"></div>
+
+  <!-- Details sheet -->
+  <div class="sheet float" id="detailsSheet"><div class="grab" onclick="collapse()"></div>
+    <div id="detailsBody"></div></div>
+  <!-- History sheet -->
+  <div class="sheet float" id="historySheet"><div class="grab" onclick="collapse()"></div>
+    <div class="sec-h">Show</div>
+    <div class="seg" id="modeSeg">
+      <button class="on" onclick="setMode('trail')">Trail</button>
+      <button onclick="setMode('heat')">Heat</button>
+    </div>
+    <div class="sec-h">Time window</div>
+    <div class="winlbl"><span>From <b id="fromLbl">5d ago</b></span><span>to <b id="toLbl">now</b></span></div>
+    <div class="range">
+      <div class="track"></div><div class="fill" id="fill"></div>
+      <input id="r0" type="range" min="0" max="100" value="28">
+      <input id="r1" type="range" min="0" max="100" value="100">
+    </div>
+    <div class="ticks"><span>7d</span><span>5d</span><span>3d</span><span>1d</span><span>now</span></div>
+    <div class="priv">Family-only · names + times only, never a coordinate.</div>
+  </div>
+
+  <!-- always-visible collapsed bar -->
+  <div class="bar float" id="bar"></div>
+</div>
+
+<script>
+const PLACE={Home:[250,360],Work:[400,150],School:[120,160],Gym:[420,430]};
+function rng(s){return()=>{s=(s*1103515245+12345)&0x7fffffff;return s/0x7fffffff}}
+function path(dest,cur,seed){const r=rng(seed),p=[];for(let d=6;d>=0;d--){const j=()=>(r()-.5)*34;
+  [[250+j(),360+j()],[(250+dest[0])/2+j()*1.5,(360+dest[1])/2+j()*1.5],[dest[0]+j(),dest[1]+j()],[250+j(),360+j()]]
+   .forEach(q=>p.push(q));}p[p.length-1]=cur;return p;}
+function acts(dest,seed){const r=rng(seed),o=[],n=Object.keys(PLACE).find(k=>PLACE[k]===dest)||'Work';
+  for(let d=0;d<7;d++){const m=()=>Math.floor(r()*9);
+    o.push({day:d,kind:'out',t:`8:0${m()} AM`,d:`Left Home`});
+    o.push({day:d,kind:'in',t:`8:3${m()} AM`,d:`Arrived ${n}`});
+    o.push({day:d,kind:'out',t:`5:1${m()} PM`,d:`Left ${n}`});
+    o.push({day:d,kind:'in',t:`5:4${m()} PM`,d:`Arrived Home`});}
+  return o.reverse();}
+const PEOPLE=[
+ {id:'jeff',name:"Jeff",c:'--p0',live:true,place:'Home',since:'15m ago',dest:PLACE.Work,cur:PLACE.Home,seed:7},
+ {id:'mara',name:'Mara',c:'--p1',live:true,place:'Work',since:'2m ago',dest:PLACE.Work,cur:PLACE.Work,seed:21},
+ {id:'theo',name:'Theo',c:'--p2',live:false,place:'School',since:'40m ago',dest:PLACE.School,cur:PLACE.School,seed:39},
+ {id:'nia',name:'Nia',c:'--p3',live:true,place:'Gym',since:'just now',dest:PLACE.Gym,cur:PLACE.Gym,seed:54},
+];
+PEOPLE.forEach(p=>{p.pts=path(p.dest,p.cur,p.seed);p.acts=acts(p.dest,p.seed);});
+
+let sel='all', mode='trail', sheet=null; // sheet: null | 'details' | 'history'
+let win=[28,100]; // range thumb positions (0=7d ago ... 100=now)
+const cssv=v=>getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+const posToDaysAgo=p=>((100-p)/100*7);
+const fmtDays=p=>{const d=posToDaysAgo(p);return d<0.04?'now':d<1?`${Math.round(d*24)}h ago`:`${d.toFixed(d<3?1:0)}d ago`;};
+
+function renderPeople(){
+  document.getElementById('people').innerHTML=
+   `<button class="chip ${sel==='all'?'on':''}" onclick="pick('all')"><span class="av av-all">◎</span><span class="chip-nm">Everyone</span></button>`+
+   PEOPLE.map(p=>`<button class="chip ${sel===p.id?'on':''}" onclick="pick('${p.id}')" style="--pc:${cssv(p.c)}">
+     <span class="av"><span>${p.name[0]}</span><span class="pres ${p.live?'live':'stale'}"></span></span>
+     <span class="chip-nm">${p.name}</span></button>`).join('');
+}
+function renderPins(){
+  const all=sel==='all';
+  document.getElementById('pins').innerHTML=PEOPLE.filter(p=>all||p.id===sel).map(p=>{const c=cssv(p.c);
+   return `<div class="pin ${p.id===sel?'sel':''}" style="left:${p.cur[0]}px;top:${p.cur[1]}px;--pc:${c}" onclick="pick('${p.id}')">
+     <div class="head" style="background:${c}"><b>${p.name[0]}</b></div><div class="lbl">${p.name}</div></div>`;}).join('');
+}
+function renderTrail(){
+  const svg=document.getElementById('trail');svg.innerHTML='';
+  if(sel==='all'){centerMap();return;}
+  const p=PEOPLE.find(x=>x.id===sel),c=cssv(p.c);
+  // window selects a slice of the path
+  const lo=Math.min(win[0],win[1])/100, hi=Math.max(win[0],win[1])/100;
+  const n=p.pts.length, a=Math.floor((1-hi)*n), b=Math.ceil((1-lo)*n);
+  const pts=p.pts.slice(Math.max(0,a),Math.max(a+1,b));
+  if(mode==='trail'){
+    let d='';pts.forEach((q,i)=>d+=(i?'L':'M')+q[0]+' '+q[1]+' ');
+    svg.innerHTML=`<path d="${d}" fill="none" stroke="${c}" stroke-width="3" opacity=".55" stroke-linecap="round" stroke-linejoin="round"/>`+
+     pts.map((q,i)=>`<circle cx="${q[0]}" cy="${q[1]}" r="${i===pts.length-1?4:2.3}" fill="${c}" opacity="${(.3+.7*i/pts.length).toFixed(2)}"/>`).join('');
+  }else{
+    svg.innerHTML=pts.map(q=>`<circle cx="${q[0]}" cy="${q[1]}" r="34" fill="${c}" opacity=".10"/>`).join('')+
+     pts.map(q=>`<circle cx="${q[0]}" cy="${q[1]}" r="16" fill="${c}" opacity=".14"/>`).join('');
+  }
+  centerMap();
+}
+// tapping a person centers the map on their pin
+function centerMap(){
+  const m=document.getElementById('map');
+  if(sel==='all'){m.style.transform='translate(0,0)';return;}
+  const p=PEOPLE.find(x=>x.id===sel);
+  const ox=195-(p.cur[0]-85), oy=300-(p.cur[1]+120); // bring the pin to screen-center-ish
+  m.style.transform=`translate(${ox}px,${oy}px)`;
+}
+
+function barHtml(){
+  const histDisabled=sel==='all';
+  let who;
+  if(sel==='all'){who=`<div class="who"><span class="av av-all" style="width:34px;height:34px">◎</span>
+     <div><div class="nm">Everyone</div><div class="sub">${PEOPLE.length} family members</div></div></div>`;}
+  else{const p=PEOPLE.find(x=>x.id===sel),c=cssv(p.c);
+    who=`<div class="who"><span class="av" style="--pc:${c};width:34px;height:34px;font-size:13px">${p.name[0]}</span>
+     <div><div class="nm">${p.name}</div><div class="sub"><span class="dot ${p.live?'live':'stale'}"></span>${p.live?'Live':'Last seen'} · ${p.since}</div></div></div>`;}
+  return who+
+   `<button class="pull ${sheet==='details'?'on':''}" onclick="toggle('details')">
+      <svg class="ic" viewBox="0 0 24 24"><path d="M6 15l6-6 6 6"/></svg>Details</button>
+    <button class="pull ${sheet==='history'?'on':''}" ${histDisabled?'disabled':''} onclick="toggle('history')">
+      <svg class="ic" viewBox="0 0 24 24"><path d="M6 15l6-6 6 6"/></svg>History</button>`;
+}
+function renderDetails(){
+  const b=document.getElementById('detailsBody');
+  if(sel==='all'){b.innerHTML=`<div class="sec-h">Everyone</div><div class="roster">`+
+    PEOPLE.map(p=>{const c=cssv(p.c);return `<div class="row" onclick="pick('${p.id}')">
+      <span class="av" style="--pc:${c};width:34px;height:34px;font-size:13px">${p.name[0]}</span>
+      <div style="flex:1"><div class="nm" style="font-size:15px;font-weight:600">${p.name}</div>
+      <div class="sub" style="font-size:12px;color:var(--text-2)"><span class="dot ${p.live?'live':'stale'}"></span> ${p.live?'Live':'Last seen'} · ${p.since}</div></div></div>`;}).join('')+`</div>`;
+    return;}
+  const p=PEOPLE.find(x=>x.id===sel);
+  const ev=p.acts.slice(0,8);
+  b.innerHTML=`<div class="sec-h">${p.name} · recent activity</div><div class="tl">`+
+   ev.map((a,i)=>`<div class="ev ${a.kind}"><span class="mk"></span><span class="t">${a.t.replace(' ','')}</span>
+     <span class="d">${a.d}${i===0?` · ${['Today','Yesterday','2 days ago','3 days ago','4 days ago','5 days ago','6 days ago'][a.day]}`:''}</span></div>`).join('')+`</div>`;
+}
+function renderRange(){
+  const lo=Math.min(win[0],win[1]),hi=Math.max(win[0],win[1]);
+  document.getElementById('fill').style.left=lo+'%';
+  document.getElementById('fill').style.width=(hi-lo)+'%';
+  document.getElementById('fromLbl').textContent=fmtDays(lo);
+  document.getElementById('toLbl').textContent=fmtDays(hi);
+}
+
+// interactions
+function pick(id){sel=id; if(id==='all'&&sheet==='history')sheet=null; renderAll();}
+function setMode(m){mode=m;document.querySelectorAll('#modeSeg button').forEach((b,i)=>b.classList.toggle('on',(m==='trail')===(i===0)));renderTrail();}
+function toggle(which){sheet=sheet===which?null:which;applySheets();renderBar();}
+function collapse(){sheet=null;applySheets();renderBar();}
+function applySheets(){
+  document.getElementById('detailsSheet').classList.toggle('open',sheet==='details');
+  document.getElementById('historySheet').classList.toggle('open',sheet==='history');
+}
+function renderBar(){document.getElementById('bar').innerHTML=barHtml();}
+['r0','r1'].forEach((id,i)=>document.getElementById(id).addEventListener('input',e=>{win[i]=+e.target.value;renderRange();renderTrail();}));
+
+function renderAll(){renderPeople();renderPins();renderTrail();renderDetails();renderRange();applySheets();renderBar();}
+renderAll();
+</script>
+</body>
+</html>
