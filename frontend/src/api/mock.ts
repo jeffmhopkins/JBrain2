@@ -2957,6 +2957,41 @@ export const mockFetch: typeof fetch = async (input, init) => {
   if (path === "/api/locations/timeline" && method === "GET") return json(MOCK_TIMELINE);
   if (path === "/api/locations/places" && method === "GET") return json(MOCK_PLACES);
   if (path === "/api/locations/fixes" && method === "GET") return json(mockTrail());
+  // The member dashboard (/dash) reads: a roster with each visible subject's latest
+  // coordinate (for the map pins) + the shared fences.
+  if (path === "/api/member/roster" && method === "GET") {
+    const now = Date.now();
+    return json([
+      {
+        subject_id: "subj-me",
+        label: "You",
+        last_seen: new Date(now - 90_000).toISOString(),
+        battery_pct: 64,
+        connection: "wifi",
+        latitude: 40.014,
+        longitude: -74.205,
+      },
+      {
+        subject_id: "subj-sam",
+        label: "Sam",
+        last_seen: new Date(now - 7 * 60_000).toISOString(),
+        battery_pct: 88,
+        connection: "cell",
+        latitude: 40.02,
+        longitude: -74.19,
+      },
+      {
+        subject_id: "subj-ro",
+        label: "Ro",
+        last_seen: new Date(now - 40 * 60_000).toISOString(),
+        battery_pct: 21,
+        connection: null,
+        latitude: 40.008,
+        longitude: -74.225,
+      },
+    ]);
+  }
+  if (path === "/api/member/places" && method === "GET") return json(MOCK_PLACES);
   if (path === "/api/locations/geocode" && method === "GET") {
     return json({ address: "12 Market St, Springfield" });
   }
