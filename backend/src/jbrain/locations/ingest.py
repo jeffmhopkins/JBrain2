@@ -8,13 +8,16 @@ ingest or skip geofencing (plan: "both transports share the one ingest core").
 """
 
 from datetime import UTC, datetime, timedelta
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from jbrain.locations import LocationFix
 from jbrain.locations.geofence import detect_transitions
+
+if TYPE_CHECKING:
+    from jbrain.push import PushNotifier
 
 # A reported capture instant this far ahead of the server clock is bogus (a spoof
 # or a wildly wrong device clock); drop it. Past fixes are kept (offline backfill).
@@ -71,6 +74,7 @@ async def ingest_location(
     principal_id: str,
     subject_id: str,
     body: dict[str, Any],
+    notifier: "PushNotifier | None" = None,
 ) -> bool:
     """Validate + store one `_type:location` body for the device's subject, firing
     geofence detection only on a genuinely new fix.
@@ -96,5 +100,6 @@ async def ingest_location(
             latitude=fix.latitude,
             longitude=fix.longitude,
             accuracy_m=fix.accuracy_m,
+            notifier=notifier,
         )
     return inserted
