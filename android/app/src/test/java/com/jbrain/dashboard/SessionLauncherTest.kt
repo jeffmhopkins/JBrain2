@@ -7,9 +7,17 @@ import org.junit.Test
 
 private class FakeStore(initial: String?) : CredentialStore {
     var key: String? = initial
+    var config: String? = if (initial == null) null else "{}"
     override fun deviceKey(): String? = key
-    override fun save(deviceKey: String) { key = deviceKey }
-    override fun clear() { key = null }
+    override fun owntracksConfig(): String? = config
+    override fun save(deviceKey: String, owntracksConfig: String) {
+        key = deviceKey
+        config = owntracksConfig
+    }
+    override fun clear() {
+        key = null
+        config = null
+    }
 }
 
 class SessionLauncherTest {

@@ -20,15 +20,18 @@ class KeystoreCredentialStore(context: Context) : CredentialStore {
 
     override fun deviceKey(): String? = prefs.getString(KEY, null)
 
-    override fun save(deviceKey: String) {
-        prefs.edit().putString(KEY, deviceKey).apply()
+    override fun owntracksConfig(): String? = prefs.getString(CONFIG, null)
+
+    override fun save(deviceKey: String, owntracksConfig: String) {
+        prefs.edit().putString(KEY, deviceKey).putString(CONFIG, owntracksConfig).apply()
     }
 
     override fun clear() {
-        prefs.edit().remove(KEY).apply()
+        prefs.edit().remove(KEY).remove(CONFIG).apply()
     }
 
     private companion object {
         const val KEY = "device_key"
+        const val CONFIG = "owntracks_config"
     }
 }

@@ -2,6 +2,7 @@ package com.jbrain.dashboard
 
 import android.annotation.SuppressLint
 import android.app.Activity
+import android.content.Intent
 import android.os.Bundle
 import android.webkit.CookieManager
 import android.webkit.WebView
@@ -10,12 +11,14 @@ import android.webkit.WebView
  *
  * On launch the app reads the Keystore device key, mints a session cookie
  * natively (the key never reaches page JavaScript), injects it into the WebView
- * jar, and loads /dash. A missing/revoked key routes to pairing (M5c); a
- * transient failure shows a retry. No JavaScript bridge is registered, so page
- * script can never reach native APIs.
+ * jar, and loads /dash. A missing/revoked key opens the pairing screen and
+ * re-launches once paired; a transient failure shows a retry. No JavaScript
+ * bridge is registered, so page script can never reach native APIs.
  */
 class DashboardActivity : Activity() {
     private lateinit var web: WebView
+    private lateinit var launcher: SessionLauncher
+    private val base = BuildConfig.DASHBOARD_BASE
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -28,10 +31,12 @@ class DashboardActivity : Activity() {
             allowContentAccess = false
         }
         setContentView(web)
+        launcher = SessionLauncher(KeystoreCredentialStore(this), SessionMinter())
+        relaunch()
+    }
 
-        val launcher = SessionLauncher(KeystoreCredentialStore(this), SessionMinter())
-        val base = BuildConfig.DASHBOARD_BASE
-        // Mint off the main thread (network), then apply on the UI thread.
+    /** Read the key, mint off the main thread, then apply on the UI thread. */
+    private fun relaunch() {
         Thread {
             val decision = launcher.launch(base)
             runOnUiThread { apply(decision) }
@@ -47,13 +52,25 @@ class DashboardActivity : Activity() {
                 }
                 web.loadUrl(decision.url)
             }
-            // Placeholder states until the M5c pairing screen lands.
-            LaunchDecision.NeedsPairing -> web.loadDataMessage("Pair this device from the JBrain app.")
-            is LaunchDecision.Retry -> web.loadDataMessage("Couldn't reach the server — pull to retry.")
+            LaunchDecision.NeedsPairing ->
+                startActivityForResult(Intent(this, PairingActivity::class.java), REQ_PAIR)
+            is LaunchDecision.Retry ->
+                web.loadDataMessage("Couldn't reach the server — reopen to retry.")
         }
+    }
+
+    @Deprecated("startActivityForResult is fine for this single flow on a plain Activity")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        // Paired successfully — try the launch again with the freshly stored key.
+        if (requestCode == REQ_PAIR && resultCode == RESULT_OK) relaunch() else if (requestCode == REQ_PAIR) finish()
     }
 
     private fun WebView.loadDataMessage(text: String) {
         loadData("<body style='font-family:sans-serif;padding:2rem'>$text</body>", "text/html", "utf-8")
+    }
+
+    private companion object {
+        const val REQ_PAIR = 1
     }
 }
