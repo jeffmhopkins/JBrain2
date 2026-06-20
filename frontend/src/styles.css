@@ -6644,6 +6644,19 @@ button.small {
   color: var(--steel);
   cursor: pointer;
 }
+/* a place pin trailing a detected address / GPS pair — taps through to Google
+   Maps; the glyph follows the steel link color and nudges down to sit on the
+   text baseline */
+.fb-shell .md-place {
+  display: inline-flex;
+  align-items: center;
+  vertical-align: -2px;
+  margin-left: 3px;
+  color: var(--steel);
+}
+.fb-shell .md-place:hover {
+  color: var(--text);
+}
 /* Full Brain glyphs are inlined line-art SVGs that carry no fill/stroke
    attributes of their own (unlike components/icons.tsx). Without this they fall
    back to the SVG default — a solid black fill — so the per-element `color`
