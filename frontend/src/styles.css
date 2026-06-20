@@ -11873,7 +11873,7 @@ input.ld-title {
   border-radius: var(--r-input);
 }
 
-/* --- JBrain360 member live map (full-screen, floating chrome) ----------- */
+/* --- JBrain360 member live map (full-screen; dock + pull-up sheets) ----- */
 .livemap {
   position: fixed;
   inset: 0;
@@ -11883,12 +11883,10 @@ input.ld-title {
   position: absolute;
   inset: 0;
   /* Leaflet gives its tile/control panes high internal z-indexes (up to ~1000).
-     A stacking context here keeps them contained below the floating chrome
-     (.lm-people / .lm-card / .lm-ctrls at z 7–8) instead of painting over it. */
+     A stacking context here keeps them contained below the floating chrome. */
   z-index: 0;
   isolation: isolate;
 }
-/* Leaflet defaults to its own font/bg; pull it onto our tokens. */
 .leaflet-container {
   background: var(--surface-2);
   font: inherit;
@@ -11914,11 +11912,10 @@ input.ld-title {
   --pc: var(--amber);
 }
 
-/* Frosted floating panels. */
 .lm-float {
   background: color-mix(in srgb, var(--surface) 80%, transparent);
-  -webkit-backdrop-filter: blur(14px);
-  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(16px);
+  backdrop-filter: blur(16px);
   border: 1px solid var(--border);
   box-shadow: 0 6px 22px var(--scrim);
 }
@@ -12050,50 +12047,119 @@ input.ld-title {
   font-weight: 600;
 }
 
-/* Bottom person/roster card (floating). */
-.lm-card {
+/* Persistent bottom bar (collapsed dock). */
+.lm-bar {
   position: absolute;
   left: 0;
   right: 0;
   bottom: 0;
   z-index: 8;
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+  padding: 8px 10px calc(10px + env(safe-area-inset-bottom));
   border-top-left-radius: 20px;
   border-top-right-radius: 20px;
   border-top: 1px solid var(--border);
-  padding: 14px 16px calc(16px + env(safe-area-inset-bottom));
 }
-.lm-card-quiet {
+.lm-bar-quiet {
   font-size: var(--fs-secondary);
   color: var(--text-2);
+  padding: 16px;
 }
-.lm-card-h {
-  font-size: var(--fs-secondary);
-  font-weight: 600;
-  color: var(--text-2);
-  margin-bottom: 6px;
-}
-.lm-chead {
+.lm-bar-who {
+  flex: 1;
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
+  min-width: 0;
+  padding: 2px 4px;
 }
-.lm-chead-main {
-  flex: 1;
+.lm-bar-txt {
   min-width: 0;
   display: flex;
   flex-direction: column;
 }
-.lm-chead-nm {
-  font-size: var(--fs-body);
+.lm-bar-nm {
+  font-size: var(--fs-secondary);
   font-weight: 600;
 }
-.lm-chead-st {
-  font-size: var(--fs-secondary);
+.lm-bar-sub {
+  font-size: var(--fs-micro);
   color: var(--text-2);
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
 }
+.lm-pull {
+  flex: 0 0 auto;
+  width: 72px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  border: 0;
+  border-radius: 13px;
+  background: var(--surface-2);
+  color: var(--text-2);
+  cursor: pointer;
+  font-size: var(--fs-micro);
+  font-weight: 600;
+}
+.lm-pull.on {
+  background: var(--location);
+  color: #04100f;
+}
+.lm-pull:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.lm-pull-ic {
+  width: 15px;
+  height: 15px;
+}
+
+/* Pull-up sheets (Details / History) — one open at a time. */
+.lm-sheet {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 9;
+  border-top-left-radius: 22px;
+  border-top-right-radius: 22px;
+  border-top: 1px solid var(--border);
+  padding: 4px 16px calc(20px + env(safe-area-inset-bottom));
+  max-height: 74%;
+  overflow-y: auto;
+  transform: translateY(100%);
+  transition: transform 0.26s cubic-bezier(0.3, 0.7, 0.3, 1);
+}
+.lm-sheet.open {
+  transform: translateY(0);
+}
+.lm-grab {
+  display: block;
+  width: 40px;
+  height: 5px;
+  border: 0;
+  padding: 0;
+  border-radius: 3px;
+  background: var(--border);
+  margin: 8px auto 12px;
+  cursor: pointer;
+}
+.lm-sec-h {
+  font-size: var(--fs-micro);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-3);
+  font-weight: 700;
+  margin: 8px 2px;
+}
+
+/* Roster (Details / Everyone). */
 .lm-roster {
   display: flex;
   flex-direction: column;
@@ -12143,6 +12209,8 @@ input.ld-title {
 .lm-dot.stale {
   background: var(--amber);
 }
+
+/* Battery pill. */
 .lm-batt {
   font-size: var(--fs-micro);
   color: var(--text-2);
@@ -12167,126 +12235,12 @@ input.ld-title {
 .lm-batt-fill.low {
   background: var(--amber);
 }
-.lm-priv {
-  font-size: var(--fs-micro);
-  color: var(--text-3);
-  margin-top: 12px;
-}
 
-/* --- JBrain360 member live map: Wave 3 (controls + last actions) -------- */
-/* The card head is now a button (tap to expand the last-actions timeline). */
-.lm-chead {
-  width: 100%;
-  border: 0;
-  background: transparent;
-  color: var(--text);
-  cursor: pointer;
-  text-align: left;
-}
-.lm-chev {
-  color: var(--text-3);
-  font-size: 16px;
-  transition: transform 0.18s;
-  flex: 0 0 auto;
-}
-.lm-card.open .lm-chev {
-  transform: rotate(180deg);
-}
-
-/* Floating Trail/Heat + day-range controls (single-person only). */
-.lm-ctrls {
-  position: absolute;
-  left: 12px;
-  right: 12px;
-  bottom: 150px;
-  z-index: 7;
-  border-radius: 14px;
-  padding: 10px 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 9px;
-}
-.lm-seg {
-  display: flex;
-  background: var(--surface-2);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 3px;
-}
-.lm-seg button {
-  flex: 1;
-  border: 0;
-  background: transparent;
-  color: var(--text-2);
+/* Last-actions timeline (Details / a person). */
+.lm-card-quiet {
   font-size: var(--fs-secondary);
-  font-weight: 600;
-  padding: 7px;
-  border-radius: 8px;
-  cursor: pointer;
-}
-.lm-seg button.on {
-  background: var(--location);
-  color: #04100f;
-}
-.lm-range {
-  display: flex;
-  align-items: center;
-  gap: 11px;
-}
-.lm-range-lbl {
-  font-size: var(--fs-micro);
   color: var(--text-2);
-  min-width: 78px;
-}
-.lm-range-lbl b {
-  color: var(--text);
-}
-.lm-range input {
-  flex: 1;
-  accent-color: var(--location);
-}
-
-/* Quick recent-action chips. */
-.lm-quick {
-  display: flex;
-  gap: 7px;
-  margin-top: 11px;
-  overflow-x: auto;
-  scrollbar-width: none;
-}
-.lm-quick::-webkit-scrollbar {
-  display: none;
-}
-.lm-qpill {
-  flex: 0 0 auto;
-  font-size: var(--fs-micro);
-  color: var(--text-2);
-  background: var(--surface-2);
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  padding: 5px 10px;
-  white-space: nowrap;
-}
-.lm-qpill .in {
-  color: var(--green);
-}
-.lm-qpill .out {
-  color: var(--amber);
-}
-
-/* Expanded last-actions timeline. */
-.lm-more {
-  margin-top: 14px;
-  max-height: 40vh;
-  overflow-y: auto;
-}
-.lm-more-h {
-  font-size: var(--fs-micro);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--text-3);
-  font-weight: 700;
-  margin-bottom: 8px;
+  padding: 4px 2px;
 }
 .lm-tl {
   position: relative;
@@ -12337,4 +12291,107 @@ input.ld-title {
 .lm-ev-day {
   font-size: var(--fs-micro);
   color: var(--text-3);
+}
+
+/* History sheet: Trail/Heat toggle + dual-handle time window. */
+.lm-seg {
+  display: flex;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  padding: 3px;
+  margin: 2px 0 14px;
+}
+.lm-seg button {
+  flex: 1;
+  border: 0;
+  background: transparent;
+  color: var(--text-2);
+  font-size: var(--fs-secondary);
+  font-weight: 600;
+  padding: 8px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.lm-seg button.on {
+  background: var(--location);
+  color: #04100f;
+}
+.lm-win {
+  margin-bottom: 4px;
+}
+.lm-winlbl {
+  display: flex;
+  justify-content: space-between;
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+  margin-bottom: 4px;
+}
+.lm-winlbl b {
+  color: var(--text);
+}
+.lm-range {
+  position: relative;
+  height: 34px;
+}
+.lm-range-track {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 15px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--surface-2);
+}
+.lm-range-fill {
+  position: absolute;
+  top: 15px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--location);
+}
+.lm-range input {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 6px;
+  width: 100%;
+  height: 22px;
+  margin: 0;
+  background: none;
+  pointer-events: none;
+  -webkit-appearance: none;
+  appearance: none;
+}
+.lm-range input::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  pointer-events: auto;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--location);
+  border: 3px solid var(--bg);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
+  cursor: grab;
+}
+.lm-range input::-moz-range-thumb {
+  pointer-events: auto;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--location);
+  border: 3px solid var(--bg);
+  cursor: grab;
+}
+.lm-ticks {
+  display: flex;
+  justify-content: space-between;
+  font-size: 10px;
+  color: var(--text-3);
+  margin-top: 2px;
+}
+.lm-priv {
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+  margin-top: 14px;
 }
