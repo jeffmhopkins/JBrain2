@@ -57,6 +57,7 @@ from jbrain.api import (
 from jbrain.api import (
     appointments as appointments_api,
 )
+from jbrain.api import image_settings as image_settings_api
 from jbrain.api import lists as lists_api
 from jbrain.api import llm_settings as llm_settings_api
 from jbrain.api import settings as settings_api
@@ -74,6 +75,7 @@ from jbrain.embed import TeiEmbedClient
 from jbrain.family import SqlFamilyRepo
 from jbrain.geocode import NominatimReverseClient
 from jbrain.image_gen.comfyui import ComfyUiImageGen
+from jbrain.image_gen.gateway import ComfyUiGatewayClient
 from jbrain.lists.repo import SqlListsRepo
 from jbrain.llm import build_router
 from jbrain.llm.local_gateway import LocalGatewayClient
@@ -267,6 +269,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if settings.comfyui_url:
             image_gen_client = httpx.AsyncClient()
             app.state.image_gen = ComfyUiImageGen(settings.comfyui_url, image_gen_client)
+            # The management client (status/free) for the owner image-settings surface
+            # — the sibling of app.state.local_gateway, wired on the same gate.
+            app.state.comfyui_gateway = ComfyUiGatewayClient(settings.comfyui_url)
             image_handlers = build_image_handlers(
                 app.state.image_gen,
                 app.state.blob_store,
@@ -276,6 +281,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             )
         else:
             app.state.image_gen = None
+            app.state.comfyui_gateway = None
         app.state.agent_registry = build_registry(
             app.state.search_service,
             app.state.notes_repo,
@@ -331,6 +337,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(family.router, prefix="/api")
     app.include_router(feed.router, prefix="/api")
     app.include_router(images.generated_router, prefix="/api")
+    app.include_router(image_settings_api.router, prefix="/api")
     app.include_router(lists_api.router, prefix="/api")
     app.include_router(llm_settings_api.router, prefix="/api")
     app.include_router(locations.router, prefix="/api")
