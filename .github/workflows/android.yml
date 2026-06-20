@@ -1,0 +1,37 @@
+# The Android app builds against a ~1 GB SDK and only depends on android/**, so it
+# runs on its own path filter rather than on every PR — a backend/frontend change
+# no longer pays a needless SDK build (the workflow file itself is in the filter so
+# changes to it still trigger a run).
+name: android
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+    paths:
+      - "android/**"
+      - ".github/workflows/android.yml"
+  pull_request:
+    paths:
+      - "android/**"
+      - ".github/workflows/android.yml"
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: android
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: android-actions/setup-android@v3
+      # platform-35 + build-tools the app compiles against; setup-android accepts
+      # the licenses so this is a no-op when the runner already has them.
+      - run: sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+      # assembleDebug proves the APK builds; testDebugUnitTest runs the JVM unit
+      # suite. On-device (emulator) tests need KVM and are out of CI scope.
+      - run: ./gradlew assembleDebug testDebugUnitTest --no-daemon
