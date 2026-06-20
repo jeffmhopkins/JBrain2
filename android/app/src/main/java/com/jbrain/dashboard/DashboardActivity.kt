@@ -5,6 +5,7 @@ import android.app.Activity
 import android.content.Intent
 import android.os.Bundle
 import android.webkit.CookieManager
+import android.webkit.WebSettings
 import android.webkit.WebView
 
 /** Hosts the member dashboard SPA (served at /dash) in a locked-down WebView.
@@ -29,7 +30,14 @@ class DashboardActivity : Activity() {
             domStorageEnabled = true // localStorage drives theme + font scale
             allowFileAccess = false // lockdown: no file:// reads
             allowContentAccess = false
+            allowFileAccessFromFileURLs = false
+            allowUniversalAccessFromFileURLs = false
+            // The dashboard is https; never let an http subresource load into it.
+            mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
         }
+        // Pin navigation to the dashboard origin; no JavaScript interface is added,
+        // so page script can never reach native APIs.
+        web.webViewClient = LockedWebViewClient(base)
         setContentView(web)
         launcher = SessionLauncher(KeystoreCredentialStore(this), SessionMinter())
         relaunch()

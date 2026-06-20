@@ -331,8 +331,11 @@ service-account bootstrap (non-negotiable #8).
   key to pairing ✓; **M5c** pairing-code redeem: a MockWebServer-tested
   `PairingClient` (redeem → device key = OwnTracks config `password` + the config),
   a `PairingCoordinator` that persists both, and a native `PairingActivity` the
-  launcher routes to and re-launches from once paired ✓; **M5d** WebView lockdown
-  hardening + the OwnTracks location engine.
+  launcher routes to and re-launches from once paired ✓; **M5d-1** WebView lockdown
+  hardening — a JVM-tested same-origin `NavigationPolicy` + `LockedWebViewClient`
+  that refuses any off-origin navigation, plus mixed-content NEVER_ALLOW, file-URL
+  access off, and no JS bridge ✓; **M5d-2** the OwnTracks location-publishing engine
+  (off the stored config) — pending the fork-vs-minimal-publisher call.
 - **M6 — FCM.** `fcm_token` registry (+ RLS test); content-free poke sender;
   view-scope-aware routing; dedupe; on-poke fetch-then-local-notify. Gate:
   **no-PII-in-payload** test, routing test, revoke-kills-token test.
