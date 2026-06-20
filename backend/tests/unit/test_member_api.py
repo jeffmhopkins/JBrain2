@@ -110,8 +110,27 @@ def locs() -> FakeLocationRepo:
     return FakeLocationRepo()
 
 
+class FakeFcmRepo:
+    def __init__(self) -> None:
+        self.registered: list[dict] = []
+        self.deleted: list[str] = []
+
+    async def register(self, ctx, *, principal_id, subject_id, token):  # noqa: ANN001
+        self.registered.append(
+            {"principal_id": principal_id, "subject_id": subject_id, "token": token}
+        )
+
+    async def delete(self, ctx, *, token):  # noqa: ANN001
+        self.deleted.append(token)
+
+
 @pytest.fixture
-def client(repo: FakeAuthRepo, locs: FakeLocationRepo) -> Iterator[TestClient]:
+def fcm() -> FakeFcmRepo:
+    return FakeFcmRepo()
+
+
+@pytest.fixture
+def client(repo: FakeAuthRepo, locs: FakeLocationRepo, fcm: FakeFcmRepo) -> Iterator[TestClient]:
     settings = Settings(
         secure_cookies=False, database_url="postgresql+asyncpg://nobody@localhost:1/none"
     )
@@ -119,6 +138,7 @@ def client(repo: FakeAuthRepo, locs: FakeLocationRepo) -> Iterator[TestClient]:
     with TestClient(app) as test_client:
         app.state.auth_repo = repo
         app.state.location_repo = locs
+        app.state.fcm_token_repo = fcm
         yield test_client
 
 
@@ -199,3 +219,20 @@ def test_timeline_passes_viewer_and_clamps_cap(client: TestClient, locs: FakeLoc
 def test_member_places_and_timeline_require_member_cookie(client: TestClient) -> None:
     assert client.get("/api/member/places").status_code == 401
     assert client.get("/api/member/timeline").status_code == 401
+
+
+def test_fcm_token_register_and_delete(client: TestClient, fcm: FakeFcmRepo) -> None:
+    _as_member(client)
+    assert client.put("/api/member/fcm-token", json={"token": "tok-1"}).status_code == 204
+    # Registered under the device's own principal + subject (the route sets them).
+    assert fcm.registered[0]["token"] == "tok-1"
+    assert fcm.registered[0]["subject_id"] == SUBJECT
+    assert (
+        client.request("DELETE", "/api/member/fcm-token", json={"token": "tok-1"}).status_code
+        == 204
+    )
+    assert fcm.deleted == ["tok-1"]
+
+
+def test_fcm_token_requires_a_member_cookie(client: TestClient) -> None:
+    assert client.put("/api/member/fcm-token", json={"token": "x"}).status_code == 401

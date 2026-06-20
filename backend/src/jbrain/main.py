@@ -77,6 +77,7 @@ from jbrain.locations.pairing import SqlPairingRepo
 from jbrain.locations.ratelimit import TokenBucket
 from jbrain.locations.viewscope import SqlViewScopeRepo
 from jbrain.notes.repo import SqlNotesRepo
+from jbrain.push import SqlFcmTokenRepo
 from jbrain.queue import SYSTEM_CTX, PgJobQueue
 from jbrain.search.repo import SqlSearchRepo
 from jbrain.search.service import SearchService
@@ -119,6 +120,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.location_repo = SqlLocationRepo(maker)
         app.state.view_scope_repo = SqlViewScopeRepo(maker)
         app.state.pairing_repo = SqlPairingRepo(maker)
+        app.state.fcm_token_repo = SqlFcmTokenRepo(maker)
         # Anti-brute-force on the unauthenticated redeem endpoint: ~10 attempts
         # burst per source IP, refilling 1 every 10s.
         app.state.pairing_rate_limiter = TokenBucket(capacity=10, refill_per_sec=0.1)
