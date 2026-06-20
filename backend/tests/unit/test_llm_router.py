@@ -265,7 +265,7 @@ async def test_context_window_for_a_local_model_reads_the_catalog() -> None:
         overrides_loader=load,
         local_enabled=True,
     )
-    assert await router.context_window("agent.turn") == 32768
+    assert await router.context_window("agent.turn") == 131072
 
 
 async def test_stored_reasoning_effort_reaches_xai_client() -> None:

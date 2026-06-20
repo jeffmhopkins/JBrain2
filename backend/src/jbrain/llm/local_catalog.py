@@ -96,6 +96,10 @@ CATALOG: tuple[LocalModel, ...] = (
         size_gb=59.0,
         note="Strongest open reasoning that still runs fast here (~31 t/s).",
         supports_reasoning=True,
+        # The model's full native window. Its alternating sliding-window attention
+        # keeps the f16 KV cache modest (~half the layers grow with context), so
+        # 128k fits the box's unified memory beside the MXFP4 weights.
+        context_window=131072,
     ),
     LocalModel(
         id="qwen3-next-80b-a3b",
