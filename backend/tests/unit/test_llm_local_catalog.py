@@ -43,7 +43,8 @@ def test_context_window_reads_the_catalog_then_falls_back() -> None:
     for m in local_catalog.CATALOG:
         assert local_catalog.context_window(m.served_model) == m.context_window
     # gpt-oss-120b runs its full native window; the rest use the gateway default.
-    assert local_catalog.get("gpt-oss-120b").context_window == 131072
+    gpt_oss = local_catalog.get("gpt-oss-120b")
+    assert gpt_oss is not None and gpt_oss.context_window == 131072
     # An unknown served name (a model outside the catalog) gets the safe default.
     assert (
         local_catalog.context_window("mystery-model")

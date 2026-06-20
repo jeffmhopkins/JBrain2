@@ -25,6 +25,7 @@ import json
 import os
 import sys
 from collections.abc import Mapping, Sequence
+from typing import cast
 
 # Concrete, distinct upstream ports — llama-swap's ${PORT} macro isn't substituted
 # by every build, and the resident group runs models concurrently so they can't
@@ -72,7 +73,7 @@ def render(
         port = UPSTREAM_PORT_BASE + i
         model_id = str(m["id"])
         gguf = resolve_weight(root, model_id, str(m["gguf_include"]))
-        window = windows.get(model_id, int(m["context_window"]))
+        window = windows.get(model_id, int(cast(int, m["context_window"])))
         cmd = [
             "llama-server",
             "--host",
