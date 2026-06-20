@@ -116,3 +116,23 @@ def id_for_spec(settings: Settings, spec: str) -> str | None:
 def supports_reasoning(settings: Settings, provider_id: str) -> bool:
     choice = _by_id(settings).get(provider_id)
     return bool(choice and choice.supports_reasoning)
+
+
+def supports_vision_for_spec(settings: Settings, spec: str) -> bool:
+    """Whether the model behind a raw "provider:model" spec is vision-capable.
+
+    Prefers a curated choice (the UI's authoritative flag); for an off-menu spec —
+    an env pin or a local model not in the provisioned selection — falls back to the
+    provider: the two cloud providers are multi-modal, and a `local:` spec matched
+    against the catalog (text-only local models are not). Unknown/malformed → False
+    (fail closed: never claim a capability we can't confirm)."""
+    for choice in provider_choices(settings):
+        if choice.spec == spec:
+            return choice.supports_vision
+    provider, _, model = spec.partition(":")
+    if provider in ("anthropic", "xai"):
+        return True
+    if provider == "local":
+        cat = local_catalog.get(model)
+        return bool(cat and cat.supports_vision)
+    return False
