@@ -18,9 +18,19 @@ function fbDeps(): FullBrainDeps {
         subject_ids: [],
         created_at: "2026-06-12T00:00:00Z",
         last_active_at: "2026-06-12T00:00:00Z",
+        turn_count: 3,
       },
     ]),
-    createSession: vi.fn(),
+    createSession: vi.fn(async (body) => ({
+      id: "new",
+      title: "",
+      status: "active",
+      agent: body.agent ?? "curator",
+      domain_scopes: body.domain_scopes,
+      subject_ids: [],
+      created_at: "2026-06-13T00:00:00Z",
+      last_active_at: "2026-06-13T00:00:00Z",
+    })),
     chat: async function* () {},
     listProposals: vi.fn(async () => []),
     getTranscript: vi.fn(async () => []),
@@ -135,7 +145,7 @@ describe("HomeScreen compose handoff", () => {
     expect(calls[0]?.appointment_id).toBe("A1");
   });
 
-  it("starts an all-domains session when the handoff finds none", async () => {
+  it("starts a full-domain Curator session when the handoff finds none", async () => {
     const createSession = vi.fn(async () => ({
       id: "new",
       title: "",
@@ -159,10 +169,11 @@ describe("HomeScreen compose handoff", () => {
         onComposeConsumed={vi.fn()}
       />,
     );
-    // No session existed, so the owner-only handoff starts an all-domains one.
+    // No Curator chat existed, so Full Brain auto-starts one with full domain access.
     await waitFor(() =>
       expect(createSession).toHaveBeenCalledWith({
         domain_scopes: ["general", "health", "finance", "location"],
+        agent: "curator",
       }),
     );
   });
@@ -193,15 +204,94 @@ describe("HomeScreen mode scoping", () => {
     ).toBeInTheDocument();
   });
 
-  it("Research swaps the stream for the Phase 4 conversation empty state", () => {
+  it("Research opens the live conversation surface (no more Phase 4 stub)", async () => {
     setup();
     fireEvent.click(screen.getByRole("tab", { name: "Research" }));
+    await waitFor(() => expect(screen.getByLabelText("Conversation")).toBeInTheDocument());
     expect(
-      screen.getByText("conversations arrive in Phase 4 — typing starts one then"),
-    ).toBeInTheDocument();
+      screen.queryByText("conversations arrive in Phase 4 — typing starts one then"),
+    ).not.toBeInTheDocument();
     expect(
       screen.queryByText("Nothing captured yet — write your first entry below."),
     ).not.toBeInTheDocument();
+  });
+
+  it("Research with no prior chat auto-starts a Jerv session", async () => {
+    // Only a Curator chat exists (Full Brain's), so Research has none of its own.
+    const deps = fbDeps();
+    render(
+      <HomeScreen
+        notes={fakeController()}
+        actions={fakeActions()}
+        onOpenNote={vi.fn()}
+        onOpenSearch={vi.fn()}
+        onOpenLauncher={vi.fn()}
+        fbDeps={deps}
+      />,
+    );
+    fireEvent.click(screen.getByRole("tab", { name: "Research" }));
+    await waitFor(() =>
+      expect(deps.createSession).toHaveBeenCalledWith({ domain_scopes: [], agent: "jerv" }),
+    );
+  });
+
+  it("Full Brain reopens the last Curator chat; re-clicking it starts a fresh one", async () => {
+    const deps = fbDeps();
+    render(
+      <HomeScreen
+        notes={fakeController()}
+        actions={fakeActions()}
+        onOpenNote={vi.fn()}
+        onOpenSearch={vi.fn()}
+        onOpenLauncher={vi.fn()}
+        fbDeps={deps}
+      />,
+    );
+    // First entry reopens the existing Curator chat — no new session.
+    fireEvent.click(screen.getByRole("tab", { name: "Full Brain" }));
+    await waitFor(() =>
+      expect(document.querySelector(".session-title")?.textContent).toBe("Recap"),
+    );
+    expect(deps.createSession).not.toHaveBeenCalled();
+
+    // Re-clicking Full Brain starts a fresh full-domain Curator chat.
+    fireEvent.click(screen.getByRole("tab", { name: "Full Brain" }));
+    await waitFor(() =>
+      expect(deps.createSession).toHaveBeenCalledWith({
+        domain_scopes: ["general", "health", "finance", "location"],
+        agent: "curator",
+      }),
+    );
+  });
+
+  it("renames the Research tab to Teacher while a Teacher chat is open", async () => {
+    const deps = fbDeps();
+    deps.listSessions = vi.fn(async () => [
+      {
+        id: "t1",
+        title: "",
+        status: "active",
+        agent: "teacher",
+        domain_scopes: [],
+        subject_ids: [],
+        created_at: "2026-06-12T00:00:00Z",
+        last_active_at: "2026-06-12T00:00:00Z",
+      },
+    ]);
+    render(
+      <HomeScreen
+        notes={fakeController()}
+        actions={fakeActions()}
+        onOpenNote={vi.fn()}
+        onOpenSearch={vi.fn()}
+        onOpenLauncher={vi.fn()}
+        fbDeps={deps}
+      />,
+    );
+    fireEvent.click(screen.getByRole("tab", { name: "Research" }));
+    // The research slot now reads "Teacher" — no plain "Research" tab remains.
+    await waitFor(() => expect(screen.getByRole("tab", { name: "Teacher" })).toBeInTheDocument());
+    expect(screen.queryByRole("tab", { name: "Research" })).not.toBeInTheDocument();
   });
 
   it("swipe-Hide hides the note and an undo toast restores it", () => {

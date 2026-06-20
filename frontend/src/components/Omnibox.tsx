@@ -16,7 +16,6 @@ import type { AppointmentRef } from "../agent/types";
 import { MODES, type Mode, ROWS, type SegState, tapSegment } from "../notes/modes";
 import type { SendInput } from "../notes/useNotes";
 import {
-  BoltIcon,
   BotIcon,
   ClipIcon,
   FinancialIcon,
@@ -48,6 +47,9 @@ interface OmniboxProps {
   /** A turn is streaming — block another send and dim the button. */
   busy?: boolean;
   onOpenLauncher: () => void;
+  /** Per-segment label overrides. The active research-mode tab reads "Teacher"
+   * while a Teacher session is open, otherwise the mode's own label stands. */
+  labels?: Partial<Record<Mode, string>> | undefined;
   /** Text to seed the composer with (e.g. a calendar "reschedule" handoff). */
   draft?: string;
   onConsumeDraft?: () => void;
@@ -69,6 +71,7 @@ export function Omnibox({
   onConversation,
   busy = false,
   onOpenLauncher,
+  labels,
   draft,
   onConsumeDraft,
   apptRef,
@@ -182,7 +185,6 @@ export function Omnibox({
 
   const boxStyle = { "--mode": meta.color, "--mode-tint": meta.tint } as CSSProperties;
   const ModeIcon = MODE_ICON[seg.mode];
-  const ToolIcon = meta.tool === "bolt" ? BoltIcon : ClipIcon;
 
   return (
     <div className="dock">
@@ -215,7 +217,7 @@ export function Omnibox({
                 <span className="seg-ic">
                   <Ic size={18} />
                 </span>
-                {m.label}
+                {labels?.[mode] ?? m.label}
               </button>
             );
           })}
@@ -288,25 +290,14 @@ export function Omnibox({
           <span className="mode-dot" />
           <span className="foot-text">{meta.footer}</span>
           <div className="foot-icons">
-            {meta.tool === "clip" ? (
-              <button
-                type="button"
-                className="icon-btn"
-                aria-label="Attach files"
-                onClick={() => fileInputRef.current?.click()}
-              >
-                <ToolIcon size={24} />
-              </button>
-            ) : (
-              <button
-                type="button"
-                className="icon-btn"
-                aria-label="Open launcher"
-                onClick={onOpenLauncher}
-              >
-                <ToolIcon size={24} />
-              </button>
-            )}
+            <button
+              type="button"
+              className="icon-btn"
+              aria-label="Attach files"
+              onClick={() => fileInputRef.current?.click()}
+            >
+              <ClipIcon size={24} />
+            </button>
             <button
               type="button"
               className="icon-btn send-btn"

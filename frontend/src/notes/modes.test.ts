@@ -41,11 +41,4 @@ describe("MODES", () => {
     expect(MODES.research.domain).toBeNull();
     expect(MODES.fullbrain.domain).toBeNull();
   });
-
-  it("only Research swaps the paperclip for the bolt", () => {
-    expect(MODES.research.tool).toBe("bolt");
-    for (const mode of ["entry", "fullbrain", "medical", "financial"] as const) {
-      expect(MODES[mode].tool).toBe("clip");
-    }
-  });
 });

@@ -30,8 +30,8 @@ export interface ModeMeta {
   tint: string;
   placeholder: string;
   footer: string;
-  tool: "clip" | "bolt";
-  /** Backend domain code for capture modes; null = Phase 4 conversation modes. */
+  /** Backend domain code for capture modes; null = conversation modes (Research /
+   * Full Brain), which hand off to the agent surface instead of writing a note. */
   domain: "general" | "health" | "finance" | null;
   dest: { path: string; options: readonly string[] } | null;
 }
@@ -43,7 +43,6 @@ export const MODES: Record<Mode, ModeMeta> = {
     tint: "var(--green-tint)",
     placeholder: "Write an entry…",
     footer: "Saved to your wiki · no AI.",
-    tool: "clip",
     domain: "general",
     dest: null,
   },
@@ -51,9 +50,8 @@ export const MODES: Record<Mode, ModeMeta> = {
     label: "Research",
     color: "var(--amber)",
     tint: "var(--amber-tint)",
-    placeholder: "Ask your brain… (read-only)",
-    footer: "Read-only — nothing gets written.",
-    tool: "bolt",
+    placeholder: "Ask the web, or work a problem…",
+    footer: "Web search & study tutor — not your notes.",
     domain: null,
     dest: null,
   },
@@ -63,7 +61,6 @@ export const MODES: Record<Mode, ModeMeta> = {
     tint: "var(--steel-tint)",
     placeholder: "Talk it out — full tool access…",
     footer: "Full tool access.",
-    tool: "clip",
     domain: null,
     dest: null,
   },
@@ -73,7 +70,6 @@ export const MODES: Record<Mode, ModeMeta> = {
     tint: "var(--rose-tint)",
     placeholder: "Log a lab, note, procedure…",
     footer: "Files to notes/medical/ · PDFs staged.",
-    tool: "clip",
     domain: "health",
     dest: { path: "notes/medical/", options: ["Records", "Labs", "Medications", "Appointments"] },
   },
@@ -83,7 +79,6 @@ export const MODES: Record<Mode, ModeMeta> = {
     tint: "var(--violet-tint)",
     placeholder: "Log a statement, receipt, transaction…",
     footer: "Files to notes/financial/.",
-    tool: "clip",
     domain: "finance",
     dest: { path: "notes/financial/", options: ["Receipts", "Statements", "Accounts"] },
   },

@@ -49,7 +49,7 @@ function Harness({
   onOpenNote?: (id: string) => void;
   onOpenEntity?: (id: string) => void;
 }) {
-  const fb = useFullBrain(true, d);
+  const fb = useFullBrain("fullbrain", d);
   const [text, setText] = useState("");
   return (
     <>
