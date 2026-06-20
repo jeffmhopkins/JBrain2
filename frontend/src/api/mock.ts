@@ -334,6 +334,10 @@ const LLM_SETTINGS: LlmSettings = {
       size_gb: 32,
       disk_gb: null,
       note: "Vision + a capable cheap text model.",
+      context_window: 32768,
+      context_window_override: null,
+      staged: false,
+      kv_gb: 1.5,
     },
     {
       id: "gpt-oss-120b",
@@ -347,6 +351,10 @@ const LLM_SETTINGS: LlmSettings = {
       size_gb: 59,
       disk_gb: null,
       note: "Strongest open reasoning that still runs fast here.",
+      context_window: 131072,
+      context_window_override: null,
+      staged: false,
+      kv_gb: 4.5,
     },
   ],
   host_memory: null,
@@ -2507,6 +2515,39 @@ export const mockFetch: typeof fetch = async (input, init) => {
       loaded: LLM_SETTINGS.local_models.filter((m) => m.loaded).map((m) => m.id),
       reachable: true,
     });
+  }
+  const loadMatch = path.match(/^\/api\/settings\/llm\/local-models\/(.+)\/load$/);
+  if (loadMatch && method === "POST") {
+    const id = decodeURIComponent(loadMatch[1] ?? "");
+    const model = LLM_SETTINGS.local_models.find((m) => m.id === id);
+    if (model) {
+      model.loaded = true;
+      model.staged = false;
+    }
+    return json({
+      loaded: LLM_SETTINGS.local_models.filter((m) => m.loaded).map((m) => m.id),
+      reachable: true,
+    });
+  }
+  const stageMatch = path.match(/^\/api\/settings\/llm\/local-models\/(.+)\/stage$/);
+  if (stageMatch && (method === "POST" || method === "DELETE")) {
+    const id = decodeURIComponent(stageMatch[1] ?? "");
+    const model = LLM_SETTINGS.local_models.find((m) => m.id === id);
+    if (model) model.staged = method === "POST";
+    return json(LLM_SETTINGS);
+  }
+  const windowMatch = path.match(/^\/api\/settings\/llm\/local-models\/(.+)\/context-window$/);
+  if (windowMatch && method === "PUT") {
+    const id = decodeURIComponent(windowMatch[1] ?? "");
+    const model = LLM_SETTINGS.local_models.find((m) => m.id === id);
+    const body = JSON.parse(String(init?.body)) as { context_window: number | null };
+    if (model) {
+      model.context_window_override = body.context_window;
+      const eff = body.context_window ?? model.context_window;
+      model.kv_gb =
+        Math.round((model.kv_gb / model.context_window) * eff * 100) / 100 || model.kv_gb;
+    }
+    return json(LLM_SETTINGS);
   }
 
   const blobMatch = path.match(/^\/api\/attachments\/([^/]+)$/);

@@ -216,6 +216,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             settings,
             recorder=SqlUsageRecorder(maker),
             overrides_loader=lambda: settings_store.llm_task_overrides(SYSTEM_CTX),
+            local_windows_loader=lambda: settings_store.llm_local_context_windows(SYSTEM_CTX),
         )
         # The agent: Tier-A memory, the tool registry (validated against the .tool
         # sidecars at startup), the session capability store, and the run log.

@@ -125,3 +125,54 @@ async def test_llm_task_overrides_round_trip_and_sanitizes(
     assert overrides["agent.turn"] == {"spec": "xai:grok-4.3", "reasoning_effort": "high"}
     assert overrides["note.extract"] == {"spec": "anthropic:claude-sonnet-4-6"}
     assert "bad.effort" not in overrides and "junk" not in overrides
+
+
+async def test_llm_local_context_windows_round_trip_and_sanitizes(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    from jbrain.settings_store import LLM_LOCAL_CONTEXT_WINDOWS_KEY
+
+    store = SqlSettingsStore(maker)
+    assert await store.llm_local_context_windows(OWNER) == {}
+
+    # set/clear round-trips through the single row.
+    await store.set_llm_local_context_window(OWNER, model_id="gpt-oss-120b", window=65536)
+    assert await store.llm_local_context_windows(OWNER) == {"gpt-oss-120b": 65536}
+    await store.set_llm_local_context_window(OWNER, model_id="gpt-oss-120b", window=None)
+    assert await store.llm_local_context_windows(OWNER) == {}
+
+    # A junk value (non-positive, bool, non-int, non-dict store) never reads as a window.
+    await store.upsert(
+        OWNER,
+        LLM_LOCAL_CONTEXT_WINDOWS_KEY,
+        {"gpt-oss-120b": 0, "qwen3-vl-30b": True, "x": "lots", "ok": 16384},
+    )
+    assert await store.llm_local_context_windows(OWNER) == {"ok": 16384}
+
+
+async def test_llm_local_staged_round_trip_and_dedups(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    from jbrain.settings_store import LLM_LOCAL_STAGED_KEY
+
+    store = SqlSettingsStore(maker)
+    assert await store.llm_local_staged(OWNER) == []
+
+    await store.set_llm_local_staged(OWNER, ["gpt-oss-120b", "qwen3-vl-30b", "gpt-oss-120b"])
+    assert await store.llm_local_staged(OWNER) == ["gpt-oss-120b", "qwen3-vl-30b"]
+
+    # Non-list / non-string entries are dropped on read.
+    await store.upsert(OWNER, LLM_LOCAL_STAGED_KEY, ["a", 5, "a", None, "b"])
+    assert await store.llm_local_staged(OWNER) == ["a", "b"]
+
+
+async def test_llm_local_settings_are_owner_only(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    # The new keys ride the owner-RLS app.settings table: a window/staged write by
+    # the owner is invisible to a non-owner session.
+    store = SqlSettingsStore(maker)
+    await store.set_llm_local_context_window(OWNER, model_id="gpt-oss-120b", window=65536)
+    await store.set_llm_local_staged(OWNER, ["gpt-oss-120b"])
+    assert await store.llm_local_context_windows(UNSCOPED) == {}
+    assert await store.llm_local_staged(UNSCOPED) == []

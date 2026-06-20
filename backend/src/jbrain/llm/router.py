@@ -154,6 +154,7 @@ class LlmRouter:
         tiers: Mapping[str, tuple[str, str]] | None = None,
         pinned: frozenset[str] = frozenset(),
         overrides_loader: Callable[[], Awaitable[Mapping[str, Mapping[str, str]]]] | None = None,
+        local_windows_loader: Callable[[], Awaitable[Mapping[str, int]]] | None = None,
         local_enabled: bool = True,
     ):
         self._clients = clients
@@ -173,6 +174,10 @@ class LlmRouter:
         # Loads the live DB-backed per-task overrides (spec + reasoning_effort).
         # None in tests/fakes → behaves exactly as the static config did.
         self._overrides_loader = overrides_loader
+        # Loads the live per-model context-window overrides (catalog id → tokens)
+        # so the meter reports the operator's chosen `-c`, not just the catalog
+        # default. None → fall back to the catalog window.
+        self._local_windows_loader = local_windows_loader
 
     def _resolve(self, task: str, strength: str | None) -> tuple[str, str]:
         """Precedence: an explicit per-task pin (JBRAIN_LLM_TASKS) wins; else the
@@ -230,6 +235,11 @@ class LlmRouter:
         unlisted model so the meter degrades gracefully rather than misreports."""
         provider, model, _ = await self._resolve_live(task, strength)
         if provider == "local":
+            if self._local_windows_loader is not None:
+                windows = await self._local_windows_loader()
+                cat_id = local_catalog.id_for_served(model)
+                if cat_id is not None and cat_id in windows:
+                    return windows[cat_id]
             return local_catalog.context_window(model)
         return CONTEXT_WINDOWS.get(model, DEFAULT_CONTEXT_WINDOW)
 
@@ -400,10 +410,12 @@ def build_router(
     sleep: Callable[[float], Awaitable[None]] | None = None,
     recorder: UsageRecorder | None = None,
     overrides_loader: Callable[[], Awaitable[Mapping[str, Mapping[str, str]]]] | None = None,
+    local_windows_loader: Callable[[], Awaitable[Mapping[str, int]]] | None = None,
 ) -> LlmRouter:
     """Wire the three providers from settings; transport/sleep injectable for tests.
-    `overrides_loader` supplies the live DB-backed per-task overrides (None keeps
-    the static-config behavior)."""
+    `overrides_loader` supplies the live DB-backed per-task overrides;
+    `local_windows_loader` the live per-model context-window overrides (both None
+    keep the static-config behavior)."""
     extra: dict[str, Any] = {"transport": transport}
     if sleep is not None:
         extra["sleep"] = sleep
@@ -425,5 +437,6 @@ def build_router(
         tiers=resolve_tiers(settings.llm_tiers),
         pinned=frozenset(settings.llm_tasks),
         overrides_loader=overrides_loader,
+        local_windows_loader=local_windows_loader,
         local_enabled=settings.local_llm_enabled,
     )

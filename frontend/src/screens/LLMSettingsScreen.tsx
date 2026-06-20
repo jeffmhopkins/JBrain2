@@ -141,8 +141,9 @@ export function LLMSettingsScreen() {
   // Which tiers have their per-task overrides expanded.
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [localOpen, setLocalOpen] = useState(false);
-  // Catalog ids with an unload request in flight (button shows a pending state).
-  const [unloading, setUnloading] = useState<Set<string>>(new Set());
+  // Catalog ids with a per-model action (stage/load/unload/window) in flight — the
+  // row's controls show a pending state and lock out a second concurrent action.
+  const [busy, setBusy] = useState<Set<string>>(new Set());
 
   // Live runtime state: while the drawer is open and hosting is on, refresh the
   // loaded flags every few seconds. Merge ONLY local_models so a poll can't
@@ -179,33 +180,74 @@ export function LLMSettingsScreen() {
     };
   }, [localOpen, hostingEnabled, foreground]);
 
+  const mark = (id: string) => setBusy((s) => new Set(s).add(id));
+  const unmark = (id: string) =>
+    setBusy((s) => {
+      const next = new Set(s);
+      next.delete(id);
+      return next;
+    });
+  // Sequence token so an earlier PUT's response can't clobber a later one (and a
+  // response after unmount is ignored). Shared across task + per-model writes —
+  // the server snapshot is the source of truth, so last response in wins.
+  const putSeq = useRef(0);
+
+  // load/unload return just the resident set; reconcile the loaded flags in place
+  // (a poll-style merge) so an in-flight task edit isn't clobbered.
+  function reconcileLoaded(res: { loaded: string[] }) {
+    const loaded = new Set(res.loaded);
+    setSettings((prev) =>
+      prev
+        ? {
+            ...prev,
+            local_models: prev.local_models.map((m) => ({ ...m, loaded: loaded.has(m.id) })),
+          }
+        : prev,
+    );
+  }
+
   function unloadModel(id: string) {
-    setUnloading((s) => new Set(s).add(id));
+    mark(id);
     api
       .unloadLocalModel(id)
-      .then((res) => {
-        const loaded = new Set(res.loaded);
-        setSettings((prev) =>
-          prev
-            ? {
-                ...prev,
-                local_models: prev.local_models.map((m) => ({ ...m, loaded: loaded.has(m.id) })),
-              }
-            : prev,
-        );
+      .then(reconcileLoaded)
+      .catch(() => {})
+      .finally(() => unmark(id));
+  }
+
+  function loadModel(id: string) {
+    mark(id);
+    api
+      .loadLocalModel(id)
+      .then(reconcileLoaded)
+      .catch(() => {})
+      .finally(() => unmark(id));
+  }
+
+  // stage + context-window return the full snapshot; reconcile it whole (guarded).
+  function stageModel(id: string, on: boolean) {
+    mark(id);
+    const seq = ++putSeq.current;
+    api
+      .stageLocalModel(id, on)
+      .then((s) => {
+        if (seq === putSeq.current) setSettings(s);
       })
       .catch(() => {})
-      .finally(() =>
-        setUnloading((s) => {
-          const next = new Set(s);
-          next.delete(id);
-          return next;
-        }),
-      );
+      .finally(() => unmark(id));
   }
-  // Sequence token so an earlier PUT's response can't clobber a later one (and a
-  // response after unmount is ignored).
-  const putSeq = useRef(0);
+
+  function setContextWindow(id: string, window: number | null) {
+    mark(id);
+    const seq = ++putSeq.current;
+    api
+      .setLocalContextWindow(id, window)
+      .then((s) => {
+        if (seq === putSeq.current) setSettings(s);
+      })
+      .catch(() => {})
+      .finally(() => unmark(id));
+  }
 
   const groups = useMemo(() => (settings ? groupTasks(settings.tasks) : []), [settings]);
 
@@ -320,8 +362,11 @@ export function LLMSettingsScreen() {
         hostingEnabled={settings.local_hosting_enabled}
         models={settings.local_models}
         hostMemory={settings.host_memory}
-        unloading={unloading}
+        busy={busy}
         onUnload={unloadModel}
+        onLoad={loadModel}
+        onStage={stageModel}
+        onSetWindow={setContextWindow}
       />
 
       {groups.map((group) => {
@@ -500,43 +545,77 @@ function capabilityChips(m: LocalModelInfo) {
   return chips;
 }
 
-// Read-only roster of self-hosted models. Enabling a model (downloading weights,
-// starting the GPU gateway) is a deliberate server-side step — `jbrain
-// enable-local-models` — so the drawer shows state and the command rather than
-// pretending the browser can pull tens of GB. Enabled models appear in the tier
-// pickers above; this is the "what's available and what's on" companion.
+// Positional bar palette: a segment's color comes from its SLOT on the memory bar
+// (1st green, 2nd yellow, 3rd orange, …), not the model identity, so colors stay
+// stable by position as models load/unload. [h, s, l]; weights sit at the base
+// lightness and the context (KV) block a lighter tint, each block sweeping the hue
+// ±HUE_SPREAD for a little depth.
+const BAR_PALETTE: [number, number, number][] = [
+  [138, 34, 58],
+  [46, 50, 63],
+  [28, 48, 62],
+  [14, 50, 60],
+];
+const HUE_SPREAD = 14;
+function slotGradient(slot: number, lighten = 0): string {
+  const [h, s, l] = BAR_PALETTE[slot % BAR_PALETTE.length] ?? [0, 0, 50];
+  const lt = Math.min(l + lighten, 88);
+  return `linear-gradient(90deg, hsl(${h - HUE_SPREAD} ${s}% ${lt}%), hsl(${h + HUE_SPREAD} ${s}% ${lt}%))`;
+}
+
+// The size picker's choices, capped per model at its catalog window.
+const WINDOW_CHOICES = [16384, 32768, 65536, 131072];
+const fmtTokens = (n: number) => (n % 1024 === 0 ? `${n / 1024}k` : `${Math.round(n / 1000)}k`);
+const barName = (m: LocalModelInfo) => m.label.split(" ")[0];
+const residentGbOf = (m: LocalModelInfo) => (m.disk_gb ?? m.size_gb) + m.kv_gb;
+
+// Roster of self-hosted models with a stage→load→unload lifecycle and a per-model
+// context window. Provisioning (the weight download) is still a server-side step —
+// `jbrain enable-local-models` — so only provisioned models appear; what shows here
+// can be staged, loaded, unloaded, and re-sized live.
 function LocalModelsDrawer({
   open,
   onToggle,
   hostingEnabled,
   models,
   hostMemory,
-  unloading,
+  busy,
   onUnload,
+  onLoad,
+  onStage,
+  onSetWindow,
 }: {
   open: boolean;
   onToggle: () => void;
   hostingEnabled: boolean;
   models: LocalModelInfo[];
   hostMemory: { total_gb: number; used_gb: number } | null;
-  unloading: Set<string>;
+  busy: Set<string>;
   onUnload: (id: string) => void;
+  onLoad: (id: string) => void;
+  onStage: (id: string, on: boolean) => void;
+  onSetWindow: (id: string, window: number | null) => void;
 }) {
   const enabledCount = models.filter((m) => m.enabled).length;
-  // The list is the operator's installed models only — un-provisioned catalog
-  // entries aren't on the box, so they'd be noise here (the summary's "of N" still
-  // says how many more the catalog offers).
   const shown = models.filter((m) => m.enabled);
-  const loaded = models.filter((m) => m.loaded);
-  // A loaded model is provisioned, so disk_gb is its real footprint; fall back to
-  // the catalog estimate only if the weights read came up empty.
-  const residentGb = loaded.reduce((sum, m) => sum + (m.disk_gb ?? m.size_gb), 0);
-  // Config state (enabled) and runtime state (loaded) read side by side, with the
-  // memory actually resident — the operator's two questions in one line.
+  const loaded = shown.filter((m) => m.loaded);
+  const stagedOnly = shown.filter((m) => m.staged && !m.loaded);
+  // Resident footprint = weights + KV for everything actually loaded.
+  const residentGb = loaded.reduce((sum, m) => sum + residentGbOf(m), 0);
+  const stagedGb = stagedOnly.reduce((sum, m) => sum + residentGbOf(m), 0);
+  const stagedCount = stagedOnly.length;
   const summary = !hostingEnabled
     ? "off"
-    : `${enabledCount} of ${models.length} enabled · ${loaded.length} loaded · ${Math.round(residentGb)} GB`;
+    : `${enabledCount} of ${models.length} enabled · ${loaded.length} loaded${
+        stagedCount ? ` · ${stagedCount} staged` : ""
+      } · ${Math.round(residentGb)} GB`;
   const ariaLabel = `Local models — ${hostingEnabled ? `hosting on, ${summary}` : "hosting off"}`;
+
+  // Loaded segments first (resident), then staged (projected) — colored by slot.
+  const onBar = [...loaded, ...stagedOnly];
+  const total = hostMemory?.total_gb ?? 0;
+  const projectedGb = residentGb + stagedGb;
+  const over = total > 0 && projectedGb > total;
 
   return (
     <section className="llm-local">
@@ -557,18 +636,49 @@ function LocalModelsDrawer({
 
       {open && (
         <div className="llm-local-body">
-          {hostMemory && hostMemory.total_gb > 0 && (
+          {hostMemory && total > 0 && (
             <div className="llm-mem" aria-label="unified memory in use">
               <div className="llm-mem-bar">
-                <i
-                  style={{
-                    width: `${Math.min(100, (hostMemory.used_gb / hostMemory.total_gb) * 100)}%`,
-                  }}
-                />
+                {onBar.map((m, i) => {
+                  const weights = m.disk_gb ?? m.size_gb;
+                  const res = weights + m.kv_gb;
+                  const isStaged = m.staged && !m.loaded;
+                  return (
+                    <div
+                      key={m.id}
+                      className={`llm-mem-seg${isStaged ? " staged" : ""}`}
+                      style={{ width: `${(res / total) * 100}%` }}
+                      title={`${m.label} — ${weights} GB weights + ${m.kv_gb} GB KV${
+                        isStaged ? " (staged)" : ""
+                      }`}
+                    >
+                      <div
+                        className="llm-mem-w"
+                        style={{ width: `${(weights / res) * 100}%`, background: slotGradient(i) }}
+                      />
+                      <div
+                        className="llm-mem-c"
+                        style={{
+                          width: `${(m.kv_gb / res) * 100}%`,
+                          background: slotGradient(i, 18),
+                        }}
+                      />
+                      <span className="llm-mem-label">
+                        {barName(m)} <span className="gb">{Math.round(res)}G</span>
+                      </span>
+                    </div>
+                  );
+                })}
               </div>
               <div className="llm-mem-cap">
-                <span>{Math.round(hostMemory.used_gb)} GB used</span>
-                <span>{Math.round(hostMemory.total_gb)} GB total</span>
+                <span>{Math.round(residentGb)} GB used</span>
+                {stagedGb > 0.05 && (
+                  <span className={`staged-note${over ? " over" : ""}`}>
+                    +{Math.round(stagedGb)} GB staged → {Math.round(projectedGb)} GB
+                    {over ? " ⚠ over" : ""}
+                  </span>
+                )}
+                <span className="total">{Math.round(total)} GB total</span>
               </div>
             </div>
           )}
@@ -585,19 +695,74 @@ function LocalModelsDrawer({
             </p>
           )}
           {shown.map((m) => {
-            // Real on-disk size when the model is provisioned here; otherwise the
-            // catalog estimate, flagged with "~" so the screen never passes off a
-            // guess as a measurement.
             const footprint = m.disk_gb ?? m.size_gb;
             const sizeText = `${m.disk_gb == null ? "~" : ""}${footprint} GB`;
+            const state = m.loaded ? "loaded" : m.staged ? "staged" : "idle";
+            const editable = !m.loaded; // idle or staged — no live process to disrupt
+            const isBusy = busy.has(m.id);
+            const effWindow = m.context_window_override ?? m.context_window;
+            const windowOpts = Array.from(
+              new Set([...WINDOW_CHOICES.filter((w) => w <= m.context_window), m.context_window]),
+            ).sort((a, b) => a - b);
             return (
-              <div key={m.id} className={`llm-local-row on${m.loaded ? " loaded" : ""}`}>
-                <div className="llm-local-name">
-                  {m.label}
-                  <span className="llm-local-meta">
-                    {m.quant} · {sizeText}
-                    {m.loaded ? ` · ${footprint} GB resident` : ""}
-                  </span>
+              <div key={m.id} className={`llm-local-row on ${state}`}>
+                <div className="llm-local-head">
+                  <div className="llm-local-name">
+                    {m.label}
+                    <span className="llm-local-meta">
+                      {m.quant} · {sizeText}
+                      {m.loaded ? ` · ${Math.round(residentGbOf(m))} GB resident` : ""}
+                    </span>
+                  </div>
+                  <div className="llm-local-topright">
+                    <div className="llm-local-act">
+                      {state === "idle" && (
+                        <button
+                          type="button"
+                          className="llm-local-btn stage"
+                          disabled={isBusy}
+                          onClick={() => onStage(m.id, true)}
+                        >
+                          {isBusy ? "…" : "Stage"}
+                        </button>
+                      )}
+                      {state === "staged" && (
+                        <>
+                          <button
+                            type="button"
+                            className="llm-local-btn load"
+                            disabled={isBusy}
+                            onClick={() => onLoad(m.id)}
+                          >
+                            {isBusy ? "…" : "Load"}
+                          </button>
+                          <button
+                            type="button"
+                            className="llm-local-btn"
+                            disabled={isBusy}
+                            onClick={() => onStage(m.id, false)}
+                          >
+                            Unstage
+                          </button>
+                        </>
+                      )}
+                      {state === "loaded" && (
+                        <button
+                          type="button"
+                          className="llm-local-btn"
+                          disabled={isBusy}
+                          onClick={() => onUnload(m.id)}
+                        >
+                          {isBusy ? "…" : "Unload"}
+                        </button>
+                      )}
+                    </div>
+                    <span
+                      className={`llm-local-state${m.loaded ? " on" : m.staged ? " staged" : ""}`}
+                    >
+                      {state}
+                    </span>
+                  </div>
                 </div>
                 <div className="llm-local-chips">
                   {capabilityChips(m).map((c) => (
@@ -606,21 +771,34 @@ function LocalModelsDrawer({
                     </span>
                   ))}
                 </div>
-                <div className="llm-local-act">
+                <div className="llm-local-ctx">
+                  <label className="llm-local-ctx-label" htmlFor={`ctx-${m.id}`}>
+                    context window
+                  </label>
+                  <select
+                    id={`ctx-${m.id}`}
+                    className="llm-local-ctx-select"
+                    value={String(effWindow)}
+                    disabled={!editable || isBusy}
+                    onChange={(e) => {
+                      const v = Number(e.target.value);
+                      // The catalog default is "no override" — store null for it so a
+                      // redundant override row is never persisted.
+                      onSetWindow(m.id, v === m.context_window ? null : v);
+                    }}
+                  >
+                    {windowOpts.map((w) => (
+                      <option key={w} value={w}>
+                        {fmtTokens(w)}
+                      </option>
+                    ))}
+                  </select>
                   {m.loaded ? (
-                    <button
-                      type="button"
-                      className="llm-local-unload"
-                      disabled={unloading.has(m.id)}
-                      onClick={() => onUnload(m.id)}
-                    >
-                      {unloading.has(m.id) ? "unloading…" : "Unload"}
-                    </button>
-                  ) : null}
+                    <span className="llm-local-ctx-hint">🔒 unload to change</span>
+                  ) : (
+                    <span className="llm-local-ctx-meta">KV ~{m.kv_gb} GB</span>
+                  )}
                 </div>
-                <span className={`llm-local-state${m.loaded ? " on" : ""}`}>
-                  {m.loaded ? "loaded" : "idle"}
-                </span>
               </div>
             );
           })}

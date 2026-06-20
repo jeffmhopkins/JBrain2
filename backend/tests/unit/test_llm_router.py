@@ -268,6 +268,37 @@ async def test_context_window_for_a_local_model_reads_the_catalog() -> None:
     assert await router.context_window("agent.turn") == 131072
 
 
+async def test_context_window_honors_a_per_model_override() -> None:
+    # A per-model window override (catalog id → tokens) wins over the catalog
+    # default for the meter; an absent override falls back to the catalog.
+    async def load() -> dict[str, dict[str, str]]:
+        return {"agent.turn": {"spec": "local:gpt-oss-120b"}}
+
+    async def windows() -> dict[str, int]:
+        return {"gpt-oss-120b": 65536}
+
+    router = LlmRouter(
+        {"xai": FakeLlmClient(), "local": FakeLlmClient()},
+        {"agent.turn": ("xai", "grok-4.3")},
+        overrides_loader=load,
+        local_windows_loader=windows,
+        local_enabled=True,
+    )
+    assert await router.context_window("agent.turn") == 65536
+
+    async def empty_windows() -> dict[str, int]:
+        return {}
+
+    fallback = LlmRouter(
+        {"xai": FakeLlmClient(), "local": FakeLlmClient()},
+        {"agent.turn": ("xai", "grok-4.3")},
+        overrides_loader=load,
+        local_windows_loader=empty_windows,
+        local_enabled=True,
+    )
+    assert await fallback.context_window("agent.turn") == 131072
+
+
 async def test_stored_reasoning_effort_reaches_xai_client() -> None:
     xai = FakeLlmClient(["x"])
     router = _override_router({"xai": xai}, {"note.extract": {"reasoning_effort": "high"}})

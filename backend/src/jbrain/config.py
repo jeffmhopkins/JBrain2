@@ -114,6 +114,11 @@ class Settings(BaseSettings):
     # here — host/infra files, not application blobs, so the read sits outside the
     # storage abstraction (same rationale as host_metrics' /proc read).
     local_models_dir: str = "/data/local-models"
+    # Whether the gateway keeps the recommended models co-resident (a non-swapping
+    # llama-swap group) rather than swapping one at a time. Mirrors the install-time
+    # LOCAL_LLM_RESIDENT_GROUP so a runtime config regeneration (after a
+    # context-window edit) reproduces the same group the setup script wrote.
+    local_llm_resident_group: bool = False
     # JSON object of per-task "provider:model" overrides, merged over the
     # adapter defaults — see jbrain.llm.router.TASK_DEFAULTS.
     llm_tasks: dict[str, str] = {}

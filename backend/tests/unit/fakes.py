@@ -198,14 +198,68 @@ class FakeSettingsStore:
                 clean[task] = sane
         return clean
 
+    async def llm_local_context_windows(self, ctx: object) -> dict[str, int]:
+        raw = self.values.get("llm_local_context_windows", {})
+        if not isinstance(raw, dict):
+            return {}
+        return {
+            mid: win
+            for mid, win in raw.items()
+            if isinstance(mid, str)
+            and isinstance(win, int)
+            and not isinstance(win, bool)
+            and win > 0
+        }
+
+    async def set_llm_local_context_window(
+        self, ctx: object, *, model_id: str, window: int | None
+    ) -> dict[str, int]:
+        current = await self.llm_local_context_windows(ctx)
+        if window is None:
+            current.pop(model_id, None)
+        else:
+            current[model_id] = window
+        self.values["llm_local_context_windows"] = current
+        return current
+
+    async def llm_local_staged(self, ctx: object) -> list[str]:
+        raw = self.values.get("llm_local_staged", [])
+        if not isinstance(raw, list):
+            return []
+        seen: set[str] = set()
+        out: list[str] = []
+        for mid in raw:
+            if isinstance(mid, str) and mid not in seen:
+                seen.add(mid)
+                out.append(mid)
+        return out
+
+    async def set_llm_local_staged(self, ctx: object, ids: list[str]) -> list[str]:
+        seen: set[str] = set()
+        clean: list[str] = []
+        for mid in ids:
+            if isinstance(mid, str) and mid not in seen:
+                seen.add(mid)
+                clean.append(mid)
+        self.values["llm_local_staged"] = clean
+        return clean
+
 
 class FakeLocalGateway:
     """In-memory stand-in for the llama-swap admin client (LocalGatewayClient)."""
 
-    def __init__(self, running: set[str] | None = None, *, fail_unload: bool = False) -> None:
+    def __init__(
+        self,
+        running: set[str] | None = None,
+        *,
+        fail_unload: bool = False,
+        fail_load: bool = False,
+    ) -> None:
         self._running = set(running or ())
         self.fail_unload = fail_unload
+        self.fail_load = fail_load
         self.unloaded: list[str] = []
+        self.loaded: list[str] = []
 
     async def running(self) -> set[str]:
         return set(self._running)
@@ -217,3 +271,11 @@ class FakeLocalGateway:
             raise LocalGatewayError("simulated gateway failure")
         self.unloaded.append(served_model)
         self._running.discard(served_model)
+
+    async def load(self, served_model: str) -> None:
+        from jbrain.llm.local_gateway import LocalGatewayError
+
+        if self.fail_load:
+            raise LocalGatewayError("simulated gateway failure")
+        self.loaded.append(served_model)
+        self._running.add(served_model)

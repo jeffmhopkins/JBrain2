@@ -70,6 +70,10 @@ services:
       JBRAIN_LOCAL_LLM_ENABLED: ${LOCAL_LLM_ENABLED:-false}
       JBRAIN_LOCAL_LLM_URL: ${LOCAL_LLM_URL:-http://local-llm:8080/v1}
       JBRAIN_LOCAL_MODELS: ${LOCAL_MODELS:-[]}
+      # Mirrors the install-time resident-group choice so a runtime config
+      # regeneration (after a context-window edit) reproduces the same llama-swap
+      # group the setup script wrote.
+      JBRAIN_LOCAL_LLM_RESIDENT_GROUP: ${LOCAL_LLM_RESIDENT_GROUP:-false}
       # Shared secret for the MQTT ingest service identity (JBrain360 M1): the API
       # validates it in /internal/mqtt-auth and the consumer connects with it. Empty
       # disables the identity (fail-closed). Only meaningful with the `mqtt` profile.
@@ -82,11 +86,12 @@ services:
       # Export downloads stream from here; import uploads land here for the
       # supervisor's one-shot to pick up. Host path, shared with backup.sh.
       - ./backups:/data/backups
-      # Read-only view of the provisioned local-model weights (same host dir the
-      # local-llm gateway serves) so the settings drawer can report each model's
-      # real on-disk footprint. Empty/absent on a stock deploy — the read fails
-      # closed to the catalog estimate.
-      - ./local-models:/data/local-models:ro
+      # The provisioned local-model weights (same host dir the local-llm gateway
+      # serves) so the settings drawer can report each model's real on-disk
+      # footprint. WRITABLE: a context-window edit re-stamps llama-swap.yaml here
+      # (atomically), which the gateway hot-reloads via --watch-config. Empty/absent
+      # on a stock deploy — the read fails closed to the catalog estimate.
+      - ./local-models:/data/local-models
     networks: [edge, internal]
     depends_on:
       db:
@@ -199,7 +204,10 @@ services:
     restart: unless-stopped
     # Read the config from the /models mount — no separate single-file bind mount
     # (a missing file would make Docker create a directory and wedge the gateway).
-    command: ["llama-swap", "--listen", ":8080", "--config", "/models/llama-swap.yaml"]
+    # --watch-config hot-reloads the file when the API re-stamps it after a
+    # context-window edit (the new -c applies on the model's next load).
+    command:
+      ["llama-swap", "--listen", ":8080", "--config", "/models/llama-swap.yaml", "--watch-config"]
     devices:
       - /dev/dri:/dev/dri
     # seccomp=unconfined is what the kyuz0 toolbox guide runs for the Vulkan path
