@@ -310,7 +310,12 @@
         {
           id: "qwen3-30b-a3b", label: "Qwen3 30B · lightweight", quant: "Q4_K_M",
           sizeGb: 18, chips: [["tools", "tools"]],
-          window: 32768, state: "idle", kvGbPer128k: 3.2, color: "#6fb6b1",
+          window: 32768, state: "loaded", kvGbPer128k: 3.2, color: "#a493c9",
+        },
+        {
+          id: "qwen3-next-80b-a3b", label: "Qwen3-Next 80B · reasoning", quant: "UD-Q4_K_XL",
+          sizeGb: 46, chips: [["reason", "reasoning"], ["tools", "tools"]],
+          window: 32768, state: "idle", kvGbPer128k: 5.0, color: "#c9a36a",
         },
       ];
       const barName = (m) => m.label.split(" ")[0]; // family name for the bar segment
