@@ -25,16 +25,19 @@ without the internet. That's exactly what this feature provides.
 
 ## How it works
 
-When `JBRAIN_LAN_ADDR` is set (e.g. `https://jbrain.local`):
+Local access is **on by default** at `https://jbrain.local`
+(`JBRAIN_LAN_ADDR`, defaulted in `docker-compose.yml`). Two halves:
 
-- **mDNS** (`avahi-daemon` on the host) advertises the box as `<name>.local`, so
-  any device on the LAN resolves it with zero per-client config and no internet.
-  Avahi tracks the box's IP across DHCP changes.
-- **Caddy** adds a second site for that hostname and serves it over HTTPS using
-  its **internal CA** (`tls internal`) — a self-signed cert minted locally, no
-  Let's Encrypt and no inbound reachability required. The proxy entrypoint renders
-  this site from `JBRAIN_LAN_ADDR` at container start
-  (`deploy/proxy-lan-conf.sh`), reusing the same app handlers as the public site.
+- **Caddy** serves a second site for that name over HTTPS using its **internal
+  CA** (`tls internal`) — a cert minted locally, no Let's Encrypt and no inbound
+  reachability. The proxy entrypoint renders this site from `JBRAIN_LAN_ADDR` at
+  container start (`deploy/proxy-lan-conf.sh`), reusing the public site's handlers.
+- **mDNS** (`avahi-daemon`) makes `jbrain.local` resolve on the LAN with zero
+  per-client config and no internet. avahi only auto-advertises the box's *system*
+  hostname, so rather than rename the box, a small service publishes `jbrain.local`
+  as a **CNAME alias** pointing at `<hostname>.local` (`deploy/avahi_alias.py`,
+  run by `deploy/jbrain-avahi-alias.service`). avahi tracks the box's IP across
+  DHCP changes. This host half is provisioned by `deploy/lan-setup.sh`.
 
 ```
 laptop ──HTTPS──> jbrain.local (Caddy, internal CA) ──> api    [all on the LAN]
@@ -43,27 +46,31 @@ laptop ──HTTPS──> jbrain.local (Caddy, internal CA) ──> api    [all 
 Because it's genuine HTTPS, the `Secure` cookie is stored and login works — tunnel
 up or down.
 
-## Enabling it
+## Setup
 
 ### Fresh install
-`deploy/install.sh` asks **"Enable local network access?"** Accept it and pick a
-name (defaults to the box's current hostname). The installer installs
-`avahi-daemon`, aligns the system hostname so `<name>.local` is advertised, and
-writes `JBRAIN_LAN_ADDR=https://<name>.local` to `/opt/jbrain2/.env`.
+Nothing to choose — `deploy/install.sh` enables it: it writes
+`JBRAIN_LAN_ADDR=https://jbrain.local`, then runs `lan-setup.sh` to install
+`avahi-daemon` + the python bindings and start the alias service.
 
 ### Existing install
-1. Install the mDNS responder: `sudo apt-get install -y avahi-daemon`.
-   Avahi advertises `<system-hostname>.local`; set the hostname if you want a
-   friendlier name (`sudo hostnamectl set-hostname jbrain`).
-2. Add to `/opt/jbrain2/.env`:
-   ```
-   JBRAIN_LAN_ADDR=https://jbrain.local
-   ```
-   (match the `<name>.local` avahi advertises).
-3. `sudo jbrain restart` — the proxy entrypoint picks up the new site.
+`sudo jbrain update` turns it on automatically (it backfills `JBRAIN_LAN_ADDR`
+and runs `lan-setup.sh`). One caveat from how updates bootstrap: the *first*
+update after this change runs with the **old** `jbrain` script, which rebuilds
+the stack (so the Caddy site comes up) but doesn't yet run the host setup. Finish
+that one time with the now-updated helper:
 
-To disable, blank `JBRAIN_LAN_ADDR` (or remove the line) and restart; the LAN
-site is torn down on the next start.
+```bash
+sudo jbrain enable-lan
+```
+
+Every later `jbrain update` does it for you.
+
+### Renaming or disabling
+Edit `JBRAIN_LAN_ADDR` in `/opt/jbrain2/.env`:
+- a different `*.local` name, then `sudo jbrain enable-lan && sudo jbrain restart`;
+- blank it to disable, then `sudo jbrain enable-lan` (tears down the alias
+  service) and `sudo jbrain restart` (drops the Caddy site).
 
 ## The certificate warning (and how to remove it)
 

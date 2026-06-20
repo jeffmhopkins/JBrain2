@@ -20,12 +20,13 @@ services:
       # http://<domain> (plain HTTP behind Cloudflare). Defaults to JBRAIN_DOMAIN
       # so installs that predate tunnel support keep their auto-TLS behaviour.
       JBRAIN_SITE_ADDR: ${JBRAIN_SITE_ADDR:-${JBRAIN_DOMAIN}}
-      # OPT-IN local-network access: when set (e.g. https://jbrain.local) the
-      # entrypoint adds a second Caddy site serving the app over HTTPS from
-      # Caddy's internal CA, so local login works (the Secure cookie needs
-      # HTTPS) even when the tunnel/internet is down. Empty -> no LAN site.
+      # Local-network access, ON by default: serves the app over HTTPS for
+      # jbrain.local (Caddy's internal CA) so owner login works on the LAN even
+      # when the tunnel/internet is down (the Secure cookie needs HTTPS). The
+      # host advertises the name over mDNS via an avahi CNAME alias — see
+      # deploy/lan-setup.sh. Blank JBRAIN_LAN_ADDR in .env to turn it off.
       # See docs/LOCAL_ACCESS.md.
-      JBRAIN_LAN_ADDR: ${JBRAIN_LAN_ADDR:-}
+      JBRAIN_LAN_ADDR: ${JBRAIN_LAN_ADDR:-https://jbrain.local}
     volumes:
       - caddy_data:/data
       - caddy_config:/config
