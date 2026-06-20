@@ -83,7 +83,7 @@ async def test_non_owner_sees_no_rows_and_cannot_insert(maker: async_sessionmake
     async with scoped_session(maker, owner) as session:
         baseline = (
             await session.execute(text("SELECT count(*) FROM app.generated_images"))
-        ).scalar()
+        ).scalar() or 0
 
     async with scoped_session(maker, owner) as session:
         await repo.insert(
