@@ -103,9 +103,22 @@ export function App() {
   const [talkArticle, setTalkArticle] = useState<string | null>(null);
   const [wikiClosing, setWikiClosing] = useState(false);
 
-  // Lives at the app level so the outbox keeps flushing while the user is
-  // on Ops or Settings.
-  const notes = useNotes(session.status === "in");
+  // The bare home stream is on screen only when no card, launcher, or stacked
+  // reading layer covers it; while it's buried behind one there's no reason to
+  // keep polling the list (the outbox still flushes on reconnect from anywhere).
+  const homeVisible =
+    card === null &&
+    !launcherOpen &&
+    noteView === null &&
+    entityView === null &&
+    wikiArticle === null &&
+    talkArticle === null &&
+    listView === null &&
+    !runsOpen;
+
+  // Lives at the app level so its state (and the outbox) survives every
+  // sub-screen; `homeVisible` gates the list poll to when the stream is shown.
+  const notes = useNotes(session.status === "in", homeVisible);
   const actions = useNoteActions(notes);
 
   // Any 401 from the API means the cookie expired or was revoked.
@@ -412,7 +425,12 @@ export function App() {
         />
       </div>
 
-      <Launcher open={launcherOpen} onClose={() => setLauncherOpen(false)} onNavigate={navigate} />
+      <Launcher
+        open={launcherOpen}
+        active={card === null}
+        onClose={() => setLauncherOpen(false)}
+        onNavigate={navigate}
+      />
 
       {/* Automations is a self-contained full-screen overlay (its own back bar +
           slide-in), rendered below — it skips the shared subscreen TopBar. */}

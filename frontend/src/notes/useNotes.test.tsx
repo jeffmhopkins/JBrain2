@@ -31,7 +31,7 @@ describe("useNotes background suspension", () => {
 
   it("stops polling the server while backgrounded and catches up on return", async () => {
     const store = createMemoryStore();
-    renderHook(() => useNotes(true, store));
+    renderHook(() => useNotes(true, true, store));
 
     // The mount fires one immediate sync.
     await flush();
@@ -47,6 +47,28 @@ describe("useNotes background suspension", () => {
     // Returning to the foreground re-arms with an immediate catch-up sync.
     setVisibility("visible");
     await flush();
+    expect(api.listNotes).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not poll while the stream is off-screen, and resumes when shown", async () => {
+    const store = createMemoryStore();
+    // Mounted while another screen covers the stream: no immediate sync, no poll.
+    const { rerender } = renderHook(({ visible }) => useNotes(true, visible, store), {
+      initialProps: { visible: false },
+    });
+    await flush();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(IDLE_INTERVAL_MS * 3);
+    });
+    expect(api.listNotes).not.toHaveBeenCalled();
+
+    // Returning to the stream syncs at once, then keeps the list fresh.
+    rerender({ visible: true });
+    await flush();
+    expect(api.listNotes).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(IDLE_INTERVAL_MS);
+    });
     expect(api.listNotes).toHaveBeenCalledTimes(2);
   });
 });

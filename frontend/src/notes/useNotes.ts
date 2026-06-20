@@ -145,7 +145,7 @@ export async function fetchNoteById(id: string): Promise<StreamItem | null> {
   }
 }
 
-export function useNotes(enabled: boolean, store?: OutboxStore): NotesController {
+export function useNotes(enabled: boolean, visible: boolean, store?: OutboxStore): NotesController {
   const storeRef = useRef<OutboxStore | null>(store ?? null);
   if (storeRef.current === null) storeRef.current = createIdbStore();
   const outbox = storeRef.current;
@@ -177,22 +177,31 @@ export function useNotes(enabled: boolean, store?: OutboxStore): NotesController
   // freshly-settled note reflects at once rather than on the next slow tick).
   const anyInFlight = useMemo(() => serverItems.some(inFlight), [serverItems]);
 
-  // A backgrounded PWA must not poll the server; suspending while hidden and
-  // catching up the instant it returns to the foreground is the whole point.
+  // Two gates keep an idle app quiet: nothing polls while the PWA is hidden,
+  // and the list poll runs only while the stream is the screen actually on
+  // display — no point refreshing a list that's buried under another surface.
+  // Returning to either re-runs this effect and syncs at once, so the stream is
+  // current the moment it's back on screen.
   const foreground = useForeground();
 
   useEffect(() => {
-    if (!enabled || !foreground) return;
+    if (!enabled || !foreground || !visible) return;
     void sync();
-    const onOnline = () => void sync();
-    window.addEventListener("online", onOnline);
     const period = anyInFlight ? ACTIVE_INTERVAL_MS : IDLE_INTERVAL_MS;
     const interval = setInterval(() => void sync(), period);
-    return () => {
-      window.removeEventListener("online", onOnline);
-      clearInterval(interval);
-    };
-  }, [enabled, sync, anyInFlight, foreground]);
+    return () => clearInterval(interval);
+  }, [enabled, sync, anyInFlight, foreground, visible]);
+
+  // The outbox still flushes on reconnect from anywhere in the app — a note
+  // composed on, say, Settings goes out without waiting for a return to the
+  // stream. It's event-driven (no steady-state load) and stays silent while the
+  // PWA is hidden.
+  useEffect(() => {
+    if (!enabled || !foreground) return;
+    const onOnline = () => void sync();
+    window.addEventListener("online", onOnline);
+    return () => window.removeEventListener("online", onOnline);
+  }, [enabled, sync, foreground]);
 
   const send = useCallback(
     async (input: SendInput) => {

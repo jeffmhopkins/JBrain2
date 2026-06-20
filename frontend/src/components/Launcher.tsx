@@ -92,26 +92,30 @@ const REVIEW_POLL_MS = 10_000;
 
 interface LauncherProps {
   open: boolean;
+  /** False while a card is stacked over the launcher: it stays mounted (for the
+   * reveal beneath the card) but is off-screen, so the badge poll pauses. */
+  active?: boolean;
   onClose: () => void;
   onNavigate: (target: LauncherTarget) => void;
 }
 
-export function Launcher({ open, onClose, onNavigate }: LauncherProps) {
+export function Launcher({ open, active = true, onClose, onNavigate }: LauncherProps) {
   // Stay mounted through the exit animation, then unmount.
   const [closing, setClosing] = useState(false);
   const panelRef = useRef<HTMLElement>(null);
   const touchStartY = useRef<number | null>(null);
   const wasOpen = useRef(open);
   // A live count drives the Review tile badge: an immediate fetch on open, then
-  // a poll while the launcher sits open (including beneath the Review card).
-  // Failures just leave the badge at its last value.
+  // a poll while the launcher is the surface on screen. Failures just leave the
+  // badge at its last value.
   const [reviewCount, setReviewCount] = useState<number | null>(null);
-  // Backgrounding the app suspends the poll; returning to the foreground re-runs
-  // this effect, which refetches at once and re-arms — so a hidden app is quiet.
+  // Two gates quiet the poll: a backgrounded PWA, and a launcher buried under a
+  // card. Returning to either re-runs this effect — an immediate refetch, then
+  // re-arm — so the badge is current the moment the menu is back on screen.
   const foreground = useForeground();
 
   useEffect(() => {
-    if (!open || !foreground) return;
+    if (!open || !active || !foreground) return;
     let stale = false;
     const refresh = () =>
       api
@@ -126,7 +130,7 @@ export function Launcher({ open, onClose, onNavigate }: LauncherProps) {
       stale = true;
       clearInterval(interval);
     };
-  }, [open, foreground]);
+  }, [open, active, foreground]);
 
   // The retreat is driven by `open` going false — from the X/grab, swipe-down,
   // Escape, OR the platform back gesture (App clears launcherOpen). Closing this
