@@ -104,7 +104,8 @@ describe("Omnibox", () => {
         onLateralSwipe={onLateralSwipe}
       />,
     );
-    const box = document.querySelector(".omnibox") as Element;
+    // Gestures initiate from the segment row only, not the whole box.
+    const box = document.querySelector(".omnibox .seg-row") as Element;
 
     // A rightward drag past the commit threshold reports a positive dx.
     fireEvent.touchStart(box, { touches: [{ clientX: 30, clientY: 40 }] });

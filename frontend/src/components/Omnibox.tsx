@@ -162,19 +162,11 @@ export function Omnibox({
     if (list) setFiles((prev) => [...prev, ...Array.from(list)]);
   }
 
-  // Two gestures share the box. Swipe up opens the card launcher; a horizontal
-  // swipe (Full Brain only) shuttles the lateral panels. The textarea joins both
-  // while it has no internal scroll (empty or short text — the common case and
-  // most of the box's surface); once content overflows it owns its own vertical
-  // scroll again, so we drop swipe-up there but keep the horizontal panel swipe
-  // (which never conflicts with vertical scrolling). Selects stay excluded.
+  // Both omnibox gestures live on the segment row only (Entry / Research / Full
+  // Brain), so a swipe never fights typing, scrolling, or text selection in the
+  // composer below: swipe up opens the card launcher; a horizontal swipe (Full
+  // Brain only) shuttles the lateral panels.
   function onTouchStart(event: TouchEvent) {
-    const target = event.target as HTMLElement;
-    if (target.closest("select") !== null) {
-      touchStartX.current = null;
-      touchStartY.current = null;
-      return;
-    }
     const touch = event.touches[0];
     if (touch === undefined) {
       touchStartX.current = null;
@@ -182,10 +174,7 @@ export function Omnibox({
       return;
     }
     touchStartX.current = touch.clientX;
-    const area = target.closest("textarea");
-    // Null Y opts the start out of swipe-up while keeping X for the panel swipe.
-    touchStartY.current =
-      area !== null && area.scrollHeight > area.clientHeight ? null : touch.clientY;
+    touchStartY.current = touch.clientY;
   }
 
   function onTouchMove(event: TouchEvent) {
@@ -219,14 +208,14 @@ export function Omnibox({
 
   return (
     <div className="dock">
-      <div
-        className="omnibox"
-        style={boxStyle}
-        onTouchStart={onTouchStart}
-        onTouchMove={onTouchMove}
-        onTouchEnd={onTouchEnd}
-      >
-        <div className="seg-row" role="tablist">
+      <div className="omnibox" style={boxStyle}>
+        <div
+          className="seg-row"
+          role="tablist"
+          onTouchStart={onTouchStart}
+          onTouchMove={onTouchMove}
+          onTouchEnd={onTouchEnd}
+        >
           {ROWS[seg.row].map((mode) => {
             const m = MODES[mode];
             const active = mode === seg.mode;
