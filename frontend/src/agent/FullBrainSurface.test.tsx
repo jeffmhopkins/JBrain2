@@ -253,6 +253,30 @@ describe("FullBrainSurface", () => {
     expect(worked).toHaveAttribute("aria-expanded", "false");
   });
 
+  it("shows a web tool's url inline on its step row, truncating not wrapping", async () => {
+    async function* answer(): AsyncGenerator<ChatEvent> {
+      yield { type: "text_delta", text: "read it" };
+      yield {
+        type: "tool_call",
+        id: "c1",
+        name: "web_fetch",
+        arguments: { url: "https://example.com/a/very/long/path" },
+      };
+      yield { type: "tool_result", tool_call_id: "c1", ok: true, summary: "page text" };
+      yield { type: "done", stop_reason: "end_turn" };
+    }
+    render(<Harness d={deps({ chat: answer })} />);
+    await waitFor(() => screen.getByLabelText("Conversation"));
+    fireEvent.change(screen.getByLabelText("Composer"), { target: { value: "fetch it" } });
+    fireEvent.click(screen.getByRole("button", { name: "send" }));
+
+    fireEvent.click(await screen.findByRole("button", { name: /Worked/ }));
+    const arg = document.querySelector(".fb-step-arg");
+    expect(arg?.textContent).toBe("https://example.com/a/very/long/path");
+    // The whole url stays reachable on hover even when the row clips it.
+    expect(arg).toHaveAttribute("title", "https://example.com/a/very/long/path");
+  });
+
   it("streams reasoning into a Thinking disclosure, then collapses to a duration", async () => {
     async function* answer(): AsyncGenerator<ChatEvent> {
       yield { type: "reasoning_delta", text: "let me think about this" };

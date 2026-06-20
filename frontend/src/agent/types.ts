@@ -131,6 +131,9 @@ export interface TranscriptTurn {
     ok: boolean | null;
     /** The call's arguments, persisted so an expanded step replays what it ran. */
     args?: Record<string, unknown>;
+    /** The verbatim result text, persisted so a step's result rung replays on
+     * reopen — the only content a sourceless tool (the web tools) can show. */
+    summary?: string;
     sources: NoteSource[];
     /** A staged proposal / resolved entities the step surfaced, persisted so the
      * bubble's chips and inline links replay on reopen (not just note sources). */

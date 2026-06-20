@@ -320,9 +320,44 @@ def test_chat_persists_tool_steps_with_sources(
             "id": "c1",
             "name": "search",
             "ok": True,
+            "summary": "found 1",
             "sources": [{"note_id": "n1", "domain": "general", "snippet": "born"}],
         }
     ]
+
+
+def test_chat_persists_a_tool_calls_arguments(
+    client: TestClient,
+    repo: FakeAuthRepo,
+    sessions_store: FakeAgentSessions,
+    transcript: FakeTranscript,
+) -> None:
+    # A sourceless tool (the web tools) carries its target only in its arguments —
+    # persist them so the step replays its url/query on reopen, not an empty row.
+    login(client, repo)
+    sessions_store.add(AgentSessionInfo("sess-1", "", "active", ("general",), (), NOW, NOW))
+
+    async def fetch(arguments, ctx):  # type: ignore[no-untyped-def]
+        return ToolOutput("page text")
+
+    client.app.state.agent_registry = registry_with_tool("web_fetch", fetch)  # type: ignore[attr-defined]
+    client.app.state.llm_router = stream_router(  # type: ignore[attr-defined]
+        [
+            LlmTurn(
+                "",
+                (ToolCall("c1", "web_fetch", {"url": "https://example.com"}),),
+                "tool_use",
+                LlmUsage(1, 1),
+            ),
+            LlmTurn("done", (), "end_turn", LlmUsage(1, 1)),
+        ],
+        stream_chunks=[[""], ["here"]],
+    )
+    client.post("/api/chat", json={"session_id": "sess-1", "message": "read it"})
+
+    step = transcript.recorded[-1]["tools"][0]
+    assert step["args"] == {"url": "https://example.com"}
+    assert step["summary"] == "page text"
 
 
 def test_chat_forwards_a_reflexion_verdict_after_done(
