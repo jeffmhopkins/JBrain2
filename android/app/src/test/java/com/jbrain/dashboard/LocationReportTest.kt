@@ -3,6 +3,7 @@ package com.jbrain.dashboard
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Test
 
 class LocationReportTest {
@@ -27,5 +28,17 @@ class LocationReportTest {
         assertEquals(12, json.getInt("acc"))
         assertEquals(88, json.getInt("batt"))
         assertEquals("ph", json.getString("tid"))
+    }
+
+    @Test
+    fun fromJsonRoundTripsThroughTheQueueEncoding() {
+        val report = LocationReport(40.5, -74.1, 1_700_000_000, accuracyM = 12)
+        assertEquals(report, LocationReport.fromJson(report.toJson()))
+    }
+
+    @Test
+    fun fromJsonRejectsNonLocationAndGarbage() {
+        assertNull(LocationReport.fromJson("""{"_type":"transition","lat":1.0}"""))
+        assertNull(LocationReport.fromJson("not json at all"))
     }
 }

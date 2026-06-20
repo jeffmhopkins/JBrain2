@@ -20,12 +20,18 @@ sealed interface PublishOutcome {
     data class Failed(val reason: String) : PublishOutcome
 }
 
+/** Publishes one location report to the server. An interface so the offline-queue
+ * drain (LocationUploader) is unit-tested with a fake. */
+interface Publisher {
+    fun publish(serverBase: String, deviceKey: String, report: LocationReport): PublishOutcome
+}
+
 /** POSTs an OwnTracks location report to `/api/owntracks` with the device key as
  * the HTTP Basic password (the server ignores the username). The ingest acks 2xx
  * even on a transient downstream error, so only 401/429 are distinguished. Free of
  * Android types; JVM-tested against MockWebServer. */
-class LocationPublisher(private val client: OkHttpClient = OkHttpClient()) {
-    fun publish(serverBase: String, deviceKey: String, report: LocationReport): PublishOutcome {
+class LocationPublisher(private val client: OkHttpClient = OkHttpClient()) : Publisher {
+    override fun publish(serverBase: String, deviceKey: String, report: LocationReport): PublishOutcome {
         val url = "${serverBase.trimEnd('/')}/api/owntracks"
         val request = Request.Builder()
             .url(url)

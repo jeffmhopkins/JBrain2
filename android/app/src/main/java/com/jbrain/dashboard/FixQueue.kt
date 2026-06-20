@@ -1,0 +1,68 @@
+package com.jbrain.dashboard
+
+import java.io.File
+
+/** A persistent FIFO of pending location fixes, so a network lapse backfills instead
+ * of dropping points. Bounded — the oldest are discarded when full. An interface so
+ * the drain logic is unit-tested with an in-memory fake. */
+interface FixQueue {
+    fun enqueue(report: LocationReport)
+
+    /** The oldest queued fix without removing it, or null when empty. */
+    fun peek(): LocationReport?
+
+    /** Drop the oldest fix (after it has been sent). */
+    fun removeFirst()
+
+    fun size(): Int
+
+    fun clear()
+}
+
+/** Newline-delimited JSON on disk; survives process death. The whole (bounded) file
+ * is rewritten on each mutation — cheap at this size and good enough for a
+ * best-effort tracker. */
+class FileFixQueue(private val file: File, private val capacity: Int = CAP) : FixQueue {
+    private val lines = ArrayDeque<String>()
+
+    init {
+        if (file.exists()) file.readLines().forEach { if (it.isNotBlank()) lines.addLast(it) }
+    }
+
+    override fun enqueue(report: LocationReport) {
+        lines.addLast(report.toJson())
+        while (lines.size > capacity) lines.removeFirst() // drop the oldest when full
+        persist()
+    }
+
+    override fun peek(): LocationReport? {
+        while (lines.isNotEmpty()) {
+            val parsed = LocationReport.fromJson(lines.first())
+            if (parsed != null) return parsed
+            lines.removeFirst() // skip a corrupt line so it can't wedge the queue
+            persist()
+        }
+        return null
+    }
+
+    override fun removeFirst() {
+        if (lines.isNotEmpty()) {
+            lines.removeFirst()
+            persist()
+        }
+    }
+
+    override fun size(): Int = lines.size
+
+    override fun clear() {
+        lines.clear()
+        persist()
+    }
+
+    private fun persist() = file.writeText(lines.joinToString("\n"))
+
+    private companion object {
+        // ~16 h of moving fixes (30 s cadence) or weeks of stationary heartbeats.
+        const val CAP = 2000
+    }
+}
