@@ -7,6 +7,8 @@ needs no scope; a bare session suffices. The plaintext key is generated here and
 returned exactly once; only its hash reaches the DB.
 """
 
+import base64
+import json
 import secrets
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -36,6 +38,24 @@ class RedeemedDevice:
 def generate_pairing_code() -> str:
     """A high-entropy (~160-bit), one-time, URL/QR-safe code."""
     return secrets.token_urlsafe(20)
+
+
+# The embeddable pairing payload version — bump if the shape changes so an old app
+# can reject a newer payload it can't parse.
+PAIRING_PAYLOAD_VERSION = 1
+
+
+def build_pairing_payload(server_base: str, code: str) -> str:
+    """A single self-contained string the owner shares and the app pastes/scans: it
+    embeds the server URL alongside the one-time code, so the app learns where to
+    redeem (and operate) from the code itself — no server URL baked into the build.
+    base64url(JSON), so it stays one opaque QR-safe token and is extensible (add
+    fields under new keys without breaking older readers)."""
+    raw = json.dumps(
+        {"v": PAIRING_PAYLOAD_VERSION, "u": server_base.rstrip("/"), "c": code},
+        separators=(",", ":"),
+    ).encode()
+    return base64.urlsafe_b64encode(raw).decode().rstrip("=")
 
 
 def build_owntracks_config(
