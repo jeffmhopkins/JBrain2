@@ -42,6 +42,10 @@ class ProvisionRequest(BaseModel):
     label: str = Field(min_length=1, max_length=128)
 
 
+class RenameRequest(BaseModel):
+    label: str = Field(min_length=1, max_length=128)
+
+
 class ProvisionedOut(BaseModel):
     device: DeviceOut
     # Shown once. Configure OwnTracks (HTTP mode) with this as the Basic password.
@@ -80,4 +84,18 @@ async def rotate_device(device_id: str, owner: OwnerDep, repo: DeviceRepoDep) ->
 @router.post("/devices/{device_id}/revoke", status_code=204)
 async def revoke_device(device_id: str, owner: OwnerDep, repo: DeviceRepoDep) -> None:
     if not await service.revoke_device(repo, _owner_ctx(owner), device_id):
+        raise HTTPException(status_code=404, detail="device not found")
+
+
+@router.post("/devices/{device_id}/rename", status_code=204)
+async def rename_device(
+    device_id: str, body: RenameRequest, owner: OwnerDep, repo: DeviceRepoDep
+) -> None:
+    if not await service.rename_device(repo, _owner_ctx(owner), device_id, body.label):
+        raise HTTPException(status_code=404, detail="device not found")
+
+
+@router.delete("/devices/{device_id}", status_code=204)
+async def delete_device(device_id: str, owner: OwnerDep, repo: DeviceRepoDep) -> None:
+    if not await service.delete_device(repo, _owner_ctx(owner), device_id):
         raise HTTPException(status_code=404, detail="device not found")

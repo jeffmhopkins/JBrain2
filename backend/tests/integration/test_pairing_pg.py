@@ -18,6 +18,8 @@ from sqlalchemy.pool import NullPool
 from jbrain.auth import service as auth_service
 from jbrain.auth.repo import SqlAuthRepo
 from jbrain.db.session import SessionContext, scoped_session
+from jbrain.devices import service as device_service
+from jbrain.devices.repo import SqlDeviceRepo
 from jbrain.locations.pairing import SqlPairingRepo
 from tests.conftest import docker_available
 from tests.integration.test_rls import OWNER, database_url  # noqa: F401
@@ -54,6 +56,56 @@ async def test_mint_then_redeem_creates_a_real_device_and_is_one_time(
     assert principal.subject_id == device.subject_id
 
     # One-time: a second redeem of the same code fails closed.
+    assert await repo.redeem(code) is None
+
+
+async def test_re_pair_rotates_the_key_on_the_existing_device(maker: async_sessionmaker) -> None:
+    repo = SqlPairingRepo(maker)
+    devices = SqlDeviceRepo(maker)
+    auth = SqlAuthRepo(maker)
+
+    # First pairing creates the device.
+    first_code, _ = await repo.mint_code(OWNER, label="Mom's phone", monitoring=1)
+    original = await repo.redeem(first_code)
+    assert original is not None
+    # A rename since the original pairing must be honoured by the re-pair config.
+    assert await device_service.rename_device(devices, OWNER, original.subject_id, "Mom's Pixel")
+
+    # Re-pair: a code TARGETING the existing subject rotates its key in place.
+    before = {d.id for d in await devices.list(OWNER)}
+    repair_code, _ = await repo.mint_code(
+        OWNER, label="ignored", monitoring=1, subject_id=original.subject_id
+    )
+    repaired = await repo.redeem(repair_code)
+    assert repaired is not None
+    # Same identity (history stays attached), fresh key + principal, current name.
+    assert repaired.subject_id == original.subject_id
+    assert repaired.principal_id != original.principal_id
+    assert repaired.label == "Mom's Pixel"
+
+    # The new key authenticates; the old one is dead; NO new device was created
+    # (the module shares one DB, so compare the device set, not a clean list).
+    assert await auth_service.authenticate_device(auth, original.key) is None
+    new = await auth_service.authenticate_device(auth, repaired.key)
+    assert new is not None and new.subject_id == original.subject_id
+    listed = {d.id: d for d in await devices.list(OWNER)}
+    assert {*listed} == before  # re-pair adds no device
+    assert listed[original.subject_id].revoked is False
+
+
+async def test_re_pair_targeting_a_non_device_subject_fails_closed(
+    maker: async_sessionmaker,
+) -> None:
+    repo = SqlPairingRepo(maker)
+    # A person subject is not a device — re-pairing it is a flat failure (no key
+    # minted), like an invalid code.
+    person = str(uuid.uuid4())
+    async with scoped_session(maker, OWNER) as session:
+        await session.execute(
+            text("INSERT INTO app.subjects (id, display_name, kind) VALUES (:id, 'Mom', 'person')"),
+            {"id": person},
+        )
+    code, _ = await repo.mint_code(OWNER, label="x", monitoring=1, subject_id=person)
     assert await repo.redeem(code) is None
 
 

@@ -11227,6 +11227,126 @@ input.ld-title {
   word-break: break-all;
 }
 
+/* --- Phones tab — Active/Revoked filter + swipe-rail rows
+   (docs/mocks/phone-management/b-swipe-rail.html). Reuses the home-note rail
+   buttons (.rail-btn / .rail-edit / .rail-delete / .rail-armed). --------- */
+.loc-filter {
+  display: flex;
+  gap: 8px;
+  margin: 4px 0 0;
+}
+.loc-filter-chip {
+  font: inherit;
+  font-size: var(--fs-micro);
+  font-weight: 600;
+  color: var(--text-2);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill);
+  padding: 6px 13px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.loc-filter-chip.on {
+  color: var(--steel);
+  background: var(--steel-tint);
+  border-color: color-mix(in srgb, var(--steel) 45%, transparent);
+}
+.loc-filter-count {
+  color: var(--text-3);
+}
+.loc-filter-chip.on .loc-filter-count {
+  color: var(--steel);
+}
+.loc-swipe-hint {
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+  margin: 10px 0 6px;
+}
+.loc-phone-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.loc-phone-wrap {
+  position: relative;
+  border-radius: var(--r-card);
+  overflow: hidden;
+  background: var(--surface-2);
+}
+.loc-phone-rail {
+  position: absolute;
+  inset: 0 0 0 auto;
+  display: flex;
+  overflow: hidden;
+}
+/* Four / two actions split the same RAIL_WIDTH (192px), like the chats rail. */
+.loc-phone-rail.rail-4 .rail-btn {
+  width: 48px;
+}
+.loc-phone-rail.rail-2 .rail-btn {
+  width: 96px;
+}
+.rail-repair {
+  background: var(--steel-tint);
+  color: var(--steel);
+}
+.rail-revoke {
+  background: var(--amber-tint);
+  color: var(--amber);
+}
+.loc-phone-slide {
+  position: relative;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
+  transition: transform 150ms ease-out;
+}
+.loc-phone-revoked .loc-phone-slide {
+  opacity: 0.62;
+}
+@media (prefers-reduced-motion: reduce) {
+  .loc-phone-slide {
+    transition: none;
+  }
+}
+.loc-phone-face {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: 0;
+  padding: 13px 15px;
+  cursor: pointer;
+  font: inherit;
+}
+.loc-phone-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  color: var(--text);
+}
+.loc-phone-meta {
+  display: block;
+  margin-top: 4px;
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+}
+.loc-phone-rename {
+  width: 100%;
+  font: inherit;
+  font-size: var(--fs-body);
+  padding: 12px 15px;
+  background: var(--surface);
+  border: 1px solid var(--steel);
+  border-radius: var(--r-card);
+  color: var(--text);
+  outline: none;
+}
+
 /* --- Location Timeline tab (Phase 7 Wave 5c) ---------------------------- */
 .loc-feed {
   display: flex;

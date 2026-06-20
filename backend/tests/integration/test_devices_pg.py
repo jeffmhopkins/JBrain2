@@ -5,16 +5,18 @@ Proves the owner-only provisioning path (RLS), the full provision -> authenticat
 device (subjects/principals WITH CHECK is_owner).
 """
 
+import uuid
 from collections.abc import AsyncIterator
 
 import pytest
+from sqlalchemy import text
 from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
 from jbrain.auth import keys, service
 from jbrain.auth.repo import SqlAuthRepo
-from jbrain.db.session import SessionContext
+from jbrain.db.session import SessionContext, scoped_session
 from jbrain.devices import service as device_service
 from jbrain.devices.repo import SqlDeviceRepo
 from tests.conftest import docker_available
@@ -61,11 +63,83 @@ async def test_provision_authenticate_rotate_revoke_lifecycle(maker: async_sessi
     assert (await devices.list(OWNER))[0].revoked is True
 
 
-async def test_rotate_and_revoke_unknown_device_are_noops(maker: async_sessionmaker) -> None:
+async def test_rename_relabels_subject_and_active_key(maker: async_sessionmaker) -> None:
+    devices = SqlDeviceRepo(maker)
+    provisioned = await device_service.provision_device(devices, OWNER, "phone")
+
+    assert await device_service.rename_device(devices, OWNER, provisioned.device.id, "Jeff's phone")
+    listed = await devices.list(OWNER)
+    assert listed[0].label == "Jeff's phone"
+    # The active key principal's label follows, so a re-pair config carries the name.
+    async with scoped_session(maker, OWNER) as session:
+        label = (
+            await session.execute(
+                text(
+                    "SELECT label FROM app.principals"
+                    " WHERE subject_id = :sid AND kind = 'device_key' AND revoked_at IS NULL"
+                ),
+                {"sid": provisioned.device.id},
+            )
+        ).scalar()
+    assert label == "Jeff's phone"
+
+
+async def test_delete_drops_the_device_its_keys_and_cascades_fixes(
+    maker: async_sessionmaker,
+) -> None:
+    devices = SqlDeviceRepo(maker)
+    auth = SqlAuthRepo(maker)
+    provisioned = await device_service.provision_device(devices, OWNER, "phone")
+    sid = provisioned.device.id
+
+    # A stored fix hangs off the subject; delete must cascade it (ON DELETE CASCADE).
+    async with scoped_session(maker, OWNER) as session:
+        await session.execute(
+            text(
+                "INSERT INTO app.location_fixes"
+                " (id, captured_at, subject_id, latitude, longitude)"
+                " VALUES (:id, now(), :sid, 40.0, -74.0)"
+            ),
+            {"id": str(uuid.uuid4()), "sid": sid},
+        )
+
+    assert await device_service.delete_device(devices, OWNER, sid) is True
+    # Gone from the list, its key no longer authenticates, and its fixes are cascaded
+    # (the module shares one DB, so assert this device is absent, not an empty list).
+    assert sid not in {d.id for d in await devices.list(OWNER)}
+    assert await service.authenticate_device(auth, provisioned.key) is None
+    async with scoped_session(maker, OWNER) as session:
+        remaining = (
+            await session.execute(
+                text("SELECT count(*) FROM app.location_fixes WHERE subject_id = :sid"),
+                {"sid": sid},
+            )
+        ).scalar()
+    assert remaining == 0
+
+
+async def test_rotate_revoke_rename_delete_unknown_device_are_noops(
+    maker: async_sessionmaker,
+) -> None:
     devices = SqlDeviceRepo(maker)
     missing = "00000000-0000-0000-0000-000000000000"
     assert await device_service.rotate_device_key(devices, OWNER, missing) is None
     assert await device_service.revoke_device(devices, OWNER, missing) is False
+    assert await device_service.rename_device(devices, OWNER, missing, "x") is False
+    assert await device_service.delete_device(devices, OWNER, missing) is False
+
+
+async def test_non_owner_cannot_rename_or_delete_a_device(maker: async_sessionmaker) -> None:
+    devices = SqlDeviceRepo(maker)
+    provisioned = await device_service.provision_device(devices, OWNER, "phone")
+    # A non-owner capability session can't even see the device (subjects_access
+    # USING), so rename/delete are no-ops and the device survives intact.
+    token = SessionContext(principal_kind="capability_token", domain_scopes=("location",))
+    did = provisioned.device.id
+    assert await device_service.rename_device(devices, token, did, "hacked") is False
+    assert await device_service.delete_device(devices, token, did) is False
+    survivor = next(d for d in await devices.list(OWNER) if d.id == provisioned.device.id)
+    assert survivor.label == "phone" and survivor.revoked is False
 
 
 async def test_non_owner_cannot_provision_a_device(maker: async_sessionmaker) -> None:

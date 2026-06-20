@@ -3030,25 +3030,13 @@ export const mockFetch: typeof fetch = async (input, init) => {
   if (path === "/api/locations/geocode" && method === "GET") {
     return json({ address: "12 Market St, Springfield" });
   }
-  if (path === "/api/devices" && method === "POST") {
-    const label =
-      (init?.body ? (JSON.parse(String(init.body)) as { label?: string }).label : undefined) ??
-      "New device";
-    const id = `dev-${mockDeviceSeq++}`;
-    const created_at = new Date().toISOString();
-    MOCK_DEVICES.unshift({
-      id,
-      label,
-      created_at,
-      revoked: false,
-      last_seen: null,
-      battery_pct: null,
-      connection: null,
-      fix_count: 0,
-    });
-    return json({ device: { id, label, created_at, revoked: false }, key: `mock-${id}-key` }, 201);
-  }
   if (path === "/api/pairing/codes" && method === "POST") {
+    const body = init?.body ? (JSON.parse(String(init.body)) as { device_id?: string }) : {};
+    // Re-pair restores a revoked phone (redeeming the code rotates its key).
+    if (body.device_id) {
+      const target = MOCK_DEVICES.find((d) => d.id === body.device_id);
+      if (target) target.revoked = false;
+    }
     const code = `mock-code-${mockDeviceSeq++}`;
     // The payload mirrors the backend: base64url(JSON {v,u,c}) embedding the server.
     const payload = btoa(JSON.stringify({ v: 1, u: window.location.origin, c: code }))
@@ -3057,14 +3045,25 @@ export const mockFetch: typeof fetch = async (input, init) => {
       .replace(/=+$/, "");
     return json({ code, expires_at: new Date(Date.now() + 3_600_000).toISOString(), payload }, 201);
   }
-  const rotate = path.match(/^\/api\/devices\/([^/]+)\/rotate$/);
-  if (rotate && method === "POST") {
-    return json({ key: `mock-${decodeURIComponent(rotate[1] ?? "")}-rotated` });
+  const rename = path.match(/^\/api\/devices\/([^/]+)\/rename$/);
+  if (rename && method === "POST") {
+    const target = MOCK_DEVICES.find((d) => d.id === decodeURIComponent(rename[1] ?? ""));
+    const label = init?.body
+      ? (JSON.parse(String(init.body)) as { label?: string }).label
+      : undefined;
+    if (target && label) target.label = label;
+    return new Response(null, { status: 204 });
   }
   const revoke = path.match(/^\/api\/devices\/([^/]+)\/revoke$/);
   if (revoke && method === "POST") {
     const target = MOCK_DEVICES.find((d) => d.id === decodeURIComponent(revoke[1] ?? ""));
     if (target) target.revoked = true;
+    return new Response(null, { status: 204 });
+  }
+  const del = path.match(/^\/api\/devices\/([^/]+)$/);
+  if (del && method === "DELETE") {
+    const idx = MOCK_DEVICES.findIndex((d) => d.id === decodeURIComponent(del[1] ?? ""));
+    if (idx >= 0) MOCK_DEVICES.splice(idx, 1);
     return new Response(null, { status: 204 });
   }
 

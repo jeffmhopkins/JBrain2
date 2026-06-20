@@ -1,12 +1,6 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type {
-  DeviceSummary,
-  LocationFix,
-  PlaceGeofence,
-  ProvisionedDevice,
-  TimelineEntry,
-} from "../api/client";
+import type { DeviceSummary, LocationFix, PlaceGeofence, TimelineEntry } from "../api/client";
 import { placeNoteBody } from "./LocationMapTab";
 import { type LocationDeps, LocationScreen, relativeTime, sentence } from "./LocationScreen";
 
@@ -30,14 +24,6 @@ function device(over: Partial<DeviceSummary> = {}): DeviceSummary {
     battery_pct: 72,
     connection: "wifi",
     fix_count: 140,
-    ...over,
-  };
-}
-
-function provisioned(over: Partial<ProvisionedDevice> = {}): ProvisionedDevice {
-  return {
-    device: { id: "new", label: "Tablet", created_at: "2026-06-18T00:00:00+00:00", revoked: false },
-    key: "SECRET-KEY-123",
     ...over,
   };
 }
@@ -79,14 +65,14 @@ function place(over: Partial<PlaceGeofence> = {}): PlaceGeofence {
 function deps(over: Partial<LocationDeps> = {}): LocationDeps {
   return {
     listDevices: vi.fn(async () => [device()]),
-    provisionDevice: vi.fn(async () => provisioned()),
     mintPairingCode: vi.fn(async () => ({
       code: "CODE-1",
       expires_at: "2026-06-20T13:00:00Z",
       payload: "cGF5bG9hZA",
     })),
-    rotateDevice: vi.fn(async () => "ROTATED-KEY-456"),
+    renameDevice: vi.fn(async () => {}),
     revokeDevice: vi.fn(async () => {}),
+    deleteDevice: vi.fn(async () => {}),
     listTimeline: vi.fn(async () => [entry()]),
     listPlaces: vi.fn(async () => [place()]),
     listFixes: vi.fn(async () => [fix({ latitude: 40.0 }), fix({ latitude: 40.001 })]),
@@ -110,11 +96,11 @@ function deps(over: Partial<LocationDeps> = {}): LocationDeps {
 }
 
 describe("LocationScreen", () => {
-  it("lands on the Map, then shows a device card with its status on the Devices tab", async () => {
+  it("lands on the Map, then shows a phone with its status on the Phones tab", async () => {
     render(<LocationScreen deps={deps()} />);
     // The map is the landing tab.
     await screen.findByLabelText("Location map");
-    fireEvent.click(screen.getByRole("tab", { name: "Devices" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Phones" }));
     await screen.findByText("Jeff's phone");
     const meta = screen.getByText(/last seen/);
     expect(meta.textContent).toMatch(/72% battery/);
@@ -124,8 +110,8 @@ describe("LocationScreen", () => {
 
   it("shows the empty state when there are no devices", async () => {
     render(<LocationScreen deps={deps({ listDevices: vi.fn(async () => []) })} />);
-    fireEvent.click(screen.getByRole("tab", { name: "Devices" }));
-    expect(await screen.findByText(/no devices yet/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: "Phones" }));
+    expect(await screen.findByText(/no phones yet/)).toBeInTheDocument();
   });
 
   it("draws the map for the selected device's fixes and date range", async () => {
@@ -253,28 +239,10 @@ describe("LocationScreen", () => {
     expect(await screen.findByText(/no movement yet/i)).toBeInTheDocument();
   });
 
-  it("provisions a device and reveals its key once with OwnTracks config", async () => {
+  it("mints a pairing code for a NEW phone and shows the payload to scan or copy", async () => {
     const d = deps({ listDevices: vi.fn(async () => []) });
     render(<LocationScreen deps={d} />);
-    fireEvent.click(screen.getByRole("tab", { name: "Devices" }));
-    await screen.findByText("＋ Add device (OwnTracks)");
-    fireEvent.click(screen.getByText("＋ Add device (OwnTracks)"));
-
-    fireEvent.change(screen.getByLabelText("Device name"), { target: { value: "Tablet" } });
-    fireEvent.click(screen.getByRole("button", { name: "Add device" }));
-
-    await waitFor(() => expect(d.provisionDevice).toHaveBeenCalledWith("Tablet"));
-    // The key is shown once (as the Key line + the OwnTracks password), alongside
-    // the endpoint URL and the once-only warning.
-    expect((await screen.findAllByText("SECRET-KEY-123")).length).toBeGreaterThan(0);
-    expect(screen.getByText(/api\/owntracks/)).toBeInTheDocument();
-    expect(screen.getByText(/shown once/i)).toBeInTheDocument();
-  });
-
-  it("mints a pairing code and shows the payload to scan or copy", async () => {
-    const d = deps({ listDevices: vi.fn(async () => []) });
-    render(<LocationScreen deps={d} />);
-    fireEvent.click(screen.getByRole("tab", { name: "Devices" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Phones" }));
     await screen.findByText("＋ Pair a phone");
     fireEvent.click(screen.getByText("＋ Pair a phone"));
 
@@ -287,39 +255,76 @@ describe("LocationScreen", () => {
     expect(screen.getByRole("button", { name: "Copy code" })).toBeInTheDocument();
   });
 
-  it("rotates a key and reveals the new one", async () => {
+  // The swipe rail opens on a tap too (the non-gesture path), so tests drive it
+  // by clicking the phone face, then the rail action.
+  async function openRail(name = /Jeff's phone/): Promise<void> {
+    fireEvent.click(await screen.findByRole("button", { name }));
+  }
+
+  it("re-pairs an existing phone — mints a code BOUND to it and shows the QR", async () => {
     const d = deps();
     render(<LocationScreen deps={d} />);
-    fireEvent.click(screen.getByRole("tab", { name: "Devices" }));
-    await screen.findByText("Jeff's phone");
-    fireEvent.click(screen.getByRole("button", { name: "Rotate key" }));
-    await waitFor(() => expect(d.rotateDevice).toHaveBeenCalledWith("d1"));
-    expect((await screen.findAllByText("ROTATED-KEY-456")).length).toBeGreaterThan(0);
+    fireEvent.click(screen.getByRole("tab", { name: "Phones" }));
+    await openRail();
+    fireEvent.click(screen.getByRole("button", { name: "re-pair" }));
+    // The code is minted for THIS device id (redeeming it rotates the key).
+    await waitFor(() => expect(d.mintPairingCode).toHaveBeenCalledWith("Jeff's phone", 1, "d1"));
+    expect(await screen.findByText("cGF5bG9hZA")).toBeInTheDocument();
   });
 
-  it("revokes only after a confirm", async () => {
+  it("renames a phone inline from the rail", async () => {
     const d = deps();
     render(<LocationScreen deps={d} />);
-    fireEvent.click(screen.getByRole("tab", { name: "Devices" }));
-    await screen.findByText("Jeff's phone");
-    fireEvent.click(screen.getByRole("button", { name: "Revoke" }));
-    // The confirm sheet — revoke fires only on its destructive button.
-    const dialog = screen.getByRole("dialog");
-    expect(within(dialog).getByText(/can no longer post fixes/i)).toBeInTheDocument();
-    fireEvent.click(within(dialog).getByRole("button", { name: "Revoke" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Phones" }));
+    await openRail();
+    fireEvent.click(screen.getByRole("button", { name: "rename" }));
+    const input = screen.getByLabelText("Phone name");
+    fireEvent.change(input, { target: { value: "Jeff's new phone" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    await waitFor(() => expect(d.renameDevice).toHaveBeenCalledWith("d1", "Jeff's new phone"));
+  });
+
+  it("revokes a phone only after a tap-again confirm", async () => {
+    const d = deps();
+    render(<LocationScreen deps={d} />);
+    fireEvent.click(screen.getByRole("tab", { name: "Phones" }));
+    await openRail();
+    // First tap arms; nothing fires yet.
+    fireEvent.click(screen.getByRole("button", { name: "revoke" }));
+    expect(d.revokeDevice).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "tap again" }));
     await waitFor(() => expect(d.revokeDevice).toHaveBeenCalledWith("d1"));
   });
 
-  it("hides key actions for a revoked device", async () => {
-    render(
-      <LocationScreen
-        deps={deps({ listDevices: vi.fn(async () => [device({ revoked: true })]) })}
-      />,
-    );
-    fireEvent.click(screen.getByRole("tab", { name: "Devices" }));
+  it("deletes a phone only after a tap-again confirm", async () => {
+    const d = deps();
+    render(<LocationScreen deps={d} />);
+    fireEvent.click(screen.getByRole("tab", { name: "Phones" }));
+    await openRail();
+    fireEvent.click(screen.getByRole("button", { name: "delete" }));
+    expect(d.deleteDevice).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "tap again" }));
+    await waitFor(() => expect(d.deleteDevice).toHaveBeenCalledWith("d1"));
+  });
+
+  it("filters revoked phones into their own segment with a restore action", async () => {
+    const d = deps({
+      listDevices: vi.fn(async () => [
+        device({ id: "d1", label: "Jeff's phone" }),
+        device({ id: "d2", label: "Old phone", revoked: true }),
+      ]),
+    });
+    render(<LocationScreen deps={d} />);
+    fireEvent.click(screen.getByRole("tab", { name: "Phones" }));
+    // Active by default: the revoked phone is hidden.
     await screen.findByText("Jeff's phone");
-    expect(screen.getByText("revoked")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Rotate key" })).toBeNull();
+    expect(screen.queryByText("Old phone")).toBeNull();
+    // Switch to the Revoked segment — the revoked phone shows, restorable.
+    fireEvent.click(screen.getByRole("tab", { name: /Revoked/ }));
+    await screen.findByText("Old phone");
+    fireEvent.click(screen.getByRole("button", { name: /Old phone/ }));
+    expect(screen.getByRole("button", { name: "restore" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "revoke" })).toBeNull();
   });
 });
 

@@ -49,6 +49,10 @@ class DeviceRepo(Protocol):
 
     async def revoke(self, ctx: SessionContext, device_id: str) -> bool: ...
 
+    async def rename(self, ctx: SessionContext, device_id: str, label: str) -> bool: ...
+
+    async def delete(self, ctx: SessionContext, device_id: str) -> bool: ...
+
 
 class SqlDeviceRepo:
     def __init__(self, maker: async_sessionmaker[AsyncSession]):
@@ -122,6 +126,49 @@ class SqlDeviceRepo:
             if not await self._is_device(session, device_id):
                 return False
             await self._revoke_keys(session, device_id)
+        return True
+
+    async def rename(self, ctx: SessionContext, device_id: str, label: str) -> bool:
+        """Owner-only label edit. Updates the subject's display_name (its active key
+        principal's label follows, so a re-pair config carries the new name). False
+        when the id isn't a device."""
+        async with scoped_session(self._maker, ctx) as session:
+            if not await self._is_device(session, device_id):
+                return False
+            await session.execute(
+                text("UPDATE app.subjects SET display_name = :label WHERE id = :sid"),
+                {"sid": device_id, "label": label},
+            )
+            await session.execute(
+                text(
+                    "UPDATE app.principals SET label = :label"
+                    " WHERE subject_id = :sid AND kind = 'device_key'"
+                ),
+                {"sid": device_id, "label": label},
+            )
+        return True
+
+    async def delete(self, ctx: SessionContext, device_id: str) -> bool:
+        """Owner-only hard delete: drops the device subject and everything that
+        cascades on it — its fixes, geofence state, and pairing codes. The key
+        principals (no ON DELETE CASCADE) are removed first, and any graph
+        entity bound to the subject is unlinked so the FK clears. False when the id
+        isn't a device."""
+        async with scoped_session(self._maker, ctx) as session:
+            if not await self._is_device(session, device_id):
+                return False
+            await session.execute(
+                text("UPDATE app.entities SET subject_id = NULL WHERE subject_id = :sid"),
+                {"sid": device_id},
+            )
+            await session.execute(
+                text("DELETE FROM app.principals WHERE subject_id = :sid"),
+                {"sid": device_id},
+            )
+            await session.execute(
+                text("DELETE FROM app.subjects WHERE id = :sid AND kind = 'device'"),
+                {"sid": device_id},
+            )
         return True
 
     async def linked_person(self, ctx: SessionContext, subject_id: str) -> LinkedPerson | None:
