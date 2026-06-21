@@ -184,6 +184,17 @@ async def test_free_local_llms_swallows_a_gateway_failure() -> None:
     await _free_local_llms(gw)  # does not raise
 
 
+def test_is_uuid_accepts_real_ids_and_rejects_a_guessed_one() -> None:
+    """Source ids are uuid PKs; a non-uuid (a model guessing "latest") is rejected so the
+    lookup never hands the DB a bad argument and leaks a raw error to the model."""
+    from jbrain.agent.imagegentools import _is_uuid
+
+    assert _is_uuid("852c8203-6742-481a-b284-2771037d8916") is True
+    assert _is_uuid("latest") is False
+    assert _is_uuid("") is False
+    assert _is_uuid("x") is False
+
+
 def test_png_dims_reads_the_ihdr_and_rejects_non_png() -> None:
     """The recorded output size comes from the PNG's IHDR (an edit's source-scaled
     output differs from the requested preset); a non-PNG falls through to None."""

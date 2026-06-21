@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import base64
 import secrets
+import uuid
 from typing import TYPE_CHECKING
 
 import structlog
@@ -69,6 +70,17 @@ _RESOLUTIONS: dict[str, tuple[int, float]] = {
     "large": (1280, 2.5),
 }
 _DEFAULT_RESOLUTION = "medium"
+
+
+def _is_uuid(value: str) -> bool:
+    """Whether a string is a parseable uuid — the form every image/attachment id takes.
+    A non-uuid source id (a model hallucinating "latest") is rejected here so the lookup
+    never hands the DB a bad argument and leaks a raw error to the model."""
+    try:
+        uuid.UUID(value)
+    except ValueError:
+        return False
+    return True
 
 
 def _snap64(value: float) -> int:
@@ -301,6 +313,11 @@ def build_image_handlers(
                 " or source_attachment_id (an image the owner attached) — not both, not neither."
             )
         if image_id:
+            # Both ids are uuid PKs; a non-uuid (e.g. the model guessing "latest") would
+            # make the lookup raise a raw DB DataError that leaks to the model — treat it
+            # as a clean miss instead, the same as an unknown id.
+            if not _is_uuid(image_id):
+                return "No generated image with that id is in this chat."
             # generated_images is owner-only, so jerv's empty-scope owner context reads it.
             async with scoped_session(maker, ctx.session) as session:
                 row = await repo.get(session, image_id)
@@ -314,7 +331,7 @@ def build_image_handlers(
         # is read under the attachment context (the session's scopes + that stamped domain),
         # not jerv's empty read scopes — the same widening the chat turn uses to load
         # attachments. RLS still hides a foreign-domain id, which reads as a clean miss.
-        if ctx.agent_session_id is None:
+        if ctx.agent_session_id is None or not _is_uuid(attachment_id):
             return "No attached image with that id is in this chat."
         att_ctx = await attachments.session_read_context(ctx.session, ctx.agent_session_id)
         if att_ctx is None:

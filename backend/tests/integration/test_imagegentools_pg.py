@@ -454,3 +454,29 @@ async def test_analyze_needs_a_prompt_and_one_source(maker: async_sessionmaker) 
     assert isinstance(both, str) and "analyze_image" in both
 
     assert router._clients["xai"].calls == []  # type: ignore[attr-defined] - never spent
+
+
+async def test_non_uuid_source_id_is_a_clean_miss_not_a_db_error(maker: async_sessionmaker) -> None:
+    """A model guessing a non-uuid source id ("latest") under a REAL session must read as a
+    clean miss, never a raw DB DataError — for both analyze_image and edit_image."""
+    owner = await _owner(maker)
+    sessions = AgentSessionRepo(maker)
+    info = await sessions.create(owner, domain_scopes=(), agent="jerv")
+    router = _router()
+    handlers = await _handlers(maker, owner, FakeImageGen(), router=router)
+    ctx = _ctx(owner, info.id)  # a real session — the path that reaches the attachment query
+
+    analyzed = await handlers["analyze_image"](
+        {"prompt": "is the person female?", "source_attachment_id": "latest"}, ctx
+    )
+    assert analyzed == "No attached image with that id is in this chat."
+    assert router._clients["xai"].calls == []  # type: ignore[attr-defined] - never spent
+
+    edited = await handlers["edit_image"](
+        {"prompt": "make it night", "source_attachment_id": "latest"}, ctx
+    )
+    assert edited == "No attached image with that id is in this chat."
+
+    # A non-uuid generated id is the same clean miss (no DB argument error).
+    bad_gen = await handlers["analyze_image"]({"prompt": "describe", "source_image_id": "x"}, ctx)
+    assert bad_gen == "No generated image with that id is in this chat."

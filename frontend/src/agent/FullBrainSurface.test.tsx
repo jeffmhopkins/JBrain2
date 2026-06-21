@@ -353,6 +353,43 @@ describe("FullBrainSurface", () => {
     expect(assistant?.content).toContain("seed=99");
   });
 
+  it("carries a prior attachment's id into the next turn's history", async () => {
+    // A replayed user turn with an image attachment: its id must reach the follow-up
+    // turn's history so the model can analyze_image / edit_image it instead of guessing.
+    const getTranscript = vi.fn(
+      async (): Promise<TranscriptTurn[]> => [
+        {
+          role: "user",
+          content: "what is in this image?",
+          tools: [],
+          attachments: [
+            { id: "att_7", filename: "fish.png", media_type: "image/png", size_bytes: 10 },
+          ],
+        },
+        { role: "assistant", content: "A person on a beach.", tools: [] },
+      ],
+    );
+    const seen: ChatRequest[] = [];
+    async function* chat(body: ChatRequest): AsyncGenerator<ChatEvent> {
+      seen.push(body);
+      yield { type: "text_delta", text: "ok" };
+      yield { type: "done", stop_reason: "end_turn" };
+    }
+    render(<Harness d={deps({ getTranscript, chat })} />);
+    await waitFor(() => screen.getByLabelText("Conversation"));
+    await waitFor(() => expect(screen.getByText("what is in this image?")).toBeInTheDocument());
+
+    fireEvent.change(screen.getByLabelText("Composer"), {
+      target: { value: "is the person female?" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "send" }));
+    await waitFor(() => expect(seen).toHaveLength(1));
+
+    const user = seen[0]?.history?.find((h) => h.role === "user");
+    expect(user?.content).toContain("source_attachment_id=att_7");
+    expect(user?.content).toContain("fish.png");
+  });
+
   it("shows a web tool's url inline on its step row, truncating not wrapping", async () => {
     async function* answer(): AsyncGenerator<ChatEvent> {
       yield { type: "text_delta", text: "read it" };
