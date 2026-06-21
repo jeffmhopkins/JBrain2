@@ -1,6 +1,6 @@
 ---
 name: edit_image
-version: 1
+version: 2
 permission: web
 side_effecting: true
 cost_class: expensive
