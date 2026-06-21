@@ -12528,8 +12528,7 @@ input.ld-title {
   position: absolute;
   top: max(env(safe-area-inset-top), 10px);
   left: 10px;
-  /* Leave room at the right edge for the basemap toggle so the two never overlap. */
-  right: 92px;
+  right: 10px;
   z-index: 8;
   display: flex;
   gap: 8px;
@@ -12547,12 +12546,12 @@ input.ld-title {
   padding: 12px;
 }
 
-/* Basemap light/dark toggle — a small floating pill at the top-right, beside (not
-   over) the person switcher, vertically centred against it. Tiles only, never the
-   app chrome. */
+/* Basemap light/dark toggle — a small floating pill on the line BELOW the person
+   switcher (the switcher is ~76px tall, so this clears it), right-aligned. Tiles
+   only, never the app chrome. */
 .lm-tiles {
   position: absolute;
-  top: calc(max(env(safe-area-inset-top), 10px) + 20px);
+  top: calc(max(env(safe-area-inset-top), 10px) + 88px);
   right: 10px;
   z-index: 8;
   display: flex;
