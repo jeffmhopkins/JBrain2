@@ -322,7 +322,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             frozenset(spec.name for spec in ACTION_SPECS),
         )
         app.state.agent_transcript = AgentTranscript(maker, app.state.turn_attachments)
-        app.state.supervisor_client = httpx.AsyncClient(base_url=settings.supervisor_url)
+        # Stopping a service is a synchronous `docker stop` on the supervisor — up to
+        # the container's SIGTERM grace (ComfyUI's ~10 s) before it returns — so the
+        # default 5 s httpx timeout would spuriously fail a stop that actually succeeds.
+        app.state.supervisor_client = httpx.AsyncClient(
+            base_url=settings.supervisor_url, timeout=30.0
+        )
         yield
         if live_task is not None:
             live_task.cancel()

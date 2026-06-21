@@ -237,20 +237,22 @@ def _bare() -> ComfyUiImageGen:
     return ComfyUiImageGen(BASE, http)
 
 
-async def test_drive_ws_emits_at_each_quarter_with_latest_preview() -> None:
+async def test_drive_ws_emits_every_step_with_latest_preview() -> None:
     ticks: list[tuple[int, int, bytes | None]] = []
     frames: list[str | bytes] = [
-        _prog(5, 20),  # 25% — before any preview frame
+        _prog(1, 4),  # step 1 — before any preview frame
         _preview_frame(b"jpeg-a"),
-        _prog(10, 20),  # 50% — preview now present
-        _prog(15, 20),  # 75%
+        _prog(2, 4),  # step 2 — preview now present
+        _prog(2, 4),  # a duplicate of the same step — suppressed, not a redundant tick
         _preview_frame(b"jpeg-b"),
-        _prog(20, 20),  # 100%
+        _prog(3, 4),  # step 3 — newest preview
+        _prog(4, 4),  # step 4
         _executing_null(),
     ]
     await _bare()._drive_ws(_FakeWs(frames), PID, lambda s, t, p: ticks.append((s, t, p)))
-    # One emit per 25% boundary, each carrying the most recent preview (None until one lands).
-    assert ticks == [(5, 20, None), (10, 20, b"jpeg-a"), (15, 20, b"jpeg-a"), (20, 20, b"jpeg-b")]
+    # One emit per sampler step, each carrying the most recent preview (None until one
+    # lands); a repeated step value does not re-tick.
+    assert ticks == [(1, 4, None), (2, 4, b"jpeg-a"), (3, 4, b"jpeg-b"), (4, 4, b"jpeg-b")]
 
 
 async def test_drive_ws_ignores_another_runs_messages() -> None:
