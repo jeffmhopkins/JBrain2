@@ -23,16 +23,19 @@ class TokenBucket:
     refill_per_sec: float
     _buckets: dict[str, _Bucket] = field(default_factory=dict)
 
-    def allow(self, key: str, *, now: float | None = None) -> bool:
+    def allow(self, key: str, *, now: float | None = None, cost: int = 1) -> bool:
+        """Consume `cost` tokens (one per fix — a batch upload costs its fix count).
+        Returns False without consuming when fewer than `cost` tokens remain (so an
+        over-capacity request never drives the bucket negative)."""
         moment = time.monotonic() if now is None else now
         bucket = self._buckets.get(key)
         if bucket is None:
-            self._buckets[key] = _Bucket(tokens=self.capacity - 1, updated_at=moment)
-            return True
+            bucket = _Bucket(tokens=self.capacity, updated_at=moment)
+            self._buckets[key] = bucket
         elapsed = max(0.0, moment - bucket.updated_at)
         bucket.tokens = min(self.capacity, bucket.tokens + elapsed * self.refill_per_sec)
         bucket.updated_at = moment
-        if bucket.tokens < 1:
+        if bucket.tokens < cost:
             return False
-        bucket.tokens -= 1
+        bucket.tokens -= cost
         return True

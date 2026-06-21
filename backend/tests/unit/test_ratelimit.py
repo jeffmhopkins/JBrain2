@@ -25,3 +25,15 @@ def test_buckets_are_per_key() -> None:
     assert bucket.allow("a", now=0.0) is False
     # A different device has its own bucket.
     assert bucket.allow("b", now=0.0) is True
+
+
+def test_cost_consumes_multiple_tokens_per_call() -> None:
+    bucket = TokenBucket(capacity=10, refill_per_sec=0.0)
+    # A batch of 4 fixes costs 4 tokens; then 6 more drain it; the next is denied.
+    assert bucket.allow("dev", now=0.0, cost=4) is True
+    assert bucket.allow("dev", now=0.0, cost=6) is True
+    assert bucket.allow("dev", now=0.0, cost=1) is False
+    # An over-cost request is denied without consuming what's left.
+    refilled = TokenBucket(capacity=5, refill_per_sec=0.0)
+    assert refilled.allow("dev", now=0.0, cost=9) is False
+    assert refilled.allow("dev", now=0.0, cost=5) is True  # the 5 were still there

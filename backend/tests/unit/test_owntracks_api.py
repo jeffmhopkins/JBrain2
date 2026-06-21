@@ -97,6 +97,59 @@ def test_schema_invalid_location_is_422(client: tuple[TestClient, FakeLocationRe
     assert loc.calls == []
 
 
+def test_batch_array_ingests_each_under_the_device_subject(
+    client: tuple[TestClient, FakeLocationRepo],
+) -> None:
+    c, loc = client
+    now = _now()
+    batch = [_loc(now - 2, tid="X"), _loc(now - 1, tid="Y"), _loc(now, batt=55)]
+    resp = c.post("/api/owntracks", json=batch, headers=_basic(_KEY))
+    assert resp.status_code == 200
+    assert resp.json() == []
+    assert len(loc.calls) == 3
+    # Red-team: every element is stored under the AUTHENTICATED subject, never the
+    # payload's `tid` — a batch cannot smuggle another subject's fixes (L9).
+    assert {subj for _, subj, _ in loc.calls} == {"subj-1"}
+    # Stored oldest-first, in array order.
+    assert [int(f.captured_at.timestamp()) for _, _, f in loc.calls] == [now - 2, now - 1, now]
+
+
+def test_batch_skips_non_location_elements(client: tuple[TestClient, FakeLocationRepo]) -> None:
+    c, loc = client
+    batch = [_loc(_now()), {"_type": "transition", "desc": "home"}, {"x": 1}]
+    assert c.post("/api/owntracks", json=batch, headers=_basic(_KEY)).status_code == 200
+    assert len(loc.calls) == 1  # only the one location element is stored
+
+
+def test_one_invalid_element_rejects_the_whole_batch_without_writing(
+    client: tuple[TestClient, FakeLocationRepo],
+) -> None:
+    c, loc = client
+    now = _now()
+    batch = [_loc(now - 1), {"_type": "location", "lat": 999, "lon": 0, "tst": now}, _loc(now)]
+    assert c.post("/api/owntracks", json=batch, headers=_basic(_KEY)).status_code == 422
+    # Whole batch validated before any write: no partial-trust store.
+    assert loc.calls == []
+
+
+def test_batch_over_the_cap_is_422(client: tuple[TestClient, FakeLocationRepo]) -> None:
+    c, loc = client
+    now = _now()
+    batch = [_loc(now - i) for i in range(101)]  # MAX_BATCH is 100
+    assert c.post("/api/owntracks", json=batch, headers=_basic(_KEY)).status_code == 422
+    assert loc.calls == []
+
+
+def test_batch_consumes_one_token_per_fix(client: tuple[TestClient, FakeLocationRepo]) -> None:
+    c, _ = client
+    # Five tokens, no refill: a 3-fix batch then a 3-fix batch — the second overflows.
+    cast(FastAPI, c.app).state.location_rate_limiter = TokenBucket(capacity=5, refill_per_sec=0.0)
+    now = _now()
+    three = [_loc(now - 2), _loc(now - 1), _loc(now)]
+    assert c.post("/api/owntracks", json=three, headers=_basic(_KEY)).status_code == 200
+    assert c.post("/api/owntracks", json=three, headers=_basic(_KEY)).status_code == 429
+
+
 def test_requires_device_auth(client: tuple[TestClient, FakeLocationRepo]) -> None:
     c, _ = client
     assert c.post("/api/owntracks", json=_loc(_now())).status_code == 401
