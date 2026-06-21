@@ -51,12 +51,29 @@ export function FullBrainSurface({
   const chatRef = useRef<HTMLElement>(null);
   const { panel, setPanel } = fb;
 
+  // Follow the stream only while the reader is already at the foot — scrolling
+  // up to read back stops the view being yanked down by every new token, and
+  // returning to the bottom re-arms the follow. A few px of slack absorbs
+  // sub-pixel rounding and the programmatic snap below (which lands ~0 here).
+  const stickRef = useRef(true);
+  function onChatScroll(): void {
+    const el = chatRef.current;
+    if (el) stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight <= 64;
+  }
+
+  // A fresh session snaps to its newest turn regardless of where the last one
+  // was left — opening a conversation should not strand you mid-history.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the id is a trigger, not a read.
+  useEffect(() => {
+    stickRef.current = true;
+  }, [fb.active?.id]);
+
   // Keep the newest turn in view as text streams and tools land — each event
   // hands us a fresh `messages` array, so this re-runs through the whole stream.
   // biome-ignore lint/correctness/useExhaustiveDependencies: re-run per transcript change; the effect reads the DOM.
   useEffect(() => {
     const el = chatRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
+    if (el && stickRef.current) el.scrollTop = el.scrollHeight;
   }, [fb.messages]);
 
   // The session's name lives in the top bar (HomeScreen owns it); the panels are
@@ -65,7 +82,7 @@ export function FullBrainSurface({
     <div className="fb-shell">
       <div className="fullbrain">
         {fb.active ? (
-          <main className="fb-chat" aria-label="Conversation" ref={chatRef}>
+          <main className="fb-chat" aria-label="Conversation" ref={chatRef} onScroll={onChatScroll}>
             {fb.messages.map((m, i) => (
               <Bubble
                 // Transcript is append-only; the positional key is stable.

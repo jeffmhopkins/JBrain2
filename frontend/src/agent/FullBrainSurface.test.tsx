@@ -269,6 +269,43 @@ describe("FullBrainSurface", () => {
     expect(worked).toHaveAttribute("aria-expanded", "false");
   });
 
+  it("follows the stream only while the reader is pinned to the bottom", async () => {
+    async function* answer(): AsyncGenerator<ChatEvent> {
+      yield { type: "text_delta", text: "reply" };
+      yield { type: "done", stop_reason: "end_turn" };
+    }
+    render(<Harness d={deps({ chat: answer })} />);
+    const chat = await waitFor(() => screen.getByLabelText("Conversation"));
+
+    // jsdom has no layout engine; stand in the metrics the stick math reads so
+    // distance-from-bottom is computable (scrollHeight − scrollTop − clientHeight).
+    Object.defineProperty(chat, "scrollHeight", { value: 1000, configurable: true });
+    Object.defineProperty(chat, "clientHeight", { value: 300, configurable: true });
+
+    function send(text: string): void {
+      fireEvent.change(screen.getByLabelText("Composer"), { target: { value: text } });
+      fireEvent.click(screen.getByRole("button", { name: "send" }));
+    }
+
+    // Pinned to the foot by default: the first turn snaps the view to the bottom.
+    send("one");
+    await waitFor(() => expect(chat.scrollTop).toBe(1000));
+
+    // The reader scrolls up to read back — following stops, so the next turn
+    // leaves their position untouched.
+    chat.scrollTop = 120;
+    fireEvent.scroll(chat);
+    send("two");
+    await waitFor(() => expect(screen.getByText("two")).toBeInTheDocument());
+    expect(chat.scrollTop).toBe(120);
+
+    // Returning to the foot re-arms the follow.
+    chat.scrollTop = 700;
+    fireEvent.scroll(chat);
+    send("three");
+    await waitFor(() => expect(chat.scrollTop).toBe(1000));
+  });
+
   it("splits an image turn into preamble, image, and reply bubbles", async () => {
     async function* answer(): AsyncGenerator<ChatEvent> {
       yield { type: "text_delta", text: "I'll make that now." };
