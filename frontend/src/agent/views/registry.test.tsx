@@ -204,6 +204,27 @@ describe("ToolView registry", () => {
     expect(container.querySelector(".tv-genimg-cmp")).toBeNull();
   });
 
+  it("shows the seed on the card so the owner can reuse it", () => {
+    const withSeed = render(
+      <ToolView
+        payload={payload({
+          view: "generated_image",
+          data: { image_id: "img_1", kind: "generate", width: 768, height: 768, seed: 4242 },
+        })}
+      />,
+    );
+    expect(withSeed.getByText("768 × 768 · seed 4242")).toBeInTheDocument();
+    withSeed.unmount();
+    // Absent seed simply omits it (older images carry no seed in the view).
+    const noSeed = render(
+      <ToolView
+        payload={payload({ view: "generated_image", data: { image_id: "x", kind: "generate" } })}
+      />,
+    );
+    expect(noSeed.queryByText(/seed/)).not.toBeInTheDocument();
+    expect(noSeed.container.querySelector(".tv-genimg-cap")?.textContent).toBe("512 × 512");
+  });
+
   it("a generate image drops the kind pill and offers a full-screen expand", () => {
     const { container, getByLabelText } = render(
       <ToolView

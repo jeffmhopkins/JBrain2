@@ -131,6 +131,28 @@ function fromTurn(t: TranscriptTurn): TranscriptMessage {
   };
 }
 
+// The model only ever receives prior turns as text, so an assistant turn that
+// generated images appends a compact, machine-readable reference — each image's id
+// (for edit_image's source_image_id) and seed (to reproduce or tweak) — so a later
+// "edit that" or "use the same seed" turn can act on a picture it can't otherwise see.
+function historyContent(m: TranscriptMessage): string {
+  if (m.role !== "assistant") return m.text;
+  const refs = m.views
+    .filter((v) => v.view === "generated_image")
+    .map((v) => {
+      const d = v.data;
+      const id = typeof d.image_id === "string" ? d.image_id : "";
+      if (!id) return "";
+      const seed = typeof d.seed === "number" ? ` seed=${d.seed}` : "";
+      const prompt = typeof d.prompt === "string" && d.prompt ? ` (${d.prompt})` : "";
+      return `source_image_id=${id}${seed}${prompt}`;
+    })
+    .filter(Boolean);
+  return refs.length
+    ? `${m.text}\n\n[Images you generated this turn — ${refs.join("; ")}]`
+    : m.text;
+}
+
 export interface FullBrain {
   active: AgentSession | null;
   /** The sessions shown for the current tab — filtered to that mode's agents
@@ -369,7 +391,7 @@ export function useFullBrain(
       }
     }
     const attachmentIds = attachments.map((a) => a.id);
-    const history = messages.map((m) => ({ role: m.role, content: m.text }));
+    const history = messages.map((m) => ({ role: m.role, content: historyContent(m) }));
     setMessages((ms) => [...ms, userMessage(text, attachments), streamingAssistant()]);
     // Reuse the note-capture warm fix (only when capture is on and fresh) so the
     // location tool can answer from the phone's current spot.

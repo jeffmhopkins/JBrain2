@@ -108,10 +108,12 @@ async def test_image_becomes_one_llm_image() -> None:
     blobs.put("sha-img", b"\x89PNG-bytes")
     aid = repo.add("image/png", "sha-img", filename="scan.png")
     images, text = await _build(repo, blobs, [aid])
-    assert text == ""
     assert len(images) == 1
     assert images[0].media_type == "image/png"
     assert base64.b64decode(images[0].data) == b"\x89PNG-bytes"
+    # The image's id is named in the text so the model can edit it by reference.
+    assert f"source_attachment_id {aid}" in text
+    assert "scan.png" in text
 
 
 async def test_pdf_yields_page_images_and_extracted_text() -> None:

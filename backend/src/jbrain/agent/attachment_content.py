@@ -57,7 +57,10 @@ class _Converted:
 
 def _image_block(info: AttachmentInfo, data: bytes) -> _Converted:
     image = LlmImage(media_type=info.media_type, data=_b64(data))
-    return _Converted(images=[image], text_blocks=[])
+    # Name the attachment's id alongside the vision content so the model can act on it
+    # by reference — e.g. pass it as edit_image's source_attachment_id to edit this image.
+    note = f'[attached image "{info.filename}" — to edit it, use source_attachment_id {info.id}]'
+    return _Converted(images=[image], text_blocks=[note])
 
 
 def _text_block(info: AttachmentInfo, data: bytes) -> _Converted:

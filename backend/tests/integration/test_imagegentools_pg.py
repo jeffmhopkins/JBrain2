@@ -129,12 +129,18 @@ async def test_generate_inserts_row_and_returns_view(maker: async_sessionmaker) 
     assert data["model"] == "qwen-image-2512"
     assert isinstance(data["image_id"], str)  # uuid stringified, JSON-safe
     assert "image_id" in data and "/api/" not in str(data)  # data-only, no url
+    # The seed rides the view (the card shows it; the PWA carries it to the next turn).
+    assert isinstance(data["seed"], int)
+    # The prose names the new id + seed so the model can edit/reproduce it.
+    assert f"source_image_id {data['image_id']}" in out
+    assert f"seed {data['seed']}" in out
 
     # The row + blob really landed: one owner row whose blob is in the store.
     async with scoped_session(maker, owner) as s:
         row = (await s.execute(text("SELECT count(*), max(seed) FROM app.generated_images"))).one()
     assert row[0] == 1
     assert fake.last_gen is not None and fake.last_gen.seed == row[1]  # resolved seed recorded
+    assert data["seed"] == row[1]  # the view's seed is the resolved/recorded one
 
 
 async def test_generate_resolution_scales_the_rendered_dims(maker: async_sessionmaker) -> None:

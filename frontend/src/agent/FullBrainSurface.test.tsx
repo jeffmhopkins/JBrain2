@@ -303,6 +303,56 @@ describe("FullBrainSurface", () => {
     expect(screen.getByRole("button", { name: /Worked/ })).toHaveTextContent("1 step");
   });
 
+  it("carries a prior image's id+seed into the next turn's history", async () => {
+    const seen: ChatRequest[] = [];
+    async function* chat(body: ChatRequest): AsyncGenerator<ChatEvent> {
+      seen.push(body);
+      if (seen.length === 1) {
+        yield { type: "text_delta", text: "made it" };
+        yield { type: "tool_call", id: "g1", name: "generate_image", arguments: {} };
+        yield { type: "tool_result", tool_call_id: "g1", ok: true, summary: "ok" };
+        yield {
+          type: "tool_view",
+          tool_call_id: "g1",
+          view: {
+            view: "generated_image",
+            surface: "inline",
+            refs: [],
+            data: {
+              image_id: "img_42",
+              kind: "generate",
+              prompt: "a fox",
+              width: 768,
+              height: 768,
+              seed: 99,
+            },
+          },
+        };
+        yield { type: "done", stop_reason: "end_turn" };
+      } else {
+        yield { type: "text_delta", text: "ok" };
+        yield { type: "done", stop_reason: "end_turn" };
+      }
+    }
+    render(<Harness d={deps({ chat })} />);
+    await waitFor(() => screen.getByLabelText("Conversation"));
+
+    fireEvent.change(screen.getByLabelText("Composer"), { target: { value: "make a fox" } });
+    fireEvent.click(screen.getByRole("button", { name: "send" }));
+    await waitFor(() => expect(screen.getByText("made it")).toBeInTheDocument());
+
+    fireEvent.change(screen.getByLabelText("Composer"), { target: { value: "make it night" } });
+    fireEvent.click(screen.getByRole("button", { name: "send" }));
+    await waitFor(() => expect(seen).toHaveLength(2));
+
+    // The follow-up turn's history names the prior image so the model can edit it or
+    // reuse its seed — the picture it can't otherwise see across turns.
+    const second = seen[1];
+    const assistant = second?.history?.find((h) => h.role === "assistant");
+    expect(assistant?.content).toContain("source_image_id=img_42");
+    expect(assistant?.content).toContain("seed=99");
+  });
+
   it("shows a web tool's url inline on its step row, truncating not wrapping", async () => {
     async function* answer(): AsyncGenerator<ChatEvent> {
       yield { type: "text_delta", text: "read it" };
