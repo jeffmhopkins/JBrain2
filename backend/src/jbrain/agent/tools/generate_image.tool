@@ -1,6 +1,6 @@
 ---
 name: generate_image
-version: 3
+version: 4
 permission: web
 side_effecting: true
 cost_class: expensive
@@ -15,8 +15,8 @@ params:
       description: What to keep OUT of the image, e.g. "blurry, extra fingers, text, watermark" (optional).
     aspect:
       type: string
-      enum: [square, portrait, landscape]
-      description: The image shape. Defaults to square.
+      enum: [square, portrait, landscape, tall, wide]
+      description: The image shape. square (1:1); portrait/landscape (gentle 3:4); tall/wide (dramatic 16:9 — phone-tall / cinematic). Defaults to square.
     resolution:
       type: string
       enum: [small, medium, large]

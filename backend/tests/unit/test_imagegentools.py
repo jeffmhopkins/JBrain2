@@ -131,7 +131,10 @@ def test_dims_scale_with_resolution_and_stay_multiples_of_64() -> None:
     assert _dims(None, None) == (1024, 1024)  # square + medium are the fallbacks
     assert _dims("portrait", "small") == (576, 768)
     assert _dims("landscape", "large") == (1280, 960)
-    for aspect in ("square", "portrait", "landscape"):
+    # 16:9 presets: the long edge is the resolution edge, the short snapped to a /64.
+    assert _dims("wide", "medium") == (1024, 576)  # exact 16:9
+    assert _dims("tall", "medium") == (576, 1024)
+    for aspect in ("square", "portrait", "landscape", "tall", "wide"):
         for resolution in ("small", "medium", "large"):
             w, h = _dims(aspect, resolution)  # type: ignore[misc]
             assert w % 64 == 0 and h % 64 == 0
