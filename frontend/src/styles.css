@@ -7208,6 +7208,12 @@ button.small {
   color: var(--text-2);
   line-height: 1.45;
   padding-left: 23px;
+  /* a long result scrolls within its own pane rather than running the step
+     on forever — the expansion stays a glanceable height (the screenshot's
+     web_fetch summary was the offender). */
+  max-height: 220px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 .fb-shell .fb-res-txt.err {
   color: var(--rose);
@@ -7255,7 +7261,11 @@ button.small {
   overflow: hidden;
 }
 .fb-shell .fb-raw-pre.full {
-  max-height: none;
+  /* "show all lines" lifts the 150px clamp but still scrolls within a bounded
+     pane rather than expanding without limit. */
+  max-height: 360px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 .fb-shell .fb-raw-copy {
   position: absolute;
