@@ -150,6 +150,29 @@ def test_batch_consumes_one_token_per_fix(client: tuple[TestClient, FakeLocation
     assert c.post("/api/owntracks", json=three, headers=_basic(_KEY)).status_code == 429
 
 
+def test_malformed_json_is_422_not_500(client: tuple[TestClient, FakeLocationRepo]) -> None:
+    c, loc = client
+    resp = c.post(
+        "/api/owntracks",
+        content="{not valid json",
+        headers={**_basic(_KEY), "Content-Type": "application/json"},
+    )
+    assert resp.status_code == 422
+    assert loc.calls == []
+
+
+def test_oversize_body_is_413(client: tuple[TestClient, FakeLocationRepo]) -> None:
+    c, loc = client
+    big = "x" * (256 * 1024 + 16)  # over MAX_BODY_BYTES; rejected before any parse
+    resp = c.post(
+        "/api/owntracks",
+        content=big,
+        headers={**_basic(_KEY), "Content-Type": "application/json"},
+    )
+    assert resp.status_code == 413
+    assert loc.calls == []
+
+
 def test_requires_device_auth(client: tuple[TestClient, FakeLocationRepo]) -> None:
     c, _ = client
     assert c.post("/api/owntracks", json=_loc(_now())).status_code == 401

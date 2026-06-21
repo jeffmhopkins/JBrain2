@@ -181,6 +181,8 @@ export function createLocationMap(
         minOpacity: 0.3,
       }).addTo(overlay);
     } else if (state.mode === "live" && last) {
+      // `last` is the newest fix that passed the accuracy gate — a wide-radius
+      // latest fix is intentionally not shown as "latest" (trustworthy fixes only).
       L.circleMarker(last, { radius: 7, className: "loc-lf-live" })
         .bindTooltip("latest")
         .addTo(overlay);

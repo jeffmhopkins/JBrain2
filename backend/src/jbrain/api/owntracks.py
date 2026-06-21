@@ -6,12 +6,15 @@ OwnTracks) OR a JSON array of them (our app's batched upload, so a dense fix str
 costs one request). Authentication is the `DeviceDep` dependency (401 pre-auth);
 past auth the endpoint always answers 200 with the OwnTracks-expected array so the
 client never enters a retry storm over a transient downstream error, EXCEPT a 429
-when a device floods (OwnTracks then backs off) and a 422 for a schema-invalid
-location body or an over-large batch. A batch is validated WHOLE before any write
-(one bad element rejects the batch — never a partial-trust write); the device
-subject is code-set from the authenticated principal for every element, never the
-payload (L9). The parse/store/geofence logic is the shared ingest core
-(`jbrain.locations.ingest`) the MQTT consumer also feeds.
+when a device floods (OwnTracks then backs off), a 422 for malformed JSON / a
+schema-invalid location body / an over-large batch, and a 413 for an over-size body.
+A batch's elements are all schema-validated before any write (one bad element
+rejects the batch — never a partial-trust store); each fix then inserts in its own
+idempotent (`ON CONFLICT DO NOTHING`) transaction, so a whole-batch retry after a
+mid-batch error safely dedups rather than double-storing. The device subject is
+code-set from the authenticated principal for every element, never the payload (L9).
+The parse/store/geofence logic is the shared ingest core (`jbrain.locations.ingest`)
+the MQTT consumer also feeds.
 """
 
 from typing import Annotated, Any, cast
@@ -31,6 +34,11 @@ router = APIRouter()
 # and keeps a batch's token cost under the per-device bucket capacity. The app
 # chunks a long offline backlog into batches no larger than this.
 MAX_BATCH = 100
+
+# A hard ceiling on the request body, checked from Content-Length before parsing so
+# a giant/deeply-nested array can't force unbounded JSON work. Generous headroom
+# over a full MAX_BATCH batch (~300 B/fix ⇒ ~30 KB).
+MAX_BODY_BYTES = 256 * 1024
 
 
 def get_location_repo(request: Request) -> SqlLocationRepo:
@@ -58,7 +66,18 @@ async def owntracks(
     limiter: RateLimiterDep,
     maker: SessionMakerDep,
 ) -> list[Any]:
-    body = await request.json()
+    # Bound the work BEFORE parsing the body: a cheap one-token gate stops a
+    # post-auth flood, and a Content-Length cap bounds a single request's JSON parse
+    # (an authenticated device otherwise forces unbounded parsing of a giant array).
+    if not limiter.allow(principal.id):
+        raise HTTPException(status_code=429, detail="rate limited")
+    clen = request.headers.get("content-length")
+    if clen is not None and clen.isdigit() and int(clen) > MAX_BODY_BYTES:
+        raise HTTPException(status_code=413, detail="payload too large")
+    try:
+        body = await request.json()
+    except ValueError as exc:  # malformed JSON: 422, never a 500
+        raise HTTPException(status_code=422, detail="invalid json") from exc
     # Single object (stock OwnTracks) or an array of them (our batched upload).
     items = body if isinstance(body, list) else [body]
     if len(items) > MAX_BATCH:
@@ -66,9 +85,9 @@ async def owntracks(
     # Only `_type:location` items are stored; transition / waypoints / lwt / anything
     # else is acked and ignored (server-side geofencing is authoritative).
     locations = [item for item in items if is_location_message(item)]
-    # One token per fix (an empty/non-location post still costs one) — a flooding
-    # device 429s and backs off; a normal batch every few seconds never trips it.
-    if not limiter.allow(principal.id, cost=max(1, len(locations))):
+    # One token per fix: the gate above charged one; charge any remainder so a batch
+    # costs its fix count. A flooding device 429s and backs off.
+    if len(locations) > 1 and not limiter.allow(principal.id, cost=len(locations) - 1):
         raise HTTPException(status_code=429, detail="rate limited")
     # Validate the WHOLE batch before any write: one schema-invalid element rejects
     # the batch (422), so a bad element can never leave a partial-trust write behind.
