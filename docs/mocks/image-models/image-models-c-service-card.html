@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Image settings — C · service card</title>
+<style>
+  :root{
+    --bg:#0e0f11;--surface:#17181b;--surface-2:#1e2024;--border:#26282c;
+    --text:#e6e7e9;--text-2:#9a9da3;--text-3:#5c5f66;
+    --steel:#7fa7c9;--green:#8fbc9a;--amber:#c9a36a;--rose:#cf8a8f;--violet:#a493c9;
+    --r-card:16px;--r-pill:999px;font-size:15px;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    display:flex;justify-content:center;padding:28px 16px}
+  .col{width:100%;max-width:440px}
+  .variant{font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--text-3);margin:0 0 4px}
+  h1{font-size:18px;margin:0 0 2px}.sub{color:var(--text-2);font-size:13px;margin:0 0 20px}
+
+  .card{border:1px solid var(--border);border-radius:var(--r-card);background:var(--surface);overflow:hidden}
+  /* prominent appliance-style status header */
+  .hd{display:flex;align-items:center;gap:13px;padding:16px 16px 14px}
+  .ring{position:relative;width:62px;height:62px;flex:none}
+  .ring svg{width:62px;height:62px;transform:rotate(-90deg)}
+  .ring circle{fill:none;stroke-width:6}
+  .ring .bg{stroke:var(--surface-2)}
+  .ring .fg{stroke:var(--amber);stroke-linecap:round;stroke-dasharray:176;stroke-dashoffset:50}
+  .ring .pct{position:absolute;inset:0;display:grid;place-items:center;font-size:13px;font-weight:600;font-variant-numeric:tabular-nums}
+  .hd-main{flex:1;min-width:0}
+  .hd-title{display:flex;align-items:center;gap:9px}
+  .hd-title b{font-size:15px}
+  .pill{font-size:11px;font-weight:600;padding:3px 9px;border-radius:var(--r-pill)}
+  .pill.run{background:color-mix(in srgb,var(--green) 20%,var(--surface));color:var(--green)}
+  .pill.stop{background:color-mix(in srgb,var(--rose) 18%,var(--surface));color:var(--rose)}
+  .hd-sub{font-size:12px;color:var(--text-2);margin-top:4px}
+  .hd-sub b{color:var(--green);font-weight:600}
+
+  .actions{display:flex;gap:8px;padding:0 16px 14px}
+  .btn{flex:1;font-size:12.5px;padding:8px 0;border-radius:10px;border:1px solid var(--border);background:var(--surface-2);color:var(--text);cursor:pointer}
+  .btn:hover{border-color:var(--steel)}
+  .btn.primary{background:color-mix(in srgb,var(--steel) 18%,var(--surface));color:var(--steel);border-color:transparent}
+  .btn.warn:hover{border-color:var(--rose);color:var(--rose)}
+
+  .models{border-top:1px solid var(--border);padding:6px 16px 8px}
+  .mh{font-size:11px;color:var(--text-3);text-transform:uppercase;letter-spacing:.05em;padding:9px 0 3px}
+  .row{display:flex;align-items:center;gap:10px;padding:9px 0;border-top:1px solid var(--border)}
+  .row:first-of-type{border-top:0}
+  .rname{font-size:13.5px;font-weight:600}.rmeta{font-size:11.5px;color:var(--text-3);margin-top:2px}
+  .chip{font-size:10px;font-weight:600;padding:2px 7px;border-radius:var(--r-pill);margin-left:7px}
+  .chip.gen{background:color-mix(in srgb,var(--violet) 20%,var(--surface));color:var(--violet)}
+  .chip.edit{background:color-mix(in srgb,var(--amber) 20%,var(--surface));color:var(--amber)}
+  .rright{margin-left:auto;text-align:right}.badge{font-size:11px;color:var(--green)}.badge.no{color:var(--text-3)}
+  .foot{padding:11px 16px;border-top:1px solid var(--border);font-size:11.5px;color:var(--text-3);line-height:1.5}
+  code{background:var(--surface-2);padding:1px 5px;border-radius:5px;font-size:11px}
+</style>
+</head>
+<body>
+<div class="col">
+  <p class="variant">Variant C</p>
+  <h1>Service appliance card</h1>
+  <p class="sub">Frames it as one ComfyUI <em>service</em>: a prominent status header with a real VRAM gauge and big Start/Stop/Free actions, then a tight model list. Less drawer chrome, more “device”.</p>
+
+  <div class="card">
+    <div class="hd">
+      <div class="ring">
+        <svg viewBox="0 0 62 62"><circle class="bg" cx="31" cy="31" r="28"/><circle class="fg" id="ring" cx="31" cy="31" r="28"/></svg>
+        <span class="pct" id="pct">25%</span>
+      </div>
+      <div class="hd-main">
+        <div class="hd-title"><b>ComfyUI</b><span class="pill run" id="pill">running</span></div>
+        <div class="hd-sub" id="sub">32 of 128 GB VRAM · <b id="free">96 GB free</b></div>
+      </div>
+    </div>
+    <div class="actions">
+      <button class="btn primary" id="toggle">Stop service</button>
+      <button class="btn warn" id="free-btn">Free memory</button>
+    </div>
+
+    <div class="models">
+      <div class="mh">Models</div>
+      <div class="row"><div><div class="rname">Qwen‑Image<span class="chip gen">generate</span></div><div class="rmeta">fp8 · 28 GB on disk · ~20 GB resident</div></div><div class="rright"><div class="badge">✓ provisioned</div></div></div>
+      <div class="row"><div><div class="rname">Qwen‑Image‑Edit<span class="chip edit">edit</span></div><div class="rmeta">bf16 · ~44 GB · not downloaded</div></div><div class="rright"><div class="badge no">not provisioned</div></div></div>
+    </div>
+    <div class="foot">Add models on the box with <code>comfyui-setup.sh</code>. ComfyUI loads a model on first use; Free unloads it.</div>
+  </div>
+
+  <div style="display:flex;gap:8px;margin-top:18px;border-top:1px solid var(--border);padding-top:14px">
+    <button class="btn" style="flex:none;padding:8px 14px" onclick="location.reload()">↺ Reset</button>
+  </div>
+</div>
+<script>
+  let running=true;
+  const pill=document.getElementById('pill'),toggle=document.getElementById('toggle'),sub=document.getElementById('sub'),free=document.getElementById('free'),ring=document.getElementById('ring'),pct=document.getElementById('pct');
+  function setUsed(usedGb){const p=Math.round(usedGb/128*100);ring.style.strokeDashoffset=176-176*(usedGb/128);pct.textContent=p+'%';sub.innerHTML=usedGb+' of 128 GB VRAM · <b id="free">'+(128-usedGb)+' GB free</b>';}
+  toggle.onclick=()=>{running=!running;pill.className='pill '+(running?'run':'stop');pill.textContent=running?'running':'stopped';toggle.textContent=running?'Stop service':'Start service';if(!running){setUsed(0);}else{setUsed(32);}};
+  document.getElementById('free-btn').onclick=()=>setUsed(0);
+</script>
+</body>
+</html>
