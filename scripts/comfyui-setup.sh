@@ -11,7 +11,9 @@
 #   1. resolves the chosen catalog models (jbrain.image_gen.catalog),
 #   2. downloads their weight files into ./comfyui-models/<subdir> (the layout
 #      ComfyUI expects: diffusion_models / text_encoders / vae / loras),
-#   3. flips JBRAIN_COMFYUI_* on in .env and starts the `comfyui` compose profile.
+#   3. prunes weight files no longer named by the catalog (so a model swap — e.g.
+#      fp8 -> bf16 — reclaims the superseded file),
+#   4. flips JBRAIN_COMFYUI_* on in .env and starts the `comfyui` compose profile.
 #
 # Run from the install dir (/opt/jbrain2) where docker-compose.yml + .env live.
 set -euo pipefail
@@ -118,6 +120,36 @@ for m in json.loads(os.environ["MANIFEST"]):
 shutil.rmtree(stage, ignore_errors=True)
 PY
 '
+
+# Prune superseded weights: delete any managed weight file NOT named by the FULL catalog
+# (every model, not just the ids selected this run). So swapping a model's weights (fp8 ->
+# bf16) reclaims the old file, while a model the catalog still references — including one
+# provisioned in a separate run, like qwen-image-edit — is never touched. Only weight files
+# in catalog-managed subdirs are considered, so a hand-added LoRA or a stray note is safe.
+say "Pruning weight files no longer in the catalog"
+FULL_MANIFEST="$(catalog -m jbrain.image_gen.catalog)"
+MANIFEST="$FULL_MANIFEST" MODELS_DIR="$MODELS_DIR" python3 - <<'PY'
+import json, os
+
+manifest = json.loads(os.environ["MANIFEST"])
+root = os.environ["MODELS_DIR"]
+_WEIGHT_EXTS = (".safetensors", ".gguf", ".ckpt", ".pt", ".pth", ".bin")
+# Expected basenames per managed subdir, across the WHOLE catalog.
+keep: dict[str, set[str]] = {}
+for model in manifest:
+    for f in model["files"]:
+        keep.setdefault(f["dest_subdir"], set()).add(os.path.basename(f["repo_path"]))
+for subdir, names in keep.items():
+    directory = os.path.join(root, subdir)
+    if not os.path.isdir(directory):
+        continue
+    for entry in sorted(os.listdir(directory)):
+        path = os.path.join(directory, entry)
+        if not os.path.isfile(path) or entry in names or not entry.endswith(_WEIGHT_EXTS):
+            continue
+        print(f"[comfyui] removing orphaned weight {subdir}/{entry}", flush=True)
+        os.remove(path)
+PY
 
 # The ComfyUI container must join the HOST's video/render group GIDs to open
 # /dev/dri/renderD128. Prefer the device's actual owning GID (authoritative); fall
