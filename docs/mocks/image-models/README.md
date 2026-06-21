@@ -5,7 +5,12 @@ where the G5 backend (`GET /api/settings/image`: service status, real VRAM
 total/free, the catalog with provisioned/disk/footprint, and start/stop/free) is
 surfaced. Open each in a browser; the Start/Stop/Free controls are live.
 
-The owner picks one; the chosen mock becomes the binding spec for the G6 build.
+**Decided: Variant B — unified meter** is the binding spec, with the owner's
+refinements: the image model shows on the SAME unified-memory bar as the LLMs (its
+own violet accent) when active, it lives in the existing Settings → LLM screen
+(the renamed "On-box models" drawer), and its start/stop/free sit alongside the LLM
+stage/load/unload controls. Built in G6 (`LLMSettingsScreen` `ImageServiceSection` +
+the `.llm-mem-img` / `.llm-img-*` styles).
 
 | Variant | File | Idea | Trade-off |
 |---|---|---|---|

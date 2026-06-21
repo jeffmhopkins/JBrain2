@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { LlmSettings, LocalModelInfo } from "../api/client";
+import type { ImageSettings, LlmSettings, LocalModelInfo } from "../api/client";
 import { LLMSettingsScreen } from "./LLMSettingsScreen";
 
 // Build a LocalModelInfo with sensible defaults; tests override what they assert on.
@@ -99,6 +99,14 @@ function stubLlmFetch(seed?: LlmSettings) {
         status: 200,
         headers: { "Content-Type": "application/json" },
       });
+    }
+    // The screen also self-fetches the image service; serve a disabled snapshot so
+    // these LLM-focused tests don't error on a path they don't care about.
+    if (path === "/api/settings/image") {
+      return new Response(
+        JSON.stringify({ enabled: false, reachable: false, models: [], memory: null }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
     }
     if (path !== "/api/settings/llm") throw new Error(`Unexpected fetch: ${path}`);
     if ((init?.method ?? "GET").toUpperCase() === "PUT") {
@@ -293,7 +301,7 @@ describe("LLMSettingsScreen", () => {
     );
     render(<LLMSettingsScreen />);
 
-    const toggle = await screen.findByRole("button", { name: /Local models/i });
+    const toggle = await screen.findByRole("button", { name: /On-box models/i });
     expect(toggle).toHaveTextContent("2 of 2 enabled");
     fireEvent.click(toggle);
 
@@ -345,7 +353,7 @@ describe("LLMSettingsScreen", () => {
     );
     render(<LLMSettingsScreen />);
 
-    const toggle = await screen.findByRole("button", { name: /Local models/i });
+    const toggle = await screen.findByRole("button", { name: /On-box models/i });
     // The summary still counts the full catalog so "how many more could I install".
     expect(toggle).toHaveTextContent("1 of 2 enabled");
     fireEvent.click(toggle);
@@ -397,7 +405,7 @@ describe("LLMSettingsScreen", () => {
     );
     render(<LLMSettingsScreen />);
 
-    const toggle = await screen.findByRole("button", { name: /Local models/i });
+    const toggle = await screen.findByRole("button", { name: /On-box models/i });
     // Summary surfaces runtime state with the resident footprint (weights + KV).
     expect(toggle).toHaveTextContent("1 loaded · 34 GB");
     fireEvent.click(toggle);
@@ -458,7 +466,7 @@ describe("LLMSettingsScreen", () => {
       }),
     );
     render(<LLMSettingsScreen />);
-    fireEvent.click(await screen.findByRole("button", { name: /Local models/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /On-box models/i }));
 
     // Idle → Stage.
     expect(await screen.findByText("idle")).toBeInTheDocument();
@@ -508,7 +516,7 @@ describe("LLMSettingsScreen", () => {
       }),
     );
     render(<LLMSettingsScreen />);
-    fireEvent.click(await screen.findByRole("button", { name: /Local models/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /On-box models/i }));
 
     const select = (await screen.findByLabelText("context window")) as HTMLSelectElement;
     // Defaults to the catalog window (128k) and offers the capped choices.
@@ -540,7 +548,7 @@ describe("LLMSettingsScreen", () => {
       vi.fn<typeof fetch>(async () => new Response(JSON.stringify(s), { status: 200 })),
     );
     render(<LLMSettingsScreen />);
-    fireEvent.click(await screen.findByRole("button", { name: /Local models/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /On-box models/i }));
 
     const select = (await screen.findByLabelText("context window")) as HTMLSelectElement;
     expect(select.disabled).toBe(true);
@@ -549,10 +557,99 @@ describe("LLMSettingsScreen", () => {
 
   it("points at the CLI when local hosting is off", async () => {
     render(<LLMSettingsScreen />); // default fixture: hosting off
-    const toggle = await screen.findByRole("button", { name: /Local models/i });
+    const toggle = await screen.findByRole("button", { name: /On-box models/i });
     expect(toggle).toHaveTextContent("off");
     fireEvent.click(toggle);
     expect(await screen.findByText(/enable-local-models/)).toBeInTheDocument();
+  });
+
+  it("surfaces the image service: shared-meter segment, rows, and stop/free", async () => {
+    const s = initialSettings();
+    s.local_hosting_enabled = true;
+    s.host_memory = { total_gb: 128, used_gb: 36 };
+    s.local_models = [
+      lm({
+        id: "gpt-oss-120b",
+        label: "GPT-OSS 120B",
+        enabled: true,
+        loaded: true,
+        tiers: ["high"],
+        quant: "MXFP4",
+        size_gb: 59,
+        disk_gb: 30,
+        kv_gb: 4,
+      }),
+    ];
+    const img: ImageSettings = {
+      enabled: true,
+      reachable: true,
+      models: [
+        {
+          id: "qwen-image",
+          label: "Qwen-Image · generate (fp8)",
+          kind: "generate",
+          enabled: true,
+          recommended: true,
+          size_gb: 28,
+          disk_gb: 27.3,
+          vram_gb: 20,
+          note: "",
+        },
+        {
+          id: "qwen-image-edit",
+          label: "Qwen-Image-Edit · edit",
+          kind: "edit",
+          enabled: false,
+          recommended: false,
+          size_gb: 44,
+          disk_gb: null,
+          vram_gb: 38,
+          note: "",
+        },
+      ],
+      memory: { total_gb: 128, free_gb: 96 }, // 32 GB resident → a bar segment
+    };
+    const calls: string[] = [];
+    const resp = (o: unknown, status = 200) =>
+      new Response(JSON.stringify(o), { status, headers: { "Content-Type": "application/json" } });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>(async (input, init) => {
+        const path = String(input);
+        const method = (init?.method ?? "GET").toUpperCase();
+        if (path === "/api/ops/llm-usage") return resp(USAGE);
+        if (path === "/api/settings/llm") return resp(s);
+        if (path === "/api/settings/image" && method === "GET") return resp(img);
+        if (path === "/api/settings/image/free" && method === "POST") {
+          calls.push("free");
+          img.memory = { total_gb: 128, free_gb: 128 };
+          return resp(img);
+        }
+        if (path === "/api/settings/image/service/stop" && method === "POST") {
+          calls.push("stop");
+          return resp({ service: "comfyui", action: "stop" }, 202);
+        }
+        throw new Error(`Unexpected fetch: ${path}`);
+      }),
+    );
+    render(<LLMSettingsScreen />);
+
+    const toggle = await screen.findByRole("button", { name: /On-box models/i });
+    expect(toggle).toHaveTextContent("image on"); // shown in the collapsed summary
+    fireEvent.click(toggle);
+
+    // The image subsection renders the service + its catalog rows.
+    const section = (await screen.findByText("Image · ComfyUI")).closest(".llm-img") as HTMLElement;
+    expect(within(section).getByText("running")).toBeInTheDocument();
+    expect(within(section).getByText("Qwen-Image · generate (fp8)")).toBeInTheDocument();
+    // The shared unified-memory bar carries an image segment (128 - 96 = 32 GB).
+    expect(document.querySelector(".llm-mem-img")).not.toBeNull();
+
+    // Free unloads the resident model; Stop halts the service — both proxy through.
+    fireEvent.click(within(section).getByText("Free"));
+    await waitFor(() => expect(calls).toContain("free"));
+    fireEvent.click(within(section).getByText("Stop"));
+    await waitFor(() => expect(calls).toContain("stop"));
   });
 
   it("lets a per-task override diverge from its tier", async () => {

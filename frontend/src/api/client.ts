@@ -331,6 +331,34 @@ export interface LlmSettingsPatch {
   tasks: Record<string, LlmTaskPatch>;
 }
 
+/** One on-box image model for the settings drawer (GET /api/settings/image). */
+export interface ImageModelInfo {
+  id: string;
+  label: string;
+  /** "generate" (text→image) or "edit" (image→image). */
+  kind: string;
+  /** Offered to jerv (in the provisioned set) on this box. */
+  enabled: boolean;
+  recommended: boolean;
+  /** Catalog's nominal download estimate. */
+  size_gb: number;
+  /** Real measured on-disk size, or null when not provisioned here. */
+  disk_gb: number | null;
+  /** Resident unified-memory footprint estimate — the RAM-budget reservation. */
+  vram_gb: number;
+  note: string;
+}
+
+/** The ComfyUI image service's state — its catalog models, reachability, and the
+ * real VRAM gauge from /system_stats (shares the LLM drawer's unified-memory bar). */
+export interface ImageSettings {
+  enabled: boolean;
+  reachable: boolean;
+  models: ImageModelInfo[];
+  /** Real VRAM total/free from ComfyUI; null when unreachable or unreported. */
+  memory: { total_gb: number; free_gb: number } | null;
+}
+
 /** One attendee on an appointment — name plus optional iCalendar params. */
 export interface AttendeeOut {
   name: string;
@@ -1254,6 +1282,28 @@ export const api = {
       { method: on ? "POST" : "DELETE" },
     );
     return (await response.json()) as LlmSettings;
+  },
+
+  // ----- On-box image service (ComfyUI), surfaced in the same LLM drawer -----
+  async getImageSettings(): Promise<ImageSettings> {
+    const response = await request("/api/settings/image");
+    return (await response.json()) as ImageSettings;
+  },
+
+  /** Unload cached models + free the service's VRAM; returns the refreshed snapshot. */
+  async freeImageMemory(): Promise<ImageSettings> {
+    const response = await request("/api/settings/image/free", { method: "POST" });
+    return (await response.json()) as ImageSettings;
+  },
+
+  /** Start the (provisioned) ComfyUI service via the supervisor. */
+  async startImageService(): Promise<void> {
+    await request("/api/settings/image/service/start", { method: "POST" });
+  },
+
+  /** Stop the ComfyUI service via the supervisor (frees its memory by halting it). */
+  async stopImageService(): Promise<void> {
+    await request("/api/settings/image/service/stop", { method: "POST" });
   },
 
   // ----- Appointments ICS feed (a revocable, read-only subscribe URL) -----

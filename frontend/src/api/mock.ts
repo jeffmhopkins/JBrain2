@@ -12,6 +12,7 @@ import type {
   EntityOut,
   FactOut,
   GraphEdge,
+  ImageSettings,
   LlmProviderId,
   LlmSettings,
   LlmUsage,
@@ -358,6 +359,39 @@ const LLM_SETTINGS: LlmSettings = {
     },
   ],
   host_memory: null,
+};
+
+// The on-box image service for the drawer's image subsection + shared meter. On,
+// reachable, with a generate model resident (VRAM used = 128 - 96) so the unified
+// bar shows an image segment beside the LLMs.
+const IMAGE_SETTINGS: ImageSettings = {
+  enabled: true,
+  reachable: true,
+  models: [
+    {
+      id: "qwen-image",
+      label: "Qwen-Image · generate (fp8)",
+      kind: "generate",
+      enabled: true,
+      recommended: true,
+      size_gb: 28,
+      disk_gb: 27.3,
+      vram_gb: 20,
+      note: "Validated on Strix Halo: 1328x1328, 20 steps, ~3.5 min on the iGPU.",
+    },
+    {
+      id: "qwen-image-edit",
+      label: "Qwen-Image-Edit · edit",
+      kind: "edit",
+      enabled: false,
+      recommended: false,
+      size_gb: 44,
+      disk_gb: null,
+      vram_gb: 38,
+      note: "Graph validated; bf16 weights await an on-box download.",
+    },
+  ],
+  memory: { total_gb: 128, free_gb: 96 },
 };
 
 // Apply one task patch like the backend would: grok keeps/sets a reasoning
@@ -2506,6 +2540,29 @@ export const mockFetch: typeof fetch = async (input, init) => {
     return json(SETTINGS);
   }
 
+  // The on-box image service (ComfyUI) surfaced in the LLM drawer.
+  if (path === "/api/settings/image" && method === "GET") return json(IMAGE_SETTINGS);
+  if (path === "/api/settings/image/free" && method === "POST") {
+    // Freeing unloads the resident model: VRAM returns to fully free.
+    IMAGE_SETTINGS.memory = { total_gb: 128, free_gb: 128 };
+    return json(IMAGE_SETTINGS);
+  }
+  if (path === "/api/settings/image/service/start" && method === "POST") {
+    IMAGE_SETTINGS.reachable = true;
+    IMAGE_SETTINGS.memory = { total_gb: 128, free_gb: 128 };
+    return new Response(JSON.stringify({ service: "comfyui", action: "start" }), {
+      status: 202,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+  if (path === "/api/settings/image/service/stop" && method === "POST") {
+    IMAGE_SETTINGS.reachable = false;
+    IMAGE_SETTINGS.memory = null;
+    return new Response(JSON.stringify({ service: "comfyui", action: "stop" }), {
+      status: 202,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
   // The chat "Stop render" control (the live image preview's Stop). Chat itself
   // isn't mocked, but the route exists so the call never 404s in mock dev.
   if (path === "/api/settings/image/interrupt" && method === "POST") {

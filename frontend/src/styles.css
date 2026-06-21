@@ -1151,6 +1151,75 @@ h3 {
   color: var(--steel);
   background: var(--steel-tint);
 }
+.llm-chip-imggen {
+  color: var(--violet);
+  background: var(--violet-tint);
+}
+.llm-chip-imgedit {
+  color: var(--amber);
+  background: var(--amber-tint);
+}
+
+/* The image service subsection — sits in the On-box models drawer beneath the LLM
+   rows, sharing the unified meter above. */
+.llm-img {
+  margin-top: 10px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+.llm-img-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.llm-img-title {
+  font-weight: 600;
+  font-size: var(--fs-secondary);
+}
+.llm-img-state {
+  font-size: var(--fs-micro);
+  padding: 2px 8px;
+  border-radius: var(--r-pill);
+  color: var(--text-3);
+  background: var(--surface-2);
+}
+.llm-img-state.running {
+  color: var(--green);
+  background: var(--green-tint);
+}
+.llm-img-state.stopped {
+  color: var(--rose);
+  background: var(--rose-tint);
+}
+.llm-img-acts {
+  margin-left: auto;
+  display: flex;
+  gap: 6px;
+}
+.llm-img-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 7px 0;
+}
+.llm-img-name {
+  font-size: var(--fs-secondary);
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.llm-img-meta {
+  margin-left: auto;
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+  text-align: right;
+}
+/* The image segment's KV-less weight block fills the whole segment (no context split). */
+.llm-mem-img .llm-mem-w {
+  border-radius: inherit;
+}
 .llm-local-state {
   font-size: var(--fs-micro);
   color: var(--text-3);
