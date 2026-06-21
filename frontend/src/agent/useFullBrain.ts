@@ -136,6 +136,15 @@ function fromTurn(t: TranscriptTurn): TranscriptMessage {
 // (for edit_image's source_image_id) and seed (to reproduce or tweak) — so a later
 // "edit that" or "use the same seed" turn can act on a picture it can't otherwise see.
 function historyContent(m: TranscriptMessage): string {
+  if (m.role === "user") {
+    // An attached image rides the model context for ONE turn (its bytes aren't re-sent),
+    // but its id must persist so a later "is the person female?" / "make it night" turn can
+    // pass it to analyze_image or edit_image instead of guessing an id ("latest").
+    const imgs = (m.attachments ?? []).filter((a) => a.media_type.startsWith("image/"));
+    if (imgs.length === 0) return m.text;
+    const refs = imgs.map((a) => `source_attachment_id=${a.id} (${a.filename})`).join("; ");
+    return `${m.text}\n\n[Images the owner attached this turn — ${refs}]`;
+  }
   if (m.role !== "assistant") return m.text;
   const refs = m.views
     .filter((v) => v.view === "generated_image")
