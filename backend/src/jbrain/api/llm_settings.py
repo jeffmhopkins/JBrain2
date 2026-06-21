@@ -50,6 +50,7 @@ TASK_LABELS: dict[str, str] = {
     "session.title": "Session title",
 }
 
+
 # Tasks that send image content to the model and so require a vision-capable provider:
 # the ingest vision.* tasks plus the agent's analyze_image route (agent.vision). The
 # screen filters these to vision choices; the PUT enforces it server-side.
