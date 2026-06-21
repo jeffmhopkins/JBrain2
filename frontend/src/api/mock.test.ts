@@ -506,4 +506,9 @@ describe("mock API", () => {
     expect(done.exit_code).toBe(0);
     expect(done.log_tail).toContain("[reset] complete");
   });
+
+  it("acknowledges a chat-run cancel (the composer's Stop)", async () => {
+    const res = await call("/api/chat/runs/run-1/cancel", { method: "POST" });
+    expect(res.status).toBe(204);
+  });
 });

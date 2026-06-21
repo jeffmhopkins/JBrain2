@@ -432,18 +432,34 @@ export function useFullBrain(
     const controller = new AbortController();
     abortRef.current = controller;
     runIdRef.current = null;
+    const body: ChatRequest = {
+      session_id: turnSessionId,
+      message: text,
+      history,
+      ...(opts?.appointmentId ? { appointment_id: opts.appointmentId } : {}),
+      ...(coords ? { latitude: coords.latitude, longitude: coords.longitude } : {}),
+      ...(attachmentIds.length ? { attachment_ids: attachmentIds } : {}),
+    };
+    // Uploads succeeded and the turn is under way — `send` resolves HERE so the composer
+    // clears the typed text and staged files immediately, rather than staying populated
+    // for the whole turn (and, on a dropped connection, the multi-minute recovery). The
+    // stream and any reconnect recovery run in the background; `busy` stays true until
+    // they finish, so a second turn can't start and clobber this one's optimistic bubbles.
+    void runTurn(body, controller, turnSessionId, baseline);
+  }
+
+  // Stream one turn to settlement in the background: fold its events into the live
+  // bubble, and on a dropped connection recover the finished exchange from the
+  // transcript rather than flashing an error. Owns the turn's busy/abort lifecycle, so
+  // it must always reach its `finally` (hence the broad catch around the stream).
+  async function runTurn(
+    body: ChatRequest,
+    controller: AbortController,
+    turnSessionId: string,
+    baseline: number,
+  ): Promise<void> {
     try {
-      for await (const event of chat(
-        {
-          session_id: active.id,
-          message: text,
-          history,
-          ...(opts?.appointmentId ? { appointment_id: opts.appointmentId } : {}),
-          ...(coords ? { latitude: coords.latitude, longitude: coords.longitude } : {}),
-          ...(attachmentIds.length ? { attachment_ids: attachmentIds } : {}),
-        },
-        controller.signal,
-      )) {
+      for await (const event of chat(body, controller.signal)) {
         // Usage rides the conversation, not a single bubble — track it apart from the
         // transcript reducer so the meter reflects the whole context, not one turn.
         if (event.type === "usage") {
@@ -598,7 +614,7 @@ export function useFullBrain(
         () => true,
         (err) => {
           if (err instanceof AttachmentUploadError) return false;
-          return true; // a stream error already settled the bubble; nothing to keep
+          return true; // the stream runs in the background now; any failure settles there
         },
       ),
     create,

@@ -1290,7 +1290,9 @@ describe("FullBrainSurface", () => {
   it("recovers from the transcript when the stream drops mid-turn (not an abort)", async () => {
     // The PWA backgrounded and the OS cut the socket: the generator throws WITHOUT an
     // abort. The detached turn finishes server-side, so the completed exchange is
-    // fetched from the transcript instead of crying error.
+    // fetched from the transcript instead of crying error. Real timers here (the poll
+    // cadence is a few seconds): the generator-throw → catch → poll microtask chain
+    // doesn't flush cleanly under fake timers, and this stays deterministic.
     const getTranscript = vi.fn(async (): Promise<TranscriptTurn[]> => []);
     async function* answer(): AsyncGenerator<ChatEvent> {
       yield { type: "run", run_id: "r1" };

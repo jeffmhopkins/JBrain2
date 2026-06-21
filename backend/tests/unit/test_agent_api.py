@@ -988,6 +988,9 @@ def test_chat_cancel_cancels_a_registered_run(client: TestClient, repo: FakeAuth
     resp = client.post("/api/chat/runs/run-9/cancel")
     assert resp.status_code == 204
     assert stub.cancelled
+    # The stub isn't a real awaitable Task; drop it so the fixture's lifespan shutdown
+    # (which gathers in-flight turns) doesn't try to await it.
+    client.app.state.live_turns.clear()  # type: ignore[attr-defined]
 
 
 def test_chat_cancel_is_idempotent_for_unknown_run(client: TestClient, repo: FakeAuthRepo) -> None:
@@ -1076,6 +1079,10 @@ async def test_chat_turn_survives_a_client_disconnect() -> None:
                 break
             await asyncio.sleep(0.01)
 
+        # The turn registered (is mid-flight) at the moment we drop the connection — so
+        # what survives below is a genuinely in-flight turn, not one that already finished.
+        assert app.state.live_turns, "the detached turn registered before the disconnect"
+
         reader.cancel()  # the PWA backgrounds / the socket drops
         with contextlib.suppress(asyncio.CancelledError):
             await reader
@@ -1093,6 +1100,73 @@ async def test_chat_turn_survives_a_client_disconnect() -> None:
     assert transcript.recorded, "the detached turn persisted the exchange despite disconnect"
     assert transcript.recorded[-1]["assistant"] == "partial answer"
     assert runlog.finished[-1]["status"] == "done"
+
+
+async def test_chat_cancel_endpoint_persists_the_partial_and_closes_the_stream() -> None:
+    # The real Stop path end-to-end: a connected client streams a turn, the owner taps
+    # Stop (POST /chat/runs/{id}/cancel) mid-answer, and we prove (a) the partial answer
+    # persists, (b) the run closes error/disconnected, and (c) the sentinel still reaches
+    # the connected response so the SSE stream terminates instead of hanging.
+    import httpx
+
+    repo = FakeAuthRepo()
+    sessions_store = FakeAgentSessions()
+    sessions_store.add(AgentSessionInfo("sess-1", "", "active", ("general",), (), NOW, NOW))
+    runlog = FakeRunLog()
+    transcript = FakeTranscript()
+    release = asyncio.Event()  # never set: the turn blocks here until the Stop cancels it
+
+    settings = Settings(
+        secure_cookies=False, database_url="postgresql+asyncpg://nobody@localhost:1/none"
+    )
+    app = create_app(settings)
+    app.state.live_turns = {}
+    app.state.auth_repo = repo
+    app.state.agent_sessions = sessions_store
+    app.state.agent_runlog = runlog
+    app.state.agent_transcript = transcript
+    app.state.turn_attachments = FakeChatAttachments()
+    app.state.blob_store = FakeChatBlobs()
+    app.state.agent_registry = ToolRegistry([])
+    app.state.settings_store = FakeSettingsStore()
+    app.state.llm_router = LlmRouter(
+        {"xai": cast(LlmClient, GatedStreamClient(release))}, {"agent.turn": ("xai", "grok-4.3")}
+    )
+
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
+        key = await service.rotate_owner_key(repo)
+        assert (await ac.post("/api/auth/session", json={"owner_key": key})).status_code == 204
+
+        async def read_all() -> list[bytes]:
+            frames: list[bytes] = []
+            async with ac.stream(
+                "POST", "/api/chat", json={"session_id": "sess-1", "message": "how far?"}
+            ) as r:
+                assert r.status_code == 200
+                async for chunk in r.aiter_bytes():
+                    frames.append(chunk)
+            return frames
+
+        reader = asyncio.create_task(read_all())
+        for _ in range(200):
+            if app.state.live_turns:
+                break
+            await asyncio.sleep(0.01)
+        run_id = next(iter(app.state.live_turns))
+
+        # The owner taps Stop — the explicit cancel the detached turn now needs.
+        cancel = await ac.post(f"/api/chat/runs/{run_id}/cancel")
+        assert cancel.status_code == 204
+
+        # The sentinel reaches the connected response, so the stream terminates (no hang).
+        frames = await asyncio.wait_for(reader, timeout=5.0)
+
+    assert b"partial " in b"".join(frames)
+    # The partial answer was persisted, and the run closed as a (benign) disconnect.
+    assert transcript.recorded[-1]["assistant"] == "partial "
+    assert runlog.finished[-1]["status"] == "error"
+    assert runlog.finished[-1]["stop_reason"] == "disconnected"
 
 
 def test_create_and_list_sessions(

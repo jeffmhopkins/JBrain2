@@ -553,25 +553,29 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
             log.warning("agent.chat_failed", run_id=run_id, error=repr(exc))
             queue.put_nowait(b'data: {"type": "done", "stop_reason": "error"}\n\n')
         finally:
-            # A Stop (the owner aborts the fetch), a dropped connection, or a mid-turn
-            # error (e.g. the compose-the-reply LLM call breaking after a tool already
-            # ran) cuts the stream before `done`: if the model already streamed a partial
-            # answer OR ran a tool, persist that partial turn so reopening the chat
-            # replays what the owner saw — and, crucially, so a side-effecting tool like
-            # generate_image (which stored an image) is remembered, not silently retried
-            # on the next turn. Same shield+suppress as the run-log close below — the
-            # cancellation that may have got us here must not interrupt the write, and a
-            # write failure must not mask the outcome. Episodic memory and auto-titling
-            # stay on the `done` path only: a half-finished answer shouldn't seed the
-            # agent's recall or name the chat.
-            if (
-                not persisted
-                and stop_reason in ("disconnected", "error")
-                and ("".join(answer).strip() or order)
-            ):
-                with contextlib.suppress(Exception):
-                    await asyncio.shield(
-                        _record_transcript(
+            # A Stop (cancel endpoint), a dropped connection, or a mid-turn error (e.g.
+            # the compose-the-reply LLM call breaking after a tool already ran) cuts the
+            # stream before `done`: if the model already streamed a partial answer OR ran
+            # a tool, persist that partial turn so reopening the chat replays what the
+            # owner saw — and, crucially, so a side-effecting tool like generate_image
+            # (which stored an image) is remembered, not silently retried on the next
+            # turn. These awaits run INLINE (no asyncio.shield): a client disconnect no
+            # longer cancels this task, so the only cancellation reaching here is a single
+            # Stop/shutdown CancelledError — already delivered, so the cleanup awaits
+            # complete normally. Keeping them inline (rather than shield-detached) is what
+            # lets shutdown `gather` the turn and so guarantee the run-log close lands
+            # before the engine pool is disposed (otherwise a detached write races a dead
+            # pool and strands the run in 'running'). Suppress so a write failure never
+            # masks the outcome. Episodic memory and auto-titling stay on the `done` path
+            # only: a half-finished answer shouldn't seed the agent's recall or name it.
+            try:
+                if (
+                    not persisted
+                    and stop_reason in ("disconnected", "error")
+                    and ("".join(answer).strip() or order)
+                ):
+                    with contextlib.suppress(Exception):
+                        await _record_transcript(
                             request,
                             owner_ctx,
                             attachment_ctx,
@@ -583,13 +587,8 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
                             body.attachment_ids,
                             "".join(reasoning),
                         )
-                    )
-            # Shield the closing UPDATE so a disconnect-driven cancellation can't
-            # interrupt it and strand the run in 'running'; suppress so a write
-            # failure never masks the real outcome (recording must not break a turn).
-            with contextlib.suppress(Exception):
-                await asyncio.shield(
-                    runlog.finish(
+                with contextlib.suppress(Exception):
+                    await runlog.finish(
                         owner_ctx,
                         run_id,
                         status=status,
@@ -597,11 +596,12 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
                         step_count=tally.steps,
                         cost_tokens=tally.cost,
                     )
-                )
-            # Signal the response generator that no more frames are coming — sent after
-            # the partial-persist and run-log shields so a still-listening client gets the
-            # complete frame stream before the stream closes.
-            queue.put_nowait(_TURN_DONE)
+            finally:
+                # The sentinel is UNCONDITIONAL: even if a second cancellation (e.g. a
+                # Stop arriving during shutdown) interrupts a shielded await above, a
+                # still-listening client must get the stream's terminator — otherwise
+                # `events()` blocks on `queue.get()` forever and the SSE response hangs.
+                queue.put_nowait(_TURN_DONE)
 
     # Detach the turn from its SSE connection: run it as a task that owns the
     # accumulation + persistence, and have the response merely forward frames from a
@@ -634,7 +634,12 @@ async def cancel_chat_run(request: Request, run_id: str) -> None:
     """Cancel the owner's in-flight turn — the composer's Stop. The turn now runs
     detached from the SSE connection (so backgrounding the PWA can't kill it), which
     means a deliberate Stop needs an explicit signal rather than just closing the
-    stream. Idempotent: an unknown/finished run is a no-op."""
+    stream. Idempotent: an unknown/finished run is a no-op.
+
+    Keyed by run id alone, not re-validated against the run's owner: this is a
+    single-owner system, so `owner_only` already means the only authenticatable caller
+    IS the owner, and `run_id` is a server-minted UUID (no enumeration value). Revisit
+    if scoped principals arrive (Phase 7)."""
     turn = request.app.state.live_turns.get(run_id)
     if turn is not None:
         turn.cancel()
