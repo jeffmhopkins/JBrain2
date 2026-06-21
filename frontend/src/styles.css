@@ -6495,6 +6495,10 @@ button.small {
   font-size: 15px;
   line-height: 1.45;
   white-space: pre-wrap;
+  /* A long unbreakable token — a bare URL, an id — wraps inside the bubble
+     instead of spilling past its right edge. Inherited, so it reaches the
+     markdown prose too; code blocks and tables keep their own scroll-x. */
+  overflow-wrap: anywhere;
 }
 .fb-shell .bubble.me {
   align-self: flex-end;

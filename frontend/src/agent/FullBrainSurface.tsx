@@ -9,7 +9,7 @@
 // to expand in place); each step is itself a pulldown showing its arguments,
 // result, and raw payload (docs/research/brain-tooluse-ux).
 
-import { type ReactNode, useEffect, useRef, useState } from "react";
+import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { api, chatAttachmentUrl } from "../api/client";
 import { FileIcon, ImageIcon } from "../components/icons";
 import { DOMAIN_COLOR } from "../notes/modes";
@@ -70,8 +70,11 @@ export function FullBrainSurface({
 
   // Keep the newest turn in view as text streams and tools land — each event
   // hands us a fresh `messages` array, so this re-runs through the whole stream.
+  // Layout effect (not useEffect) so the snap reads the just-committed height and
+  // fires before paint — during a fast turn the new text never flashes below the
+  // fold waiting for a frame to catch up.
   // biome-ignore lint/correctness/useExhaustiveDependencies: re-run per transcript change; the effect reads the DOM.
-  useEffect(() => {
+  useLayoutEffect(() => {
     const el = chatRef.current;
     if (el && stickRef.current) el.scrollTop = el.scrollHeight;
   }, [fb.messages]);
