@@ -30,7 +30,7 @@ from jbrain.image_gen.comfyui import (
     ImageGenInterrupted,
     OnProgress,
 )
-from jbrain.llm.local_gateway import LocalGatewayClient, LocalGatewayError
+from jbrain.llm.local_gateway import LocalGateway, LocalGatewayError
 from jbrain.models.images import GeneratedImage, GeneratedImageRepo
 from jbrain.storage import BlobStore
 
@@ -47,19 +47,47 @@ _DEFAULT_STEPS = 20
 # A bigint seed: positive and within the model's accepted range (random when absent).
 _SEED_BITS = 63
 
-# aspect → (width, height). Qwen-friendly multiples of 64; square is the default and
-# landscape is portrait inverted, so the three presets stay consistent.
-_ASPECTS: dict[str, tuple[int, int]] = {
-    "square": (1024, 1024),
-    "portrait": (768, 1024),
-    "landscape": (1024, 768),
+# aspect → (long_frac, short_frac) of a resolution's edge: square is 1:1, the other
+# two a 3:4 portrait/landscape. Scaled by the edge below they land on multiples of 64.
+_ASPECTS: dict[str, tuple[float, float]] = {
+    "square": (1.0, 1.0),
+    "portrait": (0.75, 1.0),
+    "landscape": (1.0, 0.75),
 }
 _DEFAULT_ASPECT = "square"
 
+# resolution → (generate square-edge px, edit total-megapixels). Medium is the model's
+# native ~1 MP and the default; `small` cuts the activation/VAE-decode memory peak (the
+# weights are fixed, but decode memory scales with pixel count) for headroom on a tight
+# unified-memory box; `large` trades that headroom back for more detail.
+_RESOLUTIONS: dict[str, tuple[int, float]] = {
+    "small": (768, 0.9),
+    "medium": (1024, 1.6),
+    "large": (1280, 2.5),
+}
+_DEFAULT_RESOLUTION = "medium"
 
-def _dims(aspect: str | None) -> tuple[int, int] | None:
-    """The (w, h) for an aspect, or None for an unrecognized value (handler errors)."""
-    return _ASPECTS.get(aspect or _DEFAULT_ASPECT)
+
+def _snap64(value: float) -> int:
+    """Round to the nearest multiple of 64 (>=64) — the latent grid Qwen expects."""
+    return max(64, round(value / 64) * 64)
+
+
+def _dims(aspect: str | None, resolution: str | None) -> tuple[int, int] | None:
+    """The (w, h) in px for an aspect at a resolution, snapped to multiples of 64;
+    None when either the aspect or the resolution is unrecognized (handler errors)."""
+    ratio = _ASPECTS.get(aspect or _DEFAULT_ASPECT)
+    res = _RESOLUTIONS.get(resolution or _DEFAULT_RESOLUTION)
+    if ratio is None or res is None:
+        return None
+    edge = res[0]
+    long_frac, short_frac = ratio
+    return _snap64(edge * long_frac), _snap64(edge * short_frac)
+
+
+def _megapixels(resolution: str | None) -> float:
+    """The edit path's total-pixel budget for a (pre-validated) resolution."""
+    return _RESOLUTIONS[resolution or _DEFAULT_RESOLUTION][1]
 
 
 def _resolve_seed(raw: object) -> int:
@@ -80,7 +108,7 @@ def _resolve_steps(raw: object) -> int:
 _STOPPED_MESSAGE = "Stopped the render — nothing was saved."
 
 
-async def _free_local_llms(gateway: LocalGatewayClient) -> None:
+async def _free_local_llms(gateway: LocalGateway) -> None:
     """Time-share unified memory: unload any resident local LLM before a render.
 
     On a single unified-memory box (Strix Halo) the LLM that drove this turn (~tens
@@ -139,7 +167,7 @@ def build_image_handlers(
     repo: GeneratedImageRepo,
     attachments: TurnAttachmentRepo,
     maker: async_sessionmaker[AsyncSession],
-    local_gateway: LocalGatewayClient,
+    local_gateway: LocalGateway,
 ) -> dict[str, ToolHandler]:
     """`generate_image` + `edit_image`. Wired only when image generation is configured
     (a localhost ComfyUI); the registry omits both tools otherwise (graceful degrade).
@@ -151,9 +179,12 @@ def build_image_handlers(
         prompt = str(arguments.get("prompt", "")).strip()
         if not prompt:
             return "generate_image needs a prompt."
-        dims = _dims(arguments.get("aspect"))
+        aspect, resolution = arguments.get("aspect"), arguments.get("resolution")
+        dims = _dims(aspect, resolution)
         if dims is None:
-            return "aspect must be one of: square, portrait, landscape."
+            if (aspect or _DEFAULT_ASPECT) not in _ASPECTS:
+                return "aspect must be one of: square, portrait, landscape."
+            return "resolution must be one of: small, medium, large."
         width, height = dims
         seed = _resolve_seed(arguments.get("seed"))
         steps = _resolve_steps(arguments.get("steps"))
@@ -229,9 +260,12 @@ def build_image_handlers(
         prompt = str(arguments.get("prompt", "")).strip()
         if not prompt:
             return "edit_image needs a prompt (the edit instruction)."
-        dims = _dims(arguments.get("aspect"))
+        aspect, resolution = arguments.get("aspect"), arguments.get("resolution")
+        dims = _dims(aspect, resolution)
         if dims is None:
-            return "aspect must be one of: square, portrait, landscape."
+            if (aspect or _DEFAULT_ASPECT) not in _ASPECTS:
+                return "aspect must be one of: square, portrait, landscape."
+            return "resolution must be one of: small, medium, large."
         source = await _source_bytes(arguments, ctx)
         if isinstance(source, str):
             return source  # a clean error — no row, no spend
@@ -240,7 +274,13 @@ def build_image_handlers(
         seed = _resolve_seed(arguments.get("seed"))
         steps = _resolve_steps(arguments.get("steps"))
         spec = EditSpec(
-            prompt=prompt, width=width, height=height, steps=steps, seed=seed, model=_EDIT_MODEL
+            prompt=prompt,
+            width=width,
+            height=height,
+            steps=steps,
+            seed=seed,
+            model=_EDIT_MODEL,
+            megapixels=_megapixels(resolution),
         )
         await _free_local_llms(local_gateway)
         try:

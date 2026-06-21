@@ -14,6 +14,10 @@ params:
       type: string
       enum: [square, portrait, landscape]
       description: The image shape. Defaults to square.
+    resolution:
+      type: string
+      enum: [small, medium, large]
+      description: The image size. Defaults to medium (the model's native ~1MP). Use small for a quicker, lighter render and large for more detail.
     steps:
       type: integer
       description: How many diffusion steps to run (optional; a sane default is used when omitted). More steps is slower, not always better.

@@ -137,6 +137,38 @@ async def test_generate_inserts_row_and_returns_view(maker: async_sessionmaker) 
     assert fake.last_gen is not None and fake.last_gen.seed == row[1]  # resolved seed recorded
 
 
+async def test_generate_resolution_scales_the_rendered_dims(maker: async_sessionmaker) -> None:
+    # `small` renders below the native default — the lighter latent that buys
+    # unified-memory headroom — and the chosen dims reach both the spec and the row.
+    owner = await _owner(maker)
+    fake = FakeImageGen()
+    handlers = await _handlers(maker, owner, fake)
+
+    out = await handlers["generate_image"](
+        {"prompt": "a teapot", "aspect": "square", "resolution": "small"}, _ctx(owner)
+    )
+
+    assert isinstance(out, ToolOutput) and out.view is not None
+    assert (out.view.data["width"], out.view.data["height"]) == (768, 768)
+    assert fake.last_gen is not None
+    assert (fake.last_gen.width, fake.last_gen.height) == (768, 768)
+
+
+async def test_generate_rejects_an_unknown_resolution(maker: async_sessionmaker) -> None:
+    # A bad resolution is a clean tool-error string — no row, no spend.
+    owner = await _owner(maker)
+    handlers = await _handlers(maker, owner, FakeImageGen())
+
+    out = await handlers["generate_image"](
+        {"prompt": "a teapot", "resolution": "enormous"}, _ctx(owner)
+    )
+
+    assert out == "resolution must be one of: small, medium, large."
+    async with scoped_session(maker, owner) as s:
+        count = (await s.execute(text("SELECT count(*) FROM app.generated_images"))).scalar()
+    assert count == 0
+
+
 async def test_edit_by_generated_id_records_source(maker: async_sessionmaker) -> None:
     owner = await _owner(maker)
     fake = FakeImageGen()
