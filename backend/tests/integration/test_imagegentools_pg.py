@@ -165,6 +165,27 @@ async def test_generate_inserts_row_and_returns_view(maker: async_sessionmaker) 
     assert data["seed"] == row[1]  # the view's seed is the resolved/recorded one
 
 
+async def test_generate_plumbs_effort_and_negative_prompt_into_the_spec(
+    maker: async_sessionmaker,
+) -> None:
+    """effort maps to the diffusion step count and a negative prompt rides the spec; both
+    flow from the tool arguments through to the image model."""
+    owner = await _owner(maker)
+    fake = FakeImageGen()
+    handlers = await _handlers(maker, owner, fake)
+
+    await handlers["generate_image"](
+        {"prompt": "a fox", "effort": 1, "negative_prompt": "blurry, text"}, _ctx(owner)
+    )
+    assert fake.last_gen is not None
+    assert fake.last_gen.steps == 7  # effort 1 → a 7-step draft
+    assert fake.last_gen.negative_prompt == "blurry, text"
+
+    # Absent effort → the 20-step normal default; absent negative prompt → empty.
+    await handlers["generate_image"]({"prompt": "a fox"}, _ctx(owner))
+    assert fake.last_gen.steps == 20 and fake.last_gen.negative_prompt == ""
+
+
 async def test_generate_frees_comfyui_after_the_render(maker: async_sessionmaker) -> None:
     # After the image is in hand, ComfyUI's resident model is unloaded so its ~39 GB
     # returns to the unified pool (for the reply's LLM reload / a follow-up edit).

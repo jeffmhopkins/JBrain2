@@ -1,6 +1,6 @@
 ---
 name: edit_image
-version: 3
+version: 4
 permission: web
 side_effecting: true
 cost_class: expensive
@@ -10,6 +10,9 @@ params:
     prompt:
       type: string
       description: The edit instruction — what to change, e.g. "make it night-time" or "add a red hat".
+    negative_prompt:
+      type: string
+      description: What to keep OUT of the result, e.g. "blurry, extra fingers, text, watermark" (optional).
     source_image_id:
       type: string
       description: The id of an image you generated earlier this chat to edit.
@@ -34,9 +37,9 @@ params:
       type: string
       enum: [small, medium, large]
       description: The output size. Defaults to medium. Use small for a quicker, lighter render and large for more detail.
-    steps:
+    effort:
       type: integer
-      description: How many diffusion steps to run (optional; a sane default is used when omitted).
+      description: Quality/time tradeoff, 0–10. 1 is a quick draft, 5 is normal high quality (the default), 10 is maximum detail. Higher means more diffusion steps and a slower render — preview at a low effort, then re-run at the same seed with higher effort to finalize.
     seed:
       type: integer
       description: A fixed seed for a repeatable result (optional). When omitted a random seed is chosen and recorded.

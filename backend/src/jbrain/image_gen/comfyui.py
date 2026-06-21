@@ -63,25 +63,33 @@ class _Binding:
     `latent` is generate-only (the edit graph derives its latent from the
     uploaded source); `input_image` is edit-only (the LoadImage node)."""
 
-    prompt: str  # the positive prompt node — the negative node is left untouched
+    prompt: str  # the positive prompt node
     sampler: str  # KSampler — holds seed + steps
     latent: str | None = None  # Empty*LatentImage — width/height (generate only)
     input_image: str | None = None  # LoadImage — server-side name (edit only)
     total_pixels: str | None = None  # ImageScaleToTotalPixels — megapixels (edit only)
+    # The negative prompt node — set only when the caller passes a negative prompt;
+    # left empty (the graph's authored default) otherwise.
+    negative: str | None = None
     # The prompt node's text input key differs by graph: CLIPTextEncode uses
     # "text", the edit graph's TextEncodeQwenImageEditPlus uses "prompt".
     prompt_key: str = "text"
 
 
-# Qwen-Image text->image, validated on the Strix Halo box: prompt=6, KSampler=3,
-# EmptySD3LatentImage=58 (the loaders + ModelSamplingAuraFlow are left as authored).
-_GEN_BINDING = _Binding(prompt="6", sampler="3", latent="58")
-# Qwen-Image-Edit image->image, exported from the box: the prompt is a
-# TextEncodeQwenImageEditPlus (68, key "prompt"), KSampler is 65, LoadImage is 41,
-# and ImageScaleToTotalPixels (79) sets the output's total-pixel budget. The rest of
-# the reference-latent pipeline (VAEEncode->FluxKontext) is left as authored.
+# Qwen-Image text->image, validated on the Strix Halo box: prompt=6, negative=7,
+# KSampler=3, EmptySD3LatentImage=58 (the loaders + ModelSamplingAuraFlow are authored).
+_GEN_BINDING = _Binding(prompt="6", sampler="3", latent="58", negative="7")
+# Qwen-Image-Edit image->image, exported from the box: the positive prompt is a
+# TextEncodeQwenImageEditPlus (68, key "prompt"), the negative its sibling (69), KSampler
+# is 65, LoadImage is 41, and ImageScaleToTotalPixels (79) sets the output's total-pixel
+# budget. The rest of the reference-latent pipeline (VAEEncode->FluxKontext) is authored.
 _EDIT_BINDING = _Binding(
-    prompt="68", sampler="65", input_image="41", total_pixels="79", prompt_key="prompt"
+    prompt="68",
+    sampler="65",
+    input_image="41",
+    total_pixels="79",
+    negative="69",
+    prompt_key="prompt",
 )
 
 _INPUT_IMAGE_KEY = "image"
@@ -120,6 +128,7 @@ class GenSpec:
     steps: int
     seed: int
     model: str
+    negative_prompt: str = ""  # what to avoid; empty leaves the graph's authored default
 
 
 @dataclass(frozen=True)
@@ -133,6 +142,7 @@ class EditSpec:
     seed: int
     model: str
     megapixels: float  # the output's total-pixel budget (the source is scaled to it)
+    negative_prompt: str = ""  # what to avoid; empty leaves the graph's authored default
 
 
 class ImageGen(Protocol):
@@ -324,6 +334,10 @@ class ComfyUiImageGen:
         self, workflow: dict[str, Any], spec: GenSpec | EditSpec, binding: _Binding
     ) -> None:
         workflow[binding.prompt]["inputs"][binding.prompt_key] = spec.prompt
+        # Only overwrite the negative node when a negative prompt was given, so an empty
+        # one leaves the graph's authored default untouched.
+        if binding.negative is not None and spec.negative_prompt:
+            workflow[binding.negative]["inputs"][binding.prompt_key] = spec.negative_prompt
         sampler = workflow[binding.sampler]["inputs"]
         sampler["seed"] = spec.seed
         sampler["steps"] = spec.steps
