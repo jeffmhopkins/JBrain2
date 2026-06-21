@@ -250,9 +250,15 @@ services:
     # the live-generation pipeline relays to the chat as a progressive preview
     # (docs/IMAGE_GEN_LIVE_PLAN.md). Cheap/low-fidelity; taesd is sharper but loads
     # a small decoder.
+    # --disable-smart-memory: on gfx1151 the fp8 model is upcast to ~39 GB bf16 and,
+    # by default, ComfyUI keeps it resident through the VAE decode — on unified
+    # memory that tips a 128 GB box into swap and OOM-kills at decode (the "errors at
+    # 20/20"). Disabling the model cache makes ComfyUI free the diffusion model after
+    # sampling, before the decode, reclaiming the headroom the decode needs. Costs a
+    # model reload (~10-15 s) on the next generation.
     command:
       ["python", "/opt/ComfyUI/main.py", "--listen", "0.0.0.0", "--port", "8188",
-       "--preview-method", "auto"]
+       "--preview-method", "auto", "--disable-smart-memory"]
     devices:
       - /dev/kfd:/dev/kfd
       - /dev/dri:/dev/dri
