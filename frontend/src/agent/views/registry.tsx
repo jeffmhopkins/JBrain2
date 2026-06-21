@@ -579,7 +579,6 @@ function EditCompare({
           height={height}
         />
       </div>
-      <span className="tv-genimg-kind kind-edit">edited</span>
       <span className="tv-genimg-lbl b">BEFORE</span>
       <span className="tv-genimg-lbl a">AFTER</span>
       <div className="tv-genimg-handle" aria-hidden="true" />

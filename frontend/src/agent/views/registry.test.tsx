@@ -318,6 +318,8 @@ describe("ToolView registry", () => {
     expect(getByText("BEFORE")).toBeInTheDocument();
     expect(getByText("AFTER")).toBeInTheDocument();
     expect(getByText("768 × 1024 · qwen-image-edit")).toBeInTheDocument();
+    // No corner kind pill — the BEFORE/AFTER labels already say it's an edit.
+    expect(container.querySelector(".tv-genimg-kind")).toBeNull();
   });
 
   it("the edit toggle switches between Compare (slider) and a zoomable Edited view", () => {
