@@ -36,8 +36,6 @@ log = structlog.get_logger()
 # turns it into an ephemeral ToolProgressEvent; it must never raise into the driver.
 OnProgress = Callable[[int, int, bytes | None], None]
 
-# The sampling fractions a preview is emitted at — "update the image at 25% passes".
-_PREVIEW_BUCKETS: tuple[float, ...] = (0.25, 0.5, 0.75, 1.0)
 # ComfyUI's binary preview frame: [uint32 event][uint32 image-type][image bytes];
 # event type 1 is PREVIEW_IMAGE.
 _WS_PREVIEW_EVENT = 1
@@ -228,10 +226,16 @@ class ComfyUiImageGen:
     async def _drive_ws(
         self, ws: AsyncIterable[str | bytes], prompt_id: str, on_progress: OnProgress
     ) -> None:
-        """Relay sampling progress: emit `on_progress` once per 25% boundary with the
+        """Relay sampling progress: emit `on_progress` once per sampler step with the
         latest preview, and return when our prompt finishes (executing → node null).
-        Raises ImageGenInterrupted on a stop, ImageGenError on a run error."""
-        emitted: set[float] = set()
+        Raises ImageGenInterrupted on a stop, ImageGenError on a run error.
+
+        Per-step is cheap: ComfyUI already decodes a preview (a fast TAESD/latent2rgb
+        approximation, not the full VAE) and sends a progress + b_preview frame every
+        step over /ws, so relaying each one is just a base64 + SSE — no extra render
+        cost. We only suppress a repeat at the same step so a duplicate message isn't a
+        redundant tick."""
+        last_value = -1
         preview: bytes | None = None
         async for raw in ws:
             if isinstance(raw, bytes | bytearray):
@@ -251,15 +255,9 @@ class ComfyUiImageGen:
             if mtype == "progress":
                 total = int(data.get("max") or 0)
                 value = int(data.get("value") or 0)
-                if total > 0:
-                    pct = value / total
-                    # Emit at most ONCE per message: a step that jumps past several
-                    # 25% boundaries (a few-step render) still yields one tick, not a
-                    # redundant burst at the same step/preview.
-                    crossed = [b for b in _PREVIEW_BUCKETS if b not in emitted and pct >= b]
-                    if crossed:
-                        emitted.update(crossed)
-                        on_progress(value, total, preview)
+                if total > 0 and value != last_value:
+                    last_value = value
+                    on_progress(value, total, preview)
             elif mtype == "execution_interrupted":
                 raise ImageGenInterrupted("the render was stopped")
             elif mtype == "execution_error":
