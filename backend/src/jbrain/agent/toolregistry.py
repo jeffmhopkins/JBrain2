@@ -134,21 +134,37 @@ class ToolRegistry:
         )
 
 
-def load_registry(tools_dir: Path, handlers: Mapping[str, ToolHandler]) -> ToolRegistry:
+def load_registry(
+    tools_dir: Path,
+    handlers: Mapping[str, ToolHandler],
+    *,
+    optional: Collection[str] = (),
+) -> ToolRegistry:
     """Load every `.tool` sidecar under `tools_dir` and bind it to its handler.
 
     Fails (ToolRegistryError) if a sidecar has no handler or a handler has no
     sidecar — the two must match exactly, so a tool can never be advertised to the
     model without code to run it, nor a handler shipped the model cannot reach.
+
+    `optional` names sidecars that may be absent when their feature is unconfigured:
+    such a sidecar without a handler is SKIPPED (not loaded) rather than failing,
+    so a feature like image generation can be gated off entirely (graceful degrade,
+    docs/IMAGE_GEN_PLAN.md). The strict pairing still holds for every other sidecar,
+    and a handler still always needs a sidecar.
     """
     loaded = [load_tool(path) for path in sorted(tools_dir.glob("*.tool"))]
-    sidecar_names = {tf.spec.name for tf in loaded}
     handler_names = set(handlers)
+    optional_set = set(optional)
+    # An optional sidecar with no handler is dropped; everything else must pair.
+    kept = [
+        tf for tf in loaded if tf.spec.name in handler_names or tf.spec.name not in optional_set
+    ]
+    sidecar_names = {tf.spec.name for tf in kept}
     if missing_handlers := sidecar_names - handler_names:
         raise ToolRegistryError(f"sidecars without handlers: {sorted(missing_handlers)}")
     if missing_sidecars := handler_names - sidecar_names:
         raise ToolRegistryError(f"handlers without sidecars: {sorted(missing_sidecars)}")
     # Duplicate sidecar names (same name in two files) surface in ToolRegistry.
     return ToolRegistry(
-        [RegisteredTool(toolfile=tf, handler=handlers[tf.spec.name]) for tf in loaded]
+        [RegisteredTool(toolfile=tf, handler=handlers[tf.spec.name]) for tf in kept]
     )

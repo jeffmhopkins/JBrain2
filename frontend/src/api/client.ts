@@ -331,6 +331,34 @@ export interface LlmSettingsPatch {
   tasks: Record<string, LlmTaskPatch>;
 }
 
+/** One on-box image model for the settings drawer (GET /api/settings/image). */
+export interface ImageModelInfo {
+  id: string;
+  label: string;
+  /** "generate" (text→image) or "edit" (image→image). */
+  kind: string;
+  /** Offered to jerv (in the provisioned set) on this box. */
+  enabled: boolean;
+  recommended: boolean;
+  /** Catalog's nominal download estimate. */
+  size_gb: number;
+  /** Real measured on-disk size, or null when not provisioned here. */
+  disk_gb: number | null;
+  /** Resident unified-memory footprint estimate — the RAM-budget reservation. */
+  vram_gb: number;
+  note: string;
+}
+
+/** The ComfyUI image service's state — its catalog models, reachability, and the
+ * real VRAM gauge from /system_stats (shares the LLM drawer's unified-memory bar). */
+export interface ImageSettings {
+  enabled: boolean;
+  reachable: boolean;
+  models: ImageModelInfo[];
+  /** Real VRAM total/free from ComfyUI; null when unreachable or unreported. */
+  memory: { total_gb: number; free_gb: number } | null;
+}
+
 /** One attendee on an appointment — name plus optional iCalendar params. */
 export interface AttendeeOut {
   name: string;
@@ -1053,6 +1081,51 @@ export function exportFileUrl(name: string): string {
   return `/api/ops/export/file/${encodeURIComponent(name)}`;
 }
 
+// Offline stand-ins for the generated-image bytes: an `<img src>` never flows
+// through `request()`/`mockFetch`, so in mock dev the by-id URLs would 404. The
+// url helpers below swap in these inline-SVG data: URIs when MOCK_MODE is on,
+// keyed by the same ids the mock fixture serves — never used in real builds.
+// (These hex are placeholder image *content*, not theme styling.)
+const svgDataUri = (svg: string): string => `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
+
+const MOCK_GENIMG: Record<string, string> = {
+  "mock-genimg-lighthouse": svgDataUri(
+    `<svg xmlns='http://www.w3.org/2000/svg' width='768' height='1024'>
+      <defs><linearGradient id='g' x1='0' y1='0' x2='0' y2='1'>
+        <stop offset='0' stop-color='#7a6a9a'/><stop offset='.55' stop-color='#c98a8f'/>
+        <stop offset='1' stop-color='#e9c79a'/></linearGradient></defs>
+      <rect width='768' height='1024' fill='url(#g)'/>
+      <rect x='600' y='760' width='40' height='180' rx='6' fill='#f4ead2'/>
+      <circle cx='620' cy='745' r='26' fill='#ffe9b0'/>
+      <circle cx='200' cy='180' r='90' fill='#ffe9b0' opacity='.55'/></svg>`,
+  ),
+  "mock-genimg-lighthouse-stormy": svgDataUri(
+    `<svg xmlns='http://www.w3.org/2000/svg' width='768' height='1024'>
+      <defs><linearGradient id='g' x1='0' y1='0' x2='0' y2='1'>
+        <stop offset='0' stop-color='#2b3242'/><stop offset='.6' stop-color='#3a4a5e'/>
+        <stop offset='1' stop-color='#5a4b66'/></linearGradient></defs>
+      <rect width='768' height='1024' fill='url(#g)'/>
+      <polygon points='620,745 540,1024 700,1024' fill='#ffe9b0' opacity='.5'/>
+      <rect x='600' y='760' width='40' height='180' rx='6' fill='#dcd2c0'/>
+      <circle cx='620' cy='745' r='26' fill='#ffe9b0'/></svg>`,
+  ),
+};
+
+/** Source URL for the served result of a generated image (data-only contract:
+ * the tool-view payload carries only `image_id`; the component builds this). */
+export function generatedImageUrl(id: string): string {
+  if (MOCK_MODE && MOCK_GENIMG[id]) return MOCK_GENIMG[id];
+  return `/api/images/generated/${encodeURIComponent(id)}`;
+}
+
+/** Source ("before") URL for an edit: the original bytes the edit started from,
+ * resolved by the same id on the backend. */
+export function generatedImageSourceUrl(id: string): string {
+  if (MOCK_MODE && MOCK_GENIMG["mock-genimg-lighthouse"] && id === "mock-genimg-lighthouse-stormy")
+    return MOCK_GENIMG["mock-genimg-lighthouse"];
+  return `/api/images/generated/${encodeURIComponent(id)}/source`;
+}
+
 export const api = {
   async login(ownerKey: string, deviceLabel: string): Promise<void> {
     await request(
@@ -1068,6 +1141,12 @@ export const api = {
 
   async logout(): Promise<void> {
     await request("/api/auth/session", { method: "DELETE" });
+  },
+
+  /** Stop the in-flight image render (the chat "Stop render" control). Best-effort:
+   * a 409 (hosting off) / 502 (gateway) just means the render runs to completion. */
+  async interruptImageRender(): Promise<void> {
+    await request("/api/settings/image/interrupt", { method: "POST" });
   },
 
   // Idempotent on client_id: retrying after a lost response returns the
@@ -1203,6 +1282,28 @@ export const api = {
       { method: on ? "POST" : "DELETE" },
     );
     return (await response.json()) as LlmSettings;
+  },
+
+  // ----- On-box image service (ComfyUI), surfaced in the same LLM drawer -----
+  async getImageSettings(): Promise<ImageSettings> {
+    const response = await request("/api/settings/image");
+    return (await response.json()) as ImageSettings;
+  },
+
+  /** Unload cached models + free the service's VRAM; returns the refreshed snapshot. */
+  async freeImageMemory(): Promise<ImageSettings> {
+    const response = await request("/api/settings/image/free", { method: "POST" });
+    return (await response.json()) as ImageSettings;
+  },
+
+  /** Start the (provisioned) ComfyUI service via the supervisor. */
+  async startImageService(): Promise<void> {
+    await request("/api/settings/image/service/start", { method: "POST" });
+  },
+
+  /** Stop the ComfyUI service via the supervisor (frees its memory by halting it). */
+  async stopImageService(): Promise<void> {
+    await request("/api/settings/image/service/stop", { method: "POST" });
   },
 
   // ----- Appointments ICS feed (a revocable, read-only subscribe URL) -----

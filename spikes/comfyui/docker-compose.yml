@@ -1,0 +1,36 @@
+# TRY-IT-ONCE spike — NOT production (see README.md).
+# Goal: prove a ROCm ComfyUI runs under docker-compose on this gfx1151 box and
+# serves on 127.0.0.1:8188. The image is kyuz0's (proven on Strix Halo hardware);
+# we run it directly under Docker instead of via the toolbox CLI — that "does the
+# toolbox image work as a plain compose service?" is exactly what we're testing.
+#
+# Reads VIDEO_GID / RENDER_GID from .env (see README Step 1).
+
+services:
+  comfyui:
+    image: docker.io/kyuz0/amd-strix-halo-comfyui:latest
+    # AMD GPU + compute device access (same flags the kyuz0 toolbox uses).
+    devices:
+      - /dev/kfd
+      - /dev/dri
+    group_add:
+      - "${VIDEO_GID}"
+      - "${RENDER_GID}"
+    security_opt:
+      - seccomp:unconfined
+    environment:
+      # Tell ROCm to treat the RDNA 3.5 iGPU as gfx1151; without this it CPU-falls-back.
+      - HSA_OVERRIDE_GFX_VERSION=11.5.1
+    ports:
+      - "127.0.0.1:8188:8188"
+    volumes:
+      # ⚠️ GUESS: the ComfyUI install path inside the image. If wrong, find it with
+      #   docker run --rm -it docker.io/kyuz0/amd-strix-halo-comfyui:latest bash
+      #   find / -name main.py -path '*ComfyUI*'
+      # and fix this target + the command path below to match.
+      - ./models:/opt/ComfyUI/models
+    # ⚠️ GUESS: launch ComfyUI as a service. The image may have its own start script
+    # under /opt instead — see README. --listen 0.0.0.0 so the published port reaches it.
+    command: >
+      bash -lc "python /opt/ComfyUI/main.py --listen 0.0.0.0 --port 8188"
+    restart: "no"

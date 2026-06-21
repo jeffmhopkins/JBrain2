@@ -44,6 +44,15 @@ class RestartResponse(BaseModel):
     restarting: list[str]
 
 
+class ServiceRequest(BaseModel):
+    service: str
+
+
+class ServiceActionResponse(BaseModel):
+    service: str
+    action: str  # "start" | "stop"
+
+
 class ContainerStatus(BaseModel):
     service: str
     state: str
@@ -167,6 +176,18 @@ def create_app(settings: Settings, gateway: DockerGateway) -> FastAPI:
         else:
             gateway.restart(body.service)
         return RestartResponse(restarting=[body.service])
+
+    @authed.post("/start", status_code=202)
+    def start_service(body: ServiceRequest) -> ServiceActionResponse:
+        # Toggle an existing-but-stopped service on (the comfyui profile service).
+        # An unknown/never-created service raises UnknownServiceError -> 404.
+        gateway.start(body.service)
+        return ServiceActionResponse(service=body.service, action="start")
+
+    @authed.post("/stop", status_code=202)
+    def stop_service(body: ServiceRequest) -> ServiceActionResponse:
+        gateway.stop(body.service)
+        return ServiceActionResponse(service=body.service, action="stop")
 
     @authed.get("/metrics")
     def metrics() -> MetricsResponse:

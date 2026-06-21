@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Live image gen — A · image-as-progress</title>
+<style>
+  :root{
+    --bg:#0e0f11; --surface:#17181b; --surface-2:#1e2024; --border:#26282c;
+    --text:#e6e7e9; --text-2:#9a9da3; --text-3:#5c5f66;
+    --steel:#7fa7c9; --green:#8fbc9a; --amber:#c9a36a; --rose:#cf8a8f;
+    --r-card:16px; --r-input:12px;
+    font-size:15px;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    display:flex;justify-content:center;padding:32px 16px}
+  .col{width:100%;max-width:440px}
+  .variant{font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--text-3);
+    margin:0 0 4px}
+  h1{font-size:18px;margin:0 0 2px}
+  .sub{color:var(--text-2);font-size:13px;margin:0 0 22px}
+
+  /* a chat turn */
+  .turn{margin-bottom:18px}
+  .who{font-size:12px;color:var(--text-3);margin:0 0 6px}
+  .bubble{background:var(--surface);border:1px solid var(--border);border-radius:14px;
+    padding:11px 13px;font-size:14px;line-height:1.45}
+  .bubble.me{background:var(--surface-2)}
+
+  /* the generating image: the image IS the progress indicator */
+  .gen{position:relative;border-radius:var(--r-card);overflow:hidden;border:1px solid var(--border);
+    aspect-ratio:1/1;background:#0a0b0d}
+  .gen .frame{position:absolute;inset:0;
+    background:
+      radial-gradient(60% 50% at 50% 45%, rgba(255,150,60,.9), rgba(255,90,30,.25) 40%, transparent 70%),
+      radial-gradient(40% 40% at 22% 70%, rgba(120,200,255,.5), transparent 70%),
+      radial-gradient(40% 40% at 80% 30%, rgba(120,200,255,.4), transparent 70%),
+      linear-gradient(160deg,#0d1420,#0a0b0d 70%);
+    transition:filter .5s ease, transform .5s ease, opacity .4s;
+    filter:blur(26px) saturate(.7) brightness(.7);transform:scale(1.08)}
+  /* faint scanline/noise so early frames read as "preview" */
+  .gen .grain{position:absolute;inset:0;opacity:.5;mix-blend-mode:overlay;
+    background-image:repeating-linear-gradient(0deg,rgba(255,255,255,.05) 0 1px,transparent 1px 3px);
+    transition:opacity .5s}
+  .gen.done .frame{filter:none;transform:none}
+  .gen.done .grain{opacity:0}
+  .gen.stopped .frame{filter:blur(18px) saturate(.4) brightness(.5)}
+
+  /* overlay: step + slim progress bar along the bottom; stop in the corner */
+  .gen .overlay{position:absolute;left:0;right:0;bottom:0;padding:9px 11px 10px;
+    background:linear-gradient(0deg,rgba(0,0,0,.72),transparent);
+    display:flex;align-items:center;gap:10px}
+  .gen .step{font-size:12px;color:#fff;font-variant-numeric:tabular-nums;text-shadow:0 1px 2px rgba(0,0,0,.6)}
+  .gen .pct{margin-left:auto;font-size:12px;color:#fff;opacity:.85;font-variant-numeric:tabular-nums}
+  .bar{position:absolute;left:0;right:0;bottom:0;height:3px;background:rgba(255,255,255,.14)}
+  .bar i{display:block;height:100%;width:0;background:var(--amber);transition:width .5s ease}
+  .gen.done .bar i{background:var(--green)}
+  .stop{position:absolute;top:9px;right:9px;display:flex;align-items:center;gap:6px;
+    background:rgba(20,21,24,.78);border:1px solid rgba(255,255,255,.16);color:#fff;
+    border-radius:999px;padding:5px 11px 5px 9px;font-size:12px;cursor:pointer;backdrop-filter:blur(4px)}
+  .stop:hover{background:rgba(207,138,143,.85);border-color:transparent}
+  .stop .sq{width:8px;height:8px;border-radius:2px;background:currentColor}
+  .gen.done .stop,.gen.stopped .stop{display:none}
+  .cap{display:flex;gap:8px;align-items:center;margin-top:7px;font-size:12px;color:var(--text-2)}
+  .cap .seed{margin-left:auto;color:var(--text-3)}
+  .stopnote{color:var(--rose)}
+
+  .controls{display:flex;gap:8px;margin-top:26px;border-top:1px solid var(--border);padding-top:16px}
+  button.demo{background:var(--surface-2);border:1px solid var(--border);color:var(--text);
+    border-radius:var(--r-input);padding:8px 14px;font-size:13px;cursor:pointer}
+  button.demo:hover{border-color:var(--steel)}
+  .note{font-size:12px;color:var(--text-3);margin-top:14px;line-height:1.5}
+</style>
+</head>
+<body>
+<div class="col">
+  <p class="variant">Variant A</p>
+  <h1>Image-as-progress (inline)</h1>
+  <p class="sub">The preview fills the final image slot and sharpens at each pass; a slim bar + a corner Stop. Least chrome — the picture is the progress.</p>
+
+  <div class="turn">
+    <p class="who">you</p>
+    <div class="bubble me">make a cyberpunk CPU with electric arcs</div>
+  </div>
+
+  <div class="turn">
+    <p class="who">jerv</p>
+    <div class="bubble">On it — generating now.</div>
+  </div>
+
+  <div class="gen" id="gen">
+    <div class="frame"></div>
+    <div class="grain"></div>
+    <button class="stop" id="stopBtn"><span class="sq"></span>Stop</button>
+    <div class="overlay">
+      <span class="step" id="step">starting…</span>
+      <span class="pct" id="pct"></span>
+    </div>
+    <div class="bar"><i id="barFill"></i></div>
+  </div>
+  <div class="cap"><span id="cap">Qwen-Image · 1328×1328</span><span class="seed">seed 30425473</span></div>
+
+  <div class="controls">
+    <button class="demo" onclick="run()">▶ Simulate render</button>
+    <button class="demo" onclick="reset()">↺ Reset</button>
+  </div>
+  <p class="note">Preview frames arrive over the chat SSE at 25 / 50 / 75 / 100%. Stop calls ComfyUI <code>/interrupt</code>; the turn keeps going with a “stopped” note. The final image is the real blob-store artifact.</p>
+</div>
+
+<script>
+  const gen=document.getElementById('gen'),frame=gen.querySelector('.frame');
+  const stepEl=document.getElementById('step'),pctEl=document.getElementById('pct'),bar=document.getElementById('barFill'),cap=document.getElementById('cap');
+  let timer=null,stopped=false;
+  const STAGES=[{p:25,s:5,blur:18,b:.8},{p:50,s:10,blur:11,b:.92},{p:75,s:15,blur:5,b:1},{p:100,s:20,blur:0,b:1}];
+  function reset(){clearTimeout(timer);stopped=false;gen.className='gen';frame.style.filter='blur(26px) saturate(.7) brightness(.7)';frame.style.transform='scale(1.08)';bar.style.width='0';stepEl.textContent='starting…';pctEl.textContent='';cap.innerHTML='Qwen-Image · 1328×1328';document.getElementById('stopBtn').style.display='';}
+  function run(){reset();let i=0;const tick=()=>{if(stopped)return;const st=STAGES[i];frame.style.filter=`blur(${st.blur}px) saturate(${.7+ .3*st.b}) brightness(${.7+.3*st.b})`;frame.style.transform=`scale(${1.08-0.08*(st.p/100)})`;bar.style.width=st.p+'%';stepEl.textContent=`step ${st.s} / 20`;pctEl.textContent=st.p+'%';if(st.p===100){gen.classList.add('done');stepEl.textContent='done';}i++;if(i<STAGES.length)timer=setTimeout(tick,950);};timer=setTimeout(tick,500);}
+  document.getElementById('stopBtn').onclick=()=>{stopped=true;clearTimeout(timer);gen.classList.add('stopped');stepEl.textContent='stopped';pctEl.textContent='';cap.innerHTML='<span class="stopnote">Render stopped — nothing saved.</span>';};
+  run();
+</script>
+</body>
+</html>

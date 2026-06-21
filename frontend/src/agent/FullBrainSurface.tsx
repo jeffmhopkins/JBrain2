@@ -10,7 +10,7 @@
 // result, and raw payload (docs/research/brain-tooluse-ux).
 
 import { type ReactNode, useEffect, useRef, useState } from "react";
-import { chatAttachmentUrl } from "../api/client";
+import { api, chatAttachmentUrl } from "../api/client";
 import { FileIcon, ImageIcon } from "../components/icons";
 import { DOMAIN_COLOR } from "../notes/modes";
 import { ProposalTree } from "./ProposalTree";
@@ -276,12 +276,15 @@ function Bubble({
       </div>
     );
   }
+  // In-flight image generations with a live preview — they keep the bubble visible
+  // (below) and render the sharpening preview + Stop ahead of any answer text.
+  const livePreviews = message.tools.filter((t) => t.progress && t.ok === undefined);
   // While the turn is still streaming, hold the whole bubble until the answer
   // text begins — tool calls alone shouldn't pop an empty Worked block ahead of
-  // any prose. EXCEPT a reasoning model: show the bubble as soon as thinking
-  // streams, so the "Thinking…" disclosure is live. The status line above the
-  // omnibox still carries "what it's doing" until the typed answer lands.
-  if (message.streaming && !message.text && !message.reasoning) {
+  // any prose. EXCEPT a reasoning model (show the live "Thinking…" disclosure) or a
+  // running image render (show its live preview). The status line above the omnibox
+  // still carries "what it's doing" until the typed answer lands.
+  if (message.streaming && !message.text && !message.reasoning && livePreviews.length === 0) {
     return null;
   }
   // A settled turn with nothing to show (no text, tools, views, or reasoning)
@@ -337,6 +340,9 @@ function Bubble({
           streaming={message.streaming}
         />
       )}
+      {livePreviews.map((t) => (
+        <GeneratingPreview key={t.id} tool={t} />
+      ))}
       {message.views.map((v, i) => (
         // biome-ignore lint/suspicious/noArrayIndexKey: views append in order
         <ToolView key={i} payload={v} />
@@ -619,6 +625,65 @@ function GeneralKnowledgeNote(): ReactNode {
 // diff, takes approve/reject in place, reflects live state, AND notifies the
 // agent of the outcome so it can follow up) is a separate, larger change that
 // needs a backend feedback loop; it is intentionally not built here.
+// aspect arg → CSS ratio, so the preview frame holds a stable size before the
+// first preview frame arrives (matching the image-gen tool's three presets).
+const PREVIEW_ASPECT: Record<string, string> = {
+  square: "1 / 1",
+  portrait: "3 / 4",
+  landscape: "4 / 3",
+};
+
+// The live "image-as-progress" surface (docs/mocks/image-gen-live, Variant A): the
+// preview fills the final image slot and sharpens (blur → 0) as the sampler
+// advances, with a slim progress bar and a corner Stop. Replaced by the final
+// generated_image view the moment the tool's result lands.
+function GeneratingPreview({ tool }: { tool: ToolActivity }): ReactNode {
+  const [stopping, setStopping] = useState(false);
+  const p = tool.progress;
+  if (!p) return null;
+  const pct = p.total > 0 ? Math.round((p.step / p.total) * 100) : 0;
+  const blur = Math.max(0, 26 * (1 - pct / 100));
+  const aspect = PREVIEW_ASPECT[String(tool.args?.aspect ?? "square")] ?? "1 / 1";
+
+  const stop = () => {
+    setStopping(true);
+    // Best-effort — a 409/502 just means the render finishes; the result lands either way.
+    void api.interruptImageRender().catch(() => {});
+  };
+
+  return (
+    <div className="fb-genprev">
+      <div className="fb-genprev-frame" style={{ aspectRatio: aspect }}>
+        {p.preview ? (
+          <img
+            className="fb-genprev-img"
+            src={p.preview}
+            alt=""
+            style={{ filter: `blur(${blur}px)` }}
+          />
+        ) : (
+          <div className="fb-genprev-skeleton" />
+        )}
+        {!stopping && (
+          <button type="button" className="fb-genprev-stop" onClick={stop}>
+            <span className="fb-genprev-sq" aria-hidden="true" />
+            Stop
+          </button>
+        )}
+        <div className="fb-genprev-overlay">
+          <span className="fb-genprev-step">
+            {stopping ? "stopping…" : `step ${p.step} / ${p.total}`}
+          </span>
+          <span className="fb-genprev-pct">{pct}%</span>
+        </div>
+        <div className="fb-genprev-bar">
+          <i style={{ width: `${pct}%` }} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ProposalChip({
   proposal,
   onOpen,

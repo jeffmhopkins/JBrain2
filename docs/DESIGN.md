@@ -834,6 +834,30 @@ and derived `place_card` stats are owner-gated. The data still comes from an
 RLS-scoped, full-owner-gated tool call. No other domain gets a tile view without
 its own decision.
 
+### `generated_image` tool-view (settled in a three-way GUI review — reference mock: `docs/mocks/genimage-c-edit-aware.html`)
+
+The in-chat card jerv shows after a `generate_image` or `edit_image` call
+(`docs/IMAGE_GEN_PLAN.md`, Wave G3). A registered, data-only view like every
+other: the model fills `{image_id, kind ('generate'|'edit'), prompt, width,
+height, model}` and **authors no markup and no URL** — the component builds the
+image source as `/api/images/generated/${image_id}` and sizes the frame from
+`width`/`height` so the bubble reserves space (no layout shift while the blob
+loads). Tokens-only `.tv-genimg-*` classes; the card frame matches the live
+`.tool-view`.
+
+Chosen **C — edit-aware before/after** (`docs/mocks/genimage-c-edit-aware.html`)
+over A (result-only) and B (result + a collapsible prompt/seed/Regenerate
+disclosure). A *generate* renders like A — just the sized image, a `kind` badge,
+and a dimensions·model caption — but an **edit** renders the source→result link
+as a draggable swipe-compare with a Before/After/Compare toggle, pulling the
+"before" image from `/api/images/generated/${image_id}/source` (the owner-gated
+edit-source route). C won because **`edit_image` is in scope**, so "what did the
+edit do?" is the key question and the source→result provenance must be legible;
+A/B render an edit no differently from a fresh generate. A and B are retained as
+the record in `docs/mocks/genimage-README.md` (B/C both subsume A's generate-only
+layout, so this choice still fixes the generate rendering). Owner-only (the table
+mirrors `wiki_*` RLS); never a note, never RAG-indexed — a chat artifact.
+
 ## Wiki Talk board (settled in a three-way GUI review — reference mock: `docs/mocks/wiki-talk-b-topics.html`)
 
 The article's editorial board (Phase 6) — the wiki's second surface after the reader. Chosen

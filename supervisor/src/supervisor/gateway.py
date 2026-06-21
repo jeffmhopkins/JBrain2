@@ -95,6 +95,10 @@ class DockerGateway(Protocol):
 
     def restart(self, service: str) -> None: ...
 
+    def start(self, service: str) -> None: ...
+
+    def stop(self, service: str) -> None: ...
+
     def logs(self, service: str, tail: int) -> str: ...
 
     def stream_logs(self, service: str) -> Iterator[str]: ...
@@ -145,6 +149,15 @@ class ComposeDockerGateway:
 
     def restart(self, service: str) -> None:
         self._find(service).restart()
+
+    def start(self, service: str) -> None:
+        # Acts on the EXISTING (created, stopped) container — the profile-gated
+        # comfyui service is created by comfyui-setup.sh's `compose up`, so toggling
+        # it on/off is a plain container start/stop. Unknown (never-created) 404s.
+        self._find(service).start()
+
+    def stop(self, service: str) -> None:
+        self._find(service).stop()
 
     def logs(self, service: str, tail: int) -> str:
         raw: bytes = self._find(service).logs(tail=tail)

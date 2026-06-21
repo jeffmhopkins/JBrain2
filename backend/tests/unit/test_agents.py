@@ -37,11 +37,24 @@ def test_teacher_is_a_tool_less_socratic_tutor() -> None:
 
 
 def test_jerv_is_a_sandboxed_web_chatbot() -> None:
-    """jerv may call the web tools, the dataless clock, and the owner-approved
-    coarse-location read; it reads no knowledge base."""
+    """jerv may call the web tools, the dataless clock, the owner-approved
+    coarse-location read, and the local image-gen tools; it reads no knowledge base."""
     jerv = AGENTS["jerv"]
-    assert jerv.tools == JERV_TOOLS == WEB_TOOLS | {"current_time", "current_location"}
+    assert (
+        jerv.tools
+        == JERV_TOOLS
+        == WEB_TOOLS | {"current_time", "current_location", "generate_image", "edit_image"}
+    )
     assert jerv.reads_knowledge_base is False
+
+
+def test_image_tools_are_jerv_only() -> None:
+    """The image-gen tools live in jerv's allowlist and nowhere else — curator (the
+    default knowledge agent, allow=None) never offers the opt-in `web` class, and the
+    tool-less teacher offers nothing."""
+    assert {"generate_image", "edit_image"} <= JERV_TOOLS
+    assert AGENTS["curator"].tools is None
+    assert AGENTS["teacher"].tools == frozenset()
 
 
 def test_agent_for_falls_back_to_curator() -> None:

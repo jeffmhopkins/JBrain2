@@ -79,6 +79,16 @@ export interface ToolViewEvent {
   tool_call_id: string;
   view: ViewPayload;
 }
+/** A progress tick a still-running tool emitted (image generation): the sampler
+ * step + total and an optional sharpening preview (a base-64 data URI the backend
+ * authored). Ephemeral — drives the live in-chat preview, never persisted. */
+export interface ToolProgressEvent {
+  type: "tool_progress";
+  tool_call_id: string;
+  step: number;
+  total: number;
+  preview?: string | null;
+}
 export interface JobEnqueuedEvent {
   type: "job_enqueued";
   job_id: string;
@@ -126,6 +136,7 @@ export type ChatEvent =
   | ToolCallEvent
   | ToolResultEvent
   | ToolViewEvent
+  | ToolProgressEvent
   | JobEnqueuedEvent
   | UsageEvent
   | DoneEvent

@@ -29,6 +29,10 @@ export interface ToolActivity {
   proposal?: ProposalRef;
   /** Entities this tool resolved (tappable chips). */
   entities?: EntityRef[];
+  /** Live generation progress for an in-flight image tool — the sampler step/total
+   * and the latest sharpening preview (a data URI). Set by `tool_progress`, cleared
+   * when the result lands (the final image view then renders). */
+  progress?: { step: number; total: number; preview?: string };
 }
 
 /** Reflexion's verdict on this turn — present only when the verifiers flagged
@@ -120,6 +124,22 @@ export function applyEvent(messages: TranscriptMessage[], event: ChatEvent): Tra
         },
       ];
       break;
+    case "tool_progress":
+      // Update the in-flight tool's live preview; ignored if its call isn't known
+      // yet (the tool_call always precedes its progress on the wire).
+      next.tools = next.tools.map((t) =>
+        t.id === event.tool_call_id
+          ? {
+              ...t,
+              progress: {
+                step: event.step,
+                total: event.total,
+                ...(event.preview ? { preview: event.preview } : {}),
+              },
+            }
+          : t,
+      );
+      break;
     case "tool_result": {
       const sources = (event.sources ?? []).map((s) => ({
         noteId: s.note_id,
@@ -130,11 +150,12 @@ export function applyEvent(messages: TranscriptMessage[], event: ChatEvent): Tra
         ...(event.proposal ? { proposal: event.proposal } : {}),
         ...(event.entities?.length ? { entities: event.entities } : {}),
       };
-      next.tools = next.tools.map((t) =>
-        t.id === event.tool_call_id
-          ? { ...t, ok: event.ok, summary: event.summary, sources, ...extra }
-          : t,
-      );
+      next.tools = next.tools.map((t) => {
+        if (t.id !== event.tool_call_id) return t;
+        // Drop any live preview — the result settled; the final image view renders.
+        const { progress: _settled, ...rest } = t;
+        return { ...rest, ok: event.ok, summary: event.summary, sources, ...extra };
+      });
       break;
     }
     case "tool_view":

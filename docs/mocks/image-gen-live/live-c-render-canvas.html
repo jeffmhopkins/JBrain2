@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Live image gen — C · render canvas</title>
+<style>
+  :root{
+    --bg:#0e0f11; --surface:#17181b; --surface-2:#1e2024; --border:#26282c;
+    --text:#e6e7e9; --text-2:#9a9da3; --text-3:#5c5f66;
+    --steel:#7fa7c9; --green:#8fbc9a; --amber:#c9a36a; --rose:#cf8a8f;
+    --r-card:16px; --r-input:12px;
+    font-size:15px;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    display:flex;justify-content:center;padding:32px 16px}
+  .col{width:100%;max-width:440px}
+  .variant{font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--text-3);margin:0 0 4px}
+  h1{font-size:18px;margin:0 0 2px}
+  .sub{color:var(--text-2);font-size:13px;margin:0 0 22px}
+  .turn{margin-bottom:18px}
+  .who{font-size:12px;color:var(--text-3);margin:0 0 6px}
+  .bubble{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:11px 13px;font-size:14px;line-height:1.45}
+  .bubble.me{background:var(--surface-2)}
+
+  /* a deliberate render "canvas": big preview, ringed percentage, staged ticks, Stop below */
+  .canvas{border:1px solid var(--border);border-radius:var(--r-card);background:var(--surface);padding:14px}
+  .stage{position:relative;border-radius:12px;overflow:hidden;aspect-ratio:1/1;background:#0a0b0d;border:1px solid var(--border)}
+  .stage .frame{position:absolute;inset:0;
+    background:
+      radial-gradient(60% 50% at 50% 45%, rgba(255,150,60,.9), rgba(255,90,30,.25) 40%, transparent 70%),
+      radial-gradient(40% 40% at 22% 70%, rgba(120,200,255,.5), transparent 70%),
+      radial-gradient(40% 40% at 80% 30%, rgba(120,200,255,.4), transparent 70%),
+      linear-gradient(160deg,#0d1420,#0a0b0d 70%);
+    filter:blur(24px) brightness(.7);transform:scale(1.08);transition:filter .5s,transform .5s}
+  .canvas.done .frame{filter:none;transform:none}
+  .canvas.stopped .frame{filter:blur(16px) brightness(.45)}
+  /* centered progress ring */
+  .ring{position:absolute;inset:0;display:grid;place-items:center;transition:opacity .4s}
+  .canvas.done .ring{opacity:0}
+  .ring svg{width:96px;height:96px;transform:rotate(-90deg)}
+  .ring circle{fill:none;stroke-width:6}
+  .ring .bg{stroke:rgba(255,255,255,.14)}
+  .ring .fg{stroke:var(--amber);stroke-linecap:round;stroke-dasharray:264;stroke-dashoffset:264;transition:stroke-dashoffset .6s ease}
+  .ring .pct{position:absolute;font-size:20px;font-weight:600;color:#fff;font-variant-numeric:tabular-nums;text-shadow:0 1px 3px rgba(0,0,0,.5)}
+
+  .meta{display:flex;align-items:center;margin-top:12px;gap:10px}
+  .title{font-size:13px;font-weight:600}
+  .title .muted{color:var(--text-3);font-weight:400}
+  .stepwrap{margin-left:auto;font-size:12px;color:var(--text-2);font-variant-numeric:tabular-nums}
+  .stages{display:flex;gap:6px;margin-top:11px}
+  .pip{flex:1;height:5px;border-radius:3px;background:var(--surface-2);position:relative;overflow:hidden}
+  .pip i{position:absolute;inset:0;background:var(--amber);transform:scaleX(0);transform-origin:left;transition:transform .5s}
+  .canvas.done .pip i{background:var(--green)}
+  .pip span{position:absolute;top:8px;left:0;font-size:9px;color:var(--text-3)}
+  .stagerow{display:flex;gap:6px;margin-top:11px;margin-bottom:20px}
+  .actions{display:flex;margin-top:14px}
+  .stop{margin:0 auto;display:flex;align-items:center;gap:7px;background:var(--surface-2);
+    border:1px solid var(--border);color:var(--text);border-radius:999px;padding:8px 22px;font-size:13px;cursor:pointer}
+  .stop:hover{background:var(--rose);color:#1a1112;border-color:transparent}
+  .stop .sq{width:9px;height:9px;border-radius:2px;background:currentColor}
+  .canvas.done .actions,.canvas.stopped .actions{display:none}
+  .donerow{margin-top:12px;font-size:12px;color:var(--text-2);text-align:center}
+  .donerow.stopped{color:var(--rose)}
+
+  .controls{display:flex;gap:8px;margin-top:26px;border-top:1px solid var(--border);padding-top:16px}
+  button.demo{background:var(--surface-2);border:1px solid var(--border);color:var(--text);border-radius:var(--r-input);padding:8px 14px;font-size:13px;cursor:pointer}
+  button.demo:hover{border-color:var(--steel)}
+  .note{font-size:12px;color:var(--text-3);margin-top:14px;line-height:1.5}
+</style>
+</head>
+<body>
+<div class="col">
+  <p class="variant">Variant C</p>
+  <h1>Render canvas</h1>
+  <p class="sub">A deliberate “rendering” surface: large preview, a ringed percentage, the four 25/50/75/100 stage pips, and a prominent Stop. Most explicit about what’s happening.</p>
+
+  <div class="turn"><p class="who">you</p><div class="bubble me">make a cyberpunk CPU with electric arcs</div></div>
+  <div class="turn"><p class="who">jerv</p><div class="bubble">On it — generating now.</div></div>
+
+  <div class="canvas" id="canvas">
+    <div class="stage">
+      <div class="frame" id="frame"></div>
+      <div class="ring">
+        <svg viewBox="0 0 96 96"><circle class="bg" cx="48" cy="48" r="42"/><circle class="fg" id="ring" cx="48" cy="48" r="42"/></svg>
+        <span class="pct" id="pct">0%</span>
+      </div>
+    </div>
+    <div class="meta">
+      <span class="title">Qwen-Image <span class="muted">· generate</span></span>
+      <span class="stepwrap" id="stepw">step 0 / 20</span>
+    </div>
+    <div class="stagerow">
+      <div class="pip"><i id="p0"></i><span>25%</span></div>
+      <div class="pip"><i id="p1"></i><span>50%</span></div>
+      <div class="pip"><i id="p2"></i><span>75%</span></div>
+      <div class="pip"><i id="p3"></i><span>100%</span></div>
+    </div>
+    <div class="actions"><button class="stop" id="stopBtn"><span class="sq"></span>Stop render</button></div>
+  </div>
+
+  <div class="controls">
+    <button class="demo" onclick="run()">▶ Simulate render</button>
+    <button class="demo" onclick="reset()">↺ Reset</button>
+  </div>
+  <p class="note">The ring + pips track ComfyUI’s <code>progress</code> events; the preview sharpens at each 25% <code>b_preview</code> frame. Stop calls <code>/interrupt</code>; on finish the canvas resolves to the saved image.</p>
+</div>
+
+<script>
+  const canvas=document.getElementById('canvas'),frame=document.getElementById('frame'),ring=document.getElementById('ring'),pct=document.getElementById('pct'),stepw=document.getElementById('stepw');
+  const pips=[document.getElementById('p0'),document.getElementById('p1'),document.getElementById('p2'),document.getElementById('p3')];
+  let timer=null,stopped=false;
+  const STAGES=[{p:25,s:5,blur:16},{p:50,s:10,blur:9},{p:75,s:15,blur:4},{p:100,s:20,blur:0}];
+  function reset(){clearTimeout(timer);stopped=false;canvas.className='canvas';frame.style.filter='blur(24px) brightness(.7)';frame.style.transform='scale(1.08)';ring.style.strokeDashoffset=264;pct.textContent='0%';stepw.textContent='step 0 / 20';pips.forEach(p=>p.style.transform='scaleX(0)');const d=canvas.querySelector('.donerow');if(d)d.remove();canvas.querySelector('.actions').style.display='';}
+  function run(){reset();let i=0;const tick=()=>{if(stopped)return;const st=STAGES[i];frame.style.filter=`blur(${st.blur}px) brightness(${.7+.3*(st.p/100)})`;frame.style.transform=`scale(${1.08-0.08*(st.p/100)})`;ring.style.strokeDashoffset=264-264*(st.p/100);pct.textContent=st.p+'%';stepw.textContent=`step ${st.s} / 20`;pips[i].style.transform='scaleX(1)';if(st.p===100){canvas.classList.add('done');const d=document.createElement('div');d.className='donerow';d.textContent='Generated a 1328×1328 image — shown above.';canvas.appendChild(d);}i++;if(i<STAGES.length)timer=setTimeout(tick,950);};timer=setTimeout(tick,500);}
+  document.getElementById('stopBtn').onclick=()=>{stopped=true;clearTimeout(timer);canvas.classList.add('stopped');stepw.textContent='stopped';const d=document.createElement('div');d.className='donerow stopped';d.textContent='Render stopped — nothing saved.';canvas.appendChild(d);};
+  run();
+</script>
+</body>
+</html>

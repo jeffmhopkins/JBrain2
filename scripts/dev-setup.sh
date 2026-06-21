@@ -131,4 +131,18 @@ fi
 # path (web/CI containers have no GPU). Mentioned here per the dev-setup
 # single-source-of-truth rule; deliberately a no-op in dev.
 
+# --- Image generation / ComfyUI (opt-in, NOT bootstrapped here) ---
+# jerv's generate_image/edit_image tools drive a ROCm ComfyUI serving Qwen-Image
+# on a gfx1151 box. Like the local LLM gateway it is a JBrain-managed compose
+# service (the `comfyui` profile), provisioned SEPARATELY by
+# scripts/comfyui-setup.sh: it downloads tens of GB of weights and starts a GPU
+# service, so it must NEVER run from this auto-bootstrapped path (web/CI containers
+# have no GPU). The backend's one image dependency, `websockets` (a client used to
+# stream ComfyUI's live generation progress + previews — docs/IMAGE_GEN_LIVE_PLAN.md),
+# is a normal pyproject dep that `uv sync` above installs; nothing GPU-specific is
+# bootstrapped here. Empty JBRAIN_COMFYUI_URL (the default) disables the feature and
+# hides both tools, so this is a no-op in dev/CI. Mentioned here per the dev-setup
+# single-source-of-truth rule (CLAUDE.md rule #8); see docs/STRIX_HALO_SETUP.md
+# ("Image generation"), docs/IMAGE_GEN_SERVICE_PLAN.md, and docs/IMAGE_GEN_LIVE_PLAN.md.
+
 log "done"

@@ -12,6 +12,7 @@ import type {
   EntityOut,
   FactOut,
   GraphEdge,
+  ImageSettings,
   LlmProviderId,
   LlmSettings,
   LlmUsage,
@@ -358,6 +359,39 @@ const LLM_SETTINGS: LlmSettings = {
     },
   ],
   host_memory: null,
+};
+
+// The on-box image service for the drawer's image subsection + shared meter. On,
+// reachable, with a generate model resident (VRAM used = 128 - 96) so the unified
+// bar shows an image segment beside the LLMs.
+const IMAGE_SETTINGS: ImageSettings = {
+  enabled: true,
+  reachable: true,
+  models: [
+    {
+      id: "qwen-image",
+      label: "Qwen-Image · generate (fp8)",
+      kind: "generate",
+      enabled: true,
+      recommended: true,
+      size_gb: 28,
+      disk_gb: 27.3,
+      vram_gb: 20,
+      note: "Validated on Strix Halo: 1328x1328, 20 steps, ~3.5 min on the iGPU.",
+    },
+    {
+      id: "qwen-image-edit",
+      label: "Qwen-Image-Edit · edit",
+      kind: "edit",
+      enabled: false,
+      recommended: false,
+      size_gb: 44,
+      disk_gb: null,
+      vram_gb: 38,
+      note: "Graph validated; bf16 weights await an on-box download.",
+    },
+  ],
+  memory: { total_gb: 128, free_gb: 96 },
 };
 
 // Apply one task patch like the backend would: grok keeps/sets a reasoning
@@ -2081,6 +2115,14 @@ const TRANSPARENT_PNG = Uint8Array.from(
   (c) => c.charCodeAt(0),
 );
 
+// Seeded generated-image ids the GET /api/images/generated route serves (Wave
+// G3). The chat's data: URI placeholders (client.ts MOCK_GENIMG) share these ids
+// so a generate card and an edit card both render — and round-trip — offline.
+const GENERATED_IMAGES = new Set<string>([
+  "mock-genimg-lighthouse",
+  "mock-genimg-lighthouse-stormy",
+]);
+
 const VALID_DOMAINS = new Set(["general", "health", "finance", "location"]);
 
 // Fake passage search over the note fixtures: substring match per term, a
@@ -2498,6 +2540,37 @@ export const mockFetch: typeof fetch = async (input, init) => {
     return json(SETTINGS);
   }
 
+  // The on-box image service (ComfyUI) surfaced in the LLM drawer.
+  if (path === "/api/settings/image" && method === "GET") return json(IMAGE_SETTINGS);
+  if (path === "/api/settings/image/free" && method === "POST") {
+    // Freeing unloads the resident model: VRAM returns to fully free.
+    IMAGE_SETTINGS.memory = { total_gb: 128, free_gb: 128 };
+    return json(IMAGE_SETTINGS);
+  }
+  if (path === "/api/settings/image/service/start" && method === "POST") {
+    IMAGE_SETTINGS.reachable = true;
+    IMAGE_SETTINGS.memory = { total_gb: 128, free_gb: 128 };
+    return new Response(JSON.stringify({ service: "comfyui", action: "start" }), {
+      status: 202,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+  if (path === "/api/settings/image/service/stop" && method === "POST") {
+    IMAGE_SETTINGS.reachable = false;
+    IMAGE_SETTINGS.memory = null;
+    return new Response(JSON.stringify({ service: "comfyui", action: "stop" }), {
+      status: 202,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+  // The chat "Stop render" control (the live image preview's Stop). Chat itself
+  // isn't mocked, but the route exists so the call never 404s in mock dev.
+  if (path === "/api/settings/image/interrupt" && method === "POST") {
+    return new Response(JSON.stringify({ status: "interrupted" }), {
+      status: 202,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
   if (path === "/api/settings/llm" && method === "GET") return json(LLM_SETTINGS);
   if (path === "/api/settings/llm" && method === "PUT") {
     const body = JSON.parse(String(init?.body)) as {
@@ -2565,6 +2638,20 @@ export const mockFetch: typeof fetch = async (input, init) => {
     const blob = attachmentBlobs.get(decodeURIComponent(blobMatch[1] ?? ""));
     if (!blob) return json({ detail: "unknown attachment" }, 404);
     return new Response(blob, { status: 200, headers: { "Content-Type": blob.type } });
+  }
+
+  // Generated-image bytes (Wave G3): the image-gen tool's result, by id, plus an
+  // edit's `/source` ("before"). The real backend serves owner-only bytes; here
+  // any seeded id round-trips a placeholder PNG (the in-chat <img> uses a data:
+  // URI helper, since an <img src> never flows through mockFetch). 404 unknown.
+  const genImgMatch = path.match(/^\/api\/images\/generated\/([^/]+)(\/source)?$/);
+  if (genImgMatch && method === "GET") {
+    const imgId = decodeURIComponent(genImgMatch[1] ?? "");
+    if (!GENERATED_IMAGES.has(imgId)) return json({ detail: "image not found" }, 404);
+    return new Response(TRANSPARENT_PNG, {
+      status: 200,
+      headers: { "Content-Type": "image/png" },
+    });
   }
 
   {

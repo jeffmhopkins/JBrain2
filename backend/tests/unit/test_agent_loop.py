@@ -16,6 +16,7 @@ from jbrain.agent.contracts import (
     ReasoningDelta,
     TextDelta,
     ToolCallEvent,
+    ToolProgressEvent,
     ToolResultEvent,
     ToolSpec,
     ToolViewEvent,
@@ -289,6 +290,48 @@ async def collect(
             session=OWNER, scopes=scopes, conversation=[UserMessage(text=message)]
         )
     ]
+
+
+async def _progress_tool(arguments: dict, ctx: ToolContext) -> str:
+    # A tool that reports progress mid-execution (image generation's pattern).
+    assert ctx.emit_progress is not None
+    ctx.emit_progress(5, 20, "data:image/jpeg;base64,AAA")
+    ctx.emit_progress(20, 20, "data:image/jpeg;base64,BBB")
+    return "rendered"
+
+
+async def test_run_stream_interleaves_tool_progress_before_the_result() -> None:
+    turns = [
+        LlmTurn("", (ToolCall("c1", "render", {}),), "tool_use", LlmUsage(1, 1)),
+        LlmTurn("done", (), "end_turn", LlmUsage(1, 1)),
+    ]
+    router, _ = stream_router_with(turns)
+    loop = AgentLoop(router, registry_with(make_tool("render", _progress_tool)))
+    events = await collect(loop)
+
+    progress = [e for e in events if isinstance(e, ToolProgressEvent)]
+    assert [(p.step, p.total, p.preview) for p in progress] == [
+        (5, 20, "data:image/jpeg;base64,AAA"),
+        (20, 20, "data:image/jpeg;base64,BBB"),
+    ]
+    assert all(p.tool_call_id == "c1" for p in progress)
+    # Every progress tick lands BEFORE the tool's result (it streamed while running).
+    last_progress = max(i for i, e in enumerate(events) if isinstance(e, ToolProgressEvent))
+    first_result = next(i for i, e in enumerate(events) if isinstance(e, ToolResultEvent))
+    assert last_progress < first_result
+
+
+async def test_run_stream_emits_no_progress_for_a_silent_tool() -> None:
+    # A tool that never calls emit_progress yields no ToolProgressEvent — the
+    # interleave is invisible to every existing tool.
+    turns = [
+        LlmTurn("", (ToolCall("c1", "search", {}),), "tool_use", LlmUsage(1, 1)),
+        LlmTurn("done", (), "end_turn", LlmUsage(1, 1)),
+    ]
+    router, _ = stream_router_with(turns)
+    loop = AgentLoop(router, registry_with(make_tool("search", search)))
+    events = await collect(loop)
+    assert not any(isinstance(e, ToolProgressEvent) for e in events)
 
 
 async def test_run_stream_emits_usage_when_a_context_window_is_given() -> None:

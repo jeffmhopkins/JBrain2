@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type {
+  ImageModelInfo,
+  ImageSettings,
   LlmProviderId,
   LlmSettings,
   LlmTask,
@@ -124,6 +126,9 @@ function sharedReasoning(
 
 export function LLMSettingsScreen() {
   const [settings, setSettings] = useState<LlmSettings | null>(null);
+  // The on-box image service, surfaced in the same drawer (shared meter). Fetched
+  // alongside the LLM settings; null until it loads / when the feature is absent.
+  const [image, setImage] = useState<ImageSettings | null>(null);
 
   useEffect(() => {
     let stale = false;
@@ -131,6 +136,12 @@ export function LLMSettingsScreen() {
       .getLlmSettings()
       .then((s) => {
         if (!stale) setSettings(s);
+      })
+      .catch(() => {});
+    api
+      .getImageSettings()
+      .then((s) => {
+        if (!stale) setImage(s);
       })
       .catch(() => {});
     return () => {
@@ -150,35 +161,49 @@ export function LLMSettingsScreen() {
   // clobber an in-flight provider/reasoning edit. A backgrounded app suspends
   // the poll (re-runs with an immediate tick on return).
   const hostingEnabled = settings?.local_hosting_enabled ?? false;
+  const imageEnabled = image?.enabled ?? false;
   const foreground = useForeground();
   useEffect(() => {
-    if (!localOpen || !hostingEnabled || !foreground) return;
+    if (!localOpen || !foreground || (!hostingEnabled && !imageEnabled)) return;
     let stop = false;
-    const tick = () =>
-      api
-        .getLlmSettings()
-        .then((fresh) => {
-          if (stop) return;
-          setSettings((prev) =>
-            prev
-              ? {
-                  ...prev,
-                  host_memory: fresh.host_memory,
-                  local_models: prev.local_models.map((m) => ({
-                    ...m,
-                    loaded: fresh.local_models.find((f) => f.id === m.id)?.loaded ?? m.loaded,
-                  })),
-                }
-              : prev,
-          );
-        })
-        .catch(() => {});
+    const tick = () => {
+      if (hostingEnabled) {
+        api
+          .getLlmSettings()
+          .then((fresh) => {
+            if (stop) return;
+            setSettings((prev) =>
+              prev
+                ? {
+                    ...prev,
+                    host_memory: fresh.host_memory,
+                    local_models: prev.local_models.map((m) => ({
+                      ...m,
+                      loaded: fresh.local_models.find((f) => f.id === m.id)?.loaded ?? m.loaded,
+                    })),
+                  }
+                : prev,
+            );
+          })
+          .catch(() => {});
+      }
+      // The image service has no per-model load flag; its VRAM gauge is the live
+      // signal, so re-pull the whole snapshot (cheap, owner-only).
+      if (imageEnabled) {
+        api
+          .getImageSettings()
+          .then((fresh) => {
+            if (!stop) setImage(fresh);
+          })
+          .catch(() => {});
+      }
+    };
     const id = setInterval(tick, 4000);
     return () => {
       stop = true;
       clearInterval(id);
     };
-  }, [localOpen, hostingEnabled, foreground]);
+  }, [localOpen, hostingEnabled, imageEnabled, foreground]);
 
   const mark = (id: string) => setBusy((s) => new Set(s).add(id));
   const unmark = (id: string) =>
@@ -247,6 +272,29 @@ export function LLMSettingsScreen() {
       })
       .catch(() => {})
       .finally(() => unmark(id));
+  }
+
+  // Image-service controls (owner-only): free unloads the resident model; start/stop
+  // toggle the service via the supervisor. Each reconciles from a fresh snapshot.
+  function freeImage() {
+    api
+      .freeImageMemory()
+      .then(setImage)
+      .catch(() => {});
+  }
+  function startImageService() {
+    api
+      .startImageService()
+      .then(() => api.getImageSettings())
+      .then(setImage)
+      .catch(() => {});
+  }
+  function stopImageService() {
+    api
+      .stopImageService()
+      .then(() => api.getImageSettings())
+      .then(setImage)
+      .catch(() => {});
   }
 
   const groups = useMemo(() => (settings ? groupTasks(settings.tasks) : []), [settings]);
@@ -362,11 +410,15 @@ export function LLMSettingsScreen() {
         hostingEnabled={settings.local_hosting_enabled}
         models={settings.local_models}
         hostMemory={settings.host_memory}
+        image={image}
         busy={busy}
         onUnload={unloadModel}
         onLoad={loadModel}
         onStage={stageModel}
         onSetWindow={setContextWindow}
+        onFreeImage={freeImage}
+        onStartImageService={startImageService}
+        onStopImageService={stopImageService}
       />
 
       {groups.map((group) => {
@@ -563,6 +615,13 @@ function slotGradient(slot: number, lighten = 0): string {
   return `linear-gradient(90deg, hsl(${h - HUE_SPREAD} ${s}% ${lt}%), hsl(${h + HUE_SPREAD} ${s}% ${lt}%))`;
 }
 
+// The image model's bar segment — a distinct violet (the "generate" accent), so it
+// reads apart from the LLM slot palette (greens/oranges) on the shared meter.
+const IMG_GRADIENT = "linear-gradient(90deg, hsl(265 35% 64%), hsl(284 35% 64%))";
+// ComfyUI reports VRAM, not a per-model load flag; treat a draw above this as "a
+// model is resident" so the bar shows it. An estimate — tune on the box.
+const IMG_ACTIVE_GB = 4;
+
 // The size picker's choices, capped per model at its catalog window.
 const WINDOW_CHOICES = [16384, 32768, 65536, 131072];
 const fmtTokens = (n: number) => (n % 1024 === 0 ? `${n / 1024}k` : `${Math.round(n / 1000)}k`);
@@ -579,22 +638,30 @@ function LocalModelsDrawer({
   hostingEnabled,
   models,
   hostMemory,
+  image,
   busy,
   onUnload,
   onLoad,
   onStage,
   onSetWindow,
+  onFreeImage,
+  onStartImageService,
+  onStopImageService,
 }: {
   open: boolean;
   onToggle: () => void;
   hostingEnabled: boolean;
   models: LocalModelInfo[];
   hostMemory: { total_gb: number; used_gb: number } | null;
+  image: ImageSettings | null;
   busy: Set<string>;
   onUnload: (id: string) => void;
   onLoad: (id: string) => void;
   onStage: (id: string, on: boolean) => void;
   onSetWindow: (id: string, window: number | null) => void;
+  onFreeImage: () => void;
+  onStartImageService: () => void;
+  onStopImageService: () => void;
 }) {
   const enabledCount = models.filter((m) => m.enabled).length;
   const shown = models.filter((m) => m.enabled);
@@ -604,18 +671,29 @@ function LocalModelsDrawer({
   const residentGb = loaded.reduce((sum, m) => sum + residentGbOf(m), 0);
   const stagedGb = stagedOnly.reduce((sum, m) => sum + residentGbOf(m), 0);
   const stagedCount = stagedOnly.length;
-  const summary = !hostingEnabled
-    ? "off"
-    : `${enabledCount} of ${models.length} enabled · ${loaded.length} loaded${
+  // The image service's live VRAM draw shares this bar. ComfyUI has no per-model
+  // "loaded" flag, so a non-trivial VRAM draw stands in for "a model is resident".
+  const imgMem = image?.memory ?? null;
+  const imgUsedGb = imgMem ? Math.max(imgMem.total_gb - imgMem.free_gb, 0) : 0;
+  const imgActive = (image?.reachable ?? false) && imgUsedGb > IMG_ACTIVE_GB;
+  const imgName =
+    (image?.models?.find((m) => m.enabled) ?? image?.models?.[0])?.label.split(" ")[0] ?? "Image";
+
+  const llmSummary = hostingEnabled
+    ? `${enabledCount} of ${models.length} enabled · ${loaded.length} loaded${
         stagedCount ? ` · ${stagedCount} staged` : ""
-      } · ${Math.round(residentGb)} GB`;
-  const ariaLabel = `Local models — ${hostingEnabled ? `hosting on, ${summary}` : "hosting off"}`;
+      } · ${Math.round(residentGb)} GB`
+    : "";
+  const summary =
+    [llmSummary, image?.reachable ? "image on" : ""].filter(Boolean).join(" · ") || "off";
+  const anyOn = hostingEnabled || (image?.reachable ?? false);
+  const ariaLabel = `On-box models — ${anyOn ? summary : "off"}`;
 
   // Loaded segments first (resident), then staged (projected) — colored by slot.
   const onBar = [...loaded, ...stagedOnly];
-  const total = hostMemory?.total_gb ?? 0;
+  const total = hostMemory?.total_gb ?? imgMem?.total_gb ?? 0;
   const projectedGb = residentGb + stagedGb;
-  const over = total > 0 && projectedGb > total;
+  const over = total > 0 && projectedGb + imgUsedGb > total;
 
   return (
     <section className="llm-local">
@@ -626,8 +704,8 @@ function LocalModelsDrawer({
         aria-label={ariaLabel}
         onClick={onToggle}
       >
-        <span className={`llm-local-dot${hostingEnabled ? " on" : ""}`} aria-hidden="true" />
-        <span className="llm-local-title">Local models</span>
+        <span className={`llm-local-dot${anyOn ? " on" : ""}`} aria-hidden="true" />
+        <span className="llm-local-title">On-box models</span>
         <span className="llm-local-summary">{summary}</span>
         <span className={`llm-exp-caret${open ? " llm-exp-open" : ""}`} aria-hidden="true">
           ›
@@ -636,7 +714,7 @@ function LocalModelsDrawer({
 
       {open && (
         <div className="llm-local-body">
-          {hostMemory && total > 0 && (
+          {total > 0 && (onBar.length > 0 || imgActive) && (
             <div className="llm-mem" aria-label="unified memory in use">
               <div className="llm-mem-bar">
                 {onBar.map((m, i) => {
@@ -669,9 +747,24 @@ function LocalModelsDrawer({
                     </div>
                   );
                 })}
+                {imgActive && (
+                  <div
+                    className="llm-mem-seg llm-mem-img"
+                    style={{ width: `${(imgUsedGb / total) * 100}%` }}
+                    title={`ComfyUI image — ${Math.round(imgUsedGb)} GB resident`}
+                  >
+                    <div
+                      className="llm-mem-w"
+                      style={{ width: "100%", background: IMG_GRADIENT }}
+                    />
+                    <span className="llm-mem-label">
+                      {imgName} <span className="gb">{Math.round(imgUsedGb)}G</span>
+                    </span>
+                  </div>
+                )}
               </div>
               <div className="llm-mem-cap">
-                <span>{Math.round(residentGb)} GB used</span>
+                <span>{Math.round(residentGb + imgUsedGb)} GB used</span>
                 {stagedGb > 0.05 && (
                   <span className={`staged-note${over ? " over" : ""}`}>
                     +{Math.round(stagedGb)} GB staged → {Math.round(projectedGb)} GB
@@ -802,8 +895,83 @@ function LocalModelsDrawer({
               </div>
             );
           })}
+          {image && (
+            <ImageServiceSection
+              image={image}
+              onFree={onFreeImage}
+              onStart={onStartImageService}
+              onStop={onStopImageService}
+            />
+          )}
         </div>
       )}
     </section>
+  );
+}
+
+// The image side of the shared "On-box models" drawer: the ComfyUI service status,
+// its start/stop/free controls alongside the LLM lifecycle controls above, and the
+// catalog rows. Provisioning (the weight download) stays the on-box
+// scripts/comfyui-setup.sh step, so these are status + runtime control only.
+function ImageServiceSection({
+  image,
+  onFree,
+  onStart,
+  onStop,
+}: {
+  image: ImageSettings;
+  onFree: () => void;
+  onStart: () => void;
+  onStop: () => void;
+}) {
+  const state = image.reachable ? "running" : image.enabled ? "stopped" : "off";
+  return (
+    <div className={`llm-img llm-img-${state}`}>
+      <div className="llm-img-head">
+        <span className="llm-img-title">Image · ComfyUI</span>
+        <span className={`llm-img-state ${state}`}>{state}</span>
+        <div className="llm-img-acts">
+          {image.reachable ? (
+            <>
+              <button type="button" className="llm-local-btn" onClick={onFree}>
+                Free
+              </button>
+              <button type="button" className="llm-local-btn" onClick={onStop}>
+                Stop
+              </button>
+            </>
+          ) : image.enabled ? (
+            <button type="button" className="llm-local-btn load" onClick={onStart}>
+              Start
+            </button>
+          ) : null}
+        </div>
+      </div>
+      {(image.models ?? []).map((m) => imageRow(m))}
+      {!image.enabled && (
+        <p className="llm-local-hint">
+          Image generation is off. Provision on the box with <code>comfyui-setup.sh</code>.
+        </p>
+      )}
+    </div>
+  );
+}
+
+function imageRow(m: ImageModelInfo) {
+  const footprint = m.disk_gb ?? m.size_gb;
+  const sizeText = `${m.disk_gb == null ? "~" : ""}${footprint} GB`;
+  return (
+    <div key={m.id} className="llm-img-row">
+      <div className="llm-img-name">
+        {m.label}
+        <span className={`llm-chip llm-chip-${m.kind === "edit" ? "imgedit" : "imggen"}`}>
+          {m.kind}
+        </span>
+      </div>
+      <div className="llm-img-meta">
+        {sizeText} · {m.disk_gb != null ? "provisioned" : "not provisioned"}
+        {m.disk_gb != null ? ` · ~${m.vram_gb} GB resident` : ""}
+      </div>
+    </div>
   );
 }

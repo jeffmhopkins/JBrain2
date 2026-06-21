@@ -6,6 +6,7 @@
 // component is a deliberate change here, like adding a tool.
 
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { generatedImageSourceUrl, generatedImageUrl } from "../../api/client";
 import type { CitationRef, ViewPayload } from "../types";
 import {
   type LiveList,
@@ -499,6 +500,166 @@ function PlaceCard({ data }: ViewProps): ReactNode {
   );
 }
 
+// generated_image (#5) — the image-gen tool's in-chat card. Data-only slots:
+// {image_id, kind, prompt, width, height, model}. The component BUILDS the
+// <img> srcs from image_id (invariant #9: never a model-authored URL) and sizes
+// the frame from width/height to avoid layout shift. A `generate` renders a
+// single sized image; an `edit` renders the source→result as a swipe compare
+// (before = the source bytes resolved by id, after = the result) plus a
+// Compare/Before/After toggle for accessibility.
+
+// Clamp a parsed dimension to a sane positive integer (a 0 or NaN would make the
+// frame's aspect-ratio collapse); falls back to a square so layout is stable.
+function asDim(value: unknown): number {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? Math.round(n) : 512;
+}
+
+type GenView = "compare" | "before" | "after";
+// The toggle pins the wipe to an edge (Before = show all "before" = 100%;
+// After = 0%) or restores the midpoint for free dragging (Compare = 50%).
+const VIEW_POS: Record<GenView, number> = { compare: 50, before: 100, after: 0 };
+
+function EditCompare({
+  beforeSrc,
+  afterSrc,
+  width,
+  height,
+  alt,
+}: {
+  beforeSrc: string;
+  afterSrc: string;
+  width: number;
+  height: number;
+  alt: string;
+}): ReactNode {
+  const ref = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState(50); // wipe position, 0–100 (% from the left)
+  const [view, setView] = useState<GenView>("compare");
+  const dragging = useRef(false);
+
+  function moveTo(clientX: number): void {
+    const el = ref.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    if (rect.width === 0) return;
+    const next = Math.max(0, Math.min(100, ((clientX - rect.left) / rect.width) * 100));
+    setPos(next);
+    setView("compare");
+  }
+
+  function pick(next: GenView): void {
+    setView(next);
+    setPos(VIEW_POS[next]);
+  }
+
+  return (
+    <div className="tv-genimg-edit">
+      {/* The two images carry the accessible names (Before:/After:); the drag is
+          a pointer affordance, with the keyboard equivalent in the toggle below. */}
+      <div
+        ref={ref}
+        className="tv-genimg-cmp"
+        style={{ aspectRatio: `${width} / ${height}`, ["--pos" as string]: `${pos}%` }}
+        onPointerDown={(e) => {
+          dragging.current = true;
+          e.currentTarget.setPointerCapture(e.pointerId);
+          moveTo(e.clientX);
+        }}
+        onPointerMove={(e) => {
+          if (dragging.current) moveTo(e.clientX);
+        }}
+        onPointerUp={() => {
+          dragging.current = false;
+        }}
+        onPointerCancel={() => {
+          dragging.current = false;
+        }}
+      >
+        <img
+          className="tv-genimg-img"
+          src={beforeSrc}
+          alt={`Before: ${alt}`}
+          width={width}
+          height={height}
+        />
+        <div className="tv-genimg-after">
+          <img
+            className="tv-genimg-img"
+            src={afterSrc}
+            alt={`After: ${alt}`}
+            width={width}
+            height={height}
+          />
+        </div>
+        <span className="tv-genimg-kind kind-edit">edited</span>
+        <span className="tv-genimg-lbl b">BEFORE</span>
+        <span className="tv-genimg-lbl a">AFTER</span>
+        <div className="tv-genimg-handle" aria-hidden="true" />
+        <div className="tv-genimg-grip" aria-hidden="true" />
+      </div>
+      <div className="tv-genimg-acts">
+        <span className="tv-genimg-cap">{alt}</span>
+        {/* biome-ignore lint/a11y/useSemanticElements: a 3-button toggle group; a <fieldset> is overkill */}
+        <div className="tv-genimg-seg" role="group" aria-label="Compare view">
+          {(["compare", "before", "after"] as GenView[]).map((m) => (
+            <button
+              key={m}
+              type="button"
+              className={view === m ? "on" : ""}
+              aria-pressed={view === m}
+              onClick={() => pick(m)}
+            >
+              {m === "compare" ? "Compare" : m === "before" ? "Before" : "After"}
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function GeneratedImage({ data }: ViewProps): ReactNode {
+  const imageId = String(data.image_id ?? "");
+  const kind = data.kind === "edit" ? "edit" : "generate";
+  const prompt = typeof data.prompt === "string" ? data.prompt : "";
+  const width = asDim(data.width);
+  const height = asDim(data.height);
+  const model = typeof data.model === "string" ? data.model : "";
+  const alt = prompt || "Generated image";
+  const meta = `${width} × ${height}${model ? ` · ${model}` : ""}`;
+
+  if (kind === "edit") {
+    return (
+      <div className="tv-genimg">
+        <EditCompare
+          beforeSrc={generatedImageSourceUrl(imageId)}
+          afterSrc={generatedImageUrl(imageId)}
+          width={width}
+          height={height}
+          alt={meta}
+        />
+      </div>
+    );
+  }
+
+  return (
+    <div className="tv-genimg">
+      <div className="tv-genimg-frame" style={{ aspectRatio: `${width} / ${height}` }}>
+        <img
+          className="tv-genimg-img"
+          src={generatedImageUrl(imageId)}
+          alt={alt}
+          width={width}
+          height={height}
+        />
+        <span className="tv-genimg-kind kind-generate">generated</span>
+      </div>
+      <div className="tv-genimg-cap">{meta}</div>
+    </div>
+  );
+}
+
 const REGISTRY: Record<string, (props: ViewProps) => ReactNode> = {
   stat_block: StatBlock,
   data_table: DataTable,
@@ -507,6 +668,7 @@ const REGISTRY: Record<string, (props: ViewProps) => ReactNode> = {
   appointment_card: AppointmentCard,
   location_map: LocationMap,
   place_card: PlaceCard,
+  generated_image: GeneratedImage,
 };
 
 export function isKnownView(name: string): boolean {

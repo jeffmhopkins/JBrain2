@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Image settings — A · sibling drawer</title>
+<style>
+  :root{
+    --bg:#0e0f11;--surface:#17181b;--surface-2:#1e2024;--border:#26282c;
+    --text:#e6e7e9;--text-2:#9a9da3;--text-3:#5c5f66;
+    --steel:#7fa7c9;--green:#8fbc9a;--amber:#c9a36a;--rose:#cf8a8f;--violet:#a493c9;
+    --r-card:16px;--r-pill:999px;font-size:15px;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    display:flex;justify-content:center;padding:28px 16px}
+  .col{width:100%;max-width:440px}
+  .variant{font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--text-3);margin:0 0 4px}
+  h1{font-size:18px;margin:0 0 2px}.sub{color:var(--text-2);font-size:13px;margin:0 0 20px}
+
+  /* a sibling of the Local models drawer, same chrome */
+  .drawer{border:1px solid var(--border);border-radius:var(--r-card);background:var(--surface);margin-bottom:12px;overflow:hidden}
+  .dhead{display:flex;align-items:center;gap:9px;width:100%;padding:13px 14px;background:none;border:0;color:var(--text);cursor:pointer;text-align:left}
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--text-3);flex:none}
+  .dot.on{background:var(--green);box-shadow:0 0 0 3px color-mix(in srgb,var(--green) 22%,transparent)}
+  .dtitle{font-weight:600;font-size:14px}
+  .dsum{margin-left:auto;font-size:12px;color:var(--text-2)}
+  .caret{color:var(--text-3);transition:transform .2s;font-size:14px}
+  .caret.open{transform:rotate(90deg)}
+  .dbody{padding:0 14px 14px;border-top:1px solid var(--border)}
+
+  /* the muted "Local models" drawer above, collapsed, for context */
+  .ghost .dhead{cursor:default}
+  .ghost .dsum{color:var(--text-3)}
+
+  /* VRAM meter */
+  .meter{margin:14px 0 4px}
+  .mbar{height:26px;border-radius:8px;background:var(--surface-2);overflow:hidden;display:flex;position:relative}
+  .seg{height:100%;display:flex;align-items:center;padding:0 8px;font-size:11px;color:#0e0f11;font-weight:600;white-space:nowrap}
+  .seg.llm{background:linear-gradient(90deg,hsl(138 34% 58%),hsl(152 34% 58%))}
+  .seg.img{background:linear-gradient(90deg,hsl(28 48% 62%),hsl(42 48% 62%))}
+  .mcap{display:flex;justify-content:space-between;font-size:11.5px;color:var(--text-2);margin-top:6px}
+  .mcap .free{color:var(--green)}
+
+  /* service control row */
+  .svc{display:flex;align-items:center;gap:10px;margin:14px 0 4px;padding:11px 12px;background:var(--surface-2);border-radius:12px}
+  .svc-state{font-size:12px;display:flex;align-items:center;gap:7px}
+  .pill{font-size:11px;font-weight:600;padding:3px 9px;border-radius:var(--r-pill)}
+  .pill.run{background:color-mix(in srgb,var(--green) 20%,var(--surface));color:var(--green)}
+  .pill.stop{background:color-mix(in srgb,var(--rose) 18%,var(--surface));color:var(--rose)}
+  .svc-actions{margin-left:auto;display:flex;gap:7px}
+  .btn{font-size:12px;padding:6px 12px;border-radius:10px;border:1px solid var(--border);background:var(--surface);color:var(--text);cursor:pointer}
+  .btn:hover{border-color:var(--steel)}
+  .btn.warn:hover{border-color:var(--rose);color:var(--rose)}
+
+  /* model rows */
+  .row{display:flex;align-items:center;gap:10px;padding:12px 2px;border-top:1px solid var(--border)}
+  .row:first-of-type{border-top:0}
+  .rname{font-size:13.5px;font-weight:600}
+  .rmeta{font-size:11.5px;color:var(--text-3);margin-top:2px}
+  .chip{font-size:10px;font-weight:600;padding:2px 7px;border-radius:var(--r-pill);margin-left:7px;vertical-align:1px}
+  .chip.gen{background:color-mix(in srgb,var(--violet) 20%,var(--surface));color:var(--violet)}
+  .chip.edit{background:color-mix(in srgb,var(--amber) 20%,var(--surface));color:var(--amber)}
+  .rright{margin-left:auto;text-align:right}
+  .badge{font-size:11px;color:var(--green)}
+  .badge.no{color:var(--text-3)}
+  .hint{font-size:11.5px;color:var(--text-3);margin-top:12px;line-height:1.5}
+  code{background:var(--surface-2);padding:1px 5px;border-radius:5px;font-size:11px}
+</style>
+</head>
+<body>
+<div class="col">
+  <p class="variant">Variant A</p>
+  <h1>Sibling drawer</h1>
+  <p class="sub">A second collapsible drawer right below “Local models”, same chrome. Its own VRAM meter, a service Start/Stop/Free row, and per‑model rows.</p>
+
+  <!-- context: the existing local-models drawer, collapsed -->
+  <div class="drawer ghost">
+    <div class="dhead"><span class="dot on"></span><span class="dtitle">Local models</span><span class="dsum">2 enabled · 1 loaded · 32 GB</span><span class="caret">›</span></div>
+  </div>
+
+  <div class="drawer">
+    <button class="dhead" id="head">
+      <span class="dot on" id="dot"></span>
+      <span class="dtitle">Image generation</span>
+      <span class="dsum" id="sum">ComfyUI · running · 96 GB free</span>
+      <span class="caret open" id="caret">›</span>
+    </button>
+    <div class="dbody" id="body">
+      <div class="meter">
+        <div class="mbar" id="bar">
+          <div class="seg llm" style="width:25%">LLM 32G</div>
+          <div class="seg img" id="imgseg" style="width:16%">Qwen 20G</div>
+        </div>
+        <div class="mcap"><span id="used">52 GB used (LLM + image)</span><span class="free" id="free">76 GB free</span><span>128 GB total</span></div>
+      </div>
+
+      <div class="svc">
+        <span class="svc-state"><span class="pill run" id="pill">running</span><span id="svctext">reachable at comfyui:8188</span></span>
+        <span class="svc-actions">
+          <button class="btn" id="toggle">Stop</button>
+          <button class="btn warn" id="free-btn">Free memory</button>
+        </span>
+      </div>
+
+      <div class="row">
+        <div><div class="rname">Qwen‑Image<span class="chip gen">generate</span></div><div class="rmeta">fp8 · 28 GB on disk · ~20 GB resident</div></div>
+        <div class="rright"><div class="badge">✓ provisioned</div></div>
+      </div>
+      <div class="row">
+        <div><div class="rname">Qwen‑Image‑Edit<span class="chip edit">edit</span></div><div class="rmeta">bf16 · ~44 GB · not downloaded</div></div>
+        <div class="rright"><div class="badge no">not provisioned</div></div>
+      </div>
+
+      <p class="hint">Provision models on the box with <code>comfyui-setup.sh</code>. ComfyUI loads a model on first use and frees it here or when stopped.</p>
+    </div>
+  </div>
+
+  <div style="display:flex;gap:8px;margin-top:18px;border-top:1px solid var(--border);padding-top:14px">
+    <button class="btn" onclick="location.reload()">↺ Reset</button>
+  </div>
+</div>
+<script>
+  const body=document.getElementById('body'),caret=document.getElementById('caret');
+  document.getElementById('head').onclick=()=>{const open=body.style.display!=='none';body.style.display=open?'none':'';caret.classList.toggle('open',!open);};
+  let running=true;
+  const pill=document.getElementById('pill'),toggle=document.getElementById('toggle'),dot=document.getElementById('dot'),sum=document.getElementById('sum'),svctext=document.getElementById('svctext'),imgseg=document.getElementById('imgseg'),used=document.getElementById('used'),free=document.getElementById('free');
+  toggle.onclick=()=>{running=!running;pill.className='pill '+(running?'run':'stop');pill.textContent=running?'running':'stopped';toggle.textContent=running?'Stop':'Start';dot.classList.toggle('on',running);svctext.textContent=running?'reachable at comfyui:8188':'service stopped';sum.textContent=running?'ComfyUI · running · 96 GB free':'ComfyUI · stopped';};
+  document.getElementById('free-btn').onclick=()=>{imgseg.style.width='0';used.textContent='32 GB used (LLM)';free.textContent='96 GB free';};
+</script>
+</body>
+</html>

@@ -1151,6 +1151,75 @@ h3 {
   color: var(--steel);
   background: var(--steel-tint);
 }
+.llm-chip-imggen {
+  color: var(--violet);
+  background: var(--violet-tint);
+}
+.llm-chip-imgedit {
+  color: var(--amber);
+  background: var(--amber-tint);
+}
+
+/* The image service subsection — sits in the On-box models drawer beneath the LLM
+   rows, sharing the unified meter above. */
+.llm-img {
+  margin-top: 10px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+.llm-img-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.llm-img-title {
+  font-weight: 600;
+  font-size: var(--fs-secondary);
+}
+.llm-img-state {
+  font-size: var(--fs-micro);
+  padding: 2px 8px;
+  border-radius: var(--r-pill);
+  color: var(--text-3);
+  background: var(--surface-2);
+}
+.llm-img-state.running {
+  color: var(--green);
+  background: var(--green-tint);
+}
+.llm-img-state.stopped {
+  color: var(--rose);
+  background: var(--rose-tint);
+}
+.llm-img-acts {
+  margin-left: auto;
+  display: flex;
+  gap: 6px;
+}
+.llm-img-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 7px 0;
+}
+.llm-img-name {
+  font-size: var(--fs-secondary);
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.llm-img-meta {
+  margin-left: auto;
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+  text-align: right;
+}
+/* The image segment's KV-less weight block fills the whole segment (no context split). */
+.llm-mem-img .llm-mem-w {
+  border-radius: inherit;
+}
 .llm-local-state {
   font-size: var(--fs-micro);
   color: var(--text-3);
@@ -8386,6 +8455,239 @@ button.small {
   font-size: 10.5px;
   color: var(--text-3);
   margin-top: 8px;
+}
+
+/* generated_image — the image-gen tool-view (docs/mocks/genimage-c-edit-aware).
+   A generate renders a single sized image; an edit renders a swipe before/after
+   plus a Compare/Before/After toggle. Tokens only; the frame's aspect-ratio is
+   set inline from the payload's width/height to avoid layout shift. */
+.fb-shell .tv-genimg {
+  overflow: hidden;
+}
+.fb-shell .tv-genimg-frame {
+  position: relative;
+  display: block;
+  width: 100%;
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--surface);
+}
+.fb-shell .tv-genimg-img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+.fb-shell .tv-genimg-cap {
+  font-size: 11.5px;
+  color: var(--text-3);
+  padding: 7px 2px 1px;
+}
+.fb-shell .tv-genimg-kind {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  font-size: 10.5px;
+  font-weight: 600;
+  padding: 3px 8px;
+  border-radius: var(--r-pill);
+  backdrop-filter: blur(3px);
+}
+.fb-shell .tv-genimg-kind.kind-generate {
+  background: color-mix(in srgb, var(--violet) 22%, var(--surface));
+  color: var(--violet);
+  border: 1px solid color-mix(in srgb, var(--violet) 34%, transparent);
+}
+.fb-shell .tv-genimg-kind.kind-edit {
+  background: color-mix(in srgb, var(--amber) 22%, var(--surface));
+  color: var(--amber);
+  border: 1px solid color-mix(in srgb, var(--amber) 34%, transparent);
+}
+
+/* Live generation preview — "image-as-progress" (docs/mocks/image-gen-live A):
+   the preview fills the final image slot and sharpens (blur → 0) as sampling
+   advances; a slim bottom bar + a corner Stop. */
+.fb-shell .fb-genprev {
+  margin: 4px 0 2px;
+}
+.fb-shell .fb-genprev-frame {
+  position: relative;
+  width: 100%;
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  background: #0a0b0d;
+}
+.fb-shell .fb-genprev-img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  /* a hair of scale so the blur's soft edge never shows the backdrop */
+  transform: scale(1.04);
+  transition: filter 0.45s ease;
+}
+.fb-shell .fb-genprev-skeleton {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(110deg, var(--surface) 30%, var(--surface-2) 50%, var(--surface) 70%);
+  background-size: 200% 100%;
+  animation: fb-genprev-shimmer 1.3s linear infinite;
+}
+@keyframes fb-genprev-shimmer {
+  to {
+    background-position: -200% 0;
+  }
+}
+.fb-shell .fb-genprev-overlay {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px 9px;
+  background: linear-gradient(0deg, rgba(0, 0, 0, 0.7), transparent);
+}
+.fb-shell .fb-genprev-step,
+.fb-shell .fb-genprev-pct {
+  font-size: 11.5px;
+  color: #fff;
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+}
+.fb-shell .fb-genprev-pct {
+  margin-left: auto;
+  opacity: 0.85;
+}
+.fb-shell .fb-genprev-bar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 3px;
+  background: rgba(255, 255, 255, 0.14);
+}
+.fb-shell .fb-genprev-bar i {
+  display: block;
+  height: 100%;
+  background: var(--amber);
+  transition: width 0.45s ease;
+}
+.fb-shell .fb-genprev-stop {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 11px 4px 9px;
+  font-size: 11.5px;
+  color: #fff;
+  cursor: pointer;
+  background: rgba(20, 21, 24, 0.78);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: var(--r-pill);
+  backdrop-filter: blur(4px);
+}
+.fb-shell .fb-genprev-stop:hover {
+  background: color-mix(in srgb, var(--rose) 85%, transparent);
+  border-color: transparent;
+}
+.fb-shell .fb-genprev-sq {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  background: currentColor;
+}
+
+/* edit: the swipe-compare. The "after" layer is clipped to the wipe position
+   (--pos), set by the drag handler / toggle on the .tv-genimg-cmp element. */
+.fb-shell .tv-genimg-cmp {
+  position: relative;
+  width: 100%;
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--surface);
+  touch-action: none;
+  user-select: none;
+  cursor: ew-resize;
+}
+.fb-shell .tv-genimg-cmp .tv-genimg-img {
+  pointer-events: none;
+}
+.fb-shell .tv-genimg-after {
+  position: absolute;
+  inset: 0;
+  clip-path: inset(0 0 0 var(--pos, 50%));
+}
+.fb-shell .tv-genimg-lbl {
+  position: absolute;
+  bottom: 8px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  padding: 2px 7px;
+  border-radius: var(--r-pill);
+  background: color-mix(in srgb, var(--bg) 62%, transparent);
+  color: var(--text-2);
+  backdrop-filter: blur(3px);
+}
+.fb-shell .tv-genimg-lbl.b {
+  left: 8px;
+}
+.fb-shell .tv-genimg-lbl.a {
+  right: 8px;
+}
+.fb-shell .tv-genimg-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: var(--pos, 50%);
+  width: 2px;
+  transform: translateX(-1px);
+  background: var(--steel);
+}
+.fb-shell .tv-genimg-grip {
+  position: absolute;
+  top: 50%;
+  left: var(--pos, 50%);
+  transform: translate(-50%, -50%);
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--steel);
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--bg) 70%, transparent);
+}
+.fb-shell .tv-genimg-acts {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 7px 2px 1px;
+}
+.fb-shell .tv-genimg-acts .tv-genimg-cap {
+  margin-right: auto;
+  padding: 0;
+}
+.fb-shell .tv-genimg-seg {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill);
+  overflow: hidden;
+}
+.fb-shell .tv-genimg-seg button {
+  font: inherit;
+  font-size: 11px;
+  padding: 5px 11px;
+  border: 0;
+  background: transparent;
+  color: var(--text-3);
+  cursor: pointer;
+}
+.fb-shell .tv-genimg-seg button.on {
+  background: var(--steel-tint);
+  color: var(--steel);
 }
 
 /* Proposal tree (the review-inbox detail; docs/ASSISTANT.md "Staging & approval") */
