@@ -49,4 +49,31 @@ class FixQueueTest {
         f.writeText("garbage\n" + fix(5).toJson())
         assertEquals(5L, FileFixQueue(f).peek()?.tst)
     }
+
+    @Test
+    fun peekBatchReturnsUpToMaxOldestFirstWithoutRemoving() {
+        val q = FileFixQueue(tempFile())
+        for (t in 1..5L) q.enqueue(fix(t))
+        assertEquals(listOf(1L, 2L, 3L), q.peekBatch(3).map { it.tst })
+        assertEquals(5, q.size()) // peek does not remove
+    }
+
+    @Test
+    fun removeFirstCountDropsThatManyOldest() {
+        val q = FileFixQueue(tempFile())
+        for (t in 1..5L) q.enqueue(fix(t))
+        q.removeFirst(2)
+        assertEquals(3, q.size())
+        assertEquals(3L, q.peek()?.tst) // 1 and 2 dropped
+    }
+
+    @Test
+    fun peekBatchSkipsCorruptLinesAndPersistsTheCleanup() {
+        val f = tempFile()
+        f.writeText("garbage\n" + fix(2).toJson() + "\nalso bad\n" + fix(4).toJson())
+        val q = FileFixQueue(f)
+        assertEquals(listOf(2L, 4L), q.peekBatch(10).map { it.tst })
+        // The two corrupt lines were dropped from disk, leaving only the valid two.
+        assertEquals(2, FileFixQueue(f).size())
+    }
 }

@@ -25,6 +25,11 @@ data class LocationReport(
     }
 
     companion object {
+        /** A JSON array of reports for a batched upload — the array shape
+         * `/api/owntracks` accepts alongside a single object. */
+        fun batchJson(reports: List<LocationReport>): String =
+            reports.joinToString(separator = ",", prefix = "[", postfix = "]") { it.toJson() }
+
         /** Parse a `_type:location` line back into a report (for the offline queue);
          * null if it isn't a well-formed location, so a corrupt line can't wedge the
          * queue. */

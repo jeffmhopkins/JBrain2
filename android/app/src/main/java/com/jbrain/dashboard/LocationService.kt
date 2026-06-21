@@ -51,6 +51,8 @@ class LocationService : Service(), LocationListener {
     // change (moving <-> stationary) re-requests updates and nothing else does.
     private val policy = SamplingPolicy()
     private var current: RequestParams = policy.movingParams
+    // When the queue was last flushed (io thread only) — the batched-upload cadence.
+    private var lastFlushMs = 0L
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -103,8 +105,17 @@ class LocationService : Service(), LocationListener {
             tst = location.time / 1000,
             accuracyM = accuracyM,
         )
-        // Queue the fix, then drain the backlog oldest-first off the main thread.
-        io.execute { handle(uploader.submit(base, key, report)) }
+        // Persist the fix, then flush the backlog as a batch on a cadence (every N
+        // points or T seconds) so a dense moving stream costs few requests instead
+        // of one POST per fix. All queue + network I/O stays on the single io thread.
+        io.execute {
+            uploader.enqueue(report)
+            val now = System.currentTimeMillis()
+            if (uploader.pending() >= FLUSH_POINTS || now - lastFlushMs >= FLUSH_INTERVAL_MS) {
+                lastFlushMs = now
+                handle(uploader.flush(base, key))
+            }
+        }
     }
 
     /** (Re-)subscribe to location updates at the given cadence from the best
@@ -149,6 +160,7 @@ class LocationService : Service(), LocationListener {
                 io.execute {
                     val base = store.serverBase() ?: return@execute
                     val key = store.deviceKey() ?: return@execute
+                    lastFlushMs = System.currentTimeMillis() // keep the fix-cadence in sync
                     handle(uploader.flush(base, key))
                 }
             }
@@ -213,5 +225,10 @@ class LocationService : Service(), LocationListener {
         // Stationary heartbeat: at least one fix every 15 min even when parked.
         // (Moving/stationary cadence lives in SamplingPolicy.)
         const val HEARTBEAT_MS = 15 * 60 * 1000L
+        // Batched upload cadence: flush once ~12 points accumulate (≈1 min moving at
+        // 5 s) or at least every 30 s, so a sparse/stationary fix still uploads
+        // promptly while a dense stream is coalesced into few requests.
+        const val FLUSH_POINTS = 12
+        const val FLUSH_INTERVAL_MS = 30_000L
     }
 }
