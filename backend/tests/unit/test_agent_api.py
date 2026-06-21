@@ -938,6 +938,25 @@ def test_chat_persists_a_partial_turn_when_the_compose_step_errors(
     assert runlog.finished[-1]["stop_reason"] == "error"
 
 
+async def test_with_heartbeat_fills_idle_gaps_without_cancelling_the_pull() -> None:
+    # A turn that streams nothing for longer than the interval (a long blocking tool)
+    # gets a heartbeat (None) in the gap, and the real events still arrive — the
+    # pending pull is never cancelled, so the underlying stream keeps running.
+    from jbrain.api.agent import _with_heartbeat
+
+    async def slow():  # type: ignore[no-untyped-def]
+        await asyncio.sleep(0.04)
+        yield "a"
+        yield "b"
+
+    out: list[str | None] = []
+    async for ev in _with_heartbeat(slow(), interval=0.01):
+        out.append(ev)
+
+    assert None in out  # at least one keepalive bridged the 0.04s idle gap
+    assert [e for e in out if e is not None] == ["a", "b"]
+
+
 def test_create_and_list_sessions(
     client: TestClient, repo: FakeAuthRepo, sessions_store: FakeAgentSessions
 ) -> None:
@@ -1135,7 +1154,7 @@ def test_chat_runs_the_selected_agents_prompt_and_only_its_tools(
     assert {t.name for t in call["tools"]} == {"web_search", "web_fetch"}
     # Sandboxed: a non-KB agent never recalls skills, and the run carries its version.
     assert not skills.called
-    assert ("sess-j", "agent-jerv-v7") in client.app.state.agent_runlog.started  # type: ignore[attr-defined]
+    assert ("sess-j", "agent-jerv-v8") in client.app.state.agent_runlog.started  # type: ignore[attr-defined]
 
 
 def test_chat_curator_is_offered_no_web_tools(

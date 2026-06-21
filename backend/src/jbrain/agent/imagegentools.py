@@ -30,6 +30,7 @@ from jbrain.image_gen.comfyui import (
     ImageGenInterrupted,
     OnProgress,
 )
+from jbrain.image_gen.gateway import ComfyUiGatewayError, ComfyUiMemory
 from jbrain.llm.local_gateway import LocalGateway, LocalGatewayError
 from jbrain.models.images import GeneratedImage, GeneratedImageRepo
 from jbrain.storage import BlobStore
@@ -127,6 +128,22 @@ async def _free_local_llms(gateway: LocalGateway) -> None:
         log.info("image_gen.llm_unload_skipped", error=str(exc))
 
 
+async def _free_comfyui_model(gateway: ComfyUiMemory) -> None:
+    """Time-share the other direction: after a render, unload ComfyUI's resident
+    diffusion model so the ~39 GB it pins returns to the unified pool. ComfyUI caches
+    the model for the next render by default, but on this box that 39 GB blocks the
+    reply's LLM reload, a follow-up edit (a *different* ~38 GB model), or switching
+    back to a large local model (gpt-oss-120b) — so we reclaim it now. The cost is a
+    cold model-load on the next image; the memory headroom is worth it here.
+
+    Best-effort: the image is already in hand, so a gateway hiccup is logged, never
+    fatal."""
+    try:
+        await gateway.free(unload_models=True, free_memory=True)
+    except ComfyUiGatewayError as exc:
+        log.info("image_gen.comfyui_free_skipped", error=str(exc))
+
+
 def _progress_callback(ctx: ToolContext) -> OnProgress | None:
     """Bridge the driver's (step, total, preview_bytes) ticks to the turn's progress
     sink, base-64ing each ephemeral preview into a data URI the PWA shows inline.
@@ -171,6 +188,7 @@ def build_image_handlers(
     attachments: TurnAttachmentRepo,
     maker: async_sessionmaker[AsyncSession],
     local_gateway: LocalGateway,
+    comfyui_gateway: ComfyUiMemory,
 ) -> dict[str, ToolHandler]:
     """`generate_image` + `edit_image`. Wired only when image generation is configured
     (a localhost ComfyUI); the registry omits both tools otherwise (graceful degrade).
@@ -202,6 +220,7 @@ def build_image_handlers(
         except ImageGenError as exc:
             log.warning("generate_image_failed", error=str(exc))
             return "I couldn't generate that image right now — the image model didn't respond."
+        await _free_comfyui_model(comfyui_gateway)
         sha = await blob_store.put(png)
         async with scoped_session(maker, ctx.session) as session:
             row = await repo.insert(
@@ -295,6 +314,7 @@ def build_image_handlers(
         except ImageGenError as exc:
             log.warning("edit_image_failed", error=str(exc))
             return "I couldn't edit that image right now — the image model didn't respond."
+        await _free_comfyui_model(comfyui_gateway)
         sha = await blob_store.put(png)
         async with scoped_session(maker, ctx.session) as session:
             row = await repo.insert(

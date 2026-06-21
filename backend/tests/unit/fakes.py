@@ -302,3 +302,18 @@ class FakeLocalGateway:
             raise LocalGatewayError("simulated gateway failure")
         self.loaded.append(served_model)
         self._running.add(served_model)
+
+
+class FakeComfyUiGateway:
+    """In-memory stand-in for the ComfyUI management client (free-memory only)."""
+
+    def __init__(self, *, fail_free: bool = False) -> None:
+        self.fail_free = fail_free
+        self.frees: list[tuple[bool, bool]] = []
+
+    async def free(self, *, unload_models: bool = True, free_memory: bool = True) -> None:
+        from jbrain.image_gen.gateway import ComfyUiGatewayError
+
+        if self.fail_free:
+            raise ComfyUiGatewayError("simulated gateway failure")
+        self.frees.append((unload_models, free_memory))

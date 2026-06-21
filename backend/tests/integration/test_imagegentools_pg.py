@@ -27,7 +27,7 @@ from jbrain.image_gen.fake import FakeImageGen
 from jbrain.models.images import GeneratedImageRepo
 from tests.conftest import docker_available
 from tests.integration.test_rls import database_url  # noqa: F401
-from tests.unit.fakes import FakeLocalGateway
+from tests.unit.fakes import FakeComfyUiGateway, FakeLocalGateway
 
 pytestmark = [
     pytest.mark.integration,
@@ -101,11 +101,22 @@ def _ctx(owner: SessionContext, session_id: str | None = None) -> ToolContext:
     )
 
 
-async def _handlers(maker: async_sessionmaker, owner: SessionContext, fake: FakeImageGen):
+async def _handlers(
+    maker: async_sessionmaker,
+    owner: SessionContext,
+    fake: FakeImageGen,
+    comfy: FakeComfyUiGateway | None = None,
+):
     sessions = AgentSessionRepo(maker)
     attachments = TurnAttachmentRepo(maker, sessions)
     return build_image_handlers(
-        fake, MemBlobStore(), GeneratedImageRepo(), attachments, maker, FakeLocalGateway()
+        fake,
+        MemBlobStore(),
+        GeneratedImageRepo(),
+        attachments,
+        maker,
+        FakeLocalGateway(),
+        comfy or FakeComfyUiGateway(),
     )
 
 
@@ -141,6 +152,19 @@ async def test_generate_inserts_row_and_returns_view(maker: async_sessionmaker) 
     assert row[0] == 1
     assert fake.last_gen is not None and fake.last_gen.seed == row[1]  # resolved seed recorded
     assert data["seed"] == row[1]  # the view's seed is the resolved/recorded one
+
+
+async def test_generate_frees_comfyui_after_the_render(maker: async_sessionmaker) -> None:
+    # After the image is in hand, ComfyUI's resident model is unloaded so its ~39 GB
+    # returns to the unified pool (for the reply's LLM reload / a follow-up edit).
+    owner = await _owner(maker)
+    comfy = FakeComfyUiGateway()
+    handlers = await _handlers(maker, owner, FakeImageGen(), comfy)
+
+    out = await handlers["generate_image"]({"prompt": "a kite"}, _ctx(owner))
+
+    assert isinstance(out, ToolOutput)
+    assert comfy.frees == [(True, True)]  # unload_models + free_memory
 
 
 async def test_generate_resolution_scales_the_rendered_dims(maker: async_sessionmaker) -> None:
@@ -215,7 +239,13 @@ async def test_edit_by_attachment_id_records_source(maker: async_sessionmaker) -
     attachments = TurnAttachmentRepo(maker, sessions)
     blobs = MemBlobStore()
     handlers = build_image_handlers(
-        fake, blobs, GeneratedImageRepo(), attachments, maker, FakeLocalGateway()
+        fake,
+        blobs,
+        GeneratedImageRepo(),
+        attachments,
+        maker,
+        FakeLocalGateway(),
+        FakeComfyUiGateway(),
     )
 
     # A jerv chat session (empty scopes) with one image attachment (stamped 'general').
@@ -258,7 +288,13 @@ async def test_edit_orphan_source_blob_is_clean_error(maker: async_sessionmaker)
     attachments = TurnAttachmentRepo(maker, sessions)
     blobs = MemBlobStore()
     handlers = build_image_handlers(
-        fake, blobs, GeneratedImageRepo(), attachments, maker, FakeLocalGateway()
+        fake,
+        blobs,
+        GeneratedImageRepo(),
+        attachments,
+        maker,
+        FakeLocalGateway(),
+        FakeComfyUiGateway(),
     )
 
     gen = await handlers["generate_image"]({"prompt": "a cat"}, _ctx(owner))

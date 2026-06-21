@@ -17,7 +17,7 @@ import asyncio
 import contextlib
 import uuid
 from collections.abc import AsyncIterator, Sequence
-from typing import Annotated, Literal, cast
+from typing import Annotated, Any, Literal, cast
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -52,6 +52,42 @@ log = structlog.get_logger()
 router = APIRouter(dependencies=[Depends(owner_only)])
 
 OwnerDep = Annotated[PrincipalInfo, Depends(owner_only)]
+
+# Emit an SSE keepalive when the turn streams nothing for this long, so an idle proxy
+# (Cloudflare's ~100s cap over the tunnel) can't drop the connection during a long
+# blocking tool — an image render's cold model-load gap (minutes with no events)
+# especially, now that we free ComfyUI between renders.
+_SSE_HEARTBEAT_SECONDS = 20.0
+
+
+async def _with_heartbeat(events: AsyncIterator[Any], interval: float) -> AsyncIterator[Any | None]:
+    """Relay each event; yield None as a heartbeat signal when none arrives within
+    `interval`. The pending pull is NEVER cancelled on a heartbeat — a tool that
+    streams nothing for minutes keeps running; only the idle gap is filled (so the SSE
+    writer can send a keepalive comment). A real cancellation (client disconnect) still
+    cancels the pull in the finally, preserving the turn's disconnect handling."""
+    it = events.__aiter__()
+    pull: asyncio.Task[Any] | None = None
+    try:
+        while True:
+            if pull is None:
+                pull = asyncio.ensure_future(it.__anext__())
+            done, _ = await asyncio.wait({pull}, timeout=interval)
+            if pull not in done:
+                yield None  # idle window — keep the connection warm, leave `pull` running
+                continue
+            try:
+                event = pull.result()
+            except StopAsyncIteration:
+                return
+            finally:
+                pull = None
+            yield event
+    finally:
+        if pull is not None:
+            pull.cancel()
+            with contextlib.suppress(BaseException):
+                await pull
 
 
 class ChatMessageIn(BaseModel):
@@ -405,23 +441,30 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
         # owner Stops — or one a dropped connection cuts — never reaches `done`, so this
         # stays False and the `finally` persists whatever partial answer streamed.
         persisted = False
+        stream = loop.run_stream(
+            session=read_ctx,
+            scopes=read_scopes,
+            conversation=conversation,
+            timezone=owner_tz,
+            buffer_retry=buffer_retry,
+            agent_session_id=session.id,
+            system=profile.prompt,
+            tools_allow=profile.tools,
+            # The "from general knowledge — not your notes" label only makes sense
+            # for an agent that reads notes; a non-KB agent (jerv, teacher) has
+            # none to contrast with, so suppress it.
+            general_knowledge_label=profile.reads_knowledge_base,
+            here=here,
+            context_window=context_window,
+        )
         try:
-            async for event in loop.run_stream(
-                session=read_ctx,
-                scopes=read_scopes,
-                conversation=conversation,
-                timezone=owner_tz,
-                buffer_retry=buffer_retry,
-                agent_session_id=session.id,
-                system=profile.prompt,
-                tools_allow=profile.tools,
-                # The "from general knowledge — not your notes" label only makes sense
-                # for an agent that reads notes; a non-KB agent (jerv, teacher) has
-                # none to contrast with, so suppress it.
-                general_knowledge_label=profile.reads_knowledge_base,
-                here=here,
-                context_window=context_window,
-            ):
+            async for event in _with_heartbeat(stream, _SSE_HEARTBEAT_SECONDS):
+                if event is None:
+                    # An idle window during a long blocking tool — keep the proxy from
+                    # dropping the stream. A `:`-comment frame carries no `data:` line,
+                    # so the client parser ignores it.
+                    yield b": keepalive\n\n"
+                    continue
                 if event.type == "text_delta":
                     answer.append(event.text)
                 elif event.type == "reasoning_delta":
