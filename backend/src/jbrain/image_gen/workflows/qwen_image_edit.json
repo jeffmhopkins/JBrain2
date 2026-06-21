@@ -36,7 +36,7 @@
   },
   "61": {
     "inputs": {
-      "clip_name": "qwen_2.5_vl_7b_fp8_scaled.safetensors",
+      "clip_name": "qwen_2.5_vl_7b.safetensors",
       "type": "qwen_image",
       "device": "default"
     },
