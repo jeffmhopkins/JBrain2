@@ -168,3 +168,21 @@ async def test_free_local_llms_swallows_a_gateway_failure() -> None:
 
     gw = FakeLocalGateway(running={"gpt-oss-120b"}, fail_unload=True)
     await _free_local_llms(gw)  # does not raise
+
+
+async def test_free_comfyui_model_unloads_and_frees() -> None:
+    """After a render the tool unloads ComfyUI's model and frees its memory."""
+    from jbrain.agent.imagegentools import _free_comfyui_model
+    from tests.unit.fakes import FakeComfyUiGateway
+
+    gw = FakeComfyUiGateway()
+    await _free_comfyui_model(gw)
+    assert gw.frees == [(True, True)]
+
+
+async def test_free_comfyui_model_swallows_a_gateway_failure() -> None:
+    # The image is already in hand, so a free() failure is logged, never fatal.
+    from jbrain.agent.imagegentools import _free_comfyui_model
+    from tests.unit.fakes import FakeComfyUiGateway
+
+    await _free_comfyui_model(FakeComfyUiGateway(fail_free=True))  # does not raise

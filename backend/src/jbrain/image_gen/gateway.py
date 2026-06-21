@@ -18,6 +18,7 @@ absent); `free()` surfaces failures because the operator explicitly asked for it
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Protocol
 
 import httpx
 import structlog
@@ -29,6 +30,14 @@ _BYTES_PER_GB = 1024**3
 
 class ComfyUiGatewayError(Exception):
     """A free/management call ComfyUI rejected or couldn't be reached for."""
+
+
+class ComfyUiMemory(Protocol):
+    """The free-memory capability the image tool depends on, so it takes the action
+    rather than the concrete HTTP client (the in-memory test fake satisfies it — the
+    same seam as the `LocalGateway` / `ImageGen` protocols)."""
+
+    async def free(self, *, unload_models: bool = True, free_memory: bool = True) -> None: ...
 
 
 @dataclass(frozen=True)

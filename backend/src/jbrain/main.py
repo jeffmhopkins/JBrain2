@@ -297,6 +297,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 # The image render frees any resident local LLM first (unified-memory
                 # time-share); llama-swap reloads it on the loop's next call.
                 app.state.local_gateway,
+                # …and frees ComfyUI's resident diffusion model AFTER the render, so the
+                # ~39 GB it pins returns to the pool for the reply's LLM reload, a
+                # follow-up edit, or switching back to a large local model.
+                app.state.comfyui_gateway,
             )
         else:
             app.state.image_gen = None
