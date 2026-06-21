@@ -519,6 +519,62 @@ function DockBar({
   );
 }
 
+/** Drag-to-dismiss for a bottom sheet: a downward swipe (starting at the top of the
+ * scroll, so it never fights the content scroll) follows the finger; release past a
+ * threshold closes, otherwise it snaps back open. Touch-only — the grab handle's tap
+ * still closes on any device. */
+function useSheetDrag(open: boolean, onClose: () => void) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [dragY, setDragY] = useState(0);
+  const start = useRef<{ y: number; dragging: boolean } | null>(null);
+
+  // Reset the offset whenever it closes, so a reopen starts flush.
+  useEffect(() => {
+    if (!open) setDragY(0);
+  }, [open]);
+
+  const onTouchStart = (e: React.TouchEvent) => {
+    const el = ref.current;
+    const target = e.target as Element | null;
+    // Don't arm when the content is scrolled down (let it scroll) or when the touch
+    // began on a slider (those own their own gesture).
+    if (!el || el.scrollTop > 0 || target?.closest("input")) {
+      start.current = null;
+      return;
+    }
+    start.current = { y: e.touches[0]?.clientY ?? 0, dragging: false };
+  };
+
+  const onTouchMove = (e: React.TouchEvent) => {
+    const s = start.current;
+    if (!s) return;
+    const dy = (e.touches[0]?.clientY ?? 0) - s.y;
+    if (dy <= 0) {
+      if (s.dragging) setDragY(0); // pulled back up to the top — sit flush
+      return;
+    }
+    s.dragging = true;
+    setDragY(dy);
+  };
+
+  const onTouchEnd = () => {
+    const s = start.current;
+    start.current = null;
+    if (!s || !s.dragging) return;
+    const h = ref.current?.offsetHeight ?? 400;
+    // Past ~28% of the sheet (min 90px) dismisses; otherwise snap back open.
+    if (dragY > Math.max(90, h * 0.28)) onClose();
+    setDragY(0);
+  };
+
+  // Only override the CSS transform while actively dragging; clearing it lets the
+  // sheet animate (snap back to open, or slide closed when the class drops).
+  const style: React.CSSProperties | undefined =
+    dragY > 0 ? { transform: `translateY(${dragY}px)`, transition: "none" } : undefined;
+
+  return { ref, onTouchStart, onTouchMove, onTouchEnd, style };
+}
+
 function DetailsSheet({
   open,
   roster,
@@ -540,9 +596,18 @@ function DetailsSheet({
   onPick: (s: Selection) => void;
   onClose: () => void;
 }) {
+  const drag = useSheetDrag(open, onClose);
   if (!roster) return null;
   return (
-    <div className={`lm-sheet lm-float${open ? " open" : ""}`} aria-hidden={!open}>
+    <div
+      ref={drag.ref}
+      className={`lm-sheet lm-float${open ? " open" : ""}`}
+      aria-hidden={!open}
+      style={drag.style}
+      onTouchStart={drag.onTouchStart}
+      onTouchMove={drag.onTouchMove}
+      onTouchEnd={drag.onTouchEnd}
+    >
       <button type="button" className="lm-grab" aria-label="Collapse" onClick={onClose} />
       {sel === "all" ? (
         <RosterList roster={roster} colorOf={colorOf} onPick={onPick} />
@@ -670,8 +735,17 @@ function HistorySheet({
   onWeight: (w: number) => void;
   onClose: () => void;
 }) {
+  const drag = useSheetDrag(open, onClose);
   return (
-    <div className={`lm-sheet lm-float${open ? " open" : ""}`} aria-hidden={!open}>
+    <div
+      ref={drag.ref}
+      className={`lm-sheet lm-float${open ? " open" : ""}`}
+      aria-hidden={!open}
+      style={drag.style}
+      onTouchStart={drag.onTouchStart}
+      onTouchMove={drag.onTouchMove}
+      onTouchEnd={drag.onTouchEnd}
+    >
       <button type="button" className="lm-grab" aria-label="Collapse" onClick={onClose} />
       <div className="lm-sec-h">Show</div>
       <div className="lm-seg">
