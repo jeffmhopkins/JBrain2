@@ -8814,21 +8814,43 @@ button.small {
 .fb-shell .tv-genimg-acts .tv-genimg-cap {
   margin-right: auto;
   padding: 0;
+  /* Truncate seed/model to a single line so the toggle stays on one row. */
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 .fb-shell .tv-genimg-seg {
   display: inline-flex;
+  flex-shrink: 0;
   border: 1px solid var(--border);
   border-radius: var(--r-pill);
   overflow: hidden;
 }
 .fb-shell .tv-genimg-seg button {
-  font: inherit;
-  font-size: 11px;
-  padding: 5px 11px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 26px;
   border: 0;
   background: transparent;
   color: var(--text-3);
   cursor: pointer;
+}
+.fb-shell .tv-genimg-seg button svg {
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.fb-shell .tv-genimg-seg button svg .fill {
+  fill: currentColor;
+  stroke: none;
+  opacity: 0.35;
 }
 .fb-shell .tv-genimg-seg button.on {
   background: var(--steel-tint);

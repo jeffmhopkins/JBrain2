@@ -323,7 +323,7 @@ describe("ToolView registry", () => {
   });
 
   it("the edit toggle switches between Compare (slider) and a zoomable Edited view", () => {
-    const { container, getByText } = render(
+    const { container, getByLabelText } = render(
       <ToolView
         payload={payload({
           view: "generated_image",
@@ -331,14 +331,14 @@ describe("ToolView registry", () => {
         })}
       />,
     );
-    // Compare is the default — the before/after slider, no single frame.
+    // The toggle is icon-only (text labels overflowed); the modes carry aria-labels.
     expect(container.querySelector(".tv-genimg-cmp")).not.toBeNull();
     expect(container.querySelector(".tv-genimg-frame")).toBeNull();
-    expect(getByText("Compare")).toHaveAttribute("aria-pressed", "true");
+    expect(getByLabelText("Compare")).toHaveAttribute("aria-pressed", "true");
 
     // "Edited" drops the slider for a single clickable frame of the result, which
     // opens the full-screen viewer (the same as a generated image).
-    fireEvent.click(getByText("Edited"));
+    fireEvent.click(getByLabelText("Edited"));
     expect(container.querySelector(".tv-genimg-cmp")).toBeNull();
     const frame = container.querySelector(".tv-genimg-frame") as HTMLElement;
     expect(frame.tagName).toBe("BUTTON");
@@ -347,7 +347,7 @@ describe("ToolView registry", () => {
     expect(document.querySelector(".fb-lightbox")).not.toBeNull();
 
     // …and back to the slider.
-    fireEvent.click(getByText("Compare"));
+    fireEvent.click(getByLabelText("Compare"));
     expect(container.querySelector(".tv-genimg-cmp")).not.toBeNull();
   });
 

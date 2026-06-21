@@ -734,23 +734,36 @@ function EditView({
       )}
       <div className="tv-genimg-acts">
         <span className="tv-genimg-cap">{meta}</span>
+        {/* Icon-only toggle: text labels overflowed and wrapped the row; the glyphs
+            keep the segment to a fixed width so the meta caption can take the rest. */}
         {/* biome-ignore lint/a11y/useSemanticElements: a 2-button toggle group; a <fieldset> is overkill */}
         <div className="tv-genimg-seg" role="group" aria-label="Edit view">
           <button
             type="button"
             className={mode === "compare" ? "on" : ""}
             aria-pressed={mode === "compare"}
+            aria-label="Compare"
+            title="Compare"
             onClick={() => setMode("compare")}
           >
-            Compare
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <rect x="3" y="5" width="18" height="14" rx="2" />
+              <path d="M12 5v14" />
+              <path className="fill" d="M5 6h6v12H5z" />
+            </svg>
           </button>
           <button
             type="button"
             className={mode === "edited" ? "on" : ""}
             aria-pressed={mode === "edited"}
+            aria-label="Edited"
+            title="Edited"
             onClick={() => setMode("edited")}
           >
-            Edited
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 20h9" />
+              <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z" />
+            </svg>
           </button>
         </div>
       </div>
