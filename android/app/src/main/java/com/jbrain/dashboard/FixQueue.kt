@@ -11,8 +11,12 @@ interface FixQueue {
     /** The oldest queued fix without removing it, or null when empty. */
     fun peek(): LocationReport?
 
-    /** Drop the oldest fix (after it has been sent). */
-    fun removeFirst()
+    /** The up-to-[max] oldest fixes (oldest first) without removing them, for a
+     * batched upload. Corrupt lines are skipped (and dropped) so they can't wedge. */
+    fun peekBatch(max: Int): List<LocationReport>
+
+    /** Drop the [count] oldest fixes (after they've been sent). */
+    fun removeFirst(count: Int = 1)
 
     fun size(): Int
 
@@ -45,11 +49,32 @@ class FileFixQueue(private val file: File, private val capacity: Int = CAP) : Fi
         return null
     }
 
-    override fun removeFirst() {
-        if (lines.isNotEmpty()) {
-            lines.removeFirst()
-            persist()
+    override fun peekBatch(max: Int): List<LocationReport> {
+        if (max <= 0) return emptyList()
+        val out = ArrayList<LocationReport>()
+        var i = 0
+        var dirty = false
+        while (i < lines.size && out.size < max) {
+            val parsed = LocationReport.fromJson(lines[i])
+            if (parsed == null) {
+                lines.removeAt(i) // drop a corrupt line; the next shifts into its place
+                dirty = true
+            } else {
+                out.add(parsed)
+                i++
+            }
         }
+        if (dirty) persist()
+        return out
+    }
+
+    override fun removeFirst(count: Int) {
+        var removed = 0
+        while (removed < count && lines.isNotEmpty()) {
+            lines.removeFirst()
+            removed++
+        }
+        if (removed > 0) persist()
     }
 
     override fun size(): Int = lines.size

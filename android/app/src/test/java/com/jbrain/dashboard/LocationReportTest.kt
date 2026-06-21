@@ -1,5 +1,6 @@
 package com.jbrain.dashboard
 
+import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -40,5 +41,22 @@ class LocationReportTest {
     fun fromJsonRejectsNonLocationAndGarbage() {
         assertNull(LocationReport.fromJson("""{"_type":"transition","lat":1.0}"""))
         assertNull(LocationReport.fromJson("not json at all"))
+    }
+
+    @Test
+    fun batchJsonEncodesAJsonArrayOldestFirst() {
+        val arr = JSONArray(
+            LocationReport.batchJson(
+                listOf(LocationReport(1.0, 2.0, 10), LocationReport(3.0, 4.0, 20)),
+            ),
+        )
+        assertEquals(2, arr.length())
+        assertEquals(10L, arr.getJSONObject(0).getLong("tst"))
+        assertEquals(20L, arr.getJSONObject(1).getLong("tst"))
+    }
+
+    @Test
+    fun batchJsonOfEmptyIsAnEmptyArray() {
+        assertEquals(0, JSONArray(LocationReport.batchJson(emptyList())).length())
     }
 }

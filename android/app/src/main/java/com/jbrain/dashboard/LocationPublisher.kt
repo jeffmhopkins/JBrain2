@@ -20,23 +20,31 @@ sealed interface PublishOutcome {
     data class Failed(val reason: String) : PublishOutcome
 }
 
-/** Publishes one location report to the server. An interface so the offline-queue
- * drain (LocationUploader) is unit-tested with a fake. */
+/** Publishes a batch of location reports to the server in one request. An interface
+ * so the offline-queue drain (LocationUploader) is unit-tested with a fake. */
 interface Publisher {
-    fun publish(serverBase: String, deviceKey: String, report: LocationReport): PublishOutcome
+    fun publishBatch(
+        serverBase: String,
+        deviceKey: String,
+        reports: List<LocationReport>,
+    ): PublishOutcome
 }
 
-/** POSTs an OwnTracks location report to `/api/owntracks` with the device key as
- * the HTTP Basic password (the server ignores the username). The ingest acks 2xx
- * even on a transient downstream error, so only 401/429 are distinguished. Free of
- * Android types; JVM-tested against MockWebServer. */
+/** POSTs a batch of OwnTracks location reports (a JSON array) to `/api/owntracks`
+ * with the device key as the HTTP Basic password (the server ignores the username).
+ * The ingest acks 2xx even on a transient downstream error, so only 401/429 are
+ * distinguished. Free of Android types; JVM-tested against MockWebServer. */
 class LocationPublisher(private val client: OkHttpClient = OkHttpClient()) : Publisher {
-    override fun publish(serverBase: String, deviceKey: String, report: LocationReport): PublishOutcome {
+    override fun publishBatch(
+        serverBase: String,
+        deviceKey: String,
+        reports: List<LocationReport>,
+    ): PublishOutcome {
         val url = "${serverBase.trimEnd('/')}/api/owntracks"
         val request = Request.Builder()
             .url(url)
             .header("Authorization", Credentials.basic("device", deviceKey))
-            .post(report.toJson().toRequestBody(JSON))
+            .post(LocationReport.batchJson(reports).toRequestBody(JSON))
             .build()
         return try {
             client.newCall(request).execute().use { resp ->
