@@ -382,21 +382,88 @@ function Bubble({
   // A settled answer also gets a copy affordance pinned to the right of that line, so
   // the foot strip shows on every finished turn even with no reasoning or tools.
   const settledAnswer = !message.streaming && message.text.trim() !== "";
+  const activityLine =
+    message.reasoning || message.tools.length > 0 || settledAnswer ? (
+      <ActivityLine
+        reasoning={message.reasoning}
+        thinking={message.thinking}
+        hasAnswer={message.text !== ""}
+        tools={message.tools}
+        copyText={settledAnswer ? stripModelCitations(message.text) : ""}
+        onOpenNote={onOpenNote}
+        onOpenEntity={onOpenEntity}
+      />
+    ) : null;
+
+  // An image turn reads as THREE messages — preamble, image, reply — not one bubble,
+  // so the picture stands as its own chat message. The split point is the prose length
+  // when the image tool was called (recorded live + persisted, so reopen splits the
+  // same). The paced reveal slices cleanly: the reply stays empty until the typewriter
+  // passes the split, then fills in.
+  const imageTool = message.tools.find((t) => IMAGE_TOOL_NAMES.has(t.name));
+  const imageViews = viewsToRender.filter((v) => v.view === "generated_image");
+  const splitAt = imageTool?.textOffset;
+  if (splitAt !== undefined && (livePreviews.length > 0 || imageViews.length > 0)) {
+    const preText = shownText.slice(0, splitAt);
+    const postText = shownText.slice(splitAt);
+    const otherViews = viewsToRender.filter((v) => v.view !== "generated_image");
+    const hasReply =
+      postText.trim() !== "" ||
+      otherViews.length > 0 ||
+      staged !== undefined ||
+      activityLine !== null;
+    return (
+      <>
+        {preText.trim() !== "" && (
+          <div className="bubble ai">
+            <Markdown
+              text={preText}
+              entities={entities}
+              onEntity={onOpenEntity}
+              streaming={message.streaming}
+            />
+          </div>
+        )}
+        {livePreviews.map((t) => (
+          <div className="bubble ai bubble-media" key={`p-${t.id}`}>
+            <GeneratingPreview tool={t} />
+          </div>
+        ))}
+        {imageViews.map((v, i) => (
+          // biome-ignore lint/suspicious/noArrayIndexKey: views append in order
+          <div className="bubble ai bubble-media" key={`v-${i}`}>
+            <ToolView payload={v} />
+          </div>
+        ))}
+        {hasReply && (
+          <div className="bubble ai">
+            {postText.trim() !== "" && (
+              <Markdown
+                text={postText}
+                onCite={onCite}
+                entities={entities}
+                onEntity={onOpenEntity}
+                streaming={message.streaming}
+              />
+            )}
+            {otherViews.map((v, i) => (
+              // biome-ignore lint/suspicious/noArrayIndexKey: views append in order
+              <ToolView key={i} payload={v} />
+            ))}
+            {staged && <ProposalChip proposal={staged} onOpen={onOpenProposal} />}
+            {generalKnowledge && <GeneralKnowledgeNote />}
+            {activityLine}
+          </div>
+        )}
+      </>
+    );
+  }
+
   return (
     <div className="bubble ai">
       {answer}
       {generalKnowledge && <GeneralKnowledgeNote />}
-      {(message.reasoning || message.tools.length > 0 || settledAnswer) && (
-        <ActivityLine
-          reasoning={message.reasoning}
-          thinking={message.thinking}
-          hasAnswer={message.text !== ""}
-          tools={message.tools}
-          copyText={settledAnswer ? stripModelCitations(message.text) : ""}
-          onOpenNote={onOpenNote}
-          onOpenEntity={onOpenEntity}
-        />
-      )}
+      {activityLine}
     </div>
   );
 }
@@ -668,10 +735,23 @@ const PREVIEW_ASPECT: Record<string, string> = {
 function GeneratingPreview({ tool }: { tool: ToolActivity }): ReactNode {
   const [stopping, setStopping] = useState(false);
   const p = tool.progress;
+  const preview = p?.preview;
   const sampling = p !== undefined && p.total > 0 && p.step < p.total;
   const pct = sampling && p ? Math.round((p.step / p.total) * 100) : 0;
-  const blur = Math.max(0, 26 * (1 - pct / 100));
+  // Sharpen as sampling advances; once finalizing, the held frame IS the final sample,
+  // so show it crisp (blur 0) — at max blur it read as a much earlier step.
+  const blur = sampling ? Math.max(0, 26 * (1 - pct / 100)) : 0;
   const aspect = PREVIEW_ASPECT[String(tool.args?.aspect ?? "square")] ?? "1 / 1";
+
+  // Cross-fade successive frames instead of snapping: the new frame fades in over the
+  // previous one (kept beneath) so the preview evolves smoothly step to step.
+  const [frames, setFrames] = useState<{ prev: string | undefined; cur: string | undefined }>({
+    prev: undefined,
+    cur: undefined,
+  });
+  useEffect(() => {
+    if (preview) setFrames((f) => (preview === f.cur ? f : { prev: f.cur, cur: preview }));
+  }, [preview]);
 
   const label = stopping
     ? "stopping…"
@@ -690,13 +770,16 @@ function GeneratingPreview({ tool }: { tool: ToolActivity }): ReactNode {
   return (
     <div className="fb-genprev">
       <div className="fb-genprev-frame" style={{ aspectRatio: aspect }}>
-        {p?.preview ? (
-          <img
-            className="fb-genprev-img"
-            src={p.preview}
-            alt=""
-            style={{ filter: `blur(${blur}px)` }}
-          />
+        {frames.cur ? (
+          <div className="fb-genprev-stage" style={{ filter: `blur(${blur}px)` }}>
+            {frames.prev && <img className="fb-genprev-img" src={frames.prev} alt="" />}
+            <img
+              className="fb-genprev-img fb-genprev-fade"
+              key={frames.cur}
+              src={frames.cur}
+              alt=""
+            />
+          </div>
         ) : (
           <div className="fb-genprev-skeleton" />
         )}

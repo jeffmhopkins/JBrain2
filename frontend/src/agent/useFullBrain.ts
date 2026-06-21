@@ -119,6 +119,7 @@ function fromTurn(t: TranscriptTurn): TranscriptMessage {
       sources: tool.sources.map((s) => ({ noteId: s.note_id, domain: s.domain, text: s.snippet })),
       ...(tool.proposal ? { proposal: tool.proposal } : {}),
       ...(tool.entities?.length ? { entities: tool.entities } : {}),
+      ...(tool.text_offset !== undefined ? { textOffset: tool.text_offset } : {}),
     })),
     // Rebuild the rich tool-result views (e.g. a list_card) so they replay too.
     views: t.tools.flatMap((tool) => (tool.view ? [tool.view] : [])),
