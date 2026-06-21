@@ -9,11 +9,19 @@ import { useEffect, useRef, useState } from "react";
 import { type DeviceSummary, type LocationFix, type PlaceGeofence, api } from "../api/client";
 import { Sheet } from "../components/Sheet";
 import type { LocationDeps } from "./LocationScreen";
-import { type LocationMapHandle, createLocationMap } from "./leafletMap";
+import {
+  type LocationMapHandle,
+  type TileScheme,
+  createLocationMap,
+  readTileScheme,
+  writeTileScheme,
+} from "./leafletMap";
 
 type Mode = "live" | "trail" | "heat";
 
 const MODE_LABEL: Record<Mode, string> = { live: "Live", trail: "Trail", heat: "Heat" };
+
+const SCHEME_LABEL: Record<TileScheme, string> = { dark: "Dark", light: "Light" };
 
 export interface PlaceNoteInput {
   name: string;
@@ -78,6 +86,9 @@ export function LocationMapTab({ deps }: { deps: LocationDeps | undefined }) {
   // The Heat view's per-point radius in px (the "spot size" slider). 25 reads as
   // dwell clusters at neighbourhood zoom without smearing the whole track.
   const [heatRadius, setHeatRadius] = useState(25);
+  // The basemap style — a tiles-only toggle (it never restyles the app chrome),
+  // persisted so the choice sticks across reloads.
+  const [tileScheme, setTileScheme] = useState<TileScheme>(() => readTileScheme());
   const [since, setSince] = useState(() => localDateTime(-DEFAULT_DAYS));
   const [until, setUntil] = useState(() => localDateTime(0));
   const [fixes, setFixes] = useState<Fixes>({ phase: "loading" });
@@ -157,7 +168,13 @@ export function LocationMapTab({ deps }: { deps: LocationDeps | undefined }) {
   return (
     <div className="loc-map">
       <div className="loc-map-stage">
-        <LeafletMap mode={mode} fixes={points} places={meta.places} heatRadius={heatRadius} />
+        <LeafletMap
+          mode={mode}
+          fixes={points}
+          places={meta.places}
+          heatRadius={heatRadius}
+          tileScheme={tileScheme}
+        />
 
         <div className="loc-map-overlay loc-map-overlay-top">
           {meta.devices.length > 1 && (
@@ -185,6 +202,23 @@ export function LocationMapTab({ deps }: { deps: LocationDeps | undefined }) {
                 onClick={() => setMode(m)}
               >
                 {MODE_LABEL[m]}
+              </button>
+            ))}
+          </div>
+          <div className="seg-row" role="tablist" aria-label="Basemap">
+            {(Object.keys(SCHEME_LABEL) as TileScheme[]).map((s) => (
+              <button
+                key={s}
+                type="button"
+                role="tab"
+                aria-selected={tileScheme === s}
+                className={`seg${tileScheme === s ? " seg-on" : ""}`}
+                onClick={() => {
+                  setTileScheme(s);
+                  writeTileScheme(s);
+                }}
+              >
+                {SCHEME_LABEL[s]}
               </button>
             ))}
           </div>
@@ -416,11 +450,13 @@ function LeafletMap({
   fixes,
   places,
   heatRadius,
+  tileScheme,
 }: {
   mode: Mode;
   fixes: LocationFix[];
   places: PlaceGeofence[];
   heatRadius: number;
+  tileScheme: TileScheme;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const handle = useRef<LocationMapHandle | null>(null);
@@ -429,6 +465,8 @@ function LeafletMap({
   // (This component only mounts in the ready branch, so the container exists.)
   useEffect(() => {
     if (!ref.current) return;
+    // createLocationMap defaults to the persisted scheme (same source as the parent
+    // state), so the initial basemap matches; later toggles flow through setScheme.
     handle.current = createLocationMap(ref.current);
     return () => {
       handle.current?.destroy();
@@ -440,6 +478,11 @@ function LeafletMap({
   useEffect(() => {
     handle.current?.update({ mode, fixes, places, heatRadius });
   }, [mode, fixes, places, heatRadius]);
+
+  // Swap the basemap in place when the toggle changes (no remount, overlays stay).
+  useEffect(() => {
+    handle.current?.setScheme(tileScheme);
+  }, [tileScheme]);
 
   return <div ref={ref} className="loc-map-canvas" aria-label="Location map" />;
 }

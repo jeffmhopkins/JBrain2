@@ -12,6 +12,37 @@ import type { LocationFix, PlaceGeofence } from "../api/client";
 
 export type MapMode = "live" | "trail" | "heat";
 
+// The selectable basemap styles. Each maps to a separate server-side scheme
+// (/api/tiles/{scheme}/…) with its own upstream + cache, so the toggle only swaps
+// the tiles — never the app's own dark UI chrome.
+export type TileScheme = "dark" | "light";
+
+const TILE_SCHEME_KEY = "jbrain.map.tileScheme";
+const DEFAULT_TILE_SCHEME: TileScheme = "dark";
+
+/** The owner's last basemap choice, persisted so a reload (or a tab/app switch)
+ * keeps it. Defaults to dark — matching the app UI — and tolerates a missing or
+ * blocked localStorage (private mode / WebView). */
+export function readTileScheme(): TileScheme {
+  try {
+    return localStorage.getItem(TILE_SCHEME_KEY) === "light" ? "light" : DEFAULT_TILE_SCHEME;
+  } catch {
+    return DEFAULT_TILE_SCHEME;
+  }
+}
+
+export function writeTileScheme(scheme: TileScheme): void {
+  try {
+    localStorage.setItem(TILE_SCHEME_KEY, scheme);
+  } catch {
+    // A blocked store just means the choice isn't remembered — never a crash.
+  }
+}
+
+function tileUrl(scheme: TileScheme): string {
+  return `/api/tiles/${scheme}/{z}/{x}/{y}.png`;
+}
+
 /** A person's current-location pin (the member map's switcher targets). Colour is a
  * palette class (`loc-pin-c*`) so it stays tokens-only; the initial is drawn in the
  * teardrop. */
@@ -44,10 +75,11 @@ export interface LocationMapHandle {
   // Recenter on a point (the member map's tap-a-person-to-center), keeping at least
   // a street-level zoom.
   centerOn: (lat: number, lon: number) => void;
+  // Swap the basemap style in place (the light/dark tile toggle). Re-points the
+  // existing tile layer, so overlays/markers stay put.
+  setScheme: (scheme: TileScheme) => void;
   destroy: () => void;
 }
-
-const TILE_URL = "/api/tiles/{z}/{x}/{y}.png";
 
 function escapeHtml(s: string): string {
   return s.replace(
@@ -61,6 +93,7 @@ function escapeHtml(s: string): string {
 export function createLocationMap(
   container: HTMLElement,
   onSelect?: (subjectId: string) => void,
+  scheme: TileScheme = readTileScheme(),
 ): LocationMapHandle {
   // Zoom moves to the bottom-right so the floating control bar owns the top edge.
   const map = L.map(container, {
@@ -68,10 +101,11 @@ export function createLocationMap(
     zoomControl: false,
   }).setView([20, 0], 2);
   L.control.zoom({ position: "bottomright" }).addTo(map);
-  L.tileLayer(TILE_URL, {
+  const tiles = L.tileLayer(tileUrl(scheme), {
     maxZoom: 19,
     attribution: "© OpenStreetMap contributors © CARTO",
   }).addTo(map);
+  let currentScheme = scheme;
   let overlay = L.layerGroup().addTo(map);
   // The data bounds last auto-fitted, so a redraw that doesn't change them leaves
   // the owner's manual zoom/pan untouched.
@@ -166,6 +200,11 @@ export function createLocationMap(
     centerOn: (lat, lon) => {
       map.setView([lat, lon], Math.max(map.getZoom(), 15), { animate: true });
       lastFit = null; // a manual recenter; a later autoFit (Everyone) should re-fit
+    },
+    setScheme: (next) => {
+      if (next === currentScheme) return;
+      currentScheme = next;
+      tiles.setUrl(tileUrl(next)); // re-requests the grid under the new scheme's path
     },
     destroy: () => {
       resize.disconnect();

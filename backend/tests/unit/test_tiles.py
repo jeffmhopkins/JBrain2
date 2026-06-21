@@ -1,7 +1,7 @@
 """The basemap tile cache + cache-first service (location map proxy). The upstream
 HTTP fetch is faked — CI never reaches a real tile host."""
 
-from jbrain.tiles import FsTileCache, TileService, tile_cache_namespace, valid_tile
+from jbrain.tiles import FsTileCache, TileService, TileSet, tile_cache_namespace, valid_tile
 
 _PNG = b"\x89PNG\r\n\x1a\n-fake-tile"
 
@@ -98,3 +98,38 @@ async def test_unwritable_cache_still_serves_the_tile(tmp_path) -> None:  # noqa
     )
     assert await svc.tile(5, 1, 1) == _PNG
     assert fetcher.calls == ["https://up/5/1/1.png"]
+
+
+def test_tileset_resolves_per_scheme_with_default(tmp_path) -> None:  # noqa: ANN001
+    dark = _service(tmp_path / "d", FakeFetcher(_PNG), upstream="https://dark/{z}/{x}/{y}.png")
+    light = _service(tmp_path / "l", FakeFetcher(_PNG), upstream="https://light/{z}/{x}/{y}.png")
+    tiles = TileSet({"dark": dark, "light": light}, default="dark")
+
+    assert tiles.schemes == frozenset({"dark", "light"})
+    assert tiles.service("dark") is dark
+    assert tiles.service("light") is light
+    # An empty/None scheme falls back to the configured default; an unknown one is None.
+    assert tiles.service(None) is dark
+    assert tiles.service("") is dark
+    assert tiles.service("sepia") is None
+
+
+async def test_tileset_schemes_use_separate_caches(tmp_path) -> None:  # noqa: ANN001
+    # The two schemes fetch from their own upstreams and cache independently — a dark
+    # hit never serves the light tile, so the app's toggle stays clean.
+    dark_fetch = FakeFetcher(b"dark-png")
+    light_fetch = FakeFetcher(b"light-png")
+    tiles = TileSet(
+        {
+            "dark": _service(tmp_path / "d", dark_fetch, upstream="https://dark/{z}/{x}/{y}.png"),
+            "light": _service(tmp_path / "l", light_fetch, upstream="https://light/{z}/{x}/{y}.png"),
+        },
+        default="dark",
+    )
+    dark_svc = tiles.service("dark")
+    light_svc = tiles.service("light")
+    assert dark_svc is not None and light_svc is not None
+    assert await dark_svc.tile(5, 1, 1) == b"dark-png"
+    assert await light_svc.tile(5, 1, 1) == b"light-png"
+    assert dark_fetch.calls == ["https://dark/5/1/1.png"]
+    assert light_fetch.calls == ["https://light/5/1/1.png"]

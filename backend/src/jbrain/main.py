@@ -86,7 +86,7 @@ from jbrain.search.repo import SqlSearchRepo
 from jbrain.search.service import SearchService
 from jbrain.settings_store import SqlSettingsStore
 from jbrain.storage import FsBackupShelf, FsBlobStore
-from jbrain.tiles import FsTileCache, HttpTileFetcher, TileService, tile_cache_namespace
+from jbrain.tiles import FsTileCache, HttpTileFetcher, TileService, TileSet, tile_cache_namespace
 from jbrain.usage import SqlUsageRecorder
 from jbrain.web import SearxngClient, WebFetcher
 from jbrain.wiki.actions import WIKI_SPECS
@@ -144,16 +144,27 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             )
         # Server-side basemap tile proxy/cache: the map's Leaflet layer fetches
         # tiles only from this box (api/tiles.py); the upstream is fetched once and
-        # cached. Empty upstream disables tiles (map falls back to the schematic).
-        app.state.tile_service = TileService(
-            # Namespace the cache by upstream so a basemap-style change re-fetches
-            # cleanly instead of serving the old style's cached z/x/y tiles.
-            FsTileCache(
-                Path(settings.tile_cache_dir) / tile_cache_namespace(settings.tile_upstream_url)
-            ),
-            HttpTileFetcher(settings.tile_user_agent),
-            upstream_template=settings.tile_upstream_url,
-            max_zoom=settings.tile_max_zoom,
+        # cached. One independent service per selectable scheme (dark/light), each
+        # cache-namespaced by its upstream URL so a style change — or the app's
+        # light/dark toggle — re-fetches cleanly instead of serving the old style's
+        # cached z/x/y tiles. Empty upstream disables that scheme (map falls back to
+        # the on-box schematic).
+        fetcher = HttpTileFetcher(settings.tile_user_agent)
+
+        def _scheme(upstream: str) -> TileService:
+            return TileService(
+                FsTileCache(Path(settings.tile_cache_dir) / tile_cache_namespace(upstream)),
+                fetcher,
+                upstream_template=upstream,
+                max_zoom=settings.tile_max_zoom,
+            )
+
+        app.state.tile_set = TileSet(
+            {
+                "dark": _scheme(settings.tile_upstream_url),
+                "light": _scheme(settings.tile_upstream_url_light),
+            },
+            default=settings.tile_default_scheme,
         )
         # Per-device ingest cap: 60 fixes/min sustained (burst 60). A flooding
         # device gets a 429 and backs off; normal move-mode never trips it.

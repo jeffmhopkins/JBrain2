@@ -12098,6 +12098,37 @@ input.ld-title {
   color: var(--text-2);
   padding: 12px;
 }
+
+/* Basemap light/dark toggle — a small floating pill on the right edge, tucked
+   below the person switcher. Switches the map tiles only, never the app chrome. */
+.lm-tiles {
+  position: absolute;
+  top: calc(max(env(safe-area-inset-top), 10px) + 70px);
+  right: 10px;
+  z-index: 8;
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  border-radius: var(--r-pill);
+}
+.lm-tiles button {
+  width: 34px;
+  height: 30px;
+  border: 0;
+  background: transparent;
+  color: var(--text-2);
+  border-radius: calc(var(--r-pill) - 3px);
+  cursor: pointer;
+  font-size: 15px;
+  line-height: 1;
+  display: grid;
+  place-items: center;
+}
+.lm-tiles button.on {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
 .lm-chip {
   flex: 0 0 auto;
   width: 56px;

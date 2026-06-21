@@ -19,11 +19,15 @@ const updateSpy = vi.fn((s: MapState) => {
   lastState = s;
 });
 const centerSpy = vi.fn();
+const schemeSpy = vi.fn();
+const writeSchemeSpy = vi.fn();
 vi.mock("./leafletMap", () => ({
   createLocationMap: (_el: HTMLElement, sel?: (id: string) => void) => {
     onSelect = sel ?? null;
-    return { update: updateSpy, centerOn: centerSpy, destroy: vi.fn() };
+    return { update: updateSpy, centerOn: centerSpy, setScheme: schemeSpy, destroy: vi.fn() };
   },
+  readTileScheme: () => "dark",
+  writeTileScheme: (s: string) => writeSchemeSpy(s),
 }));
 
 // Capture the live-socket callback so a test can push a fix.
@@ -92,6 +96,8 @@ function deps(over: Partial<MemberDeps> = {}): MemberDeps {
 beforeEach(() => {
   updateSpy.mockClear();
   centerSpy.mockClear();
+  schemeSpy.mockClear();
+  writeSchemeSpy.mockClear();
   lastState = null;
   onSelect = null;
   liveOnFix = null;
@@ -252,6 +258,19 @@ describe("MemberDashboard", () => {
     render(<MemberDashboard deps={deps({ listRoster: vi.fn(async () => []) })} />);
     expect(await screen.findByText(/no one to show yet/i)).toBeInTheDocument();
     await waitFor(() => expect(lastState?.pins?.length).toBe(0));
+  });
+
+  it("toggles only the basemap tiles between dark and light, and persists it", async () => {
+    render(<MemberDashboard deps={deps()} />);
+    await screen.findByRole("tab", { name: /Everyone/ });
+    // Switching to Light drives the map's tile scheme and remembers the choice;
+    // it never touches the redraw path (update), so the app chrome is unaffected.
+    fireEvent.click(screen.getByRole("tab", { name: /Light map/i }));
+    await waitFor(() => expect(schemeSpy).toHaveBeenLastCalledWith("light"));
+    expect(writeSchemeSpy).toHaveBeenLastCalledWith("light");
+    fireEvent.click(screen.getByRole("tab", { name: /Dark map/i }));
+    await waitFor(() => expect(schemeSpy).toHaveBeenLastCalledWith("dark"));
+    expect(writeSchemeSpy).toHaveBeenLastCalledWith("dark");
   });
 
   it("lists a fix-less member but doesn't pin them", async () => {
