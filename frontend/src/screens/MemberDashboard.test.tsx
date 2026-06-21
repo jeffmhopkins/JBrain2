@@ -119,8 +119,9 @@ describe("MemberDashboard", () => {
     expect(await screen.findByRole("tab", { name: /Everyone/ })).toBeInTheDocument();
     await waitFor(() => expect(lastState?.pins?.length).toBe(2));
     expect(lastState?.autoFit).toBe(true);
-    // Collapsed by default: both pull-ups closed; History disabled in Everyone.
-    expect(screen.getByRole("button", { name: /Details/ })).toHaveAttribute(
+    // Collapsed by default: the dock's person area (the Details trigger) is closed,
+    // and History is disabled in Everyone.
+    expect(screen.getByRole("button", { name: /Everyone/ })).toHaveAttribute(
       "aria-expanded",
       "false",
     );
@@ -202,10 +203,11 @@ describe("MemberDashboard", () => {
     await waitFor(() => expect(lastState?.heatWeight).toBe(0.8));
   });
 
-  it("pulls up Details and shows the person's last actions", async () => {
+  it("pulls up Details by tapping the person area of the dock bar", async () => {
     render(<MemberDashboard deps={deps()} />);
     await selectBob();
-    fireEvent.click(screen.getByRole("button", { name: /Details/ }));
+    // Tapping the dock's person area (not a separate Details button) opens Details.
+    fireEvent.click(screen.getByRole("button", { name: /Bob/ }));
     expect(await screen.findByText(/recent activity/i)).toBeInTheDocument();
     expect(screen.getByText(/Arrived Home/)).toBeInTheDocument();
     expect(screen.getByText(/Left Work/)).toBeInTheDocument();

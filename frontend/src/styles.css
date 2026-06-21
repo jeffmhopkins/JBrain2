@@ -12666,13 +12666,25 @@ input.ld-title {
   color: var(--text-2);
   padding: 16px;
 }
+/* The person area of the dock bar is the Details trigger (tap icon/name/anywhere
+   here); a button, reset to look like the old plain row. */
 .lm-bar-who {
   flex: 1;
   display: flex;
   align-items: center;
   gap: 10px;
   min-width: 0;
-  padding: 2px 4px;
+  padding: 4px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  border-radius: 12px;
+}
+.lm-bar-who.on {
+  background: var(--surface-2);
 }
 .lm-bar-txt {
   min-width: 0;

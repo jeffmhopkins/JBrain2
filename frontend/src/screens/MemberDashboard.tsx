@@ -7,9 +7,10 @@
 //
 // Reference mock: docs/mocks/app-live-map-v2.html. The map is the whole surface; a
 // floating switcher selects a person (centering the map on them), and the bottom is a
-// slim persistent bar with two pull-up sheets, one at a time: Details (the person's
-// last-actions timeline / the roster) and History (Trail/Heat over a drag-both-ends
-// time window). Location domain stays on --location (teal); names + times only.
+// slim persistent bar with two pull-up sheets, one at a time: tapping the person area
+// of the bar opens Details (the person's last-actions timeline / the roster); a
+// History button opens Trail/Heat over a drag-both-ends time window. Location domain
+// stays on --location (teal); names + times only.
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -471,7 +472,12 @@ function DockBar({
   const m = everyone ? null : roster.find((s) => s.subject_id === sel);
   return (
     <div className="lm-bar lm-float">
-      <div className="lm-bar-who">
+      <button
+        type="button"
+        className={`lm-bar-who${sheet === "details" ? " on" : ""}`}
+        aria-expanded={sheet === "details"}
+        onClick={() => onToggle("details")}
+      >
         {everyone ? (
           <>
             <span className="lm-av lm-av-all sm" aria-hidden>
@@ -495,15 +501,6 @@ function DockBar({
             </span>
           </>
         ) : null}
-      </div>
-      <button
-        type="button"
-        className={`lm-pull${sheet === "details" ? " on" : ""}`}
-        aria-expanded={sheet === "details"}
-        onClick={() => onToggle("details")}
-      >
-        <PullChevron />
-        Details
       </button>
       <button
         type="button"
