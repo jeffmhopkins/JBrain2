@@ -167,6 +167,29 @@ async def test_generate_frees_comfyui_after_the_render(maker: async_sessionmaker
     assert comfy.frees == [(True, True)]  # unload_models + free_memory
 
 
+async def test_edit_records_the_actual_output_dims_not_the_preset(
+    maker: async_sessionmaker,
+) -> None:
+    # An edit scales the source to a megapixel budget preserving its aspect, so the
+    # output differs from the square preset. The row/view must carry the REAL dims
+    # (read from the PNG) — otherwise the before/after frame letterboxes with a band.
+    owner = await _owner(maker)
+    fake = FakeImageGen()
+    handlers = await _handlers(maker, owner, fake)
+    gen = await handlers["generate_image"]({"prompt": "a tree"}, _ctx(owner))
+    assert isinstance(gen, ToolOutput) and gen.view is not None
+    source_id = gen.view.data["image_id"]
+
+    # The edit's output is a non-square 1264x948, not the default square preset.
+    fake.out_dims = (1264, 948)
+    out = await handlers["edit_image"](
+        {"prompt": "make it night", "source_image_id": source_id}, _ctx(owner)
+    )
+
+    assert isinstance(out, ToolOutput) and out.view is not None
+    assert (out.view.data["width"], out.view.data["height"]) == (1264, 948)
+
+
 async def test_generate_resolution_scales_the_rendered_dims(maker: async_sessionmaker) -> None:
     # `small` renders below the native default — the lighter latent that buys
     # unified-memory headroom — and the chosen dims reach both the spec and the row.

@@ -108,6 +108,21 @@ def _resolve_steps(raw: object) -> int:
 
 _STOPPED_MESSAGE = "Stopped the render — nothing was saved."
 
+_PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+
+
+def _png_dims(data: bytes) -> tuple[int, int] | None:
+    """The (width, height) from a PNG's IHDR — the two big-endian uint32 at offset 16
+    — or None if it isn't a PNG we can read. Used to record the ACTUAL output size: an
+    edit scales the source to a megapixel budget preserving its aspect, so the rendered
+    image's dims differ from the requested aspect preset; recording the real dims keeps
+    the card's aspect (and meta) honest, no letterbox band in the compare frame."""
+    if len(data) < 24 or data[:8] != _PNG_SIGNATURE:
+        return None
+    width = int.from_bytes(data[16:20], "big")
+    height = int.from_bytes(data[20:24], "big")
+    return (width, height) if width > 0 and height > 0 else None
+
 
 async def _free_local_llms(gateway: LocalGateway) -> None:
     """Time-share unified memory: unload any resident local LLM before a render.
@@ -221,6 +236,7 @@ def build_image_handlers(
             log.warning("generate_image_failed", error=str(exc))
             return "I couldn't generate that image right now — the image model didn't respond."
         await _free_comfyui_model(comfyui_gateway)
+        out_w, out_h = _png_dims(png) or (width, height)
         sha = await blob_store.put(png)
         async with scoped_session(maker, ctx.session) as session:
             row = await repo.insert(
@@ -230,13 +246,13 @@ def build_image_handlers(
                 model=_GEN_MODEL,
                 prompt=prompt,
                 source_sha256=None,
-                width=width,
-                height=height,
+                width=out_w,
+                height=out_h,
                 steps=steps,
                 seed=seed,
             )
         return ToolOutput(
-            f"Generated a {width}x{height} image (seed {seed}); the app is showing it. "
+            f"Generated a {out_w}x{out_h} image (seed {seed}); the app is showing it. "
             f"To change it, call edit_image with source_image_id {row.id}; to reproduce "
             f"or tweak it, reuse seed {seed}.",
             view=generated_image_view(row),
@@ -315,6 +331,10 @@ def build_image_handlers(
             log.warning("edit_image_failed", error=str(exc))
             return "I couldn't edit that image right now — the image model didn't respond."
         await _free_comfyui_model(comfyui_gateway)
+        # The edit scales the source to a megapixel budget preserving ITS aspect, so the
+        # output dims differ from the requested preset — record the real ones (the row's
+        # dims drive the card's aspect; a mismatch letterboxes the before/after frame).
+        out_w, out_h = _png_dims(png) or (width, height)
         sha = await blob_store.put(png)
         async with scoped_session(maker, ctx.session) as session:
             row = await repo.insert(
@@ -324,8 +344,8 @@ def build_image_handlers(
                 model=_EDIT_MODEL,
                 prompt=prompt,
                 source_sha256=source_sha,
-                width=width,
-                height=height,
+                width=out_w,
+                height=out_h,
                 steps=steps,
                 seed=seed,
             )

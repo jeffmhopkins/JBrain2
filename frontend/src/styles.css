@@ -8552,21 +8552,6 @@ button.small {
   color: var(--text-3);
   padding: 7px 2px 1px;
 }
-.fb-shell .tv-genimg-kind {
-  position: absolute;
-  top: 8px;
-  left: 8px;
-  font-size: 10.5px;
-  font-weight: 600;
-  padding: 3px 8px;
-  border-radius: var(--r-pill);
-  backdrop-filter: blur(3px);
-}
-.fb-shell .tv-genimg-kind.kind-edit {
-  background: color-mix(in srgb, var(--amber) 22%, var(--surface));
-  color: var(--amber);
-  border: 1px solid color-mix(in srgb, var(--amber) 34%, transparent);
-}
 
 /* Live generation preview — "image-as-progress" (docs/mocks/image-gen-live A):
    the preview fills the final image slot and sharpens (blur → 0) as sampling
