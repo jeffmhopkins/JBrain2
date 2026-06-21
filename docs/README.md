@@ -55,6 +55,11 @@ Phase-5 build record is `archive/PHASE5_COMPLETION_PLAN.md`.
   (tools + by-id serving) shipped; G3 (the chat view, after the GUI mock gate — chosen
   mock C) is in progress.
 
+- `PHASE7_LOCATION_DETAIL_PLAN.md` — the **high-detail, low-battery trails** build
+  plan: motion-adaptive sampling on the framework fused provider (no Play Services),
+  an accuracy filter, and batched array upload, for Life360-grade member trails.
+  Wave 0 (plan) is this doc; open decisions await owner sign-off before Wave 1.
+
 ## Archive (history, not active)
 
 `archive/` holds completed build plans and the design research that fed them.
