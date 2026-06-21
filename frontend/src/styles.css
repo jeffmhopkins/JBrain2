@@ -8470,11 +8470,14 @@ button.small {
 .fb-shell .bubble.ai:has(.fb-genprev, .tv-genimg) {
   width: 100%;
 }
-/* An image turn splits into preamble / image / reply bubbles; the image one is just a
-   slim frame around the picture (no prose padding). */
+/* An image turn splits into preamble / image / reply bubbles; the image one carries no
+   bubble chrome — the picture's own rounded frame + its caption stand alone, so there's
+   no border-inside-a-border. */
 .fb-shell .bubble.ai.bubble-media {
   width: 100%;
-  padding: 5px;
+  padding: 0;
+  border: none;
+  background: transparent;
 }
 .fb-shell .tv-genimg-frame {
   position: relative;
