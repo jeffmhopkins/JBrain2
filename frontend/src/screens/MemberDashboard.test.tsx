@@ -172,6 +172,36 @@ describe("MemberDashboard", () => {
     expect(sinceOf(1)).toBeLessThan(sinceOf(0));
   });
 
+  it("resizes the window to the picked total range (1/3/7 days)", async () => {
+    const d = deps();
+    render(<MemberDashboard deps={d} />);
+    await selectBob();
+    await waitFor(() => expect(d.listPositions).toHaveBeenCalledTimes(1));
+    fireEvent.click(screen.getByRole("button", { name: /History/ }));
+    fireEvent.click(screen.getByRole("button", { name: "1d" }));
+    await waitFor(() => expect(d.listPositions).toHaveBeenCalledTimes(2));
+    const sinceOf = (i: number) =>
+      new Date(
+        (d.listPositions as ReturnType<typeof vi.fn>).mock.calls[i]?.[1] as string,
+      ).getTime();
+    // Picking 1d spans the full one-day range: since ≈ now − 1 day, more recent than
+    // the 3-day default, and the dual slider now covers the whole chosen range.
+    expect(sinceOf(1)).toBeGreaterThan(sinceOf(0));
+    expect(Math.abs(sinceOf(1) - (Date.now() - 86_400_000))).toBeLessThan(120_000);
+  });
+
+  it("tunes the heat radius and weight from the expanded pane", async () => {
+    render(<MemberDashboard deps={deps()} />);
+    await selectBob();
+    fireEvent.click(screen.getByRole("button", { name: /History/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Heat" }));
+    await waitFor(() => expect(lastState?.mode).toBe("heat"));
+    fireEvent.change(screen.getByLabelText("Heat spot radius"), { target: { value: "40" } });
+    await waitFor(() => expect(lastState?.heatRadius).toBe(40));
+    fireEvent.change(screen.getByLabelText("Heat fix weight"), { target: { value: "0.8" } });
+    await waitFor(() => expect(lastState?.heatWeight).toBe(0.8));
+  });
+
   it("pulls up Details and shows the person's last actions", async () => {
     render(<MemberDashboard deps={deps()} />);
     await selectBob();

@@ -12528,7 +12528,8 @@ input.ld-title {
   position: absolute;
   top: max(env(safe-area-inset-top), 10px);
   left: 10px;
-  right: 10px;
+  /* Leave room at the right edge for the basemap toggle so the two never overlap. */
+  right: 92px;
   z-index: 8;
   display: flex;
   gap: 8px;
@@ -12546,11 +12547,12 @@ input.ld-title {
   padding: 12px;
 }
 
-/* Basemap light/dark toggle — a small floating pill on the right edge, tucked
-   below the person switcher. Switches the map tiles only, never the app chrome. */
+/* Basemap light/dark toggle — a small floating pill at the top-right, beside (not
+   over) the person switcher, vertically centred against it. Tiles only, never the
+   app chrome. */
 .lm-tiles {
   position: absolute;
-  top: calc(max(env(safe-area-inset-top), 10px) + 70px);
+  top: calc(max(env(safe-area-inset-top), 10px) + 20px);
   right: 10px;
   z-index: 8;
   display: flex;
@@ -12914,6 +12916,32 @@ input.ld-title {
 .lm-seg button.on {
   background: var(--location);
   color: #04100f;
+}
+/* The 1d/3d/7d total-range picker sits at the top of the time window. */
+.lm-rangepick {
+  margin: 0 0 12px;
+}
+/* Heat-view tuning sliders (Spot radius / Fix weight) — only shown in Heat mode. */
+.lm-heat {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 2px 0 14px;
+}
+.lm-heat-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: var(--fs-secondary);
+  color: var(--text-2);
+}
+.lm-heat-row > span {
+  flex: 0 0 70px;
+}
+.lm-heat-row input[type="range"] {
+  flex: 1;
+  min-width: 0;
+  accent-color: var(--location);
 }
 .lm-win {
   margin-bottom: 4px;
