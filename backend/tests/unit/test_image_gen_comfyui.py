@@ -88,6 +88,34 @@ async def test_generate_fills_prompt_seed_steps_and_dims() -> None:
     assert wf["3"]["inputs"]["seed"] == 42
     assert wf["3"]["inputs"]["steps"] == 12
     assert wf["58"]["inputs"]["width"] == 768 and wf["58"]["inputs"]["height"] == 512
+    # No negative prompt given → the negative node keeps its authored (empty) default.
+    assert wf["7"]["inputs"]["text"] == ""
+
+
+async def test_negative_prompt_fills_the_negative_node_in_both_graphs() -> None:
+    """A negative prompt lands on the negative encoder — node 7 (generate, CLIPTextEncode)
+    and node 69 (edit, the TextEncodeQwenImageEditPlus sibling of the positive 68)."""
+    seen: dict = {}
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/upload/image":
+            return httpx.Response(200, json={"name": "in.png"})
+        if request.url.path == "/prompt":
+            seen["wf"] = json.loads(request.content)["prompt"]
+            return httpx.Response(200, json={"prompt_id": "abc123"})
+        if request.url.path == "/history/abc123":
+            return httpx.Response(200, json=_HISTORY_DONE)
+        return httpx.Response(200, content=PNG)
+
+    import dataclasses
+
+    await _client(handle).generate(dataclasses.replace(GEN, negative_prompt="blurry, text"))
+    assert seen["wf"]["7"]["inputs"]["text"] == "blurry, text"
+    assert seen["wf"]["6"]["inputs"]["text"] == "a cat"  # positive untouched
+
+    await _client(handle).edit(dataclasses.replace(EDIT, negative_prompt="watermark"), b"src")
+    assert seen["wf"]["69"]["inputs"]["prompt"] == "watermark"
+    assert seen["wf"]["68"]["inputs"]["prompt"] == EDIT.prompt  # positive untouched
 
 
 async def test_edit_uploads_source_then_renders() -> None:

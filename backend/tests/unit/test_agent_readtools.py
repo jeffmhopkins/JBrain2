@@ -759,13 +759,13 @@ def test_sidecars_pinned_to_their_versions() -> None:
         ),
         "generate_image.tool": (
             "generate_image",
-            2,
-            "5390c8fa03e2642e51e6fc8c539bd60e1f7fb7d2fd68b02eba9ad0460b534925",
+            3,
+            "6c548b53a68127f710b438aae463603018f2b28ba3d9965d1092c2c446929179",
         ),
         "edit_image.tool": (
             "edit_image",
-            3,
-            "df15faa22e6ce045e846d62d1eb638d2e2c61d099dd9ec7bb3063e6f3900e11f",
+            4,
+            "0e1b194a00f307de9e425404e4657b6e02acc887cff574635e9b780ca9994fc0",
         ),
         "analyze_image.tool": (
             "analyze_image",

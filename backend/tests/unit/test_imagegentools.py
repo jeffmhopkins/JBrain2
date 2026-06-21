@@ -145,6 +145,40 @@ def test_dims_reject_unknown_aspect_or_resolution() -> None:
     assert _dims("square", "gigantic") is None
 
 
+def test_effort_maps_to_steps_through_the_three_anchors() -> None:
+    """effort 0–10 -> steps on the quality curve: 0 a 5-step draft, 5 the 20-step normal
+    default, 10 the 45-step max; effort 1 (a quick draft) lands at a handful of steps."""
+    from jbrain.agent.imagegentools import _steps_for_effort
+
+    assert _steps_for_effort(0) == 5
+    assert _steps_for_effort(5) == 20
+    assert _steps_for_effort(10) == 45
+    assert _steps_for_effort(1) == 7  # a draft
+    # Monotonic across the whole range.
+    steps = [_steps_for_effort(e) for e in range(11)]
+    assert steps == sorted(steps)
+
+
+def test_resolve_effort_clamps_to_0_10_and_defaults_to_5() -> None:
+    from jbrain.agent.imagegentools import _resolve_effort
+
+    assert _resolve_effort(None) == 5  # absent → normal
+    assert _resolve_effort("loads") == 5  # non-int → normal
+    assert _resolve_effort(True) == 5  # a bool is not an effort
+    assert _resolve_effort(-3) == 0 and _resolve_effort(99) == 10  # clamped
+
+
+def test_resolve_steps_uses_effort_unless_explicit_steps_given() -> None:
+    """`effort` drives steps; a raw `steps` (advanced escape hatch) overrides it."""
+    from jbrain.agent.imagegentools import _resolve_steps
+
+    assert _resolve_steps({}) == 20  # default effort 5
+    assert _resolve_steps({"effort": 1}) == 7  # a draft
+    assert _resolve_steps({"effort": 10}) == 45
+    assert _resolve_steps({"steps": 33}) == 33  # explicit steps wins
+    assert _resolve_steps({"steps": 33, "effort": 1}) == 33  # …over effort
+
+
 def test_megapixels_track_resolution_for_the_edit_path() -> None:
     """The edit graph scales the source to a total-pixel budget; medium keeps the
     graph's authored 1.6 MP, small/large step it down/up."""

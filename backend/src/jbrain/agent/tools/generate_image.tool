@@ -1,6 +1,6 @@
 ---
 name: generate_image
-version: 2
+version: 3
 permission: web
 side_effecting: true
 cost_class: expensive
@@ -10,6 +10,9 @@ params:
     prompt:
       type: string
       description: A vivid description of the image to create, e.g. "a watercolor fox asleep in autumn leaves".
+    negative_prompt:
+      type: string
+      description: What to keep OUT of the image, e.g. "blurry, extra fingers, text, watermark" (optional).
     aspect:
       type: string
       enum: [square, portrait, landscape]
@@ -18,9 +21,9 @@ params:
       type: string
       enum: [small, medium, large]
       description: The image size. Defaults to medium (the model's native ~1MP). Use small for a quicker, lighter render and large for more detail.
-    steps:
+    effort:
       type: integer
-      description: How many diffusion steps to run (optional; a sane default is used when omitted). More steps is slower, not always better.
+      description: Quality/time tradeoff, 0–10. 1 is a quick draft, 5 is normal high quality (the default), 10 is maximum detail. Higher means more diffusion steps and a slower render — use a low effort to preview, then re-run at the same seed with higher effort to finalize.
     seed:
       type: integer
       description: A fixed seed for a repeatable result (optional). When omitted a random seed is chosen and recorded so the owner can reproduce it.

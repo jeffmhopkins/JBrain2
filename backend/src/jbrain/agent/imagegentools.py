@@ -48,7 +48,18 @@ log = structlog.get_logger()
 _GEN_MODEL = "qwen-image-2512"
 _EDIT_MODEL = "qwen-image-edit"
 
-_DEFAULT_STEPS = 20
+# `effort` (0–10) is the owner-facing quality/time knob; it maps to diffusion steps on a
+# gentle quadratic through three anchors — effort 0 → 5 steps (quick draft), 5 → 20 (the
+# normal default), 10 → 45 (max detail) — so the low end is cheap and the top end splurges.
+_DEFAULT_EFFORT = 5
+_MAX_EFFORT = 10
+
+
+def _steps_for_effort(effort: int) -> int:
+    """Steps for an effort in 0–10: round(0.2·e² + 2·e + 5) — hits 5 / 20 / 45 at 0 / 5 / 10."""
+    return round(0.2 * effort * effort + 2 * effort + 5)
+
+
 # A bigint seed: positive and within the model's accepted range (random when absent).
 _SEED_BITS = 63
 
@@ -129,11 +140,20 @@ def _resolve_seed(raw: object) -> int:
     return secrets.randbits(_SEED_BITS)
 
 
-def _resolve_steps(raw: object) -> int:
-    """A positive step count; the default when absent or nonsensical."""
-    if isinstance(raw, int) and not isinstance(raw, bool) and raw > 0:
-        return raw
-    return _DEFAULT_STEPS
+def _resolve_effort(raw: object) -> int:
+    """An effort clamped to 0–10; the default (5 = normal) when absent or nonsensical."""
+    if isinstance(raw, int) and not isinstance(raw, bool):
+        return max(0, min(_MAX_EFFORT, raw))
+    return _DEFAULT_EFFORT
+
+
+def _resolve_steps(arguments: dict) -> int:
+    """The step count for a request: an explicit positive `steps` wins (an advanced escape
+    hatch), otherwise it comes from `effort` (0–10) via the quality curve."""
+    raw_steps = arguments.get("steps")
+    if isinstance(raw_steps, int) and not isinstance(raw_steps, bool) and raw_steps > 0:
+        return raw_steps
+    return _steps_for_effort(_resolve_effort(arguments.get("effort")))
 
 
 _STOPPED_MESSAGE = "Stopped the render — nothing was saved."
@@ -280,9 +300,15 @@ def build_image_handlers(
             return "resolution must be one of: small, medium, large."
         width, height = dims
         seed = _resolve_seed(arguments.get("seed"))
-        steps = _resolve_steps(arguments.get("steps"))
+        steps = _resolve_steps(arguments)
         spec = GenSpec(
-            prompt=prompt, width=width, height=height, steps=steps, seed=seed, model=_GEN_MODEL
+            prompt=prompt,
+            width=width,
+            height=height,
+            steps=steps,
+            seed=seed,
+            model=_GEN_MODEL,
+            negative_prompt=str(arguments.get("negative_prompt", "")).strip(),
         )
         await _free_local_llms(local_gateway)
         try:
@@ -398,7 +424,7 @@ def build_image_handlers(
             extra_sources.append(resolved[0])
         width, height = dims
         seed = _resolve_seed(arguments.get("seed"))
-        steps = _resolve_steps(arguments.get("steps"))
+        steps = _resolve_steps(arguments)
         spec = EditSpec(
             prompt=prompt,
             width=width,
@@ -407,6 +433,7 @@ def build_image_handlers(
             seed=seed,
             model=_EDIT_MODEL,
             megapixels=_megapixels(resolution),
+            negative_prompt=str(arguments.get("negative_prompt", "")).strip(),
         )
         await _free_local_llms(local_gateway)
         try:
