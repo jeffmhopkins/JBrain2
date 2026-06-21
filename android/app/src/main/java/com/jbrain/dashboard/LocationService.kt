@@ -22,11 +22,14 @@ import java.util.concurrent.Executors
 /** A foreground service that publishes the phone's location to `/api/owntracks`.
  *
  * Minimal by design (framework LocationManager — no Play Services), posting to the
- * OwnTracks-compatible ingest the backend already runs. Precise fixes come from
- * GPS_PROVIDER (fine location). Moving: a fix at most every 30 s and only after
- * 25 m of travel (the distance filter keeps a parked phone quiet). Stationary: a
- * heartbeat forces one fresh fix at least every 15 min so the map never goes stale.
- * Every fix is queued to disk first and drained oldest-first, so a network lapse
+ * OwnTracks-compatible ingest the backend already runs. Precise fixes come from the
+ * platform FUSED provider where the OS offers one (API 31+, on a Pixel that is
+ * Google's own sensor fusion — smoothed, no Play Services), falling back to
+ * GPS_PROVIDER. A `SamplingPolicy` adapts the cadence to motion: while moving, a
+ * fix every ~5 s after ~8 m of travel (a dense trail); while parked it relaxes and a
+ * heartbeat forces one fresh fix every 15 min so the map never goes stale. A device
+ * accuracy gate (`FixGate`, 50 m) drops jittery fixes before they are queued. Every
+ * kept fix is queued to disk first and drained oldest-first, so a network lapse
  * backfills (in order, with real capture times) on the next fix or when connectivity
  * returns rather than dropping points. It reads the device key from the Keystore
  * store, stops cleanly if unpaired, and clears the key + stops if the server reports
@@ -44,6 +47,10 @@ class LocationService : Service(), LocationListener {
     private val heartbeat = Handler(Looper.getMainLooper())
     private val forceFix = Runnable { requestSingleFix() }
     private var connectivity: ConnectivityManager.NetworkCallback? = null
+    // Motion-adaptive cadence; `current` is the params last requested, so a state
+    // change (moving <-> stationary) re-requests updates and nothing else does.
+    private val policy = SamplingPolicy()
+    private var current: RequestParams = policy.movingParams
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -61,12 +68,8 @@ class LocationService : Service(), LocationListener {
             return START_NOT_STICKY
         }
         try {
-            getSystemService<LocationManager>()?.requestLocationUpdates(
-                LocationManager.GPS_PROVIDER,
-                MIN_INTERVAL_MS,
-                MIN_DISTANCE_M,
-                this,
-            )
+            current = policy.params()
+            requestUpdates(current)
             // Guarantee a fix within the heartbeat even if the phone is parked from
             // the start (movement updates would otherwise never fire).
             armHeartbeat()
@@ -80,6 +83,17 @@ class LocationService : Service(), LocationListener {
         // A fix arrived (movement update or forced heartbeat) — reset the 15-min
         // watchdog so it only fires after a genuine gap with no fixes.
         armHeartbeat()
+        val accuracyM = if (location.hasAccuracy()) location.accuracy.toInt() else null
+        // Drop jittery wide-radius fixes before they reach the trail (the star-burst
+        // fix); the heartbeat is still re-armed above so a bad-fix streak retries.
+        if (!FixGate.accept(accuracyM)) return
+        // Adapt the cadence to motion: a transition (moving <-> stationary) returns
+        // new params, so re-request updates; otherwise leave the provider as-is.
+        val next = policy.onFix(location.latitude, location.longitude, location.time)
+        if (next != current) {
+            current = next
+            requestUpdates(next)
+        }
         // Both the paired server and the key come from pairing; either gone → idle.
         val base = store.serverBase() ?: return
         val key = store.deviceKey() ?: return
@@ -87,11 +101,35 @@ class LocationService : Service(), LocationListener {
             lat = location.latitude,
             lon = location.longitude,
             tst = location.time / 1000,
-            accuracyM = if (location.hasAccuracy()) location.accuracy.toInt() else null,
+            accuracyM = accuracyM,
         )
         // Queue the fix, then drain the backlog oldest-first off the main thread.
         io.execute { handle(uploader.submit(base, key, report)) }
     }
+
+    /** (Re-)subscribe to location updates at the given cadence from the best
+     * provider the OS offers — the platform fused provider where present (API 31+),
+     * else GPS. Re-requesting replaces the prior subscription. */
+    private fun requestUpdates(params: RequestParams) {
+        val lm = getSystemService<LocationManager>() ?: return
+        try {
+            lm.removeUpdates(this)
+            lm.requestLocationUpdates(provider(lm), params.intervalMs, params.displacementM, this)
+        } catch (e: SecurityException) {
+            stopSelf() // precise location was revoked mid-stream
+        }
+    }
+
+    /** The platform FUSED provider (API 31+, when the device supplies one) gives
+     * smoother sensor-fused fixes with no Play Services; otherwise raw GPS. */
+    private fun provider(lm: LocationManager): String =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+            lm.allProviders.contains(LocationManager.FUSED_PROVIDER)
+        ) {
+            LocationManager.FUSED_PROVIDER
+        } else {
+            LocationManager.GPS_PROVIDER
+        }
 
     /** Act on a flush outcome: a revoked key clears the credentials + queue and stops. */
     private fun handle(result: FlushResult) {
@@ -126,17 +164,15 @@ class LocationService : Service(), LocationListener {
     }
 
     /** Force one fresh precise fix so a parked phone still reports within the
-     * heartbeat window (the 25 m distance filter otherwise suppresses every update).
+     * heartbeat window (the displacement filter otherwise suppresses every update).
      * The fix lands in onLocationChanged, which re-arms the watchdog; we re-arm here
      * too so an indoor no-fix still retries next window. */
     @Suppress("DEPRECATION") // requestSingleUpdate; getCurrentLocation is API 30 > minSdk 26
     private fun requestSingleFix() {
         try {
-            getSystemService<LocationManager>()?.requestSingleUpdate(
-                LocationManager.GPS_PROVIDER,
-                this,
-                Looper.getMainLooper(),
-            )
+            getSystemService<LocationManager>()?.let {
+                it.requestSingleUpdate(provider(it), this, Looper.getMainLooper())
+            }
         } catch (e: SecurityException) {
             stopSelf()
         }
@@ -174,9 +210,8 @@ class LocationService : Service(), LocationListener {
     private companion object {
         const val CHANNEL = "location"
         const val NOTIF_ID = 1
-        const val MIN_INTERVAL_MS = 30_000L
-        const val MIN_DISTANCE_M = 25f
         // Stationary heartbeat: at least one fix every 15 min even when parked.
+        // (Moving/stationary cadence lives in SamplingPolicy.)
         const val HEARTBEAT_MS = 15 * 60 * 1000L
     }
 }
