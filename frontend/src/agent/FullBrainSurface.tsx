@@ -330,6 +330,19 @@ function Bubble({
   // verdict makes no flags, so the bubble renders exactly as before.
   const flags = mdFlags(message);
 
+  // Carry each image tool's last live preview to its generated_image view (1:1, in
+  // call order) so the view holds it as a placeholder until the full-res image loads —
+  // no blank gap on settle. Live-only: a reopened transcript has no preview to carry.
+  const imagePreviews = message.tools
+    .filter((t) => IMAGE_TOOL_NAMES.has(t.name))
+    .map((t) => t.preview);
+  let nextImagePreview = 0;
+  const viewsToRender = message.views.map((v) => {
+    if (v.view !== "generated_image") return v;
+    const preview = imagePreviews[nextImagePreview++];
+    return preview ? { ...v, data: { ...v.data, placeholder_data_uri: preview } } : v;
+  });
+
   // The answer side: the prose, any tool-result views, and the proposal affordance.
   const answer = (
     <>
@@ -348,7 +361,7 @@ function Bubble({
       {livePreviews.map((t) => (
         <GeneratingPreview key={t.id} tool={t} />
       ))}
-      {message.views.map((v, i) => (
+      {viewsToRender.map((v, i) => (
         // biome-ignore lint/suspicious/noArrayIndexKey: views append in order
         <ToolView key={i} payload={v} />
       ))}

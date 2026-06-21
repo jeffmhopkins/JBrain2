@@ -206,9 +206,12 @@ describe("applyEvent reducer", () => {
       total: 20,
       preview: "data:image/jpeg;base64,AAA",
     });
-    // The result settles the tool and drops the live preview (the final view renders).
+    // The result settles the tool: the live progress drops, but the last preview frame
+    // is carried as `preview` so the final image view can hold it until the full-res
+    // image loads (no blank gap).
     ms = applyEvent(ms, { type: "tool_result", tool_call_id: "g1", ok: true, summary: "done" });
     expect(ms[0]?.tools[0]?.progress).toBeUndefined();
+    expect(ms[0]?.tools[0]?.preview).toBe("data:image/jpeg;base64,AAA");
     expect(ms[0]?.tools[0]?.ok).toBe(true);
   });
 
