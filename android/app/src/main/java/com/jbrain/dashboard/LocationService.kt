@@ -160,6 +160,7 @@ class LocationService : Service(), LocationListener {
                 io.execute {
                     val base = store.serverBase() ?: return@execute
                     val key = store.deviceKey() ?: return@execute
+                    lastFlushMs = System.currentTimeMillis() // keep the fix-cadence in sync
                     handle(uploader.flush(base, key))
                 }
             }
