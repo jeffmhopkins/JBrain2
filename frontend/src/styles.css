@@ -8464,18 +8464,79 @@ button.small {
 .fb-shell .tv-genimg {
   overflow: hidden;
 }
+/* A bubble whose body is just a width:100% image/preview would shrink-wrap to the
+   image's natural size; give it the full column so the live preview and the final
+   image are always the large variant, with or without answer text beside them. */
+.fb-shell .bubble.ai:has(.fb-genprev, .tv-genimg) {
+  width: 100%;
+}
 .fb-shell .tv-genimg-frame {
   position: relative;
   display: block;
   width: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
   border-radius: 10px;
   overflow: hidden;
   background: var(--surface);
+  cursor: zoom-in;
+  -webkit-appearance: none;
+  appearance: none;
 }
 .fb-shell .tv-genimg-img {
   display: block;
   width: 100%;
   height: auto;
+}
+/* The generate image overlays its placeholder/skeleton and fades in once decoded,
+   so the frame never blanks between the live preview and the final render. (The edit
+   compare keeps the base rule — it lays out in flow.) */
+.fb-shell .tv-genimg-frame .tv-genimg-img {
+  position: absolute;
+  inset: 0;
+  height: 100%;
+  object-fit: cover;
+  transition: opacity 0.35s ease;
+}
+.fb-shell .tv-genimg-ph {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  filter: blur(8px);
+  transform: scale(1.06);
+}
+.fb-shell .tv-genimg-skeleton {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(110deg, var(--surface) 30%, var(--surface-2) 50%, var(--surface) 70%);
+  background-size: 200% 100%;
+  animation: fb-genprev-shimmer 1.3s linear infinite;
+}
+.fb-shell .tv-genimg-expand {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: flex;
+  width: 28px;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.42);
+  backdrop-filter: blur(3px);
+  opacity: 0.85;
+}
+.fb-shell .tv-genimg-expand svg {
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: #fff;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 .fb-shell .tv-genimg-cap {
   font-size: 11.5px;
@@ -8491,11 +8552,6 @@ button.small {
   padding: 3px 8px;
   border-radius: var(--r-pill);
   backdrop-filter: blur(3px);
-}
-.fb-shell .tv-genimg-kind.kind-generate {
-  background: color-mix(in srgb, var(--violet) 22%, var(--surface));
-  color: var(--violet);
-  border: 1px solid color-mix(in srgb, var(--violet) 34%, transparent);
 }
 .fb-shell .tv-genimg-kind.kind-edit {
   background: color-mix(in srgb, var(--amber) 22%, var(--surface));
@@ -8615,6 +8671,53 @@ button.small {
   height: 8px;
   border-radius: 2px;
   background: currentColor;
+}
+
+/* Full-screen image viewer (agent/views/Lightbox.tsx). A portal on <body> — NOT
+   inside .fb-shell — so it sits above the app with its own self-contained styling
+   and supports pinch/wheel zoom + drag pan. */
+.fb-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.92);
+  touch-action: none;
+  overscroll-behavior: contain;
+}
+.fb-lightbox-img {
+  max-width: 100vw;
+  max-height: 100vh;
+  object-fit: contain;
+  user-select: none;
+  -webkit-user-drag: none;
+  will-change: transform;
+  touch-action: none;
+}
+.fb-lightbox-close {
+  position: absolute;
+  top: max(12px, env(safe-area-inset-top));
+  right: max(12px, env(safe-area-inset-right));
+  display: flex;
+  width: 40px;
+  height: 40px;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+  cursor: pointer;
+}
+.fb-lightbox-close svg {
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
 }
 
 /* edit: the swipe-compare. The "after" layer is clipped to the wipe position

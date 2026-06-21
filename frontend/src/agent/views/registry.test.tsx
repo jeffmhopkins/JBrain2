@@ -204,6 +204,75 @@ describe("ToolView registry", () => {
     expect(container.querySelector(".tv-genimg-cmp")).toBeNull();
   });
 
+  it("a generate image drops the kind pill and offers a full-screen expand", () => {
+    const { container, getByLabelText } = render(
+      <ToolView
+        payload={payload({
+          view: "generated_image",
+          data: {
+            image_id: "img_7fa1",
+            kind: "generate",
+            prompt: "a fox",
+            width: 768,
+            height: 768,
+          },
+        })}
+      />,
+    );
+    // The "generated" pill is gone; the frame is a button that opens the viewer.
+    expect(container.querySelector(".tv-genimg-kind")).toBeNull();
+    expect(getByLabelText("Expand image to full screen").tagName).toBe("BUTTON");
+  });
+
+  it("expanding a generate image opens a full-screen viewer, dismissable", () => {
+    const { getByLabelText } = render(
+      <ToolView
+        payload={payload({
+          view: "generated_image",
+          data: {
+            image_id: "img_7fa1",
+            kind: "generate",
+            prompt: "a fox",
+            width: 768,
+            height: 768,
+          },
+        })}
+      />,
+    );
+    expect(document.querySelector(".fb-lightbox")).toBeNull();
+    fireEvent.click(getByLabelText("Expand image to full screen"));
+    const viewer = document.querySelector(".fb-lightbox");
+    expect(viewer).not.toBeNull();
+    // The viewer shows the by-id full image (never a model-authored URL).
+    expect(viewer?.querySelector("img")?.getAttribute("src")).toBe(
+      "/api/images/generated/img_7fa1",
+    );
+    fireEvent.click(getByLabelText("Close image"));
+    expect(document.querySelector(".fb-lightbox")).toBeNull();
+  });
+
+  it("holds the live preview as a placeholder until the full image loads", () => {
+    const { container } = render(
+      <ToolView
+        payload={payload({
+          view: "generated_image",
+          data: {
+            image_id: "img_7fa1",
+            kind: "generate",
+            width: 768,
+            height: 768,
+            placeholder_data_uri: "data:image/jpeg;base64,AAA",
+          },
+        })}
+      />,
+    );
+    const ph = container.querySelector(".tv-genimg-ph") as HTMLImageElement;
+    expect(ph.getAttribute("src")).toBe("data:image/jpeg;base64,AAA");
+    // Once the full image decodes, the placeholder is dropped.
+    fireEvent.load(container.querySelector(".tv-genimg-img") as HTMLImageElement);
+    expect(container.querySelector(".tv-genimg-ph")).toBeNull();
+  });
+
   it("renders an edit generated_image as a before/after compare with the source src", () => {
     const { container, getByText } = render(
       <ToolView

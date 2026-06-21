@@ -8,6 +8,7 @@
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { generatedImageSourceUrl, generatedImageUrl } from "../../api/client";
 import type { CitationRef, ViewPayload } from "../types";
+import { Lightbox } from "./Lightbox";
 import {
   type LiveList,
   getLiveList,
@@ -643,19 +644,62 @@ function GeneratedImage({ data }: ViewProps): ReactNode {
     );
   }
 
+  return <GenerateImage src={generatedImageUrl(imageId)} alt={alt} meta={meta} data={data} />;
+}
+
+function GenerateImage({
+  src,
+  alt,
+  meta,
+  data,
+}: {
+  src: string;
+  alt: string;
+  meta: string;
+  data: Record<string, unknown>;
+}): ReactNode {
+  const width = asDim(data.width);
+  const height = asDim(data.height);
+  // The last live preview frame, handed down from the in-flight turn (live only, absent
+  // on reopen): held as the placeholder until the full-res image loads, so there's no
+  // blank gap between "finalizing" and the rendered image.
+  const placeholder =
+    typeof data.placeholder_data_uri === "string" ? data.placeholder_data_uri : "";
+  const [loaded, setLoaded] = useState(false);
+  const [zoom, setZoom] = useState(false);
+
   return (
     <div className="tv-genimg">
-      <div className="tv-genimg-frame" style={{ aspectRatio: `${width} / ${height}` }}>
+      <button
+        type="button"
+        className="tv-genimg-frame"
+        style={{ aspectRatio: `${width} / ${height}` }}
+        onClick={() => setZoom(true)}
+        aria-label="Expand image to full screen"
+      >
+        {!loaded &&
+          (placeholder ? (
+            <img className="tv-genimg-ph" src={placeholder} alt="" aria-hidden="true" />
+          ) : (
+            <div className="tv-genimg-skeleton" />
+          ))}
         <img
           className="tv-genimg-img"
-          src={generatedImageUrl(imageId)}
+          src={src}
           alt={alt}
           width={width}
           height={height}
+          onLoad={() => setLoaded(true)}
+          style={{ opacity: loaded ? 1 : 0 }}
         />
-        <span className="tv-genimg-kind kind-generate">generated</span>
-      </div>
+        <span className="tv-genimg-expand" aria-hidden="true">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M9 3H5a2 2 0 0 0-2 2v4M15 3h4a2 2 0 0 1 2 2v4M9 21H5a2 2 0 0 1-2-2v-4M15 21h4a2 2 0 0 0 2-2v-4" />
+          </svg>
+        </span>
+      </button>
       <div className="tv-genimg-cap">{meta}</div>
+      {zoom && <Lightbox src={src} alt={alt} onClose={() => setZoom(false)} />}
     </div>
   );
 }

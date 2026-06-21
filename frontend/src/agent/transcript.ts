@@ -33,6 +33,10 @@ export interface ToolActivity {
    * and the latest sharpening preview (a data URI). Set by `tool_progress`, cleared
    * when the result lands (the final image view then renders). */
   progress?: { step: number; total: number; preview?: string };
+  /** The last live preview frame, kept after the result settles so the final image
+   * view can show it as a placeholder until the full-res image loads — no blank gap
+   * between "finalizing" and the rendered image. Live-only (absent on reopen). */
+  preview?: string;
 }
 
 /** Reflexion's verdict on this turn — present only when the verifiers flagged
@@ -152,9 +156,12 @@ export function applyEvent(messages: TranscriptMessage[], event: ChatEvent): Tra
       };
       next.tools = next.tools.map((t) => {
         if (t.id !== event.tool_call_id) return t;
-        // Drop any live preview — the result settled; the final image view renders.
-        const { progress: _settled, ...rest } = t;
-        return { ...rest, ok: event.ok, summary: event.summary, sources, ...extra };
+        // The result settled, so the live progress goes — but carry the last preview
+        // frame forward so the final image view can hold it as a placeholder until the
+        // full-res image loads (no blank gap between "finalizing" and the render).
+        const { progress, ...rest } = t;
+        const carried = progress?.preview ? { preview: progress.preview } : {};
+        return { ...rest, ok: event.ok, summary: event.summary, sources, ...carried, ...extra };
       });
       break;
     }
