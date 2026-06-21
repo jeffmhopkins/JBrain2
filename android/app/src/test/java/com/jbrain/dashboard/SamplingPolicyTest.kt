@@ -6,7 +6,9 @@ import org.junit.Test
 class SamplingPolicyTest {
     private val base = 40.0 to -74.0
 
-    /** A point [metresNorth] north of base — ~111,320 m per degree of latitude. */
+    /** A point [metresNorth] north of base. Uses the nominal ~111,320 m/deg; the
+     * policy's haversine yields ~111,195 m/deg, so true distances run ~0.1% under
+     * the labels — every threshold below is chosen with margin, never on the edge. */
     private fun north(metresNorth: Double): Pair<Double, Double> =
         (base.first + metresNorth / 111_320.0) to base.second
 
