@@ -63,6 +63,9 @@ export interface MapState {
   places: PlaceGeofence[];
   // Per-point heat radius in px (the "spot size" the Heat control tunes).
   heatRadius: number;
+  // Per-point heat weight (0..1): how much one fix contributes to the density ramp.
+  // Defaults to 0.4 when absent.
+  heatWeight?: number;
   // Current-location pins (member map). Absent on the owner map — additive.
   pins?: MapPin[];
   // Auto-fit the view to the data. Default true (the owner map). The member map
@@ -169,11 +172,11 @@ export function createLocationMap(
       L.circleMarker(first, { radius: 5, className: "loc-lf-start" }).addTo(overlay);
       L.circleMarker(last, { radius: 5, className: "loc-lf-end" }).addTo(overlay);
     } else if (state.mode === "heat" && track.length > 0) {
-      // A real gradient heat layer: dwell density reads as the blue→red ramp,
-      // and the per-point radius is owner-tunable from the Heat control.
-      // A modest per-point intensity so transit reads cool and only repeated
-      // dwell at a spot builds up to the hot end of the ramp.
-      const pts = track.map((ll) => [ll.lat, ll.lng, 0.4] as [number, number, number]);
+      // A real gradient heat layer: dwell density reads as the blue→red ramp; the
+      // per-point radius and weight are owner-tunable from the Heat control. A modest
+      // default weight so transit reads cool and only repeated dwell builds to hot.
+      const weight = state.heatWeight ?? 0.4;
+      const pts = track.map((ll) => [ll.lat, ll.lng, weight] as [number, number, number]);
       L.heatLayer(pts, {
         radius: state.heatRadius,
         blur: Math.round(state.heatRadius * 0.6),

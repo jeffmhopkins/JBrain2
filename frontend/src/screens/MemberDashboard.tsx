@@ -93,8 +93,18 @@ type Win = { from: number; to: number };
 const PIN_PALETTE = 6; // loc-pin-c0..c5
 const STALE_MS = 10 * 60_000; // a fix older than this reads as "stale", not "live"
 const HEAT_RADIUS = 22; // px per-point heat spot — a sensible fixed value for the app
-const MAX_DAYS = 7; // the window's full span (now → 7 days ago)
-const DEFAULT_WIN: Win = { from: 57, to: 100 }; // ≈ last 3 days
+// The selectable total span of the time window (the dual slider covers this whole
+// range). Picking one resets both thumbs to the full extent.
+type RangeDays = 1 | 3 | 7;
+const RANGE_DAYS: RangeDays[] = [1, 3, 7];
+// Decorative, evenly-spaced tick labels under the slider, per total span.
+const RANGE_TICKS: Record<RangeDays, string[]> = {
+  1: ["24h", "18h", "12h", "6h", "now"],
+  3: ["3d", "2d", "1d", "12h", "now"],
+  7: ["7d", "5d", "3d", "1d", "now"],
+};
+const DEFAULT_RANGE: RangeDays = 7;
+const DEFAULT_WIN: Win = { from: 57, to: 100 }; // ≈ last 3 days of the 7-day span
 
 function paletteClass(index: number): string {
   return `loc-pin-c${index % PIN_PALETTE}`;
@@ -104,25 +114,27 @@ function isLive(iso: string | null): boolean {
   return iso !== null && Date.now() - new Date(iso).getTime() < STALE_MS;
 }
 
-/** A window position (0..100) to an absolute epoch-ms, anchored at the call's "now". */
-function posToMs(p: number, now: number): number {
-  return now - ((100 - p) / 100) * MAX_DAYS * 86_400_000;
+/** A window position (0..100) to an absolute epoch-ms over a `maxDays` span,
+ * anchored at the call's "now". */
+function posToMs(p: number, now: number, maxDays: number): number {
+  return now - ((100 - p) / 100) * maxDays * 86_400_000;
 }
 
-function winToMs(win: Win): { sinceMs: number; untilMs: number } {
+function winToMs(win: Win, maxDays: number): { sinceMs: number; untilMs: number } {
   const now = Date.now();
   return {
-    sinceMs: posToMs(Math.min(win.from, win.to), now),
-    untilMs: posToMs(Math.max(win.from, win.to), now),
+    sinceMs: posToMs(Math.min(win.from, win.to), now, maxDays),
+    untilMs: posToMs(Math.max(win.from, win.to), now, maxDays),
   };
 }
 
-/** A window position as a relative label ("now" / "3h ago" / "5d ago"). */
-function fmtPos(p: number): string {
-  const d = ((100 - p) / 100) * MAX_DAYS;
+/** A window position as a relative label ("now" / "3h ago" / "5d ago") over the span. */
+function fmtPos(p: number, maxDays: number): string {
+  const d = ((100 - p) / 100) * maxDays;
   if (d < 0.04) return "now";
   if (d < 1) return `${Math.round(d * 24)}h ago`;
-  return `${d < 3 ? d.toFixed(1) : Math.round(d)}d ago`;
+  const days = d < 3 && !Number.isInteger(d) ? d.toFixed(1) : String(Math.round(d));
+  return `${days}d ago`;
 }
 
 function LiveMap({ deps }: { deps: MemberDeps | undefined }) {
@@ -139,6 +151,11 @@ function LiveMap({ deps }: { deps: MemberDeps | undefined }) {
   const [sel, setSel] = useState<Selection>("all");
   const [mode, setMode] = useState<Exclude<MapMode, "live">>("trail");
   const [win, setWin] = useState<Win>(DEFAULT_WIN);
+  const [rangeDays, setRangeDays] = useState<RangeDays>(DEFAULT_RANGE);
+  // Heat-view tuning (the expanded History pane): per-point spot radius (px) and
+  // per-point weight (how much one fix contributes to the density ramp).
+  const [heatRadius, setHeatRadius] = useState(HEAT_RADIUS);
+  const [heatWeight, setHeatWeight] = useState(0.4);
   const [sheet, setSheet] = useState<Sheet>(null);
   // Basemap style — a tiles-only toggle (the app's dark chrome is unchanged),
   // persisted so it sticks across app launches.
@@ -222,7 +239,7 @@ function LiveMap({ deps }: { deps: MemberDeps | undefined }) {
       return;
     }
     let stale = false;
-    const { sinceMs, untilMs } = winToMs(win);
+    const { sinceMs, untilMs } = winToMs(win, rangeDays);
     listPositions(sel, new Date(sinceMs).toISOString(), new Date(untilMs).toISOString())
       .then((fixes) => {
         if (!stale) setTrail(fixes);
@@ -233,7 +250,7 @@ function LiveMap({ deps }: { deps: MemberDeps | undefined }) {
     return () => {
       stale = true;
     };
-  }, [sel, win, listPositions]);
+  }, [sel, win, rangeDays, listPositions]);
 
   // Selecting a person recenters the map on them (their current pin at select time).
   useEffect(() => {
@@ -274,12 +291,13 @@ function LiveMap({ deps }: { deps: MemberDeps | undefined }) {
     h.update({
       mode: sel === "all" ? "live" : mode,
       fixes: sel === "all" ? [] : trail,
-      heatRadius: HEAT_RADIUS,
+      heatRadius,
+      heatWeight,
       places,
       pins,
       autoFit: sel === "all",
     });
-  }, [roster, places, sel, colorOf, mode, trail]);
+  }, [roster, places, sel, colorOf, mode, trail, heatRadius, heatWeight]);
 
   // Swap the basemap in place when the toggle changes (no remount; pins stay put).
   useEffect(() => {
@@ -294,6 +312,13 @@ function LiveMap({ deps }: { deps: MemberDeps | undefined }) {
     writeTileScheme(s);
   };
 
+  // Picking a total span resets both thumbs to the full extent so the dual slider
+  // covers the whole chosen range.
+  const pickRange = (d: RangeDays) => {
+    setRangeDays(d);
+    setWin({ from: 0, to: 100 });
+  };
+
   return (
     <div className="livemap">
       <div className="livemap-canvas" ref={canvas} data-testid="map-canvas" />
@@ -306,6 +331,7 @@ function LiveMap({ deps }: { deps: MemberDeps | undefined }) {
         colorOf={colorOf}
         timeline={timeline}
         win={win}
+        rangeDays={rangeDays}
         onPick={setSel}
         onClose={() => setSheet(null)}
       />
@@ -313,8 +339,14 @@ function LiveMap({ deps }: { deps: MemberDeps | undefined }) {
         open={sheet === "history"}
         mode={mode}
         win={win}
+        rangeDays={rangeDays}
+        heatRadius={heatRadius}
+        heatWeight={heatWeight}
         onMode={setMode}
         onWin={setWin}
+        onRange={pickRange}
+        onRadius={setHeatRadius}
+        onWeight={setHeatWeight}
         onClose={() => setSheet(null)}
       />
       <DockBar roster={roster} sel={sel} colorOf={colorOf} sheet={sheet} onToggle={toggleSheet} />
@@ -494,6 +526,7 @@ function DetailsSheet({
   colorOf,
   timeline,
   win,
+  rangeDays,
   onPick,
   onClose,
 }: {
@@ -503,6 +536,7 @@ function DetailsSheet({
   colorOf: Map<string, string>;
   timeline: TimelineEntry[];
   win: Win;
+  rangeDays: RangeDays;
   onPick: (s: Selection) => void;
   onClose: () => void;
 }) {
@@ -513,7 +547,13 @@ function DetailsSheet({
       {sel === "all" ? (
         <RosterList roster={roster} colorOf={colorOf} onPick={onPick} />
       ) : (
-        <PersonActivity roster={roster} sel={sel} timeline={timeline} win={win} />
+        <PersonActivity
+          roster={roster}
+          sel={sel}
+          timeline={timeline}
+          win={win}
+          rangeDays={rangeDays}
+        />
       )}
       <PrivacyLine />
     </div>
@@ -562,15 +602,17 @@ function PersonActivity({
   sel,
   timeline,
   win,
+  rangeDays,
 }: {
   roster: MemberSubject[];
   sel: Selection;
   timeline: TimelineEntry[];
   win: Win;
+  rangeDays: RangeDays;
 }) {
   const m = roster.find((s) => s.subject_id === sel);
   if (!m) return null;
-  const actions = recentActions(timeline, m.subject_id, win);
+  const actions = recentActions(timeline, m.subject_id, win, rangeDays);
   return (
     <>
       <div className="lm-sec-h">{m.label} · recent activity</div>
@@ -605,15 +647,27 @@ function HistorySheet({
   open,
   mode,
   win,
+  rangeDays,
+  heatRadius,
+  heatWeight,
   onMode,
   onWin,
+  onRange,
+  onRadius,
+  onWeight,
   onClose,
 }: {
   open: boolean;
   mode: Exclude<MapMode, "live">;
   win: Win;
+  rangeDays: RangeDays;
+  heatRadius: number;
+  heatWeight: number;
   onMode: (m: Exclude<MapMode, "live">) => void;
   onWin: (w: Win) => void;
+  onRange: (d: RangeDays) => void;
+  onRadius: (r: number) => void;
+  onWeight: (w: number) => void;
   onClose: () => void;
 }) {
   return (
@@ -638,24 +692,98 @@ function HistorySheet({
           Heat
         </button>
       </div>
+      {mode === "heat" && (
+        <HeatTuning
+          radius={heatRadius}
+          weight={heatWeight}
+          onRadius={onRadius}
+          onWeight={onWeight}
+        />
+      )}
       <div className="lm-sec-h">Time window</div>
-      <TimeWindow win={win} onWin={onWin} />
+      <TimeWindow win={win} rangeDays={rangeDays} onWin={onWin} onRange={onRange} />
       <div className="lm-priv">Family-only · names + times only, never a coordinate.</div>
     </div>
   );
 }
 
-function TimeWindow({ win, onWin }: { win: Win; onWin: (w: Win) => void }) {
+/** The Heat-view fine-tuning sliders (the expanded pane): per-point spot radius and
+ * per-point weight, so dwell density can be read at the zoom/spread the owner wants. */
+function HeatTuning({
+  radius,
+  weight,
+  onRadius,
+  onWeight,
+}: {
+  radius: number;
+  weight: number;
+  onRadius: (r: number) => void;
+  onWeight: (w: number) => void;
+}) {
+  return (
+    <div className="lm-heat">
+      <label className="lm-heat-row">
+        <span>Spot radius</span>
+        <input
+          type="range"
+          min={4}
+          max={50}
+          step={1}
+          value={radius}
+          aria-label="Heat spot radius"
+          onChange={(e) => onRadius(Number(e.target.value))}
+        />
+      </label>
+      <label className="lm-heat-row">
+        <span>Fix weight</span>
+        <input
+          type="range"
+          min={0.1}
+          max={1}
+          step={0.05}
+          value={weight}
+          aria-label="Heat fix weight"
+          onChange={(e) => onWeight(Number(e.target.value))}
+        />
+      </label>
+    </div>
+  );
+}
+
+function TimeWindow({
+  win,
+  rangeDays,
+  onWin,
+  onRange,
+}: {
+  win: Win;
+  rangeDays: RangeDays;
+  onWin: (w: Win) => void;
+  onRange: (d: RangeDays) => void;
+}) {
   const lo = Math.min(win.from, win.to);
   const hi = Math.max(win.from, win.to);
   return (
     <div className="lm-win">
+      <div className="lm-seg lm-rangepick">
+        {RANGE_DAYS.map((d) => (
+          <button
+            key={d}
+            type="button"
+            className={rangeDays === d ? "on" : ""}
+            aria-pressed={rangeDays === d}
+            onClick={() => onRange(d)}
+          >
+            {d}d
+          </button>
+        ))}
+      </div>
       <div className="lm-winlbl">
         <span>
-          From <b>{fmtPos(lo)}</b>
+          From <b>{fmtPos(lo, rangeDays)}</b>
         </span>
         <span>
-          to <b>{fmtPos(hi)}</b>
+          to <b>{fmtPos(hi, rangeDays)}</b>
         </span>
       </div>
       <div className="lm-range">
@@ -679,11 +807,9 @@ function TimeWindow({ win, onWin }: { win: Win; onWin: (w: Win) => void }) {
         />
       </div>
       <div className="lm-ticks">
-        <span>7d</span>
-        <span>5d</span>
-        <span>3d</span>
-        <span>1d</span>
-        <span>now</span>
+        {RANGE_TICKS[rangeDays].map((t) => (
+          <span key={t}>{t}</span>
+        ))}
       </div>
     </div>
   );
@@ -708,8 +834,13 @@ function PullChevron() {
 
 /** The selected person's geofence crossings within the time window (newest first) —
  * names + times only, never a coordinate. */
-function recentActions(timeline: TimelineEntry[], subjectId: string, win: Win): TimelineEntry[] {
-  const { sinceMs, untilMs } = winToMs(win);
+function recentActions(
+  timeline: TimelineEntry[],
+  subjectId: string,
+  win: Win,
+  maxDays: number,
+): TimelineEntry[] {
+  const { sinceMs, untilMs } = winToMs(win, maxDays);
   return timeline
     .filter((e) => {
       if (e.subject_id !== subjectId) return false;
