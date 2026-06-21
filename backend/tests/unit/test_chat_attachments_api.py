@@ -205,10 +205,10 @@ def test_capabilities_default_model_supports_vision(
     client: tuple[TestClient, FakeAgentSessions, FakeTurnAttachments, FakeSettingsStore],
 ) -> None:
     c, _, _, _ = client
-    # Default agent.turn is xai:grok-4.3 — a vision-capable model.
+    # Default agent.turn is xai:grok-4.3 — a vision-capable model; no ComfyUI configured.
     resp = c.get("/api/chat/capabilities")
     assert resp.status_code == 200
-    assert resp.json() == {"supports_vision": True}
+    assert resp.json() == {"supports_vision": True, "can_edit_images": False}
 
 
 def test_capabilities_reflects_text_only_override(
@@ -217,7 +217,26 @@ def test_capabilities_reflects_text_only_override(
     c, _, _, store = client
     # A stored override to a text-only local model flips the flag off.
     store.values["llm_task_overrides"] = {"agent.turn": {"spec": "local:text-only-model"}}
-    assert c.get("/api/chat/capabilities").json() == {"supports_vision": False}
+    assert c.get("/api/chat/capabilities").json() == {
+        "supports_vision": False,
+        "can_edit_images": False,
+    }
+
+
+def test_capabilities_reports_image_tools_when_comfyui_configured(
+    client: tuple[TestClient, FakeAgentSessions, FakeTurnAttachments, FakeSettingsStore],
+) -> None:
+    """With a ComfyUI configured, can_edit_images is true even on a text-only model — so
+    the composer keeps offering attach (jerv can analyze/edit an attachment by id)."""
+    c, _, _, store = client
+    c.app.state.settings = c.app.state.settings.model_copy(  # type: ignore[attr-defined]
+        update={"comfyui_url": "http://localhost:8188"}
+    )
+    store.values["llm_task_overrides"] = {"agent.turn": {"spec": "local:text-only-model"}}
+    assert c.get("/api/chat/capabilities").json() == {
+        "supports_vision": False,
+        "can_edit_images": True,
+    }
 
 
 def test_upload_rejects_disallowed_media_type(

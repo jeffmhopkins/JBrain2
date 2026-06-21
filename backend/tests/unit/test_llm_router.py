@@ -248,6 +248,34 @@ async def test_context_window_for_a_cloud_model_reads_the_table() -> None:
     assert await router.context_window("agent.turn") == CONTEXT_WINDOWS["grok-4.3"]
 
 
+async def test_supports_vision_is_true_for_a_cloud_route() -> None:
+    # The wired cloud providers (Grok, Claude) are multimodal, so a non-local route
+    # keeps image bytes inline.
+    router = LlmRouter({"xai": FakeLlmClient()}, {"agent.turn": ("xai", "grok-4.3")})
+    assert await router.supports_vision("agent.turn") is True
+
+
+async def test_supports_vision_reflects_the_local_catalog() -> None:
+    # A live local override decides vision by the catalog: the VL model can see,
+    # the text-only gpt-oss cannot (its bytes must be dropped).
+    async def vl() -> dict[str, dict[str, str]]:
+        return {"agent.turn": {"spec": "local:qwen3-vl-30b-a3b"}}
+
+    async def oss() -> dict[str, dict[str, str]]:
+        return {"agent.turn": {"spec": "local:gpt-oss-120b"}}
+
+    def _router(load) -> LlmRouter:  # type: ignore[no-untyped-def]
+        return LlmRouter(
+            {"xai": FakeLlmClient(), "local": FakeLlmClient()},
+            {"agent.turn": ("xai", "grok-4.3")},
+            overrides_loader=load,
+            local_enabled=True,
+        )
+
+    assert await _router(vl).supports_vision("agent.turn") is True
+    assert await _router(oss).supports_vision("agent.turn") is False
+
+
 async def test_context_window_falls_back_for_an_unlisted_model() -> None:
     # An unlisted model degrades to the conservative default rather than misreport.
     router = LlmRouter({"anthropic": FakeLlmClient()}, {"agent.turn": ("anthropic", "claude-x")})

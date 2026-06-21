@@ -50,6 +50,11 @@ TASK_DEFAULTS: dict[str, str] = {
     # The tool-using personal agent's turn (docs/ASSISTANT.md). Strong tier by
     # default — agent reasoning over tools is the high-stakes path.
     "agent.turn": "xai:grok-4.3",
+    # jerv's `analyze_image` tool: a vision read the turn delegates so a text-only
+    # agent model (e.g. local gpt-oss) can still "see" an attached/generated image.
+    # Defaults to the multimodal cloud model; an on-box operator overrides it to
+    # the local vision model (local:qwen3-vl-30b-a3b) so the image never leaves the box.
+    "agent.vision": "xai:grok-4.3",
     # The note→graph Integrator: graph-aware coreference/relationship/gender
     # judgment that produces an IntegrationIntent (docs/archive/INTEGRATOR_PLAN.md). Strong
     # tier — it owns the hard decisions the deterministic core then validates.
@@ -242,6 +247,19 @@ class LlmRouter:
                     return windows[cat_id]
             return local_catalog.context_window(model)
         return CONTEXT_WINDOWS.get(model, DEFAULT_CONTEXT_WINDOW)
+
+    async def supports_vision(self, task: str, strength: str | None = None) -> bool:
+        """Whether the model `task` actually resolves to (after live overrides) can
+        accept image content in a turn. A local model declares it in the catalog —
+        a text-only gateway model like gpt-oss has no vision projector; the cloud
+        providers we wire (Grok, Claude 4.x) are all multimodal, so any non-local
+        route is vision-capable. The agent path consults this to DROP image bytes a
+        non-vision model can't read (the model still sees the attachment's id as
+        text, so it can edit it or analyze it by reference)."""
+        provider, model, _ = await self._resolve_live(task, strength)
+        if provider == "local":
+            return local_catalog.supports_vision(model)
+        return True
 
     async def effective_reasoning_effort(
         self, task: str, strength: str | None = None

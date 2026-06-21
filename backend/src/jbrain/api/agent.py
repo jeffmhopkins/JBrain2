@@ -385,6 +385,13 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
         attachment_ctx,
         body.attachment_ids,
     )
+    # A text-only agent model (e.g. local gpt-oss, no vision projector) would error
+    # at the gateway on raw image bytes — so drop them when the resolved agent.turn
+    # model can't see. The attachment's id still rides in attach_text, so the model
+    # can edit it (edit_image) or look at it (analyze_image) BY REFERENCE without the
+    # bytes; a vision-capable route keeps the images inline as before.
+    if images and not await router.supports_vision("agent.turn"):
+        images = []
     conversation = _conversation(body, images, attach_text)
     # Loop 2: surface matching active skills as a DATA-framed reference block in the conversation
     # channel (never the system prompt — the data/instruction boundary). Off by default until

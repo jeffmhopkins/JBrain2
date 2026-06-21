@@ -111,8 +111,11 @@ async def test_image_becomes_one_llm_image() -> None:
     assert len(images) == 1
     assert images[0].media_type == "image/png"
     assert base64.b64decode(images[0].data) == b"\x89PNG-bytes"
-    # The image's id is named in the text so the model can edit it by reference.
-    assert f"source_attachment_id {aid}" in text
+    # The image's id is named in the text so the model can act on it by reference
+    # (edit or analyze) even when it can't see the bytes.
+    assert aid in text
+    assert "source_attachment_id" in text
+    assert "analyze_image" in text and "edit_image" in text
     assert "scan.png" in text
 
 

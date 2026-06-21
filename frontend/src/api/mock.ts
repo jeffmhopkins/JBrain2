@@ -300,6 +300,12 @@ const LLM_SETTINGS: LlmSettings = {
   reasoning_default: LLM_REASONING_DEFAULT,
   tasks: [
     { id: "agent.turn", label: "Agent turn", provider: "grok", reasoning_effort: "medium" },
+    {
+      id: "agent.vision",
+      label: "Agent image analysis",
+      provider: "grok",
+      reasoning_effort: null,
+    },
     { id: "integrate.note", label: "Integrate note", provider: "grok", reasoning_effort: "medium" },
     { id: "fact.adjudicate", label: "Fact adjudicate", provider: "grok", reasoning_effort: "high" },
     {

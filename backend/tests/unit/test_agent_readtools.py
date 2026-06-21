@@ -767,6 +767,11 @@ def test_sidecars_pinned_to_their_versions() -> None:
             2,
             "4ee1b91d02763f0abdc4984b9590460fa7ef46bbf4beb1b7957b1e4400f8e3c2",
         ),
+        "analyze_image.tool": (
+            "analyze_image",
+            1,
+            "e20ed2107fb866bf2f5d09357f63317146e4604780274796105ea68eae76bdc0",
+        ),
     }
     # Every shipped sidecar must appear above — a new `.tool` cannot slip in
     # unpinned (the gap this closes: propose_merge was registered but never pinned).

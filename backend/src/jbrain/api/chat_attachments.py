@@ -140,6 +140,11 @@ class ChatCapabilities(BaseModel):
     # Whether the model the agent.turn task resolves to can accept images — the PWA
     # gates the attach-image affordance on it. A model capability, not per-session.
     supports_vision: bool
+    # Whether the on-box image tools are configured (a ComfyUI is set). When true, an
+    # attached image is useful to jerv even if the agent model can't see it — jerv can
+    # analyze_image (read it via the vision model) or edit_image it BY id — so the PWA
+    # still offers attach in that mode rather than hiding it behind vision.
+    can_edit_images: bool
 
 
 capabilities_router = APIRouter(prefix="/chat", dependencies=[Depends(owner_only)])
@@ -153,4 +158,7 @@ async def chat_capabilities(
     so the chat composer offers image upload only when the model can read it."""
     overrides = await store.llm_task_overrides(ctx_for(principal))
     spec = (overrides.get("agent.turn") or {}).get("spec") or TASK_DEFAULTS["agent.turn"]
-    return ChatCapabilities(supports_vision=supports_vision_for_spec(settings, spec))
+    return ChatCapabilities(
+        supports_vision=supports_vision_for_spec(settings, spec),
+        can_edit_images=bool(settings.comfyui_url),
+    )

@@ -51,7 +51,7 @@ const GROUP_DEFS: GroupDef[] = [
     accent: "vision",
     name: "Vision",
     desc: "Anything that reads or describes images.",
-    taskIds: ["vision.ocr", "vision.caption"],
+    taskIds: ["vision.ocr", "vision.caption", "agent.vision"],
   },
 ];
 
@@ -315,7 +315,8 @@ export function LLMSettingsScreen() {
   // a vision local model) — a text-only local model can't read images.
   const visionProviders = providers.filter((p) => p.supports_vision);
   const providersFor = (isVision: boolean) => (isVision ? visionProviders : providers);
-  const isVisionTask = (taskId: string) => taskId.startsWith("vision.");
+  const isVisionTask = (taskId: string) =>
+    taskId.startsWith("vision.") || taskId === "agent.vision";
   const byId = new Map(providers.map((p) => [p.id, p]));
   // Reasoning is a per-provider capability (today only grok), read from the wire
   // flag rather than a hardcoded id so a future reasoning-capable provider works.
