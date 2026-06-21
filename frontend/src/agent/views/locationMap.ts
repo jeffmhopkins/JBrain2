@@ -8,10 +8,12 @@
 
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
+import { tileUrl } from "../../screens/tileScheme";
 
 // Inline tool-view thumbnails always use the dark basemap (matching the app UI);
-// the light/dark toggle lives on the interactive maps, not these static cards.
-const TILE_URL = "/api/tiles/dark/{z}/{x}/{y}.png";
+// the light/dark toggle lives on the interactive maps, not these static cards. The
+// shared helper carries the cache-bust token so a style swap refetches here too.
+const TILE_URL = tileUrl("dark");
 
 /** A trail leg: a polyline of [lat, lon] pairs (render-only coordinates). */
 export interface TrailLegData {
