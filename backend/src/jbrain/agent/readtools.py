@@ -53,9 +53,14 @@ from jbrain.search.service import (
 TOOLS_DIR = Path(__file__).parent / "tools"
 _DEFAULT_LIMIT = 8
 
-# The image-gen sidecars are optional: dropped from the registry when no ComfyUI is
-# configured (no handlers passed), so an unconfigured box silently lacks the feature.
+# The side-effecting image-gen sidecars (each produces a stored image): the `web`-class,
+# expensive, jerv-only pair the on-box pipeline drives.
 IMAGE_TOOL_NAMES = frozenset({"generate_image", "edit_image"})
+# Every jerv-only image sidecar wired behind ComfyUI — the gen pair plus the read-only
+# `analyze_image` (a vision read, not an image producer). All optional: dropped from the
+# registry when no ComfyUI is configured (no handlers passed), so an unconfigured box
+# silently lacks the feature.
+OPTIONAL_IMAGE_TOOLS = IMAGE_TOOL_NAMES | frozenset({"analyze_image"})
 
 
 class EntityReader(Protocol):
@@ -441,5 +446,5 @@ def build_registry(
             # ComfyUI is configured; otherwise their sidecars are dropped below.
             **(image_handlers or {}),
         },
-        optional=IMAGE_TOOL_NAMES,
+        optional=OPTIONAL_IMAGE_TOOLS,
     )

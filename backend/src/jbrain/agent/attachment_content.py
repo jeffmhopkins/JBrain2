@@ -58,8 +58,12 @@ class _Converted:
 def _image_block(info: AttachmentInfo, data: bytes) -> _Converted:
     image = LlmImage(media_type=info.media_type, data=_b64(data))
     # Name the attachment's id alongside the vision content so the model can act on it
-    # by reference — e.g. pass it as edit_image's source_attachment_id to edit this image.
-    note = f'[attached image "{info.filename}" — to edit it, use source_attachment_id {info.id}]'
+    # by reference even when it can't see the bytes (a text-only agent model): pass the
+    # id as source_attachment_id to analyze_image to look at it or edit_image to change it.
+    note = (
+        f'[attached image "{info.filename}" — its id is {info.id}: pass it as '
+        "source_attachment_id to analyze_image to look at it or edit_image to change it]"
+    )
     return _Converted(images=[image], text_blocks=[note])
 
 

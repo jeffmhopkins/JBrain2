@@ -204,6 +204,14 @@ def context_window(served_model: str) -> int:
     return model.context_window if model else DEFAULT_LOCAL_CONTEXT_WINDOW
 
 
+def supports_vision(served_model: str) -> bool:
+    """Whether a `local:<served_model>` can accept image content. False for a served
+    name outside the catalog — the safe default that drops image bytes rather than
+    sending them to a model with no vision projector (which errors at the gateway)."""
+    model = _BY_SERVED.get(served_model)
+    return model.supports_vision if model else False
+
+
 def id_for_served(served_model: str) -> str | None:
     """Catalog id for a served-model name (the gateway loads/reports served names,
     but per-model settings — overrides, staging — key off the catalog id), or None

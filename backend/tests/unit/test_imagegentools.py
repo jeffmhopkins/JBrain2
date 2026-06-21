@@ -29,6 +29,20 @@ def test_image_sidecars_exist_and_are_web_class() -> None:
         assert tf.spec.params["required"] == ["prompt"]
 
 
+def test_analyze_image_sidecar_is_a_web_read_not_side_effecting() -> None:
+    """analyze_image is jerv-only (`web`) like the gen tools, but a READ: it produces no
+    stored image, so it is not side-effecting and not in the side-effecting IMAGE_TOOL_NAMES
+    — it rides with them in the optional set (dropped together when ComfyUI is unconfigured)."""
+    from jbrain.agent.readtools import OPTIONAL_IMAGE_TOOLS
+
+    tf = load_tool(TOOLS_DIR / "analyze_image.tool")
+    assert tf.spec.permission == "web"
+    assert tf.spec.side_effecting is False
+    assert tf.spec.params["required"] == ["prompt"]
+    assert "analyze_image" not in IMAGE_TOOL_NAMES
+    assert "analyze_image" in OPTIONAL_IMAGE_TOOLS
+
+
 def test_optional_sidecars_dropped_when_unconfigured(tmp_path: Path) -> None:
     """`load_registry(optional=...)` drops an optional sidecar that has no handler (ComfyUI
     unset) rather than failing — so the registry never advertises an unbacked tool."""

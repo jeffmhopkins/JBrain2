@@ -43,7 +43,7 @@ WEB_TOOLS = frozenset({"web_search", "web_fetch"})
 # absent from the registry when ComfyUI is unconfigured, so allowlisting them here is
 # harmless on a box without image generation.
 JERV_TOOLS = WEB_TOOLS | frozenset(
-    {"current_time", "current_location", "generate_image", "edit_image"}
+    {"current_time", "current_location", "generate_image", "edit_image", "analyze_image"}
 )
 
 DEFAULT_AGENT = "curator"

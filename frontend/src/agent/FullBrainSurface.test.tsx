@@ -41,7 +41,7 @@ function deps(over: Partial<FullBrainDeps> = {}): FullBrainDeps {
       media_type: file.type,
       size_bytes: file.size,
     })),
-    getChatCapabilities: vi.fn(async () => ({ supports_vision: true })),
+    getChatCapabilities: vi.fn(async () => ({ supports_vision: true, can_edit_images: false })),
     ...over,
   };
 }

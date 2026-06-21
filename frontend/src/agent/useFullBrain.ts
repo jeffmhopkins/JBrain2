@@ -85,7 +85,7 @@ export interface FullBrainDeps {
   unarchiveSession: (id: string) => Promise<void>;
   rescopeSession: (id: string, domainScopes: string[]) => Promise<void>;
   uploadChatAttachment: (sessionId: string, file: File) => Promise<ChatAttachment>;
-  getChatCapabilities: () => Promise<{ supports_vision: boolean }>;
+  getChatCapabilities: () => Promise<{ supports_vision: boolean; can_edit_images: boolean }>;
 }
 
 const LIVE: FullBrainDeps = {
@@ -186,6 +186,10 @@ export interface FullBrain {
    * default: never offer an attach the model would reject; the paperclip simply
    * appears once vision is confirmed). */
   supportsVision: boolean;
+  /** Whether the on-box image tools are configured. When true an attached image is
+   * useful to jerv even without vision (it can analyze_image / edit_image it by id),
+   * so the composer keeps offering attach in that mode. */
+  canEditImages: boolean;
   create: (body: SessionCreate) => Promise<AgentSession>;
   /** Re-clicking the active tab: start a new chat with that mode's default agent.
    * Reuses the open chat if it's already an empty one of that same agent, so a
@@ -232,6 +236,7 @@ export function useFullBrain(
   // model would 415. It only ever flips true, so the paperclip appears once
   // vision is confirmed and never flashes a broken state on first paint.
   const [supportsVision, setSupportsVision] = useState(false);
+  const [canEditImages, setCanEditImages] = useState(false);
   // The open chat's id — the key the transcript and proposal inbox load against.
   const activeId = active?.id ?? null;
   // Read in the resolve effect without making it a dependency (which would re-fire
@@ -255,7 +260,9 @@ export function useFullBrain(
     let stale = false;
     getChatCapabilities()
       .then((c) => {
-        if (!stale) setSupportsVision(c.supports_vision);
+        if (stale) return;
+        setSupportsVision(c.supports_vision);
+        setCanEditImages(c.can_edit_images);
       })
       .catch(() => {});
     return () => {
@@ -525,6 +532,7 @@ export function useFullBrain(
     usage,
     stop,
     supportsVision,
+    canEditImages,
     // Resolves true once the turn is under way (files uploaded, stream started),
     // false when an upload aborted the send — so the composer keeps its staged
     // files for a retry instead of clearing them.

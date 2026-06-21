@@ -24,6 +24,8 @@ from jbrain.auth import service
 from jbrain.auth.repo import SqlAuthRepo
 from jbrain.db.session import SessionContext, scoped_session
 from jbrain.image_gen.fake import FakeImageGen
+from jbrain.llm.fake import FakeLlmClient
+from jbrain.llm.router import LlmRouter, resolve_tasks
 from jbrain.models.images import GeneratedImageRepo
 from tests.conftest import docker_available
 from tests.integration.test_rls import database_url  # noqa: F401
@@ -101,11 +103,19 @@ def _ctx(owner: SessionContext, session_id: str | None = None) -> ToolContext:
     )
 
 
+def _router(answer: str = "an analysis of the image") -> LlmRouter:
+    """A real router over a canned FakeLlmClient — analyze_image's `agent.vision` call
+    routes to the default (xai) client and gets back `answer`. `llm` is exposed on the
+    router (`._clients['xai']`) so a test can assert the vision call carried the image."""
+    return LlmRouter({"xai": FakeLlmClient(responses=[answer])}, resolve_tasks({}))
+
+
 async def _handlers(
     maker: async_sessionmaker,
     owner: SessionContext,
     fake: FakeImageGen,
     comfy: FakeComfyUiGateway | None = None,
+    router: LlmRouter | None = None,
 ):
     sessions = AgentSessionRepo(maker)
     attachments = TurnAttachmentRepo(maker, sessions)
@@ -117,6 +127,7 @@ async def _handlers(
         maker,
         FakeLocalGateway(),
         comfy or FakeComfyUiGateway(),
+        router or _router(),
     )
 
 
@@ -269,6 +280,7 @@ async def test_edit_by_attachment_id_records_source(maker: async_sessionmaker) -
         maker,
         FakeLocalGateway(),
         FakeComfyUiGateway(),
+        _router(),
     )
 
     # A jerv chat session (empty scopes) with one image attachment (stamped 'general').
@@ -318,6 +330,7 @@ async def test_edit_orphan_source_blob_is_clean_error(maker: async_sessionmaker)
         maker,
         FakeLocalGateway(),
         FakeComfyUiGateway(),
+        _router(),
     )
 
     gen = await handlers["generate_image"]({"prompt": "a cat"}, _ctx(owner))
@@ -356,3 +369,88 @@ async def test_edit_bad_source_is_clean_error_and_no_row(
     async with scoped_session(maker, owner) as s:
         count = (await s.execute(text("SELECT count(*) FROM app.generated_images"))).scalar()
     assert count == 0  # nothing recorded on a refused edit
+
+
+async def test_analyze_by_generated_id_returns_vision_answer(maker: async_sessionmaker) -> None:
+    """analyze_image resolves a prior generated image by id, sends its bytes to the vision
+    route, and returns the model's text — read-only: a plain string, no view, no new row."""
+    owner = await _owner(maker)
+    fake = FakeImageGen()
+    router = _router("a red bicycle leaning on a wall")
+    handlers = await _handlers(maker, owner, fake, router=router)
+
+    gen = await handlers["generate_image"]({"prompt": "a red bicycle"}, _ctx(owner))
+    assert isinstance(gen, ToolOutput) and gen.view is not None
+    source_id = gen.view.data["image_id"]
+
+    out = await handlers["analyze_image"](
+        {"prompt": "what is in this image?", "source_image_id": source_id}, _ctx(owner)
+    )
+    assert out == "a red bicycle leaning on a wall"
+    assert not isinstance(out, ToolOutput)  # a read — no inline view
+    # The vision route saw the question and the image bytes (one LlmImage).
+    call = router._clients["xai"].calls[0]  # type: ignore[attr-defined]
+    assert call["user_text"] == "what is in this image?"
+    assert len(call["images"]) == 1
+
+    async with scoped_session(maker, owner) as s:
+        count = (await s.execute(text("SELECT count(*) FROM app.generated_images"))).scalar()
+    assert count == 1  # only the generate row — analyze inserts nothing
+
+
+async def test_analyze_by_attachment_id_returns_vision_answer(maker: async_sessionmaker) -> None:
+    """analyze_image reads a chat attachment by id under the widened attachment context —
+    the same RLS path edit_image uses — and answers from its bytes."""
+    owner = await _owner(maker)
+    fake = FakeImageGen()
+    sessions = AgentSessionRepo(maker)
+    attachments = TurnAttachmentRepo(maker, sessions)
+    blobs = MemBlobStore()
+    handlers = build_image_handlers(
+        fake,
+        blobs,
+        GeneratedImageRepo(),
+        attachments,
+        maker,
+        FakeLocalGateway(),
+        FakeComfyUiGateway(),
+        _router("a sign that reads OPEN"),
+    )
+
+    info = await sessions.create(owner, domain_scopes=(), agent="jerv")
+    att_ctx = await attachments.session_read_context(owner, info.id)
+    assert att_ctx is not None
+    sha = await blobs.put(b"\x89PNG\r\n\x1a\nattached-bytes")
+    att = await attachments.add(
+        att_ctx,
+        info.id,
+        sha256=sha,
+        filename="photo.png",
+        media_type="image/png",
+        size_bytes=10,
+        domain_code="general",
+    )
+
+    out = await handlers["analyze_image"](
+        {"prompt": "read the sign", "source_attachment_id": att.id}, _ctx(owner, info.id)
+    )
+    assert out == "a sign that reads OPEN"
+
+
+async def test_analyze_needs_a_prompt_and_one_source(maker: async_sessionmaker) -> None:
+    """A missing prompt or a bad source (neither/both) is a clean error string naming
+    analyze_image, and never reaches the vision model."""
+    owner = await _owner(maker)
+    router = _router()
+    handlers = await _handlers(maker, owner, FakeImageGen(), router=router)
+
+    no_prompt = await handlers["analyze_image"]({"source_image_id": "x"}, _ctx(owner))
+    assert isinstance(no_prompt, str) and "prompt" in no_prompt.lower()
+
+    both = await handlers["analyze_image"](
+        {"prompt": "what is this", "source_image_id": "a", "source_attachment_id": "b"},
+        _ctx(owner),
+    )
+    assert isinstance(both, str) and "analyze_image" in both
+
+    assert router._clients["xai"].calls == []  # type: ignore[attr-defined] - never spent

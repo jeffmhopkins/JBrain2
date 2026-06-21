@@ -43,7 +43,8 @@ def test_jerv_is_a_sandboxed_web_chatbot() -> None:
     assert (
         jerv.tools
         == JERV_TOOLS
-        == WEB_TOOLS | {"current_time", "current_location", "generate_image", "edit_image"}
+        == WEB_TOOLS
+        | {"current_time", "current_location", "generate_image", "edit_image", "analyze_image"}
     )
     assert jerv.reads_knowledge_base is False
 
@@ -83,8 +84,8 @@ def test_persona_prompts_pinned_to_their_versions() -> None:
             "e457d7504be94746132de7cc0c7b50fa1567867b3573a64ddfe6030b45909b16",
         ),
         "jerv": (
-            "agent-jerv-v8",
-            "ba3289e36ea5f125df8846ffeefa1693a0e692d9dc8dc9bef0a6e60697ef2649",
+            "agent-jerv-v9",
+            "3398f31c5cd0c586da6bf579793d2d9ed7e21e95e83812a193c02740c4d6e406",
         ),
     }
     assert set(pins) == AGENT_NAMES

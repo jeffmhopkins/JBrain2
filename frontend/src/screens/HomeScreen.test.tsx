@@ -45,7 +45,7 @@ function fbDeps(): FullBrainDeps {
       media_type: file.type,
       size_bytes: file.size,
     })),
-    getChatCapabilities: vi.fn(async () => ({ supports_vision: true })),
+    getChatCapabilities: vi.fn(async () => ({ supports_vision: true, can_edit_images: false })),
   };
 }
 
@@ -383,7 +383,7 @@ describe("HomeScreen mode scoping", () => {
     // Vision off: the conversation composer hides the paperclip and shows the hint.
     const offDeps = {
       ...fbDeps(),
-      getChatCapabilities: vi.fn(async () => ({ supports_vision: false })),
+      getChatCapabilities: vi.fn(async () => ({ supports_vision: false, can_edit_images: false })),
     };
     const { unmount } = render(
       <HomeScreen
@@ -406,7 +406,7 @@ describe("HomeScreen mode scoping", () => {
     // Vision on: the paperclip is offered, no hint.
     const onDeps = {
       ...fbDeps(),
-      getChatCapabilities: vi.fn(async () => ({ supports_vision: true })),
+      getChatCapabilities: vi.fn(async () => ({ supports_vision: true, can_edit_images: false })),
     };
     render(
       <HomeScreen
@@ -419,6 +419,31 @@ describe("HomeScreen mode scoping", () => {
       />,
     );
     fireEvent.click(screen.getByRole("tab", { name: "Full Brain" }));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Attach files" })).toBeInTheDocument(),
+    );
+    expect(screen.queryByText(/This model can't read images/)).not.toBeInTheDocument();
+  });
+
+  it("keeps the Research paperclip when image tools exist even if the model can't see", async () => {
+    // jerv's mode: a blind agent model, but ComfyUI configured — attach stays offered
+    // because jerv can analyze_image / edit_image an attachment by id.
+    const deps = {
+      ...fbDeps(),
+      getChatCapabilities: vi.fn(async () => ({ supports_vision: false, can_edit_images: true })),
+    };
+    render(
+      <HomeScreen
+        notes={fakeController()}
+        actions={fakeActions()}
+        onOpenNote={vi.fn()}
+        onOpenSearch={vi.fn()}
+        onOpenLauncher={vi.fn()}
+        fbDeps={deps}
+      />,
+    );
+    fireEvent.click(screen.getByRole("tab", { name: "Research" }));
+    await waitFor(() => screen.getByLabelText("Conversation"));
     await waitFor(() =>
       expect(screen.getByRole("button", { name: "Attach files" })).toBeInTheDocument(),
     );

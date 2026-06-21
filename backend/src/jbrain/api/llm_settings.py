@@ -39,6 +39,7 @@ router = APIRouter()
 # Human labels for each routed task — the screen lists every TASK_DEFAULTS key.
 TASK_LABELS: dict[str, str] = {
     "agent.turn": "Agent turn",
+    "agent.vision": "Agent image analysis",
     "integrate.note": "Integrate note",
     "fact.adjudicate": "Fact adjudicate",
     "note.extract": "Note extract",
@@ -48,6 +49,13 @@ TASK_LABELS: dict[str, str] = {
     "vision.caption": "Vision caption",
     "session.title": "Session title",
 }
+
+# Tasks that send image content to the model and so require a vision-capable provider:
+# the ingest vision.* tasks plus the agent's analyze_image route (agent.vision). The
+# screen filters these to vision choices; the PUT enforces it server-side.
+def is_vision_task(task: str) -> bool:
+    return task.startswith("vision.") or task == "agent.vision"
+
 
 # Provider ids are no longer a fixed set: enabling local hosting adds one id per
 # provisioned catalog model. The PUT validates the id against the live choices
@@ -474,7 +482,7 @@ async def update_llm_settings(
         # A vision task must draw a vision-capable provider — the UI filters this,
         # but enforce it server-side so a direct PUT can't send images to a
         # text-only local model (the stored override outranks the prompt tier).
-        if task.startswith("vision.") and not picked.supports_vision:
+        if is_vision_task(task) and not picked.supports_vision:
             raise HTTPException(
                 status_code=422,
                 detail=f"{choice.provider} cannot serve vision task {task}",

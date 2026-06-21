@@ -235,9 +235,14 @@ export function HomeScreen({
         apptRef={pendingAppt}
         onClearApptRef={clearAppt}
         // Capture modes always keep their attach (note attachments). A conversation
-        // mode offers it only when the agent's model is vision-capable; otherwise the
-        // paperclip is hidden and the muted hint stands in (mock B).
-        attachEnabled={!conversational || fb.supportsVision}
+        // mode offers it when the agent's model is vision-capable — OR, in jerv's
+        // research mode, when the on-box image tools are configured: jerv can then
+        // analyze_image / edit_image an attachment by id even without seeing it. The
+        // curator (fullbrain) has no image tools, so there it still needs vision;
+        // otherwise the paperclip is hidden and the muted hint stands in (mock B).
+        attachEnabled={
+          !conversational || fb.supportsVision || (seg.mode === "research" && fb.canEditImages)
+        }
         attachHint={ATTACH_VISION_OFF_HINT}
       />
       {toast && (

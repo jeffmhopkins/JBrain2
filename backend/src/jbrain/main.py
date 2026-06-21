@@ -303,6 +303,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 # ~39 GB it pins returns to the pool for the reply's LLM reload, a
                 # follow-up edit, or switching back to a large local model.
                 app.state.comfyui_gateway,
+                # Routes analyze_image's vision read (the `agent.vision` task) so a
+                # text-only agent model can still see an image via a vision model.
+                app.state.llm_router,
             )
         else:
             app.state.image_gen = None
