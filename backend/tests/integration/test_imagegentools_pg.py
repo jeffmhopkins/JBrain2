@@ -266,6 +266,110 @@ async def test_edit_by_generated_id_records_source(maker: async_sessionmaker) ->
     assert edit_source == source_sha  # the source blob's sha is recorded on the edit row
 
 
+async def test_edit_with_reference_images_passes_every_source(maker: async_sessionmaker) -> None:
+    """A multi-image edit resolves the primary plus a generated AND an attached reference,
+    and drives the model with all three image blobs in order (primary first)."""
+    owner = await _owner(maker)
+    fake = FakeImageGen()
+    sessions = AgentSessionRepo(maker)
+    attachments = TurnAttachmentRepo(maker, sessions)
+    blobs = MemBlobStore()
+    handlers = build_image_handlers(
+        fake,
+        blobs,
+        GeneratedImageRepo(),
+        attachments,
+        maker,
+        FakeLocalGateway(),
+        FakeComfyUiGateway(),
+        _router(),
+    )
+    info = await sessions.create(owner, domain_scopes=(), agent="jerv")
+
+    # The primary + one generated reference: generate two images first.
+    primary = await handlers["generate_image"]({"prompt": "a room"}, _ctx(owner, info.id))
+    ref_gen = await handlers["generate_image"]({"prompt": "a lamp"}, _ctx(owner, info.id))
+    assert isinstance(primary, ToolOutput) and isinstance(ref_gen, ToolOutput)
+    assert primary.view is not None and ref_gen.view is not None
+    primary_id, ref_gen_id = primary.view.data["image_id"], ref_gen.view.data["image_id"]
+
+    # …and one attached reference.
+    att_ctx = await attachments.session_read_context(owner, info.id)
+    assert att_ctx is not None
+    att_sha = await blobs.put(b"\x89PNG\r\n\x1a\nattached-ref")
+    att = await attachments.add(
+        att_ctx,
+        info.id,
+        sha256=att_sha,
+        filename="ref.png",
+        media_type="image/png",
+        size_bytes=10,
+        domain_code="general",
+    )
+
+    out = await handlers["edit_image"](
+        {
+            "prompt": "place the lamp in the room",
+            "source_image_id": primary_id,
+            "reference_image_ids": [ref_gen_id],
+            "reference_attachment_ids": [att.id],
+        },
+        _ctx(owner, info.id),
+    )
+    assert isinstance(out, ToolOutput) and out.view is not None
+    # Three blobs reached the adapter, primary first, then the references in order.
+    assert len(fake.last_sources) == 3
+    assert fake.last_sources[0] == fake.last_source  # primary stays first
+    assert fake.last_sources[2] == b"\x89PNG\r\n\x1a\nattached-ref"  # the attached ref
+
+
+async def test_edit_rejects_too_many_reference_images(maker: async_sessionmaker) -> None:
+    """More than 2 references (3 images max) is a clean error before any spend — no render."""
+    owner = await _owner(maker)
+    fake = FakeImageGen()
+    sessions = AgentSessionRepo(maker)
+    info = await sessions.create(owner, domain_scopes=(), agent="jerv")
+    handlers = await _handlers(maker, owner, fake)
+
+    primary = await handlers["generate_image"]({"prompt": "a room"}, _ctx(owner, info.id))
+    assert isinstance(primary, ToolOutput) and primary.view is not None
+
+    out = await handlers["edit_image"](
+        {
+            "prompt": "combine",
+            "source_image_id": primary.view.data["image_id"],
+            "reference_image_ids": ["a", "b", "c"],
+        },
+        _ctx(owner, info.id),
+    )
+    assert isinstance(out, str) and "at most 3 images" in out
+    assert fake.last_edit is None  # rejected before the render
+
+
+async def test_edit_bad_reference_id_is_a_clean_error(maker: async_sessionmaker) -> None:
+    """A reference that doesn't resolve (a non-uuid guess) is a clean miss, not a DB error,
+    and the edit never runs even though the primary was valid."""
+    owner = await _owner(maker)
+    fake = FakeImageGen()
+    sessions = AgentSessionRepo(maker)
+    info = await sessions.create(owner, domain_scopes=(), agent="jerv")
+    handlers = await _handlers(maker, owner, fake)
+
+    primary = await handlers["generate_image"]({"prompt": "a room"}, _ctx(owner, info.id))
+    assert isinstance(primary, ToolOutput) and primary.view is not None
+
+    out = await handlers["edit_image"](
+        {
+            "prompt": "combine",
+            "source_image_id": primary.view.data["image_id"],
+            "reference_attachment_ids": ["latest"],
+        },
+        _ctx(owner, info.id),
+    )
+    assert out == "No attached image with that id is in this chat."
+    assert fake.last_edit is None  # a bad reference stops the edit before the render
+
+
 async def test_edit_by_attachment_id_records_source(maker: async_sessionmaker) -> None:
     owner = await _owner(maker)
     fake = FakeImageGen()

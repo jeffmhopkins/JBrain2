@@ -764,8 +764,8 @@ def test_sidecars_pinned_to_their_versions() -> None:
         ),
         "edit_image.tool": (
             "edit_image",
-            2,
-            "4ee1b91d02763f0abdc4984b9590460fa7ef46bbf4beb1b7957b1e4400f8e3c2",
+            3,
+            "df15faa22e6ce045e846d62d1eb638d2e2c61d099dd9ec7bb3063e6f3900e11f",
         ),
         "analyze_image.tool": (
             "analyze_image",

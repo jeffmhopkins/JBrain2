@@ -18,7 +18,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
-from collections.abc import AsyncIterable, Awaitable, Callable
+from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from importlib import resources
 from typing import Any, Protocol
@@ -86,6 +86,13 @@ _EDIT_BINDING = _Binding(
 
 _INPUT_IMAGE_KEY = "image"
 
+# Qwen-Image-Edit-2511's multi-image text encoder: it carries image1..image3 slots, so a
+# reference image is wired into every encoder node's image{n}. Found by class (not a fixed
+# id) so the positive AND negative encoders both get each reference.
+_EDIT_ENCODER_CLASS = "TextEncodeQwenImageEditPlus"
+# Up to 3 images total: the primary (edited / latent base) plus up to 2 extra references.
+MAX_EDIT_IMAGES = 3
+
 
 class ImageGenError(Exception):
     """A generation failed — ComfyUI unreachable, a non-2xx response, an error
@@ -134,8 +141,13 @@ class ImageGen(Protocol):
     ) -> bytes: ...  # PNG bytes
 
     async def edit(
-        self, spec: EditSpec, source: bytes, on_progress: OnProgress | None = None
-    ) -> bytes: ...  # PNG bytes
+        self,
+        spec: EditSpec,
+        source: bytes,
+        on_progress: OnProgress | None = None,
+        *,
+        extra_sources: Sequence[bytes] = (),
+    ) -> bytes: ...  # PNG bytes — `source` is primary; `extra_sources` are references
 
 
 def _load_template(name: str) -> dict[str, Any]:
@@ -180,7 +192,12 @@ class ComfyUiImageGen:
         return await self._run(workflow, on_progress)
 
     async def edit(
-        self, spec: EditSpec, source: bytes, on_progress: OnProgress | None = None
+        self,
+        spec: EditSpec,
+        source: bytes,
+        on_progress: OnProgress | None = None,
+        *,
+        extra_sources: Sequence[bytes] = (),
     ) -> bytes:
         server_name = await self._upload_input(source)
         workflow = _load_template(_EDIT_TEMPLATE)
@@ -191,7 +208,35 @@ class ComfyUiImageGen:
         scale_node = _EDIT_BINDING.total_pixels
         assert scale_node is not None  # the edit graph always carries the scale node
         workflow[scale_node]["inputs"]["megapixels"] = spec.megapixels
+        # Each extra reference (Qwen-Image-Edit-2511 takes up to 3 images total) gets its own
+        # LoadImage→scale pair wired into the encoders' image2/image3; the primary above stays
+        # the latent base, so references are added conditioning, not what's being edited.
+        for index, extra in enumerate(extra_sources, start=2):
+            name = await self._upload_input(extra)
+            self._add_reference_image(workflow, name, index, spec.megapixels, scale_node)
         return await self._run(workflow, on_progress)
+
+    @staticmethod
+    def _add_reference_image(
+        workflow: dict[str, Any],
+        server_name: str,
+        index: int,
+        megapixels: float,
+        scale_template: str,
+    ) -> None:
+        """Add a LoadImage→ImageScaleToTotalPixels pair for one reference image and wire its
+        scaled output into the image{index} slot of every prompt encoder. The scale node's
+        settings are cloned from the primary's so every image is sized the same way."""
+        load_id = f"jbrain_ref_load_{index}"
+        scale_id = f"jbrain_ref_scale_{index}"
+        workflow[load_id] = {"class_type": "LoadImage", "inputs": {_INPUT_IMAGE_KEY: server_name}}
+        scale_inputs = dict(workflow[scale_template]["inputs"])
+        scale_inputs["image"] = [load_id, 0]
+        scale_inputs["megapixels"] = megapixels
+        workflow[scale_id] = {"class_type": "ImageScaleToTotalPixels", "inputs": scale_inputs}
+        for node in workflow.values():
+            if node.get("class_type") == _EDIT_ENCODER_CLASS:
+                node["inputs"][f"image{index}"] = [scale_id, 0]
 
     async def _run(self, workflow: dict[str, Any], on_progress: OnProgress | None) -> bytes:
         """Submit + await the final image. With `on_progress` we drive ComfyUI's
