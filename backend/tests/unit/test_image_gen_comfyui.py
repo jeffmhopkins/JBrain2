@@ -24,7 +24,15 @@ BASE = "http://comfyui:8188"
 PNG = b"\x89PNG\r\n\x1a\n" + b"the-rendered-bytes"
 
 GEN = GenSpec(prompt="a cat", width=768, height=512, steps=12, seed=42, model="qwen-image-2512")
-EDIT = EditSpec(prompt="add a hat", width=512, height=512, steps=8, seed=7, model="qwen-image-edit")
+EDIT = EditSpec(
+    prompt="add a hat",
+    width=512,
+    height=512,
+    steps=8,
+    seed=7,
+    model="qwen-image-edit",
+    megapixels=1.6,
+)
 
 _OUT_IMAGE = {"filename": "out.png", "subfolder": "", "type": "output"}
 _HISTORY_DONE = {"abc123": {"outputs": {"7": {"images": [_OUT_IMAGE]}}}}
@@ -91,7 +99,9 @@ async def test_edit_uploads_source_then_renders() -> None:
             uploaded.append(request.content)
             return httpx.Response(200, json={"name": "input.png", "subfolder": "", "type": "input"})
         if request.url.path == "/prompt":
-            referenced["image"] = json.loads(request.content)["prompt"]["41"]["inputs"]["image"]
+            graph = json.loads(request.content)["prompt"]
+            referenced["image"] = graph["41"]["inputs"]["image"]
+            referenced["megapixels"] = graph["79"]["inputs"]["megapixels"]
             return httpx.Response(200, json={"prompt_id": "abc123"})
         if request.url.path == "/history/abc123":
             return httpx.Response(200, json=_HISTORY_DONE)
@@ -103,6 +113,8 @@ async def test_edit_uploads_source_then_renders() -> None:
     # The source bytes were uploaded and the returned server name fed the graph.
     assert uploaded and source in uploaded[0]
     assert referenced["image"] == "input.png"
+    # The resolution's total-pixel budget reached the scale node.
+    assert referenced["megapixels"] == 1.6
 
 
 async def test_await_polls_until_outputs_appear() -> None:

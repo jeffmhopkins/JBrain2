@@ -8575,6 +8575,21 @@ button.small {
   background: var(--amber);
   transition: width 0.45s ease;
 }
+/* The bracket states (preparing / finalizing) have no percent to show, so the bar
+   runs an indeterminate amber stripe sliding left→right instead of a fixed width. */
+.fb-shell .fb-genprev-bar i.fb-genprev-indet {
+  width: 35%;
+  transition: none;
+  animation: fb-genprev-indet 1.1s ease-in-out infinite;
+}
+@keyframes fb-genprev-indet {
+  from {
+    margin-left: -35%;
+  }
+  to {
+    margin-left: 100%;
+  }
+}
 .fb-shell .fb-genprev-stop {
   position: absolute;
   top: 8px;

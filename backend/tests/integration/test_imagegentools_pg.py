@@ -27,6 +27,7 @@ from jbrain.image_gen.fake import FakeImageGen
 from jbrain.models.images import GeneratedImageRepo
 from tests.conftest import docker_available
 from tests.integration.test_rls import database_url  # noqa: F401
+from tests.unit.fakes import FakeLocalGateway
 
 pytestmark = [
     pytest.mark.integration,
@@ -103,7 +104,9 @@ def _ctx(owner: SessionContext, session_id: str | None = None) -> ToolContext:
 async def _handlers(maker: async_sessionmaker, owner: SessionContext, fake: FakeImageGen):
     sessions = AgentSessionRepo(maker)
     attachments = TurnAttachmentRepo(maker, sessions)
-    return build_image_handlers(fake, MemBlobStore(), GeneratedImageRepo(), attachments, maker)
+    return build_image_handlers(
+        fake, MemBlobStore(), GeneratedImageRepo(), attachments, maker, FakeLocalGateway()
+    )
 
 
 async def test_generate_inserts_row_and_returns_view(maker: async_sessionmaker) -> None:
@@ -132,6 +135,38 @@ async def test_generate_inserts_row_and_returns_view(maker: async_sessionmaker) 
         row = (await s.execute(text("SELECT count(*), max(seed) FROM app.generated_images"))).one()
     assert row[0] == 1
     assert fake.last_gen is not None and fake.last_gen.seed == row[1]  # resolved seed recorded
+
+
+async def test_generate_resolution_scales_the_rendered_dims(maker: async_sessionmaker) -> None:
+    # `small` renders below the native default — the lighter latent that buys
+    # unified-memory headroom — and the chosen dims reach both the spec and the row.
+    owner = await _owner(maker)
+    fake = FakeImageGen()
+    handlers = await _handlers(maker, owner, fake)
+
+    out = await handlers["generate_image"](
+        {"prompt": "a teapot", "aspect": "square", "resolution": "small"}, _ctx(owner)
+    )
+
+    assert isinstance(out, ToolOutput) and out.view is not None
+    assert (out.view.data["width"], out.view.data["height"]) == (768, 768)
+    assert fake.last_gen is not None
+    assert (fake.last_gen.width, fake.last_gen.height) == (768, 768)
+
+
+async def test_generate_rejects_an_unknown_resolution(maker: async_sessionmaker) -> None:
+    # A bad resolution is a clean tool-error string — no row, no spend.
+    owner = await _owner(maker)
+    handlers = await _handlers(maker, owner, FakeImageGen())
+
+    out = await handlers["generate_image"](
+        {"prompt": "a teapot", "resolution": "enormous"}, _ctx(owner)
+    )
+
+    assert out == "resolution must be one of: small, medium, large."
+    async with scoped_session(maker, owner) as s:
+        count = (await s.execute(text("SELECT count(*) FROM app.generated_images"))).scalar()
+    assert count == 0
 
 
 async def test_edit_by_generated_id_records_source(maker: async_sessionmaker) -> None:
@@ -173,7 +208,9 @@ async def test_edit_by_attachment_id_records_source(maker: async_sessionmaker) -
     sessions = AgentSessionRepo(maker)
     attachments = TurnAttachmentRepo(maker, sessions)
     blobs = MemBlobStore()
-    handlers = build_image_handlers(fake, blobs, GeneratedImageRepo(), attachments, maker)
+    handlers = build_image_handlers(
+        fake, blobs, GeneratedImageRepo(), attachments, maker, FakeLocalGateway()
+    )
 
     # A jerv chat session (empty scopes) with one image attachment (stamped 'general').
     info = await sessions.create(owner, domain_scopes=(), agent="jerv")
@@ -214,7 +251,9 @@ async def test_edit_orphan_source_blob_is_clean_error(maker: async_sessionmaker)
     sessions = AgentSessionRepo(maker)
     attachments = TurnAttachmentRepo(maker, sessions)
     blobs = MemBlobStore()
-    handlers = build_image_handlers(fake, blobs, GeneratedImageRepo(), attachments, maker)
+    handlers = build_image_handlers(
+        fake, blobs, GeneratedImageRepo(), attachments, maker, FakeLocalGateway()
+    )
 
     gen = await handlers["generate_image"]({"prompt": "a cat"}, _ctx(owner))
     assert isinstance(gen, ToolOutput) and gen.view is not None

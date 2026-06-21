@@ -69,6 +69,7 @@ class _Binding:
     sampler: str  # KSampler — holds seed + steps
     latent: str | None = None  # Empty*LatentImage — width/height (generate only)
     input_image: str | None = None  # LoadImage — server-side name (edit only)
+    total_pixels: str | None = None  # ImageScaleToTotalPixels — megapixels (edit only)
     # The prompt node's text input key differs by graph: CLIPTextEncode uses
     # "text", the edit graph's TextEncodeQwenImageEditPlus uses "prompt".
     prompt_key: str = "text"
@@ -78,9 +79,12 @@ class _Binding:
 # EmptySD3LatentImage=58 (the loaders + ModelSamplingAuraFlow are left as authored).
 _GEN_BINDING = _Binding(prompt="6", sampler="3", latent="58")
 # Qwen-Image-Edit image->image, exported from the box: the prompt is a
-# TextEncodeQwenImageEditPlus (68, key "prompt"), KSampler is 65, LoadImage is 41.
-# The reference-latent pipeline (scale->VAEEncode->FluxKontext) is left as authored.
-_EDIT_BINDING = _Binding(prompt="68", sampler="65", input_image="41", prompt_key="prompt")
+# TextEncodeQwenImageEditPlus (68, key "prompt"), KSampler is 65, LoadImage is 41,
+# and ImageScaleToTotalPixels (79) sets the output's total-pixel budget. The rest of
+# the reference-latent pipeline (VAEEncode->FluxKontext) is left as authored.
+_EDIT_BINDING = _Binding(
+    prompt="68", sampler="65", input_image="41", total_pixels="79", prompt_key="prompt"
+)
 
 _INPUT_IMAGE_KEY = "image"
 
@@ -123,6 +127,7 @@ class EditSpec:
     steps: int
     seed: int
     model: str
+    megapixels: float  # the output's total-pixel budget (the source is scaled to it)
 
 
 class ImageGen(Protocol):
@@ -185,6 +190,9 @@ class ComfyUiImageGen:
         image_node = _EDIT_BINDING.input_image
         assert image_node is not None  # the edit graph always carries a LoadImage node
         workflow[image_node]["inputs"][_INPUT_IMAGE_KEY] = server_name
+        scale_node = _EDIT_BINDING.total_pixels
+        assert scale_node is not None  # the edit graph always carries the scale node
+        workflow[scale_node]["inputs"]["megapixels"] = spec.megapixels
         return await self._run(workflow, on_progress)
 
     async def _run(self, workflow: dict[str, Any], on_progress: OnProgress | None) -> bytes:

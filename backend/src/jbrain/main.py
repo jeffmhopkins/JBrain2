@@ -283,6 +283,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 app.state.generated_image_repo,
                 app.state.turn_attachments,
                 maker,
+                # The image render frees any resident local LLM first (unified-memory
+                # time-share); llama-swap reloads it on the loop's next call.
+                app.state.local_gateway,
             )
         else:
             app.state.image_gen = None

@@ -21,6 +21,8 @@ strip that suffix once here.
 
 from __future__ import annotations
 
+from typing import Protocol
+
 import httpx
 import structlog
 
@@ -29,6 +31,18 @@ log = structlog.get_logger()
 
 class LocalGatewayError(Exception):
     """A load/unload call the gateway rejected or couldn't be reached for."""
+
+
+class LocalGateway(Protocol):
+    """The runtime-state surface consumers depend on (report/unload/load), so a
+    caller takes the capability rather than the concrete HTTP client — the in-memory
+    test fake satisfies it structurally, the same seam as the `ImageGen` protocol."""
+
+    async def running(self) -> set[str]: ...
+
+    async def unload(self, served_model: str) -> None: ...
+
+    async def load(self, served_model: str) -> None: ...
 
 
 class LocalGatewayClient:

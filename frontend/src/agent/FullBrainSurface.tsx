@@ -278,7 +278,12 @@ function Bubble({
   }
   // In-flight image generations with a live preview — they keep the bubble visible
   // (below) and render the sharpening preview + Stop ahead of any answer text.
-  const livePreviews = message.tools.filter((t) => t.progress && t.ok === undefined);
+  // Any in-flight image render shows the live surface — from the moment the tool is
+  // called (a "preparing" placeholder during model load) through sampling and the
+  // final decode, until its result lands.
+  const livePreviews = message.tools.filter(
+    (t) => IMAGE_TOOL_NAMES.has(t.name) && t.ok === undefined,
+  );
   // While the turn is still streaming, hold the whole bubble until the answer
   // text begins — tool calls alone shouldn't pop an empty Worked block ahead of
   // any prose. EXCEPT a reasoning model (show the live "Thinking…" disclosure) or a
@@ -625,6 +630,10 @@ function GeneralKnowledgeNote(): ReactNode {
 // diff, takes approve/reject in place, reflects live state, AND notifies the
 // agent of the outcome so it can follow up) is a separate, larger change that
 // needs a backend feedback loop; it is intentionally not built here.
+// The two image-gen tools, by name — the only tools that drive a live preview
+// surface (so an in-flight render shows the sharpening frame, not a Worked step).
+const IMAGE_TOOL_NAMES = new Set(["generate_image", "edit_image"]);
+
 // aspect arg → CSS ratio, so the preview frame holds a stable size before the
 // first preview frame arrives (matching the image-gen tool's three presets).
 const PREVIEW_ASPECT: Record<string, string> = {
@@ -637,13 +646,27 @@ const PREVIEW_ASPECT: Record<string, string> = {
 // preview fills the final image slot and sharpens (blur → 0) as the sampler
 // advances, with a slim progress bar and a corner Stop. Replaced by the final
 // generated_image view the moment the tool's result lands.
+//
+// It spans the whole render, not just sampling: before the first tick (the LLM is
+// being unloaded and the diffusion model loaded) there's no `progress` yet, so it
+// shows a "preparing…" placeholder; once the sampler reaches its last step the
+// preview is done but the VAE decode hasn't returned, so it shows "finalizing…".
+// Both bracket states drive an indeterminate bar; only mid-sampling shows a percent.
 function GeneratingPreview({ tool }: { tool: ToolActivity }): ReactNode {
   const [stopping, setStopping] = useState(false);
   const p = tool.progress;
-  if (!p) return null;
-  const pct = p.total > 0 ? Math.round((p.step / p.total) * 100) : 0;
+  const sampling = p !== undefined && p.total > 0 && p.step < p.total;
+  const pct = sampling && p ? Math.round((p.step / p.total) * 100) : 0;
   const blur = Math.max(0, 26 * (1 - pct / 100));
   const aspect = PREVIEW_ASPECT[String(tool.args?.aspect ?? "square")] ?? "1 / 1";
+
+  const label = stopping
+    ? "stopping…"
+    : p === undefined
+      ? "preparing…"
+      : sampling
+        ? `step ${p.step} / ${p.total}`
+        : "finalizing…";
 
   const stop = () => {
     setStopping(true);
@@ -654,7 +677,7 @@ function GeneratingPreview({ tool }: { tool: ToolActivity }): ReactNode {
   return (
     <div className="fb-genprev">
       <div className="fb-genprev-frame" style={{ aspectRatio: aspect }}>
-        {p.preview ? (
+        {p?.preview ? (
           <img
             className="fb-genprev-img"
             src={p.preview}
@@ -671,13 +694,11 @@ function GeneratingPreview({ tool }: { tool: ToolActivity }): ReactNode {
           </button>
         )}
         <div className="fb-genprev-overlay">
-          <span className="fb-genprev-step">
-            {stopping ? "stopping…" : `step ${p.step} / ${p.total}`}
-          </span>
-          <span className="fb-genprev-pct">{pct}%</span>
+          <span className="fb-genprev-step">{label}</span>
+          {sampling && <span className="fb-genprev-pct">{pct}%</span>}
         </div>
         <div className="fb-genprev-bar">
-          <i style={{ width: `${pct}%` }} />
+          {sampling ? <i style={{ width: `${pct}%` }} /> : <i className="fb-genprev-indet" />}
         </div>
       </div>
     </div>

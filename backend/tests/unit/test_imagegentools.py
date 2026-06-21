@@ -106,3 +106,65 @@ def test_progress_callback_is_none_without_a_sink() -> None:
 
     ctx = ToolContext(session=SessionContext(principal_kind="owner"), scopes=())
     assert _progress_callback(ctx) is None
+
+
+def test_dims_scale_with_resolution_and_stay_multiples_of_64() -> None:
+    """aspect sets the ratio, resolution the size; medium is the 1024 default and the
+    three presets all land on the multiples of 64 Qwen's latent grid expects."""
+    from jbrain.agent.imagegentools import _dims
+
+    assert _dims("square", "medium") == (1024, 1024)  # the default size
+    assert _dims(None, None) == (1024, 1024)  # square + medium are the fallbacks
+    assert _dims("portrait", "small") == (576, 768)
+    assert _dims("landscape", "large") == (1280, 960)
+    for aspect in ("square", "portrait", "landscape"):
+        for resolution in ("small", "medium", "large"):
+            w, h = _dims(aspect, resolution)  # type: ignore[misc]
+            assert w % 64 == 0 and h % 64 == 0
+
+
+def test_dims_reject_unknown_aspect_or_resolution() -> None:
+    # A bad value in either axis is a clean None the handler turns into a tool error.
+    from jbrain.agent.imagegentools import _dims
+
+    assert _dims("hexagon", "medium") is None
+    assert _dims("square", "gigantic") is None
+
+
+def test_megapixels_track_resolution_for_the_edit_path() -> None:
+    """The edit graph scales the source to a total-pixel budget; medium keeps the
+    graph's authored 1.6 MP, small/large step it down/up."""
+    from jbrain.agent.imagegentools import _megapixels
+
+    assert _megapixels("medium") == 1.6
+    assert _megapixels(None) == 1.6  # medium is the fallback
+    assert _megapixels("small") < _megapixels("large")
+
+
+async def test_free_local_llms_unloads_every_resident_model() -> None:
+    """Before a render, the image tool frees the unified-memory the LLM holds."""
+    from jbrain.agent.imagegentools import _free_local_llms
+    from tests.unit.fakes import FakeLocalGateway
+
+    gw = FakeLocalGateway(running={"qwen3-vl-30b-a3b", "gpt-oss-120b"})
+    await _free_local_llms(gw)
+    assert set(gw.unloaded) == {"qwen3-vl-30b-a3b", "gpt-oss-120b"}
+
+
+async def test_free_local_llms_is_a_noop_when_nothing_is_loaded() -> None:
+    # A cloud-driven turn (or hosting off) has nothing resident — no unloads.
+    from jbrain.agent.imagegentools import _free_local_llms
+    from tests.unit.fakes import FakeLocalGateway
+
+    gw = FakeLocalGateway(running=set())
+    await _free_local_llms(gw)
+    assert gw.unloaded == []
+
+
+async def test_free_local_llms_swallows_a_gateway_failure() -> None:
+    # Memory housekeeping must never fail the generation — a gateway error is logged.
+    from jbrain.agent.imagegentools import _free_local_llms
+    from tests.unit.fakes import FakeLocalGateway
+
+    gw = FakeLocalGateway(running={"gpt-oss-120b"}, fail_unload=True)
+    await _free_local_llms(gw)  # does not raise

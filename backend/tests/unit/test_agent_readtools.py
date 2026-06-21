@@ -759,13 +759,13 @@ def test_sidecars_pinned_to_their_versions() -> None:
         ),
         "generate_image.tool": (
             "generate_image",
-            1,
-            "ca2fe1f373943473be5079622dfc84fb22e057941b3e2da9571313cd420ba613",
+            2,
+            "5390c8fa03e2642e51e6fc8c539bd60e1f7fb7d2fd68b02eba9ad0460b534925",
         ),
         "edit_image.tool": (
             "edit_image",
-            1,
-            "dc4a84d8031c83f30484f99efa70f3c8cd922892764ab0ba493fe3ce757c0253",
+            2,
+            "4ee1b91d02763f0abdc4984b9590460fa7ef46bbf4beb1b7957b1e4400f8e3c2",
         ),
     }
     # Every shipped sidecar must appear above — a new `.tool` cannot slip in

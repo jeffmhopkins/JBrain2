@@ -1,6 +1,6 @@
 ---
 name: edit_image
-version: 1
+version: 2
 permission: web
 side_effecting: true
 cost_class: expensive
@@ -20,6 +20,10 @@ params:
       type: string
       enum: [square, portrait, landscape]
       description: The output shape. Defaults to square.
+    resolution:
+      type: string
+      enum: [small, medium, large]
+      description: The output size. Defaults to medium. Use small for a quicker, lighter render and large for more detail.
     steps:
       type: integer
       description: How many diffusion steps to run (optional; a sane default is used when omitted).
