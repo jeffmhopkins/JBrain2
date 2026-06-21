@@ -489,6 +489,10 @@ export function useFullBrain(
       }
     } finally {
       abortRef.current = null;
+      // Cleared only now (not before reconcile) so a Stop during the multi-minute
+      // recovery still cancels the detached turn by id; a stale id can't linger into
+      // the next turn.
+      runIdRef.current = null;
       setBusy(false);
       // The turn may have staged a Proposal — refresh the review inbox.
       reloadProposals();
