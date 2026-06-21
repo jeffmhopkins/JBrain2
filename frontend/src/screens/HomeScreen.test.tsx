@@ -32,6 +32,7 @@ function fbDeps(): FullBrainDeps {
       last_active_at: "2026-06-13T00:00:00Z",
     })),
     chat: async function* () {},
+    cancelChatRun: vi.fn(async () => {}),
     listProposals: vi.fn(async () => []),
     getTranscript: vi.fn(async () => []),
     renameSession: vi.fn(async () => {}),
