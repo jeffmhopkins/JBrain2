@@ -83,6 +83,13 @@ def render(
             # The context window. Must match what the router reports to the meter.
             "-c",
             str(window),
+            # Tool calling needs the model's own chat template: --jinja makes
+            # llama-server render the embedded (Hermes-style for Qwen) tool-use
+            # template and parse `<tool_call>` blocks back into structured
+            # `tool_calls`. Without it the OpenAI `tools` we send have no grammar
+            # behind them and the model free-forms text (a narrated, never-called
+            # image) — so the on-box image tools never fire.
+            "--jinja",
             # gfx1151 stability/perf flags: flash attention + --no-mmap; -ngl 999
             # offloads every layer to the iGPU.
             "-fa",

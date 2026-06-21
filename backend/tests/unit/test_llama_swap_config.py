@@ -42,6 +42,9 @@ def test_render_stamps_default_windows_and_resolves_files(tmp_path: Path) -> Non
     text = llama_swap_config.render(_manifest(), str(tmp_path))
     # Catalog defaults become -c; distinct upstream ports; resolved gguf + mmproj.
     assert "-c 32768" in text and "-c 131072" in text
+    # --jinja on every model: the tool-use template + tool-call parsing the image
+    # tools (and every other tool) depend on. One per served model.
+    assert text.count("--jinja") == 2
     assert "--port 9100" in text and "--port 9101" in text
     assert "/models/qwen3-vl-30b/model-Q8_0.gguf" in text
     assert "--mmproj /models/qwen3-vl-30b/mmproj-f16.gguf" in text
