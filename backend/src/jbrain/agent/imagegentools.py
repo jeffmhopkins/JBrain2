@@ -157,6 +157,9 @@ def generated_image_view(row: GeneratedImage) -> ViewPayload:
             "width": row.width,
             "height": row.height,
             "model": row.model,
+            # The resolved seed — surfaced so the owner can see it on the card (and
+            # reuse it) and so the PWA can carry it into the next turn's context.
+            "seed": row.seed,
         },
     )
 
@@ -214,7 +217,9 @@ def build_image_handlers(
                 seed=seed,
             )
         return ToolOutput(
-            f"Generated a {width}x{height} image (seed {seed}); the app is showing it.",
+            f"Generated a {width}x{height} image (seed {seed}); the app is showing it. "
+            f"To change it, call edit_image with source_image_id {row.id}; to reproduce "
+            f"or tweak it, reuse seed {seed}.",
             view=generated_image_view(row),
         )
 
@@ -305,7 +310,8 @@ def build_image_handlers(
                 seed=seed,
             )
         return ToolOutput(
-            f"Edited the image (seed {seed}); the app is showing the result to the owner.",
+            f"Edited the image (seed {seed}); the app is showing the result to the owner. "
+            f"To edit this result again, use source_image_id {row.id}.",
             view=generated_image_view(row),
         )
 

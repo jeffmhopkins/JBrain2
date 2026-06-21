@@ -627,8 +627,12 @@ function GeneratedImage({ data }: ViewProps): ReactNode {
   const width = asDim(data.width);
   const height = asDim(data.height);
   const model = typeof data.model === "string" ? data.model : "";
+  const seed = typeof data.seed === "number" ? data.seed : null;
   const alt = prompt || "Generated image";
-  const meta = `${width} × ${height}${model ? ` · ${model}` : ""}`;
+  // Surface the seed on the card so the owner can see it and ask to reuse it.
+  const meta = `${width} × ${height}${seed !== null ? ` · seed ${seed}` : ""}${
+    model ? ` · ${model}` : ""
+  }`;
 
   if (kind === "edit") {
     return (
