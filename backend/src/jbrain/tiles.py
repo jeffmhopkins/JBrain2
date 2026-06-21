@@ -1,18 +1,24 @@
 """Server-side basemap tile proxy + cache (location map).
 
-The phone's Leaflet map fetches tiles from THIS box (`/api/tiles/{z}/{x}/{y}.png`),
-never a third-party tile host: the proxy fetches a tile from the configured
-upstream once, caches it on disk, and serves every later request locally. The
-upstream therefore sees only the server's coarse tile requests (tied to the server
-IP), never the owner's device or a fine coordinate — a deliberate, bounded
-relaxation of L1 ("no tiles leave the box"), recorded in PHASE7_LOCATION_PLAN.md.
+The phone's Leaflet map fetches tiles from THIS box
+(`/api/tiles/{scheme}/{z}/{x}/{y}.png`), never a third-party tile host: the proxy
+fetches a tile from the configured upstream once, caches it on disk, and serves every
+later request locally. The upstream therefore sees only the server's coarse tile
+requests (tied to the server IP), never the owner's device or a fine coordinate — a
+deliberate, bounded relaxation of L1 ("no tiles leave the box"), recorded in
+PHASE7_LOCATION_PLAN.md.
+
+A `TileSet` holds one independent `TileService` per scheme (`dark`/`light`), each with
+its own upstream and cache namespace, so the app's light/dark toggle never serves one
+scheme's cached z/x/y under the other.
 
 File I/O goes through a storage abstraction (CLAUDE.md rule 2). An empty upstream
-disables tiles (the map falls back to the on-box schematic).
+disables that scheme (the map falls back to the on-box schematic).
 """
 
 import asyncio
 import hashlib
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Protocol
 
@@ -149,3 +155,23 @@ class TileService:
             await self._cache.put(z, x, y, data)
         except Exception as exc:  # noqa: BLE001 - failing to cache still serves the tile
             log.warning("tiles.cache_put_failed", z=z, x=x, y=y, error=repr(exc))
+
+
+class TileSet:
+    """The selectable basemap schemes (e.g. `dark`/`light`). Each scheme is a fully
+    independent `TileService` — its own upstream and cache namespace — so switching
+    the app's tile toggle serves a separate tile tree, never the other scheme's
+    cached z/x/y. An unknown scheme resolves to None (the endpoint 404s)."""
+
+    def __init__(self, services: Mapping[str, TileService], *, default: str):
+        self._services = dict(services)
+        self._default = default
+
+    @property
+    def schemes(self) -> frozenset[str]:
+        return frozenset(self._services)
+
+    def service(self, scheme: str | None) -> TileService | None:
+        """Resolve a scheme to its service; an empty/None scheme falls back to the
+        configured default (legacy clients that don't pin one)."""
+        return self._services.get(scheme or self._default)

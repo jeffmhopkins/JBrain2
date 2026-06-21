@@ -9,7 +9,14 @@ import { type LocationDeps, LocationScreen, relativeTime, sentence } from "./Loc
 // shared `update` spy lets a test assert the state handed to the map.
 const { mapUpdate } = vi.hoisted(() => ({ mapUpdate: vi.fn() }));
 vi.mock("./leafletMap", () => ({
-  createLocationMap: () => ({ update: mapUpdate, destroy: vi.fn() }),
+  createLocationMap: () => ({
+    update: mapUpdate,
+    centerOn: vi.fn(),
+    setScheme: vi.fn(),
+    destroy: vi.fn(),
+  }),
+  readTileScheme: () => "dark",
+  writeTileScheme: vi.fn(),
 }));
 
 beforeEach(() => mapUpdate.mockClear());

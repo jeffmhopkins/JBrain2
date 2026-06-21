@@ -9,7 +9,9 @@
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 
-const TILE_URL = "/api/tiles/{z}/{x}/{y}.png";
+// Inline tool-view thumbnails always use the dark basemap (matching the app UI);
+// the light/dark toggle lives on the interactive maps, not these static cards.
+const TILE_URL = "/api/tiles/dark/{z}/{x}/{y}.png";
 
 /** A trail leg: a polyline of [lat, lon] pairs (render-only coordinates). */
 export interface TrailLegData {

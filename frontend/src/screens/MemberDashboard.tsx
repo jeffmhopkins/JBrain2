@@ -20,7 +20,15 @@ import {
   type TimelineEntry,
   api,
 } from "../api/client";
-import { type LocationMapHandle, type MapMode, type MapPin, createLocationMap } from "./leafletMap";
+import {
+  type LocationMapHandle,
+  type MapMode,
+  type MapPin,
+  type TileScheme,
+  createLocationMap,
+  readTileScheme,
+  writeTileScheme,
+} from "./leafletMap";
 import { type LiveFix, connectLive } from "./liveSocket";
 
 export interface MemberDeps {
@@ -132,6 +140,9 @@ function LiveMap({ deps }: { deps: MemberDeps | undefined }) {
   const [mode, setMode] = useState<Exclude<MapMode, "live">>("trail");
   const [win, setWin] = useState<Win>(DEFAULT_WIN);
   const [sheet, setSheet] = useState<Sheet>(null);
+  // Basemap style — a tiles-only toggle (the app's dark chrome is unchanged),
+  // persisted so it sticks across app launches.
+  const [tileScheme, setTileScheme] = useState<TileScheme>(() => readTileScheme());
 
   const canvas = useRef<HTMLDivElement>(null);
   const handle = useRef<LocationMapHandle | null>(null);
@@ -270,13 +281,24 @@ function LiveMap({ deps }: { deps: MemberDeps | undefined }) {
     });
   }, [roster, places, sel, colorOf, mode, trail]);
 
+  // Swap the basemap in place when the toggle changes (no remount; pins stay put).
+  useEffect(() => {
+    handle.current?.setScheme(tileScheme);
+  }, [tileScheme]);
+
   const toggleSheet = (which: Exclude<Sheet, null>) =>
     setSheet((s) => (s === which ? null : which));
+
+  const pickScheme = (s: TileScheme) => {
+    setTileScheme(s);
+    writeTileScheme(s);
+  };
 
   return (
     <div className="livemap">
       <div className="livemap-canvas" ref={canvas} data-testid="map-canvas" />
       <PeopleSwitcher roster={roster} sel={sel} colorOf={colorOf} failed={failed} onPick={setSel} />
+      <TileToggle scheme={tileScheme} onPick={pickScheme} />
       <DetailsSheet
         open={sheet === "details"}
         roster={roster}
@@ -351,6 +373,45 @@ function PeopleSwitcher({
           <span className="lm-chip-nm">{m.label}</span>
         </button>
       ))}
+    </div>
+  );
+}
+
+// --- basemap light/dark toggle (tiles only) -------------------------------
+
+/** A compact floating control that switches ONLY the basemap tiles between the
+ * dark and light schemes — the app's own dark chrome is untouched. */
+function TileToggle({
+  scheme,
+  onPick,
+}: {
+  scheme: TileScheme;
+  onPick: (s: TileScheme) => void;
+}) {
+  return (
+    <div className="lm-tiles lm-float" role="tablist" aria-label="Map style">
+      <button
+        type="button"
+        role="tab"
+        className={scheme === "dark" ? "on" : ""}
+        aria-selected={scheme === "dark"}
+        aria-label="Dark map"
+        title="Dark map"
+        onClick={() => onPick("dark")}
+      >
+        ☾
+      </button>
+      <button
+        type="button"
+        role="tab"
+        className={scheme === "light" ? "on" : ""}
+        aria-selected={scheme === "light"}
+        aria-label="Light map"
+        title="Light map"
+        onClick={() => onPick("light")}
+      >
+        ☀
+      </button>
     </div>
   );
 }

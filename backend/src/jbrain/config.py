@@ -50,12 +50,20 @@ class Settings(BaseSettings):
     # A DELIBERATE relaxation of the location plan's L1 ("no tiles leave the box"):
     # the server fetches-and-caches upstream tiles, so the upstream learns the
     # coarse map areas the owner browses (tied to the server IP, never the device).
-    # Empty disables tiles entirely (the map falls back to the on-box schematic).
-    # Default: CARTO "Dark Matter" — a clean, dark, minimal basemap that matches the
-    # app's dark UI (the bright OSM standard style clashed). Keyless; © OpenStreetMap
-    # © CARTO. Swap to any {z}/{x}/{y}.png raster style; the on-disk cache namespaces
-    # by this URL, so changing it re-fetches cleanly (no stale-style tiles).
+    #
+    # Two selectable schemes — `dark` and `light` — each a separate upstream with its
+    # OWN on-disk cache namespace, so the app's tile toggle never serves one scheme's
+    # cached z/x/y under the other. The endpoint takes the scheme as a path segment
+    # (/api/tiles/{scheme}/{z}/{x}/{y}.png); the default is what a request to an
+    # unknown/legacy path resolves to. Empty disables THAT scheme (its requests 404
+    # and the map degrades to the on-box schematic); an empty default scheme disables
+    # tiles for clients that don't pin a scheme.
+    # Defaults: CARTO "Dark Matter" / "Positron" — clean, minimal basemaps. Keyless;
+    # © OpenStreetMap © CARTO. Swap either to any {z}/{x}/{y}.png raster style; the
+    # cache namespaces by URL, so a change re-fetches cleanly (no stale-style tiles).
     tile_upstream_url: str = "https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png"
+    tile_upstream_url_light: str = "https://a.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png"
+    tile_default_scheme: str = "dark"
     # Sent on every upstream tile fetch — OSM's tile policy requires an honest UA.
     tile_user_agent: str = "JBrain2 self-hosted personal instance"
     tile_cache_dir: str = "/data/tiles"
