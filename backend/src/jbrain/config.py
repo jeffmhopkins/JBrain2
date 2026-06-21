@@ -123,6 +123,12 @@ class Settings(BaseSettings):
     # files, not application blobs, so the read sits outside the storage abstraction
     # (same rationale as local_models_dir / host_metrics' /proc read).
     comfyui_models_dir: str = "/data/comfyui-models"
+    # Overall budget for ONE render (cold model load + sampling + tiled VAE decode).
+    # On the iGPU a large/high-step image — 1536x1536 at 45 steps — plus a cold model
+    # load (we free ComfyUI between renders) runs well past the 1024x1024/20-step base,
+    # so this is generous: it's the ceiling for a render that genuinely hung, not the
+    # expected duration. Raise it for even larger jobs.
+    comfyui_timeout: float = 1800.0
     # Local models on one box are far slower than the cloud APIs — a 30B+ doing a
     # long OCR/extraction at a few dozen tok/s can run for minutes. The 120s cloud
     # default would time out mid-generation and the job would retry-loop, never

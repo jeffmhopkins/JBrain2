@@ -284,7 +284,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         image_handlers: dict[str, ToolHandler] = {}
         if settings.comfyui_url:
             image_gen_client = httpx.AsyncClient()
-            app.state.image_gen = ComfyUiImageGen(settings.comfyui_url, image_gen_client)
+            app.state.image_gen = ComfyUiImageGen(
+                settings.comfyui_url, image_gen_client, timeout=settings.comfyui_timeout
+            )
             # The management client (status/free) for the owner image-settings surface
             # — the sibling of app.state.local_gateway, wired on the same gate.
             app.state.comfyui_gateway = ComfyUiGatewayClient(settings.comfyui_url)
