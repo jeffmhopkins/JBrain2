@@ -8448,12 +8448,7 @@ button.small {
 .fb-shell .fb-genprev-skeleton {
   position: absolute;
   inset: 0;
-  background: linear-gradient(
-    110deg,
-    var(--surface) 30%,
-    var(--surface-2) 50%,
-    var(--surface) 70%
-  );
+  background: linear-gradient(110deg, var(--surface) 30%, var(--surface-2) 50%, var(--surface) 70%);
   background-size: 200% 100%;
   animation: fb-genprev-shimmer 1.3s linear infinite;
 }

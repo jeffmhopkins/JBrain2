@@ -30,9 +30,7 @@ from dataclasses import asdict, dataclass
 # ComfyUI models subdirs each weight file must land in (relative to the models
 # mount). The setup script places files by these names; the catalog is validated
 # against this set so a typo can't write to a directory ComfyUI never reads.
-MODEL_SUBDIRS: frozenset[str] = frozenset(
-    {"diffusion_models", "text_encoders", "vae", "loras"}
-)
+MODEL_SUBDIRS: frozenset[str] = frozenset({"diffusion_models", "text_encoders", "vae", "loras"})
 
 
 @dataclass(frozen=True)
