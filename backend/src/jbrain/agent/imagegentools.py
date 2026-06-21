@@ -24,6 +24,7 @@ from jbrain.agent.contracts import ViewPayload
 from jbrain.agent.loop import ToolContext, ToolHandler, ToolOutput
 from jbrain.db.session import scoped_session
 from jbrain.image_gen.comfyui import (
+    MAX_EDIT_IMAGES,
     EditSpec,
     GenSpec,
     ImageGen,
@@ -70,6 +71,21 @@ _RESOLUTIONS: dict[str, tuple[int, float]] = {
     "large": (1280, 2.5),
 }
 _DEFAULT_RESOLUTION = "medium"
+
+
+def _reference_ids(arguments: dict) -> list[tuple[str, str]]:
+    """The edit's extra reference images as ordered (image_id, attachment_id) pairs — exactly
+    one of each pair non-empty. Generated refs (reference_image_ids) come first, then attached
+    (reference_attachment_ids); non-string/blank entries are dropped. The primary source is
+    separate (source_image_id/source_attachment_id), so these are images 2..N."""
+    refs: list[tuple[str, str]] = []
+    for value in arguments.get("reference_image_ids") or []:
+        if isinstance(value, str) and value.strip():
+            refs.append((value.strip(), ""))
+    for value in arguments.get("reference_attachment_ids") or []:
+        if isinstance(value, str) and value.strip():
+            refs.append(("", value.strip()))
+    return refs
 
 
 def _is_uuid(value: str) -> bool:
@@ -312,6 +328,13 @@ def build_image_handlers(
                 f"{tool} needs exactly one source: source_image_id (an image you generated)"
                 " or source_attachment_id (an image the owner attached) — not both, not neither."
             )
+        return await _resolve_source(image_id, attachment_id, ctx)
+
+    async def _resolve_source(
+        image_id: str, attachment_id: str, ctx: ToolContext
+    ) -> tuple[bytes, str] | str:
+        """Resolve a single source — exactly one of the two ids non-empty — to (bytes, sha)
+        or a clean error string. Shared by the primary source and each reference image."""
         if image_id:
             # Both ids are uuid PKs; a non-uuid (e.g. the model guessing "latest") would
             # make the lookup raise a raw DB DataError that leaks to the model — treat it
@@ -358,6 +381,21 @@ def build_image_handlers(
         if isinstance(source, str):
             return source  # a clean error — no row, no spend
         source_bytes, source_sha = source
+        # Optional reference images (compositing): the primary above is what's edited; these
+        # ride into the model as additional inputs. Capped so total images stay within what
+        # Qwen-Image-Edit takes; each is resolved (and validated) like the primary.
+        references = _reference_ids(arguments)
+        if len(references) > MAX_EDIT_IMAGES - 1:
+            return (
+                f"edit_image takes at most {MAX_EDIT_IMAGES} images — the one to edit plus up "
+                f"to {MAX_EDIT_IMAGES - 1} reference images."
+            )
+        extra_sources: list[bytes] = []
+        for ref_image_id, ref_attachment_id in references:
+            resolved = await _resolve_source(ref_image_id, ref_attachment_id, ctx)
+            if isinstance(resolved, str):
+                return resolved  # a bad reference is a clean error — no spend
+            extra_sources.append(resolved[0])
         width, height = dims
         seed = _resolve_seed(arguments.get("seed"))
         steps = _resolve_steps(arguments.get("steps"))
@@ -372,7 +410,9 @@ def build_image_handlers(
         )
         await _free_local_llms(local_gateway)
         try:
-            png = await imagegen.edit(spec, source_bytes, _progress_callback(ctx))
+            png = await imagegen.edit(
+                spec, source_bytes, _progress_callback(ctx), extra_sources=extra_sources
+            )
         except ImageGenInterrupted:
             return _STOPPED_MESSAGE
         except ImageGenError as exc:

@@ -7,6 +7,7 @@ network, no ComfyUI (rule #5)."""
 from __future__ import annotations
 
 import base64
+from collections.abc import Sequence
 
 from jbrain.image_gen.comfyui import EditSpec, GenSpec, OnProgress
 
@@ -41,6 +42,9 @@ class FakeImageGen:
         self.last_gen: GenSpec | None = None
         self.last_edit: EditSpec | None = None
         self.last_source: bytes | None = None
+        # The full ordered image list of the last edit (primary first, then references) —
+        # lets a multi-image test assert every source reached the adapter.
+        self.last_sources: list[bytes] = []
         # (step, total, preview) ticks the last call emitted — lets a test assert the
         # handler wired its progress callback through.
         self.progress: list[tuple[int, int, bytes | None]] = []
@@ -59,9 +63,15 @@ class FakeImageGen:
         return _png_with_dims(*(self.out_dims or (spec.width, spec.height)))
 
     async def edit(
-        self, spec: EditSpec, source: bytes, on_progress: OnProgress | None = None
+        self,
+        spec: EditSpec,
+        source: bytes,
+        on_progress: OnProgress | None = None,
+        *,
+        extra_sources: Sequence[bytes] = (),
     ) -> bytes:
         self.last_edit = spec
         self.last_source = source
+        self.last_sources = [source, *extra_sources]
         self._emit(on_progress, spec.steps)
         return _png_with_dims(*(self.out_dims or (spec.width, spec.height)))

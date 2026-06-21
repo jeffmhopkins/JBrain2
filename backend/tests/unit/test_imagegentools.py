@@ -184,6 +184,21 @@ async def test_free_local_llms_swallows_a_gateway_failure() -> None:
     await _free_local_llms(gw)  # does not raise
 
 
+def test_reference_ids_orders_generated_then_attached_and_drops_junk() -> None:
+    """Reference images parse into ordered (image_id, attachment_id) pairs — generated first,
+    then attached — with non-string/blank entries dropped and a missing key an empty list."""
+    from jbrain.agent.imagegentools import _reference_ids
+
+    assert _reference_ids({}) == []
+    parsed = _reference_ids(
+        {
+            "reference_image_ids": ["g1", " g2 ", "", 7],
+            "reference_attachment_ids": ["a1", None],
+        }
+    )
+    assert parsed == [("g1", ""), ("g2", ""), ("", "a1")]
+
+
 def test_is_uuid_accepts_real_ids_and_rejects_a_guessed_one() -> None:
     """Source ids are uuid PKs; a non-uuid (a model guessing "latest") is rejected so the
     lookup never hands the DB a bad argument and leaks a raw error to the model."""

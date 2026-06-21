@@ -1,6 +1,6 @@
 ---
 name: edit_image
-version: 2
+version: 3
 permission: web
 side_effecting: true
 cost_class: expensive
@@ -16,6 +16,16 @@ params:
     source_attachment_id:
       type: string
       description: The id of an image the owner attached to this chat to edit.
+    reference_image_ids:
+      type: array
+      items:
+        type: string
+      description: Optional extra images you generated this chat, by id, to use as references alongside the main image (e.g. a style or a subject to bring in). Up to 2.
+    reference_attachment_ids:
+      type: array
+      items:
+        type: string
+      description: Optional extra images the owner attached this chat, by id, to use as references alongside the main image. Up to 2.
     aspect:
       type: string
       enum: [square, portrait, landscape]
@@ -33,9 +43,13 @@ params:
   required: [prompt]
 ---
 Edit an existing image with the owner's local image model, following the prompt
-as an edit instruction. Give EXACTLY ONE source: either source_image_id (an image
-you generated earlier this chat) or source_attachment_id (an image the owner
-attached this chat) — not both, not neither. This takes a moment; generation runs
-on-box and the turn waits. The app renders the result inline for the owner; you do
-NOT receive the image bytes or any link, so never paste a URL or claim to show the
-image yourself — just describe what you changed.
+as an edit instruction. Give EXACTLY ONE main source — the image being edited:
+either source_image_id (an image you generated earlier this chat) or
+source_attachment_id (an image the owner attached this chat) — not both, not
+neither. To COMBINE images (compositing — e.g. "put the person from this photo
+into that scene", "apply this style"), add up to 2 more by id via
+reference_image_ids and/or reference_attachment_ids; the main source is what's
+edited and the references are extra inputs. Up to 3 images total. This takes a
+moment; generation runs on-box and the turn waits. The app renders the result
+inline for the owner; you do NOT receive the image bytes or any link, so never
+paste a URL or claim to show the image yourself — just describe what you changed.

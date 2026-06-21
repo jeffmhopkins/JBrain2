@@ -117,6 +117,41 @@ async def test_edit_uploads_source_then_renders() -> None:
     assert referenced["megapixels"] == 1.6
 
 
+async def test_edit_with_reference_images_uploads_and_wires_each_encoder() -> None:
+    """Multi-image edit: every image is uploaded, and each reference is wired into the
+    image{n} slot of BOTH TextEncodeQwenImageEditPlus encoders via its own LoadImage→scale
+    pair — the primary stays image1 (the latent base)."""
+    uploaded: list[bytes] = []
+    graph: dict = {}
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/upload/image":
+            uploaded.append(request.content)
+            # Distinct server names per upload so the wiring is unambiguous.
+            return httpx.Response(200, json={"name": f"in{len(uploaded)}.png"})
+        if request.url.path == "/prompt":
+            graph.update(json.loads(request.content)["prompt"])
+            return httpx.Response(200, json={"prompt_id": "abc123"})
+        if request.url.path == "/history/abc123":
+            return httpx.Response(200, json=_HISTORY_DONE)
+        return httpx.Response(200, content=PNG)
+
+    out = await _client(handle).edit(EDIT, b"primary", extra_sources=[b"ref-a", b"ref-b"])
+    assert out == PNG
+    assert len(uploaded) == 3  # primary + 2 references each uploaded
+    encoders = [n for n in graph.values() if n["class_type"] == "TextEncodeQwenImageEditPlus"]
+    assert len(encoders) == 2  # positive + negative
+    for enc in encoders:
+        # image1 is the primary's scaled output (node 79); image2/image3 are the references'.
+        assert "image2" in enc["inputs"] and "image3" in enc["inputs"]
+        scale2, scale3 = enc["inputs"]["image2"][0], enc["inputs"]["image3"][0]
+        assert graph[scale2]["class_type"] == "ImageScaleToTotalPixels"
+        load2 = graph[scale2]["inputs"]["image"][0]
+        assert graph[load2]["class_type"] == "LoadImage"
+        assert graph[load2]["inputs"]["image"] == "in2.png"
+        assert graph[graph[scale3]["inputs"]["image"][0]]["inputs"]["image"] == "in3.png"
+
+
 async def test_await_polls_until_outputs_appear() -> None:
     polls = {"n": 0}
 
