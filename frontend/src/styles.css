@@ -8579,6 +8579,13 @@ button.small {
   border: 1px solid var(--border);
   background: #0a0b0d;
 }
+/* The preview frames stack inside the stage; blur lives on the stage so it sharpens
+   smoothly as sampling advances rather than re-triggering per frame. */
+.fb-shell .fb-genprev-stage {
+  position: absolute;
+  inset: 0;
+  transition: filter 0.45s ease;
+}
 .fb-shell .fb-genprev-img {
   position: absolute;
   inset: 0;
@@ -8587,7 +8594,19 @@ button.small {
   object-fit: cover;
   /* a hair of scale so the blur's soft edge never shows the backdrop */
   transform: scale(1.04);
-  transition: filter 0.45s ease;
+}
+/* Each new step's frame fades in over the previous one (kept beneath), so the preview
+   cross-fades smoothly step to step instead of snapping. */
+.fb-shell .fb-genprev-img.fb-genprev-fade {
+  animation: fb-genprev-fade 3s ease forwards;
+}
+@keyframes fb-genprev-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }
 .fb-shell .fb-genprev-skeleton {
   position: absolute;

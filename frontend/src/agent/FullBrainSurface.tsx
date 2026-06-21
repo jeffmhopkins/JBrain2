@@ -735,10 +735,23 @@ const PREVIEW_ASPECT: Record<string, string> = {
 function GeneratingPreview({ tool }: { tool: ToolActivity }): ReactNode {
   const [stopping, setStopping] = useState(false);
   const p = tool.progress;
+  const preview = p?.preview;
   const sampling = p !== undefined && p.total > 0 && p.step < p.total;
   const pct = sampling && p ? Math.round((p.step / p.total) * 100) : 0;
-  const blur = Math.max(0, 26 * (1 - pct / 100));
+  // Sharpen as sampling advances; once finalizing, the held frame IS the final sample,
+  // so show it crisp (blur 0) — at max blur it read as a much earlier step.
+  const blur = sampling ? Math.max(0, 26 * (1 - pct / 100)) : 0;
   const aspect = PREVIEW_ASPECT[String(tool.args?.aspect ?? "square")] ?? "1 / 1";
+
+  // Cross-fade successive frames instead of snapping: the new frame fades in over the
+  // previous one (kept beneath) so the preview evolves smoothly step to step.
+  const [frames, setFrames] = useState<{ prev: string | undefined; cur: string | undefined }>({
+    prev: undefined,
+    cur: undefined,
+  });
+  useEffect(() => {
+    if (preview) setFrames((f) => (preview === f.cur ? f : { prev: f.cur, cur: preview }));
+  }, [preview]);
 
   const label = stopping
     ? "stopping…"
@@ -757,13 +770,16 @@ function GeneratingPreview({ tool }: { tool: ToolActivity }): ReactNode {
   return (
     <div className="fb-genprev">
       <div className="fb-genprev-frame" style={{ aspectRatio: aspect }}>
-        {p?.preview ? (
-          <img
-            className="fb-genprev-img"
-            src={p.preview}
-            alt=""
-            style={{ filter: `blur(${blur}px)` }}
-          />
+        {frames.cur ? (
+          <div className="fb-genprev-stage" style={{ filter: `blur(${blur}px)` }}>
+            {frames.prev && <img className="fb-genprev-img" src={frames.prev} alt="" />}
+            <img
+              className="fb-genprev-img fb-genprev-fade"
+              key={frames.cur}
+              src={frames.cur}
+              alt=""
+            />
+          </div>
         ) : (
           <div className="fb-genprev-skeleton" />
         )}
