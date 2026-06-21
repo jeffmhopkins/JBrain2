@@ -1,8 +1,15 @@
 {
   "8": {
-    "inputs": { "samples": ["65", 0], "vae": ["10", 0] },
-    "class_type": "VAEDecode",
-    "_meta": { "title": "VAE Decode" }
+    "inputs": {
+      "samples": ["65", 0],
+      "vae": ["10", 0],
+      "tile_size": 512,
+      "overlap": 64,
+      "temporal_size": 64,
+      "temporal_overlap": 8
+    },
+    "class_type": "VAEDecodeTiled",
+    "_meta": { "title": "VAE Decode (Tiled)" }
   },
   "9": {
     "inputs": { "filename_prefix": "jbrain", "images": ["8", 0] },
