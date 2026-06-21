@@ -495,17 +495,20 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
             log.warning("agent.chat_failed", run_id=run_id, error=repr(exc))
             yield b'data: {"type": "done", "stop_reason": "error"}\n\n'
         finally:
-            # A Stop (the owner aborts the fetch) or a dropped connection cuts the
-            # stream before `done`: if the model already streamed a partial answer (or
-            # ran tools), persist that partial turn so reopening the chat replays what
-            # the owner saw instead of losing it. Same shield+suppress as the run-log
-            # close below — the cancellation that got us here must not interrupt the
-            # write, and a write failure must not mask the outcome. Episodic memory and
-            # auto-titling stay on the `done` path only: a half-finished answer
-            # shouldn't seed the agent's recall or name the chat.
+            # A Stop (the owner aborts the fetch), a dropped connection, or a mid-turn
+            # error (e.g. the compose-the-reply LLM call breaking after a tool already
+            # ran) cuts the stream before `done`: if the model already streamed a partial
+            # answer OR ran a tool, persist that partial turn so reopening the chat
+            # replays what the owner saw — and, crucially, so a side-effecting tool like
+            # generate_image (which stored an image) is remembered, not silently retried
+            # on the next turn. Same shield+suppress as the run-log close below — the
+            # cancellation that may have got us here must not interrupt the write, and a
+            # write failure must not mask the outcome. Episodic memory and auto-titling
+            # stay on the `done` path only: a half-finished answer shouldn't seed the
+            # agent's recall or name the chat.
             if (
                 not persisted
-                and stop_reason == "disconnected"
+                and stop_reason in ("disconnected", "error")
                 and ("".join(answer).strip() or order)
             ):
                 with contextlib.suppress(Exception):

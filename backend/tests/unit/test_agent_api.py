@@ -224,6 +224,16 @@ class CancelStreamClient:
         raise asyncio.CancelledError
 
 
+class BoomAfterTextClient:
+    """Streams a partial answer, then raises a non-cancellation error — the shape of a
+    compose-the-reply call breaking after a tool already ran (e.g. the local LLM
+    failing to reload). The partial turn must still persist so the work isn't lost."""
+
+    async def converse_stream(self, **_kw):  # type: ignore[no-untyped-def]
+        yield TextChunk(text="I've generated a ")
+        raise RuntimeError("model exploded")
+
+
 @pytest.fixture
 def client(
     repo: FakeAuthRepo,
@@ -867,6 +877,31 @@ def test_chat_persists_a_partial_answer_when_the_owner_stops(
     # The run still closes as error/disconnected — a partial turn is not a clean `done`.
     assert runlog.finished[-1]["status"] == "error"
     assert runlog.finished[-1]["stop_reason"] == "disconnected"
+
+
+def test_chat_persists_a_partial_turn_when_the_compose_step_errors(
+    client: TestClient,
+    repo: FakeAuthRepo,
+    sessions_store: FakeAgentSessions,
+    runlog: FakeRunLog,
+    transcript: FakeTranscript,
+) -> None:
+    login(client, repo)
+    sessions_store.add(AgentSessionInfo("sess-1", "", "active", ("general",), (), NOW, NOW))
+    client.app.state.llm_router = LlmRouter(  # type: ignore[attr-defined]
+        {"xai": cast(LlmClient, BoomAfterTextClient())}, {"agent.turn": ("xai", "grok-4.3")}
+    )
+    # A mid-turn error (not a Stop) after the model streamed — the shape of a render's
+    # compose call breaking once a side-effecting tool has run. The finally must persist
+    # the partial turn so reopening the chat replays it and the work isn't silently lost.
+    resp = client.post("/api/chat", json={"session_id": "sess-1", "message": "make an image"})
+    assert resp.status_code == 200
+    assert sse_events(resp.text)[-1] == {"type": "done", "stop_reason": "error"}
+    # The partial answer was recorded even though the turn ended in error (not disconnect).
+    assert transcript.recorded[-1]["user"] == "make an image"
+    assert transcript.recorded[-1]["assistant"] == "I've generated a "
+    assert runlog.finished[-1]["status"] == "error"
+    assert runlog.finished[-1]["stop_reason"] == "error"
 
 
 def test_create_and_list_sessions(
