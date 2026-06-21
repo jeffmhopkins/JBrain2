@@ -125,6 +125,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         maker = async_sessionmaker(engine, expire_on_commit=False)
         app.state.engine = engine
         app.state.session_maker = maker
+        # In-flight chat turns, detached from their SSE response so a backgrounded PWA
+        # can't kill them; keyed by run_id for the Stop endpoint and shutdown cleanup.
+        app.state.live_turns = {}
         app.state.auth_repo = SqlAuthRepo(maker)
         app.state.device_repo = SqlDeviceRepo(maker)
         app.state.location_repo = SqlLocationRepo(maker)
@@ -352,6 +355,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         yield
         if live_task is not None:
             live_task.cancel()
+        # Stop any chat turns still running detached from a (now-gone) SSE response, so
+        # shutdown doesn't strand them; each closes via its own CancelledError path.
+        for turn in list(app.state.live_turns.values()):
+            turn.cancel()
         await app.state.supervisor_client.aclose()
         if image_gen_client is not None:
             await image_gen_client.aclose()
