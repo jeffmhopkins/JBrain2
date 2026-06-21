@@ -1770,8 +1770,19 @@ export const api = {
       ...jsonInit("POST", body),
       ...(signal ? { signal } : {}),
     });
+    // Surface the run id before the body guard so Stop can cancel server-side even
+    // if the stream itself carries nothing (the turn runs detached either way).
+    const runId = response.headers.get("X-Run-Id");
+    if (runId) yield { type: "run", run_id: runId };
     if (!response.body) return;
     yield* parseChatStream(response.body);
+  },
+
+  /** Cancel the in-flight chat turn (the composer's Stop). The turn runs detached
+   * from the SSE stream server-side, so aborting the fetch no longer stops it — this
+   * explicit signal does. Best-effort/idempotent on the server. */
+  async cancelChatRun(runId: string): Promise<void> {
+    await request(`/api/chat/runs/${encodeURIComponent(runId)}/cancel`, { method: "POST" });
   },
 
   // `sessionId` scopes the review inbox to a Full Brain chat: its own staged

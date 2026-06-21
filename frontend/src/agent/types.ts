@@ -109,6 +109,14 @@ export interface DoneEvent {
   type: "done";
   stop_reason: string;
 }
+/** The server's run id for the in-flight turn, surfaced by `api.chat` as a synthetic
+ * first event (read from the X-Run-Id header) so the composer's Stop can cancel the
+ * turn server-side — the turn now runs detached from the SSE connection, so closing
+ * the stream no longer stops it. Captured by the hook; never rendered, never persisted. */
+export interface RunEvent {
+  type: "run";
+  run_id: string;
+}
 /** Reflexion's Loop-1 verdict on a critique-worthy turn — rides *after* `done`,
  * only when the verifiers flagged something (a passing turn emits none). The PWA
  * renders an "unverified claims" flag when `passed` is false; `ungrounded_claims`
@@ -140,6 +148,7 @@ export type ChatEvent =
   | JobEnqueuedEvent
   | UsageEvent
   | DoneEvent
+  | RunEvent
   | VerdictEvent
   | GeneralKnowledgeEvent;
 

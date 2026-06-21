@@ -2569,6 +2569,11 @@ export const mockFetch: typeof fetch = async (input, init) => {
       headers: { "Content-Type": "application/json" },
     });
   }
+  // The composer's Stop: cancel the detached chat turn. Chat itself isn't mocked,
+  // but the route exists (and is idempotent) so the call never 404s in mock dev.
+  if (/^\/api\/chat\/runs\/[^/]+\/cancel$/.test(path) && method === "POST") {
+    return new Response(null, { status: 204 });
+  }
   // The chat "Stop render" control (the live image preview's Stop). Chat itself
   // isn't mocked, but the route exists so the call never 404s in mock dev.
   if (path === "/api/settings/image/interrupt" && method === "POST") {

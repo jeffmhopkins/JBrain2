@@ -6,6 +6,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../api/client";
 import { freshCoords } from "../location";
+import { isForeground } from "../visibility";
 import {
   type TranscriptMessage,
   applyEvent,
@@ -73,10 +74,17 @@ function latestForMode(sessions: AgentSession[], mode: ConvMode): AgentSession |
   );
 }
 
+// Recovery poll cadence after a dropped stream: the turn keeps running detached
+// server-side, so we re-check the transcript until the finished exchange lands. The
+// ceiling clears a long image edit (minutes) before giving up to a real error.
+const RECONCILE_INTERVAL_MS = 3000;
+const RECONCILE_TIMEOUT_MS = 360_000;
+
 export interface FullBrainDeps {
   listSessions: () => Promise<AgentSession[]>;
   createSession: (body: SessionCreate) => Promise<AgentSession>;
   chat: (body: ChatRequest, signal?: AbortSignal) => AsyncGenerator<ChatEvent>;
+  cancelChatRun: (runId: string) => Promise<void>;
   listProposals: (sessionId?: string) => Promise<ProposalSummary[]>;
   getTranscript: (sessionId: string) => Promise<TranscriptTurn[]>;
   renameSession: (id: string, title: string) => Promise<void>;
@@ -92,6 +100,7 @@ const LIVE: FullBrainDeps = {
   listSessions: api.listSessions,
   createSession: api.createSession,
   chat: api.chat,
+  cancelChatRun: api.cancelChatRun,
   listProposals: api.listProposals,
   getTranscript: api.getTranscript,
   renameSession: api.renameSession,
@@ -222,7 +231,7 @@ export function useFullBrain(
   deps: FullBrainDeps = LIVE,
   autoStart = false,
 ): FullBrain {
-  const { listSessions, createSession, chat, listProposals, getTranscript } = deps;
+  const { listSessions, createSession, chat, cancelChatRun, listProposals, getTranscript } = deps;
   const { renameSession, deleteSession, archiveSession, unarchiveSession } = deps;
   const { rescopeSession, uploadChatAttachment, getChatCapabilities } = deps;
   const enabled = mode !== null;
@@ -240,6 +249,9 @@ export function useFullBrain(
   // The in-flight turn's abort handle — the Stop button calls `.abort()`, which
   // closes the SSE fetch and unwinds the run server-side. Null when idle.
   const abortRef = useRef<AbortController | null>(null);
+  // The detached turn's server-side run id (from the stream's synthetic `run` event).
+  // Stop cancels against it since aborting the fetch no longer ends the turn. Null when idle.
+  const runIdRef = useRef<string | null>(null);
   // The agent model's vision capability, false until the check answers — the safe
   // default keeps the chat attach affordance hidden rather than offering one the
   // model would 415. It only ever flips true, so the paperclip appears once
@@ -408,24 +420,46 @@ export function useFullBrain(
     }
     const attachmentIds = attachments.map((a) => a.id);
     const history = messages.map((m) => ({ role: m.role, content: historyContent(m) }));
+    // Snapshot before the optimistic append so a dropped-stream recovery knows how
+    // many turns predate this exchange (reconcile waits for the transcript to grow)
+    // and which session it belongs to (so a chat switch mid-recovery is ignored).
+    const baseline = messages.length;
+    const turnSessionId = active.id;
     setMessages((ms) => [...ms, userMessage(text, attachments), streamingAssistant()]);
     // Reuse the note-capture warm fix (only when capture is on and fresh) so the
     // location tool can answer from the phone's current spot.
     const coords = freshCoords();
     const controller = new AbortController();
     abortRef.current = controller;
+    runIdRef.current = null;
+    const body: ChatRequest = {
+      session_id: turnSessionId,
+      message: text,
+      history,
+      ...(opts?.appointmentId ? { appointment_id: opts.appointmentId } : {}),
+      ...(coords ? { latitude: coords.latitude, longitude: coords.longitude } : {}),
+      ...(attachmentIds.length ? { attachment_ids: attachmentIds } : {}),
+    };
+    // Uploads succeeded and the turn is under way — `send` resolves HERE so the composer
+    // clears the typed text and staged files immediately, rather than staying populated
+    // for the whole turn (and, on a dropped connection, the multi-minute recovery). The
+    // stream and any reconnect recovery run in the background; `busy` stays true until
+    // they finish, so a second turn can't start and clobber this one's optimistic bubbles.
+    void runTurn(body, controller, turnSessionId, baseline);
+  }
+
+  // Stream one turn to settlement in the background: fold its events into the live
+  // bubble, and on a dropped connection recover the finished exchange from the
+  // transcript rather than flashing an error. Owns the turn's busy/abort lifecycle, so
+  // it must always reach its `finally` (hence the broad catch around the stream).
+  async function runTurn(
+    body: ChatRequest,
+    controller: AbortController,
+    turnSessionId: string,
+    baseline: number,
+  ): Promise<void> {
     try {
-      for await (const event of chat(
-        {
-          session_id: active.id,
-          message: text,
-          history,
-          ...(opts?.appointmentId ? { appointment_id: opts.appointmentId } : {}),
-          ...(coords ? { latitude: coords.latitude, longitude: coords.longitude } : {}),
-          ...(attachmentIds.length ? { attachment_ids: attachmentIds } : {}),
-        },
-        controller.signal,
-      )) {
+      for await (const event of chat(body, controller.signal)) {
         // Usage rides the conversation, not a single bubble — track it apart from the
         // transcript reducer so the meter reflects the whole context, not one turn.
         if (event.type === "usage") {
@@ -433,18 +467,32 @@ export function useFullBrain(
             used: event.input_tokens + event.output_tokens,
             window: event.context_window,
           });
+        } else if (event.type === "run") {
+          runIdRef.current = event.run_id;
         } else {
           setMessages((ms) => applyEvent(ms, event));
         }
       }
       setMessages((ms) => (ms[ms.length - 1]?.streaming ? endStream(ms, "end_turn") : ms));
     } catch {
-      // A Stop (abort) settles the partial answer calmly as "stopped"; any other
-      // failure is a genuine error. Either way the streamed text so far stays put.
-      const reason = controller.signal.aborted ? "stopped" : "error";
-      setMessages((ms) => endStream(ms, reason));
+      if (controller.signal.aborted) {
+        setMessages((ms) => endStream(ms, "stopped"));
+      } else {
+        // The connection dropped (the PWA was backgrounded and the OS closed the
+        // socket). The turn keeps running detached server-side, so don't settle an
+        // error — poll the transcript until the finished exchange lands, then show it.
+        const recovered = await reconcile(turnSessionId, baseline);
+        if (activeRef.current?.id === turnSessionId) {
+          if (recovered) setMessages(recovered.map(fromTurn));
+          else setMessages((ms) => endStream(ms, "error"));
+        }
+      }
     } finally {
       abortRef.current = null;
+      // Cleared only now (not before reconcile) so a Stop during the multi-minute
+      // recovery still cancels the detached turn by id; a stale id can't linger into
+      // the next turn.
+      runIdRef.current = null;
       setBusy(false);
       // The turn may have staged a Proposal — refresh the review inbox.
       reloadProposals();
@@ -455,9 +503,29 @@ export function useFullBrain(
     }
   }
 
-  // Abort the in-flight turn. The `send` loop's catch sees `signal.aborted` and
-  // settles the partial bubble as "stopped"; `busy` clears in its finally.
+  // Poll the transcript after a dropped stream until the detached turn's finished
+  // exchange lands (the turn count grows past the pre-send baseline), or the ceiling
+  // gives up. Skips polling while backgrounded — a hidden app has no business asking.
+  async function reconcile(sessionId: string, baseline: number): Promise<TranscriptTurn[] | null> {
+    const deadline = Date.now() + RECONCILE_TIMEOUT_MS;
+    while (Date.now() < deadline && activeRef.current?.id === sessionId) {
+      if (isForeground()) {
+        try {
+          const turns = await getTranscript(sessionId);
+          if (turns.length > baseline) return turns;
+        } catch {}
+      }
+      await new Promise((r) => setTimeout(r, RECONCILE_INTERVAL_MS));
+    }
+    return null;
+  }
+
+  // The composer's Stop. The turn runs detached server-side, so cancel it by run id;
+  // aborting the fetch only closes our stream (the `send` catch then settles the
+  // partial bubble "stopped"). `busy` clears in the send finally.
   function stop(): void {
+    const runId = runIdRef.current;
+    if (runId) void cancelChatRun(runId).catch(() => {});
     abortRef.current?.abort();
   }
 
@@ -550,7 +618,7 @@ export function useFullBrain(
         () => true,
         (err) => {
           if (err instanceof AttachmentUploadError) return false;
-          return true; // a stream error already settled the bubble; nothing to keep
+          return true; // the stream runs in the background now; any failure settles there
         },
       ),
     create,

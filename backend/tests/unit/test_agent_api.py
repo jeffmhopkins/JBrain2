@@ -957,6 +957,218 @@ async def test_with_heartbeat_fills_idle_gaps_without_cancelling_the_pull() -> N
     assert [e for e in out if e is not None] == ["a", "b"]
 
 
+def test_chat_response_carries_the_run_id_header(
+    client: TestClient, repo: FakeAuthRepo, sessions_store: FakeAgentSessions
+) -> None:
+    # The PWA reads the run id off the response header so its Stop can target the
+    # detached turn (which no longer dies when the SSE stream closes).
+    login(client, repo)
+    sessions_store.add(AgentSessionInfo("sess-1", "", "active", ("general",), (), NOW, NOW))
+    resp = client.post("/api/chat", json={"session_id": "sess-1", "message": "hi"})
+    assert resp.status_code == 200
+    assert resp.headers["x-run-id"] == "run-1"
+
+
+def test_chat_cancel_requires_owner(client: TestClient) -> None:
+    assert client.post("/api/chat/runs/run-1/cancel").status_code == 401
+
+
+def test_chat_cancel_cancels_a_registered_run(client: TestClient, repo: FakeAuthRepo) -> None:
+    login(client, repo)
+
+    class _StubTurn:
+        def __init__(self) -> None:
+            self.cancelled = False
+
+        def cancel(self) -> None:
+            self.cancelled = True
+
+    stub = _StubTurn()
+    client.app.state.live_turns["run-9"] = stub  # type: ignore[attr-defined]
+    resp = client.post("/api/chat/runs/run-9/cancel")
+    assert resp.status_code == 204
+    assert stub.cancelled
+    # The stub isn't a real awaitable Task; drop it so the fixture's lifespan shutdown
+    # (which gathers in-flight turns) doesn't try to await it.
+    client.app.state.live_turns.clear()  # type: ignore[attr-defined]
+
+
+def test_chat_cancel_is_idempotent_for_unknown_run(client: TestClient, repo: FakeAuthRepo) -> None:
+    login(client, repo)
+    # An unknown/finished run is a no-op, not an error — the Stop can race the turn's
+    # own completion.
+    assert client.post("/api/chat/runs/ghost/cancel").status_code == 204
+
+
+def test_chat_completed_turn_deregisters_from_live_turns(
+    client: TestClient, repo: FakeAuthRepo, sessions_store: FakeAgentSessions
+) -> None:
+    login(client, repo)
+    sessions_store.add(AgentSessionInfo("sess-1", "", "active", ("general",), (), NOW, NOW))
+    client.post("/api/chat", json={"session_id": "sess-1", "message": "hi"})
+    # The done-callback popped the finished turn, so the registry is empty again.
+    assert client.app.state.live_turns == {}  # type: ignore[attr-defined]
+
+
+class GatedStreamClient:
+    """Streams a partial answer, then BLOCKS on a release event before finishing — lets a
+    test drop the SSE connection mid-turn and prove the detached turn still completes."""
+
+    def __init__(self, release: asyncio.Event) -> None:
+        self._release = release
+
+    async def converse_stream(self, **_kw):  # type: ignore[no-untyped-def]
+        yield TextChunk(text="partial ")
+        await self._release.wait()
+        yield TextChunk(text="answer")
+
+
+async def test_chat_turn_survives_a_client_disconnect() -> None:
+    # The core fix: a backgrounded PWA dropping the socket mid-turn must NOT cancel the
+    # turn. We open the stream, read the first frame, exit the stream context early
+    # (the disconnect), release the gated model, and assert the detached turn still
+    # persisted a clean `done`.
+    import httpx
+
+    repo = FakeAuthRepo()
+    sessions_store = FakeAgentSessions()
+    sessions_store.add(AgentSessionInfo("sess-1", "", "active", ("general",), (), NOW, NOW))
+    runlog = FakeRunLog()
+    transcript = FakeTranscript()
+    release = asyncio.Event()
+
+    settings = Settings(
+        secure_cookies=False, database_url="postgresql+asyncpg://nobody@localhost:1/none"
+    )
+    app = create_app(settings)
+    # ASGITransport does NOT run lifespan, so wire the state the endpoint reads by hand.
+    app.state.live_turns = {}
+    app.state.auth_repo = repo
+    app.state.agent_sessions = sessions_store
+    app.state.agent_runlog = runlog
+    app.state.agent_transcript = transcript
+    app.state.turn_attachments = FakeChatAttachments()
+    app.state.blob_store = FakeChatBlobs()
+    app.state.agent_registry = ToolRegistry([])
+    app.state.settings_store = FakeSettingsStore()
+    app.state.llm_router = LlmRouter(
+        {"xai": cast(LlmClient, GatedStreamClient(release))}, {"agent.turn": ("xai", "grok-4.3")}
+    )
+
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
+        key = await service.rotate_owner_key(repo)
+        assert (await ac.post("/api/auth/session", json={"owner_key": key})).status_code == 204
+
+        # Read the stream in a task so we can cut it mid-turn the way a dropped socket
+        # would. The task is cancelled (the disconnect) BEFORE the gate releases — proving
+        # the turn isn't waiting on the connection.
+        async def read_first_frame() -> None:
+            async with ac.stream(
+                "POST", "/api/chat", json={"session_id": "sess-1", "message": "how far?"}
+            ) as r:
+                assert r.status_code == 200
+                async for _chunk in r.aiter_bytes():
+                    return  # first frame arrived; hold the open stream until cancelled
+
+        reader = asyncio.create_task(read_first_frame())
+        # Wait until the detached turn has been registered — it is now mid-flight,
+        # blocked on the gated model.
+        for _ in range(200):
+            if app.state.live_turns or reader.done():
+                break
+            await asyncio.sleep(0.01)
+
+        # The turn registered (is mid-flight) at the moment we drop the connection — so
+        # what survives below is a genuinely in-flight turn, not one that already finished.
+        assert app.state.live_turns, "the detached turn registered before the disconnect"
+
+        reader.cancel()  # the PWA backgrounds / the socket drops
+        with contextlib.suppress(asyncio.CancelledError):
+            await reader
+
+        # The client is gone; release the gated model so the DETACHED turn finishes.
+        release.set()
+
+        # The turn runs independently of the (now-closed) response — poll briefly for it
+        # to complete and persist.
+        for _ in range(200):
+            if transcript.recorded and runlog.finished:
+                break
+            await asyncio.sleep(0.01)
+
+    assert transcript.recorded, "the detached turn persisted the exchange despite disconnect"
+    assert transcript.recorded[-1]["assistant"] == "partial answer"
+    assert runlog.finished[-1]["status"] == "done"
+
+
+async def test_chat_cancel_endpoint_persists_the_partial_and_closes_the_stream() -> None:
+    # The real Stop path end-to-end: a connected client streams a turn, the owner taps
+    # Stop (POST /chat/runs/{id}/cancel) mid-answer, and we prove (a) the partial answer
+    # persists, (b) the run closes error/disconnected, and (c) the sentinel still reaches
+    # the connected response so the SSE stream terminates instead of hanging.
+    import httpx
+
+    repo = FakeAuthRepo()
+    sessions_store = FakeAgentSessions()
+    sessions_store.add(AgentSessionInfo("sess-1", "", "active", ("general",), (), NOW, NOW))
+    runlog = FakeRunLog()
+    transcript = FakeTranscript()
+    release = asyncio.Event()  # never set: the turn blocks here until the Stop cancels it
+
+    settings = Settings(
+        secure_cookies=False, database_url="postgresql+asyncpg://nobody@localhost:1/none"
+    )
+    app = create_app(settings)
+    app.state.live_turns = {}
+    app.state.auth_repo = repo
+    app.state.agent_sessions = sessions_store
+    app.state.agent_runlog = runlog
+    app.state.agent_transcript = transcript
+    app.state.turn_attachments = FakeChatAttachments()
+    app.state.blob_store = FakeChatBlobs()
+    app.state.agent_registry = ToolRegistry([])
+    app.state.settings_store = FakeSettingsStore()
+    app.state.llm_router = LlmRouter(
+        {"xai": cast(LlmClient, GatedStreamClient(release))}, {"agent.turn": ("xai", "grok-4.3")}
+    )
+
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
+        key = await service.rotate_owner_key(repo)
+        assert (await ac.post("/api/auth/session", json={"owner_key": key})).status_code == 204
+
+        async def read_all() -> list[bytes]:
+            frames: list[bytes] = []
+            async with ac.stream(
+                "POST", "/api/chat", json={"session_id": "sess-1", "message": "how far?"}
+            ) as r:
+                assert r.status_code == 200
+                async for chunk in r.aiter_bytes():
+                    frames.append(chunk)
+            return frames
+
+        reader = asyncio.create_task(read_all())
+        for _ in range(200):
+            if app.state.live_turns:
+                break
+            await asyncio.sleep(0.01)
+        run_id = next(iter(app.state.live_turns))
+
+        # The owner taps Stop — the explicit cancel the detached turn now needs.
+        cancel = await ac.post(f"/api/chat/runs/{run_id}/cancel")
+        assert cancel.status_code == 204
+
+        # The sentinel reaches the connected response, so the stream terminates (no hang).
+        frames = await asyncio.wait_for(reader, timeout=5.0)
+
+    assert b"partial " in b"".join(frames)
+    # The partial answer was persisted, and the run closed as a (benign) disconnect.
+    assert transcript.recorded[-1]["assistant"] == "partial "
+    assert runlog.finished[-1]["status"] == "error"
+    assert runlog.finished[-1]["stop_reason"] == "disconnected"
+
+
 def test_create_and_list_sessions(
     client: TestClient, repo: FakeAuthRepo, sessions_store: FakeAgentSessions
 ) -> None:

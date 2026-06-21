@@ -59,6 +59,8 @@ OwnerDep = Annotated[PrincipalInfo, Depends(owner_only)]
 # especially, now that we free ComfyUI between renders.
 _SSE_HEARTBEAT_SECONDS = 20.0
 
+_TURN_DONE = object()  # queue sentinel: the turn finished, no more frames
+
 
 async def _with_heartbeat(events: AsyncIterator[Any], interval: float) -> AsyncIterator[Any | None]:
     """Relay each event; yield None as a heartbeat signal when none arrives within
@@ -433,7 +435,7 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
         else None
     )
 
-    async def events() -> AsyncIterator[bytes]:
+    async def drive_turn(queue: asyncio.Queue) -> None:
         stop_reason = "error"
         status = "error"
         answer: list[str] = []
@@ -470,7 +472,7 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
                     # An idle window during a long blocking tool — keep the proxy from
                     # dropping the stream. A `:`-comment frame carries no `data:` line,
                     # so the client parser ignores it.
-                    yield b": keepalive\n\n"
+                    queue.put_nowait(b": keepalive\n\n")
                     continue
                 if event.type == "text_delta":
                     answer.append(event.text)
@@ -519,7 +521,7 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
                 # A reflexion `verdict` rides after `done` (Loop 1's annotation of a
                 # critique-worthy turn). It is forwarded to the PWA but deliberately
                 # NOT recorded — Loop 1 is ephemeral and writes nothing durable.
-                yield f"data: {event.model_dump_json()}\n\n".encode()
+                queue.put_nowait(f"data: {event.model_dump_json()}\n\n".encode())
             if status == "done":
                 # Episodic memory is owner-data: only a knowledge-base agent appends one.
                 if profile.reads_knowledge_base:
@@ -539,36 +541,41 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
                 await _maybe_autotitle(request, owner_ctx, sessions, session, body.message, answer)
                 persisted = True
         except asyncio.CancelledError:
-            # The client disconnected mid-stream (closed the PWA, lost signal) — the turn never
-            # completed, so it closes as `error` (the constraint-valid terminal; the runs table
-            # carries only running/done/error, mirrored by the frontend RunStatus). The benign
-            # disconnect nuance is preserved in stop_reason, not the status. Re-raise so the task
-            # unwinds normally.
+            # The turn task itself was cancelled — an explicit Stop via the cancel endpoint
+            # or app shutdown, NOT a client disconnect (the turn now runs detached, so closing
+            # the SSE stream no longer reaches here). It never completed, so it closes as
+            # `error` (the constraint-valid terminal; the runs table carries only
+            # running/done/error, mirrored by the frontend RunStatus). The benign disconnect
+            # nuance is preserved in stop_reason, not the status. Re-raise so the task unwinds.
             status, stop_reason = "error", "disconnected"
             raise
         except Exception as exc:  # noqa: BLE001 — surface a terminal event, never a 500 mid-stream
             log.warning("agent.chat_failed", run_id=run_id, error=repr(exc))
-            yield b'data: {"type": "done", "stop_reason": "error"}\n\n'
+            queue.put_nowait(b'data: {"type": "done", "stop_reason": "error"}\n\n')
         finally:
-            # A Stop (the owner aborts the fetch), a dropped connection, or a mid-turn
-            # error (e.g. the compose-the-reply LLM call breaking after a tool already
-            # ran) cuts the stream before `done`: if the model already streamed a partial
-            # answer OR ran a tool, persist that partial turn so reopening the chat
-            # replays what the owner saw — and, crucially, so a side-effecting tool like
-            # generate_image (which stored an image) is remembered, not silently retried
-            # on the next turn. Same shield+suppress as the run-log close below — the
-            # cancellation that may have got us here must not interrupt the write, and a
-            # write failure must not mask the outcome. Episodic memory and auto-titling
-            # stay on the `done` path only: a half-finished answer shouldn't seed the
-            # agent's recall or name the chat.
-            if (
-                not persisted
-                and stop_reason in ("disconnected", "error")
-                and ("".join(answer).strip() or order)
-            ):
-                with contextlib.suppress(Exception):
-                    await asyncio.shield(
-                        _record_transcript(
+            # A Stop (cancel endpoint), a dropped connection, or a mid-turn error (e.g.
+            # the compose-the-reply LLM call breaking after a tool already ran) cuts the
+            # stream before `done`: if the model already streamed a partial answer OR ran
+            # a tool, persist that partial turn so reopening the chat replays what the
+            # owner saw — and, crucially, so a side-effecting tool like generate_image
+            # (which stored an image) is remembered, not silently retried on the next
+            # turn. These awaits run INLINE (no asyncio.shield): a client disconnect no
+            # longer cancels this task, so the only cancellation reaching here is a single
+            # Stop/shutdown CancelledError — already delivered, so the cleanup awaits
+            # complete normally. Keeping them inline (rather than shield-detached) is what
+            # lets shutdown `gather` the turn and so guarantee the run-log close lands
+            # before the engine pool is disposed (otherwise a detached write races a dead
+            # pool and strands the run in 'running'). Suppress so a write failure never
+            # masks the outcome. Episodic memory and auto-titling stay on the `done` path
+            # only: a half-finished answer shouldn't seed the agent's recall or name it.
+            try:
+                if (
+                    not persisted
+                    and stop_reason in ("disconnected", "error")
+                    and ("".join(answer).strip() or order)
+                ):
+                    with contextlib.suppress(Exception):
+                        await _record_transcript(
                             request,
                             owner_ctx,
                             attachment_ctx,
@@ -580,13 +587,8 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
                             body.attachment_ids,
                             "".join(reasoning),
                         )
-                    )
-            # Shield the closing UPDATE so a disconnect-driven cancellation can't
-            # interrupt it and strand the run in 'running'; suppress so a write
-            # failure never masks the real outcome (recording must not break a turn).
-            with contextlib.suppress(Exception):
-                await asyncio.shield(
-                    runlog.finish(
+                with contextlib.suppress(Exception):
+                    await runlog.finish(
                         owner_ctx,
                         run_id,
                         status=status,
@@ -594,11 +596,50 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
                         step_count=tally.steps,
                         cost_tokens=tally.cost,
                     )
-                )
+            finally:
+                # The sentinel is UNCONDITIONAL: even if a second cancellation (e.g. a
+                # Stop arriving during shutdown) interrupts a shielded await above, a
+                # still-listening client must get the stream's terminator — otherwise
+                # `events()` blocks on `queue.get()` forever and the SSE response hangs.
+                queue.put_nowait(_TURN_DONE)
+
+    # Detach the turn from its SSE connection: run it as a task that owns the
+    # accumulation + persistence, and have the response merely forward frames from a
+    # queue. A backgrounded PWA dropping the socket cancels only the response generator,
+    # never the turn — so the turn completes and persists `done`, and the PWA recovers it
+    # from the transcript on return. The composer's explicit Stop cancels the turn through
+    # the cancel endpoint, keyed by the run id we expose on the response header.
+    queue: asyncio.Queue = asyncio.Queue()
+    turn = asyncio.create_task(drive_turn(queue))
+    request.app.state.live_turns[run_id] = turn
+    turn.add_done_callback(lambda _t: request.app.state.live_turns.pop(run_id, None))
+
+    async def events() -> AsyncIterator[bytes]:
+        while True:
+            frame = await queue.get()
+            if frame is _TURN_DONE:
+                break
+            yield frame
 
     # X-Accel-Buffering off so nginx streams events instead of buffering the turn.
     return StreamingResponse(
         events(),
         media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no", "X-Run-Id": run_id},
     )
+
+
+@router.post("/chat/runs/{run_id}/cancel", status_code=204)
+async def cancel_chat_run(request: Request, run_id: str) -> None:
+    """Cancel the owner's in-flight turn — the composer's Stop. The turn now runs
+    detached from the SSE connection (so backgrounding the PWA can't kill it), which
+    means a deliberate Stop needs an explicit signal rather than just closing the
+    stream. Idempotent: an unknown/finished run is a no-op.
+
+    Keyed by run id alone, not re-validated against the run's owner: this is a
+    single-owner system, so `owner_only` already means the only authenticatable caller
+    IS the owner, and `run_id` is a server-minted UUID (no enumeration value). Revisit
+    if scoped principals arrive (Phase 7)."""
+    turn = request.app.state.live_turns.get(run_id)
+    if turn is not None:
+        turn.cancel()

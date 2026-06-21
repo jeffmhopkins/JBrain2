@@ -28,6 +28,7 @@ function deps(over: Partial<FullBrainDeps> = {}): FullBrainDeps {
     listSessions: vi.fn(async () => [session()]),
     createSession: vi.fn(async () => session({ id: "new" })),
     chat: noChat,
+    cancelChatRun: vi.fn(async () => {}),
     listProposals: vi.fn(async () => []),
     getTranscript: vi.fn(async () => []),
     renameSession: vi.fn(async () => {}),
@@ -1294,5 +1295,102 @@ describe("FullBrainSurface", () => {
     expect(screen.getByText("partial…")).toBeInTheDocument();
     await waitFor(() => expect(screen.getByRole("status").textContent).toContain("Stopped"));
     expect(document.querySelector(".fb-status.err")).not.toBeInTheDocument();
+  });
+
+  it("Stop cancels the detached run server-side, then settles calmly", async () => {
+    // The turn now runs detached, so Stop must cancel by run id (aborting the fetch
+    // only closes our stream). The synthetic `run` event carries that id.
+    const cancelChatRun = vi.fn(async () => {});
+    async function* answer(_b: ChatRequest, signal?: AbortSignal): AsyncGenerator<ChatEvent> {
+      yield { type: "run", run_id: "run-7" };
+      yield { type: "text_delta", text: "partial…" };
+      await new Promise<void>((_resolve, reject) => {
+        signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
+      });
+    }
+    render(<Harness d={deps({ chat: answer, cancelChatRun })} />);
+    await waitFor(() => screen.getByLabelText("Conversation"));
+    fireEvent.change(screen.getByLabelText("Composer"), { target: { value: "go" } });
+    fireEvent.click(screen.getByRole("button", { name: "send" }));
+
+    await waitFor(() => expect(screen.getByText("partial…")).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: "stop" }));
+
+    // The detached turn is cancelled by its run id, and the bubble settles calmly.
+    await waitFor(() => expect(cancelChatRun).toHaveBeenCalledWith("run-7"));
+    await waitFor(() => expect(screen.getByTestId("busy").textContent).toBe("false"));
+    expect(screen.getByText("partial…")).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole("status").textContent).toContain("Stopped"));
+    expect(document.querySelector(".fb-status.err")).not.toBeInTheDocument();
+  });
+
+  it("recovers from the transcript when the stream drops mid-turn (not an abort)", async () => {
+    // The PWA backgrounded and the OS cut the socket: the generator throws WITHOUT an
+    // abort. The detached turn finishes server-side, so the completed exchange is
+    // fetched from the transcript instead of crying error. Real timers here (the poll
+    // cadence is a few seconds): the generator-throw → catch → poll microtask chain
+    // doesn't flush cleanly under fake timers, and this stays deterministic.
+    const getTranscript = vi.fn(async (): Promise<TranscriptTurn[]> => []);
+    async function* answer(): AsyncGenerator<ChatEvent> {
+      yield { type: "run", run_id: "r1" };
+      yield { type: "text_delta", text: "thinking it thr" };
+      throw new Error("network error");
+    }
+    render(<Harness d={deps({ chat: answer, getTranscript })} />);
+    await waitFor(() => screen.getByLabelText("Conversation"));
+
+    fireEvent.change(screen.getByLabelText("Composer"), { target: { value: "go" } });
+    fireEvent.click(screen.getByRole("button", { name: "send" }));
+
+    // Wait for the partial answer (the stream threw right after), then the
+    // server-side turn "completes": the transcript now carries the finished exchange.
+    await waitFor(() => expect(screen.getByText("thinking it thr")).toBeInTheDocument());
+    getTranscript.mockResolvedValue([
+      { role: "user", content: "go", tools: [] },
+      { role: "assistant", content: "Here is the finished answer.", tools: [] },
+    ]);
+
+    // The recovered final answer renders; no error is ever shown. The recovery
+    // poll cadence is seconds, so allow a few before asserting.
+    await waitFor(
+      () => expect(screen.getByText("Here is the finished answer.")).toBeInTheDocument(),
+      { timeout: 10000 },
+    );
+    expect(screen.queryByText(/[Ss]omething went wrong/)).not.toBeInTheDocument();
+    expect(document.querySelector(".fb-status.err")).not.toBeInTheDocument();
+  });
+
+  it("gives up to an error when the transcript never grows", async () => {
+    // Fake timers from the start so the recovery poll's sleeps are controllable —
+    // the loop is armed inside the catch, so the fakes must already be in force.
+    vi.useFakeTimers();
+    try {
+      // The dropped stream's turn never lands server-side either — the transcript
+      // stays at its pre-turn size. After the ceiling, the bubble settles to error.
+      const getTranscript = vi.fn(async (): Promise<TranscriptTurn[]> => []);
+      async function* answer(): AsyncGenerator<ChatEvent> {
+        yield { type: "run", run_id: "r1" };
+        yield { type: "text_delta", text: "partial" };
+        throw new Error("network error");
+      }
+      render(<Harness d={deps({ chat: answer, getTranscript })} />);
+      // Flush the surface's async init (session list, capabilities, transcript load).
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      fireEvent.change(screen.getByLabelText("Composer"), { target: { value: "go" } });
+      fireEvent.click(screen.getByRole("button", { name: "send" }));
+
+      // Drive the recovery poll past its ceiling; the transcript never grows, so it
+      // must finally settle to error.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(360_000 + 3000);
+      });
+
+      expect(screen.getByRole("status").textContent).toContain("Something went wrong");
+      expect(document.querySelector(".fb-status.err")).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
