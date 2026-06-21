@@ -61,7 +61,7 @@ def test_manifest_is_json_with_files_and_subdirs() -> None:
     subdirs = {f["dest_subdir"] for f in entry["files"]}
     assert subdirs == {"diffusion_models", "text_encoders", "vae"}
     diffusion = next(f for f in entry["files"] if f["dest_subdir"] == "diffusion_models")
-    assert diffusion["repo_path"].endswith("qwen_image_fp8_e4m3fn.safetensors")
+    assert diffusion["repo_path"].endswith("qwen_image_2512_bf16.safetensors")
 
 
 def test_empty_ids_manifest_dumps_the_whole_catalog() -> None:

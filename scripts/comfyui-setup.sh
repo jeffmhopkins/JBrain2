@@ -57,8 +57,8 @@ fi
 
 # Weights are tens of GB; warn (don't block) if the install disk looks tight.
 AVAIL_GB="$(df -BG --output=avail "$INSTALL_DIR" | tail -1 | tr -dc '0-9')"
-if [ -n "$AVAIL_GB" ] && [ "$AVAIL_GB" -lt 40 ]; then
-  say "WARNING: only ${AVAIL_GB} GB free on $INSTALL_DIR — the recommended set needs ~28 GB."
+if [ -n "$AVAIL_GB" ] && [ "$AVAIL_GB" -lt 65 ]; then
+  say "WARNING: only ${AVAIL_GB} GB free on $INSTALL_DIR — the recommended set needs ~58 GB (bf16)."
 fi
 
 # Read from the catalog via the api image. --no-deps so a pure-Python dump doesn't

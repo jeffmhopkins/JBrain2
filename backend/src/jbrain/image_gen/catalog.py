@@ -7,17 +7,19 @@ files scripts/comfyui-setup.sh must download and where ComfyUI expects each, and
 maps each model to the workflow template the driver (jbrain.image_gen.comfyui)
 fills.
 
-Tuned for an AMD Strix Halo box (gfx1151, large unified memory): Qwen-Image fp8
-renders a 1328x1328 image in ~3.5 min on the iGPU, resident in ~20 GB — sized to
-coexist with a local LLM in the same unified-memory budget.
+Tuned for an AMD Strix Halo box (gfx1151, large unified memory): Qwen-Image runs
+on the iGPU and the renders time-share the unified memory with the local LLMs (they
+are unloaded before a render), so the models carry their native bf16 weights rather
+than an fp8 quant — gfx1151 has no fp8 compute and upcast fp8 to bf16 at load anyway,
+so bf16 is the same RAM without the quantization loss.
 
 Two consumers read this:
   - the app surfaces enabled models in settings (Wave G5/G6);
   - scripts/comfyui-setup.sh reads `python -m jbrain.image_gen.catalog <ids>`
     for the JSON download manifest.
 
-Validated on-box: the `qwen-image` generate model, its three fp8 files, and the
-20-step workflow. The `qwen-image-edit` entry is wired structurally (its graph is
+Validated on-box: the `qwen-image` generate model and its 20-step workflow (now on
+native bf16 weights). The `qwen-image-edit` entry is wired structurally (its graph is
 real, exported from the box) but its weights/repo path await an on-box
 download+run, so it ships non-recommended.
 """
@@ -77,7 +79,10 @@ _QWEN_EDIT_REPO = "Comfy-Org/Qwen-Image-Edit_ComfyUI"
 
 _TEXT_ENCODER = ImageFile(
     hf_repo=_QWEN_REPO,
-    repo_path="split_files/text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors",
+    # Native bf16 (16.6 GB), not the fp8_scaled quant — shared by BOTH graphs, so it lifts
+    # prompt adherence for generate and edit alike. The LLMs are offloaded during a render,
+    # so the extra ~8 GB resident is free headroom on the box.
+    repo_path="split_files/text_encoders/qwen_2.5_vl_7b.safetensors",
     dest_subdir="text_encoders",
 )
 _VAE = ImageFile(
@@ -87,7 +92,10 @@ _VAE = ImageFile(
 )
 _GEN_DIFFUSION = ImageFile(
     hf_repo=_QWEN_REPO,
-    repo_path="split_files/diffusion_models/qwen_image_fp8_e4m3fn.safetensors",
+    # Native bf16 of the 2512 checkpoint (40.9 GB) — matches the model name the handler
+    # records (qwen-image-2512). gfx1151 has no fp8 compute so fp8 was upcast to bf16 at
+    # load anyway: same RAM, but bf16 weights skip the fp8 quantization quality loss.
+    repo_path="split_files/diffusion_models/qwen_image_2512_bf16.safetensors",
     dest_subdir="diffusion_models",
 )
 _EDIT_DIFFUSION = ImageFile(
@@ -101,21 +109,22 @@ _EDIT_DIFFUSION = ImageFile(
 CATALOG: tuple[ImageModel, ...] = (
     ImageModel(
         id="qwen-image",
-        label="Qwen-Image · generate (fp8)",
+        label="Qwen-Image · generate (bf16)",
         kind="generate",
         workflow="qwen_image.json",
         files=(_GEN_DIFFUSION, _TEXT_ENCODER, _VAE),
-        size_gb=28.0,
-        # On-box (ROCm) resident, NOT the fp8 disk size: AMD has no fp8 compute, so
-        # ComfyUI upcasts the weights to bf16 at load — the diffusion model is ~39 GB
-        # in memory + ~8 GB text encoder. fp8 saves disk, not RAM, on gfx1151.
-        vram_gb=48.0,
+        size_gb=58.0,
+        # Native bf16 now (diffusion ~41 GB + text encoder ~16 GB resident): the same RAM
+        # the fp8 build used after its load-time upcast, minus the fp8 quantization loss. The
+        # LLMs are unloaded during a render, so this fits the box's unified memory with room.
+        vram_gb=58.0,
         fast_steps=4,
         quality_steps=20,
         recommended=True,
-        note="Validated on Strix Halo at 1024x1024, 20 steps. ~48 GB resident (ROCm "
-        "upcasts fp8 to bf16). VAE decode is tiled to keep the decode peak in budget. "
-        "The fast preset needs a step-distill (Lightning) LoRA — add it once confirmed.",
+        note="Native bf16 (2512 checkpoint) — no fp8 upcast, so no quantization loss. "
+        "~58 GB resident; fits with the LLMs offloaded during the render. VAE decode is "
+        "tiled to keep the decode peak in budget. The fast preset needs a step-distill "
+        "(Lightning) LoRA — add it once confirmed.",
     ),
     ImageModel(
         id="qwen-image-edit",
@@ -123,15 +132,17 @@ CATALOG: tuple[ImageModel, ...] = (
         kind="edit",
         workflow="qwen_image_edit.json",
         files=(_EDIT_DIFFUSION, _TEXT_ENCODER, _VAE),
-        size_gb=44.0,
-        # bf16 on disk already; ~38 GB diffusion + ~8 GB text encoder resident.
-        vram_gb=46.0,
+        size_gb=51.0,
+        # bf16 throughout: ~34 GB diffusion + ~16 GB bf16 text encoder (shared with generate)
+        # resident. Multi-image edits add encode memory per reference, all within budget once
+        # the LLMs are offloaded for the render.
+        vram_gb=55.0,
         fast_steps=4,
         quality_steps=20,
         recommended=False,
         note="Graph validated structurally (exported from the box); the bf16 "
-        "weights/repo path await an on-box download+run. ~46 GB resident. VAE decode "
-        "is tiled to keep the decode peak in budget.",
+        "weights/repo path await an on-box download+run. ~55 GB resident with the bf16 "
+        "text encoder. VAE decode is tiled to keep the decode peak in budget.",
     ),
 )
 

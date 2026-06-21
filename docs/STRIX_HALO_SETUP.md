@@ -148,7 +148,7 @@ app and `jbrain logs`, not `curl localhost:8080`.
 
 ## Image generation — ComfyUI + Qwen-Image (optional, opt-in)
 Powers jerv's `generate_image` / `edit_image` tools
-(`docs/IMAGE_GEN_SERVICE_PLAN.md`): text→image via **Qwen-Image** (fp8) and
+(`docs/IMAGE_GEN_SERVICE_PLAN.md`): text→image via **Qwen-Image** (native bf16) and
 image→image via **Qwen-Image-Edit**, served by a **ROCm ComfyUI JBrain manages
 as a compose service** — the sibling of the local-LLM gateway. Like that
 gateway, it is **opt-in**: a stock deploy never starts it, and JBrain only ever
@@ -174,11 +174,14 @@ published host port**, mirroring the LLM gateway. The model catalog is the singl
 source of truth for repos/filenames; add a model by adding a catalog entry, not by
 editing the script.
 
-- **Validated on-box.** A 1328×1328, 20-step Qwen-Image renders in **~3.5 min**
-  on the iGPU from **fp8** weights (~20 GB resident; the footprint barely moves
-  during generation, so it coexists predictably with a local LLM in unified
-  memory). The `qwen-image-edit` model ships **non-recommended** — its graph is
-  wired but its bf16 weights await an on-box download+run.
+- **Validated on-box.** A 1328×1328, 20-step Qwen-Image renders on the iGPU from
+  **native bf16** weights (~58 GB resident, the 2512 checkpoint). The renders
+  **time-share** the unified memory — the local LLMs are unloaded before a render
+  and ComfyUI's model is freed after — so the diffusion model has the box to itself
+  and bf16 costs no more RAM than the old fp8 build (gfx1151 upcast fp8 to bf16 at
+  load anyway), minus the quantization loss. The `qwen-image-edit` model ships
+  **non-recommended** — its graph is wired but its bf16 weights await an on-box
+  download+run.
 - **JBrain owns the graph, not the model.** The backend POSTs the workflow JSON in
   `backend/src/jbrain/image_gen/workflows/` (`qwen_image.json`,
   `qwen_image_edit.json` — the real graphs exported from this box), filling typed
