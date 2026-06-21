@@ -62,7 +62,8 @@ class FileFixQueue(private val file: File, private val capacity: Int = CAP) : Fi
     private fun persist() = file.writeText(lines.joinToString("\n"))
 
     private companion object {
-        // ~16 h of moving fixes (30 s cadence) or weeks of stationary heartbeats.
-        const val CAP = 2000
+        // ~7 h of dense moving fixes (5 s cadence) or weeks of stationary
+        // heartbeats — the offline backfill buffer before the oldest are dropped.
+        const val CAP = 5000
     }
 }
