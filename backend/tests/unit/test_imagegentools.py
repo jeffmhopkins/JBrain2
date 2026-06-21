@@ -170,6 +170,17 @@ async def test_free_local_llms_swallows_a_gateway_failure() -> None:
     await _free_local_llms(gw)  # does not raise
 
 
+def test_png_dims_reads_the_ihdr_and_rejects_non_png() -> None:
+    """The recorded output size comes from the PNG's IHDR (an edit's source-scaled
+    output differs from the requested preset); a non-PNG falls through to None."""
+    from jbrain.agent.imagegentools import _png_dims
+    from jbrain.image_gen.fake import _png_with_dims
+
+    assert _png_dims(_png_with_dims(1264, 948)) == (1264, 948)
+    assert _png_dims(b"not a png at all, just bytes") is None
+    assert _png_dims(b"\x89PNG\r\n\x1a\n") is None  # signature only, no IHDR dims
+
+
 async def test_free_comfyui_model_unloads_and_frees() -> None:
     """After a render the tool unloads ComfyUI's model and frees its memory."""
     from jbrain.agent.imagegentools import _free_comfyui_model

@@ -14,12 +14,30 @@ from jbrain.image_gen.comfyui import EditSpec, GenSpec, OnProgress
 _PNG_1X1 = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4//8/AAX+Av4N70a4AAAAAElFTkSuQmCC"
 )
+_PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+
+
+def _png_with_dims(width: int, height: int) -> bytes:
+    """A PNG whose IHDR declares (width, height) — the handlers read dims back from the
+    header (not the pixels), so the fake's output carries the size a real render would."""
+    return (
+        _PNG_SIGNATURE
+        + (13).to_bytes(4, "big")
+        + b"IHDR"
+        + width.to_bytes(4, "big")
+        + height.to_bytes(4, "big")
+        + b"\x08\x06\x00\x00\x00"
+    )
 
 
 class FakeImageGen:
-    """Records the last call and returns a constant valid PNG."""
+    """Records the last call and returns a PNG carrying the requested (or overridden)
+    dimensions, so the handler's read-back-the-real-size path is exercised."""
 
-    def __init__(self) -> None:
+    def __init__(self, out_dims: tuple[int, int] | None = None) -> None:
+        # When set, generate/edit return a PNG of THESE dims regardless of the spec —
+        # used to model an edit whose source-scaled output differs from the preset.
+        self.out_dims = out_dims
         self.last_gen: GenSpec | None = None
         self.last_edit: EditSpec | None = None
         self.last_source: bytes | None = None
@@ -38,7 +56,7 @@ class FakeImageGen:
     async def generate(self, spec: GenSpec, on_progress: OnProgress | None = None) -> bytes:
         self.last_gen = spec
         self._emit(on_progress, spec.steps)
-        return _PNG_1X1
+        return _png_with_dims(*(self.out_dims or (spec.width, spec.height)))
 
     async def edit(
         self, spec: EditSpec, source: bytes, on_progress: OnProgress | None = None
@@ -46,4 +64,4 @@ class FakeImageGen:
         self.last_edit = spec
         self.last_source = source
         self._emit(on_progress, spec.steps)
-        return _PNG_1X1
+        return _png_with_dims(*(self.out_dims or (spec.width, spec.height)))

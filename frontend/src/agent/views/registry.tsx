@@ -516,11 +516,8 @@ function asDim(value: unknown): number {
   return Number.isFinite(n) && n > 0 ? Math.round(n) : 512;
 }
 
-type GenView = "compare" | "before" | "after";
-// The toggle pins the wipe to an edge (Before = show all "before" = 100%;
-// After = 0%) or restores the midpoint for free dragging (Compare = 50%).
-const VIEW_POS: Record<GenView, number> = { compare: 50, before: 100, after: 0 };
-
+// The before/after wipe: drag (or the grip) reveals the source under the edited
+// result. Just the slider now — the Compare/Edited mode switch lives in EditView.
 function EditCompare({
   beforeSrc,
   afterSrc,
@@ -536,7 +533,6 @@ function EditCompare({
 }): ReactNode {
   const ref = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState(50); // wipe position, 0–100 (% from the left)
-  const [view, setView] = useState<GenView>("compare");
   const dragging = useRef(false);
 
   function moveTo(clientX: number): void {
@@ -544,136 +540,74 @@ function EditCompare({
     if (!el) return;
     const rect = el.getBoundingClientRect();
     if (rect.width === 0) return;
-    const next = Math.max(0, Math.min(100, ((clientX - rect.left) / rect.width) * 100));
-    setPos(next);
-    setView("compare");
-  }
-
-  function pick(next: GenView): void {
-    setView(next);
-    setPos(VIEW_POS[next]);
+    setPos(Math.max(0, Math.min(100, ((clientX - rect.left) / rect.width) * 100)));
   }
 
   return (
-    <div className="tv-genimg-edit">
-      {/* The two images carry the accessible names (Before:/After:); the drag is
-          a pointer affordance, with the keyboard equivalent in the toggle below. */}
-      <div
-        ref={ref}
-        className="tv-genimg-cmp"
-        style={{ aspectRatio: `${width} / ${height}`, ["--pos" as string]: `${pos}%` }}
-        onPointerDown={(e) => {
-          dragging.current = true;
-          e.currentTarget.setPointerCapture(e.pointerId);
-          moveTo(e.clientX);
-        }}
-        onPointerMove={(e) => {
-          if (dragging.current) moveTo(e.clientX);
-        }}
-        onPointerUp={() => {
-          dragging.current = false;
-        }}
-        onPointerCancel={() => {
-          dragging.current = false;
-        }}
-      >
+    <div
+      ref={ref}
+      className="tv-genimg-cmp"
+      style={{ aspectRatio: `${width} / ${height}`, ["--pos" as string]: `${pos}%` }}
+      onPointerDown={(e) => {
+        dragging.current = true;
+        e.currentTarget.setPointerCapture(e.pointerId);
+        moveTo(e.clientX);
+      }}
+      onPointerMove={(e) => {
+        if (dragging.current) moveTo(e.clientX);
+      }}
+      onPointerUp={() => {
+        dragging.current = false;
+      }}
+      onPointerCancel={() => {
+        dragging.current = false;
+      }}
+    >
+      <img
+        className="tv-genimg-img"
+        src={beforeSrc}
+        alt={`Before: ${alt}`}
+        width={width}
+        height={height}
+      />
+      <div className="tv-genimg-after">
         <img
           className="tv-genimg-img"
-          src={beforeSrc}
-          alt={`Before: ${alt}`}
+          src={afterSrc}
+          alt={`After: ${alt}`}
           width={width}
           height={height}
         />
-        <div className="tv-genimg-after">
-          <img
-            className="tv-genimg-img"
-            src={afterSrc}
-            alt={`After: ${alt}`}
-            width={width}
-            height={height}
-          />
-        </div>
-        <span className="tv-genimg-kind kind-edit">edited</span>
-        <span className="tv-genimg-lbl b">BEFORE</span>
-        <span className="tv-genimg-lbl a">AFTER</span>
-        <div className="tv-genimg-handle" aria-hidden="true" />
-        <div className="tv-genimg-grip" aria-hidden="true" />
       </div>
-      <div className="tv-genimg-acts">
-        <span className="tv-genimg-cap">{alt}</span>
-        {/* biome-ignore lint/a11y/useSemanticElements: a 3-button toggle group; a <fieldset> is overkill */}
-        <div className="tv-genimg-seg" role="group" aria-label="Compare view">
-          {(["compare", "before", "after"] as GenView[]).map((m) => (
-            <button
-              key={m}
-              type="button"
-              className={view === m ? "on" : ""}
-              aria-pressed={view === m}
-              onClick={() => pick(m)}
-            >
-              {m === "compare" ? "Compare" : m === "before" ? "Before" : "After"}
-            </button>
-          ))}
-        </div>
-      </div>
+      <span className="tv-genimg-kind kind-edit">edited</span>
+      <span className="tv-genimg-lbl b">BEFORE</span>
+      <span className="tv-genimg-lbl a">AFTER</span>
+      <div className="tv-genimg-handle" aria-hidden="true" />
+      <div className="tv-genimg-grip" aria-hidden="true" />
     </div>
   );
 }
 
-function GeneratedImage({ data }: ViewProps): ReactNode {
-  const imageId = String(data.image_id ?? "");
-  const kind = data.kind === "edit" ? "edit" : "generate";
-  const prompt = typeof data.prompt === "string" ? data.prompt : "";
-  const width = asDim(data.width);
-  const height = asDim(data.height);
-  const model = typeof data.model === "string" ? data.model : "";
-  const seed = typeof data.seed === "number" ? data.seed : null;
-  const alt = prompt || "Generated image";
-  // Surface the seed on the card so the owner can see it and ask to reuse it.
-  const meta = `${width} × ${height}${seed !== null ? ` · seed ${seed}` : ""}${
-    model ? ` · ${model}` : ""
-  }`;
-
-  if (kind === "edit") {
-    return (
-      <div className="tv-genimg">
-        <EditCompare
-          beforeSrc={generatedImageSourceUrl(imageId)}
-          afterSrc={generatedImageUrl(imageId)}
-          width={width}
-          height={height}
-          alt={meta}
-        />
-      </div>
-    );
-  }
-
-  return <GenerateImage src={generatedImageUrl(imageId)} alt={alt} meta={meta} data={data} />;
-}
-
-function GenerateImage({
+// The clickable image frame shared by a generated image and an edit's "Edited" view:
+// the picture fills the frame, fades in over its placeholder/skeleton, and opens the
+// full-screen pinch/zoom viewer on tap.
+function ImageFrame({
   src,
   alt,
-  meta,
-  data,
+  width,
+  height,
+  placeholder = "",
 }: {
   src: string;
   alt: string;
-  meta: string;
-  data: Record<string, unknown>;
+  width: number;
+  height: number;
+  placeholder?: string;
 }): ReactNode {
-  const width = asDim(data.width);
-  const height = asDim(data.height);
-  // The last live preview frame, handed down from the in-flight turn (live only, absent
-  // on reopen): held as the placeholder until the full-res image loads, so there's no
-  // blank gap between "finalizing" and the rendered image.
-  const placeholder =
-    typeof data.placeholder_data_uri === "string" ? data.placeholder_data_uri : "";
   const [loaded, setLoaded] = useState(false);
   const [zoom, setZoom] = useState(false);
-
   return (
-    <div className="tv-genimg">
+    <>
       <button
         type="button"
         className="tv-genimg-frame"
@@ -702,8 +636,125 @@ function GenerateImage({
           </svg>
         </span>
       </button>
-      <div className="tv-genimg-cap">{meta}</div>
       {zoom && <Lightbox src={src} alt={alt} onClose={() => setZoom(false)} />}
+    </>
+  );
+}
+
+function GeneratedImage({ data }: ViewProps): ReactNode {
+  const imageId = String(data.image_id ?? "");
+  const kind = data.kind === "edit" ? "edit" : "generate";
+  const prompt = typeof data.prompt === "string" ? data.prompt : "";
+  const width = asDim(data.width);
+  const height = asDim(data.height);
+  const model = typeof data.model === "string" ? data.model : "";
+  const seed = typeof data.seed === "number" ? data.seed : null;
+  const alt = prompt || "Generated image";
+  // Surface the seed on the card so the owner can see it and ask to reuse it.
+  const meta = `${width} × ${height}${seed !== null ? ` · seed ${seed}` : ""}${
+    model ? ` · ${model}` : ""
+  }`;
+
+  if (kind === "edit") {
+    return (
+      <EditView
+        beforeSrc={generatedImageSourceUrl(imageId)}
+        afterSrc={generatedImageUrl(imageId)}
+        width={width}
+        height={height}
+        alt={alt}
+        meta={meta}
+      />
+    );
+  }
+
+  return <GenerateImage src={generatedImageUrl(imageId)} alt={alt} meta={meta} data={data} />;
+}
+
+function GenerateImage({
+  src,
+  alt,
+  meta,
+  data,
+}: {
+  src: string;
+  alt: string;
+  meta: string;
+  data: Record<string, unknown>;
+}): ReactNode {
+  // The last live preview frame, handed down from the in-flight turn (live only, absent
+  // on reopen): held as the placeholder until the full-res image loads, so there's no
+  // blank gap between "finalizing" and the rendered image.
+  const placeholder =
+    typeof data.placeholder_data_uri === "string" ? data.placeholder_data_uri : "";
+  return (
+    <div className="tv-genimg">
+      <ImageFrame
+        src={src}
+        alt={alt}
+        width={asDim(data.width)}
+        height={asDim(data.height)}
+        placeholder={placeholder}
+      />
+      <div className="tv-genimg-cap">{meta}</div>
+    </div>
+  );
+}
+
+// An edit result with two modes: Compare (the before/after wipe) and Edited (just the
+// new picture, click to pinch/zoom like a generated image). The owner wanted out of
+// the slider into a plain, zoomable view of the result.
+function EditView({
+  beforeSrc,
+  afterSrc,
+  width,
+  height,
+  alt,
+  meta,
+}: {
+  beforeSrc: string;
+  afterSrc: string;
+  width: number;
+  height: number;
+  alt: string;
+  meta: string;
+}): ReactNode {
+  const [mode, setMode] = useState<"compare" | "edited">("compare");
+  return (
+    <div className="tv-genimg">
+      {mode === "compare" ? (
+        <EditCompare
+          beforeSrc={beforeSrc}
+          afterSrc={afterSrc}
+          width={width}
+          height={height}
+          alt={alt}
+        />
+      ) : (
+        <ImageFrame src={afterSrc} alt={alt} width={width} height={height} />
+      )}
+      <div className="tv-genimg-acts">
+        <span className="tv-genimg-cap">{meta}</span>
+        {/* biome-ignore lint/a11y/useSemanticElements: a 2-button toggle group; a <fieldset> is overkill */}
+        <div className="tv-genimg-seg" role="group" aria-label="Edit view">
+          <button
+            type="button"
+            className={mode === "compare" ? "on" : ""}
+            aria-pressed={mode === "compare"}
+            onClick={() => setMode("compare")}
+          >
+            Compare
+          </button>
+          <button
+            type="button"
+            className={mode === "edited" ? "on" : ""}
+            aria-pressed={mode === "edited"}
+            onClick={() => setMode("edited")}
+          >
+            Edited
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

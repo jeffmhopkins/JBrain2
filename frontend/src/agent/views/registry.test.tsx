@@ -320,7 +320,7 @@ describe("ToolView registry", () => {
     expect(getByText("768 × 1024 · qwen-image-edit")).toBeInTheDocument();
   });
 
-  it("the edit toggle pins the wipe to an edge (Before/After/Compare)", () => {
+  it("the edit toggle switches between Compare (slider) and a zoomable Edited view", () => {
     const { container, getByText } = render(
       <ToolView
         payload={payload({
@@ -329,16 +329,24 @@ describe("ToolView registry", () => {
         })}
       />,
     );
-    const cmp = container.querySelector(".tv-genimg-cmp") as HTMLElement;
-    // Compare is the default (the wipe sits at the midpoint).
-    expect(cmp.style.getPropertyValue("--pos")).toBe("50%");
-    fireEvent.click(getByText("Before"));
-    expect(cmp.style.getPropertyValue("--pos")).toBe("100%");
-    expect(getByText("Before")).toHaveAttribute("aria-pressed", "true");
-    fireEvent.click(getByText("After"));
-    expect(cmp.style.getPropertyValue("--pos")).toBe("0%");
+    // Compare is the default — the before/after slider, no single frame.
+    expect(container.querySelector(".tv-genimg-cmp")).not.toBeNull();
+    expect(container.querySelector(".tv-genimg-frame")).toBeNull();
+    expect(getByText("Compare")).toHaveAttribute("aria-pressed", "true");
+
+    // "Edited" drops the slider for a single clickable frame of the result, which
+    // opens the full-screen viewer (the same as a generated image).
+    fireEvent.click(getByText("Edited"));
+    expect(container.querySelector(".tv-genimg-cmp")).toBeNull();
+    const frame = container.querySelector(".tv-genimg-frame") as HTMLElement;
+    expect(frame.tagName).toBe("BUTTON");
+    expect(frame.querySelector("img")?.getAttribute("src")).toBe("/api/images/generated/img_9c30");
+    fireEvent.click(frame);
+    expect(document.querySelector(".fb-lightbox")).not.toBeNull();
+
+    // …and back to the slider.
     fireEvent.click(getByText("Compare"));
-    expect(cmp.style.getPropertyValue("--pos")).toBe("50%");
+    expect(container.querySelector(".tv-genimg-cmp")).not.toBeNull();
   });
 
   it("dragging the compare moves the wipe (pointer events)", () => {
