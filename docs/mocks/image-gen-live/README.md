@@ -5,7 +5,9 @@ sharpens at 25 / 50 / 75 / 100% of the sampling steps, plus a **Stop render**
 control. Open each in a browser — they auto-play and have ▶ Simulate / ↺ Reset and
 a working Stop. Plan: `docs/IMAGE_GEN_LIVE_PLAN.md`.
 
-The owner picks one; the chosen mock becomes the binding spec for the G7b build.
+**Decided: Variant A — image-as-progress** is the binding spec (built in G7b:
+`FullBrainSurface` `GeneratingPreview`, the `.fb-genprev-*` styles, and the
+`tool_progress` reducer path).
 
 | Variant | File | Idea | Trade-off |
 |---|---|---|---|

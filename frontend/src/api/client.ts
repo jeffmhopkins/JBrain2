@@ -1121,6 +1121,12 @@ export const api = {
     await request("/api/auth/session", { method: "DELETE" });
   },
 
+  /** Stop the in-flight image render (the chat "Stop render" control). Best-effort:
+   * a 409 (hosting off) / 502 (gateway) just means the render runs to completion. */
+  async interruptImageRender(): Promise<void> {
+    await request("/api/settings/image/interrupt", { method: "POST" });
+  },
+
   // Idempotent on client_id: retrying after a lost response returns the
   // already-created note instead of duplicating it.
   async createNote(note: NoteCreate): Promise<NoteOut> {

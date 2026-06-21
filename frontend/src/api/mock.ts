@@ -2506,6 +2506,14 @@ export const mockFetch: typeof fetch = async (input, init) => {
     return json(SETTINGS);
   }
 
+  // The chat "Stop render" control (the live image preview's Stop). Chat itself
+  // isn't mocked, but the route exists so the call never 404s in mock dev.
+  if (path === "/api/settings/image/interrupt" && method === "POST") {
+    return new Response(JSON.stringify({ status: "interrupted" }), {
+      status: 202,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
   if (path === "/api/settings/llm" && method === "GET") return json(LLM_SETTINGS);
   if (path === "/api/settings/llm" && method === "PUT") {
     const body = JSON.parse(String(init?.body)) as {

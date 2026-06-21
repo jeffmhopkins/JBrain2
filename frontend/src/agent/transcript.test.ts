@@ -187,4 +187,34 @@ describe("applyEvent reducer", () => {
       { noteId: "n2", domain: "health", text: "albumin" },
     ]);
   });
+
+  it("tracks an image tool's live progress, then clears it when the result lands", () => {
+    let ms: TranscriptMessage[] = [streaming()];
+    ms = applyEvent(ms, { type: "tool_call", id: "g1", name: "generate_image", arguments: {} });
+    ms = applyEvent(ms, { type: "tool_progress", tool_call_id: "g1", step: 5, total: 20 });
+    // The first tick (no preview yet) records step/total only.
+    expect(ms[0]?.tools[0]?.progress).toEqual({ step: 5, total: 20 });
+    ms = applyEvent(ms, {
+      type: "tool_progress",
+      tool_call_id: "g1",
+      step: 20,
+      total: 20,
+      preview: "data:image/jpeg;base64,AAA",
+    });
+    expect(ms[0]?.tools[0]?.progress).toEqual({
+      step: 20,
+      total: 20,
+      preview: "data:image/jpeg;base64,AAA",
+    });
+    // The result settles the tool and drops the live preview (the final view renders).
+    ms = applyEvent(ms, { type: "tool_result", tool_call_id: "g1", ok: true, summary: "done" });
+    expect(ms[0]?.tools[0]?.progress).toBeUndefined();
+    expect(ms[0]?.tools[0]?.ok).toBe(true);
+  });
+
+  it("ignores progress for an unknown tool call", () => {
+    let ms: TranscriptMessage[] = [streaming()];
+    ms = applyEvent(ms, { type: "tool_progress", tool_call_id: "ghost", step: 1, total: 4 });
+    expect(ms[0]?.tools).toEqual([]);
+  });
 });
