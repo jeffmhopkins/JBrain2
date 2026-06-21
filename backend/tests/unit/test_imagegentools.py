@@ -106,3 +106,32 @@ def test_progress_callback_is_none_without_a_sink() -> None:
 
     ctx = ToolContext(session=SessionContext(principal_kind="owner"), scopes=())
     assert _progress_callback(ctx) is None
+
+
+async def test_free_local_llms_unloads_every_resident_model() -> None:
+    """Before a render, the image tool frees the unified-memory the LLM holds."""
+    from jbrain.agent.imagegentools import _free_local_llms
+    from tests.unit.fakes import FakeLocalGateway
+
+    gw = FakeLocalGateway(running={"qwen3-vl-30b-a3b", "gpt-oss-120b"})
+    await _free_local_llms(gw)
+    assert set(gw.unloaded) == {"qwen3-vl-30b-a3b", "gpt-oss-120b"}
+
+
+async def test_free_local_llms_is_a_noop_when_nothing_is_loaded() -> None:
+    # A cloud-driven turn (or hosting off) has nothing resident — no unloads.
+    from jbrain.agent.imagegentools import _free_local_llms
+    from tests.unit.fakes import FakeLocalGateway
+
+    gw = FakeLocalGateway(running=set())
+    await _free_local_llms(gw)
+    assert gw.unloaded == []
+
+
+async def test_free_local_llms_swallows_a_gateway_failure() -> None:
+    # Memory housekeeping must never fail the generation — a gateway error is logged.
+    from jbrain.agent.imagegentools import _free_local_llms
+    from tests.unit.fakes import FakeLocalGateway
+
+    gw = FakeLocalGateway(running={"gpt-oss-120b"}, fail_unload=True)
+    await _free_local_llms(gw)  # does not raise

@@ -27,6 +27,7 @@ from jbrain.image_gen.fake import FakeImageGen
 from jbrain.models.images import GeneratedImageRepo
 from tests.conftest import docker_available
 from tests.integration.test_rls import database_url  # noqa: F401
+from tests.unit.fakes import FakeLocalGateway
 
 pytestmark = [
     pytest.mark.integration,
@@ -103,7 +104,9 @@ def _ctx(owner: SessionContext, session_id: str | None = None) -> ToolContext:
 async def _handlers(maker: async_sessionmaker, owner: SessionContext, fake: FakeImageGen):
     sessions = AgentSessionRepo(maker)
     attachments = TurnAttachmentRepo(maker, sessions)
-    return build_image_handlers(fake, MemBlobStore(), GeneratedImageRepo(), attachments, maker)
+    return build_image_handlers(
+        fake, MemBlobStore(), GeneratedImageRepo(), attachments, maker, FakeLocalGateway()
+    )
 
 
 async def test_generate_inserts_row_and_returns_view(maker: async_sessionmaker) -> None:
@@ -173,7 +176,9 @@ async def test_edit_by_attachment_id_records_source(maker: async_sessionmaker) -
     sessions = AgentSessionRepo(maker)
     attachments = TurnAttachmentRepo(maker, sessions)
     blobs = MemBlobStore()
-    handlers = build_image_handlers(fake, blobs, GeneratedImageRepo(), attachments, maker)
+    handlers = build_image_handlers(
+        fake, blobs, GeneratedImageRepo(), attachments, maker, FakeLocalGateway()
+    )
 
     # A jerv chat session (empty scopes) with one image attachment (stamped 'general').
     info = await sessions.create(owner, domain_scopes=(), agent="jerv")
@@ -214,7 +219,9 @@ async def test_edit_orphan_source_blob_is_clean_error(maker: async_sessionmaker)
     sessions = AgentSessionRepo(maker)
     attachments = TurnAttachmentRepo(maker, sessions)
     blobs = MemBlobStore()
-    handlers = build_image_handlers(fake, blobs, GeneratedImageRepo(), attachments, maker)
+    handlers = build_image_handlers(
+        fake, blobs, GeneratedImageRepo(), attachments, maker, FakeLocalGateway()
+    )
 
     gen = await handlers["generate_image"]({"prompt": "a cat"}, _ctx(owner))
     assert isinstance(gen, ToolOutput) and gen.view is not None

@@ -30,6 +30,7 @@ from jbrain.image_gen.comfyui import (
     ImageGenInterrupted,
     OnProgress,
 )
+from jbrain.llm.local_gateway import LocalGatewayClient, LocalGatewayError
 from jbrain.models.images import GeneratedImage, GeneratedImageRepo
 from jbrain.storage import BlobStore
 
@@ -79,6 +80,25 @@ def _resolve_steps(raw: object) -> int:
 _STOPPED_MESSAGE = "Stopped the render — nothing was saved."
 
 
+async def _free_local_llms(gateway: LocalGatewayClient) -> None:
+    """Time-share unified memory: unload any resident local LLM before a render.
+
+    On a single unified-memory box (Strix Halo) the LLM that drove this turn (~tens
+    of GB) and the diffusion model (~39 GB bf16 on ROCm) can't both fit alongside the
+    VAE decode, so the image OOMs. We free the LLM now; the agent loop's NEXT call —
+    to compose the reply after this tool returns — transparently reloads it via
+    llama-swap's on-demand loading (no explicit reload needed, so the image still
+    surfaces promptly and the reload is just the usual "composing" wait).
+
+    Best-effort: a cloud-driven turn (nothing resident) or an unreachable gateway is a
+    clean no-op — never let memory housekeeping fail the generation."""
+    try:
+        for served in await gateway.running():
+            await gateway.unload(served)
+    except LocalGatewayError as exc:
+        log.info("image_gen.llm_unload_skipped", error=str(exc))
+
+
 def _progress_callback(ctx: ToolContext) -> OnProgress | None:
     """Bridge the driver's (step, total, preview_bytes) ticks to the turn's progress
     sink, base-64ing each ephemeral preview into a data URI the PWA shows inline.
@@ -119,6 +139,7 @@ def build_image_handlers(
     repo: GeneratedImageRepo,
     attachments: TurnAttachmentRepo,
     maker: async_sessionmaker[AsyncSession],
+    local_gateway: LocalGatewayClient,
 ) -> dict[str, ToolHandler]:
     """`generate_image` + `edit_image`. Wired only when image generation is configured
     (a localhost ComfyUI); the registry omits both tools otherwise (graceful degrade).
@@ -139,6 +160,7 @@ def build_image_handlers(
         spec = GenSpec(
             prompt=prompt, width=width, height=height, steps=steps, seed=seed, model=_GEN_MODEL
         )
+        await _free_local_llms(local_gateway)
         try:
             png = await imagegen.generate(spec, _progress_callback(ctx))
         except ImageGenInterrupted:
@@ -220,6 +242,7 @@ def build_image_handlers(
         spec = EditSpec(
             prompt=prompt, width=width, height=height, steps=steps, seed=seed, model=_EDIT_MODEL
         )
+        await _free_local_llms(local_gateway)
         try:
             png = await imagegen.edit(spec, source_bytes, _progress_callback(ctx))
         except ImageGenInterrupted:
