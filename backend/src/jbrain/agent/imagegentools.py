@@ -63,12 +63,15 @@ def _steps_for_effort(effort: int) -> int:
 # A bigint seed: positive and within the model's accepted range (random when absent).
 _SEED_BITS = 63
 
-# aspect → (long_frac, short_frac) of a resolution's edge: square is 1:1, the other
-# two a 3:4 portrait/landscape. Scaled by the edge below they land on multiples of 64.
+# aspect → (width_frac, height_frac) of a resolution's edge (the LONG side is always the
+# full edge). square is 1:1; portrait/landscape are a gentle 3:4; wide/tall are a dramatic
+# 16:9 (cinematic / phone-tall). Scaled by the edge below and snapped to multiples of 64.
 _ASPECTS: dict[str, tuple[float, float]] = {
     "square": (1.0, 1.0),
     "portrait": (0.75, 1.0),
     "landscape": (1.0, 0.75),
+    "tall": (0.5625, 1.0),
+    "wide": (1.0, 0.5625),
 }
 _DEFAULT_ASPECT = "square"
 
@@ -296,7 +299,7 @@ def build_image_handlers(
         dims = _dims(aspect, resolution)
         if dims is None:
             if (aspect or _DEFAULT_ASPECT) not in _ASPECTS:
-                return "aspect must be one of: square, portrait, landscape."
+                return "aspect must be one of: square, portrait, landscape, tall, wide."
             return "resolution must be one of: small, medium, large."
         width, height = dims
         seed = _resolve_seed(arguments.get("seed"))
@@ -401,7 +404,7 @@ def build_image_handlers(
         dims = _dims(aspect, resolution)
         if dims is None:
             if (aspect or _DEFAULT_ASPECT) not in _ASPECTS:
-                return "aspect must be one of: square, portrait, landscape."
+                return "aspect must be one of: square, portrait, landscape, tall, wide."
             return "resolution must be one of: small, medium, large."
         source = await _source_bytes(arguments, ctx, tool="edit_image")
         if isinstance(source, str):
