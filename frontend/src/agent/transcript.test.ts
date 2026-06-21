@@ -23,8 +23,9 @@ describe("applyEvent reducer", () => {
     ms = applyEvent(ms, { type: "done", stop_reason: "end_turn" });
     const turn = ms[0];
     expect(turn?.text).toBe("let me check");
+    // textOffset 12 = the prose length ("let me check") when the call was made.
     expect(turn?.tools).toEqual([
-      { id: "c1", name: "search", ok: true, summary: "found 3", sources: [] },
+      { id: "c1", name: "search", ok: true, summary: "found 3", sources: [], textOffset: 12 },
     ]);
     expect(turn?.streaming).toBe(false);
     expect(turn?.stopReason).toBe("end_turn");

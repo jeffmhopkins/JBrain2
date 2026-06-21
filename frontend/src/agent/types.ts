@@ -164,6 +164,9 @@ export interface TranscriptTurn {
     entities?: EntityRef[];
     /** A rich tool-result view (e.g. a list_card), persisted so it replays too. */
     view?: ViewPayload | null;
+    /** The answer-text length when the tool was called — the split point an image
+     * turn replays around (preamble → image → reply). */
+    text_offset?: number;
   }[];
   /** The assistant turn's reasoning trace (gpt-oss/GLM), for the "thinking"
    * disclosure; "" for user turns and non-reasoning models. */

@@ -51,14 +51,18 @@ export function Lightbox({
 
   const clamp = (s: number): number => Math.min(MAX_SCALE, Math.max(1, s));
 
-  // Scale toward a screen point, keeping that point anchored. Snapping back to 1
-  // recentres so the image can never be stranded off-screen at fit size.
+  // Zoom so the point under the cursor/fingers stays put. The image is flex-centered
+  // in the full-viewport overlay with a center transform-origin, so at any transform
+  // its on-screen centre is the viewport centre plus the current translate. Anchoring
+  // off that — not the viewport origin — is what keeps the zoom focus under the touch.
   function zoomAround(cx: number, cy: number, nextScale: number): void {
     setT((cur) => {
       const scale = clamp(nextScale);
       if (scale === 1) return IDENTITY;
       const k = scale / cur.scale;
-      return { scale, x: cx - (cx - cur.x) * k, y: cy - (cy - cur.y) * k };
+      const dx = cx - window.innerWidth / 2 - cur.x;
+      const dy = cy - window.innerHeight / 2 - cur.y;
+      return { scale, x: cur.x + dx * (1 - k), y: cur.y + dy * (1 - k) };
     });
   }
 

@@ -432,6 +432,11 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
                         "name": event.name,
                         "ok": None,
                         "sources": [],
+                        # The length of the answer text streamed BEFORE this call — the
+                        # point the turn's prose splits around the tool. The PWA uses it
+                        # to render an image turn as preamble → image → reply (three
+                        # messages), and persisting it replays the same split on reopen.
+                        "text_offset": len("".join(answer)),
                         # Persist the call's arguments so an expanded step replays what it
                         # ran on reopen — the web tools' url/query especially, which carry
                         # no NoteSource to stand in for them. Empty args stay omitted (noise).

@@ -269,6 +269,40 @@ describe("FullBrainSurface", () => {
     expect(worked).toHaveAttribute("aria-expanded", "false");
   });
 
+  it("splits an image turn into preamble, image, and reply bubbles", async () => {
+    async function* answer(): AsyncGenerator<ChatEvent> {
+      yield { type: "text_delta", text: "I'll make that now." };
+      yield { type: "tool_call", id: "g1", name: "generate_image", arguments: { prompt: "a fox" } };
+      yield { type: "tool_result", tool_call_id: "g1", ok: true, summary: "generated" };
+      yield {
+        type: "tool_view",
+        tool_call_id: "g1",
+        view: {
+          view: "generated_image",
+          surface: "inline",
+          data: { image_id: "img_1", kind: "generate", prompt: "a fox", width: 768, height: 768 },
+          refs: [],
+        },
+      };
+      yield { type: "text_delta", text: "Here's the fox." };
+      yield { type: "done", stop_reason: "end_turn" };
+    }
+    const { container } = render(<Harness d={deps({ chat: answer })} />);
+    await waitFor(() => screen.getByLabelText("Conversation"));
+    fireEvent.change(screen.getByLabelText("Composer"), { target: { value: "make a fox" } });
+    fireEvent.click(screen.getByRole("button", { name: "send" }));
+
+    await waitFor(() => expect(screen.getByText("Here's the fox.")).toBeInTheDocument());
+    // The preamble and the reply are separate assistant bubbles…
+    expect(screen.getByText("I'll make that now.")).toBeInTheDocument();
+    expect(container.querySelectorAll(".bubble.ai")).toHaveLength(3);
+    // …with the image standing alone in its own media bubble.
+    const media = container.querySelector(".bubble.ai.bubble-media");
+    expect(media?.querySelector(".tv-genimg")).not.toBeNull();
+    // The Worked disclosure rides the reply bubble (the turn still ran one tool).
+    expect(screen.getByRole("button", { name: /Worked/ })).toHaveTextContent("1 step");
+  });
+
   it("shows a web tool's url inline on its step row, truncating not wrapping", async () => {
     async function* answer(): AsyncGenerator<ChatEvent> {
       yield { type: "text_delta", text: "read it" };

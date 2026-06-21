@@ -8470,6 +8470,12 @@ button.small {
 .fb-shell .bubble.ai:has(.fb-genprev, .tv-genimg) {
   width: 100%;
 }
+/* An image turn splits into preamble / image / reply bubbles; the image one is just a
+   slim frame around the picture (no prose padding). */
+.fb-shell .bubble.ai.bubble-media {
+  width: 100%;
+  padding: 5px;
+}
 .fb-shell .tv-genimg-frame {
   position: relative;
   display: block;

@@ -382,21 +382,88 @@ function Bubble({
   // A settled answer also gets a copy affordance pinned to the right of that line, so
   // the foot strip shows on every finished turn even with no reasoning or tools.
   const settledAnswer = !message.streaming && message.text.trim() !== "";
+  const activityLine =
+    message.reasoning || message.tools.length > 0 || settledAnswer ? (
+      <ActivityLine
+        reasoning={message.reasoning}
+        thinking={message.thinking}
+        hasAnswer={message.text !== ""}
+        tools={message.tools}
+        copyText={settledAnswer ? stripModelCitations(message.text) : ""}
+        onOpenNote={onOpenNote}
+        onOpenEntity={onOpenEntity}
+      />
+    ) : null;
+
+  // An image turn reads as THREE messages — preamble, image, reply — not one bubble,
+  // so the picture stands as its own chat message. The split point is the prose length
+  // when the image tool was called (recorded live + persisted, so reopen splits the
+  // same). The paced reveal slices cleanly: the reply stays empty until the typewriter
+  // passes the split, then fills in.
+  const imageTool = message.tools.find((t) => IMAGE_TOOL_NAMES.has(t.name));
+  const imageViews = viewsToRender.filter((v) => v.view === "generated_image");
+  const splitAt = imageTool?.textOffset;
+  if (splitAt !== undefined && (livePreviews.length > 0 || imageViews.length > 0)) {
+    const preText = shownText.slice(0, splitAt);
+    const postText = shownText.slice(splitAt);
+    const otherViews = viewsToRender.filter((v) => v.view !== "generated_image");
+    const hasReply =
+      postText.trim() !== "" ||
+      otherViews.length > 0 ||
+      staged !== undefined ||
+      activityLine !== null;
+    return (
+      <>
+        {preText.trim() !== "" && (
+          <div className="bubble ai">
+            <Markdown
+              text={preText}
+              entities={entities}
+              onEntity={onOpenEntity}
+              streaming={message.streaming}
+            />
+          </div>
+        )}
+        {livePreviews.map((t) => (
+          <div className="bubble ai bubble-media" key={`p-${t.id}`}>
+            <GeneratingPreview tool={t} />
+          </div>
+        ))}
+        {imageViews.map((v, i) => (
+          // biome-ignore lint/suspicious/noArrayIndexKey: views append in order
+          <div className="bubble ai bubble-media" key={`v-${i}`}>
+            <ToolView payload={v} />
+          </div>
+        ))}
+        {hasReply && (
+          <div className="bubble ai">
+            {postText.trim() !== "" && (
+              <Markdown
+                text={postText}
+                onCite={onCite}
+                entities={entities}
+                onEntity={onOpenEntity}
+                streaming={message.streaming}
+              />
+            )}
+            {otherViews.map((v, i) => (
+              // biome-ignore lint/suspicious/noArrayIndexKey: views append in order
+              <ToolView key={i} payload={v} />
+            ))}
+            {staged && <ProposalChip proposal={staged} onOpen={onOpenProposal} />}
+            {generalKnowledge && <GeneralKnowledgeNote />}
+            {activityLine}
+          </div>
+        )}
+      </>
+    );
+  }
+
   return (
     <div className="bubble ai">
       {answer}
       {generalKnowledge && <GeneralKnowledgeNote />}
-      {(message.reasoning || message.tools.length > 0 || settledAnswer) && (
-        <ActivityLine
-          reasoning={message.reasoning}
-          thinking={message.thinking}
-          hasAnswer={message.text !== ""}
-          tools={message.tools}
-          copyText={settledAnswer ? stripModelCitations(message.text) : ""}
-          onOpenNote={onOpenNote}
-          onOpenEntity={onOpenEntity}
-        />
-      )}
+      {activityLine}
     </div>
   );
 }
