@@ -195,6 +195,22 @@ class ToolViewEvent(BaseModel):
     view: ViewPayload
 
 
+class ToolProgressEvent(BaseModel):
+    """A progress tick a still-running tool emitted mid-execution — today only image
+    generation, which streams ComfyUI's sampling progress + a sharpening preview so
+    a 3.5-min render isn't a blind wait (docs/IMAGE_GEN_LIVE_PLAN.md). `step`/`total`
+    are the sampler steps; `preview` is a small base-64 data URI the BACKEND authors
+    for the ephemeral frame (invariant #9 forbids the *model* authoring a URL — this
+    is app-authored, like the view component's <img> src). Display-only and EPHEMERAL
+    — never persisted to the transcript; the final image is the durable artifact."""
+
+    type: Literal["tool_progress"] = "tool_progress"
+    tool_call_id: str
+    step: int
+    total: int
+    preview: str | None = None
+
+
 class JobEnqueuedEvent(BaseModel):
     """A long-running tool deferred to the job queue; the turn never blocks."""
 
@@ -268,6 +284,7 @@ ChatEvent = Annotated[
     | ToolCallEvent
     | ToolResultEvent
     | ToolViewEvent
+    | ToolProgressEvent
     | JobEnqueuedEvent
     | UsageEvent
     | DoneEvent

@@ -3,16 +3,20 @@
 is scripted by a handler: submit -> poll(history) -> view, plus the edit upload."""
 
 import json
+from collections.abc import AsyncIterator
 
 import httpx
 import pytest
+from websockets.asyncio.server import serve
 
 from jbrain.image_gen.comfyui import (
     ComfyUiImageGen,
     EditSpec,
     GenSpec,
     ImageGenError,
+    ImageGenInterrupted,
     ImageGenTimeout,
+    _parse_preview,
 )
 from jbrain.image_gen.fake import FakeImageGen
 
@@ -181,6 +185,133 @@ async def test_http_error_raises_image_gen_error() -> None:
 
     with pytest.raises(ImageGenError):
         await _client(handle).generate(GEN)
+
+
+# --- the live (WebSocket) path --------------------------------------------------
+
+PID = "abc123"
+
+
+def _prog(value: int, total: int, prompt_id: str = PID) -> str:
+    data = {"value": value, "max": total, "prompt_id": prompt_id}
+    return json.dumps({"type": "progress", "data": data})
+
+
+def _executing_null(prompt_id: str = PID) -> str:
+    return json.dumps({"type": "executing", "data": {"node": None, "prompt_id": prompt_id}})
+
+
+def _preview_frame(image: bytes) -> bytes:
+    # ComfyUI binary preview: [uint32 event=1][uint32 image-type=1(JPEG)][bytes].
+    return (1).to_bytes(4, "big") + (1).to_bytes(4, "big") + image
+
+
+class _FakeWs:
+    """An async-iterable of scripted ws frames (str text / bytes binary)."""
+
+    def __init__(self, frames: list[str | bytes]) -> None:
+        self._frames = frames
+
+    def __aiter__(self) -> AsyncIterator[str | bytes]:
+        async def gen() -> AsyncIterator[str | bytes]:
+            for f in self._frames:
+                yield f
+
+        return gen()
+
+
+def _bare() -> ComfyUiImageGen:
+    http = httpx.AsyncClient(transport=httpx.MockTransport(lambda r: httpx.Response(404)))
+    return ComfyUiImageGen(BASE, http)
+
+
+async def test_drive_ws_emits_at_each_quarter_with_latest_preview() -> None:
+    ticks: list[tuple[int, int, bytes | None]] = []
+    frames: list[str | bytes] = [
+        _prog(5, 20),  # 25% — before any preview frame
+        _preview_frame(b"jpeg-a"),
+        _prog(10, 20),  # 50% — preview now present
+        _prog(15, 20),  # 75%
+        _preview_frame(b"jpeg-b"),
+        _prog(20, 20),  # 100%
+        _executing_null(),
+    ]
+    await _bare()._drive_ws(_FakeWs(frames), PID, lambda s, t, p: ticks.append((s, t, p)))
+    # One emit per 25% boundary, each carrying the most recent preview (None until one lands).
+    assert ticks == [(5, 20, None), (10, 20, b"jpeg-a"), (15, 20, b"jpeg-a"), (20, 20, b"jpeg-b")]
+
+
+async def test_drive_ws_ignores_another_runs_messages() -> None:
+    ticks: list[int] = []
+    frames: list[str | bytes] = [_prog(10, 20, "other-run"), _prog(5, 20), _executing_null()]
+    await _bare()._drive_ws(_FakeWs(frames), PID, lambda s, t, p: ticks.append(s))
+    assert ticks == [5]  # the foreign prompt_id's progress was skipped
+
+
+async def test_drive_ws_raises_interrupted_on_stop() -> None:
+    frames: list[str | bytes] = [
+        _prog(5, 20),
+        json.dumps({"type": "execution_interrupted", "data": {"prompt_id": PID}}),
+    ]
+    with pytest.raises(ImageGenInterrupted):
+        await _bare()._drive_ws(_FakeWs(frames), PID, lambda s, t, p: None)
+
+
+async def test_drive_ws_raises_on_execution_error() -> None:
+    err = json.dumps({"type": "execution_error", "data": {"prompt_id": PID, "msg": "boom"}})
+    with pytest.raises(ImageGenError):
+        await _bare()._drive_ws(_FakeWs([err]), PID, lambda s, t, p: None)
+
+
+def test_parse_preview_reads_jpeg_after_the_header() -> None:
+    assert _parse_preview(_preview_frame(b"the-jpeg")) == b"the-jpeg"
+    # event type 2 (not PREVIEW_IMAGE), and a too-short frame, both yield None.
+    assert _parse_preview((2).to_bytes(4, "big") + (1).to_bytes(4, "big") + b"x") is None
+    assert _parse_preview(b"short") is None
+
+
+def test_ws_url_swaps_scheme_and_carries_client_id() -> None:
+    assert _bare()._ws_url("cid") == "ws://comfyui:8188/ws?clientId=cid"
+    https = ComfyUiImageGen("https://comfyui:8188", httpx.AsyncClient())
+    assert https._ws_url("cid") == "wss://comfyui:8188/ws?clientId=cid"
+
+
+async def test_generate_over_websocket_drives_progress_and_returns_final() -> None:
+    # End-to-end live path against a real loopback ws server (scripted frames) + a
+    # mocked HTTP transport for /prompt + /history + /view.
+    frames: list[str | bytes] = [
+        _prog(5, 20),
+        _preview_frame(b"jpg"),
+        _prog(20, 20),
+        _executing_null(),
+    ]
+
+    async def handler(ws: object) -> None:
+        for f in frames:
+            await ws.send(f)  # type: ignore[attr-defined]
+        # Buffered frames (incl. executing-null) are read before the close lands, so
+        # the driver breaks on completion; closing here avoids a lingering handler.
+
+    async with serve(handler, "127.0.0.1", 0) as server:
+        port = server.sockets[0].getsockname()[1]
+
+        def handle(request: httpx.Request) -> httpx.Response:
+            if request.url.path == "/prompt":
+                return httpx.Response(200, json={"prompt_id": PID})
+            if request.url.path == f"/history/{PID}":
+                return httpx.Response(200, json=_HISTORY_DONE)
+            return httpx.Response(200, content=PNG)
+
+        http = httpx.AsyncClient(transport=httpx.MockTransport(handle))
+        gen = ComfyUiImageGen(f"http://127.0.0.1:{port}", http, sleep=_no_sleep_module)
+        ticks: list[tuple[int, int, bytes | None]] = []
+        out = await gen.generate(GEN, on_progress=lambda s, t, p: ticks.append((s, t, p)))
+        assert out == PNG
+        assert [(s, t) for s, t, _ in ticks] == [(5, 20), (20, 20)]
+
+
+async def _no_sleep_module(_: float) -> None:
+    return None
 
 
 async def test_fake_image_gen_returns_valid_png_and_records_specs() -> None:

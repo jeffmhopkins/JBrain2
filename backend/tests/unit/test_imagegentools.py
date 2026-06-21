@@ -74,3 +74,35 @@ def test_image_tools_are_jerv_only_not_curator() -> None:
 
     jerv_offered = registry.allowed_names(scopes=(), allow=JERV_TOOLS)
     assert {"generate_image", "edit_image"} <= jerv_offered
+
+
+def test_progress_callback_data_uris_previews_and_passes_steps() -> None:
+    """The driver's (step, total, preview_bytes) ticks reach the turn sink with the
+    preview base-64'd into a data URI; a missing preview passes through as None."""
+    from jbrain.agent.imagegentools import _progress_callback
+    from jbrain.agent.loop import ToolContext
+    from jbrain.db.session import SessionContext
+
+    seen: list[tuple[int, int, str | None]] = []
+    ctx = ToolContext(
+        session=SessionContext(principal_kind="owner"),
+        scopes=(),
+        emit_progress=lambda s, t, p: seen.append((s, t, p)),
+    )
+    cb = _progress_callback(ctx)
+    assert cb is not None
+    cb(5, 20, b"jpegbytes")
+    cb(20, 20, None)
+    assert seen[0] == (5, 20, "data:image/jpeg;base64,anBlZ2J5dGVz")
+    assert seen[1] == (20, 20, None)
+
+
+def test_progress_callback_is_none_without_a_sink() -> None:
+    # The batch path (no emit_progress) yields no callback, so the driver skips its
+    # WebSocket and just polls for the final image.
+    from jbrain.agent.imagegentools import _progress_callback
+    from jbrain.agent.loop import ToolContext
+    from jbrain.db.session import SessionContext
+
+    ctx = ToolContext(session=SessionContext(principal_kind="owner"), scopes=())
+    assert _progress_callback(ctx) is None

@@ -18,7 +18,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterable, Awaitable, Callable
 from dataclasses import dataclass
 from importlib import resources
 from typing import Any, Protocol
@@ -26,8 +26,21 @@ from uuid import uuid4
 
 import httpx
 import structlog
+import websockets
+from websockets.exceptions import InvalidURI, WebSocketException
 
 log = structlog.get_logger()
+
+# A live-progress callback the WebSocket path calls as sampling advances:
+# (step, total_steps, latest_preview_jpeg_or_None). Sync + best-effort — the tool
+# turns it into an ephemeral ToolProgressEvent; it must never raise into the driver.
+OnProgress = Callable[[int, int, bytes | None], None]
+
+# The sampling fractions a preview is emitted at — "update the image at 25% passes".
+_PREVIEW_BUCKETS: tuple[float, ...] = (0.25, 0.5, 0.75, 1.0)
+# ComfyUI's binary preview frame: [uint32 event][uint32 image-type][image bytes];
+# event type 1 is PREVIEW_IMAGE.
+_WS_PREVIEW_EVENT = 1
 
 # A 1328x1328 20-step Qwen-Image takes ~3.5 min on the Strix Halo iGPU, and the
 # first call also pays a one-time model load; budget generously so a real run
@@ -82,6 +95,11 @@ class ImageGenTimeout(ImageGenError):
     """Generation did not complete within the overall wait budget."""
 
 
+class ImageGenInterrupted(ImageGenError):
+    """The render was stopped (ComfyUI /interrupt) — the owner hit Stop. The tool
+    turns this into a clean 'stopped, nothing saved' result, not a failure."""
+
+
 @dataclass(frozen=True)
 class GenSpec:
     """A text→image request. `seed` is the resolved seed (random seeds are chosen
@@ -108,9 +126,13 @@ class EditSpec:
 
 
 class ImageGen(Protocol):
-    async def generate(self, spec: GenSpec) -> bytes: ...  # PNG bytes
+    async def generate(
+        self, spec: GenSpec, on_progress: OnProgress | None = None
+    ) -> bytes: ...  # PNG bytes
 
-    async def edit(self, spec: EditSpec, source: bytes) -> bytes: ...  # PNG bytes
+    async def edit(
+        self, spec: EditSpec, source: bytes, on_progress: OnProgress | None = None
+    ) -> bytes: ...  # PNG bytes
 
 
 def _load_template(name: str) -> dict[str, Any]:
@@ -144,7 +166,7 @@ class ComfyUiImageGen:
         self._monotonic = monotonic
         self._sleep = sleep
 
-    async def generate(self, spec: GenSpec) -> bytes:
+    async def generate(self, spec: GenSpec, on_progress: OnProgress | None = None) -> bytes:
         workflow = _load_template(_GEN_TEMPLATE)
         self._fill_common(workflow, spec, _GEN_BINDING)
         latent_node = _GEN_BINDING.latent
@@ -152,18 +174,100 @@ class ComfyUiImageGen:
         latent = workflow[latent_node]["inputs"]
         latent["width"] = spec.width
         latent["height"] = spec.height
-        prompt_id = await self._submit(workflow)
-        return await self._await(prompt_id)
+        return await self._run(workflow, on_progress)
 
-    async def edit(self, spec: EditSpec, source: bytes) -> bytes:
+    async def edit(
+        self, spec: EditSpec, source: bytes, on_progress: OnProgress | None = None
+    ) -> bytes:
         server_name = await self._upload_input(source)
         workflow = _load_template(_EDIT_TEMPLATE)
         self._fill_common(workflow, spec, _EDIT_BINDING)
         image_node = _EDIT_BINDING.input_image
         assert image_node is not None  # the edit graph always carries a LoadImage node
         workflow[image_node]["inputs"][_INPUT_IMAGE_KEY] = server_name
-        prompt_id = await self._submit(workflow)
+        return await self._run(workflow, on_progress)
+
+    async def _run(self, workflow: dict[str, Any], on_progress: OnProgress | None) -> bytes:
+        """Submit + await the final image. With `on_progress` we drive ComfyUI's
+        WebSocket for live step/preview ticks; without one we use the plain
+        submit→poll path (the fake + every existing caller)."""
+        if on_progress is None:
+            prompt_id = await self._submit(workflow)
+            return await self._await(prompt_id)
+        return await self._run_ws(workflow, on_progress)
+
+    async def _run_ws(self, workflow: dict[str, Any], on_progress: OnProgress) -> bytes:
+        """Connect ComfyUI's /ws FIRST (so no early frames are missed), submit under
+        the same client_id, drive `on_progress` from the progress + preview frames
+        until the run ends, then fetch the final image over HTTP (already complete)."""
+        client_id = uuid4().hex
+        prompt_id: str | None = None
+        try:
+            async with websockets.connect(
+                self._ws_url(client_id), open_timeout=self._timeout
+            ) as ws:
+                prompt_id = await self._submit(workflow, client_id=client_id)
+                await asyncio.wait_for(self._drive_ws(ws, prompt_id, on_progress), self._timeout)
+        except ImageGenError:
+            raise  # interrupt / execution error already shaped
+        except TimeoutError as exc:
+            raise ImageGenTimeout(f"ComfyUI did not finish within {self._timeout:g}s") from exc
+        except (OSError, InvalidURI, WebSocketException) as exc:
+            raise ImageGenError(f"ComfyUI websocket failed: {exc}") from exc
+        assert prompt_id is not None  # set before any normal exit from the `with`
         return await self._await(prompt_id)
+
+    async def _drive_ws(
+        self, ws: AsyncIterable[str | bytes], prompt_id: str, on_progress: OnProgress
+    ) -> None:
+        """Relay sampling progress: emit `on_progress` once per 25% boundary with the
+        latest preview, and return when our prompt finishes (executing → node null).
+        Raises ImageGenInterrupted on a stop, ImageGenError on a run error."""
+        emitted: set[float] = set()
+        preview: bytes | None = None
+        async for raw in ws:
+            if isinstance(raw, bytes | bytearray):
+                pv = _parse_preview(bytes(raw))
+                if pv is not None:
+                    preview = pv
+                continue
+            try:
+                msg = json.loads(raw)
+            except ValueError:
+                continue
+            data = msg.get("data") or {}
+            # ComfyUI tags most messages with the prompt_id; skip another run's.
+            if data.get("prompt_id") not in (None, prompt_id):
+                continue
+            mtype = msg.get("type")
+            if mtype == "progress":
+                total = int(data.get("max") or 0)
+                value = int(data.get("value") or 0)
+                if total > 0:
+                    pct = value / total
+                    # Emit at most ONCE per message: a step that jumps past several
+                    # 25% boundaries (a few-step render) still yields one tick, not a
+                    # redundant burst at the same step/preview.
+                    crossed = [b for b in _PREVIEW_BUCKETS if b not in emitted and pct >= b]
+                    if crossed:
+                        emitted.update(crossed)
+                        on_progress(value, total, preview)
+            elif mtype == "execution_interrupted":
+                raise ImageGenInterrupted("the render was stopped")
+            elif mtype == "execution_error":
+                raise ImageGenError(f"ComfyUI run failed: {data!r}")
+            elif mtype == "executing" and data.get("node") is None:
+                return  # our prompt finished executing
+
+    def _ws_url(self, client_id: str) -> str:
+        """The /ws URL for the base http(s) URL, carrying the client_id ComfyUI keys
+        this connection's messages to."""
+        base = self._base
+        if base.startswith("https"):
+            base = "wss" + base[len("https") :]
+        elif base.startswith("http"):
+            base = "ws" + base[len("http") :]
+        return f"{base}/ws?clientId={client_id}"
 
     def _fill_common(
         self, workflow: dict[str, Any], spec: GenSpec | EditSpec, binding: _Binding
@@ -188,9 +292,10 @@ class ComfyUiImageGen:
             raise ImageGenError("ComfyUI upload returned no image name")
         return str(name)
 
-    async def _submit(self, workflow: dict[str, Any]) -> str:
-        """POST the filled graph; ComfyUI queues it and returns a prompt_id to poll."""
-        payload = {"prompt": workflow, "client_id": uuid4().hex}
+    async def _submit(self, workflow: dict[str, Any], client_id: str | None = None) -> str:
+        """POST the filled graph; ComfyUI queues it and returns a prompt_id to poll.
+        `client_id` ties the run's WebSocket messages to an open /ws (the live path)."""
+        payload = {"prompt": workflow, "client_id": client_id or uuid4().hex}
         try:
             resp = await self._client.post(f"{self._base}/prompt", json=payload)
             resp.raise_for_status()
@@ -258,3 +363,13 @@ class ComfyUiImageGen:
         if not resp.content:
             raise ImageGenError("ComfyUI returned an empty image body")
         return resp.content
+
+
+def _parse_preview(frame: bytes) -> bytes | None:
+    """The JPEG/PNG bytes of a ComfyUI binary preview frame, or None for a frame
+    that isn't a preview (or is too short to carry the 8-byte header)."""
+    if len(frame) < 8:
+        return None
+    if int.from_bytes(frame[0:4], "big") != _WS_PREVIEW_EVENT:
+        return None
+    return frame[8:]

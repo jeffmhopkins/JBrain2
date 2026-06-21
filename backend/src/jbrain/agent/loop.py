@@ -7,6 +7,7 @@ and never trusts the model to stop itself. Tool dispatch and the run record are
 the loop's concern; what a tool *does* is the handler's.
 """
 
+import asyncio
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -25,6 +26,7 @@ from jbrain.agent.contracts import (
     ReasoningDelta,
     TextDelta,
     ToolCallEvent,
+    ToolProgressEvent,
     ToolResultEvent,
     ToolViewEvent,
     UsageEvent,
@@ -141,6 +143,11 @@ class ToolContext:
     timezone: str | None = None
     agent_session_id: str | None = None
     here: tuple[float, float] | None = None
+    # Mid-execution progress sink, set only on the streaming path: a tool (image
+    # generation) calls it with (step, total, preview_data_uri | None) and the loop
+    # turns each call into an ephemeral ToolProgressEvent on the turn's SSE. Sync +
+    # fire-and-forget; None for the batch path and tools that don't report progress.
+    emit_progress: Callable[[int, int, str | None], None] | None = None
 
 
 @dataclass(frozen=True)
@@ -394,12 +401,20 @@ class AgentLoop:
         tools = self._registry.schemas_for(scopes, tools_allow)
         allowed = self._registry.allowed_names(scopes, tools_allow)
         messages: list[LlmMessage] = list(conversation)
+        # A tool may report progress mid-execution (image generation); the sink
+        # enqueues (step, total, preview) tuples that the per-call dispatch below
+        # drains into ToolProgressEvents. Tool calls run one at a time, so every
+        # enqueued tick belongs to the call currently dispatching.
+        progress_q: asyncio.Queue[tuple[int, int, str | None] | None] = asyncio.Queue()
         tool_ctx = ToolContext(
             session=session,
             scopes=scopes,
             timezone=timezone,
             agent_session_id=agent_session_id,
             here=here,
+            emit_progress=lambda step, total, preview: progress_q.put_nowait(
+                (step, total, preview)
+            ),
         )
         cost = 0
         consecutive_errors = 0
@@ -492,7 +507,23 @@ class AgentLoop:
             any_error = False
             for call in turn.tool_calls:
                 yield ToolCallEvent(id=call.id, name=call.name, arguments=call.arguments)
-                dispatched = await self._dispatch(call, tool_ctx, allowed)
+                # Run the tool while draining any progress it reports into
+                # ToolProgressEvents, so a long render (image generation) streams a
+                # live preview instead of blocking the turn silently. A sentinel put
+                # by the done-callback ends the drain once the tool returns; tools
+                # that report nothing just yield no progress (unchanged behaviour).
+                task = asyncio.ensure_future(self._dispatch(call, tool_ctx, allowed))
+                # A None sentinel (FIFO after every real tick) ends the drain.
+                task.add_done_callback(lambda _t: progress_q.put_nowait(None))
+                while True:
+                    tick = await progress_q.get()
+                    if tick is None:
+                        break
+                    step, total, preview = tick
+                    yield ToolProgressEvent(
+                        tool_call_id=call.id, step=step, total=total, preview=preview
+                    )
+                dispatched = await task
                 results.append(dispatched.result)
                 any_error = any_error or dispatched.result.is_error
                 surfaced_sources.extend(dispatched.sources)

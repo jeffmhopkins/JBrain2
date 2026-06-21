@@ -12,6 +12,7 @@ app builds the `<img>` src from the row id, so the model never authors a URL (in
 
 from __future__ import annotations
 
+import base64
 import secrets
 from typing import TYPE_CHECKING
 
@@ -21,7 +22,14 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from jbrain.agent.contracts import ViewPayload
 from jbrain.agent.loop import ToolContext, ToolHandler, ToolOutput
 from jbrain.db.session import scoped_session
-from jbrain.image_gen.comfyui import EditSpec, GenSpec, ImageGen, ImageGenError
+from jbrain.image_gen.comfyui import (
+    EditSpec,
+    GenSpec,
+    ImageGen,
+    ImageGenError,
+    ImageGenInterrupted,
+    OnProgress,
+)
 from jbrain.models.images import GeneratedImage, GeneratedImageRepo
 from jbrain.storage import BlobStore
 
@@ -66,6 +74,25 @@ def _resolve_steps(raw: object) -> int:
     if isinstance(raw, int) and not isinstance(raw, bool) and raw > 0:
         return raw
     return _DEFAULT_STEPS
+
+
+_STOPPED_MESSAGE = "Stopped the render — nothing was saved."
+
+
+def _progress_callback(ctx: ToolContext) -> OnProgress | None:
+    """Bridge the driver's (step, total, preview_bytes) ticks to the turn's progress
+    sink, base-64ing each ephemeral preview into a data URI the PWA shows inline.
+    None when the turn has no sink (the batch path) — the driver then skips its
+    WebSocket entirely and just polls for the final image."""
+    sink = ctx.emit_progress
+    if sink is None:
+        return None
+
+    def on_progress(step: int, total: int, preview: bytes | None) -> None:
+        uri = f"data:image/jpeg;base64,{base64.b64encode(preview).decode()}" if preview else None
+        sink(step, total, uri)
+
+    return on_progress
 
 
 def generated_image_view(row: GeneratedImage) -> ViewPayload:
@@ -113,7 +140,9 @@ def build_image_handlers(
             prompt=prompt, width=width, height=height, steps=steps, seed=seed, model=_GEN_MODEL
         )
         try:
-            png = await imagegen.generate(spec)
+            png = await imagegen.generate(spec, _progress_callback(ctx))
+        except ImageGenInterrupted:
+            return _STOPPED_MESSAGE
         except ImageGenError as exc:
             log.warning("generate_image_failed", error=str(exc))
             return "I couldn't generate that image right now — the image model didn't respond."
@@ -192,7 +221,9 @@ def build_image_handlers(
             prompt=prompt, width=width, height=height, steps=steps, seed=seed, model=_EDIT_MODEL
         )
         try:
-            png = await imagegen.edit(spec, source_bytes)
+            png = await imagegen.edit(spec, source_bytes, _progress_callback(ctx))
+        except ImageGenInterrupted:
+            return _STOPPED_MESSAGE
         except ImageGenError as exc:
             log.warning("edit_image_failed", error=str(exc))
             return "I couldn't edit that image right now — the image model didn't respond."

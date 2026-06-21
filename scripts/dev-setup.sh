@@ -137,10 +137,12 @@ fi
 # service (the `comfyui` profile), provisioned SEPARATELY by
 # scripts/comfyui-setup.sh: it downloads tens of GB of weights and starts a GPU
 # service, so it must NEVER run from this auto-bootstrapped path (web/CI containers
-# have no GPU). The backend adds NO new dependency — it only POSTs a workflow graph
-# over HTTP. Empty JBRAIN_COMFYUI_URL (the default) disables the feature and hides
-# both tools, so this is a no-op in dev/CI. Mentioned here per the dev-setup
+# have no GPU). The backend's one image dependency, `websockets` (a client used to
+# stream ComfyUI's live generation progress + previews — docs/IMAGE_GEN_LIVE_PLAN.md),
+# is a normal pyproject dep that `uv sync` above installs; nothing GPU-specific is
+# bootstrapped here. Empty JBRAIN_COMFYUI_URL (the default) disables the feature and
+# hides both tools, so this is a no-op in dev/CI. Mentioned here per the dev-setup
 # single-source-of-truth rule (CLAUDE.md rule #8); see docs/STRIX_HALO_SETUP.md
-# ("Image generation") and docs/IMAGE_GEN_SERVICE_PLAN.md.
+# ("Image generation"), docs/IMAGE_GEN_SERVICE_PLAN.md, and docs/IMAGE_GEN_LIVE_PLAN.md.
 
 log "done"
