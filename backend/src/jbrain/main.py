@@ -1,6 +1,7 @@
 import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 import httpx
 import structlog
@@ -92,7 +93,7 @@ from jbrain.search.repo import SqlSearchRepo
 from jbrain.search.service import SearchService
 from jbrain.settings_store import SqlSettingsStore
 from jbrain.storage import FsBackupShelf, FsBlobStore
-from jbrain.tiles import FsTileCache, HttpTileFetcher, TileService
+from jbrain.tiles import FsTileCache, HttpTileFetcher, TileService, tile_cache_namespace
 from jbrain.usage import SqlUsageRecorder
 from jbrain.web import SearxngClient, WebFetcher
 from jbrain.wiki.actions import WIKI_SPECS
@@ -152,7 +153,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # tiles only from this box (api/tiles.py); the upstream is fetched once and
         # cached. Empty upstream disables tiles (map falls back to the schematic).
         app.state.tile_service = TileService(
-            FsTileCache(settings.tile_cache_dir),
+            # Namespace the cache by upstream so a basemap-style change re-fetches
+            # cleanly instead of serving the old style's cached z/x/y tiles.
+            FsTileCache(
+                Path(settings.tile_cache_dir) / tile_cache_namespace(settings.tile_upstream_url)
+            ),
             HttpTileFetcher(settings.tile_user_agent),
             upstream_template=settings.tile_upstream_url,
             max_zoom=settings.tile_max_zoom,

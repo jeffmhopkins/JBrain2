@@ -6,15 +6,15 @@ domain-scoped: jerv runs `reads_knowledge_base=False` with empty read scopes, so
 domain to attribute. Rows are immutable provenance of a generation (no UPDATE grant); the
 result PNG lives in the blob store, this row is the by-id metadata + seed for repeatability.
 
-Revision ID: 0077
-Revises: 0076
+Revision ID: 0078
+Revises: 0077
 Create Date: 2026-06-20
 """
 
 from alembic import op
 
-revision = "0077"
-down_revision = "0076"
+revision = "0078"
+down_revision = "0077"
 branch_labels = None
 depends_on = None
 

@@ -51,7 +51,11 @@ class Settings(BaseSettings):
     # the server fetches-and-caches upstream tiles, so the upstream learns the
     # coarse map areas the owner browses (tied to the server IP, never the device).
     # Empty disables tiles entirely (the map falls back to the on-box schematic).
-    tile_upstream_url: str = "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
+    # Default: CARTO "Dark Matter" — a clean, dark, minimal basemap that matches the
+    # app's dark UI (the bright OSM standard style clashed). Keyless; © OpenStreetMap
+    # © CARTO. Swap to any {z}/{x}/{y}.png raster style; the on-disk cache namespaces
+    # by this URL, so changing it re-fetches cleanly (no stale-style tiles).
+    tile_upstream_url: str = "https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png"
     # Sent on every upstream tile fetch — OSM's tile policy requires an honest UA.
     tile_user_agent: str = "JBrain2 self-hosted personal instance"
     tile_cache_dir: str = "/data/tiles"

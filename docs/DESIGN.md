@@ -881,7 +881,7 @@ fixtures: empty (Build-log only) / long-thread / pending-action / error / offlin
 
 The location domain's accent is the **`--location` teal (`#6FB6B1`)** (settled in L3);
 amber (`--warn`) carries the stale/"last known" tone (matching the GPS-gap marker).
-`LocationScreen` is a 3-tab segmented control (Map · Timeline · Devices) on `.seg-row`/
+`LocationScreen` is a 3-tab segmented control (Map · Timeline · Phones) on `.seg-row`/
 `.seg-on`. Two L7 affordances sit on it, both **names + times only — never a
 coordinate** (this is why neither needs a basemap):
 
@@ -916,38 +916,78 @@ coordinate** (this is why neither needs a basemap):
   boundary), **not** the system prompt and **not** the toast — owner-gated (present
   only for a location-scoped full-owner session), so a narrowed session gets neither.
 
+### Phones tab — paired-phone management (settled in a three-way review; chosen **B — swipe rail** over A "family roster + device-hub sheet" and C "inline accordion + credential strip"; reference mocks `docs/mocks/phone-management/{a-family-roster,b-swipe-rail,c-inline-accordion}.html`)
+
+The location surface is **phones only** — the manual "Add device (OwnTracks)" path
+is retired (a JBrain360 phone never pastes a key). The old Devices tab had two
+gaps: no way to **roll the pairing token** once a phone was paired, and a
+**"Rotate key" that couldn't reach a paired phone** (a phone receives credentials
+only by redeeming a pairing code). The redesign collapses both into one action and
+renames the tab **Phones**:
+
+- **Layout:** an **Active / Revoked** filter (count pills, `--steel`) over a
+  **swipe-left rail** list — the settled home-note / chats paradigm (`notes/swipe.ts`
+  `RAIL_WIDTH`, the shared `.rail-btn`/`.rail-edit`/`.rail-delete`/`.rail-armed`).
+  Active rows carry **re-pair · rename · revoke · delete** (`rail-4`, 48px each);
+  a revoked row carries **restore · delete** (`rail-2`, 96px each). **Tapping a
+  closed row also opens its rail**, so the actions are reachable without the gesture
+  (the gesture-is-never-the-only-way rule). One rail open at a time.
+- **Re-pair (the unifying fix):** "roll the token" and "rotate the key" for a phone
+  are **one action** — mint a fresh one-time code **bound to the existing device**
+  (`POST /api/pairing/codes` with `device_id`); on redemption the device's key
+  **rotates in place** (old key revoked, new minted) while its identity + history
+  stay attached, with **no lockout window** (the old key works until the phone
+  redeems). The same flow **restores a revoked phone**. The code rides the device's
+  **current** name. Backend: `pairing_code.subject_id` + a re-pair-aware
+  `app.redeem_pairing_code` (migration 0077).
+- **Rename** edits the label inline on the row (`POST /api/devices/{id}/rename`,
+  the active key principal's label follows). **Revoke** suspends the key (history
+  kept); **delete** hard-removes the phone + its history
+  (`DELETE /api/devices/{id}`, cascading fixes/geofence state). Both destructive
+  actions arm a **tap-again confirm** on the rail button, disarmed when the rail
+  closes. Re-pair / new-pair show the QR via the existing `PairCodeSheet`.
+
+B won for the most aggressive vertical density and muscle-memory reuse of the
+existing swipe rail; A (a per-phone management sheet grouped by family member) and
+C (an inline accordion led by a credential-lifecycle strip) are retained as the
+record. **Family-member grouping is deferred** — it needs the device→Person graph
+link surfaced in the device list payload, out of scope for this round.
+
 ## JBrain360 app — member live-map surface (Phase 7, owner-approved)
 
 The **member dashboard** (`/dash`, served into the Android app's WebView) is a
-**full-screen live map with floating glass chrome** — reference mock
-`docs/mocks/app-live-map.html` (owner-approved directly; the three-way GUI gate was
+**full-screen live map with a collapsible bottom dock** — reference mock
+`docs/mocks/app-live-map-v2.html` (owner-approved directly; the three-way GUI gate was
 waived by explicit owner choice of this direction). It replaces the earlier
-Devices/Timeline/Map tab shell: the map is the whole surface; everything else floats
-over it on `backdrop-filter` panels. Location domain stays **`--location` teal**;
-live = `--green`, stale = `--amber`.
+Devices/Timeline/Map tab shell: the map is the whole surface; chrome floats over it on
+`backdrop-filter` panels. Default basemap is **CARTO Dark Matter** (dark/minimal, via
+the `/api/tiles` proxy). Location domain stays **`--location` teal**; live = `--green`,
+stale = `--amber`. The v2 refinement (collapsible dock + drag-both-ends window +
+center-on-select) supersedes the original `app-live-map.html`, kept for history.
 
-The floating elements, all owner-/family-scoped (never a scoped link — L8):
+The elements, all owner-/family-scoped (never a scoped link — L8):
 
 - **Person switcher (top).** A horizontally-scrollable row of avatar chips —
   **Everyone** + each family member — each with a green/amber **live/stale** presence
-  dot. Selecting a person recenters the map on them and swaps the overlay + card;
-  tapping their pin selects them too. Everyone mode shows all current pins (no
-  trail/heat) and turns the card into a tappable roster.
-- **Current location.** A pulsing, person-colored map pin with a name label.
-- **Trail / Heat toggle.** **Trail** draws the recent path (fading points, brightest
-  at "now"); **Heat** renders dwell density (leaflet.heat) — hottest where the person
-  lingers (home/work). Both are computed client-side from the same fixes.
-- **1–7 day range.** A slider; more days → longer trail / denser heat, and it filters
-  the activity list. The real basemap is **Leaflet over the same-origin `/api/tiles`
-  proxy** (no third-party tile host — tiles never leave the box; cf. the owner map).
-- **"Last actions" card (bottom).** The selected person's current status + battery and
-  a row of quick recent-action chips; **tap to expand** into a Today / Yesterday /
-  N-days-ago timeline of arrived/left geofence transitions (names + times only).
+  dot. Selecting a person **recenters the map on them** (`centerOn`, no auto-fit) and
+  drives the overlay; tapping their pin selects them too. Everyone mode shows all
+  current pins (auto-fit, no trail/heat).
+- **Current location.** A person-colored map pin with an upright initial.
+- **Collapsed bottom dock (map-first default).** A slim persistent **bar** shows the
+  selected person (avatar · name · live/last-seen) and **two pull-up tabs**, opened
+  **one at a time**:
+  - **Details** — the person's **last-actions** timeline (Today / Yesterday / N-days
+    arrived/left transitions; names + times only), or the **roster** in Everyone.
+  - **History** — the **Trail/Heat** toggle + a **drag-both-ends time window**
+    (two thumbs over now → 7 days; relative labels "5d ago → now") that drives the
+    trail/heat and filters the activity list. Disabled in Everyone (no single trail).
+- **Live.** Live fixes move each visible person's pin and extend the focused trail
+  (the server scopes the stream to self + group).
 
 The surface honours the firewall: a member session sees only **its own subject + its
 family group** (RLS `viewer_may_see`/`view_scope`), the basemap is self-hosted, and
-the card/timeline are **names + times only — never a raw coordinate in prose**. Build
-plan + wave breakdown: `docs/PHASE7_APP_MAP_PLAN.md`.
+the Details/History content is **names + times only — never a raw coordinate in
+prose**. Build plan + wave breakdown: `docs/PHASE7_APP_MAP_PLAN.md`.
 
 ## Implementation rules
 

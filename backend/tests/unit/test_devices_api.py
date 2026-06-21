@@ -71,6 +71,32 @@ def test_rotate_returns_a_new_key_and_revoke_then_404(
     assert c.post(f"/api/devices/{uuid.uuid4()}/revoke").status_code == 404
 
 
+def test_rename_updates_the_label_and_404s_for_unknown(
+    client: tuple[TestClient, FakeDeviceRepo],
+) -> None:
+    c, _ = client
+    device = c.post("/api/devices", json={"label": "phone"}).json()["device"]
+
+    renamed = c.post(f"/api/devices/{device['id']}/rename", json={"label": "Jeff's phone"})
+    assert renamed.status_code == 204
+    assert c.get("/api/devices").json()[0]["label"] == "Jeff's phone"
+    # Empty label is rejected by validation; unknown id is a 404.
+    assert c.post(f"/api/devices/{device['id']}/rename", json={"label": ""}).status_code == 422
+    assert c.post(f"/api/devices/{uuid.uuid4()}/rename", json={"label": "x"}).status_code == 404
+
+
+def test_delete_removes_the_device_and_404s_for_unknown(
+    client: tuple[TestClient, FakeDeviceRepo],
+) -> None:
+    c, _ = client
+    device = c.post("/api/devices", json={"label": "phone"}).json()["device"]
+
+    assert c.delete(f"/api/devices/{device['id']}").status_code == 204
+    assert c.get("/api/devices").json() == []
+    # A second delete (now unknown) is a 404.
+    assert c.delete(f"/api/devices/{device['id']}").status_code == 404
+
+
 def test_device_routes_are_owner_only(client: tuple[TestClient, FakeDeviceRepo]) -> None:
     c, _ = client
     app = cast(FastAPI, c.app)
@@ -81,6 +107,8 @@ def test_device_routes_are_owner_only(client: tuple[TestClient, FakeDeviceRepo])
         assert c.get("/api/devices").status_code == 403
         assert c.post("/api/devices", json={"label": "x"}).status_code == 403
         assert c.post("/api/devices/whatever/rotate").status_code == 403
+        assert c.post("/api/devices/whatever/rename", json={"label": "x"}).status_code == 403
+        assert c.delete("/api/devices/whatever").status_code == 403
     finally:
         app.dependency_overrides.clear()
 

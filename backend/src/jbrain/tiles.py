@@ -12,6 +12,7 @@ disables tiles (the map falls back to the on-box schematic).
 """
 
 import asyncio
+import hashlib
 from pathlib import Path
 from typing import Protocol
 
@@ -21,6 +22,13 @@ import structlog
 log = structlog.get_logger()
 
 _TIMEOUT = 15.0
+
+
+def tile_cache_namespace(upstream_template: str) -> str:
+    """A short stable key derived from the upstream tile URL, used as a cache
+    sub-directory so a basemap-style change (a different upstream) re-fetches into a
+    fresh tree rather than serving the old style's tiles under the same z/x/y."""
+    return hashlib.sha1(upstream_template.encode()).hexdigest()[:8]
 
 
 def valid_tile(z: int, x: int, y: int, max_zoom: int) -> bool:

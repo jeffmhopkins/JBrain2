@@ -41,3 +41,19 @@ def test_revoke_unknown_or_invalid_id_is_false() -> None:
     device = asyncio.run(service.provision_device(repo, _OWNER, "phone")).device
     assert asyncio.run(service.revoke_device(repo, _OWNER, device.id)) is True
     assert device.id not in repo.key_hashes
+
+
+def test_rename_invalid_id_is_false_and_happy_path_relabels() -> None:
+    repo = FakeDeviceRepo()
+    assert asyncio.run(service.rename_device(repo, _OWNER, "not-a-uuid", "x")) is False
+    device = asyncio.run(service.provision_device(repo, _OWNER, "phone")).device
+    assert asyncio.run(service.rename_device(repo, _OWNER, device.id, "Jeff's phone")) is True
+    assert repo.devices[0].label == "Jeff's phone"
+
+
+def test_delete_invalid_id_is_false_and_happy_path_removes() -> None:
+    repo = FakeDeviceRepo()
+    assert asyncio.run(service.delete_device(repo, _OWNER, "not-a-uuid")) is False
+    device = asyncio.run(service.provision_device(repo, _OWNER, "phone")).device
+    assert asyncio.run(service.delete_device(repo, _OWNER, device.id)) is True
+    assert repo.devices == [] and device.id not in repo.key_hashes

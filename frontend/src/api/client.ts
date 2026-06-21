@@ -42,12 +42,6 @@ export interface DeviceSummary {
   fix_count: number;
 }
 
-/** The provision/rotate response: the plaintext key is shown exactly once. */
-export interface ProvisionedDevice {
-  device: { id: string; label: string; created_at: string; revoked: boolean };
-  key: string;
-}
-
 /** A minted pairing code (POST /api/pairing/codes). `payload` is the self-contained
  * string the phone scans/pastes — it embeds the server URL + the code, so the app
  * needs nothing configured. `code` is the human-readable form; `expires_at` its TTL. */
@@ -1802,27 +1796,28 @@ export const api = {
     return ((await response.json()) as { address: string | null }).address;
   },
 
-  async provisionDevice(label: string): Promise<ProvisionedDevice> {
-    const response = await request("/api/devices", jsonInit("POST", { label }));
-    return (await response.json()) as ProvisionedDevice;
-  },
-
   // Mint a one-time pairing code for the JBrain360 app. The returned `payload`
   // embeds the server URL, so the phone needs nothing configured — paste/scan it.
-  async mintPairingCode(label: string, monitoring = 1): Promise<PairingCode> {
-    const response = await request("/api/pairing/codes", jsonInit("POST", { label, monitoring }));
+  // With `deviceId` the code RE-PAIRS that existing phone: redeeming it rotates the
+  // phone's key in place (the way "roll the token" / "rotate the key" works for a
+  // paired phone, which can only receive credentials by redeeming a code).
+  async mintPairingCode(label: string, monitoring = 1, deviceId?: string): Promise<PairingCode> {
+    const body: { label: string; monitoring: number; device_id?: string } = { label, monitoring };
+    if (deviceId) body.device_id = deviceId;
+    const response = await request("/api/pairing/codes", jsonInit("POST", body));
     return (await response.json()) as PairingCode;
   },
 
-  async rotateDevice(id: string): Promise<string> {
-    const response = await request(`/api/devices/${encodeURIComponent(id)}/rotate`, {
-      method: "POST",
-    });
-    return ((await response.json()) as { key: string }).key;
+  async renameDevice(id: string, label: string): Promise<void> {
+    await request(`/api/devices/${encodeURIComponent(id)}/rename`, jsonInit("POST", { label }));
   },
 
   async revokeDevice(id: string): Promise<void> {
     await request(`/api/devices/${encodeURIComponent(id)}/revoke`, { method: "POST" });
+  },
+
+  async deleteDevice(id: string): Promise<void> {
+    await request(`/api/devices/${encodeURIComponent(id)}`, { method: "DELETE" });
   },
 
   // --- Member dashboard (JBrain360): the device-cookie-scoped family surface.

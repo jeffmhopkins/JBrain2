@@ -88,6 +88,23 @@ def test_mint_is_owner_only() -> None:
             assert r.status_code == 201
             assert r.json()["code"] == "fake-code"
             assert pairing.minted == [("Mom", 2)]
+            # A first-time pair carries no re-pair target.
+            assert pairing.targets == [None]
+        finally:
+            cast(FastAPI, c.app).dependency_overrides.clear()
+
+
+def test_mint_with_device_id_targets_an_existing_device_for_re_pair() -> None:
+    app = create_app(Settings(secure_cookies=False, database_url=_DB))
+    pairing = FakePairingRepo()
+    with TestClient(app) as c:
+        app.state.pairing_repo = pairing
+        cast(FastAPI, c.app).dependency_overrides[current_principal] = _owner
+        try:
+            r = c.post("/api/pairing/codes", json={"label": "Jeff's phone", "device_id": "sub-7"})
+            assert r.status_code == 201
+            # The re-pair target is threaded through to the repo as the subject id.
+            assert pairing.targets == ["sub-7"]
         finally:
             cast(FastAPI, c.app).dependency_overrides.clear()
 

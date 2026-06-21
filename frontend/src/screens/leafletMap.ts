@@ -33,10 +33,17 @@ export interface MapState {
   heatRadius: number;
   // Current-location pins (member map). Absent on the owner map — additive.
   pins?: MapPin[];
+  // Auto-fit the view to the data. Default true (the owner map). The member map
+  // sets it false when focused on one person, so a redraw (live fix, mode/window
+  // change) doesn't fight the centerOn / the user's pan.
+  autoFit?: boolean;
 }
 
 export interface LocationMapHandle {
   update: (state: MapState) => void;
+  // Recenter on a point (the member map's tap-a-person-to-center), keeping at least
+  // a street-level zoom.
+  centerOn: (lat: number, lon: number) => void;
   destroy: () => void;
 }
 
@@ -63,7 +70,7 @@ export function createLocationMap(
   L.control.zoom({ position: "bottomright" }).addTo(map);
   L.tileLayer(TILE_URL, {
     maxZoom: 19,
-    attribution: "© OpenStreetMap contributors",
+    attribution: "© OpenStreetMap contributors © CARTO",
   }).addTo(map);
   let overlay = L.layerGroup().addTo(map);
   // The data bounds last auto-fitted, so a redraw that doesn't change them leaves
@@ -142,7 +149,7 @@ export function createLocationMap(
         .addTo(overlay);
     }
 
-    if (bounds.length > 0) {
+    if (bounds.length > 0 && (state.autoFit ?? true)) {
       // Auto-fit only when the framed area actually changes (new device, range,
       // or fixes). A redraw from a control tweak — the heat spot-size slider, a
       // mode switch — must keep the owner's current zoom/pan.
@@ -156,6 +163,10 @@ export function createLocationMap(
 
   return {
     update,
+    centerOn: (lat, lon) => {
+      map.setView([lat, lon], Math.max(map.getZoom(), 15), { animate: true });
+      lastFit = null; // a manual recenter; a later autoFit (Everyone) should re-fit
+    },
     destroy: () => {
       resize.disconnect();
       map.remove();

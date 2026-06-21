@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Phone management — 3 mockups</title>
+<style>
+  :root{--bg:#0e0f11;--surface:#17181b;--surface-2:#1e2024;--border:#26282c;--text:#e6e7e9;--text-2:#9a9da3;--text-3:#5c5f66;--teal:#6fb6b1}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);font:15px/1.6 system-ui,-apple-system,sans-serif;padding:40px 20px;display:flex;flex-direction:column;align-items:center}
+  .wrap{max-width:680px;width:100%}
+  h1{font-size:24px;margin:0 0 6px}
+  .sub{color:var(--text-2);margin:0 0 28px}
+  .prob{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:16px 18px;margin-bottom:28px}
+  .prob b{color:var(--teal)}
+  .prob ul{margin:8px 0 0;padding-left:20px;color:var(--text-2)}
+  a.card{display:block;text-decoration:none;color:inherit;background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:18px 20px;margin-bottom:14px;transition:border-color .12s}
+  a.card:hover{border-color:color-mix(in srgb,var(--teal) 45%,transparent)}
+  a.card .t{font-size:17px;font-weight:600;display:flex;align-items:center;gap:10px}
+  a.card .tag{font-size:11px;font-weight:600;color:var(--teal);background:color-mix(in srgb,var(--teal) 14%,transparent);border-radius:999px;padding:3px 9px}
+  a.card p{color:var(--text-2);margin:8px 0 0;font-size:14px}
+  code{font-family:ui-monospace,Menlo,monospace;font-size:12px;color:var(--text-3)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Location → Phones — management mockups</h1>
+  <p class="sub">Three interactive variants for managing the family's paired phones. Open each on a phone-width window; tap around — pairing, re-pair/roll code, rename, revoke, delete all respond.</p>
+
+  <div class="prob">
+    <b>What's being fixed</b>
+    <ul>
+      <li>Phones only — the <code>Add device (OwnTracks)</code> path is dropped.</li>
+      <li><b>Roll the token / rotate the key</b> on an already-paired phone — unified into one <b>re-pair</b> action that mints a fresh QR code; the phone redeems it and its key rotates automatically (a paired phone can only take credentials by redeeming a code).</li>
+      <li><b>Rename</b> a phone and <b>delete</b> it (distinct from revoke), so the revoked clutter from the current screen has a home.</li>
+      <li>Organised around <b>family members</b> — whose phone is whose.</li>
+    </ul>
+  </div>
+
+  <a class="card" href="a-family-roster.html">
+    <div class="t">A — Family roster + device hub <span class="tag">grouped · sheet</span></div>
+    <p>Phones grouped under each family member; tapping a phone opens a full management sheet (status + key state, re-pair, rename, danger zone). Revoked phones fold under a per-person disclosure. Most "family-first".</p>
+  </a>
+
+  <a class="card" href="b-swipe-rail.html">
+    <div class="t">B — Swipe-action rail <span class="tag">filter · swipe</span></div>
+    <p>Flat list with an Active / Revoked filter. Swipe a phone left for a 4-action rail (re-pair · rename · revoke · delete) — reuses the settled home-note / chats swipe paradigm. Rename inline, destructive actions arm a tap-again confirm, undo toast. Densest.</p>
+  </a>
+
+  <a class="card" href="c-inline-accordion.html">
+    <div class="t">C — Inline accordion <span class="tag">expand · credential</span></div>
+    <p>Each phone unfolds in place to a panel led by a <b>credential-lifecycle strip</b> (key active / aging / waiting / disabled), then an action grid; the roll-code QR opens right inside the card. Puts the key's state front-and-centre.</p>
+  </a>
+</div>
+</body>
+</html>
