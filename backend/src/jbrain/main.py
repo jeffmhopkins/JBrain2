@@ -365,9 +365,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             turn.cancel()
         if turns:
             with suppress(asyncio.TimeoutError):
-                await asyncio.wait_for(
-                    asyncio.gather(*turns, return_exceptions=True), timeout=10.0
-                )
+                await asyncio.wait_for(asyncio.gather(*turns, return_exceptions=True), timeout=10.0)
         await app.state.supervisor_client.aclose()
         if image_gen_client is not None:
             await image_gen_client.aclose()
