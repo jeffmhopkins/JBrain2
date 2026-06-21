@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The launcher-icon background: a full-bleed fill in the PWA tile colour (the
+     launcher applies its own round/squircle mask, so this must not be rounded). -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
+    <solid android:color="#15171A" />
+</shape>
