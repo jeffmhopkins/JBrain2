@@ -12,36 +12,11 @@ import type { LocationFix, PlaceGeofence } from "../api/client";
 
 export type MapMode = "live" | "trail" | "heat";
 
-// The selectable basemap styles. Each maps to a separate server-side scheme
-// (/api/tiles/{scheme}/…) with its own upstream + cache, so the toggle only swaps
-// the tiles — never the app's own dark UI chrome.
-export type TileScheme = "dark" | "light";
-
-const TILE_SCHEME_KEY = "jbrain.map.tileScheme";
-const DEFAULT_TILE_SCHEME: TileScheme = "dark";
-
-/** The owner's last basemap choice, persisted so a reload (or a tab/app switch)
- * keeps it. Defaults to dark — matching the app UI — and tolerates a missing or
- * blocked localStorage (private mode / WebView). */
-export function readTileScheme(): TileScheme {
-  try {
-    return localStorage.getItem(TILE_SCHEME_KEY) === "light" ? "light" : DEFAULT_TILE_SCHEME;
-  } catch {
-    return DEFAULT_TILE_SCHEME;
-  }
-}
-
-export function writeTileScheme(scheme: TileScheme): void {
-  try {
-    localStorage.setItem(TILE_SCHEME_KEY, scheme);
-  } catch {
-    // A blocked store just means the choice isn't remembered — never a crash.
-  }
-}
-
-function tileUrl(scheme: TileScheme): string {
-  return `/api/tiles/${scheme}/{z}/{x}/{y}.png`;
-}
+// The basemap scheme + URL helpers live in a side-effect-free module so the inline
+// tool-views can share them; re-exported here so existing `./leafletMap` importers
+// keep working.
+export { type TileScheme, readTileScheme, writeTileScheme } from "./tileScheme";
+import { type TileScheme, readTileScheme, tileUrl } from "./tileScheme";
 
 /** A person's current-location pin (the member map's switcher targets). Colour is a
  * palette class (`loc-pin-c*`) so it stays tokens-only; the initial is drawn in the
