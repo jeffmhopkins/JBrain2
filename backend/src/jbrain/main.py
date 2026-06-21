@@ -173,9 +173,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             },
             default=settings.tile_default_scheme,
         )
-        # Per-device ingest cap: 60 fixes/min sustained (burst 60). A flooding
-        # device gets a 429 and backs off; normal move-mode never trips it.
-        app.state.location_rate_limiter = TokenBucket(capacity=60, refill_per_sec=1.0)
+        # Per-device ingest cap: 60 fixes/min sustained, burst 120 so a batched
+        # offline backfill (up to MAX_BATCH=100 fixes in one POST) is accepted at
+        # once. A flooding device still 429s and backs off; one token per fix.
+        app.state.location_rate_limiter = TokenBucket(capacity=120, refill_per_sec=1.0)
         app.state.notes_repo = SqlNotesRepo(maker)
         app.state.lists_repo = SqlListsRepo(maker)
         app.state.appointments_repo = SqlAppointmentsRepo(maker)

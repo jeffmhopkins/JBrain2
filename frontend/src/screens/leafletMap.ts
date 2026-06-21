@@ -9,6 +9,7 @@ import "leaflet/dist/leaflet.css";
 // Side-effect import: augments L with `heatLayer` (the gradient Heat view).
 import "leaflet.heat";
 import type { LocationFix, PlaceGeofence } from "../api/client";
+import { withinAccuracy } from "./locationFilter";
 
 export type MapMode = "live" | "trail" | "heat";
 
@@ -120,7 +121,9 @@ export function createLocationMap(
   function update(state: MapState): void {
     overlay.remove();
     overlay = L.layerGroup().addTo(map);
-    const track = state.fixes.map((f) => L.latLng(f.latitude, f.longitude));
+    // Drop low-accuracy fixes so jittery indoor GPS doesn't smear the trail into a
+    // star-burst (matches the backend geofence accuracy gate).
+    const track = withinAccuracy(state.fixes).map((f) => L.latLng(f.latitude, f.longitude));
     const bounds: L.LatLng[] = [...track];
 
     for (const place of state.places) {
@@ -178,6 +181,8 @@ export function createLocationMap(
         minOpacity: 0.3,
       }).addTo(overlay);
     } else if (state.mode === "live" && last) {
+      // `last` is the newest fix that passed the accuracy gate — a wide-radius
+      // latest fix is intentionally not shown as "latest" (trustworthy fixes only).
       L.circleMarker(last, { radius: 7, className: "loc-lf-live" })
         .bindTooltip("latest")
         .addTo(overlay);
