@@ -122,7 +122,9 @@ async def test_tileset_schemes_use_separate_caches(tmp_path) -> None:  # noqa: A
     tiles = TileSet(
         {
             "dark": _service(tmp_path / "d", dark_fetch, upstream="https://dark/{z}/{x}/{y}.png"),
-            "light": _service(tmp_path / "l", light_fetch, upstream="https://light/{z}/{x}/{y}.png"),
+            "light": _service(
+                tmp_path / "l", light_fetch, upstream="https://light/{z}/{x}/{y}.png"
+            ),
         },
         default="dark",
     )
