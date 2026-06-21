@@ -106,13 +106,16 @@ CATALOG: tuple[ImageModel, ...] = (
         workflow="qwen_image.json",
         files=(_GEN_DIFFUSION, _TEXT_ENCODER, _VAE),
         size_gb=28.0,
-        vram_gb=20.0,
+        # On-box (ROCm) resident, NOT the fp8 disk size: AMD has no fp8 compute, so
+        # ComfyUI upcasts the weights to bf16 at load — the diffusion model is ~39 GB
+        # in memory + ~8 GB text encoder. fp8 saves disk, not RAM, on gfx1151.
+        vram_gb=48.0,
         fast_steps=4,
         quality_steps=20,
         recommended=True,
-        note="Validated on Strix Halo: 1328x1328, 20 steps, ~3.5 min on the iGPU. "
-        "The fast preset needs a step-distill (Lightning) LoRA — add it to the "
-        "catalog once confirmed on-box.",
+        note="Validated on Strix Halo at 1024x1024, 20 steps. ~48 GB resident (ROCm "
+        "upcasts fp8 to bf16). VAE decode is tiled to keep the decode peak in budget. "
+        "The fast preset needs a step-distill (Lightning) LoRA — add it once confirmed.",
     ),
     ImageModel(
         id="qwen-image-edit",
@@ -121,13 +124,14 @@ CATALOG: tuple[ImageModel, ...] = (
         workflow="qwen_image_edit.json",
         files=(_EDIT_DIFFUSION, _TEXT_ENCODER, _VAE),
         size_gb=44.0,
-        vram_gb=38.0,
+        # bf16 on disk already; ~38 GB diffusion + ~8 GB text encoder resident.
+        vram_gb=46.0,
         fast_steps=4,
         quality_steps=20,
         recommended=False,
         note="Graph validated structurally (exported from the box); the bf16 "
-        "weights/repo path await an on-box download+run. ~38 GB resident — heavier "
-        "than the fp8 generate model.",
+        "weights/repo path await an on-box download+run. ~46 GB resident. VAE decode "
+        "is tiled to keep the decode peak in budget.",
     ),
 )
 
