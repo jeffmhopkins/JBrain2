@@ -1,5 +1,16 @@
 # On-box fish identification — build plan (Waves F0–F5)
 
+> **Status (branch `claude/fish-identification-tool-61qzru`):** Waves **F1–F5 shipped**
+> on the branch — the adapter/gateway/catalog/config, the `identify_fish` tool
+> (load→use→unload), the hero-verdict result card (GUI gate #1 → **A**), the owner-only
+> control-plane API, the transient-row settings UI (GUI gate #2 → **A**), and the
+> compose profile + setup script. All locally verified (ruff/pyright/biome/tsc clean;
+> 1969 backend unit + 692 frontend tests green; testcontainers integration tests run in
+> CI). Each wave passed an independent adversarial review. **Remaining:** the **F0 host
+> spike** (build/validate the ROCm fishial service image + pin the weights release) is
+> gated on the owner's Strix Halo box — until then the backend is faked in tests and the
+> compose `FISH_ID_IMAGE` / `FISH_ID_RELEASE` are placeholders.
+
 Adds an **`identify_fish`** agent tool backed by the MIT-licensed
 [`fishial/fish-identification`](https://github.com/fishial/fish-identification)
 models (DINOv2 + ViT classifier, segmentation/detection heads; ~866 species), run
