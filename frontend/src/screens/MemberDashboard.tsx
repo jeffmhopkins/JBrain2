@@ -12,7 +12,7 @@
 // History button opens Trail/Heat over a drag-both-ends time window. Location domain
 // stays on --location (teal); names + times only.
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   type LocationFix,
   type MemberSubject,
@@ -25,13 +25,23 @@ import {
   type LocationMapHandle,
   type MapMode,
   type MapPin,
+  type MapState,
   type TileScheme,
   createLocationMap,
   readTileScheme,
   writeTileScheme,
 } from "./leafletMap";
 import { type LiveFix, connectLive } from "./liveSocket";
-import { travelingSpeedMph } from "./speed";
+import { TRAVELING_MIN_MPS, travelingSpeedMph } from "./speed";
+import {
+  METRIC_LABEL,
+  TRAIL_METRICS,
+  type TrailMetric,
+  colorForFix,
+  computeDwell,
+  legendInfo,
+  metricLabel,
+} from "./trailMetric";
 
 export interface MemberDeps {
   /** Resolve the session cookie's principal; rejects (401) when unauthenticated. */
@@ -122,6 +132,24 @@ function presetToMs(preset: WindowPreset): { sinceMs: number; untilMs: number } 
   return { sinceMs: now - PRESET_MS[preset], untilMs: now };
 }
 
+// The dual slider's two ends, as 0..100 positions over the loaded trail's own time
+// extent (0 = first fix, 100 = newest). It's a pure in-memory trim, never a refetch.
+type ScrubWindow = { lo: number; hi: number };
+
+/** Trim a (time-ordered) trail to the slider's [lo, hi] fraction of its own span. */
+function trimByWindow(trail: LocationFix[], win: ScrubWindow): LocationFix[] {
+  if (trail.length === 0 || (win.lo <= 0 && win.hi >= 100)) return trail;
+  const t0 = new Date(trail[0]?.captured_at ?? 0).getTime();
+  const t1 = new Date(trail[trail.length - 1]?.captured_at ?? 0).getTime();
+  if (!(t1 > t0)) return trail;
+  const start = t0 + ((t1 - t0) * win.lo) / 100;
+  const end = t0 + ((t1 - t0) * win.hi) / 100;
+  return trail.filter((f) => {
+    const t = new Date(f.captured_at).getTime();
+    return t >= start && t <= end;
+  });
+}
+
 function LiveMap({ deps }: { deps: MemberDeps | undefined }) {
   const listRoster = deps?.listRoster ?? api.memberRoster;
   const listPlaces = deps?.listPlaces ?? api.memberPlaces;
@@ -136,6 +164,12 @@ function LiveMap({ deps }: { deps: MemberDeps | undefined }) {
   const [sel, setSel] = useState<Selection>("all");
   const [mode, setMode] = useState<Exclude<MapMode, "live">>("trail");
   const [windowPreset, setWindowPreset] = useState<WindowPreset>(DEFAULT_PRESET);
+  // The trail's colour metric + the tapped/scrubbed point to inspect.
+  const [metric, setMetric] = useState<TrailMetric>("speed");
+  const [picked, setPicked] = useState<LocationFix | null>(null);
+  // The dual start/stop slider (0..100) within the loaded span. It NEVER refetches —
+  // it trims the in-memory trail by time — so dragging stays snappy.
+  const [win, setWin] = useState<ScrubWindow>({ lo: 0, hi: 100 });
   // Heat-view tuning (the expanded History pane): per-point spot radius (px) and
   // per-point weight (how much one fix contributes to the density ramp).
   const [heatRadius, setHeatRadius] = useState(HEAT_RADIUS);
@@ -156,11 +190,26 @@ function LiveMap({ deps }: { deps: MemberDeps | undefined }) {
   selfIdRef.current = (roster ?? []).find((s) => s.is_self)?.subject_id ?? null;
   // Buffered latest live fix per OTHER subject, flushed on an interval (see below).
   const pendingRef = useRef<Map<string, LiveFix>>(new Map());
+  // Coalesce map redraws to one per animation frame so slider drags stay at 60fps.
+  const rafRef = useRef<number | null>(null);
+  const nextStateRef = useRef<MapState | null>(null);
+  const scheduleUpdate = useCallback((s: MapState) => {
+    nextStateRef.current = s;
+    if (rafRef.current != null) return;
+    rafRef.current = requestAnimationFrame(() => {
+      rafRef.current = null;
+      if (nextStateRef.current) handle.current?.update(nextStateRef.current);
+    });
+  }, []);
 
   // Create the Leaflet map once; a pin tap follows through to the switcher.
   useEffect(() => {
     if (!canvas.current) return;
-    const h = createLocationMap(canvas.current, (id) => setSel(id));
+    const h = createLocationMap(
+      canvas.current,
+      (id) => setSel(id),
+      (fix) => setPicked(fix),
+    );
     handle.current = h;
     return () => {
       h.destroy();
@@ -218,6 +267,11 @@ function LiveMap({ deps }: { deps: MemberDeps | undefined }) {
             accuracy_m: fix.accuracy_m,
             battery_pct: fix.battery_pct,
             velocity_mps: fix.velocity_mps,
+            // The live feed carries speed but not course/accel/altitude; the historical
+            // trail (from positions) does. The live tail is just the newest few points.
+            course_deg: null,
+            acceleration_mps2: null,
+            altitude_m: null,
           },
         ]);
       }
@@ -271,6 +325,23 @@ function LiveMap({ deps }: { deps: MemberDeps | undefined }) {
     if (sel === "all") setSheet((s) => (s === "history" ? null : s));
   }, [sel]);
 
+  // Changing person or span resets the scrub window to full and drops any inspected
+  // point (it may no longer be in range). The deps are intentional triggers (the body
+  // only calls setters), so the exhaustive-deps heuristic doesn't apply.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: sel/windowPreset are reset triggers
+  useEffect(() => {
+    setWin({ lo: 0, hi: 100 });
+    setPicked(null);
+  }, [sel, windowPreset]);
+
+  // The slider trims the loaded trail in memory (no refetch → snappy).
+  const visibleTrail = useMemo(() => trimByWindow(trail, win), [trail, win]);
+  // "Time at place" dwell over the visible trail — only when that metric is active.
+  const dwellInfo = useMemo(
+    () => (metric === "timeplace" ? computeDwell(visibleTrail) : { dwell: [], max: 0 }),
+    [metric, visibleTrail],
+  );
+
   // Each visible subject gets a stable colour by roster order.
   const colorOf = useMemo(() => {
     const m = new Map<string, string>();
@@ -294,16 +365,44 @@ function LiveMap({ deps }: { deps: MemberDeps | undefined }) {
       live: isLive(s.last_seen),
       selected: s.subject_id === sel,
     }));
-    h.update({
+    // The inspected point's callout: tinted + labelled in the active metric.
+    const pickedIdx = picked ? visibleTrail.indexOf(picked) : -1;
+    const pickedDwell = pickedIdx >= 0 ? (dwellInfo.dwell[pickedIdx] ?? 0) : 0;
+    const who = roster.find((s) => s.subject_id === sel)?.label ?? "";
+    const selected =
+      picked && sel !== "all"
+        ? {
+            lat: picked.latitude,
+            lon: picked.longitude,
+            color: colorForFix(metric, picked, pickedDwell, dwellInfo.max),
+            label: `${(who[0] ?? "•").toUpperCase()}: ${metricLabel(metric, picked, pickedDwell)}`,
+          }
+        : null;
+    scheduleUpdate({
       mode: sel === "all" ? "live" : mode,
-      fixes: sel === "all" ? [] : trail,
+      fixes: sel === "all" ? [] : visibleTrail,
+      metric,
+      selected,
       heatRadius,
       heatWeight,
       places,
       pins,
       autoFit: sel === "all",
     });
-  }, [roster, places, sel, colorOf, mode, trail, heatRadius, heatWeight]);
+  }, [
+    roster,
+    places,
+    sel,
+    colorOf,
+    mode,
+    visibleTrail,
+    metric,
+    picked,
+    dwellInfo,
+    heatRadius,
+    heatWeight,
+    scheduleUpdate,
+  ]);
 
   // Swap the basemap in place when the toggle changes (no remount; pins stay put).
   useEffect(() => {
@@ -318,11 +417,23 @@ function LiveMap({ deps }: { deps: MemberDeps | undefined }) {
     writeTileScheme(s);
   };
 
+  // Scrubbing the slider trims in memory; if the newest fix now at the end was moving,
+  // surface its readout (the "drag onto a moving point shows its info" behaviour).
+  const onWin = (w: ScrubWindow) => {
+    setWin(w);
+    const sub = trimByWindow(trail, w);
+    const newest = sub[sub.length - 1];
+    setPicked(newest && (newest.velocity_mps ?? 0) >= TRAVELING_MIN_MPS ? newest : null);
+  };
+
   return (
     <div className="livemap">
       <div className="livemap-canvas" ref={canvas} data-testid="map-canvas" />
       <PeopleSwitcher roster={roster} sel={sel} colorOf={colorOf} failed={failed} onPick={setSel} />
       <TileToggle scheme={tileScheme} onPick={pickScheme} />
+      {sel !== "all" && (
+        <MetricLegend metric={metric} dwellMax={dwellInfo.max} onPick={setMetric} />
+      )}
       <DetailsSheet
         open={sheet === "details"}
         roster={roster}
@@ -337,14 +448,23 @@ function LiveMap({ deps }: { deps: MemberDeps | undefined }) {
         open={sheet === "history"}
         mode={mode}
         windowPreset={windowPreset}
+        win={win}
         heatRadius={heatRadius}
         heatWeight={heatWeight}
         onMode={setMode}
         onPreset={setWindowPreset}
+        onWin={onWin}
         onRadius={setHeatRadius}
         onWeight={setHeatWeight}
         onClose={() => setSheet(null)}
       />
+      {picked && sel !== "all" && (
+        <PointCard
+          fix={picked}
+          who={roster?.find((s) => s.subject_id === sel)?.label ?? "Device"}
+          onClose={() => setPicked(null)}
+        />
+      )}
       <DockBar roster={roster} sel={sel} colorOf={colorOf} sheet={sheet} onToggle={toggleSheet} />
     </div>
   );
@@ -706,10 +826,12 @@ function HistorySheet({
   open,
   mode,
   windowPreset,
+  win,
   heatRadius,
   heatWeight,
   onMode,
   onPreset,
+  onWin,
   onRadius,
   onWeight,
   onClose,
@@ -717,10 +839,12 @@ function HistorySheet({
   open: boolean;
   mode: Exclude<MapMode, "live">;
   windowPreset: WindowPreset;
+  win: ScrubWindow;
   heatRadius: number;
   heatWeight: number;
   onMode: (m: Exclude<MapMode, "live">) => void;
   onPreset: (p: WindowPreset) => void;
+  onWin: (w: ScrubWindow) => void;
   onRadius: (r: number) => void;
   onWeight: (w: number) => void;
   onClose: () => void;
@@ -766,6 +890,7 @@ function HistorySheet({
       )}
       <div className="lm-sec-h">Time window</div>
       <WindowPresets preset={windowPreset} onPreset={onPreset} />
+      <DualSlider win={win} onWin={onWin} />
       <div className="lm-priv">Family-only · names + times only, never a coordinate.</div>
     </div>
   );
@@ -835,6 +960,161 @@ function WindowPresets({
           {p}
         </button>
       ))}
+    </div>
+  );
+}
+
+/** The dual start/stop slider within the loaded span: two overlaid range inputs with
+ * a filled bar for the active sub-window. Trims the in-memory trail only — no refetch
+ * on drag, so it stays snappy on a long span. */
+function DualSlider({ win, onWin }: { win: ScrubWindow; onWin: (w: ScrubWindow) => void }) {
+  return (
+    <div className="lm-range">
+      <div className="lm-range-track" />
+      <div className="lm-range-fill" style={{ left: `${win.lo}%`, width: `${win.hi - win.lo}%` }} />
+      <input
+        type="range"
+        min={0}
+        max={100}
+        value={win.lo}
+        aria-label="Window start"
+        onChange={(e) => onWin({ lo: Math.min(Number(e.target.value), win.hi - 2), hi: win.hi })}
+      />
+      <input
+        type="range"
+        min={0}
+        max={100}
+        value={win.hi}
+        aria-label="Window end"
+        onChange={(e) => onWin({ lo: win.lo, hi: Math.max(Number(e.target.value), win.lo + 2) })}
+      />
+    </div>
+  );
+}
+
+/** The legend (top-left, under the names): the active metric's colour→value scale,
+ * with an icon that drops down the metric picker. */
+function MetricLegend({
+  metric,
+  dwellMax,
+  onPick,
+}: {
+  metric: TrailMetric;
+  dwellMax: number;
+  onPick: (m: TrailMetric) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const info = legendInfo(metric, dwellMax);
+  useEffect(() => {
+    if (!open) return;
+    const close = () => setOpen(false);
+    document.addEventListener("click", close);
+    return () => document.removeEventListener("click", close);
+  }, [open]);
+  return (
+    <div className="lm-legend lm-float">
+      <button
+        type="button"
+        className={`lm-legend-h${open ? " open" : ""}`}
+        aria-haspopup="true"
+        aria-label="Trail color metric"
+        onClick={(e) => {
+          e.stopPropagation();
+          setOpen((o) => !o);
+        }}
+      >
+        <svg
+          className="lm-legend-ic"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
+        >
+          <path d="M12 3 2 9l10 6 10-6-10-6Z" />
+          <path d="M2 15l10 6 10-6" />
+        </svg>
+        <span className="lm-legend-nm">{info.label}</span>
+        <span className="lm-legend-unit">{info.unit}</span>
+      </button>
+      <div className="lm-legend-ramp" style={{ background: info.gradient }} />
+      <div className="lm-legend-ticks">
+        <span>{info.lo}</span>
+        <span>{info.hi}</span>
+      </div>
+      {open && (
+        <div className="lm-legend-menu lm-float" role="menu">
+          {TRAIL_METRICS.map((m) => (
+            <button
+              key={m}
+              type="button"
+              role="menuitemradio"
+              aria-checked={m === metric}
+              className={m === metric ? "on" : ""}
+              onClick={() => {
+                onPick(m);
+                setOpen(false);
+              }}
+            >
+              <span
+                className="lm-legend-sw"
+                style={{ background: legendInfo(m, dwellMax).gradient }}
+              />
+              {METRIC_LABEL[m]}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+const PC_COMPASS = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"];
+
+/** The tapped/scrubbed point's full readout — a compact two-column table above the
+ * dock (the mock's layout). Shows everything the fix carries; "—" where unreported. */
+function PointCard({
+  fix,
+  who,
+  onClose,
+}: {
+  fix: LocationFix;
+  who: string;
+  onClose: () => void;
+}) {
+  const course = fix.course_deg;
+  const cells: [string, string][] = [
+    ["Speed", travelingSpeedMph(fix.velocity_mps) ?? "stopped"],
+    [
+      "Heading",
+      course == null ? "—" : `${PC_COMPASS[Math.round(course / 45) % 8]} ${Math.round(course)}°`,
+    ],
+    ["Accel", fix.acceleration_mps2 == null ? "—" : `${fix.acceleration_mps2.toFixed(1)} m/s²`],
+    ["Battery", fix.battery_pct == null ? "—" : `${fix.battery_pct}%`],
+    ["Altitude", fix.altitude_m == null ? "—" : `${Math.round(fix.altitude_m)} m`],
+    ["Accuracy", fix.accuracy_m == null ? "—" : `±${Math.round(fix.accuracy_m)} m`],
+  ];
+  return (
+    <div className="lm-pointcard lm-float">
+      <div className="lm-pc-h">
+        <span className="lm-pc-nm">{who}</span>
+        <span className="lm-pc-when">
+          {lastSeen(fix.captured_at)} · {timeOfDay(fix.captured_at)}
+        </span>
+        <button type="button" className="lm-pc-x" aria-label="Close" onClick={onClose}>
+          ×
+        </button>
+      </div>
+      <div className="lm-pc-grid">
+        {cells.map(([k, v]) => (
+          <div className="lm-pc-tr" key={k}>
+            <span className="lm-pc-k">{k}</span>
+            <span className="lm-pc-v">{v}</span>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

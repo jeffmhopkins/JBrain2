@@ -76,6 +76,10 @@ class FakeLocationRepo:
                 longitude=-74.0,
                 accuracy_m=10.0,
                 battery_pct=80,
+                velocity_mps=10.0,
+                course_deg=270.0,
+                acceleration_mps2=1.5,
+                altitude_m=41.0,
             )
         ]
 
@@ -208,6 +212,9 @@ def test_positions_returns_trail_and_audits(client: TestClient, locs: FakeLocati
     _as_member(client)
     data = client.get("/api/member/positions", params={"subject_id": "subject-sib"}).json()
     assert len(data) == 1 and data[0]["latitude"] == 40.0
+    # Per-fix telemetry rides along for the trail's tap-to-inspect popup.
+    assert data[0]["velocity_mps"] == 10.0 and data[0]["course_deg"] == 270.0
+    assert data[0]["acceleration_mps2"] == 1.5 and data[0]["altitude_m"] == 41.0
     assert locs.fix_calls[0]["subject_id"] == "subject-sib"
     # The read recorded a who-saw-whom row attributing the member to itself.
     assert locs.view_calls[0]["target_subject_id"] == "subject-sib"

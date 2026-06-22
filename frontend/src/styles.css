@@ -12076,6 +12076,23 @@ input.ld-title {
   stroke-linecap: round;
   stroke-linejoin: round;
 }
+.loc-lf-hit {
+  cursor: pointer;
+}
+/* The tap-to-inspect callout: a glassy chip tinted to the active metric. */
+.loc-lf-pick-tip.leaflet-tooltip {
+  background: var(--surface-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  font-weight: 700;
+  font-size: 12px;
+  padding: 3px 9px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.5);
+}
+.loc-lf-pick-tip.leaflet-tooltip-top::before {
+  border-top-color: var(--surface-2);
+}
 .loc-lf-start {
   fill: var(--green);
   fill-opacity: 1;
@@ -13287,4 +13304,150 @@ input.ld-title {
 .atx-hint {
   margin-left: auto;
   color: var(--text-3);
+}
+/* --- trail metric legend (top-left, under the names) -------------------- */
+.lm-legend {
+  position: absolute;
+  top: 92px;
+  left: 12px;
+  z-index: 8;
+  width: 172px;
+  border-radius: 13px;
+  padding: 9px 11px;
+}
+.lm-legend-h {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  background: transparent;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+  padding: 0;
+  margin-bottom: 6px;
+  text-align: left;
+}
+.lm-legend-ic {
+  width: 14px;
+  height: 14px;
+  color: var(--text-2);
+  flex: 0 0 auto;
+}
+.lm-legend-nm {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-2);
+}
+.lm-legend-unit {
+  font-size: 10.5px;
+  color: var(--text-3);
+  margin-left: auto;
+}
+.lm-legend-ramp {
+  height: 9px;
+  border-radius: 5px;
+  margin-bottom: 4px;
+}
+.lm-legend-ticks {
+  display: flex;
+  justify-content: space-between;
+  font-size: 10px;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+.lm-legend-menu {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  margin-top: 6px;
+  width: 174px;
+  border-radius: 12px;
+  padding: 5px;
+  z-index: 12;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.lm-legend-menu button {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+  padding: 8px 9px;
+  border-radius: 8px;
+  cursor: pointer;
+  text-align: left;
+}
+.lm-legend-menu button:hover,
+.lm-legend-menu button.on {
+  background: var(--surface-2);
+}
+.lm-legend-sw {
+  width: 26px;
+  height: 10px;
+  border-radius: 4px;
+  flex: 0 0 auto;
+}
+
+/* --- tap-to-inspect point card (floats above the dock) ----------------- */
+.lm-pointcard {
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: 92px;
+  z-index: 8;
+  border-radius: 16px;
+  padding: 11px 13px;
+}
+.lm-pc-h {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 9px;
+}
+.lm-pc-nm {
+  font-weight: 650;
+}
+.lm-pc-when {
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+}
+.lm-pc-x {
+  margin-left: auto;
+  border: 0;
+  background: transparent;
+  color: var(--text-2);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 2px;
+}
+.lm-pc-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  column-gap: 16px;
+}
+.lm-pc-tr {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--border);
+}
+.lm-pc-k {
+  font-size: 11px;
+  color: var(--text-3);
+}
+.lm-pc-v {
+  font-size: 12.5px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
 }

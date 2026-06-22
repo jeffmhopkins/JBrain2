@@ -15,6 +15,7 @@ import type { LiveFix } from "./liveSocket";
 // and the pin-tap callback — so the tests assert what the screen drives, no real map.
 let lastState: MapState | null = null;
 let onSelect: ((id: string) => void) | null = null;
+let onPointSelect: ((fix: LocationFix) => void) | null = null;
 const updateSpy = vi.fn((s: MapState) => {
   lastState = s;
 });
@@ -22,8 +23,13 @@ const centerSpy = vi.fn();
 const schemeSpy = vi.fn();
 const writeSchemeSpy = vi.fn();
 vi.mock("./leafletMap", () => ({
-  createLocationMap: (_el: HTMLElement, sel?: (id: string) => void) => {
+  createLocationMap: (
+    _el: HTMLElement,
+    sel?: (id: string) => void,
+    point?: (fix: LocationFix) => void,
+  ) => {
     onSelect = sel ?? null;
+    onPointSelect = point ?? null;
     return { update: updateSpy, centerOn: centerSpy, setScheme: schemeSpy, destroy: vi.fn() };
   },
   readTileScheme: () => "dark",
@@ -46,6 +52,9 @@ const fix = (over: Partial<LocationFix> = {}): LocationFix => ({
   accuracy_m: 10,
   battery_pct: 80,
   velocity_mps: null,
+  course_deg: null,
+  acceleration_mps2: null,
+  altitude_m: null,
   ...over,
 });
 
@@ -103,6 +112,7 @@ beforeEach(() => {
   writeSchemeSpy.mockClear();
   lastState = null;
   onSelect = null;
+  onPointSelect = null;
   liveOnFix = null;
 });
 
@@ -277,11 +287,14 @@ describe("MemberDashboard", () => {
     try {
       render(<MemberDashboard deps={deps()} />);
       await act(async () => {
-        await vi.advanceTimersByTimeAsync(0); // resolve mount fetches
+        await vi.advanceTimersByTimeAsync(50); // resolve mount fetches + the rAF redraw
       });
       act(() => onSelect?.("s-bob"));
       await act(async () => {
-        await vi.advanceTimersByTimeAsync(0); // resolve the trail fetch
+        await vi.advanceTimersByTimeAsync(50); // resolve the trail fetch
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(50); // flush the post-fetch rAF redraw
       });
       expect(lastState?.fixes?.length).toBe(2);
       act(() =>
@@ -299,13 +312,58 @@ describe("MemberDashboard", () => {
       expect(lastState?.fixes?.length).toBe(2);
       expect(lastState?.pins?.find((p) => p.subjectId === "s-bob")?.lat).toBe(41.0);
       await act(async () => {
-        await vi.advanceTimersByTimeAsync(10_000);
+        await vi.advanceTimersByTimeAsync(10_000); // fire the coalescing flush
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(50); // flush the post-flush rAF redraw
       });
       expect(lastState?.fixes?.length).toBe(3);
       expect(lastState?.pins?.find((p) => p.subjectId === "s-bob")?.lat).toBe(41.5);
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("recolors the trail when a metric is picked from the legend dropdown", async () => {
+    render(<MemberDashboard deps={deps()} />);
+    await selectBob();
+    await waitFor(() => expect(lastState?.metric).toBe("speed"));
+    fireEvent.click(screen.getByRole("button", { name: "Trail color metric" }));
+    fireEvent.click(screen.getByRole("menuitemradio", { name: "Accel" }));
+    await waitFor(() => expect(lastState?.metric).toBe("accel"));
+  });
+
+  it("inspects a tapped trail point in a card and on the map", async () => {
+    render(<MemberDashboard deps={deps()} />);
+    await selectBob();
+    await waitFor(() => expect(onPointSelect).not.toBeNull());
+    act(() =>
+      onPointSelect?.(
+        fix({ velocity_mps: 13.4, course_deg: 47, battery_pct: 64, acceleration_mps2: 1.8 }),
+      ),
+    );
+    // The card fills in the readout...
+    expect(await screen.findByText(/30 mph/)).toBeInTheDocument();
+    expect(screen.getByText(/47°/)).toBeInTheDocument();
+    // ...and the map gets a tinted callout for the same point.
+    await waitFor(() => expect(lastState?.selected?.label).toMatch(/30 mph/));
+  });
+
+  it("trims the trail with the slider without refetching (snappy scrub)", async () => {
+    const d = deps({
+      listPositions: vi.fn(async () => [
+        fix({ captured_at: new Date(Date.now() - 60 * 60_000).toISOString() }),
+        fix({ captured_at: new Date(Date.now() - 30 * 60_000).toISOString() }),
+        fix({ captured_at: new Date().toISOString() }),
+      ]),
+    });
+    render(<MemberDashboard deps={d} />);
+    await selectBob();
+    await waitFor(() => expect(lastState?.fixes?.length).toBe(3));
+    // Drag the start thumb forward → drops the oldest fix(es), in memory only.
+    fireEvent.change(screen.getByLabelText("Window start"), { target: { value: "60" } });
+    await waitFor(() => expect((lastState?.fixes?.length ?? 3) < 3).toBe(true));
+    expect(d.listPositions).toHaveBeenCalledTimes(1); // never refetched on drag
   });
 
   it("clears the trail when its fetch fails", async () => {

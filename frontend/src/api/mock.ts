@@ -2331,12 +2331,16 @@ function mockTrail(): {
   accuracy_m: number | null;
   battery_pct: number | null;
   velocity_mps: number | null;
+  course_deg: number | null;
+  acceleration_mps2: number | null;
+  altitude_m: number | null;
 }[] {
   const out = [];
   for (let i = 0; i < 40; i++) {
     // A walk from Home toward Office, dwelling at the Office end (heat cluster).
     const t = Math.min(1, i / 25);
     const dwell = i > 25 ? (i - 25) * 0.0001 : 0;
+    const vel = i < 25 ? Math.round(13 * Math.sin((i / 25) * Math.PI) * 10) / 10 : 0.2;
     out.push({
       captured_at: new Date(Date.now() - (40 - i) * 6 * 60_000).toISOString(),
       latitude: 39.997 + 0.004 * t + (Math.random() - 0.5) * 0.0002 + dwell,
@@ -2345,7 +2349,10 @@ function mockTrail(): {
       battery_pct: 80 - Math.floor(i / 4),
       // A speed hump (0 → fast → 0) on the way, then near-still at the dwell, so the
       // trail shows the full speed-colour ramp in the mock.
-      velocity_mps: i < 25 ? Math.round(13 * Math.sin((i / 25) * Math.PI) * 10) / 10 : 0.2,
+      velocity_mps: vel,
+      course_deg: Math.round((40 + i * 6) % 360), // a gentle curve for the heading wheel
+      acceleration_mps2: Math.round(Math.abs(Math.sin(i / 3)) * 25) / 10, // 0..2.5 m/s²
+      altitude_m: 38 + Math.round(8 * Math.sin(i / 5)),
     });
   }
   return out;

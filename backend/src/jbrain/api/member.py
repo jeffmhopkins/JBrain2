@@ -89,6 +89,10 @@ class FixPointOut(BaseModel):
     accuracy_m: float | None
     battery_pct: int | None
     velocity_mps: float | None
+    # Per-fix telemetry for the trail's tap-to-inspect popup (course/accel/altitude).
+    course_deg: float | None
+    acceleration_mps2: float | None
+    altitude_m: float | None
 
     @classmethod
     def of(cls, f: FixPoint) -> "FixPointOut":
@@ -99,6 +103,9 @@ class FixPointOut(BaseModel):
             accuracy_m=f.accuracy_m,
             battery_pct=f.battery_pct,
             velocity_mps=f.velocity_mps,
+            course_deg=f.course_deg,
+            acceleration_mps2=f.acceleration_mps2,
+            altitude_m=f.altitude_m,
         )
 
 

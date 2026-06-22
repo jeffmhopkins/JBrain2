@@ -74,6 +74,12 @@ export interface LocationFix {
   /** Speed (m/s) at this fix; null when the device didn't report one. Drives the
    * speed-colored trail. */
   velocity_mps: number | null;
+  /** Heading (degrees, 0–360); per-fix telemetry for the tap-to-inspect popup. */
+  course_deg: number | null;
+  /** Absolute linear acceleration (m/s²), 0.2 s-filtered. */
+  acceleration_mps2: number | null;
+  /** Altitude (m). */
+  altitude_m: number | null;
 }
 
 export interface LatLon {
