@@ -105,12 +105,12 @@ async def store_sample(
                     captured_at, mem_total_bytes, mem_available_bytes,
                     swap_total_bytes, swap_free_bytes, disk_total_bytes, disk_free_bytes,
                     load_1m, load_5m, load_15m, uptime_seconds, gpu_busy_percent,
-                    fan_rpm_max, fan_rpm, containers
+                    power_w, fan_rpm_max, fan_rpm, containers
                 ) VALUES (
                     coalesce(:captured_at, now()), :mem_total, :mem_avail,
                     :swap_total, :swap_free, :disk_total, :disk_free,
                     :load_1m, :load_5m, :load_15m, :uptime, :gpu,
-                    :fan_max, cast(:fan_rpm AS jsonb), cast(:containers AS jsonb)
+                    :power, :fan_max, cast(:fan_rpm AS jsonb), cast(:containers AS jsonb)
                 )
                 """
             ),
@@ -127,6 +127,7 @@ async def store_sample(
                 "load_15m": metrics["load_15m"],
                 "uptime": metrics["uptime_seconds"],
                 "gpu": metrics.get("gpu_busy_percent"),
+                "power": metrics.get("apu_power_w"),
                 "fan_max": fan_rpm_max_of(fan_rpm),
                 "fan_rpm": json.dumps(fan_rpm) if fan_rpm is not None else None,
                 "containers": json.dumps(metrics.get("containers"))
@@ -143,7 +144,7 @@ INSERT INTO app.host_metrics_hourly AS h (
     bucket, sample_count, load_1m_avg, load_1m_max, load_5m_avg, load_15m_avg,
     mem_total_bytes, mem_used_avg, mem_used_max, swap_used_avg, swap_used_max,
     disk_total_bytes, disk_used_avg, disk_used_max,
-    gpu_busy_avg, gpu_busy_max, fan_rpm_avg, fan_rpm_max
+    gpu_busy_avg, gpu_busy_max, fan_rpm_avg, fan_rpm_max, power_w_avg, power_w_max
 )
 SELECT
     time_bucket(INTERVAL '1 hour', captured_at),
@@ -158,7 +159,8 @@ SELECT
     avg(disk_total_bytes - disk_free_bytes)::bigint,
     max(disk_total_bytes - disk_free_bytes),
     avg(gpu_busy_percent), max(gpu_busy_percent),
-    avg(fan_rpm_max), max(fan_rpm_max)
+    avg(fan_rpm_max), max(fan_rpm_max),
+    avg(power_w), max(power_w)
 FROM app.host_metrics
 WHERE captured_at >= :since
 GROUP BY 1
@@ -172,7 +174,8 @@ ON CONFLICT (bucket) DO UPDATE SET
     disk_total_bytes = EXCLUDED.disk_total_bytes,
     disk_used_avg = EXCLUDED.disk_used_avg, disk_used_max = EXCLUDED.disk_used_max,
     gpu_busy_avg = EXCLUDED.gpu_busy_avg, gpu_busy_max = EXCLUDED.gpu_busy_max,
-    fan_rpm_avg = EXCLUDED.fan_rpm_avg, fan_rpm_max = EXCLUDED.fan_rpm_max
+    fan_rpm_avg = EXCLUDED.fan_rpm_avg, fan_rpm_max = EXCLUDED.fan_rpm_max,
+    power_w_avg = EXCLUDED.power_w_avg, power_w_max = EXCLUDED.power_w_max
 """
 
 
@@ -226,7 +229,7 @@ _RAW_SELECT = """
     avg(swap_total_bytes - swap_free_bytes)::bigint AS swap_used,
     avg(disk_total_bytes - disk_free_bytes)::bigint AS disk_used,
     max(disk_total_bytes) AS disk_total,
-    avg(gpu_busy_percent) AS gpu, max(fan_rpm_max) AS fan
+    avg(gpu_busy_percent) AS gpu, max(fan_rpm_max) AS fan, avg(power_w) AS power
 """
 
 _HOURLY_SELECT = """
@@ -234,7 +237,7 @@ _HOURLY_SELECT = """
     avg(mem_used_avg)::bigint AS mem_used, max(mem_total_bytes) AS mem_total,
     avg(swap_used_avg)::bigint AS swap_used,
     avg(disk_used_avg)::bigint AS disk_used, max(disk_total_bytes) AS disk_total,
-    avg(gpu_busy_avg) AS gpu, max(fan_rpm_max) AS fan
+    avg(gpu_busy_avg) AS gpu, max(fan_rpm_max) AS fan, avg(power_w_avg) AS power
 """
 
 
@@ -294,6 +297,7 @@ async def history(
             "disk_total_bytes": _int(r["disk_total"]),
             "gpu_busy_percent": _round(r["gpu"]),
             "fan_rpm_max": _int(r["fan"]),
+            "power_w": _round(r["power"]),
         }
         for r in rows
     ]

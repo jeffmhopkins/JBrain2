@@ -25,6 +25,7 @@ function metrics() {
     uptime_seconds: 0,
     gpu_busy_percent: null,
     fan_rpm: null,
+    apu_power_w: null,
     containers: [],
     db: { db_size_bytes: 23 * 2 ** 20, note_count: 2, attachment_count: 5, attachment_bytes: 0 },
     blobs: { file_count: 5, total_bytes: 5 * 2 ** 20 },
