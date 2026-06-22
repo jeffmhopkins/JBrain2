@@ -64,6 +64,9 @@ export interface LocationMapHandle {
   // Recenter on a point (the member map's tap-a-person-to-center), keeping at least
   // a street-level zoom.
   centerOn: (lat: number, lon: number) => void;
+  // Smoothly pan to a point at the CURRENT zoom — the focused person's map "follows"
+  // them as live fixes move them, without the zoom jump of a recenter.
+  follow: (lat: number, lon: number) => void;
   // Swap the basemap style in place (the light/dark tile toggle). Re-points the
   // existing tile layer, so overlays/markers stay put.
   setScheme: (scheme: TileScheme) => void;
@@ -301,6 +304,14 @@ export function createLocationMap(
     centerOn: (lat, lon) => {
       map.setView([lat, lon], Math.max(map.getZoom(), 15), { animate: true });
       lastFit = null; // a manual recenter; a later autoFit (Everyone) should re-fit
+    },
+    follow: (lat, lon) => {
+      // Pan at the current zoom; skip the work when they're already ~centred so GPS
+      // jitter doesn't nudge the view every fix.
+      const c = map.getCenter();
+      if (Math.abs(c.lat - lat) < 1e-5 && Math.abs(c.lng - lon) < 1e-5) return;
+      map.panTo([lat, lon], { animate: true, duration: 0.6 });
+      lastFit = null;
     },
     setScheme: (next) => {
       if (next === currentScheme) return;

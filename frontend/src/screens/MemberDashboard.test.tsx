@@ -20,6 +20,7 @@ const updateSpy = vi.fn((s: MapState) => {
   lastState = s;
 });
 const centerSpy = vi.fn();
+const followSpy = vi.fn();
 const schemeSpy = vi.fn();
 const writeSchemeSpy = vi.fn();
 vi.mock("./leafletMap", () => ({
@@ -30,7 +31,13 @@ vi.mock("./leafletMap", () => ({
   ) => {
     onSelect = sel ?? null;
     onPointSelect = point ?? null;
-    return { update: updateSpy, centerOn: centerSpy, setScheme: schemeSpy, destroy: vi.fn() };
+    return {
+      update: updateSpy,
+      centerOn: centerSpy,
+      follow: followSpy,
+      setScheme: schemeSpy,
+      destroy: vi.fn(),
+    };
   },
   readTileScheme: () => "dark",
   writeTileScheme: (s: string) => writeSchemeSpy(s),
@@ -108,6 +115,7 @@ function deps(over: Partial<MemberDeps> = {}): MemberDeps {
 beforeEach(() => {
   updateSpy.mockClear();
   centerSpy.mockClear();
+  followSpy.mockClear();
   schemeSpy.mockClear();
   writeSchemeSpy.mockClear();
   lastState = null;
@@ -158,6 +166,27 @@ describe("MemberDashboard", () => {
     expect(onSelect).toBeTruthy();
     act(() => onSelect?.("s-bob"));
     await waitFor(() => expect(centerSpy).toHaveBeenCalledWith(41.0, -73.0));
+  });
+
+  it("pans to follow the selected person as their live fix moves them", async () => {
+    render(<MemberDashboard deps={deps()} />);
+    // Focus self: its live fixes apply immediately (others are coalesced on a flush).
+    fireEvent.click(await screen.findByRole("tab", { name: /Me/ }));
+    await waitFor(() => expect(centerSpy).toHaveBeenCalledWith(40.0, -74.0));
+    // The first focus centers; a subsequent fix for the same person pans (follows).
+    act(() =>
+      liveOnFix?.({
+        subject_id: "s-me",
+        lat: 40.5,
+        lon: -74.5,
+        accuracy_m: 10,
+        battery_pct: 80,
+        velocity_mps: 5,
+        captured_at: new Date().toISOString(),
+      }),
+    );
+    await waitFor(() => expect(followSpy).toHaveBeenCalledWith(40.5, -74.5));
+    expect(centerSpy).toHaveBeenCalledTimes(1); // still just the one initial center
   });
 
   it("pulls up History and toggles Heat (focused person)", async () => {
