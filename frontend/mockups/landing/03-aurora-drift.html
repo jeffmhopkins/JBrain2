@@ -1,0 +1,527 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#1b1035">
+<title>JBrain — Aurora Drift</title>
+<style>
+  html,body { margin:0; padding:0; height:100%; overflow:hidden; background:#1b1035; }
+  #c { display:block; width:100vw; height:100vh; }
+  #net { position:fixed; right:0; bottom:0; pointer-events:none; mix-blend-mode:screen; opacity:.55; }
+  #panel {
+    position:fixed; left:16px; top:16px; z-index:10;
+    font:11px/1.5 'Courier New', ui-monospace, monospace;
+    color:#7ee8d4; letter-spacing:.4px;
+    background:rgba(12,20,42,.80); border:1px solid rgba(93,255,176,.18);
+    border-radius:10px; padding:12px 14px 10px;
+    backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px);
+    transition:opacity .6s; user-select:none; max-width:230px;
+  }
+  body.idle #panel { opacity:0; pointer-events:none; }
+  #panel .ttl { color:#5dffb0; font-weight:bold; margin-bottom:6px; font-size:13px; text-shadow:0 0 10px rgba(93,255,176,.55); }
+  #panel .ttl span { color:#3d5c50; font-weight:normal; font-size:10px; }
+  #panel .lbl { color:#9a7cff; font-size:10px; margin:8px 0 3px; text-shadow:0 0 8px rgba(154,124,255,.5); }
+  #panel .hint { color:#4a7a6e; }
+  #brand { position:fixed; left:0; right:0; bottom:18px; z-index:10; text-align:center;
+    font:600 12px/1 'Courier New', ui-monospace, monospace; letter-spacing:3px;
+    color:rgba(93,255,176,.45); text-shadow:0 0 14px rgba(93,255,176,.35); transition:opacity .6s; }
+  body.idle #brand { opacity:.2; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<canvas id="net"></canvas>
+<div id="panel">
+  <div class="ttl">JBRAIN <span>// aurora drift</span></div>
+  <div class="hint">a flock of boids. one mind made visible.</div>
+  <div class="lbl">SELECTED &middot; <span id="selId">#0</span></div>
+  <div class="hint">click any boid to read its brain</div>
+  <div class="lbl">CONTROLS</div>
+  <div class="hint">drag orbit &middot; scroll zoom &middot; H hide ui</div>
+</div>
+<div id="brand">J B R A I N</div>
+
+<script>
+"use strict";
+/* ============================================================ aurora drift engine
+   Variant of the Neon Reef renderer — same software-3D boid architecture,
+   restyled as soft bioluminescent aurora. Twilight gradient background,
+   slow graceful flocking, large hazy glows, twinkling plankton field.
+   No external dependencies. */
+
+// ---- style knobs ----
+const STYLE = {
+  bgTop:[27,16,53],          // #1b1035 deep indigo
+  bgBot:[12,47,58],          // #0c2f3a dark teal
+  fog0:34, fog1:120,
+  hueCalm:162,               // mint/teal calm (~#5dffb0)
+  hueHot:260,                // violet hot (#9a7cff)
+  sat:85, edgeBoost:18,
+  predHue:285, predSat:70,   // soft violet predator
+  netInk:'#48d6ff', netHot:'#9a7cff',
+  glow:true,
+};
+
+const cnv = document.getElementById('c');
+const ctx = cnv.getContext('2d');
+let W=0,H=0,focal=1,cx=0,cyc=0,DPR=1,vig=null;
+// Cached gradient for the trail-clear rect
+let bgGrad=null;
+
+function buildBgGrad(){
+  bgGrad = ctx.createLinearGradient(0,0,0,H);
+  bgGrad.addColorStop(0,`rgba(${STYLE.bgTop[0]},${STYLE.bgTop[1]},${STYLE.bgTop[2]},0.22)`);
+  bgGrad.addColorStop(1,`rgba(${STYLE.bgBot[0]},${STYLE.bgBot[1]},${STYLE.bgBot[2]},0.22)`);
+}
+
+function resize(){
+  DPR = Math.min(1.75, window.devicePixelRatio||1);
+  W = innerWidth; H = innerHeight;
+  cnv.width = W*DPR; cnv.height = H*DPR;
+  cnv.style.width=W+'px'; cnv.style.height=H+'px';
+  ctx.setTransform(DPR,0,0,DPR,0,0);
+  focal = H*1.05; cx=W/2; cyc=H/2;
+  vig = ctx.createRadialGradient(cx,cyc,Math.min(W,H)*0.28, cx,cyc,Math.max(W,H)*0.82);
+  vig.addColorStop(0,'rgba(0,0,0,0)');
+  vig.addColorStop(1,'rgba(0,0,0,0.62)');
+  buildBgGrad();
+  sizeNet();
+}
+addEventListener('resize',resize);
+
+// ---- vec ----
+const TAU=Math.PI*2;
+const sub=(a,b)=>[a[0]-b[0],a[1]-b[1],a[2]-b[2]];
+const add=(a,b)=>[a[0]+b[0],a[1]+b[1],a[2]+b[2]];
+const scl=(a,s)=>[a[0]*s,a[1]*s,a[2]*s];
+const dot=(a,b)=>a[0]*b[0]+a[1]*b[1]+a[2]*b[2];
+const cross=(a,b)=>[a[1]*b[2]-a[2]*b[1],a[2]*b[0]-a[0]*b[2],a[0]*b[1]-a[1]*b[0]];
+const len=a=>Math.hypot(a[0],a[1],a[2]);
+const norm=a=>{const l=len(a)||1;return [a[0]/l,a[1]/l,a[2]/l];};
+const clamp=(v,a,b)=>v<a?a:v>b?b:v;
+const lerp=(a,b,t)=>a+(b-a)*t;
+
+// ---- camera (orbit) ----
+const cam={pos:[0,0,60],f:[0,0,-1],r:[1,0,0],u:[0,1,0]};
+let camYaw=0.6, camPitch=0.25, camDist=58, yawV=0, pitchV=0;
+function updateCamera(t){
+  camYaw += yawV; camPitch += pitchV; yawV*=0.9; pitchV*=0.9;
+  if(!dragging) camYaw += 0.0008;            // extra gentle idle drift
+  camPitch = clamp(camPitch,-1.2,1.2);
+  const cp=Math.cos(camPitch), sp=Math.sin(camPitch);
+  const tgt=[0,0,0];
+  cam.pos=[Math.sin(camYaw)*cp*camDist, sp*camDist + Math.sin(t*0.00025)*3, Math.cos(camYaw)*cp*camDist];
+  const f=norm(sub(tgt,cam.pos));
+  const r=norm(cross(f,[0,1,0]));
+  cam.f=f; cam.r=r; cam.u=cross(r,f);
+}
+function project(p){
+  const d=sub(p,cam.pos);
+  const z=dot(d,cam.f);
+  if(z<=0.05) return {vis:false};
+  const x=dot(d,cam.r), y=dot(d,cam.u);
+  const inv=focal/z;
+  return {x:cx+x*inv, y:cyc-y*inv, z, inv, vis:true};
+}
+function fogAt(z){ return clamp(1-(z-STYLE.fog0)/(STYLE.fog1-STYLE.fog0),0,1); }
+
+// ---- render list (painter) ----
+const RL=[];
+const LIGHT=norm([0.4,0.85,0.35]);
+function pushMesh(mesh, pos, basis, hue, sat, scale, baseL, edgeA){
+  const [R,U,F]=basis;
+  const wv=mesh.v.map(p=>{
+    const wx=pos[0]+R[0]*p[0]*scale+U[0]*p[1]*scale+F[0]*p[2]*scale;
+    const wy=pos[1]+R[1]*p[0]*scale+U[1]*p[1]*scale+F[1]*p[2]*scale;
+    const wz=pos[2]+R[2]*p[0]*scale+U[2]*p[1]*scale+F[2]*p[2]*scale;
+    return [wx,wy,wz];
+  });
+  const pj=wv.map(project);
+  for(const fc of mesh.f){
+    const a=pj[fc[0]],b=pj[fc[1]],c=pj[fc[2]];
+    if(!a.vis||!b.vis||!c.vis) continue;
+    const depth=(a.z+b.z+c.z)/3, fog=fogAt(depth);
+    if(fog<0.02) continue;
+    const n=norm(cross(sub(wv[fc[1]],wv[fc[0]]),sub(wv[fc[2]],wv[fc[0]])));
+    const shade=0.45+0.55*clamp(dot(n,LIGHT),0,1);
+    const l=clamp(baseL*shade,8,72);
+    RL.push({t:'tri',pts:[a,b,c],depth,h:hue,s:sat,l,a:fog,eA:edgeA,eL:Math.min(90,l+STYLE.edgeBoost)});
+  }
+}
+function pushLine(p,q,hue,sat,l,a,w){
+  const A=project(p),B=project(q); if(!A.vis||!B.vis) return;
+  const depth=(A.z+B.z)/2, fog=fogAt(depth); if(fog<0.02) return;
+  RL.push({t:'line',x1:A.x,y1:A.y,x2:B.x,y2:B.y,depth,h:hue,s:sat,l,a:a*fog,w});
+}
+// pushPoint: draws a SOFT LARGE halo (bloom) + a core — aurora style
+function pushPoint(p,r,hue,sat,l,a){
+  const P=project(p); if(!P.vis) return; const fog=fogAt(P.z); if(fog<0.04) return;
+  RL.push({t:'pt',x:P.x,y:P.y,r:Math.max(0.8,r*P.inv),depth:P.z,h:hue,s:sat,l,a:a*fog});
+}
+function flush(){
+  RL.sort((a,b)=>b.depth-a.depth);
+  ctx.lineJoin='round'; ctx.lineCap='round';
+  for(const f of RL){
+    if(f.t==='tri'){
+      ctx.beginPath();
+      ctx.moveTo(f.pts[0].x,f.pts[0].y);
+      ctx.lineTo(f.pts[1].x,f.pts[1].y);
+      ctx.lineTo(f.pts[2].x,f.pts[2].y);
+      ctx.closePath();
+      ctx.fillStyle=`hsla(${f.h},${f.s}%,${f.l}%,${f.a*0.88})`;
+      ctx.fill();
+      ctx.strokeStyle=`hsla(${f.h},${f.s}%,${f.eL}%,${f.a*f.eA})`;
+      ctx.lineWidth=0.8; ctx.stroke();
+    } else if(f.t==='line'){
+      ctx.strokeStyle=`hsla(${f.h},${f.s}%,${f.l}%,${f.a})`;
+      ctx.lineWidth=f.w; ctx.beginPath();
+      ctx.moveTo(f.x1,f.y1); ctx.lineTo(f.x2,f.y2); ctx.stroke();
+    } else {
+      // Aurora point: large soft halo first, then mid ring, then crisp core
+      ctx.save(); ctx.globalCompositeOperation='lighter';
+      // outer halo — very large, very faint
+      ctx.fillStyle=`hsla(${f.h},${f.s}%,${f.l}%,${f.a*0.06})`;
+      ctx.beginPath(); ctx.arc(f.x,f.y,f.r*9.0,0,TAU); ctx.fill();
+      // mid bloom
+      ctx.fillStyle=`hsla(${f.h},${f.s}%,${f.l}%,${f.a*0.12})`;
+      ctx.beginPath(); ctx.arc(f.x,f.y,f.r*4.8,0,TAU); ctx.fill();
+      // core
+      ctx.fillStyle=`hsla(${f.h},${f.s}%,${Math.min(92,f.l+18)}%,${f.a*0.85})`;
+      ctx.beginPath(); ctx.arc(f.x,f.y,f.r,0,TAU); ctx.fill();
+      ctx.restore();
+    }
+  }
+  RL.length=0;
+}
+
+// ---- geometry: chunky low-poly fish facing +z ----
+function fishMesh(){
+  const v=[
+    [0,0,1.15],
+    [0.32,0,0.1],
+    [-0.32,0,0.1],
+    [0,0.34,0.1],
+    [0,-0.30,0.1],
+    [0,0,-0.85],
+    [0,0.55,-1.2],
+    [0,-0.5,-1.2],
+    [0,0.62,-0.2],
+  ];
+  const f=[
+    [0,3,1],[0,1,4],[0,4,2],[0,2,3],
+    [3,5,1],[1,5,4],[4,5,2],[2,5,3],
+    [5,6,7],
+    [3,8,5],
+  ];
+  return {v,f};
+}
+const FISH=fishMesh();
+
+function predMesh(){
+  const v=[
+    [0,0,1.8],[0.55,0,0.0],[-0.55,0,0.0],[0,0.55,0.0],[0,-0.5,0.0],
+    [0,0,-1.5],[0,0.95,-2.1],[0,-0.85,-2.1],[0,1.0,-0.3],
+    [0.3,-0.25,1.2],[-0.3,-0.25,1.2],
+  ];
+  const f=[
+    [0,3,1],[0,1,4],[0,4,2],[0,2,3],
+    [3,5,1],[1,5,4],[4,5,2],[2,5,3],
+    [5,6,7],[3,8,5],
+    [0,9,1],[0,2,10],
+  ];
+  return {v,f};
+}
+const PRED=predMesh();
+
+// ---- boids ----
+const BND=27;
+const N=120;
+const boids=[];
+function rnd(a,b){return a+Math.random()*(b-a);}
+for(let i=0;i<N;i++){
+  boids.push({
+    p:[rnd(-BND,BND),rnd(-BND,BND),rnd(-BND,BND)],
+    v:[rnd(-1,1),rnd(-1,1),rnd(-1,1)],
+    // hue drift: each boid gets a slow personal hue offset
+    huePhase: rnd(0,TAU),
+    state:{density:0,speed:0,threat:0,sep:0,ali:0,coh:0},
+    sx:-1,sy:-1,sz:1e9,
+  });
+}
+const predator={p:[0,0,-40],v:[0,0,1]};
+
+// Aurora drift: gentler motion — reduced MAXSPD and MAXF for serene feel
+const MAXSPD=0.34, MAXF=0.011;
+const R_NEI=7.5, R_SEP=3.2, R_FLEE=12;
+function limit(v,m){const l=len(v);return l>m?scl(v,m/l):v;}
+function stepBoids(){
+  for(const b of boids){
+    let sep=[0,0,0],ali=[0,0,0],coh=[0,0,0],cnt=0,scnt=0;
+    for(const o of boids){
+      if(o===b) continue;
+      const d=sub(b.p,o.p), dl=len(d);
+      if(dl<R_NEI){ ali=add(ali,o.v); coh=add(coh,o.p); cnt++; }
+      if(dl<R_SEP && dl>1e-4){ sep=add(sep,scl(d,1/(dl*dl))); scnt++; }
+    }
+    let acc=[0,0,0];
+    if(scnt){ sep=limit(sub(scl(norm(sep),MAXSPD),b.v),MAXF); acc=add(acc,scl(sep,1.7)); }
+    if(cnt){
+      ali=limit(sub(scl(norm(ali),MAXSPD),b.v),MAXF); acc=add(acc,scl(ali,1.0));
+      coh=sub(scl(coh,1/cnt),b.p); coh=limit(sub(scl(norm(coh),MAXSPD),b.v),MAXF); acc=add(acc,scl(coh,0.9));
+    }
+    // flee predator — softened force so the drift stays calm
+    const dp=sub(b.p,predator.p), dpl=len(dp); let threat=0;
+    if(dpl<R_FLEE && dpl>1e-3){
+      const flee=limit(sub(scl(norm(dp),MAXSPD),b.v),MAXF*2.0);
+      acc=add(acc,scl(flee,2.2*(R_FLEE/Math.max(dpl,1))));
+      threat=1-clamp(dpl/R_FLEE,0,1);
+    }
+    // soft bounds
+    for(let k=0;k<3;k++){
+      if(b.p[k]> BND-4) acc[k]-=0.008*(b.p[k]-(BND-4));
+      if(b.p[k]<-BND+4) acc[k]-=0.008*(b.p[k]-(-BND+4));
+    }
+    b.v=limit(add(b.v,acc),MAXSPD);
+    if(len(b.v)<0.08) b.v=scl(norm(b.v),0.08);
+    b.p=add(b.p,b.v);
+    b.state.density=clamp(cnt/12,0,1);
+    b.state.speed=clamp(len(b.v)/MAXSPD,0,1);
+    b.state.threat=threat;
+    b.state.sep=clamp(len(sep)/MAXF,0,1);
+    b.state.ali=clamp(len(ali)/MAXF,0,1);
+    b.state.coh=clamp(len(coh)/MAXF,0,1);
+  }
+  // predator seeks flock centroid at a lazy, softened pace
+  let c=[0,0,0]; for(const b of boids) c=add(c,b.p); c=scl(c,1/N);
+  const seek=limit(sub(scl(norm(sub(c,predator.p)),MAXSPD*0.72),predator.v),MAXF*0.8);
+  predator.v=limit(add(predator.v,seek),MAXSPD*0.72);
+  predator.p=add(predator.p,predator.v);
+}
+
+function basisFrom(v){
+  const F=norm(v);
+  let R=cross(F,[0,1,0]); if(len(R)<1e-3) R=[1,0,0]; R=norm(R);
+  const U=cross(R,F);
+  return [R,U,F];
+}
+
+let selected=0;
+function drawWorld(t){
+  // world cage hint — faint teal lines
+  const e=BND;
+  const corners=[[-e,-e,-e],[e,-e,-e],[e,e,-e],[-e,e,-e],[-e,-e,e],[e,-e,e],[e,e,e],[-e,e,e]];
+  const E=[[0,1],[1,2],[2,3],[3,0],[4,5],[5,6],[6,7],[7,4],[0,4],[1,5],[2,6],[3,7]];
+  for(const [a,b] of E) pushLine(corners[a],corners[b],STYLE.hueCalm,50,30,0.07,1);
+
+  // plankton/stardust — denser field with per-particle twinkling
+  for(const d of dust){
+    const twinkle=0.3+0.7*(0.5+0.5*Math.sin(d.phase + t*d.speed));
+    const hue=lerp(STYLE.hueCalm, STYLE.hueHot, d.colorMix);
+    pushPoint(d.p, 0.6, hue, 70, 60, twinkle*0.65);
+  }
+
+  for(let i=0;i<N;i++){
+    const b=boids[i];
+    const basis=basisFrom(b.v);
+    const spd=clamp(len(b.v)/MAXSPD,0,1);
+    // Hue drifts between calm mint and violet, modulated by speed + threat + personal phase
+    const hueDrift=0.5+0.5*Math.sin(b.huePhase + t*0.0004);
+    const hue=lerp(STYLE.hueCalm, STYLE.hueHot, clamp(spd*0.7 + b.state.threat*0.5 + hueDrift*0.15, 0, 1));
+    const isSel=i===selected;
+    pushMesh(FISH,b.p,basis,hue,STYLE.sat, isSel?1.5:1.0, isSel?68:44, isSel?0.90:0.50);
+    const P=project(b.p); if(P.vis){ b.sx=P.x; b.sy=P.y; b.sz=P.z; } else { b.sz=1e9; }
+    // Soft aurora glow on every boid (large hazy halo)
+    pushPoint(b.p, 2.2, hue, STYLE.sat, 72, isSel?0.95:0.52);
+    if(isSel){
+      // Extra selection bloom — double halo with violet accent
+      pushPoint(b.p, 3.5, STYLE.hueHot, 90, 80, 0.65);
+    }
+  }
+  // predator — soft violet ghost
+  const pb=basisFrom(predator.v);
+  pushMesh(PRED,predator.p,pb,STYLE.predHue,STYLE.predSat,2.0,48,0.75);
+  pushPoint(predator.p,3.0,STYLE.predHue,STYLE.predSat,65,0.55);
+}
+
+// Denser stardust/plankton field — 200 particles, each with twinkling state
+const dust=[];
+for(let i=0;i<200;i++) dust.push({
+  p:[rnd(-BND,BND),rnd(-BND,BND),rnd(-BND,BND)],
+  phase: rnd(0,TAU),
+  speed: rnd(0.0008,0.003),
+  colorMix: rnd(0,1),       // 0=mint teal, 1=violet
+});
+
+// ============================================================ neural overlay
+const net=document.getElementById('net');
+const nctx=net.getContext('2d');
+let NW=300,NH=240;
+function sizeNet(){
+  NW=Math.min(340,Math.round(W*0.42)); NH=Math.min(280,Math.round(H*0.42));
+  net.width=NW*DPR; net.height=NH*DPR;
+  net.style.width=NW+'px'; net.style.height=NH+'px';
+  nctx.setTransform(DPR,0,0,DPR,0,0);
+  layoutNet();
+}
+const LAYERS=[6,8,8,3];
+let nodes=[],edges=[];
+function layoutNet(){
+  nodes=[]; edges=[];
+  const padX=34,padY=26;
+  const gw=(NW-padX*2)/(LAYERS.length-1);
+  for(let l=0;l<LAYERS.length;l++){
+    const col=[];
+    const gh=(NH-padY*2)/Math.max(1,LAYERS[l]-1);
+    for(let i=0;i<LAYERS[l];i++){
+      col.push({x:padX+l*gw, y:LAYERS[l]===1?NH/2:padY+i*gh, a:0});
+    }
+    nodes.push(col);
+  }
+  for(let l=1;l<LAYERS.length;l++){
+    for(let i=0;i<LAYERS[l-1];i++) for(let j=0;j<LAYERS[l];j++)
+      edges.push({l,i,j,w:rnd(-1,1),pulses:[]});
+  }
+}
+function sig(x){return 1/(1+Math.exp(-x));}
+function netForward(){
+  const s=boids[selected].state;
+  const inp=[s.density,s.speed,s.threat,s.sep,s.ali,s.coh];
+  for(let i=0;i<LAYERS[0];i++) nodes[0][i].a=lerp(nodes[0][i].a,inp[i],0.2);
+  for(let l=1;l<LAYERS.length;l++){
+    for(let j=0;j<LAYERS[l];j++){
+      let sum=-0.4;
+      for(const e of edges) if(e.l===l && e.j===j) sum+=nodes[l-1][e.i].a*e.w*0.9;
+      const tgt=sig(sum*2.2);
+      nodes[l][j].a=lerp(nodes[l][j].a,tgt,0.18);
+    }
+  }
+  // emit pulses — slower drift feel
+  for(const e of edges){
+    const src=nodes[e.l-1][e.i];
+    if(src.a>0.4 && Math.random()<src.a*0.07){
+      e.pulses.push({t:0,sp:rnd(0.012,0.032)});
+    }
+  }
+}
+function hexA(hex,a){
+  const n=parseInt(hex.slice(1),16); return `rgba(${(n>>16)&255},${(n>>8)&255},${n&255},${a})`;
+}
+function drawNet(){
+  nctx.clearRect(0,0,NW,NH);
+  nctx.globalCompositeOperation='lighter';
+  // edges
+  for(const e of edges){
+    const A=nodes[e.l-1][e.i], B=nodes[e.l][e.j];
+    const act=(A.a+B.a)*0.5;
+    nctx.strokeStyle=hexA(STYLE.netInk,0.025+act*0.18);
+    nctx.lineWidth=0.5+act*1.0;
+    nctx.beginPath(); nctx.moveTo(A.x,A.y); nctx.lineTo(B.x,B.y); nctx.stroke();
+    for(let k=e.pulses.length-1;k>=0;k--){
+      const p=e.pulses[k]; p.t+=p.sp;
+      if(p.t>=1){ B.a=Math.min(1,B.a+0.12); e.pulses.splice(k,1); continue; }
+      const x=lerp(A.x,B.x,p.t), y=lerp(A.y,B.y,p.t);
+      const col=B.a>0.6?STYLE.netHot:STYLE.netInk;
+      // pulse halo
+      nctx.fillStyle=hexA(col,0.22);
+      nctx.beginPath(); nctx.arc(x,y,5.5,0,TAU); nctx.fill();
+      nctx.fillStyle=hexA(col,0.80);
+      nctx.beginPath(); nctx.arc(x,y,1.8,0,TAU); nctx.fill();
+    }
+  }
+  // nodes — large gentle halo + core
+  for(let l=0;l<nodes.length;l++) for(const nd of nodes[l]){
+    const r=5+nd.a*10;
+    const col=nd.a>0.55?STYLE.netHot:STYLE.netInk;
+    // large outer halo
+    const g2=nctx.createRadialGradient(nd.x,nd.y,0,nd.x,nd.y,r+14);
+    g2.addColorStop(0,hexA(col,0.12+nd.a*0.25));
+    g2.addColorStop(1,hexA(col,0));
+    nctx.fillStyle=g2; nctx.beginPath(); nctx.arc(nd.x,nd.y,r+14,0,TAU); nctx.fill();
+    // inner glow
+    const g=nctx.createRadialGradient(nd.x,nd.y,0,nd.x,nd.y,r+6);
+    g.addColorStop(0,hexA(col,0.28+nd.a*0.55));
+    g.addColorStop(1,hexA(col,0));
+    nctx.fillStyle=g; nctx.beginPath(); nctx.arc(nd.x,nd.y,r+6,0,TAU); nctx.fill();
+    // bright core dot
+    nctx.fillStyle=hexA('#ddfff5',0.20+nd.a*0.62);
+    nctx.beginPath(); nctx.arc(nd.x,nd.y,1.4+nd.a*1.8,0,TAU); nctx.fill();
+  }
+  nctx.globalCompositeOperation='source-over';
+  // labels
+  nctx.fillStyle=hexA(STYLE.netInk,0.48);
+  nctx.font="9px 'Courier New', monospace";
+  const labs=['density','speed','threat','sep','align','cohere'];
+  for(let i=0;i<LAYERS[0];i++) nctx.fillText(labs[i],4,nodes[0][i].y+3);
+  const out=['turn','flee','throttle'];
+  for(let i=0;i<LAYERS[3];i++){ const nd=nodes[3][i]; nctx.fillText(out[i],nd.x+8,nd.y+3); }
+}
+
+// ============================================================ interaction
+let dragging=false,lastX=0,lastY=0;
+cnv.addEventListener('pointerdown',e=>{ dragging=true; lastX=e.clientX; lastY=e.clientY; pokeIdle(); pickStart=[e.clientX,e.clientY]; });
+addEventListener('pointermove',e=>{
+  pokeIdle();
+  if(dragging){ yawV+=-(e.clientX-lastX)*0.0010; pitchV+=(e.clientY-lastY)*0.0010; lastX=e.clientX; lastY=e.clientY; }
+});
+let pickStart=null;
+addEventListener('pointerup',e=>{
+  dragging=false;
+  if(pickStart && Math.hypot(e.clientX-pickStart[0],e.clientY-pickStart[1])<6) pick(e.clientX,e.clientY);
+  pickStart=null;
+});
+cnv.addEventListener('wheel',e=>{ e.preventDefault(); camDist=clamp(camDist*(1+Math.sign(e.deltaY)*0.08),22,110); pokeIdle(); },{passive:false});
+function pick(mx,my){
+  let best=-1,bd=1e9;
+  for(let i=0;i<N;i++){ const b=boids[i]; if(b.sz>1e8) continue;
+    const d=Math.hypot(b.sx-mx,b.sy-my); if(d<26 && d<bd){bd=d;best=i;} }
+  if(best>=0){ selected=best; document.getElementById('selId').textContent='#'+best; }
+}
+let idleTimer=null;
+function pokeIdle(){ document.body.classList.remove('idle'); clearTimeout(idleTimer); idleTimer=setTimeout(()=>document.body.classList.add('idle'),4000); }
+addEventListener('keydown',e=>{ if(e.key==='h'||e.key==='H') document.body.classList.toggle('idle'); });
+pokeIdle();
+
+// ============================================================ main loop
+function frame(now){
+  const t=now;
+  updateCamera(t);
+  stepBoids();
+
+  // ---- trail-clear with twilight gradient ----
+  // First paint a full opaque background on the very first frame to avoid transparent flicker
+  ctx.setTransform(DPR,0,0,DPR,0,0);
+  ctx.globalCompositeOperation='source-over';
+
+  // Rebuild bgGrad each frame so the gradient maps to current canvas coords.
+  // This is cheap — no image data copy, just a gradient descriptor.
+  const bg=ctx.createLinearGradient(0,0,0,H);
+  bg.addColorStop(0,`rgba(${STYLE.bgTop[0]},${STYLE.bgTop[1]},${STYLE.bgTop[2]},0.22)`);
+  bg.addColorStop(1,`rgba(${STYLE.bgBot[0]},${STYLE.bgBot[1]},${STYLE.bgBot[2]},0.22)`);
+  ctx.fillStyle=bg;
+  ctx.fillRect(0,0,W,H);
+
+  drawWorld(t);
+  flush();
+  // vignette
+  ctx.fillStyle=vig; ctx.fillRect(0,0,W,H);
+  netForward(); drawNet();
+  requestAnimationFrame(frame);
+}
+
+function firstFrame(now){
+  // Paint solid background before first render so canvas isn't transparent
+  ctx.setTransform(DPR,0,0,DPR,0,0);
+  const solidBg=ctx.createLinearGradient(0,0,0,H);
+  solidBg.addColorStop(0,`rgb(${STYLE.bgTop[0]},${STYLE.bgTop[1]},${STYLE.bgTop[2]})`);
+  solidBg.addColorStop(1,`rgb(${STYLE.bgBot[0]},${STYLE.bgBot[1]},${STYLE.bgBot[2]})`);
+  ctx.fillStyle=solidBg;
+  ctx.fillRect(0,0,W,H);
+  frame(now);
+}
+
+resize();
+requestAnimationFrame(firstFrame);
+</script>
+</body>
+</html>

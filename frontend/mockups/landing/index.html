@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>JBrain — Landing Page Mockups</title>
+<style>
+  :root{ --ink:#9adfe8; --cy:#5ef2ff; --pk:#ff5ec8; --dim:#54808c; }
+  html,body{ margin:0; background:#04060d; color:var(--ink);
+    font:14px/1.6 'Courier New', ui-monospace, monospace; min-height:100%; }
+  .wrap{ max-width:1100px; margin:0 auto; padding:40px 24px 80px; }
+  h1{ color:var(--cy); font-size:22px; letter-spacing:3px; text-shadow:0 0 12px rgba(94,242,255,.4); margin:0 0 4px; }
+  .sub{ color:var(--dim); margin:0 0 4px; }
+  .lead{ color:var(--ink); max-width:680px; margin:14px 0 30px; }
+  .lead b{ color:var(--pk); }
+  .grid{ display:grid; grid-template-columns:repeat(auto-fill,minmax(320px,1fr)); gap:20px; }
+  .card{ border:1px solid rgba(94,242,255,.18); border-radius:12px; overflow:hidden;
+    background:rgba(8,12,22,.6); display:flex; flex-direction:column; transition:border-color .2s, transform .2s; }
+  .card:hover{ border-color:var(--cy); transform:translateY(-2px); }
+  .frame{ position:relative; aspect-ratio:16/10; background:#04060d; overflow:hidden; }
+  .frame iframe{ position:absolute; inset:0; width:200%; height:200%; transform:scale(.5); transform-origin:top left; border:0; pointer-events:none; }
+  .frame .open{ position:absolute; inset:0; z-index:2; text-decoration:none; }
+  .frame .tag{ position:absolute; left:10px; top:10px; z-index:3; font-size:10px; letter-spacing:1px;
+    color:var(--cy); background:rgba(4,6,14,.7); border:1px solid rgba(94,242,255,.25); border-radius:6px; padding:2px 7px; }
+  .meta{ padding:12px 14px 16px; }
+  .meta h2{ font-size:15px; color:var(--cy); margin:0 0 6px; letter-spacing:1px; }
+  .meta p{ margin:0 0 10px; color:var(--ink); font-size:12.5px; min-height:48px; }
+  .swatches{ display:flex; gap:6px; margin-bottom:12px; }
+  .sw{ width:18px; height:18px; border-radius:4px; border:1px solid rgba(255,255,255,.12); }
+  .actions a{ color:var(--cy); text-decoration:none; border:1px solid rgba(94,242,255,.3);
+    border-radius:6px; padding:5px 12px; font-size:12px; }
+  .actions a:hover{ background:rgba(94,242,255,.1); }
+  footer{ margin-top:40px; color:var(--dim); font-size:12px; }
+  .pending{ display:grid; place-items:center; position:absolute; inset:0; color:var(--dim); font-size:11px; z-index:1; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>J B R A I N</h1>
+  <p class="sub">// landing page art &mdash; concept mockups</p>
+  <p class="lead">Five takes on the same idea: a 3D flock of <b>boids</b> drifting through space,
+  a lone <b>predator</b> hunting them, and one "real" boid whose <b>brain</b> is rendered as a live
+  neural network. <b>Click any boid</b> to read its mind &mdash; the neural map rewires to that boid's
+  state. All five share one dependency-free, pure-canvas software-3D engine; they differ in feel.
+  Tap a tile to open it fullscreen.</p>
+
+  <div class="grid" id="grid"></div>
+
+  <footer>drag to orbit &middot; scroll to zoom &middot; click a boid &middot; H to hide UI</footer>
+</div>
+
+<script>
+const CARDS=[
+  { file:'01-neon-reef.html', tag:'01', name:'Neon Reef',
+    desc:'Cyberpunk bioluminescence. Cyan→magenta boids, bloom, light-streak trails. The default "wow".',
+    sw:['#04060d','#34e0ff','#ff2bd6','#ffb000'] },
+  { file:'02-ghost-ink.html', tag:'02', name:'Ghost Ink',
+    desc:'Monochrome sumi-e. Ink-white brush-trails on charcoal; the predator is the only color (vermilion).',
+    sw:['#14130f','#ece9e0','#d9402a','#5c5950'] },
+  { file:'03-aurora-drift.html', tag:'03', name:'Aurora Drift',
+    desc:'Soft bioluminescent calm. Twilight gradient, mint/teal haze, slow graceful drift, stardust.',
+    sw:['#1b1035','#5dffb0','#48d6ff','#9a7cff'] },
+  { file:'04-wireframe-genesis.html', tag:'04', name:'Wireframe Genesis',
+    desc:'Holographic blueprint. Phosphor wireframe boids, ground grid, live numeric neural trace, amber alerts.',
+    sw:['#021016','#2fffe0','#ffb000','#0a3a40'] },
+  { file:'05-synapse-storm.html', tag:'05', name:'Synapse Storm',
+    desc:'Brain-forward neuron-art. The neural net is the hero; the flock is the hazy mind behind it.',
+    sw:['#000000','#1fd6c4','#ff7a18','#ffffff'] },
+];
+const grid=document.getElementById('grid');
+grid.innerHTML=CARDS.map(c=>`
+  <div class="card">
+    <div class="frame">
+      <span class="tag">${c.tag}</span>
+      <div class="pending">loading preview…</div>
+      <iframe src="${c.file}" loading="lazy" title="${c.name}"></iframe>
+      <a class="open" href="${c.file}" aria-label="Open ${c.name} fullscreen"></a>
+    </div>
+    <div class="meta">
+      <h2>${c.name}</h2>
+      <p>${c.desc}</p>
+      <div class="swatches">${c.sw.map(s=>`<span class="sw" style="background:${s}"></span>`).join('')}</div>
+      <div class="actions"><a href="${c.file}">open fullscreen →</a></div>
+    </div>
+  </div>`).join('');
+</script>
+</body>
+</html>
