@@ -293,10 +293,19 @@ services:
     profiles: [whisper]
     image: ${WHISPER_IMAGE:-ghcr.io/mostlygeek/llama-swap:vulkan}
     restart: unless-stopped
-    # Same hot-reloadable config pattern as local-llm: read llama-swap.yaml from the
-    # mounted models dir (a missing single-file bind mount would wedge as a dir).
-    command:
-      ["llama-swap", "--listen", ":8080", "--config", "/models/llama-swap.yaml", "--watch-config"]
+    # This image ships its OWN entrypoint that hardcodes `-config /app/config.yaml`
+    # (a bundled multi-model sample), so a plain `command:` can't repoint it —
+    # llama-swap would load the sample and crash-loop. Override the entrypoint
+    # entirely to run the same binary against OUR one-model config in the mounted
+    # dir (`/dev/dri` + the GIDs below give it the iGPU; --watch-config hot-reloads
+    # a model swap). Unlike the kyuz0 LLM base, which has no entrypoint and takes a
+    # `command:` directly.
+    entrypoint:
+      ["/app/llama-swap", "--config", "/models/llama-swap.yaml", "--listen", ":8080",
+       "--watch-config"]
+    # Blank the image's default CMD so Docker can't append it to our entrypoint and
+    # re-introduce the bundled `-config /app/config.yaml`.
+    command: []
     devices:
       - /dev/dri:/dev/dri
     security_opt:
