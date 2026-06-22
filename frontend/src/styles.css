@@ -13233,11 +13233,11 @@ input.ld-title {
   border-radius: 5px;
   transition: background 0.08s;
 }
+/* box-shadow (not padding) makes the pill, so the highlight never reflows words. */
 .atx-w.now {
   background: var(--steel);
   color: #0e0f11 !important;
-  padding: 1px 3px;
-  margin: 0 -2px;
+  box-shadow: 0 0 0 3px var(--steel);
 }
 .atx-plain {
   color: var(--text);

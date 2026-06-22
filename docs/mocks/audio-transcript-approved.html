@@ -62,7 +62,8 @@
 
   .body{padding:4px 14px 14px;font-size:16px;line-height:1.75}
   .w{cursor:pointer;border-radius:5px;transition:background .08s}
-  .w.now{background:var(--steel);color:#0E0F11 !important;padding:1px 3px;margin:0 -2px}
+  /* box-shadow (not padding) makes the pill, so highlighting never reflows the words. */
+  .w.now{background:var(--steel);color:#0E0F11 !important;border-radius:5px;box-shadow:0 0 0 3px var(--steel)}
   .legend{display:flex;align-items:center;gap:9px;padding:10px 14px 14px;border-top:1px solid var(--border);font-size:12px;color:var(--text-2)}
   .grad{flex:1;height:7px;max-width:160px;border-radius:var(--r-pill);background:linear-gradient(90deg,var(--rose),var(--amber),var(--green))}
   .pagecap{font-size:11px;color:var(--text-3);text-align:center;margin-top:12px;line-height:1.5}

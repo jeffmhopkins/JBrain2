@@ -59,10 +59,12 @@ async def test_posts_verbose_json_multipart_and_parses_words() -> None:
     assert result.duration_ms == 1100
     # Sub-word tokens fold into words; punctuation attaches to its word; confidence
     # is the mean of a word's token probs; spans are milliseconds.
-    assert result.words == (
-        Word(text="Hello", start_ms=0, end_ms=500, confidence=0.9),
-        Word(text="world.", start_ms=500, end_ms=1100, confidence=pytest.approx(0.6)),
-    )
+    assert [(w.text, w.start_ms, w.end_ms) for w in result.words] == [
+        ("Hello", 0, 500),
+        ("world.", 500, 1100),
+    ]
+    assert result.words[0].confidence == 0.9
+    assert result.words[1].confidence == pytest.approx(0.6)  # mean(0.4, 0.8)
 
 
 def test_token_centiseconds_t0_t1_are_normalized() -> None:
