@@ -390,6 +390,18 @@ describe("MemberDashboard", () => {
     }
   });
 
+  it("hides the trail legend on the heat map (it has no meaning there)", async () => {
+    render(<MemberDashboard deps={deps()} />);
+    await selectBob();
+    // The legend's color-metric trigger is present for the trail...
+    expect(screen.getByRole("button", { name: "Trail color metric" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /History/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Heat" }));
+    await waitFor(() => expect(lastState?.mode).toBe("heat"));
+    // ...and gone once the view is the heat map.
+    expect(screen.queryByRole("button", { name: "Trail color metric" })).not.toBeInTheDocument();
+  });
+
   it("recolors the trail when a metric is picked from the legend dropdown", async () => {
     render(<MemberDashboard deps={deps()} />);
     await selectBob();

@@ -507,7 +507,7 @@ function LiveMap({ deps }: { deps: MemberDeps | undefined }) {
       <div className="livemap-canvas" ref={canvas} data-testid="map-canvas" />
       <PeopleSwitcher roster={roster} sel={sel} colorOf={colorOf} failed={failed} onPick={setSel} />
       <TileToggle scheme={tileScheme} onPick={pickScheme} />
-      {sel !== "all" && (
+      {sel !== "all" && mode === "trail" && (
         <MetricLegend metric={metric} dwellMax={dwellInfo.max} onPick={setMetric} />
       )}
       <DetailsSheet
