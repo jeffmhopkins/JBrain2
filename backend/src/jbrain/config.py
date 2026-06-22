@@ -155,6 +155,32 @@ class Settings(BaseSettings):
     # LOCAL_LLM_RESIDENT_GROUP so a runtime config regeneration (after a
     # context-window edit) reproduces the same group the setup script wrote.
     local_llm_resident_group: bool = False
+    # OPT-IN on-box speech-to-text: whisper.cpp served by the same llama-swap
+    # gateway the local-llm profile runs (docs/WHISPER_TRANSCRIPTION_PLAN.md), so
+    # it loads on first request and the gateway frees it when idle — and the
+    # transcribe job/tool additionally unload it the moment they finish. Audio (and,
+    # fast-follow, video) attachments transcribe through it, and jerv gets a
+    # transcribe tool. EMPTY URL DISABLES the feature: no client is wired, audio
+    # attachments extract to nothing, and the tool reports "not configured" — the
+    # same graceful degrade as comfyui_url. `whisper_enabled` mirrors the
+    # install-time choice for parity with local_llm_enabled / comfyui_enabled.
+    whisper_url: str = ""
+    whisper_enabled: bool = False
+    # The served-model name the gateway resolves to a loaded whisper.cpp model
+    # (and the name LocalGateway.unload() evicts). A plain default so the request
+    # is always concrete; the setup script writes the provisioned name.
+    whisper_model: str = "whisper"
+    # Generous ceiling for one transcription: a long clip on a cold model load
+    # (reading weights, then decoding at on-box speeds) can run for minutes, and a
+    # too-tight timeout would retry-loop mid-decode. Queue backoff still covers a
+    # genuinely wedged server.
+    whisper_timeout: float = 300.0
+    # Per-attachment size budget (the docs/ANALYSIS.md "Dispatcher-level policy"
+    # cap, OCR's MAX_OCR_BYTES sibling): ingest skips enqueueing transcription for
+    # larger files, with a logged warning and no cache row, so a smaller re-upload
+    # transcribes normally. 100 MB ~ a long lossy recording.
+    whisper_max_bytes: int = 100 * 1024 * 1024
+
     # JSON object of per-task "provider:model" overrides, merged over the
     # adapter defaults — see jbrain.llm.router.TASK_DEFAULTS.
     llm_tasks: dict[str, str] = {}

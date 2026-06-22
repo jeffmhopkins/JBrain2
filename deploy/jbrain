@@ -14,6 +14,12 @@ PROFILE=()
 if [ -f .env ] && grep -q '^LOCAL_LLM_ENABLED=true' .env; then
   PROFILE+=(--profile local-llm)
 fi
+# The opt-in on-box speech-to-text gateway lives behind the `whisper` profile.
+# Keep it in routine commands when enabled so it is built, started, and restarted
+# alongside the rest of the stack (and rebuilt by `update`).
+if [ -f .env ] && grep -q '^WHISPER_ENABLED=true' .env; then
+  PROFILE+=(--profile whisper)
+fi
 # The opt-in Cloudflare Tunnel connector lives behind the `tunnel` profile. Keep
 # it in every routine command when enabled so the connector is started, stopped,
 # and restarted alongside the rest of the stack.
@@ -32,6 +38,7 @@ Usage: jbrain <command>
   update           pull latest source, rebuild, migrate, restart
   enable-lan       set up LAN access (mDNS + jbrain.local alias) on this host
   enable-local-models [ids...]  provision + enable self-hosted local models
+  enable-whisper [model]        provision + enable on-box audio transcription
   strix-halo-host-setup [args]  one-time AMD Strix Halo host prep (kernel/udev)
   backup           run a backup now
   restore [stamp]  restore a backup (no stamp: list available)
@@ -102,6 +109,12 @@ case "${1:-}" in
     # logic lives with the source so it tracks the catalog. Absolute path so it
     # works regardless of cwd.
     JBRAIN_INSTALL_DIR=/opt/jbrain2 bash /opt/jbrain2/src/scripts/local-llm-setup.sh "$@"
+    ;;
+  enable-whisper)
+    shift
+    # Opt-in, heavy (downloads a GGML model, starts a GPU service). Provisioning
+    # lives with the source. Absolute path so it works regardless of cwd.
+    JBRAIN_INSTALL_DIR=/opt/jbrain2 bash /opt/jbrain2/src/scripts/whisper-setup.sh "$@"
     ;;
   strix-halo-host-setup)
     shift

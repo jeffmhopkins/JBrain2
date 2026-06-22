@@ -250,6 +250,20 @@ async def test_permanent_ocr_failure_also_triggers_fallback(
     assert calls == ["att-2"]
 
 
+async def test_exhausted_transcribe_job_triggers_analysis_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The audio twin of the OCR fallback: a permanently-failed transcription must
+    # not strand its note unanalyzed (worker._after_exhaustion spans both kinds).
+    fake = FakeQueue([job(kind="transcribe_attachment", payload={"attachment_id": "att-a"})])
+    fake.fail_exhausts = True
+    install(monkeypatch, fake)
+    calls = install_fallback_spy(monkeypatch)
+
+    assert await worker.process_one(None, {"transcribe_attachment": boom_handler}) is True  # type: ignore[arg-type]
+    assert calls == ["att-a"]
+
+
 async def test_non_exhausted_ocr_failure_does_not_fall_back(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -359,6 +373,9 @@ async def test_run_registers_all_job_handlers(
         "embed_note",
         "integrate_note",
         "ocr_attachment",
+        # The audio sibling of ocr_attachment — in-code only, not in ACTION_SPECS /
+        # the app.actions seed (docs/WHISPER_TRANSCRIPTION_PLAN.md).
+        "transcribe_attachment",
         "consolidate_predicates",
         "sync_predicates",
         # The purge sweep is now a fireable action (Phase-5 Track B).

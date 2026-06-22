@@ -349,8 +349,8 @@ so backends are config, not code:
 | `text/*` | decode |
 | `application/pdf` | per-page text layer (PyMuPDF); pages without one render to images → image chain |
 | `image/*` | OCR backend (Tesseract local / vision-LLM via the adapter) **and** captioning (vision-LLM) as separate products |
-| `video/*` | ffmpeg → audio track → transcription backend; keyframes → image chain |
-| `audio/*` | transcription backend (faster-whisper local once hardware allows, or API) |
+| `video/*` | ffmpeg → audio track → transcription backend; keyframes → image chain (fast-follow; needs ffmpeg) |
+| `audio/*` | **shipped:** whisper.cpp via the on-box llama-swap gateway, an async `transcribe_attachment` job → `kind='transcript'` cache row (docs/WHISPER_TRANSCRIPTION_PLAN.md) |
 
 Extractors return **provenanced segments**: source anchor (page, frame
 time, audio range), kind (`text-layer | ocr | transcript | caption`),
@@ -363,8 +363,12 @@ Dispatcher-level policy: per-domain backend routing (rides the privacy
 routing axis — sensitive-domain media can be pinned to local tools), and
 per-task size/cost budgets with a sample-or-summarize fallback for large
 media. Phase mapping: Phase 2 ships the dispatcher + text/PDF chains;
-Phase 3 adds vision backends (they require the LLM adapter); transcription
-lands with whisper hardware or an API key.
+Phase 3 adds vision backends (they require the LLM adapter); audio
+transcription is now shipped on whisper.cpp via the on-box llama-swap gateway
+(the model loads on demand and is freed after each job), mirroring the OCR job
+— not a synchronous extractor, since it is a slow gateway call. It is off by
+default (empty `whisper_url`); video transcription (ffmpeg → audio) is the
+fast-follow.
 
 Image-chain modes [decided: **default full**; per-attachment on-demand run;
 the description kind rides `'caption'`]: the `image_analysis_mode` user

@@ -38,8 +38,24 @@ ALLOWED_MEDIA_TYPES: frozenset[str] = frozenset(
         "text/markdown",
         "text/csv",
         "application/json",
+        # Audio: the model can't hear it inline, but its id rides the turn so jerv
+        # can pass it to the `transcribe` tool (the local whisper gateway). Present
+        # whether or not whisper is configured — the tool, not the upload, is the
+        # gate; an unconfigured box simply lacks the tool.
+        "audio/wav",
+        "audio/x-wav",
+        "audio/mpeg",
+        "audio/mp4",
+        "audio/x-m4a",
+        "audio/ogg",
+        "audio/webm",
+        "audio/flac",
     }
 )
+
+
+def is_audio_media_type(media_type: str) -> bool:
+    return media_type.startswith("audio/")
 
 
 def is_allowed_media_type(media_type: str) -> bool:
