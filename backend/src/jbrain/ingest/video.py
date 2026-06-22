@@ -35,6 +35,7 @@ degrades to a frames-only one.
 import asyncio
 import base64
 import re
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -146,9 +147,137 @@ def build_timeline(frames: list[dict[str, Any]], words: list[dict[str, Any]]) ->
 
 
 class VideoSampler(Protocol):
-    """The frame sampler the handler runs off the event loop (faked in tests)."""
+    """The frame sampler the caller runs off the event loop (faked in tests)."""
 
     def __call__(self, video: bytes) -> list[SampledFrame]: ...
+
+
+@dataclass(frozen=True)
+class VideoAnalysis:
+    """The map→fuse→reduce product, before it is persisted or rendered: the reduce
+    summary, the structured `analysis` (duration + per-frame timeline + transcript),
+    and the provenance string. Shared by the note-attachment job (which caches it)
+    and jerv's inline analyze_video tool (which renders it)."""
+
+    summary: str
+    analysis: dict[str, Any]
+    tool: str
+
+
+async def run_video_analysis(
+    data: bytes,
+    *,
+    filename: str,
+    media_type: str,
+    router: LlmRouter,
+    blobs: BlobStore,
+    sampler: VideoSampler,
+    transcribe: TranscribeClient | None = None,
+    transcribe_model: str = "",
+    gateway: LocalGateway | None = None,
+) -> VideoAnalysis | None:
+    """Run map→fuse→reduce on one video's bytes (no DB, no attachment identity).
+
+    Sample + caption frames, transcribe the audio (best-effort), fuse both on one
+    [mm:ss] timeline, and summarize. Frame JPEGs are stored as content-addressed
+    blobs whose ids ride the timeline as `thumb_id` (no URLs — invariant #9). Returns
+    None when the clip yields neither a frame nor any speech (nothing to summarize),
+    so the caller skips rather than inventing a summary from an empty timeline."""
+    # MAP — sample frames (off the event loop) and caption each.
+    frames = await asyncio.to_thread(sampler, data)
+    captioned: list[dict[str, Any]] = []
+    for frame in frames:
+        image = LlmImage(media_type="image/jpeg", data=base64.b64encode(frame.jpeg).decode("ascii"))
+        caption = await router.complete(
+            FRAME_CAPTION_TASK,
+            system=FRAME_SYSTEM,
+            user_text=f"Caption this frame from the video (file: {filename}).",
+            images=[image],
+            max_tokens=FRAME_MAX_TOKENS,
+        )
+        thumb_id = await blobs.put(frame.jpeg)
+        captioned.append(
+            {"t_ms": frame.timestamp_ms, "caption": caption.text.strip(), "thumb_id": thumb_id}
+        )
+
+    # MAP — transcribe the audio track (best-effort; absent when whisper is off).
+    transcript = await _transcribe_audio(
+        transcribe, gateway, transcribe_model, data, filename=filename, media_type=media_type
+    )
+    if not captioned and not transcript:
+        return None
+
+    # FUSE + REDUCE — one timeline, one summary.
+    words = list(transcript["words"]) if transcript else []
+    timeline = build_timeline(captioned, words)
+    summary = await router.complete(
+        SUMMARY_TASK, system=SUMMARY_SYSTEM, user_text=timeline, max_tokens=SUMMARY_MAX_TOKENS
+    )
+    analysis = {
+        "duration_ms": _duration_ms(captioned, transcript),
+        "frames": captioned,
+        "transcript": transcript,
+    }
+    return VideoAnalysis(
+        summary=summary.text.strip(),
+        analysis=analysis,
+        tool=":".join(await router.effective_spec(FRAME_CAPTION_TASK)),
+    )
+
+
+async def _transcribe_audio(
+    transcribe: TranscribeClient | None,
+    gateway: LocalGateway | None,
+    model: str,
+    data: bytes,
+    *,
+    filename: str,
+    media_type: str,
+) -> dict[str, Any] | None:
+    """The fused transcript dict, or None when whisper is unconfigured or the clip has
+    no speech. The whisper gateway's ffmpeg extracts the audio track from the video
+    container, so the raw video bytes ride the existing transcribe path; the model is
+    freed after (load-on-demand / unload-after)."""
+    if transcribe is None:
+        return None
+    try:
+        result = await transcribe.transcribe(data, filename=filename, media_type=media_type)
+    finally:
+        await _unload(gateway, model)
+    words = [
+        {
+            "text": w.text,
+            "start_ms": w.start_ms,
+            "end_ms": w.end_ms,
+            "confidence": round(w.confidence, 4),
+        }
+        for w in result.words
+    ]
+    clean = result.text.strip()
+    if not clean and not words:
+        return None  # silent / non-speech audio — no transcript to fuse
+    return {"text": clean, "words": words, "duration_ms": result.duration_ms}
+
+
+def _duration_ms(frames: list[dict[str, Any]], transcript: dict[str, Any] | None) -> int | None:
+    """Best-effort clip length: the transcript's probed duration, else the last
+    sampled frame's offset (the sampler clamps it to the clip)."""
+    if transcript and transcript.get("duration_ms"):
+        return int(transcript["duration_ms"])
+    if frames:
+        return int(frames[-1]["t_ms"])
+    return None
+
+
+async def _unload(gateway: LocalGateway | None, model: str) -> None:
+    """Best-effort eviction of the whisper model from the gateway. Never raises:
+    freeing VRAM is an optimization, and the gateway TTL-unloads anyway."""
+    if gateway is None or not model:
+        return
+    try:
+        await gateway.unload(model)
+    except LocalGatewayError as exc:
+        log.info("video.unload_failed", model=model, error=str(exc))
 
 
 class VideoPipeline:
@@ -169,8 +298,8 @@ class VideoPipeline:
         self._transcribe = transcribe
         self._transcribe_model = transcribe_model
         self._gateway = gateway
-        # media.sample_frames is blocking (ffmpeg subprocess); the handler runs it via
-        # asyncio.to_thread. Injectable so tests need no ffmpeg.
+        # media.sample_frames is blocking (ffmpeg subprocess); run_video_analysis runs
+        # it via asyncio.to_thread. Injectable so tests need no ffmpeg.
         self._sampler: VideoSampler = sampler or media.sample_frames
 
     async def analyze_video_attachment(self, payload: dict[str, Any]) -> None:
@@ -215,59 +344,31 @@ class VideoPipeline:
             return
 
         data = await self._blobs.get(sha256)
-        # MAP — sample frames (off the event loop) and caption each.
-        frames = await asyncio.to_thread(self._sampler, data)
-        captioned: list[dict[str, Any]] = []
-        for frame in frames:
-            image = LlmImage(
-                media_type="image/jpeg", data=base64.b64encode(frame.jpeg).decode("ascii")
-            )
-            caption = await self._router.complete(
-                FRAME_CAPTION_TASK,
-                system=FRAME_SYSTEM,
-                user_text=f"Caption this frame from the video (file: {filename}).",
-                images=[image],
-                max_tokens=FRAME_MAX_TOKENS,
-            )
-            thumb_id = await self._blobs.put(frame.jpeg)
-            captioned.append(
-                {"t_ms": frame.timestamp_ms, "caption": caption.text.strip(), "thumb_id": thumb_id}
-            )
-
-        # MAP — transcribe the audio track (best-effort; absent when whisper is off).
-        transcript = await self._transcribe_audio(data, filename=filename, media_type=media_type)
-        words = list(transcript["words"]) if transcript else []
-
-        if not captioned and not transcript:
+        result = await run_video_analysis(
+            data,
+            filename=filename,
+            media_type=media_type,
+            router=self._router,
+            blobs=self._blobs,
+            sampler=self._sampler,
+            transcribe=self._transcribe,
+            transcribe_model=self._transcribe_model,
+            gateway=self._gateway,
+        )
+        if result is None:
             # Nothing decodable and nothing spoken: write no marker so the on-demand
-            # tool re-tries (e.g. once ffmpeg/whisper is configured) rather than
+            # path re-tries (e.g. once ffmpeg/whisper is configured) rather than
             # caching a dead empty analysis.
             log.info("video.skipped", attachment_id=attachment_id, reason="no frames or audio")
             return
 
-        # FUSE + REDUCE — one timeline, one summary.
-        timeline = build_timeline(captioned, words)
-        summary = await self._router.complete(
-            SUMMARY_TASK,
-            system=SUMMARY_SYSTEM,
-            user_text=timeline,
-            max_tokens=SUMMARY_MAX_TOKENS,
-        )
-        summary_text = summary.text.strip()
-
-        duration_ms = self._duration_ms(captioned, transcript)
-        analysis = {
-            "duration_ms": duration_ms,
-            "frames": captioned,
-            "transcript": transcript,
-        }
         row = AttachmentExtract(
             attachment_id=attachment_uuid,
             kind=KIND_VIDEO_ANALYSIS,
-            tool=":".join(await self._router.effective_spec(FRAME_CAPTION_TASK)),
-            text=summary_text,
-            confidence=VIDEO_ANALYSIS_CONFIDENCE if summary_text else 0.0,
-            analysis=analysis,
+            tool=result.tool,
+            text=result.summary,
+            confidence=VIDEO_ANALYSIS_CONFIDENCE if result.summary else 0.0,
+            analysis=result.analysis,
             source_anchor=filename,
             domain_code=domain,
         )
@@ -286,56 +387,7 @@ class VideoPipeline:
             "video.analyzed",
             attachment_id=attachment_id,
             note_id=note_id,
-            frames=len(captioned),
-            has_audio=transcript is not None,
-            summary_chars=len(summary_text),
+            frames=len(result.analysis["frames"]),
+            has_audio=result.analysis["transcript"] is not None,
+            summary_chars=len(result.summary),
         )
-
-    async def _transcribe_audio(
-        self, data: bytes, *, filename: str, media_type: str
-    ) -> dict[str, Any] | None:
-        """The fused transcript dict, or None when whisper is unconfigured or the clip
-        has no speech. The whisper gateway's ffmpeg extracts the audio track from the
-        video container, so the raw video bytes ride the existing transcribe path."""
-        if self._transcribe is None:
-            return None
-        try:
-            result = await self._transcribe.transcribe(
-                data, filename=filename, media_type=media_type
-            )
-        finally:
-            await self._unload()
-        words = [
-            {
-                "text": w.text,
-                "start_ms": w.start_ms,
-                "end_ms": w.end_ms,
-                "confidence": round(w.confidence, 4),
-            }
-            for w in result.words
-        ]
-        clean = result.text.strip()
-        if not clean and not words:
-            return None  # silent / non-speech audio — no transcript to fuse
-        return {"text": clean, "words": words, "duration_ms": result.duration_ms}
-
-    @staticmethod
-    def _duration_ms(frames: list[dict[str, Any]], transcript: dict[str, Any] | None) -> int | None:
-        """Best-effort clip length: the transcript's probed duration, else the last
-        sampled frame's offset (the sampler clamps it to the clip)."""
-        if transcript and transcript.get("duration_ms"):
-            return int(transcript["duration_ms"])
-        if frames:
-            return int(frames[-1]["t_ms"])
-        return None
-
-    async def _unload(self) -> None:
-        """Best-effort eviction of the whisper model from the gateway (load-on-demand
-        / unload-after), mirroring transcribe_attachment. Never raises: freeing VRAM
-        is an optimization, and the gateway TTL-unloads anyway."""
-        if self._gateway is None or not self._transcribe_model:
-            return
-        try:
-            await self._gateway.unload(self._transcribe_model)
-        except LocalGatewayError as exc:
-            log.info("video.unload_failed", model=self._transcribe_model, error=str(exc))

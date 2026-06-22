@@ -67,6 +67,9 @@ OPTIONAL_IMAGE_TOOLS = IMAGE_TOOL_NAMES | frozenset({"analyze_image"})
 # jerv's on-box audio transcription sidecar, dropped from the registry when the
 # whisper gateway is unconfigured (graceful degrade, like the image tools).
 OPTIONAL_TRANSCRIBE_TOOL = frozenset({"transcribe"})
+# jerv's on-box video analysis sidecar, dropped from the registry when ffmpeg is
+# absent (graceful degrade, like the image/whisper tools).
+OPTIONAL_VIDEO_TOOL = frozenset({"analyze_video"})
 
 
 class EntityReader(Protocol):
@@ -411,6 +414,7 @@ def build_registry(
     settings: "SqlSettingsStore | None" = None,
     image_handlers: dict[str, ToolHandler] | None = None,
     transcribe_handlers: dict[str, ToolHandler] | None = None,
+    video_handlers: dict[str, ToolHandler] | None = None,
 ) -> ToolRegistry:
     """The agent's tool registry: every shipped sidecar bound to its handler — the
     read tools, the Tier-A memory tools, the list tools (which write the owner's
@@ -459,6 +463,9 @@ def build_registry(
             # jerv's local audio transcription (`web`-gated, on-box), present only when
             # the whisper gateway is configured; otherwise its sidecar is dropped below.
             **(transcribe_handlers or {}),
+            # jerv's local video analysis (`web`-gated, on-box), present only when
+            # ffmpeg is available; otherwise its sidecar is dropped below.
+            **(video_handlers or {}),
         },
-        optional=OPTIONAL_IMAGE_TOOLS | OPTIONAL_TRANSCRIBE_TOOL,
+        optional=OPTIONAL_IMAGE_TOOLS | OPTIONAL_TRANSCRIBE_TOOL | OPTIONAL_VIDEO_TOOL,
     )

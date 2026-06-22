@@ -52,6 +52,7 @@ def test_jerv_is_a_sandboxed_web_chatbot() -> None:
             "edit_image",
             "analyze_image",
             "transcribe",
+            "analyze_video",
             "query_server_metrics",
         }
     )

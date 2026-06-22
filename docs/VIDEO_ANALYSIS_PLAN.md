@@ -48,10 +48,15 @@ transcript in the JSONB column, confidence capped (~0.6, Guards) — plus the fr
 thumbnails as blobs. Re-enqueue `ingest_note`. Real-Postgres + RLS isolation test.
 
 ### Wave 3 — The tool
-`analyze_video.tool` sidecar + handler: read the cache; on a miss, enqueue the job
-and return "analyzing… check back". Returns the summary text + a `video_analysis`
-ViewPayload (attachment id + structured analysis; no URLs — invariant #9). Optional-
-tool/graceful-degrade wiring + digest pin.
+`analyze_video.tool` sidecar + handler. **Owner revision:** jerv chat attachments
+live in `app.turn_attachments` (no `note_id`, no extract cache), so the tool can't
+read the note-attachment cache the Wave 2 job writes. Per the owner it instead runs
+the map→fuse→reduce **inline** (the `analyze_image`/`transcribe` pattern) over a
+shared `run_video_analysis`: resolve the chat attachment under the session scope,
+sample + caption frames, transcribe the audio, fuse, summarize. Returns the summary
+text + a `video_analysis` ViewPayload (attachment id + structured analysis; no URLs —
+invariant #9). Optional-tool/graceful-degrade wiring (gated on ffmpeg) + digest pin +
+jerv allowlist. The Wave 2 job remains the note-pipeline path (ingest/on-demand).
 
 ### Wave 4 — The scrubbing/timeline card (after the mock gate)
 `<video controls>` + a summary panel + a timeline rail of frame-thumbnail markers;
@@ -72,4 +77,9 @@ structure.
   RLS isolation tests). Frame captions route by `agent.vision`; the reduce summarizes the
   fused `[mm:ss]` timeline. Degrades to frames-only (whisper off) or transcript-only
   (ffmpeg can't decode); an empty clip caches nothing so the tool re-tries.
-- Waves 3–4 — not started.
+- **Wave 3 — done** (`analyze_video.tool` + `jbrain.agent.videotools`: inline analysis
+  over the shared `run_video_analysis`, ffmpeg-gated registry wiring, jerv allowlist,
+  digest pin, unit tests). Owner chose inline (chat attachments have no cache) over the
+  originally-planned deferred-job; the Wave 2 job stays the note-pipeline path.
+- Wave 4 — not started (the scrubbing card, after the mock gate — spec approved:
+  docs/mocks/analyze-video-approved.html).
