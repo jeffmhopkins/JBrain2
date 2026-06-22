@@ -7,7 +7,7 @@ unconfigured ComfyUI drops both tools from the built registry (graceful degrade)
 """
 
 import hashlib
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from pathlib import Path
 
 import pytest
@@ -116,6 +116,7 @@ async def _handlers(
     fake: FakeImageGen,
     comfy: FakeComfyUiGateway | None = None,
     router: LlmRouter | None = None,
+    provisioned: Sequence[str] = ("qwen-image", "dreamshaper-xl-lightning"),
 ):
     sessions = AgentSessionRepo(maker)
     attachments = TurnAttachmentRepo(maker, sessions)
@@ -128,6 +129,7 @@ async def _handlers(
         FakeLocalGateway(),
         comfy or FakeComfyUiGateway(),
         router or _router(),
+        provisioned,
     )
 
 
@@ -210,6 +212,26 @@ async def test_generate_fast_uses_the_dreamshaper_model_and_short_step_curve(
 
     await handlers["generate_image"]({"prompt": "a finished piece"}, _ctx(owner))
     assert fake.last_gen.model == "qwen-image-2512" and fake.last_gen.steps == 20
+
+
+async def test_generate_fast_when_dreamshaper_not_installed_is_a_clean_actionable_error(
+    maker: async_sessionmaker,
+) -> None:
+    """speed: fast on a box that provisioned only Qwen returns an actionable message (and the
+    setup command) before any spend — no row, no render, no opaque ComfyUI checkpoint error."""
+    owner = await _owner(maker)
+    fake = FakeImageGen()
+    handlers = await _handlers(maker, owner, fake, provisioned=("qwen-image",))
+
+    out = await handlers["generate_image"](
+        {"prompt": "a quick sketch", "speed": "fast"}, _ctx(owner)
+    )
+    assert isinstance(out, str)
+    assert "comfyui-setup.sh dreamshaper-xl-lightning" in out
+    assert fake.last_gen is None  # bailed before driving the model
+    async with scoped_session(maker, owner) as s:
+        count = (await s.execute(text("SELECT count(*) FROM app.generated_images"))).scalar()
+    assert count == 0  # no row written
 
 
 async def test_generate_frees_comfyui_after_the_render(maker: async_sessionmaker) -> None:

@@ -310,6 +310,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 # Routes analyze_image's vision read (the `agent.vision` task) so a
                 # text-only agent model can still see an image via a vision model.
                 app.state.llm_router,
+                # The provisioned catalog ids gate the `speed: fast` path — a fast request
+                # for a model the operator never installed fails with a clear, actionable
+                # message rather than ComfyUI's opaque missing-checkpoint error.
+                settings.comfyui_models,
             )
         else:
             app.state.image_gen = None

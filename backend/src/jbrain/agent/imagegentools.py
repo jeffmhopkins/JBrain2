@@ -15,6 +15,7 @@ from __future__ import annotations
 import base64
 import secrets
 import uuid
+from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
 import structlog
@@ -301,14 +302,21 @@ def build_image_handlers(
     local_gateway: LocalGateway,
     comfyui_gateway: ComfyUiMemory,
     router: LlmRouter,
+    provisioned_models: Sequence[str] = (),
 ) -> dict[str, ToolHandler]:
     """`generate_image` + `edit_image` + `analyze_image`. Wired only when image generation
     is configured (a localhost ComfyUI); the registry omits all three otherwise (graceful
     degrade). `router` routes `analyze_image`'s vision read (the `agent.vision` task) so a
     text-only agent model can still see an image by delegating to a vision model.
 
+    `provisioned_models` is the catalog ids the operator actually downloaded (settings'
+    comfyui_models): the `speed: fast` path is gated on it so a request for a model that was
+    never installed fails with an actionable message, not ComfyUI's opaque missing-checkpoint
+    error. The quality model is ungated — the tool's base contract, offered whenever ComfyUI is.
+
     `maker` opens the RLS-scoped transaction each write/read runs under (the repo takes an
     already-scoped `AsyncSession`); the firewall is Postgres', applied from `ctx.session`."""
+    installed = set(provisioned_models)
 
     async def generate_image_tool(arguments: dict, ctx: ToolContext) -> str:
         prompt = str(arguments.get("prompt", "")).strip()
@@ -323,6 +331,14 @@ def build_image_handlers(
         width, height = dims
         seed = _resolve_seed(arguments.get("seed"))
         fast = _resolve_fast(arguments.get("speed"))
+        if fast and _FAST_MODEL not in installed:
+            # The fast knob is always in the schema, but the model is a separate install — say
+            # so plainly (and how to fix it) instead of letting ComfyUI 404 on the checkpoint.
+            return (
+                "The fast image model (DreamShaper XL Lightning) isn't installed on this box "
+                "yet. Generate at the default quality instead, or ask the owner to run "
+                "`comfyui-setup.sh dreamshaper-xl-lightning`."
+            )
         model = _FAST_MODEL if fast else _GEN_MODEL
         steps = _resolve_steps(arguments, fast=fast)
         spec = GenSpec(
