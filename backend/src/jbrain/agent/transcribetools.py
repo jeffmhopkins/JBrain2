@@ -14,10 +14,11 @@ import uuid
 import structlog
 
 from jbrain.agent.attachments import TurnAttachmentRepo
-from jbrain.agent.loop import ToolContext, ToolHandler
+from jbrain.agent.contracts import ViewPayload
+from jbrain.agent.loop import ToolContext, ToolHandler, ToolOutput
 from jbrain.llm.local_gateway import LocalGateway, LocalGatewayError
 from jbrain.storage import BlobStore
-from jbrain.transcribe import TranscribeClient
+from jbrain.transcribe import TranscribeClient, Transcript
 
 log = structlog.get_logger()
 
@@ -83,9 +84,42 @@ def build_transcribe_handlers(
         text = transcript.text.strip()
         if not text:
             return f'No speech was found in "{info.filename}".'
-        return f'Transcript of "{info.filename}":\n{text}'
+        # The model reads the transcript text; the owner sees the rich card (audio
+        # player + per-word confidence + sync). The view carries the attachment id,
+        # not a URL — the component builds the audio src (invariant #9).
+        return ToolOutput(
+            f'Transcript of "{info.filename}":\n{text}',
+            view=_transcript_view(attachment_id, info.filename, model, transcript),
+        )
 
     return {"transcribe": transcribe_tool}
+
+
+def _transcript_view(
+    attachment_id: str, filename: str, model: str, transcript: Transcript
+) -> ViewPayload:
+    return ViewPayload(
+        view="transcript",
+        surface="inline",
+        data={
+            # `source` tells the component which download endpoint to build the
+            # audio src from (a chat attachment here vs a note attachment).
+            "attachment_id": attachment_id,
+            "source": "chat",
+            "filename": filename,
+            "model": model,
+            "duration_ms": transcript.duration_ms,
+            "words": [
+                {
+                    "text": w.text,
+                    "start_ms": w.start_ms,
+                    "end_ms": w.end_ms,
+                    "confidence": round(w.confidence, 4),
+                }
+                for w in transcript.words
+            ],
+        },
+    )
 
 
 async def _unload(gateway: LocalGateway | None, model: str) -> None:

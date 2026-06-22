@@ -1,15 +1,14 @@
-"""WhisperCppClient: the multipart request shape and the tolerant response parse.
-
-A MockTransport answers the gateway so the test is deterministic and offline —
-the same seam jbrain.transcribe documents for the job/tool tests.
+"""WhisperCppClient: the verbose_json request shape and the tolerant parse into
+words (text + ms span + confidence). A MockTransport answers offline.
 """
 
+import json
 from collections.abc import Callable
 
 import httpx
 import pytest
 
-from jbrain.transcribe import Transcript, WhisperCppClient
+from jbrain.transcribe import Transcript, WhisperCppClient, Word, parse_transcript
 
 WAV = b"RIFF....fake-audio-bytes"
 
@@ -22,45 +21,110 @@ def make_client(handler: Handler) -> WhisperCppClient:
     )
 
 
+VERBOSE = {
+    "language": "en",
+    "duration": 1.1,
+    "text": "Hello world.",
+    "segments": [
+        {
+            "avg_logprob": -0.2,
+            "text": " Hello world.",
+            "start": 0.0,
+            "end": 1.1,
+            "tokens": [
+                {"text": " Hello", "start": 0.0, "end": 0.5, "p": 0.9},
+                {"text": " world", "start": 0.5, "end": 1.0, "p": 0.4},
+                {"text": ".", "start": 1.0, "end": 1.1, "p": 0.8},
+            ],
+        }
+    ],
+}
+
+
 @pytest.mark.asyncio
-async def test_posts_multipart_audio_with_model_and_parses_text() -> None:
+async def test_posts_verbose_json_multipart_and_parses_words() -> None:
     seen: dict[str, object] = {}
 
     def handler(req: httpx.Request) -> httpx.Response:
         seen["url"] = str(req.url)
-        seen["ctype"] = req.headers.get("content-type", "")
         seen["body"] = req.content
-        return httpx.Response(200, json={"text": "  hello world ", "language": "en"})
+        return httpx.Response(200, json=VERBOSE)
 
     result = await make_client(handler).transcribe(WAV, filename="memo.wav", media_type="audio/wav")
 
-    assert result == Transcript(text="hello world", language="en")
-    # The base URL ends in /v1 (gateway convention); the endpoint must not double it.
     assert seen["url"] == "http://gw/v1/audio/transcriptions"
-    assert "multipart/form-data" in str(seen["ctype"])
-    # The model name and the audio bytes both ride the multipart body.
     assert b'name="model"' in bytes(seen["body"])  # type: ignore[arg-type]
-    assert b"whisper-large-v3" in bytes(seen["body"])  # type: ignore[arg-type]
-    assert WAV in bytes(seen["body"])  # type: ignore[arg-type]
-    assert b"memo.wav" in bytes(seen["body"])  # type: ignore[arg-type]
+    assert b"verbose_json" in bytes(seen["body"])  # type: ignore[arg-type]
+    assert result.text == "Hello world." and result.language == "en"
+    assert result.duration_ms == 1100
+    # Sub-word tokens fold into words; punctuation attaches to its word; confidence
+    # is the mean of a word's token probs; spans are milliseconds.
+    assert [(w.text, w.start_ms, w.end_ms) for w in result.words] == [
+        ("Hello", 0, 500),
+        ("world.", 500, 1100),
+    ]
+    assert result.words[0].confidence == 0.9
+    assert result.words[1].confidence == pytest.approx(0.6)  # mean(0.4, 0.8)
 
 
-@pytest.mark.asyncio
-async def test_missing_language_is_none_and_text_is_stripped() -> None:
-    def handler(_req: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json={"text": "\njust text\n"})
+def test_token_centiseconds_t0_t1_are_normalized() -> None:
+    body = {
+        "segments": [
+            {
+                "avg_logprob": -0.1,
+                "tokens": [
+                    {"text": " hi", "t0": 0, "t1": 30, "p": 0.95},
+                    {"text": " there", "t0": 30, "t1": 80, "p": 0.7},
+                ],
+            }
+        ]
+    }
+    tr = parse_transcript(json.dumps(body))
+    assert tr.text == "hi there"
+    assert tr.words[0] == Word("hi", 0, 300, 0.95)  # 30 cs -> 300 ms
+    assert tr.words[1] == Word("there", 300, 800, 0.7)
 
-    result = await make_client(handler).transcribe(WAV, filename="a.mp3", media_type="audio/mpeg")
-    assert result == Transcript(text="just text", language=None)
+
+def test_segment_without_tokens_uses_avg_logprob_as_one_word() -> None:
+    body = {"segments": [{"text": " whole line", "start": 0.0, "end": 2.0, "avg_logprob": -0.7}]}
+    tr = parse_transcript(json.dumps(body))
+    assert len(tr.words) == 1
+    w = tr.words[0]
+    assert w.text == "whole line" and w.start_ms == 0 and w.end_ms == 2000
+    assert w.confidence == pytest.approx(0.4966, abs=1e-3)  # exp(-0.7)
 
 
-@pytest.mark.asyncio
-async def test_bare_string_body_is_accepted() -> None:
-    def handler(_req: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, text="  plain ")
+def test_missing_token_prob_falls_back_to_segment_confidence() -> None:
+    body = {
+        "segments": [{"avg_logprob": -0.2, "tokens": [{"text": " hi", "start": 0, "end": 0.4}]}]
+    }
+    tr = parse_transcript(json.dumps(body))
+    assert tr.words[0].confidence == pytest.approx(0.8187, abs=1e-3)  # exp(-0.2)
 
-    result = await make_client(handler).transcribe(WAV, filename="a.ogg", media_type="audio/ogg")
-    assert result == Transcript(text="plain", language=None)
+
+def test_special_and_timestamp_tokens_are_dropped() -> None:
+    body = {
+        "segments": [
+            {
+                "avg_logprob": -0.1,
+                "tokens": [
+                    {"text": "[_BEG_]", "start": 0, "end": 0},
+                    {"text": "<|0.00|>", "start": 0, "end": 0},
+                    {"text": " word", "start": 0.0, "end": 0.5, "p": 0.9},
+                ],
+            }
+        ]
+    }
+    tr = parse_transcript(json.dumps(body))
+    assert [w.text for w in tr.words] == ["word"]
+
+
+def test_plain_text_body_degrades_to_text_only() -> None:
+    assert parse_transcript("  just text  ") == Transcript(text="just text")
+
+
+def test_bare_json_string_is_accepted() -> None:
+    assert parse_transcript('"hello"') == Transcript(text="hello")
 
 
 @pytest.mark.asyncio

@@ -24,7 +24,7 @@ from jbrain.ingest.pipeline import IngestPipeline
 from jbrain.ingest.transcribe_job import TRANSCRIPT_CONFIDENCE, TranscribePipeline
 from jbrain.notes.repo import SqlNotesRepo
 from jbrain.storage import FsBlobStore
-from jbrain.transcribe import Transcript
+from jbrain.transcribe import Transcript, Word
 from tests.conftest import docker_available
 from tests.integration.test_rls import OWNER, UNSCOPED, database_url  # noqa: F401
 
@@ -170,7 +170,21 @@ async def test_transcribe_round_trip_blob_to_searchable_chunk(
     assert await transcribe_jobs_for(maker, attachment_id) == 1
 
     gateway = FakeGateway()
-    fake = FakeTranscribeClient([Transcript(text="Discussed the Q3 roadmap.", language="en")])
+    fake = FakeTranscribeClient(
+        [
+            Transcript(
+                text="Discussed the Q3 roadmap.",
+                language="en",
+                words=(
+                    Word("Discussed", 0, 600, 0.95),
+                    Word("the", 600, 800, 0.97),
+                    Word("Q3", 800, 1100, 0.61),
+                    Word("roadmap.", 1100, 1700, 0.9),
+                ),
+                duration_ms=1700,
+            )
+        ]
+    )
     handler = TranscribePipeline(maker, blobs, fake, "whisper-large-v3", gateway=gateway)
     await handler.transcribe_attachment({"attachment_id": attachment_id})
 
@@ -195,6 +209,19 @@ async def test_transcribe_round_trip_blob_to_searchable_chunk(
         "whisper:whisper-large-v3",
         "memo.wav",
     )
+    # The per-word breakdown is stored as JSONB for the karaoke UI.
+    async with scoped_session(maker, OWNER) as s:
+        words = (
+            await s.execute(
+                text(
+                    "SELECT words FROM app.attachment_extracts"
+                    " WHERE attachment_id = :aid AND kind = 'transcript'"
+                ),
+                {"aid": attachment_id},
+            )
+        ).scalar_one()
+    assert [w["text"] for w in words] == ["Discussed", "the", "Q3", "roadmap."]
+    assert words[2] == {"text": "Q3", "start_ms": 800, "end_ms": 1100, "confidence": 0.61}
     assert row["confidence"] == pytest.approx(TRANSCRIPT_CONFIDENCE)
 
     # The handler re-enqueued ingest; run it and the transcript becomes a chunk.

@@ -293,6 +293,7 @@ class SqlNotesRepo:
                     tool=r.tool,
                     confidence=r.confidence,
                     created_at=r.created_at,
+                    words=r.words,
                 )
                 for r in rows
             ]
