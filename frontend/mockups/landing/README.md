@@ -8,19 +8,19 @@ Each mockup is a **single, self-contained HTML file** with **no dependencies**
 renderer** in the low-poly-neon style of the reference
 (`kc3efj.net/aquarium.html`).
 
-## The concept
+## The concept (calm / phone-first)
 
-- A 3D **flock of boids** (Reynolds separation / alignment / cohesion) drifts
-  through space with depth fog and motion trails.
-- A lone **predator** hunts the flock; boids flee, the swarm swirls.
-- One boid is "real": its **brain is a live feed-forward neural network**
-  overlay. Its 6 input neurons are driven by that boid's actual per-frame state
-  — density, speed, predator threat, and the separation/alignment/cohesion
-  force magnitudes — so pulses cascade through the net as the boid reacts.
-- **Click any boid** to retarget the neural map to that boid. A calm interior
-  boid and a hunted one produce visibly different firing.
+- Top **two-thirds**: a slow 3D **flock of 10 boids** (Reynolds separation /
+  alignment / cohesion) with one lone **predator** drifting among them. Lots of
+  negative space, gentle motion — no clutter, no menus, no chrome.
+- Bottom **one-third**: a live feed-forward **neural network** panel. Its 6
+  input neurons are driven by the **selected** boid's actual per-frame state —
+  density, speed, predator threat, and the separation/alignment/cohesion force
+  magnitudes — so the neurons light up with that boid's "thinking".
+- **Tap a boid** to select it: it **changes color**, and the neural panel
+  rewires to that boid. A calm interior boid and a hunted one fire differently.
 
-Controls: drag to orbit · scroll to zoom · click a boid · `H` toggles UI.
+Controls: tap a boid to select · drag to orbit · pinch / scroll to zoom.
 
 ## The five styles
 

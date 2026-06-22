@@ -2,78 +2,54 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no">
 <meta name="theme-color" content="#04060d">
 <title>JBrain — Neon Reef</title>
 <style>
-  html,body { margin:0; padding:0; height:100%; overflow:hidden; background:#04060d; }
-  #c { display:block; width:100vw; height:100vh; }
-  #net { position:fixed; right:0; bottom:0; pointer-events:none; mix-blend-mode:screen; opacity:.62; }
-  #panel {
-    position:fixed; left:16px; top:16px; z-index:10;
-    font:11px/1.5 'Courier New', ui-monospace, monospace;
-    color:#9adfe8; letter-spacing:.4px;
-    background:rgba(4,6,14,.78); border:1px solid rgba(94,242,255,.22);
-    border-radius:10px; padding:12px 14px 10px;
-    backdrop-filter:blur(6px); -webkit-backdrop-filter:blur(6px);
-    transition:opacity .6s; user-select:none; max-width:230px;
-  }
-  body.idle #panel { opacity:0; pointer-events:none; }
-  #panel .ttl { color:#5ef2ff; font-weight:bold; margin-bottom:6px; font-size:13px; text-shadow:0 0 8px rgba(94,242,255,.6); }
-  #panel .ttl span { color:#4a6f7a; font-weight:normal; font-size:10px; }
-  #panel .lbl { color:#ff5ec8; font-size:10px; margin:8px 0 3px; text-shadow:0 0 6px rgba(255,94,200,.5); }
-  #panel .hint { color:#54808c; }
-  #brand { position:fixed; left:0; right:0; bottom:18px; z-index:10; text-align:center;
-    font:600 12px/1 'Courier New', ui-monospace, monospace; letter-spacing:3px;
-    color:rgba(94,242,255,.5); text-shadow:0 0 12px rgba(94,242,255,.4); transition:opacity .6s; }
-  body.idle #brand { opacity:.25; }
+  html,body { margin:0; padding:0; height:100%; overflow:hidden; background:#04060d;
+    touch-action:none; -webkit-user-select:none; user-select:none; }
+  #c { display:block; position:fixed; left:0; top:0; }
+  #net { display:block; position:fixed; left:0; bottom:0; }
 </style>
 </head>
 <body>
 <canvas id="c"></canvas>
 <canvas id="net"></canvas>
-<div id="panel">
-  <div class="ttl">JBRAIN <span>// neon reef</span></div>
-  <div class="hint">a flock of boids. one mind made visible.</div>
-  <div class="lbl">SELECTED &middot; <span id="selId">#0</span></div>
-  <div class="hint">click any boid to read its brain</div>
-  <div class="lbl">CONTROLS</div>
-  <div class="hint">drag orbit &middot; scroll zoom &middot; H hide ui</div>
-</div>
-<div id="brand">J B R A I N</div>
 
 <script>
 "use strict";
 /* ============================================================ shared engine
-   Pure-canvas software 3D renderer in the low-poly neon style:
-   world verts -> orbit camera -> perspective -> painter sort -> flat fills
-   + neon edge strokes, depth fog to background. No dependencies. */
+   Pure-canvas software 3D renderer, low-poly neon style. No dependencies.
+   Layout: top ~2/3 = a small slow boid flock; bottom 1/3 = the live neural
+   net of the selected boid. Tap a boid to select it (it changes color);
+   its real state drives the neurons. No menus, no chrome. */
 
-// ---- style knobs (overridden per mockup) ----
 const STYLE = {
   bg:[4,6,13],
-  fog0:34, fog1:120,              // fog near/far in camera-space depth
-  hueCalm:188, hueHot:312,        // boid hue maps speed calm->hot
-  sat:90, edgeBoost:26,
-  predHue:30, predSat:95,         // predator amber/red
-  netInk:'#46e6ff', netHot:'#ff2bd6',
-  glow:true,
+  fog0:18, fog1:78,
+  hueCalm:188, hueHot:316,
+  sat:88,
+  selHue:52,                       // selected boid turns warm gold
+  predHue:6, predSat:92,
+  netInk:'#46e6ff', netHot:'#ffd34d', netBg:[6,9,18],
 };
 
-const cnv = document.getElementById('c');
-const ctx = cnv.getContext('2d');
-let W=0,H=0,focal=1,cx=0,cyc=0,DPR=1,vig=null;
+const cnv=document.getElementById('c'), ctx=cnv.getContext('2d');
+const net=document.getElementById('net'), nctx=net.getContext('2d');
+let W=0,H=0,SCENE_H=0,NET_H=0,focal=1,cx=0,cyc=0,DPR=1,vig=null;
+
 function resize(){
-  DPR = Math.min(1.75, window.devicePixelRatio||1);
-  W = innerWidth; H = innerHeight;
-  cnv.width = W*DPR; cnv.height = H*DPR;
-  cnv.style.width=W+'px'; cnv.style.height=H+'px';
+  DPR=Math.min(2,window.devicePixelRatio||1);
+  W=innerWidth; H=innerHeight;
+  NET_H=Math.round(H*0.33); SCENE_H=H-NET_H;
+  cnv.width=W*DPR; cnv.height=SCENE_H*DPR; cnv.style.width=W+'px'; cnv.style.height=SCENE_H+'px';
   ctx.setTransform(DPR,0,0,DPR,0,0);
-  focal = H*1.05; cx=W/2; cyc=H/2;
-  vig = ctx.createRadialGradient(cx,cyc,Math.min(W,H)*0.30, cx,cyc,Math.max(W,H)*0.80);
-  vig.addColorStop(0,'rgba(0,0,0,0)');
-  vig.addColorStop(1,'rgba(0,0,0,0.55)');
-  sizeNet();
+  net.width=W*DPR; net.height=NET_H*DPR; net.style.width=W+'px'; net.style.height=NET_H+'px';
+  nctx.setTransform(DPR,0,0,DPR,0,0);
+  focal=SCENE_H*1.15; cx=W/2; cyc=SCENE_H/2;
+  vig=ctx.createRadialGradient(cx,cyc,Math.min(W,SCENE_H)*0.25,cx,cyc,Math.max(W,SCENE_H)*0.75);
+  vig.addColorStop(0,'rgba(0,0,0,0)'); vig.addColorStop(1,'rgba(0,0,0,0.5)');
+  layoutNet();
 }
 addEventListener('resize',resize);
 
@@ -88,59 +64,47 @@ const len=a=>Math.hypot(a[0],a[1],a[2]);
 const norm=a=>{const l=len(a)||1;return [a[0]/l,a[1]/l,a[2]/l];};
 const clamp=(v,a,b)=>v<a?a:v>b?b:v;
 const lerp=(a,b,t)=>a+(b-a)*t;
+function rnd(a,b){return a+Math.random()*(b-a);}
 
-// ---- camera (orbit) ----
-const cam={pos:[0,0,60],f:[0,0,-1],r:[1,0,0],u:[0,1,0]};
-let camYaw=0.6, camPitch=0.25, camDist=58, yawV=0, pitchV=0;
+// ---- camera (gentle orbit) ----
+const cam={pos:[0,0,40],f:[0,0,-1],r:[1,0,0],u:[0,1,0]};
+let camYaw=0.5,camPitch=0.18,camDist=42,yawV=0,pitchV=0;
 function updateCamera(t){
-  camYaw += yawV; camPitch += pitchV; yawV*=0.9; pitchV*=0.9;
-  if(!dragging) camYaw += 0.0012;            // gentle idle drift
-  camPitch = clamp(camPitch,-1.2,1.2);
-  const cp=Math.cos(camPitch), sp=Math.sin(camPitch);
-  const tgt=[0, 0, 0];
-  cam.pos=[Math.sin(camYaw)*cp*camDist, sp*camDist + Math.sin(t*0.0003)*3, Math.cos(camYaw)*cp*camDist];
-  const f=norm(sub(tgt,cam.pos));
+  camYaw+=yawV; camPitch+=pitchV; yawV*=0.9; pitchV*=0.9;
+  if(!dragging) camYaw+=0.0008;
+  camPitch=clamp(camPitch,-1.0,1.0);
+  const cp=Math.cos(camPitch),sp=Math.sin(camPitch);
+  cam.pos=[Math.sin(camYaw)*cp*camDist, sp*camDist+Math.sin(t*0.0002)*2, Math.cos(camYaw)*cp*camDist];
+  const f=norm(sub([0,0,0],cam.pos));
   const r=norm(cross(f,[0,1,0]));
   cam.f=f; cam.r=r; cam.u=cross(r,f);
 }
 function project(p){
-  const d=sub(p,cam.pos);
-  const z=dot(d,cam.f);
+  const d=sub(p,cam.pos), z=dot(d,cam.f);
   if(z<=0.05) return {vis:false};
-  const x=dot(d,cam.r), y=dot(d,cam.u);
   const inv=focal/z;
-  return {x:cx+x*inv, y:cyc-y*inv, z, inv, vis:true};
+  return {x:cx+dot(d,cam.r)*inv, y:cyc-dot(d,cam.u)*inv, z, inv, vis:true};
 }
 function fogAt(z){ return clamp(1-(z-STYLE.fog0)/(STYLE.fog1-STYLE.fog0),0,1); }
 
 // ---- render list (painter) ----
 const RL=[];
 const LIGHT=norm([0.4,0.85,0.35]);
-function pushMesh(mesh, pos, basis, hue, sat, scale, baseL, edgeA){
+function pushMesh(mesh,pos,basis,hue,sat,scale,baseL,edgeA){
   const [R,U,F]=basis;
-  const wv=mesh.v.map(p=>{
-    const wx=pos[0]+R[0]*p[0]*scale+U[0]*p[1]*scale+F[0]*p[2]*scale;
-    const wy=pos[1]+R[1]*p[0]*scale+U[1]*p[1]*scale+F[1]*p[2]*scale;
-    const wz=pos[2]+R[2]*p[0]*scale+U[2]*p[1]*scale+F[2]*p[2]*scale;
-    return [wx,wy,wz];
-  });
+  const wv=mesh.v.map(p=>[
+    pos[0]+R[0]*p[0]*scale+U[0]*p[1]*scale+F[0]*p[2]*scale,
+    pos[1]+R[1]*p[0]*scale+U[1]*p[1]*scale+F[1]*p[2]*scale,
+    pos[2]+R[2]*p[0]*scale+U[2]*p[1]*scale+F[2]*p[2]*scale]);
   const pj=wv.map(project);
   for(const fc of mesh.f){
     const a=pj[fc[0]],b=pj[fc[1]],c=pj[fc[2]];
     if(!a.vis||!b.vis||!c.vis) continue;
-    const depth=(a.z+b.z+c.z)/3, fog=fogAt(depth);
-    if(fog<0.02) continue;
-    // world normal for flat shade
+    const depth=(a.z+b.z+c.z)/3, fog=fogAt(depth); if(fog<0.02) continue;
     const n=norm(cross(sub(wv[fc[1]],wv[fc[0]]),sub(wv[fc[2]],wv[fc[0]])));
     const shade=0.45+0.55*clamp(dot(n,LIGHT),0,1);
-    const l=clamp(baseL*shade,8,72);
-    RL.push({t:'tri',pts:[a,b,c],depth,h:hue,s:sat,l,a:fog,eA:edgeA,eL:Math.min(90,l+STYLE.edgeBoost)});
+    RL.push({t:'tri',pts:[a,b,c],depth,h:hue,s:sat,l:clamp(baseL*shade,8,75),a:fog,eA:edgeA,eL:Math.min(92,baseL*shade+26)});
   }
-}
-function pushLine(p,q,hue,sat,l,a,w){
-  const A=project(p),B=project(q); if(!A.vis||!B.vis) return;
-  const depth=(A.z+B.z)/2, fog=fogAt(depth); if(fog<0.02) return;
-  RL.push({t:'line',x1:A.x,y1:A.y,x2:B.x,y2:B.y,depth,h:hue,s:sat,l,a:a*fog,w});
 }
 function pushPoint(p,r,hue,sat,l,a){
   const P=project(p); if(!P.vis) return; const fog=fogAt(P.z); if(fog<0.04) return;
@@ -151,24 +115,14 @@ function flush(){
   ctx.lineJoin='round'; ctx.lineCap='round';
   for(const f of RL){
     if(f.t==='tri'){
-      ctx.beginPath();
-      ctx.moveTo(f.pts[0].x,f.pts[0].y);
-      ctx.lineTo(f.pts[1].x,f.pts[1].y);
-      ctx.lineTo(f.pts[2].x,f.pts[2].y);
-      ctx.closePath();
-      ctx.fillStyle=`hsla(${f.h},${f.s}%,${f.l}%,${f.a*0.9})`;
-      ctx.fill();
-      ctx.strokeStyle=`hsla(${f.h},${f.s}%,${f.eL}%,${f.a*f.eA})`;
-      ctx.lineWidth=1; ctx.stroke();
-    } else if(f.t==='line'){
-      ctx.strokeStyle=`hsla(${f.h},${f.s}%,${f.l}%,${f.a})`;
-      ctx.lineWidth=f.w; ctx.beginPath();
-      ctx.moveTo(f.x1,f.y1); ctx.lineTo(f.x2,f.y2); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(f.pts[0].x,f.pts[0].y); ctx.lineTo(f.pts[1].x,f.pts[1].y); ctx.lineTo(f.pts[2].x,f.pts[2].y); ctx.closePath();
+      ctx.fillStyle=`hsla(${f.h},${f.s}%,${f.l}%,${f.a*0.9})`; ctx.fill();
+      ctx.strokeStyle=`hsla(${f.h},${f.s}%,${f.eL}%,${f.a*f.eA})`; ctx.lineWidth=1; ctx.stroke();
     } else {
       ctx.save(); ctx.globalCompositeOperation='lighter';
-      ctx.fillStyle=`hsla(${f.h},${f.s}%,${f.l}%,${f.a*0.25})`;
-      ctx.beginPath(); ctx.arc(f.x,f.y,f.r*3.4,0,TAU); ctx.fill();
-      ctx.fillStyle=`hsla(${f.h},${f.s}%,${Math.min(94,f.l+22)}%,${f.a})`;
+      ctx.fillStyle=`hsla(${f.h},${f.s}%,${f.l}%,${f.a*0.22})`;
+      ctx.beginPath(); ctx.arc(f.x,f.y,f.r*3.6,0,TAU); ctx.fill();
+      ctx.fillStyle=`hsla(${f.h},${f.s}%,${Math.min(95,f.l+22)}%,${f.a})`;
       ctx.beginPath(); ctx.arc(f.x,f.y,f.r,0,TAU); ctx.fill();
       ctx.restore();
     }
@@ -176,283 +130,172 @@ function flush(){
   RL.length=0;
 }
 
-// ---- geometry: a chunky low-poly fish facing +z ----
-function fishMesh(){
-  const v=[
-    [0,0,1.15],          // 0 nose
-    [0.32,0,0.1],        // 1 right
-    [-0.32,0,0.1],       // 2 left
-    [0,0.34,0.1],        // 3 top
-    [0,-0.30,0.1],       // 4 bottom
-    [0,0,-0.85],         // 5 tail base
-    [0,0.55,-1.2],       // 6 caudal top
-    [0,-0.5,-1.2],       // 7 caudal bottom
-    [0,0.62,-0.2],       // 8 dorsal tip
-  ];
-  const f=[
-    [0,3,1],[0,1,4],[0,4,2],[0,2,3],          // nose pyramid
-    [3,5,1],[1,5,4],[4,5,2],[2,5,3],          // body to tail
-    [5,6,7],                                    // caudal fin
-    [3,8,5],                                    // dorsal-ish
-  ];
-  return {v,f};
-}
-const FISH=fishMesh();
+// ---- geometry ----
+const FISH={v:[[0,0,1.15],[0.32,0,0.1],[-0.32,0,0.1],[0,0.34,0.1],[0,-0.30,0.1],[0,0,-0.85],[0,0.55,-1.2],[0,-0.5,-1.2],[0,0.62,-0.2]],
+  f:[[0,3,1],[0,1,4],[0,4,2],[0,2,3],[3,5,1],[1,5,4],[4,5,2],[2,5,3],[5,6,7],[3,8,5]]};
+const PRED={v:[[0,0,1.8],[0.55,0,0],[-0.55,0,0],[0,0.55,0],[0,-0.5,0],[0,0,-1.5],[0,0.95,-2.1],[0,-0.85,-2.1],[0,1.0,-0.3],[0.3,-0.25,1.2],[-0.3,-0.25,1.2]],
+  f:[[0,3,1],[0,1,4],[0,4,2],[0,2,3],[3,5,1],[1,5,4],[4,5,2],[2,5,3],[5,6,7],[3,8,5],[0,9,1],[0,2,10]]};
 
-function predMesh(){
-  const v=[
-    [0,0,1.8],[0.55,0,0.0],[-0.55,0,0.0],[0,0.55,0.0],[0,-0.5,0.0],
-    [0,0,-1.5],[0,0.95,-2.1],[0,-0.85,-2.1],[0,1.0,-0.3],
-    [0.3,-0.25,1.2],[-0.3,-0.25,1.2],          // jaw hints
-  ];
-  const f=[
-    [0,3,1],[0,1,4],[0,4,2],[0,2,3],
-    [3,5,1],[1,5,4],[4,5,2],[2,5,3],
-    [5,6,7],[3,8,5],
-    [0,9,1],[0,2,10],
-  ];
-  return {v,f};
-}
-const PRED=predMesh();
-
-// ---- boids ----
-const BND=27;                       // half-extent of cube world
-const N=120;
+// ---- boids (10, slow) ----
+const BND=17, N=10;
 const boids=[];
-function rnd(a,b){return a+Math.random()*(b-a);}
-for(let i=0;i<N;i++){
-  boids.push({
-    p:[rnd(-BND,BND),rnd(-BND,BND),rnd(-BND,BND)],
-    v:[rnd(-1,1),rnd(-1,1),rnd(-1,1)],
-    state:{density:0,speed:0,threat:0,sep:0,ali:0,coh:0},
-    sx:-1,sy:-1,sz:1e9,
-  });
-}
-const predator={p:[0,0,-40],v:[0,0,1]};
+for(let i=0;i<N;i++) boids.push({
+  p:[rnd(-BND,BND),rnd(-BND,BND),rnd(-BND,BND)],
+  v:[rnd(-1,1),rnd(-1,1),rnd(-1,1)],
+  state:{density:0,speed:0,threat:0,sep:0,ali:0,coh:0}, sx:-1,sy:-1,sz:1e9,
+});
+const predator={p:[0,0,-26],v:[0,0,1]};
 
-const MAXSPD=0.62, MAXF=0.022;
-const R_NEI=7.5, R_SEP=3.2, R_FLEE=12;
+const MAXSPD=0.16, MAXF=0.006, R_NEI=11, R_SEP=5, R_FLEE=13;
 function limit(v,m){const l=len(v);return l>m?scl(v,m/l):v;}
 function stepBoids(){
   for(const b of boids){
     let sep=[0,0,0],ali=[0,0,0],coh=[0,0,0],cnt=0,scnt=0;
-    for(const o of boids){
-      if(o===b) continue;
+    for(const o of boids){ if(o===b) continue;
       const d=sub(b.p,o.p), dl=len(d);
       if(dl<R_NEI){ ali=add(ali,o.v); coh=add(coh,o.p); cnt++; }
-      if(dl<R_SEP && dl>1e-4){ sep=add(sep,scl(d,1/(dl*dl))); scnt++; }
+      if(dl<R_SEP&&dl>1e-4){ sep=add(sep,scl(d,1/(dl*dl))); scnt++; }
     }
     let acc=[0,0,0];
-    if(scnt){ sep=limit(sub(scl(norm(sep),MAXSPD),b.v),MAXF); acc=add(acc,scl(sep,1.7)); }
+    if(scnt){ sep=limit(sub(scl(norm(sep),MAXSPD),b.v),MAXF); acc=add(acc,scl(sep,1.6)); }
     if(cnt){
       ali=limit(sub(scl(norm(ali),MAXSPD),b.v),MAXF); acc=add(acc,scl(ali,1.0));
       coh=sub(scl(coh,1/cnt),b.p); coh=limit(sub(scl(norm(coh),MAXSPD),b.v),MAXF); acc=add(acc,scl(coh,0.9));
     }
-    // flee predator
     const dp=sub(b.p,predator.p), dpl=len(dp); let threat=0;
-    if(dpl<R_FLEE && dpl>1e-3){
+    if(dpl<R_FLEE&&dpl>1e-3){
       const flee=limit(sub(scl(norm(dp),MAXSPD),b.v),MAXF*3);
-      acc=add(acc,scl(flee,3.2*(R_FLEE/Math.max(dpl,1))));
-      threat=1-clamp(dpl/R_FLEE,0,1);
+      acc=add(acc,scl(flee,3.0*(R_FLEE/Math.max(dpl,1)))); threat=1-clamp(dpl/R_FLEE,0,1);
     }
-    // soft bounds
     for(let k=0;k<3;k++){
-      if(b.p[k]> BND-4) acc[k]-=0.01*(b.p[k]-(BND-4));
-      if(b.p[k]<-BND+4) acc[k]-=0.01*(b.p[k]-(-BND+4));
+      if(b.p[k]>BND-3) acc[k]-=0.006*(b.p[k]-(BND-3));
+      if(b.p[k]<-BND+3) acc[k]-=0.006*(b.p[k]-(-BND+3));
     }
     b.v=limit(add(b.v,acc),MAXSPD);
-    if(len(b.v)<0.18) b.v=scl(norm(b.v),0.18);
+    if(len(b.v)<0.05) b.v=scl(norm(b.v),0.05);
     b.p=add(b.p,b.v);
-    b.state.density=clamp(cnt/12,0,1);
-    b.state.speed=clamp(len(b.v)/MAXSPD,0,1);
-    b.state.threat=threat;
-    b.state.sep=clamp(len(sep)/MAXF,0,1);
-    b.state.ali=clamp(len(ali)/MAXF,0,1);
-    b.state.coh=clamp(len(coh)/MAXF,0,1);
+    b.state.density=clamp(cnt/6,0,1); b.state.speed=clamp(len(b.v)/MAXSPD,0,1);
+    b.state.threat=threat; b.state.sep=clamp(len(sep)/MAXF,0,1);
+    b.state.ali=clamp(len(ali)/MAXF,0,1); b.state.coh=clamp(len(coh)/MAXF,0,1);
   }
-  // predator: seek flock centroid, lazily
   let c=[0,0,0]; for(const b of boids) c=add(c,b.p); c=scl(c,1/N);
-  const seek=limit(sub(scl(norm(sub(c,predator.p)),MAXSPD*0.92),predator.v),MAXF*1.3);
-  predator.v=limit(add(predator.v,seek),MAXSPD*0.92);
-  predator.p=add(predator.p,predator.v);
+  const seek=limit(sub(scl(norm(sub(c,predator.p)),MAXSPD*0.8),predator.v),MAXF*1.1);
+  predator.v=limit(add(predator.v,seek),MAXSPD*0.8); predator.p=add(predator.p,predator.v);
 }
-
-function basisFrom(v){
-  const F=norm(v);
-  let R=cross(F,[0,1,0]); if(len(R)<1e-3) R=[1,0,0]; R=norm(R);
-  const U=cross(R,F);
-  return [R,U,F];
-}
+function basisFrom(v){ const F=norm(v); let R=cross(F,[0,1,0]); if(len(R)<1e-3) R=[1,0,0]; R=norm(R); return [R,cross(R,F),F]; }
 
 let selected=0;
 function drawWorld(t){
-  // world cage hint
-  const e=BND;
-  const corners=[[-e,-e,-e],[e,-e,-e],[e,e,-e],[-e,e,-e],[-e,-e,e],[e,-e,e],[e,e,e],[-e,e,e]];
-  const E=[[0,1],[1,2],[2,3],[3,0],[4,5],[5,6],[6,7],[7,4],[0,4],[1,5],[2,6],[3,7]];
-  for(const [a,b] of E) pushLine(corners[a],corners[b],STYLE.hueCalm,40,30,0.10,1);
-
-  // dust
-  for(const d of dust){ pushPoint(d,0.5,STYLE.hueCalm,30,55,0.5); }
-
   for(let i=0;i<N;i++){
-    const b=boids[i];
-    const basis=basisFrom(b.v);
-    const spd=clamp(len(b.v)/MAXSPD,0,1);
-    const hue=lerp(STYLE.hueCalm,STYLE.hueHot,spd*0.9+b.state.threat*0.6);
+    const b=boids[i], basis=basisFrom(b.v), spd=clamp(len(b.v)/MAXSPD,0,1);
     const isSel=i===selected;
-    pushMesh(FISH,b.p,basis,hue,STYLE.sat, isSel?1.5:1.0, isSel?70:46, isSel?0.95:0.55);
-    // remember screen pos for picking
-    const P=project(b.p); if(P.vis){ b.sx=P.x; b.sy=P.y; b.sz=P.z; } else { b.sz=1e9; }
-    if(isSel){ pushPoint(b.p,2.0,STYLE.hueHot? STYLE.hueHot:hue,STYLE.sat,80,0.9); }
+    const hue=isSel?STYLE.selHue:lerp(STYLE.hueCalm,STYLE.hueHot,spd*0.7+b.state.threat*0.6);
+    pushMesh(FISH,b.p,basis,hue,isSel?95:STYLE.sat,isSel?1.7:1.15,isSel?72:48,isSel?0.95:0.5);
+    const P=project(b.p); if(P.vis){ b.sx=P.x; b.sy=P.y; b.sz=P.z; } else b.sz=1e9;
+    if(isSel) pushPoint(b.p,2.2,STYLE.selHue,95,82,0.9);
   }
-  // predator
-  const pb=basisFrom(predator.v);
-  pushMesh(PRED,predator.p,pb,STYLE.predHue,STYLE.predSat,2.0,55,0.9);
-  pushPoint(predator.p,2.6,STYLE.predHue,STYLE.predSat,70,0.7);
+  pushMesh(PRED,predator.p,basisFrom(predator.v),STYLE.predHue,STYLE.predSat,2.1,55,0.9);
+  pushPoint(predator.p,2.6,STYLE.predHue,STYLE.predSat,68,0.6);
 }
 
-const dust=[]; for(let i=0;i<90;i++) dust.push([rnd(-BND,BND),rnd(-BND,BND),rnd(-BND,BND)]);
-
-// ============================================================ neural overlay
-const net=document.getElementById('net');
-const nctx=net.getContext('2d');
-let NW=300,NH=240;
-function sizeNet(){
-  NW=Math.min(340,Math.round(W*0.42)); NH=Math.min(280,Math.round(H*0.42));
-  net.width=NW*DPR; net.height=NH*DPR;
-  net.style.width=NW+'px'; net.style.height=NH+'px';
-  nctx.setTransform(DPR,0,0,DPR,0,0);
-  layoutNet();
-}
-const LAYERS=[6,8,8,3];
+// ============================================================ neural net (bottom 1/3)
+const LAYERS=[6,6,3];
 let nodes=[],edges=[];
 function layoutNet(){
   nodes=[]; edges=[];
-  const padX=34,padY=26;
-  const gw=(NW-padX*2)/(LAYERS.length-1);
+  const padX=64, padY=22;
+  const gw=(W-padX*2)/(LAYERS.length-1);
   for(let l=0;l<LAYERS.length;l++){
-    const col=[];
-    const gh=(NH-padY*2)/Math.max(1,LAYERS[l]-1);
-    for(let i=0;i<LAYERS[l];i++){
-      col.push({x:padX+l*gw, y:LAYERS[l]===1?NH/2:padY+i*gh, a:0});
-    }
+    const col=[]; const gh=(NET_H-padY*2)/Math.max(1,LAYERS[l]-1);
+    for(let i=0;i<LAYERS[l];i++) col.push({x:padX+l*gw, y:LAYERS[l]===1?NET_H/2:padY+i*gh, a:0});
     nodes.push(col);
   }
-  for(let l=1;l<LAYERS.length;l++){
-    for(let i=0;i<LAYERS[l-1];i++) for(let j=0;j<LAYERS[l];j++)
-      edges.push({l,i,j,w:rnd(-1,1),pulses:[]});
-  }
+  for(let l=1;l<LAYERS.length;l++) for(let i=0;i<LAYERS[l-1];i++) for(let j=0;j<LAYERS[l];j++)
+    edges.push({l,i,j,w:rnd(-1,1),pulses:[]});
 }
 function sig(x){return 1/(1+Math.exp(-x));}
 function netForward(){
   const s=boids[selected].state;
   const inp=[s.density,s.speed,s.threat,s.sep,s.ali,s.coh];
-  for(let i=0;i<LAYERS[0];i++) nodes[0][i].a=lerp(nodes[0][i].a,inp[i],0.2);
-  // propagate
-  for(let l=1;l<LAYERS.length;l++){
-    for(let j=0;j<LAYERS[l];j++){
-      let sum=-0.4;
-      for(const e of edges) if(e.l===l && e.j===j) sum+=nodes[l-1][e.i].a*e.w*0.9;
-      const tgt=sig(sum*2.2);
-      nodes[l][j].a=lerp(nodes[l][j].a,tgt,0.18);
-    }
+  for(let i=0;i<LAYERS[0];i++) nodes[0][i].a=lerp(nodes[0][i].a,inp[i],0.12);
+  for(let l=1;l<LAYERS.length;l++) for(let j=0;j<LAYERS[l];j++){
+    let sum=-0.4; for(const e of edges) if(e.l===l&&e.j===j) sum+=nodes[l-1][e.i].a*e.w*0.9;
+    nodes[l][j].a=lerp(nodes[l][j].a,sig(sum*2.2),0.12);
   }
-  // emit pulses stochastically from active nodes
-  for(const e of edges){
-    const src=nodes[e.l-1][e.i];
-    if(src.a>0.4 && Math.random()<src.a*0.10){
-      e.pulses.push({t:0,sp:rnd(0.02,0.05)});
-    }
-  }
+  for(const e of edges){ const src=nodes[e.l-1][e.i];
+    if(src.a>0.42 && Math.random()<src.a*0.05) e.pulses.push({t:0,sp:rnd(0.012,0.03)}); }
 }
-function hexA(hex,a){ // #rrggbb -> rgba
-  const n=parseInt(hex.slice(1),16); return `rgba(${(n>>16)&255},${(n>>8)&255},${n&255},${a})`;
-}
+function hexA(hex,a){ const n=parseInt(hex.slice(1),16); return `rgba(${(n>>16)&255},${(n>>8)&255},${n&255},${a})`; }
 function drawNet(){
-  nctx.clearRect(0,0,NW,NH);
+  // own subtle background + top divider so it reads as a distinct panel
+  nctx.globalCompositeOperation='source-over';
+  nctx.fillStyle=`rgb(${STYLE.netBg[0]},${STYLE.netBg[1]},${STYLE.netBg[2]})`;
+  nctx.fillRect(0,0,W,NET_H);
+  nctx.fillStyle=hexA(STYLE.netInk,0.18); nctx.fillRect(0,0,W,1);
   nctx.globalCompositeOperation='lighter';
-  // edges
   for(const e of edges){
-    const A=nodes[e.l-1][e.i], B=nodes[e.l][e.j];
-    const act=(A.a+B.a)*0.5;
-    nctx.strokeStyle=hexA(STYLE.netInk,0.03+act*0.22);
-    nctx.lineWidth=0.6+act*1.2;
+    const A=nodes[e.l-1][e.i], B=nodes[e.l][e.j], act=(A.a+B.a)*0.5;
+    nctx.strokeStyle=hexA(STYLE.netInk,0.03+act*0.2); nctx.lineWidth=0.6+act*1.1;
     nctx.beginPath(); nctx.moveTo(A.x,A.y); nctx.lineTo(B.x,B.y); nctx.stroke();
-    for(let k=e.pulses.length-1;k>=0;k--){
-      const p=e.pulses[k]; p.t+=p.sp;
-      if(p.t>=1){ B.a=Math.min(1,B.a+0.12); e.pulses.splice(k,1); continue; }
+    for(let k=e.pulses.length-1;k>=0;k--){ const p=e.pulses[k]; p.t+=p.sp;
+      if(p.t>=1){ B.a=Math.min(1,B.a+0.1); e.pulses.splice(k,1); continue; }
       const x=lerp(A.x,B.x,p.t), y=lerp(A.y,B.y,p.t);
-      const col=B.a>0.6?STYLE.netHot:STYLE.netInk;
-      nctx.fillStyle=hexA(col,0.9);
+      nctx.fillStyle=hexA(B.a>0.6?STYLE.netHot:STYLE.netInk,0.9);
       nctx.beginPath(); nctx.arc(x,y,1.8,0,TAU); nctx.fill();
     }
   }
-  // nodes
   for(let l=0;l<nodes.length;l++) for(const n of nodes[l]){
-    const r=4+n.a*9;
+    const r=4+n.a*8, col=n.a>0.55?STYLE.netHot:STYLE.netInk;
     const g=nctx.createRadialGradient(n.x,n.y,0,n.x,n.y,r+6);
-    const col=n.a>0.55?STYLE.netHot:STYLE.netInk;
-    g.addColorStop(0,hexA(col,0.35+n.a*0.6));
-    g.addColorStop(1,hexA(col,0));
+    g.addColorStop(0,hexA(col,0.3+n.a*0.6)); g.addColorStop(1,hexA(col,0));
     nctx.fillStyle=g; nctx.beginPath(); nctx.arc(n.x,n.y,r+6,0,TAU); nctx.fill();
-    nctx.fillStyle=hexA('#ffffff',0.25+n.a*0.6);
-    nctx.beginPath(); nctx.arc(n.x,n.y,1.6+n.a*1.6,0,TAU); nctx.fill();
+    nctx.fillStyle=hexA('#ffffff',0.2+n.a*0.6); nctx.beginPath(); nctx.arc(n.x,n.y,1.6+n.a*1.5,0,TAU); nctx.fill();
   }
   nctx.globalCompositeOperation='source-over';
-  // labels
-  nctx.fillStyle=hexA(STYLE.netInk,0.5);
-  nctx.font="9px 'Courier New', monospace";
+  nctx.fillStyle=hexA(STYLE.netInk,0.45); nctx.font="9px ui-monospace, 'Courier New', monospace";
   const labs=['density','speed','threat','sep','align','cohere'];
-  for(let i=0;i<LAYERS[0];i++) nctx.fillText(labs[i],4,nodes[0][i].y+3);
+  nctx.textAlign='right'; for(let i=0;i<LAYERS[0];i++) nctx.fillText(labs[i],nodes[0][i].x-9,nodes[0][i].y+3);
   const out=['turn','flee','throttle'];
-  for(let i=0;i<LAYERS[3];i++){ const n=nodes[3][i]; nctx.fillText(out[i],n.x+8,n.y+3); }
+  nctx.textAlign='left'; for(let i=0;i<LAYERS[2];i++) nctx.fillText(out[i],nodes[2][i].x+9,nodes[2][i].y+3);
+  nctx.textAlign='center'; nctx.fillStyle=hexA(STYLE.netInk,0.6);
+  nctx.fillText('boid #'+selected+' — neural activity',W/2,14);
 }
 
-// ============================================================ interaction
-let dragging=false,lastX=0,lastY=0;
-cnv.addEventListener('pointerdown',e=>{ dragging=true; lastX=e.clientX; lastY=e.clientY; pokeIdle(); pickStart=[e.clientX,e.clientY]; });
+// ============================================================ interaction (orbit + tap-select + pinch)
+let dragging=false,lastX=0,lastY=0,downX=0,downY=0,moved=false;
+const ptrs=new Map(); let pinchD=0;
+cnv.addEventListener('pointerdown',e=>{ ptrs.set(e.pointerId,[e.clientX,e.clientY]);
+  if(ptrs.size===1){ dragging=true; lastX=e.clientX; lastY=e.clientY; downX=e.clientX; downY=e.clientY; moved=false; }
+  else if(ptrs.size===2){ const v=[...ptrs.values()]; pinchD=Math.hypot(v[0][0]-v[1][0],v[0][1]-v[1][1]); } });
 addEventListener('pointermove',e=>{
-  pokeIdle();
-  if(dragging){ yawV+= -(e.clientX-lastX)*0.0010; pitchV+= (e.clientY-lastY)*0.0010; lastX=e.clientX; lastY=e.clientY; }
-});
-let pickStart=null;
-addEventListener('pointerup',e=>{
-  dragging=false;
-  if(pickStart && Math.hypot(e.clientX-pickStart[0],e.clientY-pickStart[1])<6) pick(e.clientX,e.clientY);
-  pickStart=null;
-});
-cnv.addEventListener('wheel',e=>{ e.preventDefault(); camDist=clamp(camDist*(1+Math.sign(e.deltaY)*0.08),22,110); pokeIdle(); },{passive:false});
-function pick(mx,my){
-  let best=-1,bd=1e9;
+  if(!ptrs.has(e.pointerId)) return; ptrs.set(e.pointerId,[e.clientX,e.clientY]);
+  if(ptrs.size===2){ const v=[...ptrs.values()]; const d=Math.hypot(v[0][0]-v[1][0],v[0][1]-v[1][1]);
+    if(pinchD) camDist=clamp(camDist*(pinchD/d),18,80); pinchD=d; return; }
+  if(dragging){ const dx=e.clientX-lastX, dy=e.clientY-lastY;
+    if(Math.hypot(e.clientX-downX,e.clientY-downY)>6) moved=true;
+    yawV+=-dx*0.0012; pitchV+=dy*0.0012; lastX=e.clientX; lastY=e.clientY; } });
+function endPtr(e){ ptrs.delete(e.pointerId);
+  if(ptrs.size<2) pinchD=0;
+  if(ptrs.size===0){ dragging=false;
+    if(!moved && e.clientY<SCENE_H) pick(e.clientX,e.clientY); } }
+addEventListener('pointerup',endPtr); addEventListener('pointercancel',endPtr);
+cnv.addEventListener('wheel',e=>{ e.preventDefault(); camDist=clamp(camDist*(1+Math.sign(e.deltaY)*0.08),18,80); },{passive:false});
+function pick(mx,my){ let best=-1,bd=1e9;
   for(let i=0;i<N;i++){ const b=boids[i]; if(b.sz>1e8) continue;
-    const d=Math.hypot(b.sx-mx,b.sy-my); if(d<26 && d<bd){bd=d;best=i;} }
-  if(best>=0){ selected=best; document.getElementById('selId').textContent='#'+best; }
-}
-let idleTimer=null;
-function pokeIdle(){ document.body.classList.remove('idle'); clearTimeout(idleTimer); idleTimer=setTimeout(()=>document.body.classList.add('idle'),4000); }
-addEventListener('keydown',e=>{ if(e.key==='h'||e.key==='H') document.body.classList.toggle('idle'); });
-pokeIdle();
+    const d=Math.hypot(b.sx-mx,b.sy-my); if(d<40&&d<bd){bd=d;best=i;} }
+  if(best>=0) selected=best; }
 
-// ============================================================ main loop
-let last=performance.now();
+// ============================================================ loop
 function frame(now){
-  const t=now;
-  updateCamera(t);
-  stepBoids();
-  // fade-trail clear for light streaks
-  ctx.setTransform(DPR,0,0,DPR,0,0);
-  ctx.globalCompositeOperation='source-over';
-  ctx.fillStyle=`rgba(${STYLE.bg[0]},${STYLE.bg[1]},${STYLE.bg[2]},0.32)`;
-  ctx.fillRect(0,0,W,H);
-  drawWorld(t);
-  flush();
-  ctx.fillStyle=vig; ctx.fillRect(0,0,W,H);
+  updateCamera(now); stepBoids();
+  ctx.setTransform(DPR,0,0,DPR,0,0); ctx.globalCompositeOperation='source-over';
+  ctx.fillStyle=`rgba(${STYLE.bg[0]},${STYLE.bg[1]},${STYLE.bg[2]},0.30)`; ctx.fillRect(0,0,W,SCENE_H);
+  drawWorld(now); flush();
+  ctx.fillStyle=vig; ctx.fillRect(0,0,W,SCENE_H);
   netForward(); drawNet();
   requestAnimationFrame(frame);
 }
-resize();
-requestAnimationFrame(frame);
+resize(); requestAnimationFrame(frame);
 </script>
 </body>
 </html>
