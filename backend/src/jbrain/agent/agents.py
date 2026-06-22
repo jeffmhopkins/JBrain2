@@ -35,15 +35,24 @@ _PROMPTS = Path(__file__).parent / "prompts"
 WEB_TOOLS = frozenset({"web_search", "web_fetch"})
 
 # jerv's full allowlist: the internet tools, the dataless clock read, the
-# owner-approved coarse location read, and the local image-generation tools.
-# `current_time` is allowlisted explicitly (a default-knowledge tool jerv's closed
-# allowlist could not otherwise reach); `current_location` and `generate_image`/
-# `edit_image` are `web`-gated jerv-only tools (on-box, no egress, opt-in — the image
-# tools drive the localhost ComfyUI, docs/IMAGE_GEN_PLAN.md). The image tools are
-# absent from the registry when ComfyUI is unconfigured, so allowlisting them here is
-# harmless on a box without image generation.
+# owner-approved coarse location read, the local image-generation tools, and the
+# local audio transcription. `current_time` is allowlisted explicitly (a
+# default-knowledge tool jerv's closed allowlist could not otherwise reach);
+# `current_location`, `generate_image`/`edit_image`/`analyze_image`, and `transcribe`
+# are `web`-gated jerv-only tools (on-box, no egress, opt-in — the image tools drive
+# the localhost ComfyUI, docs/IMAGE_GEN_PLAN.md; `transcribe` drives the on-box
+# whisper gateway, docs/WHISPER_TRANSCRIPTION_PLAN.md). The image + transcribe tools
+# are absent from the registry when their backend is unconfigured, so allowlisting
+# them here is harmless on a box without that backend.
 JERV_TOOLS = WEB_TOOLS | frozenset(
-    {"current_time", "current_location", "generate_image", "edit_image", "analyze_image"}
+    {
+        "current_time",
+        "current_location",
+        "generate_image",
+        "edit_image",
+        "analyze_image",
+        "transcribe",
+    }
 )
 
 DEFAULT_AGENT = "curator"
