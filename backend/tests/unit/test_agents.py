@@ -38,7 +38,8 @@ def test_teacher_is_a_tool_less_socratic_tutor() -> None:
 
 def test_jerv_is_a_sandboxed_web_chatbot() -> None:
     """jerv may call the web tools, the dataless clock, the owner-approved
-    coarse-location read, and the local image-gen tools; it reads no knowledge base."""
+    coarse-location read, the local image-gen tools, and the read-only host-metrics
+    summary; it reads no knowledge base."""
     jerv = AGENTS["jerv"]
     assert (
         jerv.tools
@@ -51,6 +52,7 @@ def test_jerv_is_a_sandboxed_web_chatbot() -> None:
             "edit_image",
             "analyze_image",
             "transcribe",
+            "query_server_metrics",
         }
     )
     assert jerv.reads_knowledge_base is False

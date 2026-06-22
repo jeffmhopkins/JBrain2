@@ -2924,6 +2924,34 @@ export const mockFetch: typeof fetch = async (input, init) => {
     });
   }
 
+  if (path.startsWith("/api/ops/metrics/history")) {
+    // A synthetic 120-bucket series with gentle sine waves so the graphs render.
+    const now = Date.now();
+    const points = Array.from({ length: 120 }, (_, i) => {
+      const wave = Math.sin(i / 9);
+      return {
+        t: new Date(now - (119 - i) * 60_000).toISOString(),
+        load_1m: Math.round((1.2 + wave) * 100) / 100,
+        load_5m: 1.1,
+        load_15m: 1.0,
+        mem_used_bytes: Math.round((60 + wave * 6) * 2 ** 30),
+        mem_total_bytes: 128 * 2 ** 30,
+        swap_used_bytes: 0,
+        disk_used_bytes: 500 * 2 ** 30,
+        disk_total_bytes: 2000 * 2 ** 30,
+        gpu_busy_percent: Math.max(0, Math.round(40 + wave * 30)),
+        fan_rpm_max: Math.round(2000 + wave * 400),
+      };
+    });
+    return json({
+      resolution: "raw",
+      step_seconds: 60,
+      since: points[0]?.t,
+      until: points[points.length - 1]?.t,
+      points,
+    });
+  }
+
   if (path === "/api/ops/llm-usage") return json(LLM_USAGE);
 
   if (path === "/api/ops/update" && init?.method === "POST") {
@@ -3032,6 +3060,7 @@ export const mockFetch: typeof fetch = async (input, init) => {
       load_15m: 0.2,
       uptime_seconds: 3 * 86400 + 7 * 3600,
       gpu_busy_percent: 63,
+      fan_rpm: { "CPU fan": 2100, "System fan": 1850 },
       containers: CONTAINERS.map((c, i) => ({
         service: c.service,
         mem_bytes: (i + 1) * 90 * 2 ** 20,

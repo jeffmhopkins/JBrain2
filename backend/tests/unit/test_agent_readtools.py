@@ -471,6 +471,7 @@ def test_build_registry_binds_the_shipped_sidecars() -> None:
         object(),  # type: ignore[arg-type]  # device repo
         build_web_handlers(SearxngClient(""), WebFetcher()),
         object(),  # type: ignore[arg-type]  # city geocoder
+        object(),  # type: ignore[arg-type]  # sessionmaker (query_server_metrics)
         object(),  # type: ignore[arg-type]  # external reverse geocoder
     )
     # The `web` (opt-in / jerv-only) permission class — never offered to the default
@@ -488,6 +489,7 @@ def test_build_registry_binds_the_shipped_sidecars() -> None:
         "read_entity",
         "find_entity",
         "relate",
+        "query_server_metrics",
         "read_lists",
         "read_list",
         "create_list",
@@ -777,6 +779,11 @@ def test_sidecars_pinned_to_their_versions() -> None:
             2,
             "f7d5a16c2e858d890595e9fd452c3f3d25154679574e4d45181678866c288017",
         ),
+        "query_server_metrics.tool": (
+            "query_server_metrics",
+            1,
+            "c913e40d4769f173fe57a03f30f1a9ef5380970fb423729001f4e3dffa353647",
+        ),
     }
     # Every shipped sidecar must appear above — a new `.tool` cannot slip in
     # unpinned (the gap this closes: propose_merge was registered but never pinned).
@@ -785,6 +792,24 @@ def test_sidecars_pinned_to_their_versions() -> None:
     for filename, expected in pins.items():
         tf = load_tool(TOOLS_DIR / filename)
         assert (tf.spec.name, tf.spec.version, tf.digest) == expected
+
+
+def test_query_server_metrics_offered_to_jerv() -> None:
+    """The host-metrics read is on jerv's allowlist and (declaring no domains) is
+    visible to jerv's empty-scope session — owner data stays gated by the tables' RLS,
+    but the hardware-telemetry summary is offered."""
+    from jbrain.agent.agents import JERV_TOOLS
+    from jbrain.agent.toolregistry import RegisteredTool, ToolRegistry
+
+    async def noop(_args: dict, _ctx: ToolContext) -> ToolOutput:
+        return ToolOutput("")
+
+    assert "query_server_metrics" in JERV_TOOLS
+    registry = ToolRegistry(
+        [RegisteredTool(load_tool(TOOLS_DIR / "query_server_metrics.tool"), noop)]
+    )
+    # Empty scopes (a sandboxed jerv session) + jerv's allowlist still surfaces it.
+    assert {t.name for t in registry.schemas_for(set(), JERV_TOOLS)} == {"query_server_metrics"}
 
 
 # --- read_wiki (the read-only wiki-editorial tool) ------------------------

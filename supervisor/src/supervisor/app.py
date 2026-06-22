@@ -82,6 +82,7 @@ class MetricsResponse(BaseModel):
     load_15m: float
     uptime_seconds: int
     gpu_busy_percent: float | None
+    fan_rpm: dict[str, int] | None
     containers: list[ContainerMemoryOut]
 
 
@@ -204,6 +205,7 @@ def create_app(settings: Settings, gateway: DockerGateway) -> FastAPI:
             load_15m=host.load_15m,
             uptime_seconds=host.uptime_seconds,
             gpu_busy_percent=host.gpu_busy_percent,
+            fan_rpm=host.fan_rpm,
             containers=[
                 ContainerMemoryOut(service=c.service, mem_bytes=c.mem_bytes)
                 for c in gateway.container_memory()

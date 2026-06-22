@@ -1,6 +1,6 @@
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { OpsMetrics, OpsStatus } from "../api/client";
+import type { MetricsHistory, OpsMetrics, OpsStatus } from "../api/client";
 import { OpsScreen } from "./OpsScreen";
 
 function json(body: unknown, status = 200): Response {
@@ -41,6 +41,7 @@ const METRICS: OpsMetrics = {
   load_15m: 0.62,
   uptime_seconds: 5 * 3600 + 40 * 60,
   gpu_busy_percent: 41,
+  fan_rpm: { "CPU fan": 2100, "System fan": 1850 },
   containers: [{ service: "api", mem_bytes: 87 * 2 ** 20 }],
   db: {
     db_size_bytes: 23 * 2 ** 20,
@@ -53,10 +54,46 @@ const METRICS: OpsMetrics = {
 
 /** Default handler: status + metrics resolve, everything else 404s quietly so
  * telemetry (usage) and on-demand fetches (logs) don't error the screen. */
+const HISTORY: MetricsHistory = {
+  resolution: "raw",
+  step_seconds: 60,
+  since: "2026-06-22T00:00:00Z",
+  until: "2026-06-22T02:00:00Z",
+  points: [
+    {
+      t: "2026-06-22T00:00:00Z",
+      load_1m: 0.5,
+      load_5m: 0.5,
+      load_15m: 0.5,
+      mem_used_bytes: 60 * 2 ** 30,
+      mem_total_bytes: 128 * 2 ** 30,
+      swap_used_bytes: 0,
+      disk_used_bytes: 500 * 2 ** 30,
+      disk_total_bytes: 2000 * 2 ** 30,
+      gpu_busy_percent: 40,
+      fan_rpm_max: 2100,
+    },
+    {
+      t: "2026-06-22T01:00:00Z",
+      load_1m: 1.5,
+      load_5m: 1.2,
+      load_15m: 1.0,
+      mem_used_bytes: 72 * 2 ** 30,
+      mem_total_bytes: 128 * 2 ** 30,
+      swap_used_bytes: 0,
+      disk_used_bytes: 520 * 2 ** 30,
+      disk_total_bytes: 2000 * 2 ** 30,
+      gpu_busy_percent: 70,
+      fan_rpm_max: 2600,
+    },
+  ],
+};
+
 function baseMock(input: RequestInfo | URL): Response | null {
   const path = String(input);
   if (path === "/api/ops/status") return json(STATUS);
   if (path === "/api/ops/metrics") return json(METRICS);
+  if (path.startsWith("/api/ops/metrics/history")) return json(HISTORY);
   return null;
 }
 
@@ -91,6 +128,36 @@ describe("OpsScreen", () => {
     expect(screen.getByText("jbrain/api:edge", { exact: false })).toBeInTheDocument();
   });
 
+  it("the History card lazy-loads graphs on expand and switches range", async () => {
+    fetchMock.mockImplementation(
+      async (input) => baseMock(input) ?? new Response(null, { status: 404 }),
+    );
+
+    render(<OpsScreen />);
+
+    // Collapsed by default — no history fetch until opened.
+    const history = await screen.findByRole("button", { name: /History/ });
+    expect(fetchMock.mock.calls.some(([u]) => String(u).includes("metrics/history"))).toBe(false);
+
+    fireEvent.click(history);
+
+    // Charts render once the body mounts and the fetch resolves. "CPU load" and
+    // "Fan" are unique to the History card (System shows "Load"/"Fans").
+    expect(await screen.findByText("CPU load")).toBeInTheDocument();
+    expect(screen.getByText("Fan")).toBeInTheDocument();
+    // Peak label reflects the higher of the two buckets (load 1.5).
+    expect(screen.getByText("1.50 peak")).toBeInTheDocument();
+    expect(screen.getByText("2 30s buckets")).toBeInTheDocument();
+
+    // Picking a range refetches with that window.
+    fireEvent.click(screen.getByRole("button", { name: "7d" }));
+    await waitFor(() =>
+      expect(
+        fetchMock.mock.calls.some(([u]) => String(u).includes("metrics/history?range=7d")),
+      ).toBe(true),
+    );
+  });
+
   it("the System card is expanded by default with the embedded Server update", async () => {
     fetchMock.mockImplementation(
       async (input) => baseMock(input) ?? new Response(null, { status: 404 }),
@@ -101,6 +168,9 @@ describe("OpsScreen", () => {
     expect(await screen.findByText("Memory")).toBeInTheDocument();
     expect(screen.getByText("Database")).toBeInTheDocument();
     expect(screen.getByText("Load")).toBeInTheDocument();
+    // Fan telemetry renders one labelled row, RPM per fan.
+    expect(screen.getByText("Fans")).toBeInTheDocument();
+    expect(screen.getByText("CPU fan 2100rpm · System fan 1850rpm")).toBeInTheDocument();
     // Server update is folded into the Load row, not a separate footer card.
     expect(screen.getByRole("button", { name: "Update server" })).toBeInTheDocument();
   });

@@ -2477,6 +2477,94 @@ button.small {
   flex: none;
 }
 
+/* History card: range selector + per-metric sparklines. */
+.ops-range {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+
+.ops-range-btn {
+  padding: 4px 10px;
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.ops-range-btn.active {
+  color: var(--steel);
+  background: var(--steel-tint);
+  border-color: color-mix(in srgb, var(--steel) 30%, transparent);
+}
+
+/* TimeSeriesPlot: a reusable stack of labeled sparklines (Ops history + the
+   agent's server_metrics view). */
+.plot-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.plot-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 4px;
+}
+
+.plot-label {
+  font-size: var(--fs-sm);
+  color: var(--text-2);
+}
+
+.plot-now {
+  font-size: var(--fs-sm);
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.plot-svg {
+  display: block;
+  width: 100%;
+  height: 40px;
+}
+
+.plot-axis {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 2px;
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+/* server_metrics tool view header (the plot itself reuses .plot-* above). */
+.tv-metrics-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 12px;
+  font-size: var(--fs-sm);
+  color: var(--text);
+}
+
+.tv-metrics-sub,
+.tv-metrics-empty {
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+}
+
+.ops-chart-note {
+  margin-top: 12px;
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+  text-align: right;
+}
+
 .ops-card-head.open .ops-card-caret {
   transform: rotate(90deg);
 }

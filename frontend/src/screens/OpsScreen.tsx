@@ -2,10 +2,14 @@ import { type ReactNode, useCallback, useEffect, useRef, useState } from "react"
 import {
   ApiError,
   type ContainerStatus,
+  type MetricRange,
+  type MetricsHistory,
   type OpsMetrics,
   type UpdateStatus,
   api,
 } from "../api/client";
+import { TimeSeriesPlot } from "../components/TimeSeriesPlot";
+import { serverMetricSeries } from "../components/serverMetricSeries";
 import { useForeground, useForegroundRef } from "../visibility";
 import { RunsScreen } from "./RunsScreen";
 
@@ -259,7 +263,9 @@ function SystemCard({ metrics }: { metrics: OpsMetrics | null }) {
     );
     const gpu =
       metrics.gpu_busy_percent != null ? `gpu ${Math.round(metrics.gpu_busy_percent)}% · ` : "";
-    summary = `mem ${memPct}% · disk ${diskPct}% · ${gpu}load ${metrics.load_1m.toFixed(2)} · up ${fmtUptime(metrics.uptime_seconds)}`;
+    const fanRpms = metrics.fan_rpm ? Object.values(metrics.fan_rpm) : [];
+    const fan = fanRpms.length > 0 ? `fan ${Math.max(...fanRpms)}rpm · ` : "";
+    summary = `mem ${memPct}% · disk ${diskPct}% · ${gpu}${fan}load ${metrics.load_1m.toFixed(2)} · up ${fmtUptime(metrics.uptime_seconds)}`;
   }
   return (
     <OpsCard
@@ -309,6 +315,19 @@ function SystemRows({ metrics }: { metrics: OpsMetrics }) {
           <div className="ops-vmid">
             <span className="ops-vv">{Math.round(metrics.gpu_busy_percent)}%</span>
             <Meter used={metrics.gpu_busy_percent} total={100} tone="util" />
+          </div>
+        </div>
+      )}
+      {metrics.fan_rpm && Object.keys(metrics.fan_rpm).length > 0 && (
+        <div className="ops-vrow">
+          <span className="ops-vk">Fans</span>
+          <div className="ops-vmid">
+            {/* RPM has no fixed ceiling, so this is a text readout (no meter). */}
+            <span className="ops-vv">
+              {Object.entries(metrics.fan_rpm)
+                .map(([label, rpm]) => `${label} ${rpm}rpm`)
+                .join(" · ")}
+            </span>
           </div>
         </div>
       )}
@@ -542,6 +561,88 @@ function ServiceBody({
   );
 }
 
+// ===== History card — time-series graphs over a selectable window =====
+
+const HISTORY_RANGES: MetricRange[] = ["6h", "24h", "7d", "30d", "1y"];
+
+/** The body is a child of OpsCard, so it mounts (and fetches) only when the card
+ * is expanded — a collapsed History card costs nothing. The range buttons drive
+ * the refetch; the resolution note tells the operator raw vs hourly rollup. */
+function HistoryBody() {
+  const [range, setRange] = useState<MetricRange>("24h");
+  const [history, setHistory] = useState<MetricsHistory | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    api
+      .opsMetricsHistory(range)
+      .then((h) => {
+        if (!cancelled) {
+          setHistory(h);
+          setError(null);
+        }
+      })
+      .catch((err) => {
+        if (!cancelled) setError(errorMessage(err));
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [range]);
+
+  const points = history?.points ?? [];
+  return (
+    <>
+      <div className="ops-range">
+        {HISTORY_RANGES.map((r) => (
+          <button
+            key={r}
+            type="button"
+            className={`ops-range-btn${r === range ? " active" : ""}`}
+            aria-pressed={r === range}
+            onClick={() => setRange(r)}
+          >
+            {r}
+          </button>
+        ))}
+      </div>
+      {error && (
+        <p className="error" role="alert">
+          {error}
+        </p>
+      )}
+      {points.length === 0 ? (
+        <p className="muted ops-vrow-empty">
+          {loading ? "Loading…" : "No samples recorded for this range yet."}
+        </p>
+      ) : (
+        <>
+          <TimeSeriesPlot series={serverMetricSeries(points)} />
+          {history && (
+            <p className="ops-chart-note">
+              {`${points.length} ${history.resolution === "raw" ? "30s" : "hourly"} buckets`}
+            </p>
+          )}
+        </>
+      )}
+    </>
+  );
+}
+
+function HistoryCard() {
+  return (
+    <OpsCard title="History" summaryCollapsed={<span className="ops-card-summary">graphs</span>}>
+      <HistoryBody />
+    </OpsCard>
+  );
+}
+
 export function OpsScreen() {
   const [containers, setContainers] = useState<ContainerStatus[] | null>(null);
   const [metrics, setMetrics] = useState<OpsMetrics | null>(null);
@@ -615,6 +716,8 @@ export function OpsScreen() {
       )}
 
       <SystemCard metrics={metrics} />
+
+      <HistoryCard />
 
       {containers === null && !error ? (
         <p className="muted">Loading status…</p>

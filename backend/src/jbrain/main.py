@@ -353,6 +353,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             app.state.device_repo,
             web_handlers,
             app.state.city_geocoder,
+            maker,
             external_reverse,
             router=app.state.llm_router,
             settings=settings_store,

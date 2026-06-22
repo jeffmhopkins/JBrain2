@@ -370,6 +370,7 @@ def _editor_registry(maker: async_sessionmaker, jobs: _FakeJobs) -> ToolRegistry
         stub,  # device repo
         build_web_handlers(SearxngClient(""), WebFetcher()),  # unused by the editor turn
         stub,  # city geocoder
+        maker,  # sessionmaker for query_server_metrics
     )
 
 

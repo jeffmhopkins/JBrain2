@@ -29,6 +29,9 @@ class HostMetrics:
     # iGPU/dGPU utilization, 0-100, or None when no amdgpu busy attribute is
     # present (non-AMD box, no GPU, or /sys not exposed) — the card omits the row.
     gpu_busy_percent: float | None = None
+    # Fan speeds in RPM keyed by sensor label, or None when the host exposes no
+    # fan telemetry at all — the card omits the row rather than imply a dead fan.
+    fan_rpm: dict[str, int] | None = None
 
 
 def _meminfo_kb(text: str) -> dict[str, int]:
@@ -66,10 +69,59 @@ def read_gpu_busy_percent(drm: Path = Path("/sys/class/drm")) -> float | None:
     return best
 
 
+def _fan_label(input_path: Path) -> str:
+    """Human label for a fan*_input: its fan*_label if the chip provides one, else
+    the hwmon chip `name` plus the fan index (e.g. "amdgpu fan1") so fans from
+    different chips stay distinguishable."""
+    label_path = input_path.with_name(input_path.name.replace("_input", "_label"))
+    try:
+        text = label_path.read_text().strip()
+    except OSError:
+        text = ""
+    if text:
+        return text
+    # input_path.name is like "fan1_input"; drop the suffix to get "fan1".
+    fan = input_path.name.removesuffix("_input")
+    try:
+        chip = (input_path.parent / "name").read_text().strip()
+    except OSError:
+        chip = ""
+    return f"{chip} {fan}".strip()
+
+
+def read_fan_rpm(hwmon: Path = Path("/sys/class/hwmon")) -> dict[str, int] | None:
+    """Fan speeds in RPM keyed by sensor label, or None when no fan telemetry is
+    present (a VM, a fanless box, or /sys not exposed) — the caller drops the row
+    rather than imply a stalled fan.
+
+    Reads the standard hwmon RPM gauge at /sys/class/hwmon/hwmon*/fan*_input; on
+    Strix Halo the EC fan(s) surface here. A reading of 0 is kept (a genuinely
+    stopped fan), unlike the None that means "no telemetry at all". Duplicate
+    labels across chips are disambiguated with a numeric suffix."""
+    fans: dict[str, int] = {}
+    try:
+        inputs = sorted(hwmon.glob("hwmon*/fan*_input"))
+    except OSError:
+        return None
+    for path in inputs:
+        try:
+            rpm = int(path.read_text().strip())
+        except (OSError, ValueError):
+            continue
+        label = _fan_label(path)
+        key, n = label, 2
+        while key in fans:
+            key = f"{label} ({n})"
+            n += 1
+        fans[key] = rpm
+    return fans or None
+
+
 def read_host_metrics(
     proc: Path = Path("/proc"),
     disk_path: str = "/",
     drm: Path = Path("/sys/class/drm"),
+    hwmon: Path = Path("/sys/class/hwmon"),
 ) -> HostMetrics:
     mem = _meminfo_kb((proc / "meminfo").read_text())
     load_parts = (proc / "loadavg").read_text().split()
@@ -87,4 +139,5 @@ def read_host_metrics(
         load_15m=float(load_parts[2]),
         uptime_seconds=int(uptime),
         gpu_busy_percent=read_gpu_busy_percent(drm),
+        fan_rpm=read_fan_rpm(hwmon),
     )

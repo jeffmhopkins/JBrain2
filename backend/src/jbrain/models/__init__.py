@@ -12,7 +12,7 @@ from jbrain.models.analysis import (
 from jbrain.models.core import Base, DeviceSession, Domain, Principal, Subject
 from jbrain.models.images import GeneratedImage
 from jbrain.models.location import GeofenceState, LocationFix, PlaceGeofence
-from jbrain.models.telemetry import LlmUsage
+from jbrain.models.telemetry import HostMetric, HostMetricHourly, LlmUsage
 from jbrain.models.wiki import (
     WikiArticle,
     WikiCitation,
@@ -46,6 +46,8 @@ __all__ = [
     "Fact",
     "GeneratedImage",
     "GeofenceState",
+    "HostMetric",
+    "HostMetricHourly",
     "LlmUsage",
     "LocationFix",
     "NoteAnalysis",

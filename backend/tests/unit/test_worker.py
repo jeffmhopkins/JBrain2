@@ -329,6 +329,81 @@ async def test_run_loop_backfills_once_then_polls(monkeypatch: pytest.MonkeyPatc
     assert fake.predicate_sync_backfills == 1
 
 
+async def test_run_loop_samples_and_maintains_metrics_when_supervisor_set(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake = FakeQueue()
+    install(monkeypatch, fake)
+    calls: dict[str, Any] = {"samples": 0, "rollup_windows": [], "prunes": 0}
+
+    async def fake_sample(maker: Any, ctx: Any, client: Any, token: str) -> bool:
+        assert ctx is queue.SYSTEM_CTX
+        calls["samples"] += 1
+        return True
+
+    async def fake_rollup(maker: Any, ctx: Any, *, window: Any) -> int:
+        calls["rollup_windows"].append(window)
+        return 0
+
+    async def fake_prune(maker: Any, ctx: Any) -> tuple[int, int]:
+        calls["prunes"] += 1
+        return (0, 0)
+
+    monkeypatch.setattr(worker.ops_metrics, "sample_once", fake_sample)
+    monkeypatch.setattr(worker.ops_metrics, "rollup", fake_rollup)
+    monkeypatch.setattr(worker.ops_metrics, "prune", fake_prune)
+    # Pin the clock past both intervals so the first iteration fires deterministically:
+    # last_sample/last_maintenance start at 0, and a freshly-booted runner's real
+    # monotonic() can be < the 300s maintenance interval (the CI-vs-local difference).
+    monkeypatch.setattr(worker.time, "monotonic", lambda: 1_000_000.0)
+
+    async def fake_sleep(seconds: float) -> None:
+        raise asyncio.CancelledError
+
+    monkeypatch.setattr(worker.asyncio, "sleep", fake_sleep)
+    with pytest.raises(asyncio.CancelledError):
+        await worker.run_loop(
+            None,  # type: ignore[arg-type]
+            {},
+            supervisor_client=object(),  # type: ignore[arg-type]
+            supervisor_token="t",
+        )
+    # First pass samples once and runs the boot maintenance (full-window rollup).
+    assert calls["samples"] == 1
+    assert calls["rollup_windows"] == [worker.ops_metrics.RAW_RETENTION]
+    assert calls["prunes"] == 1
+
+
+async def test_run_loop_skips_metrics_without_supervisor(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake = FakeQueue()
+    install(monkeypatch, fake)
+    sampled = False
+
+    async def fake_sample(*args: Any, **kwargs: Any) -> bool:
+        nonlocal sampled
+        sampled = True
+        return True
+
+    monkeypatch.setattr(worker.ops_metrics, "sample_once", fake_sample)
+
+    async def fake_sleep(seconds: float) -> None:
+        raise asyncio.CancelledError
+
+    monkeypatch.setattr(worker.asyncio, "sleep", fake_sleep)
+    with pytest.raises(asyncio.CancelledError):
+        await worker.run_loop(None, {})  # type: ignore[arg-type]
+    assert sampled is False  # no supervisor client -> no sampling
+
+
+async def test_sample_metrics_safely_swallows_errors(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def boom(*args: Any, **kwargs: Any) -> bool:
+        raise ConnectionError("supervisor down")
+
+    monkeypatch.setattr(worker.ops_metrics, "sample_once", boom)
+    # Must not raise — a supervisor blip is a missed sample, not a worker crash.
+    await worker._sample_metrics_safely(None, object(), "t")  # type: ignore[arg-type]
+
+
 async def test_run_loop_survives_transient_errors_and_retries_backfill(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -359,7 +434,7 @@ async def test_run_registers_all_job_handlers(
     captured: dict[str, Any] = {}
 
     async def capture(
-        maker: Any, handlers: Any, registry: Any = None, settings: Any = None
+        maker: Any, handlers: Any, registry: Any = None, settings: Any = None, **_: Any
     ) -> None:
         captured.update(handlers)
         raise asyncio.CancelledError
@@ -425,7 +500,9 @@ async def test_run_disposes_engine(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(worker, "create_async_engine", lambda url: engine)
     monkeypatch.setattr(worker, "async_sessionmaker", lambda eng, **kw: object())
 
-    async def boom(maker: Any, handlers: Any, registry: Any = None, settings: Any = None) -> None:
+    async def boom(
+        maker: Any, handlers: Any, registry: Any = None, settings: Any = None, **_: Any
+    ) -> None:
         raise asyncio.CancelledError
 
     monkeypatch.setattr(worker, "run_loop", boom)

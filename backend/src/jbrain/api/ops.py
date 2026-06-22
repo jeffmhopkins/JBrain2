@@ -6,7 +6,7 @@ only the supervisor's fixed command set.
 """
 
 from collections.abc import AsyncIterator
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
@@ -17,6 +17,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, PlainTextResponse, StreamingResponse
 from pydantic import BaseModel
 
+from jbrain import ops_metrics
 from jbrain.api.deps import PrincipalDep, SettingsDep, owner_only
 from jbrain.config import Settings
 from jbrain.db.session import SessionContext
@@ -253,6 +254,34 @@ async def metrics(
         merged["blobs"] = None
 
     return merged
+
+
+# The history ranges the Ops graph offers. Spans up to RAW_QUERY_MAX read raw
+# 30s samples (downsampled); wider spans read the hourly rollup (jbrain.ops_metrics).
+_HISTORY_RANGES: dict[str, timedelta] = {
+    "6h": timedelta(hours=6),
+    "24h": timedelta(hours=24),
+    "2d": timedelta(days=2),
+    "7d": timedelta(days=7),
+    "30d": timedelta(days=30),
+    "90d": timedelta(days=90),
+    "1y": timedelta(days=365),
+}
+
+
+@router.get("/metrics/history")
+async def metrics_history(
+    request: Request, principal: PrincipalDep, range: str = "24h"
+) -> dict[str, object]:
+    """Downsampled host-metrics time series for the Ops graph (owner-only,
+    RLS-scoped). `range` selects the window; the resolution (raw vs hourly rollup)
+    and bucket width are chosen server-side so the payload stays small."""
+    window = _HISTORY_RANGES.get(range)
+    if window is None:
+        raise HTTPException(status_code=400, detail=f"unknown range: {range}")
+    maker = cast("async_sessionmaker[AsyncSession]", request.app.state.session_maker)
+    ctx = SessionContext(principal_id=principal.id, principal_kind=principal.kind)
+    return await ops_metrics.history(maker, ctx, since=datetime.now(tz=UTC) - window)
 
 
 @router.get("/llm-usage")
