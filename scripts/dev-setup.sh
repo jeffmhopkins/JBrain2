@@ -21,6 +21,22 @@ fresh() { # fresh <stamp-name> <lockfile> — 0 if stamp is current
   [ -f "$STAMP_DIR/$1" ] && [ -f "$2" ] && [ "$STAMP_DIR/$1" -nt "$2" ]
 }
 
+# --- System packages (ffmpeg: video frame sampling + audio extraction) ---
+# jbrain.media shells out to ffmpeg/ffprobe for the analyze_video pipeline (and the
+# backend test suite generates synthetic clips with them). Best-effort apt install,
+# like dockerd above: never fatal — the feature degrades (media.ffmpeg_available())
+# and its tests skip when the binaries are absent.
+if ! command -v ffmpeg >/dev/null 2>&1; then
+  if command -v apt-get >/dev/null 2>&1 && sudo -n true 2>/dev/null; then
+    log "installing ffmpeg (analyze_video frame sampling)"
+    sudo apt-get update -qq >/dev/null 2>&1 \
+      && sudo apt-get install -y -qq ffmpeg >/dev/null 2>&1 \
+      || log "WARNING: could not install ffmpeg — analyze_video tests will skip"
+  else
+    log "ffmpeg not installed and no apt/sudo — analyze_video tests will skip"
+  fi
+fi
+
 # --- Python (backend + supervisor: FastAPI, pytest, ruff, pyright) ---
 ensure_uv() {
   if ! command -v uv >/dev/null 2>&1; then
