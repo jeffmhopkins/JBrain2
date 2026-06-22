@@ -64,4 +64,26 @@ describe("api.chat run id", () => {
       expect.objectContaining({ method: "POST" }),
     );
   });
+
+  it("chatResume GETs the run's stream from the given offset and parses events", async () => {
+    const body = sseBody([
+      'data: {"type":"text_delta","text":"more"}\n\n',
+      'data: {"type":"done","stop_reason":"end_turn"}\n\n',
+    ]);
+    const fetchMock = vi.fn(async () => new Response(body, { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const events: ChatEvent[] = [];
+    for await (const event of api.chatResume("run-9", 3)) events.push(event);
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/chat/runs/run-9/stream?after=3",
+      expect.anything(),
+    );
+    // No synthetic run event — the caller already holds the id; just the parsed frames.
+    expect(events).toEqual([
+      { type: "text_delta", text: "more" },
+      { type: "done", stop_reason: "end_turn" },
+    ]);
+  });
 });

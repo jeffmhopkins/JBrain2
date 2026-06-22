@@ -382,15 +382,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             live_task.cancel()
         # Stop any chat turns still running detached from a (now-gone) SSE response, so
         # shutdown doesn't strand them; each closes via its own CancelledError path. AWAIT
-        # them (bounded) before disposing the engine: their cancel-cleanup runs the run-log
-        # close inline, which opens a fresh pooled session — so the pool must outlive it, or
-        # the close races a dead engine and strands the run in 'running'.
-        turns = list(app.state.live_turns.values())
-        for turn in turns:
-            turn.cancel()
-        if turns:
+        # their tasks (bounded) before disposing the engine: their cancel-cleanup runs the
+        # run-log close inline, which opens a fresh pooled session — so the pool must
+        # outlive it, or the close races a dead engine and strands the run in 'running'.
+        live_turns = list(app.state.live_turns.values())
+        for lt in live_turns:
+            lt.cancel()
+        tasks = [lt.task for lt in live_turns if getattr(lt, "task", None) is not None]
+        if tasks:
             with suppress(asyncio.TimeoutError):
-                await asyncio.wait_for(asyncio.gather(*turns, return_exceptions=True), timeout=10.0)
+                await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True), timeout=10.0)
         await app.state.supervisor_client.aclose()
         if image_gen_client is not None:
             await image_gen_client.aclose()

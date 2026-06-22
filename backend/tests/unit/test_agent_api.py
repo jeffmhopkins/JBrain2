@@ -938,23 +938,66 @@ def test_chat_persists_a_partial_turn_when_the_compose_step_errors(
     assert runlog.finished[-1]["stop_reason"] == "error"
 
 
-async def test_with_heartbeat_fills_idle_gaps_without_cancelling_the_pull() -> None:
-    # A turn that streams nothing for longer than the interval (a long blocking tool)
-    # gets a heartbeat (None) in the gap, and the real events still arrive — the
-    # pending pull is never cancelled, so the underlying stream keeps running.
-    from jbrain.api.agent import _with_heartbeat
+async def test_live_turn_replays_from_offset_then_follows_live() -> None:
+    # The reconnect primitive: a subscriber joining at `after` replays the buffered tail,
+    # then follows live frames, and ends when the turn finishes.
+    from jbrain.api.agent import _LiveTurn
 
-    async def slow():  # type: ignore[no-untyped-def]
-        await asyncio.sleep(0.04)
-        yield "a"
-        yield "b"
+    live = _LiveTurn()
+    live.emit(b"data: 1\n\n")
+    live.emit(b"data: 2\n\n")
 
-    out: list[str | None] = []
-    async for ev in _with_heartbeat(slow(), interval=0.01):
-        out.append(ev)
+    got: list[bytes] = []
 
-    assert None in out  # at least one keepalive bridged the 0.04s idle gap
-    assert [e for e in out if e is not None] == ["a", "b"]
+    async def consume() -> None:
+        async for frame in live.stream(after=1):  # skip frame 1, resume at 2
+            got.append(frame)
+
+    task = asyncio.create_task(consume())
+    await asyncio.sleep(0)  # let it backfill + register as a live subscriber
+    live.emit(b"data: 3\n\n")
+    await asyncio.sleep(0)
+    live.finish()
+    await asyncio.wait_for(task, timeout=1.0)
+
+    assert got == [b"data: 2\n\n", b"data: 3\n\n"]
+
+
+async def test_live_turn_subscribe_after_finish_replays_tail_and_ends() -> None:
+    # A reconnect that arrives just as the turn ends still gets the buffered frames and a
+    # clean end (no hang) — the broker replays the tail and terminates immediately.
+    from jbrain.api.agent import _LiveTurn
+
+    live = _LiveTurn()
+    live.emit(b"data: 1\n\n")
+    live.finish()
+
+    got = [frame async for frame in live.stream(after=0)]
+    assert got == [b"data: 1\n\n"]
+
+
+async def test_live_turn_stream_clamps_out_of_range_offsets() -> None:
+    # A reconnect's `after` is owner-supplied; out-of-range values must be safe — negative
+    # clamps to a full replay, past-the-end yields nothing, and both end cleanly.
+    from jbrain.api.agent import _LiveTurn
+
+    live = _LiveTurn()
+    live.emit(b"data: 1\n\n")
+    live.emit(b"data: 2\n\n")
+    live.finish()
+
+    assert [frame async for frame in live.stream(after=-5)] == [b"data: 1\n\n", b"data: 2\n\n"]
+    assert [frame async for frame in live.stream(after=99)] == []
+
+
+def test_chat_resume_requires_owner(client: TestClient) -> None:
+    assert client.get("/api/chat/runs/run-1/stream").status_code == 401
+
+
+def test_chat_resume_unknown_run_is_404(client: TestClient, repo: FakeAuthRepo) -> None:
+    login(client, repo)
+    # No live run by that id → 404, so the client falls back to the transcript.
+    assert client.get("/api/chat/runs/ghost/stream").status_code == 404
 
 
 def test_chat_response_carries_the_run_id_header(
@@ -1167,6 +1210,90 @@ async def test_chat_cancel_endpoint_persists_the_partial_and_closes_the_stream()
     assert transcript.recorded[-1]["assistant"] == "partial "
     assert runlog.finished[-1]["status"] == "error"
     assert runlog.finished[-1]["stop_reason"] == "disconnected"
+
+
+async def test_chat_resume_streams_the_rest_of_a_live_turn() -> None:
+    # The live-resume path end-to-end: the PWA's stream drops mid-turn, then it reconnects
+    # (GET /chat/runs/{id}/stream?after=N) and receives the frames it MISSED — the live
+    # tail — not a replay of what it already saw, and follows to completion.
+    import httpx
+
+    repo = FakeAuthRepo()
+    sessions_store = FakeAgentSessions()
+    sessions_store.add(AgentSessionInfo("sess-1", "", "active", ("general",), (), NOW, NOW))
+    runlog = FakeRunLog()
+    transcript = FakeTranscript()
+    release = asyncio.Event()  # holds the turn mid-answer until the resume is attached
+
+    settings = Settings(
+        secure_cookies=False, database_url="postgresql+asyncpg://nobody@localhost:1/none"
+    )
+    app = create_app(settings)
+    app.state.live_turns = {}
+    app.state.auth_repo = repo
+    app.state.agent_sessions = sessions_store
+    app.state.agent_runlog = runlog
+    app.state.agent_transcript = transcript
+    app.state.turn_attachments = FakeChatAttachments()
+    app.state.blob_store = FakeChatBlobs()
+    app.state.agent_registry = ToolRegistry([])
+    app.state.settings_store = FakeSettingsStore()
+    app.state.llm_router = LlmRouter(
+        {"xai": cast(LlmClient, GatedStreamClient(release))}, {"agent.turn": ("xai", "grok-4.3")}
+    )
+
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
+        key = await service.rotate_owner_key(repo)
+        assert (await ac.post("/api/auth/session", json={"owner_key": key})).status_code == 204
+
+        # Open the turn and hold the stream in a task; cancel it (the OS-killed-socket
+        # shape) once the detached turn has buffered its first frame — the "partial " the
+        # gated model emits before it blocks, the one the client "already saw".
+        async def hold_post() -> None:
+            async with ac.stream(
+                "POST", "/api/chat", json={"session_id": "sess-1", "message": "how far?"}
+            ) as r:
+                assert r.status_code == 200
+                async for _chunk in r.aiter_bytes():
+                    pass  # keep the connection open until cancelled
+
+        reader = asyncio.create_task(hold_post())
+        for _ in range(200):
+            if app.state.live_turns:
+                break
+            await asyncio.sleep(0.01)
+        run_id = next(iter(app.state.live_turns))
+        live = app.state.live_turns[run_id]
+        for _ in range(200):
+            if len(live.frames) >= 1:
+                break
+            await asyncio.sleep(0.01)
+        assert len(live.frames) >= 1 and b"partial " in live.frames[0]
+        reader.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await reader
+
+        # Reconnect skipping the one frame already seen, and collect the live tail.
+        rest = b""
+
+        async def resume() -> None:
+            nonlocal rest
+            async with ac.stream("GET", f"/api/chat/runs/{run_id}/stream?after=1") as r:
+                assert r.status_code == 200
+                async for chunk in r.aiter_bytes():
+                    rest += chunk
+
+        rtask = asyncio.create_task(resume())
+        await asyncio.sleep(0.05)  # let the resume subscribe before releasing the gate
+        release.set()
+        await asyncio.wait_for(rtask, timeout=5.0)
+
+    # The resume delivered the live tail (the "answer" text + the terminal done)…
+    assert b"answer" in rest
+    assert b"end_turn" in rest
+    # …and did NOT replay the already-seen first frame.
+    assert b"partial " not in rest
 
 
 def test_create_and_list_sessions(
