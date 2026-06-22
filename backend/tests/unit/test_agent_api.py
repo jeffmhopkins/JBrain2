@@ -976,6 +976,20 @@ async def test_live_turn_subscribe_after_finish_replays_tail_and_ends() -> None:
     assert got == [b"data: 1\n\n"]
 
 
+async def test_live_turn_stream_clamps_out_of_range_offsets() -> None:
+    # A reconnect's `after` is owner-supplied; out-of-range values must be safe — negative
+    # clamps to a full replay, past-the-end yields nothing, and both end cleanly.
+    from jbrain.api.agent import _LiveTurn
+
+    live = _LiveTurn()
+    live.emit(b"data: 1\n\n")
+    live.emit(b"data: 2\n\n")
+    live.finish()
+
+    assert [frame async for frame in live.stream(after=-5)] == [b"data: 1\n\n", b"data: 2\n\n"]
+    assert [frame async for frame in live.stream(after=99)] == []
+
+
 def test_chat_resume_requires_owner(client: TestClient) -> None:
     assert client.get("/api/chat/runs/run-1/stream").status_code == 401
 

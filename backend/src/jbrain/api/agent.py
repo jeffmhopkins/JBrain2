@@ -78,7 +78,13 @@ class _LiveTurn:
         self.task: asyncio.Task[None] | None = None
 
     def emit(self, frame: bytes) -> None:
-        """Append a data frame and fan it out to every live subscriber."""
+        """Append a data frame and fan it out to every live subscriber. INVARIANT: every
+        buffered frame is exactly one client-parseable `data:` SSE event — the reconnect
+        `after` offset counts events on both sides, so a frame the client's parser would
+        skip (a comment, a multi-event blob) would desync it. The buffer grows for one
+        turn only and is freed when the run leaves `live_turns`. No `await` between the
+        append and the fan-out, so a subscriber's snapshot can never miss an interleaved
+        frame."""
         self.frames.append(frame)
         for q in self._subs:
             q.put_nowait(frame)
