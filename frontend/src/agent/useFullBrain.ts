@@ -26,6 +26,10 @@ import type {
 
 export type Panel = "none" | "sessions" | "proposals";
 
+// A shared empty transcript so the active chat's `messages` keeps a stable reference
+// when its buffer is absent (no needless re-renders of the conversation).
+const EMPTY_MESSAGES: TranscriptMessage[] = [];
+
 /** Live context-window fill for the open chat, from the stream's `usage` events:
  * `used` (the latest turn's prompt + output, the fullest the context has been) over
  * the model's total `window`. Null until the first usage event of a session. */
@@ -241,7 +245,13 @@ export function useFullBrain(
   const [panel, setPanel] = useState<Panel>("none");
   const [proposals, setProposals] = useState<ProposalSummary[]>([]);
   const [openProposal, setOpenProposal] = useState<string | null>(null);
-  const [messages, setMessages] = useState<TranscriptMessage[]>([]);
+  // Live transcript keyed by session id, so an in-flight turn streams into ITS
+  // session's buffer even while another chat is on screen — switching away and back
+  // can't lose the running render. The visible `messages` is just this map's entry
+  // for the active chat.
+  const [messagesBySession, setMessagesBySession] = useState<Record<string, TranscriptMessage[]>>(
+    {},
+  );
   const [busy, setBusy] = useState(false);
   // Live context-window fill from the stream's `usage` events; cleared when the
   // open chat changes (a different session has its own context).
@@ -252,6 +262,10 @@ export function useFullBrain(
   // The detached turn's server-side run id (from the stream's synthetic `run` event).
   // Stop cancels against it since aborting the fetch no longer ends the turn. Null when idle.
   const runIdRef = useRef<string | null>(null);
+  // The session whose turn is streaming right now. The transcript-reload effect leaves
+  // this session's buffer alone (its live turn isn't in the stored transcript yet), and
+  // a chat switch preserves it — so returning to the chat still shows the running turn.
+  const turnSessionRef = useRef<string | null>(null);
   // The agent model's vision capability, false until the check answers — the safe
   // default keeps the chat attach affordance hidden rather than offering one the
   // model would 415. It only ever flips true, so the paperclip appears once
@@ -260,6 +274,17 @@ export function useFullBrain(
   const [canEditImages, setCanEditImages] = useState(false);
   // The open chat's id — the key the transcript and proposal inbox load against.
   const activeId = active?.id ?? null;
+  // The visible transcript: the active chat's buffer (empty until loaded). A stable
+  // empty array keeps the reference steady across renders when there's nothing to show.
+  const messages = (activeId !== null ? messagesBySession[activeId] : undefined) ?? EMPTY_MESSAGES;
+  // Update one session's buffer, leaving the others untouched — the streaming reducer
+  // and the transcript load both go through here so a turn only ever edits its own chat.
+  const setSessionMessages = useCallback(
+    (sessionId: string, updater: (ms: TranscriptMessage[]) => TranscriptMessage[]) => {
+      setMessagesBySession((prev) => ({ ...prev, [sessionId]: updater(prev[sessionId] ?? []) }));
+    },
+    [],
+  );
   // Read in the resolve effect without making it a dependency (which would re-fire
   // it on every open/turn and re-pick the session).
   const activeRef = useRef(active);
@@ -375,19 +400,23 @@ export function useFullBrain(
   // the conversation empty.
   useEffect(() => {
     if (!enabled || activeId === null) return;
+    // A turn is streaming live into this chat's buffer — its in-flight render isn't in
+    // the stored transcript yet, so reloading would wipe it. Leave the live buffer be;
+    // returning to the chat keeps showing the running turn.
+    if (activeId === turnSessionRef.current) return;
     let stale = false;
     // A different chat has its own context — drop the prior meter until this one's
     // first turn reports usage (token counts aren't part of the stored transcript).
     setUsage(null);
     getTranscript(activeId)
       .then((turns) => {
-        if (!stale) setMessages(turns.map(fromTurn));
+        if (!stale) setSessionMessages(activeId, () => turns.map(fromTurn));
       })
       .catch(() => {});
     return () => {
       stale = true;
     };
-  }, [enabled, activeId, getTranscript]);
+  }, [enabled, activeId, getTranscript, setSessionMessages]);
 
   async function send(
     textRaw: string,
@@ -421,11 +450,17 @@ export function useFullBrain(
     const attachmentIds = attachments.map((a) => a.id);
     const history = messages.map((m) => ({ role: m.role, content: historyContent(m) }));
     // Snapshot before the optimistic append so a dropped-stream recovery knows how
-    // many turns predate this exchange (reconcile waits for the transcript to grow)
-    // and which session it belongs to (so a chat switch mid-recovery is ignored).
+    // many turns predate this exchange (reconcile waits for the transcript to grow).
     const baseline = messages.length;
     const turnSessionId = active.id;
-    setMessages((ms) => [...ms, userMessage(text, attachments), streamingAssistant()]);
+    // Mark which chat this turn streams into, so its buffer survives a switch away and
+    // back, and its own (pre-turn) transcript reload doesn't clobber the live render.
+    turnSessionRef.current = turnSessionId;
+    setSessionMessages(turnSessionId, (ms) => [
+      ...ms,
+      userMessage(text, attachments),
+      streamingAssistant(),
+    ]);
     // Reuse the note-capture warm fix (only when capture is on and fresh) so the
     // location tool can answer from the phone's current spot.
     const coords = freshCoords();
@@ -470,22 +505,25 @@ export function useFullBrain(
         } else if (event.type === "run") {
           runIdRef.current = event.run_id;
         } else {
-          setMessages((ms) => applyEvent(ms, event));
+          // Fold into THIS turn's chat buffer, not whatever chat is on screen — the
+          // owner may be looking at another session while this one streams.
+          setSessionMessages(turnSessionId, (ms) => applyEvent(ms, event));
         }
       }
-      setMessages((ms) => (ms[ms.length - 1]?.streaming ? endStream(ms, "end_turn") : ms));
+      setSessionMessages(turnSessionId, (ms) =>
+        ms[ms.length - 1]?.streaming ? endStream(ms, "end_turn") : ms,
+      );
     } catch {
       if (controller.signal.aborted) {
-        setMessages((ms) => endStream(ms, "stopped"));
+        setSessionMessages(turnSessionId, (ms) => endStream(ms, "stopped"));
       } else {
         // The connection dropped (the PWA was backgrounded and the OS closed the
         // socket). The turn keeps running detached server-side, so don't settle an
         // error — poll the transcript until the finished exchange lands, then show it.
+        // Targets the turn's own buffer, so it lands whether or not that chat is open.
         const recovered = await reconcile(turnSessionId, baseline);
-        if (activeRef.current?.id === turnSessionId) {
-          if (recovered) setMessages(recovered.map(fromTurn));
-          else setMessages((ms) => endStream(ms, "error"));
-        }
+        if (recovered) setSessionMessages(turnSessionId, () => recovered.map(fromTurn));
+        else setSessionMessages(turnSessionId, (ms) => endStream(ms, "error"));
       }
     } finally {
       abortRef.current = null;
@@ -493,6 +531,9 @@ export function useFullBrain(
       // recovery still cancels the detached turn by id; a stale id can't linger into
       // the next turn.
       runIdRef.current = null;
+      // The turn settled — release its chat so reopening it now reloads the stored
+      // transcript (which carries the finished render) instead of the live buffer.
+      if (turnSessionRef.current === turnSessionId) turnSessionRef.current = null;
       setBusy(false);
       // The turn may have staged a Proposal — refresh the review inbox.
       reloadProposals();
@@ -505,10 +546,11 @@ export function useFullBrain(
 
   // Poll the transcript after a dropped stream until the detached turn's finished
   // exchange lands (the turn count grows past the pre-send baseline), or the ceiling
-  // gives up. Skips polling while backgrounded — a hidden app has no business asking.
+  // gives up. Keyed on the turn's own session (not the active one), so recovery lands
+  // even if the owner is viewing another chat. Skips polling while backgrounded.
   async function reconcile(sessionId: string, baseline: number): Promise<TranscriptTurn[] | null> {
     const deadline = Date.now() + RECONCILE_TIMEOUT_MS;
-    while (Date.now() < deadline && activeRef.current?.id === sessionId) {
+    while (Date.now() < deadline) {
       if (isForeground()) {
         try {
           const turns = await getTranscript(sessionId);
@@ -551,13 +593,18 @@ export function useFullBrain(
   }
 
   function open(session: AgentSession): void {
-    // Clear only when actually switching sessions, so the prior chat doesn't
-    // linger while the new one's transcript loads (the id-keyed effect reloads
-    // it). Re-opening the current session must NOT clear — its id is unchanged,
-    // so the effect wouldn't re-fire to repopulate it.
-    if (session.id !== active?.id) setMessages([]);
+    const switching = session.id !== active?.id;
     setActive(session);
     setPanel("none");
+    // Re-opening the current chat must NOT disturb its buffer (its id is unchanged, so
+    // the id-keyed effect wouldn't re-fire to repopulate it). On an actual switch, drop
+    // the other chats' cached buffers (the effect reloads the opened one) but PRESERVE
+    // the chat with a live turn, so returning to it still shows the running render.
+    if (!switching) return;
+    setMessagesBySession((prev) => {
+      const live = turnSessionRef.current;
+      return live && prev[live] ? { [live]: prev[live] } : {};
+    });
   }
 
   async function rename(id: string, title: string): Promise<void> {
@@ -569,11 +616,12 @@ export function useFullBrain(
   async function remove(id: string): Promise<void> {
     await deleteSession(id);
     setSessions((prev) => prev.filter((s) => s.id !== id));
-    // If the open conversation was deleted, drop it (and its transcript).
-    if (active?.id === id) {
-      setActive(null);
-      setMessages([]);
-    }
+    // Drop the deleted chat's buffer; if it was the open one, clear the active chat too.
+    setMessagesBySession((prev) => {
+      const { [id]: _gone, ...rest } = prev;
+      return rest;
+    });
+    if (active?.id === id) setActive(null);
   }
 
   async function archive(id: string): Promise<void> {
