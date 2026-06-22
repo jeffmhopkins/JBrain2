@@ -608,7 +608,7 @@ function TurnGlyph({ kind }: { kind: "thinking" | "rendering" }): ReactNode {
   return (
     <span className={`turn-glyph ${kind}`} aria-hidden="true">
       {kind === "rendering" ? (
-        <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor">
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
           <path d="M12 2l2.3 6.4L21 11l-6.7 2.6L12 20l-2.3-6.4L3 11l6.7-2.6z" />
         </svg>
       ) : (
