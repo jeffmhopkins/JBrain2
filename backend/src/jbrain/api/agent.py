@@ -17,7 +17,7 @@ import asyncio
 import contextlib
 import uuid
 from collections.abc import AsyncIterator, Sequence
-from typing import Annotated, Any, Literal, cast
+from typing import Annotated, Literal, cast
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -59,37 +59,67 @@ OwnerDep = Annotated[PrincipalInfo, Depends(owner_only)]
 # especially, now that we free ComfyUI between renders.
 _SSE_HEARTBEAT_SECONDS = 20.0
 
-_TURN_DONE = object()  # queue sentinel: the turn finished, no more frames
+_TURN_DONE = object()  # per-subscriber sentinel: the turn finished, no more frames
 
 
-async def _with_heartbeat(events: AsyncIterator[Any], interval: float) -> AsyncIterator[Any | None]:
-    """Relay each event; yield None as a heartbeat signal when none arrives within
-    `interval`. The pending pull is NEVER cancelled on a heartbeat — a tool that
-    streams nothing for minutes keeps running; only the idle gap is filled (so the SSE
-    writer can send a keepalive comment). A real cancellation (client disconnect) still
-    cancels the pull in the finally, preserving the turn's disconnect handling."""
-    it = events.__aiter__()
-    pull: asyncio.Task[Any] | None = None
-    try:
-        while True:
-            if pull is None:
-                pull = asyncio.ensure_future(it.__anext__())
-            done, _ = await asyncio.wait({pull}, timeout=interval)
-            if pull not in done:
-                yield None  # idle window — keep the connection warm, leave `pull` running
-                continue
-            try:
-                event = pull.result()
-            except StopAsyncIteration:
-                return
-            finally:
-                pull = None
-            yield event
-    finally:
-        if pull is not None:
-            pull.cancel()
-            with contextlib.suppress(BaseException):
-                await pull
+class _LiveTurn:
+    """An in-flight turn's frame buffer + live fan-out, so the original SSE response AND
+    a reconnecting client (GET /chat/runs/{id}/stream) can both replay the frames so far
+    and follow the turn to completion. In-process, keyed by run_id; the detached
+    `drive_turn` task feeds it via `emit`/`finish`. Buffered frames are the `data:` SSE
+    lines only — keepalives are per-connection (emitted on idle by `stream`), never
+    buffered, so a reconnect's `after` offset counts only real events."""
+
+    def __init__(self) -> None:
+        self.frames: list[bytes] = []
+        self.done = False
+        self._subs: set[asyncio.Queue[bytes | object]] = set()
+        # The driving task — held so the cancel endpoint and shutdown can stop it.
+        self.task: asyncio.Task[None] | None = None
+
+    def emit(self, frame: bytes) -> None:
+        """Append a data frame and fan it out to every live subscriber."""
+        self.frames.append(frame)
+        for q in self._subs:
+            q.put_nowait(frame)
+
+    def finish(self) -> None:
+        """Mark the turn complete and terminate every live subscriber. Idempotent."""
+        self.done = True
+        for q in self._subs:
+            q.put_nowait(_TURN_DONE)
+        self._subs.clear()
+
+    def cancel(self) -> None:
+        if self.task is not None:
+            self.task.cancel()
+
+    async def stream(self, after: int = 0) -> AsyncIterator[bytes]:
+        """Replay buffered frames from index `after`, then follow live frames until the
+        turn ends. A keepalive comment is emitted whenever no frame arrives within the
+        heartbeat window, so an idle proxy can't drop a connection during a long tool.
+        Backfill is synchronous (no await before the subscription is registered) so no
+        frame can slip in between the snapshot and going live."""
+        q: asyncio.Queue[bytes | object] = asyncio.Queue()
+        for frame in self.frames[max(after, 0) :]:
+            q.put_nowait(frame)
+        if self.done:
+            q.put_nowait(_TURN_DONE)
+        else:
+            self._subs.add(q)
+        try:
+            while True:
+                try:
+                    item = await asyncio.wait_for(q.get(), timeout=_SSE_HEARTBEAT_SECONDS)
+                except TimeoutError:
+                    yield b": keepalive\n\n"
+                    continue
+                if item is _TURN_DONE:
+                    return
+                yield cast(bytes, item)
+        finally:
+            self._subs.discard(q)
+
 
 
 class ChatMessageIn(BaseModel):
@@ -435,7 +465,7 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
         else None
     )
 
-    async def drive_turn(queue: asyncio.Queue) -> None:
+    async def drive_turn(live: _LiveTurn) -> None:
         stop_reason = "error"
         status = "error"
         answer: list[str] = []
@@ -467,13 +497,11 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
             context_window=context_window,
         )
         try:
-            async for event in _with_heartbeat(stream, _SSE_HEARTBEAT_SECONDS):
-                if event is None:
-                    # An idle window during a long blocking tool — keep the proxy from
-                    # dropping the stream. A `:`-comment frame carries no `data:` line,
-                    # so the client parser ignores it.
-                    queue.put_nowait(b": keepalive\n\n")
-                    continue
+            # A long blocking tool may stream nothing for minutes; the pull is never
+            # cancelled here (only a client disconnect cancelled the old wrapper, which no
+            # longer reaches this detached task), so a plain loop suffices. Idle keepalives
+            # are now each subscriber's job (`_LiveTurn.stream`), not buffered here.
+            async for event in stream:
                 if event.type == "text_delta":
                     answer.append(event.text)
                 elif event.type == "reasoning_delta":
@@ -521,7 +549,7 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
                 # A reflexion `verdict` rides after `done` (Loop 1's annotation of a
                 # critique-worthy turn). It is forwarded to the PWA but deliberately
                 # NOT recorded — Loop 1 is ephemeral and writes nothing durable.
-                queue.put_nowait(f"data: {event.model_dump_json()}\n\n".encode())
+                live.emit(f"data: {event.model_dump_json()}\n\n".encode())
             if status == "done":
                 # Episodic memory is owner-data: only a knowledge-base agent appends one.
                 if profile.reads_knowledge_base:
@@ -551,7 +579,7 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
             raise
         except Exception as exc:  # noqa: BLE001 — surface a terminal event, never a 500 mid-stream
             log.warning("agent.chat_failed", run_id=run_id, error=repr(exc))
-            queue.put_nowait(b'data: {"type": "done", "stop_reason": "error"}\n\n')
+            live.emit(b'data: {"type": "done", "stop_reason": "error"}\n\n')
         finally:
             # A Stop (cancel endpoint), a dropped connection, or a mid-turn error (e.g.
             # the compose-the-reply LLM call breaking after a tool already ran) cuts the
@@ -597,33 +625,28 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
                         cost_tokens=tally.cost,
                     )
             finally:
-                # The sentinel is UNCONDITIONAL: even if a second cancellation (e.g. a
-                # Stop arriving during shutdown) interrupts a shielded await above, a
-                # still-listening client must get the stream's terminator — otherwise
-                # `events()` blocks on `queue.get()` forever and the SSE response hangs.
-                queue.put_nowait(_TURN_DONE)
+                # Completion is UNCONDITIONAL: even if a second cancellation (e.g. a Stop
+                # arriving during shutdown) interrupts a cleanup await above, every
+                # subscriber must get the terminator — otherwise a still-listening client
+                # blocks on its queue forever and the SSE response hangs.
+                live.finish()
 
     # Detach the turn from its SSE connection: run it as a task that owns the
-    # accumulation + persistence, and have the response merely forward frames from a
-    # queue. A backgrounded PWA dropping the socket cancels only the response generator,
-    # never the turn — so the turn completes and persists `done`, and the PWA recovers it
-    # from the transcript on return. The composer's explicit Stop cancels the turn through
-    # the cancel endpoint, keyed by the run id we expose on the response header.
-    queue: asyncio.Queue = asyncio.Queue()
-    turn = asyncio.create_task(drive_turn(queue))
-    request.app.state.live_turns[run_id] = turn
-    turn.add_done_callback(lambda _t: request.app.state.live_turns.pop(run_id, None))
-
-    async def events() -> AsyncIterator[bytes]:
-        while True:
-            frame = await queue.get()
-            if frame is _TURN_DONE:
-                break
-            yield frame
+    # accumulation + persistence, feeding a `_LiveTurn` broker the response subscribes to.
+    # A backgrounded PWA dropping the socket cancels only the response generator, never the
+    # turn — so the turn completes and persists `done`. While it runs, the PWA can RECONNECT
+    # (GET /chat/runs/{id}/stream) and resume the live event stream from where it left off;
+    # once it's finished it recovers the exchange from the transcript instead. The
+    # composer's explicit Stop cancels the turn through the cancel endpoint, keyed by the
+    # run id we expose on the response header.
+    live = _LiveTurn()
+    live.task = asyncio.create_task(drive_turn(live))
+    request.app.state.live_turns[run_id] = live
+    live.task.add_done_callback(lambda _t: request.app.state.live_turns.pop(run_id, None))
 
     # X-Accel-Buffering off so nginx streams events instead of buffering the turn.
     return StreamingResponse(
-        events(),
+        live.stream(0),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no", "X-Run-Id": run_id},
     )
@@ -640,6 +663,24 @@ async def cancel_chat_run(request: Request, run_id: str) -> None:
     single-owner system, so `owner_only` already means the only authenticatable caller
     IS the owner, and `run_id` is a server-minted UUID (no enumeration value). Revisit
     if scoped principals arrive (Phase 7)."""
-    turn = request.app.state.live_turns.get(run_id)
-    if turn is not None:
-        turn.cancel()
+    live = request.app.state.live_turns.get(run_id)
+    if live is not None:
+        live.cancel()
+
+
+@router.get("/chat/runs/{run_id}/stream")
+async def resume_chat_run(request: Request, run_id: str, after: int = 0) -> StreamingResponse:
+    """Reconnect to an in-flight turn the PWA lost (the OS dropped the backgrounded
+    socket) and resume its live SSE stream from `after` — the count of events the client
+    already saw — so thinking/render progress picks up live instead of waiting for the
+    final answer. 404 once the run is no longer live; the client then recovers the
+    finished exchange from the transcript. Owner-gated and run-id-keyed exactly like the
+    cancel endpoint (single-owner system; server-minted run id)."""
+    live = request.app.state.live_turns.get(run_id)
+    if live is None:
+        raise HTTPException(status_code=404, detail="run not live")
+    return StreamingResponse(
+        live.stream(after),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no", "X-Run-Id": run_id},
+    )

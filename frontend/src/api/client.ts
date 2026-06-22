@@ -1778,6 +1778,20 @@ export const api = {
     yield* parseChatStream(response.body);
   },
 
+  /** Reconnect to an in-flight turn whose stream dropped (a backgrounded socket) and
+   * resume its live events from `after` — the count of server frames already folded — so
+   * thinking/render progress picks up live. Throws (404 via request) once the run is no
+   * longer live, so the caller falls back to the transcript. No synthetic run event: the
+   * caller already holds the run id. */
+  async *chatResume(runId: string, after: number, signal?: AbortSignal): AsyncGenerator<ChatEvent> {
+    const response = await request(
+      `/api/chat/runs/${encodeURIComponent(runId)}/stream?after=${after}`,
+      { ...(signal ? { signal } : {}) },
+    );
+    if (!response.body) return;
+    yield* parseChatStream(response.body);
+  },
+
   /** Cancel the in-flight chat turn (the composer's Stop). The turn runs detached
    * from the SSE stream server-side, so aborting the fetch no longer stops it — this
    * explicit signal does. Best-effort/idempotent on the server. */

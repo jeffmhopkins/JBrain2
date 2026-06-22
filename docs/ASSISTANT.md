@@ -157,7 +157,14 @@ loops consume.
 rebuild, a bulk re-embed): the tool enqueues a job, returns a handle inline, and
 the chat turn never blocks. **Streaming to the phone:** the `/chat` endpoint emits
 SSE/WS events (`text_delta`, `tool_call`, `tool_result`, `job_enqueued`, `done`)
-so the PWA shows tool activity live; reconnect resumes from the persisted run.
+so the PWA shows tool activity live. The turn runs **detached** from its SSE
+connection: a backgrounded PWA dropping the socket never cancels it (it completes
+and persists), and while it runs the PWA can **reconnect** —
+`GET /chat/runs/{id}/stream?after=N` replays the in-memory frame buffer from the
+last-seen offset and follows live, so thinking/render progress resumes rather than
+restarting. Once the run has finished the reconnect 404s and the PWA recovers the
+exchange from the persisted transcript instead. The composer's Stop is an explicit
+`POST /chat/runs/{id}/cancel` (closing the stream no longer ends the turn).
 
 **No standing multi-agent orchestra.** One context window holds a personal chat
 task. Keep exactly one narrow `spawn_subagent` escape hatch for rare fan-out

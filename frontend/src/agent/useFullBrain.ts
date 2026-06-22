@@ -104,6 +104,7 @@ export interface FullBrainDeps {
   listSessions: () => Promise<AgentSession[]>;
   createSession: (body: SessionCreate) => Promise<AgentSession>;
   chat: (body: ChatRequest, signal?: AbortSignal) => AsyncGenerator<ChatEvent>;
+  chatResume: (runId: string, after: number, signal?: AbortSignal) => AsyncGenerator<ChatEvent>;
   cancelChatRun: (runId: string) => Promise<void>;
   listProposals: (sessionId?: string) => Promise<ProposalSummary[]>;
   getTranscript: (sessionId: string) => Promise<TranscriptTurn[]>;
@@ -120,6 +121,7 @@ const LIVE: FullBrainDeps = {
   listSessions: api.listSessions,
   createSession: api.createSession,
   chat: api.chat,
+  chatResume: api.chatResume,
   cancelChatRun: api.cancelChatRun,
   listProposals: api.listProposals,
   getTranscript: api.getTranscript,
@@ -256,7 +258,8 @@ export function useFullBrain(
   deps: FullBrainDeps = LIVE,
   autoStart = false,
 ): FullBrain {
-  const { listSessions, createSession, chat, cancelChatRun, listProposals, getTranscript } = deps;
+  const { listSessions, createSession, chat, chatResume, cancelChatRun } = deps;
+  const { listProposals, getTranscript } = deps;
   const { renameSession, deleteSession, archiveSession, unarchiveSession } = deps;
   const { rescopeSession, uploadChatAttachment, getChatCapabilities } = deps;
   const enabled = mode !== null;
@@ -523,22 +526,50 @@ export function useFullBrain(
     turnSessionId: string,
     baseline: number,
   ): Promise<void> {
+    // How many SERVER frames we've folded — the offset a reconnect resumes from. The
+    // synthetic `run` event is client-made (from the X-Run-Id header), so it doesn't count.
+    let framesSeen = 0;
+    // Fold one server event into the turn's own chat buffer (not whatever chat is on
+    // screen — the owner may be viewing another session while this one streams). Usage
+    // rides the whole conversation, so it's tracked apart from the transcript reducer.
+    const fold = (event: ChatEvent): void => {
+      if (event.type === "usage") {
+        setUsage({ used: event.input_tokens + event.output_tokens, window: event.context_window });
+      } else {
+        setSessionMessages(turnSessionId, (ms) => applyEvent(ms, event));
+      }
+    };
+    // Reconnect to the still-running turn and resume folding its live events from where
+    // the dropped stream left off. Returns true when it settled live (saw `done`) or was
+    // Stopped; false to fall back to the transcript (the run already finished → 404, or
+    // the reconnect dropped again before completing).
+    const resumeLive = async (): Promise<boolean> => {
+      const runId = runIdRef.current;
+      if (!runId) return false;
+      let settled = false;
+      try {
+        for await (const event of chatResume(runId, framesSeen, controller.signal)) {
+          framesSeen += 1;
+          fold(event);
+          if (event.type === "done") settled = true;
+        }
+      } catch {
+        if (controller.signal.aborted) {
+          setSessionMessages(turnSessionId, (ms) => endStream(ms, "stopped"));
+          return true;
+        }
+        return false;
+      }
+      return settled;
+    };
     try {
       for await (const event of chat(body, controller.signal)) {
-        // Usage rides the conversation, not a single bubble — track it apart from the
-        // transcript reducer so the meter reflects the whole context, not one turn.
-        if (event.type === "usage") {
-          setUsage({
-            used: event.input_tokens + event.output_tokens,
-            window: event.context_window,
-          });
-        } else if (event.type === "run") {
+        if (event.type === "run") {
           runIdRef.current = event.run_id;
-        } else {
-          // Fold into THIS turn's chat buffer, not whatever chat is on screen — the
-          // owner may be looking at another session while this one streams.
-          setSessionMessages(turnSessionId, (ms) => applyEvent(ms, event));
+          continue;
         }
+        framesSeen += 1;
+        fold(event);
       }
       setSessionMessages(turnSessionId, (ms) =>
         ms[ms.length - 1]?.streaming ? endStream(ms, "end_turn") : ms,
@@ -547,13 +578,18 @@ export function useFullBrain(
       if (controller.signal.aborted) {
         setSessionMessages(turnSessionId, (ms) => endStream(ms, "stopped"));
       } else {
-        // The connection dropped (the PWA was backgrounded and the OS closed the
-        // socket). The turn keeps running detached server-side, so don't settle an
-        // error — poll the transcript until the finished exchange lands, then show it.
-        // Targets the turn's own buffer, so it lands whether or not that chat is open.
-        const recovered = await reconcile(turnSessionId, baseline);
-        if (recovered) setSessionMessages(turnSessionId, () => recovered.map(fromTurn));
-        else setSessionMessages(turnSessionId, (ms) => endStream(ms, "error"));
+        // The connection dropped (the PWA was backgrounded and the OS closed the socket).
+        // The turn runs on detached server-side — RECONNECT and resume its live stream so
+        // thinking/render progress picks up where it left off. Only if the run is already
+        // gone (or the reconnect drops again) do we recover the finished exchange from the
+        // transcript. Both target the turn's own buffer, so they land whether or not that
+        // chat is open.
+        const resumed = await resumeLive();
+        if (!resumed) {
+          const recovered = await reconcile(turnSessionId, baseline);
+          if (recovered) setSessionMessages(turnSessionId, () => recovered.map(fromTurn));
+          else setSessionMessages(turnSessionId, (ms) => endStream(ms, "error"));
+        }
       }
     } finally {
       abortRef.current = null;

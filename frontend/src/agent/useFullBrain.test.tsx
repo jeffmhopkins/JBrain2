@@ -30,6 +30,7 @@ function deps(over: Partial<FullBrainDeps> = {}): FullBrainDeps {
     ]),
     createSession: vi.fn(async () => session({ id: "new" })),
     chat: async function* () {},
+    chatResume: async function* () {},
     listProposals: vi.fn(async () => []),
     getTranscript: vi.fn(async (): Promise<TranscriptTurn[]> => []),
     renameSession: vi.fn(async () => {}),
@@ -145,6 +146,36 @@ describe("useFullBrain — a turn stays attached to its own chat", () => {
     });
     // Settled → no live turn.
     await waitFor(() => expect(result.current.activeTurn).toBeNull());
+  });
+
+  it("resumes the live stream on a drop instead of falling back to the transcript", async () => {
+    // The reconnect path: the stream drops mid-turn, the client reconnects (chatResume)
+    // and folds the live tail onto the partial — no transcript recovery needed.
+    async function* chat(): AsyncGenerator<ChatEvent> {
+      yield { type: "run", run_id: "r1" };
+      yield { type: "text_delta", text: "partial " };
+      throw new Error("network drop");
+    }
+    const chatResume = vi.fn(async function* (): AsyncGenerator<ChatEvent> {
+      yield { type: "text_delta", text: "and the rest" };
+      yield { type: "done", stop_reason: "end_turn" };
+    });
+
+    const d = deps({ chat, chatResume });
+    const { result } = renderHook(() => useFullBrain("fullbrain", d));
+    await waitFor(() => expect(result.current.active?.id).toBe("A"));
+
+    await act(async () => {
+      await result.current.send("go");
+    });
+    // The resumed tail continues the same bubble, and the turn settles live.
+    await waitFor(() =>
+      expect(result.current.messages.at(-1)?.text).toBe("partial and the rest"),
+    );
+    expect(result.current.messages.at(-1)?.streaming).toBe(false);
+    // It reconnected from the count of server frames already folded — the synthetic `run`
+    // event isn't a server frame, so only the one text_delta counts (after=1).
+    expect(chatResume).toHaveBeenCalledWith("r1", 1, expect.anything());
   });
 
   it("reports a non-image tool as kind 'thinking', not rendering", async () => {
