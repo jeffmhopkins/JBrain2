@@ -39,8 +39,14 @@ by-id production source (noted in each file's header comment).
 
 ## Decision
 
-_Pending owner selection._ Once chosen, this section records the pick + rationale
-(like the genimage README), the chosen file becomes the binding spec for the
-`FishIdentification` component and its `.tv-fish-*` classes in
-`frontend/src/agent/views/registry.tsx`, and the selection lands in `docs/DESIGN.md`
-(a new `fish_identification` tool-view entry, per the GUI gate).
+**Chosen: A — hero verdict** (`fish-id-a-hero-verdict.html`). It is the **binding
+spec** for the `FishIdentification` component and its `.tv-fish-*` classes in
+`frontend/src/agent/views/registry.tsx`: the owner's photo fills a sized hero frame
+(no layout shift), the top species reads over a bottom scrim with a confidence
+**pill** whose tone is an enum (good ≥ ~70% / mid otherwise, never a raw color), and
+the runners-up are one muted "also considered" line below. A won as the calmest,
+most photo-feed-like card — the picture is the message, and the top guess is usually
+what's wanted; the alternatives stay visible (one line) so a close call isn't hidden
+entirely. **B** (ranked list) and **C** (verdict + expand) are retained in this
+directory as the record. The selection + rationale also land in `docs/DESIGN.md` (the
+new `fish_identification` tool-view entry, per the GUI gate).

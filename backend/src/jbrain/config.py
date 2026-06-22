@@ -129,6 +129,26 @@ class Settings(BaseSettings):
     # so this is generous: it's the ceiling for a render that genuinely hung, not the
     # expected duration. Raise it for even larger jobs.
     comfyui_timeout: float = 1800.0
+    # OPT-IN on-box fish identification: a fishial service (DINOv2+ViT classifier on
+    # the owner's Strix Halo box) JBrain manages through the `fish-id` compose profile,
+    # the sibling of the comfyui gateway (docs/FISH_ID_PLAN.md). EMPTY URL DISABLES the
+    # feature: main.py wires no client and the identify_fish tool never reaches the
+    # registry — graceful degrade, mirroring comfyui_url. The URL is the functional
+    # gate; `fish_id_enabled` mirrors the install-time choice for parity with
+    # comfyui_enabled. scripts/fish-id-setup.sh sets both.
+    fish_id_url: str = ""
+    fish_id_enabled: bool = False
+    # Catalog ids (jbrain.fish_id.catalog) the operator has provisioned and wants
+    # offered in settings. Set by the setup path alongside the weights.
+    fish_id_models: list[str] = []
+    # Read-only mount of the provisioned fish weights (scripts/fish-id-setup.sh's
+    # ./fish-id-models), so the settings screen can report each model's real on-disk
+    # footprint for the shared RAM meter — host/infra files, not application blobs, so
+    # the read sits outside the storage abstraction (same rationale as comfyui_models_dir).
+    fish_id_models_dir: str = "/data/fish-id-models"
+    # Overall budget for ONE identification (cold model load + segment/detect/embed).
+    # The model is freed between calls, so a request pays a cold load; budget generously.
+    fish_id_timeout: float = 120.0
     # Local models on one box are far slower than the cloud APIs — a 30B+ doing a
     # long OCR/extraction at a few dozen tok/s can run for minutes. The 120s cloud
     # default would time out mid-generation and the job would retry-loop, never
